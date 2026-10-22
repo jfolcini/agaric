@@ -1628,7 +1628,8 @@ export const pagesHandlers = {
   // any of these — the Rust tests own the import contract):
   //   - Frontmatter / inline `key:: value` properties beyond a raw COUNT
   //     (`properties_set`); no property values are stamped onto blocks.
-  //   - `((block-ref))` stripping and `[[Page#anchor]]` block targets.
+  //   - `((block-ref))` stripping, `[[Page#anchor]]` block targets and
+  //     Obsidian `![[Note]]` embeds.
   //   - Depth: every content block is emitted flat under the page.
   //   - Attachment handling (kept as literal text).
   //   - A folder pick's note names (`vault.notes`, #5740): a bare `[[Name]]`
@@ -1756,7 +1757,8 @@ export const pagesHandlers = {
       properties_set: propertiesSet,
     })
 
-    // The mock reads no Logseq `collapsed::` line, so it folds nothing.
+    // The mock reads no Logseq `collapsed::` line, so it folds nothing, and no
+    // anchor, so it leaves no reference for `link_import_anchors`.
     return {
       page_title: pageTitle,
       page_id: pageId,
@@ -1764,8 +1766,14 @@ export const pagesHandlers = {
       properties_set: propertiesSet,
       collapsed: [],
       warnings,
+      anchors: [],
+      deferred: [],
     }
   },
+
+  // The end of a folder import. The mock's import defers no reference, so
+  // there is nothing to link; the Rust tests own the contract.
+  link_import_anchors: () => [],
 
   // ---------------------------------------------------------------------------
   // Attachment commands (F-7)
@@ -1872,5 +1880,6 @@ export const pagesHandlers = {
   | 'apply_page_source'
   | 'get_blocks_source'
   | 'import_markdown'
+  | 'link_import_anchors'
   | 'import_bibliography'
 >

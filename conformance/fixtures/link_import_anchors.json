@@ -1,0 +1,358 @@
+{
+  "description": "The end of a folder import: `link_import_anchors` links the references its notes left in the blocks it is given (`ImportResult::deferred`), once every note exists. A `[[PAGE#anchor]]` link becomes a ref to the block its anchor names: the page's first heading of that text, or the block `anchors` gives for its `^id`, its label dropped since a ref carries none; an anchor that names none links the page. A Logseq `((uuid))` becomes a ref to the block `anchors` gives for it, else is stripped. The blocks stand in a space an op creates (`C1`) beside a page left in the harness's space, whose block holds a placeholder too and is given to the command: it is not in the space, so it stays as it was, as does the id no block has. The pages' ids are the seed labels expanded to 26 characters, as `[[ULID#anchor]]` spells them. The importers' grammar has one implementation, in Rust (#5071), so this fixture is backend-only on the mock (`DRIFT_SKIP` in conformance.test.ts). Seed: S1 (Guide) > S2 (## Setup), S3 (the `^step` block); S4 (Notes) > S5 (two links), S6 (an anchor that names nothing), S7 (a Logseq ref S8 answers, and one nothing answers), S8; S9 (Elsewhere) > S10. Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Guide",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "## Setup",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "The step.",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Notes",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "see ((000000000000000000000000S2)) and ((000000000000000000000000S3))",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B4",
+        "parent_id": "B4",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "{{embed [[000000000000000000000000S1]]}}",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B4",
+        "parent_id": "B4",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "back ((000000000000000000000000S8)) gone",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B4",
+        "parent_id": "B4",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "target",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B4",
+        "parent_id": "B4",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Elsewhere",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B9",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "see [[000000000000000000000000S1#Setup]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B10",
+        "page_id": "B9",
+        "parent_id": "B9",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Library",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B11",
+        "page_id": "B11",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 7,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [
+      {
+        "kind": "block_ref",
+        "source_id": "B5",
+        "source_page_id": "B4",
+        "target_id": "B2"
+      },
+      {
+        "kind": "block_ref",
+        "source_id": "B5",
+        "source_page_id": "B4",
+        "target_id": "B3"
+      },
+      {
+        "kind": "page_link",
+        "source_id": "B6",
+        "source_page_id": "B4",
+        "target_id": "B1"
+      },
+      {
+        "kind": "block_ref",
+        "source_id": "B7",
+        "source_page_id": "B4",
+        "target_id": "B8"
+      }
+    ],
+    "properties": [
+      {
+        "block_id": "B11",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_space_to_import_into",
+      "returns": ["create_space#space_id=B11"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_notes_join_the_space",
+      "returns": ["move_blocks_to_space#moved=2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_references_are_linked",
+      "returns": [
+        "link_import_anchors#warning=1 wikilink block/heading anchors were dropped; links resolve to the page",
+        "link_import_anchors#warning=1 link label(s) were dropped: a block reference carries no label",
+        "link_import_anchors#warning=1 ((block-ref)) reference(s) were stripped from imported content and could not be preserved"
+      ]
+    }
+  ],
+  "name": "link_import_anchors",
+  "ops": [
+    {
+      "args": {
+        "name": "Library"
+      },
+      "command": "create_space",
+      "comment": "The space the folder is imported into, named `C1` below.",
+      "name": "a_space_to_import_into",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S1", "S4"],
+        "spaceId": "C1"
+      },
+      "command": "move_blocks_to_space",
+      "comment": "Guide and Notes with their blocks join the space; Elsewhere stays out.",
+      "name": "the_notes_join_the_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "anchors": [
+          {
+            "anchor": "step",
+            "block_id": "S3",
+            "page_id": "S1"
+          },
+          {
+            "anchor": "6560a1b2-0000-4000-8000-000000000001",
+            "block_id": "S8",
+            "page_id": "S4"
+          }
+        ],
+        "blocks": ["S5", "S6", "S7", "S10", "S99"],
+        "spaceId": "C1"
+      },
+      "command": "link_import_anchors",
+      "comment": "S5 refs the heading and the `^step` block, the label of the second dropped; S6 embeds the page, as no heading is `Nowhere`; S7 refs S8 and loses the ref nothing answers; S10 is not in the space, and S99 is no block, so both are left alone. Each warning is one the import shows.",
+      "name": "the_references_are_linked",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Guide",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "## Setup",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "The step.",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "page",
+        "content": "Notes",
+        "id": "S4",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "see [[000000000000000000000000S1#Setup]] and [[000000000000000000000000S1#^step|the step]]",
+        "id": "S5",
+        "parent_id": "S4",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "{{embed [[000000000000000000000000S1#Nowhere]]}}",
+        "id": "S6",
+        "parent_id": "S4",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "back ((6560a1b2-0000-4000-8000-000000000001)) gone ((6560a1b2-0000-4000-8000-0000000000ff))",
+        "id": "S7",
+        "parent_id": "S4",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "target",
+        "id": "S8",
+        "parent_id": "S4",
+        "position": 4
+      },
+      {
+        "block_type": "page",
+        "content": "Elsewhere",
+        "id": "S9",
+        "parent_id": null,
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "see [[000000000000000000000000S1#Setup]]",
+        "id": "S10",
+        "parent_id": "S9",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

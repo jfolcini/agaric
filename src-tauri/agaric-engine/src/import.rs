@@ -95,6 +95,23 @@ pub struct ImportResult {
     /// Empty on a fully clean import. Surfaced to the user and logged at
     /// `warn!` on completion so a lossy import is never silent.
     pub warnings: Vec<String>,
+    /// The blocks the file's anchors name: each Obsidian `^id` and Logseq
+    /// `id::` uuid it carried.
+    pub anchors: Vec<ImportAnchor>,
+    /// On a folder import, the blocks still holding a reference into another
+    /// note, which `link_import_anchors` links once every note is imported.
+    pub deferred: Vec<String>,
+}
+
+/// A block an imported note's anchor names: its trailing Obsidian `^id`
+/// (without the `^`) or its Logseq `id::` uuid, on the page `page_id`. A
+/// folder import hands these to `link_import_anchors`, which links another
+/// note's reference to the block.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct ImportAnchor {
+    pub page_id: String,
+    pub anchor: String,
+    pub block_id: String,
 }
 
 /// Output of [`parse_logseq_markdown`]: parsed blocks plus any warnings
@@ -832,6 +849,70 @@ pub fn detect_attachment_refs(content: &str, code_spans: &[(usize, usize)]) -> V
     refs
 }
 
+/// Whether the token at byte `pos` of `content` is escaped: an odd run of
+/// backslashes before it makes it text, an even run is literal backslashes
+/// before a token (#5160 N3).
+pub fn is_escaped(content: &str, pos: usize) -> bool {
+    content.as_bytes()[..pos]
+        .iter()
+        .rev()
+        .take_while(|&&b| b == b'\\')
+        .count()
+        % 2
+        == 1
+}
+
+/// Whether an Obsidian embed's `name` (its target before any `#anchor`)
+/// names a note rather than a file: the last segment of its path has no file
+/// extension, a run of ASCII letters and digits holding a letter after its
+/// last `.`. `Note`, `2024.01.05` and `v1.2 notes` are notes; `img.png`,
+/// `talk.mp3` and `paper.pdf` are files, which the attachment pass reads.
+pub fn embed_names_note(name: &str) -> bool {
+    let segment = name.rsplit('/').next().unwrap_or(name);
+    segment.rsplit_once('.').is_none_or(|(_, ext)| {
+        !(ext.chars().all(|c| c.is_ascii_alphanumeric())
+            && ext.chars().any(|c| c.is_ascii_alphabetic()))
+    })
+}
+
+/// `content` with each Obsidian note embed outside inline code written in
+/// Agaric's form (<https://obsidian.md/help/embeds>): a block that is one
+/// embed becomes the embed block `{{embed [[target]]}}`, its `|label`
+/// dropped, and an embed among other text the link `[[target|label]]`, since
+/// an Agaric embed is a whole block. The name pass then links the target, a
+/// `#heading` or `#^id` anchor to the block it names. `names_note` tells a
+/// note's name from a file's ([`embed_names_note`]); a file embed is left to
+/// the attachment pass, and an escaped one is text.
+pub fn rewrite_obsidian_note_embeds(content: &str, names_note: impl Fn(&str) -> bool) -> String {
+    if !content.contains("![[") {
+        return content.to_string();
+    }
+    let code_spans = inline_code_spans(content);
+    let is_note_embed = |caps: &regex::Captures<'_>| {
+        let start = caps.get(0).expect("group 0 always present").start();
+        let name = caps[1].split('#').next().unwrap_or_default().trim();
+        !code_spans.iter().any(|&(s, e)| start >= s && start < e)
+            && !is_escaped(content, start)
+            && names_note(name)
+    };
+    if let Some(caps) = OBSIDIAN_EMBED_RE.captures(content)
+        && &caps[0] == content.trim()
+        && is_note_embed(&caps)
+    {
+        return format!("{{{{embed [[{}]]}}}}", caps[1].trim());
+    }
+    OBSIDIAN_EMBED_RE
+        .replace_all(content, |caps: &regex::Captures<'_>| {
+            let whole = &caps[0];
+            if is_note_embed(caps) {
+                whole[1..].to_string()
+            } else {
+                whole.to_string()
+            }
+        })
+        .into_owned()
+}
+
 /// Match one detected attachment `reference` against the supplied vault files
 /// (#1925), returning the index of the chosen [`VaultFile`] or `None`.
 ///
@@ -963,6 +1044,19 @@ pub fn guess_attachment_mime(path: &str) -> String {
 /// `:LOGBOOK:` drawers dropped, and a `((uuid))` reference to no block of the
 /// file is stripped.
 pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
+    parse_import(content, false)
+}
+
+/// [`parse_logseq_markdown`] for a note of a folder import: a `((uuid))`
+/// reference to no block of the file is kept, for `link_import_anchors` to
+/// link once the note naming it is imported.
+pub fn parse_vault_markdown(content: &str) -> ParseOutput {
+    parse_import(content, true)
+}
+
+/// The import reading of [`parse_logseq_markdown`], keeping every `((uuid))`
+/// reference when `keep_refs`.
+fn parse_import(content: &str, keep_refs: bool) -> ParseOutput {
     // Normalize line endings BEFORE any other parsing. The frontmatter strip
     // below uses `find("\n---")`, which is fragile against CRLF (works only
     // because `\n---` is a substring of `\r\n---`) and outright broken for
@@ -1008,7 +1102,14 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     });
 
     let mut warnings = frontmatter_warnings;
-    let mut blocks = parse_outline(body, ParseMode::Import, true, None, &mut warnings);
+    let mut blocks = parse_outline(
+        body,
+        ParseMode::Import,
+        true,
+        None,
+        keep_refs,
+        &mut warnings,
+    );
     let collapsed = read_logseq_bookkeeping(&mut blocks);
 
     ParseOutput {
@@ -1219,6 +1320,7 @@ fn source_outline(
         ParseMode::Source,
         foreign,
         id_lines,
+        false,
         &mut output.warnings,
     );
     output
@@ -1342,15 +1444,18 @@ enum ParseMode {
 /// The block scan both modes share: lines into blocks, then anchors, unless
 /// the ids travel beside the text on `id_lines`, then, for `foreign` text (an
 /// import or a paste, not the page's own buffer), the depth clamp, appending
-/// one warning per lossy transform to `warnings`.
+/// one warning per lossy transform to `warnings`. An import keeps every
+/// `((uuid))` reference when `keep_refs` ([`read_blocks`]).
 fn parse_outline(
     normalized: &str,
     mode: ParseMode,
     foreign: bool,
     id_lines: Option<&std::collections::HashSet<usize>>,
+    keep_refs: bool,
     warnings: &mut Vec<String>,
 ) -> Vec<ParsedBlock> {
-    let (mut blocks, ends_in_code, mut lossy) = read_blocks(normalized, mode, foreign, id_lines);
+    let (mut blocks, ends_in_code, mut lossy) =
+        read_blocks(normalized, mode, foreign, id_lines, keep_refs);
     if id_lines.is_none() {
         extract_block_anchors(&mut blocks, &ends_in_code, mode);
     }
@@ -1362,18 +1467,26 @@ fn parse_outline(
 }
 
 /// [`parse_block_lines`], which on import strips each `((uuid))` reference
-/// but one naming a block of the text by its Logseq `id::` line (#5160 D14).
-/// The line may come after the reference, so a text holding both is read
-/// twice.
+/// but one naming a block of the text by its Logseq `id::` line (#5160 D14),
+/// or every one when `keep_refs`. The line may come after the reference, so a
+/// text holding both is read twice.
 fn read_blocks(
     normalized: &str,
     mode: ParseMode,
     foreign: bool,
     id_lines: Option<&std::collections::HashSet<usize>>,
+    keep_refs: bool,
 ) -> (Vec<ParsedBlock>, Vec<bool>, LossyCounts) {
     let none = std::collections::HashSet::new();
     let read = parse_block_lines(normalized, mode, foreign, &none, id_lines);
-    let ids = logseq_ids(&read.0, &read.1);
+    let ids = if keep_refs {
+        LOGSEQ_BLOCK_REF_RE
+            .find_iter(normalized)
+            .map(|found| logseq_ref_uuid(&found))
+            .collect()
+    } else {
+        logseq_ids(&read.0, &read.1)
+    };
     if read.2.stripped_refs == 0 || ids.is_empty() {
         return read;
     }
@@ -2912,6 +3025,35 @@ pub fn resolve_logseq_refs(
         })
         .collect();
     resolved.then(|| lines.join("\n"))
+}
+
+/// Whether `text` holds a Logseq `((uuid))` reference.
+pub fn holds_logseq_ref(text: &str) -> bool {
+    LOGSEQ_BLOCK_REF_RE.is_match(text)
+}
+
+/// `content` with each Logseq `((uuid))` outside inline code that `target`
+/// names a block for written as that block's `((ULID))` ref, and every other
+/// one stripped as [`parse_logseq_markdown`] strips it, with how many were:
+/// the end of a folder import, once every note's blocks exist.
+pub fn link_logseq_refs(content: &str, target: impl Fn(&str) -> Option<String>) -> (String, usize) {
+    let resolved = resolve_logseq_refs(content, target);
+    let none = std::collections::HashSet::new();
+    let mut stripped = 0;
+    let lines: Vec<String> = resolved
+        .as_deref()
+        .unwrap_or(content)
+        .split('\n')
+        .map(|line| {
+            if !holds_logseq_ref(line) {
+                return line.to_string();
+            }
+            let (line, removed) = strip_block_refs_counted(line, &none);
+            stripped += removed;
+            line
+        })
+        .collect();
+    (lines.join("\n"), stripped)
 }
 
 /// #2510 — matches a trailing Obsidian block-anchor marker: a `^` followed by
@@ -4896,6 +5038,12 @@ bare line (({UUID_B})) too"
                 "1 block(s) exceeded maximum depth of 19 and were flattened".into(),
                 "stripped 2 unresolvable ((block-ref)) token(s)".into(),
             ],
+            anchors: vec![ImportAnchor {
+                page_id: "01J00000000000000000PAGE01".into(),
+                anchor: "step-2".into(),
+                block_id: "01J00000000000000000BLOCK2".into(),
+            }],
+            deferred: vec!["01J00000000000000000BLOCK3".into()],
         };
         insta::assert_yaml_snapshot!(result);
     }
@@ -7279,5 +7427,176 @@ mod tests_line_probes_5160 {
         ] {
             assert_eq!(strip_title_heading(md, title), md, "{md:?} {title:?}");
         }
+    }
+}
+
+/// Obsidian's stored embed syntax (https://obsidian.md/help/embeds) read into
+/// Agaric's `{{embed …}}` block, and the Logseq references a folder import
+/// links once every note exists.
+#[cfg(test)]
+mod tests_obsidian_embeds {
+    use super::*;
+
+    fn embeds(content: &str) -> String {
+        rewrite_obsidian_note_embeds(content, embed_names_note)
+    }
+
+    /// A block that is one note embed, of the note, a heading of it or a block
+    /// of it, becomes the embed block; a label has no place in one.
+    #[test]
+    fn a_block_that_is_one_note_embed_becomes_an_embed_block() {
+        for (block, embed) in [
+            ("![[Note]]", "{{embed [[Note]]}}"),
+            ("![[Note#Heading]]", "{{embed [[Note#Heading]]}}"),
+            ("![[Note#^step-2]]", "{{embed [[Note#^step-2]]}}"),
+            ("![[#^here]]", "{{embed [[#^here]]}}"),
+            ("![[Note|shown as]]", "{{embed [[Note]]}}"),
+            ("  ![[ folder/Note ]] ", "{{embed [[folder/Note]]}}"),
+        ] {
+            assert_eq!(embeds(block), embed, "{block:?}");
+        }
+    }
+
+    /// Among other text a note embed is the link it would be without the `!`,
+    /// its label kept, since an Agaric embed is a whole block.
+    #[test]
+    fn a_note_embed_among_other_text_becomes_a_link() {
+        assert_eq!(
+            embeds("see ![[Note]] and ![[Note#^step|the step]]"),
+            "see [[Note]] and [[Note#^step|the step]]"
+        );
+        assert_eq!(embeds("![[Note]] ![[Other]]"), "[[Note]] [[Other]]");
+        assert_eq!(embeds("## ![[Note#Heading]]"), "## [[Note#Heading]]");
+    }
+
+    /// A file embed is the attachment pass's, and stays as written, beside a
+    /// note embed too.
+    #[test]
+    fn a_file_embed_is_left_for_the_attachment_pass() {
+        for block in [
+            "![[img.png]]",
+            "![[img.png|100]]",
+            "![[assets/talk.mp3]]",
+            "see ![[paper.pdf#page=3]] here",
+        ] {
+            assert_eq!(embeds(block), block, "{block:?}");
+        }
+        assert_eq!(embeds("![[img.png]] ![[Note]]"), "![[img.png]] [[Note]]");
+    }
+
+    /// An embed in inline code, or escaped, is text.
+    #[test]
+    fn an_embed_in_code_or_escaped_is_text() {
+        for block in [
+            "`![[Note]]`",
+            r"\![[Note]]",
+            r"see \![[Note]] here",
+            "a `![[Note]]` b",
+        ] {
+            assert_eq!(embeds(block), block, "{block:?}");
+        }
+        assert_eq!(embeds(r"\\![[Note]]"), r"\\[[Note]]");
+    }
+
+    /// A name names a note unless its last segment ends in a file extension:
+    /// letters and digits, one a letter, after its last `.`.
+    #[test]
+    fn an_embed_names_a_note_unless_it_ends_in_a_file_extension() {
+        for name in [
+            "Note",
+            "2024.01.05",
+            "v1.2 notes",
+            "Dr. Smith",
+            "sub.dir/Note",
+            "Note.",
+            "",
+        ] {
+            assert!(embed_names_note(name), "{name:?} names a note");
+        }
+        for name in [
+            "img.png",
+            "notes/paper.PDF",
+            "talk.mp3",
+            "a.7z",
+            "Drawing.excalidraw",
+        ] {
+            assert!(!embed_names_note(name), "{name:?} names a file");
+        }
+    }
+
+    /// The caller's reading of a name decides: a note of the folder whose name
+    /// looks like a file is still a note.
+    #[test]
+    fn the_callers_reading_of_a_name_decides() {
+        let names_note = |name: &str| name == "Mr.Robot" || embed_names_note(name);
+        assert_eq!(
+            rewrite_obsidian_note_embeds("![[Mr.Robot]]", names_note),
+            "{{embed [[Mr.Robot]]}}"
+        );
+        assert_eq!(
+            rewrite_obsidian_note_embeds("![[Mrs.Robot]]", names_note),
+            "![[Mrs.Robot]]"
+        );
+    }
+
+    const OTHER: &str = "6560a1b2-0000-4000-8000-000000000001";
+    const OWN: &str = "6560a1b2-0000-4000-8000-000000000003";
+
+    fn contents(output: &ParseOutput) -> Vec<&str> {
+        output.blocks.iter().map(|b| b.content.as_str()).collect()
+    }
+
+    /// A note of a folder import keeps its `((uuid))` refs to blocks of other
+    /// notes, for the end of the import to link; a lone file strips them.
+    #[test]
+    fn a_folder_note_keeps_its_refs_to_other_notes() {
+        let md = format!(
+            "- {{{{embed (({OTHER}))}}}}\n- see (({OTHER})) and (({OWN}))\n- mine\n  id:: {OWN}\n"
+        );
+        let kept = parse_vault_markdown(&md);
+        assert_eq!(
+            contents(&kept),
+            [
+                format!("{{{{embed (({OTHER}))}}}}"),
+                format!("see (({OTHER})) and (({OWN}))"),
+                "mine".to_string(),
+            ]
+        );
+        assert_eq!(kept.warnings, Vec::<String>::new());
+        assert_eq!(kept.blocks[2].block_anchor.as_deref(), Some(OWN));
+
+        let lone = parse_logseq_markdown(&md);
+        let see = format!("see and (({OWN}))");
+        assert_eq!(contents(&lone)[1..], [see.as_str(), "mine"]);
+        assert_eq!(
+            lone.warnings,
+            [
+                "2 ((block-ref)) reference(s) were stripped from imported content and could not \
+              be preserved"
+            ]
+        );
+    }
+
+    /// At the end of a folder import a `((uuid))` some note's `id::` names is
+    /// a ref to its block, and any other is stripped as an import strips it,
+    /// counted; one in inline code is text, and a line with none is as it was.
+    #[test]
+    fn the_end_of_a_folder_import_links_or_strips_each_logseq_ref() {
+        let target = |uuid: &str| (uuid == OTHER).then(|| "01J00000000000000000BLOCK1".to_string());
+        let content =
+            format!("{{{{embed (({OTHER}))}}}}\nsee (({OWN})) and `(({OWN}))`\nplain  line ");
+        assert_eq!(
+            link_logseq_refs(&content, target),
+            (
+                format!(
+                    "{{{{embed ((01J00000000000000000BLOCK1))}}}}\nsee and `(({OWN}))`\nplain  line "
+                ),
+                1
+            )
+        );
+        assert_eq!(
+            link_logseq_refs("no refs", target),
+            ("no refs".to_string(), 0)
+        );
     }
 }

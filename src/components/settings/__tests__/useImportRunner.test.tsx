@@ -33,7 +33,8 @@ vi.mock('@/lib/ipc-helpers', async (importOriginal) => {
 })
 
 // Post-import navigation resolves the title through `commands.resolvePageByAlias`;
-// nothing matches here.
+// nothing matches here. A folder import ends with `commands.linkImportAnchors`.
+const mockLinkImportAnchors = vi.fn()
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
@@ -41,6 +42,7 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
     commands: {
       ...actual.commands,
       resolvePageByAlias: async () => ({ status: 'ok', data: null }),
+      linkImportAnchors: (...args: unknown[]) => mockLinkImportAnchors(...args),
     },
   }
 })
@@ -78,6 +80,7 @@ function mkEvent(): React.ChangeEvent<HTMLInputElement> {
 beforeEach(() => {
   vi.clearAllMocks()
   mockImportMarkdown.mockReset()
+  mockLinkImportAnchors.mockReset()
   _resetGraphStructureEventsForTest()
   useSpaceStore.setState({ currentSpaceId: 'SPACE' })
   useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
@@ -104,6 +107,8 @@ describe('useImportRunner', () => {
         properties_set: 2,
         page_id: 'PAGE',
         collapsed: [],
+        anchors: [],
+        deferred: [],
         warnings: ['w1'],
       })
       .mockRejectedValueOnce({ kind: 'validation', message: 'bad' })
@@ -177,6 +182,8 @@ describe('useImportRunner', () => {
       properties_set: 0,
       page_id: 'PAGE',
       collapsed: [],
+      anchors: [],
+      deferred: [],
       warnings: [],
     })
 
@@ -234,6 +241,8 @@ describe('useImportRunner', () => {
         properties_set: 0,
         page_id: 'PAGE',
         collapsed: [],
+        anchors: [],
+        deferred: [],
         warnings: [],
       })
     } else {
@@ -272,6 +281,8 @@ describe('useImportRunner', () => {
       properties_set: 0,
       page_id: 'PAGE',
       collapsed: [],
+      anchors: [],
+      deferred: [],
       warnings: [],
     })
 
@@ -300,6 +311,8 @@ describe('useImportRunner', () => {
         properties_set: 0,
         page_id: 'PAGE_ATLAS',
         collapsed: ['BLOCK_1', 'BLOCK_3'],
+        anchors: [],
+        deferred: [],
         warnings: [],
       })
       .mockResolvedValueOnce({
@@ -308,6 +321,8 @@ describe('useImportRunner', () => {
         properties_set: 0,
         page_id: 'PAGE_PLAIN',
         collapsed: [],
+        anchors: [],
+        deferred: [],
         warnings: [],
       })
 
@@ -327,8 +342,10 @@ describe('useImportRunner', () => {
     expect(hasPreference(PREFERENCES.blockCollapse, 'PAGE_PLAIN')).toBe(false)
   })
 
-  it('cancels between units: the in-flight unit completes, the next never starts', async () => {
+  it('cancels between units: the in-flight unit completes, the next never starts, and what imported is linked', async () => {
     const { result } = renderHook(() => useImportRunner())
+    const anchor = { page_id: 'PAGE', anchor: 'mine', block_id: 'BLOCK_A' }
+    mockLinkImportAnchors.mockResolvedValueOnce({ status: 'ok', data: [] })
 
     // First unit sets the abort flag while in flight, then resolves.
     mockImportMarkdown
@@ -340,6 +357,8 @@ describe('useImportRunner', () => {
           properties_set: 0,
           page_id: 'PAGE',
           collapsed: [],
+          anchors: [anchor],
+          deferred: ['BLOCK_A2'],
           warnings: [],
         }
       })
@@ -364,10 +383,104 @@ describe('useImportRunner', () => {
     expect(outcome?.totalBlocks).toBe(1)
     // Only the first unit ran; the second was never started.
     expect(mockImportMarkdown).toHaveBeenCalledTimes(1)
+    // Its references into notes that never import are linked or dropped, not
+    // left as the placeholders the import wrote.
+    expect(mockLinkImportAnchors).toHaveBeenCalledWith('SPACE', [anchor], ['BLOCK_A2'])
     expect(result.current.importing).toBe(false)
     expect(result.current.importResult).toMatchObject({
       importedCount: 1,
       cancelled: true,
+    })
+  })
+
+  it("links a folder's notes into one another once its last note is imported", async () => {
+    const anchorA = { page_id: 'PAGE_A', anchor: 'mine', block_id: 'BLOCK_A' }
+    const anchorB = { page_id: 'PAGE_B', anchor: 'step', block_id: 'BLOCK_B' }
+    mockImportMarkdown
+      .mockResolvedValueOnce({
+        page_title: 'A',
+        blocks_created: 2,
+        properties_set: 0,
+        page_id: 'PAGE_A',
+        collapsed: [],
+        anchors: [anchorA],
+        deferred: ['BLOCK_A2'],
+        warnings: ['wa'],
+      })
+      .mockResolvedValueOnce({
+        page_title: 'B',
+        blocks_created: 1,
+        properties_set: 0,
+        page_id: 'PAGE_B',
+        collapsed: [],
+        anchors: [anchorB],
+        deferred: [],
+        warnings: [],
+      })
+    mockLinkImportAnchors.mockResolvedValueOnce({ status: 'ok', data: ['1 anchor dropped'] })
+
+    const { result } = renderHook(() => useImportRunner())
+    await act(async () => {
+      result.current.begin()
+      await result.current.run({
+        event: mkEvent(),
+        activeSpaceId: 'SPACE',
+        units: [unit('A.md'), unit('B.md')],
+        notes: false,
+        loggerFailLabel: 'file import failed',
+      })
+    })
+
+    expect(mockLinkImportAnchors).toHaveBeenCalledTimes(1)
+    expect(mockLinkImportAnchors).toHaveBeenCalledWith('SPACE', [anchorA, anchorB], ['BLOCK_A2'])
+    expect(result.current.importResult?.warnings).toEqual(['wa', '1 anchor dropped'])
+  })
+
+  it('leaves the links out when no note deferred one, and reports a failed linking', async () => {
+    const imported = (deferred: string[]) => ({
+      page_title: 'A',
+      blocks_created: 1,
+      properties_set: 0,
+      page_id: 'PAGE_A',
+      collapsed: [],
+      anchors: [],
+      deferred,
+      warnings: [],
+    })
+    mockImportMarkdown.mockResolvedValueOnce(imported([]))
+    const { result } = renderHook(() => useImportRunner())
+    const runOnce = async () => {
+      await act(async () => {
+        result.current.begin()
+        await result.current.run({
+          event: mkEvent(),
+          activeSpaceId: 'SPACE',
+          units: [unit('A.md')],
+          notes: false,
+          loggerFailLabel: 'file import failed',
+        })
+      })
+    }
+    await runOnce()
+    expect(mockLinkImportAnchors).not.toHaveBeenCalled()
+
+    mockImportMarkdown.mockResolvedValueOnce(imported(['BLOCK_A2']))
+    mockLinkImportAnchors.mockResolvedValueOnce({
+      status: 'error',
+      error: { kind: 'database', message: 'locked' },
+    })
+    await runOnce()
+    expect(mockLinkImportAnchors).toHaveBeenCalledTimes(1)
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      'DataSettingsTab',
+      'linking the imported notes failed',
+      undefined,
+      expect.anything(),
+    )
+    expect(result.current.importResult).toMatchObject({
+      importedCount: 1,
+      failures: [],
+      warnings: ['locked'],
     })
   })
 
@@ -417,6 +530,8 @@ describe('useImportRunner', () => {
         properties_set: 0,
         page_id: 'PAGE',
         collapsed: [],
+        anchors: [],
+        deferred: [],
         warnings: [],
       })
       await runPromise

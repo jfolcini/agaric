@@ -11,7 +11,11 @@
 // the bare name exists, `[[über]]` names `Über.md` (the backend folds note
 // names in full Unicode, as the frontend does), the tag chip reads its name,
 // the front-matter property is set, the embed renders from the stored bytes,
-// and the image is an attachment only, never a page.
+// the image is an attachment only, never a page, and `![[topic]]`, Obsidian's
+// stored embed of a note, is an embed block showing the note. `![[topic#^step]]`
+// embeds one block of a note imported AFTER the one that names it, whose `^step`
+// marker leaves the block's text: only the folder's closing `link_import_anchors`
+// call can link it, so it is the embed showing that block alone.
 //
 // WebKitWebDriver cannot pick a folder: Send Keys with a directory path hands
 // the input the directory itself as one File, which fails to read. So the
@@ -123,7 +127,7 @@ async function blockId(marker: string): Promise<string> {
 }
 
 describe('Agaric real-backend Obsidian vault import (#5740) @markdown', () => {
-  it('imports a vault with its wikilink, tag, front matter and embedded image', async () => {
+  it('imports a vault with its wikilink, tag, front matter, embedded image and note embeds', async () => {
     await waitForAppReady()
     const marker = runScopedMarker('wdio-obs')
     const vault = `${marker}-vault`
@@ -135,6 +139,8 @@ describe('Agaric real-backend Obsidian vault import (#5740) @markdown', () => {
       '---',
       `- ${marker}-links [[${topic}]] #${marker}-tag`,
       `- ${marker}-figure ![[pic.png]]`,
+      `- ![[${topic}]]`,
+      `- ![[${topic}#^step]]`,
       `- ${marker}-umlaut [[über]]`,
       '',
     ].join('\n')
@@ -143,7 +149,7 @@ describe('Agaric real-backend Obsidian vault import (#5740) @markdown', () => {
       vault,
       {
         [`${home}.md`]: Buffer.from(homeMd),
-        [`${topic}.md`]: Buffer.from(`- ${marker}-body\n`),
+        [`${topic}.md`]: Buffer.from(`- ${marker}-body\n- ${marker}-step ^step\n`),
         'Über.md': Buffer.from(`- ${marker}-uber\n`),
         'pic.png': PNG,
       },
@@ -175,6 +181,32 @@ describe('Agaric real-backend Obsidian vault import (#5740) @markdown', () => {
         throw new Error(`the tag chip reads ${JSON.stringify(tagText)}, not the imported tag`)
       })
     await expectImageRendered(await blockId(`${marker}-figure`), 'the embedded image')
+    // The embeds in block order: the note, whose two blocks both show, then the
+    // one block `^step` named, which shows alone.
+    let embeds: string[] = []
+    await browser
+      .waitUntil(
+        async () => {
+          embeds = await browser.execute(() =>
+            [...document.querySelectorAll('[data-testid="embed-container"]')].map(
+              (embed) => embed.textContent ?? '',
+            ),
+          )
+          const [note, block] = embeds
+          return (
+            note?.includes(`${marker}-body`) === true &&
+            note.includes(`${marker}-step`) &&
+            block?.includes(`${marker}-step`) === true &&
+            !block.includes(`${marker}-body`)
+          )
+        },
+        { timeout: NAV_TIMEOUT },
+      )
+      .catch(() => {
+        throw new Error(
+          `the embeds read ${JSON.stringify(embeds)}, not the note and then its ^step block`,
+        )
+      })
     const umlaut = $(
       `li[data-block-id="${await blockId(`${marker}-umlaut`)}"] [data-testid="block-link-chip"]`,
     )

@@ -17213,3 +17213,294 @@ async fn duplicate_then_move_copy_out_undoes_to_its_slot() {
         "z′ is back under x′ at the slot its append resolved to"
     );
 }
+
+// ======================================================================
+// Obsidian's stored embeds (https://obsidian.md/help/embeds) and the
+// references a folder import's notes make into each other, in either order.
+// ======================================================================
+
+/// The children of `page`'s child whose text is `content`.
+async fn children_of(pool: &SqlitePool, page: &BlockId, content: &str) -> Vec<(String, String)> {
+    let (id, _) = dup_children(pool, page)
+        .await
+        .into_iter()
+        .find(|(_, text)| text == content)
+        .unwrap();
+    dup_children(pool, &BlockId::from_trusted(&id)).await
+}
+
+/// Import `notes`, `(path, text)` in order, as one folder pick carrying
+/// `files`, then end it as the Data tab does, with `link_import_anchors`.
+/// Returns every warning, the imports' then the end's.
+async fn import_folder(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    dir: &std::path::Path,
+    notes: &[(&str, &str)],
+    files: &[VaultFile],
+) -> Vec<String> {
+    ensure_test_space(pool).await;
+    mark_block_as_space(pool, TEST_SPACE_ID).await;
+    let paths: Vec<String> = notes.iter().map(|(path, _)| (*path).to_string()).collect();
+    let (mut anchors, mut deferred, mut warnings) = (Vec::new(), Vec::new(), Vec::new());
+    for (path, md) in notes {
+        let result = import_markdown_with_progress(
+            pool,
+            DEV,
+            mat,
+            dir,
+            (*md).to_string(),
+            Some((*path).to_string()),
+            TEST_SPACE_ID.into(),
+            Some(files.to_vec()),
+            Some(paths.clone()),
+            None,
+        )
+        .await
+        .unwrap();
+        settle(mat).await;
+        anchors.extend(result.anchors);
+        deferred.extend(result.deferred.iter().map(|id| BlockId::from_trusted(id)));
+        warnings.extend(result.warnings);
+    }
+    let end = link_import_anchors_inner(pool, DEV, mat, TEST_SPACE_ID, &anchors, &deferred)
+        .await
+        .unwrap();
+    settle(mat).await;
+    warnings.extend(end);
+    warnings
+}
+
+/// A block that is one Obsidian note embed is the embed block of the note, of
+/// the block a `#Heading` names, or of the block a `#^id` of the file names;
+/// an anchor that names none embeds the note. Among other text an embed is a
+/// link, or a ref where the anchor names a block, its label dropped. No page is
+/// named after an anchor, and an embed in code is text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_obsidian_note_embed_imports_as_an_embed_block() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let [guide, heading, _, _] = anchor_pages(&pool, &mat).await;
+
+    let result = import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Notes.md",
+        "- ![[Guide]]\n- ![[Guide#Setup]]\n- ![[Guide#Nowhere]]\n- ![[#^own]]\n\
+         - own block ^own\n- inline ![[Guide]] and ![[Guide#setup|the steps]]\n\
+         - `![[Guide]]` is code\n",
+    )
+    .await;
+    let notes = BlockId::from_trusted(&result.page_id);
+    let children = dup_children(&pool, &notes).await;
+    let own = &children[4].0;
+    let contents: Vec<&str> = children.iter().map(|(_, text)| text.as_str()).collect();
+    assert_eq!(
+        contents,
+        [
+            format!("{{{{embed [[{guide}]]}}}}"),
+            format!("{{{{embed (({heading}))}}}}"),
+            format!("{{{{embed [[{guide}]]}}}}"),
+            format!("{{{{embed (({own}))}}}}"),
+            "own block".to_string(),
+            format!("inline [[{guide}]] and (({heading}))"),
+            "`![[Guide]]` is code".to_string(),
+        ]
+    );
+    assert_eq!(
+        result.warnings,
+        [
+            dropped_anchors(1),
+            "1 link label(s) were dropped: a block reference carries no label".into()
+        ]
+    );
+    for stray in ["Guide#Setup", "Guide#Nowhere", "#^own", ""] {
+        assert_eq!(
+            pages_titled(&pool, stray).await,
+            Vec::<String>::new(),
+            "{stray:?}"
+        );
+    }
+    assert_eq!(pages_titled(&pool, "Guide").await.len(), 1);
+    mat.shutdown();
+}
+
+/// A folder import links its notes' embeds and anchored links into a note
+/// imported after them, and into one imported before them by its `^id`, which
+/// only that note's import knew: each a ref to the block, or the embed block
+/// of it, its `^id` marker gone from its text, and the label of a link that
+/// became a ref dropped. An anchor that names no block links or embeds the
+/// note, a link with its label. A file embed is still an attachment, and every note is one page.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_folder_import_links_embeds_and_anchors_across_its_notes() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let a = "- ![[B]]\n- ![[B#Setup]]\n- ![[B#^step]]\n\
+             - see ![[B]] and ![[B#^step|the step]]\n\
+             - link [[B#Setup]] and [[B#^step|the step]]\n\
+             - missing [[B#Nowhere]] and [[B#^gone|gone]]\n\
+             - own block ^mine\n- pic ![[img.png]]\n- ![[B#^gone]]\n";
+    let b = "Intro paragraph.\n\n## Setup\n\nThe step. ^step\n\nBack to [[A#^mine]] and ![[A]].\n";
+    let png = VaultFile {
+        path: "img.png".into(),
+        bytes: vec![0x89, b'P', b'N', b'G'],
+    };
+    let warnings = import_folder(
+        &pool,
+        &mat,
+        dir.path(),
+        &[("vault/A.md", a), ("vault/B.md", b)],
+        &[png],
+    )
+    .await;
+
+    let [page_a] = <[String; 1]>::try_from(pages_titled(&pool, "vault/A").await).unwrap();
+    let [page_b] = <[String; 1]>::try_from(pages_titled(&pool, "vault/B").await).unwrap();
+    let page_b = BlockId::from_trusted(&page_b);
+    let b_top = dup_children(&pool, &page_b).await;
+    let setup = &b_top[1].0;
+    let b_setup = children_of(&pool, &page_b, "## Setup").await;
+    let step = &b_setup[0].0;
+    let a_blocks = dup_children(&pool, &BlockId::from_trusted(&page_a)).await;
+    let mine = &a_blocks[6].0;
+    let att: String = sqlx::query_scalar("SELECT id FROM attachments WHERE deleted_at IS NULL")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let texts = |rows: &[(String, String)]| rows.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>();
+    assert_eq!(
+        texts(&a_blocks),
+        [
+            format!("{{{{embed [[{page_b}]]}}}}"),
+            format!("{{{{embed (({setup}))}}}}"),
+            format!("{{{{embed (({step}))}}}}"),
+            format!("see [[{page_b}]] and (({step}))"),
+            format!("link (({setup})) and (({step}))"),
+            format!("missing [[{page_b}]] and [[{page_b}|gone]]"),
+            "own block".to_string(),
+            format!("pic ![](attachment:{att})"),
+            format!("{{{{embed [[{page_b}]]}}}}"),
+        ]
+    );
+    assert_eq!(texts(&b_top), ["Intro paragraph.", "## Setup"]);
+    assert_eq!(
+        texts(&b_setup),
+        [
+            "The step.".to_string(),
+            format!("Back to (({mine})) and [[{page_a}]]."),
+        ]
+    );
+    assert_eq!(
+        warnings,
+        [
+            dropped_anchors(3),
+            "2 link label(s) were dropped: a block reference carries no label".into()
+        ]
+    );
+    for stray in ["B", "A", "vault/B#Setup", "vault/B#^step", "B#Setup"] {
+        assert_eq!(
+            pages_titled(&pool, stray).await,
+            Vec::<String>::new(),
+            "{stray:?}"
+        );
+    }
+    mat.shutdown();
+}
+
+const LOGSEQ_OTHER: &str = "6560a1b2-0000-4000-8000-000000000001";
+const LOGSEQ_OWN: &str = "6560a1b2-0000-4000-8000-000000000003";
+
+/// A Logseq page's `{{embed [[Page]]}}` embeds that page and its
+/// `{{embed ((uuid))}}` the block of the file whose `id::` names the uuid, as
+/// a `((uuid))` refs it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_logseq_embed_imports_as_the_embed_of_its_target() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let result = import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Journal.md",
+        &format!(
+            "- {{{{embed [[Other]]}}}}\n- {{{{embed (({LOGSEQ_OWN}))}}}}\n\
+             - mine\n  id:: {LOGSEQ_OWN}\n"
+        ),
+    )
+    .await;
+    let [other] = <[String; 1]>::try_from(pages_titled(&pool, "Other").await).unwrap();
+    let children = dup_children(&pool, &BlockId::from_trusted(&result.page_id)).await;
+    let mine = &children[2].0;
+    let contents: Vec<&str> = children.iter().map(|(_, text)| text.as_str()).collect();
+    assert_eq!(
+        contents,
+        [
+            format!("{{{{embed [[{other}]]}}}}"),
+            format!("{{{{embed (({mine}))}}}}"),
+            "mine".to_string(),
+        ]
+    );
+    assert_eq!(result.warnings, Vec::<String>::new());
+    mat.shutdown();
+}
+
+/// A folder import links a Logseq `((uuid))` and `{{embed ((uuid))}}` to the
+/// block of another file whose `id::` names it, imported after it or before
+/// it, and strips one no file names, with the warning.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_folder_import_links_logseq_refs_across_its_files() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let none = "6560a1b2-0000-4000-8000-0000000000ff";
+    let first = format!(
+        "- {{{{embed [[L2]]}}}}\n- {{{{embed (({LOGSEQ_OTHER}))}}}}\n- cross (({LOGSEQ_OTHER}))\n\
+         - {{{{embed (({LOGSEQ_OWN}))}}}}\n- mine\n  id:: {LOGSEQ_OWN}\n- lost (({none}))\n"
+    );
+    let second = format!("- target block\n  id:: {LOGSEQ_OTHER}\n- back (({LOGSEQ_OWN}))\n");
+    let warnings = import_folder(
+        &pool,
+        &mat,
+        dir.path(),
+        &[
+            ("graph/pages/L1.md", &first),
+            ("graph/pages/L2.md", &second),
+        ],
+        &[],
+    )
+    .await;
+
+    let [l1] = <[String; 1]>::try_from(pages_titled(&pool, "graph/pages/L1").await).unwrap();
+    let [l2] = <[String; 1]>::try_from(pages_titled(&pool, "graph/pages/L2").await).unwrap();
+    let l1_blocks = dup_children(&pool, &BlockId::from_trusted(&l1)).await;
+    let l2_blocks = dup_children(&pool, &BlockId::from_trusted(&l2)).await;
+    let mine = &l1_blocks[4].0;
+    let target = &l2_blocks[0].0;
+    let texts = |rows: &[(String, String)]| rows.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>();
+    assert_eq!(
+        texts(&l1_blocks),
+        [
+            format!("{{{{embed [[{l2}]]}}}}"),
+            format!("{{{{embed (({target}))}}}}"),
+            format!("cross (({target}))"),
+            format!("{{{{embed (({mine}))}}}}"),
+            "mine".to_string(),
+            "lost".to_string(),
+        ]
+    );
+    assert_eq!(
+        texts(&l2_blocks),
+        ["target block".to_string(), format!("back (({mine}))")]
+    );
+    assert_eq!(
+        warnings,
+        [
+            "1 ((block-ref)) reference(s) were stripped from imported content and could not be \
+          preserved"
+        ]
+    );
+    mat.shutdown();
+}

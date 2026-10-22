@@ -18,7 +18,9 @@ use crate::materializer::Materializer;
 use agaric_core::error::AppError;
 use agaric_core::ulid::{BlockId, PageId};
 use agaric_engine::import;
-use agaric_engine::import::{ImportProgressUpdate, ImportResult, VaultFile};
+use agaric_engine::import::{
+    ImportAnchor, ImportProgressUpdate, ImportResult, VaultFile, is_escaped,
+};
 use agaric_store::pagination::{BlockRow, Cursor, NULL_POSITION_SENTINEL, PageRequest};
 use agaric_store::space::SpaceId;
 
@@ -158,19 +160,6 @@ fn tag_guard_spans(content: &str) -> Vec<(usize, usize)> {
             .map(|m| (m.start(), m.end())),
     );
     spans
-}
-
-/// Whether the token at byte `pos` is escaped: an odd run of backslashes
-/// before it makes it text, an even run is literal backslashes before a
-/// token (#5160 N3).
-fn is_escaped(content: &str, pos: usize) -> bool {
-    content.as_bytes()[..pos]
-        .iter()
-        .rev()
-        .take_while(|&&b| b == b'\\')
-        .count()
-        % 2
-        == 1
 }
 
 /// Whether the `[[…]]` match starting at `start` is a page-link token: outside
@@ -493,12 +482,33 @@ fn rewrite_inbound_page_links(
             }
             match links.ids.get(name) {
                 Some(ulid) => {
-                    stored_page_link(ulid, label.as_deref(), titles.get(ulid).map(String::as_str))
+                    let title = titles.get(ulid).map(String::as_str);
+                    // A deferred anchor rides with the page: `[[ULID#anchor]]`.
+                    let target = links
+                        .deferred
+                        .get(name)
+                        .map_or_else(|| ulid.clone(), |anchor| format!("{ulid}#{anchor}"));
+                    stored_page_link(&target, label.as_deref(), title)
                 }
                 None => whole.to_string(),
             }
         })
         .into_owned()
+}
+
+/// A link a folder import leaves for [`link_import_anchors_inner`]:
+/// `[[ULID#anchor]]` or `[[ULID#anchor|label]]`, an anchor into the page
+/// `ULID` that named none of its blocks when the link was imported. Group 1 is
+/// the page, 2 the anchor and 3 the label.
+static DEFERRED_LINK_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"\[\[([0-9A-Z]{26})#([^\]|\n]+)(?:\|([^\]\n]*))?\]\]")
+        .expect("invalid deferred link regex")
+});
+
+/// Whether `content` holds a reference [`link_import_anchors_inner`] links: a
+/// [`DEFERRED_LINK_RE`] link or a Logseq `((uuid))`.
+fn holds_deferred_ref(content: &str) -> bool {
+    DEFERRED_LINK_RE.is_match(content) || import::holds_logseq_ref(content)
 }
 
 /// `true` when byte offset `pos` falls inside any of the half-open `spans`.
@@ -3267,6 +3277,7 @@ async fn resolve_pasted_names(
         device_id,
         space_id: space.as_str(),
         file_page: None,
+        defer_anchors: false,
         warnings,
         created: Vec::new(),
     };
@@ -3921,6 +3932,8 @@ pub async fn import_markdown_with_progress(
         blocks_total,
         lines,
         warnings: std::mem::take(&mut parse_output.warnings),
+        folder: vault_notes.is_some(),
+        deferred: Vec::new(),
     };
 
     let (tx, refs) = resolve_document_refs(&mut ctx, tx, &parse_output, &mut counters).await?;
@@ -3947,13 +3960,35 @@ pub async fn import_markdown_with_progress(
     // #1925 — post-commit attachment ingest + content rewrite.
     ingest_attachments(&mut ctx, vault_files, pending_attachments).await;
 
+    let (collapsed, anchors) = marked_blocks(&ctx.page_id, &parse_output, &created_block_ids);
+    // #128 / #1932 / #1934 — completion event + diagnostics/telemetry logging.
+    Ok(finish(ctx, &counters, collapsed, anchors))
+}
+
+/// The created blocks the parse marked: those its Logseq `collapsed::` lines
+/// fold, and the one each anchor names ([`ImportResult::collapsed`],
+/// [`ImportResult::anchors`]). A block the import skipped (#1918) is neither.
+fn marked_blocks(
+    page_id: &str,
+    parse_output: &import::ParseOutput,
+    created_block_ids: &[Option<String>],
+) -> (Vec<String>, Vec<ImportAnchor>) {
     let collapsed = parse_output
         .collapsed
         .iter()
         .filter_map(|&index| created_block_ids[index].clone())
         .collect();
-    // #128 / #1932 / #1934 — completion event + diagnostics/telemetry logging.
-    Ok(finish(ctx, &counters, collapsed))
+    let anchors = parse_output.blocks.iter().zip(created_block_ids);
+    let anchors = anchors
+        .filter_map(|(block, id)| {
+            Some(ImportAnchor {
+                page_id: page_id.to_string(),
+                anchor: block.block_anchor.clone()?,
+                block_id: id.clone()?,
+            })
+        })
+        .collect();
+    (collapsed, anchors)
 }
 
 /// Guard the payload, parse it, and derive the page title.
@@ -3994,9 +4029,15 @@ fn parse_import_payload(
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| "Imported Page".to_string());
     // Agaric's own export writes the title as a leading `# Title` line, which
-    // would otherwise come back as a block repeating it (#5160 S6).
-    let mut parse_output =
-        import::parse_logseq_markdown(import::strip_title_heading(content, &page_title));
+    // would otherwise come back as a block repeating it (#5160 S6). A note of a
+    // folder import keeps its `((uuid))` refs to other notes for
+    // `link_import_anchors`.
+    let text = import::strip_title_heading(content, &page_title);
+    let mut parse_output = if vault_notes.is_some() {
+        import::parse_vault_markdown(text)
+    } else {
+        import::parse_logseq_markdown(text)
+    };
     // A folder import (its path has a folder) links its notes by relative path
     // (#5160 N10); a lone file has no vault to be relative to.
     if let Some(dir) = page_title.rsplit_once('/').map(|(dir, _)| dir) {
@@ -4005,6 +4046,12 @@ fn parse_import_payload(
         }
     }
     let notes = vault_note_titles(vault_notes.unwrap_or_default());
+    // A note of the folder is a note whatever its name looks like.
+    let names_note =
+        |name: &str| import::embed_names_note(name) || notes.contains_key(&name.to_lowercase());
+    for block in parse_output.blocks.iter_mut().filter(|b| !b.is_code) {
+        block.content = import::rewrite_obsidian_note_embeds(&block.content, names_note);
+    }
     if !notes.is_empty() {
         for block in parse_output.blocks.iter_mut().filter(|b| !b.is_code) {
             block.content = rewrite_vault_wikilinks(&block.content, &notes);
@@ -4388,6 +4435,11 @@ struct ImportCtx<'a> {
     /// Parse-time + apply-time diagnostics, accumulated across every phase and
     /// returned in the final [`ImportResult`].
     warnings: Vec<String>,
+    /// A note of a folder import, whose references into other notes wait for
+    /// `link_import_anchors` when the note they name is not imported yet.
+    folder: bool,
+    /// The blocks holding such a reference ([`ImportResult::deferred`]).
+    deferred: Vec<String>,
 }
 
 impl ImportCtx<'_> {
@@ -4398,6 +4450,7 @@ impl ImportCtx<'_> {
             device_id: self.device_id,
             space_id: &self.space_id,
             file_page: Some(&self.page_id),
+            defer_anchors: self.folder,
             warnings: &mut self.warnings,
             created: Vec::new(),
         }
@@ -4416,6 +4469,10 @@ struct NameCtx<'a> {
     /// exist. Paste and Edit as Markdown write into a page whose blocks are
     /// saved, so such a link is looked up there, as one into another page is.
     file_page: Option<&'a str>,
+    /// A folder import's: an anchor into another page that names no block yet
+    /// is left for `link_import_anchors` ([`PageLinks::deferred`]) rather than
+    /// dropped.
+    defer_anchors: bool,
     warnings: &'a mut Vec<String>,
     /// The pages and tags the passes created, in creation order.
     created: Vec<BlockRow>,
@@ -4666,6 +4723,10 @@ struct PageLinks {
     /// Each anchored name's block on another page, which the link refs
     /// instead of the page (#5160 D10).
     blocks: HashMap<String, String>,
+    /// A folder import's anchored names whose anchor names no block of the
+    /// page yet, each with its anchor: the link carries it to
+    /// [`link_import_anchors_inner`] ([`DEFERRED_LINK_RE`]).
+    deferred: HashMap<String, String>,
 }
 
 impl PageLinks {
@@ -5132,7 +5193,14 @@ async fn resolve_link_names(
         }
         links.page_links.ids.insert(name, resolved_ulid);
     }
-    link_cross_page_anchors(&mut tx, &mut links.page_links, cross_page, ctx.warnings).await?;
+    link_cross_page_anchors(
+        &mut tx,
+        &mut links.page_links,
+        cross_page,
+        ctx.defer_anchors,
+        ctx.warnings,
+    )
+    .await?;
     Ok((tx, links))
 }
 
@@ -5149,22 +5217,48 @@ struct CrossPageAnchor {
 /// same-file pass compares it and as Obsidian resolves a repeated heading, or,
 /// for `^id`, the block of that id, which is the anchor an
 /// export writes for a ref to another page's block. An Obsidian `^name` names
-/// no block once its own file's import is done. Any other anchor links the
-/// page, and the anchors dropped so are counted in one warning (#1282). Each
-/// name keeps its page too, which an inline query naming it remaps to. One
-/// read covers every page's blocks, `page_id` holding its whole subtree, with
-/// the text of its headings only.
+/// no block once its own file's import is done: a folder import, `defer`,
+/// leaves it, and any anchor whose page is not imported yet, for
+/// [`link_import_anchors_inner`] ([`PageLinks::deferred`]). Any other anchor
+/// links the page, and the anchors dropped so are counted in one warning
+/// (#1282). Each name keeps its page too, which an inline query naming it
+/// remaps to.
 async fn link_cross_page_anchors(
     conn: &mut sqlx::SqliteConnection,
     links: &mut PageLinks,
     anchors: Vec<CrossPageAnchor>,
+    defer: bool,
     warnings: &mut Vec<String>,
 ) -> Result<(), AppError> {
     if anchors.is_empty() {
         return Ok(());
     }
     let pages: HashSet<&str> = anchors.iter().map(|a| a.page_id.as_str()).collect();
-    let pages_json = serde_json::to_string(&pages)?;
+    let candidates = load_anchor_candidates(conn, &pages).await?;
+    let by_id: HashMap<&str, &AnchorCandidate> =
+        candidates.iter().map(|c| (c.id.as_str(), c)).collect();
+    let mut dropped = 0;
+    for a in anchors {
+        if let Some(block) = anchor_block(&candidates, &by_id, &a.page_id, &a.anchor) {
+            links.blocks.insert(a.name.clone(), block.to_string());
+        } else if defer {
+            links.deferred.insert(a.name.clone(), a.anchor);
+        } else {
+            dropped += 1;
+        }
+        links.ids.insert(a.name, a.page_id);
+    }
+    warn_dropped_anchors(warnings, dropped);
+    Ok(())
+}
+
+/// The blocks of `pages` an anchor may name, in one read: `page_id` holds a
+/// page's whole subtree, and only a heading's text is read.
+async fn load_anchor_candidates(
+    conn: &mut sqlx::SqliteConnection,
+    pages: &HashSet<&str>,
+) -> Result<Vec<AnchorCandidate>, AppError> {
+    let pages_json = serde_json::to_string(pages)?;
     let candidates = sqlx::query_as!(
         AnchorCandidate,
         r#"SELECT id AS "id!", page_id AS "page_id!", parent_id, position,
@@ -5178,23 +5272,17 @@ async fn link_cross_page_anchors(
     )
     .fetch_all(&mut *conn)
     .await?;
-    let by_id: HashMap<&str, &AnchorCandidate> =
-        candidates.iter().map(|c| (c.id.as_str(), c)).collect();
-    let mut dropped = 0;
-    for a in anchors {
-        if let Some(block) = anchor_block(&candidates, &by_id, &a) {
-            links.blocks.insert(a.name.clone(), block.to_string());
-        } else {
-            dropped += 1;
-        }
-        links.ids.insert(a.name, a.page_id);
-    }
-    if dropped > 0 {
+    Ok(candidates)
+}
+
+/// Warn of `n` anchors whose links fell back to their page, when there are
+/// any (#1282).
+fn warn_dropped_anchors(warnings: &mut Vec<String>, n: usize) {
+    if n > 0 {
         warnings.push(format!(
-            "{dropped} wikilink block/heading anchors were dropped; links resolve to the page"
+            "{n} wikilink block/heading anchors were dropped; links resolve to the page"
         ));
     }
-    Ok(())
 }
 
 /// A block of a page some link names by an anchor, where it sits in the page,
@@ -5207,16 +5295,17 @@ struct AnchorCandidate {
     content: String,
 }
 
-/// The block `a` names among `candidates`, `by_id` indexing them: on its page,
-/// the block of the `^id` or the first heading of the anchor's text in
-/// document order.
+/// The block `anchor` names among `candidates`, `by_id` indexing them: on the
+/// page `page_id`, the block of the `^id` or the first heading of the
+/// anchor's text in document order.
 fn anchor_block<'a>(
     candidates: &'a [AnchorCandidate],
     by_id: &HashMap<&str, &'a AnchorCandidate>,
-    a: &CrossPageAnchor,
+    page_id: &str,
+    anchor: &str,
 ) -> Option<&'a str> {
-    let block_id = obsidian_block_anchor_id(&a.anchor);
-    let norm = normalize_heading_anchor(&a.anchor);
+    let block_id = obsidian_block_anchor_id(anchor);
+    let norm = normalize_heading_anchor(anchor);
     let names = |c: &&AnchorCandidate| {
         if let Some(id) = block_id {
             c.id == id
@@ -5227,7 +5316,7 @@ fn anchor_block<'a>(
     };
     candidates
         .iter()
-        .filter(|c| c.page_id == a.page_id)
+        .filter(|c| c.page_id == page_id)
         .filter(names)
         .min_by_key(|c| tree_path(by_id, c))
         .map(|c| c.id.as_str())
@@ -6064,6 +6153,7 @@ async fn insert_blocks(
         );
         let detected_attachment_refs =
             detect_import_attachment_refs(&content, block.is_code, vault_files);
+        let deferred = ctx.folder && !block.is_code && holds_deferred_ref(&content);
 
         // The parent stack is NOT pushed for a #1918-skipped block, so any of
         // its children re-parent onto the nearest surviving ancestor (matching
@@ -6079,6 +6169,9 @@ async fn insert_blocks(
         // document index, for the block-anchor resolution pass below.
         created_block_ids[block_index] = Some(new_block_id.clone());
         parent_stack.push((block.depth, new_block_id.clone()));
+        if deferred {
+            ctx.deferred.push(new_block_id.clone());
+        }
 
         // #1925 — record this block's detected attachment refs against its now
         // committed-pending id. Ingested + rewritten in the post-commit phase.
@@ -6400,6 +6493,139 @@ async fn resolve_anchor_links(
     push_anchor_warnings(&mut ctx.warnings, &outcomes);
 }
 
+/// What [`link_import_anchors_inner`] could not keep, each warned of once.
+#[derive(Default)]
+struct DeferredOutcomes {
+    dropped_anchors: usize,
+    dropped_labels: usize,
+    stripped_refs: usize,
+}
+
+/// `content` with each [`DEFERRED_LINK_RE`] link outside inline code written
+/// as a ref to the block `target` finds for its page and anchor, its label
+/// dropped since a block ref carries none, else as the link to the page with
+/// its label.
+fn link_deferred_links(
+    content: &str,
+    target: impl Fn(&str, &str) -> Option<String>,
+    outcomes: &mut DeferredOutcomes,
+) -> String {
+    let code_spans = import::inline_code_spans(content);
+    DEFERRED_LINK_RE
+        .replace_all(content, |caps: &regex::Captures<'_>| {
+            let m = caps.get(0).expect("group 0 always present");
+            if is_in_span(m.start(), &code_spans) {
+                return m.as_str().to_string();
+            }
+            let label = caps.get(3).map(|l| l.as_str()).filter(|l| !l.is_empty());
+            if let Some(block) = target(&caps[1], &caps[2]) {
+                outcomes.dropped_labels += usize::from(label.is_some());
+                return format!("(({block}))");
+            }
+            outcomes.dropped_anchors += 1;
+            stored_page_link(&caps[1], label, None)
+        })
+        .into_owned()
+}
+
+/// The `(id, content)` of each of `blocks` live in `space_id`, read in batches.
+async fn live_contents(
+    pool: &SqlitePool,
+    space_id: &str,
+    blocks: &[BlockId],
+) -> Result<Vec<(String, String)>, AppError> {
+    let scope = agaric_store::space::SpaceScope::Active(SpaceId::from_trusted(space_id));
+    let mut contents = Vec::new();
+    for chunk in blocks.chunks(agaric_store::pagination::MAX_BATCH_BLOCK_IDS) {
+        let rows = batch_resolve_inner(pool, chunk.to_vec(), &scope).await?;
+        let live = rows.into_iter().filter(|row| !row.deleted);
+        contents.extend(live.filter_map(|row| Some((row.id, row.title?))));
+    }
+    Ok(contents)
+}
+
+/// The end of a folder import: link each reference its notes' imports left in
+/// `blocks` ([`ImportResult::deferred`]), once every note's blocks exist. A
+/// `[[ULID#anchor]]` link (`DEFERRED_LINK_RE`) is a ref to the block its
+/// anchor names on that page: the block of that `^id` among `anchors`, the
+/// notes' [`ImportResult::anchors`], else what an import finds there, the
+/// first heading of that text or the block of that id; else it links the
+/// page, with its label. A Logseq `((uuid))` is a ref to the block whose
+/// `id::` names it among `anchors`, else stripped as an import strips it. A
+/// block not live in `space_id` is left alone. Each block that changes is
+/// edited once, and one that cannot be is warned of rather than failing the
+/// pass, which runs after the imports are durable. Returns the warnings.
+#[instrument(skip(pool, device_id, materializer, anchors, blocks), err)]
+pub async fn link_import_anchors_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    space_id: &str,
+    anchors: &[ImportAnchor],
+    blocks: &[BlockId],
+) -> Result<Vec<String>, AppError> {
+    let contents = live_contents(pool, space_id, blocks).await?;
+    let pages: HashSet<&str> = contents
+        .iter()
+        .flat_map(|(_, content)| DEFERRED_LINK_RE.captures_iter(content))
+        .map(|caps| caps.get(1).expect("group 1 always present").as_str())
+        .collect();
+    let candidates = load_anchor_candidates(&mut *pool.acquire().await?, &pages).await?;
+    let by_id: HashMap<&str, &AnchorCandidate> =
+        candidates.iter().map(|c| (c.id.as_str(), c)).collect();
+    let named: HashMap<(&str, &str), &str> = anchors
+        .iter()
+        .map(|a| ((a.page_id.as_str(), a.anchor.as_str()), a.block_id.as_str()))
+        .collect();
+    let by_uuid: HashMap<&str, &str> = anchors
+        .iter()
+        .map(|a| (a.anchor.as_str(), a.block_id.as_str()))
+        .collect();
+    let target = |page: &str, anchor: &str| {
+        obsidian_block_anchor_id(anchor)
+            .and_then(|id| named.get(&(page, id)).copied())
+            .or_else(|| anchor_block(&candidates, &by_id, page, anchor))
+            .map(str::to_string)
+    };
+    let mut outcomes = DeferredOutcomes::default();
+    let mut warnings = Vec::new();
+    for (id, content) in &contents {
+        let linked = link_deferred_links(content, target, &mut outcomes);
+        let (linked, stripped) = import::link_logseq_refs(&linked, |uuid| {
+            by_uuid.get(uuid).copied().map(str::to_string)
+        });
+        outcomes.stripped_refs += stripped;
+        if linked == *content {
+            continue;
+        }
+        let block = BlockId::from_trusted(id);
+        if let Err(e) = crate::commands::blocks::crud::edit_block_inner(
+            pool,
+            device_id,
+            materializer,
+            block,
+            linked,
+        )
+        .await
+        {
+            tracing::warn!(block_id = %id, error = %e, "import: deferred link rewrite failed");
+            warnings.push(format!(
+                "block '{id}' link(s) into other notes could not be rewritten ({e})"
+            ));
+        }
+    }
+    warn_dropped_anchors(&mut warnings, outcomes.dropped_anchors);
+    warn_dropped_labels(&mut warnings, outcomes.dropped_labels);
+    if outcomes.stripped_refs > 0 {
+        warnings.push(format!(
+            "{} ((block-ref)) reference(s) were stripped from imported content and could not be \
+             preserved",
+            outcomes.stripped_refs
+        ));
+    }
+    Ok(warnings)
+}
+
 /// The path-derived fields and byte length one vault file ingests with.
 ///
 /// #2724 — read in a SHORT immutable borrow of the file so the `std::mem::take`
@@ -6690,7 +6916,12 @@ async fn ingest_attachments(
 
 /// #128 / #1932 / #1934 — emit the `Complete` progress event, log the collected
 /// diagnostics + completion telemetry, and build the returned [`ImportResult`].
-fn finish(ctx: ImportCtx<'_>, counters: &ImportCounters, collapsed: Vec<String>) -> ImportResult {
+fn finish(
+    ctx: ImportCtx<'_>,
+    counters: &ImportCounters,
+    collapsed: Vec<String>,
+    anchors: Vec<ImportAnchor>,
+) -> ImportResult {
     let &ImportCounters {
         blocks_created,
         properties_set,
@@ -6702,6 +6933,7 @@ fn finish(ctx: ImportCtx<'_>, counters: &ImportCounters, collapsed: Vec<String>)
         page_title,
         warnings,
         started_at,
+        deferred,
         ..
     } = ctx;
     // #128 — `Complete` is emitted only after the final chunk commits, so
@@ -6750,6 +6982,8 @@ fn finish(ctx: ImportCtx<'_>, counters: &ImportCounters, collapsed: Vec<String>)
         properties_set,
         collapsed,
         warnings,
+        anchors,
+        deferred,
     }
 }
 
@@ -6844,7 +7078,9 @@ pub async fn paste_blocks(
     .map_err(sanitize_internal_error)
 }
 
-/// What a folder pick sends with one of its notes ([`import_markdown`]).
+/// What a folder pick sends with one of its notes ([`import_markdown`]). A note
+/// sent with it leaves its references into other notes for
+/// [`link_import_anchors`], which the pick calls once every note is imported.
 #[derive(Debug, Deserialize, Type)]
 pub struct VaultImport {
     /// The bytes of the sibling files the note references (#1925).
@@ -6902,6 +7138,31 @@ pub async fn import_markdown(
         vault_files,
         vault_notes,
         Some(&crate::main_thread::UiChannel::new(app, progress)),
+    )
+    .await
+    .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: the end of a folder import, linking the references its notes
+/// left (`ImportResult::deferred`) to the blocks their anchors name
+/// (`ImportResult::anchors`). Delegates to [`link_import_anchors_inner`];
+/// returns its warnings.
+#[tauri::command]
+#[specta::specta]
+pub async fn link_import_anchors(
+    space_id: SpaceId,
+    anchors: Vec<ImportAnchor>,
+    blocks: Vec<BlockId>,
+    ctx: State<'_, WriteCtx>,
+) -> Result<Vec<String>, AppError> {
+    space_id.validate_shape()?;
+    link_import_anchors_inner(
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
+        space_id.as_str(),
+        &anchors,
+        &blocks,
     )
     .await
     .map_err(sanitize_internal_error)
@@ -7565,15 +7826,16 @@ mod tests {
     }
 
     /// #5740 — a folder import writes a bare `[[Name]]` naming one of its notes
-    /// as that note's title; a name no note has, a title, and a token in code,
-    /// an embed, a tag or an escape stay as written.
+    /// as that note's title, and so the link a note embed among text reads as;
+    /// a name no note has, a title, and a token in code (inline or fenced), a
+    /// file embed, a tag or an escape stay as written.
     #[test]
     fn a_bare_wikilink_names_the_vault_note_of_that_name() {
         let notes: Vec<String> = vec!["v/sub/Topic.md".into(), "v/Über.md".into()];
         let (parsed, _) = parse_import_payload(
             "- é[[topic]] [[ Topic |l]] [[Topic#h]] [[v/sub/Topic]] [[none]] [[Über]] [[über]]\n\
-             - ![[Topic]] #[[Topic]] \\[[Topic]] `[[Topic]]`\n\
-             - ````\n  [[Topic]]\n  ````\n",
+             - ![[Topic]] ![[topic.png]] #[[Topic]] \\[[Topic]] `[[Topic]]`\n\
+             - ````\n  ![[Topic]] [[Topic]]\n  ````\n",
             Some("v/home.md".into()),
             None,
             Some(&notes),
@@ -7584,8 +7846,8 @@ mod tests {
             contents,
             [
                 "é[[v/sub/Topic]] [[v/sub/Topic|l]] [[v/sub/Topic#h]] [[v/sub/Topic]] [[none]] [[v/Über]] [[v/Über]]",
-                "![[Topic]] #[[Topic]] \\[[Topic]] `[[Topic]]`",
-                "````\n[[Topic]]\n````",
+                "[[v/sub/Topic]] ![[topic.png]] #[[Topic]] \\[[Topic]] `[[Topic]]`",
+                "````\n![[Topic]] [[Topic]]\n````",
             ]
         );
     }

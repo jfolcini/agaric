@@ -85,8 +85,10 @@ const DRIFT_SKIP = new Set<string>([
   // DRIFT(#763), decided in #5071: the markdown and bibliography grammar has
   // one implementation, in Rust, and the mock's importers are deliberate
   // approximations of it (`handlers/pages.ts`), so this fixture pins the
-  // backend alone.
+  // backend alone. So does the end of a folder import, which links the
+  // references only the real import leaves.
   'markdown_imports',
+  'link_import_anchors',
 ])
 
 /**
