@@ -572,6 +572,7 @@ async fn reverse_set_property_with_prior_produces_set_property() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         1_736_942_400_000,
     )
@@ -586,6 +587,7 @@ async fn reverse_set_property_with_prior_produces_set_property() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         1_736_942_460_000,
     )
@@ -612,6 +614,7 @@ async fn reverse_first_set_property_produces_delete_property() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         FIXED_TS,
     )
@@ -635,6 +638,7 @@ async fn reverse_delete_property_produces_set_property_with_prior() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         1_736_942_400_000,
     )
@@ -745,6 +749,94 @@ async fn reverse_of_a_first_set_records_the_set_value_as_prior_5918() {
         .map(Result::unwrap)
         .collect();
     assert_eq!(batched, vec![expected], "batch kernel");
+}
+
+/// #6014: a set restores the value it recorded, in both kernels, over the op
+/// log's last local set. A peer's write arrives through the engine with no local
+/// op, so the log answers with a stale value.
+#[tokio::test]
+async fn reverse_set_property_restores_its_recorded_prior_6014() {
+    let (pool, _dir) = test_pool().await;
+    let block_id = BlockId::test_id("BLK_6014_SET");
+    append_op(
+        &pool,
+        OpPayload::SetProperty(effort(&block_id, 1.0)),
+        FIXED_TS,
+    )
+    .await;
+    let set = append_op(
+        &pool,
+        OpPayload::SetProperty(SetPropertyPayload {
+            prior: Some(effort(&block_id, 2.5).value()),
+            ..effort(&block_id, 4.0)
+        }),
+        FIXED_TS + 1_000,
+    )
+    .await;
+
+    let expected = OpPayload::SetProperty(effort(&block_id, 2.5));
+    assert_eq!(
+        compute_reverse(&pool, TEST_DEVICE, set.seq).await.unwrap(),
+        expected,
+        "single-op kernel: the recorded value, not the logged 1.0"
+    );
+    let batched: Vec<OpPayload> = compute_reverse_batch(&pool, std::slice::from_ref(&set))
+        .await
+        .unwrap()
+        .into_iter()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        batched,
+        vec![expected],
+        "batch kernel: the recorded value, not the logged 1.0"
+    );
+}
+
+/// #6014: a set that found its key absent records an empty `prior`, and both
+/// kernels answer with a delete over the op log's last local set: that value was
+/// deleted on a peer, which leaves no local op to say so.
+#[tokio::test]
+async fn reverse_set_property_over_an_absent_key_deletes_it_6014() {
+    let (pool, _dir) = test_pool().await;
+    let block_id = BlockId::test_id("BLK_6014_ABS");
+    append_op(
+        &pool,
+        OpPayload::SetProperty(effort(&block_id, 1.0)),
+        FIXED_TS,
+    )
+    .await;
+    let set = append_op(
+        &pool,
+        OpPayload::SetProperty(SetPropertyPayload {
+            prior: Some(PropertyValueFields::default()),
+            ..effort(&block_id, 4.0)
+        }),
+        FIXED_TS + 1_000,
+    )
+    .await;
+
+    let expected = OpPayload::DeleteProperty(DeletePropertyPayload {
+        block_id: block_id.clone(),
+        key: "effort".into(),
+        prior: Some(effort(&block_id, 4.0).value()),
+    });
+    assert_eq!(
+        compute_reverse(&pool, TEST_DEVICE, set.seq).await.unwrap(),
+        expected,
+        "single-op kernel: a delete, not the logged 1.0"
+    );
+    let batched: Vec<OpPayload> = compute_reverse_batch(&pool, std::slice::from_ref(&set))
+        .await
+        .unwrap()
+        .into_iter()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        batched,
+        vec![expected],
+        "batch kernel: a delete, not the logged 1.0"
+    );
 }
 
 /// `reverse_add_attachment` mints a SYNTHETIC `delete_attachment` — the only
@@ -1241,6 +1333,7 @@ async fn reverse_set_property_value_num() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         FIXED_TS,
     )
@@ -1259,6 +1352,7 @@ async fn reverse_set_property_value_num() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         1_736_942_460_000,
     )
@@ -1282,6 +1376,7 @@ async fn reverse_set_property_value_date() {
             value_date: Some("2025-06-15".into()),
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         FIXED_TS,
     )
@@ -1300,6 +1395,7 @@ async fn reverse_set_property_value_date() {
             value_date: Some("2025-12-31".into()),
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         1_736_942_460_000,
     )
@@ -1327,6 +1423,7 @@ async fn reverse_set_property_value_bool() {
             value_date: None,
             value_ref: None,
             value_bool: Some(true),
+            prior: None,
         }),
         FIXED_TS,
     )
@@ -1345,6 +1442,7 @@ async fn reverse_set_property_value_bool() {
             value_date: None,
             value_ref: None,
             value_bool: Some(false),
+            prior: None,
         }),
         1_736_942_460_000,
     )
@@ -1377,6 +1475,7 @@ async fn reverse_delete_property_restores_value_bool() {
             value_date: None,
             value_ref: None,
             value_bool: Some(true),
+            prior: None,
         }),
         FIXED_TS,
     )
@@ -1798,6 +1897,7 @@ async fn reverse_set_reserved_property_todo_state() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         FIXED_TS,
     )
@@ -1820,6 +1920,7 @@ async fn reverse_set_reserved_property_todo_state_with_prior() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         1_736_942_400_000,
     )
@@ -1834,6 +1935,7 @@ async fn reverse_set_reserved_property_todo_state_with_prior() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         1_736_942_460_000,
     )
@@ -1857,6 +1959,7 @@ async fn reverse_delete_reserved_property_todo_state() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         1_736_942_400_000,
     )
@@ -1890,6 +1993,7 @@ async fn reverse_set_reserved_property_priority_with_prior() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         1_736_942_400_000,
     )
@@ -1904,6 +2008,7 @@ async fn reverse_set_reserved_property_priority_with_prior() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         1_736_942_460_000,
     )
@@ -1927,6 +2032,7 @@ async fn reverse_set_reserved_property_due_date_with_prior() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         1_736_942_400_000,
     )
@@ -1941,6 +2047,7 @@ async fn reverse_set_reserved_property_due_date_with_prior() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         1_736_942_460_000,
     )
@@ -1964,6 +2071,7 @@ async fn reverse_set_reserved_property_scheduled_date_with_prior() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         1_736_942_400_000,
     )
@@ -1978,6 +2086,7 @@ async fn reverse_set_reserved_property_scheduled_date_with_prior() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         1_736_942_460_000,
     )
@@ -2063,6 +2172,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
                 value_date: None,
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             }),
             next_ts(&mut ts),
         )
@@ -2078,6 +2188,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
                 value_date: None,
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             }),
             next_ts(&mut ts),
         )
@@ -2183,6 +2294,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
                 value_date: None,
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             }),
             next_ts(&mut ts),
         )
@@ -2696,6 +2808,7 @@ async fn compute_reverse_batch_set_delete_set_yields_delete_property() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         FIXED_TS + 60_000,
     )
@@ -2722,6 +2835,7 @@ async fn compute_reverse_batch_set_delete_set_yields_delete_property() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         FIXED_TS + 180_000,
     )
@@ -3040,6 +3154,7 @@ async fn compute_reverse_set_property_skips_replicated_prior_2549() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         2_000,
     )
@@ -3057,6 +3172,7 @@ async fn compute_reverse_set_property_skips_replicated_prior_2549() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         3_000,
     )
@@ -3072,6 +3188,7 @@ async fn compute_reverse_set_property_skips_replicated_prior_2549() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         4_000,
     )
@@ -3109,6 +3226,7 @@ async fn compute_reverse_restores_the_replicated_prior_space_5262() {
             value_date: None,
             value_ref: Some(BlockId::test_id(id)),
             value_bool: None,
+            prior: None,
         })
     };
 
@@ -3560,6 +3678,7 @@ async fn reverse_set_property_tie_breaks_on_device_id_3646() {
                     value_date: None,
                     value_ref: None,
                     value_bool: None,
+                    prior: None,
                 }),
                 FIXED_TS,
             )
@@ -3577,6 +3696,7 @@ async fn reverse_set_property_tie_breaks_on_device_id_3646() {
                 value_date: None,
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             }),
             FIXED_TS,
         )
@@ -3817,6 +3937,7 @@ async fn compute_reverse_batch_property_group_stays_aligned_across_chunks_4656()
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         })
     };
 

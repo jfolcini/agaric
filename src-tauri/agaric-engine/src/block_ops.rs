@@ -760,6 +760,7 @@ pub fn check_property_value(
         value_date,
         value_ref: value_ref.map(BlockId::from),
         value_bool,
+        prior: None,
     };
     validate_property_value(&payload, declaration)
 }
@@ -850,8 +851,9 @@ pub async fn fetch_live_block_in_tx(
 /// The value `block_id` holds for `key`, or `None` when it holds none: a
 /// column-backed key is read from its `blocks` column, in the slot
 /// `project_set_property_to_sql` writes it from; any other key from its
-/// `block_properties` row. A delete records it as the `prior` its undo
-/// restores (#5918).
+/// `block_properties` row. A set or a delete records it as the `prior` its
+/// undo restores (#5918, #6014); a set that finds none records every slot
+/// empty.
 pub async fn held_property_value(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,
@@ -992,6 +994,7 @@ pub async fn set_property_in_tx_with_declaration(
         value_date: value_date.clone(),
         value_ref: value_ref.clone().map(BlockId::from),
         value_bool,
+        prior: None,
     };
     validate_property_value(&prop_payload, declaration.as_ref())?;
 
@@ -1010,8 +1013,18 @@ pub async fn set_property_in_tx_with_declaration(
     )
     .await?;
 
-    // 3. Append SetProperty op to the op_log
-    let payload = OpPayload::SetProperty(prop_payload.clone());
+    // 3. Append SetProperty op to the op_log. An empty `prior` records that
+    // the key was absent: `None` would read as an op written before #6014, and
+    // its reverse would ask the op log, which can still hold a value a peer
+    // has since deleted.
+    let payload = OpPayload::SetProperty(SetPropertyPayload {
+        prior: Some(
+            held_property_value(tx, &block_id, key)
+                .await?
+                .unwrap_or_default(),
+        ),
+        ..prop_payload
+    });
     let op_record =
         op_log::append_local_op_in_tx(tx, device_id, payload, agaric_store::db::now_ms()).await?;
 
@@ -1375,6 +1388,7 @@ mod validate_property_value_tests {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }
     }
 

@@ -1233,6 +1233,7 @@ async fn undo_property_converges_engine_2655() {
                 value_date: None,
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             }),
         )
         .await;
@@ -1578,6 +1579,7 @@ async fn undo_delete_property_converges_engine_2838() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
     )
     .await;

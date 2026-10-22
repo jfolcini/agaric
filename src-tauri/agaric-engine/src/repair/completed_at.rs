@@ -427,6 +427,7 @@ mod tests {
                 value_date: Some("2026-03-03".into()),
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             }),
             "the reverse sets the stamp back"
         );

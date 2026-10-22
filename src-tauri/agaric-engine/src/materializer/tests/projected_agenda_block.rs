@@ -42,6 +42,7 @@ fn set_op(key: &str, text: Option<&str>, num: Option<f64>, date: Option<String>)
         value_date: date,
         value_ref: None,
         value_bool: None,
+        prior: None,
     })
 }
 

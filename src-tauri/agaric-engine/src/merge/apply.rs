@@ -71,6 +71,7 @@ mod engine_apply_unit_tests {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         })
     }
 
@@ -519,6 +520,7 @@ mod engine_apply_unit_tests {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         });
 
         let before = divergence::count();

@@ -209,3 +209,28 @@ async fn delete_property_without_prior_keeps_its_pre_5918_bytes_and_hash() {
         "the hash is the one the pre-#5918 bytes give"
     );
 }
+
+/// #6014: a `set_property` with no `prior` is stored as exactly the bytes a set
+/// was stored as before the field existed, so it hashes as one did, and those
+/// stored bytes still decode.
+#[tokio::test]
+async fn set_property_without_prior_keeps_its_pre_6014_bytes_and_hash() {
+    const PRE_6014_PAYLOAD: &str = r#"{"block_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","key":"effort","value_bool":null,"value_date":null,"value_num":null,"value_ref":null,"value_text":"2h"}"#;
+    let (pool, _dir) = test_pool().await;
+    let payload: SetPropertyPayload = serde_json::from_str(PRE_6014_PAYLOAD).unwrap();
+    assert_eq!(payload.prior, None, "a pre-#6014 set decodes with no prior");
+
+    let record = append_local_op_at(&pool, "dev-6014", OpPayload::SetProperty(payload), FIXED_TS)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        record.payload, PRE_6014_PAYLOAD,
+        "stored bytes are unchanged"
+    );
+    assert_eq!(
+        record.hash,
+        compute_op_hash("dev-6014", 1, None, "set_property", PRE_6014_PAYLOAD),
+        "the hash is the one the pre-#6014 bytes give"
+    );
+}

@@ -111,7 +111,7 @@ Reverse-op table (canonical):
 | `restore_block` | `delete_block` |
 | `purge_block` | **non-reversible** |
 | `move_block` | `move_block` to the previous parent + position |
-| `set_property` | `set_property` with previous value (or `delete_property` if absent) |
+| `set_property` | `set_property` with the value the set recorded (`prior`), or `delete_property` if the key was absent |
 | `delete_property` | `set_property` with the value the delete recorded (`prior`) |
 | `add_tag` | `remove_tag` |
 | `remove_tag` | `add_tag` |
@@ -120,7 +120,7 @@ Reverse-op table (canonical):
 | `add_attachment` | `delete_attachment` |
 | `delete_attachment` | conditional: `add_attachment` with captured metadata if available; otherwise non-reversible |
 
-Prior-state lookups for `edit_block` / `set_property` reverses use the **op log** (walk backwards from the target seq to find the predecessor value), not the materialised `blocks` row. The materialised state is the current value; the op log holds history. A `delete_property` records the value it removed as `prior`, read from the materialised state in its transaction, because the op log cannot always supply it: a value a peer set arrives through the engine with no local op behind it (#5918). Its reverse looks in the op log only for a delete written before `prior` existed.
+Prior-state lookups for `edit_block` reverses use the **op log** (walk backwards from the target seq to find the predecessor value), not the materialised `blocks` row. The materialised state is the current value; the op log holds history. A `set_property` or `delete_property` records the value it overwrote or removed as `prior`, read from the materialised state in its transaction (all five slots empty when a set found the key absent), because the op log cannot always supply it: a value a peer set or deleted arrives through the engine with no local op behind it (#5918, #6014). A reverse falls back to the op log only for an op that records no `prior`, such as one written before it existed.
 
 ## Recurrence
 

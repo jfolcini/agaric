@@ -31,7 +31,7 @@ use agaric_store::db::now_ms;
 use agaric_store::op::{CreateBlockPayload, OpPayload, SetPropertyPayload};
 use agaric_store::op_log::{self, OpRecord};
 
-use crate::block_ops::set_property_in_tx;
+use crate::block_ops::{held_property_value, set_property_in_tx};
 use crate::loro::shared::LoroState;
 
 /// Reserved ULID for the seeded "Personal" space.
@@ -251,7 +251,7 @@ pub async fn ensure_accent_color_property(
 /// reprojection from the engine.
 ///
 /// [`pages_without_space`] selects pages with no `space_id`, so the apply has
-/// no old space to prune (#2907).
+/// no old space to prune (#2907) and the op no `prior` to record.
 pub async fn migrate_pages_to_personal_space(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     state: &LoroState,
@@ -272,6 +272,7 @@ pub async fn migrate_pages_to_personal_space(
             value_date: None,
             value_ref: Some(BlockId::from(SPACE_PERSONAL_ULID)),
             value_bool: None,
+            prior: None,
         });
         let record = op_log::append_local_op_in_tx(tx, device_id, payload, now_ms()).await?;
         crate::apply::kernel::apply_op_projected(tx, &record, state, false).await?;
@@ -490,6 +491,8 @@ pub async fn migrate_orphan_tags_to_space(
             value_date: None,
             value_ref: Some(BlockId::from(target_space)),
             value_bool: None,
+            // An orphan holds no space, so the set overwrites nothing.
+            prior: None,
         });
         let record = op_log::append_local_op_in_tx(tx, device_id, payload, now_ms()).await?;
 
@@ -706,6 +709,7 @@ pub async fn repair_misfiled_tag_spaces(
             value_date: None,
             value_ref: Some(BlockId::from(target_space.as_str())),
             value_bool: None,
+            prior: held_property_value(tx, tag_id, "space").await?,
         });
         let record = op_log::append_local_op_in_tx(tx, device_id, payload, now_ms()).await?;
 
@@ -1179,6 +1183,45 @@ mod tests {
         assert_eq!(
             again, 0,
             "re-running the scan must find nothing: the tag now agrees with its references"
+        );
+    }
+
+    /// #6014: the repair records the space it moves the tag out of, so
+    /// reverting it (History or a point-in-time restore) puts the tag back.
+    /// A space like this one was stamped with no op behind it, so the op log
+    /// has nothing to offer.
+    #[tokio::test]
+    async fn reversing_a_misfiled_tag_repair_restores_the_space_it_left() {
+        let (pool, _tmp) = fresh_pool().await;
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        let tag_id =
+            seed_tag_referenced_from(&mut tx, "meet", Some(SPACE_PERSONAL_ULID), SPACE_WORK_ULID)
+                .await;
+        let mut records = Vec::new();
+        repair_misfiled_tag_spaces(&mut tx, &LoroState::new(), DEV, &mut records)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let [repair] = records.as_slice() else {
+            panic!("expected the one repair, got {records:?}");
+        };
+
+        let reverse = crate::reverse::compute_reverse(&pool, DEV, repair.seq)
+            .await
+            .unwrap();
+        assert_eq!(
+            reverse,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::from_trusted(&tag_id),
+                key: "space".into(),
+                value_text: None,
+                value_num: None,
+                value_date: None,
+                value_ref: Some(BlockId::from(SPACE_PERSONAL_ULID)),
+                value_bool: None,
+                prior: None,
+            }),
+            "the reverse moves the tag back to Personal"
         );
     }
 

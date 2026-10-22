@@ -253,6 +253,7 @@ async fn dispatch_op_set_property() {
             value_date: Some("2025-01-15".into()),
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
     )
     .await;
@@ -340,6 +341,7 @@ async fn dispatch_op_set_property_space_sql_only_802() {
             value_date: None,
             value_ref: Some(BlockId::test_id("space-802")),
             value_bool: None,
+            prior: None,
         }),
     )
     .await;
@@ -426,6 +428,7 @@ async fn dispatch_op_set_property_space_sql_only_skips_unregistered_target_802()
             value_date: None,
             value_ref: Some(BlockId::test_id("not-a-space")),
             value_bool: None,
+            prior: None,
         }),
     )
     .await;

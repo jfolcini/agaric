@@ -311,6 +311,7 @@ fn resolve_op(
                 value_date: None,
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             }))
         }
         OpKind::AddTag { index, tag_id } => {

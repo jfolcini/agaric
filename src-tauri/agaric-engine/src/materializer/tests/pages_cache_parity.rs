@@ -1081,6 +1081,7 @@ fn set_space(block_id: &str, space: &str) -> OpPayload {
         value_date: None,
         value_ref: Some(BlockId::from_trusted(space)),
         value_bool: None,
+        prior: None,
     })
 }
 

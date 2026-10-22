@@ -979,15 +979,20 @@ fn build_reverse_set_property(
     prior_payload: Option<&str>,
 ) -> Result<OpPayload, AppError> {
     let payload: SetPropertyPayload = serde_json::from_str(&record.payload)?;
-    match prior_payload {
-        Some(p_json) => {
-            let p: SetPropertyPayload = serde_json::from_str(p_json)?;
-            Ok(OpPayload::SetProperty(SetPropertyPayload::with_value(
-                payload.block_id,
-                payload.key,
-                p.value(),
-            )))
-        }
+    let prior = match &payload.prior {
+        Some(prior) => prior.clone().into_held(),
+        // An op written before #6014 records nothing.
+        None => prior_payload
+            .map(serde_json::from_str::<SetPropertyPayload>)
+            .transpose()?
+            .map(|p| p.value()),
+    };
+    match prior {
+        Some(p) => Ok(OpPayload::SetProperty(SetPropertyPayload::with_value(
+            payload.block_id,
+            payload.key,
+            p,
+        ))),
         None => {
             let prior = Some(payload.value());
             Ok(OpPayload::DeleteProperty(DeletePropertyPayload {

@@ -150,6 +150,7 @@ pub(super) fn all_op_payloads() -> Vec<(&'static str, OpPayload)> {
                 value_date: None,
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             }),
         ),
         (

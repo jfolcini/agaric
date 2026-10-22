@@ -446,6 +446,7 @@ async fn set_property_via_kernel(
         value_date: None,
         value_ref: None,
         value_bool: None,
+        prior: None,
     });
     let record = agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
         .await

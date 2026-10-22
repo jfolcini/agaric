@@ -144,14 +144,15 @@ client must produce the identical canonical form:
   "Option::is_none"` attributes in `op.rs`):
   `create_block.position` / `create_block.index` and `move_block.new_index`
   (the post-#400 sibling-slot fields), `add_attachment.content_hash`
-  (#5728) and `delete_property.prior` (#5918) are **omitted entirely** when
-  `None`, whereas e.g. `set_property.value_*` fields (and the same five
-  inside a present `prior`) serialize as explicit `null`.
+  (#5728), `delete_property.prior` (#5918) and `set_property.prior` (#6014)
+  are **omitted entirely** when `None`, whereas e.g. `set_property.value_*`
+  fields (and the same five inside a present `prior`) serialize as explicit
+  `null`.
   Backwards-compat: a missing `value_bool` (`set_property`), `fs_path`
   (`delete_attachment`), `content_hash` (`add_attachment`) or `prior`
-  (`delete_property`) deserializes to `None` / `""` / `None` / `None`
-  respectively, and an omitted `content_hash` or `prior` re-serializes to
-  the text the op's hash was computed over.
+  (`delete_property`, `set_property`) deserializes to `None` / `""` /
+  `None` / `None` respectively, and an omitted `content_hash` or `prior`
+  re-serializes to the text the op's hash was computed over.
 - **All ULID fields must be uppercase Crockford Base32** before
   serialization. The local writer calls `OpPayload::normalize_block_ids()`
   (a no-op marker today, because `BlockId` auto-uppercases on construction

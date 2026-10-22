@@ -275,6 +275,15 @@ pub struct SetPropertyPayload {
     pub value_ref: Option<BlockId>,
     #[serde(default)]
     pub value_bool: Option<bool>,
+    /// The value the set overwrote, which its undo restores; every slot `None`
+    /// when the block held none. The op log cannot always supply it: a value
+    /// set on a peer arrives through the engine with no local op behind it,
+    /// and so does the deletion of one (#6014). `None` on ops written before
+    /// it existed, and on the writers that only set a key the block does not
+    /// hold (the space migrations and orphan-tag adoption); omitted then, so
+    /// those ops keep their hash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prior: Option<PropertyValueFields>,
 }
 
 impl SetPropertyPayload {
@@ -295,6 +304,7 @@ impl SetPropertyPayload {
             value_date,
             value_ref,
             value_bool,
+            prior: None,
         }
     }
 
@@ -318,6 +328,14 @@ pub struct PropertyValueFields {
     pub value_date: Option<String>,
     pub value_ref: Option<BlockId>,
     pub value_bool: Option<bool>,
+}
+
+impl PropertyValueFields {
+    /// `None` when every slot is empty. A value a block holds sets a slot, so
+    /// an empty `prior` records that the block held none.
+    pub fn into_held(self) -> Option<Self> {
+        (self != Self::default()).then_some(self)
+    }
 }
 
 /// Payload for the `delete_property` op — removes a property by key from a block.
@@ -850,6 +868,7 @@ mod tests {
                 value_date: None,
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             }),
             OpPayload::DeleteProperty(DeletePropertyPayload {
                 block_id: BlockId::from_string(TEST_BID).unwrap(),
@@ -1105,6 +1124,60 @@ mod tests {
                 assert_eq!(inner.value_text.as_deref(), Some("high"));
             }
             other => panic!("expected SetProperty, got {other:?}"),
+        }
+    }
+
+    /// #6014: an empty `prior` records that the key was absent, so it has to
+    /// survive the stored JSON as a present object. Dropped on write, it would
+    /// read back as the `None` of an older op, and its reverse would ask the op
+    /// log again.
+    #[test]
+    fn set_property_empty_prior_is_stored_and_read_back_as_present() {
+        let payload = SetPropertyPayload {
+            block_id: BlockId::from_string(TEST_BID).unwrap(),
+            key: "effort".into(),
+            value_text: Some("2h".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+            value_bool: None,
+            prior: Some(PropertyValueFields::default()),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(
+            json["prior"],
+            serde_json::json!({
+                "value_text": null,
+                "value_num": null,
+                "value_date": null,
+                "value_ref": null,
+                "value_bool": null,
+            })
+        );
+        let read_back: SetPropertyPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(read_back.prior, Some(PropertyValueFields::default()));
+    }
+
+    /// #6014: only a value with no slot set reads as "held none". A `false`, a
+    /// `0` and an empty string are values, and each sets its slot.
+    #[test]
+    fn property_value_into_held_is_none_only_when_every_slot_is_empty() {
+        assert_eq!(PropertyValueFields::default().into_held(), None);
+        for held in [
+            PropertyValueFields {
+                value_bool: Some(false),
+                ..Default::default()
+            },
+            PropertyValueFields {
+                value_num: Some(0.0),
+                ..Default::default()
+            },
+            PropertyValueFields {
+                value_text: Some(String::new()),
+                ..Default::default()
+            },
+        ] {
+            assert_eq!(held.clone().into_held(), Some(held));
         }
     }
 
@@ -1477,6 +1550,7 @@ mod tests {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         };
         let json = serde_json::to_string(&payload).unwrap();
         assert!(json.contains("\"value_text\":null"));
@@ -1502,6 +1576,7 @@ mod tests {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         });
         let json = serde_json::to_string(&payload).unwrap();
         let deser: OpPayload = serde_json::from_str(&json).unwrap();
@@ -1638,6 +1713,7 @@ mod tests {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         };
         assert!(
             validate_set_property(&p).is_ok(),
@@ -1655,6 +1731,7 @@ mod tests {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
@@ -1674,6 +1751,7 @@ mod tests {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
@@ -1696,6 +1774,7 @@ mod tests {
                 value_date: None,
                 value_ref: None,
                 value_bool: Some(b),
+                prior: None,
             };
             assert!(
                 validate_set_property(&p).is_ok(),
@@ -1716,6 +1795,7 @@ mod tests {
             value_date: None,
             value_ref: None,
             value_bool: Some(true),
+            prior: None,
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
@@ -1738,6 +1818,7 @@ mod tests {
             value_date: None,
             value_ref: None,
             value_bool: Some(true),
+            prior: None,
         };
         let json: serde_json::Value = serde_json::to_value(&payload).unwrap();
         insta::assert_yaml_snapshot!("set_property_payload_value_bool_true", json);
@@ -1766,6 +1847,7 @@ mod tests {
                 value_date: None,
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             };
             assert!(
                 validate_set_property(&p).is_ok(),
@@ -1784,6 +1866,7 @@ mod tests {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
@@ -1803,6 +1886,7 @@ mod tests {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
@@ -1823,6 +1907,7 @@ mod tests {
                 value_date: None,
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             };
             let err = validate_set_property(&p).unwrap_err();
             assert!(
@@ -1885,6 +1970,7 @@ mod tests {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
@@ -1907,6 +1993,7 @@ mod tests {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
@@ -1927,6 +2014,7 @@ mod tests {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         };
         let err_neg = validate_set_property(&p_neg).unwrap_err();
         assert!(
@@ -1945,6 +2033,7 @@ mod tests {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         };
         assert!(
             validate_set_property(&p).is_ok(),
@@ -1967,6 +2056,7 @@ mod tests {
                 value_date: None,
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             };
             let err = validate_set_property(&p).unwrap_err();
             assert!(
@@ -1991,6 +2081,7 @@ mod tests {
                 value_date: Some(empty.into()),
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             };
             let err = validate_set_property(&p).unwrap_err();
             assert!(
@@ -2015,6 +2106,7 @@ mod tests {
                 value_date: None,
                 value_ref: Some(empty.into()),
                 value_bool: None,
+                prior: None,
             };
             let err = validate_set_property(&p).unwrap_err();
             assert!(
@@ -2047,6 +2139,7 @@ mod tests {
             value_date: None,
             value_ref: Some(BlockId::from(lower)),
             value_bool: None,
+            prior: None,
         };
         assert_eq!(
             p.value_ref.as_ref().map(agaric_core::ulid::BlockId::as_str),
