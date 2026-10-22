@@ -12,9 +12,12 @@
  * The editor-insert handlers (`/link`, `/tag`, `/block-ref`, `/code`,
  * `/quote`) operate directly on `ctx.rovingEditor.editor` and never
  * touch the page store, so a real editor + the production handler is the whole
- * code path.
+ * code path. `/code` and `/quote` also clear the block's list style, which the
+ * mock backend holds here.
  */
 
+import type { InvokeArgs } from '@tauri-apps/api/core'
+import { invoke } from '@tauri-apps/api/core'
 import { renderHook } from '@testing-library/react'
 import { Editor } from '@tiptap/core'
 import Blockquote from '@tiptap/extension-blockquote'
@@ -29,6 +32,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeSyntheticCtx } from '@/components/block-tree/use-block-slash-commands/__tests__/test-utils'
 import { useSlashCommandStructural } from '@/components/block-tree/use-block-slash-commands/useSlashCommandStructural'
 import type { DocNode } from '@/editor/types'
+import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
+import type { PropertyRow } from '@/lib/bindings'
+import { listStyleFromRows, setListStyle } from '@/lib/list-style'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 
 vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
 vi.mock('@/lib/logger', () => ({
@@ -47,7 +55,15 @@ afterEach(() => {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  seedBlocks()
+  vi.mocked(invoke).mockImplementation(async (cmd: string, args?: InvokeArgs) =>
+    dispatch(cmd, args),
+  )
 })
+
+const BLOCK_ID = SEED_IDS.BLOCK_GS_1
+const styleOf = () =>
+  listStyleFromRows(dispatch('get_properties', { blockId: BLOCK_ID }) as PropertyRow[])
 
 /**
  * Build a real editor whose initial doc is a single paragraph holding
@@ -68,7 +84,7 @@ function buildCtxWithEditor(initialText: string) {
       ],
     },
   })
-  const { ctx } = makeSyntheticCtx()
+  const { ctx } = makeSyntheticCtx({ blockId: BLOCK_ID })
   ctx.rovingEditor.editor = editor as unknown as typeof ctx.rovingEditor.editor
   return ctx
 }
@@ -152,7 +168,7 @@ describe('T3 — /code and /quote from a non-default block state', () => {
         ],
       },
     })
-    const { ctx } = makeSyntheticCtx()
+    const { ctx } = makeSyntheticCtx({ blockId: BLOCK_ID })
     ctx.rovingEditor.editor = editor as unknown as typeof ctx.rovingEditor.editor
 
     editor.commands.setTextSelection({ from: 1, to: 6 })
@@ -162,6 +178,39 @@ describe('T3 — /code and /quote from a non-default block state', () => {
     // current block); the title text is preserved inside.
     expect(editor.state.doc.child(0).type.name).toBe('blockquote')
     expect(editor.state.doc.textContent).toContain('Title')
+  })
+
+  // A code block or a quote is not a list, as a heading or a callout is not (#5691).
+  it.each(['code', 'quote'] as const)('/%s clears a bulleted block’s list style', async (id) => {
+    await setListStyle(BLOCK_ID, 'bullet')
+    expect(styleOf()).toBe('bullet')
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const ctx = buildCtxWithEditor('item')
+
+    await result.current.exact[id]?.(ctx, { id, label: id })
+
+    expect(editor?.state.doc.child(0).type.name).toBe(id === 'code' ? 'codeBlock' : 'blockquote')
+    expect(styleOf()).toBe('none')
+  })
+
+  // #4577's shape: the editor's commit carries the code block before the style goes, so a
+  // Discard straight after cannot leave a plain block that lost its bullet.
+  it('/code commits the code block before it clears the list style', async () => {
+    await setListStyle(BLOCK_ID, 'bullet')
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const ctx = buildCtxWithEditor('item')
+    const committed: Array<{ type: string | undefined; style: string }> = []
+    const unregister = registerActiveDraftFlush(BLOCK_ID, async () => {
+      committed.push({ type: editor?.state.doc.child(0).type.name, style: styleOf() })
+    })
+    try {
+      await result.current.exact['code']?.(ctx, { id: 'code', label: 'code' })
+    } finally {
+      unregister()
+    }
+
+    expect(committed).toEqual([{ type: 'codeBlock', style: 'bullet' }])
+    expect(styleOf()).toBe('none')
   })
 })
 

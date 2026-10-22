@@ -529,6 +529,7 @@ function PageModeDocument({
     openPropertyDrawer: setDrawerBlockId,
     saveQuery: (id, expression) => actions.current.saveQuery(id, expression),
     attach: (id, files) => actions.current.attachPicked(id, files),
+    clearListStyle: (id) => actions.current.setListStyle(id, 'none'),
   })
   // The session reads these as they are when it needs them, not as it was built with.
   const blocked = useEffectEvent((blocker: PageModeBlocker) => onBlocked(blocker))

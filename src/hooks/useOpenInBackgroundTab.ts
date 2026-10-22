@@ -1,7 +1,7 @@
 /**
  * Opening a page in a background tab, the way a browser opens a middle-clicked
- * link: a new tab behind the active one, with the view left as it is. A
- * Ctrl/Cmd+click on a link chip opens its target in a new tab in front.
+ * or Ctrl/Cmd+clicked link: a new tab behind the active one, with the view left
+ * as it is.
  */
 
 import type React from 'react'
@@ -35,8 +35,8 @@ export function useOpenInBackgroundTab(): OpenInBackgroundTab | undefined {
   return isMobile ? undefined : open
 }
 
-/** Opens a link chip's target in a new tab, behind the active one unless `inForeground`. */
-export type OpenLinkInNewTab = (linkId: string, inForeground?: boolean) => void
+/** Opens a link chip's target in a new tab behind the active one. */
+export type OpenLinkInNewTab = (linkId: string) => void
 
 /**
  * The opener for a link chip's target, given the editor's link navigation
@@ -46,16 +46,12 @@ export function useOpenLinkInNewTab(
   navigate: (linkId: string, openPage: NavigateToPageFn) => Promise<void>,
 ): OpenLinkInNewTab | undefined {
   const openInBackgroundTab = useOpenInBackgroundTab()
-  const openInNewTab = useTabsStore((s) => s.openInNewTab)
   return useMemo(
     () =>
       openInBackgroundTab &&
-      ((linkId, inForeground = false) =>
-        void navigate(linkId, (pageId, title = '', blockId) => {
-          if (inForeground) openInNewTab(pageId, title, blockId)
-          else openInBackgroundTab(pageId, title)
-        })),
-    [navigate, openInBackgroundTab, openInNewTab],
+      ((linkId) =>
+        void navigate(linkId, (pageId, title = '') => openInBackgroundTab(pageId, title))),
+    [navigate, openInBackgroundTab],
   )
 }
 
@@ -99,9 +95,9 @@ export interface LinkClickProps extends MiddleClickProps {
 }
 
 /**
- * Mouse props for a container of link chips: a middle click on a chip opens
- * its target in a background tab, a Ctrl/Cmd+click in a new tab in front. A
- * click anywhere else is left alone, so Ctrl+click still selects a block.
+ * Mouse props for a container of link chips: a middle click or a Ctrl/Cmd+click
+ * on a chip opens its target in a background tab. A click anywhere else is left
+ * alone, so Ctrl+click still selects a block.
  */
 export function delegatedLinkClickProps(open: OpenLinkInNewTab): LinkClickProps {
   return {
@@ -116,7 +112,7 @@ export function delegatedLinkClickProps(open: OpenLinkInNewTab): LinkClickProps 
       if (linkId === undefined) return
       e.preventDefault()
       e.stopPropagation()
-      open(linkId, true)
+      open(linkId)
     },
   }
 }

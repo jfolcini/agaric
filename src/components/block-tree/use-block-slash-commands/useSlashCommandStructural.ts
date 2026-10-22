@@ -9,6 +9,7 @@
  * sub-hooks.
  */
 
+import type { Editor } from '@tiptap/react'
 import { useMemo } from 'react'
 
 import {
@@ -28,21 +29,48 @@ import { listStyleForBlockType, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
+/**
+ * A heading, a code block, a quote or a callout is not a list: these commands
+ * clear the block's list style, as every Turn into target but the two lists
+ * does (#5691). The editor's pending commit is flushed first, as
+ * {@link handleListStyle} explains, so the style never goes without the change
+ * `/code` and `/quote` make in the editor. Page mode clears it its own way.
+ */
+async function clearListStyle(ctx: SlashCommandContext, failKey: string): Promise<void> {
+  if (ctx.clearListStyle) {
+    ctx.clearListStyle()
+    return
+  }
+  try {
+    await flushActiveDraft()
+    await setListStyle(ctx.blockId, 'none')
+  } catch (err) {
+    logger.error('useSlashCommandStructural', 'clearing the list style failed', undefined, err)
+    notify.error(ctx.t(failKey))
+  }
+}
+
 async function handleHeading(ctx: SlashCommandContext, level: number): Promise<void> {
   const stripped = readCurrentContent(ctx).replace(/^#{1,6}\s/, '')
   const newContent = `${'#'.repeat(level)} ${stripped}`
   await applyContentEdit(ctx, newContent, 'blockTree.setHeadingFailed')
+  await clearListStyle(ctx, 'blockTree.clearListStyleFailed')
 }
 
 async function handleCallout(ctx: SlashCommandContext, calloutType: string): Promise<void> {
   const newContent = `> [!${calloutType.toUpperCase()}] ${readCurrentContent(ctx)}`
   await applyContentEdit(ctx, newContent, 'slash.calloutFailed')
-  try {
-    await setListStyle(ctx.blockId, listStyleForBlockType('callout'))
-  } catch (err) {
-    logger.error('useSlashCommandStructural', 'setListStyle (callout) failed', undefined, err)
-    notify.error(ctx.t('slash.calloutFailed'))
-  }
+  await clearListStyle(ctx, 'slash.calloutFailed')
+}
+
+async function handleToggleBlock(
+  ctx: SlashCommandContext,
+  toggle: (editor: Editor) => void,
+): Promise<void> {
+  const editor = ctx.rovingEditor.editor
+  if (!editor) return
+  toggle(editor)
+  await clearListStyle(ctx, 'blockTree.clearListStyleFailed')
 }
 
 /**
@@ -152,13 +180,9 @@ export function useSlashCommandStructural(): SlashHandlerTables {
         tag: (ctx) => {
           ctx.rovingEditor.editor?.chain().focus().insertContent('@').run()
         },
-        code: (ctx) => {
-          const editor = ctx.rovingEditor.editor
-          if (editor) toggleCodeBlockSafely(editor)
-        },
-        quote: (ctx) => {
-          ctx.rovingEditor.editor?.chain().focus().toggleBlockquote().run()
-        },
+        code: (ctx) => handleToggleBlock(ctx, (editor) => toggleCodeBlockSafely(editor)),
+        quote: (ctx) =>
+          handleToggleBlock(ctx, (editor) => editor.chain().focus().toggleBlockquote().run()),
         // #215 — open the visual builder pre-populated instead of dumping raw
         // `{{query …}}` syntax; the builder inserts the generated expression.
         query: (ctx) => ctx.openQueryBuilder(),

@@ -139,7 +139,7 @@ describe('BlockListRenderer — middle click and Ctrl+click on a link chip', () 
     expect(open).not.toHaveBeenCalled()
   })
 
-  it('opens the chip’s target in a new tab in front on a Ctrl or Cmd click', () => {
+  it('opens the chip’s target in a background tab on a Ctrl or Cmd click', () => {
     const open = vi.fn()
     renderWith(open)
     const chip = screen.getByText('link')
@@ -147,10 +147,7 @@ describe('BlockListRenderer — middle click and Ctrl+click on a link chip', () 
     expect(fireEvent.click(chip, { ctrlKey: true })).toBe(false)
     expect(fireEvent.click(chip, { metaKey: true })).toBe(false)
 
-    expect(open.mock.calls).toEqual([
-      ['LINK_BLK001', true],
-      ['LINK_BLK001', true],
-    ])
+    expect(open.mock.calls).toEqual([['LINK_BLK001'], ['LINK_BLK001']])
   })
 
   it('leaves a Ctrl+click off a chip, and a plain click on one, to the block', () => {

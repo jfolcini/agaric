@@ -17,9 +17,9 @@
  *  - cmdk owns Arrow / Enter keyboard nav + `aria-activedescendant`,
  * Replacing the hand-rolled roving-focus model in.
  *  - `<CommandItem value={...}>` carries the unique selection id;
- *    `onSelect` fires on Enter or click. Modifier-key new-tab is
- *    detected via the same listener (cmdk fires the click event
- *    through, preserving `metaKey`/`ctrlKey`).
+ *    `onSelect` fires on Enter or click. A Ctrl/Cmd+Enter or click
+ *    opens the page in a background tab, detected via the same listener
+ *    (cmdk fires the click event through, preserving `metaKey`/`ctrlKey`).
  *
  * Mobile UX uses the same body via `<SearchSheet>`, which mounts
  * `<PaletteBody>` (exported below) inside its all-pages segment. The
@@ -83,6 +83,7 @@ import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useFailedOnce } from '@/hooks/useFailedOnce'
 import { useGenerationGuard } from '@/hooks/useGenerationGuard'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useOpenInBackgroundTab } from '@/hooks/useOpenInBackgroundTab'
 import { usePagePrefetchIntent } from '@/hooks/usePagePrefetchIntent'
 import { useStarredPages } from '@/hooks/useStarredPages'
 import { useVoiceInput } from '@/hooks/useVoiceInput'
@@ -205,7 +206,7 @@ export function PaletteBody({
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const spaceIsReady = useSpaceStore((s) => s.isReady)
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
-  const openInNewTab = useTabsStore((s) => s.openInNewTab)
+  const openInBackgroundTab = useOpenInBackgroundTab()
   // #2850 — warm the highlighted result's page subtree as arrow-key
   // traversal / mouse hover moves cmdk's active row. Debounced (shared dwell
   // constant) so fast traversal can't fan out one IPC per row; the
@@ -531,6 +532,13 @@ export function PaletteBody({
   })
   const showVoiceButton = isMobile && voice.supported
 
+  // A new tab opens behind the active one, as a Ctrl+click on a link does; mobile shows no tabs.
+  function openedBehind(pageId: string, pageTitle: string, newTab: boolean): boolean {
+    if (!newTab || openInBackgroundTab === undefined) return false
+    openInBackgroundTab(pageId, pageTitle)
+    return true
+  }
+
   function handleNavigateToPage(pageId: string, pageTitle: string, newTab: boolean): void {
     if (linkMode) {
       const ok = insertPageLinkInto(previousFocusedElement, pageTitle, previousSelectionRange)
@@ -549,11 +557,7 @@ export function PaletteBody({
       )
     }
     addRecentPage(pageId, pageTitle)
-    if (newTab) {
-      openInNewTab(pageId, pageTitle)
-    } else {
-      navigateToPage(pageId, pageTitle)
-    }
+    if (!openedBehind(pageId, pageTitle, newTab)) navigateToPage(pageId, pageTitle)
     onClose()
   }
 
@@ -564,11 +568,7 @@ export function PaletteBody({
     newTab: boolean,
   ): void {
     addRecentPage(pageId, pageTitle)
-    if (newTab) {
-      openInNewTab(pageId, pageTitle)
-    } else {
-      navigateToPage(pageId, pageTitle, blockId)
-    }
+    if (!openedBehind(pageId, pageTitle, newTab)) navigateToPage(pageId, pageTitle, blockId)
     onClose()
   }
 
@@ -583,7 +583,7 @@ export function PaletteBody({
 
   function handleRecentClick(page: RecentPage) {
     addRecentPage(page.id, page.title)
-    navigateToPage(page.id, page.title)
+    if (!openedBehind(page.id, page.title, consumeNewTab())) navigateToPage(page.id, page.title)
     onClose()
   }
 
@@ -773,8 +773,7 @@ export function PaletteBody({
       return
     }
     addRecentPage(page.id, page.title)
-    if (newTab) openInNewTab(page.id, page.title)
-    else navigateToPage(page.id, page.title)
+    if (!openedBehind(page.id, page.title, newTab)) navigateToPage(page.id, page.title)
     onClose()
   }
 

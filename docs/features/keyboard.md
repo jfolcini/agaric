@@ -97,6 +97,7 @@ The buffer uses the block editor's bindings from the catalog, your rebinds inclu
 | `Ctrl+B` | Toggle the sidebar (only when focus is outside the editor) |
 | `Ctrl+N` | Open the **New page** dialog (type a title, Enter creates; a blank title makes an Untitled page) |
 | `Ctrl+T` | Open in new tab (desktop) |
+| `Ctrl+Enter` (in the command palette) | Open the highlighted page in a background tab (desktop), as `Ctrl+click` on it does |
 | `Ctrl+W` | Close active tab (desktop) |
 | `Ctrl+Shift+T` | Reopen the last closed tab, on its pages and at its place (desktop; each window keeps its recently closed tabs for the session) |
 | `Ctrl+1` … `Ctrl+8` / `Ctrl+9` | Select the Nth tab / the last tab (desktop) |

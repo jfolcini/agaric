@@ -36,7 +36,7 @@ import type { BlockTypeToken } from '@/lib/block-type-convert'
  */
 export interface BlockActions {
   onNavigate?: ((id: string) => void) | undefined
-  /** Open a `[[link]]` or `((ref))` target's page in a new tab, behind the active one unless `inForeground`; unset on mobile. */
+  /** Open a `[[link]]` or `((ref))` target's page in a background tab; unset on mobile. */
   onOpenLinkInNewTab?: OpenLinkInNewTab | undefined
   onDelete?: ((blockId: string) => void) | undefined
   onIndent?: ((blockId: string) => void) | undefined

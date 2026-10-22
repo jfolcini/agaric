@@ -164,8 +164,8 @@ interface TabsStore {
    * the way `goBack` leaves it on the last tab. No-op when no tab holds any of them.
    */
   removePages: (pageIds: readonly string[]) => void
-  /** Open a page in a new tab and switch to it; `blockId` takes the cursor, as with `navigateToPage`. */
-  openInNewTab: (pageId: string, title: string, blockId?: string) => void
+  /** Open a page in a new tab and switch to it. */
+  openInNewTab: (pageId: string, title: string) => void
   /** Open a page in a new tab behind the active one, leaving the view and active tab as they are. */
   openInBackgroundTab: (pageId: string, title: string) => void
   /** Close a tab by index. If last tab closed, switch to 'pages' view. */
@@ -744,7 +744,7 @@ export const useTabsStore = create<TabsStore>()(
         }
       },
 
-      openInNewTab: (pageId: string, title: string, blockId?: string) => {
+      openInNewTab: (pageId: string, title: string) => {
         const state = get()
         const { tabs } = readActiveSlice(state)
         const newStack: PageEntry[] = [{ pageId, title }]
@@ -760,7 +760,7 @@ export const useTabsStore = create<TabsStore>()(
         const newIndex = newTabs.length - 1
         set(spliceTabs(state, newTabs, newIndex))
         setNavigationView('page-editor')
-        setNavigationSelectedBlockId(blockId ?? null)
+        setNavigationSelectedBlockId(null)
       },
 
       openInBackgroundTab: (pageId: string, title: string) => {
