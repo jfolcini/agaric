@@ -152,10 +152,10 @@ pub async fn flush_draft_inner(
     //    rather than erroring forever on a row nothing can flush.
     ensure_draft_within_max_content_length(&content)?;
 
-    // 4. prev_edit lookup (same logic as edit_block_inner) inside the tx.
-    // Delegates to the shared helper in
+    // 4. What the edit overwrites (same logic as edit_block_inner) inside the
+    //    tx. Delegates to the shared helper in
     //    `commands::blocks::crud` so both call sites stay in lockstep.
-    let prev_edit = super::blocks::find_prev_edit_in_tx(&mut tx, block_id_str).await?;
+    let overwrites = super::blocks::find_prev_edit_in_tx(&mut tx, block_id_str).await?;
 
     // 5. Append the edit_block op + delete the draft row, on the outer tx.
     //    `flush_draft_in_tx` returns the `OpRecord`. #2651: mirror
@@ -170,7 +170,7 @@ pub async fn flush_draft_inner(
     //    FTS/link reindex indexed the pre-flush text). The returned
     //    `ApplyEffects` is empty for Edit, so it is discarded.
     let record =
-        draft::flush_draft_in_tx(&mut tx, device_id, block_id_str, &content, prev_edit).await?;
+        draft::flush_draft_in_tx(&mut tx, device_id, block_id_str, &content, overwrites).await?;
     crate::materializer::apply_op_projected(&mut tx, &record, materializer.loro_state(), false)
         .await?;
     // Block-type-aware dispatch (matches `edit_block_inner`): the background
@@ -413,11 +413,11 @@ pub async fn flush_all_drafts_inner(
             continue;
         }
 
-        // prev_edit lookup (same logic as `flush_draft_inner` step 4) on
-        // the outer tx. `find_prev_edit_in_tx` takes `&mut SqliteConnection`,
+        // What the edit overwrites (same logic as `flush_draft_inner` step 4)
+        // on the outer tx. `find_prev_edit_in_tx` takes `&mut SqliteConnection`,
         // so deref through the `CommandTx` (`*tx`) and the inner
         // `Transaction` (`**tx`).
-        let prev_edit = super::blocks::find_prev_edit_in_tx(&mut tx, &block_id).await?;
+        let overwrites = super::blocks::find_prev_edit_in_tx(&mut tx, &block_id).await?;
 
         // Append the edit_block op + delete the draft row, on the outer tx.
         // #2651: mirror `edit_block_inner` — materialize `blocks.content` +
@@ -426,7 +426,7 @@ pub async fn flush_all_drafts_inner(
         // op unmaterialized until boot replay. Block-type-aware dispatch so the
         // `page_link_cache` rollup (not maintained in-tx) still gets rebuilt.
         let record =
-            draft::flush_draft_in_tx(&mut tx, device_id, &block_id, &content, prev_edit).await?;
+            draft::flush_draft_in_tx(&mut tx, device_id, &block_id, &content, overwrites).await?;
         crate::materializer::apply_op_projected(&mut tx, &record, materializer.loro_state(), false)
             .await?;
         tx.enqueue_edit_background(record, block_type);

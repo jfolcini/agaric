@@ -111,7 +111,7 @@
         }
       },
       "command": "create_block",
-      "comment": "The older op in the group. Undoing a create is always reversible, unlike an edit, which needs a prior text row in the op log."
+      "comment": "The older op in the group. Undoing a create is always reversible, unlike an edit applied as an op, which records no prior text and so needs a prior text row in the op log."
     },
     {
       "args": {

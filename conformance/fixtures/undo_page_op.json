@@ -1,5 +1,5 @@
 {
-  "description": "#5057 — `undo_page_op`, the positional (depth-addressed) undo. This is the one member of the undo cluster a static fixture can spell today: `undoDepth` is an ORDINAL (\"the newest undoable op on this page\"), where every other member is given an `OpRef { device_id, seq }` and the two runners' device ids differ. The seed row is edited TWICE because undoing an edit reconstructs the prior text from the op log: a block whose history starts at its seed row has no prior and the undo refuses with `non_reversible`. The return shape names only the two op_type fields for that same reason — `reversed_op_type` is what says WHICH op was undone, and it is the field the frontend turns into its toast (`useUndoShortcuts.ts` builds `undo.op.${snakeToCamel(reversed_op_type)}`).",
+  "description": "#5057 — `undo_page_op`, the positional (depth-addressed) undo. This is the one member of the undo cluster a static fixture can spell today: `undoDepth` is an ORDINAL (\"the newest undoable op on this page\"), where every other member is given an `OpRef { device_id, seq }` and the two runners' device ids differ. The seed row is edited TWICE because an edit applied as an op records no prior text, so its undo reconstructs one from the op log: a block whose history starts at its seed row has none there and the undo refuses with `non_reversible`. The return shape names only the two op_type fields for that same reason — `reversed_op_type` is what says WHICH op was undone, and it is the field the frontend turns into its toast (`useUndoShortcuts.ts` builds `undo.op.${snakeToCamel(reversed_op_type)}`).",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -101,7 +101,7 @@
         "toText": "first edit"
       },
       "command": "edit_block",
-      "comment": "S2's FIRST op. Undoing an edit reconstructs the prior text from the op log, so a block whose history starts at the seed row has nothing to restore and the undo would refuse with `non_reversible` — this op is what gives the edit below a prior to go back to."
+      "comment": "S2's FIRST op. An edit applied as an op records no prior text, so its undo reconstructs one from the op log, and a block whose history starts at the seed row has nothing there to restore: the undo would refuse with `non_reversible` — this op is what gives the edit below a prior to go back to."
     },
     {
       "args": {

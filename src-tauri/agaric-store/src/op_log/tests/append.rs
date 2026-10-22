@@ -53,6 +53,7 @@ async fn second_op_references_first_as_parent() {
         block_id: BlockId::test_id("BLK-PARENT"),
         to_text: "world".into(),
         prev_edit: None,
+        prior_text: None,
     });
     let r2 = append_local_op_at(&pool, TEST_DEVICE, p2, FIXED_TS)
         .await

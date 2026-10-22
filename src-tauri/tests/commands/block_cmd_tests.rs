@@ -10308,9 +10308,6 @@ async fn move_blocks_batch_op_refs_undo_the_whole_batch_5140() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    // Born via REAL create ops, not `insert_block`: the reverse of a move
-    // reconstructs the prior placement from the block's own prior op_log row
-    // (`find_prior_position`), so a raw-seeded block has no reverse.
     let p = create_block_inner(&pool, DEV, &mat, "page".into(), "P".into(), None, Some(0))
         .await
         .unwrap();

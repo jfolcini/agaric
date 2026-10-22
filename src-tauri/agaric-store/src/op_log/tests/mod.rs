@@ -96,6 +96,7 @@ pub(super) fn all_op_payloads() -> Vec<(&'static str, OpPayload)> {
                 block_id: BlockId::test_id("BLK001"),
                 to_text: "updated".into(),
                 prev_edit: None,
+                prior_text: None,
             }),
         ),
         (
@@ -124,6 +125,7 @@ pub(super) fn all_op_payloads() -> Vec<(&'static str, OpPayload)> {
                 new_parent_id: Some(BlockId::test_id("BLK000")),
                 new_position: 3,
                 new_index: None,
+                prior: None,
             }),
         ),
         (

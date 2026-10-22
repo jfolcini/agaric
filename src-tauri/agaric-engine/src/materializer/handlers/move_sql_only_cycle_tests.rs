@@ -50,6 +50,7 @@ async fn apply_move_block_sql_only_skips_cycle() {
             new_parent_id: Some(BlockId::from_trusted(B)),
             new_position: 1,
             new_index: None,
+            prior: None,
         },
     )
     .await
@@ -99,6 +100,7 @@ async fn apply_move_block_sql_only_allows_non_cycle() {
             new_parent_id: Some(BlockId::from_trusted(B)),
             new_position: 3,
             new_index: None,
+            prior: None,
         },
     )
     .await

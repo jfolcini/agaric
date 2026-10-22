@@ -575,6 +575,7 @@ async fn already_flushed_draft_just_gets_deleted() {
         block_id: BlockId::test_id(block_id),
         to_text: "some content".to_owned(),
         prev_edit: None,
+        prior_text: None,
     });
     append_local_op(&pool, device_id, op).await.unwrap();
 
@@ -624,6 +625,7 @@ async fn same_ms_real_edit_is_not_clobbered_by_recovery() {
         block_id: BlockId::test_id(block_id),
         to_text: "newer real edit".to_owned(),
         prev_edit: None,
+        prior_text: None,
     });
     append_local_op_at(&pool, device_id, op, TS).await.unwrap();
 
@@ -718,6 +720,7 @@ async fn backward_clock_step_does_not_resurrect_stale_draft_1256() {
         block_id: BlockId::test_id(block_id),
         to_text: "newer flushed edit".to_owned(),
         prev_edit: None,
+        prior_text: None,
     });
     let record = append_local_op_at(&pool, device_id, op, backward_ts)
         .await
@@ -917,6 +920,7 @@ async fn prev_edit_uses_latest_op_when_both_create_and_edit_exist() {
         block_id: BlockId::test_id(block_id),
         to_text: "v2".to_owned(),
         prev_edit: Some((device_id.to_owned(), 1)),
+        prior_text: None,
     });
     let edit_record = append_local_op(&pool, device_id, edit_op).await.unwrap();
 
@@ -1011,6 +1015,7 @@ async fn recovery_with_mixed_flushed_and_unflushed_drafts() {
         block_id: BlockId::test_id("block-flushed"),
         to_text: "flushed content".to_owned(),
         prev_edit: None,
+        prior_text: None,
     });
     append_local_op(&pool, device_id, op).await.unwrap();
 
@@ -1127,6 +1132,7 @@ async fn recovery_report_counts_are_accurate() {
             block_id: BlockId::test_id(&bid),
             to_text: "x".to_owned(),
             prev_edit: None,
+            prior_text: None,
         });
         append_local_op(&pool, device_id, op).await.unwrap();
     }
@@ -1180,6 +1186,7 @@ async fn find_prev_edit_returns_most_recent_op_not_first() {
             block_id: BlockId::test_id(block_id),
             to_text: "v2".to_owned(),
             prev_edit: Some((device_id.to_owned(), 1)),
+            prior_text: None,
         }),
     )
     .await
@@ -1349,6 +1356,7 @@ async fn recovery_leaves_blocks_content_unchanged_for_already_flushed_draft() {
         block_id: BlockId::test_id(block_id),
         to_text: "current content".to_owned(),
         prev_edit: None,
+        prior_text: None,
     });
     append_local_op(&pool, device_id, op).await.unwrap();
 
@@ -1687,6 +1695,7 @@ async fn find_prev_edit_returns_single_dag_head() {
             block_id: BlockId::test_id(block_id),
             to_text: "v2".to_owned(),
             prev_edit: Some((device_id.to_owned(), 1)),
+            prior_text: None,
         }),
     )
     .await
@@ -1743,6 +1752,7 @@ async fn find_prev_edit_prefers_local_device_head_when_multiple_heads_exist() {
             block_id: BlockId::test_id(block_id),
             to_text: "edit from A".to_owned(),
             prev_edit: Some((dev_a.to_owned(), 1)),
+            prior_text: None,
         }),
         1_736_942_460_000,
     )
@@ -1758,6 +1768,7 @@ async fn find_prev_edit_prefers_local_device_head_when_multiple_heads_exist() {
             block_id: BlockId::test_id(block_id),
             to_text: "edit from B".to_owned(),
             prev_edit: Some((dev_a.to_owned(), 1)),
+            prior_text: None,
         }),
         1_736_942_520_000,
     )
@@ -1827,6 +1838,7 @@ async fn find_prev_edit_multi_head_no_local_tiebreak_is_deterministic_m6() {
             block_id: BlockId::test_id(block_id),
             to_text: "edit from A".to_owned(),
             prev_edit: Some((dev_a.to_owned(), 1)),
+            prior_text: None,
         }),
         1_736_942_460_000,
     )
@@ -1841,6 +1853,7 @@ async fn find_prev_edit_multi_head_no_local_tiebreak_is_deterministic_m6() {
             block_id: BlockId::test_id(block_id),
             to_text: "edit from B".to_owned(),
             prev_edit: Some((dev_a.to_owned(), 1)),
+            prior_text: None,
         }),
         1_736_942_520_000,
     )
@@ -2284,6 +2297,7 @@ async fn perf26_draft_recovery_filters_to_target_block_only() {
         block_id: other_a.clone(),
         to_text: "new".into(),
         prev_edit: None,
+        prior_text: None,
     });
     append_local_op_at(&pool, device_id, recent_op, FAR_FUTURE)
         .await
@@ -2417,6 +2431,7 @@ async fn perf26_draft_recovery_at_10k_ops() {
                     block_id: bid.clone(),
                     to_text: "n".into(),
                     prev_edit: None,
+                    prior_text: None,
                 }),
                 FAR_PAST,
             )
@@ -3393,6 +3408,7 @@ fn oracle_workload(page_id: &str, child_ids: &[String], total: usize) -> Vec<OpP
         new_parent_id: Some(BlockId::from_trusted(page_id)),
         new_position: i64::try_from(creates).unwrap(),
         new_index: Some(i64::try_from(creates - 1).unwrap()),
+        prior: None,
     }));
     for e in 0..(total - creates - 2) {
         let id = &child_ids[e % creates];
@@ -3400,6 +3416,7 @@ fn oracle_workload(page_id: &str, child_ids: &[String], total: usize) -> Vec<OpP
             block_id: BlockId::from_trusted(id),
             to_text: format!("edit {e} of {id}"),
             prev_edit: None,
+            prior_text: None,
         }));
     }
     ops.push(OpPayload::DeleteBlock(DeleteBlockPayload {
@@ -3788,6 +3805,7 @@ async fn crash_tail_ops_on_blocks_deleted_later_reach_the_engine_5630() {
             block_id: id(X),
             to_text: "X edited".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         set_property("todo_state", Some("TODO"), None),
         OpPayload::DeleteProperty(DeletePropertyPayload {
@@ -3809,6 +3827,7 @@ async fn crash_tail_ops_on_blocks_deleted_later_reach_the_engine_5630() {
             new_parent_id: Some(id(X)),
             new_position: 3,
             new_index: Some(2),
+            prior: None,
         }),
     ];
     let edits_before_the_page_is_deleted = vec![
@@ -3993,6 +4012,7 @@ async fn crash_tail_move_in_move_out_then_delete_the_old_parent_5630() {
             new_parent_id: Some(id(parent)),
             new_position: index + 1,
             new_index: Some(index),
+            prior: None,
         })
     };
     let (pool, _dir) = test_pool().await;
@@ -4103,6 +4123,7 @@ async fn replay_over_an_engine_ahead_of_the_cursor_keeps_an_outdented_block_thro
             new_parent_id: Some(id(parent)),
             new_position: index + 1,
             new_index: Some(index),
+            prior: None,
         })
     };
     let (pool, _dir) = test_pool().await;
@@ -4628,6 +4649,7 @@ async fn retried_replay_op_keeps_replay_routing_5647() {
         block_id: BlockId::test_id(X),
         to_text: "X edited".into(),
         prev_edit: None,
+        prior_text: None,
     });
     let edit = apply_like_a_command(&pool, &session, device_id, edit).await;
     let delete = OpPayload::DeleteBlock(DeleteBlockPayload {
@@ -4900,6 +4922,7 @@ async fn replay_restore_then_create(per_op: bool) -> Vec<String> {
             block_id: BlockId::test_id("R5418C1"),
             to_text: format!("edit {seq}"),
             prev_edit: None,
+            prior_text: None,
         });
         seq = append_local_op(&pool, device_id, edit).await.unwrap().seq;
     }
@@ -5220,6 +5243,7 @@ async fn boot_replay_preserves_new_scheme_sibling_order_603() {
             new_parent_id: Some(BlockId::from_trusted(PAGE_ID)),
             new_position: 99, // junk legacy breadcrumb — routing must use new_index
             new_index: Some(0),
+            prior: None,
         }),
     ] {
         append_local_op(&pool, device_id, payload).await.unwrap();
@@ -5401,6 +5425,7 @@ async fn boot_replay_reprojects_batched_over_chunk_boundary_2295() {
             new_parent_id: Some(BlockId::from_trusted(PAGE_ID)),
             new_position: 99, // junk legacy breadcrumb — routing must use new_index
             new_index: Some(0),
+            prior: None,
         }),
     )
     .await

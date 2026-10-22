@@ -96,6 +96,7 @@ async fn redo_append_is_forward_equivalent_and_links_reversed_op_3443() {
             block_id: BlockId::test_id("BLK-REDO"),
             to_text: "reapplied".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         FIXED_TS,
         &reverses,

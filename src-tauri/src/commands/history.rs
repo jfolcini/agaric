@@ -66,8 +66,9 @@ async fn reproject_live_sibling_group(
 }
 
 /// Preflight a reverse [`OpPayload::MoveBlock`] against the CURRENT tree
-/// state. `compute_reverse` reconstructs the prior placement purely from
-/// op-log history, so by the time an undo/redo/revert applies it the target
+/// state. `compute_reverse` restores the placement the move recorded when it
+/// ran (or the op log holds, for a move written before #6046), so by the time
+/// an undo/redo/revert applies it the target
 /// parent may have been soft-deleted or purged, or may have become a
 /// DESCENDANT of the moved block (reverting only the older of two moves).
 /// The forward path validates both inside its tx (parent liveness + the
@@ -776,6 +777,31 @@ impl ReverseCohortFanout {
         crate::materializer::remove_deleted_cohort_fts(pool, &self.deleted).await;
         crate::materializer::reindex_restored_cohort_fts(pool, &self.restored).await;
     }
+}
+
+/// `reverse` as it is appended: a set or a move records what it overwrites,
+/// as the forward writers do (#6014, #6046). Undoing it, a redo or the undo of
+/// a redo, then restores what was live when it ran, a value or a placement a
+/// peer set in between included, not what this device's op log last saw.
+async fn with_recorded_prior_in_tx(
+    tx: &mut CommandTx,
+    reverse: &OpPayload,
+) -> Result<OpPayload, AppError> {
+    let mut reverse = reverse.clone();
+    match &mut reverse {
+        OpPayload::SetProperty(p) => {
+            p.prior = Some(
+                agaric_engine::block_ops::held_property_value(tx, p.block_id.as_str(), &p.key)
+                    .await?
+                    .unwrap_or_default(),
+            );
+        }
+        OpPayload::MoveBlock(p) => {
+            p.prior = super::blocks::live_placement(tx, p.block_id.as_str()).await?;
+        }
+        _ => {}
+    }
+    Ok(reverse)
 }
 
 /// Apply the materialized effect of a reverse [`OpPayload`] to the blocks/tags/properties
@@ -1549,9 +1575,9 @@ async fn revert_ops_in_tx(
     }
 
     // Phase 1: Validate all ops are reversible by computing their reverse payloads.
-    let (reverses, computed_skipped) =
+    let (reverses, computed_skipped, moves_recorded_priors) =
         compute_reverses_newest_first(pool, &ops, skip_non_reversible).await?;
-    let plan = plan_reverse_apply_order(&reverses);
+    let plan = plan_reverse_apply_order(&reverses, moves_recorded_priors);
 
     // Phase 2: Apply all reverses inside the caller's IMMEDIATE transaction.
     // Collected in APPLICATION order tagged with the original op's `created_at`,
@@ -1584,8 +1610,9 @@ async fn revert_ops_in_tx(
 type PendingReverse = (OpRef, OpPayload, i64, String);
 
 /// Phase 1 of [`revert_ops_in_tx`]: compute every op's reverse payload and
-/// sort the batch newest-first. Returns the reverses and the number of
-/// non-reversible ops skipped (always 0 unless `skip_non_reversible`).
+/// sort the batch newest-first. Returns the reverses, the number of
+/// non-reversible ops skipped (always 0 unless `skip_non_reversible`), and
+/// whether any reverted move recorded its prior placement (#6046).
 ///
 /// A bounded number of batched reads, whatever the batch size:
 ///   1. one UNION-ALL `op_log` lookup for every input `OpRef`
@@ -1610,10 +1637,11 @@ async fn compute_reverses_newest_first(
     pool: &SqlitePool,
     ops: &[OpRef],
     skip_non_reversible: bool,
-) -> Result<(Vec<PendingReverse>, u64), AppError> {
+) -> Result<(Vec<PendingReverse>, u64, bool), AppError> {
     use agaric_engine::reverse;
 
     let mut non_reversible_skipped: u64 = 0;
+    let mut moves_recorded_priors = false;
     // #2549: refuse to revert a REPLICATED audit op (`is_replicated = 1`,
     // #2481/#2495). Such rows were ingested for provenance only and never
     // applied to local state, so applying their inverse would corrupt local
@@ -1623,7 +1651,7 @@ async fn compute_reverses_newest_first(
     let records = reverse::get_op_records_batch(pool, ops).await?;
     // #2020: `compute_reverse_batch` returns a per-op `Result`. A
     // non-reversible op surfaces as an inner `Err(NonReversible)` (e.g. a
-    // position-less `move_block`, a `delete_attachment` whose paired
+    // `move_block` with no placement to restore, a `delete_attachment` whose paired
     // `add_attachment` is gone, or a `purge_block`) — the SAME unified
     // mechanism that subsumes the old static `[purge_block,
     // delete_attachment]` skip list. The non-reversible *contract* lives
@@ -1647,6 +1675,11 @@ async fn compute_reverses_newest_first(
                 return Err(e);
             }
         };
+        if record.op_type == "move_block" {
+            let forward: agaric_store::op::MoveBlockPayload =
+                serde_json::from_str(&record.payload)?;
+            moves_recorded_priors |= forward.prior.is_some();
+        }
         reverses.push((
             op_ref.clone(),
             reverse_payload,
@@ -1665,7 +1698,7 @@ async fn compute_reverses_newest_first(
             .then_with(|| b.0.seq.cmp(&a.0.seq)) // seq DESC
             .then_with(|| b.0.device_id.cmp(&a.0.device_id)) // device_id DESC
     });
-    Ok((reverses, non_reversible_skipped))
+    Ok((reverses, non_reversible_skipped, moves_recorded_priors))
 }
 
 /// The order [`apply_reverses_in_order`] applies a newest-first batch in, from
@@ -1700,8 +1733,17 @@ struct ReverseApplyPlan<'a> {
 /// that needs LIFO, or a mixed group) keeps the newest-first order `reverses`
 /// arrives in. The RESULTS Vec is re-sorted newest-first by the caller
 /// regardless, so the redo stack is unaffected.
-fn plan_reverse_apply_order(reverses: &[PendingReverse]) -> ReverseApplyPlan<'_> {
-    let distinct_move_group = reverses.len() > 1
+///
+/// The reorder is for slots the op-log scan reconstructs, from each block's own
+/// last create or move. A move that recorded where it left the block (#6046)
+/// restores exactly the state before it, which composes only newest-first, so
+/// a group in which any move did (`moves_recorded_priors`) keeps that order.
+fn plan_reverse_apply_order(
+    reverses: &[PendingReverse],
+    moves_recorded_priors: bool,
+) -> ReverseApplyPlan<'_> {
+    let distinct_move_group = !moves_recorded_priors
+        && reverses.len() > 1
         && reverses
             .iter()
             .all(|(_, p, _, _)| matches!(p, OpPayload::MoveBlock(_)))
@@ -1838,6 +1880,7 @@ async fn apply_reverses_in_order(
             }
             return Err(e);
         }
+        let reverse_payload = &with_recorded_prior_in_tx(tx, reverse_payload).await?;
 
         let new_op_type = reverse_payload.op_type_str().to_owned();
 
@@ -1930,7 +1973,7 @@ async fn apply_reverses_in_order(
 /// revert path classifies them through `reverse::is_skippable_non_reversible`,
 /// so both statically non-reversible op-types (`purge_block`,
 /// `delete_attachment`) and ops only discovered to be non-reversible at runtime
-/// (a position-less `move_block`, a `delete_attachment` whose paired
+/// (a `move_block` with no placement to restore, a `delete_attachment` whose paired
 /// `add_attachment` is gone) are skipped uniformly. The restore completes and
 /// reverses everything that CAN be reversed.
 ///
@@ -2012,7 +2055,7 @@ pub async fn restore_page_to_op_inner(
     //     filtered + counted here.
     //   * DYNAMIC (`reverse::is_skippable_non_reversible`) — ops that
     //     `compute_reverse_batch` only discovers to be non-reversible at
-    //     RUNTIME (a position-less `move_block`, a `delete_attachment`
+    //     RUNTIME (a `move_block` with no placement to restore, a `delete_attachment`
     //     whose paired `add_attachment` is gone). These flow through as
     //     candidates and are SKIPPED+COUNTED by `revert_ops_in_tx`.
     //
@@ -2245,6 +2288,7 @@ pub async fn undo_page_op_inner(
         device_id: target.device_id,
         seq: target.seq,
     };
+    let reverse_payload = with_recorded_prior_in_tx(&mut tx, &reverse_payload).await?;
     let op_ts = reverse_op_timestamp(&reverse_payload);
     let op_record = op_log::append_local_undo_op_in_tx(
         &mut tx,
@@ -2593,6 +2637,7 @@ pub async fn redo_page_op_inner(
         device_id: undo_device_id,
         seq: undo_seq,
     };
+    let reverse_payload = with_recorded_prior_in_tx(&mut tx, &reverse_payload).await?;
     let op_ts = reverse_op_timestamp(&reverse_payload);
     let op_record = op_log::append_local_redo_op_in_tx(
         &mut tx,
@@ -3942,6 +3987,7 @@ mod tests {
             block_id: child_id.clone(),
             to_text: "v1".into(),
             prev_edit: None,
+            prior_text: None,
         });
         append_local_op_at(&pool, DEV, edit1, FIXED_TS)
             .await
@@ -4080,6 +4126,7 @@ mod tests {
                 block_id: child_id.clone(),
                 to_text: text.into(),
                 prev_edit: None,
+                prior_text: None,
             });
             append_local_op_at(&pool, DEV, edit, FIXED_TS + i64::try_from(i).unwrap())
                 .await
@@ -4101,6 +4148,7 @@ mod tests {
             block_id: child_id.clone(),
             to_text: "edit1".into(),
             prev_edit: Some((DEV.to_string(), 2)),
+            prior_text: None,
         })
         .unwrap();
         insert_raw_op_is_undo(
@@ -4263,6 +4311,7 @@ mod tests {
             block_id: child_id.clone(),
             to_text: "v2".into(),
             prev_edit: None,
+            prior_text: None,
         });
         append_local_op_at(pool, DEV, edit, FIXED_TS + 1000)
             .await
@@ -4755,6 +4804,7 @@ mod tests {
             block_id: child_id.clone(),
             to_text: "v2".into(),
             prev_edit: None,
+            prior_text: None,
         });
         append_local_op_at(pool, DEV, edit, FIXED_TS + 1000)
             .await
@@ -5415,6 +5465,7 @@ mod tests {
                 block_id: real_id.clone(),
                 to_text: "v2".into(),
                 prev_edit: None,
+                prior_text: None,
             });
             let rec = append_local_op_at(pool, DEV, edit, FIXED_TS).await.unwrap();
             Some(OpRef {
@@ -5869,6 +5920,7 @@ mod tests {
             block_id: page.real_id.clone(),
             to_text: "v3".into(),
             prev_edit: None,
+            prior_text: None,
         });
         // Stamped after the sweep so it is the newest op on the page.
         let ts = agaric_store::db::next_delete_ms() + 1_000;
@@ -5940,6 +5992,7 @@ mod tests {
                 new_parent_id: Some(BlockId::from(parent)),
                 new_position: slot + 1,
                 new_index: Some(slot),
+                prior: None,
             }),
             seq, // created_at
             "move_block".to_owned(),
@@ -5963,7 +6016,7 @@ mod tests {
             pending_move(2, "B", "Q", 0),
             pending_move(1, "A", "P", 0),
         ];
-        let plan = plan_reverse_apply_order(&reverses);
+        let plan = plan_reverse_apply_order(&reverses, false);
         assert!(plan.distinct_move_group);
         assert_eq!(plan.apply_order, vec![2, 0, 1]);
         assert_eq!(plan.group_target_parent.len(), 3);
@@ -5972,12 +6025,28 @@ mod tests {
         assert_eq!(plan.group_target_parent["C"], Some("P"));
     }
 
+    /// #6046: the same group as above, from moves that recorded their prior
+    /// placement. Each reverse restores exactly the state before its move, so
+    /// the plan keeps the newest-first arrival order and excludes nothing.
+    #[test]
+    fn plan_reverse_apply_order_keeps_lifo_for_moves_that_recorded_priors() {
+        let reverses = vec![
+            pending_move(3, "C", "P", 2),
+            pending_move(2, "B", "Q", 0),
+            pending_move(1, "A", "P", 0),
+        ];
+        let plan = plan_reverse_apply_order(&reverses, true);
+        assert!(!plan.distinct_move_group);
+        assert_eq!(plan.apply_order, vec![0, 1, 2]);
+        assert!(plan.group_target_parent.is_empty());
+    }
+
     /// A same-block move sequence needs LIFO: the plan keeps the newest-first
     /// arrival order and excludes nothing.
     #[test]
     fn plan_reverse_apply_order_keeps_lifo_for_a_same_block_move_sequence() {
         let reverses = vec![pending_move(2, "A", "Q", 0), pending_move(1, "A", "P", 3)];
-        let plan = plan_reverse_apply_order(&reverses);
+        let plan = plan_reverse_apply_order(&reverses, false);
         assert!(!plan.distinct_move_group);
         assert_eq!(plan.apply_order, vec![0, 1]);
         assert!(plan.group_target_parent.is_empty());
@@ -5996,6 +6065,7 @@ mod tests {
                 block_id: BlockId::from("B"),
                 to_text: String::new(),
                 prev_edit: None,
+                prior_text: None,
             }),
             3,
             "edit_block".to_owned(),
@@ -6005,21 +6075,22 @@ mod tests {
             pending_move(2, "C", "P", 0),
             pending_move(1, "A", "P", 2),
         ];
-        let plan = plan_reverse_apply_order(&reverses);
+        let plan = plan_reverse_apply_order(&reverses, false);
         assert!(!plan.distinct_move_group);
         assert_eq!(plan.apply_order, vec![0, 1, 2]);
         assert!(plan.group_target_parent.is_empty());
     }
 
     // -----------------------------------------------------------------
-    // Reversing a `move_block` has to reconstruct the slot it came from, so
-    // `find_prior_position` scans for an earlier local `move_block` /
-    // `create_block` and refuses `NotFound` when the log holds none. A group
-    // reverts with `skip_non_reversible = false`, so one such refusal rolls
-    // the whole group back.
+    // Reversing a `move_block` has to reconstruct the slot it came from. A
+    // move written before #6046 records none, so `find_prior_position` scans
+    // for an earlier local `move_block` / `create_block` and answers
+    // `NonReversible` when the log holds none. A group reverts with
+    // `skip_non_reversible = false`, so one such refusal rolls the whole group
+    // back; a restore skips it.
     //
     // #5057 read that refusal as a defect in the group's op ENUMERATION. It
-    // is not: an empty group answers `Ok(vec![])`, so a `NotFound` can only
+    // is not: an empty group answers `Ok(vec![])`, so the refusal can only
     // come from reverse computation. The pair below pins both arms of the one
     // variable that decides it, because pinning only the refusal would leave
     // the reader with the same wrong hypothesis.
@@ -6085,6 +6156,7 @@ mod tests {
             new_parent_id: Some(page_id.clone()),
             new_position: MOVED_TO_POSITION,
             new_index: Some(1),
+            prior: None,
         });
         append_local_op_at(pool, DEV, mv, FIXED_TS).await.unwrap();
         sqlx::query("UPDATE blocks SET position = ? WHERE id = ?")
@@ -6125,7 +6197,7 @@ mod tests {
             .await
             .expect_err("the single-op path refuses the move for the same reason");
         assert!(
-            matches!(&d1_err, AppError::NotFound(m) if m.contains("no prior position found")),
+            matches!(&d1_err, AppError::NonReversible { op_type } if op_type == "move_block"),
             "depth 1 (the move): got {d1_err:?}"
         );
 
@@ -6133,7 +6205,7 @@ mod tests {
             .await
             .expect_err("the group must refuse while the move has no prior placement");
         assert!(
-            matches!(&grp_err, AppError::NotFound(m) if m.contains("no prior position found")),
+            matches!(&grp_err, AppError::NonReversible { op_type } if op_type == "move_block"),
             "the group: got {grp_err:?}"
         );
         mat.shutdown();

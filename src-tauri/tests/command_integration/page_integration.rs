@@ -957,6 +957,7 @@ async fn restore_page_to_op_skips_non_reversible_and_completes() {
             new_parent_id: None,
             new_position: 5,
             new_index: None,
+            prior: None,
         }),
         9_000_000_000_000,
     )

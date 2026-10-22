@@ -330,6 +330,7 @@ async fn run_engine_arm() -> (Vec<ShapeRow>, Option<i64>, Option<i64>, Option<i6
         block_id: BlockId::from_trusted(NORMAL_CHILD_ID),
         to_text: "edited-content".into(),
         prev_edit: None,
+        prior_text: None,
     });
     let edit_record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, edit)
         .await
@@ -477,6 +478,7 @@ async fn run_fallback_arm() -> (Vec<ShapeRow>, Option<i64>, Option<i64>, Option<
             block_id: BlockId::from_trusted(NORMAL_CHILD_ID),
             to_text: "edited-content".into(),
             prev_edit: None,
+            prior_text: None,
         },
     )
     .await

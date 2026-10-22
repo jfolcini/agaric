@@ -332,6 +332,7 @@ async fn edit_via_kernel(
         block_id: BlockId::from_trusted(id),
         to_text: to_text.into(),
         prev_edit: None,
+        prior_text: None,
     });
     let record = agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
         .await
@@ -356,6 +357,7 @@ async fn move_via_kernel(
         new_parent_id: new_parent.map(BlockId::from_trusted),
         new_position: new_index + 1,
         new_index: Some(new_index),
+        prior: None,
     });
     let record = agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
         .await
@@ -563,6 +565,7 @@ async fn run_structural_kernel_arm(
         block_id: BlockId::from_trusted(S_A),
         to_text: "structural-a-edited".into(),
         prev_edit: None,
+        prior_text: None,
     });
     let edit_record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, edit)
         .await
@@ -579,6 +582,7 @@ async fn run_structural_kernel_arm(
         new_parent_id: Some(BlockId::from_trusted(S_A)),
         new_position: 1,
         new_index: Some(0),
+        prior: None,
     });
     let mv_record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, mv)
         .await

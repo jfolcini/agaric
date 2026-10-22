@@ -127,6 +127,7 @@ async fn apply_op_edit() {
             block_id: BlockId::test_id("APPLY_EDIT_1"),
             to_text: "after edit".into(),
             prev_edit: None,
+            prior_text: None,
         }),
     )
     .await;
@@ -274,6 +275,7 @@ async fn apply_op_move() {
             new_parent_id: Some(BlockId::test_id("APPLY_MOVE_PARENT")),
             new_position: 5,
             new_index: None,
+            prior: None,
         }),
     )
     .await;

@@ -6,8 +6,8 @@ use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
 use agaric_store::db::ReadPool;
 use agaric_store::op::{
-    CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
-    RestoreBlockPayload,
+    BlockPlacement, CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload,
+    OpPayload, RestoreBlockPayload,
 };
 use agaric_store::op_log::{OpRecord, resolve_prev_edit_target};
 
@@ -51,6 +51,9 @@ pub async fn reverse_edit_block(
     record: &OpRecord,
 ) -> Result<OpPayload, AppError> {
     let payload: EditBlockPayload = serde_json::from_str(&record.payload)?;
+    if let Some(prior_text) = payload.prior_text {
+        return Ok(reverse_edit_to(payload.block_id, prior_text, record));
+    }
 
     // Resolve the causal pointer, if the op carries one. `None` covers
     // "no pointer" and "pointer dangles (op-log compaction)" — both mean the
@@ -101,11 +104,22 @@ pub async fn reverse_edit_block(
             },
         )?;
 
-    Ok(OpPayload::EditBlock(EditBlockPayload {
-        block_id: payload.block_id,
+    Ok(reverse_edit_to(payload.block_id, prior_text, record))
+}
+
+/// The edit that puts `block_id` back to `prior_text`, pointing at the edit it
+/// reverses.
+pub(crate) fn reverse_edit_to(
+    block_id: BlockId,
+    prior_text: String,
+    record: &OpRecord,
+) -> OpPayload {
+    OpPayload::EditBlock(EditBlockPayload {
+        block_id,
         to_text: prior_text,
         prev_edit: Some((record.device_id.clone(), record.seq)),
-    }))
+        prior_text: None,
+    })
 }
 
 /// A resolved `prev_edit` row paired with the `(device_id, seq)` of the
@@ -120,10 +134,12 @@ type ResolvedPrevEdit<'a> = (&'a (String, String), (&'a str, i64));
 ///
 /// Follow the op's CAUSAL predecessor (`EditBlockPayload::prev_edit`) when it
 /// resolves, rather than reconstructing the pre-image purely by timestamp
-/// order. `prev_edit` is the `(device_id, seq)` of the edit/create that was
-/// the live value when this edit was authored (stamped by
-/// `find_prev_edit_in_tx`, which keys on `seq DESC` — the per-device causal
-/// counter — NOT `created_at`). Restoring exactly that op's text is the
+/// order. `prev_edit` is the `(device_id, seq)` of the edit/create whose
+/// text the block held when this edit was authored (stamped by
+/// `find_prev_edit_in_tx`: the newest row holding that text, else the newest
+/// by the per-device causal counter `seq` — NOT `created_at`). An edit that
+/// records its `prior_text` (#6046) never gets here: both kernels restore
+/// that first. Restoring exactly that op's text is the
 /// correct undo target even under cross-device clock skew, where the
 /// `(created_at, seq, device_id)` scan could pick a DIFFERENT ancestor that
 /// the live edit had already superseded.
@@ -199,23 +215,20 @@ pub(crate) fn text_of_prior_row(
 
 /// Reverse of a `move_block` op: re-home the block to its prior sibling slot.
 ///
-/// #1526: unlike [`reverse_edit_block`], the reverse of a move CANNOT follow a
-/// causal `prev_edit`-style pointer — [`MoveBlockPayload`] carries no
-/// predecessor reference, so the only available reconstruction of the prior
-/// placement is [`find_prior_position`]'s `(created_at, seq, device_id)`
-/// timestamp scan. This is therefore INTENTIONALLY timestamp-ordered: undo of a
-/// move is well-defined under single-device editing (where `seq` is a strictly
-/// monotonic causal counter, so timestamp order agrees with causal order), and
-/// the placement-recovery semantics for cross-device clock skew would require a
-/// wire-format (op payload) extension — out of scope under AGENTS.md
-/// "Architectural Stability". If a `prev_move` pointer is ever added to
-/// `MoveBlockPayload`, mirror the `prev_edit` branch in `reverse_edit_block`
-/// here.
+/// The slot the move recorded (`MoveBlockPayload::prior`) wins: the op log
+/// cannot always supply it, since a block created or moved on a peer has no
+/// local create or move behind it (#6046). Only an op written before the
+/// field existed falls back to [`find_prior_position`]'s
+/// `(created_at, seq, device_id)` scan of local rows, and with neither, the
+/// move has no inverse.
 pub async fn reverse_move_block(
     pool: &SqlitePool,
     record: &OpRecord,
 ) -> Result<OpPayload, AppError> {
     let payload: MoveBlockPayload = serde_json::from_str(&record.payload)?;
+    if let Some(prior) = payload.prior {
+        return Ok(reverse_move_to(payload.block_id, prior));
+    }
     let prior = find_prior_position(
         pool,
         payload.block_id.as_str(),
@@ -224,17 +237,26 @@ pub async fn reverse_move_block(
         &record.device_id,
     )
     .await?
-    .ok_or_else(|| {
-        AppError::NotFound(format!(
-            "no prior position found for block '{}' before ({}, {})",
-            payload.block_id, record.device_id, record.seq
-        ))
+    .ok_or_else(|| AppError::NonReversible {
+        op_type: record.op_type.clone(),
     })?;
     // #400: restore the block to its prior sibling slot. New-scheme prior ops
     // carry a 0-based `index`; legacy prior ops carry a sparse `position`.
     Ok(OpPayload::MoveBlock(
         prior.into_move_payload(payload.block_id),
     ))
+}
+
+/// The move that puts `block_id` back where a move recorded it was.
+pub(crate) fn reverse_move_to(block_id: BlockId, prior: BlockPlacement) -> OpPayload {
+    OpPayload::MoveBlock(
+        PriorPlacement {
+            parent: prior.parent_id,
+            index: Some(prior.index),
+            position: None,
+        }
+        .into_move_payload(block_id),
+    )
 }
 
 // Reverse-of-restore is a bare `DeleteBlock(block_id)`. The
@@ -332,12 +354,14 @@ impl PriorPlacement {
                 // 1-based breadcrumb mirroring new_index (overflow-safe, shared).
                 new_position: agaric_store::pagination::index_to_provisional_position(idx),
                 new_index: Some(idx),
+                prior: None,
             },
             None => MoveBlockPayload {
                 block_id,
                 new_parent_id: self.parent,
                 new_position: self.position.unwrap_or(1),
                 new_index: None,
+                prior: None,
             },
         }
     }
@@ -459,6 +483,7 @@ mod tests_m63 {
                 block_id: BlockId::test_id("BLKA"),
                 to_text: "A first edit".into(),
                 prev_edit: None,
+                prior_text: None,
             }),
             1_736_942_460_000,
         )
@@ -488,6 +513,7 @@ mod tests_m63 {
                 block_id: BlockId::test_id("BLKB"),
                 to_text: "B first edit".into(),
                 prev_edit: None,
+                prior_text: None,
             }),
             1_736_942_580_000,
         )
@@ -503,6 +529,7 @@ mod tests_m63 {
                 block_id: BlockId::test_id("BLKA"),
                 to_text: "A second edit".into(),
                 prev_edit: None,
+                prior_text: None,
             }),
             1_736_942_640_000,
         )
@@ -552,6 +579,7 @@ mod tests_m63 {
                 new_parent_id: Some(BlockId::test_id("P2")),
                 new_position: 3,
                 new_index: None,
+                prior: None,
             }),
             1_736_942_460_000,
         )
@@ -582,6 +610,7 @@ mod tests_m63 {
                 new_parent_id: Some(BlockId::test_id("P9X")),
                 new_position: 99,
                 new_index: None,
+                prior: None,
             }),
             1_736_942_580_000,
         )
@@ -597,6 +626,7 @@ mod tests_m63 {
                 new_parent_id: Some(BlockId::test_id("P3")),
                 new_position: 5,
                 new_index: None,
+                prior: None,
             }),
             1_736_942_640_000,
         )
@@ -656,6 +686,7 @@ mod tests_m63 {
                 new_parent_id: Some(BlockId::test_id("PNEW")),
                 new_position: 3,
                 new_index: Some(2),
+                prior: None,
             }),
             1_736_950_060_000,
         )
@@ -670,6 +701,7 @@ mod tests_m63 {
                 new_parent_id: Some(BlockId::test_id("POTHER")),
                 new_position: 9,
                 new_index: Some(8),
+                prior: None,
             }),
             1_736_950_120_000,
         )
@@ -725,6 +757,7 @@ mod tests_m63 {
                 block_id: BlockId::test_id("BLKLOWER"),
                 to_text: "edited".into(),
                 prev_edit: None,
+                prior_text: None,
             }),
             1_736_942_460_000,
         )

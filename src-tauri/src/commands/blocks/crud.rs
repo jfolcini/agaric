@@ -15,52 +15,45 @@ use super::super::*;
 use agaric_engine::block_ops::{create_block_in_tx, set_property_in_tx};
 use agaric_store::space::{SpaceId, SpaceScope};
 
-/// Look up the causal predecessor for the given `block_id` — the most-recent
-/// `edit_block`/`create_block` op for this block REGARDLESS OF PROVENANCE
-/// (local or replicated) — scoped to the supplied connection (typically a
-/// live transaction). Returns the originating
-/// `(device_id, seq)` pair if any, shaped to drop straight into
-/// [`EditBlockPayload::prev_edit`].
+/// What an edit of `block_id` records about the text it overwrites, read on
+/// the caller's transaction: the `prev_edit` pointer and, when no op holds
+/// that text, the text itself as `prior_text` (#6046).
 ///
-/// Extracted to deduplicate the identical query that used
-/// to live inline in [`edit_block_inner`] and `commands::drafts::flush_draft_inner`.
-/// Keeping it on a `&mut SqliteConnection` lets both callers pass either
-/// `&mut **CommandTx` (this file) or `&mut *Transaction` (drafts.rs)
-/// without extra deref gymnastics.
+/// The pointer names the newest row whose text is the block's live content,
+/// so its undo restores what the block held. Causal order alone cannot pick
+/// it: `seq` is per device, so a peer's edit at a lower `seq` would lose to
+/// this device's older one (#3655). No row holds the live content after a
+/// Loro merge, or for a block whose ops never reached this log; the pointer
+/// then falls back to causal order and the edit carries the text. An ordinary
+/// edit carries none.
 ///
-/// #3281/#3644: this is the STAMPING site for the `prev_edit` pointer that
-/// `reverse::block_ops::reverse_edit_block` later follows. It now shares the
-/// single scan primitive with every other reconstruction site (see
-/// [`agaric_store::op_log::latest_block_edit_before`]).
-///
-/// It deliberately does NOT carry the `is_replicated = 0` guard that the
-/// blind `StrictlyBefore` prior-state walk carries — do not "restore the
-/// consistency" here. The question this scan answers is "what is the live
-/// value of the block I am about to overwrite", and a peer's edit that
-/// arrived through Loro IS part of that live value even though its op_log
-/// row is audit-only. Excluding replicated rows stamps the pointer at
-/// already-superseded text, and for a block that originated on a peer it
-/// stamps `None` — leaving the user's first local edit with no
-/// reconstruction source at all, so Ctrl+Z fails outright (#3644). #3281
-/// prescribed the guard here; that prescription was wrong, and its own
-/// Impact paragraph conceded the content did reach this device.
-///
-/// The `BlockEditScan::LatestCausal` ordering (`seq DESC, device_id DESC`,
-/// deliberately NOT `created_at`) is unchanged: #1526 depends on the pointer
-/// naming the causal predecessor, which is what makes it trustworthy under
-/// cross-device clock skew.
+/// Neither scan filters `is_replicated = 0`: a peer's edit that arrived
+/// through Loro is the live value, and for a peer-born block its audit row is
+/// the only one there is (#3644).
 // `pub` so `tests/app_tests/reverse_tests.rs` can pin the #3644 stamping site.
 pub async fn find_prev_edit_in_tx(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,
-) -> Result<Option<(String, i64)>, AppError> {
-    let row = agaric_store::op_log::latest_block_edit_before(
+) -> Result<(Option<(String, i64)>, Option<String>), AppError> {
+    use agaric_store::op_log::{BlockEditScan, latest_block_edit_before};
+
+    let live: String = sqlx::query_scalar!("SELECT content FROM blocks WHERE id = ?", block_id)
+        .fetch_optional(&mut *conn)
+        .await?
+        .flatten()
+        .unwrap_or_default();
+    let holding = latest_block_edit_before(
         &mut *conn,
         block_id,
-        agaric_store::op_log::BlockEditScan::LatestCausal,
+        BlockEditScan::LatestHolding { text: &live },
     )
     .await?;
-    Ok(row.map(|r| (r.device_id, r.seq)))
+    if let Some(row) = holding {
+        return Ok((Some((row.device_id, row.seq)), None));
+    }
+    let latest =
+        latest_block_edit_before(&mut *conn, block_id, BlockEditScan::LatestCausal).await?;
+    Ok((latest.map(|r| (r.device_id, r.seq)), Some(live)))
 }
 
 #[instrument(skip(pool, device_id, materializer, content), err)]
@@ -475,10 +468,9 @@ pub(crate) async fn edit_block_in_tx(
     let parent_id = existing.parent_id;
     let position = existing.position;
 
-    // 2. Find prev_edit inside transaction (delegates to the shared
-    //    helper — same query also used by `flush_draft_inner`; see
-    // (b)).
-    let prev_edit = find_prev_edit_in_tx(tx, &block_id).await?;
+    // 2. What the edit overwrites, read inside the transaction (the shared
+    //    helper `flush_draft_inner` also uses).
+    let (prev_edit, prior_text) = find_prev_edit_in_tx(tx, &block_id).await?;
 
     // Referential cross-space integrity: reject an edit that
     // introduces `[[ULID]]` / `#[ULID]` tokens pointing at a block in a
@@ -496,6 +488,7 @@ pub(crate) async fn edit_block_in_tx(
         block_id: block_id_ulid,
         to_text: to_text.clone(),
         prev_edit,
+        prior_text,
     };
 
     let op_record = op_log::append_local_op_in_tx(

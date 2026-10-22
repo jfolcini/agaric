@@ -1044,6 +1044,7 @@ mod tests {
                 block_id: BlockId::from_trusted(block_id),
                 to_text: String::new(),
                 prev_edit: None,
+                prior_text: None,
             }),
             created_at,
         )

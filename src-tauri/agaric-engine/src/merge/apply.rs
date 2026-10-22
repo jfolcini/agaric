@@ -53,6 +53,7 @@ mod engine_apply_unit_tests {
             block_id: BlockId::from_trusted(block_id),
             to_text: to_text.into(),
             prev_edit: None,
+            prior_text: None,
         })
     }
 
@@ -424,6 +425,7 @@ mod engine_apply_unit_tests {
             new_parent_id: Some(BlockId::from_trusted(PARENT)),
             new_position: 99,
             new_index: Some(0),
+            prior: None,
         });
         dispatch(&state, &space, "DEV/4", &mv);
 
@@ -474,6 +476,7 @@ mod engine_apply_unit_tests {
             new_parent_id: None,
             new_position: 0,
             new_index: None,
+            prior: None,
         });
         // `op_id` mirrors the cohort fan-out shape:
         // `<device>/<seq>#cohort/<block_id>`.

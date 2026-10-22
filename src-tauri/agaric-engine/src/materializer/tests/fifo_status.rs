@@ -24,6 +24,7 @@ async fn foreground_distinct_block_edits_land_in_fifo_order() {
             block_id: BlockId::test_id("PAR_A"),
             to_text: "updated-A".into(),
             prev_edit: None,
+            prior_text: None,
         }),
     )
     .await;
@@ -33,6 +34,7 @@ async fn foreground_distinct_block_edits_land_in_fifo_order() {
             block_id: BlockId::test_id("PAR_B"),
             to_text: "updated-B".into(),
             prev_edit: None,
+            prior_text: None,
         }),
     )
     .await;

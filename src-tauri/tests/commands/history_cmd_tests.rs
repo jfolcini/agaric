@@ -778,6 +778,7 @@ async fn seed_page_with_ops(
             block_id: child.id.clone(),
             to_text: format!("edit-{i}"),
             prev_edit: None,
+            prior_text: None,
         });
         // #109 Phase 2: op_log.created_at is INTEGER epoch-ms; pass the
         // millisecond value directly (numeric ordering replaces the old

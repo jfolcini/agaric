@@ -175,14 +175,22 @@ pub struct CreateBlockPayload {
 pub struct EditBlockPayload {
     pub block_id: BlockId,
     pub to_text: String,
-    /// `(device_id, seq)` reference to the immediately preceding edit of this
-    /// block — forms the CAS key for editor conflict detection. The `device_id`
+    /// `(device_id, seq)` reference to the edit or create whose text the block
+    /// held when this edit was written — forms the CAS key for editor conflict
+    /// detection. The `device_id`
     /// string participates in the canonical payload / hash preimage (see
     /// `normalize_block_ids`); it must be in its already-canonical form (today:
     /// UUID, always ASCII-safe). Compare the I-Core-11 note on `parent_seqs`.
     ///
     /// Serialized as a JSON two-element array `[device_id, seq]` or `null`.
     pub prev_edit: Option<(String, i64)>,
+    /// The text the edit overwrote, which its undo restores, recorded only
+    /// when no op in the log holds it: a Loro merge of two devices' edits, or a
+    /// block whose ops never reached this log (#6046). `None` otherwise and on
+    /// ops written before it existed; omitted then, so an ordinary edit keeps
+    /// its size and an older op its hash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prior_text: Option<String>,
 }
 
 /// Delete always cascades to all descendants. The `cascade` field
@@ -229,6 +237,22 @@ pub struct MoveBlockPayload {
     /// New-scheme 0-based sibling slot (#400). `None` ⇒ a pre-#400 op.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new_index: Option<i64>,
+    /// Where the block sat before the move, which its undo restores. The op
+    /// log cannot always supply it: a block created on a peer has no local
+    /// create, and a peer's move of it no local move (#6046). `None` on ops
+    /// written before it existed and on the boot repairs' moves; omitted then,
+    /// so those ops keep their hash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prior: Option<BlockPlacement>,
+}
+
+/// A block's parent and its 0-based slot among that parent's other live
+/// children in `(position, id)` order, the slot a `move_block`'s `new_index`
+/// names.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockPlacement {
+    pub parent_id: Option<BlockId>,
+    pub index: i64,
 }
 
 /// Payload for the `add_tag` op — associates a tag block with a content/page block.
@@ -835,6 +859,7 @@ mod tests {
                 block_id: BlockId::from_string(TEST_BID).unwrap(),
                 to_text: "updated".into(),
                 prev_edit: Some(("dev-1".into(), 1)),
+                prior_text: None,
             }),
             OpPayload::DeleteBlock(DeleteBlockPayload {
                 block_id: BlockId::from_string(TEST_BID).unwrap(),
@@ -851,6 +876,7 @@ mod tests {
                 new_parent_id: Some(BlockId::from_string(TEST_PID).unwrap()),
                 new_position: 3,
                 new_index: None,
+                prior: None,
             }),
             OpPayload::AddTag(AddTagPayload {
                 block_id: BlockId::from_string(TEST_BID).unwrap(),
@@ -947,6 +973,7 @@ mod tests {
             block_id: BlockId::test_id("B1"),
             to_text: "new text".into(),
             prev_edit: Some(("device-1".into(), 5)),
+            prior_text: None,
         };
         let json = serde_json::to_string(&with).unwrap();
         assert!(json.contains("[\"device-1\",5]"));
@@ -955,6 +982,7 @@ mod tests {
             block_id: BlockId::test_id("B1"),
             to_text: "new text".into(),
             prev_edit: None,
+            prior_text: None,
         };
         let json = serde_json::to_string(&without).unwrap();
         assert!(json.contains("\"prev_edit\":null"));
@@ -1068,6 +1096,7 @@ mod tests {
             new_parent_id: None,
             new_position: 3,
             new_index: Some(2),
+            prior: None,
         });
         let mjson = serde_json::to_string(&mv).unwrap();
         assert!(
@@ -1507,6 +1536,7 @@ mod tests {
             block_id: BlockId::from_string(TEST_BID).unwrap(),
             to_text: String::new(),
             prev_edit: None,
+            prior_text: None,
         });
         let json = serde_json::to_string(&payload).unwrap();
         let deser: OpPayload = serde_json::from_str(&json).unwrap();
@@ -1523,6 +1553,7 @@ mod tests {
             block_id: BlockId::from_string(TEST_BID).unwrap(),
             to_text: long_text.clone(),
             prev_edit: None,
+            prior_text: None,
         });
         let json = serde_json::to_string(&payload).unwrap();
         let deser: OpPayload = serde_json::from_str(&json).unwrap();
@@ -1615,6 +1646,7 @@ mod tests {
             new_parent_id: None,
             new_position: 0,
             new_index: None,
+            prior: None,
         });
         let json = serde_json::to_string(&payload).unwrap();
         assert!(

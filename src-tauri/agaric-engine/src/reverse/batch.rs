@@ -40,9 +40,10 @@
 //! `prev_edit: None` — the one shape where the pointer-first and
 //! timestamp-scan kernels trivially agree, and a shape production never
 //! produces. The DECISION now lives in exactly one place,
-//! [`block_ops::resolve_prior_text`], which both kernels call; only the
-//! plumbing that feeds it (per-op queries vs. prefetched UNION-ALL batches)
-//! differs. When adding a new context-bearing op-type here, prefer sharing
+//! [`block_ops::resolve_prior_text`], which both kernels call for an edit
+//! that records no `prior_text` (#6046); only the plumbing that feeds it
+//! (per-op queries vs. prefetched UNION-ALL batches) differs. When adding a
+//! new context-bearing op-type here, prefer sharing
 //! the decision function with `block_ops`/`property_ops`/`attachment_ops`
 //! over hand-copying it — and seed the oracle with a fixture that can
 //! actually tell the two apart.
@@ -166,12 +167,13 @@ pub fn is_statically_non_reversible(op_type: &str) -> bool {
 /// RUNTIME (not statically by op-type) by:
 ///   * the `purge_block` arm (no inverse exists at all),
 ///   * `delete_attachment` whose paired `add_attachment` is gone, and
-///   * `move_block` whose only prior placement is a `create_block` with
-///     neither `index` nor `position` (an append recorded before #5155).
+///   * `move_block` that records no prior placement (an op written before
+///     #6046) and whose only local one is missing, or is a `create_block`
+///     with neither `index` nor `position` (an append recorded before #5155).
 ///
 /// Centralizing the predicate here is what lets a restore skip the
-/// dynamically-discovered non-reversible ops (a position-less
-/// `move_block`, a `delete_attachment` with a missing add) that the old
+/// dynamically-discovered non-reversible ops (a `move_block` with no
+/// placement to restore, a `delete_attachment` with a missing add) that the old
 /// static op-type list could never have caught — the bug behind #2020,
 /// where the first such op aborted the entire restore.
 #[must_use]
@@ -192,9 +194,9 @@ pub fn is_skippable_non_reversible(err: &AppError) -> bool {
 ///   * `Ok(payload)` — the op's reverse payload.
 ///   * `Err(AppError::NonReversible { .. })` — the op has no inverse
 ///     (purge_block, an attachment restore whose `add_attachment` is
-///     gone, a move-of-create missing position, or — #3280 — an
-///     `edit_block` whose prior text cannot be reconstructed from either
-///     its causal `prev_edit` pointer or the local timestamp scan).
+///     gone, a `move_block` with no prior placement to restore, or — #3280
+///     — an `edit_block` whose prior text cannot be reconstructed from its
+///     record, its causal `prev_edit` pointer or the local timestamp scan).
 ///     Callers decide whether to SKIP (point-in-time restore) or abort
 ///     (interactive undo); see [`is_skippable_non_reversible`].
 ///
@@ -202,10 +204,10 @@ pub fn is_skippable_non_reversible(err: &AppError) -> bool {
 /// abort the whole computation regardless of caller policy:
 ///   * `AppError::Validation` on unknown `op_type` strings.
 ///   * `AppError::NotFound` when an op's prior context is missing
-///     (move_block, set_property, delete_property arms). #3280 moved the
-///     `edit_block` arm OFF this list: a peer-originated block has no
-///     local prior text at all, so a fatal error there aborted entire
-///     restores that had explicitly asked to skip non-reversible ops.
+///     (set_property, delete_property arms). #3280 moved the `edit_block`
+///     arm OFF this list, and #6046 the `move_block` arm: a peer-originated
+///     block has no local prior row at all, so a fatal error there aborted
+///     entire restores that had explicitly asked to skip non-reversible ops.
 ///   * `serde_json::Error` (via `From`) for malformed payloads, and any
 ///     SQL error from the prior-context prefetch.
 ///
@@ -901,6 +903,13 @@ fn build_reverse_edit_block(
     prior: Option<&(String, String)>,
 ) -> Result<OpPayload, AppError> {
     let payload: EditBlockPayload = serde_json::from_str(&record.payload)?;
+    if let Some(prior_text) = payload.prior_text {
+        return Ok(block_ops::reverse_edit_to(
+            payload.block_id,
+            prior_text,
+            record,
+        ));
+    }
     let prev_ptr = payload
         .prev_edit
         .as_ref()
@@ -919,11 +928,11 @@ fn build_reverse_edit_block(
                 op_type: record.op_type.clone(),
             }
         })?;
-    Ok(OpPayload::EditBlock(EditBlockPayload {
-        block_id: payload.block_id,
-        to_text: prior_text,
-        prev_edit: Some((record.device_id.clone(), record.seq)),
-    }))
+    Ok(block_ops::reverse_edit_to(
+        payload.block_id,
+        prior_text,
+        record,
+    ))
 }
 
 fn build_reverse_move_block(
@@ -931,11 +940,12 @@ fn build_reverse_move_block(
     prior: Option<&(String, String)>,
 ) -> Result<OpPayload, AppError> {
     let payload: MoveBlockPayload = serde_json::from_str(&record.payload)?;
-    let (prior_op_type, prior_payload) = prior.ok_or_else(|| {
-        AppError::NotFound(format!(
-            "no prior position found for block '{}' before ({}, {})",
-            payload.block_id, record.device_id, record.seq
-        ))
+    if let Some(recorded) = payload.prior {
+        return Ok(block_ops::reverse_move_to(payload.block_id, recorded));
+    }
+    // An op written before #6046 records nothing.
+    let (prior_op_type, prior_payload) = prior.ok_or_else(|| AppError::NonReversible {
+        op_type: record.op_type.clone(),
     })?;
     // #400: restore the prior sibling slot. New-scheme prior ops carry a 0-based
     // index; pre-#400 ops carry a 1-based position. `(parent, index, position)`.
@@ -971,6 +981,7 @@ fn build_reverse_move_block(
         new_parent_id: old_parent,
         new_position,
         new_index,
+        prior: None,
     }))
 }
 

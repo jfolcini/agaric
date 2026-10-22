@@ -192,6 +192,7 @@ async fn full_apply_op_keeps_engine_and_sql_sibling_order_in_lockstep() {
             new_parent_id: Some(BlockId::from_trusted(PAGE_ID)),
             new_position: 99,
             new_index: Some(0),
+            prior: None,
         }),
     )
     .await;

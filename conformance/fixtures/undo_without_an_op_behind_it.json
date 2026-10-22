@@ -1,0 +1,232 @@
+{
+  "description": "#6046 — undoing a move and an edit of blocks no op in this log created. A block born on another device reaches this one through the engine, so the op log holds no create for it, just as it holds none for a seeded block here. A move records the slot it left and an edit the text it overwrote when no op holds it, so both undo; the mock records the same in `old_parent_id` / `old_position` and `from_text`. Before #6046 the move's undo refused with `not_found` and the edit's with `non_reversible`. Both writes run as commands: a write applied as an op records nothing.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "No ops",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "seed two",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "seed three",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "seed four",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 5,
+      "ops": [
+        {
+          "op_type": "move_block"
+        },
+        {
+          "op_type": "move_block"
+        },
+        {
+          "op_type": "move_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "move_a_block_no_op_placed",
+      "returns": ["B4#new_parent_id=B1#new_position=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "move_another_to_the_top",
+      "returns": ["B3#new_parent_id=B1#new_position=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_first_move",
+      "returns": ["undo_op#reversed_op_type=move_block#new_op_type=move_block#is_redo=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "edit_a_block_no_op_wrote",
+      "returns": ["B2#content=edited"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_edit",
+      "returns": ["undo_op#reversed_op_type=edit_block#new_op_type=edit_block#is_redo=false"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "children_after_the_undos",
+      "rows": [
+        "B3#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "B2#parent_id=B1#page_id=B1#position=2#deleted_at=null",
+        "B4#parent_id=B1#page_id=B1#position=3#deleted_at=null"
+      ],
+      "total_count": null
+    }
+  ],
+  "name": "undo_without_an_op_behind_it",
+  "ops": [
+    {
+      "args": {
+        "blockIds": ["S4"],
+        "newIndex": 0,
+        "newParentId": "S1"
+      },
+      "command": "move_blocks_batch",
+      "comment": "O1 — S4 moves from the end of S1 to the top: S4, S2, S3.",
+      "name": "move_a_block_no_op_placed",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S3"],
+        "newIndex": 0,
+        "newParentId": "S1"
+      },
+      "command": "move_blocks_batch",
+      "comment": "O2 — S3 moves to the top too: S3, S4, S2. It stays there, so the settled state is not the seed's.",
+      "name": "move_another_to_the_top",
+      "via": "command"
+    },
+    {
+      "args": {
+        "opRef": "O1"
+      },
+      "command": "undo_op",
+      "comment": "O3 — S4 goes back to the end, the slot O1 recorded: S3, S2, S4.",
+      "name": "undo_the_first_move",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "edited"
+      },
+      "command": "edit_block",
+      "comment": "O4 — S2's first edit: no op holds its seed text, so the edit records it.",
+      "name": "edit_a_block_no_op_wrote",
+      "via": "command"
+    },
+    {
+      "args": {
+        "opRef": "O4"
+      },
+      "command": "undo_op",
+      "comment": "S2 is back to its seed text.",
+      "name": "undo_the_edit",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "request": {
+          "limit": 10,
+          "parentId": "S1"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "The observation: S3 on top, where O2 left it, then S2 and S4 in their seeded order.",
+      "name": "children_after_the_undos"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "No ops",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "seed two",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "seed three",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "seed four",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

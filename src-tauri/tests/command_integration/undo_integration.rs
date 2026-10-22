@@ -166,6 +166,7 @@ async fn undo_cross_page_move_reprojects_source_group_dense() {
             new_parent_id: Some(BlockId::from_trusted(S2)),
             new_position: 1,
             new_index: Some(0),
+            prior: None,
         }),
     )
     .await;
@@ -344,6 +345,7 @@ async fn undo_cross_parent_move_persists_settled_position_both_groups() {
             new_parent_id: Some(BlockId::from_trusted(S2)),
             new_position: 1,
             new_index: Some(0),
+            prior: None,
         }),
     )
     .await;
@@ -1053,6 +1055,7 @@ async fn undo_redo_edit_converges_engine_2655() {
             block_id: BlockId::from_trusted(BLK),
             to_text: "modified".into(),
             prev_edit: None,
+            prior_text: None,
         }),
     )
     .await;

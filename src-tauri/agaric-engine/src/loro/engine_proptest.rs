@@ -265,6 +265,7 @@ fn resolve_op(
                 block_id: BlockId::from_trusted(target),
                 to_text: new_content.clone(),
                 prev_edit: None,
+                prior_text: None,
             }))
         }
         OpKind::Delete { index } => {
@@ -299,6 +300,7 @@ fn resolve_op(
                 new_parent_id: None,
                 new_position: *position,
                 new_index: None,
+                prior: None,
             }))
         }
         OpKind::SetProperty { index, key, value } => {

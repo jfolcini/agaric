@@ -455,6 +455,7 @@ async fn dispatch_edit_block_enqueues_reindex_block_tag_refs() {
             block_id: BlockId::test_id(src),
             to_text: format!("edited: #[{tag}]"),
             prev_edit: None,
+            prior_text: None,
         }),
     )
     .await;

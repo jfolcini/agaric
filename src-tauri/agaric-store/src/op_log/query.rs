@@ -58,25 +58,33 @@ pub struct BlockEditRow {
 ///   land on a replicated audit row means reconstructing prior state from a
 ///   row nobody named, and that guess can surface content this device never
 ///   applied. It keeps the guard (#2549/#2495).
-/// * [`LatestCausal`](BlockEditScan::LatestCausal) and
-///   [`AtOrBefore`](BlockEditScan::AtOrBefore) are ANCHORED. The first
-///   answers "what is the live value of this block right now", at the moment
+/// * [`LatestHolding`](BlockEditScan::LatestHolding),
+///   [`LatestCausal`](BlockEditScan::LatestCausal) and
+///   [`AtOrBefore`](BlockEditScan::AtOrBefore) are ANCHORED. The first two
+///   answer "what is the live value of this block right now", at the moment
 ///   a local edit is authored — and a peer's edit that arrived through Loro
 ///   genuinely IS part of the live value, so excluding it would stamp the
-///   pointer at superseded text. The second snaps to the op the user picked
+///   pointer at superseded text. The third snaps to the op the user picked
 ///   out of the history list, which `get_block_history` deliberately shows
-///   replicated rows in (#2481). Filtering either one does not prevent a bad
+///   replicated rows in (#2481). Filtering any of them does not prevent a bad
 ///   guess; it discards the answer.
 #[derive(Debug, Clone, Copy)]
 pub enum BlockEditScan<'a> {
+    /// [`LatestCausal`](BlockEditScan::LatestCausal), restricted to the rows
+    /// whose text is `text`. Provenance: ALL rows, replicated included.
+    ///
+    /// Used to STAMP `EditBlockPayload::prev_edit` at the row that holds the
+    /// block's live content, which its undo restores (#6046). Which device
+    /// wrote that row, and at what `seq`, does not matter: two rows holding
+    /// the same text restore the same text.
+    LatestHolding { text: &'a str },
     /// Unbounded, ordered by the CAUSAL key `(seq, device_id)` DESC.
     /// Provenance: ALL rows, replicated included — see the type-level note.
     ///
-    /// Used to STAMP `EditBlockPayload::prev_edit`. #1526: `seq` is the
-    /// per-device causal counter, and the pointer must name the op that was
-    /// the live value when the edit was authored — deliberately NOT the
-    /// wall-clock-nearest op, which is what makes the pointer trustworthy
-    /// under cross-device clock skew.
+    /// Used to STAMP `EditBlockPayload::prev_edit` when no row holds the
+    /// block's live content ([`LatestHolding`](BlockEditScan::LatestHolding)
+    /// found none). #1526: `seq` is the per-device causal counter, which is
+    /// what makes the pointer trustworthy under cross-device clock skew.
     ///
     /// #3655: `seq` being PER-DEVICE is also this variant's limit. Ordering
     /// by `seq DESC` compares counters that are only comparable within a
@@ -85,9 +93,9 @@ pub enum BlockEditScan<'a> {
     /// authored later. `device_id DESC` then makes an equal-`seq`
     /// cross-device collision resolve DETERMINISTICALLY (pinned by
     /// `latest_block_edit_before_latest_causal_tie_breaks_on_device_id_3655`)
-    /// — deterministic, not causally correct. A causally correct answer would
-    /// need a vector clock or a Loro frontier, which is a wire-format change
-    /// and out of scope under AGENTS.md "Architectural Stability".
+    /// — deterministic, not causally correct. That is why the stamp asks
+    /// `LatestHolding` first, and records the overwritten text itself when no
+    /// row holds it (#6046).
     LatestCausal,
     /// Strictly before `(created_at, seq, device_id)` in the canonical
     /// `(created_at, seq, device_id)` total order.
@@ -172,6 +180,7 @@ where
 {
     let bid = block_id.to_ascii_uppercase();
     let row = match scan {
+        BlockEditScan::LatestHolding { text } => latest_holding(executor, &bid, text).await?,
         BlockEditScan::LatestCausal => {
             sqlx::query_as!(
                 BlockEditRow,
@@ -226,6 +235,31 @@ where
         }
     };
     Ok(row)
+}
+
+/// The [`BlockEditScan::LatestHolding`] arm of [`latest_block_edit_before`].
+async fn latest_holding<'e, E>(
+    executor: E,
+    bid: &str,
+    text: &str,
+) -> Result<Option<BlockEditRow>, AppError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    Ok(sqlx::query_as!(
+        BlockEditRow,
+        "SELECT device_id, seq, op_type, payload FROM op_log \
+         WHERE block_id = ?1 \
+           AND op_type IN ('edit_block', 'create_block') \
+           AND json_extract(payload, CASE op_type WHEN 'edit_block' \
+               THEN '$.to_text' ELSE '$.content' END) = ?2 \
+         ORDER BY seq DESC, device_id DESC \
+         LIMIT 1",
+        bid,
+        text,
+    )
+    .fetch_optional(executor)
+    .await?)
 }
 
 /// Resolve an `EditBlockPayload::prev_edit` pointer to the pointed-at op's

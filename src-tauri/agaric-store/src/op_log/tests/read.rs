@@ -179,6 +179,7 @@ async fn seed_cross_device_collision(pool: &SqlitePool, block_id: &str, at: i64,
                 block_id: BlockId::test_id(block_id),
                 to_text: format!("from {dev}"),
                 prev_edit: None,
+                prior_text: None,
             }),
             at,
         )
@@ -208,6 +209,7 @@ async fn latest_block_edit_before_strictly_before_tie_breaks_on_device_id_382() 
                 block_id: BlockId::test_id("BLKTIE"),
                 to_text: "anchor".into(),
                 prev_edit: None,
+                prior_text: None,
             }),
             FIXED_TS,
         )
@@ -308,6 +310,7 @@ async fn latest_block_edit_before_latest_causal_tie_breaks_on_device_id_3655() {
                     block_id: BlockId::test_id("BLKCAU"),
                     to_text: format!("from {dev}"),
                     prev_edit: None,
+                    prior_text: None,
                 }),
                 FIXED_TS,
             )

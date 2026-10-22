@@ -27,6 +27,7 @@ async fn resolve_prev_edit_target_returns_pointed_at_op_3443() {
             block_id: BlockId::test_id("BLK-PREV"),
             to_text: "second".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         FIXED_TS,
     )

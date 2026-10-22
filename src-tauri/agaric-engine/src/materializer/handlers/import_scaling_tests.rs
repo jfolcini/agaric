@@ -471,6 +471,7 @@ async fn move_child_record(
         new_parent_id: Some(BlockId::from_trusted(PAGE_ID)),
         new_position: new_index,
         new_index: Some(new_index),
+        prior: None,
     });
     agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
         .await
