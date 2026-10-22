@@ -44,7 +44,8 @@ test.describe('Turn into by the Ctrl+Shift+L chord @editor', () => {
     const { editor, list } = await openPickerAtEnd(page)
     await list.locator('[data-testid="suggestion-item"]', { hasText: 'Quote' }).first().click()
 
-    await expect(editor.locator('blockquote')).toHaveText(GS_3_TEXT)
+    // The caret is in the quote, so its `> ` is drawn (Show Markdown syntax around the cursor).
+    await expect(editor.locator('blockquote')).toHaveText(`> ${GS_3_TEXT}`)
 
     await reopenPage(page, 'Getting Started')
     await expect(staticBlock(page).locator('blockquote')).toHaveText(GS_3_TEXT)

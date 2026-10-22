@@ -27,6 +27,10 @@
  * stays an atom whose id is not text, so Backspace and Delete take it whole as
  * before and the syntax is no part of the selection. An unresolved chip's
  * label already reads in its syntax (`[[01ABCDEF...]]`), so it gets none.
+ * So do the block constructs, on the selection's lines: a quote's `> ` run (a
+ * callout's `> [!TYPE] ` on its first line), a code block's fences on lines of
+ * their own, and the `$` or `$$` of math selected or beside the caret, whose
+ * LaTeX its node view edits.
  *
  * A link's URL is edited through the link popover (Ctrl+K, or the selection
  * bubble's link button), not in its `](url)`.
@@ -57,6 +61,7 @@ import {
   marksTypedAt,
   OUTSIDE_HEADING_MARKER,
   revealedChipMarkers,
+  revealedConstructMarkers,
   revealedMarkers,
   revealedRunsAt,
 } from '@/editor/revealed-markers'
@@ -137,8 +142,15 @@ function revealDecorations(state: EditorState, statusOf: ChipStatus): Decoration
       key: `md-reveal-chip:${m.text}:${m.side}`,
     }),
   )
+  const constructs = revealedConstructMarkers(state).map((m) =>
+    Decoration.widget(m.pos, () => markerDom(m.text, 'syntax-marker'), {
+      side: m.side,
+      key: `md-reveal-syntax:${m.text}:${m.side}`,
+    }),
+  )
   return DecorationSet.create(state.doc, [
     ...chips,
+    ...constructs,
     ...revealedMarkers(state).map((m) => {
       const name = m.kind === 'heading' ? 'heading' : m.run.mark.type.name
       return Decoration.widget(m.pos, () => markerDom(m.text), {
