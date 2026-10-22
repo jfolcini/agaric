@@ -436,6 +436,34 @@ describe('Notion export (#6032)', () => {
     expect(loaded?.content).toBe('owner:: Ann\n\n# Plan: Q3\n\nNote: this line\nis prose\n')
   })
 
+  it('leaves a code block as written: no callout and no link made of what it shows', async () => {
+    const code = [
+      '```html',
+      '<details>',
+      '<summary>More</summary>',
+      `<a href="Other%20${OTHER}.md">[Other](Other%20${OTHER}.md)</a>`,
+      '</details>',
+      '```',
+    ].join('\n')
+    const page = folderFile([`# Plan\n\n${code}`], `Plan ${PLAN}.md`, `Export/Plan ${PLAN}.md`)
+
+    const [loaded] = await loadAll([page])
+
+    expect(loaded?.content).toBe(code)
+  })
+
+  it('keeps as prose the property lines of a page with a key the app reserves', async () => {
+    const page = folderFile(
+      ['# Plan\n\nSpace: Room 4\nOwner: Ann\n\nBody'],
+      `Plan ${PLAN}.md`,
+      `Export/Plan ${PLAN}.md`,
+    )
+
+    const [loaded] = await loadAll([page])
+
+    expect(loaded?.content).toBe('Space: Room 4\nOwner: Ann\n\nBody')
+  })
+
   it('reports the database tables apart from other skipped files', () => {
     expect(skippedFiles(notionFiles())).toEqual({ other: 0, databases: 2 })
   })

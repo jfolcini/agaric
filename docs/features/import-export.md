@@ -33,7 +33,7 @@ Each note becomes a page titled by its notebook path and title (`Projects/Roadma
 
 Unzip Notion's *Markdown & CSV* export and pick the folder. A folder whose `.md` files mostly end in Notion's 32-hex page id (`Plan 0123…cdef.md`) is read as a Notion export; any other folder is untouched.
 
-- **Kept:** each page, titled without the id, folders too (`Export/Plan/Sub`); links between pages (`[Sub](Plan%20<id>/Sub%20<id>.md)`), which name the pages they import as; a database row's `Key: value` lines under the title as page properties, the key lowercased with `-` for spaces and accents dropped (`Due date` is `due-date`, and `Tags` the page's tags); an `<aside>` as a `> [!note]` callout; a `<details>` toggle as a callout titled by its `<summary>`, open, since Agaric has no toggle.
+- **Kept:** each page, titled without the id, folders too (`Export/Plan/Sub`); links between pages (`[Sub](Plan%20<id>/Sub%20<id>.md)`), which name the pages they import as; a database row's `Key: value` lines under the title as page properties, the key lowercased with `-` for spaces and accents dropped (`Due date` is `due-date`, and `Tags` the page's tags), unless a key is reserved by the app (`Space`, `Template`, `Created at`) or has no Latin letter or digit left (`状態`), when the lines stay text; an `<aside>` as a `> [!note]` callout; a `<details>` toggle as a callout titled by its `<summary>`, open, since Agaric has no toggle. Code blocks stay as written.
 - **Dropped:** the database tables (`.csv`), skipped and counted in one warning; each row is also a page of the export and imports with its properties. A property value its definition refuses (a `Status: In progress` against the built-in `status` select) is skipped with a warning, as front matter is.
 
 ### Org (`.org`)

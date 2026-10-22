@@ -9,6 +9,8 @@
  * Agaric stores no toggle, so a toggle is a callout titled by its summary.
  */
 
+import { FOLDED_RESERVED_KEYS, foldPropertyKey } from '@/lib/inline-property-parse'
+
 /** The id Notion appends to a file or folder name, before any extension. */
 const NAME_ID_RE = / [0-9a-f]{32}(?=(?:\.[^./]*)?$)/
 
@@ -25,6 +27,9 @@ const PROPERTY_LINE_RE = /^([\p{L}\p{N}\p{M}][\p{L}\p{N}\p{M} ._()-]{0,63}): (\S
 const HTML_OPEN_RE = /^(\s*)<(aside|details)>(.*)$/
 
 const SUMMARY_RE = /^\s*<summary>(.*?)<\/summary>\s*$/
+
+/** A code fence's opening run, after any indent. */
+const FENCE_RE = /^\s*(`{3,}|~{3,})/
 
 /**
  * Whether the picked `.md` file names read as a Notion export: most carry the
@@ -62,14 +67,35 @@ export function notionToMarkdown(content: string, title: string): string {
 
   const head = read ? [...(properties as string[]), ''] : []
   if (heading !== undefined && heading.slice(2).trim() !== title) head.push(heading, '')
+  let fence: string | null = null
   return [...head, ...htmlBlocksToCallouts(body)]
+    .map((line) => {
+      const before = fence
+      fence = fenceAfter(fence, line)
+      if (before !== null || fence !== null) return line
+      return line.replace(
+        MD_LINK_DEST_RE,
+        (_, dest: string) => `](${dest.replace(LINK_ID_RE, '')})`,
+      )
+    })
     .join('\n')
-    .replace(MD_LINK_DEST_RE, (_, dest: string) => `](${dest.replace(LINK_ID_RE, '')})`)
+}
+
+/**
+ * The code fence open after `line`, given `open`, the one open before it. A
+ * line is code when a fence is open before or after it.
+ */
+function fenceAfter(open: string | null, line: string): string | null {
+  const run = FENCE_RE.exec(line)?.[1]
+  if (open === null) return run ?? null
+  return run !== undefined && run[0] === open[0] && run.length >= open.length ? null : open
 }
 
 /**
  * `Key: value` as a `key:: value` line, its key in the alphabet a property key
- * allows (`Due date` is `due-date`), or null when the line is not one.
+ * allows (`Due date` is `due-date`), or null when the line is not one. A key
+ * the app reserves (`Space`, `Created at`) makes it none: the import drops such
+ * a page property without a word, while prose keeps the line.
  */
 function propertyLine(line: string): string | null {
   const match = PROPERTY_LINE_RE.exec(line.trim())
@@ -80,15 +106,19 @@ function propertyLine(line: string): string | null {
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, '-')
     .replace(/^-+|-+$/g, '')
-  return key === '' ? null : `${key}:: ${(match[2] as string).trim()}`
+  if (key === '' || FOLDED_RESERVED_KEYS.has(foldPropertyKey(key))) return null
+  return `${key}:: ${(match[2] as string).trim()}`
 }
 
 /** Each `<aside>` and `<details>` block of `lines` as a `> [!note]` callout. */
 function htmlBlocksToCallouts(lines: readonly string[]): string[] {
   const out: string[] = []
+  let fence: string | null = null
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] as string
-    const open = HTML_OPEN_RE.exec(line)
+    const before = fence
+    fence = fenceAfter(fence, line)
+    const open = before === null && fence === null ? HTML_OPEN_RE.exec(line) : null
     const close = open === null ? -1 : closingLine(lines, i, open[2] as string)
     if (open === null || close === -1) {
       out.push(line)
