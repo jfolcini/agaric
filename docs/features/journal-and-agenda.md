@@ -15,7 +15,7 @@ stepper and date display while keeping the calendar picker available:
 | **Stream** | One continuous column, today pinned at the top and older days loading in as you scroll down. | Toggle in the Journal header. |
 | **Agenda** | Flat task list across a date range, with filters and grouping. | Toggle in the Journal header. |
 
-The Daily view opens its day as a page opens: in page mode with Settings › Editor › *Edit pages as* set to Page, and the *Blocks | Page* switch at the end of the row above the day (or `Ctrl+E`) changes it for the day on screen (see [editor.md](editor.md#page-mode)). In page mode the day is one document, so it has no *Add block* button: Enter adds a block, and an empty day takes typing at once. The Weekly and Stream views edit in blocks whatever the setting says.
+The Daily view opens its day as a page opens: in page mode with Settings › Editor › *Edit pages as* set to Page, and the *Blocks | Page* switch at the end of the row above the day (or `Ctrl+E`) changes it for the day on screen (see [editor.md](editor.md#page-mode)). In page mode the day is one document, so it has no *Add block* button: Enter adds a block, and an empty day takes typing at once, as a new day made from the journal template does on its first block. The Weekly and Stream views edit in blocks whatever the setting says.
 
 Per-space: every space has its own date cursor and mode. Switching spaces restores wherever you left off.
 

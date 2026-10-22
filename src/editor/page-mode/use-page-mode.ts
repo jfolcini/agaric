@@ -1,6 +1,6 @@
 /**
- * usePageMode — whether `PageEditor` shows a page in page mode (#5691), and
- * its Blocks | Page switch. Pages open as the device's *Edit pages as* setting
+ * usePageMode — whether `PageEditor`, or the journal's `DayPageEditor`, shows a
+ * page in page mode (#5691), and its Blocks | Page switch. Pages open as the device's *Edit pages as* setting
  * says (`PREFERENCES.editMode`); the switch changes the mode of the page on
  * screen only. Desktop only. A page over page mode's cap (`page-mode-fit.ts`)
  * stays in block mode, the switch saying why, as the page store's rows show

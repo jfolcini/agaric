@@ -3,7 +3,8 @@
  * *Edit pages as* on Page, today's seeded day opens as one document, and what is
  * typed there is saved and shows again after leaving the journal; `Ctrl+E`
  * switches the day between blocks and page mode, keeping the caret's block and
- * the block at the top of the view, either way.
+ * the block at the top of the view, either way; and a new day made from the
+ * journal template opens with the cursor on its first block, as block mode does.
  */
 
 import type { Page } from '@playwright/test'
@@ -21,6 +22,8 @@ import {
 const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
 /** Today's seeded daily page and its five blocks (`SEED_IDS` in `src/lib/tauri-mock/seed.ts`). */
 const TODAY_PAGE = '00000000000000000000PAGE03'
+/** The seeded *Meeting Notes Template* page, its first block `## Attendees`. */
+const TEMPLATE_PAGE = '00000000000000000000PAGE06'
 const SEEDED_BLOCKS = 5
 const DAY = '.journal-day-page'
 const EDITOR = `${DAY} [data-testid="page-mode-editor"]`
@@ -176,5 +179,30 @@ test.describe('the journal’s daily view in page mode (#5691) @journal @editor'
     await row(ids[42]).scrollIntoViewIfNeeded()
     await expect(row(ids[42])).toContainText('blo!?ck 42')
     expect((await backendTexts(page))[SEEDED_BLOCKS + 42]).toBe('blo!?ck 42')
+  })
+
+  test('a new day made from the journal template opens with the cursor on its first block', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => localStorage.setItem('agaric-edit-mode', 'page'))
+    await waitForBoot(page)
+    await ipc(page, 'set_property', {
+      blockId: TEMPLATE_PAGE,
+      key: 'journal-template',
+      value: {
+        value_text: 'true',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+
+    await page.getByRole('button', { name: 'Next day' }).click()
+    await page.getByRole('button', { name: 'Add your first block' }).click()
+
+    await expect(page.locator(`${EDITOR} [data-page-block]`).first()).toContainText('Attendees')
+    await expect(page.locator(EDITOR)).toBeFocused()
+    await expect.poll(() => cursor(page)).toEqual({ index: 0, offset: 0 })
   })
 })

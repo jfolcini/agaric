@@ -1,6 +1,6 @@
 /**
- * EditModeSwitch — a page header's Blocks | Page switch (#5691): the page on
- * screen edited one block at a time or as one document. Page's tooltip names
+ * EditModeSwitch — the Blocks | Page switch (#5691): the page on screen edited
+ * one block at a time or as one document. Page's tooltip names
  * its shortcut; where page mode cannot show the page yet, Page is
  * `aria-disabled`, not `disabled`, so the tooltip can say why instead, and
  * choosing it does nothing. A press keeps the focus where it was, so the switch

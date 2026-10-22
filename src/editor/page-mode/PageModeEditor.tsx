@@ -135,6 +135,7 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { searchPropertyKeys } from '@/lib/slash-commands'
 import type { FlatBlock } from '@/lib/tree-utils'
+import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePageBlockStoreApi } from '@/stores/page-blocks'
 import { notifyUndoNewAction } from '@/stores/page-blocks-reducers'
@@ -903,7 +904,11 @@ function PageModeDocument({
     })
 
     const { cursor = null, place = null } = openedOn() ?? {}
+    // A block focused for block mode to edit, as a new journal day focuses its template's first.
+    const focused = useBlockStore.getState().focusedBlockId
     if (cursor !== null) cursorInto(editor, cursor.blockId, cursor.pos)
+    else if (focused !== null && cursorInto(editor, focused))
+      useBlockStore.getState().setFocused(null)
     // A new or empty page takes typing at once, as block mode focuses the block it creates on one.
     else if (blocks.length <= 1 && !blocks[0]?.content) editor.commands.focus('start')
     if (place !== null) restoreScrollPlace(place)
