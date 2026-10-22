@@ -201,6 +201,36 @@ describe('useSlashCommandStructural — callouts, and the list style they and he
     },
   )
 
+  // A refused `edit_block` leaves the block as it was: still a list, and told once.
+  it.each([
+    ['h1', 'blockTree.setHeadingFailed'],
+    ['callout', 'slash.calloutFailed'],
+    ['callout-warning', 'slash.calloutFailed'],
+    ['turn-paragraph', 'slash.turnIntoFailed'],
+  ])('%s keeps the list style when the edit is refused', async (id, failKey) => {
+    seedBlocks()
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'edit_block') throw new Error('refused')
+      return dispatch(cmd, args)
+    })
+    const actual = await vi.importActual<typeof import('@/lib/list-style')>('@/lib/list-style')
+    mockedSetListStyle.mockImplementation(actual.setListStyle)
+    const blockId = SEED_IDS.BLOCK_GS_1
+    await actual.setListStyle(blockId, 'bullet')
+    const styleOf = () =>
+      listStyleFromRows(dispatch('get_properties', { blockId }) as PropertyRow[])
+
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx } = makeSyntheticCtx({ blockId })
+    const handler =
+      result.current.exact[id] ?? result.current.prefix.find(([p]) => id.startsWith(p))?.[1]
+    await handler?.(ctx, { id, label: id })
+
+    expect(styleOf()).toBe('bullet')
+    expect(toast.error).toHaveBeenCalledTimes(1)
+    expect(toast.error).toHaveBeenCalledWith(failKey)
+  })
+
   it('/h2 toasts once when clearing the list style fails', async () => {
     mockedSetListStyle.mockRejectedValueOnce(new Error('boom'))
     const { result } = renderHook(() => useSlashCommandStructural())

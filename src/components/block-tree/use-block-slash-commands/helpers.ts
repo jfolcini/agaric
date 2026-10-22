@@ -44,14 +44,15 @@ export function readCurrentContent(ctx: SlashCommandContext): string {
   return block?.content ?? ''
 }
 
+/** Write `newContent` to the block; resolves whether it was written (a refusal is toasted here). */
 export async function applyContentEdit(
   ctx: SlashCommandContext,
   newContent: string,
   failKey: string,
-): Promise<void> {
+): Promise<boolean> {
   if (ctx.blockText) {
     ctx.blockText.write(newContent)
-    return
+    return true
   }
   try {
     const resp = unwrap(await commands.editBlock(ctx.blockId, newContent))
@@ -70,8 +71,10 @@ export async function applyContentEdit(
       blocks: state.blocks.map((b) => (b.id === ctx.blockId ? { ...b, content: newContent } : b)),
     }))
     ctx.rovingEditor.mount(ctx.blockId, newContent)
+    return true
   } catch {
     notify.error(ctx.t(failKey))
+    return false
   }
 }
 

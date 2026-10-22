@@ -211,11 +211,12 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
         // #1960 — strip any existing block marker first so re-applying a callout
         // (e.g. changing an existing callout's type via the Turn-into contextual
         // picker) REPLACES the marker rather than nesting `> [!X] > [!Y] …`.
-        await applyContentEdit(
+        const written = await applyContentEdit(
           ctx,
           `> [!${type.toUpperCase()}] ${stripBlockMarker(readCurrentContent(ctx))}`,
           'slash.calloutFailed',
         )
+        if (!written) return
         try {
           await setListStyle(blockId, listStyleForBlockType('callout'))
         } catch (err) {
@@ -236,7 +237,7 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       const ctx = buildCtx(blockId)
       void (async () => {
         const newContent = convertBlockContent(readCurrentContent(ctx), type)
-        await applyContentEdit(ctx, newContent, 'slash.turnIntoFailed')
+        if (!(await applyContentEdit(ctx, newContent, 'slash.turnIntoFailed'))) return
         try {
           await setListStyle(blockId, listStyleForBlockType(type))
         } catch (err) {

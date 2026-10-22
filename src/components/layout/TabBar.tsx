@@ -135,11 +135,8 @@ function SortableTab({
   onKeyDown,
   onClose,
 }: SortableTabProps): React.ReactElement {
-  // The `tab` role keeps dnd-kit from marking the dragged tab `aria-pressed`,
-  // which a tab does not take.
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
-    attributes: { role: 'tab' },
   })
   return (
     <button
@@ -153,6 +150,8 @@ function SortableTab({
       tabIndex={isActive ? 0 : -1}
       // A tab announces itself as a tab, not as dnd-kit's "sortable".
       aria-roledescription={undefined}
+      // dnd-kit marks a dragged button `aria-pressed`, which a tab does not take.
+      aria-pressed={undefined}
       aria-selected={isActive}
       title={fullPath}
       // Along the strip only: it clips anything above or below it.

@@ -15,7 +15,7 @@ import { renderHook } from '@testing-library/react'
 import type { TFunction } from 'i18next'
 import { createElement } from 'react'
 import { toast } from 'sonner'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import { makeBlock, makeBlockRow } from '@/__tests__/fixtures'
 import { stubInvoke, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
@@ -435,6 +435,41 @@ describe('useBlockTreeEventListeners', () => {
 
       await vi.waitFor(() => expect(styleOf()).toBe('none'))
       expect(toast.error).not.toHaveBeenCalled()
+    })
+
+    // A refused `edit_block` leaves the block as it was: still a list, and told once.
+    it.each([
+      ['INSERT_CALLOUT', undefined, 'slash.calloutFailed'],
+      ['TURN_INTO_BLOCK', { type: 'paragraph' }, 'slash.turnIntoFailed'],
+    ] as const)('%s keeps the list style when the edit is refused', async (event, detail, key) => {
+      seedBlocks()
+      mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+        if (cmd === 'edit_block') throw new Error('refused')
+        return dispatch(cmd, args)
+      })
+      const actual = await vi.importActual<typeof import('@/lib/list-style')>('@/lib/list-style')
+      vi.mocked(setListStyle).mockImplementation(actual.setListStyle)
+      onTestFinished(() => {
+        vi.mocked(setListStyle).mockReset().mockResolvedValue(undefined)
+      })
+      const blockId = SEED_IDS.BLOCK_GS_1
+      await actual.setListStyle(blockId, 'bullet')
+      const styleOf = () =>
+        listStyleFromRows(dispatch('get_properties', { blockId }) as PropertyRow[])
+      setGlobalFocus(blockId)
+      const opts = makeOptions({
+        focusedBlockId: blockId,
+        pageStore: makePageStore([{ id: blockId, content: 'hello' }]),
+      })
+      renderHook(() => useBlockTreeEventListeners(opts))
+
+      dispatchBlockCommand(event, detail)
+
+      await vi.waitFor(() => expect(toast.error).toHaveBeenCalledWith(key))
+      // The handler is not awaitable: a macrotask lets whatever it still has queued run first.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(styleOf()).toBe('bullet')
+      expect(toast.error).toHaveBeenCalledTimes(1)
     })
 
     it('INSERT_CALLOUT toasts once when clearing the list style fails', async () => {

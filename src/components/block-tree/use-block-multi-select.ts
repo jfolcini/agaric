@@ -59,7 +59,7 @@ export interface UseBlockMultiSelectReturn {
 /**
  * Set task state `state` on every block of `ids` in one IPC, as the batch
  * toolbar does in block mode and the block menu's bulk form in page mode,
- * then say how many it set or failed to.
+ * then say how many it set or failed to. Resolves whether it set every one.
  */
 export async function setTodoStateOnBlocks(
   pageStore: StoreApi<PageBlockState>,
@@ -67,7 +67,7 @@ export async function setTodoStateOnBlocks(
   ids: string[],
   state: string | null,
   t: TFunction,
-): Promise<void> {
+): Promise<boolean> {
   const idSet = new Set(ids)
   // Optimistic FE update — flip the badge instantly while the
   // single-IPC batch round-trips. On failure the catch below
@@ -95,9 +95,10 @@ export async function setTodoStateOnBlocks(
   }
   if (failCount > 0) {
     notify.error(t('blockTree.updateFailedMessage', { failCount, totalCount: ids.length }))
-  } else {
-    notify.success(t('blockTree.setStateMessage', { successCount, state: state ?? 'none' }))
+    return false
   }
+  notify.success(t('blockTree.setStateMessage', { successCount, state: state ?? 'none' }))
+  return true
 }
 
 export function useBlockMultiSelect({

@@ -401,8 +401,13 @@ describe('TabBar', () => {
       const user = userEvent.setup()
       render(<TabBar />)
 
-      screen.getByRole('tab', { name: /Page 1/ }).focus()
-      await user.keyboard('[Space][ArrowRight][Escape]')
+      const picked = screen.getByRole('tab', { name: /Page 1/ })
+      picked.focus()
+      await user.keyboard('[Space]')
+      // A picked-up tab is still a tab, not a pressed button.
+      expect(picked).toHaveAttribute('role', 'tab')
+      expect(picked).not.toHaveAttribute('aria-pressed')
+      await user.keyboard('[ArrowRight][Escape]')
 
       expect(useTabsStore.getState().tabs.map((tab) => tab.label)).toEqual(['Page 1', 'Page 2'])
     })

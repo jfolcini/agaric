@@ -119,7 +119,7 @@ export function useJournalBlockCreation({
           // race `autoCreateFirstBlock` the way the deferred group below can.
           notifyPageAdded(newId, dateStr, currentSpaceId)
           pageId = newId
-          // Page-render notification (`setCreatedPages` /
+          // Page-render notification (`setCreated` /
           // `onPageCreated` / `useResolveStore.set`) is deferred to the
           // bottom of the `if (isNewPage)` branch below. Firing it here
           // would re-render JournalPage and mount BlockTree before this
@@ -156,9 +156,8 @@ export function useJournalBlockCreation({
           // first load takes this instead of a `load_page_subtree` round trip.
           // Only after a successful probe: parking an empty subtree for a day
           // the backend seeded would make `autoCreateFirstBlock` add a block.
-          const spaceId = useSpaceStore.getState().currentSpaceId
-          if (probed && first === undefined && spaceId != null)
-            parkEmptyPageSubtree(spaceId, pageId)
+          if (probed && first === undefined && currentSpaceId != null)
+            parkEmptyPageSubtree(currentSpaceId, pageId)
           setCreated((prev) => ({
             spaceId: currentSpaceId,
             pages: new Map(prev.spaceId === currentSpaceId ? prev.pages : []).set(

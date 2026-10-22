@@ -1024,6 +1024,37 @@ describe('useNavigationStore', () => {
       expect(useNavigationStore.getState().selectedBlockId).toBe('B2')
     })
 
+    it('opens on its block when Back closes the active tab and brings it to the front', () => {
+      useTabsStore.getState().navigateToPage('P1', 'Page 1')
+      useTabsStore.getState().openInBackgroundTab('P2', 'Page 2', 'B2')
+
+      useTabsStore.getState().goBack()
+
+      expect(selectPageStack(useTabsStore.getState())).toEqual([{ pageId: 'P2', title: 'Page 2' }])
+      expect(useNavigationStore.getState().selectedBlockId).toBe('B2')
+    })
+
+    it('opens on its block when removing the active tab’s page brings it to the front', () => {
+      useTabsStore.getState().navigateToPage('P1', 'Page 1')
+      useTabsStore.getState().openInBackgroundTab('P2', 'Page 2', 'B2')
+
+      useTabsStore.getState().removePages(['P1'])
+
+      expect(selectPageStack(useTabsStore.getState())).toEqual([{ pageId: 'P2', title: 'Page 2' }])
+      expect(useNavigationStore.getState().selectedBlockId).toBe('B2')
+    })
+
+    it('opens on its block when it is closed unseen and reopened', () => {
+      useTabsStore.getState().navigateToPage('P1', 'Page 1')
+      useTabsStore.getState().openInBackgroundTab('P2', 'Page 2', 'B2')
+      useTabsStore.getState().closeTab(1)
+
+      useTabsStore.getState().reopenClosedTab()
+
+      expect(selectPageStack(useTabsStore.getState())).toEqual([{ pageId: 'P2', title: 'Page 2' }])
+      expect(useNavigationStore.getState().selectedBlockId).toBe('B2')
+    })
+
     it('keeps its block when its page is renamed before it comes to the front', () => {
       useTabsStore.getState().navigateToPage('P1', 'Page 1')
       useTabsStore.getState().openInBackgroundTab('P2', 'Page 2', 'B2')
