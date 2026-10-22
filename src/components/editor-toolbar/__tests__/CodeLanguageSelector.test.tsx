@@ -25,6 +25,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { CodeLanguageSelector } from '@/components/editor-toolbar/CodeLanguageSelector'
 import { CODE_LANGUAGES } from '@/components/FormattingToolbar/toolbar-config'
 import type { PropertyRow } from '@/lib/bindings'
@@ -324,7 +325,9 @@ describe('CodeLanguageSelector', () => {
     )
 
     it('toasts when clearing the list style fails', async () => {
-      vi.mocked(invoke).mockRejectedValueOnce(new Error('boom'))
+      vi.mocked(invoke).mockImplementation(
+        mockInvokeCommands({ delete_property: () => Promise.reject(new Error('boom')) }),
+      )
       const user = userEvent.setup()
       render(
         <CodeLanguageSelector
