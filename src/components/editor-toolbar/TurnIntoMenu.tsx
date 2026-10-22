@@ -245,6 +245,7 @@ export function TurnIntoMenu({ editor, blockId, onClose }: TurnIntoMenuProps): R
           <Separator className="my-1" />
           <CodeLanguageSelector
             editor={editor}
+            blockId={blockId}
             isCodeBlock={state.codeBlock}
             currentLanguage={state.codeLanguage}
             onClose={onClose}

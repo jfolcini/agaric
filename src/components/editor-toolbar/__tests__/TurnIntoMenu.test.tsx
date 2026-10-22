@@ -11,7 +11,8 @@
  *  - The code disclosure forwards `isCodeBlock={state.codeBlock}` — false for a
  *    paragraph — so converting paragraph → code+language happens in one shot via
  *    `toggleCodeBlockSafely` rather than `updateAttributes` on a non-existent
- *    code block. A regression to a hardcoded `isCodeBlock` would fail here.
+ *    code block. A regression to a hardcoded `isCodeBlock` would fail here. It
+ *    also forwards the focused `blockId`, whose list style the picker clears.
  *  - When the focused block ALREADY is a code block / callout, the matching
  *    picker starts expanded so re-picking the variant stays one interaction.
  *  - Disclosure rows expose `aria-haspopup="dialog"` / `aria-expanded` /
@@ -130,8 +131,8 @@ describe('TurnIntoMenu — single-step disclosures (#3001)', () => {
       expect(onClose).not.toHaveBeenCalled()
     })
 
-    it('clicking Code block expands the code picker with isCodeBlock=false (paragraph → code+language in one shot)', () => {
-      render(<TurnIntoMenu editor={makeEditor()} onClose={vi.fn()} />)
+    it('clicking Code block expands the code picker with isCodeBlock=false (paragraph → code+language in one shot), for the focused block', () => {
+      render(<TurnIntoMenu editor={makeEditor()} blockId="BLOCK_1" onClose={vi.fn()} />)
 
       fireEvent.pointerDown(codeRow(), { button: 0 })
 
@@ -139,7 +140,7 @@ describe('TurnIntoMenu — single-step disclosures (#3001)', () => {
       expect(picker).toBeInTheDocument()
       expect(picker).toHaveAttribute('data-is-code-block', 'false')
       expect(codeSelectorProps).toHaveBeenLastCalledWith(
-        expect.objectContaining({ isCodeBlock: false }),
+        expect.objectContaining({ isCodeBlock: false, blockId: 'BLOCK_1' }),
       )
     })
 

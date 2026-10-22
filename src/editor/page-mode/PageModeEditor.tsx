@@ -570,10 +570,7 @@ function PageModeDocument({
       return now
     }
     const api = commandsApi(async () => treeRows(await read()))
-    const cursorBlock = (): string | null => {
-      const { $head } = editor.state.selection
-      return $head.depth < 1 ? null : blockIdOf($head.node(1))
-    }
+    const cursorBlock = (): string | null => caretOf(editor)?.blockId ?? null
     // The blocks changed whose task markers and `#name`s are not committed yet,
     // each as it was before (`commitPageTask`), and the caret's block.
     const typedIn = new Map<string, PMNode | null>()

@@ -14,7 +14,9 @@
  * Apply semantics are unchanged: outside a code block, selecting a language runs
  * `toggleCodeBlockSafely(editor, { language })` (single toggle chain that both
  * converts the block AND sets the language); inside one, it updates the
- * `codeBlock` node's `language` attribute directly.
+ * `codeBlock` node's `language` attribute directly. Turning a block into a code
+ * block also clears its `listStyle`, as every other Turn-into target but the
+ * two lists does (`listStyleForBlockType`).
  */
 
 import type { Editor } from '@tiptap/react'
@@ -30,9 +32,14 @@ import {
 } from '@/components/editor-toolbar/InlinePicker'
 import { CODE_LANGUAGES } from '@/components/FormattingToolbar/toolbar-config'
 import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
+import { listStyleForBlockType, setListStyle } from '@/lib/list-style'
+import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 
 export interface CodeLanguageSelectorProps {
   editor: Editor
+  /** The focused block; undefined outside a block context. */
+  blockId?: string | undefined
   isCodeBlock: boolean
   currentLanguage: string
   onClose: () => void
@@ -40,6 +47,7 @@ export interface CodeLanguageSelectorProps {
 
 export function CodeLanguageSelector({
   editor,
+  blockId,
   isCodeBlock,
   currentLanguage,
   onClose,
@@ -60,14 +68,22 @@ export function CodeLanguageSelector({
   const customLang = filter.trim().toLowerCase()
   const showCustom = filteredLanguages.length === 0 && customLang.length > 0
 
+  function turnIntoCode(attrs?: { language: string }): void {
+    // toggleCodeBlockSafely handles the tiptap 3.23.6 deleteSelection
+    // regression (see use-roving-editor.ts). `attrs` sets the language as
+    // part of the toggle — single chain, single `run()`.
+    toggleCodeBlockSafely(editor, attrs)
+    if (blockId === undefined) return
+    setListStyle(blockId, listStyleForBlockType('code')).catch((err: unknown) => {
+      logger.error('CodeLanguageSelector', 'setListStyle (turn-into) failed', { blockId }, err)
+      notify.error(t('slash.turnIntoFailed'))
+    })
+  }
+
   function applyLanguage(lang: string): void {
     const attrs = { language: lang }
     if (!isCodeBlock) {
-      // toggleCodeBlockSafely handles the tiptap 3.23.6 deleteSelection
-      // regression (see use-roving-editor.ts). Passing `attrs` here means
-      // the language is set as part of the toggle — single chain, single
-      // `run()`.
-      toggleCodeBlockSafely(editor, attrs)
+      turnIntoCode(attrs)
     } else {
       editor.chain().focus().updateAttributes('codeBlock', attrs).run()
     }
@@ -127,7 +143,7 @@ export function CodeLanguageSelector({
           if (isCodeBlock) {
             editor.chain().focus().updateAttributes('codeBlock', { language: '' }).run()
           } else {
-            toggleCodeBlockSafely(editor)
+            turnIntoCode()
           }
           onClose()
         }}

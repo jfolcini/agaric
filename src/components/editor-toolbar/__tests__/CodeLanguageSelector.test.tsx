@@ -11,18 +11,28 @@
  *  - Clicking "Plain text" when in a code block clears the language
  *  - Clicking "Plain text" when NOT in a code block toggles a new code block
  *  - `onClose()` is invoked after each selection
+ *  - Turning a block into a code block clears its list style, read back from
+ *    the mock backend, and toasts when that write fails
  *  - Axe audit passes
  */
 
+import type { InvokeArgs } from '@tauri-apps/api/core'
+import { invoke } from '@tauri-apps/api/core'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { Editor } from '@tiptap/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { toast } from 'sonner'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { CodeLanguageSelector } from '@/components/editor-toolbar/CodeLanguageSelector'
 import { CODE_LANGUAGES } from '@/components/FormattingToolbar/toolbar-config'
+import type { PropertyRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
+import { listStyleFromRows, setListStyle } from '@/lib/list-style'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 
 // ── TipTap editor chain mock ──────────────────────────────────────────────
 // The component invokes one of two paths:
@@ -276,6 +286,63 @@ describe('CodeLanguageSelector', () => {
       expect(mockUpdateAttributes).not.toHaveBeenCalled()
       expect(mockRun).toHaveBeenCalledTimes(1)
       expect(onClose).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('list style', () => {
+    const blockId = SEED_IDS.BLOCK_GS_1
+    const styleOf = () =>
+      listStyleFromRows(dispatch('get_properties', { blockId }) as PropertyRow[])
+    afterEach(() => {
+      vi.mocked(invoke).mockReset()
+    })
+
+    it.each(['rust', t('toolbar.plainText')])(
+      'outside a code block: %s clears the bulleted block’s list style',
+      async (row) => {
+        seedBlocks()
+        vi.mocked(invoke).mockImplementation(async (cmd: string, args?: InvokeArgs) =>
+          dispatch(cmd, args),
+        )
+        await setListStyle(blockId, 'bullet')
+        expect(styleOf()).toBe('bullet')
+        const user = userEvent.setup()
+        render(
+          <CodeLanguageSelector
+            editor={makeEditor()}
+            blockId={blockId}
+            isCodeBlock={false}
+            currentLanguage=""
+            onClose={vi.fn()}
+          />,
+        )
+
+        await user.click(screen.getByRole('button', { name: row }))
+
+        await vi.waitFor(() => expect(styleOf()).toBe('none'))
+        expect(toast.error).not.toHaveBeenCalled()
+      },
+    )
+
+    it('toasts when clearing the list style fails', async () => {
+      vi.mocked(invoke).mockImplementation(
+        mockInvokeCommands({ delete_property: () => Promise.reject(new Error('boom')) }),
+      )
+      const user = userEvent.setup()
+      render(
+        <CodeLanguageSelector
+          editor={makeEditor()}
+          blockId={blockId}
+          isCodeBlock={false}
+          currentLanguage=""
+          onClose={vi.fn()}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: 'rust' }))
+
+      await vi.waitFor(() => expect(toast.error).toHaveBeenCalledWith(t('slash.turnIntoFailed')))
+      expect(mockToggleCodeBlock).toHaveBeenCalledWith({ language: 'rust' })
     })
   })
 
