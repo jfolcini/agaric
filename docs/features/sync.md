@@ -19,7 +19,7 @@ Agaric syncs across your own devices over local WiFi. **No cloud, no accounts, a
 1. On the **first device**: Settings → Sync & devices → *Pair new device*. The **PairingDialog** opens with a QR code and a 4-word passphrase. The session lasts 5 minutes (the countdown pauses while you're typing on the other side).
 2. On the **second device**: same path, then *Have a code from the other device?*. Choose *Scan QR code* (camera) or *Type passphrase* (4 word boxes).
 3. On scan / entry, each device proves it knows the passphrase and the two add each other to their peer lists. There is no certificate exchange: the connection itself authenticates each device's cryptographic key, and that key is remembered on first contact (TOFU) — subsequent connections must present the same one.
-4. The first sync runs immediately. Large vaults use **snapshot catch-up** (see below) so you don't wait for thousands of small operations.
+4. The first sync runs immediately and brings the whole vault over: each space arrives in one message rather than edit by edit. Later syncs send only what changed.
 
 If the camera fails (no permission, no camera), the scanner says why and offers *Retry camera*; *Type passphrase* stays available.
 
@@ -66,7 +66,7 @@ If you click the Sync button before any device is paired, the **NoPeersDialog** 
 
 ## Snapshot catch-up
 
-When a peer is so far behind that the log has been compacted past its frontier (typical on a fresh device, or after a long absence), the responder sends a full snapshot instead of replaying the log. Snapshots stream as raw bytes on the same connection and apply atomically, so a snapshot apply can never half-fail. It is a *merge*, not a wipe: anything you wrote on the catching-up device that the other side had not seen yet survives. The first sync of a fresh device on a large vault might take a moment; subsequent syncs are incremental.
+When the changes one device would send cannot be applied on top of what the other holds, as after a device is restored from an older backup and has lost edits the other remembers, the sync switches to a full snapshot of each space. A fresh device never needs this: its first sync is the ordinary one above. Snapshots stream as raw bytes on the same connection and apply atomically, so a snapshot apply can never half-fail. It is a *merge*, not a wipe: anything you wrote on the catching-up device that the other side had not seen yet survives.
 
 ## Per-peer settings
 

@@ -10,7 +10,8 @@
 //! Every step is the app's own code: `init_pools`, the daemon,
 //! `confirm_pairing_inner` with the fields of the QR the app showed (what a
 //! phone's camera hands the joiner), `create_block_inner`,
-//! `create_block_inner_with_space`, `create_space_inner`, `edit_block_inner`,
+//! `create_block_inner_with_space`, `create_blocks_batch_inner`,
+//! `create_space_inner`, `edit_block_inner`,
 //! `set_property_inner`, `set_todo_state_inner`, `set_due_date_inner`,
 //! `add_tag_inner`, `move_block_inner`, `move_blocks_to_space_inner`,
 //! `add_attachment_with_bytes_inner`, `get_active_block_inner`,
@@ -36,11 +37,12 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
 use agaric_lib::commands::{
-    add_attachment_with_bytes_inner, add_tag_inner, confirm_pairing_inner, create_block_inner,
-    create_block_inner_with_space, create_space_inner, edit_block_inner, get_active_block_inner,
-    get_property_inner, list_attachments_inner, list_peer_refs_inner, move_block_inner,
-    move_blocks_to_space_inner, read_attachment_inner, set_due_date_inner, set_property_inner,
-    set_todo_state_inner, start_pairing_armed_inner,
+    CreateBlockSpec, add_attachment_with_bytes_inner, add_tag_inner, confirm_pairing_inner,
+    create_block_inner, create_block_inner_with_space, create_blocks_batch_inner,
+    create_space_inner, edit_block_inner, get_active_block_inner, get_property_inner,
+    list_attachments_inner, list_peer_refs_inner, move_block_inner, move_blocks_to_space_inner,
+    read_attachment_inner, set_due_date_inner, set_property_inner, set_todo_state_inner,
+    start_pairing_armed_inner,
 };
 use agaric_lib::db::{DbPools, init_pools, now_ms};
 use agaric_lib::materializer::Materializer;
@@ -50,8 +52,10 @@ use agaric_store::peer_refs::{self, PeerRef};
 use agaric_store::space::{SpaceId, SpaceScope};
 use agaric_sync::foreground::LifecycleHooks;
 use agaric_sync::pairing::{PairingSession, ScannedPeerCandidate};
+use agaric_sync::sync_constants::OP_LOG_BATCH_INLINE_MAX_BYTES;
 use agaric_sync::sync_daemon::{SyncDaemon, SyncDaemonContext};
 use agaric_sync::sync_events::{SyncEvent, SyncEventSink};
+use agaric_sync::sync_protocol::{batch_ops_for_wire, collect_ops_for_peer};
 use agaric_sync::sync_scheduler::SyncScheduler;
 
 /// How long a command waits on the app: the lane's `ACTION_TIMEOUT`.
@@ -97,6 +101,15 @@ enum Command {
         content: String,
         #[serde(default)]
         space_id: Option<String>,
+    },
+    /// Write `pages` pages in the Personal space, `<marker> page <n>`, each
+    /// holding `blocks_per_page` blocks, `<marker> page <n> block <m>` and
+    /// `padding` bytes of filler, written as one batch per page.
+    SeedVault {
+        marker: String,
+        pages: usize,
+        blocks_per_page: usize,
+        padding: usize,
     },
     /// Create a space named `name`.
     CreateSpace {
@@ -199,6 +212,12 @@ enum Reply {
     },
     Created {
         id: String,
+    },
+    /// How many `OpLogBatch` messages this vault's op log takes to a device
+    /// that holds none of it, and the last block `seed_vault` wrote.
+    Seeded {
+        op_batches: usize,
+        last_block_id: String,
     },
     Edited,
     PropertySet,
@@ -340,6 +359,15 @@ impl Peer {
                 content,
                 space_id,
             } => self.create_in_space(block_type, content, space_id).await,
+            Command::SeedVault {
+                marker,
+                pages,
+                blocks_per_page,
+                padding,
+            } => {
+                self.seed_vault(&marker, pages, blocks_per_page, padding)
+                    .await
+            }
             Command::CreateSpace { name } => self.create_space(name).await,
             Command::MoveToSpace { id, space_id } => self.move_to_space(id, space_id).await,
             Command::EditBlock { id, content } => self.edit_block(id, content).await,
@@ -523,6 +551,62 @@ impl Peer {
         self.last_write_ms = now_ms();
         Ok(Reply::Created {
             id: row.id.into_string(),
+        })
+    }
+
+    async fn seed_vault(
+        &mut self,
+        marker: &str,
+        pages: usize,
+        blocks_per_page: usize,
+        padding: usize,
+    ) -> Result<Reply, AppError> {
+        let mut filler = "lorem ipsum ".repeat(padding.div_ceil(12));
+        filler.truncate(padding);
+        let personal = SpaceScope::Active(SpaceId::from_trusted(SPACE_PERSONAL_ULID));
+        let mut last_block_id = None;
+        for page in 1..=pages {
+            let page_row = create_block_inner_with_space(
+                &self.pools.write,
+                &self.device_id,
+                &self.materializer,
+                "page".into(),
+                format!("{marker} page {page}"),
+                None,
+                None,
+                &personal,
+                None,
+            )
+            .await?;
+            let specs = (1..=blocks_per_page)
+                .map(|block| CreateBlockSpec {
+                    block_type: "content".into(),
+                    content: format!("{marker} page {page} block {block} {filler}"),
+                    parent_id: Some(page_row.id.clone()),
+                    position: None,
+                    properties: std::collections::HashMap::new(),
+                })
+                .collect();
+            let rows = create_blocks_batch_inner(
+                &self.pools.write,
+                &self.device_id,
+                &self.materializer,
+                specs,
+            )
+            .await?;
+            last_block_id = rows.last().map(|row| row.id.as_str().to_owned());
+            // Every block queues its cache tasks; unflushed, the pages overflow the queue.
+            self.materializer.flush_background().await?;
+        }
+        self.last_write_ms = now_ms();
+        let records = collect_ops_for_peer(&self.pools.read, &[]).await?;
+        Ok(Reply::Seeded {
+            op_batches: batch_ops_for_wire(records, OP_LOG_BATCH_INLINE_MAX_BYTES).len(),
+            last_block_id: last_block_id.ok_or_else(|| {
+                AppError::InvalidOperation(
+                    "seed_vault wrote no block: pass pages and blocks".into(),
+                )
+            })?,
         })
     }
 
