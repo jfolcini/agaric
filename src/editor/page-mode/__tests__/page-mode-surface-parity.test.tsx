@@ -77,6 +77,7 @@ const PAGE_MODE_ONLY = new Set([
   'pageTaskKeys',
   'pageBlockIds',
   'pageKeys',
+  'pageBlockKeys',
   'pageRenderedKeys',
   'pageListKeys',
   'pageBlockFocus',

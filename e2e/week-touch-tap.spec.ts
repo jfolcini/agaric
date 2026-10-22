@@ -61,6 +61,7 @@ test.describe('Week view on a phone @journal @editor @mobile', () => {
     await codeSlot.scrollIntoViewIfNeeded()
     await staticOf(code.id).tap({ position: { x: 4, y: 4 } })
     await expect(page.locator('[data-testid="block-editor"] pre')).toBeVisible()
+    await expect(editor).toBeFocused()
     await page.keyboard.type('edited ')
     // The code block on screen above the target, so its height change moves it.
     await codeSlot.evaluate((el) => el.scrollIntoView({ block: 'start' }))

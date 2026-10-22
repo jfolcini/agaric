@@ -5,9 +5,7 @@
  * block hides, which they leave alone. Tab and Shift+Tab move a block and the
  * blocks under it a level in or out, by block mode's own rules
  * (`block-tree-ops.ts`); with *Tab indents blocks* off, Tab is left to move
- * focus and the indent and dedent shortcuts do it, as in block mode. Block
- * mode's move and duplicate shortcuts move the selected blocks a place up or
- * down and copy the caret's block, as the block menu's rows do. Arrows
+ * focus and the indent and dedent shortcuts do it, as in block mode. Arrows
  * cross blocks on their own: the page is one editable surface. Escape leaves
  * the text for the box around it (`SURFACE`), focused and ringed, as block
  * mode leaves its block's row; Tab from there goes back to the caret. Inside a
@@ -38,7 +36,6 @@ import { emojiPickerPluginKey } from '@/editor/extensions/emoji-picker'
 import { propertyPickerPluginKey } from '@/editor/extensions/property-picker'
 import { queryPickerPluginKey } from '@/editor/extensions/query-picker'
 import { openSlashPicker, slashCommandPluginKey } from '@/editor/extensions/slash-command'
-import { duplicateBlock, moveBlocks } from '@/editor/page-mode/page-block-actions'
 import { hiddenBlocks, isCollapsed } from '@/editor/page-mode/page-collapse'
 import {
   depthOf,
@@ -221,18 +218,6 @@ export const outdentIds =
 /** Shift+Tab: the selected blocks (`outdentIds`). */
 export const outdentBlocks = outdentIds((state) => selectedRoots(state, treeRows(state.doc)))
 
-/** The move keys: the selected blocks one place up or down, as the block menu's Move rows. */
-const moveSelected =
-  (direction: -1 | 1): Command =>
-  (state, dispatch, view) =>
-    moveBlocks(selectedRoots(state, treeRows(state.doc)), direction)(state, dispatch, view)
-
-/** The duplicate key: the caret's block, as block mode duplicates the block it edits. */
-const duplicateCaretBlock: Command = (state, dispatch, view) => {
-  const id = blockIdOf(state.doc.child(state.selection.$head.index(0)))
-  return id !== null && duplicateBlock(id)(state, dispatch, view)
-}
-
 /** The index of the block shown above the block at `index`, past the blocks a collapsed block hides. */
 function shownAbove(state: EditorState, index: number): number {
   const hidden = hiddenBlocks(state)
@@ -348,8 +333,7 @@ export const PageKeys = Extension.create<PageKeysOptions>({
             // a key on a chip is the chip's, but Escape leaves the text from there too.
             keydown: (view, event) => !view.hasFocus() && event.key !== 'Escape',
           },
-          // The rebindable shortcuts: block mode's chords for the block menu's rows, and the
-          // indent keys, which still indent where Tab is left to move focus.
+          // The rebindable shortcuts, which still indent where Tab is left to move focus.
           handleKeyDown(view, event) {
             if (pickerOpen(view.state)) return false
             // Block mode's chord for Turn into: the slash picker on `/turn`, in the caret's block.
@@ -369,9 +353,6 @@ export const PageKeys = Extension.create<PageKeysOptions>({
             let command: Command | null = null
             if (matchesShortcutBinding(event, 'indentBlock')) command = indentBlocks
             else if (matchesShortcutBinding(event, 'dedentBlock')) command = outdentBlocks
-            else if (matchesShortcutBinding(event, 'moveBlockUp')) command = moveSelected(-1)
-            else if (matchesShortcutBinding(event, 'moveBlockDown')) command = moveSelected(1)
-            else if (matchesShortcutBinding(event, 'duplicateBlock')) command = duplicateCaretBlock
             if (command === null) return false
             return command(view.state, view.dispatch, view)
           },

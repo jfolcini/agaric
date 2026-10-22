@@ -1,13 +1,15 @@
 /**
  * What page mode's block menu does to the document (#5972): each structural
  * row of block mode's menu, as a command on the blocks it names by id, not on
- * the selection; and what a drop of a block's grip does (`page-drag.ts`). The
+ * the selection; what a drop of a block's grip does (`page-drag.ts`); and
+ * block mode's chords for the Move and Duplicate rows (`PageBlockKeys`). The
  * document owns structure, so these edit it and the save writes the result, as
  * it writes a key's.
  */
 
+import { Extension } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
-import { type Command, type EditorState, TextSelection } from '@tiptap/pm/state'
+import { type Command, type EditorState, Plugin, TextSelection } from '@tiptap/pm/state'
 
 import {
   firstTokenPos,
@@ -15,11 +17,18 @@ import {
   selectionEnds,
   startOf,
 } from '@/editor/page-mode/page-document'
-import { applyRows, joinBackward, treeRows } from '@/editor/page-mode/page-keys'
+import {
+  applyRows,
+  joinBackward,
+  pickerOpen,
+  selectedRoots,
+  treeRows,
+} from '@/editor/page-mode/page-keys'
 import { blockIdOf } from '@/editor/token-ids'
 import { announce } from '@/lib/announcer'
 import { findPrevSiblingAt } from '@/lib/block-tree-ops'
 import { t } from '@/lib/i18n'
+import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import type { TreeItem } from '@/lib/tree-utils'
 
 /** The index one past the last block under the block at `index`. */
@@ -223,3 +232,34 @@ export function blockIdsBetween(doc: PMNode, from: number, to: number): string[]
   }
   return ids
 }
+
+/**
+ * Block mode's move and duplicate chords: the selected blocks a place up or
+ * down, and a copy of the caret's block, as the block menu's rows do. Here,
+ * not in `PageKeys`, which these commands build on.
+ */
+export const PageBlockKeys = Extension.create({
+  name: 'pageBlockKeys',
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        props: {
+          handleKeyDown(view, event) {
+            const { state } = view
+            if (pickerOpen(state)) return false
+            let command: Command | null = null
+            if (matchesShortcutBinding(event, 'moveBlockUp')) {
+              command = moveBlocks(selectedRoots(state, treeRows(state.doc)), -1)
+            } else if (matchesShortcutBinding(event, 'moveBlockDown')) {
+              command = moveBlocks(selectedRoots(state, treeRows(state.doc)), 1)
+            } else if (matchesShortcutBinding(event, 'duplicateBlock')) {
+              const id = blockIdOf(state.doc.child(state.selection.$head.index(0)))
+              if (id !== null) command = duplicateBlock(id)
+            }
+            return command !== null && command(state, view.dispatch, view)
+          },
+        },
+      }),
+    ]
+  },
+})
