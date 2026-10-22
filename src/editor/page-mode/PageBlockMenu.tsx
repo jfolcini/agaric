@@ -67,7 +67,7 @@ export interface PageBlockMenuProps {
   pageId: string
   pageStore: StoreApi<PageBlockState>
   actions: React.RefObject<PageBlockMenuActions>
-  /** Absent on mobile, which has no tab bar to open a tab on. */
+  /** Absent on a touch phone, which has no tab bar to open a tab on. */
   onOpenLinkInNewTab: ((id: string) => void) | undefined
 }
 

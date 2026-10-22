@@ -26,7 +26,7 @@ const t = (key: string): string => key
 /** The app shell: the shortcut listeners plus the hook that applies the zoom. */
 function mountShell() {
   return renderHook(() => {
-    useAppKeyboardShortcuts({ t, isMobile: false })
+    useAppKeyboardShortcuts({ t, isTouchPhone: false })
     useInterfaceZoom()
   })
 }

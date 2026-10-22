@@ -22,14 +22,14 @@
  *   so any non-Radix overlay can listen and close itself.
  * - **tab** — `openInNewTab`, `closeActiveTab`, `reopenClosedTab`, `previousTab`, `nextTab`,
  *   `selectTab1` … `selectTab8`, `selectLastTab`.
- *   Mobile-gated because the TabBar is hidden on touch devices.
+ *   Off on a touch phone, where the TabBar is hidden.
  *
  * **Why 5 separate effects rather than one consolidated listener.**
  * The journal handler is registered on `document`, the other four on
  * `window`. Merging would change the propagation/capture semantics for
  * tests (and for any DOM that stops propagation between `document` and
  * `window`). Each category also has its own dependency list (`t` only,
- * `[t, isMobile]`, or `[]`) — keeping them split lets React skip
+ * `[t, isTouchPhone]`, or `[]`) — keeping them split lets React skip
  * re-registration when only one input changed. Behaviour is therefore
  * identical to the pre-extraction code; this hook only relocates
  * ownership of the listeners.
@@ -394,11 +394,11 @@ function tryInterfaceZoom(e: KeyboardEvent): boolean {
 export interface UseAppKeyboardShortcutsParams {
   /** i18next translator. Single-key calls only inside this hook. */
   readonly t: (key: string) => string
-  /** Suppresses the tab-management shortcuts on touch devices (hidden TabBar). */
-  readonly isMobile: boolean
+  /** Suppresses the tab-management shortcuts on a touch phone (hidden TabBar). */
+  readonly isTouchPhone: boolean
 }
 
-export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcutsParams): void {
+export function useAppKeyboardShortcuts({ t, isTouchPhone }: UseAppKeyboardShortcutsParams): void {
   // ── Journal navigation shortcuts (Alt+Arrow, Alt+T) ────────────────
   // Uses keyboard-config matchers so users can rebind these.
   // Dispatches through JOURNAL_SHORTCUTS so the handler stays well under
@@ -526,7 +526,7 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
       // Ignore auto-repeat so holding the tab-cycle shortcut
       // doesn't spin through every tab on each frame.
       if (e.repeat) return
-      if (isMobile) return
+      if (isTouchPhone) return
       const state = useTabsStore.getState()
 
       if (trySelectTab(e, state)) return
@@ -559,5 +559,5 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
     }
     window.addEventListener('keydown', handleTabShortcuts)
     return () => window.removeEventListener('keydown', handleTabShortcuts)
-  }, [isMobile, t])
+  }, [isTouchPhone, t])
 }

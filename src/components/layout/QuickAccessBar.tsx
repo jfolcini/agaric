@@ -18,7 +18,7 @@
  *
  * Render gate:
  *   - Renders on BOTH desktop and mobile. #927 f6: the recents strip is the
- *     mobile page-switch affordance. TabBar is desktop-only and there is no
+ *     mobile page-switch affordance. TabBar is hidden on a touch phone and there is no
  *     bottom-nav, so before this change mobile page-switching was gated behind
  *     the sidebar Sheet. The strip is a horizontal-scroll touch surface, so it
  *     works as-is on coarse pointers; enabling it here is the lower-risk fix.
@@ -34,7 +34,7 @@ import { useTranslation } from 'react-i18next'
 
 import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { RecentPageChip } from '@/components/ui/recent-page-chip'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import { SCROLL_ONLY_WHEN_WIDER, ScrollArea } from '@/components/ui/scroll-area'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { useOpenInBackgroundTab } from '@/hooks/useOpenInBackgroundTab'
 import { getPageDisplayName } from '@/lib/page-display'
@@ -133,7 +133,7 @@ export function QuickAccessBar(): React.ReactElement | null {
 
   // #927 f6: renders on mobile too — the recents strip is the mobile
   // page-switch affordance now that there is no bottom-nav and TabBar is
-  // desktop-only. Nothing to show with no recents, and none on Settings.
+  // hidden on a touch phone. Nothing to show with no recents, and none on Settings.
   if (visible.length === 0 || isSettings) return null
 
   return (
@@ -156,8 +156,11 @@ export function QuickAccessBar(): React.ReactElement | null {
           viewportProps={{
             onWheel: handleWheel,
             style: hasOverflow
-              ? { maskImage: 'linear-gradient(to right, black 90%, transparent)' }
-              : undefined,
+              ? {
+                  ...SCROLL_ONLY_WHEN_WIDER.style,
+                  maskImage: 'linear-gradient(to right, black 90%, transparent)',
+                }
+              : SCROLL_ONLY_WHEN_WIDER.style,
           }}
         >
           <div className="flex items-center gap-1.5 px-4 md:px-6 md:pointer-fine:pl-16 py-1">

@@ -85,6 +85,7 @@ export class FakeTasks implements PageTaskSource {
   openDatePicker = vi.fn<(id: string, mode: 'due' | 'schedule') => void>()
   openDateLinkPicker = vi.fn<() => void>()
   openPropertyDrawer = vi.fn<(id: string) => void>()
+  openHistory = vi.fn<(id: string) => void>()
   propertiesEdited = vi.fn<() => void>()
   attachmentsChanged = vi.fn<() => void>()
   attach = vi.fn<(id: string, files: File[]) => void>()

@@ -433,7 +433,7 @@ function App() {
   // OS-level chord (`registerGlobalShortcut`) below stays here
   // because it interacts with Tauri APIs and the local
   // `quickCaptureChord` state.
-  useAppKeyboardShortcuts({ t, isMobile })
+  useAppKeyboardShortcuts({ t, isTouchPhone: isTouch && isMobile })
 
   // ── register the quick-capture global hotkey ─────────────
   // Chord state, the storage-event re-bind listener, and the SEQUENCED
@@ -646,8 +646,8 @@ function App() {
              * TabBar is hoisted out of the page-editor view router
              * case and rendered at shell level so tabs stay visible across
              * every sidebar destination (journal, pages, search, …). The
-             * autohide guard on `tabs.length <= 1` and the desktop-only
-             * mobile gate live inside the component itself.
+             * autohide guard on `tabs.length <= 1` and the touch-phone gate
+             * live inside the component itself.
              *
              * #735 — boundary so a TabBar render crash degrades to an
              * inline panel instead of bubbling to the root boundary and
@@ -664,7 +664,7 @@ function App() {
              * duplicated the left sidebar. Mounted between the hoisted TabBar
              * above and the ViewHeaderOutletSlot below. #927 f6: now renders on
              * mobile too — the recents strip is the mobile page-switch
-             * affordance (TabBar is desktop-only, no bottom-nav). Returns null
+             * affordance (TabBar is hidden on a touch phone, no bottom-nav). Returns null
              * when there are no recents, and on Settings.
              */}
             <FeatureErrorBoundary name="Quick access" nameKey="errorBoundary.section.quickAccess">

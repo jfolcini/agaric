@@ -1,9 +1,8 @@
 /**
  * TabBar — horizontal tab bar mounted at the app-shell level.
  *
- * Renders one button per open tab. Hidden when only a single tab is open, or
- * When the viewport is below the mobile breakpoint (makes tabs a
- * desktop-only affordance — mobile users navigate via sidebar + breadcrumbs).
+ * Renders one button per open tab. Hidden when only a single tab is open, and
+ * on a touch phone, which navigates through the sidebar and breadcrumbs.
  * Each tab shows the page title (label) and a close area (X icon).
  *
  * The strip is a recessed band that ends in a hairline. The active tab is
@@ -42,8 +41,9 @@ import type { TabSwitcherListProps } from '@/components/layout/TabSwitcherList'
 import { IconButton } from '@/components/ui/icon-button'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { Popover, PopoverTrigger } from '@/components/ui/popover'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import { SCROLL_ONLY_WHEN_WIDER, ScrollArea } from '@/components/ui/scroll-area'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { useJournalDateFormat } from '@/hooks/useJournalDateFormat'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { delegatedMiddleClickProps } from '@/hooks/useOpenInBackgroundTab'
@@ -201,6 +201,7 @@ export function TabBar(): React.ReactElement | null {
 
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([])
   const keyNavRef = useRef(false)
+  const isTouch = useIsTouch()
   const isMobile = useIsMobile()
 
   const { handleKeyDown: handleListKeyDown } = useListKeyboardNavigation({
@@ -218,10 +219,10 @@ export function TabBar(): React.ReactElement | null {
     }
   }, [activeTabIndex])
 
-  // Scope item 6: TabBar is desktop-only. Mobile users navigate via
-  // sidebar + breadcrumbs; the `openInNewTab` IPC surface collapses to a
-  // plain `navigateToPage` on mobile (handled at the call site).
-  if (isMobile) return null
+  // A touch phone has no tab bar: it navigates through the sidebar and
+  // breadcrumbs, and every opener of a new tab is withheld there
+  // (`useOpenInBackgroundTab`). A narrow mouse window keeps its tabs.
+  if (isTouch && isMobile) return null
 
   // Per decision: autohide guard preserved by explicit user direction
   // in session 461.
@@ -292,7 +293,11 @@ export function TabBar(): React.ReactElement | null {
           onClose={closeTab}
         />
       </div>
-      <ScrollArea orientation="horizontal" className="min-w-0 flex-1">
+      <ScrollArea
+        orientation="horizontal"
+        className="min-w-0 flex-1"
+        viewportProps={SCROLL_ONLY_WHEN_WIDER}
+      >
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}

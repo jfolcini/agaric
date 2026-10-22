@@ -9,6 +9,7 @@ import { useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { announce } from '@/lib/announcer'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { pageLinkIdAt } from '@/lib/link-chip'
@@ -17,11 +18,12 @@ import { useTabsStore } from '@/stores/tabs'
 export type OpenInBackgroundTab = (pageId: string, title: string, blockId?: string) => void
 
 /**
- * The opener, or `undefined` on mobile, where `TabBar` is hidden and a
+ * The opener, or `undefined` on a touch phone, where `TabBar` is hidden and a
  * background tab could never be reached.
  */
 export function useOpenInBackgroundTab(): OpenInBackgroundTab | undefined {
   const { t } = useTranslation()
+  const isTouch = useIsTouch()
   const isMobile = useIsMobile()
   const openInBackgroundTab = useTabsStore((s) => s.openInBackgroundTab)
   const open = useCallback<OpenInBackgroundTab>(
@@ -32,7 +34,7 @@ export function useOpenInBackgroundTab(): OpenInBackgroundTab | undefined {
     },
     [openInBackgroundTab, t],
   )
-  return isMobile ? undefined : open
+  return isTouch && isMobile ? undefined : open
 }
 
 /** Opens a link chip's target in a new tab behind the active one, on the block a `((ref))` names. */
@@ -40,7 +42,7 @@ export type OpenLinkInNewTab = (linkId: string) => void
 
 /**
  * The opener for a link chip's target, given the editor's link navigation
- * (`useBlockNavigateToLink`), or `undefined` on mobile, as `useOpenInBackgroundTab`.
+ * (`useBlockNavigateToLink`), or `undefined` on a touch phone, as `useOpenInBackgroundTab`.
  */
 export function useOpenLinkInNewTab(
   navigate: (linkId: string, openPage: NavigateToPageFn) => Promise<void>,

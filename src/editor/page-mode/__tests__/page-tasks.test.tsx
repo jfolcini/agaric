@@ -926,7 +926,7 @@ describe('the task keys', () => {
     expect(tasks.blocks.get(A)).toBeUndefined()
   })
 
-  it('Ctrl+Shift+D opens the date picker to link a date, Ctrl+Shift+P the caret’s block’s drawer', () => {
+  it('Ctrl+Shift+D opens the date picker to link a date, Ctrl+Shift+P and Ctrl+Shift+Y the caret’s block’s drawer and history', () => {
     const tasks = new FakeTasks()
     const { editor } = mount(
       [
@@ -939,10 +939,12 @@ describe('the task keys', () => {
 
     expect(pressIn(editor, 'D', { ctrlKey: true, shiftKey: true })).toBe(true)
     expect(pressIn(editor, 'P', { ctrlKey: true, shiftKey: true })).toBe(true)
+    expect(pressIn(editor, 'Y', { ctrlKey: true, shiftKey: true })).toBe(true)
     expect(pressIn(editor, 'x')).toBe(false)
 
     expect(tasks.openDateLinkPicker).toHaveBeenCalledTimes(1)
     expect(tasks.openPropertyDrawer.mock.calls).toEqual([[B]])
+    expect(tasks.openHistory.mock.calls).toEqual([[B]])
     expect(tasks.cycle).not.toHaveBeenCalled()
   })
 

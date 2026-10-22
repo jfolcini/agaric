@@ -15,6 +15,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render as rtlRender, act, fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { Editor } from '@tiptap/react'
 import type { DragEventHandler, MouseEventHandler, ReactElement, ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -25,6 +26,7 @@ import {
   EditorSurfaceContext,
   type EditorSurfaceProps,
 } from '@/components/editor/editor-surface-context'
+import { setActiveEditor } from '@/editor/active-editor'
 import { EDITOR_PORTAL_SELECTOR } from '@/editor/editor-portal'
 import { BatchAttachmentsProvider, useBatchAttachments } from '@/hooks/useBatchAttachments'
 import type { AttachmentRow } from '@/lib/bindings'
@@ -447,6 +449,54 @@ describe('EditableBlock', () => {
 
       expect(fireEvent.mouseDown(screen.getByTestId('static-text-B2'))).toBe(true)
     })
+
+    // The journal week view: another day's tree holds the focused editor.
+    it.each([true, false])(
+      'a press keeps another tree’s editor focused only while it has focus (focused: %s)',
+      (isFocused) => {
+        setActiveEditor({ isFocused, isDestroyed: false } as Editor)
+        const roving = makeRovingEditor({ activeBlockId: null })
+        render(
+          <EditableBlock
+            blockId="B2"
+            content="New"
+            isFocused={false}
+            rovingEditor={roving as never}
+          />,
+        )
+
+        const notPrevented = fireEvent.mouseDown(screen.getByTestId('static-text-B2'))
+        setActiveEditor(null)
+        expect(notPrevented).toBe(!isFocused)
+      },
+    )
+
+    it.each([true, false])(
+      'a click blurs another tree’s editor before it mounts here, while it has focus (focused: %s)',
+      async (isFocused) => {
+        const blur = vi.fn()
+        setActiveEditor({ isFocused, isDestroyed: false, view: { dom: { blur } } } as never)
+        const mount = vi.fn()
+        const roving = makeRovingEditor({ activeBlockId: null, mount })
+        render(
+          <EditableBlock
+            blockId="B2"
+            content="New"
+            isFocused={false}
+            rovingEditor={roving as never}
+          />,
+        )
+
+        await userEvent.click(screen.getByTestId('static-block-B2'))
+        setActiveEditor(null)
+
+        expect(mount).toHaveBeenCalledTimes(1)
+        expect(blur).toHaveBeenCalledTimes(isFocused ? 1 : 0)
+        // Its blur saves the other block before this one takes the focus.
+        const order = [...blur.mock.invocationCallOrder, ...mount.mock.invocationCallOrder]
+        expect(order).toEqual(order.toSorted((a, b) => a - b))
+      },
+    )
 
     it('a press on a control inside the block still moves focus to it', () => {
       const roving = makeRovingEditor({ activeBlockId: 'PREV_BLOCK' })

@@ -8,8 +8,8 @@
  * `DATE_CONTROL_VIEWS`; on the tool/admin views and the page editor a bare
  * calendar trio reads as off-context (#1740).
  *
- * None of it shows below `md`: on a phone the drawer's Journal entry is one
- * tap away, and the row is for the view's own title.
+ * None of it shows on a touch phone: the drawer's Journal entry is one tap
+ * away, and the row is for the view's own title. A narrow mouse window keeps it.
  */
 
 import { Calendar as CalendarIcon } from 'lucide-react'
@@ -19,6 +19,8 @@ import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 
 import { Button } from '@/components/ui/button'
+import { useIsMobile } from '@/hooks/useIsMobile'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore, type View } from '@/stores/navigation'
 
@@ -31,7 +33,7 @@ const JournalCalendarDropdown = lazy(() =>
 
 const DATE_CONTROL_VIEWS: ReadonlySet<View> = new Set<View>(['pages', 'search', 'tags', 'query'])
 
-export function GlobalDateControls(): React.ReactElement {
+export function GlobalDateControls(): React.ReactElement | null {
   const { t } = useTranslation()
   const { currentDate, navigateToDate } = useJournalStore(
     useShallow((s) => ({ currentDate: s.currentDate, navigateToDate: s.navigateToDate })),
@@ -40,6 +42,10 @@ export function GlobalDateControls(): React.ReactElement {
     useShallow((s) => ({ currentView: s.currentView, setView: s.setView })),
   )
   const [calendarOpen, setCalendarOpen] = useState(false)
+  const isTouch = useIsTouch()
+  const isMobile = useIsMobile()
+
+  if (isTouch && isMobile) return null
 
   function handleToday() {
     const today = new Date()
@@ -74,7 +80,7 @@ export function GlobalDateControls(): React.ReactElement {
   }
 
   return (
-    <div className="flex items-center gap-1 max-md:hidden">
+    <div className="flex items-center gap-1">
       <Button variant="outline" size="xs" onClick={handleToday} aria-label={t('journal.goToToday')}>
         {t('journal.today')}
       </Button>

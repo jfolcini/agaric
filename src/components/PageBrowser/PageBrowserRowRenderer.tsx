@@ -124,7 +124,7 @@ function HeaderRow({
           {accessibleLabel}
         </span>
         <span aria-hidden="true">{visibleLabel}</span>
-        <span aria-hidden="true" className="ml-1 font-normal text-muted-foreground/80">
+        <span aria-hidden="true" className="ml-1 font-normal text-muted-foreground">
           {row.count}
         </span>
       </div>

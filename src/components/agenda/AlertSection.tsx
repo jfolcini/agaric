@@ -46,7 +46,7 @@ const variantConfig: Record<
     titleColor: 'pending',
     keyPrefix: 'upcoming',
     badgeState: 'default',
-    dateColor: 'text-status-pending-foreground/60',
+    dateColor: 'text-muted-foreground',
   },
 }
 

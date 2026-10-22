@@ -18,10 +18,11 @@
  * date chip opens block mode's date picker, and `openDatePicker`
  * (Ctrl+Shift+D) opens it to link a date at the caret; a property chip opens
  * block mode's property editor, and the `+N` pill and `openPropertiesDrawer`
- * (Ctrl+Shift+P) its property drawer, and a ref chip opens its target as a
- * link chip does; the attachment badge opens block mode's
- * attachment list. A file pasted into a block, or dropped on one, is attached
- * to it as block mode attaches it: all through block mode's commands. A
+ * (Ctrl+Shift+P) its property drawer, `openBlockHistory` (Ctrl+Shift+Y) its
+ * history sheet, and a ref chip opens its target as a link chip does; the
+ * attachment badge opens block mode's attachment list. A file pasted into a
+ * block, or dropped on one, is attached to it as block mode attaches it: all
+ * through block mode's commands. A
  * change made elsewhere reaches the controls with the page's reload, never
  * through the document or its undo history. The controls follow the block's
  * id, so a split or a join that moves an id moves them with it.
@@ -94,6 +95,8 @@ export interface PageTaskActions {
   openDateLinkPicker: () => void
   /** Open block mode's property drawer on block `id`. */
   openPropertyDrawer: (id: string) => void
+  /** Open block mode's history sheet on block `id`. */
+  openHistory: (id: string) => void
   /** A property editor, the drawer or the history sheet closed: read the page's properties again. */
   propertiesEdited: () => void
   /** An attachment was deleted, renamed or added: read the page's attachments again. */
@@ -579,6 +582,10 @@ const PageTaskKeys = Extension.create<{ tasks: PageTaskSource }>({
             }
             if (matchesShortcutBinding(event, 'openPropertiesDrawer')) {
               tasks.openPropertyDrawer(id)
+              return true
+            }
+            if (matchesShortcutBinding(event, 'openBlockHistory')) {
+              tasks.openHistory(id)
               return true
             }
             return false

@@ -18,6 +18,8 @@ import { axe } from 'vitest-axe'
 import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { GlobalDateControls } from '@/components/agenda/GlobalDateControls'
 import { __resetCalendarPageDatesForTests } from '@/hooks/useCalendarPageDates'
+import { useIsMobile } from '@/hooks/useIsMobile'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
@@ -38,6 +40,9 @@ vi.mock('@/components/ui/calendar', () => ({
 }))
 
 const mockedInvoke = vi.mocked(invoke)
+
+vi.mock('@/hooks/useIsMobile', () => ({ useIsMobile: vi.fn(() => false) }))
+vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: vi.fn(() => false) }))
 
 /**
  * Both commands the calendar dropdown fires when it opens, overridable per
@@ -60,6 +65,8 @@ function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}): void {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(useIsMobile).mockReturnValue(false)
+  vi.mocked(useIsTouch).mockReturnValue(false)
   __resetCalendarPageDatesForTests()
   useJournalStore.setState({
     mode: 'daily',
@@ -88,6 +95,14 @@ beforeEach(() => {
 })
 
 describe('GlobalDateControls', () => {
+  // A touch phone reaches the journal from its drawer; a narrow mouse window keeps the row.
+  it.each([true, false])('at phone width, hides only on touch (touch: %s)', (touch) => {
+    vi.mocked(useIsMobile).mockReturnValue(true)
+    vi.mocked(useIsTouch).mockReturnValue(touch)
+    render(<GlobalDateControls />)
+    expect(screen.queryByRole('button', { name: /go to agenda/i }) === null).toBe(touch)
+  })
+
   it('renders Today button', () => {
     render(<GlobalDateControls />)
     expect(screen.getByRole('button', { name: /today/i })).toBeInTheDocument()
