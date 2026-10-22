@@ -26,12 +26,14 @@
 // ---------------------------------------------------------------------------
 
 import {
-  ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
   expectAbsent,
   expectImageRendered,
+  importFolder,
   navigateTo,
+  openPageTitled,
+  pageEntryTitled,
   runScopedMarker,
   waitForAppReady,
 } from './helpers'
@@ -41,75 +43,6 @@ const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
   'base64',
 )
-
-/**
- * Pick the folder `vault` holding `files` in the Data tab's Obsidian input and
- * wait until the result region reads `summary`.
- */
-async function importVault(
-  vault: string,
-  files: Record<string, Buffer>,
-  summary: string,
-): Promise<void> {
-  await navigateTo('Settings')
-  const dataTab = $('#settings-tab-data')
-  await dataTab.waitForClickable({ timeout: NAV_TIMEOUT })
-  await dataTab.click()
-  await $('[data-testid="settings-panel-data"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
-  await $('[data-testid="import-obsidian-input"]').waitForExist({ timeout: ACTION_TIMEOUT })
-  const entries = Object.entries(files).map(([name, bytes]) => ({
-    name,
-    rel: `${vault}/${name}`,
-    b64: bytes.toString('base64'),
-  }))
-  await browser.execute((list: Array<{ name: string; rel: string; b64: string }>) => {
-    const input = document.querySelector<HTMLInputElement>('[data-testid="import-obsidian-input"]')
-    if (input === null) throw new Error('no Obsidian import input')
-    const picked = new DataTransfer()
-    for (const { name, rel, b64 } of list) {
-      const file = new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], name)
-      Object.defineProperty(file, 'webkitRelativePath', { value: rel })
-      picked.items.add(file)
-    }
-    input.files = picked.files
-    if (input.files?.[0]?.webkitRelativePath !== list[0]?.rel) {
-      throw new Error('the input lost the files or their relative paths')
-    }
-    input.dispatchEvent(new Event('change', { bubbles: true }))
-  }, entries)
-  const result = $('[data-testid="import-result"]')
-  await result.waitForDisplayed({ timeout: ACTION_TIMEOUT })
-  let text = ''
-  await browser
-    .waitUntil(
-      async () => {
-        text = await result.getText()
-        return text.includes(summary)
-      },
-      { timeout: ACTION_TIMEOUT },
-    )
-    .catch(() => {
-      throw new Error(
-        `the import result reads ${JSON.stringify(text)}, not ${JSON.stringify(summary)}`,
-      )
-    })
-}
-
-/**
- * The Pages entry titled exactly `title`: a namespaced page is a leaf of the
- * namespace tree (PageTreeItem.tsx), a flat one a PageRow; both carry the
- * full title in the label span's `title` attribute.
- */
-function pageEntry(title: string) {
-  return $(`span[title="${title}"]`)
-}
-
-async function openPage(title: string): Promise<void> {
-  await navigateTo('Pages')
-  await pageEntry(title).waitForClickable({ timeout: NAV_TIMEOUT })
-  await pageEntry(title).click()
-  await expectPageOpen(title)
-}
 
 async function expectPageOpen(title: string): Promise<void> {
   await browser.waitUntil(async () => (await $('[aria-label="Page title"]').getText()) === title, {
@@ -145,7 +78,8 @@ describe('Agaric real-backend Obsidian vault import (#5740) @markdown', () => {
       '',
     ].join('\n')
     // The image is an attachment, so the pick makes three pages.
-    await importVault(
+    await importFolder(
+      'import-obsidian-input',
       vault,
       {
         [`${home}.md`]: Buffer.from(homeMd),
@@ -158,13 +92,13 @@ describe('Agaric real-backend Obsidian vault import (#5740) @markdown', () => {
 
     await navigateTo('Journal')
     await navigateTo('Pages')
-    await pageEntry(`${vault}/${topic}`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await pageEntryTitled(`${vault}/${topic}`).waitForDisplayed({ timeout: NAV_TIMEOUT })
     await expectAbsent(`span[title="${topic}"]`, `a page titled ${topic}`)
-    await pageEntry(`${vault}/Über`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await pageEntryTitled(`${vault}/Über`).waitForDisplayed({ timeout: NAV_TIMEOUT })
     await expectAbsent('span[title="über"]', 'a page titled über')
     await expectAbsent(`span[title="${vault}/pic.png"]`, 'a page made of the image')
 
-    await openPage(`${vault}/${home}`)
+    await openPageTitled(`${vault}/${home}`)
     const links = await blockId(`${marker}-links`)
     const tag = $(`li[data-block-id="${links}"] [data-testid="tag-ref-chip"]`)
     await tag.waitForExist({ timeout: NAV_TIMEOUT })

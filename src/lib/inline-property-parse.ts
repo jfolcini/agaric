@@ -95,7 +95,8 @@ export function foldPropertyKey(key: string): string {
   return key.replaceAll('-', '_').replace(/[A-Z]/g, (c) => c.toLowerCase())
 }
 
-const FOLDED_RESERVED_KEYS: ReadonlySet<string> = new Set(
+/** {@link INLINE_PROPERTY_RESERVED_KEYS}, each folded by {@link foldPropertyKey}. */
+export const FOLDED_RESERVED_KEYS: ReadonlySet<string> = new Set(
   [...INLINE_PROPERTY_RESERVED_KEYS].map(foldPropertyKey),
 )
 

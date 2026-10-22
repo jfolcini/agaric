@@ -1,3 +1,7 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
 import JSZip from 'jszip'
 
 import { expect, getInvokeCalls, installIpcRecorder, openPage, test, waitForBoot } from './helpers'
@@ -328,6 +332,58 @@ test.describe('Import markdown @markdown', () => {
     const importResult = page.locator('[data-testid="import-result"]')
     await expect(importResult).toBeVisible()
     await expect(importResult).toContainText('1 property')
+  })
+})
+
+// ===========================================================================
+// 2b. Folder import of other formats (#6032). The mock models titles and block
+// text but no property, task keyword or nesting, so the Org task state, the
+// Notion properties and the resolved links are in
+// e2e-tauri/import-notion-org.e2e.ts.
+// ===========================================================================
+
+test.describe('Folder import of Notion, Org and text files @markdown', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('titles each page as its source names it and turns a Notion aside into a callout', async ({
+    page,
+  }) => {
+    const id = '0123456789abcdef0123456789abcdef'
+    const root = path.join(mkdtempSync(path.join(os.tmpdir(), 'pw-6032-')), 'Export')
+    mkdirSync(root)
+    const files: Record<string, string> = {
+      [`Plan ${id}.md`]: '# Plan\n\nStatus: Active\n\n<aside>\n💡 Mind the deadline.\n</aside>\n',
+      [`Notes ${id.replace('0', '1')}.md`]: '# Notes\n\nA note.\n',
+      [`Tasks ${id}.csv`]: 'Name,Status\n',
+      'tasks.org': '#+TITLE: Org Tasks\n* TODO Write report\n',
+      'reading.txt': '- a text file\n',
+    }
+    for (const [name, text] of Object.entries(files)) writeFileSync(path.join(root, name), text)
+
+    await navigateToDataSettings(page)
+    await page.locator('[data-testid="import-folder-input"]').setInputFiles(root)
+
+    const importResult = page.locator('[data-testid="import-result"]')
+    await expect(importResult).toContainText('4 files')
+    await page.getByTestId('import-result-details').locator('summary').click()
+    await expect(page.getByTestId('import-warning-item').first()).toContainText(
+      'Skipped 1 Notion database table (.csv)',
+    )
+
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Pages', exact: true })
+      .click()
+    for (const title of ['Export/Plan', 'Export/Notes', 'Export/Org Tasks', 'Export/reading']) {
+      await expect(page.locator(`span[title="${title}"]`)).toBeVisible()
+    }
+    await expect(page.locator(`span[title="Export/Plan ${id}"]`)).toHaveCount(0)
+
+    await page.locator('span[title="Export/Plan"]').click()
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Export/Plan')
+    await expect(page.getByTestId('callout-block')).toContainText('Mind the deadline.')
   })
 })
 
