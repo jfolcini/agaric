@@ -3,10 +3,12 @@
  */
 
 import { Editor, type JSONContent } from '@tiptap/core'
+import CodeBlock from '@tiptap/extension-code-block'
 import Document from '@tiptap/extension-document'
 import History from '@tiptap/extension-history'
 import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
+import { Slice } from '@tiptap/pm/model'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -14,6 +16,7 @@ import { BlockLink } from '@/editor/extensions/block-link'
 import { parse, serialize } from '@/editor/markdown-serializer'
 import type { DocNode } from '@/editor/types'
 import { t } from '@/lib/i18n'
+import { setPageDragData } from '@/lib/page-drag'
 
 describe('BlockLink', () => {
   it('creates an extension with the correct name', () => {
@@ -333,5 +336,56 @@ describe('BlockLink label (#5160 D9)', () => {
       type: 'paragraph',
       content: [{ type: 'block_link', attrs: { id: ID, label: '[WIP spec' } }],
     })
+  })
+})
+
+describe('BlockLink takes a page dropped on the editor (#5691)', () => {
+  const PAGE = '01HZ00000000000000000PAGE1'
+  let editor: Editor
+
+  afterEach(() => {
+    editor?.destroy()
+  })
+
+  /** Run the editor's drop props as ProseMirror's drop does, the pointer over `pos`. */
+  function drop(data: DataTransfer, pos: number, markdown = 'see here'): boolean {
+    editor = new Editor({
+      extensions: [Document, Paragraph, Text, CodeBlock, BlockLink],
+      content: parse(markdown) as unknown as JSONContent,
+    })
+    const at = vi.spyOn(editor.view, 'posAtCoords').mockReturnValue({ pos, inside: -1 })
+    // happy-dom's DragEvent drops the data and point it is built with.
+    const event = { dataTransfer: data, clientX: 10, clientY: 20 } as unknown as DragEvent
+    const taken =
+      editor.view.someProp('handleDrop', (handle) =>
+        handle(editor.view, event, Slice.empty, false),
+      ) ?? false
+    if (taken) expect(at).toHaveBeenCalledWith({ left: 10, top: 20 })
+    return taken
+  }
+
+  it('links the page where it is dropped', () => {
+    const data = new DataTransfer()
+    setPageDragData(data, PAGE)
+
+    expect(drop(data, 5)).toBe(true)
+    expect(serialize(editor.getJSON() as DocNode)).toBe(`see [[${PAGE}]]here`)
+  })
+
+  it('takes a drop on a code block and changes nothing', () => {
+    const data = new DataTransfer()
+    setPageDragData(data, PAGE)
+    const code = '```\nlet a = 1\n```'
+
+    expect(drop(data, 4, code)).toBe(true)
+    expect(serialize(editor.getJSON() as DocNode)).toBe(code)
+  })
+
+  it('leaves a drop of anything else to ProseMirror', () => {
+    const data = new DataTransfer()
+    data.setData('text/plain', 'hello')
+
+    expect(drop(data, 5)).toBe(false)
+    expect(serialize(editor.getJSON() as DocNode)).toBe('see here')
   })
 })

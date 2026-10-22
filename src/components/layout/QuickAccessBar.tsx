@@ -171,7 +171,7 @@ export function QuickAccessBar(): React.ReactElement | null {
               const fullTitle = ref.title || t('recent.untitled')
               const displayTitle = getPageDisplayName(fullTitle, 'leaf').label
               return (
-                <NewTabTarget key={ref.pageId} pageId={ref.pageId} title={ref.title}>
+                <NewTabTarget key={ref.pageId} pageId={ref.pageId} title={ref.title} dragsPage>
                   <RecentPageChip
                     ref={(el) => {
                       if (el != null) buttonRefs.current.set(idx, el)

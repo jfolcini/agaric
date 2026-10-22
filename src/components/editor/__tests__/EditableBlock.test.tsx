@@ -15,7 +15,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render as rtlRender, act, fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { MouseEventHandler, ReactElement, ReactNode } from 'react'
+import type { DragEventHandler, MouseEventHandler, ReactElement, ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -28,6 +28,8 @@ import {
 import { EDITOR_PORTAL_SELECTOR } from '@/editor/editor-portal'
 import { BatchAttachmentsProvider, useBatchAttachments } from '@/hooks/useBatchAttachments'
 import type { AttachmentRow } from '@/lib/bindings'
+import { logger } from '@/lib/logger'
+import { PAGE_DRAG_TYPE } from '@/lib/page-drag'
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 
@@ -89,14 +91,23 @@ vi.mock('@/components/editor/StaticBlock', () => ({
     content,
     onFocus,
     onMouseDown,
+    onDragOver,
+    onDrop,
   }: {
     blockId: string
     content: string
     onFocus: (id: string) => void
     onMouseDown?: MouseEventHandler<HTMLDivElement>
+    onDragOver?: DragEventHandler<HTMLDivElement>
+    onDrop?: DragEventHandler<HTMLDivElement>
   }) => (
     // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- mirrors StaticBlock's passive container
-    <div onMouseDown={onMouseDown}>
+    <div
+      data-testid={`static-root-${blockId}`}
+      onMouseDown={onMouseDown}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+    >
       <button
         type="button"
         data-testid={`static-block-${blockId}`}
@@ -1925,6 +1936,111 @@ describe('EditableBlock', () => {
         expect(mockSaveDraft).toHaveBeenCalledWith('B1', `https://example.com/${'a'.repeat(49)}`)
       } finally {
         vi.useRealTimers()
+      }
+    })
+  })
+
+  describe('a page dragged onto the static block', () => {
+    const PAGE = '01HZ00000000000000000PAGE1'
+
+    /** What `setPageDragData` puts on a drag (`page-drag.ts`). */
+    function pageDrag(pageId: string) {
+      return {
+        types: [PAGE_DRAG_TYPE, 'text/plain'],
+        getData: (type: string) => (type === PAGE_DRAG_TYPE ? pageId : `[[${pageId}]]`),
+      }
+    }
+
+    function renderStatic(content: string) {
+      render(
+        <EditableBlock
+          blockId="B1"
+          content={content}
+          isFocused={false}
+          rovingEditor={makeRovingEditor() as never}
+        />,
+      )
+      return screen.getByTestId('static-root-B1')
+    }
+
+    it('links the page at the end of the block', async () => {
+      mockEdit.mockResolvedValue(true)
+      const block = renderStatic('see')
+
+      expect(fireEvent.dragOver(block, { dataTransfer: pageDrag(PAGE) })).toBe(false)
+      expect(fireEvent.drop(block, { dataTransfer: pageDrag(PAGE) })).toBe(false)
+
+      await waitFor(() => expect(mockEdit).toHaveBeenCalledWith('B1', `see [[${PAGE}]]`))
+    })
+
+    it('adds no space to an empty block', async () => {
+      mockEdit.mockResolvedValue(true)
+      const block = renderStatic('')
+
+      fireEvent.drop(block, { dataTransfer: pageDrag(PAGE) })
+
+      await waitFor(() => expect(mockEdit).toHaveBeenCalledWith('B1', `[[${PAGE}]]`))
+    })
+
+    it.each([
+      ['a heading', '# Plan'],
+      ['a list item', '- one\n- two'],
+      ['a quote', '> said'],
+      ['a callout', '> [!NOTE] mind this'],
+    ])('links the page at the end of %s', async (_kind, content) => {
+      mockEdit.mockResolvedValue(true)
+      const block = renderStatic(content)
+
+      expect(fireEvent.dragOver(block, { dataTransfer: pageDrag(PAGE) })).toBe(false)
+      fireEvent.drop(block, { dataTransfer: pageDrag(PAGE) })
+
+      await waitFor(() => expect(mockEdit).toHaveBeenCalledWith('B1', `${content} [[${PAGE}]]`))
+    })
+
+    // The link would land inside the block's syntax: on a closing fence, a
+    // fence no longer closes.
+    it.each([
+      ['a code block', '```js\nlet a = 1\n```'],
+      ['a Mermaid diagram', '```mermaid\ngraph TD\n```'],
+      ['display math', '$$\nE = mc^2\n$$'],
+      ['a table', '| a | b |\n| --- | --- |\n| 1 | 2 |'],
+      ['a rule', '---'],
+    ])('refuses a page dropped on %s', (_kind, content) => {
+      const block = renderStatic(content)
+
+      expect(fireEvent.dragOver(block, { dataTransfer: pageDrag(PAGE) })).toBe(true)
+      expect(fireEvent.drop(block, { dataTransfer: pageDrag(PAGE) })).toBe(true)
+      expect(mockEdit).not.toHaveBeenCalled()
+    })
+
+    it('leaves a drag of anything else to the browser', () => {
+      const block = renderStatic('see')
+      const text = {
+        types: ['text/plain'],
+        getData: (type: string) => (type === 'text/plain' ? 'hello' : ''),
+      }
+
+      expect(fireEvent.dragOver(block, { dataTransfer: text })).toBe(true)
+      expect(fireEvent.drop(block, { dataTransfer: text })).toBe(true)
+      expect(mockEdit).not.toHaveBeenCalled()
+    })
+
+    it('logs a link the write failed to save', async () => {
+      mockEdit.mockResolvedValue(false)
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      try {
+        const block = renderStatic('see')
+
+        fireEvent.drop(block, { dataTransfer: pageDrag(PAGE) })
+
+        await waitFor(() =>
+          expect(warn).toHaveBeenCalledWith('EditableBlock', 'linking a dropped page failed', {
+            blockId: 'B1',
+            pageId: PAGE,
+          }),
+        )
+      } finally {
+        warn.mockRestore()
       }
     })
   })

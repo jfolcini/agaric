@@ -28,38 +28,16 @@
  * the bookmarks themselves.
  */
 
-import {
-  type Announcements,
-  closestCenter,
-  DndContext,
-  type DragEndEvent,
-  KeyboardCode,
-  KeyboardSensor,
-  type KeyboardSensorOptions,
-  PointerSensor,
-  TouchSensor,
-  type UniqueIdentifier,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core'
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
+import { closestCenter, DndContext, type DragEndEvent, type UniqueIdentifier } from '@dnd-kit/core'
+import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { CSS, getEventCoordinates } from '@dnd-kit/utilities'
 import { Bookmark, BookmarkX } from 'lucide-react'
 import { type ReactElement, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { MOUSE_DRAG_ACTIVATION_DISTANCE } from '@/components/block-tree/use-block-dnd'
-import {
-  LONG_PRESS_DELAY,
-  LONG_PRESS_MOVE_THRESHOLD,
-} from '@/components/block-tree/use-block-touch-long-press'
 import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHeader'
 import { NewTabTarget } from '@/components/common/NewTabTarget'
+import { reorderAccessibility, useReorderSensors } from '@/components/layout/reorder-dnd'
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -69,13 +47,13 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from '@/components/ui/sidebar'
-import { useIsTouch } from '@/hooks/useIsTouch'
 import { useStarredPages } from '@/hooks/useStarredPages'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { resolveStoreTitle } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
 import { getPageDisplayName } from '@/lib/page-display'
+import { dropPageAt } from '@/lib/page-drag'
 import { PREFERENCES, usePreference } from '@/lib/preferences'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
@@ -84,19 +62,6 @@ import { useTabsStore } from '@/stores/tabs'
 
 /** Shared empty set, so a space with nothing asked yet keeps a stable identity. */
 const EMPTY_IDS: ReadonlySet<string> = new Set()
-
-/**
- * Space picks a bookmark up; Enter is left to the button, so it still opens
- * the page. Enter and Tab still drop one that is already up.
- */
-const KEYBOARD_SENSOR_OPTIONS: KeyboardSensorOptions = {
-  coordinateGetter: sortableKeyboardCoordinates,
-  keyboardCodes: {
-    start: [KeyboardCode.Space],
-    cancel: [KeyboardCode.Esc],
-    end: [KeyboardCode.Space, KeyboardCode.Enter, KeyboardCode.Tab],
-  },
-}
 
 interface BookmarkEntry {
   pageId: string
@@ -126,7 +91,9 @@ function SortableBookmark({ pageId, title, onOpen, onRemove }: SortableBookmarkP
   return (
     <SidebarMenuItem
       ref={setNodeRef}
-      style={{ transform: CSS.Translate.toString(transform), transition }}
+      // Up and down only: a row carried sideways overflows the sidebar, which
+      // dnd-kit then scrolls after it without end.
+      style={{ transform: CSS.Translate.toString(transform && { ...transform, x: 0 }), transition }}
       className={cn(isDragging && 'z-10 rounded-md bg-sidebar-accent')}
     >
       <NewTabTarget pageId={pageId} title={title}>
@@ -261,43 +228,34 @@ export function BookmarksSection(): ReactElement {
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const { isMobile, setOpenMobile } = useSidebar()
 
-  // The block tree's pointer sensors (`use-block-dnd.ts`): on a coarse pointer
-  // the drag waits for the long-press hold, so a swipe still scrolls the
-  // drawer; on a fine one it waits for 8px of travel, so a click still opens
-  // the page.
-  const isTouch = useIsTouch()
-  const sensors = useSensors(
-    useSensor(isTouch ? TouchSensor : PointerSensor, {
-      activationConstraint: isTouch
-        ? { delay: LONG_PRESS_DELAY, tolerance: LONG_PRESS_MOVE_THRESHOLD }
-        : { distance: MOUSE_DRAG_ACTIVATION_DISTANCE },
-    }),
-    useSensor(KeyboardSensor, KEYBOARD_SENSOR_OPTIONS),
+  const sensors = useReorderSensors()
+  const dndAccessibility = useMemo(
+    () =>
+      reorderAccessibility(
+        t,
+        (id: UniqueIdentifier) =>
+          bookmarks.find((b) => b.pageId === id)?.title || t('recent.untitled'),
+        t('bookmarks.reorderInstructions'),
+      ),
+    [bookmarks, t],
   )
 
-  // dnd-kit's default announcements read the id, which here is a ULID (#2943).
-  const dndAccessibility = useMemo(() => {
-    const titleOf = (id: UniqueIdentifier): string =>
-      bookmarks.find((b) => b.pageId === id)?.title || t('recent.untitled')
-    const announcements: Announcements = {
-      onDragStart: ({ active }) => t('dnd.pickedUp', { block: titleOf(active.id) }),
-      onDragOver: ({ active, over }) =>
-        over
-          ? t('dnd.movedOver', { block: titleOf(active.id), target: titleOf(over.id) })
-          : t('dnd.movedOutside', { block: titleOf(active.id) }),
-      onDragEnd: ({ active, over }) =>
-        over
-          ? t('dnd.dropped', { block: titleOf(active.id), target: titleOf(over.id) })
-          : t('dnd.droppedOutside', { block: titleOf(active.id) }),
-      onDragCancel: ({ active }) => t('dnd.cancelled', { block: titleOf(active.id) }),
+  // A bookmark dragged out of the sidebar is a page dragged into what it is
+  // dropped on (`page-drag.ts`). One task later: a press that blurred the block
+  // editor keeps it on its block until the press ends (`useEditorBlur`), and a
+  // link dropped into it then would be lost.
+  const handleDragEnd = ({ active, over, activatorEvent, delta }: DragEndEvent) => {
+    const start = getEventCoordinates(activatorEvent)
+    const sidebar = (activatorEvent.target as Element | null)?.closest('[data-sidebar="sidebar"]')
+    const box = sidebar?.getBoundingClientRect()
+    if (start !== null && box !== undefined) {
+      const x = start.x + delta.x
+      const y = start.y + delta.y
+      if (x < box.left || x > box.right || y < box.top || y > box.bottom) {
+        setTimeout(() => dropPageAt(String(active.id), x, y))
+        return
+      }
     }
-    return {
-      announcements,
-      screenReaderInstructions: { draggable: t('bookmarks.reorderInstructions') },
-    }
-  }, [bookmarks, t])
-
-  const handleDragEnd = ({ active, over }: DragEndEvent) => {
     if (over) move(String(active.id), String(over.id))
   }
 

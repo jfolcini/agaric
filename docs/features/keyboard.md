@@ -101,6 +101,7 @@ The buffer uses the block editor's bindings from the catalog, your rebinds inclu
 | `Ctrl+Shift+T` | Reopen the last closed tab, on its pages and at its place (desktop; each window keeps its recently closed tabs for the session) |
 | `Ctrl+1` … `Ctrl+8` / `Ctrl+9` | Select the Nth tab / the last tab (desktop) |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab (desktop) |
+| `Space`, `←` / `→`, `Space` | On a focused tab: pick it up, move it, drop it; `Escape` puts it back (desktop) |
 | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Zoom the whole interface in / out / back to 100% (desktop; the level is kept per device and shown in Settings → Appearance → Zoom) |
 | `Ctrl+Alt+N` (`⌘⌥N` on macOS) | Open **Quick Capture**. A true global OS hotkey — fires even when the app is in the background. It is the first row of Settings → Keyboard, labelled system-wide |
 
