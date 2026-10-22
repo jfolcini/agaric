@@ -19,14 +19,12 @@
 import type React from 'react'
 import { useCallback, useRef, useState } from 'react'
 
-import { invalidateCalendarPageDates } from '@/hooks/useCalendarPageDates'
+import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { unwrap } from '@/lib/app-error'
 import { type ImportAnchor, commands } from '@/lib/bindings'
-import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { importMarkdown } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
-import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { requireActiveScope } from '@/lib/space-scope'
 import { type ImportUnit, importErrorReason } from '@/lib/vault-import'
 import { useResolveStore } from '@/stores/resolve'
@@ -314,11 +312,10 @@ export function useImportRunner(): UseImportRunner {
         }
       }
 
-      // #5258 — an imported journal day must not hide behind a cached range.
+      // #5258, #6049 — an imported page, journal day, link or property must not
+      // hide behind a cache filled before the import.
       if (succeededFiles > 0) {
-        invalidateCalendarPageDates()
-        invalidatePropertyCaches()
-        recordGraphStructureChange()
+        invalidateDerivedCaches()
         // #5740 — and an imported `#tag` chip reads its name only from the
         // resolve store, which a sync refills the same way.
         void useResolveStore.getState().preload(activeSpaceId, true, importedPageIds)

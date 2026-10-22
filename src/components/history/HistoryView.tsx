@@ -32,14 +32,12 @@ import { entryKey, useHistorySelection } from '@/hooks/useHistorySelection'
 import { useRegisterPrimaryFocus } from '@/hooks/usePrimaryFocus'
 import { reloadChangedPageStores } from '@/hooks/useSyncEvents'
 import { unwrap } from '@/lib/app-error'
-import { recordAttachmentInvalidation } from '@/lib/attachment-invalidation'
 import type { HistoryEntry, PageResponse } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { categorizeHistoryError, type HistoryErrorCategory } from '@/lib/categorize-history-error'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { queryClient } from '@/lib/query-client'
 import { requireActiveScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
@@ -257,19 +255,9 @@ export function HistoryView(): React.ReactElement {
   const reloadAfterMutation = useCallback(() => {
     clearSelection()
     void queryClient.resetQueries({ queryKey })
-    invalidatePropertyCaches()
-    // #4335 review — a revert (`HistoryRevertDialog`) or restore
-    // (`HistoryRestoreDialog`) can mutate `attachments` directly
-    // (`rename_attachment` is now revertible; `restore_page_to_op_inner`
-    // carries its own attachment disjunct). `AttachmentList` has no
-    // TanStack Query cache keyed off this view's `queryKey` to reset — it
-    // is local state owned by `useBlockAttachments` /
-    // `BatchAttachmentsProvider` elsewhere in the tree — so a concurrently
-    // mounted instance needs this separate signal or it keeps showing
-    // pre-mutation filenames. See `@/lib/attachment-invalidation`.
-    recordAttachmentInvalidation()
     // #5276 — a revert rewrites pages behind every store's back and no event names
-    // which, so reload everything held, as a sync without page ids does.
+    // which, so reload everything held, as a sync without page ids does; that also
+    // drops every derived cache, attachments included (#4335, #6049).
     reloadChangedPageStores()
   }, [clearSelection, queryKey])
 

@@ -4,13 +4,10 @@ import type { Root } from 'react-dom/client'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useCalendarPageDatesEpoch } from '@/hooks/useCalendarPageDates'
+import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { mapBackendState, useSyncEvents } from '@/hooks/useSyncEvents'
-import { getBlockPropertyInvalidationKey } from '@/lib/block-property-events'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
-import { propertyKeysQueryKey } from '@/lib/property-keys-cache'
-import { queryClient } from '@/lib/query-client'
 import { useRecentPagesStore } from '@/stores/recent-pages'
 import type { Tab } from '@/stores/tabs'
 import { useTabsStore } from '@/stores/tabs'
@@ -182,6 +179,12 @@ vi.mock('@/stores/space', () => ({
 vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),
 }))
+
+// #6049 — a spy that still drops the caches; which caches is `derived-caches.test.ts`.
+vi.mock('@/hooks/derived-caches', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/hooks/derived-caches')>()
+  return { invalidateDerivedCaches: vi.fn(actual.invalidateDerivedCaches) }
+})
 
 import { toast } from 'sonner'
 
@@ -1416,49 +1419,12 @@ describe('useSyncEvents', () => {
       }
     }
 
-    it('bumps the block-property counter the task panels refetch on (#5256)', async () => {
-      const before = getBlockPropertyInvalidationKey()
+    it('drops every derived cache, attachments included (#5256, #5258, #6049)', async () => {
       const { unmount } = await fire(['PAGE_1'])
 
-      await vi.waitFor(() => {
-        expect(getBlockPropertyInvalidationKey()).toBe(before + 1)
-      })
+      expect(vi.mocked(invalidateDerivedCaches)).toHaveBeenCalledTimes(1)
 
       unmount()
-    })
-
-    it('marks the property key and value lists stale (#5296)', async () => {
-      const keys = propertyKeysQueryKey('SPACE_TEST')
-      queryClient.setQueryData(keys, ['status'])
-
-      const { unmount } = await fire(['PAGE_1'])
-
-      expect(queryClient.getQueryState(keys)?.isInvalidated).toBe(true)
-      unmount()
-    })
-
-    it('marks the Pages list for a refetch (#5258)', async () => {
-      const pagesKey = ['pageBrowserData', 'SPACE_TEST', 'default', []]
-      queryClient.setQueryData(pagesKey, { pages: [], pageParams: [] })
-      const { unmount } = await fire(['PAGE_1'])
-
-      expect(queryClient.getQueryState(pagesKey)?.isInvalidated).toBe(true)
-
-      unmount()
-    })
-
-    it('invalidates the journal calendar page dates (#5258)', async () => {
-      let epoch = -1
-      const probe = renderHook(() => {
-        epoch = useCalendarPageDatesEpoch()
-      })
-      const before = epoch
-      const { unmount } = await fire(['PAGE_1'])
-
-      expect(epoch).toBe(before + 1)
-
-      unmount()
-      probe.unmount()
     })
 
     it('retitles a renamed page in the tabs and recents, leaving pages outside the set (#5242)', async () => {

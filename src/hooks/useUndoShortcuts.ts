@@ -22,16 +22,14 @@
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
-import { recordBlockPropertyChange } from '@/lib/block-property-events'
 import { t as translate } from '@/lib/i18n'
 import { isEditableTarget, matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
-import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
-import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import { getPageStore } from '@/stores/page-blocks'
@@ -82,12 +80,13 @@ import { useUndoStore } from '@/stores/undo'
  * #5287 — an undo emits no `block:properties-changed`, and the page store's
  * reload excludes the page root, so the header's property table and template
  * flags learn of a reverted page property only through the property counter.
+ *
+ * #6049 — the name caches, the property counter and every other derived cache
+ * are dropped together by `invalidateDerivedCaches`, as after a sync.
  */
 export async function refreshAfterUndoRedo(pageId: string, spaceId: string | null): Promise<void> {
   await getPageStore(pageId)?.getState().load()
-  invalidateNameCaches()
-  invalidatePropertyCaches()
-  recordBlockPropertyChange()
+  invalidateDerivedCaches()
   try {
     const pageBlock = unwrap(await commands.getBlock(pageId))
     if (pageBlock?.content) {

@@ -19,18 +19,13 @@
  * Resolves issues #276, #386, #378.
  */
 
-import { invalidateCalendarPageDates } from '@/hooks/useCalendarPageDates'
-import { invalidatePageBrowserData } from '@/hooks/usePageBrowserData'
+import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { useTauriEventListener } from '@/hooks/useTauriEventListener'
 import { announce } from '@/lib/announcer'
-import { recordBlockPropertyChange } from '@/lib/block-property-events'
-import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
-import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { isPairingWindowRejection } from '@/lib/pairing-rejections'
-import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { forEachLivePageStoreGroup } from '@/stores/page-blocks'
 import { retitleHeldPages } from '@/stores/page-rename'
 import { useResolveStore } from '@/stores/resolve'
@@ -127,8 +122,8 @@ export interface BlocksChangedPayload {
  * #1071 / #2505 — the shared targeted page-store reload. Given the set of
  * owning-page ids touched by an out-of-band write (a remote sync session or an
  * MCP write), reload + undo-re-anchor ONLY the mounted page stores whose id is
- * in the set, then run one resolve-cache preload and bump the graph-structure
- * signal. `QuickCaptureDialog` calls it for its own write too (#5291).
+ * in the set, then run one resolve-cache preload and `invalidateDerivedCaches`.
+ * `QuickCaptureDialog` calls it for its own write too (#5291).
  *
  * FALLBACK: when `changedPageIds` is absent or empty (an older peer, the
  * snapshot-catch-up path, or an MCP write whose block had no resolvable page
@@ -183,30 +178,9 @@ export function reloadChangedPageStores(changedPageIds?: string[]): void {
       logger.warn('useSyncEvents', 'retitling tabs and recents after sync failed', undefined, err)
     })
 
-  // #1530 — out-of-band ops also change the page-link graph topology; bump the
-  // graph-structure signal so a mounted GraphView refetches (stale-while-
-  // revalidate) instead of serving stale nodes/edges until the TTL.
-  recordGraphStructureChange()
-
-  // #5256 — and task state: a peer's DONE or an MCP `add_tag` fires no
-  // `block:properties-changed` here, which is all the task panels refetch on.
-  recordBlockPropertyChange()
-  invalidatePropertyCaches()
-
-  // #5258 — and pages themselves: the Pages list, and a journal day's page.
-  invalidatePageBrowserData()
-  invalidateCalendarPageDates()
-
-  // #4007 — and they change page/tag NAMES. The picker's `pagesListRef` /
-  // `tagsListRef` caches are filled once per space and only learn about
-  // mutations that a local surface announces on the name-change bus, so a
-  // peer's rename or delete (or an MCP write) would otherwise keep being
-  // offered under the old name for the rest of the session. The event set
-  // here is unknown-shape — `changed_page_ids` carries owning-page ids, not
-  // titles, and says nothing about tags — so drop both caches and let the
-  // next picker read re-fetch, exactly as the resolve preload above does for
-  // chip titles.
-  invalidateNameCaches()
+  // #6049 — and everything derived from blocks: links, task state, properties,
+  // names, attachments, the Pages list and the journal's day map.
+  invalidateDerivedCaches()
 
   // #5283 — and spaces: a peer can create, rename, recolour or delete one. The
   // refresh never rejects, and it moves off an active space a peer deleted.

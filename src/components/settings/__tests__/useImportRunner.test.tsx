@@ -9,19 +9,12 @@
 import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import type React from 'react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { stubInvoke } from '@/__tests__/helpers/invoke'
 import { useImportRunner } from '@/components/settings/useImportRunner'
-import { useCalendarPageDatesEpoch } from '@/hooks/useCalendarPageDates'
-import {
-  _resetGraphStructureEventsForTest,
-  DEBOUNCE_MS as GRAPH_DEBOUNCE_MS,
-  getGraphStructureKey,
-} from '@/lib/graph-structure-events'
+import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { hasPreference, PREFERENCES, readPreference } from '@/lib/preferences'
-import { propertyKeysQueryKey } from '@/lib/property-keys-cache'
-import { queryClient } from '@/lib/query-client'
 import type { ImportUnit } from '@/lib/vault-import'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -57,6 +50,12 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
+// #6049 — a spy that still drops the caches; which caches is `derived-caches.test.ts`.
+vi.mock('@/hooks/derived-caches', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/hooks/derived-caches')>()
+  return { invalidateDerivedCaches: vi.fn(actual.invalidateDerivedCaches) }
+})
+
 // The hook subscribes to the tabs store for post-import navigation.
 vi.mock('@/stores/tabs', () => ({
   useTabsStore: (selector: (s: { navigateToPage: () => void }) => unknown) =>
@@ -81,7 +80,6 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockImportMarkdown.mockReset()
   mockLinkImportAnchors.mockReset()
-  _resetGraphStructureEventsForTest()
   useSpaceStore.setState({ currentSpaceId: 'SPACE' })
   useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
   // A run that imported a page refills the resolve store: the space's tags and
@@ -92,10 +90,6 @@ beforeEach(() => {
     ],
     batch_resolve: () => [],
   })
-})
-
-afterEach(() => {
-  vi.useRealTimers()
 })
 
 describe('useImportRunner', () => {
@@ -216,24 +210,12 @@ describe('useImportRunner', () => {
     })
   })
 
-  // #5258 — an imported journal day must show in a journal calendar already open.
-  // #5296 — and an imported `key:: value` in the property pickers; #5292 — and an
-  // imported page or `[[link]]` in a Graph already open.
+  // #5258, #5292, #5296, #6049 — an imported page, journal day, `[[link]]` or
+  // `key:: value` must show in a view already open.
   it.each([
-    [
-      're-fetches the journal calendar, property lists and the Graph after a run that imported a page',
-      true,
-      1,
-    ],
-    [
-      'leaves the journal calendar, property lists and the Graph alone when every unit failed',
-      false,
-      0,
-    ],
-  ])('%s', async (_label, succeeds, expectedMoves) => {
-    vi.useFakeTimers()
-    const keys = propertyKeysQueryKey('SPACE')
-    queryClient.setQueryData(keys, ['status'])
+    ['drops every derived cache after a run that imported a page', true, 1],
+    ['leaves the derived caches alone when every unit failed', false, 0],
+  ])('%s', async (_label, succeeds, expectedCalls) => {
     if (succeeds) {
       mockImportMarkdown.mockResolvedValueOnce({
         page_title: '2026-06-15',
@@ -248,8 +230,6 @@ describe('useImportRunner', () => {
     } else {
       mockImportMarkdown.mockRejectedValueOnce({ kind: 'validation', message: 'bad' })
     }
-    const calendar = renderHook(() => useCalendarPageDatesEpoch())
-    const epochBefore = calendar.result.current
 
     const { result } = renderHook(() => useImportRunner())
     await act(async () => {
@@ -263,12 +243,7 @@ describe('useImportRunner', () => {
       })
     })
 
-    expect(calendar.result.current).toBe(epochBefore + expectedMoves)
-    expect(queryClient.getQueryState(keys)?.isInvalidated).toBe(succeeds)
-    act(() => {
-      vi.advanceTimersByTime(GRAPH_DEBOUNCE_MS + 1)
-    })
-    expect(getGraphStructureKey()).toBe(expectedMoves)
+    expect(vi.mocked(invalidateDerivedCaches)).toHaveBeenCalledTimes(expectedCalls)
   })
 
   // #5740 — a `#tag` chip names its tag only through the resolve store
