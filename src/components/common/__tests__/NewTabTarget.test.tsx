@@ -12,6 +12,9 @@ import { droppedPageId } from '@/lib/page-drag'
 import { useNavigationStore } from '@/stores/navigation'
 import { useTabsStore } from '@/stores/tabs'
 
+let touch = false
+vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: () => touch }))
+
 const onClick = vi.fn()
 
 function renderTarget() {
@@ -64,6 +67,7 @@ beforeEach(() => {
 
 afterEach(() => {
   window.innerWidth = desktopWidth
+  touch = false
 })
 
 describe('NewTabTarget', () => {
@@ -239,8 +243,9 @@ describe('NewTabTarget', () => {
     }
   })
 
-  it('on mobile, which shows no tabs, renders the element alone', async () => {
+  it('on a touch phone, which shows no tabs, renders the element alone', async () => {
     window.innerWidth = 500
+    touch = true
     const user = userEvent.setup()
     renderTarget()
 
