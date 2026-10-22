@@ -18,7 +18,7 @@
  *
  * Returns:
  *  - `createdPages` — locally-tracked dateStr→pageId for pages this
- *    hook just created (so `JournalPage.makeDayEntry` can render the
+ *    hook just created in the active space (so `JournalPage.makeDayEntry` can render the
  *    BlockTree immediately, before any refetch lands).
  *  - `handleAddBlock(dateStr)` — the orchestrator; idempotent against
  *    `pageMap`/`createdPages`, surface-level error reporting via notify.
@@ -48,7 +48,7 @@ interface UseJournalBlockCreationOpts {
 }
 
 export interface UseJournalBlockCreationResult {
-  /** dateStr→pageId for pages created locally (not yet in pageMap). */
+  /** dateStr→pageId for pages created locally in the active space (not yet in pageMap). */
   createdPages: Map<string, string>
   /** Add a new block under `dateStr`'s page, creating the page if needed. */
   handleAddBlock: (dateStr: string) => Promise<void>
@@ -56,12 +56,21 @@ export interface UseJournalBlockCreationResult {
   forgetCreatedPage: (dateStr: string) => void
 }
 
+/** The pages map of a space this journal has created no page in. */
+const NO_CREATED_PAGES = new Map<string, string>()
+
 export function useJournalBlockCreation({
   pageMap,
   onPageCreated,
 }: UseJournalBlockCreationOpts): UseJournalBlockCreationResult {
   const { t } = useTranslation()
-  const [createdPages, setCreatedPages] = useState<Map<string, string>>(new Map())
+  // Tied to the space the pages were created in: the journal stays mounted
+  // across a space switch, and another space's day is not this one's.
+  const activeSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  const [created, setCreated] = useState<{ spaceId: string | null; pages: Map<string, string> }>(
+    () => ({ spaceId: activeSpaceId, pages: NO_CREATED_PAGES }),
+  )
+  const createdPages = created.spaceId === activeSpaceId ? created.pages : NO_CREATED_PAGES
   // #2543 — in-flight guard, mirroring useJournalAutoCreate's #755
   // `autoCreatedRef` guard. `createdPages` is only updated AFTER the
   // page-create IPC settles, so two invocations for
@@ -78,6 +87,7 @@ export function useJournalBlockCreation({
       try {
         let pageId = createdPages.get(dateStr) ?? pageMap.get(dateStr) ?? null
         const isNewPage = !pageId
+        const currentSpaceId = useSpaceStore.getState().currentSpaceId
 
         if (!pageId) {
           // H-3b — route page creation through `createPageInSpace`
@@ -85,7 +95,6 @@ export function useJournalBlockCreation({
           // property set atomically (CreateBlock + SetProperty in one tx).
           // The legacy `createBlock({ blockType: 'page' })` path leaked
           // unscoped pages that disappeared from the PageBrowser list.
-          const currentSpaceId = useSpaceStore.getState().currentSpaceId
           if (currentSpaceId == null) {
             // SpaceStore not yet hydrated — surface the failure instead
             // of silently creating an unscoped page (the symptom we are
@@ -150,7 +159,13 @@ export function useJournalBlockCreation({
           const spaceId = useSpaceStore.getState().currentSpaceId
           if (probed && first === undefined && spaceId != null)
             parkEmptyPageSubtree(spaceId, pageId)
-          setCreatedPages((prev) => new Map(prev).set(dateStr, pageId as string))
+          setCreated((prev) => ({
+            spaceId: currentSpaceId,
+            pages: new Map(prev.spaceId === currentSpaceId ? prev.pages : []).set(
+              dateStr,
+              pageId as string,
+            ),
+          }))
           onPageCreated(dateStr, pageId)
           useResolveStore.getState().set(pageId, dateStr, false)
           // The caret lands on the template's first block, as it did when
@@ -195,11 +210,11 @@ export function useJournalBlockCreation({
   )
 
   const forgetCreatedPage = useCallback((dateStr: string) => {
-    setCreatedPages((prev) => {
-      if (!prev.has(dateStr)) return prev
-      const next = new Map(prev)
-      next.delete(dateStr)
-      return next
+    setCreated((prev) => {
+      if (!prev.pages.has(dateStr)) return prev
+      const pages = new Map(prev.pages)
+      pages.delete(dateStr)
+      return { ...prev, pages }
     })
   }, [])
 

@@ -366,6 +366,33 @@ describe('useJournalBlockCreation', () => {
     expect(createPageCallsAfterSecond).toBe(1)
   })
 
+  // The journal stays mounted across a space switch: the day page created in
+  // one space is not the next space's, which gets its own.
+  it('creates the day again after a space switch instead of reusing the old space’s page', async () => {
+    stubInvoke({
+      create_page_in_space: ({ spaceId }) => `PAGE_IN_${String(spaceId)}`,
+      first_child_for_blocks: () => ({}),
+    })
+    const { result } = setup()
+    for (const day of ['2025-06-14', '2025-06-15']) {
+      await act(async () => {
+        await result.current.handleAddBlock(day)
+      })
+    }
+    expect(result.current.createdPages.get('2025-06-15')).toBe('PAGE_IN_SPACE_TEST')
+
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_OTHER' })
+    })
+    expect(result.current.createdPages.size).toBe(0)
+    await act(async () => {
+      await result.current.handleAddBlock('2025-06-15')
+    })
+
+    expect([...result.current.createdPages]).toEqual([['2025-06-15', 'PAGE_IN_SPACE_OTHER']])
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')).toEqual([])
+  })
+
   // #2543 — `createdPages` is only updated AFTER the whole page-create +
   // template-load sequence settles, so (unlike the previous test, which
   // covers the ALREADY-created case) a genuine double-click BEFORE the
