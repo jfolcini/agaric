@@ -2689,7 +2689,7 @@ describe('property definition commands', () => {
   // `PageResponse<PropertyDefinition>` envelope; tests destructure
   // `.items` and ignore the cursor (mock fixture is single-page).
   it('list_property_defs returns seed definitions', () => {
-    const page = invoke('list_property_defs') as {
+    const page = invoke('list_property_defs', { spaceId: 'SPACE_PERSONAL' }) as {
       items: Array<Record<string, unknown>>
       next_cursor: string | null
       has_more: boolean
@@ -2705,6 +2705,7 @@ describe('property definition commands', () => {
 
   it('create_property_def adds a new definition', () => {
     const def = invoke('create_property_def', {
+      spaceId: 'SPACE_PERSONAL',
       key: 'estimate',
       valueType: 'number',
       options: null,
@@ -2712,7 +2713,7 @@ describe('property definition commands', () => {
     expect(def['key']).toBe('estimate')
     expect(def['value_type']).toBe('number')
 
-    const page = invoke('list_property_defs') as {
+    const page = invoke('list_property_defs', { spaceId: 'SPACE_PERSONAL' }) as {
       items: Array<Record<string, unknown>>
     }
     expect(page.items.some((d) => d['key'] === 'estimate')).toBe(true)
@@ -2720,11 +2721,13 @@ describe('property definition commands', () => {
 
   it('update_property_def_options updates options', () => {
     invoke('create_property_def', {
+      spaceId: 'SPACE_PERSONAL',
       key: 'status',
       valueType: 'select',
       options: JSON.stringify(['open', 'closed']),
     })
     const updated = invoke('update_property_def_options', {
+      spaceId: 'SPACE_PERSONAL',
       key: 'status',
       options: JSON.stringify(['open', 'in-progress', 'closed']),
     }) as Record<string, unknown>
@@ -2743,14 +2746,18 @@ describe('property definition commands', () => {
     // backend-authored answers: `update_options_empty_rejects` (validation)
     // and `update_options_unknown_key_rejects` (not_found).
     expect(() =>
-      invoke('update_property_def_options', { key: 'nonexistent', options: '["a"]' }),
+      invoke('update_property_def_options', {
+        spaceId: 'SPACE_PERSONAL',
+        key: 'nonexistent',
+        options: '["a"]',
+      }),
     ).toThrow("property definition 'nonexistent'")
   })
 
   it('delete_property_def removes a definition', () => {
-    invoke('create_property_def', { key: 'temp', valueType: 'text' })
-    invoke('delete_property_def', { key: 'temp' })
-    const page = invoke('list_property_defs') as {
+    invoke('create_property_def', { spaceId: 'SPACE_PERSONAL', key: 'temp', valueType: 'text' })
+    invoke('delete_property_def', { spaceId: 'SPACE_PERSONAL', key: 'temp' })
+    const page = invoke('list_property_defs', { spaceId: 'SPACE_PERSONAL' }) as {
       items: Array<Record<string, unknown>>
     }
     expect(page.items.some((d) => d['key'] === 'temp')).toBe(false)
@@ -3558,6 +3565,8 @@ describe('import_markdown', () => {
       content:
         'status:: done\nstatus:: open\npriority:: high\npriority:: A\nmood:: open\nplain line',
       filename: 'props.md',
+      // The space's definitions decide (#5841).
+      spaceId: 'SPACE_PERSONAL',
     }) as Record<string, unknown>
     expect(result['properties_set']).toBe(3)
   })

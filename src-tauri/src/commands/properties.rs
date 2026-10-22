@@ -14,6 +14,7 @@ use agaric_core::ulid::{ActiveBlockId, BlockId};
 use agaric_store::backlink;
 use agaric_store::pagination;
 use agaric_store::pagination::ActiveBlockRow;
+use agaric_store::space::SpaceId;
 
 use super::sanitize_internal_error;
 use super::*;
@@ -1325,21 +1326,22 @@ fn declared_type_admits_shape(value_type: &str, shape: &str) -> bool {
     }
 }
 
-/// Would declaring `key` as `value_type` orphan values the vault already
-/// holds under that key? Returns the rejection message when it would, and
-/// `None` when the declaration is safe (#4399).
+/// Would declaring `key` as `value_type` in `space_id` orphan values the
+/// space's blocks already hold under that key? Returns the rejection message
+/// when it would, and `None` when the declaration is safe (#4399).
 ///
 /// # Why a declaration over existing values is a trap
 ///
-/// `property_definitions` is keyed by `key` alone, so a declaration
-/// constrains **every block in the vault**. The dangerous case is a key
+/// `property_definitions` is keyed by `(space_id, key)`, so a declaration
+/// constrains **every block in the space** (#5841). The dangerous case is a key
 /// with existing values and no declaration — the ordinary state, since
 /// `validate_property_value` skips its type check entirely when
 /// `declaration` is `None`, so an undeclared non-reserved key accepts any
 /// of the five typed slots. Declaring a contradicting type over those
 /// values costs the user three things at once (#4382):
 ///
-///  1. every later write of the stored shape, on any block, is rejected —
+///  1. every later write of the stored shape, on any block of the space, is
+///     rejected —
 ///     `"Property 'year' expects type 'number', got 'text'."`;
 ///  2. on inbound sync a `Str` value is routed by `value_type`,
 ///     `parse::<f64>()` fails, and there is a deliberate
@@ -1383,25 +1385,28 @@ fn declared_type_admits_shape(value_type: &str, shape: &str) -> bool {
 /// refuses them first (#5841).
 async fn conflicting_existing_values(
     conn: &mut sqlx::SqliteConnection,
+    space_id: &str,
     key: &str,
     value_type: &str,
     options: Option<&str>,
 ) -> Result<Option<String>, AppError> {
-    // One aggregate pass over the key's rows. The `exactly_one_value` CHECK
-    // (migrations 0062 / 0088) guarantees exactly one non-NULL value column
-    // per row, so these five counts partition `total` and a row can never be
-    // counted under two shapes.
+    // One aggregate pass over the key's rows in the space. The
+    // `exactly_one_value` CHECK (migrations 0062 / 0088) guarantees exactly
+    // one non-NULL value column per row, so these five counts partition
+    // `total` and a row can never be counted under two shapes.
     let counts = sqlx::query!(
         r#"SELECT
-             COUNT(*)                                                            AS "total!: i64",
-             COALESCE(SUM(CASE WHEN value_text IS NOT NULL THEN 1 ELSE 0 END), 0) AS "n_text!: i64",
-             COALESCE(SUM(CASE WHEN value_num  IS NOT NULL THEN 1 ELSE 0 END), 0) AS "n_num!: i64",
-             COALESCE(SUM(CASE WHEN value_date IS NOT NULL THEN 1 ELSE 0 END), 0) AS "n_date!: i64",
-             COALESCE(SUM(CASE WHEN value_ref  IS NOT NULL THEN 1 ELSE 0 END), 0) AS "n_ref!: i64",
-             COALESCE(SUM(CASE WHEN value_bool IS NOT NULL THEN 1 ELSE 0 END), 0) AS "n_bool!: i64"
-           FROM block_properties
-           WHERE key = ?1"#,
+             COUNT(*)                                                               AS "total!: i64",
+             COALESCE(SUM(CASE WHEN bp.value_text IS NOT NULL THEN 1 ELSE 0 END), 0) AS "n_text!: i64",
+             COALESCE(SUM(CASE WHEN bp.value_num  IS NOT NULL THEN 1 ELSE 0 END), 0) AS "n_num!: i64",
+             COALESCE(SUM(CASE WHEN bp.value_date IS NOT NULL THEN 1 ELSE 0 END), 0) AS "n_date!: i64",
+             COALESCE(SUM(CASE WHEN bp.value_ref  IS NOT NULL THEN 1 ELSE 0 END), 0) AS "n_ref!: i64",
+             COALESCE(SUM(CASE WHEN bp.value_bool IS NOT NULL THEN 1 ELSE 0 END), 0) AS "n_bool!: i64"
+           FROM block_properties bp
+           JOIN blocks b ON b.id = bp.block_id
+           WHERE bp.key = ?1 AND b.space_id = ?2"#,
         key,
+        space_id,
     )
     .fetch_one(&mut *conn)
     .await?;
@@ -1434,12 +1439,15 @@ async fn conflicting_existing_values(
     {
         let out_of_options: i64 = sqlx::query_scalar!(
             r#"SELECT COUNT(*) AS "n!: i64"
-               FROM block_properties
-               WHERE key = ?1
-                 AND value_text IS NOT NULL
-                 AND value_text NOT IN (SELECT value FROM json_each(?2))"#,
+               FROM block_properties bp
+               JOIN blocks b ON b.id = bp.block_id
+               WHERE bp.key = ?1
+                 AND b.space_id = ?3
+                 AND bp.value_text IS NOT NULL
+                 AND bp.value_text NOT IN (SELECT value FROM json_each(?2))"#,
             key,
             opts,
+            space_id,
         )
         .fetch_one(&mut *conn)
         .await?;
@@ -1457,21 +1465,21 @@ async fn conflicting_existing_values(
     Ok(Some(format!(
         "cannot declare property '{key}' as '{value_type}': {offending} value(s) already stored \
          under this key would be rejected by that type ({detail}). A property definition applies \
-         to every block in the vault, and it cannot be removed again while any value under the \
-         key exists. Clear or convert those values first, or declare '{key}' as the type they \
+         to every block in its space, and it cannot be removed again while any value under the \
+         key exists there. Clear or convert those values first, or declare '{key}' as the type they \
          already use."
     )))
 }
 
-/// Create a property definition. Uses INSERT OR IGNORE for idempotency —
-/// if the key already exists, this is a no-op and the existing row is
-/// returned unchanged. A built-in key is refused with
+/// Create a property definition in `space_id` (#5841). Uses INSERT OR IGNORE
+/// for idempotency — if the space already declares the key, this is a no-op
+/// and the existing row is returned unchanged. A built-in key is refused with
 /// [`ValidationCode::BuiltinPropertyLocked`].
 ///
 /// # Refuses to declare a type over values that contradict it (#4399)
 ///
-/// Before inserting, this probes `block_properties` for the key and
-/// rejects with [`AppError::Validation`] when any value already stored
+/// Before inserting, this probes the space's `block_properties` for the key
+/// and rejects with [`AppError::Validation`] when any value already stored
 /// under it would be rejected by the requested `value_type` — see
 /// `conflicting_existing_values` for the trap that guards against, and
 /// for why the probe is shape-aware instead of the coarser "any values at
@@ -1497,6 +1505,7 @@ async fn conflicting_existing_values(
 #[instrument(skip(pool, options), err)]
 pub async fn create_property_def_inner(
     pool: &SqlitePool,
+    space_id: &str,
     key: String,
     value_type: String,
     options: Option<String>,
@@ -1511,37 +1520,44 @@ pub async fn create_property_def_inner(
     // written — so there is no new constraint to guard, and re-asserting a
     // declaration the user already made must never be refused. This is also
     // what keeps a rename onto an already-declared key a no-op.
-    let existing = sqlx::query_as!(
-        PropertyDefinition,
-        r#"SELECT key, value_type, options, created_at, 0 AS "builtin!: bool" FROM property_definitions WHERE key = ?"#,
-        key
-    )
-    .fetch_optional(&mut *tx)
-    .await?;
-    if let Some(row) = existing {
+    if let Some(row) = user_property_def(&mut tx, space_id, &key).await? {
         return Ok(row);
     }
 
     if let Some(reason) =
-        conflicting_existing_values(&mut tx, &key, &value_type, options.as_deref()).await?
+        conflicting_existing_values(&mut tx, space_id, &key, &value_type, options.as_deref())
+            .await?
     {
         return Err(AppError::validation(reason));
     }
 
-    create_property_def_in_tx(&mut tx, &key, &value_type, options.as_deref()).await?;
+    create_property_def_in_tx(&mut tx, space_id, &key, &value_type, options.as_deref()).await?;
 
     // Fetch back inside the same transaction — the row this call created,
     // never one a racing writer slipped in afterwards.
-    let row = sqlx::query_as!(
-        PropertyDefinition,
-        r#"SELECT key, value_type, options, created_at, 0 AS "builtin!: bool" FROM property_definitions WHERE key = ?"#,
-        key
-    )
-    .fetch_one(&mut *tx)
-    .await?;
+    let row = user_property_def(&mut tx, space_id, &key)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("property definition '{key}'")))?;
 
     tx.commit().await?;
     Ok(row)
+}
+
+/// `space_id`'s own row for `key`, never a built-in.
+async fn user_property_def(
+    conn: &mut sqlx::SqliteConnection,
+    space_id: &str,
+    key: &str,
+) -> Result<Option<PropertyDefinition>, AppError> {
+    Ok(sqlx::query_as!(
+        PropertyDefinition,
+        r#"SELECT key, value_type, options, created_at, 0 AS "builtin!: bool"
+           FROM property_definitions WHERE space_id = ? AND key = ?"#,
+        space_id,
+        key,
+    )
+    .fetch_optional(conn)
+    .await?)
 }
 
 /// In-transaction twin of [`create_property_def_inner`] (#4382).
@@ -1552,9 +1568,9 @@ pub async fn create_property_def_inner(
 /// `property_definitions` in the same transaction).
 ///
 /// This exists so a caller can make "is this key safe to declare?" and the
-/// declaration itself **one atomic decision**. Declaring a key is globally
-/// visible — `property_definitions` is keyed by `key` alone — so a
-/// pre-flight run on a separate connection is a genuine TOCTOU: a
+/// declaration itself **one atomic decision**. Declaring a key constrains
+/// every block of the space, so a pre-flight run on a separate connection is
+/// a genuine TOCTOU: a
 /// concurrent write can create the very `block_properties` rows the
 /// pre-flight looked for and did not find. Inside one `BEGIN IMMEDIATE`
 /// there is no such window.
@@ -1564,13 +1580,14 @@ pub async fn create_property_def_inner(
 /// and runs that decision in this same transaction. The two callers do
 /// differ: `declare_bib_property_defs` warns and continues, because
 /// refusing to import a bibliography over an unrelated key elsewhere in
-/// the vault is disproportionate, while [`create_property_def_inner`]
+/// the space is disproportionate, while [`create_property_def_inner`]
 /// refuses, because a user asked for this one key by name. Adding a probe
 /// here would not change the import's behaviour — its own test is the
 /// strictly coarser "any values at all?" — but it would put the decision
 /// in the wrong place.
 pub async fn create_property_def_in_tx(
     conn: &mut sqlx::SqliteConnection,
+    space_id: &str,
     key: &str,
     value_type: &str,
     options: Option<&str>,
@@ -1579,7 +1596,9 @@ pub async fn create_property_def_in_tx(
 
     let now = agaric_core::time::now_rfc3339();
     sqlx::query!(
-        "INSERT OR IGNORE INTO property_definitions (key, value_type, options, created_at) VALUES (?1, ?2, ?3, ?4)",
+        "INSERT OR IGNORE INTO property_definitions (space_id, key, value_type, options, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        space_id,
         key,
         value_type,
         options,
@@ -1591,12 +1610,42 @@ pub async fn create_property_def_in_tx(
     Ok(())
 }
 
-/// List all property definitions, paginated and ordered by `key ASC`
-/// (AGENTS.md invariant #3): the built-ins (#5841), marked `builtin`, merged
-/// with the user's rows.
+/// The editable definitions a new space starts with (#5841): ordinary user
+/// definitions, so the user can change or delete them. Mirrored by
+/// `DEFAULT_PROPERTY_DEFS` in `src/lib/tauri-mock/seed.ts`.
+pub const DEFAULT_PROPERTY_DEFS: [(&str, &str, Option<&str>); 5] = [
+    (
+        "status",
+        "select",
+        Some(r#"["active","paused","done","archived"]"#),
+    ),
+    ("url", "text", None),
+    (
+        "effort",
+        "select",
+        Some(r#"["15m","30m","1h","2h","4h","1d"]"#),
+    ),
+    ("assignee", "text", None),
+    ("location", "text", None),
+];
+
+/// Give `space_id`, a space just created, the [`DEFAULT_PROPERTY_DEFS`].
+pub async fn seed_default_property_defs_in_tx(
+    conn: &mut sqlx::SqliteConnection,
+    space_id: &str,
+) -> Result<(), AppError> {
+    for (key, value_type, options) in DEFAULT_PROPERTY_DEFS {
+        create_property_def_in_tx(&mut *conn, space_id, key, value_type, options).await?;
+    }
+    Ok(())
+}
+
+/// List `space_id`'s property definitions, paginated and ordered by
+/// `key ASC` (AGENTS.md invariant #3): the built-ins (#5841), marked
+/// `builtin`, merged with the space's own rows.
 ///
-/// `key` is the primary key on `property_definitions` (a string, not a
-/// ULID), so the keyset cursor is encoded via [`pagination::Cursor::for_id`] with
+/// `key` is unique within a space (a string, not a ULID), so the keyset
+/// cursor is encoded via [`pagination::Cursor::for_id`] with
 /// `last.key.clone()` — `for_id` accepts any `String` and stores it in
 /// the cursor's `id` slot. [`pagination::PageRequest::new`] rejects a
 /// supplied `limit` outside the canonical `[1, MAX_PAGE_SIZE]` range;
@@ -1611,6 +1660,7 @@ pub async fn create_property_def_in_tx(
 #[instrument(skip(pool), err)]
 pub async fn list_property_defs_inner(
     pool: &SqlitePool,
+    space_id: &str,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<pagination::PageResponse<PropertyDefinition>, AppError> {
@@ -1624,9 +1674,10 @@ pub async fn list_property_defs_inner(
         PropertyDefinition,
         r#"SELECT key, value_type, options, created_at, 0 AS "builtin!: bool"
          FROM property_definitions
-         WHERE (?1 IS NULL OR key > ?2)
+         WHERE space_id = ?1 AND (?2 IS NULL OR key > ?3)
          ORDER BY key ASC
-         LIMIT ?3"#,
+         LIMIT ?4"#,
+        space_id,
         cursor_flag,
         cursor_key,
         fetch_limit,
@@ -1649,8 +1700,8 @@ pub async fn list_property_defs_inner(
     })
 }
 
-/// Fetch a single property definition by key: the built-in (#5841), else the
-/// user's row. Returns `Ok(None)` for an undeclared key.
+/// Fetch a single property definition by key: the built-in (#5841), else
+/// `space_id`'s row. Returns `Ok(None)` for a key the space does not declare.
 ///
 /// The SQL shape mirrors the existing single-key `SELECT` already used
 /// inside [`create_property_def_inner`] (post-INSERT readback) and
@@ -1662,23 +1713,19 @@ pub async fn list_property_defs_inner(
 #[instrument(skip(pool), err)]
 pub async fn get_property_def_inner(
     pool: &SqlitePool,
+    space_id: &str,
     key: &str,
 ) -> Result<Option<PropertyDefinition>, AppError> {
     if let Some(def) = agaric_store::op::builtin_property_def(key) {
         return Ok(Some(builtin_definition(def)));
     }
-    let row = sqlx::query_as!(
-        PropertyDefinition,
-        r#"SELECT key, value_type, options, created_at, 0 AS "builtin!: bool" FROM property_definitions WHERE key = ?"#,
-        key
-    )
-    .fetch_optional(pool)
-    .await?;
-    Ok(row)
+    let mut conn = pool.acquire().await?;
+    user_property_def(&mut conn, space_id, key).await
 }
 
-/// Update the options array for a select-type definition.
-/// Returns error if the key is built in, doesn't exist or isn't select-type.
+/// Update the options array of `space_id`'s select-type definition.
+/// Returns error if the key is built in, the space doesn't declare it or it
+/// isn't select-type.
 ///
 /// # Orphan rows on narrowing
 ///
@@ -1725,6 +1772,7 @@ pub async fn get_property_def_inner(
 #[instrument(skip(pool, options), err)]
 pub async fn update_property_def_options_inner(
     pool: &SqlitePool,
+    space_id: &str,
     key: String,
     options: String,
 ) -> Result<PropertyDefinition, AppError> {
@@ -1745,14 +1793,9 @@ pub async fn update_property_def_options_inner(
     let mut tx = crate::db::begin_immediate_logged(pool, "update_property_def_options").await?;
 
     // Fetch existing to verify it's select-type
-    let existing = sqlx::query_as!(
-        PropertyDefinition,
-        r#"SELECT key, value_type, options, created_at, 0 AS "builtin!: bool" FROM property_definitions WHERE key = ?"#,
-        key
-    )
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("property definition '{key}'")))?;
+    let existing = user_property_def(&mut tx, space_id, &key)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("property definition '{key}'")))?;
 
     if existing.value_type != "select" {
         return Err(AppError::validation(format!(
@@ -1761,7 +1804,7 @@ pub async fn update_property_def_options_inner(
         )));
     }
 
-    // Count orphan rows before applying the narrowing. The new
+    // Count the space's orphan rows before applying the narrowing. The new
     // options are encoded as a JSON array; bind via `json_each(?)` so
     // SQLite expands the membership test without a placeholder
     // explosion. Live blocks only — `b.deleted_at IS NULL` matches the
@@ -1771,11 +1814,13 @@ pub async fn update_property_def_options_inner(
         "SELECT COUNT(*) FROM block_properties bp \
          JOIN blocks b ON b.id = bp.block_id \
          WHERE bp.key = ?1 \
+           AND b.space_id = ?3 \
            AND bp.value_text IS NOT NULL \
            AND b.deleted_at IS NULL \
            AND bp.value_text NOT IN (SELECT value FROM json_each(?2))",
         key,
         options,
+        space_id,
     )
     .fetch_one(&mut *tx)
     .await?;
@@ -1791,11 +1836,13 @@ pub async fn update_property_def_options_inner(
         );
     }
 
-    let result = sqlx::query("UPDATE property_definitions SET options = ? WHERE key = ?")
-        .bind(&options)
-        .bind(&key)
-        .execute(&mut *tx)
-        .await?;
+    let result =
+        sqlx::query("UPDATE property_definitions SET options = ? WHERE space_id = ? AND key = ?")
+            .bind(&options)
+            .bind(space_id)
+            .bind(&key)
+            .execute(&mut *tx)
+            .await?;
 
     // #383: guard against a silent no-op write. The existence check above ran
     // inside the same tx, so a 0-row UPDATE here means the row vanished under
@@ -1808,23 +1855,19 @@ pub async fn update_property_def_options_inner(
     // #383: read the post-update row back INSIDE the tx instead of
     // reconstructing the return value from the pre-update snapshot, so the
     // returned shape reflects exactly what is committed.
-    let updated = sqlx::query_as!(
-        PropertyDefinition,
-        r#"SELECT key, value_type, options, created_at, 0 AS "builtin!: bool" FROM property_definitions WHERE key = ?"#,
-        key
-    )
-    .fetch_one(&mut *tx)
-    .await?;
+    let updated = user_property_def(&mut tx, space_id, &key)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("property definition '{key}'")))?;
 
     tx.commit().await?;
 
     Ok(updated)
 }
 
-/// Delete a property definition by key.
+/// Delete `space_id`'s definition of `key`.
 ///
-/// Returns error if the key doesn't exist, is a built-in, or is still
-/// referenced by `block_properties` rows.
+/// Returns error if the space doesn't declare the key, it is a built-in, or
+/// a block of the space still holds a value under it.
 ///
 /// # reject when dependent rows exist
 ///
@@ -1848,7 +1891,11 @@ pub async fn update_property_def_options_inner(
 /// `block_properties` row that the caller never saw in the rejection
 /// message.
 #[instrument(skip(pool), err)]
-pub async fn delete_property_def_inner(pool: &SqlitePool, key: String) -> Result<(), AppError> {
+pub async fn delete_property_def_inner(
+    pool: &SqlitePool,
+    space_id: &str,
+    key: String,
+) -> Result<(), AppError> {
     refuse_builtin_definition_write(&key)?;
 
     // Open a BEGIN IMMEDIATE tx so the dependent-row check and
@@ -1857,10 +1904,14 @@ pub async fn delete_property_def_inner(pool: &SqlitePool, key: String) -> Result
     // allow-raw-tx: deletes from property_definitions (schema metadata), no op_log (#110)
     let mut tx = crate::db::begin_immediate_logged(pool, "delete_property_def").await?;
 
-    let dependent_count: i64 =
-        sqlx::query_scalar!("SELECT COUNT(*) FROM block_properties WHERE key = ?", key,)
-            .fetch_one(&mut *tx)
-            .await?;
+    let dependent_count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM block_properties bp JOIN blocks b ON b.id = bp.block_id \
+         WHERE bp.key = ?1 AND b.space_id = ?2",
+        key,
+        space_id,
+    )
+    .fetch_one(&mut *tx)
+    .await?;
 
     if dependent_count > 0 {
         return Err(AppError::validation(format!(
@@ -1869,7 +1920,8 @@ pub async fn delete_property_def_inner(pool: &SqlitePool, key: String) -> Result
         )));
     }
 
-    let result = sqlx::query("DELETE FROM property_definitions WHERE key = ?")
+    let result = sqlx::query("DELETE FROM property_definitions WHERE space_id = ? AND key = ?")
+        .bind(space_id)
         .bind(&key)
         .execute(&mut *tx)
         .await?;
@@ -2276,68 +2328,78 @@ pub async fn get_batch_properties(
         .map_err(sanitize_internal_error)
 }
 
-/// Tauri command: create a property definition. Delegates to [`create_property_def_inner`].
+/// Tauri command: create a property definition in a space. Delegates to [`create_property_def_inner`].
 #[tauri::command]
 #[specta::specta]
 pub async fn create_property_def(
     write_pool: State<'_, WritePool>,
+    space_id: SpaceId,
     key: String,
     value_type: String,
     options: Option<String>,
 ) -> Result<PropertyDefinition, AppError> {
-    create_property_def_inner(&write_pool.0, key, value_type, options)
+    space_id.validate_shape()?;
+    create_property_def_inner(&write_pool.0, space_id.as_str(), key, value_type, options)
         .await
         .map_err(sanitize_internal_error)
 }
 
-/// Tauri command: list all property definitions, paginated.
+/// Tauri command: list a space's property definitions, paginated.
 /// Delegates to [`list_property_defs_inner`].
 #[tauri::command]
 #[specta::specta]
 pub async fn list_property_defs(
     read_pool: State<'_, ReadPool>,
+    space_id: SpaceId,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<pagination::PageResponse<PropertyDefinition>, AppError> {
-    list_property_defs_inner(&read_pool.0, cursor, limit)
+    space_id.validate_shape()?;
+    list_property_defs_inner(&read_pool.0, space_id.as_str(), cursor, limit)
         .await
         .map_err(sanitize_internal_error)
 }
 
-/// Tauri command: fetch a single property definition by key.
+/// Tauri command: fetch a single property definition of a space by key.
 /// Delegates to [`get_property_def_inner`].
 #[tauri::command]
 #[specta::specta]
 pub async fn get_property_def(
     read_pool: State<'_, ReadPool>,
+    space_id: SpaceId,
     key: String,
 ) -> Result<Option<PropertyDefinition>, AppError> {
-    get_property_def_inner(&read_pool.0, &key)
+    space_id.validate_shape()?;
+    get_property_def_inner(&read_pool.0, space_id.as_str(), &key)
         .await
         .map_err(sanitize_internal_error)
 }
 
-/// Tauri command: update options for a select-type definition. Delegates to [`update_property_def_options_inner`].
+/// Tauri command: update options for a space's select-type definition. Delegates to [`update_property_def_options_inner`].
 #[tauri::command]
 #[specta::specta]
 pub async fn update_property_def_options(
     write_pool: State<'_, WritePool>,
+    space_id: SpaceId,
     key: String,
     options: String,
 ) -> Result<PropertyDefinition, AppError> {
-    update_property_def_options_inner(&write_pool.0, key, options)
+    space_id.validate_shape()?;
+    update_property_def_options_inner(&write_pool.0, space_id.as_str(), key, options)
         .await
         .map_err(sanitize_internal_error)
 }
 
-/// Tauri command: delete a property definition. Delegates to [`delete_property_def_inner`].
+/// Tauri command: delete a space's property definition. Delegates to [`delete_property_def_inner`].
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_property_def(
     write_pool: State<'_, WritePool>,
+    space_id: SpaceId,
     key: String,
 ) -> Result<(), AppError> {
-    delete_property_def_inner(&write_pool.0, key)
+    space_id.validate_shape()?;
+    delete_property_def_inner(&write_pool.0, space_id.as_str(), key)
         .await
         .map_err(sanitize_internal_error)
 }

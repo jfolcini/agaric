@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT key, value_type, options, created_at, 0 AS \"builtin!: bool\"\n         FROM property_definitions\n         WHERE (?1 IS NULL OR key > ?2)\n         ORDER BY key ASC\n         LIMIT ?3",
+  "query": "SELECT key AS \"key!\", value_type, options FROM property_definitions\n               WHERE space_id = ?",
   "describe": {
     "columns": [
       {
-        "name": "key",
+        "name": "key!",
         "ordinal": 0,
         "type_info": "Text",
         "origin": {
@@ -35,35 +35,16 @@
             "name": "options"
           }
         }
-      },
-      {
-        "name": "created_at",
-        "ordinal": 3,
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "property_definitions",
-            "name": "created_at"
-          }
-        }
-      },
-      {
-        "name": "builtin!: bool",
-        "ordinal": 4,
-        "type_info": "Integer",
-        "origin": "Expression"
       }
     ],
     "parameters": {
-      "Right": 3
+      "Right": 1
     },
     "nullable": [
       false,
       false,
-      true,
-      false,
-      false
+      true
     ]
   },
-  "hash": "cfa95e18255f6e73374e9c0f701eee77656892fcc4d96cef543ee07ba766110c"
+  "hash": "288fe444aa193f9b4b8cd858a8408c390e439fcd387b3f7df07cf33e587fd62a"
 }

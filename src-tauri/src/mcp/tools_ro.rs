@@ -17,7 +17,7 @@
 //! | `get_block` | [`get_active_block_inner`] | Plus the block's properties, tags, its page's title and, for a page, aliases (#5377). soft-deleted blocks → `NotFound`. `space_id` required; a block in another space is rejected. |
 //! | `list_backlinks` | [`list_backlinks_grouped_inner`] | Grouped by source page. `space_id` required. Groups stop at [`RESPONSE_BYTES_CAP`] (#5402). |
 //! | `list_tags` | [`list_tags_inner`] | The tags of one space. Cursor paginated. Limits outside `[1, 100]` are rejected. `space_id` required. |
-//! | `list_property_defs` | [`list_property_defs_inner`] | Typed property schema; cursor paginated. No `space_id`: property definitions are vault-wide. |
+//! | `list_property_defs` | [`list_property_defs_inner`] | A space's typed property schema; cursor paginated. |
 //! | `get_agenda` | [`agenda_range_inner`] | Dated blocks in the range plus projected repeats, one row each. `space_id` required. |
 //! | `journal_for_date` | [`journal_for_date_inner`] | Idempotent date → page lookup with a **bounded create carve-out (#2719)**: for `date` within today ± [`JOURNAL_CREATE_WINDOW_MONTHS`] months, creates the missing page on first call (single `CreateBlock`+`SetProperty` op pair, origin `agent:<name>`); outside that window the tool never creates — it returns an existing page as a pure read or `AppError::NotFound`. See [`ReadOnlyTools`] and `handle_journal_for_date` below. |
 //! | `list_spaces` | [`list_spaces_registry_inner`] | #633 — space discovery for agents. Returns `{ id, name, is_default }` per live space from the canonical `spaces` registry (#804). |
@@ -438,9 +438,11 @@ struct ListTagsArgs {
     limit: Option<i64>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ListPropertyDefsArgs {
+    /// Property definitions are per space (#5841).
+    space_id: String,
     #[serde(default)]
     cursor: Option<String>,
     #[serde(default)]
@@ -1007,14 +1009,19 @@ fn tool_desc_list_tags() -> ToolDescription {
 fn tool_desc_list_property_defs() -> ToolDescription {
     ToolDescription {
         name: TOOL_LIST_PROPERTY_DEFS.to_string(),
-        description:
-            "List every property definition (typed property schema), with cursor pagination. \
-             A built-in definition is marked `builtin: true` and cannot be changed."
-                .to_string(),
+        description: "List a space's property definitions (typed property schema), with cursor \
+             pagination. Each space declares its own; a built-in definition is in every space, \
+             marked `builtin: true`, and cannot be changed."
+            .to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
+            "required": ["space_id"],
             "properties": {
+                "space_id": {
+                    "type": "string",
+                    "description": "ULID of the space whose definitions to list.",
+                },
                 "cursor": {
                     "type": "string",
                     "description": "Opaque pagination cursor from a prior response.",
@@ -1099,8 +1106,8 @@ fn tool_desc_list_spaces() -> ToolDescription {
     ToolDescription {
         name: TOOL_LIST_SPACES.to_string(),
         description: "List the spaces you may use as { id, name, is_default }. Every other \
-             tool except list_property_defs requires a space_id — call this first to discover \
-             one. is_default marks the seeded Personal space."
+             tool requires a space_id — call this first to discover one. is_default marks the \
+             seeded Personal space."
             .to_string(),
         input_schema: json!({
             "type": "object",
@@ -1834,7 +1841,8 @@ async fn handle_list_tags(pool: &SqlitePool, args: Value) -> Result<Value, AppEr
 async fn handle_list_property_defs(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: ListPropertyDefsArgs = parse_args(TOOL_LIST_PROPERTY_DEFS, args)?;
     let limit = validate_limit(TOOL_LIST_PROPERTY_DEFS, args.limit, LIST_RESULT_CAP)?;
-    let resp = list_property_defs_inner(pool, args.cursor, limit).await?;
+    let space_id = SpaceId::from_string(args.space_id)?;
+    let resp = list_property_defs_inner(pool, space_id.as_str(), args.cursor, limit).await?;
     to_tool_result(&resp)
 }
 
@@ -1970,7 +1978,7 @@ async fn handle_list_journal(pool: &SqlitePool, args: Value) -> Result<Value, Ap
 ///
 /// Pure read against the canonical `spaces` registry (#804). This is
 /// the discovery entry point for the `space_id` argument every other tool
-/// but `list_property_defs` requires — without it an agent
+/// requires — without it an agent
 /// with no out-of-band configuration could not legally call any of
 /// them. Returns a JSON array of `{ id, name, is_default }` rows.
 async fn handle_list_spaces(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {

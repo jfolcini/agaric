@@ -2583,7 +2583,7 @@ pub async fn duplicate_block_inner(
             "block '{block_id}' holds a value Duplicate cannot copy"
         )));
     }
-    let lines = PropertyLines::load(&mut tx, PropertyWrite::Copy).await?;
+    let lines = PropertyLines::load_for_block(&mut tx, &page_id, PropertyWrite::Copy).await?;
     let parent_id = root.parent_id.map(BlockId::into_string);
     let siblings =
         super::super::blocks::move_ops::ordered_live_children(&mut tx, parent_id.as_deref())
@@ -2666,7 +2666,8 @@ pub(crate) async fn copy_page_blocks_in_tx(
     for block in &mut parsed.blocks {
         block.content = expand(&block.content);
     }
-    let lines = PropertyLines::load(tx, PropertyWrite::Copy).await?;
+    let dest = BlockId::from_trusted(dest_page_id);
+    let lines = PropertyLines::load_for_block(tx, &dest, PropertyWrite::Copy).await?;
     Box::pin(create_parsed_blocks(
         tx,
         materializer,
@@ -3187,7 +3188,12 @@ async fn read_pasted_properties(
     blocks: &mut [import::ParsedBlock],
 ) -> Result<(PropertyLines, Vec<String>), AppError> {
     let space = agaric_store::space::resolve_block_space(&mut ***tx, &anchor.id).await?;
-    let mut lines = PropertyLines::load(tx, PropertyWrite::Paste).await?;
+    let mut lines = PropertyLines::load(
+        tx,
+        space.as_ref().map(SpaceId::as_str),
+        PropertyWrite::Paste,
+    )
+    .await?;
     let values = blocks.iter().flat_map(|block| &block.properties);
     lines
         .resolve_refs(tx, space.as_ref().map(SpaceId::as_str), values)
@@ -3905,7 +3911,8 @@ pub async fn import_markdown_with_progress(
         &mut parse_output.warnings,
     )
     .await?;
-    let mut lines = PropertyLines::load(&mut tx, PropertyWrite::Import).await?;
+    let mut lines =
+        PropertyLines::load(&mut tx, Some(space_id.as_str()), PropertyWrite::Import).await?;
     let values = parse_output
         .blocks
         .iter()

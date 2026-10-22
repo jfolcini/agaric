@@ -48,6 +48,7 @@ import {
   fakeId,
   pageAliases,
   properties,
+  propertyDefs,
   pushOp,
   todayDate,
 } from '@/lib/tauri-mock/seed'
@@ -125,6 +126,8 @@ function purgeCohortAndSatellites(cohort: Iterable<string>): void {
     blockTagRefs.delete(id)
     pageAliases.delete(id)
     blockDrafts.delete(id)
+    // #5841 — a purged space's property definitions go with it.
+    propertyDefs.delete(id)
   }
   // tag_id side: a purged block used AS a tag on a SURVIVING block leaves a
   // dangling association/reference the backend FK-cascades. Sweep every set.

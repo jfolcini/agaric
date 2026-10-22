@@ -40,6 +40,7 @@ When you switch spaces, you re-scope:
 | Backlinks (linked + unlinked) + filter dimensions | yes |
 | History view | yes |
 | Templates view | yes |
+| Property definitions (Settings › Properties defaults to the active space) | yes |
 | Journal — date, mode, content | yes (each space has its own daily / weekly / monthly cursor) |
 | Recent pages strip | yes |
 | Cross-space links | not followed — see below |
@@ -57,6 +58,7 @@ If you opened Agaric before spaces existed, your existing pages migrated automat
 ## Per-space integrations
 
 - **Journal & journal template** — fully per-space.
+- **Property definitions** — each space declares its own; see [properties.md](properties.md#where-to-manage-definitions).
 - **MCP / agents** — agents see every space and name one in each tool call; see [agent-access.md](agent-access.md).
 
 ## Pitfalls to know

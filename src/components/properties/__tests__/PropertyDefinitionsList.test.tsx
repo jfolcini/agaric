@@ -2,7 +2,8 @@
  * Tests for PropertyDefinitionsList component.
  *
  * Validates:
- *  - Renders property definitions list, without the internal `is_space` (#5629)
+ *  - Renders the selected space's definitions, the active one by default,
+ *    without the internal `is_space` (#5629, #5841)
  *  - Search/filter functionality
  *  - Delete with confirmation
  *  - A built-in shows a lock and offers no edit or delete (#5841)
@@ -21,7 +22,8 @@ import { PropertyDefinitionsList } from '@/components/properties/PropertyDefinit
 import type { AppError, PageResponse, PropertyDefinition } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { propertyDefs, seedBlocks } from '@/lib/tauri-mock/seed'
+import { seedBlocks, spacePropertyDefs } from '@/lib/tauri-mock/seed'
+import { useSpaceStore } from '@/stores/space'
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
@@ -68,8 +70,12 @@ function pageOf(items: PropertyDefinition[]): PageResponse<PropertyDefinition> {
   return { items, next_cursor: null, has_more: false, total_count: null }
 }
 
+const PERSONAL = { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }
+const WORK = { id: 'SPACE_WORK', name: 'Work', accent_color: null }
+
 beforeEach(() => {
   vi.clearAllMocks()
+  useSpaceStore.setState({ currentSpaceId: PERSONAL.id, availableSpaces: [PERSONAL] })
 })
 
 describe('PropertyDefinitionsList', () => {
@@ -193,6 +199,7 @@ describe('PropertyDefinitionsList', () => {
     expect(await screen.findByText('My Prop')).toBeInTheDocument()
 
     expect(mockedInvoke).toHaveBeenCalledWith('create_property_def', {
+      spaceId: PERSONAL.id,
       key: 'my-prop',
       valueType: 'text',
       options: null,
@@ -228,6 +235,7 @@ describe('PropertyDefinitionsList', () => {
 
     expect(await screen.findByText('Size')).toBeInTheDocument()
     expect(mockedInvoke).toHaveBeenCalledWith('create_property_def', {
+      spaceId: PERSONAL.id,
       key: 'size',
       valueType: 'select',
       options: '["small","large"]',
@@ -246,7 +254,7 @@ describe('PropertyDefinitionsList', () => {
     await user.click(screen.getByRole('button', { name: /Create/i }))
 
     await waitFor(() => {
-      expect(propertyDefs.get('billable')?.['value_type']).toBe('boolean')
+      expect(spacePropertyDefs(PERSONAL.id).get('billable')?.['value_type']).toBe('boolean')
     })
   })
 
@@ -262,11 +270,7 @@ describe('PropertyDefinitionsList', () => {
     await user.click(deleteBtn)
 
     expect(await screen.findByText('Delete this property definition?')).toBeInTheDocument()
-    expect(
-      screen.getByText(
-        "A property still in use can't be deleted. Remove it from every block that uses it first.",
-      ),
-    ).toBeInTheDocument()
+    expect(screen.getByText(t('propertiesView.deleteDesc'))).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Cancel/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Delete/i })).toBeInTheDocument()
   })
@@ -380,9 +384,9 @@ describe('PropertyDefinitionsList', () => {
 
   // #4399 — Settings -> Properties is the entry point the issue calls "the
   // direct one": type `year`, pick `number`, done. The backend now refuses
-  // when the vault already holds `year` values that `number` would reject,
+  // when the space already holds `year` values that `number` would reject,
   // and the reason has to reach the user — the offending blocks are anywhere
-  // in the vault, so "Failed to create property definition" leaves nothing to
+  // in the space, so "Failed to create property definition" leaves nothing to
   // act on. Note the rejection is the AppError OBJECT (what `unwrap` throws),
   // not an `Error`; the test above pins that a transport `Error` still gets
   // the generic toast, so this cannot pass by showing every thrown message.
@@ -530,6 +534,7 @@ describe('PropertyDefinitionsList', () => {
       // Paginated wrapper threads `cursor` + `limit` (both null
       // when omitted) through the IPC layer.
       expect(mockedInvoke).toHaveBeenCalledWith('list_property_defs', {
+        spaceId: PERSONAL.id,
         cursor: null,
         limit: null,
       })
@@ -812,6 +817,165 @@ describe('PropertyDefinitionsList', () => {
       await user.click(screen.getByRole('button', { name: /Edit options/i }))
       // Wait for the portalled PopoverContent so axe runs against a settled DOM.
       await screen.findByRole('dialog', { name: t('propertiesView.editOptionsPopoverLabel') })
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  // ── #5841: definitions are per space ─────
+  describe('per-space definitions', () => {
+    const spacePicker = () =>
+      screen.getByRole('combobox', { name: t('propertiesView.definitionsIn') })
+    const copyButton = (key: string) =>
+      screen.getByRole('button', { name: t('propertiesView.copyToSpaceLabel', { key }) })
+
+    /** The mock backend, with a Work space declaring `budget` as a number. */
+    function seedTwoSpaces(): void {
+      seedBlocks()
+      spacePropertyDefs(WORK.id).set('budget', {
+        key: 'budget',
+        value_type: 'number',
+        options: null,
+        created_at: '2026-01-01T00:00:00.000Z',
+      })
+      useSpaceStore.setState({ currentSpaceId: PERSONAL.id, availableSpaces: [PERSONAL, WORK] })
+      mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+    }
+
+    it("lists the active space's definitions, and another space's once picked", async () => {
+      const user = userEvent.setup()
+      seedTwoSpaces()
+
+      render(<PropertyDefinitionsList />)
+
+      expect(await screen.findByText('Context')).toBeInTheDocument()
+      expect(spacePicker()).toHaveValue(PERSONAL.id)
+      expect(screen.queryByText('Budget')).not.toBeInTheDocument()
+
+      await user.selectOptions(spacePicker(), WORK.id)
+
+      expect(await screen.findByText('Budget')).toBeInTheDocument()
+      expect(screen.queryByText('Context')).not.toBeInTheDocument()
+      expect(mockedInvoke).toHaveBeenCalledWith('list_property_defs', {
+        spaceId: WORK.id,
+        cursor: null,
+        limit: null,
+      })
+    })
+
+    it('creates a definition in the picked space only', async () => {
+      const user = userEvent.setup()
+      seedTwoSpaces()
+      render(<PropertyDefinitionsList />)
+      await screen.findByText('Context')
+      await user.selectOptions(spacePicker(), WORK.id)
+      await screen.findByText('Budget')
+
+      await user.type(screen.getByPlaceholderText('Property key'), 'estimate')
+      await user.click(screen.getByRole('button', { name: /Create/i }))
+
+      await waitFor(() => {
+        expect(spacePropertyDefs(WORK.id).get('estimate')?.['value_type']).toBe('text')
+      })
+      expect(spacePropertyDefs(PERSONAL.id).has('estimate')).toBe(false)
+    })
+
+    it('copies a user definition to another space, where it then lists', async () => {
+      const user = userEvent.setup()
+      seedTwoSpaces()
+      render(<PropertyDefinitionsList />)
+      await screen.findByText('Project')
+
+      await user.click(copyButton('project'))
+      await user.click(await screen.findByRole('button', { name: WORK.name }))
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+          t('propertiesView.copiedToSpace', { key: 'project', space: WORK.name }),
+        )
+      })
+      expect(mockedInvoke).toHaveBeenCalledWith('create_property_def', {
+        spaceId: WORK.id,
+        key: 'project',
+        valueType: 'select',
+        options: '["alpha","beta","gamma"]',
+      })
+      await user.selectOptions(spacePicker(), WORK.id)
+      expect(await screen.findByText('Project')).toBeInTheDocument()
+    })
+
+    it("keeps the other space's differing definition and says so", async () => {
+      const user = userEvent.setup()
+      seedTwoSpaces()
+      spacePropertyDefs(WORK.id).set('project', {
+        key: 'project',
+        value_type: 'text',
+        options: null,
+        created_at: '2026-01-01T00:00:00.000Z',
+      })
+      render(<PropertyDefinitionsList />)
+      await screen.findByText('Project')
+
+      await user.click(copyButton('project'))
+      await user.click(await screen.findByRole('button', { name: WORK.name }))
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.warning)).toHaveBeenCalledWith(
+          t('propertiesView.copyKeptExisting', { key: 'project', space: WORK.name, type: 'text' }),
+        )
+      })
+      expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+      expect(spacePropertyDefs(WORK.id).get('project')?.['value_type']).toBe('text')
+    })
+
+    it("shows the backend's reason when the copy is refused", async () => {
+      const user = userEvent.setup()
+      useSpaceStore.setState({ currentSpaceId: PERSONAL.id, availableSpaces: [PERSONAL, WORK] })
+      const refusal: AppError = {
+        kind: 'validation',
+        message: "cannot declare property 'year' as 'number': 1 value(s) already stored",
+      }
+      stubInvoke({
+        list_property_defs: () => pageOf([makePropDef('year', 'number')]),
+        create_property_def: () => Promise.reject(refusal),
+      })
+      render(<PropertyDefinitionsList />)
+      await screen.findByText('Year')
+
+      await user.click(copyButton('year'))
+      await user.click(await screen.findByRole('button', { name: WORK.name }))
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.error)).toHaveBeenCalledWith(refusal.message)
+      })
+    })
+
+    it('offers no copy when there is no other space, nor on a built-in', async () => {
+      stubDefs(pageOf([makePropDef('project'), makeBuiltinDef('priority', 'select', '["1"]')]))
+      render(<PropertyDefinitionsList />)
+      await screen.findByText('Project')
+
+      expect(
+        screen.queryByRole('button', {
+          name: t('propertiesView.copyToSpaceLabel', { key: 'project' }),
+        }),
+      ).not.toBeInTheDocument()
+    })
+
+    it('has no a11y violations with the copy menu open', async () => {
+      const user = userEvent.setup()
+      seedTwoSpaces()
+      const { container } = render(<PropertyDefinitionsList />)
+      await screen.findByText('Project')
+      expect(
+        screen.queryByRole('button', {
+          name: t('propertiesView.copyToSpaceLabel', { key: 'priority' }),
+        }),
+      ).not.toBeInTheDocument()
+
+      await user.click(copyButton('project'))
+      await screen.findByRole('button', { name: WORK.name })
 
       const results = await axe(container)
       expect(results).toHaveNoViolations()

@@ -17,13 +17,14 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import { isValidation } from '@/lib/app-error'
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { blocks, makeBlock, properties, propertyDefs, seedBlocks } from '@/lib/tauri-mock/seed'
+import { blocks, makeBlock, properties, seedBlocks, spacePropertyDefs } from '@/lib/tauri-mock/seed'
 
 const BLOCK = '0000000000000000000000000A'
 
+/** A block of the seeded Personal space, whose definitions apply (#5841). */
 function reset(): void {
   seedBlocks()
-  blocks.set(BLOCK, makeBlock(BLOCK, 'block', 'a', null, 0))
+  blocks.set(BLOCK, { ...makeBlock(BLOCK, 'block', 'a', null, 0), space_id: 'SPACE_PERSONAL' })
 }
 
 /** Run a `set_property` dispatch and return the thrown value (or undefined). */
@@ -71,6 +72,14 @@ describe('tauri-mock set_property validation (#2656)', () => {
     expect(properties.get(BLOCK)?.get('project')).toBeUndefined()
   })
 
+  // #5841 — definitions are per space: another space does not declare
+  // `project`, so its blocks hold any text under it.
+  it("checks a value against its own space's definitions only", () => {
+    blocks.set(BLOCK, { ...makeBlock(BLOCK, 'block', 'a', null, 0), space_id: 'SPACE_OTHER' })
+    expect(setPropertyError('project', 'delta')).toBeUndefined()
+    expect(properties.get(BLOCK)?.get('project')?.['value_text']).toBe('delta')
+  })
+
   it('accepts a select value that IS one of the definition options', () => {
     const res = dispatch('set_property', {
       blockId: BLOCK,
@@ -85,7 +94,11 @@ describe('tauri-mock set_property validation (#2656)', () => {
     // The real backend (`block_ops.rs`) skips the membership check when the
     // options column is NULL, keeping custom select keys flexible. The mock
     // must not be stricter, or it is a false gate.
-    propertyDefs.set('stage', { key: 'stage', value_type: 'select', options: null })
+    spacePropertyDefs('SPACE_PERSONAL').set('stage', {
+      key: 'stage',
+      value_type: 'select',
+      options: null,
+    })
     const res = dispatch('set_property', {
       blockId: BLOCK,
       key: 'stage',

@@ -126,7 +126,7 @@ pub async fn apply_page_source_inner(
     tx.arm_engine_rollback(materializer.loro_state());
     let data = load_page_export_data(&mut tx, page_id.as_str(), PageRead::Source).await?;
     let (base, stale) = read_base(&data, &base_source, flags.merge)?;
-    let mut lines = PropertyLines::load(&mut tx, PropertyWrite::Edit).await?;
+    let mut lines = PropertyLines::load_for_block(&mut tx, &page_id, PropertyWrite::Edit).await?;
     let mut warnings = Vec::new();
     let (blocks, front) = read_buffer(
         &source,

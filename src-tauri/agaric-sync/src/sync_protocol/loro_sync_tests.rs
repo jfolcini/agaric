@@ -1977,11 +1977,9 @@ async fn replay_inbox_row_replays_snapshot_slot_1054() {
 // Inbound property re-projection (end-to-end).
 // -----------------------------------------------------------------
 
-/// Seed the `property_definitions` rows the re-projection consults to
-/// recover SQL types for the typed-column assertions below.
+/// Seed [`SPACE_A`]'s `property_definitions` rows, which the re-projection
+/// consults to recover SQL types for the typed-column assertions below.
 async fn seed_property_defs(pool: &SqlitePool) {
-    // `INSERT OR REPLACE` so these test-chosen types win over any
-    // seeded default (e.g. migration 0014 seeds `effort` as `select`).
     for (key, value_type) in [
         ("note", "text"),
         ("effort", "number"),
@@ -1989,15 +1987,63 @@ async fn seed_property_defs(pool: &SqlitePool) {
         ("due", "date"),
     ] {
         sqlx::query(
-            "INSERT OR REPLACE INTO property_definitions (key, value_type, created_at) \
-                 VALUES (?, ?, '2026-01-01T00:00:00Z')",
+            "INSERT INTO property_definitions (space_id, key, value_type, created_at) \
+                 VALUES (?, ?, ?, '2026-01-01T00:00:00Z')",
         )
+        .bind(SPACE_A)
         .bind(key)
         .bind(value_type)
         .execute(pool)
         .await
         .unwrap();
     }
+}
+
+/// #5841 — a doc's string values are typed by its own space's definitions.
+/// `due` is declared `date` in [`SPACE_A`] only, so the same value lands in
+/// `value_date` from A's doc and in `value_text` from a space that does not
+/// declare it.
+#[tokio::test]
+async fn apply_remote_types_a_string_by_the_docs_own_space_5841() {
+    const SPACE_B: &str = "01HZ00000000000000000000SQ";
+    let (pool, _dir) = fresh_pool().await;
+    seed_property_defs(&pool).await;
+
+    let registry_a = LoroEngineRegistry::new();
+    for (space, block) in [(SPACE_A, BLOCK_A), (SPACE_B, BLOCK_B)] {
+        let space = SpaceId::from_trusted(space);
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            let e = g.engine_mut();
+            e.apply_create_block(block, "content", "from-A", None, 0)
+                .expect("create");
+            e.apply_set_property(block, "due", Some("2026-01-01"))
+                .expect("set due");
+        }
+        let msg = prepare_outgoing_for_pool(&pool, &registry_a, &space, "device-A", None)
+            .await
+            .expect("prepare")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
+        apply_remote(&pool, &LoroEngineRegistry::new(), "device-B", msg)
+            .await
+            .expect("apply_remote");
+    }
+
+    let due: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT block_id, value_date, value_text FROM block_properties \
+             WHERE key = 'due' ORDER BY block_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("fetch due");
+    assert_eq!(
+        due,
+        vec![
+            (BLOCK_A.to_owned(), Some("2026-01-01".into()), None),
+            (BLOCK_B.to_owned(), None, Some("2026-01-01".into())),
+        ],
+        "A declares `due` as a date, B does not"
+    );
 }
 
 /// A remote engine sets several typed properties on a block; after

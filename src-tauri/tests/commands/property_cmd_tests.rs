@@ -2322,7 +2322,7 @@ async fn set_property_custom_date_typed_stores_value_date() {
     let mat = Materializer::new(pool.clone());
 
     // Create a date-type property definition
-    create_property_def_inner(&pool, "deadline".into(), "date".into(), None)
+    create_test_property_def(&pool, "deadline".into(), "date".into(), None)
         .await
         .unwrap();
 
@@ -2396,7 +2396,7 @@ async fn set_property_custom_date_typed_stores_value_date() {
 async fn create_property_def_ref_type_succeeds() {
     let (pool, _dir) = test_pool().await;
 
-    let def = create_property_def_inner(&pool, "reviewer".into(), "ref".into(), None)
+    let def = create_test_property_def(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();
 
@@ -2412,7 +2412,7 @@ async fn create_property_def_ref_type_succeeds() {
 async fn create_property_def_ref_type_rejects_options() {
     let (pool, _dir) = test_pool().await;
 
-    let result = create_property_def_inner(
+    let result = create_test_property_def(
         &pool,
         "reviewer".into(),
         "ref".into(),
@@ -2432,7 +2432,7 @@ async fn set_property_ref_type_enforces_value_ref() {
     let mat = Materializer::new(pool.clone());
 
     // Create a ref-type definition
-    create_property_def_inner(&pool, "reviewer".into(), "ref".into(), None)
+    create_test_property_def(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();
 
@@ -2450,6 +2450,8 @@ async fn set_property_ref_type_enforces_value_ref() {
     .unwrap();
 
     mat.flush_background().await.unwrap();
+
+    assign_all_to_test_space(&pool).await;
 
     // A value_text on a ref-type property names a page (#5160 D11); one that
     // names none is refused
@@ -2487,6 +2489,7 @@ async fn set_property_ref_type_enforces_value_ref() {
     .unwrap();
 
     mat.flush_background().await.unwrap();
+    assign_all_to_test_space(&pool).await;
 
     let result = set_property_inner(
         &pool,
@@ -5310,20 +5313,22 @@ async fn every_builtin_definition_refuses_create_update_and_delete_5841() {
     for def in agaric_store::op::BUILTIN_PROPERTY_DEFS {
         let key = def.key;
         let created =
-            create_property_def_inner(&pool, key.into(), def.value_type.into(), def.options_json())
+            create_test_property_def(&pool, key.into(), def.value_type.into(), def.options_json())
                 .await;
         assert_eq!(
             created.err().and_then(|e| e.validation_code()),
             Some(ValidationCode::BuiltinPropertyLocked),
             "creating '{key}' is refused"
         );
-        let updated = update_property_def_options_inner(&pool, key.into(), r#"["x"]"#.into()).await;
+        let updated =
+            update_property_def_options_inner(&pool, TEST_SPACE_ID, key.into(), r#"["x"]"#.into())
+                .await;
         assert_eq!(
             updated.err().and_then(|e| e.validation_code()),
             Some(ValidationCode::BuiltinPropertyLocked),
             "editing the options of '{key}' is refused"
         );
-        let deleted = delete_property_def_inner(&pool, key.into()).await;
+        let deleted = delete_property_def_inner(&pool, TEST_SPACE_ID, key.into()).await;
         assert_eq!(
             deleted.err().and_then(|e| e.validation_code()),
             Some(ValidationCode::BuiltinPropertyLocked),
@@ -5362,7 +5367,7 @@ async fn update_property_def_options_sanitizes_database_errors() {
     let (pool, _dir) = test_pool().await;
     // Seed a valid select-type def so the query reaches the UPDATE stage,
     // not the early NotFound branch.
-    create_property_def_inner(
+    create_test_property_def(
         &pool,
         "moods".into(),
         "select".into(),
@@ -5373,7 +5378,13 @@ async fn update_property_def_options_sanitizes_database_errors() {
 
     pool.close().await;
 
-    let raw = update_property_def_options_inner(&pool, "moods".into(), r#"["a","b"]"#.into()).await;
+    let raw = update_property_def_options_inner(
+        &pool,
+        TEST_SPACE_ID,
+        "moods".into(),
+        r#"["a","b"]"#.into(),
+    )
+    .await;
     let sanitized = raw.map_err(sanitize_internal_error);
 
     match sanitized {
@@ -5399,13 +5410,13 @@ async fn update_property_def_options_sanitizes_database_errors() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_property_def_sanitizes_database_errors() {
     let (pool, _dir) = test_pool().await;
-    create_property_def_inner(&pool, "temp".into(), "text".into(), None)
+    create_test_property_def(&pool, "temp".into(), "text".into(), None)
         .await
         .unwrap();
 
     pool.close().await;
 
-    let raw = delete_property_def_inner(&pool, "temp".into()).await;
+    let raw = delete_property_def_inner(&pool, TEST_SPACE_ID, "temp".into()).await;
     let sanitized = raw.map_err(sanitize_internal_error);
 
     match sanitized {
@@ -5434,7 +5445,7 @@ async fn update_property_def_options_preserves_user_facing_errors_through_saniti
     // unchanged — otherwise the frontend loses the actionable message
     // ("options must be a JSON array of strings" / "must not be empty").
     let (pool, _dir) = test_pool().await;
-    create_property_def_inner(
+    create_test_property_def(
         &pool,
         "flavour".into(),
         "select".into(),
@@ -5443,7 +5454,13 @@ async fn update_property_def_options_preserves_user_facing_errors_through_saniti
     .await
     .unwrap();
 
-    let raw = update_property_def_options_inner(&pool, "flavour".into(), "not-json".into()).await;
+    let raw = update_property_def_options_inner(
+        &pool,
+        TEST_SPACE_ID,
+        "flavour".into(),
+        "not-json".into(),
+    )
+    .await;
     let sanitized = raw.map_err(sanitize_internal_error);
 
     match sanitized {
@@ -5467,7 +5484,7 @@ async fn update_property_def_options_reads_back_committed_row() {
     // pre-update snapshot). The returned options must reflect exactly what was
     // persisted, and the persisted row must match.
     let (pool, _dir) = test_pool().await;
-    create_property_def_inner(
+    create_test_property_def(
         &pool,
         "flavour".into(),
         "select".into(),
@@ -5476,10 +5493,14 @@ async fn update_property_def_options_reads_back_committed_row() {
     .await
     .unwrap();
 
-    let updated =
-        update_property_def_options_inner(&pool, "flavour".into(), r#"["sweet","sour"]"#.into())
-            .await
-            .unwrap();
+    let updated = update_property_def_options_inner(
+        &pool,
+        TEST_SPACE_ID,
+        "flavour".into(),
+        r#"["sweet","sour"]"#.into(),
+    )
+    .await
+    .unwrap();
 
     // Returned shape reflects the committed row.
     assert_eq!(updated.key, "flavour");
@@ -5500,8 +5521,13 @@ async fn update_property_def_options_missing_key_returns_not_found() {
     // #383: a missing definition must surface NotFound (the existence check
     // now runs inside the tx; this exercises the early-return rollback path).
     let (pool, _dir) = test_pool().await;
-    let result =
-        update_property_def_options_inner(&pool, "no-such-key".into(), r#"["a"]"#.into()).await;
+    let result = update_property_def_options_inner(
+        &pool,
+        TEST_SPACE_ID,
+        "no-such-key".into(),
+        r#"["a"]"#.into(),
+    )
+    .await;
     assert!(
         matches!(result, Err(AppError::NotFound(_))),
         "missing definition must return NotFound, got: {result:?}"
@@ -5513,14 +5539,14 @@ async fn delete_property_def_preserves_user_facing_errors_through_sanitize() {
     // NotFound / Validation are user-facing — sanitize must not rewrite them.
     let (pool, _dir) = test_pool().await;
 
-    let raw = delete_property_def_inner(&pool, "nonexistent-key".into()).await;
+    let raw = delete_property_def_inner(&pool, TEST_SPACE_ID, "nonexistent-key".into()).await;
     let sanitized = raw.map_err(sanitize_internal_error);
     assert!(
         matches!(sanitized, Err(AppError::NotFound(_))),
         "NotFound must pass through sanitization unchanged, got: {sanitized:?}"
     );
 
-    let raw = delete_property_def_inner(&pool, "todo_state".into()).await;
+    let raw = delete_property_def_inner(&pool, TEST_SPACE_ID, "todo_state".into()).await;
     let sanitized = raw.map_err(sanitize_internal_error);
     assert!(
         matches!(sanitized, Err(AppError::Validation { .. })),
@@ -5550,11 +5576,11 @@ async fn m26_delete_property_def_happy_path_removes_row_when_no_dependents() {
     // succeed and the `property_definitions` row should be gone.
     let (pool, _dir) = test_pool().await;
 
-    create_property_def_inner(&pool, "scratch".into(), "text".into(), None)
+    create_test_property_def(&pool, "scratch".into(), "text".into(), None)
         .await
         .unwrap();
 
-    delete_property_def_inner(&pool, "scratch".into())
+    delete_property_def_inner(&pool, TEST_SPACE_ID, "scratch".into())
         .await
         .expect("delete must succeed when no block_properties reference the key");
 
@@ -5579,7 +5605,7 @@ async fn m26_delete_property_def_rejects_when_block_properties_reference_key() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    create_property_def_inner(&pool, "importance".into(), "text".into(), None)
+    create_test_property_def(&pool, "importance".into(), "text".into(), None)
         .await
         .unwrap();
 
@@ -5595,6 +5621,7 @@ async fn m26_delete_property_def_rejects_when_block_properties_reference_key() {
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
+    assign_all_to_test_space(&pool).await;
 
     set_property_inner(
         &pool,
@@ -5613,7 +5640,7 @@ async fn m26_delete_property_def_rejects_when_block_properties_reference_key() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    let result = delete_property_def_inner(&pool, "importance".into()).await;
+    let result = delete_property_def_inner(&pool, TEST_SPACE_ID, "importance".into()).await;
     assert!(
         matches!(result, Err(AppError::Validation { .. })),
         "delete must return Validation when block_properties reference the key, got: {result:?}"
@@ -5655,7 +5682,7 @@ async fn m26_delete_property_def_rejection_message_includes_key_and_count() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    create_property_def_inner(&pool, "importance".into(), "text".into(), None)
+    create_test_property_def(&pool, "importance".into(), "text".into(), None)
         .await
         .unwrap();
 
@@ -5671,6 +5698,7 @@ async fn m26_delete_property_def_rejection_message_includes_key_and_count() {
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
+    assign_all_to_test_space(&pool).await;
 
     set_property_inner(
         &pool,
@@ -5689,7 +5717,7 @@ async fn m26_delete_property_def_rejection_message_includes_key_and_count() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    let result = delete_property_def_inner(&pool, "importance".into()).await;
+    let result = delete_property_def_inner(&pool, TEST_SPACE_ID, "importance".into()).await;
     match result {
         Err(AppError::Validation { message: msg, .. }) => {
             // Shown verbatim in the Settings toast, so it is user-facing copy.
@@ -5794,7 +5822,7 @@ async fn bug20_set_property_rejects_select_value_not_in_custom_options() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    create_property_def_inner(
+    create_test_property_def(
         &pool,
         "mood".into(),
         "select".into(),
@@ -5815,6 +5843,7 @@ async fn bug20_set_property_rejects_select_value_not_in_custom_options() {
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
+    assign_all_to_test_space(&pool).await;
 
     // Happy: "happy" is in options
     set_property_inner(
@@ -5916,9 +5945,10 @@ async fn bug20_select_property_with_null_options_is_permissive() {
     // with NULL options — exercising the defensive permissive branch in
     // the validation logic.
     sqlx::query(
-        "INSERT INTO property_definitions (key, value_type, options, created_at) \
-         VALUES ('freeform_select', 'select', NULL, '2025-01-01T00:00:00Z')",
+        "INSERT INTO property_definitions (space_id, key, value_type, options, created_at) \
+         VALUES (?, 'freeform_select', 'select', NULL, '2025-01-01T00:00:00Z')",
     )
+    .bind(TEST_SPACE_ID)
     .execute(&pool)
     .await
     .unwrap();
@@ -6425,7 +6455,7 @@ async fn set_is_space_to_invalid_value_returns_error_m90() {
 async fn get_property_def_returns_some_for_existing_key() {
     let (pool, _dir) = test_pool().await;
 
-    create_property_def_inner(
+    create_test_property_def(
         &pool,
         "severity".into(),
         "select".into(),
@@ -6434,7 +6464,7 @@ async fn get_property_def_returns_some_for_existing_key() {
     .await
     .unwrap();
 
-    let def = get_property_def_inner(&pool, "severity")
+    let def = get_property_def_inner(&pool, TEST_SPACE_ID, "severity")
         .await
         .unwrap()
         .expect("seeded definition should be returned");
@@ -6448,7 +6478,7 @@ async fn get_property_def_returns_some_for_existing_key() {
 async fn get_property_def_returns_none_for_missing_key() {
     let (pool, _dir) = test_pool().await;
 
-    let result = get_property_def_inner(&pool, "definitely-not-a-real-key")
+    let result = get_property_def_inner(&pool, TEST_SPACE_ID, "definitely-not-a-real-key")
         .await
         .unwrap();
 
@@ -8549,14 +8579,15 @@ async fn delete_property_inner_soft_deleted_block_yields_validation_in_tx() {
 
 /// The `property_definitions` row for `key`, or `None`.
 async fn def_type_of(pool: &SqlitePool, key: &str) -> Option<String> {
-    get_property_def_inner(pool, key)
+    get_property_def_inner(pool, TEST_SPACE_ID, key)
         .await
         .unwrap()
         .map(|d| d.value_type)
 }
 
-/// Seed one block holding `key` = `value_text` through the ordinary
-/// command path, with NO declaration — the permissive state #4382 traps.
+/// Seed one block of [`TEST_SPACE_ID`] holding `key` = `value_text` through
+/// the ordinary command path, with NO declaration — the permissive state
+/// #4382 traps.
 async fn block_with_text_property(
     pool: &SqlitePool,
     mat: &Materializer,
@@ -8568,6 +8599,7 @@ async fn block_with_text_property(
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
+    assign_all_to_test_space(pool).await;
     set_property_inner(
         pool,
         DEV,
@@ -8610,7 +8642,7 @@ async fn create_property_def_refuses_a_type_that_rejects_stored_values_4399() {
         "seed precondition: `year` must be IN USE but UNDECLARED"
     );
 
-    let result = create_property_def_inner(&pool, "year".into(), "number".into(), None).await;
+    let result = create_test_property_def(&pool, "year".into(), "number".into(), None).await;
 
     // 1. Refused, by THIS guard — the message names the key, the requested
     //    type, the count and the shape actually stored. Shape validation
@@ -8730,7 +8762,7 @@ async fn create_property_def_allows_a_type_every_stored_value_satisfies_4399() {
         "seed precondition: `year` must be IN USE but UNDECLARED"
     );
 
-    let def = create_property_def_inner(&pool, "year".into(), "number".into(), None)
+    let def = create_test_property_def(&pool, "year".into(), "number".into(), None)
         .await
         .expect("declaring a type every stored value already satisfies must be allowed");
     assert_eq!(def.value_type, "number");
@@ -8765,7 +8797,7 @@ async fn create_property_def_declares_an_unused_key_4399() {
         .unwrap();
     assert_eq!(count, 0, "seed precondition: `year` must be unused");
 
-    let def = create_property_def_inner(&pool, "year".into(), "number".into(), None)
+    let def = create_test_property_def(&pool, "year".into(), "number".into(), None)
         .await
         .expect("an unused key must still be declarable");
     assert_eq!(def.key, "year");
@@ -8812,7 +8844,7 @@ async fn create_property_def_treats_soft_deleted_values_as_in_use_4399() {
         "seed precondition: the block must actually be soft-deleted"
     );
 
-    let result = create_property_def_inner(&pool, "year".into(), "number".into(), None).await;
+    let result = create_test_property_def(&pool, "year".into(), "number".into(), None).await;
     assert!(
         matches!(result, Err(AppError::Validation { message: ref msg, .. })
             if msg.contains("cannot declare property 'year' as 'number'")),
@@ -8837,14 +8869,14 @@ async fn create_property_def_is_still_a_no_op_for_a_declared_in_use_key_4399() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    create_property_def_inner(&pool, "year".into(), "text".into(), None)
+    create_test_property_def(&pool, "year".into(), "text".into(), None)
         .await
         .unwrap();
     block_with_text_property(&pool, &mat, "an old book", "year", "circa 1920").await;
 
     // The requested type contradicts every stored value — but the key is
     // already declared, so nothing is written and nothing is refused.
-    let def = create_property_def_inner(&pool, "year".into(), "number".into(), None)
+    let def = create_test_property_def(&pool, "year".into(), "number".into(), None)
         .await
         .expect("an already-declared key must stay an idempotent no-op");
     assert_eq!(
@@ -8870,7 +8902,7 @@ async fn create_property_def_refuses_select_options_that_exclude_stored_values_4
 
     block_with_text_property(&pool, &mat, "a shipped thing", "stage", "shipped").await;
 
-    let result = create_property_def_inner(
+    let result = create_test_property_def(
         &pool,
         "stage".into(),
         "select".into(),
@@ -8888,7 +8920,7 @@ async fn create_property_def_refuses_select_options_that_exclude_stored_values_4
     // The counterpart: options that DO cover the stored value are allowed.
     // Without this the test above would also pass a probe that refused every
     // `select` declaration over an in-use key.
-    let def = create_property_def_inner(
+    let def = create_test_property_def(
         &pool,
         "stage".into(),
         "select".into(),
@@ -8923,7 +8955,7 @@ async fn create_property_def_refusal_still_lets_a_rename_carry_its_value_4399() 
         block_with_text_property(&pool, &mat, "someday", "deadline", "when it's ready").await;
 
     // The block being renamed: `due` declared `date`, holding a date.
-    create_property_def_inner(&pool, "due".into(), "date".into(), None)
+    create_test_property_def(&pool, "due".into(), "date".into(), None)
         .await
         .unwrap();
     let renaming = create_block_inner(
@@ -8938,6 +8970,7 @@ async fn create_property_def_refusal_still_lets_a_rename_carry_its_value_4399() 
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
+    assign_all_to_test_space(&pool).await;
     set_property_inner(
         &pool,
         DEV,
@@ -8957,7 +8990,7 @@ async fn create_property_def_refusal_still_lets_a_rename_carry_its_value_4399() 
 
     // Step 1 of the rename: carry the definition. Refused — `deadline`'s
     // existing text values would be rejected by `date`.
-    let carried = create_property_def_inner(&pool, "deadline".into(), "date".into(), None).await;
+    let carried = create_test_property_def(&pool, "deadline".into(), "date".into(), None).await;
     assert!(
         matches!(carried, Err(AppError::Validation { message: ref msg, .. })
             if msg.contains("cannot declare property 'deadline' as 'date'")),
@@ -9088,7 +9121,7 @@ async fn create_property_def_admits_stored_refs_under_text_4399() {
     );
 
     // `text` admits `value_ref`, so this must be allowed.
-    let def = create_property_def_inner(&pool, "source".into(), "text".into(), None)
+    let def = create_test_property_def(&pool, "source".into(), "text".into(), None)
         .await
         .expect("`text` admits a stored `value_ref` — step 4's `text | select` arm");
     assert_eq!(def.value_type, "text");
@@ -9148,6 +9181,7 @@ async fn create_property_def_url_admits_stored_text_and_refuses_stored_number_47
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
+    assign_all_to_test_space(&pool).await;
     set_property_inner(
         &pool,
         DEV,
@@ -9165,7 +9199,7 @@ async fn create_property_def_url_admits_stored_text_and_refuses_stored_number_47
     .expect("an undeclared key must accept a number");
     mat.flush_background().await.unwrap();
 
-    let refused = create_property_def_inner(&pool, "hits".into(), "url".into(), None).await;
+    let refused = create_test_property_def(&pool, "hits".into(), "url".into(), None).await;
     assert!(
         matches!(refused, Err(AppError::Validation { message: ref msg, .. })
             if msg.contains("cannot declare property 'hits' as 'url'")
@@ -9178,7 +9212,7 @@ async fn create_property_def_url_admits_stored_text_and_refuses_stored_number_47
         "a refused `url` declaration must write nothing"
     );
 
-    let def = create_property_def_inner(&pool, "homepage".into(), "url".into(), None)
+    let def = create_test_property_def(&pool, "homepage".into(), "url".into(), None)
         .await
         .expect("`url` admits a stored `value_text`");
     assert_eq!(def.value_type, "url");
@@ -9203,7 +9237,7 @@ async fn create_property_def_refuses_ref_and_boolean_over_stored_text_4399() {
     block_with_text_property(&pool, &mat, "another note", "urgent", "very").await;
 
     for (key, value_type) in [("owner", "ref"), ("urgent", "boolean")] {
-        let result = create_property_def_inner(&pool, key.into(), value_type.into(), None).await;
+        let result = create_test_property_def(&pool, key.into(), value_type.into(), None).await;
         assert!(
             matches!(result, Err(AppError::Validation { message: ref msg, .. })
                 if msg.contains(&format!("cannot declare property '{key}' as '{value_type}'"))
@@ -9221,7 +9255,7 @@ async fn create_property_def_refuses_ref_and_boolean_over_stored_text_4399() {
     // MIRROR: with the keys still undeclared, declare each as the type its
     // values DO satisfy, then confirm the shapes the refusal predicted are
     // the shapes the engine rejects.
-    create_property_def_inner(&pool, "owner".into(), "text".into(), None)
+    create_test_property_def(&pool, "owner".into(), "text".into(), None)
         .await
         .unwrap();
     let holder = create_block_inner(
@@ -9236,6 +9270,7 @@ async fn create_property_def_refuses_ref_and_boolean_over_stored_text_4399() {
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
+    assign_all_to_test_space(&pool).await;
     let rejected = set_property_inner(
         &pool,
         DEV,
@@ -9330,4 +9365,220 @@ async fn delete_property_todo_state_clears_task_stamps_5378() {
     let b = get_block_inner(&pool, block.id.clone()).await.unwrap();
     assert_eq!(b.todo_state, None);
     mat.shutdown();
+}
+
+// ======================================================================
+// #5841 S0.5 — property definitions are per space
+// ======================================================================
+
+/// A content block of `space`, with `key` = `text` when one is given,
+/// written while the key is undeclared there.
+async fn block_in_space(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    space: &str,
+    held: Option<(&str, &str)>,
+) -> String {
+    ensure_test_space(pool).await;
+    ensure_test_space_b(pool).await;
+    let block = create_block_inner(pool, DEV, mat, "content".into(), "card".into(), None, None)
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+    assign_to_space(pool, block.id.as_str(), space).await;
+    if let Some((key, text)) = held {
+        set_property_inner(
+            pool,
+            DEV,
+            mat,
+            block.id.as_str().into(),
+            key.into(),
+            Some(text.into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+    }
+    block.id.as_str().to_owned()
+}
+
+/// A value is checked against its own space's definition: `stage` is a
+/// select in one space and undeclared in the other.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_checks_a_value_against_its_own_spaces_definition_5841() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let in_a = block_in_space(&pool, &mat, TEST_SPACE_ID, None).await;
+    let in_b = block_in_space(&pool, &mat, TEST_SPACE_B_ID, None).await;
+    create_property_def_inner(
+        &pool,
+        TEST_SPACE_ID,
+        "stage".into(),
+        "select".into(),
+        Some(r#"["draft","final"]"#.into()),
+    )
+    .await
+    .unwrap();
+
+    let set = |block: String| {
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.as_str().into(),
+            "stage".into(),
+            Some("shipped".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+    };
+    let refused = set(in_a).await;
+    assert!(
+        matches!(refused, Err(AppError::Validation { message: ref msg, .. })
+            if msg.contains("not in allowed options")),
+        "space A's select refuses an option it lacks, got {refused:?}"
+    );
+    set(in_b.clone())
+        .await
+        .expect("space B does not declare `stage`, so any text goes");
+    let held = get_property_inner(&pool, &BlockId::from_trusted(&in_b), "stage")
+        .await
+        .unwrap()
+        .expect("B's value is stored");
+    assert_eq!(held.value_text.as_deref(), Some("shipped"));
+    mat.shutdown();
+}
+
+/// #4399 per space: values another space's blocks hold do not stop a
+/// declaration; the space's own do.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_property_def_probes_only_its_own_spaces_values_5841() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    block_in_space(&pool, &mat, TEST_SPACE_B_ID, Some(("year", "circa 1920"))).await;
+
+    let declared =
+        create_property_def_inner(&pool, TEST_SPACE_ID, "year".into(), "number".into(), None)
+            .await
+            .expect("space A's blocks hold no `year`");
+    assert_eq!(declared.value_type, "number");
+
+    let refused =
+        create_property_def_inner(&pool, TEST_SPACE_B_ID, "year".into(), "number".into(), None)
+            .await;
+    assert!(
+        matches!(refused, Err(AppError::Validation { message: ref msg, .. })
+            if msg.contains("cannot declare property 'year' as 'number'")
+                && msg.contains("1 stored as text")),
+        "space B's own text value is in the way, got {refused:?}"
+    );
+    assert!(
+        get_property_def_inner(&pool, TEST_SPACE_B_ID, "year")
+            .await
+            .unwrap()
+            .is_none(),
+        "the refusal wrote nothing in B"
+    );
+    mat.shutdown();
+}
+
+/// A definition's delete counts its own space's values only, and the same
+/// key in another space is another row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_property_def_counts_only_its_own_spaces_values_5841() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    for space in [TEST_SPACE_ID, TEST_SPACE_B_ID] {
+        create_property_def_inner(&pool, space, "stage".into(), "text".into(), None)
+            .await
+            .unwrap();
+    }
+    block_in_space(&pool, &mat, TEST_SPACE_ID, Some(("stage", "draft"))).await;
+
+    let refused = delete_property_def_inner(&pool, TEST_SPACE_ID, "stage".into()).await;
+    assert!(
+        matches!(refused, Err(AppError::Validation { message: ref msg, .. })
+            if msg == "Can't delete 'stage': 1 block(s) still use it. Remove the property from \
+                       them first."),
+        "space A's own value keeps its definition, got {refused:?}"
+    );
+    delete_property_def_inner(&pool, TEST_SPACE_B_ID, "stage".into())
+        .await
+        .expect("no block of space B holds `stage`");
+    assert!(
+        get_property_def_inner(&pool, TEST_SPACE_B_ID, "stage")
+            .await
+            .unwrap()
+            .is_none(),
+        "B's row is gone"
+    );
+    assert!(
+        get_property_def_inner(&pool, TEST_SPACE_ID, "stage")
+            .await
+            .unwrap()
+            .is_some(),
+        "A's row stays"
+    );
+    mat.shutdown();
+}
+
+/// A space that does not declare a key has nothing to read, update or
+/// delete under it, whatever another space declares.
+#[tokio::test]
+async fn a_space_without_the_key_reads_and_writes_none_of_another_spaces_row_5841() {
+    let (pool, _dir) = test_pool().await;
+    create_property_def_inner(
+        &pool,
+        TEST_SPACE_ID,
+        "stage".into(),
+        "select".into(),
+        Some(r#"["draft"]"#.into()),
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        get_property_def_inner(&pool, TEST_SPACE_B_ID, "stage")
+            .await
+            .unwrap()
+            .is_none(),
+        "B does not see A's row"
+    );
+    let listed = list_property_defs_inner(&pool, TEST_SPACE_B_ID, None, None)
+        .await
+        .unwrap();
+    assert!(
+        listed.items.iter().all(|def| def.builtin),
+        "B lists the built-ins only, got {:?}",
+        listed.items
+    );
+    let updated = update_property_def_options_inner(
+        &pool,
+        TEST_SPACE_B_ID,
+        "stage".into(),
+        r#"["draft","final"]"#.into(),
+    )
+    .await;
+    assert!(
+        matches!(updated, Err(AppError::NotFound(_))),
+        "got {updated:?}"
+    );
+    let deleted = delete_property_def_inner(&pool, TEST_SPACE_B_ID, "stage".into()).await;
+    assert!(
+        matches!(deleted, Err(AppError::NotFound(_))),
+        "got {deleted:?}"
+    );
+    let a = get_property_def_inner(&pool, TEST_SPACE_ID, "stage")
+        .await
+        .unwrap()
+        .expect("A's row is untouched");
+    assert_eq!(a.options.as_deref(), Some(r#"["draft"]"#));
 }

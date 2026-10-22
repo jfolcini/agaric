@@ -427,13 +427,13 @@ export const commands = {
 	 *  (#1425). Delegates to [`list_property_values_inner`].
 	 */
 	listPropertyValues: (key: string) => typedError<string[], AppError>(__TAURI_INVOKE("list_property_values", { key })),
-	/**  Tauri command: create a property definition. Delegates to [`create_property_def_inner`]. */
-	createPropertyDef: (key: string, valueType: string, options: string | null) => typedError<PropertyDefinition, AppError>(__TAURI_INVOKE("create_property_def", { key, valueType, options })),
+	/**  Tauri command: create a property definition in a space. Delegates to [`create_property_def_inner`]. */
+	createPropertyDef: (spaceId: SpaceId, key: string, valueType: string, options: string | null) => typedError<PropertyDefinition, AppError>(__TAURI_INVOKE("create_property_def", { spaceId, key, valueType, options })),
 	/**
-	 *  Tauri command: fetch a single property definition by key.
+	 *  Tauri command: fetch a single property definition of a space by key.
 	 *  Delegates to [`get_property_def_inner`].
 	 */
-	getPropertyDef: (key: string) => typedError<{
+	getPropertyDef: (spaceId: SpaceId, key: string) => typedError<{
 	key: string,
 	value_type: string,
 	options: string | null,
@@ -443,16 +443,16 @@ export const commands = {
 	 *  by every definition write.
 	 */
 	builtin: boolean,
-} | null, AppError>(__TAURI_INVOKE("get_property_def", { key })),
+} | null, AppError>(__TAURI_INVOKE("get_property_def", { spaceId, key })),
 	/**
-	 *  Tauri command: list all property definitions, paginated.
+	 *  Tauri command: list a space's property definitions, paginated.
 	 *  Delegates to [`list_property_defs_inner`].
 	 */
-	listPropertyDefs: (cursor: string | null, limit: number | null) => typedError<PageResponse<PropertyDefinition>, AppError>(__TAURI_INVOKE("list_property_defs", { cursor, limit })),
-	/**  Tauri command: update options for a select-type definition. Delegates to [`update_property_def_options_inner`]. */
-	updatePropertyDefOptions: (key: string, options: string) => typedError<PropertyDefinition, AppError>(__TAURI_INVOKE("update_property_def_options", { key, options })),
-	/**  Tauri command: delete a property definition. Delegates to [`delete_property_def_inner`]. */
-	deletePropertyDef: (key: string) => typedError<null, AppError>(__TAURI_INVOKE("delete_property_def", { key })),
+	listPropertyDefs: (spaceId: SpaceId, cursor: string | null, limit: number | null) => typedError<PageResponse<PropertyDefinition>, AppError>(__TAURI_INVOKE("list_property_defs", { spaceId, cursor, limit })),
+	/**  Tauri command: update options for a space's select-type definition. Delegates to [`update_property_def_options_inner`]. */
+	updatePropertyDefOptions: (spaceId: SpaceId, key: string, options: string) => typedError<PropertyDefinition, AppError>(__TAURI_INVOKE("update_property_def_options", { spaceId, key, options })),
+	/**  Tauri command: delete a space's property definition. Delegates to [`delete_property_def_inner`]. */
+	deletePropertyDef: (spaceId: SpaceId, key: string) => typedError<null, AppError>(__TAURI_INVOKE("delete_property_def", { spaceId, key })),
 	/**  Tauri command: list all sync peers. Delegates to [`list_peer_refs_inner`]. */
 	listPeerRefs: () => typedError<PeerRef[], AppError>(__TAURI_INVOKE("list_peer_refs")),
 	/**  Tauri command: delete (unpair) a sync peer. Delegates to [`delete_peer_ref_inner`]. */

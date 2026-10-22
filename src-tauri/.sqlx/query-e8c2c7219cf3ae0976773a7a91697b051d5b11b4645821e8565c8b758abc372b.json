@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) FROM block_properties bp JOIN blocks b ON b.id = bp.block_id WHERE bp.key = ?1 AND b.space_id = ?2",
+  "describe": {
+    "columns": [
+      {
+        "name": "COUNT(*)",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e8c2c7219cf3ae0976773a7a91697b051d5b11b4645821e8565c8b758abc372b"
+}

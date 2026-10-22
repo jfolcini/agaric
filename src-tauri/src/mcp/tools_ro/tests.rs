@@ -1406,8 +1406,9 @@ async fn list_tags_rejects_unknown_field() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_property_defs_happy_path() {
-    // A fresh DB lists the built-in property definitions and the rows
-    // seeded by migrations. The exact wire shape is snapshot-locked by
+    // A space lists the built-in property definitions and its own rows (the
+    // defaults a new space starts with, #5841). The exact wire shape is
+    // snapshot-locked by
     // `tool_response_list_property_defs.snap`; this test just pins
     // (a) a stable subset of must-be-present keys (the four reserved
     // keys named in AGENTS.md "Architectural Stability — properties
@@ -1416,12 +1417,17 @@ async fn list_property_defs_happy_path() {
     // `property_definitions` table so adding/removing seeded defs
     // does not silently desync this assertion from reality.
     let (tools, _mat, _dir) = mk_tools().await;
+    crate::commands::tests::common::ensure_test_space_with_defs(&tools.pool).await;
     // Under the default page limit (`MAX_PAGE_SIZE = 200`) all
     // seeded definitions fit on a single page, so we still see them
     // all. The response is now a `PageResponse { items, next_cursor,
     // has_more }` rather than a flat array.
     let result = tools
-        .call_tool("list_property_defs", json!({}), &test_ctx())
+        .call_tool(
+            "list_property_defs",
+            json!({"space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
         .await
         .expect("happy path");
     let arr = result["items"].as_array().expect("defs items array");
@@ -1445,10 +1451,13 @@ async fn list_property_defs_happy_path() {
     // (b) Cross-check against the live DB and the built-ins (#5841) so this
     //     test detects drift in either direction without requiring a
     //     hand-edited count constant.
-    let live_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM property_definitions")
-        .fetch_one(&tools.pool)
-        .await
-        .expect("count property_definitions");
+    let live_count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM property_definitions WHERE space_id = ?",
+        TEST_SPACE_ID,
+    )
+    .fetch_one(&tools.pool)
+    .await
+    .expect("count property_definitions");
     let builtin_count = i64::try_from(agaric_store::op::BUILTIN_PROPERTY_DEFS.len())
         .expect("built-in count fits i64");
     assert_eq!(
@@ -1467,10 +1476,87 @@ async fn list_property_defs_happy_path() {
 async fn list_property_defs_rejects_unknown_field() {
     let (tools, _mat, _dir) = mk_tools().await;
     let err = tools
-        .call_tool("list_property_defs", json!({"key": "x"}), &test_ctx())
+        .call_tool(
+            "list_property_defs",
+            json!({"space_id": TEST_SPACE_ID, "key": "x"}),
+            &test_ctx(),
+        )
         .await
-        .expect_err("any arg is an error");
+        .expect_err("an unknown arg is an error");
     assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+}
+
+/// #5841 — definitions are per space, so the space is required, and a
+/// malformed one is refused rather than listing nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_property_defs_requires_a_well_formed_space_id_5841() {
+    let (tools, _mat, _dir) = mk_tools().await;
+    let missing = tools
+        .call_tool("list_property_defs", json!({}), &test_ctx())
+        .await
+        .expect_err("space_id is required");
+    assert!(
+        matches!(missing, AppError::Validation { .. }) && missing.to_string().contains("space_id"),
+        "the refusal names the missing field, got {missing:?}"
+    );
+    let malformed = tools
+        .call_tool(
+            "list_property_defs",
+            json!({"space_id": "NOT-A-VALID-ULID"}),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("a malformed space_id is refused");
+    assert!(matches!(malformed, AppError::Ulid(_)), "got {malformed:?}");
+}
+
+/// #5841 — each space lists its own definitions: a key declared in one space
+/// is absent from another's listing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_property_defs_lists_only_the_given_spaces_rows_5841() {
+    use crate::commands::tests::common::TEST_SPACE_B_ID;
+    let (tools, _mat, _dir) = mk_tools().await;
+    crate::commands::tests::common::ensure_test_space_with_defs(&tools.pool).await;
+    crate::commands::create_property_def_inner(
+        &tools.pool,
+        TEST_SPACE_B_ID,
+        "estimate".into(),
+        "number".into(),
+        None,
+    )
+    .await
+    .unwrap();
+    let keys = |resp: &Value| -> Vec<String> {
+        resp["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|d| d["builtin"] == json!(false))
+            .map(|d| d["key"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let a = tools
+        .call_tool(
+            "list_property_defs",
+            json!({"space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
+        .await
+        .unwrap();
+    let b = tools
+        .call_tool(
+            "list_property_defs",
+            json!({"space_id": TEST_SPACE_B_ID}),
+            &test_ctx(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        keys(&a),
+        ["assignee", "effort", "location", "status", "url"],
+        "space A holds the defaults"
+    );
+    assert_eq!(keys(&b), ["estimate"], "space B holds only its own key");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2339,7 +2425,13 @@ async fn call_tool_scopes_actor_even_when_outer_scope_absent() {
     // Inject a check inside the pool-free handler path by calling
     // list_property_defs (no DB side effects needed for the check,
     // but ACTOR.scope runs in the same task).
-    let result = tools.call_tool("list_property_defs", json!({}), &ctx).await;
+    let result = tools
+        .call_tool(
+            "list_property_defs",
+            json!({"space_id": TEST_SPACE_ID}),
+            &ctx,
+        )
+        .await;
     let Ok(resp) = result else {
         panic!("list_property_defs must succeed inside scoped call, got {result:?}");
     };
@@ -2505,10 +2597,15 @@ async fn list_tags_paginates_m85() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_property_defs_paginates_m85() {
     let (tools, _mat, _dir) = mk_tools().await;
-    // Use the migration-seeded defaults (~19 rows) — with limit=4 the
-    // first page must overflow.
+    crate::commands::tests::common::ensure_test_space_with_defs(&tools.pool).await;
+    // Use the space's defaults and the built-ins (~19 rows) — with limit=4
+    // the first page must overflow.
     let resp = tools
-        .call_tool("list_property_defs", json!({"limit": 4}), &test_ctx())
+        .call_tool(
+            "list_property_defs",
+            json!({"space_id": TEST_SPACE_ID, "limit": 4}),
+            &test_ctx(),
+        )
         .await
         .expect("list_property_defs wire call must succeed");
     let items = resp["items"].as_array().expect("response.items[]");
@@ -2534,7 +2631,7 @@ async fn list_property_defs_paginates_m85() {
     let resp2 = tools
         .call_tool(
             "list_property_defs",
-            json!({"limit": 4, "cursor": cursor}),
+            json!({"space_id": TEST_SPACE_ID, "limit": 4, "cursor": cursor}),
             &test_ctx(),
         )
         .await
@@ -3115,8 +3212,13 @@ async fn snapshot_list_tags_response_shape() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn snapshot_list_property_defs_response_shape() {
     let (tools, _mat, _dir) = mk_tools().await;
+    crate::commands::tests::common::ensure_test_space_with_defs(&tools.pool).await;
     let result = tools
-        .call_tool("list_property_defs", json!({}), &test_ctx())
+        .call_tool(
+            "list_property_defs",
+            json!({"space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
         .await
         .unwrap();
     insta::assert_yaml_snapshot!("tool_response_list_property_defs", result, {

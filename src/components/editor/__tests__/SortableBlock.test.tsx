@@ -353,6 +353,8 @@ function makeRovingEditor() {
 describe('SortableBlock', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // Definitions are per space; the block is in the active one (#5841).
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
   })
 
   it('renders EditableBlock inside', () => {
@@ -3105,7 +3107,7 @@ describe('SortableBlock property chip click-to-edit', () => {
     // The hook calls `getPropertyDef('effort')` which has no definition;
     // the existing `status` def in the vocabulary should not influence
     // the editor for an unrelated key.
-    mockGetPropertyDef.mockImplementation(async (key: string) => {
+    mockGetPropertyDef.mockImplementation(async (_spaceId: string, key: string) => {
       if (key === 'status') {
         return {
           key: 'status',
@@ -3193,6 +3195,8 @@ describe('SortableBlock inline chip typed-column wiring (#3275)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    // Definitions are per space; the block is in the active one (#5841).
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
     mockUseSortable.mockReturnValue(makeSortable())
     mockSetProperty.mockResolvedValue({})
   })
@@ -3206,7 +3210,7 @@ describe('SortableBlock inline chip typed-column wiring (#3275)', () => {
 
   it('routes a number-typed chip edit into value_num through the real hook', async () => {
     const user = userEvent.setup()
-    mockGetPropertyDef.mockImplementation(async (key: string) =>
+    mockGetPropertyDef.mockImplementation(async (_spaceId: string, key: string) =>
       key === 'estimate' ? numberDef : null,
     )
 
@@ -3223,7 +3227,7 @@ describe('SortableBlock inline chip typed-column wiring (#3275)', () => {
     await user.click(screen.getByTestId('property-chip-estimate'))
     const input = await screen.findByRole('textbox')
     await waitFor(() => {
-      expect(mockGetPropertyDef).toHaveBeenCalledWith('estimate')
+      expect(mockGetPropertyDef).toHaveBeenCalledWith('SPACE_1', 'estimate')
     })
     // Flush the definition lookup so the hook has a type for THIS key.
     await act(async () => {})
@@ -3248,7 +3252,7 @@ describe('SortableBlock inline chip typed-column wiring (#3275)', () => {
 
   it('routes a date-typed chip edit into value_date through the real hook', async () => {
     const user = userEvent.setup()
-    mockGetPropertyDef.mockImplementation(async (key: string) =>
+    mockGetPropertyDef.mockImplementation(async (_spaceId: string, key: string) =>
       key === 'deadline' ? dateDef : null,
     )
 
@@ -3265,7 +3269,7 @@ describe('SortableBlock inline chip typed-column wiring (#3275)', () => {
     await user.click(screen.getByTestId('property-chip-deadline'))
     const input = await screen.findByRole('textbox')
     await waitFor(() => {
-      expect(mockGetPropertyDef).toHaveBeenCalledWith('deadline')
+      expect(mockGetPropertyDef).toHaveBeenCalledWith('SPACE_1', 'deadline')
     })
     await act(async () => {})
 
@@ -3301,7 +3305,7 @@ describe('SortableBlock inline chip typed-column wiring (#3275)', () => {
     const estimatePending = new Promise((resolve) => {
       resolveEstimate = resolve
     })
-    mockGetPropertyDef.mockImplementation((key: string) =>
+    mockGetPropertyDef.mockImplementation((_spaceId: string, key: string) =>
       key === 'deadline' ? Promise.resolve(dateDef) : estimatePending,
     )
 
@@ -3322,7 +3326,7 @@ describe('SortableBlock inline chip typed-column wiring (#3275)', () => {
     await user.click(screen.getByTestId('property-chip-deadline'))
     await screen.findByRole('textbox')
     await waitFor(() => {
-      expect(mockGetPropertyDef).toHaveBeenCalledWith('deadline')
+      expect(mockGetPropertyDef).toHaveBeenCalledWith('SPACE_1', 'deadline')
     })
     await act(async () => {})
 

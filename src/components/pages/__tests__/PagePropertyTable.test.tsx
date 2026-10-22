@@ -28,7 +28,7 @@ import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { getTodayString } from '@/lib/date-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { opLog, properties, propertyDefs, seedBlocks, SEED_IDS } from '@/lib/tauri-mock/seed'
+import { opLog, properties, spacePropertyDefs, seedBlocks, SEED_IDS } from '@/lib/tauri-mock/seed'
 
 // Wrap `reportIpcError` in a spy that delegates to the real implementation.
 // Lets FE-H-17 partial-failure assertions inspect call arguments while
@@ -106,6 +106,8 @@ function makeProp(key: string, overrides?: Partial<PropertyRow>): PropertyRow {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // The page is in the active space, whose definitions the table lists (#5841).
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
 })
 
 function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
@@ -656,6 +658,7 @@ describe('PagePropertyTable add property flow', () => {
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('create_property_def', {
+        spaceId: 'SPACE_PERSONAL',
         key: 'newfield',
         valueType: 'text',
         options: null,
@@ -705,6 +708,7 @@ describe('PagePropertyTable add property flow', () => {
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('create_property_def', {
+        spaceId: 'SPACE_PERSONAL',
         key: 'homepage',
         valueType: 'url',
         options: null,
@@ -1357,6 +1361,7 @@ describe('PagePropertyTable edit select options', () => {
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('update_property_def_options', {
+        spaceId: 'SPACE_PERSONAL',
         key: 'stage',
         options: '["TODO","DOING","DONE"]',
       })
@@ -1397,6 +1402,7 @@ describe('PagePropertyTable edit select options', () => {
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('update_property_def_options', {
+        spaceId: 'SPACE_PERSONAL',
         key: 'stage',
         options: '["TODO","DONE"]',
       })
@@ -1710,14 +1716,14 @@ describe('PagePropertyTable add-from-definition against the real tauri-mock (#27
 
   it('number and boolean defs still init-persist immediately via the real mock', async () => {
     const user = userEvent.setup()
-    propertyDefs.set('weight', {
+    spacePropertyDefs('SPACE_PERSONAL').set('weight', {
       key: 'weight',
       value_type: 'number',
       options: null,
       created_at: new Date().toISOString(),
       builtin: false,
     })
-    propertyDefs.set('is_featured', {
+    spacePropertyDefs('SPACE_PERSONAL').set('is_featured', {
       key: 'is_featured',
       value_type: 'boolean',
       options: null,
@@ -1796,12 +1802,13 @@ describe('PagePropertyTable create-def flow against the real tauri-mock (#2804)'
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('create_property_def', {
+        spaceId: 'SPACE_PERSONAL',
         key: 'newfield',
         valueType: 'text',
         options: null,
       })
     })
-    expect(propertyDefs.get('newfield')).toBeTruthy()
+    expect(spacePropertyDefs('SPACE_PERSONAL').get('newfield')).toBeTruthy()
 
     // A draft row renders for value entry…
     await waitFor(() => {
@@ -1838,7 +1845,10 @@ describe('PagePropertyTable create-def flow against the real tauri-mock (#2804)'
     })
     // Both the definition and the value actually landed in the mock store,
     // not just the invoke call.
-    expect(propertyDefs.get('newfield')).toMatchObject({ key: 'newfield', value_type: 'text' })
+    expect(spacePropertyDefs('SPACE_PERSONAL').get('newfield')).toMatchObject({
+      key: 'newfield',
+      value_type: 'text',
+    })
     expect(properties.get(PAGE_ID)?.get('newfield')?.['value_text']).toBe('work')
     expect(mockedToastError).not.toHaveBeenCalled()
   })
@@ -1860,7 +1870,7 @@ describe('PagePropertyTable create-def flow against the real tauri-mock (#2804)'
     })
     expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
     // The def itself was still created — only the value write was skipped.
-    expect(propertyDefs.get('newfield')).toBeTruthy()
+    expect(spacePropertyDefs('SPACE_PERSONAL').get('newfield')).toBeTruthy()
     expect(properties.get(PAGE_ID)?.get('newfield')).toBeUndefined()
   })
 
@@ -1888,7 +1898,7 @@ describe('PagePropertyTable create-def flow against the real tauri-mock (#2804)'
     await waitFor(() => {
       expect(properties.get(PAGE_ID)?.get('size')?.['value_text']).toBe('large')
     })
-    expect(propertyDefs.get('size')).toMatchObject({
+    expect(spacePropertyDefs('SPACE_PERSONAL').get('size')).toMatchObject({
       value_type: 'select',
       options: '["small","large"]',
     })
@@ -2033,7 +2043,7 @@ describe('PagePropertyTable removing a ref draft against the real tauri-mock (#5
   beforeEach(() => {
     seedBlocks()
     properties.set(PAGE_ID, new Map())
-    propertyDefs.set('owner', makeDef('owner', 'ref'))
+    spacePropertyDefs('SPACE_PERSONAL').set('owner', makeDef('owner', 'ref'))
     useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
     mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
   })

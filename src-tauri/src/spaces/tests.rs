@@ -436,6 +436,79 @@ async fn bootstrap_seeds_default_accent_colors_for_personal_and_work() {
     );
 }
 
+/// `key` sorted, as `space_id` declares them.
+async fn property_def_keys(pool: &SqlitePool, space_id: &str) -> Vec<String> {
+    sqlx::query_scalar("SELECT key FROM property_definitions WHERE space_id = ? ORDER BY key")
+        .bind(space_id)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+/// #5841 — a fresh vault's Personal and Work start as a space `create_space`
+/// makes does: the default property definitions, exactly, as ordinary rows.
+#[tokio::test]
+async fn bootstrap_gives_personal_and_work_the_default_property_defs_5841() {
+    let (pool, _dir) = test_pool().await;
+    assert!(
+        property_def_keys(&pool, SPACE_PERSONAL_ULID)
+            .await
+            .is_empty(),
+        "seed precondition: a fresh vault has no space, so 0129 kept no row"
+    );
+
+    bootstrap_spaces(&pool, DEV).await.unwrap();
+
+    let defaults: Vec<String> = crate::commands::DEFAULT_PROPERTY_DEFS
+        .iter()
+        .map(|(key, _, _)| (*key).to_owned())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    assert_eq!(
+        defaults,
+        ["assignee", "effort", "location", "status", "url"],
+        "the defaults the maintainer chose"
+    );
+    for space in [SPACE_PERSONAL_ULID, SPACE_WORK_ULID] {
+        assert_eq!(
+            property_def_keys(&pool, space).await,
+            defaults,
+            "{space} holds exactly the defaults"
+        );
+    }
+}
+
+/// #5841 — a seeded space bootstrap RESTORES keeps its own definitions: a
+/// default its user deleted is not added back.
+#[tokio::test]
+async fn bootstrap_restoring_a_seeded_space_does_not_re_add_a_deleted_default_5841() {
+    let (pool, _dir) = test_pool().await;
+    bootstrap_spaces(&pool, DEV).await.unwrap();
+    crate::commands::delete_property_def_inner(&pool, SPACE_WORK_ULID, "effort".into())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE blocks SET deleted_at = 1 WHERE id = ?")
+        .bind(SPACE_WORK_ULID)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    bootstrap_spaces(&pool, DEV).await.unwrap();
+
+    let restored: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(SPACE_WORK_ULID)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(restored, None, "seed precondition: bootstrap restored Work");
+    assert_eq!(
+        property_def_keys(&pool, SPACE_WORK_ULID).await,
+        ["assignee", "location", "status", "url"],
+        "the deleted default stays deleted"
+    );
+}
+
 /// Running bootstrap twice on a vanilla install must not
 /// pile up duplicate `accent_color` ops in the op_log. Each seeded
 /// block gets exactly ONE accent_color SetProperty op across both
@@ -1773,9 +1846,19 @@ async fn move_fixture() -> MoveFixture {
     add_tag_inner(&pool_a, "device-A", &mat_a, note.clone(), tag.clone())
         .await
         .unwrap();
-    create_property_def_inner(&pool_a, "related".into(), "ref".into(), None)
+    // Definitions are per space (#5841) and do not sync yet: each device
+    // declares `related` in both spaces the note lives in.
+    for space in [&old, &new] {
+        create_property_def_inner(
+            &pool_a,
+            space.as_str(),
+            "related".into(),
+            "ref".into(),
+            None,
+        )
         .await
         .unwrap();
+    }
     set_property_inner(
         &pool_a,
         "device-A",
@@ -1810,9 +1893,17 @@ async fn move_fixture() -> MoveFixture {
     super::bootstrap::bootstrap_spaces(&pool_b, "device-B", &mat_b)
         .await
         .unwrap();
-    create_property_def_inner(&pool_b, "related".into(), "ref".into(), None)
+    for space in [&old, &new] {
+        create_property_def_inner(
+            &pool_b,
+            space.as_str(),
+            "related".into(),
+            "ref".into(),
+            None,
+        )
         .await
         .unwrap();
+    }
     let mut fx = MoveFixture {
         pool_a,
         mat_a,

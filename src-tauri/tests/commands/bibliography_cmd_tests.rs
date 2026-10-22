@@ -962,7 +962,7 @@ async fn import_bibliography_keeps_existing_year_declaration_4382() {
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
 
-    create_property_def_inner(&pool, "year".into(), "text".into(), None)
+    create_test_property_def(&pool, "year".into(), "text".into(), None)
         .await
         .unwrap();
 

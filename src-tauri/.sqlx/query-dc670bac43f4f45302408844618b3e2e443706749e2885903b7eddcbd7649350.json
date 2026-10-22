@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT DISTINCT key AS \"key!: String\"\n           FROM block_properties\n           WHERE key IN (SELECT value FROM json_each(?1))",
+  "query": "SELECT DISTINCT bp.key AS \"key!: String\"\n           FROM block_properties bp\n           JOIN blocks b ON b.id = bp.block_id\n           WHERE bp.key IN (SELECT value FROM json_each(?1))\n             AND b.space_id = ?2",
   "describe": {
     "columns": [
       {
@@ -16,11 +16,11 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 2
     },
     "nullable": [
       false
     ]
   },
-  "hash": "1977a4cc0fe467b661810a01b8f76dedccaeb85f19414c5c3211856cf181c999"
+  "hash": "dc670bac43f4f45302408844618b3e2e443706749e2885903b7eddcbd7649350"
 }

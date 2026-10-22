@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT value_type, options FROM property_definitions WHERE key = ?",
+  "query": "SELECT value_type, options FROM property_definitions WHERE space_id = ? AND key = ?",
   "describe": {
     "columns": [
       {
@@ -27,12 +27,12 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 2
     },
     "nullable": [
       false,
       true
     ]
   },
-  "hash": "a0a71a8351aea2d2127d5aa155a21df1ccf295de95a512e233767d8a9d9d7119"
+  "hash": "54f104b1f1b1da553c5230221422be330271b675b52a0d120a8ec79b49a14ca2"
 }

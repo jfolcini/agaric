@@ -23,7 +23,7 @@ import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { opLog, properties, propertyDefs, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
+import { opLog, properties, spacePropertyDefs, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
@@ -116,7 +116,8 @@ function setupMock(
 beforeEach(() => {
   vi.clearAllMocks()
   pageStore = createPageBlockStore('PAGE_1')
-  useSpaceStore.setState({ currentSpaceId: null })
+  // The block is in the active space, whose definitions the drawer lists (#5841).
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
   useBlockStore.setState({
     focusedBlockId: null,
     selectedBlockIds: [],
@@ -704,13 +705,14 @@ describe('BlockPropertyDrawer', () => {
 
   it('renders ref-type property with resolved page title', async () => {
     // Pre-populate resolve cache so the title is available.
-    // Cache is keyed by composite `${spaceId}::${ulid}`;
-    // no active space is set so we use the `__global__` sentinel via
-    // `keyFor(null, id)`.
+    // Cache is keyed by composite `${spaceId}::${ulid}`, in the active space.
     const { useResolveStore, keyFor } = await import('@/stores/resolve')
     useResolveStore.setState({
       cache: new Map([
-        [keyFor(null, 'TARGET_PAGE'), { title: 'My Target Page', deleted: false, resolved: true }],
+        [
+          keyFor('SPACE_PERSONAL', 'TARGET_PAGE'),
+          { title: 'My Target Page', deleted: false, resolved: true },
+        ],
       ]),
       version: 1,
     })
@@ -1121,7 +1123,7 @@ describe('BlockPropertyDrawer', () => {
 
     function seedBillable(valueBool: number) {
       seedBlocks()
-      propertyDefs.set('billable', {
+      spacePropertyDefs('SPACE_PERSONAL').set('billable', {
         key: 'billable',
         value_type: 'boolean',
         options: null,
@@ -1180,7 +1182,7 @@ describe('BlockPropertyDrawer', () => {
 
     beforeEach(() => {
       seedBlocks()
-      propertyDefs.set('owner', {
+      spacePropertyDefs('SPACE_PERSONAL').set('owner', {
         key: 'owner',
         value_type: 'ref',
         options: null,

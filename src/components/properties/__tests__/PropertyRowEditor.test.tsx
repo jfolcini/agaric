@@ -552,6 +552,7 @@ describe('PropertyRowEditor select options editing', () => {
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('update_property_def_options', {
+        spaceId: 'SPACE_TEST',
         key: 'stage',
         options: '["TODO","DOING","DONE"]',
       })
@@ -591,6 +592,7 @@ describe('PropertyRowEditor select options editing', () => {
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('update_property_def_options', {
+        spaceId: 'SPACE_TEST',
         key: 'stage',
         options: '["TODO","DONE"]',
       })
@@ -677,6 +679,7 @@ describe('PropertyRowEditor select options editing', () => {
     await waitFor(() => {
       // After reorder TODO ↔ DOING the saved options begin with DOING
       expect(mockedInvoke).toHaveBeenCalledWith('update_property_def_options', {
+        spaceId: 'SPACE_TEST',
         key: 'stage',
         options: '["DOING","TODO","DONE"]',
       })

@@ -38,6 +38,7 @@ import {
   seedBlocks,
 } from '@/lib/tauri-mock/seed'
 import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
+import { useSpaceStore } from '@/stores/space'
 
 // Force the multi-block detector to see a single block so flush takes the
 // checkbox branch regardless of how the real serializer tokenizes a task item.
@@ -310,7 +311,10 @@ describe('useBlockFlush — inline `key:: value` properties (#2675)', () => {
       async (cmd: string, args?: unknown) => dispatch(cmd, args) as never,
     )
     seedBlocks()
-    mockBlocks.set(BLK, makeMockBlock(BLK, 'block', '', null, 0))
+    // A block of the seeded Personal space, the active one: its definitions
+    // apply (#5841).
+    mockBlocks.set(BLK, { ...makeMockBlock(BLK, 'block', '', null, 0), space_id: 'SPACE_PERSONAL' })
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
     // Mirror the block into the page store so `edit()` has a row to update.
     pageStore.setState({ blocks: [makeBlock({ id: BLK, content: '', todo_state: null })] })
   })

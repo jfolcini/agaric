@@ -381,6 +381,7 @@
       "args": {
         "key": "reviewer",
         "options": null,
+        "spaceId": "$SPACE",
         "valueType": "ref"
       },
       "command": "create_property_def",

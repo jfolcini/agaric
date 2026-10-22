@@ -569,9 +569,15 @@ async fn set_property_accepts_value_bool_697() {
     let (tools, mat, pool, space, _dir) = mk_tools().await;
     let block = mk_in_space_content_block(&pool, &mat, &space, "task").await;
     // Boolean-typed definition so the value lands in value_bool.
-    crate::commands::create_property_def_inner(&pool, "archived".into(), "boolean".into(), None)
-        .await
-        .expect("boolean property def");
+    crate::commands::create_property_def_inner(
+        &pool,
+        &space,
+        "archived".into(),
+        "boolean".into(),
+        None,
+    )
+    .await
+    .expect("boolean property def");
     settle(&mat).await;
 
     let result = tools

@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT key, value_type, options, created_at, 0 AS \"builtin!: bool\" FROM property_definitions WHERE key = ?",
+  "query": "SELECT key AS \"key!\", value_type, options\n               FROM property_definitions\n               WHERE space_id = ?2 AND key IN (SELECT value FROM json_each(?1))",
   "describe": {
     "columns": [
       {
-        "name": "key",
+        "name": "key!",
         "ordinal": 0,
         "type_info": "Text",
         "origin": {
@@ -35,35 +35,16 @@
             "name": "options"
           }
         }
-      },
-      {
-        "name": "created_at",
-        "ordinal": 3,
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "property_definitions",
-            "name": "created_at"
-          }
-        }
-      },
-      {
-        "name": "builtin!: bool",
-        "ordinal": 4,
-        "type_info": "Integer",
-        "origin": "Expression"
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 2
     },
     "nullable": [
       false,
       false,
-      true,
-      false,
-      false
+      true
     ]
   },
-  "hash": "d5ba349515ebf3badc11ce02072d6adf5f7af260e9d6c2a96d62891653b85538"
+  "hash": "86254d612e52aa22c3721aaad8d22674b77f400ebfd80fcbecaa95f4ca3f88c6"
 }

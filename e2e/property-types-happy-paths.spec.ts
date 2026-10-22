@@ -106,7 +106,12 @@ test.describe('Number property @editor', () => {
   // numeric sort lists nine first.
   test('sorts the References panel numerically', async ({ page }) => {
     // Set-up, not under test: the definition and the two referrers.
-    await ipc(page, 'create_property_def', { key: 'estimate', valueType: 'number', options: null })
+    await ipc(page, 'create_property_def', {
+      spaceId: 'SPACE_PERSONAL',
+      key: 'estimate',
+      valueType: 'number',
+      options: null,
+    })
     const [twelve, nine] = await seedSearchBlocks(page, [
       { content: `Estimate twelve on [[${GETTING_STARTED}]]` },
       { content: `Estimate nine on [[${GETTING_STARTED}]]` },

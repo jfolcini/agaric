@@ -29,6 +29,7 @@ import {
   compareMetaRows,
   comparePositionThenId,
   createPageInSpace,
+  definitionSpaceOf,
   deriveLinkEdges,
   encodeNextCursor,
   metaRowMatchesFilter,
@@ -58,6 +59,7 @@ import {
   pageOpens,
   properties,
   pushOp,
+  seedDefaultPropertyDefs,
 } from '@/lib/tauri-mock/seed'
 
 /**
@@ -306,6 +308,7 @@ interface FrontMatterWrites {
  * refusal naming its line, so nothing is written.
  */
 function frontMatterWrites(
+  spaceId: string | null,
   from: FrontMatter,
   to: FrontMatter,
   now: FrontMatter,
@@ -317,7 +320,7 @@ function frontMatterWrites(
   )
   for (const [key, value] of set) {
     try {
-      assertValidSetPropertyValue(key, value)
+      assertValidSetPropertyValue(spaceId, key, value)
     } catch (err) {
       const reason = (err as { message?: unknown }).message
       throw refusedAt(lines.get(key), `\`${key}: ${value}\` cannot be saved: ${String(reason)}`)
@@ -869,7 +872,13 @@ function readSourceEdit(
   const before = new Map(t0.map((b) => [b.anchor, b.content]))
   const edited = readFrontMatter(source)
   const from = stale ? readFrontMatter(baseSource) : now
-  const front = frontMatterWrites(from.front, edited.front, now.front, edited.lines)
+  const front = frontMatterWrites(
+    definitionSpaceOf(pageId),
+    from.front,
+    edited.front,
+    now.front,
+    edited.lines,
+  )
   // An id of the source the edit started from is the page's too, so the merge
   // reads a block the page deleted since as that block.
   const loaded = stale ? readOwnText(from.body) : t0
@@ -963,10 +972,10 @@ function placeSourceBullets(
  * accepts (a select option, a valid repeat rule), or a priority letter, which
  * the import reads as the option it stands for (`import_priority_value`).
  */
-function importKeepsProperty(key: string, value: string): boolean {
+function importKeepsProperty(spaceId: string, key: string, value: string): boolean {
   if (key === 'priority' && /^[ABC]$/.test(value)) return true
   try {
-    assertValidSetPropertyValue(key, value)
+    assertValidSetPropertyValue(spaceId === '' ? null : spaceId, key, value)
     return true
   } catch {
     return false
@@ -1371,6 +1380,9 @@ export const pagesHandlers = {
         value_bool: null,
       })
     }
+    // #5841 — a new space starts with the default definitions, not a copy of
+    // another space's.
+    seedDefaultPropertyDefs(id, new Date().toISOString())
     return id
   },
 
@@ -1695,7 +1707,7 @@ export const pagesHandlers = {
     // NOT modelled here.)
     const propertiesSet = lines.filter((line) => {
       const match = /^\s*([^\s:][^:]*)::\s+(\S.*)$/.exec(line)
-      return match !== null && importKeepsProperty(match[1] ?? '', (match[2] ?? '').trim())
+      return match !== null && importKeepsProperty(spaceId, match[1] ?? '', (match[2] ?? '').trim())
     }).length
 
     // Create the page block + stamp `space` ref property, unless an empty page

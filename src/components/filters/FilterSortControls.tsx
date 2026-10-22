@@ -34,6 +34,7 @@ import type { BacklinkSort, PropertyDefinition } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
 import { listAllPropertyDefs } from '@/stores/inline-property-commit'
+import { useSpaceStore } from '@/stores/space'
 
 export interface FilterSortControlsProps {
   sort: BacklinkSort | null
@@ -45,9 +46,9 @@ export interface FilterSortControlsProps {
   loadProperties?: boolean
 }
 
-async function fetchPropertyDefs(): Promise<PropertyDefinition[]> {
+async function fetchPropertyDefs(spaceId: string): Promise<PropertyDefinition[]> {
   try {
-    return await listAllPropertyDefs()
+    return await listAllPropertyDefs(spaceId)
   } catch (err) {
     logger.warn('FilterSortControls', 'failed to load property definitions', undefined, err)
     return []
@@ -61,11 +62,13 @@ export function FilterSortControls({
 }: FilterSortControlsProps): React.ReactElement {
   const { t } = useTranslation()
   const current = sort ?? DEFAULT_BACKLINK_SORT
-  // staleTime 0: a definition created since the last open shows up on the next.
+  // The active space's definitions (#5841). staleTime 0: a definition created
+  // since the last open shows up on the next.
+  const spaceId = useSpaceStore((s) => s.currentSpaceId)
   const { data: defs } = useQuery(
     {
-      queryKey: ['backlinkSortPropertyDefs'],
-      queryFn: fetchPropertyDefs,
+      queryKey: ['backlinkSortPropertyDefs', spaceId],
+      queryFn: () => (spaceId === null ? [] : fetchPropertyDefs(spaceId)),
       enabled: loadProperties,
       staleTime: 0,
     },

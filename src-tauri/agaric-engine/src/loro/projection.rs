@@ -1282,8 +1282,8 @@ pub async fn project_block_full_to_sql(
 }
 
 /// [`reproject_property_row_from_engine`]'s `value_type` lookup: the
-/// built-in definition's (#5841), else the `property_definitions` row's in
-/// `value_types`, defaulting to `text` for an undefined key.
+/// built-in definition's (#5841), else the block's space's definition in
+/// `value_types`, defaulting to `text` for a key the space does not declare.
 fn declared_value_type_or_text<'a>(
     value_types: &'a std::collections::HashMap<String, String>,
     key: &str,
@@ -1486,7 +1486,8 @@ async fn reproject_reserved_columns_from_engine(
 /// to `value_num` / `value_bool` with no string round-trip — the engine is
 /// type-lossless end-to-end. A `Str` covers text/date/ref/select (all
 /// `LoroValue::String` in Loro per the §8 Q5 encoding); only that case
-/// consults `property_definitions.value_type` (defaulting to `"text"`) to
+/// consults `value_types`, the block's space's definitions
+/// ([`crate::block_ops::load_value_types`], defaulting to `"text"`), to
 /// pick the column, and it still tolerates a legacy pre-§2.1 `Str`-encoded
 /// number/boolean. An explicit `Null` (cleared), or a `number`-typed `Str`
 /// whose text fails to parse, routes to no column — and since
@@ -3776,18 +3777,18 @@ mod tests {
     // Inbound property re-projection into block_properties.
     // ---------------------------------------------------------------------
 
-    /// Load all `property_definitions` rows into a `key → value_type` map.
-    /// Use this in tests that pass `value_types` to
+    /// The space [`seed_block_and_property_defs`] declares its keys in.
+    const DEFS_SPACE: &str = "01JDEFSSPACE00000000000000";
+
+    /// [`DEFS_SPACE`]'s `key → value_type` map, through the production
+    /// loader. Use this in tests that pass `value_types` to
     /// `reproject_block_properties_from_engine` and need the seeded types to
     /// take effect (e.g. a `Str` value for a `number`- or `ref`-typed key).
     async fn load_value_types(pool: &SqlitePool) -> std::collections::HashMap<String, String> {
-        sqlx::query!("SELECT key, value_type FROM property_definitions")
-            .fetch_all(pool)
+        let mut conn = pool.acquire().await.expect("acquire");
+        crate::block_ops::load_value_types(&mut conn, DEFS_SPACE)
             .await
             .expect("load value_types")
-            .into_iter()
-            .map(|r| (r.key, r.value_type))
-            .collect()
     }
 
     /// Seed the `property_definitions` rows the re-projection consults to
@@ -3801,8 +3802,6 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
-        // `INSERT OR REPLACE` so these test-chosen types win over any
-        // seeded default (e.g. migration 0014 seeds `effort` as `select`).
         for (key, value_type) in [
             ("note", "text"),
             ("effort", "number"),
@@ -3811,9 +3810,10 @@ mod tests {
             ("link", "ref"),
         ] {
             sqlx::query(
-                "INSERT OR REPLACE INTO property_definitions (key, value_type, created_at) \
-                 VALUES (?, ?, '2026-01-01T00:00:00Z')",
+                "INSERT INTO property_definitions (space_id, key, value_type, created_at) \
+                 VALUES (?, ?, ?, '2026-01-01T00:00:00Z')",
             )
+            .bind(DEFS_SPACE)
             .bind(key)
             .bind(value_type)
             .execute(pool)

@@ -467,14 +467,14 @@ describe('renameMayDeclareKey', () => {
 
   it('allows a fresh, unused, non-builtin key', async () => {
     installBackend({}, ['estimate'])
-    expect(await renameMayDeclareKey('effortPoints')).toBe(true)
+    expect(await renameMayDeclareKey('SPACE_A', 'effortPoints')).toBe(true)
   })
 
   it('refuses a key any block already holds a value for', async () => {
     // The un-exitable state: the definition could never be deleted again while
     // those rows exist, so it must not be written in the first place.
     installBackend({}, ['estimate', 'status'])
-    expect(await renameMayDeclareKey('status')).toBe(false)
+    expect(await renameMayDeclareKey('SPACE_A', 'status')).toBe(false)
   })
 
   it('refuses an already-declared key — that row is not this rename to withdraw', async () => {
@@ -490,7 +490,12 @@ describe('renameMayDeclareKey', () => {
       },
       [],
     )
-    expect(await renameMayDeclareKey('effortPoints')).toBe(false)
+    expect(await renameMayDeclareKey('SPACE_A', 'effortPoints')).toBe(false)
+    // Declared in the space the rename happens in (#5841).
+    expect(mockedInvoke).toHaveBeenCalledWith('get_property_def', {
+      spaceId: 'SPACE_A',
+      key: 'effortPoints',
+    })
   })
 
   it('refuses builtin and column-backed keys without any lookup', async () => {
@@ -498,7 +503,7 @@ describe('renameMayDeclareKey', () => {
     // `delete_property_def_inner` refuses every `is_builtin_property_key`, so
     // such a declaration is permanent the moment it lands.
     for (const key of ['repeat', 'created_at', 'completed_at', 'due_date', 'space']) {
-      expect(await renameMayDeclareKey(key)).toBe(false)
+      expect(await renameMayDeclareKey('SPACE_A', key)).toBe(false)
     }
     expect(mockedInvoke).not.toHaveBeenCalled()
   })

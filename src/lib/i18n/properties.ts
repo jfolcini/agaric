@@ -259,7 +259,7 @@ export const properties: Record<string, string> = {
   'propertiesView.create': 'Create',
   'propertiesView.deleteConfirm': 'Delete this property definition?',
   'propertiesView.deleteDesc':
-    "A property still in use can't be deleted. Remove it from every block that uses it first.",
+    "A property still in use in this space can't be deleted. Remove it from every block that uses it first.",
   'propertiesView.deleted': 'Property definition deleted',
   'propertiesView.created': 'Property definition created',
   'propertiesView.editOptions': 'Edit options',
@@ -268,6 +268,14 @@ export const properties: Record<string, string> = {
   'propertiesView.deadlineWarningDesc':
     "Show tasks due within this many days in the Agenda's Upcoming list. 0 turns it off.",
   'propertiesView.builtIn': 'Built-in',
+  'propertiesView.definitionsIn': 'Definitions in',
+  'propertiesView.copyToSpaceTooltip': 'Copy to space…',
+  'propertiesView.copyToSpaceLabel': 'Copy {{key}} to another space',
+  'propertiesView.copyToSpaceMenuLabel': 'Spaces to copy {{key}} to',
+  'propertiesView.copiedToSpace': 'Copied {{key}} to {{space}}',
+  'propertiesView.copyKeptExisting':
+    '{{space}} already defines {{key}} as {{type}}; its definition was kept',
+  'propertiesView.copyFailed': 'Failed to copy the property definition',
   'propertiesView.clearSearch': 'Clear search',
   'propertiesView.deleteTooltip': 'Delete property',
   'propertiesView.editOptionsTooltip': 'Edit options',

@@ -2008,6 +2008,49 @@ mod tests {
         );
     }
 
+    /// #5841 — purging a space removes its property definitions and only
+    /// its: they are keyed by `space_id` with no FK, so nothing else would.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn purge_registered_space_deletes_its_property_definitions_5841() {
+        use crate::apply::loro_apply::apply_purge_block_via_loro;
+        use agaric_core::ulid::BlockId;
+        use agaric_store::op::PurgeBlockPayload;
+
+        let (pool, _dir) = fresh_pool().await;
+        let state = crate::loro::shared::LoroState::new();
+        seed_registered_space(&pool, SPACE_PURGE_2910, CHILD_PURGE_2910).await;
+        for space in [SPACE_PURGE_2910, SPACE_KEEP_2910] {
+            sqlx::query(
+                "INSERT INTO property_definitions (space_id, key, value_type, created_at) \
+                 VALUES (?, 'stage', 'text', 'T')",
+            )
+            .bind(space)
+            .execute(&pool)
+            .await
+            .expect("seed a definition");
+        }
+
+        let payload = PurgeBlockPayload {
+            block_id: BlockId::from_trusted(SPACE_PURGE_2910),
+        };
+        let mut tx = pool.begin().await.expect("begin");
+        apply_purge_block_via_loro(&mut tx, &state, "device-1", &payload, false)
+            .await
+            .expect("apply_purge_block_via_loro");
+        tx.commit().await.expect("commit");
+
+        let left: Vec<String> =
+            sqlx::query_scalar("SELECT space_id FROM property_definitions ORDER BY space_id")
+                .fetch_all(&pool)
+                .await
+                .expect("read definitions");
+        assert_eq!(
+            left,
+            [SPACE_KEEP_2910],
+            "the purged space's definitions go, another space's stay"
+        );
+    }
+
     /// Boot-residue regression guard: after purging the space, a fresh boot
     /// rehydration (`rehydrate_registry`, which reinstalls an engine for
     /// EVERY persisted `loro_doc_state` row) must NOT resurrect the dead

@@ -36,6 +36,7 @@ import type {
 } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import type { SetPropertyParams } from '@/lib/property-save-utils'
+import { useSpaceStore } from '@/stores/space'
 
 export type { SetPropertyParams }
 
@@ -43,8 +44,9 @@ export interface UseBlockPropertyIpcReturn {
   /** Fetch all property rows for the given block. Throws on IPC failure. */
   getProperties: (blockId: string) => Promise<PropertyRow[]>
   /**
-   * Fetch the first page of typed property definitions (the vocabulary).
-   * Throws on IPC failure.
+   * Fetch the first page of the active space's typed property definitions
+   * (the vocabulary, #5841); none with no active space. Throws on IPC
+   * failure.
    *
    * `list_property_defs` is cursor-paginated; the drawer this hook serves is
    * single-page-by-design (the seeded vocabulary fits well under one page), so
@@ -60,9 +62,13 @@ export function useBlockPropertyIpc(): UseBlockPropertyIpcReturn {
     async (blockId: string) => unwrap(await commands.getProperties(blockId)),
     [],
   )
+  const spaceId = useSpaceStore((s) => s.currentSpaceId)
   const listPropertyDefs = useCallback(
-    async () => unwrap(await commands.listPropertyDefs(null, null)),
-    [],
+    async (): Promise<PageResponse<PropertyDefinition>> =>
+      spaceId === null
+        ? { items: [], next_cursor: null, has_more: false, total_count: null }
+        : unwrap(await commands.listPropertyDefs(spaceId, null, null)),
+    [spaceId],
   )
   const setProperty = useCallback(
     async (params: SetPropertyParams) =>

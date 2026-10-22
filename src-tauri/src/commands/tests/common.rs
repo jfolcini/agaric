@@ -145,6 +145,27 @@ pub async fn mark_block_as_space(pool: &SqlitePool, space_id: &str) {
     .unwrap();
 }
 
+/// Give [`TEST_SPACE_ID`] the default property definitions, as
+/// `create_space` gives a new space (#5841).
+pub async fn ensure_test_space_with_defs(pool: &SqlitePool) {
+    let mut conn = pool.acquire().await.unwrap();
+    crate::commands::seed_default_property_defs_in_tx(&mut conn, TEST_SPACE_ID)
+        .await
+        .unwrap();
+}
+
+/// `create_property_def_inner` in [`TEST_SPACE_ID`]. Definitions are per
+/// space (#5841), so they type the values of that space's blocks only
+/// (`assign_all_to_test_space`).
+pub async fn create_test_property_def(
+    pool: &SqlitePool,
+    key: String,
+    value_type: String,
+    options: Option<String>,
+) -> Result<crate::commands::PropertyDefinition, agaric_core::error::AppError> {
+    crate::commands::create_property_def_inner(pool, TEST_SPACE_ID, key, value_type, options).await
+}
+
 /// Assign a block to [`TEST_SPACE_ID`] by stamping the denormalized
 /// `blocks.space_id` column directly. Bypasses `set_property_in_tx`
 /// intentionally — the query layer reads `blocks.space_id` regardless of

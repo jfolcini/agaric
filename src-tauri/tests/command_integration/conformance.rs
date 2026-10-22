@@ -1243,21 +1243,15 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
             seed_block_into_engine(state, b);
         }
     }
-    // Seed the property-definition registry (#3830). A fixture that declares
-    // this section declares the WHOLE set of user rows: migrations 0011/0014
-    // pre-seed the backend's `property_definitions` with a few editable
-    // declarations, while the mock's map starts empty (`clearMock`), so they
-    // are cleared to put both stacks in the state the fixture spells out. A
-    // fixture WITHOUT the section keeps them, untouched. The built-ins (#5841)
-    // are constants on both stacks and are never cleared.
+    // Seed the harness space's property definitions (#3830, per space since
+    // #5841). A fresh vault holds no rows (a space gets its defaults when it
+    // is created), so the section is the WHOLE set of the space's user rows,
+    // on both stacks. The built-ins are constants on both and never rows.
     if let Some(defs) = seed["property_defs"].as_array() {
-        sqlx::query("DELETE FROM property_definitions")
-            .execute(&pool)
-            .await
-            .expect("clear seeded property definitions");
         for d in defs {
             create_property_def_inner(
                 &pool,
+                TEST_SPACE_ID,
                 d["key"].as_str().expect("seed def key").to_owned(),
                 d["value_type"]
                     .as_str()

@@ -1848,7 +1848,8 @@ async fn delete_purge_derived_rows(conn: &mut sqlx::SqliteConnection) -> Result<
 }
 
 /// [`purge_block_sql_cascade`]'s tail before `DELETE FROM blocks`:
-/// `block_tag_refs`, `page_link_cache`, `loro_doc_state`.
+/// `block_tag_refs`, `page_link_cache`, and a purged space's `loro_doc_state`
+/// and `property_definitions`.
 ///
 /// block_tag_refs / page_link_cache: both columns of each table FK
 /// into blocks(id) ON DELETE CASCADE, so the final `DELETE FROM blocks`
@@ -1896,6 +1897,16 @@ async fn delete_purge_link_refs_and_doc_state(
     // temp table; not expressible as a compile-checked `query!` macro.
     sqlx::query(
         "DELETE FROM loro_doc_state \
+         WHERE space_id IN (SELECT id FROM _purge_descendants)",
+    )
+    .execute(&mut *conn)
+    .await?;
+    // #5841: a purged space's property definitions go with it. They are keyed
+    // by `space_id` with no FK (0129), so nothing else removes them.
+    // dynamic-sql: subtree-scoped cascade delete driven by the `_purge_descendants`
+    // temp table; not expressible as a compile-checked `query!` macro.
+    sqlx::query(
+        "DELETE FROM property_definitions \
          WHERE space_id IN (SELECT id FROM _purge_descendants)",
     )
     .execute(&mut *conn)
