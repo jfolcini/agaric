@@ -75,15 +75,27 @@ describe('link chips and new tabs', () => {
     },
   )
 
-  it('a Ctrl+click on a block ref opens its page behind the active tab', () => {
+  it.each([
+    ['a Ctrl+click', (chip: HTMLElement) => fireEvent.click(chip, { ctrlKey: true })],
+    [
+      'a middle click',
+      (chip: HTMLElement) => userEvent.setup().pointer({ keys: '[MouseMiddle]', target: chip }),
+    ],
+  ])('%s on a block ref opens its page behind the active tab, on the block', async (_, click) => {
     render(<Links />)
 
-    fireEvent.click(screen.getByText('block ref'), { ctrlKey: true })
+    await click(screen.getByText('block ref'))
 
     expect(activeTop()).toEqual({ pageId: 'CUR', title: 'Current' })
     expect(useTabsStore.getState().tabs[1]?.pageStack).toEqual([
       { pageId: 'REF_PAGE', title: 'Ref page' },
     ])
+    expect(useNavigationStore.getState().selectedBlockId).toBeNull()
+
+    useTabsStore.getState().switchTab(1)
+
+    expect(activeTop()).toEqual({ pageId: 'REF_PAGE', title: 'Ref page' })
+    expect(useNavigationStore.getState().selectedBlockId).toBe('REF')
   })
 
   it('a middle click on a chip opens it behind the active tab', async () => {

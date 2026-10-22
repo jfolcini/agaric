@@ -14,7 +14,7 @@ import type { NavigateToPageFn } from '@/lib/block-events'
 import { pageLinkIdAt } from '@/lib/link-chip'
 import { useTabsStore } from '@/stores/tabs'
 
-export type OpenInBackgroundTab = (pageId: string, title: string) => void
+export type OpenInBackgroundTab = (pageId: string, title: string, blockId?: string) => void
 
 /**
  * The opener, or `undefined` on mobile, where `TabBar` is hidden and a
@@ -25,8 +25,8 @@ export function useOpenInBackgroundTab(): OpenInBackgroundTab | undefined {
   const isMobile = useIsMobile()
   const openInBackgroundTab = useTabsStore((s) => s.openInBackgroundTab)
   const open = useCallback<OpenInBackgroundTab>(
-    (pageId, title) => {
-      openInBackgroundTab(pageId, title)
+    (pageId, title, blockId) => {
+      openInBackgroundTab(pageId, title, blockId)
       // Nothing on screen moves, so a screen reader would hear nothing.
       announce(t('tabs.openedInBackground', { title }))
     },
@@ -35,7 +35,7 @@ export function useOpenInBackgroundTab(): OpenInBackgroundTab | undefined {
   return isMobile ? undefined : open
 }
 
-/** Opens a link chip's target in a new tab behind the active one. */
+/** Opens a link chip's target in a new tab behind the active one, on the block a `((ref))` names. */
 export type OpenLinkInNewTab = (linkId: string) => void
 
 /**
@@ -50,7 +50,9 @@ export function useOpenLinkInNewTab(
     () =>
       openInBackgroundTab &&
       ((linkId) =>
-        void navigate(linkId, (pageId, title = '') => openInBackgroundTab(pageId, title))),
+        void navigate(linkId, (pageId, title = '', blockId) =>
+          openInBackgroundTab(pageId, title, blockId),
+        )),
     [navigate, openInBackgroundTab],
   )
 }

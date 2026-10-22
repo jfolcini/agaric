@@ -847,6 +847,28 @@ describe('CommandPalette — click semantics', () => {
     expectOpenedBehind('PAGE_R', 'Recent')
   })
 
+  it('a Ctrl+click on a block result opens its page behind, on the block once in front', async () => {
+    seedOneTab()
+    mockedSearchBlocksPartitioned.mockResolvedValue(
+      partitionedResp(
+        [makePageRow('PAGE_X', 'Alpha')],
+        [makeBlockRow('BLOCK_42', 'alpha note', 'PAGE_X')],
+      ),
+    )
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.change(screen.getByTestId('command-palette-input'), { target: { value: 'alpha' } })
+
+    fireEvent.click(await screen.findByTestId('palette-block-BLOCK_42'), { ctrlKey: true })
+
+    expect(useTabsStore.getState().activeTabIndex).toBe(0)
+    expect(useTabsStore.getState().tabs[1]?.pageStack.map((entry) => entry.pageId)).toEqual([
+      'PAGE_X',
+    ])
+    useTabsStore.getState().switchTab(1)
+    expect(useNavigationStore.getState().selectedBlockId).toBe('BLOCK_42')
+  })
+
   it('on mobile, which shows no tabs, Ctrl+Enter opens the page in place', async () => {
     mockedUseIsMobile.mockReturnValue(true)
     seedOneTab()

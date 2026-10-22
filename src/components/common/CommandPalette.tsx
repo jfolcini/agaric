@@ -533,9 +533,14 @@ export function PaletteBody({
   const showVoiceButton = isMobile && voice.supported
 
   // A new tab opens behind the active one, as a Ctrl+click on a link does; mobile shows no tabs.
-  function openedBehind(pageId: string, pageTitle: string, newTab: boolean): boolean {
+  function openedBehind(
+    pageId: string,
+    pageTitle: string,
+    newTab: boolean,
+    blockId?: string,
+  ): boolean {
     if (!newTab || openInBackgroundTab === undefined) return false
-    openInBackgroundTab(pageId, pageTitle)
+    openInBackgroundTab(pageId, pageTitle, blockId)
     return true
   }
 
@@ -568,7 +573,9 @@ export function PaletteBody({
     newTab: boolean,
   ): void {
     addRecentPage(pageId, pageTitle)
-    if (!openedBehind(pageId, pageTitle, newTab)) navigateToPage(pageId, pageTitle, blockId)
+    if (!openedBehind(pageId, pageTitle, newTab, blockId)) {
+      navigateToPage(pageId, pageTitle, blockId)
+    }
     onClose()
   }
 

@@ -1,6 +1,7 @@
 import { devices, type Locator, type Page } from '@playwright/test'
 
 import {
+  activeSuggestionList,
   expect,
   focusBlock,
   focusBlockById,
@@ -15,13 +16,17 @@ import {
  * A middle click on something that opens a page, or "Open in new tab" in its
  * right-click menu, opens the page in a background tab: the tab strip gains
  * it and the current view stays on screen. A Ctrl/Cmd+click on a link does the
- * same, and Alt+Enter at a link follows it, in block mode and page mode.
+ * same, and Alt+Enter at a link follows it, in block mode and page mode. A
+ * `((ref))` opened behind lands on its block once its tab is brought forward.
  *
- * Seed data (tauri-mock): "Getting Started" holds a [[Quick Notes]] link.
+ * Seed data (tauri-mock): "Getting Started" holds a [[Quick Notes]] link, and
+ * "Quick Notes"' first block says "These notes complement…".
  */
 
 /** The seeded Getting Started block holding the [[Quick Notes]] link. */
 const LINK_BLOCK = '0000000000000000000BLOCK02'
+/** The seeded first block of Quick Notes, "These notes complement…". */
+const QUICK_NOTES_FIRST_BLOCK = '0000000000000000000BLOCK08'
 const PAGE_MODE_EDITOR = '[data-testid="page-mode-editor"]'
 
 function tabs(page: Page): Locator {
@@ -202,6 +207,33 @@ test.describe('Ctrl+click opens a link in a background tab, and Alt+Enter follow
       .click({ modifiers: ['ControlOrMeta'] })
 
     await expectStillOnGettingStartedWithBackgroundTab(page)
+  })
+
+  test('Ctrl+click on a block ref opens its page behind, on the block once brought forward', async ({
+    page,
+  }) => {
+    await openPage(page, 'Getting Started')
+    await focusBlock(page)
+    await page.keyboard.press('End')
+    await page.keyboard.type(' ((complement', { delay: 30 })
+    await expect(
+      activeSuggestionList(page).locator('[data-testid="suggestion-item"]').first(),
+    ).toBeVisible()
+    await page.keyboard.press('Enter')
+    await saveBlock(page)
+
+    await page
+      .locator('[data-testid="block-static"] [data-testid="block-ref-chip"]')
+      .click({ modifiers: ['ControlOrMeta'] })
+
+    await expectStillOnGettingStartedWithBackgroundTab(page)
+    await tabs(page).nth(1).click()
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Quick Notes')
+    await expect(
+      page.locator(
+        `[data-testid="sortable-block"][data-block-id="${QUICK_NOTES_FIRST_BLOCK}"] [data-testid="block-editor"]`,
+      ),
+    ).toBeVisible()
   })
 
   test('Alt+Enter with the caret right after a link in a block follows it', async ({ page }) => {
