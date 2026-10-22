@@ -4,7 +4,9 @@ import {
   dragBlock,
   expect,
   focusBlock,
+  ipc,
   openPage,
+  reopenPage,
   saveBlock,
   selectEditorRange,
   test,
@@ -186,6 +188,48 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
     await expect(staticBlock).toBeVisible()
     await expect(staticBlock.locator('pre')).toBeVisible()
     await expect(staticBlock.locator('pre')).toContainText('const x = 42')
+  })
+
+  test('Turn into Code makes a bulleted block a code block with no bullet, and it stays one', async ({
+    page,
+  }) => {
+    await openPage(page, 'Getting Started')
+    const id = await page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .getAttribute('data-block-id')
+    const row = page.locator(`[data-testid="sortable-block"][data-block-id="${id}"]`)
+    await ipc(page, 'set_property', {
+      blockId: id,
+      key: 'listStyle',
+      value: {
+        value_text: 'bullet',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    const listStyle = async () =>
+      (
+        await ipc<Array<{ key: string; value_text: string | null }>>(page, 'get_properties', {
+          blockId: id,
+        })
+      ).find((r) => r.key === 'listStyle')?.value_text ?? null
+    await reopenPage(page, 'Getting Started')
+    await expect(row.getByTestId('list-marker')).toHaveText('•')
+
+    await focusBlock(page, 0)
+    await page.getByRole('button', { name: 'Turn into', exact: true }).first().click()
+    await page.getByRole('menuitem', { name: 'Code block', exact: true }).click()
+    await page.getByRole('button', { name: 'rust', exact: true }).click()
+    await expect.poll(listStyle).toBeNull()
+
+    await saveBlock(page, 'Escape')
+    await reopenPage(page, 'Getting Started')
+    await expect(row.locator('[data-testid="block-static"] pre')).toBeVisible()
+    await expect(row.getByTestId('list-marker')).toHaveCount(0)
+    expect(await listStyle()).toBeNull()
   })
 
   test('Bold + Italic combined: apply both, save, verify nested marks', async ({ page }) => {

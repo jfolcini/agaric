@@ -122,18 +122,18 @@ describe('what a save writes', () => {
     expect(backend.live()).toEqual([[A, 0, 'foo!']])
   })
 
-  it('counts its writes, and says whether one changed the page’s shape', async () => {
+  it('counts its writes, names the blocks whose text it wrote, and says whether one changed the page’s shape', async () => {
     const { ed, backend, state } = open([[A, 0, 'foo']])
     caret(ed, 0, 3)
     type(ed, '!')
     const edit = await savePage(ed.state.doc, state, backend)
-    expect([state.writes, edit.structural]).toEqual([1, false])
+    expect([state.writes, edit.structural, [...edit.edited]]).toEqual([1, false, [A]])
 
     press(ed, 'Enter')
     type(ed, 'new')
     const create = await savePage(ed.state.doc, state, backend)
 
-    expect([state.writes, create.structural]).toEqual([2, true])
+    expect([state.writes, create.structural, [...create.edited]]).toEqual([2, true, []])
   })
 
   it('deletes a block cut with its child once: the child goes with it', async () => {

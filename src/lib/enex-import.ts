@@ -172,14 +172,16 @@ export function createHtmlTurndown(): TurndownService {
   td.use(gfm)
   // A pipe-table row is one line, and Evernote wraps each cell's text in
   // `<div>`s, whose line breaks would end the row mid-cell; a `|` in the text
-  // would open a column. Added after the plugin's cell rule, so it wins.
+  // would open a column, and so would one after an odd backslash run, which
+  // only raw `<code>` leaves (Turndown doubles text backslashes). Added after
+  // the plugin's cell rule, so it wins.
   td.addRule('enmlTableCell', {
     filter: ['th', 'td'],
     replacement: (cellContent, node) => {
       const text = cellContent
         .trim()
         .replace(/\s*\n\s*/g, ' ')
-        .replace(/\|/g, '\\|')
+        .replace(/(\\*)\|/g, (_m, bs: string) => `${bs}${bs.length % 2 === 1 ? '\\' : ''}\\|`)
       return `${node.previousElementSibling === null ? '|' : ''} ${text} |`
     },
   })

@@ -36,6 +36,7 @@
 
 import { describe, expect, it } from 'vitest'
 
+import { parse } from '@/editor/markdown-serializer'
 import {
   type EnexNote,
   enexNoteToMarkdown,
@@ -661,6 +662,14 @@ describe('parseEnex — notes whose <content> yields no body', () => {
     expect(note.tags).toEqual(['work'])
     expect(note.markdown).toBe('unclosed')
   })
+
+  it('imports a malformed note with no <en-note> root with its text', () => {
+    const xml = enex(
+      `<note><title>T</title><content><![CDATA[<div><p>unclosed</div>]]></content></note>`,
+    )
+
+    expect(at(parseEnex(xml)).markdown).toBe('unclosed')
+  })
 })
 
 describe('parseEnex — ENML an XML parse rejects', () => {
@@ -859,6 +868,43 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
     expect(at(parseEnex(xml)).markdown).toBe(
       '| Name | Qty |\n| --- | --- |\n| Apple green | **3** \\| 4 |',
     )
+  })
+
+  it('keeps a web clip’s <th> header cell on one line, its pipe escaped', () => {
+    const enml =
+      '<table><tr><th><div>Name</div><div>a|b</div></th></tr><tr><td>Apple</td></tr></table>'
+    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
+
+    expect(at(parseEnex(xml)).markdown).toBe('| Name a\\|b |\n| --- |\n| Apple |')
+  })
+
+  it('keeps a pipe after a backslash in inline code inside its cell', () => {
+    // Turndown doubles every backslash in text but leaves `<code>` raw, so a
+    // code cell's `\|` reaches the cell rule with an odd backslash run. The
+    // parsed code has one backslash more than the source, because the table
+    // parser unescapes every `\|` before it reads the code span.
+    const enml =
+      '<table><tbody><tr><td><code>a\\|b</code></td><td>a|b</td><td>a\\|b</td></tr></tbody></table>'
+    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
+
+    const header = (text: string, marks?: [{ type: 'code' }]) => ({
+      type: 'tableHeader',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text, ...(marks && { marks }) }] }],
+    })
+    expect(parse(at(parseEnex(xml)).markdown)).toEqual({
+      type: 'doc',
+      content: [
+        {
+          type: 'table',
+          content: [
+            {
+              type: 'tableRow',
+              content: [header('a\\\\|b', [{ type: 'code' }]), header('a|b'), header('a\\|b')],
+            },
+          ],
+        },
+      ],
+    })
   })
 
   it('drops an empty <table> rather than failing the whole file', () => {
