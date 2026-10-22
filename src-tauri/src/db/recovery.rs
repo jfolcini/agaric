@@ -1162,18 +1162,6 @@ pub(crate) async fn reproject_blocks_from_engine(
         return Ok(false);
     }
 
-    // `property_definitions` drives typed-column routing for non-reserved
-    // properties. Load ONCE for the whole rebuild (hoisted out of the per-block
-    // loop), mirroring the live inbound-sync path. This is the identical query
-    // `import_and_project` runs, so it is already in the offline `.sqlx` cache.
-    let value_types: std::collections::HashMap<String, String> =
-        sqlx::query!("SELECT key, value_type FROM property_definitions")
-            .fetch_all(pool)
-            .await?
-            .into_iter()
-            .map(|r| (r.key, r.value_type))
-            .collect();
-
     let mut tx = pool.begin().await?;
     let mut spaces_reprojected = 0usize;
     let mut blocks_reprojected = 0usize;
@@ -1187,6 +1175,9 @@ pub(crate) async fn reproject_blocks_from_engine(
     let mut skipped_blocks_total = 0usize;
 
     for (space_id_str, bytes) in &snapshots {
+        // A space's definitions type its doc's string values (#5841), as on
+        // the live inbound-sync path; loaded once per space, not per block.
+        let value_types = agaric_engine::block_ops::load_value_types(&mut tx, space_id_str).await?;
         let Some((n, space_skipped)) =
             reproject_space_from_engine(&mut tx, space_id_str, bytes, &value_types).await?
         else {
@@ -7275,6 +7266,52 @@ mod tests {
         assert!(
             engine_reproject_pending(&pool).await.unwrap(),
             "the boot gate must report a pending retry after a partial reprojection"
+        );
+    }
+
+    /// #5841: each space's string values are typed by that space's own
+    /// definitions. `due` is declared `date` in space-1 only, so the same
+    /// stored string lands in `value_date` there and `value_text` in space-2.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn engine_reproject_types_values_by_their_spaces_definitions_5841() {
+        const DATED: &str = "DATEDBLK-5841";
+        const UNDECLARED: &str = "UNDECLBLK-5841";
+        let (pool, _dir) = test_pool().await;
+        sqlx::query(
+            "INSERT INTO property_definitions (space_id, key, value_type, created_at) \
+             VALUES ('space-1', 'due', 'date', 'T')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for (space, block) in [("space-1", DATED), ("space-2", UNDECLARED)] {
+            let mut engine =
+                agaric_engine::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
+            engine
+                .apply_create_block(block, "content", "task", None, 0)
+                .unwrap();
+            engine
+                .apply_set_property(block, "due", Some("2026-01-01"))
+                .unwrap();
+            insert_snapshot(&pool, space, engine.export_snapshot().unwrap()).await;
+        }
+
+        assert!(reproject_blocks_from_engine(&pool).await.unwrap());
+
+        let due: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT block_id, value_date, value_text FROM block_properties \
+             WHERE key = 'due' ORDER BY block_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            due,
+            vec![
+                (DATED.to_owned(), Some("2026-01-01".to_owned()), None),
+                (UNDECLARED.to_owned(), None, Some("2026-01-01".to_owned())),
+            ],
+            "space-1 declares `due` a date, space-2 does not"
         );
     }
 

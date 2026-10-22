@@ -1462,6 +1462,7 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
         "list_property_defs" => {
             let resp = list_property_defs_inner(
                 pool,
+                &arg_req::<String>(args, "spaceId"),
                 opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
                 opt_arg(args, "limit").and_then(|v| v.as_i64()),
             )
@@ -1472,7 +1473,12 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             )
         }
         "get_property_def" => {
-            let row = get_property_def_inner(pool, &arg_req::<String>(args, "key")).await?;
+            let row = get_property_def_inner(
+                pool,
+                &arg_req::<String>(args, "spaceId"),
+                &arg_req::<String>(args, "key"),
+            )
+            .await?;
             // `Option<PropertyDefinition>`: a hit projects to one token, a miss
             // to none — the present-vs-absent distinction the step pins.
             let v = serde_json::to_value(&row).expect("serialize Option<PropertyDefinition>");

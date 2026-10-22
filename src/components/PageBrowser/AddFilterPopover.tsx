@@ -58,6 +58,7 @@ import type {
 import { logger } from '@/lib/logger'
 import { PRIORITY_LEVELS } from '@/lib/priority-levels'
 import { EXCLUDE_JOURNAL_PAGES_FILTER } from '@/stores/pageBrowserFilters'
+import { useSpaceStore } from '@/stores/space'
 
 export interface AddFilterPopoverProps {
   /** Emits the chosen primitive. The parent appends it to its chip set. */
@@ -155,11 +156,13 @@ export function AddFilterPopover({
   // fetch) — the seeded vocabulary fits well under a single page, and a key
   // beyond the first page simply falls back to the undeclared (Text)
   // behaviour rather than blocking on a full walk.
+  // The active space's definitions (#5841).
+  const spaceId = useSpaceStore((s) => s.currentSpaceId)
   useEffect(() => {
-    if (!showAdvancedFacets || editor !== 'property') return
+    if (!showAdvancedFacets || editor !== 'property' || spaceId === null) return
     let cancelled = false
     commands
-      .listPropertyDefs(null, null)
+      .listPropertyDefs(spaceId, null, null)
       .then(unwrap)
       .then(({ items }) => {
         if (!cancelled)
@@ -172,7 +175,7 @@ export function AddFilterPopover({
     return () => {
       cancelled = true
     }
-  }, [showAdvancedFacets, editor])
+  }, [showAdvancedFacets, editor, spaceId])
 
   // The `PropertyValue` variant + operator set the has-property editor offers
   // for the CURRENTLY TYPED key. On the Pages browser (`!showAdvancedFacets`)

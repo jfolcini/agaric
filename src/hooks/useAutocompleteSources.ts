@@ -193,13 +193,14 @@ export function useAutocompleteSources(
   useEffect(() => {
     if (active !== 'propValue' || propValueKey == null || propValueKey === '') return
     ensurePropertyValuesInvalidationListener()
-    // Resolve the definition once per key. `undefined` in the map means
-    // "not yet fetched"; we record `string[]` for select options or `null`
-    // otherwise so the fetch never repeats for the same key.
-    if (selectOptionsRef.current[propValueKey] === undefined) {
+    // Resolve the definition once per key, in the space whose definitions
+    // apply (#5841). `undefined` in the map means "not yet fetched"; we record
+    // `string[]` for select options or `null` otherwise so the fetch never
+    // repeats for the same key.
+    if (spaceId != null && selectOptionsRef.current[propValueKey] === undefined) {
       let cancelled = false
       commands
-        .getPropertyDef(propValueKey)
+        .getPropertyDef(spaceId, propValueKey)
         .then(unwrap)
         .then((def) => {
           if (cancelled) return
@@ -225,7 +226,7 @@ export function useAutocompleteSources(
       }
     }
     return undefined
-  }, [active, propValueKey])
+  }, [active, propValueKey, spaceId])
 
   // ── Tag IPC (debounced, stale-while-loading) ──────────────────────
   useEffect(() => {

@@ -124,7 +124,7 @@ Tabbed configuration view. On desktop the tabs sit in a vertical rail, bucketed 
   - **Keyboard** — the system-wide Quick Capture hotkey (desktop), then full shortcut customisation (see [keyboard.md](keyboard.md)).
   - **Tasks & reminders** (id `notifications`) — the deadline warning days for the Agenda's Upcoming list, due-task reminders, the reminder time, the OS permission and a test notification.
   - **Spaces** — the space this device opens in (*Open on launch*: last used or one space), and create, rename, recolour or delete spaces (see [spaces.md](spaces.md)). The SpaceSwitcher's *Manage spaces…* opens it.
-  - **Properties** — list of property definitions with their type; create a definition, delete an unused one, and edit a select key's options. A built-in definition shows a lock and can't be edited or deleted. The internal `is_space` definition is not listed.
+  - **Properties** — the property definitions of the space picked in *Definitions in* (the active space by default), with their type; create a definition, delete an unused one, edit a select key's options, and copy a definition to another space. A built-in definition shows a lock and can't be edited or deleted. The internal `is_space` definition is not listed.
 - **Integrations**
   - **Agent access** — read-only and read-write switches; each shows its socket path and connections only while it is on. The activity feed with SessionRevertControls is a separate card, shown whether or not access is on (see [agent-access.md](agent-access.md)).
 - **Data & sync**

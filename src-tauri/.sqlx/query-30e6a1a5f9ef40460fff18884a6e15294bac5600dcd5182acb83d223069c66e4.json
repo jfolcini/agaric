@@ -1,21 +1,21 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT COUNT(*) FROM property_definitions",
+  "query": "SELECT 1 AS \"v!: i32\" FROM blocks WHERE id = ?",
   "describe": {
     "columns": [
       {
-        "name": "COUNT(*)",
+        "name": "v!: i32",
         "ordinal": 0,
         "type_info": "Integer",
         "origin": "Expression"
       }
     ],
     "parameters": {
-      "Right": 0
+      "Right": 1
     },
     "nullable": [
       false
     ]
   },
-  "hash": "63e750c21d81ee1e5bf6c7407175f88ae7e6b4b35604c02c61fd181b106fe9aa"
+  "hash": "30e6a1a5f9ef40460fff18884a6e15294bac5600dcd5182acb83d223069c66e4"
 }

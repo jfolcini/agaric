@@ -23,17 +23,22 @@ pub(super) struct PropertyLines {
 }
 
 impl PropertyLines {
-    /// Read the definitions. A surface that writes typed values resolves its
-    /// ref values next ([`Self::resolve_refs`]); a copy writes back the ids a
-    /// block held.
+    /// Read the definitions of `space_id`, the space the blocks are written
+    /// in (#5841); with none, the built-ins only. A surface that writes typed
+    /// values resolves its ref values next ([`Self::resolve_refs`]); a copy
+    /// writes back the ids a block held.
     pub(super) async fn load(
         conn: &mut sqlx::SqliteConnection,
+        space_id: Option<&str>,
         mode: PropertyWrite,
     ) -> Result<Self, AppError> {
-        let rows =
-            sqlx::query!(r#"SELECT key AS "key!", value_type, options FROM property_definitions"#)
-                .fetch_all(&mut *conn)
-                .await?;
+        let rows = sqlx::query!(
+            r#"SELECT key AS "key!", value_type, options FROM property_definitions
+               WHERE space_id = ?"#,
+            space_id,
+        )
+        .fetch_all(&mut *conn)
+        .await?;
         let declarations: HashMap<String, PropertyDeclaration> = rows
             .into_iter()
             .map(|row| {
@@ -63,6 +68,16 @@ impl PropertyLines {
             refs: HashMap::new(),
             typed: HashMap::new(),
         })
+    }
+
+    /// [`Self::load`] in the space `block_id` belongs to.
+    pub(super) async fn load_for_block(
+        conn: &mut sqlx::SqliteConnection,
+        block_id: &BlockId,
+        mode: PropertyWrite,
+    ) -> Result<Self, AppError> {
+        let space = agaric_store::space::resolve_block_space(&mut *conn, block_id).await?;
+        Self::load(conn, space.as_ref().map(SpaceId::as_str), mode).await
     }
 
     /// Resolve in `space_id` the values `properties` write under a
@@ -342,14 +357,16 @@ pub(crate) async fn read_typed_ref(
     key: &str,
     text: String,
 ) -> Result<(Option<String>, Option<String>), AppError> {
-    let declared = agaric_engine::block_ops::property_declaration(&mut *conn, key).await?;
+    let block = BlockId::from_trusted(block_id);
+    let space = agaric_store::space::resolve_block_space(&mut *conn, &block).await?;
+    let space_id = space.as_ref().map(SpaceId::as_str);
+    let declared =
+        agaric_engine::block_ops::property_declaration(&mut *conn, space_id, key).await?;
     if declared.is_none_or(|declaration| declaration.value_type != "ref") {
         return Ok((Some(text), None));
     }
-    let block = BlockId::from_trusted(block_id);
-    let space = agaric_store::space::resolve_block_space(&mut *conn, &block).await?;
     let name = ref_name(&text);
-    let id = resolve_ref_values(conn, space.as_ref().map(SpaceId::as_str), vec![name])
+    let id = resolve_ref_values(conn, space_id, vec![name])
         .await?
         .remove(name)
         .expect("resolve_ref_values answers each name it is given")

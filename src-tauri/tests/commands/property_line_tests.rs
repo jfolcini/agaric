@@ -365,7 +365,7 @@ async fn import_markdown_keeps_a_key_two_definitions_fold_to_as_typed() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    create_property_def_inner(&pool, "due-date".into(), "text".into(), None)
+    create_test_property_def(&pool, "due-date".into(), "text".into(), None)
         .await
         .unwrap();
 
@@ -445,7 +445,7 @@ async fn paste_blocks_keeps_a_ref_id_of_another_space_as_text() {
     )
     .await
     .unwrap();
-    create_property_def_inner(&pool, "reviewer".into(), "ref".into(), None)
+    create_test_property_def(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();
     let anchor = dup_child(&pool, &mat, &page, "anchor").await;
@@ -510,7 +510,7 @@ async fn import_markdown_resolves_a_ref_value_by_title() {
     let alice = dup_page(&pool, &mat, "Alice").await;
     dup_page(&pool, &mat, "Twin").await;
     dup_page(&pool, &mat, "twin").await;
-    create_property_def_inner(&pool, "reviewer".into(), "ref".into(), None)
+    create_test_property_def(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();
     let md = "- a\n  reviewer:: [[Alice]]\n- b\n  reviewer:: alice\n- c\n  reviewer:: TWIN\n\
@@ -552,7 +552,7 @@ async fn set_property_reads_a_ref_value_typed_as_text() {
     let alice = dup_page(&pool, &mat, "Alice").await;
     dup_page(&pool, &mat, "Twin").await;
     dup_page(&pool, &mat, "twin").await;
-    create_property_def_inner(&pool, "reviewer".into(), "ref".into(), None)
+    create_test_property_def(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();
     let block = dup_child(&pool, &mat, &page, "task").await;
@@ -609,7 +609,7 @@ async fn a_refused_ref_value_is_inert_text() {
     let page = dup_page(&pool, &mat, "Paste").await;
     dup_page(&pool, &mat, "Twin").await;
     dup_page(&pool, &mat, "twin").await;
-    create_property_def_inner(&pool, "reviewer".into(), "ref".into(), None)
+    create_test_property_def(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();
     let anchor = dup_child(&pool, &mat, &page, "anchor").await;
@@ -653,7 +653,7 @@ async fn export_then_import_keeps_a_ref_property_and_the_recurrence_rule() {
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let alice = dup_page(&pool, &mat, "Alice").await;
-    create_property_def_inner(&pool, "reviewer".into(), "ref".into(), None)
+    create_test_property_def(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();
     let page = dup_page(&pool, &mat, "Weekly").await;
@@ -695,10 +695,10 @@ async fn paste_blocks_keeps_a_refused_value_as_text_with_a_warning() {
     let mat = Materializer::new(pool.clone());
     let page = dup_page(&pool, &mat, "Paste").await;
     let alice = dup_page(&pool, &mat, "Alice").await;
-    create_property_def_inner(&pool, "reviewer".into(), "ref".into(), None)
+    create_test_property_def(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();
-    create_property_def_inner(&pool, "due".into(), "date".into(), None)
+    create_test_property_def(&pool, "due".into(), "date".into(), None)
         .await
         .unwrap();
     let anchor = dup_child(&pool, &mat, &page, "anchor").await;
@@ -800,6 +800,7 @@ async fn import_markdown_skips_a_refused_front_matter_value_with_a_warning() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    ensure_test_space_with_defs(&pool).await;
     let md = "---\npriority: 99\nStatus: active\n---\n- body\n";
 
     let result = import(&pool, &mat, dir.path(), md, "Front.md").await;

@@ -32,6 +32,7 @@ import { axe } from 'vitest-axe'
 import { QueryBuilderModal } from '@/components/dialogs/QueryBuilderModal'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { decodeInlineQueryPayload, encodeInlineQueryPayload } from '@/lib/inline-query-spec'
+import { useSpaceStore } from '@/stores/space'
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
@@ -55,6 +56,8 @@ describe('QueryBuilderModal', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    // The known keys are the active space's definitions (#5841).
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
     // Default to the desktop path so existing test bodies keep their semantics.
     mockedUseIsMobile.mockReturnValue(false)
     mockedInvoke.mockImplementation(async (cmd: string) => {

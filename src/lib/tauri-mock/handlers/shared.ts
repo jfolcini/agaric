@@ -401,10 +401,14 @@ export function invalidOperationRejection(message: string): Error & AppError {
 }
 
 /**
- * The definition of `key` as the backend's `property_declaration` reads it:
- * the built-in (#5841), marked `builtin`, else the mock's user row.
+ * The definition of `key` in `spaceId` as the backend's `property_declaration`
+ * reads it: the built-in (#5841), marked `builtin`, else the space's row. With
+ * no space, only a built-in.
  */
-export function propertyDefinition(key: string): Record<string, unknown> | undefined {
+export function propertyDefinition(
+  spaceId: string | null,
+  key: string,
+): Record<string, unknown> | undefined {
   const builtin = BUILTIN_PROPERTY_DEFS.find((def) => def.key === key)
   if (builtin) {
     return {
@@ -415,8 +419,19 @@ export function propertyDefinition(key: string): Record<string, unknown> | undef
       builtin: true,
     }
   }
-  const row = propertyDefs.get(key)
+  const row = spaceId === null ? undefined : propertyDefs.get(spaceId)?.get(key)
   return row && { ...row, builtin: false }
+}
+
+/**
+ * The space whose definitions type `blockId`'s properties, as the backend's
+ * `resolve_block_space` reads it: the block's own `space_id`, else its owning
+ * page's space.
+ */
+export function definitionSpaceOf(blockId: string): string | null {
+  const block = blocks.get(blockId)
+  if (!block || block['deleted_at'] != null) return null
+  return (block['space_id'] as string | null) ?? ownerSpaceOf(block)
 }
 
 /**
@@ -509,7 +524,11 @@ export function isValidRepeatRuleMock(rule: string): boolean {
  * Keeps the mock honest so the empty-`value_text` picker/slash bug fails in
  * tests instead of passing silently.
  */
-export function assertValidSetPropertyValue(key: string, valueText: string | null): void {
+export function assertValidSetPropertyValue(
+  spaceId: string | null,
+  key: string,
+  valueText: string | null,
+): void {
   if (typeof valueText === 'string' && valueText.trim() === '') {
     throw validationRejection('set_property.value_text.empty')
   }
@@ -525,7 +544,7 @@ export function assertValidSetPropertyValue(key: string, valueText: string | nul
       message: `repeat rule '${valueText}' is not valid`,
     })
   }
-  const def = propertyDefinition(key)
+  const def = propertyDefinition(spaceId, key)
   if (def?.['value_type'] !== 'select') return
   const rawOptions = def['options'] as string | null
   // A NULL options column means "no restriction" — the real backend

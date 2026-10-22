@@ -5,7 +5,7 @@
 # Format: <count> <path-relative-to-repo-root>
 
 3 src-tauri/agaric-engine/src/apply/kernel.rs
-25 src-tauri/agaric-engine/src/apply/loro_apply.rs
+26 src-tauri/agaric-engine/src/apply/loro_apply.rs
 2 src-tauri/agaric-engine/src/apply/pages_cache.rs
 12 src-tauri/agaric-engine/src/block_ops.rs
 4 src-tauri/agaric-engine/src/dag.rs

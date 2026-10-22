@@ -23,6 +23,7 @@ import {
   pageAliases,
   properties,
   seedBlocks,
+  seedDefaultPropertyDefs,
 } from '@/lib/tauri-mock/seed'
 
 const id = (label: string): string => label.padStart(26, '0')
@@ -810,6 +811,8 @@ describe('tauri-mock apply_page_source front matter (#5160 S8)', () => {
       ]),
     )
     setSpace(PAGE, SPACE)
+    // The space's own definitions (#5841): a space starts with the defaults.
+    seedDefaultPropertyDefs(SPACE, '2026-01-01T00:00:00.000Z')
     pageAliases.set(PAGE, ['Home base'])
     blockTags.set(PAGE, new Set([WORK]))
   })

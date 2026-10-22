@@ -564,21 +564,27 @@ impl From<&BuiltinPropertyDef> for PropertyDeclaration {
     }
 }
 
-/// The declaration `key` has: its built-in definition (#5841), else its
-/// `property_definitions` row, else `None` for an undeclared key.
+/// The declaration `key` has in `space_id`: its built-in definition (#5841),
+/// else that space's `property_definitions` row, else `None` for a key the
+/// space does not declare. With no space, only a built-in is declared.
 ///
 /// # Errors
 ///
 /// Returns [`AppError`] if the row lookup fails.
 pub async fn property_declaration(
     conn: &mut sqlx::SqliteConnection,
+    space_id: Option<&str>,
     key: &str,
 ) -> Result<Option<PropertyDeclaration>, AppError> {
     if let Some(def) = builtin_property_def(key) {
         return Ok(Some(def.into()));
     }
+    let Some(space_id) = space_id else {
+        return Ok(None);
+    };
     Ok(sqlx::query!(
-        "SELECT value_type, options FROM property_definitions WHERE key = ?",
+        "SELECT value_type, options FROM property_definitions WHERE space_id = ? AND key = ?",
+        space_id,
         key,
     )
     .fetch_optional(conn)
@@ -587,6 +593,51 @@ pub async fn property_declaration(
         value_type: row.value_type,
         options: row.options,
     }))
+}
+
+/// [`property_declaration`] in the space `block_id` belongs to. A block with
+/// no space (a space's own block) sees only the built-ins.
+///
+/// # Errors
+///
+/// Returns [`AppError`] if a lookup fails.
+pub async fn block_property_declaration(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+    key: &str,
+) -> Result<Option<PropertyDeclaration>, AppError> {
+    if let Some(def) = builtin_property_def(key) {
+        return Ok(Some(def.into()));
+    }
+    let block = BlockId::from_trusted(block_id);
+    let space = agaric_store::space::resolve_block_space(&mut *conn, &block).await?;
+    property_declaration(
+        conn,
+        space.as_ref().map(agaric_store::space::SpaceId::as_str),
+        key,
+    )
+    .await
+}
+
+/// Every `key → value_type` `space_id` declares, which the Loro → SQL
+/// projection routes a string value by (built-ins are looked up apart).
+///
+/// # Errors
+///
+/// Returns [`AppError`] if the query fails.
+pub async fn load_value_types(
+    conn: &mut sqlx::SqliteConnection,
+    space_id: &str,
+) -> Result<std::collections::HashMap<String, String>, AppError> {
+    Ok(sqlx::query!(
+        "SELECT key, value_type FROM property_definitions WHERE space_id = ?",
+        space_id,
+    )
+    .fetch_all(conn)
+    .await?
+    .into_iter()
+    .map(|row| (row.key, row.value_type))
+    .collect())
 }
 
 /// Step 4 of [`validate_property_value`]: the payload's populated field must
@@ -786,11 +837,12 @@ pub async fn set_property_in_tx(
     value_ref: Option<String>,
     value_bool: Option<bool>,
 ) -> Result<(BlockRow, op_log::OpRecord), AppError> {
-    // Thin wrapper (#1921): look up the key's declaration and delegate. A
-    // "clear" (all-null) write needs no declaration, so the lookup is skipped.
-    // Callers that ALREADY hold the declaration (e.g. the batched import
-    // frontmatter path) call [`set_property_in_tx_with_declaration`] directly
-    // to avoid the per-key round-trip.
+    // Thin wrapper (#1921): look up the key's declaration in the block's space
+    // and delegate. A "clear" (all-null) write needs no declaration, so the
+    // lookup is skipped. Callers that ALREADY hold the declaration (e.g. the
+    // batched import frontmatter path) call
+    // [`set_property_in_tx_with_declaration`] directly to avoid the per-key
+    // round-trip.
     let is_clear = value_text.is_none()
         && value_num.is_none()
         && value_date.is_none()
@@ -799,7 +851,7 @@ pub async fn set_property_in_tx(
     let declaration = if is_clear {
         None
     } else {
-        property_declaration(tx, key).await?
+        block_property_declaration(tx, &block_id, key).await?
     };
     set_property_in_tx_with_declaration(
         tx,

@@ -22,6 +22,9 @@ use tokio::runtime::Runtime;
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// The space every bench declares its definitions in (#5841: per space).
+const BENCH_SPACE: &str = "01BENCHSPACE00000000000000";
+
 async fn fresh_pool(dir: &TempDir, name: &str) -> SqlitePool {
     let db_path = dir.path().join(format!("{name}.db"));
     init_pool(&db_path).await.unwrap()
@@ -36,9 +39,11 @@ async fn seed_property_defs(pool: &SqlitePool, n: usize) -> Vec<String> {
     for i in 0..n {
         let key = format!("bench-prop-{i:06}");
         sqlx::query(
-            "INSERT OR IGNORE INTO property_definitions (key, value_type, options, created_at) \
-             VALUES (?, 'select', '[\"a\",\"b\",\"c\"]', '2026-01-01T00:00:00.000Z')",
+            "INSERT OR IGNORE INTO property_definitions \
+             (space_id, key, value_type, options, created_at) \
+             VALUES (?, ?, 'select', '[\"a\",\"b\",\"c\"]', '2026-01-01T00:00:00.000Z')",
         )
+        .bind(BENCH_SPACE)
         .bind(&key)
         .execute(&mut *tx)
         .await
@@ -77,6 +82,7 @@ fn bench_create_property_def(c: &mut Criterion) {
                     async move {
                         create_property_def_inner(
                             &pool,
+                            BENCH_SPACE,
                             format!("new-key-{counter}"),
                             "text".into(),
                             None,
@@ -105,12 +111,17 @@ fn bench_list_property_defs(c: &mut Criterion) {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("list_pd_{count}")));
 
-        // Migrations seed built-in property definitions (0014/0016), so the
-        // list returns those plus our seeded keys. Measure the baseline before
-        // seeding and assert against `baseline + count` rather than a fixed
-        // total that silently breaks whenever the built-in set changes.
+        // The list returns the built-ins plus our seeded keys. Measure the
+        // baseline before seeding and assert against `baseline + count` rather
+        // than a fixed total that silently breaks whenever the built-in set
+        // changes.
         let baseline = rt
-            .block_on(list_property_defs_inner(&pool, None, Some(200)))
+            .block_on(list_property_defs_inner(
+                &pool,
+                BENCH_SPACE,
+                None,
+                Some(200),
+            ))
             .unwrap()
             .items
             .len();
@@ -130,7 +141,7 @@ fn bench_list_property_defs(c: &mut Criterion) {
                         // intentionally consumes only the first page —
                         // pagination cost is constant per page and the
                         // throughput metric tracks one page worth of work.
-                        let page = list_property_defs_inner(&pool, None, Some(200))
+                        let page = list_property_defs_inner(&pool, BENCH_SPACE, None, Some(200))
                             .await
                             .unwrap();
                         assert_eq!(
@@ -178,6 +189,7 @@ fn bench_update_property_def_options(c: &mut Criterion) {
                     async move {
                         update_property_def_options_inner(
                             &pool,
+                            BENCH_SPACE,
                             target_key,
                             format!("[\"opt_{counter}\",\"x\",\"y\"]"),
                         )
@@ -213,9 +225,11 @@ fn bench_delete_property_def(c: &mut Criterion) {
         // Seed the deletable key
         rt.block_on(async {
             sqlx::query(
-                "INSERT OR IGNORE INTO property_definitions (key, value_type, options, created_at) \
-                 VALUES (?, 'text', NULL, '2026-01-01T00:00:00.000Z')",
+                "INSERT OR IGNORE INTO property_definitions \
+                 (space_id, key, value_type, options, created_at) \
+                 VALUES (?, ?, 'text', NULL, '2026-01-01T00:00:00.000Z')",
             )
+            .bind(BENCH_SPACE)
             .bind(&target_key)
             .execute(&pool)
             .await
@@ -235,15 +249,17 @@ fn bench_delete_property_def(c: &mut Criterion) {
                         for _ in 0..iters {
                             // Re-insert so there is something to delete
                             sqlx::query(
-                                "INSERT OR IGNORE INTO property_definitions (key, value_type, options, created_at) \
-                                 VALUES (?, 'text', NULL, '2026-01-01T00:00:00.000Z')",
+                                "INSERT OR IGNORE INTO property_definitions \
+                                 (space_id, key, value_type, options, created_at) \
+                                 VALUES (?, ?, 'text', NULL, '2026-01-01T00:00:00.000Z')",
                             )
+                            .bind(BENCH_SPACE)
                             .bind(&target_key)
                             .execute(&pool)
                             .await
                             .unwrap();
 
-                            delete_property_def_inner(&pool, target_key.clone())
+                            delete_property_def_inner(&pool, BENCH_SPACE, target_key.clone())
                                 .await
                                 .unwrap();
                         }

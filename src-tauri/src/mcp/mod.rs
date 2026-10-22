@@ -69,8 +69,8 @@ macro_rules! read_tools_primer {
          - pages and blocks: `list_pages`, `search`, `get_page`, `get_journal`, \
          `list_journal`, `list_trash`.\n\
          - tags: `list_tags`, one space at a time.\n\
-         Spaces: every tool but `list_spaces` and `list_property_defs` requires \
-         `space_id`; nothing defaults it. A call naming a space you may not use, or \
+         Spaces: every tool but `list_spaces` requires `space_id`; nothing \
+         defaults it. A call naming a space you may not use, or \
          on a block or page in another space, is refused.\n\
          Dates are YYYY-MM-DD; `get_journal` also takes `today` or `yesterday`, on \
          this device's clock.\n\

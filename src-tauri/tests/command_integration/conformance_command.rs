@@ -346,10 +346,19 @@ pub(super) async fn apply_op_via_command(
     let command = op["command"].as_str().expect("op command");
     let args = &op["args"];
     let arg = |k: &str| args.get(k);
+    // `$SPACE` names the harness space, as inside a `scope` below.
     let arg_label_id = |k: &str| {
-        arg(k)
-            .and_then(Value::as_str)
-            .map(|l| resolve_op_arg_id(l, created_ids))
+        arg(k).and_then(Value::as_str).map(|l| {
+            if l == SPACE_TOKEN {
+                TEST_SPACE_ID.to_owned()
+            } else {
+                resolve_op_arg_id(l, created_ids)
+            }
+        })
+    };
+    let space_id = || {
+        arg_label_id("spaceId")
+            .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'spaceId'"))
     };
     let block_id = || BlockId::from(arg_label_id("blockId").expect("blockId").as_str());
     // A batch command's `blockIds` is a LIST of the same labels `blockId`
@@ -472,6 +481,7 @@ pub(super) async fn apply_op_via_command(
         "create_property_def" => to_json(
             create_property_def_inner(
                 pool,
+                &space_id(),
                 req_str("key"),
                 req_str("valueType"),
                 opt_str("options"),
@@ -479,7 +489,13 @@ pub(super) async fn apply_op_via_command(
             .await,
         ),
         "update_property_def_options" => to_json(
-            update_property_def_options_inner(pool, req_str("key"), req_str("options")).await,
+            update_property_def_options_inner(
+                pool,
+                &space_id(),
+                req_str("key"),
+                req_str("options"),
+            )
+            .await,
         ),
         // `save_draft` and `delete_draft` have no `*_inner`: their wrappers are
         // the thin layer over these engine functions directly.
@@ -597,7 +613,9 @@ pub(super) async fn apply_op_via_command(
             )
             .await,
         ),
-        "delete_property_def" => to_json(delete_property_def_inner(pool, req_str("key")).await),
+        "delete_property_def" => {
+            to_json(delete_property_def_inner(pool, &space_id(), req_str("key")).await)
+        }
         // The deleted keys name the changed-property event; the wire returns none.
         "delete_property" => to_json(
             delete_property_inner(

@@ -18,6 +18,7 @@ import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -75,6 +76,8 @@ const directionButton = (dir: 'ascending' | 'descending') =>
 beforeEach(() => {
   vi.clearAllMocks()
   queryClient.clear()
+  // The property fields are the active space's definitions (#5841).
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
   stubDefs()
 })
 

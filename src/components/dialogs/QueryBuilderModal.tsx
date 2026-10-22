@@ -51,6 +51,7 @@ import {
   setGroupOpInTree,
   toggleNegateInTree,
 } from '@/stores/advancedQuery'
+import { useSpaceStore } from '@/stores/space'
 
 // The nested-builder UI (and its AddFilterPopover subtree) is only needed when
 // the user opens Advanced mode, so it is lazy-loaded to keep it off the entry
@@ -155,12 +156,14 @@ export function QueryBuilderModal({
 
   // ---- Load known property definitions for datalist autocomplete + validation ----
   // `listPropertyDefs` is paginated; the modal is single-page-by-design —
-  // datalist suggestions only need the first page worth of keys.
+  // datalist suggestions only need the first page worth of keys. The active
+  // space's definitions (#5841).
+  const spaceId = useSpaceStore((s) => s.currentSpaceId)
   useEffect(() => {
-    if (!open) return
+    if (!open || spaceId === null) return
     let cancelled = false
     commands
-      .listPropertyDefs(null, null)
+      .listPropertyDefs(spaceId, null, null)
       .then(unwrap)
       .then(({ items: defs }) => {
         if (!cancelled) {
@@ -176,7 +179,7 @@ export function QueryBuilderModal({
     return () => {
       cancelled = true
     }
-  }, [open])
+  }, [open, spaceId])
 
   // ---- Parse initial expression (for editing existing queries) ----
   useEffect(() => {

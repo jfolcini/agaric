@@ -45,8 +45,18 @@ export const blockTags = new Map<string, Set<string>>()
 // derives them, the way the backend's reindex does. `source_id → Set<tag_id>`.
 export const blockTagRefs = new Map<string, Set<string>>()
 
-// Property definitions store
-export const propertyDefs = new Map<string, Record<string, unknown>>()
+// Property definitions store, per space (#5841): space_id → key → row
+export const propertyDefs = new Map<string, Map<string, Record<string, unknown>>>()
+
+/** `spaceId`'s definitions, an empty map the first time it is asked for. */
+export function spacePropertyDefs(spaceId: string): Map<string, Record<string, unknown>> {
+  let defs = propertyDefs.get(spaceId)
+  if (!defs) {
+    defs = new Map()
+    propertyDefs.set(spaceId, defs)
+  }
+  return defs
+}
 
 // Page aliases store: page_id → string[]
 export const pageAliases = new Map<string, string[]>()
@@ -325,18 +335,32 @@ export function makeBlock(
 }
 
 /**
- * The user definitions every backend database holds from its migrations
- * (0011, 0014, less what 0128 removed), so a typed `effort:: soon` meets the
- * same `select` definition here as in the app. The built-ins (#5841) are not
- * rows: `propertyDefinition` serves them.
+ * The editable definitions a new space starts with (#5841), mirroring
+ * `DEFAULT_PROPERTY_DEFS` in `src-tauri/src/commands/properties.rs`, so a
+ * typed `effort:: soon` meets the same `select` definition here as in the
+ * app. The built-ins are not rows: `propertyDefinition` serves them.
  */
-const SEEDED_PROPERTY_DEFS: ReadonlyArray<[string, string, readonly string[] | null]> = [
+const DEFAULT_PROPERTY_DEFS: ReadonlyArray<[string, string, readonly string[] | null]> = [
   ['status', 'select', ['active', 'paused', 'done', 'archived']],
   ['url', 'text', null],
   ['effort', 'select', ['15m', '30m', '1h', '2h', '4h', '1d']],
   ['assignee', 'text', null],
   ['location', 'text', null],
 ]
+
+/** Give `spaceId`, a space just made, the {@link DEFAULT_PROPERTY_DEFS}. */
+export function seedDefaultPropertyDefs(spaceId: string, createdAt: string): void {
+  const defs = spacePropertyDefs(spaceId)
+  for (const [key, valueType, options] of DEFAULT_PROPERTY_DEFS) {
+    if (defs.has(key)) continue
+    defs.set(key, {
+      key,
+      value_type: valueType,
+      options: options && JSON.stringify(options),
+      created_at: createdAt,
+    })
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Seed loader — clears every store and re-inserts the canonical fixture.
@@ -715,22 +739,16 @@ export function seedBlocks(): void {
   blockTags.set(SEED_IDS.BLOCK_MTG_1, new Set([SEED_IDS.TAG_WORK]))
   blockTags.set(SEED_IDS.BLOCK_DAILY_3, new Set([SEED_IDS.TAG_PERSONAL]))
 
-  // -- Seed property definitions --
-  for (const [key, valueType, options] of SEEDED_PROPERTY_DEFS) {
-    propertyDefs.set(key, {
-      key,
-      value_type: valueType,
-      options: options && JSON.stringify(options),
-      created_at: '2026-01-01T00:00:00.000Z',
-    })
-  }
-  propertyDefs.set('context', {
+  // -- Seed the Personal space's property definitions --
+  seedDefaultPropertyDefs('SPACE_PERSONAL', '2026-01-01T00:00:00.000Z')
+  const personalDefs = spacePropertyDefs('SPACE_PERSONAL')
+  personalDefs.set('context', {
     key: 'context',
     value_type: 'text',
     options: null,
     created_at: new Date().toISOString(),
   })
-  propertyDefs.set('project', {
+  personalDefs.set('project', {
     key: 'project',
     value_type: 'select',
     options: JSON.stringify(['alpha', 'beta', 'gamma']),
@@ -741,7 +759,7 @@ export function seedBlocks(): void {
   // `block_properties` row referencing it, so without an unused definition the
   // delete flow cannot be exercised against a faithful mock at all. The e2e
   // spec that covers it deletes this one.
-  propertyDefs.set('reviewer', {
+  personalDefs.set('reviewer', {
     key: 'reviewer',
     value_type: 'text',
     options: null,
@@ -869,7 +887,8 @@ export function seedBlocks(): void {
  * space to survive a reload: one made with the create form lives in this
  * in-memory store, which a reload re-seeds. Gated behind
  * `localStorage['__mockWorkSpace'] === 'true'` so the default seed keeps its
- * one space. Empty, like a space the create form makes.
+ * one space. No pages and the default property definitions, like a space the
+ * create form makes.
  */
 function seedWorkSpace(): void {
   let enabled = false
@@ -880,6 +899,7 @@ function seedWorkSpace(): void {
   }
   if (!enabled) return
   blocks.set('SPACE_WORK', makeBlock('SPACE_WORK', 'page', 'Work', null, 1))
+  seedDefaultPropertyDefs('SPACE_WORK', '2026-01-01T00:00:00.000Z')
   properties.set(
     'SPACE_WORK',
     new Map([

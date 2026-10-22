@@ -219,10 +219,14 @@ export function usePropertyRowEditor({
   const canAddOption = newOptionInput.trim().length > 0
 
   const handleSaveOptions = useCallback(async () => {
-    if (!def) return
+    if (!def || currentSpaceId === null) return
     try {
       const updatedDef = unwrap(
-        await commands.updatePropertyDefOptions(def.key, JSON.stringify(editingOptions)),
+        await commands.updatePropertyDefOptions(
+          currentSpaceId,
+          def.key,
+          JSON.stringify(editingOptions),
+        ),
       )
       onDefUpdated?.(updatedDef)
       setEditOptionsOpen(false)
@@ -237,7 +241,7 @@ export function usePropertyRowEditor({
       )
       notify.error(t('pageProperty.updateOptionsFailed'))
     }
-  }, [def, editingOptions, onDefUpdated, t])
+  }, [def, currentSpaceId, editingOptions, onDefUpdated, t])
 
   // --- Ref picker popover state ---
   const [refPickerOpen, setRefPickerOpen] = useState(false)

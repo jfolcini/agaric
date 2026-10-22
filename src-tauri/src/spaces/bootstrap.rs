@@ -159,7 +159,9 @@ pub async fn bootstrap_spaces(
 
 /// The two seeded space blocks plus their `is_space` and `accent_color`
 /// properties. Each writer short-circuits when its row already exists, so a
-/// re-run / partial-resume never piles up duplicate ops.
+/// re-run / partial-resume never piles up duplicate ops. A fresh vault's
+/// Personal and Work get the default property definitions, as a space
+/// `create_space` makes does (#5841).
 ///
 /// Returns `(spaces_created, is_space_props_set, accent_props_set)`.
 async fn ensure_seeded_space_blocks(
@@ -169,7 +171,7 @@ async fn ensure_seeded_space_blocks(
     records: &mut Vec<OpRecord>,
 ) -> Result<(i32, i32, i32), AppError> {
     let personal_created =
-        ensure_space_block(tx, device_id, SPACE_PERSONAL_ULID, "Personal", records).await?;
+        ensure_seeded_space_block(tx, device_id, SPACE_PERSONAL_ULID, "Personal", records).await?;
     let personal_is_space_set =
         ensure_is_space_property(tx, state, device_id, SPACE_PERSONAL_ULID, records).await?;
     let personal_accent_set = ensure_accent_color_property(
@@ -182,7 +184,8 @@ async fn ensure_seeded_space_blocks(
     )
     .await?;
 
-    let work_created = ensure_space_block(tx, device_id, SPACE_WORK_ULID, "Work", records).await?;
+    let work_created =
+        ensure_seeded_space_block(tx, device_id, SPACE_WORK_ULID, "Work", records).await?;
     let work_is_space_set =
         ensure_is_space_property(tx, state, device_id, SPACE_WORK_ULID, records).await?;
     let work_accent_set = ensure_accent_color_property(
@@ -200,6 +203,31 @@ async fn ensure_seeded_space_blocks(
         i32::from(personal_is_space_set) + i32::from(work_is_space_set),
         i32::from(personal_accent_set) + i32::from(work_accent_set),
     ))
+}
+
+/// [`ensure_space_block`], and a block that did not exist at all gets the
+/// default property definitions (#5841). A soft-deleted one it restores keeps
+/// its own: re-adding a default its user deleted could declare a type over
+/// values that contradict it.
+async fn ensure_seeded_space_block(
+    tx: &mut CommandTx,
+    device_id: &str,
+    space_id: &str,
+    name: &str,
+    records: &mut Vec<OpRecord>,
+) -> Result<bool, AppError> {
+    let existed = sqlx::query_scalar!(
+        r#"SELECT 1 AS "v!: i32" FROM blocks WHERE id = ?"#,
+        space_id
+    )
+    .fetch_optional(&mut ***tx)
+    .await?
+    .is_some();
+    let created = ensure_space_block(tx, device_id, space_id, name, records).await?;
+    if !existed {
+        crate::commands::seed_default_property_defs_in_tx(tx, space_id).await?;
+    }
+    Ok(created)
 }
 
 /// #4775: every user-created space's own block lives in the space's doc, which

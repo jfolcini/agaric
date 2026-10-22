@@ -30,6 +30,7 @@ import {
   SYSTEM_MANAGED_PROPERTY_KEYS,
 } from '@/lib/property-save-utils'
 import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error'
+import { useSpaceStore } from '@/stores/space'
 
 // Properties designed for task blocks (content blocks with todo_state).
 // Filtered out of the "add property" popover for pages.
@@ -42,6 +43,8 @@ interface PagePropertyTableProps {
 
 export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTableProps) {
   const { t } = useTranslation()
+  // The page is in the active space, whose definitions apply (#5841).
+  const spaceId = useSpaceStore((s) => s.currentSpaceId)
   const [expanded, setExpanded] = useState(false)
   const [definitionsLoading, setDefinitionsLoading] = useState(true)
   const [properties, setProperties] = useState<PropertyRow[]>([])
@@ -103,11 +106,12 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   // the seeded property vocabulary fits well under one page, so we
   // destructure `.items` and ignore the cursor.
   useEffect(() => {
+    if (spaceId === null) return
     // A page switch can land before this answer; the older page's load must
     // not clear the new page's pending state.
     let active = true
     commands
-      .listPropertyDefs(null, null)
+      .listPropertyDefs(spaceId, null, null)
       .then(unwrap)
       .then((defsPage) => {
         if (active) setDefinitions(Array.isArray(defsPage?.items) ? defsPage.items : [])
@@ -126,7 +130,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
     return () => {
       active = false
     }
-  }, [pageId, t])
+  }, [pageId, spaceId, t])
 
   // Auto-expand and open add-popover when forceExpanded transitions to true
   const prevForceRef = useRef(false)
@@ -274,8 +278,9 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
 
   const handleCreateDef = useCallback(
     async (key: string, valueType: string, options: string | null) => {
+      if (spaceId === null) return
       try {
-        const newDef = unwrap(await commands.createPropertyDef(key, valueType, options))
+        const newDef = unwrap(await commands.createPropertyDef(spaceId, key, valueType, options))
         setDefinitions((prev) => [...prev, newDef])
         // #2804 — same rationale as `handleAddFromDef`: a brand-new
         // `DRAFT_ROW_VALUE_TYPES` def has no valid empty initializer, so add a
@@ -315,7 +320,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
         })
       }
     },
-    [pageId, t, addDraftRow],
+    [pageId, spaceId, t, addDraftRow],
   )
 
   // Definitions available for the add-property popover:

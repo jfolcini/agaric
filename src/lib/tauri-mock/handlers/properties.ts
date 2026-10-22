@@ -21,6 +21,7 @@ import {
   appErrorRejection,
   assertValidReservedPropertyValue,
   assertValidSetPropertyValue,
+  definitionSpaceOf,
   notFoundRejection,
   ownerSpaceOf,
   propertyDefinition,
@@ -36,6 +37,7 @@ import {
   properties,
   propertyDefs,
   pushOp,
+  spacePropertyDefs,
   todayDate,
 } from '@/lib/tauri-mock/seed'
 
@@ -383,8 +385,10 @@ export const propertiesHandlers = {
     let valueRef = (valueArgs?.['value_ref'] as string | null) ?? null
     const valueBool = (valueArgs?.['value_bool'] as boolean | null) ?? null
     // #2656 — mirror the real backend's op-log value validation so contract
-    // drift fails e2e/unit instead of storing an invalid value silently.
-    assertValidSetPropertyValue(key, valueText)
+    // drift fails e2e/unit instead of storing an invalid value silently. The
+    // block's space's definitions apply (#5841).
+    const defSpace = definitionSpaceOf(blockId)
+    assertValidSetPropertyValue(defSpace, key, valueText)
     // `validate_set_property`: one value, or none to clear a reserved column.
     const valueCount = [valueText, valueNum, valueDate, valueRef, valueBool].filter(
       (v) => v !== null,
@@ -399,7 +403,7 @@ export const propertiesHandlers = {
     if (
       valueText !== null &&
       valueRef === null &&
-      propertyDefinition(key)?.['value_type'] === 'ref'
+      propertyDefinition(defSpace, key)?.['value_type'] === 'ref'
     ) {
       const block = blocks.get(blockId)
       const spaceId = block ? ((block['space_id'] as string | null) ?? ownerSpaceOf(block)) : null
@@ -765,14 +769,15 @@ export const propertiesHandlers = {
 
   create_property_def: (args) => {
     const a = args as Record<string, unknown>
+    const spaceId = a['spaceId'] as string
     const key = a['key'] as string
     const valueType = a['valueType'] as string
     const options = (a['options'] as string | null) ?? null
     validatePropertyDefShape(key, valueType, options)
-    // INSERT OR IGNORE (`create_property_def_inner`): an existing declaration
-    // wins untouched, so re-asserting a key under a different value_type
-    // answers with the FIRST one rather than overwriting it.
-    const existing = propertyDefinition(key)
+    // INSERT OR IGNORE (`create_property_def_inner`): the space's existing
+    // declaration wins untouched, so re-asserting a key under a different
+    // value_type answers with the FIRST one rather than overwriting it.
+    const existing = propertyDefinition(spaceId, key)
     if (existing) return existing
     const def = {
       key,
@@ -780,34 +785,41 @@ export const propertiesHandlers = {
       options,
       created_at: new Date().toISOString(),
     }
-    propertyDefs.set(key, def)
+    spacePropertyDefs(spaceId).set(key, def)
     return { ...def, builtin: false }
   },
 
-  list_property_defs: () => ({
-    // Paginated; the mock returns every def in one page (the
-    // mock fixtures stay small enough that pagination is irrelevant).
-    // `key ASC` is the backend's ORDER BY (#3830), over the built-ins
-    // (#5841) and the user's rows together; insertion order was the mock's
-    // own, and the two differ as soon as defs are declared out of
-    // alphabetical order.
-    items: [...BUILTIN_PROPERTY_DEFS.map((def) => def.key), ...propertyDefs.keys()]
-      .toSorted(compareUtf8Bytes)
-      .map((key) => propertyDefinition(key)),
-    next_cursor: null,
-    has_more: false,
-    total_count: null,
-  }),
+  list_property_defs: (args) => {
+    const a = args as Record<string, unknown>
+    const spaceId = a['spaceId'] as string
+    return {
+      // Paginated; the mock returns every def in one page (the
+      // mock fixtures stay small enough that pagination is irrelevant).
+      // `key ASC` is the backend's ORDER BY (#3830), over the built-ins
+      // (#5841) and the space's rows together; insertion order was the mock's
+      // own, and the two differ as soon as defs are declared out of
+      // alphabetical order.
+      items: [
+        ...BUILTIN_PROPERTY_DEFS.map((def) => def.key),
+        ...(propertyDefs.get(spaceId)?.keys() ?? []),
+      ]
+        .toSorted(compareUtf8Bytes)
+        .map((key) => propertyDefinition(spaceId, key)),
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+  },
 
-  // Single-key lookup: the built-in, else the user's row, else null.
+  // Single-key lookup: the built-in, else the space's row, else null.
   get_property_def: (args) => {
     const a = args as Record<string, unknown>
-    const key = a['key'] as string
-    return propertyDefinition(key) ?? null
+    return propertyDefinition(a['spaceId'] as string, a['key'] as string) ?? null
   },
 
   update_property_def_options: (args) => {
     const a = args as Record<string, unknown>
+    const spaceId = a['spaceId'] as string
     const key = a['key'] as string
     const options = a['options'] as string
     refuseBuiltinDefinitionWrite(key)
@@ -816,32 +828,39 @@ export const propertiesHandlers = {
     if (parsePropertyDefOptions(options).length === 0) {
       throw validationRejection('options must not be empty')
     }
-    const def = propertyDefs.get(key)
+    const def = propertyDefs.get(spaceId)?.get(key)
     if (!def) throw notFoundRejection(`property definition '${key}'`)
     const valueType = def['value_type'] as string
     if (valueType !== 'select') {
       throw validationRejection(`cannot update options on '${valueType}'-type definition '${key}'`)
     }
     const updated = { ...def, options }
-    propertyDefs.set(key, updated)
+    spacePropertyDefs(spaceId).set(key, updated)
     return { ...updated, builtin: false }
   },
 
   delete_property_def: (args) => {
     const a = args as Record<string, unknown>
+    const spaceId = a['spaceId'] as string
     const key = a['key'] as string
     refuseBuiltinDefinitionWrite(key)
-    // A definition still referenced by a live `block_properties` row is
-    // refused rather than orphaning the rows, in the backend's words: the
-    // Settings screen shows them.
-    const inUse = [...properties.values()].filter((perBlock) => perBlock.has(key)).length
+    // A definition a block of the space still holds a value under is refused
+    // rather than orphaning the rows, in the backend's words: the Settings
+    // screen shows them. Trashed blocks count, as `blocks.space_id` keeps
+    // them in the space.
+    const inUse = [...properties.entries()].filter(([blockId, perBlock]) => {
+      const block = blocks.get(blockId)
+      if (!perBlock.has(key) || !block) return false
+      return ((block['space_id'] as string | null) ?? ownerSpaceOf(block)) === spaceId
+    }).length
     if (inUse > 0) {
       throw validationRejection(
         `Can't delete '${key}': ${inUse} block(s) still use it. Remove the property from them first.`,
       )
     }
-    if (!propertyDefs.has(key)) throw notFoundRejection(`property_definitions ('${key}')`)
-    propertyDefs.delete(key)
+    const defs = propertyDefs.get(spaceId)
+    if (!defs?.has(key)) throw notFoundRejection(`property definition '${key}'`)
+    defs.delete(key)
     return undefined
   },
 

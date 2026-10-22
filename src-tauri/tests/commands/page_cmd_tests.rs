@@ -2294,7 +2294,7 @@ async fn import_markdown_frontmatter_round_trips_typed_page_properties_1432() {
         ("published", "boolean"),
         ("parent_ref", "ref"),
     ] {
-        let def = create_property_def_inner(&pool, key.into(), ty.into(), None)
+        let def = create_test_property_def(&pool, key.into(), ty.into(), None)
             .await
             .unwrap();
         assert_eq!(def.value_type, ty, "def '{key}' must have type '{ty}'");
@@ -2486,7 +2486,7 @@ async fn import_markdown_frontmatter_ref_is_space_scoped_1432() {
 
     // Declare two ref-typed property defs.
     for key in ["cross_ref", "local_ref"] {
-        let def = create_property_def_inner(&pool, key.into(), "ref".into(), None)
+        let def = create_test_property_def(&pool, key.into(), "ref".into(), None)
             .await
             .unwrap();
         assert_eq!(def.value_type, "ref");
@@ -2964,7 +2964,7 @@ async fn everything_page(pool: &SqlitePool, mat: &Materializer) -> BlockId {
         ("review_on", "date"),
         ("reviewer", "ref"),
     ] {
-        create_property_def_inner(pool, key.into(), value_type.into(), None)
+        create_test_property_def(pool, key.into(), value_type.into(), None)
             .await
             .unwrap();
     }
@@ -3136,7 +3136,7 @@ async fn apply_page_source_sets_and_deletes_properties() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let page = dup_page(&pool, &mat, "Props").await;
-    create_property_def_inner(&pool, "reviewer".into(), "ref".into(), None)
+    create_test_property_def(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();
     let target = dup_child(&pool, &mat, &page, "the reviewer").await;
@@ -3201,7 +3201,7 @@ async fn apply_page_source_reads_a_ref_value_as_an_id_or_a_title() {
     let project = dup_page(&pool, &mat, "Project").await;
     dup_page(&pool, &mat, "Twin").await;
     dup_page(&pool, &mat, "twin").await;
-    create_property_def_inner(&pool, "reviewer".into(), "ref".into(), None)
+    create_test_property_def(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();
     let plain = dup_child(&pool, &mat, &page, "plain").await;
@@ -5156,7 +5156,7 @@ async fn duplicate_block_carries_task_columns_list_style_and_typed_properties() 
         ("review_on", "date", None),
         ("stage", "select", Some(r#"["draft","final"]"#)),
     ] {
-        create_property_def_inner(
+        create_test_property_def(
             &pool,
             key.into(),
             value_type.into(),
@@ -5237,7 +5237,7 @@ async fn duplicate_block_points_a_declared_ref_at_the_original_target() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let page = dup_page(&pool, &mat, "Dup").await;
-    create_property_def_inner(&pool, "reviewer".into(), "ref".into(), None)
+    create_test_property_def(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();
     let target = dup_child(&pool, &mat, &page, "the reviewer").await;
@@ -5282,7 +5282,7 @@ async fn duplicate_block_copies_a_value_its_key_no_longer_offers() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let page = dup_page(&pool, &mat, "Dup").await;
-    create_property_def_inner(
+    create_test_property_def(
         &pool,
         "stage".into(),
         "select".into(),
@@ -5306,7 +5306,7 @@ async fn duplicate_block_copies_a_value_its_key_no_longer_offers() {
     )
     .await
     .unwrap();
-    update_property_def_options_inner(&pool, "stage".into(), r#"["draft"]"#.into())
+    update_property_def_options_inner(&pool, TEST_SPACE_ID, "stage".into(), r#"["draft"]"#.into())
         .await
         .unwrap();
     settle(&mat).await;
@@ -5874,7 +5874,7 @@ async fn a_copy_pastes_back_as_the_blocks_it_was_copied_from() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let page = dup_page(&pool, &mat, "Copy").await;
-    create_property_def_inner(&pool, "reviewer".into(), "ref".into(), None)
+    create_test_property_def(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();
     let target = dup_child(&pool, &mat, &page, "target").await;
@@ -16527,7 +16527,7 @@ async fn import_round_trips_typed_descendant_block_property_2982() {
     // "score" collides with none of the built-in or seeded defs
     // (status/priority/effort/due_date/todo_state/scheduled_date/space/
     // is_space/repeat*/…), so declaring it fresh here is unambiguous.
-    let def = create_property_def_inner(&pool, "score".into(), "number".into(), None)
+    let def = create_test_property_def(&pool, "score".into(), "number".into(), None)
         .await
         .unwrap();
     assert_eq!(def.value_type, "number");

@@ -45,7 +45,7 @@ use super::super::*;
 pub const IMPORT_BIB_CHUNK_ENTRIES: usize = 200;
 
 /// The typed property definitions a bibliography import *prefers* for its
-/// eight keys. A preference, not a guarantee: the vault's existing shape
+/// eight keys. A preference, not a guarantee: the space's existing shape
 /// for a key always wins, and the import coerces its own values to that
 /// shape instead (see [`declare_bib_property_defs`] for the two ways a key
 /// can already have a shape, and why declaring over either would be
@@ -90,18 +90,18 @@ fn citation_display_name(entry: &BibEntry) -> String {
     }
 }
 
-/// Declare the [`BIB_PROPERTY_DEFS`] the vault has no shape for yet, and
-/// fold what was declared into `decls` (#4382).
+/// Declare in `space_id` the [`BIB_PROPERTY_DEFS`] the space has no shape for
+/// yet, and fold what was declared into `decls` (#4382).
 ///
 /// `decls` arrives holding the `property_definitions` rows that already
-/// exist for the import's eight keys, read from `tx`. A key already in
-/// `decls` is left alone — `INSERT OR IGNORE` would no-op anyway.
+/// exist in the space for the import's eight keys, read from `tx`. A key
+/// already in `decls` is left alone — `INSERT OR IGNORE` would no-op anyway.
 ///
 /// # Why an UNdeclared key can also be unsafe to declare
 ///
-/// A `property_definitions` row is keyed by `key` alone, so declaring one
-/// constrains every block in the vault, not just the pages this import
-/// creates. The dangerous case is a key with existing **values** and no
+/// A `property_definitions` row is keyed by `(space_id, key)`, so declaring
+/// one constrains every block in the space (#5841), not just the pages this
+/// import creates. The dangerous case is a key with existing **values** and no
 /// declaration — the ordinary state, since an undeclared key is fully
 /// permissive: `validate_property_value` skips its type check when
 /// `declaration` is `None`, so for a non-reserved key (none of the eight
@@ -136,17 +136,18 @@ fn citation_display_name(entry: &BibEntry) -> String {
 /// the narrowing is one-way while any value under the key exists. Milder
 /// than `year`, still not this import's decision to make.
 ///
-/// So: **the vault's existing shape for a key wins, declared or not.** An
+/// So: **the space's existing shape for a key wins, declared or not.** An
 /// in-use-but-undeclared key stays undeclared and this import's values for
 /// it are coerced to that permissive shape, the same shape the user's
 /// existing values already have. Declaring is the branch that can leave
-/// the vault internally inconsistent; this one cannot.
+/// the space internally inconsistent; this one cannot.
 ///
 /// Reported through [`ImportBibliographyResult::warnings`] rather than
 /// failing the import: a legitimate pre-existing use of `year` elsewhere
 /// is no reason to refuse to import a bibliography.
 async fn declare_bib_property_defs(
     tx: &mut CommandTx,
+    space_id: &str,
     decls: &mut HashMap<String, (String, Option<String>)>,
     warnings: &mut Vec<String>,
 ) -> Result<(), AppError> {
@@ -165,16 +166,19 @@ async fn declare_bib_property_defs(
     }
 
     // ONE batched `json_each` probe (the established import idiom): which
-    // of those keys any block already holds a value under. Deliberately
-    // does not filter `blocks.deleted_at`, because the blocking COUNT(*) in
-    // `delete_property_def_inner` does not either — narrowing the condition
-    // would let the trap back in through a soft-deleted block.
+    // of those keys any block of the space already holds a value under.
+    // Deliberately does not filter `blocks.deleted_at`, because the blocking
+    // COUNT(*) in `delete_property_def_inner` does not either — narrowing the
+    // condition would let the trap back in through a soft-deleted block.
     let keys_json = serde_json::to_string(&undeclared)?;
     let in_use: HashSet<String> = sqlx::query_scalar!(
-        r#"SELECT DISTINCT key AS "key!: String"
-           FROM block_properties
-           WHERE key IN (SELECT value FROM json_each(?1))"#,
+        r#"SELECT DISTINCT bp.key AS "key!: String"
+           FROM block_properties bp
+           JOIN blocks b ON b.id = bp.block_id
+           WHERE bp.key IN (SELECT value FROM json_each(?1))
+             AND b.space_id = ?2"#,
         keys_json,
+        space_id,
     )
     .fetch_all(&mut ***tx)
     .await?
@@ -211,13 +215,13 @@ async fn declare_bib_property_defs(
                 )
             };
             warnings.push(format!(
-                "property '{key}' left undeclared: blocks in this vault already hold values \
+                "property '{key}' left undeclared: blocks in this space already hold values \
                  under this key, and {consequence}; this import's '{key}' values are stored \
                  as text"
             ));
             continue;
         }
-        create_property_def_in_tx(tx, key, value_type, None).await?;
+        create_property_def_in_tx(tx, space_id, key, value_type, None).await?;
         decls.insert((*key).to_string(), ((*value_type).to_string(), None));
     }
 
@@ -332,6 +336,7 @@ async fn fetch_taken_page_titles(
 /// safe to create back into the map.
 async fn fetch_bib_property_declarations(
     tx: &mut CommandTx,
+    space_id: &str,
 ) -> Result<HashMap<String, (String, Option<String>)>, AppError> {
     Ok({
         let keys: Vec<&str> = BIB_PROPERTY_DEFS.iter().map(|(k, _)| *k).collect();
@@ -339,8 +344,9 @@ async fn fetch_bib_property_declarations(
         let rows = sqlx::query!(
             r#"SELECT key AS "key!", value_type, options
                FROM property_definitions
-               WHERE key IN (SELECT value FROM json_each(?1))"#,
+               WHERE space_id = ?2 AND key IN (SELECT value FROM json_each(?1))"#,
             keys_json,
+            space_id,
         )
         .fetch_all(&mut ***tx)
         .await?;
@@ -642,12 +648,12 @@ async fn import_bib_entries(
     let (mut existing_keys, mut existing_dois) =
         fetch_existing_citation_keys_and_dois(&mut tx, space_id).await?;
     let mut used_titles = fetch_taken_page_titles(&mut tx, space_id, entries).await?;
-    let mut decls = fetch_bib_property_declarations(&mut tx).await?;
+    let mut decls = fetch_bib_property_declarations(&mut tx, space_id).await?;
 
     // #4382 — declare the import's typed property definitions, but only for
-    // keys the vault has no shape for yet. In the same transaction as the
+    // keys the space has no shape for yet. In the same transaction as the
     // read above, so the check and the write cannot be split.
-    declare_bib_property_defs(&mut tx, &mut decls, &mut warnings).await?;
+    declare_bib_property_defs(&mut tx, space_id, &mut decls, &mut warnings).await?;
 
     // KNOWN WINDOW (#4395 review note 5), recorded rather than fixed here.
     // `decls` is read once, in this first chunk, and a SKIPPED key stays
@@ -798,9 +804,8 @@ pub async fn import_bibliography_inner(
     }
 
     // NOTE (#4382): the typed property definitions are NOT declared here.
-    // Declaring a key is globally visible (`property_definitions` is keyed
-    // by `key` alone), so the decision needs the same transaction as the
-    // check that guards it — see `declare_bib_property_defs`, called from
+    // Declaring a key constrains every block of the space, so the decision
+    // needs the same transaction as the check that guards it — see `declare_bib_property_defs`, called from
     // inside the first chunk's `BEGIN IMMEDIATE` in `import_bib_entries`.
     import_bib_entries(pool, device_id, materializer, &entries, &space_id, warnings).await
 }

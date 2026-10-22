@@ -5,8 +5,11 @@ import {
   activeMenu,
   activePopover,
   activeSheet,
+  chooseSelectOption,
   expect,
+  navigateToView,
   openPage,
+  openSettingsTab,
   test,
   waitForBoot,
 } from './helpers'
@@ -44,7 +47,7 @@ function ipc<T>(page: Page, cmd: string, args: unknown): Promise<T> {
 }
 
 function storedDefinition(page: Page, key: string): Promise<unknown> {
-  return ipc(page, 'get_property_def', { key })
+  return ipc(page, 'get_property_def', { spaceId: 'SPACE_PERSONAL', key })
 }
 
 // ===========================================================================
@@ -496,6 +499,7 @@ test.describe('Property definitions view @editor', () => {
             __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
           }
         ).__TAURI_INTERNALS__.invoke('update_property_def_options', {
+          spaceId: 'SPACE_PERSONAL',
           key: 'priority',
           options: '["P0","1","2","3"]',
         })
@@ -509,5 +513,56 @@ test.describe('Property definitions view @editor', () => {
     await expect
       .poll(() => storedDefinition(page, 'priority'))
       .toMatchObject({ options: '["1","2","3"]', builtin: true })
+  })
+})
+
+// ===========================================================================
+// 6. Definitions are per space (#5841)
+// ===========================================================================
+
+test.describe('Per-space property definitions @editor @spaces @settings', () => {
+  const DEFINITIONS_IN = 'Definitions in'
+
+  test.beforeEach(async ({ page }) => {
+    // A second space, Work, seeded with the defaults a new space starts with.
+    await page.addInitScript(() => window.localStorage.setItem('__mockWorkSpace', 'true'))
+    await waitForBoot(page)
+  })
+
+  async function openPropertiesSettings(page: Page) {
+    await navigateToView(page, 'Settings')
+    await openSettingsTab(page, 'Properties')
+    const panel = page.getByTestId('settings-panel-properties')
+    await expect(panel.getByRole('combobox', { name: DEFINITIONS_IN })).toBeVisible()
+    return panel
+  }
+
+  test("the selector lists the picked space's definitions", async ({ page }) => {
+    const panel = await openPropertiesSettings(page)
+    const row = (key: string) => panel.locator('ul > li', { hasText: key })
+
+    // The active space, Personal, is the default.
+    await expect(panel.getByRole('combobox', { name: DEFINITIONS_IN })).toHaveText('Personal')
+    await expect(row('context')).toBeVisible()
+
+    await chooseSelectOption(page, DEFINITIONS_IN, 'Work')
+    await expect(row('status')).toContainText('select')
+    await expect(row('context')).toHaveCount(0)
+
+    await chooseSelectOption(page, DEFINITIONS_IN, 'Personal')
+    await expect(row('context')).toBeVisible()
+  })
+
+  test('copies a definition to another space, where it stays', async ({ page }) => {
+    let panel = await openPropertiesSettings(page)
+    await panel.getByRole('button', { name: 'Copy project to another space' }).click()
+    await activePopover(page).getByRole('button', { name: 'Work', exact: true }).click()
+    await expect(page.getByText('Copied project to Work')).toBeVisible()
+
+    // Leave the view and come back: the copy is in Work's stored definitions.
+    await navigateToView(page, 'Journal')
+    panel = await openPropertiesSettings(page)
+    await chooseSelectOption(page, DEFINITIONS_IN, 'Work')
+    await expect(panel.locator('ul > li', { hasText: 'project' })).toContainText('select')
   })
 })

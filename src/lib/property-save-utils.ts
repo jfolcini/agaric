@@ -244,8 +244,8 @@ export function carriedRenameDefinition(
  * - Builtin (`NON_DELETABLE_PROPERTIES`) and column-backed keys —
  *   `create_property_def` refuses a built-in key outright (#5841), and a
  *   column-backed key's shape is fixed by the `blocks` column.
- * - A key that is ALREADY declared — `create_property_def` is INSERT OR
- *   IGNORE, so nothing would be created anyway, and the existing row is the
+ * - A key that is ALREADY declared in `spaceId` — `create_property_def` is
+ *   INSERT OR IGNORE, so nothing would be created anyway, and the existing row is the
  *   user's, never this rename's to withdraw.
  * - A key any block already holds a value for — `list_property_keys` is the
  *   distinct `block_properties` key list, the same predicate the delete's
@@ -270,9 +270,9 @@ export function carriedRenameDefinition(
  * Throws whatever the two lookups throw; the caller treats a failed
  * pre-flight like a failed copy (best-effort, rename proceeds).
  */
-export async function renameMayDeclareKey(newKey: string): Promise<boolean> {
+export async function renameMayDeclareKey(spaceId: string, newKey: string): Promise<boolean> {
   if (NON_DELETABLE_PROPERTIES.has(newKey) || COLUMN_BACKED_PROPERTY_KEYS.has(newKey)) return false
-  if (unwrap(await commands.getPropertyDef(newKey)) != null) return false
+  if (unwrap(await commands.getPropertyDef(spaceId, newKey)) != null) return false
   return !unwrap(await commands.listPropertyKeys()).includes(newKey)
 }
 

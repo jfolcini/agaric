@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT COUNT(*) FROM block_properties WHERE key = ?",
+  "query": "SELECT COUNT(*) FROM property_definitions WHERE space_id = ?",
   "describe": {
     "columns": [
       {
@@ -17,5 +17,5 @@
       false
     ]
   },
-  "hash": "bea618f1e0fc555c947f98a324e76520848eb351c832aaaf204e42909f4444e0"
+  "hash": "70a0d2a69f2f0b2ef7101b2d1945e79c055db5afe654c63c9daa66d98c1f2234"
 }

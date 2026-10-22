@@ -15,6 +15,7 @@ import { usePageTemplateMeta } from '@/hooks/usePageTemplateMeta'
 import type { PropertyRow } from '@/lib/bindings'
 import { EVENT_PROPERTY_CHANGED } from '@/lib/block-event-names'
 import { _resetPropertyChangeDispatchForTest } from '@/lib/property-change-dispatch'
+import { useSpaceStore } from '@/stores/space'
 
 const eventListeners = new Map<string, (event: unknown) => void>()
 
@@ -81,6 +82,8 @@ beforeEach(() => {
   // The dispatcher's listener only registers inside Tauri.
   ;(window as unknown as { __TAURI_INTERNALS__: object }).__TAURI_INTERNALS__ = {}
   storedRows = []
+  // The page's definitions are the active space's (#5841).
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
   mockedInvoke.mockImplementation(
     mockInvokeCommands({
       get_properties: () => storedRows,

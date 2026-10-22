@@ -421,6 +421,10 @@ pub async fn create_page_in_space(
 /// The new block is created with `parent_id = None` and `position = None`
 /// (append-after-last-sibling) — every space is top-level by definition.
 ///
+/// The space starts with the built-in property definitions and the editable
+/// [`DEFAULT_PROPERTY_DEFS`](crate::commands::DEFAULT_PROPERTY_DEFS), not a
+/// copy of another space's (#5841).
+///
 /// If `accent_color` is `Some(...)`, an additional
 /// `SetProperty(key = "accent_color")` op is appended in the same
 /// Transaction. The accent color is consumed by (visual
@@ -516,6 +520,8 @@ pub async fn create_space_inner(
         .await?;
         tx.enqueue_background(accent_op);
     }
+
+    crate::commands::seed_default_property_defs_in_tx(&mut tx, new_space_id.as_str()).await?;
 
     tx.commit_and_dispatch(materializer).await?;
     Ok(new_space_id)

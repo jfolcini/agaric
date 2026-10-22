@@ -50,6 +50,7 @@ import {
   propertyDefs,
   pushOp,
   seedBlocks,
+  spacePropertyDefs,
 } from '@/lib/tauri-mock/seed'
 
 export interface Fixture {
@@ -223,8 +224,9 @@ export function loadSeed(fixture: Fixture): void {
     if (!row) continue
     row['page_id'] = row['block_type'] === 'page' ? id : resolveRootPageId(row)
   }
+  // The harness space's definitions (#5841), as the Rust seed declares them.
   for (const d of fixture.seed.property_defs ?? []) {
-    propertyDefs.set(d['key'] as string, {
+    spacePropertyDefs(CONFORMANCE_SPACE_ID).set(d['key'] as string, {
       key: d['key'],
       value_type: d['value_type'],
       options: d['options'] ?? null,
@@ -384,6 +386,9 @@ export function expandOpArgs(
   ]) {
     if (typeof out[key] === 'string') out[key] = resolveOpArgId(out[key] as string, createdIds)
   }
+  // `$SPACE` names the harness space, as inside a `scope` below. Mirror of the
+  // Rust runner's `arg_label_id`.
+  if (args['spaceId'] === '$SPACE') out['spaceId'] = CONFORMANCE_SPACE_ID
   // #5236 — `create_block` takes its space as the wire's `scope` object; the
   // `space_id` inside is a label like `spaceId`, or `$SPACE` for the harness
   // space. Mirror of the Rust runner's `scope()`.

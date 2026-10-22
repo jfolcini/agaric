@@ -108,7 +108,7 @@ describe('set_property mock gate (#3647)', () => {
   it('rejects a malformed repeat rule with the coded validation error', () => {
     let caught: unknown
     try {
-      assertValidSetPropertyValue('repeat', '++ 1d')
+      assertValidSetPropertyValue(null, 'repeat', '++ 1d')
     } catch (err) {
       caught = err
     }
@@ -119,10 +119,10 @@ describe('set_property mock gate (#3647)', () => {
   })
 
   it('accepts a valid repeat rule', () => {
-    expect(() => assertValidSetPropertyValue('repeat', '++1d')).not.toThrow()
+    expect(() => assertValidSetPropertyValue(null, 'repeat', '++1d')).not.toThrow()
   })
 
   it('leaves other keys alone', () => {
-    expect(() => assertValidSetPropertyValue('assignee', '++ 1d')).not.toThrow()
+    expect(() => assertValidSetPropertyValue(null, 'assignee', '++ 1d')).not.toThrow()
   })
 })

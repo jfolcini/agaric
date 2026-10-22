@@ -220,7 +220,7 @@ async fn apply_page_source_refuses_an_invalid_front_matter_value_by_its_line() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let (page, _) = front_matter_page(&pool, &mat).await;
-    create_property_def_inner(&pool, "estimate".into(), "number".into(), None)
+    create_test_property_def(&pool, "estimate".into(), "number".into(), None)
         .await
         .unwrap();
     let base = page_source(&pool, &page).await;

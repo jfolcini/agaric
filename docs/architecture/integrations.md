@@ -29,7 +29,7 @@ One socket, one marker file (`mcp-enabled`):
 - **Read-only agents**: list pages, get page, read a page as Markdown, search, get block, list backlinks, list tags, list property definitions, get agenda, fetch journal page by date, list spaces.
 - **Read-write agents**: append block, update block content, set property, add tag, create page, delete block, …, then every read-only tool.
 
-`list_spaces` returns `{ id, name, is_default }` for every space the agent may use; it is the discovery surface for the `space_id` every tool but `list_spaces` and `list_property_defs` requires. Wire names live as `TOOL_*` constants in `src-tauri/src/mcp/registry.rs`; the authoritative advertised and dispatched sets are `list_tool_descriptions()` and the `call_tool()` match arms in `tools_ro.rs` / `tools_rw.rs`.
+`list_spaces` returns `{ id, name, is_default }` for every space the agent may use; it is the discovery surface for the `space_id` every tool but `list_spaces` requires. Wire names live as `TOOL_*` constants in `src-tauri/src/mcp/registry.rs`; the authoritative advertised and dispatched sets are `list_tool_descriptions()` and the `call_tool()` match arms in `tools_ro.rs` / `tools_rw.rs`.
 
 ### `ToolRegistry` trait
 
@@ -49,11 +49,10 @@ One socket, one marker file (`mcp-enabled`):
 6. Refresh the matching `tool_descriptions` insta snapshot and add or refresh the tool's response
    snapshot when its test pins a response envelope.
 
-Every tool requires `space_id` except `list_spaces` and `list_property_defs` (property
-definitions are vault-wide). Reads are confined to that space, a tool that addresses a block or
-page by id rejects a target in another space, and `create_page` uses it to select the destination
-space. An agent limited to some spaces is refused any other; this guards against mistakes and is
-not isolation. See [Agent Access → Space scoping](../features/agent-access.md#space-scoping) for
+Every tool requires `space_id` except `list_spaces`. Reads are confined to that space, a tool
+that addresses a block or page by id rejects a target in another space, and `create_page` uses it
+to select the destination space. An agent limited to some spaces is refused any other; this guards
+against mistakes and is not isolation. See [Agent Access → Space scoping](../features/agent-access.md#space-scoping) for
 the full contract and the gaps it accepts.
 
 The MCP `search` tool takes `parent_id`, `tag_ids`, and `space_id` as **top-level** arguments (alongside `query`, `cursor`, `limit`) — `space_id` is required, the other two are optional. Everything else is carried by an optional structured `filter` arg that mirrors the user-facing `SearchFilter` minus those three already-top-level slots: `include_page_globs`, `exclude_page_globs`, `state_filter`, `priority_filter`, `excluded_state_filter`, `excluded_priority_filter`, `due_filter`, `scheduled_filter`, `property_filters`, `excluded_property_filters`, `block_type_filter`, `case_sensitive`, `whole_word`, `is_regex`, `last_edited`. (`SearchFilterArgs` in `src-tauri/src/mcp/tools_ro.rs` is `deny_unknown_fields`, so passing `parent_id`/`tag_ids`/`space_id` *inside* `filter` is rejected.) Inline filter syntax (`tag:` / `state:` / `prop:`…) is **not** re-parsed from `query` at the MCP boundary — agents pass structured arguments. Omitting `filter` preserves the prior query-string-only behaviour. Its `tag_ids` also match inline `#tag` references and inherited tags (`SearchFilter::tags_match_inline_and_inherited`), which the app's search does only for an `under:#tag` query.

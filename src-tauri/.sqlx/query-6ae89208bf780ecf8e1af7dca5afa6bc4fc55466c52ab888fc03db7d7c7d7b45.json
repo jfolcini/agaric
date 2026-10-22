@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT\n             COUNT(*)                                                            AS \"total!: i64\",\n             COALESCE(SUM(CASE WHEN value_text IS NOT NULL THEN 1 ELSE 0 END), 0) AS \"n_text!: i64\",\n             COALESCE(SUM(CASE WHEN value_num  IS NOT NULL THEN 1 ELSE 0 END), 0) AS \"n_num!: i64\",\n             COALESCE(SUM(CASE WHEN value_date IS NOT NULL THEN 1 ELSE 0 END), 0) AS \"n_date!: i64\",\n             COALESCE(SUM(CASE WHEN value_ref  IS NOT NULL THEN 1 ELSE 0 END), 0) AS \"n_ref!: i64\",\n             COALESCE(SUM(CASE WHEN value_bool IS NOT NULL THEN 1 ELSE 0 END), 0) AS \"n_bool!: i64\"\n           FROM block_properties\n           WHERE key = ?1",
+  "query": "SELECT\n             COUNT(*)                                                               AS \"total!: i64\",\n             COALESCE(SUM(CASE WHEN bp.value_text IS NOT NULL THEN 1 ELSE 0 END), 0) AS \"n_text!: i64\",\n             COALESCE(SUM(CASE WHEN bp.value_num  IS NOT NULL THEN 1 ELSE 0 END), 0) AS \"n_num!: i64\",\n             COALESCE(SUM(CASE WHEN bp.value_date IS NOT NULL THEN 1 ELSE 0 END), 0) AS \"n_date!: i64\",\n             COALESCE(SUM(CASE WHEN bp.value_ref  IS NOT NULL THEN 1 ELSE 0 END), 0) AS \"n_ref!: i64\",\n             COALESCE(SUM(CASE WHEN bp.value_bool IS NOT NULL THEN 1 ELSE 0 END), 0) AS \"n_bool!: i64\"\n           FROM block_properties bp\n           JOIN blocks b ON b.id = bp.block_id\n           WHERE bp.key = ?1 AND b.space_id = ?2",
   "describe": {
     "columns": [
       {
@@ -41,7 +41,7 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 2
     },
     "nullable": [
       false,
@@ -52,5 +52,5 @@
       false
     ]
   },
-  "hash": "194ea2e3109a55b5732e57683cd3b5dcc4c75a7874d86850c6d701f3aaf8666e"
+  "hash": "6ae89208bf780ecf8e1af7dca5afa6bc4fc55466c52ab888fc03db7d7c7d7b45"
 }

@@ -52,6 +52,8 @@ function stored(): { row: BlockRow; properties: PropertyRow[] } {
 describe('commitInlineProperties (#5160 Phase 4b)', () => {
   beforeEach(() => {
     seedBlocks()
+    // The block is in the active space, whose definitions apply (#5841).
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
     vi.clearAllMocks()
     vi.mocked(invoke).mockImplementation(async (cmd: string, args?: InvokeArgs) =>
       dispatch(cmd, args),
@@ -81,7 +83,12 @@ describe('commitInlineProperties (#5160 Phase 4b)', () => {
   })
 
   it('a value a `date` definition refuses stays as text, as in the app', async () => {
-    dispatch('create_property_def', { key: 'due', valueType: 'date', options: null })
+    dispatch('create_property_def', {
+      spaceId: 'SPACE_PERSONAL',
+      key: 'due',
+      valueType: 'date',
+      options: null,
+    })
     const edit = await commit('task\ndue:: soon')
 
     expect(edit).toHaveBeenCalledExactlyOnceWith(BLOCK, 'task\ndue:: soon')
@@ -91,7 +98,12 @@ describe('commitInlineProperties (#5160 Phase 4b)', () => {
 
   it('a ref value names a page by title or `[[id]]`, and one naming none stays text (D11)', async () => {
     for (const key of ['owner', 'approver', 'watcher']) {
-      dispatch('create_property_def', { key, valueType: 'ref', options: null })
+      dispatch('create_property_def', {
+        spaceId: 'SPACE_PERSONAL',
+        key,
+        valueType: 'ref',
+        options: null,
+      })
     }
 
     const edit = await commit(
@@ -125,7 +137,12 @@ describe('commitInlineProperties (#5160 Phase 4b)', () => {
   })
 
   it('a value that cannot be stored stays as text, and one toast names it (D11)', async () => {
-    dispatch('create_property_def', { key: 'estimate', valueType: 'number', options: null })
+    dispatch('create_property_def', {
+      spaceId: 'SPACE_PERSONAL',
+      key: 'estimate',
+      valueType: 'number',
+      options: null,
+    })
 
     const edit = await commit('task\nproject:: delta\nEstimate:: lots\ncontext:: @desk')
 
@@ -139,7 +156,12 @@ describe('commitInlineProperties (#5160 Phase 4b)', () => {
   })
 
   it('a key that folds to two definitions names neither and stays as typed (D13)', async () => {
-    dispatch('create_property_def', { key: 'due-date', valueType: 'text', options: null })
+    dispatch('create_property_def', {
+      spaceId: 'SPACE_PERSONAL',
+      key: 'due-date',
+      valueType: 'text',
+      options: null,
+    })
 
     const edit = await commit('task\nDue-Date:: soon')
 

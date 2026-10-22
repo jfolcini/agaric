@@ -1,0 +1,319 @@
+{
+  "description": "#5841 S0.5 — property definitions are per space, keyed `(space_id, key)`. The harness space declares `stage` as a select; a space `create_space` makes starts with the built-ins and the editable defaults (`status`, `url`, `effort`, `assignee`, `location`) and none of another space's rows. Each write names its space (`spaceId`), so the same key carries a different type per space, a value is checked against its own space's definition, and a delete counts only its own space's values. Query steps cannot name an op-created space, so the new space is read back through the command leg: the INSERT OR IGNORE create answers the default it keeps. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Other",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 3,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "stage",
+        "value": "draft",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B3",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "create_the_other_space",
+      "returns": ["create_space#space_id=B3"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_new_space_holds_the_default_status",
+      "returns": [
+        "status#value_type=select#options=[\"active\",\"paused\",\"done\",\"archived\"]#builtin=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_same_key_is_text_in_the_other_space",
+      "returns": ["stage#value_type=text#options=null#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_value_is_checked_against_its_own_space",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "widen_the_harness_spaces_options",
+      "returns": [
+        "stage#value_type=select#options=[\"draft\",\"final\",\"archived\"]#builtin=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_used_definition_stays",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_other_spaces_definition_goes",
+      "returns": ["delete_property_def"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_other_space_declares_stage_afresh",
+      "returns": ["stage#value_type=number#options=null#builtin=false"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "the_harness_space_lists_only_its_own_rows",
+      "rows": [
+        "completed_at#value_type=date#options=null#builtin=true",
+        "created_at#value_type=date#options=null#builtin=true",
+        "due_date#value_type=date#options=null#builtin=true",
+        "is_space#value_type=select#options=[\"true\"]#builtin=true",
+        "listStyle#value_type=select#options=[\"bullet\",\"ordered\"]#builtin=true",
+        "priority#value_type=select#options=[\"1\",\"2\",\"3\"]#builtin=true",
+        "repeat#value_type=text#options=null#builtin=true",
+        "repeat-count#value_type=number#options=null#builtin=true",
+        "repeat-origin#value_type=text#options=null#builtin=true",
+        "repeat-seq#value_type=number#options=null#builtin=true",
+        "repeat-until#value_type=date#options=null#builtin=true",
+        "scheduled_date#value_type=date#options=null#builtin=true",
+        "space#value_type=ref#options=null#builtin=true",
+        "stage#value_type=select#options=[\"draft\",\"final\",\"archived\"]#builtin=false",
+        "todo_state#value_type=select#options=[\"TODO\",\"DOING\",\"DONE\",\"CANCELLED\"]#builtin=true"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "the_other_spaces_default_is_not_here",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "property_defs_per_space",
+  "ops": [
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Other"
+      },
+      "command": "create_space",
+      "comment": "The second space, `C1`.",
+      "name": "create_the_other_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "status",
+        "options": null,
+        "spaceId": "C1",
+        "valueType": "text"
+      },
+      "command": "create_property_def",
+      "comment": "A new space holds the default `status` select, so this INSERT OR IGNORE answers it, options and all, rather than the text this op asked for.",
+      "name": "the_new_space_holds_the_default_status",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "stage",
+        "options": null,
+        "spaceId": "C1",
+        "valueType": "text"
+      },
+      "command": "create_property_def",
+      "comment": "The harness space declares `stage` as a select; the new space did not copy it, so this declares `stage` as text there.",
+      "name": "the_same_key_is_text_in_the_other_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "stage",
+        "value": {
+          "value_text": "shipped"
+        }
+      },
+      "command": "set_property",
+      "comment": "S2 is in the harness space, whose `stage` is a select without `shipped`: refused, though the other space's text `stage` would take it.",
+      "expect_error": "validation",
+      "name": "a_value_is_checked_against_its_own_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "stage",
+        "value": {
+          "value_text": "draft"
+        }
+      },
+      "command": "set_property",
+      "comment": "One of the harness space's options."
+    },
+    {
+      "args": {
+        "key": "stage",
+        "options": "[\"draft\",\"final\",\"archived\"]",
+        "spaceId": "$SPACE"
+      },
+      "command": "update_property_def_options",
+      "comment": "Widening the harness space's options leaves the other space's text `stage` alone.",
+      "name": "widen_the_harness_spaces_options",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "stage",
+        "spaceId": "$SPACE"
+      },
+      "command": "delete_property_def",
+      "comment": "S2 holds a `stage` value in the harness space, so its definition stays.",
+      "expect_error": "validation",
+      "name": "a_used_definition_stays",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "stage",
+        "spaceId": "C1"
+      },
+      "command": "delete_property_def",
+      "comment": "No block of the other space holds `stage`, so its definition goes, whatever the harness space's blocks hold.",
+      "name": "the_other_spaces_definition_goes",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "stage",
+        "options": null,
+        "spaceId": "C1",
+        "valueType": "number"
+      },
+      "command": "create_property_def",
+      "comment": "Gone from the other space: the key can be declared afresh there, as a number.",
+      "name": "the_other_space_declares_stage_afresh",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "spaceId": "$SPACE"
+      },
+      "command": "list_property_defs",
+      "comment": "The harness space: the built-ins and its own widened `stage` select, and none of the defaults the other space was made with.",
+      "name": "the_harness_space_lists_only_its_own_rows"
+    },
+    {
+      "args": {
+        "key": "status",
+        "spaceId": "$SPACE"
+      },
+      "command": "get_property_def",
+      "comment": "The other space's default `status` is not the harness space's.",
+      "expect_empty": true,
+      "name": "the_other_spaces_default_is_not_here"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "property_defs": [
+      {
+        "key": "stage",
+        "options": "[\"draft\",\"final\"]",
+        "value_type": "select"
+      }
+    ],
+    "tags": []
+  }
+}

@@ -152,6 +152,7 @@ import {
 } from '@/components/editor/BlockPropertyEditor'
 import { logger } from '@/lib/logger'
 import { NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
+import { useSpaceStore } from '@/stores/space'
 
 // Make rAF synchronous so the deferred outside-click registration runs
 // immediately within the test's microtask flush.
@@ -160,6 +161,8 @@ beforeEach(() => {
     cb(0)
     return 0
   })
+  // Definitions are per space; the edited block is in the active one (#5841).
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
 })
 
 function makeProps(overrides: Partial<BlockPropertyEditorProps> = {}): BlockPropertyEditorProps {
@@ -1010,12 +1013,12 @@ describe('BlockPropertyEditor', () => {
       { key: string; value_type: string; options: string | null; created_at: string }
     > {
       const defs = new Map(seed.map((d) => [d.key, { ...d, created_at: 'T' }]))
-      mockGetPropertyDef.mockImplementation((key: string) =>
+      mockGetPropertyDef.mockImplementation((_spaceId: string, key: string) =>
         Promise.resolve({ status: 'ok', data: defs.get(key) ?? null }),
       )
       // `create_property_def_inner` refuses every built-in key (#5841).
       mockCreatePropertyDef.mockImplementation(
-        (key: string, valueType: string, options: string | null) => {
+        (_spaceId: string, key: string, valueType: string, options: string | null) => {
           if (NON_DELETABLE_PROPERTIES.has(key))
             return Promise.resolve({
               status: 'error',
@@ -1032,7 +1035,7 @@ describe('BlockPropertyEditor', () => {
       // `delete_property_def_inner` (`src-tauri/src/commands/properties.rs`):
       // refuses every builtin key outright, refuses while any
       // `block_properties` row references the key, and 404s an absent row.
-      mockDeletePropertyDef.mockImplementation((key: string) => {
+      mockDeletePropertyDef.mockImplementation((_spaceId: string, key: string) => {
         if (NON_DELETABLE_PROPERTIES.has(key))
           return Promise.resolve({
             status: 'error',
@@ -1150,7 +1153,7 @@ describe('BlockPropertyEditor', () => {
       })
 
       await waitFor(() => {
-        expect(mockCreatePropertyDef).toHaveBeenCalledWith('dueBy', 'date', null)
+        expect(mockCreatePropertyDef).toHaveBeenCalledWith('SPACE_1', 'dueBy', 'date', null)
       })
       // The engine validates the payload shape against the definition row, so
       // the definition has to exist before the typed write lands.
@@ -1506,7 +1509,12 @@ describe('BlockPropertyEditor', () => {
           expect(mockToastError).toHaveBeenCalledWith('Failed to rename property')
         })
         // The copy did happen — this is not passing by never declaring.
-        expect(mockCreatePropertyDef).toHaveBeenCalledWith('effortPoints', 'number', null)
+        expect(mockCreatePropertyDef).toHaveBeenCalledWith(
+          'SPACE_1',
+          'effortPoints',
+          'number',
+          null,
+        )
         // ...and nothing survives the rename that did not happen. `defs` is
         // the registry itself, so this fails if the withdrawal is merely
         // ATTEMPTED and refused.

@@ -7554,13 +7554,6 @@ async fn property_definitions_0128_drops_builtin_rows_and_keeps_their_values_584
         Some("2026-05-01"),
         "the `due` value is untouched"
     );
-    assert!(
-        crate::commands::get_property_def_inner(&pool, "due")
-            .await
-            .expect("look up `due`")
-            .is_none(),
-        "`due` is undeclared now"
-    );
 
     let materializer = crate::materializer::Materializer::new(pool.clone());
     let err = crate::commands::set_priority_inner(
@@ -7587,4 +7580,118 @@ async fn property_definitions_0128_drops_builtin_rows_and_keeps_their_values_584
         Some("P0"),
         "the refusal leaves the stored level"
     );
+}
+
+/// #5841 S0.5 — 0129 keys `property_definitions` by `(space_id, key)` and
+/// copies every definition into every registered space, a trashed one
+/// included, keeping each row's type, options and creation time. The table
+/// stays STRICT, and a key may be declared differently per space.
+#[tokio::test]
+async fn property_definitions_0129_copies_every_row_into_every_space_5841() {
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 128).await;
+
+    const LIVE_A: &str = "01J000000000000000000SPCA1";
+    const LIVE_B: &str = "01J000000000000000000SPCB2";
+    const TRASHED: &str = "01J000000000000000000SPCT3";
+    for (space, deleted_at) in [(LIVE_A, None), (LIVE_B, None), (TRASHED, Some(1_000_i64))] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id, deleted_at) \
+             VALUES (?, 'page', 'space', ?, ?)",
+        )
+        .bind(space)
+        .bind(space)
+        .bind(deleted_at)
+        .execute(&pool)
+        .await
+        .expect("seed a space block");
+        sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+            .bind(space)
+            .execute(&pool)
+            .await
+            .expect("register the space");
+    }
+    sqlx::query(
+        "INSERT INTO property_definitions (key, value_type, options, created_at) \
+         VALUES ('estimate', 'number', NULL, '2026-02-01T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .expect("seed a user definition");
+    let before: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT key, value_type, options, created_at FROM property_definitions ORDER BY key",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("read the definitions before");
+    assert_eq!(
+        before.len(),
+        6,
+        "the five seeds 0128 kept, and the user's own"
+    );
+
+    apply_migrations_through(&pool, 128, 129).await;
+
+    let after: Vec<(String, String, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT space_id, key, value_type, options, created_at FROM property_definitions \
+         ORDER BY space_id, key",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("read the definitions after");
+    let expected: Vec<(String, String, String, Option<String>, String)> = [LIVE_A, LIVE_B, TRASHED]
+        .iter()
+        .flat_map(|space| {
+            before
+                .iter()
+                .map(move |(key, value_type, options, created_at)| {
+                    (
+                        (*space).to_owned(),
+                        key.clone(),
+                        value_type.clone(),
+                        options.clone(),
+                        created_at.clone(),
+                    )
+                })
+        })
+        .collect();
+    assert_eq!(
+        after, expected,
+        "every definition is copied into every space, the trashed one included"
+    );
+
+    let strict: i64 = sqlx::query_scalar(
+        "SELECT strict FROM pragma_table_list WHERE name = 'property_definitions'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("read the STRICT flag");
+    assert_eq!(strict, 1, "0129 keeps property_definitions STRICT");
+    sqlx::query(
+        "UPDATE property_definitions SET value_type = 'text' \
+         WHERE space_id = ? AND key = 'estimate'",
+    )
+    .bind(LIVE_B)
+    .execute(&pool)
+    .await
+    .expect("one space may retype a key");
+    let types: Vec<String> = sqlx::query_scalar(
+        "SELECT value_type FROM property_definitions WHERE key = 'estimate' ORDER BY space_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("read `estimate` per space");
+    assert_eq!(
+        types,
+        ["number", "text", "number"],
+        "each space holds its own row for the key"
+    );
+    sqlx::query(
+        "INSERT INTO property_definitions (space_id, key, value_type, created_at) \
+         VALUES (?, 'estimate', 'number', 'x')",
+    )
+    .bind(LIVE_A)
+    .execute(&pool)
+    .await
+    .expect_err("(space_id, key) is the key");
 }

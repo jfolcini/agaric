@@ -139,6 +139,8 @@ const NO_TEST_ALLOWLIST = Object.freeze({
     'Only mounted through BacklinkFilterBuilder. Its one IPC call (listTagsByPrefix on open, #5445) is rejected in BacklinkFilterBuilder.test.tsx, which asserts the references.loadTagsFailed toast.',
   'src/components/agent-access/CreateAgentDialog.tsx':
     'Only mounted through AgentList. Its one IPC call (createMcpAgent, #5667) is rejected in AgentList.test.tsx, which asserts the inline alert, the log and the toast.',
+  'src/components/properties/CopyDefinitionToSpace.tsx':
+    "Only mounted through PropertyDefinitionsList. Its one IPC call (createPropertyDef into another space, #5841) is rejected in PropertyDefinitionsList.test.tsx, which asserts the backend's reason reaches the toast.",
 })
 
 if (!fs.existsSync(COMPONENTS_DIR) || !fs.existsSync(TESTS_DIR)) {

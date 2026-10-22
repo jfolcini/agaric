@@ -989,10 +989,11 @@ pub enum InboundDeliveryKind {
 /// referenced by `block_tags.tag_id` (FK to `blocks(id)`) exist before
 /// Pass B's tag-edge inserts.
 ///
-/// Load property_definitions ONCE for the whole pass (hoisted out of
-/// the per-block loop to avoid an N+1 SELECT against a static table).
-/// #2264: skipped when the import changed no live block (purge-only
-/// imports reach this tx solely for Pass D + the inbox DELETE).
+/// Load the space's property definitions ONCE for the whole pass (hoisted
+/// out of the per-block loop to avoid an N+1 SELECT). Every block of this
+/// import lives in `space_id`'s doc, so its values are typed by that space's
+/// definitions (#5841). #2264: skipped when the import changed no live block
+/// (purge-only imports reach this tx solely for Pass D + the inbox DELETE).
 async fn project_pass_a(
     tx: &mut sqlx::SqliteConnection,
     space_id: &SpaceId,
@@ -1003,15 +1004,10 @@ async fn project_pass_a(
         project_block_full_to_sql, reproject_block_properties_from_engine,
     };
 
-    let value_types: std::collections::HashMap<String, String> = if changed_blocks.is_empty() {
+    let value_types = if changed_blocks.is_empty() {
         std::collections::HashMap::new()
     } else {
-        sqlx::query!("SELECT key, value_type FROM property_definitions")
-            .fetch_all(&mut *tx)
-            .await?
-            .into_iter()
-            .map(|r| (r.key, r.value_type))
-            .collect()
+        agaric_engine::block_ops::load_value_types(&mut *tx, space_id.as_str()).await?
     };
     for (block_id, (snapshot_opt, full_state)) in changed_blocks.iter().zip(block_states) {
         // Runs for EVERY changed block, rank-only ones included: this is the

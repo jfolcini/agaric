@@ -99,12 +99,22 @@ export function usePropertyDefForEdit(
     // re-runs on every `currentSpaceId` change, so this is always the space
     // the response describes).
     const spaceId = currentSpaceId
+    if (spaceId === null) {
+      // Definitions are per space (#5841): with no active space nothing is
+      // declared but the built-ins, which a chip never edits, so the chip is
+      // plain text.
+      setSelectOptions(null)
+      setIsRefProp(false)
+      setRefPages([])
+      setResolvedType({ key, spaceId, valueType: 'text' })
+      return
+    }
     let stale = false
     // Single-key PK lookup instead of paginating the
     // entire property-definition vocabulary every time the user opens
     // the per-block property-editor popover.
     commands
-      .getPropertyDef(key)
+      .getPropertyDef(spaceId, key)
       .then(unwrap)
       .then((def) => {
         if (stale) return
@@ -136,37 +146,30 @@ export function usePropertyDefForEdit(
         } else if (def?.value_type === 'ref') {
           setIsRefProp(true)
           setSelectOptions(null)
-          // #2248 — `listBlocks` requires an active space; there is no
-          // cross-space listing. With no active space, skip the fetch and
-          // leave the ref-page list empty rather than invoking (which would
-          // throw in `requireActiveScope`).
-          if (!currentSpaceId) {
-            if (!stale) setRefPages([])
-          } else {
-            commands
-              .listBlocks(
-                {
-                  parentId: null,
-                  blockType: 'page',
-                  tagId: null,
-                  date: null,
-                  dateRange: null,
-                  source: null,
-                  excludeTodoStates: null,
-                  cursor: null,
-                  limit: null,
-                },
-                { kind: 'active', space_id: currentSpaceId },
-              )
-              .then(unwrap)
-              .then((res) => {
-                if (!stale) setRefPages(res.items)
-              })
-              .catch((err) => {
-                logger.warn('SortableBlock', 'ref page resolution failed', undefined, err)
-                if (!stale) setRefPages([])
-              })
-          }
+          // `listBlocks` lists one space (#2248): the space the definition is in.
+          commands
+            .listBlocks(
+              {
+                parentId: null,
+                blockType: 'page',
+                tagId: null,
+                date: null,
+                dateRange: null,
+                source: null,
+                excludeTodoStates: null,
+                cursor: null,
+                limit: null,
+              },
+              { kind: 'active', space_id: spaceId },
+            )
+            .then(unwrap)
+            .then((res) => {
+              if (!stale) setRefPages(res.items)
+            })
+            .catch((err) => {
+              logger.warn('SortableBlock', 'ref page resolution failed', undefined, err)
+              if (!stale) setRefPages([])
+            })
         } else {
           setSelectOptions(null)
           setIsRefProp(false)

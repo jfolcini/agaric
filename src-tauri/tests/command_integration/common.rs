@@ -1,5 +1,6 @@
 //! Shared helpers for command integration tests.
 
+pub use agaric_lib::commands::tests::common::create_test_property_def;
 pub use agaric_lib::commands::*;
 pub use agaric_lib::db::ReadPool;
 // kept (#2897): test-prelude re-exports consumed by sibling integration-test

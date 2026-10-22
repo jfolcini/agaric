@@ -268,10 +268,23 @@ async fn a_restricted_agent_neither_reads_nor_writes_outside_its_spaces_5667() {
         .expect("search in its own space");
     assert_eq!(search["items"], json!([]), "B's block is not found from A");
 
-    // Property definitions are the vault's schema, not a space's content.
-    v.call(&agent, "list_property_defs", json!({}))
-        .await
-        .expect("served to every agent");
+    // Property definitions are per space (#5841), behind the same gate.
+    v.call(
+        &agent,
+        "list_property_defs",
+        json!({ "space_id": v.spaces[A] }),
+    )
+    .await
+    .expect("its own space's definitions");
+    assert_space_refused(
+        v.call(
+            &agent,
+            "list_property_defs",
+            json!({ "space_id": v.spaces[B] }),
+        )
+        .await,
+        &v.spaces[B],
+    );
     assert_eq!(
         space_ids(&v.call(&agent, "list_spaces", json!({})).await.unwrap()),
         [v.spaces[A].as_str()],
@@ -395,7 +408,7 @@ fn space_args_cover_every_tool_schema_5667() {
             spaceless.push(tool.name);
         }
     }
-    assert_eq!(spaceless, ["list_property_defs", "list_spaces"]);
+    assert_eq!(spaceless, ["list_spaces"]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

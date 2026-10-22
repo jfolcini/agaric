@@ -56,9 +56,8 @@ function makePage(id: string, content: string): BlockRow {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // #2248 — reset the active space between tests (the ref-page fetch is
-  // gated on it now).
-  useSpaceStore.setState({ currentSpaceId: null })
+  // The definitions looked up are the active space's (#5841).
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
   // Single-key PK lookup; default mock returns null
   // (no def for the requested key).
   mockGetPropertyDef.mockResolvedValue(null)
@@ -97,7 +96,7 @@ describe('usePropertyDefForEdit', () => {
     expect(result.current.isRefProp).toBe(false)
     expect(result.current.refPages).toEqual([])
     // Dedicated PK lookup, not a full vocabulary scan.
-    expect(mockGetPropertyDef).toHaveBeenCalledWith('severity')
+    expect(mockGetPropertyDef).toHaveBeenCalledWith('SPACE_1', 'severity')
   })
 
   it.each([
@@ -166,9 +165,10 @@ describe('usePropertyDefForEdit', () => {
     )
   })
 
-  it('skips the ref-page fetch and leaves refPages empty when there is no active space (#2248)', async () => {
-    // No active space seeded. `listBlocks` has no cross-space form, so the
-    // hook must NOT call it and must leave the ref-page list empty.
+  it('looks nothing up with no active space and edits as plain text (#5841)', async () => {
+    // Definitions are per space: with none active, nothing but the built-ins
+    // is declared, and `listBlocks` has no cross-space form (#2248).
+    useSpaceStore.setState({ currentSpaceId: null })
     mockGetPropertyDef.mockResolvedValue({
       key: 'related',
       value_type: 'ref',
@@ -176,12 +176,17 @@ describe('usePropertyDefForEdit', () => {
       created_at: '2025-01-01T00:00:00Z',
     })
 
-    const { result } = renderHook(() => usePropertyDefForEdit({ key: 'related', value: '' }))
+    // Stable, as the callers' `useState` holds it: a fresh object per render
+    // re-runs the effect, whose no-space answer re-renders at once.
+    const editingProp = { key: 'related', value: '' }
+    const { result } = renderHook(() => usePropertyDefForEdit(editingProp))
 
     await waitFor(() => {
-      expect(result.current.isRefProp).toBe(true)
+      expect(result.current.valueType).toBe('text')
     })
+    expect(result.current.isRefProp).toBe(false)
     expect(result.current.refPages).toEqual([])
+    expect(mockGetPropertyDef).not.toHaveBeenCalled()
     expect(mockListBlocks).not.toHaveBeenCalled()
   })
 
@@ -313,6 +318,7 @@ describe('usePropertyDefForEdit', () => {
       // key may well be a date or text property.
       expect(result.current.valueType).not.toBe('number')
       expect(result.current.valueType).toBeNull()
+      expect(mockGetPropertyDef).toHaveBeenLastCalledWith('SPACE_B', 'estimate')
 
       await act(async () => {
         resolveSpaceB(defFor('estimate', 'text'))

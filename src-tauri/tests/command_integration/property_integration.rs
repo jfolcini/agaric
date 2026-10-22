@@ -237,7 +237,7 @@ async fn set_property_inner_with_type_mismatch_returns_validation() {
     // 1. Register a `date`-typed property definition.  This is the
     //    `property_definitions` row that `set_property_in_tx`
     //    consults for the type-match arm.
-    create_property_def_inner(&pool, "deadline".into(), "date".into(), None)
+    create_test_property_def(&pool, "deadline".into(), "date".into(), None)
         .await
         .unwrap();
 
@@ -254,6 +254,7 @@ async fn set_property_inner_with_type_mismatch_returns_validation() {
     .await
     .unwrap();
     settle(&mat).await;
+    assign_all_to_test_space(&pool).await;
 
     // 3. Provide a `value_text` payload (wrong type for a `date`
     //    definition).  `validate_set_property` accepts the call
@@ -304,7 +305,7 @@ async fn boolean_property_set_and_read_back() {
     let mat = test_materializer(&pool);
 
     // 1. Register a `boolean`-typed property definition.
-    create_property_def_inner(&pool, "flag".into(), "boolean".into(), None)
+    create_test_property_def(&pool, "flag".into(), "boolean".into(), None)
         .await
         .expect("create_property_def_inner must accept value_type='boolean'");
 
@@ -361,7 +362,7 @@ async fn boolean_property_false_persists_as_zero() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
-    create_property_def_inner(&pool, "archived".into(), "boolean".into(), None)
+    create_test_property_def(&pool, "archived".into(), "boolean".into(), None)
         .await
         .unwrap();
 
@@ -412,7 +413,7 @@ async fn boolean_property_type_mismatch_returns_validation() {
     let mat = test_materializer(&pool);
 
     // text-typed definition; supplying value_bool must be rejected.
-    create_property_def_inner(&pool, "label".into(), "text".into(), None)
+    create_test_property_def(&pool, "label".into(), "text".into(), None)
         .await
         .unwrap();
 
@@ -428,6 +429,7 @@ async fn boolean_property_type_mismatch_returns_validation() {
     .await
     .unwrap();
     settle(&mat).await;
+    assign_all_to_test_space(&pool).await;
 
     let result = set_property_inner(
         &pool,
@@ -998,7 +1000,7 @@ async fn query_by_property_happy_path() {
 #[tokio::test]
 async fn create_property_def_returns_correct_fields() {
     let (pool, _dir) = test_pool().await;
-    let def = create_property_def_inner(&pool, "custom_field".into(), "text".into(), None)
+    let def = create_test_property_def(&pool, "custom_field".into(), "text".into(), None)
         .await
         .unwrap();
     assert_eq!(def.key, "custom_field");
@@ -1012,7 +1014,7 @@ async fn create_property_def_select_with_options() {
     let (pool, _dir) = test_pool().await;
     let opts = r#"["low","medium","high"]"#;
     let def =
-        create_property_def_inner(&pool, "severity".into(), "select".into(), Some(opts.into()))
+        create_test_property_def(&pool, "severity".into(), "select".into(), Some(opts.into()))
             .await
             .unwrap();
     assert_eq!(def.key, "severity");
@@ -1024,13 +1026,12 @@ async fn create_property_def_select_with_options() {
 async fn create_property_def_idempotent() {
     let (pool, _dir) = test_pool().await;
     let opts = r#"["a","b"]"#;
-    let first =
-        create_property_def_inner(&pool, "color".into(), "select".into(), Some(opts.into()))
-            .await
-            .unwrap();
+    let first = create_test_property_def(&pool, "color".into(), "select".into(), Some(opts.into()))
+        .await
+        .unwrap();
 
     // Call again with different options — should return original unchanged
-    let second = create_property_def_inner(
+    let second = create_test_property_def(
         &pool,
         "color".into(),
         "select".into(),
@@ -1058,19 +1059,21 @@ async fn list_property_defs_returns_all_ordered() {
         .await
         .unwrap();
 
-    create_property_def_inner(&pool, "zeta".into(), "text".into(), None)
+    create_test_property_def(&pool, "zeta".into(), "text".into(), None)
         .await
         .unwrap();
-    create_property_def_inner(&pool, "alpha".into(), "number".into(), None)
+    create_test_property_def(&pool, "alpha".into(), "number".into(), None)
         .await
         .unwrap();
-    create_property_def_inner(&pool, "mid".into(), "date".into(), None)
+    create_test_property_def(&pool, "mid".into(), "date".into(), None)
         .await
         .unwrap();
 
     // Paginated; under the default limit the three defs and the built-ins
     // fit on page 1 (no second page expected).
-    let page = list_property_defs_inner(&pool, None, None).await.unwrap();
+    let page = list_property_defs_inner(&pool, TEST_SPACE_ID, None, None)
+        .await
+        .unwrap();
     let user_keys: Vec<&str> = page
         .items
         .iter()
@@ -1092,11 +1095,17 @@ async fn list_property_defs_returns_all_ordered() {
 }
 
 /// #5841 — the built-ins come from the constant, marked `builtin`, between
-/// the seeded user rows in key order; `due` is no longer seeded.
-#[tokio::test]
+/// a new space's default rows in key order; `due` is not among them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_property_defs_lists_builtins_with_the_seeded_rows_5841() {
     let (pool, _dir) = test_pool().await;
-    let page = list_property_defs_inner(&pool, None, None).await.unwrap();
+    let mat = test_materializer(&pool);
+    let space = create_space_inner(&pool, DEV, &mat, "Fresh".into(), None)
+        .await
+        .unwrap();
+    let page = list_property_defs_inner(&pool, space.as_str(), None, None)
+        .await
+        .unwrap();
     let listed: Vec<(&str, bool)> = page
         .items
         .iter()
@@ -1118,7 +1127,7 @@ async fn list_property_defs_lists_builtins_with_the_seeded_rows_5841() {
     assert_eq!(status.value_type, "select");
     assert!(status.options.is_some());
 
-    let priority = get_property_def_inner(&pool, "priority")
+    let priority = get_property_def_inner(&pool, TEST_SPACE_ID, "priority")
         .await
         .unwrap()
         .expect("priority is built in");
@@ -1134,14 +1143,15 @@ async fn list_property_defs_lists_builtins_with_the_seeded_rows_5841() {
 async fn update_property_def_options_changes_options() {
     let (pool, _dir) = test_pool().await;
     let opts1 = r#"["a","b"]"#;
-    create_property_def_inner(&pool, "mood".into(), "select".into(), Some(opts1.into()))
+    create_test_property_def(&pool, "mood".into(), "select".into(), Some(opts1.into()))
         .await
         .unwrap();
 
     let opts2 = r#"["x","y","z"]"#;
-    let updated = update_property_def_options_inner(&pool, "mood".into(), opts2.into())
-        .await
-        .unwrap();
+    let updated =
+        update_property_def_options_inner(&pool, TEST_SPACE_ID, "mood".into(), opts2.into())
+            .await
+            .unwrap();
 
     assert_eq!(updated.options.as_deref(), Some(opts2));
     assert_eq!(updated.key, "mood");
@@ -1151,16 +1161,18 @@ async fn update_property_def_options_changes_options() {
 #[tokio::test]
 async fn delete_property_def_removes_row() {
     let (pool, _dir) = test_pool().await;
-    create_property_def_inner(&pool, "temp".into(), "text".into(), None)
+    create_test_property_def(&pool, "temp".into(), "text".into(), None)
         .await
         .unwrap();
 
-    delete_property_def_inner(&pool, "temp".into())
+    delete_property_def_inner(&pool, TEST_SPACE_ID, "temp".into())
         .await
         .unwrap();
 
     // Paginated; consume the first page (only one fixture row remains).
-    let page = list_property_defs_inner(&pool, None, None).await.unwrap();
+    let page = list_property_defs_inner(&pool, TEST_SPACE_ID, None, None)
+        .await
+        .unwrap();
     assert!(
         !page.items.iter().any(|d| d.key == "temp"),
         "deleted def must not appear in list"
@@ -1174,7 +1186,7 @@ async fn delete_property_def_removes_row() {
 #[tokio::test]
 async fn create_property_def_empty_key_returns_validation() {
     let (pool, _dir) = test_pool().await;
-    let result = create_property_def_inner(&pool, String::new(), "text".into(), None).await;
+    let result = create_test_property_def(&pool, String::new(), "text".into(), None).await;
     assert!(
         matches!(result, Err(AppError::Validation { .. })),
         "empty key must return Validation error"
@@ -1185,7 +1197,7 @@ async fn create_property_def_empty_key_returns_validation() {
 async fn create_property_def_key_too_long_returns_validation() {
     let (pool, _dir) = test_pool().await;
     let long_key = "a".repeat(65);
-    let result = create_property_def_inner(&pool, long_key, "text".into(), None).await;
+    let result = create_test_property_def(&pool, long_key, "text".into(), None).await;
     assert!(
         matches!(result, Err(AppError::Validation { .. })),
         "65-char key must return Validation error"
@@ -1195,7 +1207,7 @@ async fn create_property_def_key_too_long_returns_validation() {
 #[tokio::test]
 async fn create_property_def_invalid_chars_returns_validation() {
     let (pool, _dir) = test_pool().await;
-    let result = create_property_def_inner(&pool, "has spaces".into(), "text".into(), None).await;
+    let result = create_test_property_def(&pool, "has spaces".into(), "text".into(), None).await;
     assert!(
         matches!(result, Err(AppError::Validation { .. })),
         "key with spaces must return Validation error"
@@ -1207,7 +1219,7 @@ async fn create_property_def_invalid_value_type_returns_validation() {
     let (pool, _dir) = test_pool().await;
     // `boolean` is now a valid value_type. Use a clearly bogus
     // identifier here to keep the negative-path coverage.
-    let result = create_property_def_inner(&pool, "flag".into(), "garbage".into(), None).await;
+    let result = create_test_property_def(&pool, "flag".into(), "garbage".into(), None).await;
     assert!(
         matches!(result, Err(AppError::Validation { .. })),
         "invalid value_type must return Validation error"
@@ -1217,7 +1229,7 @@ async fn create_property_def_invalid_value_type_returns_validation() {
 #[tokio::test]
 async fn create_property_def_select_without_options_returns_validation() {
     let (pool, _dir) = test_pool().await;
-    let result = create_property_def_inner(&pool, "pick".into(), "select".into(), None).await;
+    let result = create_test_property_def(&pool, "pick".into(), "select".into(), None).await;
     assert!(
         matches!(result, Err(AppError::Validation { .. })),
         "select without options must return Validation error"
@@ -1228,7 +1240,7 @@ async fn create_property_def_select_without_options_returns_validation() {
 async fn create_property_def_text_with_options_returns_validation() {
     let (pool, _dir) = test_pool().await;
     let result =
-        create_property_def_inner(&pool, "note".into(), "text".into(), Some(r#"["a"]"#.into()))
+        create_test_property_def(&pool, "note".into(), "text".into(), Some(r#"["a"]"#.into()))
             .await;
     assert!(
         matches!(result, Err(AppError::Validation { .. })),
@@ -1239,8 +1251,13 @@ async fn create_property_def_text_with_options_returns_validation() {
 #[tokio::test]
 async fn update_property_def_options_nonexistent_key_returns_not_found() {
     let (pool, _dir) = test_pool().await;
-    let result =
-        update_property_def_options_inner(&pool, "nonexistent".into(), r#"["a"]"#.into()).await;
+    let result = update_property_def_options_inner(
+        &pool,
+        TEST_SPACE_ID,
+        "nonexistent".into(),
+        r#"["a"]"#.into(),
+    )
+    .await;
     assert!(
         matches!(result, Err(AppError::NotFound(_))),
         "update on nonexistent key must return NotFound"
@@ -1250,11 +1267,13 @@ async fn update_property_def_options_nonexistent_key_returns_not_found() {
 #[tokio::test]
 async fn update_property_def_options_non_select_returns_validation() {
     let (pool, _dir) = test_pool().await;
-    create_property_def_inner(&pool, "mytext".into(), "text".into(), None)
+    create_test_property_def(&pool, "mytext".into(), "text".into(), None)
         .await
         .unwrap();
 
-    let result = update_property_def_options_inner(&pool, "mytext".into(), r#"["a"]"#.into()).await;
+    let result =
+        update_property_def_options_inner(&pool, TEST_SPACE_ID, "mytext".into(), r#"["a"]"#.into())
+            .await;
     assert!(
         matches!(result, Err(AppError::Validation { .. })),
         "update options on text-type must return Validation error"
@@ -1264,7 +1283,7 @@ async fn update_property_def_options_non_select_returns_validation() {
 #[tokio::test]
 async fn delete_property_def_nonexistent_returns_not_found() {
     let (pool, _dir) = test_pool().await;
-    let result = delete_property_def_inner(&pool, "ghost".into()).await;
+    let result = delete_property_def_inner(&pool, TEST_SPACE_ID, "ghost".into()).await;
     assert!(
         matches!(result, Err(AppError::NotFound(_))),
         "delete nonexistent key must return NotFound"
@@ -1279,7 +1298,7 @@ async fn delete_property_def_nonexistent_returns_not_found() {
 async fn create_property_def_select_empty_options_returns_validation() {
     let (pool, _dir) = test_pool().await;
     let result =
-        create_property_def_inner(&pool, "empty".into(), "select".into(), Some("[]".into())).await;
+        create_test_property_def(&pool, "empty".into(), "select".into(), Some("[]".into())).await;
     assert!(
         matches!(result, Err(AppError::Validation { .. })),
         "select with empty options array must return Validation error"
@@ -1289,7 +1308,7 @@ async fn create_property_def_select_empty_options_returns_validation() {
 #[tokio::test]
 async fn create_property_def_with_hyphen_underscore_key() {
     let (pool, _dir) = test_pool().await;
-    let def = create_property_def_inner(&pool, "my-custom_prop".into(), "text".into(), None)
+    let def = create_test_property_def(&pool, "my-custom_prop".into(), "text".into(), None)
         .await
         .unwrap();
     assert_eq!(def.key, "my-custom_prop", "hyphen/underscore key must work");
@@ -1621,7 +1640,7 @@ async fn seed_m85_property_defs(pool: &sqlx::SqlitePool, count: usize) -> Vec<St
     let mut keys = Vec::with_capacity(count);
     for i in 0..count {
         let key = format!("m85_def_{i:03}");
-        create_property_def_inner(pool, key.clone(), "text".into(), None)
+        create_test_property_def(pool, key.clone(), "text".into(), None)
             .await
             .unwrap();
         keys.push(key);
@@ -1636,7 +1655,7 @@ async fn list_property_defs_returns_next_cursor_when_capped_m85() {
     // surface a cursor.
     seed_m85_property_defs(&pool, 8).await;
 
-    let page = list_property_defs_inner(&pool, None, Some(5))
+    let page = list_property_defs_inner(&pool, TEST_SPACE_ID, None, Some(5))
         .await
         .unwrap();
     assert_eq!(
@@ -1674,7 +1693,7 @@ async fn list_property_defs_walks_pages_correctly_m85() {
     loop {
         iterations += 1;
         assert!(iterations < 10, "pagination must terminate (loop guard)");
-        let page = list_property_defs_inner(&pool, cursor, Some(4))
+        let page = list_property_defs_inner(&pool, TEST_SPACE_ID, cursor, Some(4))
             .await
             .unwrap();
         for row in &page.items {
@@ -1722,7 +1741,9 @@ async fn list_property_defs_with_no_cursor_returns_first_page_m85() {
     let (pool, _dir) = test_pool().await;
     let keys = seed_m85_property_defs(&pool, 3).await;
 
-    let page = list_property_defs_inner(&pool, None, None).await.unwrap();
+    let page = list_property_defs_inner(&pool, TEST_SPACE_ID, None, None)
+        .await
+        .unwrap();
     assert_eq!(
         page.items.len(),
         3 + agaric_store::op::BUILTIN_PROPERTY_DEFS.len(),

@@ -82,13 +82,13 @@ export interface PageBlockStoreLike {
 /** Per-block flush sequence tokens — see the module docstring. */
 const flushSeqByBlock = new Map<string, number>()
 
-/** Every property definition, page by page. */
-export async function listAllPropertyDefs(): Promise<PropertyDefinition[]> {
+/** Every property definition of `spaceId` (#5841), page by page. */
+export async function listAllPropertyDefs(spaceId: string): Promise<PropertyDefinition[]> {
   const defs: PropertyDefinition[] = []
   let cursor: string | null = null
   do {
     const page: PageResponse<PropertyDefinition> = unwrap(
-      await commands.listPropertyDefs(cursor, null),
+      await commands.listPropertyDefs(spaceId, cursor, null),
     )
     defs.push(...page.items)
     cursor = page.has_more ? page.next_cursor : null
@@ -97,10 +97,10 @@ export async function listAllPropertyDefs(): Promise<PropertyDefinition[]> {
 }
 
 /**
- * The key a typed `key:: value` line names and its definition (#5160 D13):
- * the definition spelled so, else the one definition the key folds to
- * (`foldPropertyKey`), the built-in keys' included (`list_property_defs`
- * lists them). Two that fold alike are never guessed between, and a key none folds
+ * The key a typed `key:: value` line names and its definition in `spaceId`
+ * (#5160 D13): the definition spelled so, else the one definition the key
+ * folds to (`foldPropertyKey`), the built-in keys' included
+ * (`list_property_defs` lists them). Two that fold alike are never guessed between, and a key none folds
  * to is a custom key: both stay as typed. `listDefs` answers every
  * definition; a key with no definition spelled so needs the list, since a
  * definition spelled otherwise (`repeat-until`) may fold to it. Mirrors
@@ -108,9 +108,10 @@ export async function listAllPropertyDefs(): Promise<PropertyDefinition[]> {
  */
 async function resolveTypedKey(
   typed: string,
+  spaceId: string,
   listDefs: () => Promise<PropertyDefinition[]>,
 ): Promise<{ key: string; def: PropertyDefinition | null }> {
-  const exact = unwrap(await commands.getPropertyDef(typed))
+  const exact = unwrap(await commands.getPropertyDef(spaceId, typed))
   if (exact) return { key: typed, def: exact }
   const folded = foldPropertyKey(typed)
   const matches = (await listDefs()).filter((def) => foldPropertyKey(def.key) === folded)
@@ -177,11 +178,16 @@ export async function commitInlineProperties(opts: {
   // stays LITERAL in the committed content (see `strippedLines`), so the text
   // they now know how to fix is still on screen.
   let repeatReason: string | null = null
+  // The block is on a page of the active space, whose definitions apply.
+  const spaceId = useSpaceStore.getState().currentSpaceId
   let defs: Promise<PropertyDefinition[]> | undefined
-  const listDefs = () => (defs ??= listAllPropertyDefs())
+  const resolveKey = async (typed: string) =>
+    spaceId === null
+      ? { key: typed, def: null }
+      : resolveTypedKey(typed, spaceId, () => (defs ??= listAllPropertyDefs(spaceId)))
   for (const prop of inlineProps) {
     try {
-      const { key, def } = await resolveTypedKey(prop.key, listDefs)
+      const { key, def } = await resolveKey(prop.key)
       const params = buildInlinePropertySetParams(blockId, key, prop.value, def)
       if (params === null) {
         keptAsText.push(`${prop.key}:: ${prop.value}`)

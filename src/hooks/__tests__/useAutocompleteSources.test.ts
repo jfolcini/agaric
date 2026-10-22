@@ -384,7 +384,7 @@ describe('useAutocompleteSources', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    expect(mockedGetPropertyDef).toHaveBeenCalledWith('status')
+    expect(mockedGetPropertyDef).toHaveBeenCalledWith('S1', 'status')
     // Select options first (todo, doing, done), then non-overlapping
     // usage values (archived). `done` appears once.
     expect(result.current.items.map((i) => i.value)).toEqual(['todo', 'doing', 'done', 'archived'])

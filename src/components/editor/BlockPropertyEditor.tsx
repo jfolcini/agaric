@@ -30,6 +30,7 @@ import {
 } from '@/lib/property-save-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
+import { useSpaceStore } from '@/stores/space'
 
 export interface BlockPropertyEditorProps {
   blockId: string
@@ -81,6 +82,8 @@ export function BlockPropertyEditor({
   valueType,
 }: BlockPropertyEditorProps): React.ReactElement | null {
   const { t } = useTranslation()
+  // The block is in the active space, whose definitions apply (#5841).
+  const spaceId = useSpaceStore((s) => s.currentSpaceId)
 
   const propAnchorRef = useRef<HTMLSpanElement | null>(null)
   const propPopupRef = useRef<HTMLDivElement | null>(null)
@@ -533,7 +536,10 @@ export function BlockPropertyEditor({
               let resolvedValueType = valueType
               if (resolvedValueType === null) {
                 try {
-                  const def = unwrap(await commands.getPropertyDef(editingProp.key))
+                  const def =
+                    spaceId === null
+                      ? null
+                      : unwrap(await commands.getPropertyDef(spaceId, editingProp.key))
                   // A MISS is a real answer ('text'), matching
                   // `usePropertyDefForEdit` and `BlockPropertyDrawer.getType`.
                   resolvedValueType = def?.value_type ?? 'text'
@@ -684,9 +690,9 @@ export function BlockPropertyEditor({
               // #4041 review notes 3 + 4 — writing the declaration first means
               // the value write can still fail AFTER it lands (a concurrently
               // soft-deleted block, a cross-space `ref`, an IPC error), and a
-              // `property_definitions` row is global and can be permanent:
-              // `delete_property_def_inner` refuses while any
-              // `block_properties` row references the key, and refuses every
+              // `property_definitions` row covers its whole space and can be
+              // permanent: `delete_property_def_inner` refuses while any of
+              // the space's `block_properties` rows reference the key, and refuses every
               // builtin outright. A compensating delete therefore cannot be
               // the safety mechanism — the case that hurts most is the case it
               // refuses. `renameMayDeclareKey` is the pre-flight that makes the
@@ -709,13 +715,21 @@ export function BlockPropertyEditor({
                 // Old key's declaration first: when there is nothing to carry
                 // (an untyped key — the common case) the pre-flight's two
                 // lookups are never issued at all.
-                const carried = carriedRenameDefinition(
-                  unwrap(await commands.getPropertyDef(editingKey.oldKey)),
-                  oldRow,
-                )
-                if (carried && (await renameMayDeclareKey(newKey))) {
+                const carried =
+                  spaceId === null
+                    ? null
+                    : carriedRenameDefinition(
+                        unwrap(await commands.getPropertyDef(spaceId, editingKey.oldKey)),
+                        oldRow,
+                      )
+                if (carried && spaceId && (await renameMayDeclareKey(spaceId, newKey))) {
                   unwrap(
-                    await commands.createPropertyDef(newKey, carried.valueType, carried.options),
+                    await commands.createPropertyDef(
+                      spaceId,
+                      newKey,
+                      carried.valueType,
+                      carried.options,
+                    ),
                   )
                   declaredKey = newKey
                 }
@@ -750,9 +764,9 @@ export function BlockPropertyEditor({
                 // its 1000-key cap) — and what then survives is a declaration
                 // over an unused key, which the user can still remove from the
                 // Properties tab. Never the un-exitable state of note 4.
-                if (declaredKey) {
+                if (declaredKey && spaceId) {
                   try {
-                    unwrap(await commands.deletePropertyDef(declaredKey))
+                    unwrap(await commands.deletePropertyDef(spaceId, declaredKey))
                   } catch (cleanupErr) {
                     logger.warn(
                       'BlockPropertyEditor',

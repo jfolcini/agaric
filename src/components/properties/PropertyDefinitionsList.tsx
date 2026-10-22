@@ -1,19 +1,22 @@
 /**
- * PropertyDefinitionsList -- CRUD for property definitions.
+ * PropertyDefinitionsList -- CRUD for one space's property definitions.
  *
- * Search/filter, create form, list rendering, delete confirmation,
- * and edit options for select-type properties. A built-in definition
- * (#5841) shows a lock and offers no action.
+ * A space selector (definitions are per space, #5841; it starts on the
+ * active space), search/filter, create form, list rendering, delete
+ * confirmation, edit options for select-type properties, and copying a
+ * definition to another space. A built-in definition shows a lock and offers
+ * no action.
  */
 
 import { HelpCircle, Lock, Plus, Search, Settings2, Trash2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
 import { ListViewState } from '@/components/common/ListViewState'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
+import { CopyDefinitionToSpace } from '@/components/properties/CopyDefinitionToSpace'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -38,6 +41,7 @@ import { notify } from '@/lib/notify'
 import { formatPropertyName, selectOptionsJson } from '@/lib/property-utils'
 import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
+import { useSpaceStore } from '@/stores/space'
 
 const VALUE_TYPES = ['text', 'number', 'date', 'select', 'ref', 'boolean', 'url'] as const
 
@@ -46,6 +50,13 @@ const SPACE_MARKER_KEY = 'is_space'
 
 export function PropertyDefinitionsList(): React.ReactElement {
   const { t } = useTranslation()
+  const activeSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  const spaces = useSpaceStore((s) => s.availableSpaces)
+  // The space whose definitions are shown: the one picked, else the active one.
+  const [pickedSpaceId, setPickedSpaceId] = useState<string | null>(null)
+  const spaceId = pickedSpaceId ?? activeSpaceId
+  // A load answered after the space changed again must not show the old list.
+  const loadSeq = useRef(0)
   const [definitions, setDefinitions] = useState<PropertyDefinition[]>([])
   const [loading, setLoading] = useState(true)
   // #3306 — settled failure vs genuinely-empty vocabulary.
@@ -80,24 +91,28 @@ export function PropertyDefinitionsList(): React.ReactElement {
   }, [editOptionsValue])
 
   const loadDefinitions = useCallback(async () => {
+    const seq = ++loadSeq.current
     setLoading(true)
     setLoadError(false)
     try {
       // `listPropertyDefs` is paginated. The settings panel is
-      // single-page-by-design — it surfaces the built-ins plus the user's
+      // single-page-by-design — it surfaces the built-ins plus the space's
       // definitions, which fit well under one page; we destructure `.items`
       // and ignore the cursor.
-      const { items: defs } = unwrap(await commands.listPropertyDefs(null, null))
+      const defs =
+        spaceId === null ? [] : unwrap(await commands.listPropertyDefs(spaceId, null, null)).items
+      if (seq !== loadSeq.current) return
       setDefinitions(defs)
     } catch (error) {
+      if (seq !== loadSeq.current) return
       // Replace bespoke `String(error)` toast with the unified
       // helper — error detail goes to the structured log; the user sees
       // the localized message.
       setLoadError(true)
-      reportIpcError('PropertyDefinitionsList', 'property.errorLoad', error, t)
+      reportIpcError('PropertyDefinitionsList', 'property.errorLoad', error, t, { spaceId })
     }
     setLoading(false)
-  }, [t])
+  }, [spaceId, t])
 
   useEffect(() => {
     // `loadDefinitions` reports its own failure (reportIpcError); never rejects.
@@ -107,10 +122,10 @@ export function PropertyDefinitionsList(): React.ReactElement {
 
   const handleCreate = useCallback(async () => {
     const key = newKey.trim()
-    if (!key) return
+    if (!key || spaceId === null) return
     setIsCreating(true)
     try {
-      const def = unwrap(await commands.createPropertyDef(key, newType, newOptionsJson))
+      const def = unwrap(await commands.createPropertyDef(spaceId, key, newType, newOptionsJson))
       setDefinitions((prev) => [...prev, def])
       setNewKey('')
       setNewType('text')
@@ -123,18 +138,20 @@ export function PropertyDefinitionsList(): React.ReactElement {
       // the refusal names the key, how many values are in the way and what
       // shape they hold. This is the entry point the issue calls "the direct
       // one" — type `year`, pick `number`, done — and the offending values
-      // are vault-wide, so they are usually nowhere near this screen. A bare
+      // are anywhere in the space, so they are usually nowhere near this
+      // screen. A bare
       // "Failed to create property definition" gives the user nothing to act
       // on. Non-validation kinds still fall back to the localized message.
       reportIpcErrorWithReason('PropertyDefinitionsList', 'property.errorCreate', error, t, { key })
     }
     setIsCreating(false)
-  }, [newKey, newType, newOptionsJson, t])
+  }, [spaceId, newKey, newType, newOptionsJson, t])
 
   const handleDelete = useCallback(
     async (key: string) => {
+      if (spaceId === null) return
       try {
-        unwrap(await commands.deletePropertyDef(key))
+        unwrap(await commands.deletePropertyDef(spaceId, key))
         setDefinitions((prev) => prev.filter((d) => d.key !== key))
         setDeleteTarget(null)
         notify.success(t('propertiesView.deleted'))
@@ -145,7 +162,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
         })
       }
     },
-    [t],
+    [spaceId, t],
   )
 
   const handleConfirmDelete = useCallback(() => {
@@ -157,8 +174,11 @@ export function PropertyDefinitionsList(): React.ReactElement {
 
   const handleSaveOptions = useCallback(
     async (key: string) => {
+      if (spaceId === null) return
       try {
-        const updated = unwrap(await commands.updatePropertyDefOptions(key, editOptionsValue))
+        const updated = unwrap(
+          await commands.updatePropertyDefOptions(spaceId, key, editOptionsValue),
+        )
         setDefinitions((prev) => prev.map((d) => (d.key === key ? updated : d)))
         setEditingOptionsKey(null)
       } catch (err) {
@@ -166,7 +186,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
         reportIpcError('PropertyDefinitionsList', 'property.errorUpdate', err, t, { key })
       }
     },
-    [editOptionsValue, t],
+    [spaceId, editOptionsValue, t],
   )
 
   // Hidden from the list only: the duplicate-key check still sees it.
@@ -176,6 +196,33 @@ export function PropertyDefinitionsList(): React.ReactElement {
 
   return (
     <div className="space-y-6">
+      {/* The space whose definitions this lists and edits */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <span className="text-sm font-medium" aria-hidden="true">
+          {t('propertiesView.definitionsIn')}
+        </span>
+        <Select
+          value={spaceId ?? ''}
+          onValueChange={setPickedSpaceId}
+          disabled={spaces.length === 0}
+        >
+          <SelectTrigger
+            className="sm:w-56"
+            aria-label={t('propertiesView.definitionsIn')}
+            data-testid="property-definitions-space"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {spaces.map((space) => (
+              <SelectItem key={space.id} value={space.id}>
+                {space.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
       {/* Search input */}
       <div className="relative">
         <Search
@@ -376,19 +423,30 @@ export function PropertyDefinitionsList(): React.ReactElement {
                         {t('propertiesView.builtIn')}
                       </Badge>
                     ) : (
-                      <IconButton
-                        variant="ghost"
-                        size="icon-xs"
-                        tooltip={t('propertiesView.deleteTooltip')}
-                        ariaLabel={t('properties.deleteDefinition', { key: def.key })}
+                      <div
                         className={cn(
-                          'max-sm:col-start-2 max-sm:row-start-1 [@media(pointer:coarse)]:-mr-3 text-muted-foreground hover:text-destructive active:text-destructive active:scale-95',
+                          'flex shrink-0 items-center max-sm:col-start-2 max-sm:row-start-1',
                           !hasOptionsCell && 'sm:ml-auto',
                         )}
-                        onClick={() => setDeleteTarget(def.key)}
                       >
-                        <Trash2 />
-                      </IconButton>
+                        {spaceId !== null && (
+                          <CopyDefinitionToSpace
+                            definition={def}
+                            fromSpaceId={spaceId}
+                            className="text-muted-foreground"
+                          />
+                        )}
+                        <IconButton
+                          variant="ghost"
+                          size="icon-xs"
+                          tooltip={t('propertiesView.deleteTooltip')}
+                          ariaLabel={t('properties.deleteDefinition', { key: def.key })}
+                          className="[@media(pointer:coarse)]:-mr-3 text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
+                          onClick={() => setDeleteTarget(def.key)}
+                        >
+                          <Trash2 />
+                        </IconButton>
+                      </div>
                     )}
                   </ListItem>
                 )

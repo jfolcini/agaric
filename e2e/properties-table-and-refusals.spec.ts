@@ -49,7 +49,10 @@ async function storedProperties(page: Page, blockId: string): Promise<Record<str
 }
 
 async function storedOptions(page: Page, key: string): Promise<unknown> {
-  const def = await ipc<PropertyDef | null>(page, 'get_property_def', { key })
+  const def = await ipc<PropertyDef | null>(page, 'get_property_def', {
+    spaceId: 'SPACE_PERSONAL',
+    key,
+  })
   return def?.options == null ? null : JSON.parse(def.options)
 }
 
@@ -212,7 +215,10 @@ test.describe('Page Properties table @editor', () => {
       .poll(() => storedProperties(page, QUICK_NOTES))
       .toEqual({ reviewer: 'Ana', budget: '1200' })
     expect(
-      await ipc<PropertyDef | null>(page, 'get_property_def', { key: 'budget' }),
+      await ipc<PropertyDef | null>(page, 'get_property_def', {
+        spaceId: 'SPACE_PERSONAL',
+        key: 'budget',
+      }),
     ).toMatchObject({ key: 'budget', value_type: 'text' })
 
     await reopenTable(page, 2)

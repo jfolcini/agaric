@@ -5,7 +5,7 @@
  *
  * Validates:
  * - getProperties forwards blockId to the get_properties IPC and returns rows
- * - listPropertyDefs invokes list_property_defs with no args and returns the array
+ * - listPropertyDefs invokes list_property_defs for the active space and returns the page
  * - setProperty maps the param object to the positional bindings call
  * - errors propagate from the IPC layer (no swallowing)
  */
@@ -21,6 +21,7 @@ import { unwrap } from '@/lib/app-error'
 import type { PageResponse, PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { paginationLimit } from '@/lib/safe-limit'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -33,6 +34,8 @@ const setPropertyResult = withOps(makeBlockRow({ id: 'BLOCK_1' }))
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // The definitions listed are the active space's (#5841).
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
 })
 
 afterEach(() => {
@@ -106,6 +109,7 @@ describe('useBlockPropertyIpc.listPropertyDefs', () => {
     // The wrapper threads `cursor` + `limit` (both null by default) so
     // the bindings call site stays type-safe under the new signature.
     expect(mockedInvoke).toHaveBeenCalledWith('list_property_defs', {
+      spaceId: 'SPACE_1',
       cursor: null,
       limit: null,
     })
@@ -197,7 +201,7 @@ describe('useBlockPropertyIpc.listPropertyDefs', () => {
     let cursor: string | null = null
     do {
       const resp: PageResponse<PropertyDefinition> = unwrap(
-        await commands.listPropertyDefs(cursor, limit),
+        await commands.listPropertyDefs('SPACE_A', cursor, limit),
       )
       collected.push(...resp.items)
       cursor = resp.has_more ? resp.next_cursor : null
@@ -209,8 +213,8 @@ describe('useBlockPropertyIpc.listPropertyDefs', () => {
     // Both IPC invocations chained the cursor correctly.
     const calls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_property_defs')
     expect(calls).toHaveLength(2)
-    expect(calls[0]?.[1]).toEqual({ cursor: null, limit: 50 })
-    expect(calls[1]?.[1]).toEqual({ cursor: 'cursor-2', limit: 50 })
+    expect(calls[0]?.[1]).toEqual({ spaceId: 'SPACE_A', cursor: null, limit: 50 })
+    expect(calls[1]?.[1]).toEqual({ spaceId: 'SPACE_A', cursor: 'cursor-2', limit: 50 })
   })
 })
 
