@@ -7,8 +7,11 @@ import { axe } from 'vitest-axe'
 import type { PageHeaderMenuProps } from '@/components/pages/PageHeaderMenu'
 import { PageHeaderMenu } from '@/components/pages/PageHeaderMenu'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { t } from '@/lib/i18n'
 import { resetAllShortcuts, setCustomShortcut } from '@/lib/keyboard-config'
+
+vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: vi.fn(() => false) }))
 
 vi.mock('lucide-react', () => ({
   BookTemplate: (props: React.SVGProps<SVGSVGElement>) => (
@@ -601,6 +604,15 @@ describe('PageHeaderMenu on a phone', () => {
   })
   afterEach(() => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: desktopWidth })
+    vi.mocked(useIsTouch).mockReturnValue(false)
+  })
+
+  // A touch phone has no tab bar to show the tab on; a narrow mouse window has.
+  it.each([true, false])('offers Open in new tab only without touch (touch: %s)', (touch) => {
+    vi.mocked(useIsTouch).mockReturnValue(touch)
+    renderMenu({ kebabOpen: true, onOpenInNewTab: vi.fn() })
+    const row = screen.queryByRole('menuitem', { name: t('tabs.openInNewTab') })
+    expect(row === null).toBe(touch)
   })
 
   it('tapping the kebab asks to open the sheet', async () => {

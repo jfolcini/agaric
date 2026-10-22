@@ -4,11 +4,15 @@
  * else is left to the element under it.
  */
 
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, renderHook, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { delegatedLinkClickProps, useOpenLinkInNewTab } from '@/hooks/useOpenInBackgroundTab'
+import {
+  delegatedLinkClickProps,
+  useOpenInBackgroundTab,
+  useOpenLinkInNewTab,
+} from '@/hooks/useOpenInBackgroundTab'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { useNavigationStore } from '@/stores/navigation'
 import { useTabsStore } from '@/stores/tabs'
@@ -19,6 +23,11 @@ function navigate(linkId: string, openPage: NavigateToPageFn): Promise<void> {
   else openPage(linkId, 'Linked page')
   return Promise.resolve()
 }
+
+let phoneWidth = false
+let touch = false
+vi.mock('@/hooks/useIsMobile', () => ({ useIsMobile: () => phoneWidth }))
+vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: () => touch }))
 
 const onChipClick = vi.fn()
 const onTextClick = vi.fn()
@@ -47,6 +56,8 @@ function activeTop() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  phoneWidth = false
+  touch = false
   useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [{ pageId: 'CUR', title: 'Current' }], label: 'Current' }],
     activeTabIndex: 0,
@@ -122,5 +133,15 @@ describe('link chips and new tabs', () => {
     expect(onTextClick.mock.calls[0]?.[0]).toMatchObject({ ctrlKey: true })
     expect(onChipClick).toHaveBeenCalledTimes(1)
     expect(useTabsStore.getState().tabs).toHaveLength(1)
+  })
+})
+
+describe('at phone width', () => {
+  // A touch phone hides the tab bar, so a background tab could never be reached there.
+  it.each([true, false])('opens background tabs only without touch (touch: %s)', (withTouch) => {
+    phoneWidth = true
+    touch = withTouch
+    const { result } = renderHook(() => useOpenInBackgroundTab())
+    expect(result.current === undefined).toBe(withTouch)
   })
 })

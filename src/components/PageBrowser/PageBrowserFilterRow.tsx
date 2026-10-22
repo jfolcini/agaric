@@ -21,7 +21,7 @@ import { PROPERTY_OP_CHIP } from '@/components/PageBrowser/add-filter/vocab'
 import { AddFilterPopover } from '@/components/PageBrowser/AddFilterPopover'
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import { SCROLL_ONLY_WHEN_WIDER, ScrollArea } from '@/components/ui/scroll-area'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import type { DatePredicate, FilterPrimitive } from '@/lib/bindings'
 import type { PageFilterWithKey } from '@/lib/filters/page-filter-with-key'
@@ -391,7 +391,7 @@ export function PageBrowserFilterRow({
   )
   // A phone keeps the chips on one row that scrolls sideways, edge to edge.
   return isMobile ? (
-    <ScrollArea orientation="horizontal" className="-mx-4">
+    <ScrollArea orientation="horizontal" className="-mx-4" viewportProps={SCROLL_ONLY_WHEN_WIDER}>
       {row}
     </ScrollArea>
   ) : (

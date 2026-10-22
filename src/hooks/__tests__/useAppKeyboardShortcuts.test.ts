@@ -86,7 +86,7 @@ describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () =>
   it('Ctrl+F (findInPage,) opens the in-page find toolbar', () => {
     // Reset the find store explicitly so prior test runs don't leak state.
     useInPageFindStore.setState({ open: false, query: '', lastQuery: '' })
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
 
@@ -97,7 +97,7 @@ describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () =>
   })
 
   it('Ctrl+Shift+F (focusSearch) sets navigation view to "search"', () => {
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     fireEvent.keyDown(window, { key: 'F', ctrlKey: true, shiftKey: true })
 
@@ -110,7 +110,7 @@ describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () =>
       'recent_commands:SPACE_PERSONAL',
       JSON.stringify([{ id: 'go-settings', runAt: '2026-05-19T00:00:00Z' }]),
     )
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     fireEvent.keyDown(window, { key: '.', ctrlKey: true })
 
@@ -125,7 +125,7 @@ describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () =>
 
   it('Ctrl+. with no recent commands opens the palette in commands mode (Phase 8)', async () => {
     localStorage.removeItem('recent_commands:SPACE_PERSONAL')
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     fireEvent.keyDown(window, { key: '.', ctrlKey: true })
 
@@ -139,7 +139,7 @@ describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () =>
       'recent_commands:SPACE_PERSONAL',
       JSON.stringify([{ id: 'go-settings', runAt: '2026-05-19T00:00:00Z' }]),
     )
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     const input = document.createElement('input')
     document.body.append(input)
@@ -159,7 +159,7 @@ describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () =>
     const listener = (e: Event) => opened.push((e as CustomEvent<string>).detail)
     window.addEventListener(OPEN_NEW_PAGE_DIALOG_EVENT, listener)
     try {
-      renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+      renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
       const event = new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, cancelable: true })
       window.dispatchEvent(event)
       expect(event.defaultPrevented).toBe(true)
@@ -183,7 +183,7 @@ describe('useAppKeyboardShortcuts — Ctrl+K collision (palette vs editor link)'
   it('OUTSIDE the editor → opens the command palette', async () => {
     const { useCommandPaletteStore } = await import('@/stores/useCommandPaletteStore')
     useCommandPaletteStore.setState({ open: false })
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     // Dispatch from a plain (non-editor) element so `isFocusInsideEditor`
     // runs `target.closest(...)` and finds no ProseMirror ancestor — the
@@ -203,7 +203,7 @@ describe('useAppKeyboardShortcuts — Ctrl+K collision (palette vs editor link)'
   it('INSIDE the editor → does NOT open the palette (editor owns the link command)', async () => {
     const { useCommandPaletteStore } = await import('@/stores/useCommandPaletteStore')
     useCommandPaletteStore.setState({ open: false })
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     // A contenteditable ProseMirror surface as the event target.
     const pm = document.createElement('div')
@@ -239,7 +239,7 @@ describe('useAppKeyboardShortcuts — Ctrl+. collision (runLastCommand vs collap
       'recent_commands:SPACE_PERSONAL',
       JSON.stringify([{ id: 'go-settings', runAt: '2026-05-19T00:00:00Z' }]),
     )
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     const input = document.createElement('input')
     document.body.append(input)
@@ -264,7 +264,7 @@ describe('useAppKeyboardShortcuts — Ctrl+. collision (runLastCommand vs collap
 
 describe('useAppKeyboardShortcuts — journal nav (document listener)', () => {
   it('Alt+ArrowRight advances the journal date in daily mode', () => {
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     fireEvent.keyDown(document, { key: 'ArrowRight', altKey: true })
 
@@ -274,7 +274,7 @@ describe('useAppKeyboardShortcuts — journal nav (document listener)', () => {
   })
 
   it('Alt+ArrowLeft moves the journal date back in daily mode', () => {
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     fireEvent.keyDown(document, { key: 'ArrowLeft', altKey: true })
 
@@ -288,7 +288,7 @@ describe('useAppKeyboardShortcuts — journal nav (document listener)', () => {
     vi.setSystemTime(new Date('2025-06-30T12:00:00Z'))
 
     try {
-      renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+      renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
       fireEvent.keyDown(document, { key: 't', altKey: true })
 
@@ -307,7 +307,7 @@ describe('useAppKeyboardShortcuts — journal nav (document listener)', () => {
     vi.setSystemTime(new Date(2025, 5, 30, 12))
     try {
       useJournalStore.setState({ mode: 'stream' })
-      renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+      renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
       fireEvent.keyDown(document, { key: 't', altKey: true })
     } finally {
       vi.useRealTimers()
@@ -322,7 +322,7 @@ describe('useAppKeyboardShortcuts — journal nav (document listener)', () => {
     useNavigationStore.setState({ currentView: 'pages' })
     const initial = useJournalStore.getState().currentDate
 
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     fireEvent.keyDown(document, { key: 'ArrowRight', altKey: true })
 
@@ -332,7 +332,7 @@ describe('useAppKeyboardShortcuts — journal nav (document listener)', () => {
 
 describe('useAppKeyboardShortcuts — space digit hotkeys', () => {
   it('Alt+2 switches to the second alphabetical space', () => {
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     fireEvent.keyDown(window, { key: '2', altKey: true })
 
@@ -344,7 +344,7 @@ describe('useAppKeyboardShortcuts — space digit hotkeys', () => {
   })
 
   it('out-of-range Alt+9 with three spaces is a silent no-op', () => {
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     fireEvent.keyDown(window, { key: '9', altKey: true })
 
@@ -376,7 +376,7 @@ describe('useAppKeyboardShortcuts — space digit hotkeys', () => {
         seedNineSpaces()
         const setCurrentSpace = vi.fn()
         useSpaceStore.setState({ setCurrentSpace })
-        renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+        renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
         fireEvent.keyDown(window, { key: String(n), altKey: true })
 
@@ -403,7 +403,7 @@ describe('useAppKeyboardShortcuts — space digit hotkeys', () => {
         isReady: true,
         setCurrentSpace,
       })
-      renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+      renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
       fireEvent.keyDown(window, { key: '9', altKey: true })
 
@@ -414,7 +414,7 @@ describe('useAppKeyboardShortcuts — space digit hotkeys', () => {
       seedNineSpaces()
       const setCurrentSpace = vi.fn()
       useSpaceStore.setState({ setCurrentSpace })
-      renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+      renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
       const input = document.createElement('input')
       document.body.append(input)
@@ -431,7 +431,7 @@ describe('useAppKeyboardShortcuts — space digit hotkeys', () => {
       seedNineSpaces()
       const setCurrentSpace = vi.fn()
       useSpaceStore.setState({ setCurrentSpace })
-      renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+      renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
       const block = document.createElement('div')
       block.setAttribute('contenteditable', 'true')
@@ -449,7 +449,7 @@ describe('useAppKeyboardShortcuts — space digit hotkeys', () => {
     const setCurrentSpace = vi.fn()
     useSpaceStore.setState({ setCurrentSpace })
 
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     fireEvent.keyDown(window, { key: '1', altKey: true })
 
@@ -464,7 +464,7 @@ describe('useAppKeyboardShortcuts — close-overlays', () => {
     window.addEventListener(CLOSE_ALL_OVERLAYS_EVENT, listener)
 
     try {
-      renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+      renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
       fireEvent.keyDown(window, { key: 'Escape' })
 
@@ -496,7 +496,7 @@ describe('useAppKeyboardShortcuts — tab shortcuts', () => {
   it('Ctrl+Tab cycles to the next tab when there is more than one tab', () => {
     seedTwoTabs()
 
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     fireEvent.keyDown(window, { key: 'Tab', ctrlKey: true })
 
@@ -506,7 +506,7 @@ describe('useAppKeyboardShortcuts — tab shortcuts', () => {
   it('Ctrl+Shift+Tab as WebKitGTK reports it (key Unidentified, code Tab) cycles to the previous tab', () => {
     seedTwoTabs()
 
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     fireEvent.keyDown(window, {
       key: 'Unidentified',
@@ -519,10 +519,10 @@ describe('useAppKeyboardShortcuts — tab shortcuts', () => {
     expect(useTabsStore.getState().activeTabIndex).toBe(1)
   })
 
-  it('does NOT fire on mobile (TabBar is hidden)', () => {
+  it('does NOT fire on a touch phone (TabBar is hidden)', () => {
     seedTwoTabs()
 
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: true }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: true }))
 
     fireEvent.keyDown(window, { key: 'Tab', ctrlKey: true })
 
@@ -546,7 +546,7 @@ describe('useAppKeyboardShortcuts — tab shortcuts', () => {
 
   it('Ctrl+2 selects the second tab and Ctrl+9 the last, even from inside the editor', () => {
     seedThreeTabs()
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
     const pm = document.createElement('div')
     pm.className = 'ProseMirror'
     pm.setAttribute('contenteditable', 'true')
@@ -563,7 +563,7 @@ describe('useAppKeyboardShortcuts — tab shortcuts', () => {
 
   it('Ctrl+5 past the last tab, and Ctrl+1 onto an empty tab, change nothing', () => {
     seedThreeTabs()
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
     fireEvent.keyDown(window, { key: '5', ctrlKey: true })
     expect(useTabsStore.getState().activeTabIndex).toBe(0)
 
@@ -581,7 +581,7 @@ describe('useAppKeyboardShortcuts — tab shortcuts', () => {
   it('Ctrl+Shift+T reopens the tab Ctrl+W closed, on its page and at its place', () => {
     seedThreeTabs()
     useTabsStore.getState().switchTab(1)
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     fireEvent.keyDown(window, { key: 'w', ctrlKey: true })
     expect(useTabsStore.getState().tabs.map((tab) => tab.label)).toEqual(['A', 'C'])
@@ -612,7 +612,7 @@ describe('useAppKeyboardShortcuts — quick switcher and command palette', () =>
     async (key, mode) => {
       const { useCommandPaletteStore } = await import('@/stores/useCommandPaletteStore')
       useCommandPaletteStore.getState().close()
-      renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+      renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
       const pm = editorSurface()
       try {
         const e = new KeyboardEvent('keydown', {
@@ -634,7 +634,7 @@ describe('useAppKeyboardShortcuts — quick switcher and command palette', () =>
   it('Ctrl+P on the open quick switcher switches it to commands', async () => {
     const { useCommandPaletteStore } = await import('@/stores/useCommandPaletteStore')
     useCommandPaletteStore.getState().close()
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
     fireEvent.keyDown(window, { key: 'o', ctrlKey: true })
     expect(useCommandPaletteStore.getState().mode).toBe('search')
     fireEvent.keyDown(window, { key: 'p', ctrlKey: true })
@@ -657,7 +657,7 @@ describe('useAppKeyboardShortcuts — Back / Forward', () => {
 
   it('Ctrl+Alt+Left steps back and Ctrl+Alt+Right forward', () => {
     seedHistory()
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     fireEvent.keyDown(window, { key: 'ArrowLeft', ctrlKey: true, altKey: true })
     expect(useNavigationStore.getState().currentView).toBe('pages')
@@ -667,7 +667,7 @@ describe('useAppKeyboardShortcuts — Back / Forward', () => {
 
   it("the mouse's back (3) and forward (4) buttons step the same way, and keep the WebView's own", () => {
     seedHistory()
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     const back = new MouseEvent('mouseup', { button: 3, bubbles: true, cancelable: true })
     window.dispatchEvent(back)
@@ -687,7 +687,7 @@ describe('useAppKeyboardShortcuts — Back / Forward', () => {
 
 describe('useAppKeyboardShortcuts — cleanup', () => {
   it('removes every keydown listener on unmount', () => {
-    const { unmount } = renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    const { unmount } = renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     unmount()
 
@@ -713,7 +713,7 @@ describe('useAppKeyboardShortcuts — cleanup', () => {
 
 describe('useAppKeyboardShortcuts — modifier discipline', () => {
   it('plain "f" does NOT switch to search view (only Ctrl+F does)', () => {
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     fireEvent.keyDown(window, { key: 'f' })
 
@@ -722,7 +722,7 @@ describe('useAppKeyboardShortcuts — modifier discipline', () => {
   })
 
   it('auto-repeat events are ignored', () => {
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     fireEvent.keyDown(window, { key: 'f', ctrlKey: true, repeat: true })
 
@@ -736,7 +736,7 @@ describe('useAppKeyboardShortcuts — modifier discipline', () => {
 
 describe('useAppKeyboardShortcuts — typing-in-field gating', () => {
   it('journal nav skips when target is INPUT', () => {
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    renderHook(() => useAppKeyboardShortcuts({ t, isTouchPhone: false }))
 
     const input = document.createElement('input')
     document.body.append(input)

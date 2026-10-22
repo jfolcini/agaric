@@ -26,6 +26,7 @@ import { PropertyPicker } from '@/editor/extensions/property-picker'
 import { QueryHint } from '@/editor/extensions/query-hint'
 import { QueryPicker } from '@/editor/extensions/query-picker'
 import { SlashCommand } from '@/editor/extensions/slash-command'
+import { PageBlockKeys } from '@/editor/page-mode/page-block-actions'
 import { PageBlockFocus } from '@/editor/page-mode/page-block-focus'
 import { PageBlockIds } from '@/editor/page-mode/page-block-ids'
 import { PageCollapse } from '@/editor/page-mode/page-collapse'
@@ -87,6 +88,7 @@ export function pageModeExtensions(options: PageModeExtensionOptions): Extension
     PagePaste,
     PageBlockIds.configure(options.mintId === undefined ? {} : { mintId: options.mintId }),
     PageKeys.configure({ onNavigate: options.onNavigate }),
+    PageBlockKeys,
     PageRenderedKeys,
     ...(options.lists === undefined ? [] : [pageListKeys(options.lists)]),
     // After `pageListKeys` and at its priority: among equals the one registered

@@ -378,8 +378,6 @@ function PageModeDocument({
       command: (item: PickerItem) => void
       /** `/attach`'s file: attached, as block mode's `/attach` attaches it, never put in the text. */
       attachPicked: (id: string, files: File[]) => void
-      /** The block menu's History, once the block is saved. */
-      openHistory: (id: string) => void
       /** The block menu's Turn into: a slash command, run on the block once it is saved. */
       turnInto: (id: string, item: PickerItem) => void
       /** The block menu's task state set on a selection, once its blocks are saved. */
@@ -461,6 +459,7 @@ function PageModeDocument({
           actions.current.openDatePicker(id, mode),
         openDateLinkPicker: () => actions.current.openDateLinkPicker(),
         openPropertyDrawer: (id: string) => actions.current.openPropertyDrawer(id),
+        openHistory: (id: string) => actions.current.openHistory(id),
         propertiesEdited: () => actions.current.propertiesEdited(),
         attachmentsChanged: () => actions.current.attachmentsChanged(),
         attach: (id: string, files: File[]) => actions.current.attach(id, files),

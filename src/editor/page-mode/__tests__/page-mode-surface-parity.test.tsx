@@ -1,6 +1,7 @@
 /**
  * What block mode offers and page mode leaves out (#5691): the roving editor's
- * extensions, the block menu's rows and the slash menu's commands. Each is in
+ * extensions, the block menu's rows, the slash menu's commands and the
+ * rebindable chords the block editor answers. Each is in
  * page mode, or left out here with a reason, as the source buffer's are
  * (`source-toolbar-parity.test.ts`), so one added to block mode alone fails
  * here until page mode takes it or names why not. `page-mode-parity.test.ts`
@@ -20,13 +21,22 @@ import {
   type BlockContextMenuProps,
 } from '@/components/editor/block-context-menu/types'
 import { BlockContextMenu } from '@/components/editor/BlockContextMenu'
-import { blockId, idMinter, openPage, PAGE } from '@/editor/page-mode/__tests__/page-mode-fixtures'
+import {
+  blockId,
+  caret,
+  idMinter,
+  openPage,
+  PAGE,
+  press,
+  type Row,
+} from '@/editor/page-mode/__tests__/page-mode-fixtures'
 import { FakeTasks, listSource } from '@/editor/page-mode/__tests__/page-node-view-fixtures'
 import { PageLists } from '@/editor/page-mode/page-lists'
 import { pageModeExtensions } from '@/editor/page-mode/page-mode-extensions'
 import { runsAtOnce, searchPageSlashCommands } from '@/editor/page-mode/page-slash-commands'
 import { PageBlockMenu } from '@/editor/page-mode/PageBlockMenu'
 import { useRovingEditor } from '@/editor/use-roving-editor'
+import { DEFAULT_SHORTCUTS, parseChord } from '@/lib/keyboard-config'
 import {
   ASSIGNEE_COMMANDS,
   CALLOUT_COMMANDS,
@@ -67,6 +77,7 @@ const PAGE_MODE_ONLY = new Set([
   'pageTaskKeys',
   'pageBlockIds',
   'pageKeys',
+  'pageBlockKeys',
   'pageRenderedKeys',
   'pageListKeys',
   'pageBlockFocus',
@@ -109,6 +120,29 @@ const ROW_ACTION: Record<BlockMenuActionId, keyof BlockActions | null> = {
   history: 'onShowHistory',
   properties: 'onShowProperties',
   delete: 'onDelete',
+}
+
+const HEADING_KEYS =
+  'block mode runs them from the block tree’s listener, which page mode does not mount; /h1–/h6 and Turn into make headings here'
+
+/** The catalog's categories whose chords the block editor answers. */
+const EDITOR_CHORD_CATEGORIES = new Set([
+  'keyboard.category.navigation',
+  'keyboard.category.editing',
+  'keyboard.category.blockTree',
+  'keyboard.category.editorFormatting',
+])
+
+/** The block editor's rebindable chords page mode does not answer with their action, and why. */
+const CHORD_NOT_IN_PAGE_MODE: Record<string, string> = {
+  zoomIn: 'page mode shows the whole page; it has no zoom',
+  zoomOut: 'page mode shows the whole page; it has no zoom, and its Escape leaves the text',
+  heading1: HEADING_KEYS,
+  heading2: HEADING_KEYS,
+  heading3: HEADING_KEYS,
+  heading4: HEADING_KEYS,
+  heading5: HEADING_KEYS,
+  heading6: HEADING_KEYS,
 }
 
 /** The commands page mode runs once a save has created the block (`page-slash-commands.tsx`). */
@@ -285,5 +319,46 @@ describe('the slash menu', () => {
 
   it('names no command after the save that the menu does not have', () => {
     expect([...AFTER_THE_SAVE].filter((id) => !blockModeIds.includes(id))).toEqual([])
+  })
+})
+
+describe('the block editor’s chords', () => {
+  const chords = DEFAULT_SHORTCUTS.filter(
+    (shortcut) => shortcut.rebindable !== false && EDITOR_CHORD_CATEGORIES.has(shortcut.category),
+  )
+
+  /** The key and modifiers of the binding's first chord, as the browser reports them. */
+  function chordEvent(keys: string): [string, KeyboardEventInit] {
+    const chord = parseChord(keys.split(' / ')[0] as string)
+    if (chord === null) throw new Error(`no chord in ${keys}`)
+    const key = chord.key.length === 1 ? chord.key.toLowerCase() : chord.key.replaceAll(' ', '')
+    return [key, { ctrlKey: chord.ctrl, altKey: chord.alt, shiftKey: chord.shift }]
+  }
+
+  it.each(chords.map((shortcut) => [shortcut.id, shortcut.keys]))(
+    '%s (%s) is answered in page mode, or names why not',
+    (id, keys) => {
+      // The caret beside a page link, in a saved block with a block under it: where every chord acts.
+      const rows: Row[] = [
+        [blockId(1), 0, 'first'],
+        [blockId(2), 0, `[[${blockId(9)}]] second`],
+        [blockId(3), 1, 'third'],
+      ]
+      const lists = new PageLists(
+        {},
+        rows.map(([rowId, depth]) => ({ id: rowId, depth })),
+      )
+      const editor = openPage(rows, idMinter(), undefined, listSource(lists), new FakeTasks())
+      editors.push(editor)
+      caret(editor, 1, 1)
+      expect(press(editor, ...chordEvent(keys)) || CHORD_NOT_IN_PAGE_MODE[id] !== undefined).toBe(
+        true,
+      )
+    },
+  )
+
+  it('waives only the block editor’s chords', () => {
+    const ids = new Set(chords.map((shortcut) => shortcut.id))
+    expect(Object.keys(CHORD_NOT_IN_PAGE_MODE).filter((id) => !ids.has(id))).toEqual([])
   })
 })

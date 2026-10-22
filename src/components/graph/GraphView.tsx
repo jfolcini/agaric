@@ -257,7 +257,7 @@ export function GraphView(): React.ReactElement {
         announce(t('graph.selected', { page: label }))
       },
       open: navigateToPage,
-      // The tab bar is desktop-only, so on mobile a new tab would open out of sight.
+      // A touch phone has no tab bar, so there a new tab would open out of sight.
       openInNewTab: openInBackgroundTab ?? navigateToPage,
     }),
     [t, navigateToPage, openInBackgroundTab],

@@ -525,7 +525,7 @@ function AttachmentImage({
         value={captionDraft}
         placeholder={t('imageCaption.placeholder')}
         aria-label={t('imageCaption.label')}
-        className="mt-1 w-full border-0 bg-transparent px-0 text-center text-xs text-muted-foreground placeholder:text-muted-foreground/60 focus:outline-none focus-visible:outline-none"
+        className="mt-1 w-full border-0 bg-transparent px-0 text-center text-xs text-muted-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:outline-none"
         data-testid="image-caption-input"
         onClick={(e) => e.stopPropagation()}
         onFocus={() => {

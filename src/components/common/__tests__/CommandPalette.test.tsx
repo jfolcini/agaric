@@ -98,6 +98,9 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
 vi.mock('@/hooks/useIsMobile', () => ({
   useIsMobile: vi.fn(() => false),
 }))
+// Tabs hide only on a touch phone: touch and a phone's width together.
+let touch = false
+vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: () => touch }))
 
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { searchBlocks, searchBlocksPartitioned } from '@/lib/ipc-helpers'
@@ -193,6 +196,7 @@ function partitionedResp(
 }
 
 beforeEach(() => {
+  touch = false
   vi.clearAllMocks()
   // `clearAllMocks` wipes the mock implementation, so re-pin the
   // Default desktop viewport. Mobile tests override.
@@ -869,8 +873,9 @@ describe('CommandPalette — click semantics', () => {
     expect(useNavigationStore.getState().selectedBlockId).toBe('BLOCK_42')
   })
 
-  it('on mobile, which shows no tabs, Ctrl+Enter opens the page in place', async () => {
+  it('on a touch phone, which shows no tabs, Ctrl+Enter opens the page in place', async () => {
     mockedUseIsMobile.mockReturnValue(true)
+    touch = true
     seedOneTab()
     const navigateToPage = vi.fn()
     useTabsStore.setState({ navigateToPage })

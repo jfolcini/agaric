@@ -25,6 +25,7 @@ vi.mock('@/lib/logger', () => ({
 
 let mobile = false
 vi.mock('@/hooks/useIsMobile', () => ({ useIsMobile: () => mobile }))
+vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: () => mobile }))
 
 class RecordingWorker {
   static last: RecordingWorker | null = null
@@ -173,7 +174,7 @@ describe('GraphView — select, then open on purpose (#5435)', () => {
     expect(container.querySelectorAll('g.node[aria-selected="true"]')).toHaveLength(0)
   })
 
-  it('on mobile, where the tab bar is hidden, a modifier click opens in place', async () => {
+  it('on a touch phone, where the tab bar is hidden, a modifier click opens in place', async () => {
     mobile = true
     const container = await renderGraph()
 

@@ -608,6 +608,39 @@ test.describe('page mode block menu (#5972) @editor @pages', () => {
     await expect(page.locator(`${EDITOR} [data-page-block-id="${ids[0]}"] h1`)).toHaveCount(0)
   })
 
+  test('the move and duplicate chords act on the caret’s block, and the order they leave stays', async ({
+    page,
+  }) => {
+    const { pageId, ids } = await seedRows(page, 'Chord arrange', [
+      [0, 'one'],
+      [0, 'two'],
+      [1, 'child'],
+      [0, 'three'],
+    ])
+    await openInPageMode(page, 'Chord arrange', 4)
+    await caretIn(page, 3)
+
+    await page.keyboard.press('Control+Shift+ArrowUp')
+    await expect
+      .poll(async () => (await backend(page, pageId)).map((r) => r[0]))
+      .toEqual([ids[0], ids[3], ids[1], ids[2]])
+
+    await page.keyboard.press('Control+Shift+J')
+    const arranged = [
+      [0, 'one'],
+      [0, 'three'],
+      [0, 'three'],
+      [0, 'two'],
+      [1, 'child'],
+    ]
+    await expect
+      .poll(async () => (await backend(page, pageId)).map((r) => [r[1], r[2]]))
+      .toEqual(arranged)
+
+    await reopen(page, 'Chord arrange', 5)
+    expect((await shown(page)).map((r) => [r[1], r[2]])).toEqual(arranged)
+  })
+
   test('Properties and History open on the block they were chosen for', async ({ page }) => {
     const { ids } = await seedRows(page, 'Menu dialogs', [
       [0, 'one'],

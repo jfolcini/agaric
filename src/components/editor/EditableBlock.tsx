@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next'
 import { EditorSurfaceContext } from '@/components/editor/editor-surface-context'
 import { useListMarker } from '@/components/editor/ListMarkerContext'
 import { StaticBlock } from '@/components/editor/StaticBlock'
+import { getActiveEditor } from '@/editor/active-editor'
 import { blockLinkToken } from '@/editor/markdown-common'
 import { parse } from '@/editor/markdown-serializer'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
@@ -443,6 +444,11 @@ function EditableBlockInner({
           rootParentId,
           pageStoreApiRef.current,
         )
+      } else if (rovingEditorRef.current.activeBlockId === null) {
+        // Another tree's editor, kept focused through the press, leaves first:
+        // its blur saves its block before this one takes the focus.
+        const other = getActiveEditor()
+        if (other?.isFocused === true) other.view.dom.blur()
       }
       // Mount into the new block
       logger.debug('editor', 'focus', { blockId: id })
@@ -452,18 +458,19 @@ function EditableBlockInner({
     [content, setFocused, rootParentId],
   )
 
-  // A press on this block's text while the editor sits on another block of this
-  // tree keeps that editor focused, so the click's handleFocus saves that block
-  // and moves the editor here with no blur in between. A mouse press's blur
-  // would keep the other block in edit mode until the release (`useEditorBlur`),
-  // but a tap's compat mousedown is not held: the blur would render that block
-  // static at another height before the click, and the tap would land on another
-  // row. A press on a chip or button inside the block still moves focus, so its
-  // blur saves.
+  // A press on this block's text while an editor sits on another block, of this
+  // tree or of another day's in the journal week view, keeps that editor
+  // focused until the click, whose handleFocus saves that block and moves the
+  // editor here. A mouse press's blur would keep the other block in edit mode
+  // until the release (`useEditorBlur`), but a tap's compat mousedown is not
+  // held: the blur would render that block static at another height before the
+  // click, and the tap would land on another row. A press on a chip or button
+  // inside the block still moves focus, so its blur saves.
   const keepEditorUntilClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       const active = rovingEditorRef.current.activeBlockId
-      if (active === null || active === blockId) return
+      if (active === blockId) return
+      if (active === null && getActiveEditor()?.isFocused !== true) return
       if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return
       const control = (e.target as Element).closest(
         'a, button, input, select, textarea, [tabindex]',

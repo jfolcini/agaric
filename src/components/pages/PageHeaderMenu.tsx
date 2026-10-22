@@ -27,6 +27,7 @@ import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { SheetTrigger } from '@/components/ui/sheet'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useIsTouch } from '@/hooks/useIsTouch'
 
 /** A space shown in the "Move to space" sub-menu. */
 export interface MoveTargetSpace {
@@ -105,10 +106,10 @@ export function PageHeaderMenu({
   onMoveToSpace,
 }: PageHeaderMenuProps) {
   const { t } = useTranslation()
-  // Item 7: hide the `t('tabs.openInNewTab')` affordance on mobile — the
-  // hoisted TabBar is itself desktop-only, so the item would otherwise be
-  // semantically misleading (the new tab is invisible on mobile).
   const isMobile = useIsMobile()
+  const isTouch = useIsTouch()
+  // A touch phone has no tab bar (`TabBar`), so a new tab there could never be seen.
+  const offersNewTab = onOpenInNewTab != null && !(isTouch && isMobile)
 
   // Phase 2 — the `t('space.moveTo')` entry expands inline (no nested
   // Radix popover) to keep focus management simple and the a11y tree
@@ -131,7 +132,7 @@ export function PageHeaderMenu({
   // Ordered top-level menuitem ids — mirrors the conditional render order.
   // A disabled Redo cannot take focus, so it leaves the roving set.
   const orderedIds: string[] = [
-    ...(onOpenInNewTab != null && !isMobile ? ['openInNewTab'] : []),
+    ...(offersNewTab ? ['openInNewTab'] : []),
     'undo',
     ...(canRedo ? ['redo'] : []),
     'openOutline',
@@ -249,7 +250,7 @@ export function PageHeaderMenu({
 
   const items = (
     <>
-      {onOpenInNewTab != null && !isMobile && (
+      {offersNewTab && (
         <>
           <button
             type="button"

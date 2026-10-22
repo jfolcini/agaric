@@ -11,6 +11,7 @@ import {
   caret,
   idMinter,
   openPage,
+  press,
   type Row,
   rowsOf,
 } from '@/editor/page-mode/__tests__/page-mode-fixtures'
@@ -197,6 +198,51 @@ describe('duplicateBlock', () => {
 
     expect(duplicateBlock(E)(ed.state, ed.view.dispatch)).toBe(false)
     expect(rowsOf(ed.state.doc)).toEqual([[A, 0, 'a']])
+  })
+})
+
+describe('the move and duplicate shortcuts (PageBlockKeys)', () => {
+  const CHORD = { ctrlKey: true, shiftKey: true }
+
+  it('move the block at the cursor and the blocks under it past a sibling, as block mode’s do', () => {
+    const ed = build([
+      [A, 0, 'a'],
+      [B, 0, 'b'],
+      [C, 1, 'c'],
+    ])
+    caret(ed, 1, 0)
+
+    expect(press(ed, 'ArrowUp', CHORD)).toBe(true)
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [B, 0, 'b'],
+      [C, 1, 'c'],
+      [A, 0, 'a'],
+    ])
+
+    expect(press(ed, 'ArrowDown', CHORD)).toBe(true)
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'a'],
+      [B, 0, 'b'],
+      [C, 1, 'c'],
+    ])
+  })
+
+  it('duplicate the block at the cursor with the blocks under it, right after them', () => {
+    const ed = build([
+      [A, 0, 'a'],
+      [B, 1, 'b'],
+      [C, 0, 'c'],
+    ])
+    caret(ed, 0, 0)
+
+    expect(press(ed, 'j', CHORD)).toBe(true)
+    expect(rowsOf(ed.state.doc).map(([, depth, markdown]) => [depth, markdown])).toEqual([
+      [0, 'a'],
+      [1, 'b'],
+      [0, 'a'],
+      [1, 'b'],
+      [0, 'c'],
+    ])
   })
 })
 

@@ -8,16 +8,21 @@ import { t } from '@/lib/i18n'
 import { useNavigationStore } from '@/stores/navigation'
 import { resetTabIdCounter, selectPageStack, useTabsStore } from '@/stores/tabs'
 
-// `useIsMobile` is mocked so each test can pin the viewport-state boolean
-// without juggling `window.innerWidth` or matchMedia. The default (false)
-// matches the existing tests that assume desktop rendering.
+// `useIsMobile` and `useIsTouch` are mocked so each test can pin the device
+// without juggling `window.innerWidth` or matchMedia. The defaults (false)
+// match the existing tests that assume desktop rendering.
 vi.mock('@/hooks/useIsMobile', () => ({
   useIsMobile: vi.fn(() => false),
 }))
+vi.mock('@/hooks/useIsTouch', () => ({
+  useIsTouch: vi.fn(() => false),
+}))
 
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useIsTouch } from '@/hooks/useIsTouch'
 
 const mockedUseIsMobile = vi.mocked(useIsMobile)
+const mockedUseIsTouch = vi.mocked(useIsTouch)
 
 /** Helper to reset the store to a clean initial state. */
 function resetStore() {
@@ -36,6 +41,7 @@ describe('TabBar', () => {
   beforeEach(() => {
     resetStore()
     mockedUseIsMobile.mockReturnValue(false)
+    mockedUseIsTouch.mockReturnValue(false)
   })
 
   // ---------------------------------------------------------------------------
@@ -671,8 +677,10 @@ describe('TabBar', () => {
       expect(screen.queryByRole('tablist')).toBeNull()
     })
 
-    it('mobile viewport hides the bar entirely even with many tabs', () => {
+    // A narrow mouse window keeps its tabs; a touch phone navigates without them.
+    it.each([true, false])('at phone width, hides the bar only on touch (touch: %s)', (touch) => {
       mockedUseIsMobile.mockReturnValue(true)
+      mockedUseIsTouch.mockReturnValue(touch)
       useNavigationStore.setState({
         currentView: 'page-editor',
       })
@@ -687,7 +695,7 @@ describe('TabBar', () => {
 
       render(<TabBar />)
 
-      expect(screen.queryByRole('tablist')).toBeNull()
+      expect(screen.queryByRole('tablist') === null).toBe(touch)
     })
 
     // The tab covers the strip's hairline with the page background, and its
