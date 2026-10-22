@@ -1846,22 +1846,43 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
 /** Block mode's editor, on the block it is editing. */
 const ROVING = '[data-testid="block-editor"] [contenteditable="true"]'
 
-/** The block at the top of the page as shown, either mode's, and how far below the scroller's top it starts. */
-function topBlock(page: Page): Promise<{ id: string; top: number } | null> {
-  return page.evaluate(() => {
-    const at = (document.getElementById('main-content') as HTMLElement).getBoundingClientRect().top
-    const rows = document.querySelectorAll(
-      '.page-editor [data-page-block-id], .page-editor li[data-block-id]',
-    )
-    for (const row of rows) {
-      const box = row.getBoundingClientRect()
-      if (box.bottom > at) {
-        const id = row.getAttribute('data-page-block-id') ?? row.getAttribute('data-block-id')
-        return { id: id ?? '', top: Math.round(box.top - at) }
-      }
+interface Place {
+  id: string
+  top: number
+}
+
+/** Run in the page: the block at the top of the page as shown, either mode's, and how far below the scroller's top it starts. */
+function placeShown(): Place | null {
+  const at = (document.getElementById('main-content') as HTMLElement).getBoundingClientRect().top
+  const rows = document.querySelectorAll(
+    '.page-editor [data-page-block-id], .page-editor li[data-block-id]',
+  )
+  for (const row of rows) {
+    const box = row.getBoundingClientRect()
+    if (box.bottom > at) {
+      const id = row.getAttribute('data-page-block-id') ?? row.getAttribute('data-block-id')
+      return { id: id ?? '', top: Math.round(box.top - at) }
     }
-    return null
-  })
+  }
+  return null
+}
+
+function topBlock(page: Page): Promise<Place | null> {
+  return page.evaluate(placeShown)
+}
+
+/**
+ * `topBlock` as the next press of the key `code` reaches the page, before the app handles it:
+ * the place the switch that press makes carries. After a scroll, block mode's rows take their
+ * measured heights over a few frames, which moves the block at the top until they have.
+ */
+async function topBlockOnKey(page: Page, code: string): Promise<() => Promise<Place | null>> {
+  await page.evaluate(`addEventListener('keydown', function read(event) {
+    if (event.code !== '${code}') return
+    removeEventListener('keydown', read, true)
+    window.placeOnKey = (${placeShown.toString()})()
+  }, true)`)
+  return () => page.evaluate(() => (window as unknown as { placeOnKey: Place | null }).placeOnKey)
 }
 
 test.describe('page mode keeps the keyboard’s place (#5691) @editor @pages', () => {
@@ -2060,11 +2081,12 @@ test.describe('page mode keeps the keyboard’s place (#5691) @editor @pages', (
     await expect(row(ids[0])).toBeVisible()
     await row(ids[60]).evaluate((el) => el.scrollIntoView({ block: 'start' }))
     await page.locator('#main-content').evaluate((el) => el.scrollBy(0, -10))
-    const inBlocks = await topBlock(page)
-    expect(inBlocks?.id).toBe(ids[59])
+    const atSwitch = await topBlockOnKey(page, 'KeyM')
 
     await page.keyboard.press('Control+Shift+M')
 
+    const inBlocks = await atSwitch()
+    expect(inBlocks?.id).toBe(ids[59])
     await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(200)
     await expect.poll(() => topBlock(page)).toEqual(inBlocks)
 
