@@ -310,10 +310,10 @@ function buildCollapseGroup(ctx: MenuGroupContext): MenuItem[] {
 
 /** The states a selection's task state can be set to, `null` clearing it, as block mode's batch toolbar offers them. */
 const BATCH_TODO_STATES = [
+  [null, null],
   ['TODO', 'blockContext.todoLabel'],
   ['DOING', 'blockContext.doingLabel'],
   ['DONE', 'blockContext.doneLabel'],
-  [null, null],
 ] as const
 
 /** Group 4: TODO cycle, on a selection one state set on all of it, Priority cycle. */

@@ -229,15 +229,10 @@ export function BookmarksSection(): ReactElement {
   const { isMobile, setOpenMobile } = useSidebar()
 
   const sensors = useReorderSensors()
-  const dndAccessibility = useMemo(
-    () =>
-      reorderAccessibility(
-        t,
-        (id: UniqueIdentifier) =>
-          bookmarks.find((b) => b.pageId === id)?.title || t('recent.untitled'),
-        t('bookmarks.reorderInstructions'),
-      ),
-    [bookmarks, t],
+  const dndAccessibility = reorderAccessibility(
+    t,
+    (id: UniqueIdentifier) => bookmarks.find((b) => b.pageId === id)?.title || t('recent.untitled'),
+    t('bookmarks.reorderInstructions'),
   )
 
   // A bookmark dragged out of the sidebar is a page dragged into what it is

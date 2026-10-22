@@ -873,12 +873,34 @@ describe('PageBlockMenu: a selection of several blocks', () => {
     it('sets it on every selected block, not on the blocks under them', async () => {
       const { view, menu } = await openOnSelection()
       expect(await axe(menu)).toHaveNoViolations()
+      const reads = () => mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'load_page_subtree')
+      const readsBefore = reads().length
 
       await choose(view, t('contextMenu.setTodoSelected', { state: 'DOING' }))
 
       await waitFor(() => expect(states(view)).toEqual([null, 'DOING', 'DOING', 'DOING', 'TODO']))
+      await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(1))
+      await settled(view)
       // One step for the page's undo, as block mode's toolbar records it.
       expect(useUndoStore.getState().pages.get(view.pageId)?.undoStack).toHaveLength(1)
+      // What it showed is what it wrote: the page is not read again.
+      expect(reads()).toHaveLength(readsBefore)
+    })
+
+    it('lists Clear first, as block mode’s batch toolbar does', async () => {
+      const { menu } = await openOnSelection()
+
+      const expected = [
+        t('contextMenu.clearTodoSelected'),
+        t('contextMenu.setTodoSelected', { state: 'TODO' }),
+        t('contextMenu.setTodoSelected', { state: 'DOING' }),
+        t('contextMenu.setTodoSelected', { state: 'DONE' }),
+      ]
+      const offered = within(menu)
+        .getAllByRole('menuitem')
+        .map((item) => item.textContent ?? '')
+        .filter((name) => expected.includes(name))
+      expect(offered).toEqual(expected)
     })
 
     it('clears it on every selected block', async () => {

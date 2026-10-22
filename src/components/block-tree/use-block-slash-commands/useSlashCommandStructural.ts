@@ -35,8 +35,10 @@ import { notify } from '@/lib/notify'
  * does (#5691). The editor's pending commit is flushed first, as
  * {@link handleListStyle} explains, so the style never goes without the change
  * `/code` and `/quote` make in the editor. Page mode clears it its own way.
+ * A command whose `edit_block` was refused leaves the style alone: the block
+ * is unchanged, and that refusal has already been toasted.
  */
-async function clearListStyle(ctx: SlashCommandContext, failKey: string): Promise<void> {
+async function clearListStyleFor(ctx: SlashCommandContext, failKey: string): Promise<void> {
   if (ctx.clearListStyle) {
     ctx.clearListStyle()
     return
@@ -53,14 +55,14 @@ async function clearListStyle(ctx: SlashCommandContext, failKey: string): Promis
 async function handleHeading(ctx: SlashCommandContext, level: number): Promise<void> {
   const stripped = readCurrentContent(ctx).replace(/^#{1,6}\s/, '')
   const newContent = `${'#'.repeat(level)} ${stripped}`
-  await applyContentEdit(ctx, newContent, 'blockTree.setHeadingFailed')
-  await clearListStyle(ctx, 'blockTree.clearListStyleFailed')
+  if (!(await applyContentEdit(ctx, newContent, 'blockTree.setHeadingFailed'))) return
+  await clearListStyleFor(ctx, 'blockTree.clearListStyleFailed')
 }
 
 async function handleCallout(ctx: SlashCommandContext, calloutType: string): Promise<void> {
   const newContent = `> [!${calloutType.toUpperCase()}] ${readCurrentContent(ctx)}`
-  await applyContentEdit(ctx, newContent, 'slash.calloutFailed')
-  await clearListStyle(ctx, 'slash.calloutFailed')
+  if (!(await applyContentEdit(ctx, newContent, 'slash.calloutFailed'))) return
+  await clearListStyleFor(ctx, 'slash.calloutFailed')
 }
 
 async function handleToggleBlock(
@@ -70,7 +72,7 @@ async function handleToggleBlock(
   const editor = ctx.rovingEditor.editor
   if (!editor) return
   toggle(editor)
-  await clearListStyle(ctx, 'blockTree.clearListStyleFailed')
+  await clearListStyleFor(ctx, 'blockTree.clearListStyleFailed')
 }
 
 /**
@@ -127,7 +129,7 @@ async function handleTurnInto(ctx: SlashCommandContext, item: PickerItem): Promi
   const type = turnIdToBlockType(item.id)
   if (!type) return
   const newContent = convertBlockContent(readCurrentContent(ctx), type)
-  await applyContentEdit(ctx, newContent, 'slash.turnIntoFailed')
+  if (!(await applyContentEdit(ctx, newContent, 'slash.turnIntoFailed'))) return
   try {
     await setListStyle(ctx.blockId, listStyleForBlockType(type))
   } catch (err) {

@@ -748,11 +748,11 @@ function PageModeDocument({
     }
     actions.current = {
       cycle: (id) => afterSave(id, () => cycleTask(id)),
-      // Block mode's batch toolbar's write; read again, as its failure leaves the state it showed.
+      // Block mode's batch toolbar's write; a refusal leaves the state it showed, so read again.
       setTodo: (ids, state) =>
-        void afterSaveAll(ids, (saved) =>
-          setTodoStateOnBlocks(pageStore, pageId, saved, state, t),
-        ).then(readAgain),
+        void afterSaveAll(ids, async (saved) => {
+          if (!(await setTodoStateOnBlocks(pageStore, pageId, saved, state, t))) readAgain()
+        }),
       cyclePriority: (id) => afterSave(id, () => cyclePriority(id)),
       setPriority: (id, level) =>
         afterSave(id, () => setBlockPriority(pageStore, pageId, id, level)),
