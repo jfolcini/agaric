@@ -336,10 +336,11 @@ Useful flags (see `scripts/release.sh --help`):
 2. **`validate`** — same gate as CI (`prek run --all-files`).
 3. **`e2e-tauri`** — the real-backend WebdriverIO lane (`e2e-tauri-weekly.yml`) over every spec, beside the builds; a red run blocks `publish-release`.
 4. **`build-and-release`** — Linux + Windows + macOS (x86_64 + aarch64) desktop bundles, uploaded to a draft Release created up front. Per-platform steps also `cargo tauri signer sign` the updater payloads, in isolated steps whose env holds only the signing secret.
-5. **`android-build-and-release`** — the signed APK. Without the keystore secret the job fails, so the release stays a draft.
-6. **Provenance + SBOMs** — each artifact gets a Sigstore bundle (`*.sigstore.json` — signature) and an in-toto SLSA statement (`*.intoto.jsonl` — provenance, what OpenSSF Scorecard's Signed-Releases provenance probe matches), plus SPDX + CycloneDX SBOMs and a signed OpenVEX document (`generate-vex`).
-7. **`generate-latest-json`** — re-verifies every updater `.sig` with `minisign` against the pubkey pinned in `tauri.conf.json` (#2971), then stitches the `latest.json` the in-app updater fetches.
-8. **`publish-release`** — flips the draft to published and marks it Latest, gated on *every* terminal job above reporting success.
+5. **`android-launch-smoke`** — builds a release-profile x86_64 APK (`android-launch-smoke.yml`), launches it on an emulator and fails on a dead process or a crash in logcat; the weekly lane runs the same workflow.
+6. **`android-build-and-release`** — the signed APK, built once the launch smoke is green. Without the keystore secret the job fails, so the release stays a draft.
+7. **Provenance + SBOMs** — each artifact gets a Sigstore bundle (`*.sigstore.json` — signature) and an in-toto SLSA statement (`*.intoto.jsonl` — provenance, what OpenSSF Scorecard's Signed-Releases provenance probe matches), plus SPDX + CycloneDX SBOMs and a signed OpenVEX document (`generate-vex`).
+8. **`generate-latest-json`** — re-verifies every updater `.sig` with `minisign` against the pubkey pinned in `tauri.conf.json` (#2971), then stitches the `latest.json` the in-app updater fetches.
+9. **`publish-release`** — flips the draft to published and marks it Latest, gated on *every* terminal job above reporting success.
 
 ### If a release tag fails at `verify-version`
 
