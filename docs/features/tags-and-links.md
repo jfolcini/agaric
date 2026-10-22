@@ -33,6 +33,7 @@ A pill-based UI lets you toggle each clause; advanced users can type the express
 ## Block & page links
 
 - **Insert a page link**: type `[[` to open the **BlockLinkPicker**. Pick a page or paste a title.
+- **Drag a page in**: on desktop, drag a bookmark from the sidebar or a recent page into the editor, and a link to its page lands there: in page mode and *Edit as Markdown* where it is dropped, in block mode at the end of the block it is dropped on.
 - **Page chip**: links render as a chip with the target's title. Click to navigate; the page opens in the active tab.
 - **Follow a link from the keyboard or into another tab**: `Alt+Enter` with the cursor on or right beside a page link or block reference follows it as a click does (rebind it in Settings → Keyboard). On desktop, `Ctrl+click` (`Cmd+click` on macOS) opens the target in a new tab in front, and a middle click in a tab behind. All three work in blocks and in page mode.
 - **Insert a block reference**: type `((` to open the **BlockRefPicker**. Pick the block you want to point at.

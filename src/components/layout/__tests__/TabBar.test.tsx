@@ -273,6 +273,135 @@ describe('TabBar', () => {
   // ---------------------------------------------------------------------------
   // keyboard navigation (T-35)
   // ---------------------------------------------------------------------------
+  describe('middle click', () => {
+    it('closes the tab it lands on, leaving the active tab active', async () => {
+      useTabsStore.setState({
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+          { id: '2', pageStack: [{ pageId: 'P3', title: 'Page 3' }], label: 'Page 3' },
+        ],
+        activeTabIndex: 2,
+      })
+      const user = userEvent.setup()
+      render(<TabBar />)
+
+      await user.pointer({
+        keys: '[MouseMiddle]',
+        target: screen.getByRole('tab', { name: /Page 2/ }),
+      })
+
+      const { tabs, activeTabIndex } = useTabsStore.getState()
+      expect(tabs.map((tab) => tab.label)).toEqual(['Page 1', 'Page 3'])
+      expect(tabs[activeTabIndex]?.label).toBe('Page 3')
+    })
+
+    it('cancels the browser’s own middle-button actions', () => {
+      useTabsStore.setState({
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+        ],
+        activeTabIndex: 0,
+      })
+      render(<TabBar />)
+      const tab = screen.getByRole('tab', { name: /Page 2/ })
+
+      expect(fireEvent.mouseDown(tab, { button: 1 })).toBe(false)
+      expect(fireEvent.mouseUp(tab, { button: 1 })).toBe(false)
+    })
+  })
+
+  describe('reordering', () => {
+    /**
+     * dnd-kit finds the tab an arrow key moves to by measuring the tabs, and
+     * happy-dom lays nothing out. Line them up in DOM order, 10px apart.
+     */
+    function layOutTabs(widths: readonly number[] = [90, 90, 90]): void {
+      vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+        this: Element,
+      ) {
+        const tab = this.closest('[role="tab"]')
+        const index = tab?.parentElement ? [...tab.parentElement.children].indexOf(tab) : 0
+        const left = widths.slice(0, index).reduce((sum, width) => sum + width + 10, 0)
+        return new DOMRect(left, 0, widths[index] ?? 90, 28)
+      })
+    }
+
+    it('moves a tab with Space, ArrowRight, Space, and the arrow does not switch tabs', async () => {
+      useTabsStore.setState({
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+          { id: '2', pageStack: [{ pageId: 'P3', title: 'Page 3' }], label: 'Page 3' },
+        ],
+        activeTabIndex: 0,
+      })
+      layOutTabs()
+      const user = userEvent.setup()
+      render(<TabBar />)
+
+      screen.getByRole('tab', { name: /Page 1/ }).focus()
+      await user.keyboard('[Space][ArrowRight][Space]')
+
+      const { tabs, activeTabIndex } = useTabsStore.getState()
+      expect(tabs.map((tab) => tab.label)).toEqual(['Page 2', 'Page 1', 'Page 3'])
+      expect(tabs[activeTabIndex]?.label).toBe('Page 1')
+      expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+        'Page 2',
+        'Page 1',
+        'Page 3',
+      ])
+      // Announced by label, not by the tab's id.
+      expect(screen.getByRole('status')).toHaveTextContent('Page 1 dropped over Page 2.')
+    })
+
+    // A tab is as wide as its title, up to 200px.
+    it.each([
+      { key: 'ArrowRight', widths: [200, 44, 90], focused: 'Page 1' },
+      { key: 'ArrowLeft', widths: [44, 200, 90], focused: 'Page 2' },
+    ])('$key moves a wide tab past a narrow one', async ({ key, widths, focused }) => {
+      useTabsStore.setState({
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+          { id: '2', pageStack: [{ pageId: 'P3', title: 'Page 3' }], label: 'Page 3' },
+        ],
+        activeTabIndex: focused === 'Page 1' ? 0 : 1,
+      })
+      layOutTabs(widths)
+      const user = userEvent.setup()
+      render(<TabBar />)
+
+      screen.getByRole('tab', { name: focused }).focus()
+      await user.keyboard(`[Space][${key}][Space]`)
+
+      expect(useTabsStore.getState().tabs.map((tab) => tab.label)).toEqual([
+        'Page 2',
+        'Page 1',
+        'Page 3',
+      ])
+    })
+
+    it('Escape puts a picked-up tab back', async () => {
+      useTabsStore.setState({
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+        ],
+        activeTabIndex: 0,
+      })
+      layOutTabs()
+      const user = userEvent.setup()
+      render(<TabBar />)
+
+      screen.getByRole('tab', { name: /Page 1/ }).focus()
+      await user.keyboard('[Space][ArrowRight][Escape]')
+
+      expect(useTabsStore.getState().tabs.map((tab) => tab.label)).toEqual(['Page 1', 'Page 2'])
+    })
+  })
+
   describe('keyboard navigation', () => {
     function setupThreeTabs(activeTabIndex: number) {
       const tabs = [

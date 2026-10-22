@@ -560,3 +560,62 @@ describe('reopenClosedTab', () => {
     expect(persisted).not.toHaveProperty('closedTabs')
   })
 })
+
+// ---------------------------------------------------------------------------
+// `moveTab`, the TabBar's drag and keyboard reorder.
+// ---------------------------------------------------------------------------
+
+describe('moveTab', () => {
+  function tab(id: string, label: string): Tab {
+    return { id, pageStack: [{ pageId: `P_${label}`, title: label }], label }
+  }
+
+  function seed(activeTabIndex: number): void {
+    useTabsStore.setState({
+      tabs: [tab('1', 'A'), tab('2', 'B'), tab('3', 'C'), tab('4', 'D')],
+      activeTabIndex,
+      tabsBySpace: {},
+      activeTabIndexBySpace: {},
+    })
+  }
+
+  const labels = () => useTabsStore.getState().tabs.map((t) => t.label)
+  const activeLabel = () => {
+    const { tabs, activeTabIndex } = useTabsStore.getState()
+    return tabs[activeTabIndex]?.label
+  }
+
+  beforeEach(() => {
+    useSpaceStore.setState({ currentSpaceId: null })
+  })
+
+  it('moves a tab right, shifting the tabs between left, and the active tab follows itself', () => {
+    seed(0)
+    useTabsStore.getState().moveTab(0, 2)
+    expect(labels()).toEqual(['B', 'C', 'A', 'D'])
+    expect(activeLabel()).toBe('A')
+  })
+
+  it('moves a tab left, past the active one, and the active one stays active', () => {
+    seed(1)
+    useTabsStore.getState().moveTab(3, 0)
+    expect(labels()).toEqual(['D', 'A', 'B', 'C'])
+    expect(activeLabel()).toBe('B')
+  })
+
+  it('persists the new order', () => {
+    seed(0)
+    useTabsStore.getState().moveTab(1, 3)
+    const persisted = useTabsStore.persist.getOptions().partialize?.(useTabsStore.getState()) as {
+      tabs: Tab[]
+    }
+    expect(persisted.tabs.map((t) => t.label)).toEqual(['A', 'C', 'D', 'B'])
+  })
+
+  it('ignores an index outside the strip', () => {
+    seed(0)
+    useTabsStore.getState().moveTab(0, 4)
+    useTabsStore.getState().moveTab(-1, 2)
+    expect(labels()).toEqual(['A', 'B', 'C', 'D'])
+  })
+})

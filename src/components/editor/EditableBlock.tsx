@@ -13,6 +13,8 @@ import { useTranslation } from 'react-i18next'
 import { EditorSurfaceContext } from '@/components/editor/editor-surface-context'
 import { useListMarker } from '@/components/editor/ListMarkerContext'
 import { StaticBlock } from '@/components/editor/StaticBlock'
+import { blockLinkToken } from '@/editor/markdown-common'
+import { parse } from '@/editor/markdown-serializer'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useDebouncedContentCommit } from '@/hooks/useDebouncedContentCommit'
 import { useDraftAutosave } from '@/hooks/useDraftAutosave'
@@ -26,12 +28,32 @@ import { commands } from '@/lib/bindings'
 import { extractFileInfo, isAttachmentAllowed, readFileBytes } from '@/lib/file-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { carriesPage, droppedPageId } from '@/lib/page-drag'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
 import { useBlockStore } from '@/stores/blocks'
 import { type PageBlockState, usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
 import { latestUndoEntry } from '@/stores/undo'
 import { runUnmountFlush } from '@/stores/unmount-flush'
+
+/** The kinds a link appended to a block's text stays inside of. */
+const LINKABLE_BLOCKS: ReadonlySet<string> = new Set([
+  'paragraph',
+  'heading',
+  'blockquote',
+  'bulletList',
+  'orderedList',
+])
+
+/**
+ * Whether a page dropped on the block may be linked at its end. A fence, `$$`,
+ * table or rule would take the link into its syntax and break; a query or an
+ * embed draws no drop target (`StaticBlock`).
+ */
+function takesPageLink(content: string): boolean {
+  const last = parse(content).content?.at(-1)
+  return last === undefined || LINKABLE_BLOCKS.has(last.type)
+}
 
 /**
  * Unmount the roving editor from the given block and persist its content.
@@ -517,6 +539,29 @@ function EditableBlockInner({
     [blockId, t],
   )
 
+  // A page dragged onto the block from a list (`page-drag.ts`) is linked at its
+  // end: a static block has no caret to drop at. On the block the editor is
+  // on, `BlockLink` takes the drop where it lands.
+  const acceptPageDrag = useCallback(
+    (e: React.DragEvent) => {
+      if (carriesPage(e.dataTransfer) && takesPageLink(content)) e.preventDefault()
+    },
+    [content],
+  )
+  const dropPageLink = useCallback(
+    async (e: React.DragEvent) => {
+      const pageId = droppedPageId(e.dataTransfer)
+      if (pageId === null || !takesPageLink(content)) return
+      e.preventDefault()
+      const separator = content === '' || /\s$/.test(content) ? '' : ' '
+      const linked = `${content}${separator}${blockLinkToken(pageId)}`
+      if (!(await editRef.current(blockId, linked))) {
+        logger.warn('EditableBlock', 'linking a dropped page failed', { blockId, pageId })
+      }
+    },
+    [blockId, content],
+  )
+
   const handlePaste = useCallback(
     async (e: React.ClipboardEvent) => {
       const files = Array.from(e.clipboardData.files)
@@ -551,6 +596,8 @@ function EditableBlockInner({
         isSelected={isSelected}
         onSelect={onSelect}
         onMouseDown={keepEditorUntilClick}
+        onDragOver={acceptPageDrag}
+        onDrop={dropPageLink}
         onRemoveBrokenLink={removeBrokenLink}
       />
     )

@@ -50,6 +50,8 @@ export interface StaticBlockProps {
   /** Ctrl+Click / Shift+Click selection callback. */
   onSelect?: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
   onMouseDown?: React.MouseEventHandler<HTMLDivElement> | undefined
+  onDragOver?: React.DragEventHandler<HTMLDivElement> | undefined
+  onDrop?: React.DragEventHandler<HTMLDivElement> | undefined
   /** Write a query block's expression from the query builder; the page store's `edit` when absent. */
   onSaveQuery?: ((blockId: string, expression: string) => Promise<boolean>) | undefined
   /** Called with the content without a broken-link chip the user clicked. */
@@ -68,6 +70,8 @@ function StaticBlockInner({
   isSelected,
   onSelect,
   onMouseDown,
+  onDragOver,
+  onDrop,
   onSaveQuery,
   onRemoveBrokenLink,
 }: StaticBlockProps): React.ReactElement {
@@ -183,6 +187,8 @@ function StaticBlockInner({
         data-block-id={blockId}
         onMouseDown={onMouseDown}
         onClick={handleOuterClick}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
       >
         <ListMarker style={listStyle} ordinal={listOrdinal} />
         {richContent ?? (

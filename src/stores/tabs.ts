@@ -178,6 +178,8 @@ interface TabsStore {
    * Sees the tab's page content (shell-level TabBar hoist).
    */
   switchTab: (tabIndex: number) => void
+  /** Move the tab at `from` to `to`, shifting the tabs between; the active tab stays active. */
+  moveTab: (from: number, to: number) => void
 }
 
 type TabsState = TabsStore
@@ -874,6 +876,22 @@ export const useTabsStore = create<TabsStore>()(
         set(spliceTabs(state, withRecordedOrigin(tabs, tabIndex, target, entered), tabIndex))
         setNavigationView('page-editor')
         setNavigationSelectedBlockId(null)
+      },
+
+      moveTab: (from: number, to: number) => {
+        const state = get()
+        const { tabs, activeTabIndex } = readActiveSlice(state)
+        const moving = tabs[from]
+        if (moving === undefined || to < 0 || to >= tabs.length || from === to) return
+        const active = tabs[activeTabIndex]
+        const moved = tabs.toSpliced(from, 1).toSpliced(to, 0, moving)
+        set(
+          spliceTabs(
+            state,
+            moved,
+            moved.findIndex((tab) => tab === active),
+          ),
+        )
       },
     }),
     {

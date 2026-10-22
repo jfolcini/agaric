@@ -336,6 +336,8 @@ export const common: Record<string, string> = {
   'tabs.closeActiveTab': 'Close active tab',
   'tabs.nextTab': 'Next tab',
   'tabs.previousTab': 'Previous tab',
+  'tabs.reorderInstructions':
+    'To move a tab, press space to pick it up, use the left and right arrow keys to move it, and press space again to drop it. Press escape to cancel.',
   'quickCapture.fabLabel': 'Quick capture',
   // #1422 — mobile touch-gesture discoverability: the first-run coach-mark
   // overlay (`gestures.coachmark.*` chrome + `gestures.*.title/desc` rows).

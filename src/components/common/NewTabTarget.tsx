@@ -1,8 +1,10 @@
 /**
  * NewTabTarget — wraps one element that opens a page, so a middle click on it,
  * or "Open in new tab" in its right-click (on touch, long-press) menu, opens
- * the page in a background tab. On mobile, which shows no tabs, the element
- * renders untouched.
+ * the page in a background tab. With `dragsPage`, dragging it into the editor
+ * links the page there (`page-drag.ts`); only where asked, since a draggable
+ * element takes the press that would select its text. On mobile, which shows
+ * no tabs, the element renders untouched.
  */
 
 import type React from 'react'
@@ -15,15 +17,23 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
 import { delegatedMiddleClickProps, useOpenInBackgroundTab } from '@/hooks/useOpenInBackgroundTab'
+import { setPageDragData } from '@/lib/page-drag'
 
 export interface NewTabTargetProps {
   pageId: string
   title: string
+  /** Dragging the element carries the page (`page-drag.ts`). */
+  dragsPage?: boolean
   /** One element that takes a ref and event props. */
   children: React.ReactElement
 }
 
-export function NewTabTarget({ pageId, title, children }: NewTabTargetProps): React.ReactElement {
+export function NewTabTarget({
+  pageId,
+  title,
+  dragsPage = false,
+  children,
+}: NewTabTargetProps): React.ReactElement {
   const { t } = useTranslation()
   const open = useOpenInBackgroundTab()
   if (open === undefined) return children
@@ -39,6 +49,10 @@ export function NewTabTarget({ pageId, title, children }: NewTabTargetProps): Re
         asChild
         {...delegatedMiddleClickProps(() => openPage)}
         onTouchEnd={claimRelease}
+        {...(dragsPage && {
+          draggable: true,
+          onDragStart: (e: React.DragEvent) => setPageDragData(e.dataTransfer, pageId),
+        })}
       >
         {children}
       </ContextMenuTrigger>

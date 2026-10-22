@@ -963,6 +963,42 @@ describe('StaticBlock', () => {
       }
     })
 
+    // A link appended to a query's or an embed's text would turn it into text:
+    // neither takes the page drop `EditableBlock` hands down (#5691).
+    it.each([
+      ['a query', '{{query type:tag expr:project}}'],
+      ['an embed', '{{embed ((01HZ00000000000000000BLOCK))}}'],
+    ])('%s takes no drop', (_kind, content) => {
+      stubInvoke(mockedInvoke, {
+        list_tags_by_prefix: () => [],
+        run_advanced_query: () => ({
+          rows: [],
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
+        }),
+        batch_resolve: () => [],
+      })
+      const onDragOver = vi.fn()
+      const onDrop = vi.fn()
+      const { container } = render(
+        <StaticBlock
+          blockId="B1"
+          content={content}
+          onFocus={vi.fn()}
+          onDragOver={onDragOver}
+          onDrop={onDrop}
+        />,
+      )
+      const root = container.firstElementChild as HTMLElement
+
+      fireEvent.dragOver(root)
+      fireEvent.drop(root)
+
+      expect(onDragOver).not.toHaveBeenCalled()
+      expect(onDrop).not.toHaveBeenCalled()
+    })
+
     it('query-block variant: clicking a non-interactive descendant calls onFocus', async () => {
       stubEmptyQuery()
       // The query block's inner subtree (QueryResult + QueryResultList) is

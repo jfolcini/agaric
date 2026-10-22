@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -8,6 +8,7 @@ import {
   useBlockTouchLongPress,
 } from '@/components/block-tree/use-block-touch-long-press'
 import { NewTabTarget } from '@/components/common/NewTabTarget'
+import { droppedPageId } from '@/lib/page-drag'
 import { useNavigationStore } from '@/stores/navigation'
 import { useTabsStore } from '@/stores/tabs'
 
@@ -88,6 +89,34 @@ describe('NewTabTarget', () => {
     expect(fireEvent.mouseDown(button, { button: 1 })).toBe(false)
     expect(fireEvent.mouseUp(button, { button: 1 })).toBe(false)
     expect(fireEvent.mouseDown(button, { button: 0 })).toBe(true)
+  })
+
+  it('drags the page it opens, when asked to', () => {
+    render(
+      <NewTabTarget pageId="TARGET" title="Target page" dragsPage>
+        <button type="button">Target page</button>
+      </NewTabTarget>,
+    )
+    const button = screen.getByRole('button')
+    const dragStart = createEvent.dragStart(button, { dataTransfer: {} }) as DragEvent
+
+    fireEvent(button, dragStart)
+
+    expect(button).toHaveAttribute('draggable', 'true')
+    expect(droppedPageId(dragStart.dataTransfer)).toBe('TARGET')
+  })
+
+  // A draggable element takes the press that would select its text: a search
+  // snippet or a reference preview.
+  it('leaves the element undraggable otherwise', () => {
+    renderTarget()
+    const button = screen.getByRole('button')
+    const dragStart = createEvent.dragStart(button, { dataTransfer: {} }) as DragEvent
+
+    fireEvent(button, dragStart)
+
+    expect(button).not.toHaveAttribute('draggable')
+    expect(droppedPageId(dragStart.dataTransfer)).toBeNull()
   })
 
   it('leaves a primary click to the element', async () => {

@@ -19,18 +19,25 @@
  *
  * Implements ARIA tablist pattern with ArrowLeft/ArrowRight + Home/End
  * keyboard navigation using automatic activation (focus follows selection).
+ * Dragging a tab, or Space, arrows, Space, moves it, as the sidebar's
+ * bookmarks move (`reorder-dnd.ts`).
  *
  * The close area is a `<span>` (not a `<button>`) to avoid nested-interactive
  * a11y violations inside `role="tab"` (and `role="option"` in the switcher).
- * Close also available via Ctrl+W and Delete / Backspace on a focused tab.
+ * Close also available via a middle click, Ctrl+W and Delete / Backspace on a
+ * focused tab.
  */
 
+import { closestCenter, DndContext, type DragEndEvent, type UniqueIdentifier } from '@dnd-kit/core'
+import { horizontalListSortingStrategy, SortableContext, useSortable } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { cva } from 'class-variance-authority'
 import { ChevronDown, X } from 'lucide-react'
 import type React from 'react'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { reorderAccessibility, useReorderSensors } from '@/components/layout/reorder-dnd'
 import type { TabSwitcherListProps } from '@/components/layout/TabSwitcherList'
 import { IconButton } from '@/components/ui/icon-button'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
@@ -39,9 +46,11 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useJournalDateFormat } from '@/hooks/useJournalDateFormat'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
+import { delegatedMiddleClickProps } from '@/hooks/useOpenInBackgroundTab'
 import { formatJournalTitle, isDateFormattedPage } from '@/lib/date-utils'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { getPageDisplayName } from '@/lib/page-display'
+import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 import { selectActiveTabIndexForSpace, selectTabsForSpace, useTabsStore } from '@/stores/tabs'
@@ -99,6 +108,76 @@ function TabSwitcher({ onActivate, ...listProps }: TabSwitcherListProps): React.
   )
 }
 
+interface SortableTabProps {
+  id: string
+  isActive: boolean
+  state: 'inactive' | 'editing' | 'elsewhere'
+  fullPath: string
+  label: string
+  buttonRef: (el: HTMLButtonElement | null) => void
+  onClick: (e: React.MouseEvent) => void
+  onKeyDown: (e: React.KeyboardEvent) => void
+  onClose: () => void
+}
+
+/**
+ * One tab. The whole tab is the drag handle; while it is up, the arrows move it
+ * instead of switching tabs.
+ */
+function SortableTab({
+  id,
+  isActive,
+  state,
+  fullPath,
+  label,
+  buttonRef,
+  onClick,
+  onKeyDown,
+  onClose,
+}: SortableTabProps): React.ReactElement {
+  // The `tab` role keeps dnd-kit from marking the dragged tab `aria-pressed`,
+  // which a tab does not take.
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+    attributes: { role: 'tab' },
+  })
+  return (
+    <button
+      ref={(el) => {
+        setNodeRef(el)
+        buttonRef(el)
+      }}
+      type="button"
+      {...attributes}
+      role="tab"
+      tabIndex={isActive ? 0 : -1}
+      // A tab announces itself as a tab, not as dnd-kit's "sortable".
+      aria-roledescription={undefined}
+      aria-selected={isActive}
+      title={fullPath}
+      // Along the strip only: it clips anything above or below it.
+      style={{ transform: CSS.Translate.toString(transform && { ...transform, y: 0 }), transition }}
+      className={cn(tabVariants({ state }), isDragging && 'z-10')}
+      {...listeners}
+      {...delegatedMiddleClickProps(() => onClose)}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        listeners?.['onKeyDown']?.(e)
+        if (!isDragging && !e.defaultPrevented) onKeyDown(e)
+      }}
+    >
+      <span className="truncate">{label}</span>
+      <span
+        data-tab-close=""
+        className="ml-1 rounded-sm hover:bg-destructive/20 p-0.5 inline-flex"
+        aria-hidden="true"
+      >
+        <X className="size-3" />
+      </span>
+    </button>
+  )
+}
+
 export function TabBar(): React.ReactElement | null {
   const { t } = useTranslation()
   // #1448 — DISPLAY-ONLY journal-tab title formatting. `fullPath`/`tab.label`
@@ -117,6 +196,8 @@ export function TabBar(): React.ReactElement | null {
   const currentView = useNavigationStore((s) => s.currentView)
   const switchTab = useTabsStore((s) => s.switchTab)
   const closeTab = useTabsStore((s) => s.closeTab)
+  const moveTab = useTabsStore((s) => s.moveTab)
+  const sensors = useReorderSensors()
 
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([])
   const keyNavRef = useRef(false)
@@ -187,6 +268,16 @@ export function TabBar(): React.ReactElement | null {
     return currentView === 'page-editor' ? 'editing' : 'elsewhere'
   }
 
+  const indexOf = (id: UniqueIdentifier) => tabs.findIndex((tab) => tab.id === id)
+  const dndAccessibility = reorderAccessibility(
+    t,
+    (id) => displayLabel(tabs[indexOf(id)]?.label || t('tabs.untitled')),
+    t('tabs.reorderInstructions'),
+  )
+  const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    if (over) moveTab(indexOf(active.id), indexOf(over.id))
+  }
+
   return (
     // Left edge matches the Recent / ViewHeaderOutletSlot rows below so the
     // chrome stack aligns vertically. The hairline is drawn twice, under the
@@ -202,47 +293,49 @@ export function TabBar(): React.ReactElement | null {
         />
       </div>
       <ScrollArea orientation="horizontal" className="min-w-0 flex-1">
-        <div
-          role="tablist"
-          aria-label={t('tabs.tabList')}
-          className="flex items-end gap-1 border-b border-border pr-4 md:pr-6 pt-1 min-w-0"
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+          accessibility={dndAccessibility}
         >
-          {tabs.map((tab, i) => {
-            const isActive = i === activeTabIndex
-            // Bug 1: tabs are space-constrained (`max-w-[120px]
-            // md:max-w-[200px]` + `truncate`) — full namespaced paths
-            // overflow fast. Display the LEAF only and surface the full
-            // path via `title=""` for hover. The empty-label fallback to
-            // "Untitled" is preserved verbatim so the existing label test
-            // keeps passing.
-            const fullPath = tab.label || t('tabs.untitled')
-            return (
-              <button
-                key={tab.id}
-                ref={(el) => {
-                  tabRefs.current[i] = el
-                }}
-                type="button"
-                role="tab"
-                tabIndex={isActive ? 0 : -1}
-                aria-selected={isActive}
-                title={fullPath}
-                className={tabVariants({ state: tabState(i) })}
-                onClick={(e) => handleTabClick(i, e)}
-                onKeyDown={(e) => handleTabKeyDown(i, e)}
-              >
-                <span className="truncate">{displayLabel(fullPath)}</span>
-                <span
-                  data-tab-close=""
-                  className="ml-1 rounded-sm hover:bg-destructive/20 p-0.5 inline-flex"
-                  aria-hidden="true"
-                >
-                  <X className="size-3" />
-                </span>
-              </button>
-            )
-          })}
-        </div>
+          <SortableContext
+            items={tabs.map((tab) => tab.id)}
+            strategy={horizontalListSortingStrategy}
+          >
+            <div
+              role="tablist"
+              aria-label={t('tabs.tabList')}
+              className="flex items-end gap-1 border-b border-border pr-4 md:pr-6 pt-1 min-w-0"
+            >
+              {tabs.map((tab, i) => {
+                // Bug 1: tabs are space-constrained (`max-w-[120px]
+                // md:max-w-[200px]` + `truncate`) — full namespaced paths
+                // overflow fast. Display the LEAF only and surface the full
+                // path via `title=""` for hover. The empty-label fallback to
+                // "Untitled" is preserved verbatim so the existing label test
+                // keeps passing.
+                const fullPath = tab.label || t('tabs.untitled')
+                return (
+                  <SortableTab
+                    key={tab.id}
+                    id={tab.id}
+                    isActive={i === activeTabIndex}
+                    state={tabState(i)}
+                    fullPath={fullPath}
+                    label={displayLabel(fullPath)}
+                    buttonRef={(el) => {
+                      tabRefs.current[i] = el
+                    }}
+                    onClick={(e) => handleTabClick(i, e)}
+                    onKeyDown={(e) => handleTabKeyDown(i, e)}
+                    onClose={() => closeTab(i)}
+                  />
+                )
+              })}
+            </div>
+          </SortableContext>
+        </DndContext>
       </ScrollArea>
     </div>
   )

@@ -11,15 +11,20 @@
  * Uses a NodeView (addNodeView) so we can attach a click handler: it
  * navigates, or removes a broken link (`resolveStatus` says `'deleted'`).
  * renderHTML is kept for copy-paste / serialization.
+ *
+ * A page dragged in from a list (`page-drag.ts`) lands as a link where it is
+ * dropped, in block mode and page mode alike.
  */
 
 import { type Editor, mergeAttributes, Node } from '@tiptap/core'
 import { closeHistory } from '@tiptap/pm/history'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
+import { Plugin, TextSelection } from '@tiptap/pm/state'
 
 import { storableLinkLabel } from '@/editor/markdown-common'
 import { t } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
+import { droppedPageId } from '@/lib/page-drag'
 
 export interface BlockLinkOptions {
   /** Resolve a block/page ULID to its display title. Falls back to truncated ULID. */
@@ -202,6 +207,32 @@ export const BlockLink = Node.create<BlockLinkOptions>({
           })
         },
     }
+  },
+
+  addProseMirrorPlugins() {
+    const { type } = this
+    return [
+      new Plugin({
+        props: {
+          handleDrop(view, event) {
+            const pageId = droppedPageId(event.dataTransfer)
+            if (pageId === null) return false
+            const at = view.posAtCoords({ left: event.clientX, top: event.clientY })
+            const tr = view.state.tr
+            const near = TextSelection.near(tr.doc.resolve(at?.pos ?? tr.selection.from))
+            const { $from } = near
+            // A code block holds no link: inserting one there would split the
+            // code in two, so the drop is taken and dropped.
+            if (!$from.parent.canReplaceWith($from.index(), $from.index(), type)) return true
+            tr.setSelection(near)
+            tr.replaceSelectionWith(type.create({ id: pageId }), false)
+            view.dispatch(tr.setMeta('uiEvent', 'drop'))
+            view.focus()
+            return true
+          },
+        },
+      }),
+    ]
   },
 
   addKeyboardShortcuts() {
