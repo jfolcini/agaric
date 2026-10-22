@@ -121,6 +121,14 @@ jobs:
     if: ${{ !cancelled() && needs.verify-version.result == 'success' }}
     uses: ./.github/workflows/e2e-tauri-weekly.yml
 
+  # Launches a release-profile x86_64 APK on an emulator (#6050), beside the
+  # desktop matrix. `android-build-and-release` waits for it, so a launch crash
+  # keeps the signed APK, and with it the publish, from happening.
+  android-launch-smoke:
+    needs: verify-version
+    if: ${{ !cancelled() && needs.verify-version.result == 'success' }}
+    uses: ./.github/workflows/android-launch-smoke.yml
+
   build-and-release:
     needs: [verify-version, validate]
     if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' }}
@@ -1748,8 +1756,8 @@ jobs:
   # APK to that same release with `gh release upload`.
   # ---------------------------------------------------------------------------
   android-build-and-release:
-    needs: [verify-version, validate, build-and-release]
-    if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' && needs.build-and-release.result == 'success' }}
+    needs: [verify-version, validate, build-and-release, android-launch-smoke]
+    if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' && needs.build-and-release.result == 'success' && needs.android-launch-smoke.result == 'success' }}
     runs-on: ubuntu-24.04
     # MEASURED, n=3 (#3579). Every earlier value here was an estimate standing
     # in for a measurement: PEND-41 R1's 60 came from ci.yml's 27.8-min WARM

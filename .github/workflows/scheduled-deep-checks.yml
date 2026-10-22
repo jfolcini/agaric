@@ -95,6 +95,12 @@ name: Scheduled deep checks
 #                    reds when the type-aware machinery goes quiet, and its
 #                    30-day report artifact is the trail for reading a
 #                    regression back. Maintainer decision, 2026-09-09.
+#   android-launch — #6050: launches a release-profile x86_64 APK on an
+#                    emulator and fails on a dead process or a crash in
+#                    logcat (`android-launch-smoke.yml`, also called by
+#                    `release.yml`). Only a release build reproduces
+#                    `panic = "abort"`, which 0.15.0 crashed on while CI was
+#                    green.
 #   report-scheduled-failures — #3359: the NOTIFICATION path for this whole
 #                    workflow. Every lane above is non-blocking, so before
 #                    this job a red lane was visible only to whoever opened
@@ -140,7 +146,7 @@ on:
         description: >-
           Which lanes to run: `all`, or a comma-separated subset of
           clippy-clean, bench-smoke, bench-slo, mutants, mutants-frontend,
-          fuzz, type-aware-lint, full-suite. Re-running one lane after a fix
+          fuzz, type-aware-lint, android-launch, full-suite. Re-running one lane after a fix
           costs that lane instead of the whole ~4 h matrix.
 
           A subset still WRITES for the two mutation lanes: each owns its own
@@ -233,6 +239,7 @@ jobs:
       mutants_frontend: ${{ steps.pick.outputs.mutants_frontend }}
       fuzz: ${{ steps.pick.outputs.fuzz }}
       type_aware_lint: ${{ steps.pick.outputs.type_aware_lint }}
+      android_launch: ${{ steps.pick.outputs.android_launch }}
       full_suite: ${{ steps.pick.outputs.full_suite }}
     steps:
       - name: Resolve the lane selection
@@ -244,7 +251,7 @@ jobs:
           LANES: ${{ github.event.inputs.lanes || 'all' }}
         run: |
           set -euo pipefail
-          known='clippy-clean bench-smoke bench-slo mutants mutants-frontend fuzz type-aware-lint full-suite'
+          known='clippy-clean bench-smoke bench-slo mutants mutants-frontend fuzz type-aware-lint android-launch full-suite'
           sel=$(printf '%s' "$LANES" | tr ',' ' ' | tr -s '[:space:]' ' ' \
                 | sed 's/^ //; s/ $//')
           # Not `sel=all`: `github.event.inputs.lanes || 'all'` already covers
@@ -3334,6 +3341,13 @@ jobs:
           fi
           echo "full-suite: every leg green" >> "$GITHUB_STEP_SUMMARY"
 
+  # android-launch (#6050) — the emulator launch of a release-profile APK. The
+  # called workflow takes no secrets and restores no cache.
+  android-launch:
+    needs: select-lanes
+    if: needs.select-lanes.outputs.android_launch == 'true'
+    uses: ./.github/workflows/android-launch-smoke.yml
+
   report-scheduled-failures:
     needs:
       # `select-lanes` included so the comment above stays true, and for a
@@ -3354,6 +3368,7 @@ jobs:
       - fuzz
       - file-fuzz-findings
       - type-aware-lint
+      - android-launch
       - full-suite
     if: always()
     runs-on: ubuntu-24.04
