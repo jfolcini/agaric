@@ -1481,6 +1481,34 @@
   @apply text-muted-foreground select-none;
 }
 
+/* #5691 — a code block's fences and display math's `$$`, drawn by the block's
+   own element on lines of their own outside its box. Generated content is no
+   text in the DOM: no caret goes in it, and reading the editor's text skips it.
+   The second `content` keeps it from screen readers where alt text is known. */
+.ProseMirror .md-reveal-block-syntax {
+  position: relative;
+  margin-block: 1.25rem;
+}
+.ProseMirror .md-reveal-block-syntax::before,
+.ProseMirror .md-reveal-block-syntax::after {
+  @apply text-muted-foreground font-mono text-sm;
+  position: absolute;
+  left: 0;
+  line-height: 1.25rem;
+  white-space: pre;
+  pointer-events: none;
+}
+.ProseMirror .md-reveal-block-syntax::before {
+  bottom: 100%;
+  content: attr(data-reveal-open);
+  content: attr(data-reveal-open) / '';
+}
+.ProseMirror .md-reveal-block-syntax::after {
+  top: 100%;
+  content: attr(data-reveal-close);
+  content: attr(data-reveal-close) / '';
+}
+
 /* Inline code inside the editor — visible background so the user
    knows they're typing inside a code span, not plain text. */
 .ProseMirror code {

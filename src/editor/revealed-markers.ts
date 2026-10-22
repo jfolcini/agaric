@@ -2,9 +2,9 @@
  * The Markdown markers MarkdownReveal (`extensions/markdown-reveal.ts`, #5689)
  * draws for an editor state: the delimiters of bold, italic, strikethrough,
  * highlight, code and external links, and a heading's `#` run; the syntax drawn
- * around a page, tag or block-ref chip (`revealedChipMarkers`); and a quote's or
- * callout's `>` run, a code block's fences and math's `$`
- * (`revealedConstructMarkers`). Kept free of ProseMirror
+ * around a page, tag or block-ref chip (`revealedChipMarkers`); a quote's or
+ * callout's `>` run and inline math's `$` (`revealedConstructMarkers`); and a
+ * code block's fences and display math's `$$` (`revealedBlockSyntax`). Kept free of ProseMirror
  * values so `useBlockKeyboard`, on the cold-start path (#2939), can ask whether
  * a marker, or a link (`linkAtCaret`), sits beside the caret without loading the editor chunk.
  */
@@ -355,8 +355,6 @@ export function revealedChipMarkers(
 
 /** Drawn first at a textblock's start: before a heading's `#` run and every mark's marker there. */
 const LINE_START_SIDE = -300
-/** A code block's fences are drawn nearest it among the widgets between blocks. */
-const FENCE_SIDE = 300
 
 /** The textblock at `$pos` is the first line the node at `depth` is written on. */
 function isFirstLine($pos: ResolvedPos, depth: number): boolean {
@@ -381,30 +379,26 @@ function quotePrefix($pos: ResolvedPos): string {
   return prefix
 }
 
-/**
- * The syntax of the textblock at `$pos`: a code block's fences, else the `>`
- * run of the quotes it is in. The fences are drawn outside the code, before
- * and after its `<pre>`: a widget at the code's end makes ProseMirror put the
- * caret between nodes there, and Chromium types the next character at the
- * code's start.
- */
+/** The `>` run of the quotes the textblock at `$pos` is in. A code block's fences are block syntax. */
 function lineMarkers($pos: ResolvedPos): ReadOnlyMarker[] {
   const block = $pos.parent
-  if (!block.isTextblock) return []
-  if (block.type.name === 'codeBlock') {
-    const fence = codeFence(block.textContent)
-    const language = (block.attrs['language'] as string | null) ?? ''
-    return [
-      { pos: $pos.before(), text: `${fence}${language}`, side: FENCE_SIDE },
-      { pos: $pos.after(), text: fence, side: -FENCE_SIDE },
-    ]
-  }
+  if (!block.isTextblock || block.type.name === 'codeBlock') return []
   const prefix = quotePrefix($pos)
   return prefix ? [{ pos: $pos.start(), text: prefix, side: LINE_START_SIDE }] : []
 }
 
-/** The delimiter math is written between. Math is an atom whose LaTeX its node view edits. */
-const MATH_DELIMITER: Readonly<Record<string, string>> = { math_inline: '$', math_block: '$$' }
+/**
+ * The lines written above and below a block node: a code block's fences or
+ * display math's `$$`. Drawn by the node's own element, not as widgets: a
+ * widget is text in the editor's DOM, which the browser reads as the
+ * editor's text and can put the caret in.
+ */
+export interface BlockSyntax {
+  from: number
+  to: number
+  open: string
+  close: string
+}
 
 /** The textblocks the selection is in: the caret's, or every one a range touches, as headings are. */
 function linesAtSelection({ selection, doc }: EditorState): ResolvedPos[] {
@@ -418,24 +412,40 @@ function linesAtSelection({ selection, doc }: EditorState): ResolvedPos[] {
 }
 
 /**
- * The syntax of the quotes, callouts and code blocks the selection is in, and
- * of the math selected or beside a caret. A code block's fences and
- * display math's `$$`, drawn between blocks, are lines of their own. Read-only,
- * as a chip's: the editor's own keys act on these constructs (Backspace at a
- * quote's start lifts the line out of it), and the LaTeX is edited in the math's
- * node view.
+ * The syntax of the quotes and callouts the selection is in, and the `$` of
+ * inline math selected or beside a caret. Read-only, as a chip's: the editor's
+ * own keys act on these constructs (Backspace at a quote's start lifts the
+ * line out of it), and the LaTeX is edited in the math's node view.
  */
 export function revealedConstructMarkers(state: EditorState): ReadOnlyMarker[] {
   if (!isMarkdownRevealEnabled() || spansPageBlocks(state)) return []
-  const math = nodesAtSelection(state.selection).flatMap(({ node, pos }): ReadOnlyMarker[] => {
-    const delimiter = MATH_DELIMITER[node.type.name]
-    if (!delimiter) return []
-    return [
-      { pos, text: delimiter, side: CHIP_OPEN_SIDE },
-      { pos: pos + node.nodeSize, text: delimiter, side: CHIP_CLOSE_SIDE },
-    ]
-  })
+  const math = nodesAtSelection(state.selection).flatMap(({ node, pos }): ReadOnlyMarker[] =>
+    node.type.name === 'math_inline'
+      ? [
+          { pos, text: '$', side: CHIP_OPEN_SIDE },
+          { pos: pos + node.nodeSize, text: '$', side: CHIP_CLOSE_SIDE },
+        ]
+      : [],
+  )
   return [...linesAtSelection(state).flatMap(lineMarkers), ...math]
+}
+
+/** The fences of the code blocks the selection is in, and the `$$` of selected display math. */
+export function revealedBlockSyntax(state: EditorState): BlockSyntax[] {
+  if (!isMarkdownRevealEnabled() || spansPageBlocks(state)) return []
+  const code = linesAtSelection(state).flatMap(($pos): BlockSyntax[] => {
+    const block = $pos.parent
+    if (block.type.name !== 'codeBlock') return []
+    const fence = codeFence(block.textContent)
+    const language = (block.attrs['language'] as string | null) ?? ''
+    return [{ from: $pos.before(), to: $pos.after(), open: `${fence}${language}`, close: fence }]
+  })
+  const math = nodesAtSelection(state.selection).flatMap(({ node, pos }): BlockSyntax[] =>
+    node.type.name === 'math_block'
+      ? [{ from: pos, to: pos + node.nodeSize, open: '$$', close: '$$' }]
+      : [],
+  )
+  return [...code, ...math]
 }
 
 /** A selected node, or the nodes right before and after a caret, with their positions. */

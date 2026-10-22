@@ -1448,7 +1448,7 @@ describe('MarkdownReveal for quotes, callouts, code blocks and math (#5691)', ()
     writePreference(PREFERENCES.revealMarkdownSyntax, true)
   })
 
-  // The math node views render React and KaTeX, which the widgets around them never touch.
+  // The math node views render React and KaTeX, which the syntax drawn around them never touches.
   const constructs: AnyExtension[] = [
     CalloutBlockquote,
     CodeBlock,
@@ -1459,11 +1459,21 @@ describe('MarkdownReveal for quotes, callouts, code blocks and math (#5691)', ()
   const QUOTES = 'before\n\n> [!NOTE] first\n>\n> second\n\n> > deep\n\n> # Title\n\nafter'
   const CODE = '```ts\nlet a = 1\n```\n\nafter'
 
-  /** The construct syntax drawn, in document order, as the user reads it. */
+  /** The construct syntax drawn, in document order, as the user reads it: widgets, and a block's lines above and below it. */
   function syntax(ed: Editor): string[] {
-    return [...ed.view.dom.querySelectorAll('.md-reveal-syntax-marker')].map(
-      (el) => el.textContent ?? '',
+    return [
+      ...ed.view.dom.querySelectorAll('.md-reveal-syntax-marker, .md-reveal-block-syntax'),
+    ].flatMap((el) =>
+      el.classList.contains('md-reveal-block-syntax')
+        ? [el.getAttribute('data-reveal-open') ?? '', el.getAttribute('data-reveal-close') ?? '']
+        : [el.textContent ?? ''],
     )
+  }
+
+  /** The DOM caret is in `el`. */
+  function caretIn(el: Element | null): boolean {
+    const anchor = document.getSelection()?.anchorNode
+    return !!el && !!anchor && el.contains(anchor)
   }
 
   /** The drawn syntax that reads `text`. */
@@ -1553,16 +1563,17 @@ describe('MarkdownReveal for quotes, callouts, code blocks and math (#5691)', ()
     expect(markdown(ed)).not.toContain('> > Xsecond')
   })
 
-  it('shows a code block’s fences on lines of their own while the caret is in it, and hides them once it leaves', () => {
+  it('shows a code block’s fences while the caret is in it, as no text in the editor, and hides them once it leaves', () => {
     const ed = createEditor(CODE, constructs)
     const stored = markdown(ed)
     ed.commands.setTextSelection(at(ed, 'a = 1'))
     expect(syntax(ed)).toEqual(['```ts', '```'])
-    // Around the `<pre>`, not in it: the code's own DOM is as it is with the setting off.
+    // The `<pre>` draws them as generated content (index.css): a text node there is
+    // the editor's text to a browser, which reads it back and can put the caret in it.
+    expect(ed.view.dom.textContent).toBe('let a = 1after')
     const pre = ed.view.dom.querySelector('pre')
-    expect(pre?.textContent).toBe('let a = 1')
-    expect(pre?.previousElementSibling?.textContent).toBe('```ts')
-    expect(pre?.nextElementSibling?.textContent).toBe('```')
+    expect(pre?.getAttribute('data-reveal-open')).toBe('```ts')
+    expect(pre?.getAttribute('data-reveal-close')).toBe('```')
     ed.commands.setTextSelection(at(ed, 'after') + 1)
     expect(syntax(ed)).toEqual([])
     expect(markdown(ed)).toBe(stored)
@@ -1574,18 +1585,17 @@ describe('MarkdownReveal for quotes, callouts, code blocks and math (#5691)', ()
     expect(syntax(ed)).toEqual(['````', '````'])
   })
 
-  it('keeps the caret between the fences, at the code’s start and at its end, and typing there is code', () => {
+  it('keeps the caret in the code, at its start and at its end, and typing there is code', () => {
     const ed = createEditor(CODE, constructs)
     const start = at(ed, 'let')
     ed.commands.setTextSelection(start)
     expect(ed.state.selection.from).toBe(start)
-    expect(caretFollows(drawn(ed, '```ts'))).toBe(true)
-    expect(caretFollows(drawn(ed, '```'))).toBe(false)
+    expect(caretIn(ed.view.dom.querySelector('pre'))).toBe(true)
     type(ed, 'X')
 
     const end = at(ed, '1') + 1
     ed.commands.setTextSelection(end)
-    expect(caretFollows(drawn(ed, '```'))).toBe(false)
+    expect(caretIn(ed.view.dom.querySelector('pre'))).toBe(true)
     type(ed, 'Y')
     expect(markdown(ed)).toContain('```ts\nXlet a = 1Y\n```')
   })
@@ -1614,12 +1624,12 @@ describe('MarkdownReveal for quotes, callouts, code blocks and math (#5691)', ()
     expect(undoDepth(ed.state)).toBe(0)
   })
 
-  it('draws the syntax aria-hidden and out of in-page find', () => {
-    const ed = createEditor(CODE, constructs)
-    ed.commands.setTextSelection(2)
-    const fence = drawn(ed, '```ts')
-    expect(fence.getAttribute('aria-hidden')).toBe('true')
-    expect(fence.hasAttribute('data-find-skip')).toBe(true)
+  it('draws a quote’s syntax aria-hidden and out of in-page find', () => {
+    const ed = createEditor(QUOTES, constructs)
+    ed.commands.setTextSelection(at(ed, 'second') + 1)
+    const run = drawn(ed, '> ')
+    expect(run.getAttribute('aria-hidden')).toBe('true')
+    expect(run.hasAttribute('data-find-skip')).toBe(true)
   })
 
   it('keeps the syntax in place while an IME composes, and redraws it once it ends', () => {

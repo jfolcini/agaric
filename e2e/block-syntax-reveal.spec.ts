@@ -118,11 +118,22 @@ function cursor(page: Page, selector: string): Promise<{ text: string; offset: n
   }, selector)
 }
 
-/** The construct syntax drawn, as the user reads it. */
+/**
+ * The construct syntax drawn, as the user reads it, in document order: the
+ * widgets' text, and the lines a code block or display math draws above and
+ * below itself as generated content.
+ */
 function shownSyntax(page: Page): Promise<string[]> {
-  return page
-    .getByTestId('md-reveal-syntax-marker')
-    .evaluateAll((els) => els.map((el) => el.textContent ?? ''))
+  return page.locator('.md-reveal-syntax-marker, .md-reveal-block-syntax').evaluateAll((els) =>
+    els.flatMap((el) => {
+      if (!el.classList.contains('md-reveal-block-syntax')) return [el.textContent ?? '']
+      // The computed `content` is `"```ts" / ""`: the drawn string, then its empty alt text.
+      return (['::before', '::after'] as const).map((pseudo) => {
+        const drawn = /^"((?:[^"\\]|\\.)*)"/.exec(getComputedStyle(el, pseudo).content)
+        return drawn?.[1]?.replace(/\\(.)/g, '$1') ?? ''
+      })
+    }),
+  )
 }
 
 /** The box of the first `char` in `text`'s text node in the editor at `selector`. */
@@ -163,19 +174,30 @@ function caretBox(page: Page): Promise<{ x: number; y: number }> {
   })
 }
 
-/** The two syntax markers drawn are lines of their own, right above and right below `pre`. */
-async function expectFencesAround(page: Page, pre: Locator): Promise<void> {
-  const fences = page.getByTestId('md-reveal-syntax-marker')
-  await expect(fences).toHaveCount(2)
-  const [open, code, close] = await Promise.all([
-    fences.nth(0).boundingBox(),
-    pre.boundingBox(),
-    fences.nth(1).boundingBox(),
-  ])
-  if (!open || !code || !close) throw new Error('a fence or the code has no layout box')
-  expect(open.y + open.height).toBeLessThanOrEqual(code.y + 1)
-  expect(close.y).toBeGreaterThanOrEqual(code.y + code.height - 1)
-  expect(close.y - (open.y + open.height)).toBeLessThan(code.height + open.height)
+/**
+ * `pre` draws its fences on lines of their own, right above and right below
+ * its box, in the room its margins leave, and `block`, the block holding it,
+ * reads as the code alone: a WebDriver read-back of the editor sees no fence.
+ */
+async function expectFencesAround(pre: Locator, block: Locator, code: string): Promise<void> {
+  const layout = await pre.evaluate((el) => {
+    const box = el.getBoundingClientRect()
+    const own = getComputedStyle(el)
+    const line = (pseudo: '::before' | '::after') => {
+      const style = getComputedStyle(el, pseudo)
+      return { position: style.position, height: Number.parseFloat(style.lineHeight) }
+    }
+    return {
+      before: line('::before'),
+      after: line('::after'),
+      margins: [own.marginTop, own.marginBottom].map(Number.parseFloat),
+      height: box.height,
+    }
+  })
+  expect(layout.before.position).toBe('absolute')
+  expect(layout.after.position).toBe('absolute')
+  expect(layout.margins).toEqual([layout.before.height, layout.after.height])
+  await expect(block).toHaveText(code, { useInnerText: true })
 }
 
 /** Each block's content as the backend holds it, re-read one by one. */
@@ -209,7 +231,12 @@ test.describe('block syntax revealed around the cursor in page mode (#5691) @edi
 
     await caretAt(page, PAGE_EDITOR, 'let a', 2)
     expect(await shownSyntax(page)).toEqual(['```ts', '```'])
-    await expectFencesAround(page, page.locator(`${PAGE_EDITOR} pre`).first())
+    const preFirst = page.locator(`${PAGE_EDITOR} pre`).first()
+    await expectFencesAround(
+      preFirst,
+      preFirst.locator('xpath=ancestor::*[@data-page-block][1]'),
+      'let a = 1',
+    )
 
     // ArrowRight off the code's end selects the display math after it.
     await caretAt(page, PAGE_EDITOR, '= 1', 3)
@@ -277,7 +304,12 @@ test.describe('block syntax revealed around the cursor in page mode (#5691) @edi
     await page.keyboard.press('Enter')
     await page.keyboard.type('d')
     expect(await cursor(page, PAGE_EDITOR)).toEqual({ text: 'const x = 42\nd', offset: 14 })
-    await expectFencesAround(page, page.locator(`${PAGE_EDITOR} pre`).last())
+    const preLast = page.locator(`${PAGE_EDITOR} pre`).last()
+    await expectFencesAround(
+      preLast,
+      preLast.locator('xpath=ancestor::*[@data-page-block][1]'),
+      'const x = 42\nd',
+    )
 
     const id = await page
       .locator(`${PAGE_EDITOR} [data-page-block]`)
@@ -350,14 +382,18 @@ test.describe('block syntax revealed around the cursor in block mode (#5691) @ed
     await focusBlockById(page, code)
     await caretAt(page, BLOCK_EDITOR, 'let a', 3)
     expect(await shownSyntax(page)).toEqual(['```ts', '```'])
-    await expectFencesAround(page, page.locator(`${BLOCK_EDITOR} pre`))
+    await expectFencesAround(
+      page.locator(`${BLOCK_EDITOR} pre`),
+      page.locator(BLOCK_EDITOR),
+      'let a = 1',
+    )
     await page.keyboard.type('Y')
 
     await focusBlockById(page, math)
-    await expect(page.getByTestId('md-reveal-syntax-marker')).toHaveText(['$$', '$$'])
+    await expect.poll(() => shownSyntax(page)).toEqual(['$$', '$$'])
 
     await focusBlockById(page, plain)
-    await expect(page.getByTestId('md-reveal-syntax-marker')).toHaveCount(0)
+    await expect.poll(() => shownSyntax(page)).toEqual([])
 
     const saved = [
       'plain start',

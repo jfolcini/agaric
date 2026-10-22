@@ -454,10 +454,14 @@ describe('MarkdownReveal beside chips in page mode', () => {
 })
 
 describe('MarkdownReveal for quotes and code blocks in page mode (#5691)', () => {
-  /** The construct syntax drawn, in document order, as the user reads it. */
+  /** The construct syntax drawn, in document order, as the user reads it: widgets, and a block's lines above and below it. */
   function syntax(ed: Editor): string[] {
-    return [...ed.view.dom.querySelectorAll('.md-reveal-syntax-marker')].map(
-      (el) => el.textContent ?? '',
+    return [
+      ...ed.view.dom.querySelectorAll('.md-reveal-syntax-marker, .md-reveal-block-syntax'),
+    ].flatMap((el) =>
+      el.classList.contains('md-reveal-block-syntax')
+        ? [el.getAttribute('data-reveal-open') ?? '', el.getAttribute('data-reveal-close') ?? '']
+        : [el.textContent ?? ''],
     )
   }
 
