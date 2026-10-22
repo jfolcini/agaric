@@ -30,9 +30,10 @@
  * only while Ctrl (Cmd) is held, because a page link is what a writer's
  * pointer rests on all day. Holding the key as the pointer arrives, or
  * pressing it with the pointer already resting there, waits out the same
- * dwell, and any other key cancels it: Ctrl+B or Ctrl+← typed with the pointer
- * over a link is a chord, not a request to preview. It has no keyboard chord,
- * so `Alt+ArrowDown` stays block-ref only.
+ * dwell, and letting go of the key or pressing any other cancels it: a Ctrl
+ * tap as the pointer crosses a link, or Ctrl+B or Ctrl+← typed with the pointer
+ * over one, is not a request to preview. It has no keyboard chord, so
+ * `Alt+ArrowDown` stays block-ref only.
  */
 
 import type React from 'react'
@@ -293,6 +294,13 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
     [container, clearOpenTimer, dismiss, dismissHoldingFocus, open],
   )
 
+  const handleKeyUp = useCallback(
+    (e: KeyboardEvent) => {
+      if (e.key === 'Control' || e.key === 'Meta') clearOpenTimer()
+    },
+    [clearOpenTimer],
+  )
+
   // A click on the chip itself navigates and unmounts the subtree, so neither
   // `pointerleave` nor `focusin` would ever close the peek it left behind.
   // Heard on `window`, ahead of any capture handler between it and the chip
@@ -317,6 +325,7 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
     window.addEventListener('click', handleClick, true)
     window.addEventListener('focusin', handleFocusIn)
     window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
     // The app's `closeOverlays` shortcut (Escape, rebindable) fires exactly
     // when a keyboard-opened peek holds focus — outside any input — and
     // `preventDefault`s the key, which `handleKeyDown` honours. The broadcast
@@ -332,6 +341,7 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
       window.removeEventListener('click', handleClick, true)
       window.removeEventListener('focusin', handleFocusIn)
       window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
       window.removeEventListener(CLOSE_ALL_OVERLAYS_EVENT, dismissHoldingFocus)
       if (openTimerRef.current) clearTimeout(openTimerRef.current)
       if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
@@ -347,6 +357,7 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
     handleClick,
     handleFocusIn,
     handleKeyDown,
+    handleKeyUp,
     dismissHoldingFocus,
     releaseChip,
   ])

@@ -709,7 +709,11 @@ pub async fn repair_misfiled_tag_spaces(
             value_date: None,
             value_ref: Some(BlockId::from(target_space.as_str())),
             value_bool: None,
-            prior: held_property_value(tx, tag_id, "space").await?,
+            prior: Some(
+                held_property_value(tx, tag_id, "space")
+                    .await?
+                    .unwrap_or_default(),
+            ),
         });
         let record = op_log::append_local_op_in_tx(tx, device_id, payload, now_ms()).await?;
 

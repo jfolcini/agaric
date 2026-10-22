@@ -422,6 +422,10 @@ function PageModeDocument({
     t: translate,
   })
   const openLinkInNewTab = useOpenLinkInNewTab(handleNavigate)
+  const linkClick = useMemo(
+    () => (openLinkInNewTab ? delegatedLinkClickProps(openLinkInNewTab) : {}),
+    [openLinkInNewTab],
+  )
   // One options object for the editor's life: `useEditor` re-applies options
   // that change identity.
   // oxlint-disable-next-line react/refs -- `handleNavigateRef` is read inside the chips' click closure, which TipTap invokes on a click, never during this render; handing a ref to a consumer that defers the read is the intended use; see #4406
@@ -947,7 +951,7 @@ function PageModeDocument({
           tabIndex={-1}
           className="rounded-md focus-ring-visible"
           {...{ [SURFACE]: '' }}
-          {...(openLinkInNewTab ? delegatedLinkClickProps(openLinkInNewTab) : {})}
+          {...linkClick}
         />
       </BlockResolversProvider>
       {/* Block mode's own: the marks and the link on a selection, and Ctrl+K. */}

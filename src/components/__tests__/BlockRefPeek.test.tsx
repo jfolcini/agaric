@@ -608,6 +608,18 @@ describe('BlockRefPeek', () => {
       expect(await within(peek).findByText('This page is empty.')).toBeInTheDocument()
     })
 
+    it('does not call a page empty when only its first blocks are blank', async () => {
+      stubPage(() => ({ ...children('', '', '', '', ''), has_more: true }))
+      const user = userEvent.setup()
+      render(<PageLink />)
+
+      const peek = await ctrlHover(user)
+      expect(
+        await within(peek).findByText('The first blocks of this page are blank.'),
+      ).toBeInTheDocument()
+      expect(within(peek).queryByText('This page is empty.')).toBeNull()
+    })
+
     it('says so when the page is not in this space', async () => {
       vi.mocked(invoke).mockImplementation(mockInvokeCommands({ batch_resolve: () => [] }))
       const user = userEvent.setup()

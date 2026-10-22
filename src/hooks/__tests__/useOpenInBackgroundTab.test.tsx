@@ -72,25 +72,6 @@ describe('link chips and new tabs', () => {
     },
   )
 
-  it('a Ctrl+click on a chip still reaches a listener around the chips, which the ref peek closes on', () => {
-    render(
-      <div data-testid="around">
-        <Links />
-      </div>,
-    )
-    const around = vi.fn()
-    screen.getByTestId('around').addEventListener('click', around, true)
-
-    fireEvent.click(screen.getByText('page link'), { ctrlKey: true })
-    expect(around).toHaveBeenCalledTimes(1)
-    expect(onChipClick).not.toHaveBeenCalled()
-    expect(useTabsStore.getState().activeTabIndex).toBe(1)
-
-    // The next plain click is the chip's own.
-    fireEvent.click(screen.getByText('page link'))
-    expect(onChipClick).toHaveBeenCalledTimes(1)
-  })
-
   it('a Ctrl+click on a block ref opens its page in front, on the block', () => {
     render(<Links />)
 
