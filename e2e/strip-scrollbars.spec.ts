@@ -45,7 +45,10 @@ test('the tab bar, the recents strip and the filter row keep no scrollbar while 
   // Pages opens first: at 700 px the sidebar that holds its button collapses.
   await navigateToView(page, 'Pages')
   await page.setViewportSize({ width: 700, height: 900 })
-  const filters = await bars(page.getByTestId('page-browser-filter-row'))
+  // Its own scroll area, which the resize's re-render adds; the page's scroll area holds it too.
+  const filters = await bars(
+    page.getByTestId('page-browser-filter-scroll').locator('[data-slot="scroll-area-viewport"]'),
+  )
 
   const fits = { barHeight: 0, overflowX: 0 }
   expect({ tabs, recents, filters }).toEqual({ tabs: fits, recents: fits, filters: fits })

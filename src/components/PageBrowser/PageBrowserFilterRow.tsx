@@ -391,7 +391,12 @@ export function PageBrowserFilterRow({
   )
   // A phone keeps the chips on one row that scrolls sideways, edge to edge.
   return isMobile ? (
-    <ScrollArea orientation="horizontal" className="-mx-4" viewportProps={SCROLL_ONLY_WHEN_WIDER}>
+    <ScrollArea
+      orientation="horizontal"
+      className="-mx-4"
+      viewportProps={SCROLL_ONLY_WHEN_WIDER}
+      data-testid="page-browser-filter-scroll"
+    >
       {row}
     </ScrollArea>
   ) : (
