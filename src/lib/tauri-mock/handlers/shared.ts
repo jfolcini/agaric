@@ -1588,9 +1588,10 @@ export function insertAtSlotAndRenumber(
 /**
  * #5155 — the slot a bare append under `parentId` resolves to: the parent's
  * live-child count, not counting the row being placed. The backend records it
- * in the create op so a later move of the block can be undone, and it lands the
- * block before a trailing tombstone (`live_tree_slot`). A top-level append keeps
- * the end-of-group sentinel, because the backend leaves its `index` unset.
+ * in the create op, which lands the block before a trailing tombstone
+ * (`live_tree_slot`) and gives the undo of a move written before #6046 its slot
+ * to restore. A top-level append keeps the end-of-group sentinel, because the
+ * backend leaves its `index` unset.
  */
 export function appendSlot(parentId: string | null, blockId: string): number {
   if (parentId == null) return Number.MAX_SAFE_INTEGER

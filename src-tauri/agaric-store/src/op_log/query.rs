@@ -70,13 +70,17 @@ pub struct BlockEditRow {
 ///   guess; it discards the answer.
 #[derive(Debug, Clone, Copy)]
 pub enum BlockEditScan<'a> {
-    /// [`LatestCausal`](BlockEditScan::LatestCausal), restricted to the rows
-    /// whose text is `text`. Provenance: ALL rows, replicated included.
+    /// The newest row by `created_at` whose text is `text`. Provenance: ALL
+    /// rows, replicated included.
     ///
     /// Used to STAMP `EditBlockPayload::prev_edit` at the row that holds the
     /// block's live content, which its undo restores (#6046). Which device
     /// wrote that row, and at what `seq`, does not matter: two rows holding
-    /// the same text restore the same text.
+    /// the same text restore the same text. So it orders by `created_at`, the
+    /// order of `idx_op_log_block_created`, and the walk stops at the first
+    /// holder, which on an edit commit is the block's newest row. Ordering by
+    /// the causal key instead decodes the payload of every row the block ever
+    /// had, on every commit.
     LatestHolding { text: &'a str },
     /// Unbounded, ordered by the CAUSAL key `(seq, device_id)` DESC.
     /// Provenance: ALL rows, replicated included — see the type-level note.
@@ -246,6 +250,8 @@ async fn latest_holding<'e, E>(
 where
     E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
 {
+    // `created_at` alone: more terms leave `idx_op_log_block_created` unable to
+    // deliver the order, and the sorter then decodes every row's payload.
     Ok(sqlx::query_as!(
         BlockEditRow,
         "SELECT device_id, seq, op_type, payload FROM op_log \
@@ -253,7 +259,7 @@ where
            AND op_type IN ('edit_block', 'create_block') \
            AND json_extract(payload, CASE op_type WHEN 'edit_block' \
                THEN '$.to_text' ELSE '$.content' END) = ?2 \
-         ORDER BY seq DESC, device_id DESC \
+         ORDER BY created_at DESC \
          LIMIT 1",
         bid,
         text,

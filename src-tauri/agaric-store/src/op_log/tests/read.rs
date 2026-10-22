@@ -330,3 +330,109 @@ async fn latest_block_edit_before_latest_causal_tie_breaks_on_device_id_3655() {
         );
     }
 }
+
+/// #6046: `LatestHolding` names the newest row, by `created_at`, whose text is
+/// the one asked for: an edit's `to_text` or a create's `content`, whichever
+/// device wrote it. The two rows holding "v1" tie on the text, and the one
+/// with the LOWER `seq` is newer, so neither the causal key nor insertion
+/// order picks it.
+#[tokio::test]
+async fn latest_block_edit_before_latest_holding_names_the_newest_holder_6046() {
+    let (pool, _dir) = test_pool().await;
+    let block_id = BlockId::test_id("BLKHOLD");
+    append_local_op_at(
+        &pool,
+        "dev-a",
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: block_id.clone(),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            index: None,
+            content: "v0".into(),
+        }),
+        FIXED_TS,
+    )
+    .await
+    .unwrap();
+    for (dev, text, at) in [
+        ("dev-a", "v1", FIXED_TS + 10),
+        ("dev-a", "v2", FIXED_TS + 15),
+        ("dev-b", "v1", FIXED_TS + 20),
+    ] {
+        append_local_op_at(
+            &pool,
+            dev,
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: block_id.clone(),
+                to_text: text.into(),
+                prev_edit: None,
+                prior_text: None,
+            }),
+            at,
+        )
+        .await
+        .unwrap();
+    }
+
+    let holder = |text: &'static str| {
+        let pool = pool.clone();
+        async move {
+            latest_block_edit_before(&pool, "BLKHOLD", BlockEditScan::LatestHolding { text })
+                .await
+                .unwrap()
+                .map(|row| (row.device_id, row.seq, row.op_type))
+        }
+    };
+    assert_eq!(
+        holder("v1").await,
+        Some(("dev-b".into(), 1, "edit_block".into())),
+        "the newer of the two rows holding v1, not the one with the higher seq"
+    );
+    assert_eq!(
+        holder("v0").await,
+        Some(("dev-a".into(), 1, "create_block".into())),
+        "a create holds its `content`"
+    );
+    assert_eq!(holder("v3").await, None, "no row holds it");
+}
+
+/// #6046: the walk stops at the newest holder, so an edit commit does not
+/// decode the payload of every row the block ever had. The older row's payload
+/// is not JSON, which `json_extract` refuses: only a scan that goes past the
+/// newest holder reaches it.
+#[tokio::test]
+async fn latest_block_edit_before_latest_holding_stops_at_the_newest_holder_6046() {
+    let (pool, _dir) = test_pool().await;
+    sqlx::query(
+        "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+         VALUES ('dev-old', 1, 'h', 'edit_block', 'not json', ?, 'BLKSTOP')",
+    )
+    .bind(FIXED_TS)
+    .execute(&pool)
+    .await
+    .unwrap();
+    append_local_op_at(
+        &pool,
+        "dev-new",
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id("BLKSTOP"),
+            to_text: "held".into(),
+            prev_edit: None,
+            prior_text: None,
+        }),
+        FIXED_TS + 10,
+    )
+    .await
+    .unwrap();
+
+    let row = latest_block_edit_before(
+        &pool,
+        "BLKSTOP",
+        BlockEditScan::LatestHolding { text: "held" },
+    )
+    .await
+    .expect("a scan that stops at the newest holder never decodes the older row")
+    .expect("the newer row holds the text");
+    assert_eq!((row.device_id.as_str(), row.seq), ("dev-new", 1));
+}
