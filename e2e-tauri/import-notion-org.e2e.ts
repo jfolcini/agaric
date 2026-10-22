@@ -21,27 +21,14 @@ import {
   expectAbsent,
   importFolder,
   navigateTo,
+  openPageTitled,
+  pageEntryTitled,
   runScopedMarker,
   waitForAppReady,
 } from './helpers'
 
 const PLAN_ID = '0123456789abcdef0123456789abcdef'
 const NOTES_ID = 'fedcba9876543210fedcba9876543210'
-
-/** The Pages entry titled exactly `title` (a namespace leaf carries it as `title`). */
-function pageEntry(title: string) {
-  return $(`span[title="${title}"]`)
-}
-
-async function openPage(title: string): Promise<void> {
-  await navigateTo('Pages')
-  await pageEntry(title).waitForClickable({ timeout: NAV_TIMEOUT })
-  await pageEntry(title).click()
-  await browser.waitUntil(async () => (await $('[aria-label="Page title"]').getText()) === title, {
-    timeout: NAV_TIMEOUT,
-    timeoutMsg: `the page ${title} never opened`,
-  })
-}
 
 /** The row (`li[data-block-id]`) of the block whose text holds `marker`. */
 async function rowOf(marker: string) {
@@ -94,11 +81,11 @@ describe('Agaric real-backend Notion, Org and text folder import (#6032) @markdo
     await navigateTo('Journal')
     await navigateTo('Pages')
     for (const title of ['Notes', orgTitle, 'reading']) {
-      await pageEntry(`${folder}/${title}`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+      await pageEntryTitled(`${folder}/${title}`).waitForDisplayed({ timeout: NAV_TIMEOUT })
     }
     await expectAbsent(`span[title="${folder}/Plan ${PLAN_ID}"]`, 'a page titled with its id')
 
-    await openPage(`${folder}/Plan`)
+    await openPageTitled(`${folder}/Plan`)
     const chip = (await rowOf(`${marker}-link`)).$('[data-testid="block-link-chip"]')
     await browser.waitUntil(async () => (await chip.getAttribute('title')) === `${folder}/Notes`, {
       timeout: NAV_TIMEOUT,
@@ -111,7 +98,7 @@ describe('Agaric real-backend Notion, Org and text folder import (#6032) @markdo
     await reviewer.waitForDisplayed({ timeout: NAV_TIMEOUT })
     expect(await reviewer.getValue()).toBe(`${marker}-ann`)
 
-    await openPage(`${folder}/${orgTitle}`)
+    await openPageTitled(`${folder}/${orgTitle}`)
     await expectTaskState(`${marker}-task`, 'TODO')
     await expectTaskState(`${marker}-sub`, 'DONE')
     const task = await rowOf(`${marker}-task`)

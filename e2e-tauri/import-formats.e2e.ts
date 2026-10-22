@@ -28,9 +28,13 @@ import {
   NAV_TIMEOUT,
   blockStaticByMarker,
   expectImageRendered,
+  importFolder,
   navigateTo,
+  openDataTab,
+  openPageTitled,
   runScopedMarker,
   waitForAppReady,
+  waitForImportResult,
 } from './helpers'
 
 // A 1x1 transparent PNG.
@@ -38,34 +42,6 @@ const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
   'base64',
 )
-
-async function openDataTab(): Promise<void> {
-  await navigateTo('Settings')
-  const dataTab = $('#settings-tab-data')
-  await dataTab.waitForClickable({ timeout: NAV_TIMEOUT })
-  await dataTab.click()
-  await $('[data-testid="settings-panel-data"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
-}
-
-/** Wait until the Data tab's result region (ImportSection.tsx) reads `summary`. */
-async function waitForImportResult(summary: string): Promise<void> {
-  const result = $('[data-testid="import-result"]')
-  await result.waitForDisplayed({ timeout: ACTION_TIMEOUT })
-  let text = ''
-  await browser
-    .waitUntil(
-      async () => {
-        text = await result.getText()
-        return text.includes(summary)
-      },
-      { timeout: ACTION_TIMEOUT },
-    )
-    .catch(() => {
-      throw new Error(
-        `the import result reads ${JSON.stringify(text)}, not ${JSON.stringify(summary)}`,
-      )
-    })
-}
 
 /** Write `contents` to a fresh temp file and pick it in the Data tab's `testid` input. */
 async function importFile(
@@ -84,58 +60,6 @@ async function importFile(
   }, testid)
   await input.addValue(file)
   await waitForImportResult(summary)
-}
-
-/**
- * Pick `folder` in the Data tab's folder input: its FileList holds each file
- * with `webkitRelativePath` `<folder>/<name>`, as the browser's folder picker
- * fills it. WebKitWebDriver cannot pick a folder: Send Keys with a directory
- * path hands the input the directory itself as one File, which fails to read.
- */
-async function importFolder(folder: string, files: Record<string, Buffer>): Promise<void> {
-  await openDataTab()
-  await $('[data-testid="import-folder-input"]').waitForExist({ timeout: ACTION_TIMEOUT })
-  const entries = Object.entries(files).map(([name, bytes]) => ({
-    name,
-    rel: `${folder}/${name}`,
-    b64: bytes.toString('base64'),
-  }))
-  await browser.execute((list: Array<{ name: string; rel: string; b64: string }>) => {
-    const input = document.querySelector<HTMLInputElement>('[data-testid="import-folder-input"]')
-    if (input === null) throw new Error('no folder input')
-    const picked = new DataTransfer()
-    for (const { name, rel, b64 } of list) {
-      const bin = atob(b64)
-      const bytes = new Uint8Array(bin.length)
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-      const file = new File([bytes], name)
-      Object.defineProperty(file, 'webkitRelativePath', { value: rel })
-      picked.items.add(file)
-    }
-    input.files = picked.files
-    if (input.files?.[0]?.webkitRelativePath !== list[0]?.rel) {
-      throw new Error('the folder input lost the files or their relative paths')
-    }
-    input.dispatchEvent(new Event('change', { bubbles: true }))
-  }, entries)
-  // The success line; a run where every file failed reads "All N files failed".
-  await waitForImportResult('Imported “')
-}
-
-/**
- * Open a page from the Pages list by its full title. A namespaced title
- * (`a/b`) is a leaf of the namespace tree (PageTreeItem.tsx), a flat one a
- * PageRow; both carry the full title in their label span's `title`.
- */
-async function openPageByFullTitle(title: string): Promise<void> {
-  await navigateTo('Pages')
-  const label = $(`span[title="${title}"]`)
-  await label.waitForClickable({ timeout: NAV_TIMEOUT })
-  await label.click()
-  await browser.waitUntil(async () => (await $('[aria-label="Page title"]').getText()) === title, {
-    timeout: NAV_TIMEOUT,
-    timeoutMsg: `the page ${title} never opened`,
-  })
 }
 
 /** A USTAR archive of `entries`, holding the header fields `parseJex`'s tar reader reads. */
@@ -164,13 +88,18 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     await waitForAppReady()
     const marker = runScopedMarker('wdio-folder')
     const folder = `${marker}-dir`
-    await importFolder(folder, {
-      'note.md': Buffer.from(`- ${marker}-caption ![pic](pic.png)\n`),
-      'pic.png': PNG,
-    })
+    await importFolder(
+      'import-folder-input',
+      folder,
+      {
+        'note.md': Buffer.from(`- ${marker}-caption ![pic](pic.png)\n`),
+        'pic.png': PNG,
+      },
+      'Imported “',
+    )
 
     await navigateTo('Journal')
-    await openPageByFullTitle(`${folder}/note`)
+    await openPageTitled(`${folder}/note`)
     const block = blockStaticByMarker(`${marker}-caption`)
     await block.waitForDisplayed({ timeout: NAV_TIMEOUT })
     const id = await block.getAttribute('data-block-id')
@@ -204,7 +133,7 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     await navigateTo('Pages')
     await $(`span[title="${title}"]`).waitForDisplayed({ timeout: NAV_TIMEOUT })
     expect(await $$(`span[title="${title}"]`).length).toBe(1)
-    await openPageByFullTitle(title)
+    await openPageTitled(title)
     for (const block of ['first', 'second', 'item']) {
       await blockStaticByMarker(`${marker}-${block}`).waitForDisplayed({ timeout: NAV_TIMEOUT })
     }
@@ -262,7 +191,7 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     await importFile('import-jex-input', 'export.jex', jex, 'Imported “2 notes”')
 
     await navigateTo('Journal')
-    await openPageByFullTitle(`${book}/${marker}-top`)
+    await openPageTitled(`${book}/${marker}-top`)
     await blockStaticByMarker(`${marker}-top-body`).waitForDisplayed({ timeout: NAV_TIMEOUT })
     // The to-do opens with a task block named after the note, the first block
     // whose text holds `<marker>-top` (the body block's comes after it).
@@ -281,7 +210,7 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     // The tag is the page's tag (PageTagSection's chip).
     await $(`[aria-label="Remove tag ${tag}"]`).waitForDisplayed({ timeout: NAV_TIMEOUT })
     await navigateTo('Journal')
-    await openPageByFullTitle(`${book}/${sub}/${marker}-deep`)
+    await openPageTitled(`${book}/${sub}/${marker}-deep`)
     await blockStaticByMarker(`${marker}-deep-body`).waitForDisplayed({ timeout: NAV_TIMEOUT })
   })
 })

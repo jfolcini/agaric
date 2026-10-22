@@ -32,6 +32,8 @@ import {
   expectImageRendered,
   importFolder,
   navigateTo,
+  openPageTitled,
+  pageEntryTitled,
   runScopedMarker,
   waitForAppReady,
 } from './helpers'
@@ -41,22 +43,6 @@ const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
   'base64',
 )
-
-/**
- * The Pages entry titled exactly `title`: a namespaced page is a leaf of the
- * namespace tree (PageTreeItem.tsx), a flat one a PageRow; both carry the
- * full title in the label span's `title` attribute.
- */
-function pageEntry(title: string) {
-  return $(`span[title="${title}"]`)
-}
-
-async function openPage(title: string): Promise<void> {
-  await navigateTo('Pages')
-  await pageEntry(title).waitForClickable({ timeout: NAV_TIMEOUT })
-  await pageEntry(title).click()
-  await expectPageOpen(title)
-}
 
 async function expectPageOpen(title: string): Promise<void> {
   await browser.waitUntil(async () => (await $('[aria-label="Page title"]').getText()) === title, {
@@ -106,13 +92,13 @@ describe('Agaric real-backend Obsidian vault import (#5740) @markdown', () => {
 
     await navigateTo('Journal')
     await navigateTo('Pages')
-    await pageEntry(`${vault}/${topic}`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await pageEntryTitled(`${vault}/${topic}`).waitForDisplayed({ timeout: NAV_TIMEOUT })
     await expectAbsent(`span[title="${topic}"]`, `a page titled ${topic}`)
-    await pageEntry(`${vault}/Über`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await pageEntryTitled(`${vault}/Über`).waitForDisplayed({ timeout: NAV_TIMEOUT })
     await expectAbsent('span[title="über"]', 'a page titled über')
     await expectAbsent(`span[title="${vault}/pic.png"]`, 'a page made of the image')
 
-    await openPage(`${vault}/${home}`)
+    await openPageTitled(`${vault}/${home}`)
     const links = await blockId(`${marker}-links`)
     const tag = $(`li[data-block-id="${links}"] [data-testid="tag-ref-chip"]`)
     await tag.waitForExist({ timeout: NAV_TIMEOUT })
