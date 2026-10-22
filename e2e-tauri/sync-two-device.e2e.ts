@@ -97,6 +97,38 @@ async function clickSyncNow(deviceId: string): Promise<void> {
 }
 
 /**
+ * Freeze the peer and press "Sync now" until the app dials it; resolves to the
+ * dial's Cancel. A session already running with the peer (one the daemon
+ * started on its own, or one the peer dialled) refuses the press with "Sync
+ * already in progress for this peer" and shows no Cancel. Frozen, the peer
+ * would hold that session until a transport timeout, so it thaws between
+ * presses; the app shows no end for that session, so the thaw is timed.
+ */
+async function freezeAndDial(device: SyncPeer, deviceId: string) {
+  const cancel = peerRow(deviceId).$('button[aria-label^="Cancel sync:"]')
+  await browser.waitUntil(
+    async () => {
+      device.pause()
+      await clickSyncNow(deviceId)
+      const dialling = await cancel.waitForClickable({ timeout: 5_000 }).then(
+        () => true,
+        () => false,
+      )
+      if (!dialling) {
+        device.resume()
+        await browser.pause(5_000)
+      }
+      return dialling
+    },
+    {
+      timeout: ACTION_TIMEOUT,
+      timeoutMsg: 'every "Sync now" to the frozen peer was refused or showed no Cancel',
+    },
+  )
+  return cancel
+}
+
+/**
  * The device row of `deviceId` as one read: whether it shows a running session
  * (its progress or its Cancel), the sync state card's label, and the open toasts.
  */
@@ -558,17 +590,15 @@ describe('Agaric real-backend two-device sync (#5365) @sync', () => {
     const { deviceId, pageId } = paired
 
     // A pull first, so the daemon's own resync leaves this peer alone for a
-    // minute: the one dial to the frozen peer is the one this test starts.
+    // minute. A resync already due can still take the pull, or outlast it;
+    // `freezeAndDial` waits that session out.
     await peer.createBlock(pageId, BEFORE_PAUSE)
     await openSyncSettings()
     await clickSyncNow(deviceId)
     await peer.waitPulled()
 
-    peer.pause()
     try {
-      await clickSyncNow(deviceId)
-      const cancel = peerRow(deviceId).$('button[aria-label^="Cancel sync:"]')
-      await cancel.waitForClickable({ timeout: ACTION_TIMEOUT })
+      const cancel = await freezeAndDial(peer, deviceId)
       await cancel.click()
 
       let seen = await readSyncSurface(deviceId)
