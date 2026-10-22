@@ -452,3 +452,40 @@ describe('MarkdownReveal beside chips in page mode', () => {
         expect(outcome(true, 1, offset, key)).toEqual(outcome(false, 1, offset, key))
   })
 })
+
+describe('MarkdownReveal for quotes and code blocks in page mode (#5691)', () => {
+  /** The construct syntax drawn, in document order, as the user reads it: widgets, and a block's lines above and below it. */
+  function syntax(ed: Editor): string[] {
+    return [
+      ...ed.view.dom.querySelectorAll('.md-reveal-syntax-marker, .md-reveal-block-syntax'),
+    ].flatMap((el) =>
+      el.classList.contains('md-reveal-block-syntax')
+        ? [el.getAttribute('data-reveal-open') ?? '', el.getAttribute('data-reveal-close') ?? '']
+        : [el.textContent ?? ''],
+    )
+  }
+
+  const ROWS: Row[] = [
+    [A, 0, '> [!TIP] note'],
+    [B, 0, '```js\nx = 1\n```'],
+    [C, 0, 'plain'],
+  ]
+
+  it('draws the caret’s callout line and code fences, nothing elsewhere or across blocks, and saves none of it', () => {
+    const ed = page(ROWS)
+    // A quote's text is one level deeper than a paragraph's: `posIn` is the quote's start, +1 its line's.
+    const inNote = posIn(ed, 0, 1) + 1
+    ed.commands.setTextSelection(inNote)
+    expect(syntax(ed)).toEqual(['> [!TIP] '])
+    expect(ed.state.selection.from).toBe(inNote)
+    caret(ed, 1, 2)
+    expect(syntax(ed)).toEqual(['```js', '```'])
+    caret(ed, 2, 2)
+    expect(syntax(ed)).toEqual([])
+    ed.view.dispatch(
+      ed.state.tr.setSelection(TextSelection.create(ed.state.doc, inNote, posIn(ed, 1, 2))),
+    )
+    expect(syntax(ed)).toEqual([])
+    expect(rowsOf(ed.state.doc)).toEqual(ROWS)
+  })
+})

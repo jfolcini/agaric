@@ -10,6 +10,7 @@
 import { type AnyExtension, Editor } from '@tiptap/core'
 import Bold from '@tiptap/extension-bold'
 import Code from '@tiptap/extension-code'
+import CodeBlock from '@tiptap/extension-code-block'
 import Document from '@tiptap/extension-document'
 import Heading from '@tiptap/extension-heading'
 import Highlight from '@tiptap/extension-highlight'
@@ -18,13 +19,16 @@ import Italic from '@tiptap/extension-italic'
 import Strike from '@tiptap/extension-strike'
 import Text from '@tiptap/extension-text'
 import { undoDepth } from '@tiptap/pm/history'
+import { NodeSelection } from '@tiptap/pm/state'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { BlockLink } from '@/editor/extensions/block-link'
 import { BlockRef } from '@/editor/extensions/block-ref'
+import { CalloutBlockquote } from '@/editor/extensions/callout-blockquote'
 import { ExternalLink } from '@/editor/extensions/external-link'
 import { ListMarkerDecoration, setListMarkerMeta } from '@/editor/extensions/list-marker-decoration'
 import { MarkdownReveal } from '@/editor/extensions/markdown-reveal'
+import { MathBlock, MathInline } from '@/editor/extensions/math'
 import { TagRef } from '@/editor/extensions/tag-ref'
 import { TaskParagraph } from '@/editor/extensions/task-paragraph'
 import { Underline } from '@/editor/extensions/underline'
@@ -1436,5 +1440,217 @@ describe('MarkdownReveal beside page, tag and block-ref chips (#5974)', () => {
     ])
     ed.commands.setTextSelection(2)
     expect(shown(ed)).toBe('[[Plan]]**b**')
+  })
+})
+
+describe('MarkdownReveal for quotes, callouts, code blocks and math (#5691)', () => {
+  beforeEach(() => {
+    writePreference(PREFERENCES.revealMarkdownSyntax, true)
+  })
+
+  // The math node views render React and KaTeX, which the syntax drawn around them never touches.
+  const constructs: AnyExtension[] = [
+    CalloutBlockquote,
+    CodeBlock,
+    MathInline.extend({ addNodeView: () => null }),
+    MathBlock.extend({ addNodeView: () => null }),
+  ]
+
+  const QUOTES = 'before\n\n> [!NOTE] first\n>\n> second\n\n> > deep\n\n> # Title\n\nafter'
+  const CODE = '```ts\nlet a = 1\n```\n\nafter'
+
+  /** The construct syntax drawn, in document order, as the user reads it: widgets, and a block's lines above and below it. */
+  function syntax(ed: Editor): string[] {
+    return [
+      ...ed.view.dom.querySelectorAll('.md-reveal-syntax-marker, .md-reveal-block-syntax'),
+    ].flatMap((el) =>
+      el.classList.contains('md-reveal-block-syntax')
+        ? [el.getAttribute('data-reveal-open') ?? '', el.getAttribute('data-reveal-close') ?? '']
+        : [el.textContent ?? ''],
+    )
+  }
+
+  /** The DOM caret is in `el`. */
+  function caretIn(el: Element | null): boolean {
+    const anchor = document.getSelection()?.anchorNode
+    return !!el && !!anchor && el.contains(anchor)
+  }
+
+  /** The drawn syntax that reads `text`. */
+  function drawn(ed: Editor, text: string): Element {
+    const el = [...ed.view.dom.querySelectorAll('.md-reveal-syntax-marker')].find(
+      (e) => e.textContent === text,
+    )
+    if (!el) throw new Error(`no ${text} is drawn`)
+    return el
+  }
+
+  /** The document position of the first character of `text`. */
+  function at(ed: Editor, text: string): number {
+    let found = -1
+    ed.state.doc.descendants((node, pos) => {
+      if (found >= 0 || !node.isText) return found < 0
+      const offset = node.text?.indexOf(text) ?? -1
+      if (offset >= 0) found = pos + offset
+      return false
+    })
+    if (found < 0) throw new Error(`no ${text} in the document`)
+    return found
+  }
+
+  /** The DOM's caret is past `el`: typing goes where the caret is drawn, right of the syntax. */
+  function caretFollows(el: Element): boolean {
+    const selection = document.getSelection()
+    const parent = el.parentNode
+    if (!selection?.anchorNode || !parent) throw new Error('no DOM caret')
+    const caret = document.createRange()
+    caret.setStart(selection.anchorNode, selection.anchorOffset)
+    // The point right after `el` is before the caret (-1) or is the caret (0).
+    return caret.comparePoint(parent, [...parent.childNodes].indexOf(el as ChildNode) + 1) <= 0
+  }
+
+  it('shows the `>` run of the line the caret is on, a callout’s type on its first line, and hides it once the caret leaves', () => {
+    const ed = createEditor(QUOTES, constructs)
+    const stored = markdown(ed)
+    for (const [text, expected] of [
+      ['before', []],
+      ['first', ['> [!NOTE] ']],
+      ['second', ['> ']],
+      ['deep', ['> > ']],
+      ['after', []],
+    ] as const) {
+      ed.commands.setTextSelection(at(ed, text) + 1)
+      expect(syntax(ed), text).toEqual(expected)
+    }
+    expect(markdown(ed)).toBe(stored)
+    expect(undoDepth(ed.state)).toBe(0)
+  })
+
+  it('shows the syntax of every line a range selects, as it does every heading’s # run', () => {
+    const ed = createEditor(`${QUOTES}\n\n${CODE}`, constructs)
+    ed.commands.setTextSelection({ from: at(ed, 'first') + 1, to: at(ed, 'deep') + 1 })
+    expect(syntax(ed)).toEqual(['> [!NOTE] ', '> ', '> > '])
+    ed.commands.setTextSelection({ from: at(ed, 'Title') + 1, to: at(ed, 'a = 1') })
+    expect(syntax(ed)).toEqual(['> ', '```ts', '```'])
+  })
+
+  it('draws a quote’s `>` run before the # run of the heading inside it', () => {
+    const ed = createEditor(QUOTES, constructs)
+    ed.commands.setTextSelection(at(ed, 'Title') + 1)
+    const heading = ed.view.dom.querySelector('h1')
+    expect(heading?.textContent).toBe('> # Title')
+  })
+
+  it('keeps the caret where it was, right of the `>` run, as the run comes and goes', () => {
+    const ed = createEditor(QUOTES, constructs)
+    const start = at(ed, 'second')
+    ed.commands.setTextSelection(start)
+    expect(ed.state.selection.from).toBe(start)
+    expect(caretFollows(drawn(ed, '> '))).toBe(true)
+
+    const outside = document.createElement('button')
+    document.body.append(outside)
+    outside.focus()
+    expect(syntax(ed)).toEqual([])
+    ed.view.focus()
+    expect(syntax(ed)).toEqual(['> '])
+    expect(ed.state.selection.from).toBe(start)
+    expect(caretFollows(drawn(ed, '> '))).toBe(true)
+    outside.remove()
+
+    type(ed, 'X')
+    expect(markdown(ed)).toContain('> Xsecond')
+    expect(markdown(ed)).not.toContain('> > Xsecond')
+  })
+
+  it('shows a code block’s fences while the caret is in it, as no text in the editor, and hides them once it leaves', () => {
+    const ed = createEditor(CODE, constructs)
+    const stored = markdown(ed)
+    ed.commands.setTextSelection(at(ed, 'a = 1'))
+    expect(syntax(ed)).toEqual(['```ts', '```'])
+    // The `<pre>` draws them as generated content (index.css): a text node there is
+    // the editor's text to a browser, which reads it back and can put the caret in it.
+    expect(ed.view.dom.textContent).toBe('let a = 1after')
+    const pre = ed.view.dom.querySelector('pre')
+    expect(pre?.getAttribute('data-reveal-open')).toBe('```ts')
+    expect(pre?.getAttribute('data-reveal-close')).toBe('```')
+    ed.commands.setTextSelection(at(ed, 'after') + 1)
+    expect(syntax(ed)).toEqual([])
+    expect(markdown(ed)).toBe(stored)
+  })
+
+  it('draws the fence the code block is stored with, longer than a run of backticks in it', () => {
+    const ed = createEditor('````\na ``` b\n````', constructs)
+    ed.commands.setTextSelection(2)
+    expect(syntax(ed)).toEqual(['````', '````'])
+  })
+
+  it('keeps the caret in the code, at its start and at its end, and typing there is code', () => {
+    const ed = createEditor(CODE, constructs)
+    const start = at(ed, 'let')
+    ed.commands.setTextSelection(start)
+    expect(ed.state.selection.from).toBe(start)
+    expect(caretIn(ed.view.dom.querySelector('pre'))).toBe(true)
+    type(ed, 'X')
+
+    const end = at(ed, '1') + 1
+    ed.commands.setTextSelection(end)
+    expect(caretIn(ed.view.dom.querySelector('pre'))).toBe(true)
+    type(ed, 'Y')
+    expect(markdown(ed)).toContain('```ts\nXlet a = 1Y\n```')
+  })
+
+  it('shows `$` around inline math beside the caret, and `$$` around selected display math', () => {
+    const ed = createEditor('a $x^2$ b\n\n$$\ny\n$$\n\nafter', constructs)
+    const stored = markdown(ed)
+    // `a |$x^2$ b`, then `a $x^2$| b`.
+    expect(ed.state.doc.nodeAt(3)?.type.name).toBe('math_inline')
+    ed.commands.setTextSelection(3)
+    expect(syntax(ed)).toEqual(['$', '$'])
+    ed.commands.setTextSelection(4)
+    expect(syntax(ed)).toEqual(['$', '$'])
+    ed.commands.setTextSelection(2)
+    expect(syntax(ed)).toEqual([])
+
+    const display = ed.state.doc.child(1)
+    expect(display.type.name).toBe('math_block')
+    const pos = ed.state.doc.child(0).nodeSize
+    ed.view.dispatch(ed.state.tr.setSelection(NodeSelection.create(ed.state.doc, pos)))
+    expect(syntax(ed)).toEqual(['$$', '$$'])
+    expect(ed.state.selection.from).toBe(pos)
+    ed.commands.setTextSelection(at(ed, 'after'))
+    expect(syntax(ed)).toEqual([])
+    expect(markdown(ed)).toBe(stored)
+    expect(undoDepth(ed.state)).toBe(0)
+  })
+
+  it('draws a quote’s syntax aria-hidden and out of in-page find', () => {
+    const ed = createEditor(QUOTES, constructs)
+    ed.commands.setTextSelection(at(ed, 'second') + 1)
+    const run = drawn(ed, '> ')
+    expect(run.getAttribute('aria-hidden')).toBe('true')
+    expect(run.hasAttribute('data-find-skip')).toBe(true)
+  })
+
+  it('keeps the syntax in place while an IME composes, and redraws it once it ends', () => {
+    vi.useFakeTimers()
+    const ed = createEditor(QUOTES, constructs)
+    ed.commands.setTextSelection(at(ed, 'second') + 1)
+    expect(syntax(ed)).toEqual(['> '])
+    ed.view.dom.dispatchEvent(new Event('compositionstart', { bubbles: true }))
+    ed.commands.setTextSelection(at(ed, 'after') + 1)
+    expect(syntax(ed)).toEqual(['> '])
+    ed.view.dom.dispatchEvent(new Event('compositionend', { bubbles: true }))
+    vi.runAllTimers()
+    expect(syntax(ed)).toEqual([])
+  })
+
+  it('draws none with the preference off', () => {
+    writePreference(PREFERENCES.revealMarkdownSyntax, false)
+    const ed = createEditor(`${QUOTES}\n\n${CODE}`, constructs)
+    ed.commands.setTextSelection(at(ed, 'first') + 1)
+    expect(syntax(ed)).toEqual([])
+    ed.commands.setTextSelection(at(ed, 'let'))
+    expect(syntax(ed)).toEqual([])
   })
 })

@@ -27,6 +27,11 @@
  * stays an atom whose id is not text, so Backspace and Delete take it whole as
  * before and the syntax is no part of the selection. An unresolved chip's
  * label already reads in its syntax (`[[01ABCDEF...]]`), so it gets none.
+ * So do the block constructs, on the selection's lines: a quote's `> ` run (a
+ * callout's `> [!TYPE] ` on its first line) and the `$` of inline math selected
+ * or beside the caret, whose LaTeX its node view edits; a code block's fences
+ * and selected display math's `$$` are drawn by the block's own element, above
+ * and below it, so they are no text the browser can read or put the caret in.
  *
  * A link's URL is edited through the link popover (Ctrl+K, or the selection
  * bubble's link button), not in its `](url)`.
@@ -56,7 +61,9 @@ import {
   markerBesideCaret,
   marksTypedAt,
   OUTSIDE_HEADING_MARKER,
+  revealedBlockSyntax,
   revealedChipMarkers,
+  revealedConstructMarkers,
   revealedMarkers,
   revealedRunsAt,
 } from '@/editor/revealed-markers'
@@ -137,8 +144,24 @@ function revealDecorations(state: EditorState, statusOf: ChipStatus): Decoration
       key: `md-reveal-chip:${m.text}:${m.side}`,
     }),
   )
+  const constructs = revealedConstructMarkers(state).map((m) =>
+    Decoration.widget(m.pos, () => markerDom(m.text, 'syntax-marker'), {
+      side: m.side,
+      key: `md-reveal-syntax:${m.text}:${m.side}`,
+    }),
+  )
+  // The node's element draws them (`.md-reveal-block-syntax` in index.css): no text in the DOM.
+  const blocks = revealedBlockSyntax(state).map((b) =>
+    Decoration.node(b.from, b.to, {
+      class: 'md-reveal-block-syntax',
+      'data-reveal-open': b.open,
+      'data-reveal-close': b.close,
+    }),
+  )
   return DecorationSet.create(state.doc, [
     ...chips,
+    ...constructs,
+    ...blocks,
     ...revealedMarkers(state).map((m) => {
       const name = m.kind === 'heading' ? 'heading' : m.run.mark.type.name
       return Decoration.widget(m.pos, () => markerDom(m.text), {

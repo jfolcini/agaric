@@ -1123,14 +1123,21 @@ function serializeHeading(node: HeadingNode, onUnknownNode?: (type: string) => v
   )
 }
 
+/**
+ * The fence a code block of `code` is written between. CommonMark: longer
+ * than the longest run of backticks in the code, so the closing fence cannot
+ * collide with content, and at least 3.
+ */
+export function codeFence(code: string): string {
+  const runs = code.match(/`+/g)
+  const longest = runs ? Math.max(...runs.map((r) => r.length)) : 0
+  return '`'.repeat(Math.max(3, longest + 1))
+}
+
 function serializeCodeBlock(node: CodeBlockNode): string {
   const code = node.content?.[0]?.text ?? ''
   const lang = node.attrs?.language ?? ''
-  // CommonMark: pick a fence longer than the longest run of backticks in the
-  // code, so the closing fence cannot collide with content. Default to 3.
-  const runs = code.match(/`+/g)
-  const longest = runs ? Math.max(...runs.map((r) => r.length)) : 0
-  const fence = '`'.repeat(Math.max(3, longest + 1))
+  const fence = codeFence(code)
   return `${fence}${lang}\n${code}\n${fence}`
 }
 

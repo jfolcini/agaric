@@ -1,8 +1,10 @@
 /**
  * The Markdown markers MarkdownReveal (`extensions/markdown-reveal.ts`, #5689)
  * draws for an editor state: the delimiters of bold, italic, strikethrough,
- * highlight, code and external links, and a heading's `#` run; and the syntax drawn
- * around a page, tag or block-ref chip (`revealedChipMarkers`). Kept free of ProseMirror
+ * highlight, code and external links, and a heading's `#` run; the syntax drawn
+ * around a page, tag or block-ref chip (`revealedChipMarkers`); a quote's or
+ * callout's `>` run and inline math's `$` (`revealedConstructMarkers`); and a
+ * code block's fences and display math's `$$` (`revealedBlockSyntax`). Kept free of ProseMirror
  * values so `useBlockKeyboard`, on the cold-start path (#2939), can ask whether
  * a marker, or a link (`linkAtCaret`), sits beside the caret without loading the editor chunk.
  */
@@ -12,6 +14,7 @@ import type { EditorState, Selection } from '@tiptap/pm/state'
 
 import {
   CLOSE_DELIMITER,
+  codeFence,
   inlineCodeDelimiters,
   MARK_ORDER,
   OPEN_DELIMITER,
@@ -317,8 +320,11 @@ const CHIP_OPEN_SIDE = 100
 /** Drawn before a caret at its position, ahead of any mark delimiter there. */
 const CHIP_CLOSE_SIDE = -200
 
-/** A chip's syntax, drawn beside the chip as a widget. Read-only: not part of the selection, so Backspace and Delete never see it. */
-export interface ChipMarker {
+/**
+ * A chip's syntax drawn beside it, or a block construct's (`revealedConstructMarkers`),
+ * as a widget. Read-only: not part of the selection, so Backspace and Delete never see it.
+ */
+export interface ReadOnlyMarker {
   pos: number
   text: string
   side: number
@@ -335,16 +341,111 @@ export interface ChipMarker {
 export function revealedChipMarkers(
   state: EditorState,
   showsOwnSyntax: (chip: PMNode, unresolvedLabel: string) => boolean,
-): ChipMarker[] {
+): ReadOnlyMarker[] {
   if (!isMarkdownRevealEnabled() || spansPageBlocks(state)) return []
   return nodesAtSelection(state.selection).flatMap(({ node, pos }) => {
     const syntax = CHIP_SYNTAX[node.type.name]
     if (!syntax || showsOwnSyntax(node, syntax.unresolved(String(node.attrs['id'])))) return []
-    const out: ChipMarker[] = [{ pos, text: syntax.open, side: CHIP_OPEN_SIDE }]
+    const out: ReadOnlyMarker[] = [{ pos, text: syntax.open, side: CHIP_OPEN_SIDE }]
     if (syntax.close)
       out.push({ pos: pos + node.nodeSize, text: syntax.close, side: CHIP_CLOSE_SIDE })
     return out
   })
+}
+
+/** Drawn first at a textblock's start: before a heading's `#` run and every mark's marker there. */
+const LINE_START_SIDE = -300
+
+/** The textblock at `$pos` is the first line the node at `depth` is written on. */
+function isFirstLine($pos: ResolvedPos, depth: number): boolean {
+  for (let d = depth; d < $pos.depth; d++) if ($pos.index(d) !== 0) return false
+  return true
+}
+
+/**
+ * What the serializer writes before the text of the textblock at `$pos`: a
+ * `> ` per quote around it, outermost first, and a callout's `[!TYPE]` on its
+ * first line.
+ */
+function quotePrefix($pos: ResolvedPos): string {
+  let prefix = ''
+  for (let depth = 1; depth < $pos.depth; depth++) {
+    const node = $pos.node(depth)
+    if (node.type.name !== 'blockquote') continue
+    prefix += '> '
+    const callout = node.attrs['calloutType'] as string | null
+    if (callout && isFirstLine($pos, depth)) prefix += `[!${callout.toUpperCase()}] `
+  }
+  return prefix
+}
+
+/** The `>` run of the quotes the textblock at `$pos` is in. A code block's fences are block syntax. */
+function lineMarkers($pos: ResolvedPos): ReadOnlyMarker[] {
+  const block = $pos.parent
+  if (!block.isTextblock || block.type.name === 'codeBlock') return []
+  const prefix = quotePrefix($pos)
+  return prefix ? [{ pos: $pos.start(), text: prefix, side: LINE_START_SIDE }] : []
+}
+
+/**
+ * The lines written above and below a block node: a code block's fences or
+ * display math's `$$`. Drawn by the node's own element, not as widgets: a
+ * widget is text in the editor's DOM, which the browser reads as the
+ * editor's text and can put the caret in.
+ */
+export interface BlockSyntax {
+  from: number
+  to: number
+  open: string
+  close: string
+}
+
+/** The textblocks the selection is in: the caret's, or every one a range touches, as headings are. */
+function linesAtSelection({ selection, doc }: EditorState): ResolvedPos[] {
+  if (selection.empty) return [selection.$from]
+  const lines: ResolvedPos[] = []
+  doc.nodesBetween(selection.from, selection.to, (node, pos) => {
+    if (node.isTextblock) lines.push(doc.resolve(pos + 1))
+    return !node.isTextblock
+  })
+  return lines
+}
+
+/**
+ * The syntax of the quotes and callouts the selection is in, and the `$` of
+ * inline math selected or beside a caret. Read-only, as a chip's: the editor's
+ * own keys act on these constructs (Backspace at a quote's start lifts the
+ * line out of it), and the LaTeX is edited in the math's node view.
+ */
+export function revealedConstructMarkers(state: EditorState): ReadOnlyMarker[] {
+  if (!isMarkdownRevealEnabled() || spansPageBlocks(state)) return []
+  const math = nodesAtSelection(state.selection).flatMap(({ node, pos }): ReadOnlyMarker[] =>
+    node.type.name === 'math_inline'
+      ? [
+          { pos, text: '$', side: CHIP_OPEN_SIDE },
+          { pos: pos + node.nodeSize, text: '$', side: CHIP_CLOSE_SIDE },
+        ]
+      : [],
+  )
+  return [...linesAtSelection(state).flatMap(lineMarkers), ...math]
+}
+
+/** The fences of the code blocks the selection is in, and the `$$` of selected display math. */
+export function revealedBlockSyntax(state: EditorState): BlockSyntax[] {
+  if (!isMarkdownRevealEnabled() || spansPageBlocks(state)) return []
+  const code = linesAtSelection(state).flatMap(($pos): BlockSyntax[] => {
+    const block = $pos.parent
+    if (block.type.name !== 'codeBlock') return []
+    const fence = codeFence(block.textContent)
+    const language = (block.attrs['language'] as string | null) ?? ''
+    return [{ from: $pos.before(), to: $pos.after(), open: `${fence}${language}`, close: fence }]
+  })
+  const math = nodesAtSelection(state.selection).flatMap(({ node, pos }): BlockSyntax[] =>
+    node.type.name === 'math_block'
+      ? [{ from: pos, to: pos + node.nodeSize, open: '$$', close: '$$' }]
+      : [],
+  )
+  return [...code, ...math]
 }
 
 /** A selected node, or the nodes right before and after a caret, with their positions. */
