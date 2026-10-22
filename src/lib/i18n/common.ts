@@ -61,6 +61,16 @@ export const common: Record<string, string> = {
   'space.moveTo': 'Move to space',
   'space.movedToast': 'Page moved to {{space}}',
   'space.moveFailed': 'Failed to move page',
+  'spaceMove.lossTitle': 'Move and remove properties?',
+  'spaceMove.lossDescription':
+    '{{space}} does not define these properties the same way, so the move removes their values. Undo puts them back.',
+  'spaceMove.lossConfirm': 'Move and remove',
+  'spaceMove.lossChanged': 'Something changed since you confirmed. Check the list again.',
+  'spaceMove.lossListLabel': 'Properties the move removes',
+  'spaceMove.valueCount_one': '{{count}} value',
+  'spaceMove.valueCount_other': '{{count}} values',
+  'spaceMove.inTrash': 'In Trash',
+  'spaceMove.valuesFailed': 'Could not load the values',
   'space.notReady': 'Loading spaces…',
   'space.activeDeletedNotification':
     'Your active space was deleted on another device. Switched to {{space}}.',

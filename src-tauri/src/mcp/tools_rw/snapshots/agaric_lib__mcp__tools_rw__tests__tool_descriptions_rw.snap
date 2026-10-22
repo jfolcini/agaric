@@ -150,10 +150,15 @@ expression: wire
       - space_id
     type: object
   name: append_markdown
-- description: "Move a page, with its content blocks, to another space. Reversible via page history."
+- description: "Move a page, with its content blocks, to another space. Reversible via page history. Property definitions are per space: a value whose key the target space does not define identically is removed by the move. Such a move is refused until `acknowledge_property_loss` lists those keys with the counts the refusal names."
   inputSchema:
     additionalProperties: false
     properties:
+      acknowledge_property_loss:
+        additionalProperties:
+          type: integer
+        description: "Property key → number of values the move removes, exactly as a refusal of this move listed them. Omit it for a move that removes nothing."
+        type: object
       page_id:
         description: "ULID, title or alias of the page to move. Only page blocks move; a content block stays with its page."
         type: string

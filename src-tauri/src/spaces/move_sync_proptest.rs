@@ -292,6 +292,7 @@ impl Vaults {
                     &self.mat_a,
                     vec![self.pages[page].clone()],
                     self.spaces[to].as_str().to_owned(),
+                    &[],
                 )
                 .await
                 .unwrap();

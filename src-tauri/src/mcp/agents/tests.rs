@@ -536,6 +536,7 @@ async fn link_that_crosses_to_b(v: &Vault) -> (String, String) {
             BlockId::from_trusted(&other),
         ],
         v.spaces[B].clone(),
+        &[],
     )
     .await
     .unwrap();
@@ -585,6 +586,7 @@ async fn gap_history_keeps_a_moved_blocks_text_from_its_old_space_5667() {
         &v.mat,
         vec![BlockId::from_trusted(&moving)],
         v.spaces[A].clone(),
+        &[],
     )
     .await
     .unwrap();

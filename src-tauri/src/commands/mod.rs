@@ -89,17 +89,18 @@ pub use attachments::{
     rename_attachment, rename_attachment_inner,
 };
 pub use blocks::{
-    CreateBlockSpec, batch_resolve, batch_resolve_inner, count_trash, count_trash_inner,
-    create_block, create_block_inner, create_block_inner_with_space, create_blocks_batch,
-    create_blocks_batch_inner, delete_block, delete_block_inner, delete_blocks_by_ids,
-    delete_blocks_by_ids_inner, edit_block, edit_block_inner, first_child_for_blocks,
-    first_child_for_blocks_inner, get_active_block_inner, get_block, get_block_inner, list_blocks,
-    list_blocks_inner, list_trash, list_trash_inner, move_block, move_block_inner,
+    CreateBlockSpec, PropertyLoss, PropertyLossValue, batch_resolve, batch_resolve_inner,
+    count_trash, count_trash_inner, create_block, create_block_inner,
+    create_block_inner_with_space, create_blocks_batch, create_blocks_batch_inner, delete_block,
+    delete_block_inner, delete_blocks_by_ids, delete_blocks_by_ids_inner, edit_block,
+    edit_block_inner, first_child_for_blocks, first_child_for_blocks_inner, get_active_block_inner,
+    get_block, get_block_inner, list_blocks, list_blocks_inner, list_property_loss_values,
+    list_property_loss_values_inner, list_trash, list_trash_inner, move_block, move_block_inner,
     move_blocks_batch, move_blocks_batch_inner, move_blocks_to_space, move_blocks_to_space_inner,
-    purge_all_deleted_inner, purge_block, purge_block_inner, purge_blocks_by_ids,
-    purge_blocks_by_ids_inner, restore_all_deleted_inner, restore_block, restore_block_inner,
-    restore_blocks_by_ids, restore_blocks_by_ids_inner, trash_descendant_counts,
-    trash_descendant_counts_inner,
+    preview_space_move, preview_space_move_inner, purge_all_deleted_inner, purge_block,
+    purge_block_inner, purge_blocks_by_ids, purge_blocks_by_ids_inner, restore_all_deleted_inner,
+    restore_block, restore_block_inner, restore_blocks_by_ids, restore_blocks_by_ids_inner,
+    trash_descendant_counts, trash_descendant_counts_inner,
 };
 pub use bug_report::{
     BugReport, LogFileEntry, RetryQueueSummary, collect_bug_report_metadata,

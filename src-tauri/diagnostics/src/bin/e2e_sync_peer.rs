@@ -632,6 +632,7 @@ impl Peer {
             &self.materializer,
             vec![BlockId::from_string(id)?],
             space_id,
+            &[],
         )
         .await?;
         self.last_write_ms = now_ms();

@@ -831,6 +831,8 @@ pub(super) async fn apply_op_via_command(
             )
             .await,
         ),
+        // #5841 S0.6 — `acknowledgedLoss` is the `preview_space_move` rows the
+        // caller confirmed: keys are the user's own text, so no label expansion.
         "move_blocks_to_space" => to_json(
             move_blocks_to_space_inner(
                 pool,
@@ -838,6 +840,13 @@ pub(super) async fn apply_op_via_command(
                 mat,
                 block_ids(),
                 arg_label_id("spaceId").expect("spaceId"),
+                &arg("acknowledgedLoss")
+                    .filter(|v| !v.is_null())
+                    .map(|v| {
+                        serde_json::from_value::<Vec<PropertyLoss>>(v.clone())
+                            .expect("acknowledgedLoss is a list of {key, count}")
+                    })
+                    .unwrap_or_default(),
             )
             .await,
         ),

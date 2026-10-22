@@ -9770,9 +9770,16 @@ async fn page_undo_of_move_blocks_to_space_renests_the_detached_page_5267() {
     ensure_test_space_b(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_B_ID).await;
 
-    move_blocks_to_space_inner(&pool, DEV, &mat, vec![page.clone()], TEST_SPACE_B_ID.into())
-        .await
-        .unwrap();
+    move_blocks_to_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![page.clone()],
+        TEST_SPACE_B_ID.into(),
+        &[],
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
     assert_eq!(
         sql_placement(&pool, &k).await.0,

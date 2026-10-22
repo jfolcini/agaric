@@ -1493,6 +1493,43 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 next_cursor: None,
             }
         }
+        // ── What a cross-space move drops (#5841 S0.6) ──
+        //
+        // `key#count=<n>` per key, ordered by key; then one key's values,
+        // paged by block id, each with its page and whether it is trashed.
+        "preview_space_move" => {
+            let rows = preview_space_move_inner(
+                pool,
+                arg_req::<Vec<BlockId>>(args, "blockIds"),
+                arg_req::<String>(args, "targetSpaceId"),
+            )
+            .await?;
+            let v = serde_json::to_value(&rows).expect("serialize Vec<PropertyLoss>");
+            RawResult {
+                rows: v
+                    .as_array()
+                    .map(|a| a.iter().map(|r| row_token(r, "key", &["count"])).collect())
+                    .unwrap_or_default(),
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
+        "list_property_loss_values" => {
+            let resp = list_property_loss_values_inner(
+                pool,
+                arg_req::<Vec<BlockId>>(args, "blockIds"),
+                arg_req::<String>(args, "targetSpaceId"),
+                arg_req::<String>(args, "key"),
+                opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
+                opt_arg(args, "limit").and_then(|v| v.as_i64()),
+            )
+            .await?;
+            page_result_with(
+                &serde_json::to_value(&resp).expect("serialize PageResponse"),
+                &|row| row_token(row, "block_id", &["page_id", "deleted", "value_text"]),
+            )
+        }
         // ── Attachment metadata (#3830) ──
         //
         // Waived as "blob store outside the snapshot scope" until the fixture
@@ -2856,7 +2893,13 @@ pub(super) mod reader_delegation_tests {
     // `pool.begin()` tx, SELECTs only (the clipboard one first SELECTs the
     // page id), then a pure render (`commands/pages/markdown.rs`). Writer set
     // unchanged.
-    const SWEPT_ARM_COUNT: usize = 59;
+    // #5841 S0.6 wired `preview_space_move` and `list_property_loss_values`:
+    // one `query_as!` SELECT each over `blocks`, `block_properties` and
+    // `property_definitions` (`commands/blocks/space_move.rs`), the paged one
+    // behind `PageRequest::new` and `build_page_response`. The drops they
+    // describe are written by `move_blocks_to_space`, not a read arm. Writer
+    // set unchanged.
+    const SWEPT_ARM_COUNT: usize = 61;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

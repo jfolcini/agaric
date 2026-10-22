@@ -1201,6 +1201,7 @@ async fn a_space_created_on_one_device_reaches_its_peer_4775() {
         &mat_a,
         vec![older.clone()],
         space.as_str().to_owned(),
+        &[],
     )
     .await
     .unwrap();
@@ -1541,6 +1542,7 @@ async fn a_moved_page_keeps_its_task_dates_on_its_peer_4801() {
         &mat_a,
         vec![page.clone()],
         space.as_str().to_owned(),
+        &[],
     )
     .await
     .unwrap();
@@ -2011,6 +2013,7 @@ impl MoveFixture {
             &self.mat_a,
             blocks.iter().map(|id| (*id).clone()).collect(),
             space.as_str().to_owned(),
+            &[],
         )
         .await
         .unwrap();

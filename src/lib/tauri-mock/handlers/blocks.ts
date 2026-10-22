@@ -30,6 +30,7 @@ import {
   nextCohortMarker,
   notFoundRejection,
   ownerSpaceOf,
+  pageRequestLimit,
   refreshDescendantPageIds,
   renumberSiblings,
   restoreCohort,
@@ -52,6 +53,11 @@ import {
   pushOp,
   todayDate,
 } from '@/lib/tauri-mock/seed'
+import {
+  dropAcknowledgedLosses,
+  spaceMoveLossValues,
+  spaceMoveLosses,
+} from '@/lib/tauri-mock/space-move'
 
 // #3091 — depth at which the backend refuses to purge a subtree. The recursive
 // purge CTE (`descendants_cte_purge!()`) caps at `depth < 100`, and
@@ -2097,6 +2103,8 @@ export const blocksHandlers = {
     ) {
       throw validationRejection(`block '${spaceId}' is not a live space`)
     }
+    // #5841 S0.6 — the drops land before the `space` ops, as on the backend.
+    dropAcknowledgedLosses(inputIds, spaceId, a['acknowledgedLoss'])
     let count = 0
     // Root arrivals, re-ranked in ONE pass after the loop (see below).
     const arrivedAtRoot = new Set<string>()
@@ -2195,6 +2203,22 @@ export const blocksHandlers = {
       })
     }
     return count
+  },
+
+  // #5841 S0.6 — what a cross-space move would drop (`space-move.ts`).
+  preview_space_move: (args) => {
+    const a = args as Record<string, unknown>
+    return spaceMoveLosses((a['blockIds'] as string[]) ?? [], a['targetSpaceId'] as string)
+  },
+
+  list_property_loss_values: (args) => {
+    const a = args as Record<string, unknown>
+    const limit = pageRequestLimit(a['limit'])
+    const rows = spaceMoveLossValues(
+      (a['blockIds'] as string[]) ?? [],
+      a['targetSpaceId'] as string,
+    ).filter((row) => row.key === a['key'])
+    return paginateKeyset(rows, (row) => [row['block_id'] as string], limit, a['cursor'], null, [])
   },
 
   // ---------------------------------------------------------------------------
@@ -2360,6 +2384,8 @@ export const blocksHandlers = {
   | 'move_block'
   | 'move_blocks_batch'
   | 'move_blocks_to_space'
+  | 'preview_space_move'
+  | 'list_property_loss_values'
   | 'count_trash'
   | 'trash_descendant_counts'
   | 'first_child_for_blocks'

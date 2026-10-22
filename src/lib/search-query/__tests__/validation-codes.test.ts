@@ -108,6 +108,7 @@ describe('ValidationCode (#1061/#2251 shared contract)', () => {
       InvalidAgentName: 'InvalidAgentName',
       DuplicateAgentName: 'DuplicateAgentName',
       BuiltinPropertyLocked: 'BuiltinPropertyLocked',
+      UnacknowledgedPropertyLoss: 'UnacknowledgedPropertyLoss',
     })
   })
 

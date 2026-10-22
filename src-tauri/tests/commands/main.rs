@@ -40,6 +40,7 @@ mod property_line_tests;
 mod query_cmd_tests;
 mod search_blocks_struct_tests;
 mod snapshot_tests;
+mod space_move_cmd_tests;
 mod status_cmd_tests;
 mod sync_cmd_tests;
 mod tag_cmd_tests;

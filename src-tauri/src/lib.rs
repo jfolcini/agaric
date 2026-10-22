@@ -82,6 +82,9 @@ macro_rules! agaric_commands {
             // collapses the per-row `set_property(space)` IPC loop into one
             // IMMEDIATE tx with a single op-log seq range.
             $crate::commands::blocks::crud::move_blocks_to_space,
+            // #5841 S0.6: what a cross-space move would drop, and its values.
+            $crate::commands::blocks::space_move::preview_space_move,
+            $crate::commands::blocks::space_move::list_property_loss_values,
             $crate::commands::blocks::crud::restore_block,
             $crate::commands::blocks::crud::purge_block,
             // TrashView batch restore/purge: collapses

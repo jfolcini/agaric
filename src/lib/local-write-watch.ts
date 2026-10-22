@@ -33,6 +33,7 @@ const READ_ONLY_EXACT: ReadonlySet<string> = new Set<string>([
   'trash_descendant_counts',
   'filtered_blocks_query',
   'run_advanced_query',
+  'preview_space_move',
 ])
 
 /** True when the snake_case IPC `command` has no persistent effect. */

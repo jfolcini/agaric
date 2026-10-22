@@ -225,7 +225,7 @@ describe('PageBrowser multi-select', () => {
 
     await user.click(selectCheckbox('P1'))
 
-    mockPageList({ move_blocks_to_space: () => 1 })
+    mockPageList({ preview_space_move: () => [], move_blocks_to_space: () => 1 })
 
     await user.click(screen.getByTestId('page-batch-move-btn'))
     const select = await screen.findByRole('combobox', {
@@ -238,6 +238,7 @@ describe('PageBrowser multi-select', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('move_blocks_to_space', {
         blockIds: ['P1'],
         spaceId: 'SPACE_OTHER',
+        acknowledgedLoss: null,
       })
     })
     await waitFor(() => {
