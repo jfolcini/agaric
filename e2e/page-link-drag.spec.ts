@@ -125,7 +125,10 @@ test.describe('A page dragged into the editor becomes a link (#5691) @editor @pa
   })
 
   test('a recent page dragged onto a block links it, through the native drag', async ({ page }) => {
-    await openPage(page, 'Projects')
+    // The bookmark this describe adds also reads "Projects", so `openPage`'s
+    // page-wide text match can find two; open the page through the bookmark.
+    await bookmark(page, 'Projects').click()
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Projects')
     await openPage(page, 'Getting Started')
     const chip = page.getByTestId('quick-access-bar').getByRole('button', { name: 'Projects' })
     await expect(chip).toBeVisible()
