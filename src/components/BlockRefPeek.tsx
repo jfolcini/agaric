@@ -26,6 +26,11 @@
  *   4. `countBacklinksBatch` — the reference count. `PageId` is `= BlockId`
  *      and the SQL is target-agnostic, so a block id needs no new signature.
  *
+ * A `[[page]]` chip (Ctrl/Cmd + hover, see `useBlockRefPeek`) gets the same
+ * chrome over a different payload: `batchResolve` as the same gate and for
+ * the title, then the page's first {@link PAGE_PEEK_BLOCKS} top-level blocks
+ * from `listBlocks`.
+ *
  * Cached in the read-path TanStack client keyed on `(space, refId)` with a
  * short `staleTime`. Deliberately NOT the resolve store: that store is
  * seeded by every normalising writer in the app and churning its `version`
@@ -42,7 +47,7 @@ import { useTranslation } from 'react-i18next'
 import { renderRichContent } from '@/components/RichContentRenderer'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { useBlockRefPeek } from '@/hooks/useBlockRefPeek'
+import { type PeekKind, useBlockRefPeek } from '@/hooks/useBlockRefPeek'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
 import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import { unwrap } from '@/lib/app-error'
@@ -52,6 +57,7 @@ import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
+import { listBlocksLimit } from '@/lib/safe-limit'
 import { requireActiveScope } from '@/lib/space-scope'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
@@ -59,6 +65,8 @@ import { useSpaceStore } from '@/stores/space'
 /** Long enough that a re-hover is instant, short enough that an edit shows. */
 const PEEK_STALE_MS = 30_000
 const PEEK_GC_MS = 5 * 60_000
+/** A glimpse of the page, not the page: the reader opens it for the rest. */
+const PAGE_PEEK_BLOCKS = 5
 
 type PeekTarget =
   /** Purged, never existed, or in another space — all one render. */
@@ -75,8 +83,13 @@ type PeekTarget =
       pageTitle: string | null
       refCount: number
     }
+  | { status: 'page'; title: string; blocks: { id: string; content: string }[] }
 
-async function fetchPeekTarget(refId: string, spaceId: string): Promise<PeekTarget> {
+async function fetchPeekTarget(
+  refId: string,
+  kind: PeekKind,
+  spaceId: string,
+): Promise<PeekTarget> {
   const scope = requireActiveScope(spaceId)
   try {
     const resolved = unwrap(await commands.batchResolve([refId], scope))
@@ -84,6 +97,31 @@ async function fetchPeekTarget(refId: string, spaceId: string): Promise<PeekTarg
     if (!row) return { status: 'unresolved' }
     const title = resolveStoreTitle(row.block_type, row.title)
     if (row.deleted) return { status: 'deleted', title }
+    if (kind === 'page-link') {
+      const children = unwrap(
+        await commands.listBlocks(
+          {
+            parentId: refId,
+            blockType: null,
+            tagId: null,
+            date: null,
+            dateRange: null,
+            source: null,
+            excludeTodoStates: null,
+            cursor: null,
+            limit: listBlocksLimit(PAGE_PEEK_BLOCKS),
+          },
+          scope,
+        ),
+      )
+      return {
+        status: 'page',
+        title,
+        blocks: children.items
+          .map((block) => ({ id: block.id, content: block.content ?? '' }))
+          .filter((block) => block.content.trim().length > 0),
+      }
+    }
 
     const block = unwrap(await commands.getBlock(refId))
     // A page is its own store root; `page_id` is the materializer-maintained
@@ -111,7 +149,7 @@ async function fetchPeekTarget(refId: string, spaceId: string): Promise<PeekTarg
   } catch (err) {
     // Never throw into the render: the chip stays exactly as it was and the
     // peek says it could not resolve the target.
-    logger.warn('BlockRefPeek', 'failed to load peek target', { refId }, err)
+    logger.warn('BlockRefPeek', 'failed to load peek target', { refId, kind }, err)
     return { status: 'error' }
   }
 }
@@ -131,8 +169,17 @@ function keepEditorFocus(event: React.MouseEvent): void {
 
 export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactElement | null {
   const { t } = useTranslation()
-  const { refId, anchorRect, fromKeyboard, peekRef, close, keepOpen, scheduleClose, activateChip } =
-    useBlockRefPeek(container)
+  const {
+    refId,
+    kind,
+    anchorRect,
+    fromKeyboard,
+    peekRef,
+    close,
+    keepOpen,
+    scheduleClose,
+    activateChip,
+  } = useBlockRefPeek(container)
   const spaceId = useSpaceStore((s) => s.currentSpaceId)
   const spaceName = useSpaceStore(
     (s) => s.availableSpaces.find((sp) => sp.id === s.currentSpaceId)?.name ?? null,
@@ -145,9 +192,9 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
 
   const { data } = useQuery(
     {
-      queryKey: ['blockRefPeek', spaceId, refId],
+      queryKey: ['blockRefPeek', spaceId, kind, refId],
       // Both are non-null whenever `enabled` is true.
-      queryFn: () => fetchPeekTarget(refId as string, spaceId as string),
+      queryFn: () => fetchPeekTarget(refId as string, kind, spaceId as string),
       enabled: refId !== null && spaceId !== null,
       staleTime: PEEK_STALE_MS,
       gcTime: PEEK_GC_MS,
@@ -203,6 +250,13 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
     data === undefined || data.status === 'unresolved' || data.status === 'error'
       ? null
       : data.title
+  const isPage = kind === 'page-link'
+  const openButton = (
+    <Button variant="ghost" size="xs" onMouseDown={keepEditorFocus} onClick={activateChip}>
+      <ExternalLink aria-hidden="true" />
+      {t('refPeek.open')}
+    </Button>
+  )
 
   return (
     <div
@@ -217,7 +271,9 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a native <dialog> is modal (focus trap + inert background), which is wrong for a popover the pointer leaves by moving off it, and its non-modal form needs an imperative show() plus UA styles that fight floating-ui's placement
       role="dialog"
       aria-label={
-        title === null ? t('refPeek.dialogLabelUnknown') : t('refPeek.dialogLabel', { title })
+        title !== null
+          ? t('refPeek.dialogLabel', { title })
+          : t(isPage ? 'refPeek.pageDialogLabelUnknown' : 'refPeek.dialogLabelUnknown')
       }
       tabIndex={-1}
       onPointerEnter={keepOpen}
@@ -239,14 +295,34 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
           {t('refPeek.loading')}
         </div>
       ) : data.status === 'unresolved' ? (
-        <p className="text-xs text-muted-foreground">{t('refPeek.unresolved')}</p>
+        <p className="text-xs text-muted-foreground">
+          {t(isPage ? 'refPeek.pageUnresolved' : 'refPeek.unresolved')}
+        </p>
       ) : data.status === 'error' ? (
-        <p className="text-xs text-muted-foreground">{t('refPeek.error')}</p>
+        <p className="text-xs text-muted-foreground">
+          {t(isPage ? 'refPeek.pageError' : 'refPeek.error')}
+        </p>
       ) : data.status === 'deleted' ? (
         <div className="flex items-start gap-2 text-xs text-muted-foreground">
           <Trash2 className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           <span>{t('refPeek.deleted', { title: data.title })}</span>
         </div>
+      ) : data.status === 'page' ? (
+        <>
+          <p className="truncate text-sm font-medium">{data.title}</p>
+          {data.blocks.length === 0 ? (
+            <p className="text-xs text-muted-foreground">{t('refPeek.pageEmpty')}</p>
+          ) : (
+            <div className="ref-peek-content flex flex-col gap-1 text-sm">
+              {data.blocks.map((block) => (
+                <div key={block.id}>
+                  {renderRichContent(block.content, { interactive: false, ...callbacks })}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex justify-end pt-1">{openButton}</div>
+        </>
       ) : (
         <>
           {data.pageTitle !== null && (
@@ -271,15 +347,7 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
               {t('refPeek.references', { count: data.refCount })}
             </span>
             <div className="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="xs"
-                onMouseDown={keepEditorFocus}
-                onClick={activateChip}
-              >
-                <ExternalLink aria-hidden="true" />
-                {t('refPeek.open')}
-              </Button>
+              {openButton}
               <Button
                 variant="ghost"
                 size="xs"

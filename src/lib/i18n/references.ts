@@ -46,6 +46,12 @@ export const references: Record<string, string> = {
   'refPeek.unresolved':
     'This block is not in the current space. Switch space to follow the reference.',
   'refPeek.error': 'Could not load this block just now.',
+  // A `[[page]]` chip peeks on Ctrl/Cmd + hover: the page's title and first blocks.
+  'refPeek.pageDialogLabelUnknown': 'Page preview',
+  'refPeek.pageEmpty': 'This page is empty.',
+  'refPeek.pageUnresolved':
+    'This page is not in the current space. Switch space to follow the link.',
+  'refPeek.pageError': 'Could not load this page just now.',
   // ── Embeds (#4550) ────────────────────────────────────────────────
   // `{{embed ((ULID))}}` renders the target's subtree inline. Read-only in
   // phase 1: the two exits are `embed.openSource` and the block-ref chips

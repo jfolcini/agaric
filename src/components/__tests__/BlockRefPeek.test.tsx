@@ -14,8 +14,8 @@ import { useState, type ReactElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
-import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
-import type { BlockRow } from '@/lib/bindings'
+import { mockInvokeCommands, type TypedInvokeHandler } from '@/__tests__/helpers/invoke'
+import type { BlockRow, PageResponse } from '@/lib/bindings'
 import { normalizeBlockRefTitle } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
@@ -419,7 +419,7 @@ describe('BlockRefPeek', () => {
       expect(warnSpy).toHaveBeenCalledWith(
         'BlockRefPeek',
         'failed to load peek target',
-        { refId: TARGET },
+        { refId: TARGET, kind: 'block-ref' },
         expect.anything(),
       )
     })
@@ -506,6 +506,152 @@ describe('BlockRefPeek', () => {
       expect(chip).not.toHaveAttribute('aria-label')
       expect(chip.textContent).toContain('Removed block')
       expect(chip.textContent).toContain('(deleted)')
+    })
+  })
+
+  // Obsidian's page preview in its editor: a `[[page]]` chip peeks only while
+  // Ctrl (Cmd) is held, and shows the page's title and first blocks.
+  describe('page-link preview', () => {
+    const LINKED = '01DRZ3NDEKTSV4RRFFQ69G5FAV'
+
+    function stubPage(listBlocks: TypedInvokeHandler<'list_blocks'>): void {
+      vi.mocked(invoke).mockImplementation(
+        mockInvokeCommands({
+          batch_resolve: (args) =>
+            (args['ids'] as string[]).map((id) => ({
+              id,
+              title: 'Design Notes',
+              block_type: 'page',
+              deleted: false,
+            })),
+          list_blocks: listBlocks,
+        }),
+      )
+    }
+
+    function children(...contents: string[]): PageResponse<BlockRow> {
+      return {
+        items: contents.map((content, i) =>
+          blockRow({ id: `01ERZ3NDEKTSV4RRFFQ69G5FA${i}`, content, position: i }),
+        ),
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }
+    }
+
+    function PageLink(): ReactElement {
+      const [el, setEl] = useState<HTMLDivElement | null>(null)
+      return (
+        <div ref={setEl}>
+          {renderRichContent(`see [[${PAGE}]]`, {
+            interactive: true,
+            onNavigate: () => {},
+            resolveBlockTitle: (id) => (id === PAGE ? 'Design Notes' : 'Linked page'),
+          })}
+          <BlockRefPeek container={el} />
+        </div>
+      )
+    }
+
+    async function ctrlHover(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+      await user.keyboard('{Control>}')
+      await user.hover(screen.getByTestId('block-link-chip'))
+      return screen.findByTestId('ref-peek')
+    }
+
+    beforeEach(() => {
+      stubPage(() => children('First thought on the page', '', `Then a link to [[${LINKED}]]`))
+    })
+
+    it('opens on Ctrl+hover with the page title and its first blocks', async () => {
+      const user = userEvent.setup()
+      render(<PageLink />)
+
+      const peek = await ctrlHover(user)
+      await waitFor(() => {
+        expect(within(peek).getByText('First thought on the page')).toBeInTheDocument()
+      })
+      expect(within(peek).getByText('Design Notes')).toBeInTheDocument()
+      expect(within(peek).getByText(/Then a link to/)).toBeInTheDocument()
+      expect(peek).toHaveAccessibleName('Preview of Design Notes')
+      // A block-reference peek's count and copy action are about a block.
+      expect(within(peek).queryByRole('button', { name: 'Copy reference' })).toBeNull()
+    })
+
+    it('does not open on a plain hover', async () => {
+      const user = userEvent.setup()
+      render(<PageLink />)
+
+      await user.hover(screen.getByTestId('block-link-chip'))
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 500))
+      })
+      expect(screen.queryByTestId('ref-peek')).not.toBeInTheDocument()
+    })
+
+    it('shows a loading line while the blocks are on their way', async () => {
+      stubPage(() => new Promise(() => {}))
+      const user = userEvent.setup()
+      render(<PageLink />)
+
+      const peek = await ctrlHover(user)
+      expect(within(peek).getByText('Loading preview…')).toBeInTheDocument()
+    })
+
+    it('says the page is empty when it has no text yet', async () => {
+      stubPage(() => children('', '   '))
+      const user = userEvent.setup()
+      render(<PageLink />)
+
+      const peek = await ctrlHover(user)
+      expect(await within(peek).findByText('This page is empty.')).toBeInTheDocument()
+    })
+
+    it('says so when the page is not in this space', async () => {
+      vi.mocked(invoke).mockImplementation(mockInvokeCommands({ batch_resolve: () => [] }))
+      const user = userEvent.setup()
+      render(<PageLink />)
+
+      const peek = await ctrlHover(user)
+      expect(
+        await within(peek).findByText(
+          'This page is not in the current space. Switch space to follow the link.',
+        ),
+      ).toBeInTheDocument()
+      expect(peek).toHaveAccessibleName('Page preview')
+    })
+
+    it('logs and says so quietly when the blocks fail to load', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      stubPage(() => Promise.reject(new Error('IPC down')))
+      const user = userEvent.setup()
+      render(<PageLink />)
+
+      const peek = await ctrlHover(user)
+      expect(
+        await within(peek).findByText('Could not load this page just now.'),
+      ).toBeInTheDocument()
+      expect(warnSpy).toHaveBeenCalledWith(
+        'BlockRefPeek',
+        'failed to load peek target',
+        { refId: PAGE, kind: 'page-link' },
+        expect.anything(),
+      )
+    })
+
+    it('has no violations with the preview open', async () => {
+      const user = userEvent.setup()
+      const { container } = render(<PageLink />)
+
+      const peek = await ctrlHover(user)
+      await within(peek).findByText('First thought on the page')
+      await waitFor(() => {
+        expect(peek).toBeVisible()
+      })
+      await waitFor(async () => {
+        expect(await axe(container)).toHaveNoViolations()
+      })
     })
   })
 })

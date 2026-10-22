@@ -6,6 +6,8 @@
  *    the pointer can cross the gap into the peek and use its buttons.
  *  - The chip is left exactly as it was found when the host unmounts, parked
  *    `title=` included.
+ *  - A `[[page]]` chip opens only with Ctrl (Cmd) held, not on a Ctrl chord,
+ *    and has no keyboard chord.
  */
 
 import { act, fireEvent, renderHook } from '@testing-library/react'
@@ -177,5 +179,174 @@ describe('useBlockRefPeek', () => {
 
     expect(result.current.refId).toBeNull()
     expect(chip.getAttribute('title')).toBe(CHIP_TITLE)
+  })
+
+  describe('page-link chips', () => {
+    function mountPageLink(): { container: HTMLElement; chip: HTMLElement } {
+      const container = document.createElement('div')
+      const chip = document.createElement('span')
+      chip.setAttribute('data-type', 'block-link')
+      chip.setAttribute('data-id', REF)
+      chip.tabIndex = 0
+      container.append(chip)
+      document.body.append(container)
+      return { container, chip }
+    }
+
+    it('does not open on a plain hover', () => {
+      const { container, chip } = mountPageLink()
+      const { result } = renderHook(() => useBlockRefPeek(container))
+
+      act(() => {
+        fireEvent.pointerEnter(chip, { pointerType: 'mouse' })
+        vi.advanceTimersByTime(5000)
+      })
+      expect(result.current.refId).toBeNull()
+    })
+
+    it.each([
+      ['Ctrl', { ctrlKey: true }],
+      ['Cmd', { metaKey: true }],
+    ])('opens after the dwell when %s is held as the pointer arrives', (_, modifier) => {
+      const { container, chip } = mountPageLink()
+      const { result } = renderHook(() => useBlockRefPeek(container))
+
+      act(() => {
+        fireEvent.pointerEnter(chip, { pointerType: 'mouse', ...modifier })
+        vi.advanceTimersByTime(200)
+      })
+      expect(result.current.refId).toBeNull()
+
+      act(() => {
+        vi.advanceTimersByTime(150)
+      })
+      expect(result.current.refId).toBe(REF)
+      expect(result.current.kind).toBe('page-link')
+    })
+
+    it('opens after the dwell when Ctrl is pressed with the pointer already resting on it', () => {
+      const { container, chip } = mountPageLink()
+      const { result } = renderHook(() => useBlockRefPeek(container))
+
+      act(() => {
+        fireEvent.pointerEnter(chip, { pointerType: 'mouse' })
+        vi.advanceTimersByTime(1000)
+        fireEvent.keyDown(window, { key: 'Control', ctrlKey: true })
+        vi.advanceTimersByTime(349)
+      })
+      expect(result.current.refId).toBeNull()
+
+      act(() => {
+        vi.advanceTimersByTime(1)
+      })
+      expect(result.current.refId).toBe(REF)
+    })
+
+    // The pointer rests on a link in the block being typed in.
+    it('a key pressed with Ctrl cancels the pending preview and closes an open one', () => {
+      const { container, chip } = mountPageLink()
+      const { result } = renderHook(() => useBlockRefPeek(container))
+
+      act(() => {
+        fireEvent.pointerEnter(chip, { pointerType: 'mouse' })
+        fireEvent.keyDown(window, { key: 'Control', ctrlKey: true })
+        fireEvent.keyDown(window, { key: 'ArrowLeft', ctrlKey: true })
+        vi.advanceTimersByTime(1000)
+      })
+      expect(result.current.refId).toBeNull()
+
+      act(() => {
+        fireEvent.keyDown(window, { key: 'Control', ctrlKey: true })
+        vi.advanceTimersByTime(350)
+      })
+      expect(result.current.refId).toBe(REF)
+
+      // A chord the editor consumes (`preventDefault`) closes it too.
+      act(() => {
+        const event = new KeyboardEvent('keydown', { key: 'e', ctrlKey: true, cancelable: true })
+        event.preventDefault()
+        window.dispatchEvent(event)
+      })
+      expect(result.current.refId).toBeNull()
+    })
+
+    it('ignores Ctrl’s auto-repeat, so a preview closed with Ctrl still held stays closed', () => {
+      const { container, chip } = mountPageLink()
+      const { result } = renderHook(() => useBlockRefPeek(container))
+
+      act(() => {
+        fireEvent.pointerEnter(chip, { pointerType: 'mouse', ctrlKey: true })
+        vi.advanceTimersByTime(350)
+      })
+      expect(result.current.refId).toBe(REF)
+
+      act(() => {
+        fireEvent.keyDown(window, { key: 'Escape', ctrlKey: true })
+        fireEvent.keyDown(window, { key: 'Control', ctrlKey: true, repeat: true })
+        vi.advanceTimersByTime(1000)
+      })
+      expect(result.current.refId).toBeNull()
+    })
+
+    // The Ctrl+click that opens a link in a new tab stops the click in a
+    // capture handler above the page; the tab switch keeps this host mounted.
+    it('closes on a click on the chip that an ancestor stops in the capture phase', () => {
+      const { container, chip } = mountPageLink()
+      const wrapper = document.createElement('div')
+      container.replaceWith(wrapper)
+      wrapper.append(container)
+      wrapper.addEventListener('click', (e) => e.stopPropagation(), true)
+      const { result } = renderHook(() => useBlockRefPeek(container))
+
+      act(() => {
+        fireEvent.pointerEnter(chip, { pointerType: 'mouse', ctrlKey: true })
+        vi.advanceTimersByTime(350)
+      })
+      expect(result.current.refId).toBe(REF)
+
+      act(() => {
+        fireEvent.click(chip, { ctrlKey: true })
+      })
+      expect(result.current.refId).toBeNull()
+    })
+
+    it('ignores Ctrl once the pointer has left the chip', () => {
+      const { container, chip } = mountPageLink()
+      const { result } = renderHook(() => useBlockRefPeek(container))
+
+      act(() => {
+        fireEvent.pointerEnter(chip, { pointerType: 'mouse' })
+        fireEvent.pointerLeave(chip, { pointerType: 'mouse' })
+        fireEvent.keyDown(window, { key: 'Control', ctrlKey: true })
+        vi.advanceTimersByTime(1000)
+      })
+      expect(result.current.refId).toBeNull()
+    })
+
+    // Clicking a static block swaps its chips for the editor's without a
+    // `pointerleave`; a later Ctrl+B must not anchor a peek on the dead chip.
+    it('ignores Ctrl once the hovered chip has left the DOM', () => {
+      const { container, chip } = mountPageLink()
+      const { result } = renderHook(() => useBlockRefPeek(container))
+
+      act(() => {
+        fireEvent.pointerEnter(chip, { pointerType: 'mouse' })
+        chip.remove()
+        fireEvent.keyDown(window, { key: 'Control', ctrlKey: true })
+        vi.advanceTimersByTime(1000)
+      })
+      expect(result.current.refId).toBeNull()
+    })
+
+    it('has no Alt+ArrowDown chord', () => {
+      const { container, chip } = mountPageLink()
+      const { result } = renderHook(() => useBlockRefPeek(container))
+
+      chip.focus()
+      act(() => {
+        fireEvent.keyDown(window, { key: 'ArrowDown', altKey: true })
+      })
+      expect(result.current.refId).toBeNull()
+    })
   })
 })
