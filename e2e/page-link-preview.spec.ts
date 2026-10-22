@@ -57,7 +57,7 @@ test.describe('Page-link preview @editor @pages', () => {
     await page.keyboard.up('Control')
   })
 
-  test('a Ctrl+click on a previewed page link opens it in a new tab and closes the preview', async ({
+  test('a Ctrl+click on a previewed page link opens it in a background tab and closes the preview', async ({
     page,
   }) => {
     const chip = page
@@ -65,6 +65,8 @@ test.describe('Page-link preview @editor @pages', () => {
       .filter({ hasText: 'Getting Started' })
     const peek = page.locator(PEEK)
     const tabs = page.getByRole('tablist', { name: 'Editor tabs' }).getByRole('tab')
+    const title = page.locator('[aria-label="Page title"]')
+    const current = await title.textContent()
     await chip.hover()
     await page.keyboard.down('Control')
     await expect(peek).toContainText('Welcome to Agaric!')
@@ -73,8 +75,9 @@ test.describe('Page-link preview @editor @pages', () => {
     await page.keyboard.up('Control')
 
     await expect(tabs).toHaveCount(2)
-    await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true')
-    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Getting Started')
+    await expect(tabs.nth(1)).toHaveAttribute('title', 'Getting Started')
+    await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'false')
+    await expect(title).toHaveText(current ?? '')
     await expect(peek).toHaveCount(0)
   })
 
