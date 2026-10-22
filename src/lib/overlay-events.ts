@@ -53,7 +53,7 @@ export const TOGGLE_SIDEBAR_EVENT = 'agaric:toggleSidebar'
 /**
  * Global "open the New page dialog" DOM event; `detail` is the title to
  * pre-fill. Every new-page entry point (sidebar button, `createNewPage`
- * chord, palette command, the Pages view) dispatches it, and the
+ * chord, palette command and no-match row, the Pages view) dispatches it, and the
  * always-mounted dialog-state owner (`useAppDialogs`) opens the one dialog.
  * Same one-shot-signal rationale as `SHOW_SHORTCUTS_EVENT`.
  */

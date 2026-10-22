@@ -36,7 +36,7 @@
  * `components/palette/ranking`.
  */
 
-import { Mic } from 'lucide-react'
+import { FilePlus2, Mic } from 'lucide-react'
 import type React from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -93,6 +93,7 @@ import { isDateFormattedPage } from '@/lib/date-utils'
 import { searchBlocksPartitioned } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { openNewPageDialog } from '@/lib/overlay-events'
 import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation'
 import { removeExcludeJournalPagesFilter } from '@/stores/pageBrowserFilters'
@@ -983,6 +984,18 @@ export function PaletteBody({
           {t('palette.linkModeBadge')}
         </div>
       )}
+      {showNoResults && (
+        // Above the list, not in it: a listbox may hold only options, and
+        // not a <CommandEmpty>, which hides once the rows below it show.
+        <div
+          className="px-3 py-3 text-sm text-muted-foreground"
+          data-testid="palette-no-results"
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level no-results row (full-width padded); <output> is inline-level and would break the row layout
+          role="status"
+        >
+          {t('palette.noResults', { query: trimmedQuery })}
+        </div>
+      )}
       <CommandList
         className="max-h-[60dvh]"
         onClickCapture={handleListClickCapture}
@@ -1019,17 +1032,21 @@ export function PaletteBody({
               </CommandEmpty>
             )}
             {showNoResults && (
-              // Plain div (not <CommandEmpty>) because
-              // CommandEmpty self-hides when any cmdk item is present
-              // and the escalation footer below counts as one.
-              <div
-                className="px-3 py-3 text-sm text-muted-foreground"
-                data-testid="palette-no-results"
-                // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level no-results row (full-width padded); <output> is inline-level and would break the row layout
-                role="status"
-              >
-                {t('palette.noResults', { query: trimmedQuery })}
-              </div>
+              // Obsidian's quick switcher offers the query as a new page; the
+              // New page dialog every new-page entry point opens takes it from here.
+              <CommandGroup>
+                <CommandItem
+                  value="__create_page__"
+                  onSelect={() => {
+                    onClose()
+                    openNewPageDialog(trimmedQuery)
+                  }}
+                  data-testid="palette-create-page"
+                >
+                  <FilePlus2 aria-hidden className="size-4" />
+                  {t('pageBrowser.createPageNamed', { name: trimmedQuery })}
+                </CommandItem>
+              </CommandGroup>
             )}
             {showNoLinkMatch && (
               <div

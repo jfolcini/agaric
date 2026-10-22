@@ -45,7 +45,7 @@ A pill-based UI lets you toggle each clause; advanced users can type the express
 
 An **embed** is transclusion: one source of truth rendered in many places. Where a `((block reference))` shows a title chip, an embed renders the target block **and its whole subtree** inline, in a bordered container, kept live.
 
-- **Insert**: `/embed`, or type `{{embed` and search. Either way one list covers both kinds of target — a page is a block here — and the block's content becomes the token `{{embed ((ULID))}}`. The `{{embed [[ULID]]}}` form is also accepted when written by hand.
+- **Insert**: `/embed`, or type `{{embed` and search. Either way one list covers both kinds of target — a page is a block here — and the block's content becomes the token `{{embed ((ULID))}}`. Typing `![[` (Obsidian's embed syntax) in an empty block opens the `[[` page picker instead, and the page picked becomes `{{embed [[ULID]]}}`, a form also accepted when written by hand; after or before other text, `![[` makes a link.
 - **A block embed** renders the target block and every descendant. **A page embed** renders that page's top-level blocks; its header strip shows the page title alone.
 - **The whole block becomes the embed.** Like `{{query …}}`, the token has to be the block's entire content — a mention of the syntax mid-sentence stays text.
 - **Header strip**: reads *Embedded from {page}*, with an **Edit this embed in place** toggle, a collapse chevron and an **Open source** control. The container itself is one tab stop — **Enter** opens the source, **Space** collapses — and the edit toggle is the one control inside it with a tab stop of its own.

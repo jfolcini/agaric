@@ -834,7 +834,7 @@ describe('BlockLinkPicker suggestion command chain', () => {
         return true
       },
     }
-    const mockEditor = { chain: () => chainProxy }
+    const mockEditor = { chain: () => chainProxy, state: { doc: { textBetween: () => '' } } }
 
     capturedCommand?.({
       editor: mockEditor,

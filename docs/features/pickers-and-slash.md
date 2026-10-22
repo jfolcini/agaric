@@ -7,7 +7,7 @@ Inline pickers let you reference other content or insert structure without leavi
 
 | Trigger | Picker | What it inserts | When to use |
 | --- | --- | --- | --- |
-| `[[` | **BlockLinkPicker** | A page-link chip pointing at the page or block you pick. | "Link to my project plan" / cross-reference |
+| `[[` | **BlockLinkPicker** | A page-link chip pointing at the page or block you pick. Typed as `![[` in an empty block, the pick is an embed of the page instead (`{{embed [[ULID]]}}`, see [tags-and-links.md](tags-and-links.md#embeds)). | "Link to my project plan" / cross-reference |
 | `@` | **AtTagPicker** | An inline tag-reference chip (e.g. `@urgent`). | Lightweight tagging inline in a sentence |
 | `#` | **AtTagPicker** | The same tag chip. Opens only where a space would make the text a tag (at the start of the text or after whitespace), so never on `#42`, `(#`, in code, or on a bare `#` (which still starts a heading). Typing `#urgent` and a space or punctuation makes the tag without picking; `#[[multi word]]` makes the tag `multi word`; a `#urgent` left as text becomes the tag when the block is saved. See [tags-and-links.md](tags-and-links.md#tags). | Tagging as you type |
 | `((` | **BlockRefPicker** | A *block reference* — a one-line chip carrying the target block's title. A link with a nicer label: no children, no live content. For the block's actual content, use `/embed`. | Point at a definition or a decision |

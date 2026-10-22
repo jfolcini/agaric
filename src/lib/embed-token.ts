@@ -15,9 +15,9 @@
  *
  * They are not two features. A page *is* a block in this data model
  * (`rootParentId` is a block id), so one renderer serves both and the parse
- * result carries no "kind" discriminator. The pickers always WRITE the
- * `((ULID))` form ({@link buildEmbedToken}); the `[[ULID]]` form exists so
- * hand-written and Logseq-flavoured syntax still renders.
+ * result carries no "kind" discriminator. The `{{` picker WRITES the
+ * `((ULID))` form ({@link buildEmbedToken}); the `[[ULID]]` form is what
+ * typing `![[` writes, and what hand-written and Logseq-flavoured syntax use.
  */
 
 /**
@@ -88,7 +88,7 @@ export function parseEmbedToken(content: string | null | undefined): EmbedToken 
 }
 
 /**
- * Build the token a picker writes into block content. Always the `((ULID))`
+ * Build the token the `{{` picker writes into block content, the `((ULID))`
  * form — see the module docstring for why the page/block distinction does not
  * survive into storage.
  */
