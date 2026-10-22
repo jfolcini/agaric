@@ -5,6 +5,7 @@ import {
   navigateToView,
   openPage,
   openSettingsTab,
+  saveBlock,
   switchToSpace,
   test,
   waitForBoot,
@@ -12,9 +13,10 @@ import {
 
 /**
  * Spaces happy paths (#5739): the "Open on launch" setting, per-space tabs /
- * recents / journal date restored on a switch, and the collapsed sidebar's
- * accent badge cycling the active space. All three are frontend state over
- * the mock's `list_spaces`, so the mock-backed build can show each failing.
+ * recents / journal date restored on a switch, the journal adding a block to
+ * the new space's day, and the collapsed sidebar's accent badge cycling the
+ * active space. Each is frontend state over the mock's `list_spaces`, so the
+ * mock-backed build can show each failing.
  *
  * The second space is the mock's opt-in `SPACE_WORK` seed ("Work", no accent
  * colour; `src/lib/tauri-mock/seed.ts`), next to the seeded `SPACE_PERSONAL`
@@ -116,6 +118,34 @@ test('switching spaces restores each space its own tabs, recent pages and journa
   await expect(editorTabs(page).first()).toHaveAttribute('aria-selected', 'true')
   await expect(pageTitle(page)).toHaveText('Projects')
   await expect(recentChips(page)).toHaveText(['Quick Notes', 'Getting Started'])
+})
+
+// The journal kept the day page it created in one space and showed it in the
+// next, so a block added there after a switch landed in the old space.
+test("a journal block added after a space switch is the new space's @spaces", async ({ page }) => {
+  const addLine = async (text: string) => {
+    await navigateToView(page, 'Journal')
+    await page.getByRole('button', { name: /^Add (your first )?block$/ }).click()
+    await expect(
+      page.locator('[data-testid="block-editor"] [contenteditable="true"]'),
+    ).toBeFocused()
+    await page.keyboard.type(text)
+    await saveBlock(page, 'Escape')
+  }
+  const line = (text: string) => page.locator('[data-testid="block-static"]', { hasText: text })
+
+  await switchToSpace(page, 'Work')
+  await addLine('work line')
+  await switchToSpace(page, 'Personal')
+  await addLine('personal line')
+  await expect(line('work line')).toHaveCount(0)
+
+  await navigateToView(page, 'Pages')
+  await navigateToView(page, 'Journal')
+  await expect(line('personal line')).toBeVisible()
+  await switchToSpace(page, 'Work')
+  await expect(line('work line')).toBeVisible()
+  await expect(line('personal line')).toHaveCount(0)
 })
 
 test('in the collapsed sidebar, the space badge switches to the next space @spaces', async ({
