@@ -23,7 +23,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { StoreApi } from 'zustand'
 
 import type { BlockActions } from '@/components/block-tree/use-block-actions'
-import { linkUrlAt, pageLinkIdAt } from '@/components/block-tree/use-block-touch-long-press'
+import { linkUrlAt } from '@/components/block-tree/use-block-touch-long-press'
 import {
   BLOCK_MENU_ACTION_IDS,
   type BlockMenuActionId,
@@ -44,6 +44,7 @@ import { blockText } from '@/editor/page-mode/page-slash-commands'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { blockIdOf } from '@/editor/token-ids'
 import { type BlockTypeToken, detectBlockType } from '@/lib/block-type-convert'
+import { pageLinkIdAt } from '@/lib/link-chip'
 import { CALLOUT_COMMANDS, TURN_INTO_COMMANDS } from '@/lib/slash-commands'
 import { computeSelectionRoots, type FlatBlock } from '@/lib/tree-utils'
 import type { PageBlockState } from '@/stores/page-blocks'

@@ -11,7 +11,7 @@ import type { EditorState as ProseMirrorState } from '@tiptap/pm/state'
 import { useCallback, useEffect } from 'react'
 
 import { getSelectionProbe } from '@/editor/pm-selection-probe'
-import { markerBesideCaret } from '@/editor/revealed-markers'
+import { linkAtCaret, markerBesideCaret } from '@/editor/revealed-markers'
 import { isTabIndentEnabled } from '@/lib/editor-preferences'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { isTabKey } from '@/lib/keyboard-config/keys'
@@ -134,6 +134,8 @@ export interface BlockKeyboardCallbacks {
   onDuplicate?: (() => void) | undefined
   /** Open the "Turn into" type picker for the current block (#976 item 14 — default Ctrl/Cmd+Shift+L). */
   onTurnInto?: (() => void) | undefined
+  /** Follow the page link or block ref at the caret, as a click on it does (default Alt+Enter). */
+  onFollowLink?: ((linkId: string) => void) | undefined
   /**
    * Whether the current block is the sole remaining block on the page.
    * When true, Backspace on an empty block is a no-op (prevents empty page).
@@ -241,6 +243,7 @@ export function handleBlockKeyDown(
     // arrow toward it (`markdown-reveal.ts`), so those keys stay in the block.
     markerBeforeCaret: hasMarkerBeside(editor.state, 'before'),
     markerAfterCaret: hasMarkerBeside(editor.state, 'after'),
+    link: isProseMirrorState(editor.state) ? linkAtCaret(editor.state) : null,
   }
   for (const rule of KEY_RULES) {
     if (rule.match(event, ctx)) {
@@ -272,6 +275,8 @@ interface KeyContext {
   /** A revealed Markdown marker sits right before / after the caret (#5689). */
   markerBeforeCaret: boolean
   markerAfterCaret: boolean
+  /** The page link or block ref at the caret (`linkAtCaret`). */
+  link: string | null
 }
 
 interface KeyRule {
@@ -405,6 +410,14 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
       cb.onTurnInto?.()
     },
   },
+  // `followLink` (default Alt+Enter): ahead of Enter, which would take Alt+Enter too.
+  {
+    match: (e, ctx) => ctx.link !== null && matchesShortcutBinding(e, 'followLink'),
+    handle: (e, cb, ctx) => {
+      e.preventDefault()
+      if (ctx.link !== null) cb.onFollowLink?.(ctx.link)
+    },
+  },
   // Enter (without Shift): save + create new sibling. Suppressed inside
   // code blocks and tables (#725) so ProseMirror's own Enter handling runs
   // instead (newlineInCode inserts a newline in the fence; splitBlock adds a
@@ -535,6 +548,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
     onShowHistory,
     onDuplicate,
     onTurnInto,
+    onFollowLink,
     isLastBlock,
   } = callbacks
 
@@ -601,6 +615,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
         onShowHistory,
         onDuplicate,
         onTurnInto,
+        onFollowLink,
         isLastBlock,
       })
       // When our handler called preventDefault(), also stop propagation so
@@ -629,6 +644,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       onShowHistory,
       onDuplicate,
       onTurnInto,
+      onFollowLink,
       isLastBlock,
     ],
   )

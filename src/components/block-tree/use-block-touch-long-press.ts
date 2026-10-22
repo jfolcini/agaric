@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 
 import { haptic } from '@/lib/haptics'
+import { pageLinkIdAt } from '@/lib/link-chip'
 
 /** Hold (ms) before a touch press is recognised; also the drag sensor's delay. */
 export const LONG_PRESS_DELAY = 400
@@ -56,16 +57,6 @@ export function linkUrlAt(target: EventTarget | null): string | undefined {
   return linkEl
     ? (linkEl.getAttribute('href') ?? linkEl.getAttribute('data-href') ?? undefined)
     : undefined
-}
-
-/**
- * The target id of the `[[link]]` or `((ref))` chip under `target`, static or
- * in the editor; both renderers mark a navigable chip with these attributes.
- */
-export function pageLinkIdAt(target: EventTarget | null): string | undefined {
-  if (!(target instanceof Element)) return undefined
-  const chip = target.closest('[data-type="block-link"][data-id], [data-type="block-ref"][data-id]')
-  return chip?.getAttribute('data-id') ?? undefined
 }
 
 interface TouchPress {

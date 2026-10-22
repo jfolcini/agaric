@@ -83,7 +83,7 @@ import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { BatchAttachmentsProvider } from '@/hooks/useBatchAttachments'
 import { BatchPropertiesProvider } from '@/hooks/useBatchPropertyRows'
 import { useScopedBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
-import { useOpenInBackgroundTab } from '@/hooks/useOpenInBackgroundTab'
+import { useOpenLinkInNewTab } from '@/hooks/useOpenInBackgroundTab'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { useViewportObserver } from '@/hooks/useViewportObserver'
 import { useViewportWindow } from '@/hooks/useViewportWindow'
@@ -1176,6 +1176,7 @@ export function BlockTree({
           onShowHistory: handleShowFocusedHistory,
           onDuplicate: handleDuplicateFocused,
           onTurnInto: handleTurnIntoFocused,
+          onFollowLink: handleNavigate,
         }
       : INERT_BLOCK_KEYBOARD_CALLBACKS,
   )
@@ -1406,14 +1407,7 @@ export function BlockTree({
   // Fix 6 — bulk-delete the active multi-selection from the long-press /
   // right-click context menu (single IPC + undo toast).
   const handleBatchDeleteAction = useCallback(() => void handleBatchDelete(), [handleBatchDelete])
-  const openInBackgroundTab = useOpenInBackgroundTab()
-  const handleOpenLinkInNewTab = useMemo(
-    () =>
-      openInBackgroundTab &&
-      ((id: string) =>
-        void handleNavigate(id, (pageId, title) => openInBackgroundTab(pageId, title ?? ''))),
-    [handleNavigate, openInBackgroundTab],
-  )
+  const handleOpenLinkInNewTab = useOpenLinkInNewTab(handleNavigate)
   const { blockActions, blockResolvers } = useBlockTreeContextBags({
     onNavigate: handleNavigate,
     onOpenLinkInNewTab: handleOpenLinkInNewTab,

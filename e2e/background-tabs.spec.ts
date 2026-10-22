@@ -3,6 +3,7 @@ import { devices, type Locator, type Page } from '@playwright/test'
 import {
   expect,
   focusBlock,
+  focusBlockById,
   openPage,
   saveBlock,
   test,
@@ -13,10 +14,16 @@ import {
 /**
  * A middle click on something that opens a page, or "Open in new tab" in its
  * right-click menu, opens the page in a background tab: the tab strip gains
- * it and the current view stays on screen.
+ * it and the current view stays on screen. A Ctrl/Cmd+click on a link opens it
+ * in a new tab in front, and Alt+Enter at a link follows it, in block mode and
+ * page mode.
  *
  * Seed data (tauri-mock): "Getting Started" holds a [[Quick Notes]] link.
  */
+
+/** The seeded Getting Started block holding the [[Quick Notes]] link. */
+const LINK_BLOCK = '0000000000000000000BLOCK02'
+const PAGE_MODE_EDITOR = '[data-testid="page-mode-editor"]'
 
 function tabs(page: Page): Locator {
   return page.getByRole('tablist', { name: 'Editor tabs' }).getByRole('tab')
@@ -47,6 +54,26 @@ async function expectStillOnGettingStartedWithBackgroundTab(page: Page) {
   await expect(tabs(page).nth(1)).toHaveText(/Quick Notes/)
   await expect(tabs(page).nth(1)).toHaveAttribute('aria-selected', 'false')
   await expect(page.locator('[aria-label="Page title"]')).toHaveText('Getting Started')
+}
+
+async function expectQuickNotesInFrontTab(page: Page) {
+  await expect(tabs(page)).toHaveCount(2)
+  await expect(tabs(page).nth(0)).toHaveText(/Getting Started/)
+  await expect(tabs(page).nth(1)).toHaveText(/Quick Notes/)
+  await expect(tabs(page).nth(1)).toHaveAttribute('aria-selected', 'true')
+  await expect(page.locator('[aria-label="Page title"]')).toHaveText('Quick Notes')
+  // The page it was opened from stays in its own tab.
+  await tabs(page).nth(0).click()
+  await expect(page.locator('[aria-label="Page title"]')).toHaveText('Getting Started')
+}
+
+async function openInPageMode(page: Page) {
+  await openPage(page, 'Getting Started')
+  await page
+    .getByRole('radiogroup', { name: 'Editing mode' })
+    .getByRole('radio', { name: 'Page' })
+    .click()
+  await expect(page.locator(`${PAGE_MODE_EDITOR} [data-testid="block-link-chip"]`)).toBeVisible()
 }
 
 function inlineLink(page: Page): Locator {
@@ -150,5 +177,85 @@ test.describe('Background tabs on a touch tablet @pages @mobile', () => {
     await touchLongPress(page, '[data-testid="query-result"] table [role="link"]', 900)
 
     await expectOnlyOpenInNewTabMenu(page)
+  })
+})
+
+test.describe('Links open in a new tab in front, and Alt+Enter follows them @editor @pages', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('Ctrl+click on a link in a block opens it in a new tab in front', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+
+    await inlineLink(page).click({ modifiers: ['ControlOrMeta'] })
+
+    await expectQuickNotesInFrontTab(page)
+  })
+
+  test('Ctrl+click on a link in the block being edited opens it in a new tab in front', async ({
+    page,
+  }) => {
+    await openPage(page, 'Getting Started')
+    await focusBlockById(page, LINK_BLOCK)
+
+    await page
+      .locator('[data-testid="block-editor"] [data-testid="block-link-chip"]')
+      .click({ modifiers: ['ControlOrMeta'] })
+
+    await expectQuickNotesInFrontTab(page)
+  })
+
+  test('Ctrl+click on a link in page mode opens it in a new tab in front', async ({ page }) => {
+    await openInPageMode(page)
+
+    await page
+      .locator(`${PAGE_MODE_EDITOR} [data-testid="block-link-chip"]`)
+      .click({ modifiers: ['ControlOrMeta'] })
+
+    await expectQuickNotesInFrontTab(page)
+  })
+
+  test('Alt+Enter with the caret right after a link in a block follows it', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+    await focusBlockById(page, LINK_BLOCK)
+    await page.keyboard.press('ControlOrMeta+End')
+    for (const _ of ' for tips.') await page.keyboard.press('ArrowLeft')
+    // The editor has taken the caret's move once it draws the link's syntax beside it.
+    await expect(page.getByTestId('md-reveal-chip-marker')).toHaveText(['[[', ']]'])
+
+    await page.keyboard.press('Alt+Enter')
+
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Quick Notes')
+    await expect(tabs(page)).toHaveCount(0)
+  })
+
+  test('Alt+Enter with the caret right before a link in page mode follows it', async ({ page }) => {
+    await openInPageMode(page)
+    await page.evaluate((selector) => {
+      const { editor } = document.querySelector(selector) as HTMLElement & {
+        editor: {
+          state: {
+            doc: {
+              descendants: (f: (node: { type: { name: string } }, pos: number) => void) => void
+            }
+          }
+          commands: { setTextSelection: (pos: number) => boolean }
+          view: { focus: () => void }
+        }
+      }
+      let chipPos = -1
+      editor.state.doc.descendants((node, pos) => {
+        if (node.type.name === 'block_link' && chipPos < 0) chipPos = pos
+      })
+      editor.commands.setTextSelection(chipPos)
+      editor.view.focus()
+    }, PAGE_MODE_EDITOR)
+    await expect(page.locator(PAGE_MODE_EDITOR)).toBeFocused()
+
+    await page.keyboard.press('Alt+Enter')
+
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Quick Notes')
+    await expect(tabs(page)).toHaveCount(0)
   })
 })

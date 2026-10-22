@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { i18n } from '@/lib/i18n'
 import {
   configKeyToTipTap,
   DEFAULT_SHORTCUTS,
@@ -2305,5 +2306,43 @@ describe('isTabKey', () => {
     expect(isTabKey({ key: 'Unidentified', code: 'KeyA' })).toBe(false)
     expect(isTabKey({ key: 'Unidentified' })).toBe(false)
     expect(isTabKey({ key: 'a', code: 'Tab' })).toBe(false)
+  })
+})
+
+// Obsidian parity, slice 2: following a link from the keyboard.
+describe('link shortcuts', () => {
+  const ev = (key: string, opts: Partial<KeyboardEvent> = {}) => ({
+    key,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    altKey: false,
+    ...opts,
+  })
+
+  it('followLink is Alt + Enter at a link, rebindable, and in the English catalog', () => {
+    const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'followLink')
+    expect(s).toEqual({
+      id: 'followLink',
+      keys: 'Alt + Enter',
+      category: 'keyboard.category.navigation',
+      description: 'keyboard.followLink',
+      condition: 'keyboard.condition.atLink',
+    })
+    expect(i18n.t('keyboard.followLink')).toBe('Follow the link')
+    expect(i18n.t('keyboard.condition.atLink')).toBe('At a page link or block reference')
+  })
+
+  it('followLink resolves from Alt+Enter only, and its chord binds nothing else', () => {
+    expect(matchesShortcutBinding(ev('Enter', { altKey: true }), 'followLink')).toBe(true)
+    expect(matchesShortcutBinding(ev('Enter'), 'followLink')).toBe(false)
+    expect(matchesShortcutBinding(ev('Enter', { ctrlKey: true }), 'followLink')).toBe(false)
+    expect(
+      matchesShortcutBinding(ev('Enter', { altKey: true, shiftKey: true }), 'followLink'),
+    ).toBe(false)
+    expect(DEFAULT_SHORTCUTS.filter((sc) => sc.keys === 'Alt + Enter').map((sc) => sc.id)).toEqual([
+      'followLink',
+    ])
+    expect(findConflicts()).toHaveLength(0)
   })
 })

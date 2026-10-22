@@ -17,6 +17,8 @@ import { Selection } from '@tiptap/pm/state'
 import { common, createLowlight } from 'lowlight'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
+import { BlockLink } from '@/editor/extensions/block-link'
+import { BlockRef } from '@/editor/extensions/block-ref'
 import { ExternalLink } from '@/editor/extensions/external-link'
 import { MarkdownReveal } from '@/editor/extensions/markdown-reveal'
 import { setSelectionProbe } from '@/editor/pm-selection-probe'
@@ -27,6 +29,7 @@ import {
   handleBlockKeyDown,
   useBlockKeyboard,
 } from '@/editor/use-block-keyboard'
+import { resetAllShortcuts, setCustomShortcut } from '@/lib/keyboard-config'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
 
 // #2939 — in production the editor-runtime chunk registers the ProseMirror
@@ -2382,6 +2385,106 @@ describe('#5689 — a revealed heading or link marker beside the caret keeps its
       expect(callbacks._calls['onFocusNext']).toBeUndefined()
     } finally {
       cleanup()
+    }
+  })
+})
+
+describe('followLink — Alt+Enter at a page link or block ref follows it', () => {
+  const PAGE = '01JPAGE0000000000000000000'
+  const REF = '01JREF00000000000000000000'
+
+  function setup() {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: [Document, Paragraph, Text, BlockLink, BlockRef],
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'paragraph',
+            content: [
+              { type: 'text', text: 'see ' },
+              { type: 'block_link', attrs: { id: PAGE } },
+              { type: 'text', text: ' and ' },
+              { type: 'block_ref', attrs: { id: REF } },
+            ],
+          },
+        ],
+      },
+    })
+    const followed: string[] = []
+    const callbacks = { ...makeCallbacks(), onFollowLink: (id: string) => followed.push(id) }
+    return { editor, callbacks, followed }
+  }
+
+  afterEach(() => {
+    resetAllShortcuts()
+  })
+
+  it.each([
+    ['before', 5, PAGE],
+    ['after', 6, PAGE],
+    ['after, ending the block,', 12, REF],
+  ])('follows the link the caret is right %s', (_where, pos, id) => {
+    const { editor, callbacks, followed } = setup()
+    try {
+      editor.commands.setTextSelection(pos)
+      const event = makeEvent('Enter', { altKey: true })
+      handleBlockKeyDown(event, editor, callbacks)
+      expect(followed).toEqual([id])
+      expect(event.preventDefault).toHaveBeenCalled()
+      expect(callbacks._calls['onEnterSave']).toBeUndefined()
+    } finally {
+      editor.destroy()
+    }
+  })
+
+  it('follows a selected chip', () => {
+    const { editor, callbacks, followed } = setup()
+    try {
+      editor.commands.setNodeSelection(5)
+      handleBlockKeyDown(makeEvent('Enter', { altKey: true }), editor, callbacks)
+      expect(followed).toEqual([PAGE])
+    } finally {
+      editor.destroy()
+    }
+  })
+
+  it('away from a link, Alt+Enter is Enter as before', () => {
+    const { editor, callbacks, followed } = setup()
+    try {
+      editor.commands.setTextSelection(2)
+      handleBlockKeyDown(makeEvent('Enter', { altKey: true }), editor, callbacks)
+      expect(followed).toEqual([])
+      expect(callbacks._calls['onEnterSave']).toBe(1)
+    } finally {
+      editor.destroy()
+    }
+  })
+
+  it('at a link, a plain Enter is Enter as before', () => {
+    const { editor, callbacks, followed } = setup()
+    try {
+      editor.commands.setTextSelection(6)
+      handleBlockKeyDown(makeEvent('Enter'), editor, callbacks)
+      expect(followed).toEqual([])
+      expect(callbacks._calls['onEnterSave']).toBe(1)
+    } finally {
+      editor.destroy()
+    }
+  })
+
+  it('follows on the chord the user bound instead', () => {
+    setCustomShortcut('followLink', 'Ctrl + Shift + O')
+    const { editor, callbacks, followed } = setup()
+    try {
+      editor.commands.setTextSelection(5)
+      handleBlockKeyDown(makeEvent('Enter', { altKey: true }), editor, callbacks)
+      handleBlockKeyDown(makeEvent('O', { ctrlKey: true, shiftKey: true }), editor, callbacks)
+      expect(followed).toEqual([PAGE])
+      expect(callbacks._calls['onEnterSave']).toBe(1)
+    } finally {
+      editor.destroy()
     }
   })
 })

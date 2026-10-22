@@ -37,6 +37,7 @@ Settings → Keyboard. Each row shows the action, then its current keys, then an
 | `Ctrl+Shift+V` | Paste as plain text: the clipboard's lines go into the block as they are, with no blocks made and no markdown read |
 | `Ctrl+Shift+L` | Turn block into another type |
 | `Ctrl+Backspace` (on empty block) | Delete the block |
+| `Alt+Enter` (on or beside a page link or block reference) | Follow the link, as a click does; in blocks and in page mode |
 
 ## Formatting marks
 
