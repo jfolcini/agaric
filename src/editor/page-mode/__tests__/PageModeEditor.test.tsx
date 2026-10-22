@@ -39,6 +39,7 @@ import { logger } from '@/lib/logger'
 import { SYSTEM_MANAGED_PROPERTY_KEYS } from '@/lib/property-save-utils'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
+import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import { PageBlockStoreProvider } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
@@ -155,6 +156,7 @@ beforeEach(() => {
   useSpaceStore.setState({ currentSpaceId: SCOPE.space_id })
   useUndoStore.setState({ pages: new Map() })
   useNavigationStore.setState({ selectedBlockId: null })
+  useBlockStore.setState({ focusedBlockId: null })
   mockedInvoke.mockImplementation(passThrough)
 })
 
@@ -939,6 +941,22 @@ describe('PageModeEditor', () => {
       expect(editor.state.selection.$head.index(0)).toBe(1)
     })
     expect(editor.state.selection.$head.parentOffset).toBe(3)
+  })
+
+  it('opens with the cursor in the block focused for block mode, a new day’s template block', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    useBlockStore.setState({ focusedBlockId: ids[1] as string })
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    await waitFor(() => {
+      expect(editor.state.selection.$head.index(0)).toBe(1)
+    })
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+    })
+    expect(document.activeElement).toBe(editor.view.dom)
+    expect(useBlockStore.getState().focusedBlockId).toBeNull()
   })
 
   it('a new or empty page takes typing at once; a page with text leaves the focus alone', async () => {

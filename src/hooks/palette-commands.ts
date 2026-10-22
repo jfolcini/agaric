@@ -326,7 +326,7 @@ export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
     },
   },
   {
-    // The open page's header acts on it where its Blocks | Page switch is offered.
+    // The Blocks | Page switch on screen acts on it: a page's header, the journal's day.
     id: 'toggle-page-mode',
     labelKey: 'palette.cmdTogglePageMode',
     category: 'action',

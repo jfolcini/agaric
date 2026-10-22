@@ -26,8 +26,13 @@ export interface PageModeOpening {
   place: ScrollPlace | null
 }
 
-/** Both modes' rows of the page: page mode's blocks, block mode's tree rows. */
-const ROWS = '.page-editor [data-page-block-id], .page-editor li[data-block-id]'
+/** Both modes' rows of the page, a page view's or the journal day's: page mode's blocks, block mode's tree rows. */
+const ROWS = [
+  '.page-editor [data-page-block-id]',
+  '.page-editor li[data-block-id]',
+  '.journal-day-page [data-page-block-id]',
+  '.journal-day-page li[data-block-id]',
+].join(', ')
 
 function rowId(row: Element): string | null {
   return row.getAttribute('data-page-block-id') ?? row.getAttribute('data-block-id')

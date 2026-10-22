@@ -1,5 +1,5 @@
 /**
- * PageModeSlot — where `PageEditor` shows page mode (#5691): the editor,
+ * PageModeSlot — where `PageEditor` or `DayPageEditor` shows page mode (#5691): the editor,
  * loaded on first use so TipTap stays off the startup path.
  */
 

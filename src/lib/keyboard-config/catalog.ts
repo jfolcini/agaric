@@ -698,7 +698,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     condition: 'keyboard.condition.inPageEditor',
   },
   {
-    // #5691 — the page header's Blocks | Page switch; `Ctrl + E` as in Obsidian.
+    // #5691 — the Blocks | Page switch of a page or the journal's day; `Ctrl + E` as in Obsidian.
     id: 'togglePageMode',
     keys: 'Ctrl + E / Ctrl + Shift + M',
     category: 'keyboard.category.pageEditor',

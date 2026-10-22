@@ -17,8 +17,8 @@
  *    legacy reads (and the no-active-space boot path) keep working.
  *  - `selectedBlockId` — optional block ID to highlight / scroll-to /
  *    focus after navigation. Set by `navigateToPage(…, blockId)` (which
- *    lives in `useTabsStore`) and consumed by `PageEditor` / `DailyView`
- *    on mount as a one-shot. NOT persisted — block-level selection is
+ *    lives in `useTabsStore`) and consumed by `PageEditor` / the journal
+ *    day's `DayPageEditor`, or page mode's editor in either, as a one-shot. NOT persisted — block-level selection is
  *    a transient UI affordance, not a layout choice.
  *  - `navHistoryBySpace` — the header's Back / Forward history per space,
  *    in memory only. Written by `./navigation-history`, which records and
@@ -290,8 +290,8 @@ export const useNavigationStore = create<NavigationStore>()(
       version: 3,
       storage: safePersistStorage,
       // selectedBlockId is intentionally NOT persisted — it is a one-shot
-      // UI affordance consumed and cleared by PageEditor / DailyView on
-      // mount, not a setting that should survive relaunch.
+      // UI affordance consumed and cleared by PageEditor / DayPageEditor (or
+      // page mode's editor) on mount, not a setting that should survive relaunch.
       partialize: (state) => ({
         currentView: state.currentView,
         currentViewBySpace: state.currentViewBySpace,
