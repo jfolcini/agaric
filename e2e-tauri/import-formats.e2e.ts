@@ -215,36 +215,71 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     await expectImageRendered(id, 'after the round trip')
   })
 
-  it('imports a .jex with each note a page titled by its notebook path', async () => {
+  it('imports a .jex with each note a page titled by its notebook path, a to-do a task, a tag a page tag', async () => {
     await waitForAppReady()
     const marker = runScopedMarker('wdio-jex')
     const book = `${marker}-book`
     const sub = `${marker}-sub`
+    const tag = `${marker}-tag`
     const ids = {
       book: '1'.repeat(32),
       sub: '2'.repeat(32),
       top: '3'.repeat(32),
       deep: '4'.repeat(32),
+      tag: '5'.repeat(32),
+      noteTag: '6'.repeat(32),
     }
-    const note = (name: string, parent: string, id: string): [string, string] => [
+    const note = (
+      name: string,
+      parent: string,
+      id: string,
+      props: Record<string, string> = {},
+    ): [string, string] => [
       `${id}.md`,
       joplinItem(`${marker}-${name}\n\n${marker}-${name}-body`, {
         id,
         parent_id: parent,
+        ...props,
         type_: '1',
       }),
     ]
     const jex = tar([
       [`${ids.book}.md`, joplinItem(book, { id: ids.book, parent_id: '', type_: '2' })],
       [`${ids.sub}.md`, joplinItem(sub, { id: ids.sub, parent_id: ids.book, type_: '2' })],
-      note('top', ids.book, ids.top),
+      // A to-do due at local noon on 1 Oct 2031, tagged.
+      note('top', ids.book, ids.top, {
+        is_todo: '1',
+        todo_completed: '0',
+        todo_due: String(new Date(2031, 9, 1, 12).getTime()),
+      }),
       note('deep', ids.sub, ids.deep),
+      [`${ids.tag}.md`, joplinItem(tag, { id: ids.tag, type_: '5' })],
+      [
+        `${ids.noteTag}.md`,
+        joplinItem('', { id: ids.noteTag, note_id: ids.top, tag_id: ids.tag, type_: '6' }),
+      ],
     ])
     await importFile('import-jex-input', 'export.jex', jex, 'Imported “2 notes”')
 
     await navigateTo('Journal')
     await openPageByFullTitle(`${book}/${marker}-top`)
     await blockStaticByMarker(`${marker}-top-body`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    // The to-do opens with a task block named after the note, the first block
+    // whose text holds `<marker>-top` (the body block's comes after it).
+    const task = blockStaticByMarker(`${marker}-top`)
+    const taskId = await task.getAttribute('data-block-id')
+    const row = $(`li[data-block-id="${taskId}"]`)
+    const taskMarker = row.$('[data-testid="task-marker"]')
+    await taskMarker.waitForExist({ timeout: ACTION_TIMEOUT })
+    await browser.waitUntil(
+      async () => ((await taskMarker.getAttribute('aria-label')) ?? '').startsWith('Task: TODO'),
+      { timeout: ACTION_TIMEOUT, timeoutMsg: 'the imported to-do never showed the TODO state' },
+    )
+    const due = row.$('.due-date-chip')
+    await due.waitForExist({ timeout: ACTION_TIMEOUT })
+    expect(await due.getAttribute('aria-label')).toContain('Oct 1, 2031')
+    // The tag is the page's tag (PageTagSection's chip).
+    await $(`[aria-label="Remove tag ${tag}"]`).waitForDisplayed({ timeout: NAV_TIMEOUT })
     await navigateTo('Journal')
     await openPageByFullTitle(`${book}/${sub}/${marker}-deep`)
     await blockStaticByMarker(`${marker}-deep-body`).waitForDisplayed({ timeout: NAV_TIMEOUT })

@@ -389,6 +389,7 @@ describe('jexNotesToUnits', () => {
     markdown: `body of ${title}`,
     createdMs: null,
     updatedMs: null,
+    tags: [],
     attachments,
   })
 

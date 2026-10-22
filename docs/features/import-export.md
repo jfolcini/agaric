@@ -24,6 +24,10 @@ Each note becomes a page titled by the note (a `/` in the title nests it, as a f
 
 The Import button shows a per-block progress count while a file imports, then a count-only summary (page title, blocks created, properties set, and a `N warning(s)` count). It does not show per-file detail or which file produced a given warning.
 
+### Joplin (`.jex`)
+
+Each note becomes a page titled by its notebook path and title (`Projects/Roadmap/Note`), and goes through the same import as a Markdown file. An HTML note (a web clip) is converted to Markdown first. Its tags become the page's tags, whole (`C++`, `2024`, `Multi Word`); its created and updated dates become the page properties `created` and `updated`, beside `source: joplin`. A to-do opens with a task block named after the note: TODO or DONE as Joplin had it, and its due date (the day in local time) as the task's due date. An embedded image becomes an attachment, a space or parenthesis in its name replaced by `_`. A link to another note becomes a `[[Notebook/Title|label]]` link, from `:/id` and `joplin://id`; an `#anchor` on it is dropped. Not imported: a file attached as a link rather than an image (a PDF, an audio file), which keeps its link to the file's name and is counted in one warning; a reference-style link (`[label]: :/id`) or an HTML `<a href=":/id">` in a Markdown note, which stays a Joplin link; encrypted items, skipped and counted; a note's location, author and source URL, and an image's size.
+
 ### Bibliography import (BibTeX / CSL-JSON)
 
 *Import bibliography* in Settings → Data accepts `.bib` (BibTeX) and `.json` (CSL-JSON) files. Each entry becomes a **reference page** in the active space:

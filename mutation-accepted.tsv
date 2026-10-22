@@ -227,14 +227,12 @@ frontend	src/lib/in-page-find/matcher.ts	StringLiteral	24	1	return lowered.index
 frontend	src/lib/in-page-find/matcher.ts	StringLiteral	45	1	if (import.meta.env.DEV && foldedNeedle === '') {
 frontend	src/lib/in-page-find/matcher.ts	StringLiteral	73	1	error: { kind: 'invalid', message: err instanceof Error ? err.message : '' },
 frontend	src/lib/jex-import.ts	ArithmeticOperator	8	1	while (offset + BLOCK <= archive.length) {
-frontend	src/lib/jex-import.ts	ConditionalExpression	5	1	if (cp !== undefined && cp >= 0x20) out += ch
 frontend	src/lib/jex-import.ts	ConditionalExpression	5	1	if (c === undefined || c === 0 || c === 0x20) continue
 frontend	src/lib/jex-import.ts	ConditionalExpression	5	1	if (raw === undefined) return null
 frontend	src/lib/jex-import.ts	StringLiteral	26	1	const line = lines[i] ?? ''
 frontend	src/lib/jex-import.ts	StringLiteral	28	1	const id = (props['id'] ?? '').toLowerCase()
 frontend	src/lib/jex-import.ts	StringLiteral	34	1	parentId: (props['parent_id'] ?? '').toLowerCase(),
 frontend	src/lib/jex-import.ts	StringLiteral	36	1	const sub = (mime.split('/')[1] ?? '').replace(/[^a-z0-9]/gi, '').toLowerCase()
-frontend	src/lib/jex-import.ts	StringLiteral	59	1	const base = name.replace(/\\/g, '/').split('/').pop() ?? ''
 frontend	src/lib/jex-import.ts	StringLiteral	70	1	folders.set(id, { title: firstLine, parentId: (props['parent_id'] ?? '').toLowerCase() })
 frontend	src/lib/search-query/classify.ts	ArrayDeclaration	44	1	const quotedOut: Array<[number, number]> = []
 frontend	src/lib/search-query/classify.ts	ConditionalExpression	5	1	if (tag) {

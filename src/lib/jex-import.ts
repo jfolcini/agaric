@@ -9,25 +9,34 @@
  *
  * This module is PURE (no IPC, no Tauri): it unpacks the tar in the browser,
  * classifies each item by its `type_` metadata (`1` note, `2` folder, `4`
- * resource), converts each note into composed importer Markdown, and returns
- * plain {@link JexNote} records. The caller (DataTab) hands each note's markdown
- * to the EXISTING `importMarkdown` IPC — one note → one page — exactly as the
- * `.enex` path does. The markdown importer already resolves `[[wikilinks]]`,
- * folder→namespace and YAML frontmatter, so we only PRODUCE markdown here.
+ * resource, `5` tag, `6` note-tag link), converts each note into composed
+ * importer Markdown, and returns plain {@link JexNote} records. The caller
+ * (DataTab) hands each note's markdown to the EXISTING `importMarkdown` IPC —
+ * one note → one page — exactly as the `.enex` path does. The markdown
+ * importer already resolves `[[wikilinks]]`, folder→namespace and YAML
+ * frontmatter, so we only PRODUCE markdown here.
  *
- * Joplin item bodies are ALREADY Markdown (unlike ENEX's ENML), so no
- * Turndown/DOM pass is needed. Two Joplin-specific reference forms are rewritten
- * text-side (Joplin uses `:/<32-hex-id>` for both):
- *  - **Resource embeds/links** `![alt](:/<resId>)` / `[label](:/<resId>)` → the
- *    resource's ingested vault path (`![alt](path)` / `[label](path)`), with the
+ * A Markdown note's body is used as it is; an HTML note (`markup_language: 2`)
+ * goes through Turndown + GFM, as ENEX's ENML does. A note's tags become the
+ * page's front-matter `tags:`, which the importer applies as page tags, and a
+ * to-do (`is_todo: 1`) opens with a task block naming the note: its checkbox
+ * holds `todo_completed` and its `due_date::` line the local date of
+ * `todo_due`, so the task shows on the page and in the agenda. Joplin's
+ * references (`:/<32-hex-id>`, `joplin://<id>`, with an optional `#anchor` or
+ * `"title"`, and `<img src=":/id">`) are rewritten text-side:
+ *  - **Resource embeds** `![alt](:/<resId>)` → `![alt](path)`, with the
  *    decoded bytes shipped on {@link JexNote.attachments} as `importMarkdown`'s
  *    `vaultFiles` — the SAME vault-attachment path a folder import (and the
  *    `.enex` importer, #2513 part 1) uses, so the backend ingests the bytes and
  *    canonicalizes the ref to `attachment:<id>`.
- *  - **Internal note links** `[label](:/<noteId>)` → an Agaric `[[Target Title]]`
- *    wikilink when the target note exists in the archive (best-effort link
- *    preservation); an unresolved `:/id` is left untouched as a stable
- *    placeholder rather than producing a broken embed.
+ *  - **Resource links** `[label](:/<resId>)`, Joplin's form for a file that is
+ *    not an image, → `[label](path)`, counted in
+ *    {@link JexParseResult.fileLinks}: the backend ingests only `![]()`, and
+ *    an image ref to a PDF would render as a broken image, so the file is not
+ *    imported and its bytes are not shipped.
+ *  - **Internal note links** `[label](:/<noteId>)` → `[[Target Title|label]]`
+ *    when the target note exists in the archive; an unresolved `:/id` is left
+ *    untouched as a stable placeholder rather than producing a broken embed.
  *
  * Folders are mapped to namespaces: a note under `Projects/Roadmap` lands as the
  * namespaced page `Projects/Roadmap/<title>`, mirroring the folder→namespace
@@ -37,13 +46,19 @@
  * GRACEFUL DEGRADATION: a malformed/partial archive never crashes the whole
  * import — an item whose metadata can't be parsed, or an encrypted item
  * (`encryption_applied: 1`), is skipped and counted in {@link JexParseResult.skipped}.
- * Tags (`type_: 5/6`) and other known-but-unimported item kinds are ignored
- * silently. The caller degrades per-note failures like the `.md`/`.enex` path.
+ * Other known-but-unimported item kinds are ignored silently. The caller
+ * degrades per-note failures like the `.md`/`.enex` path.
  *
  * OUT OF SCOPE (still open on #2513): advanced ENML fidelity (part 3).
  */
 
-import { UNTITLED_PLACEHOLDER } from '@/lib/enex-import'
+import { formatDate } from '@/lib/date-utils'
+import {
+  createHtmlTurndown,
+  prepareTablesForGfm,
+  sanitizeResourceName,
+  UNTITLED_PLACEHOLDER,
+} from '@/lib/enex-import'
 
 /** A decoded resource attachment referenced by a note (#2513, part 2). */
 export interface JexResource {
@@ -69,6 +84,8 @@ export interface JexNote {
   createdMs: number | null
   /** `updated_time` as epoch milliseconds, or null when absent/unparseable. */
   updatedMs: number | null
+  /** The note's tag names, written as the page's front-matter `tags:`. */
+  tags: string[]
   /**
    * Decoded resources referenced by this note's body (first-referenced order),
    * shipped as `importMarkdown`'s `vaultFiles`. Empty when the note embeds none.
@@ -86,10 +103,24 @@ export interface JexParseResult {
    * NOT counted (they are simply ignored). Surfaced by the caller as a warning.
    */
   skipped: number
+  /**
+   * Count of resource links (`[label](:/id)`, no `!`) left as links: the
+   * backend imports only image refs, so these files are not imported.
+   * Surfaced by the caller as a warning.
+   */
+  fileLinks: number
 }
 
-/** Matches a Joplin item reference `:/<32-hex-id>` inside a markdown (image) link. */
-const JOPLIN_REF_RE = /(!?)\[([^\]]*)\]\(:\/([0-9a-fA-F]{32})\)/g
+/**
+ * A markdown (image) link to a Joplin item: `:/<32-hex-id>` or
+ * `joplin://<id>`, with the optional `#anchor` and `"title"` Joplin's
+ * `resourceRegex` (`urlUtils.ts`) allows, both dropped on rewrite.
+ */
+const JOPLIN_REF_RE =
+  /(!?)\[([^\]]*)\]\((?::\/|joplin:\/\/)([0-9a-fA-F]{32})(?:#[^\s)]*)?(?:\s+"[^"]*")?\)/g
+
+/** An HTML `<img>` whose `src` is a Joplin item, as a resized image is written. */
+const JOPLIN_IMG_TAG_RE = /<img\b[^>]*?\bsrc=(["'])(?::\/|joplin:\/\/)([0-9a-fA-F]{32})\1[^>]*>/gi
 
 // ---------------------------------------------------------------------------
 // Minimal inline USTAR tar reader.
@@ -265,17 +296,6 @@ function mimeToExt(mime: string): string {
   return sub.length > 0 && sub.length <= 5 ? sub : 'bin'
 }
 
-/** Basename-only, control-char-free filename (no path traversal). */
-function sanitizeResourceName(name: string): string {
-  const base = name.replace(/\\/g, '/').split('/').pop() ?? ''
-  let out = ''
-  for (const ch of base) {
-    const cp = ch.codePointAt(0)
-    if (cp !== undefined && cp >= 0x20) out += ch
-  }
-  return out.trim()
-}
-
 /** Metadata for one Joplin resource item (`type_: 4`). */
 interface ResourceMeta {
   mime: string
@@ -359,8 +379,12 @@ interface RawNote {
   /** Parent notebook id, for folder→namespace resolution. */
   parentId: string
   body: string
+  /** `markup_language: 2`: the body is HTML, not Markdown. */
+  isHtml: boolean
   createdMs: number | null
   updatedMs: number | null
+  /** The task block a to-do opens with, or null for a plain note. */
+  todo: { done: boolean; dueDate: string | null } | null
 }
 
 /** Tar members split into decoded item `.md` texts and resource binaries. */
@@ -394,6 +418,10 @@ interface ClassifiedItems {
   rawNotes: RawNote[]
   folders: Map<string, { title: string; parentId: string }>
   resourceMetas: Map<string, ResourceMeta>
+  /** Tag id → tag name (`type_: 5`). */
+  tagTitles: Map<string, string>
+  /** Note id → the ids of its tags (`type_: 6`, `note_id` / `tag_id`). */
+  noteTagIds: Map<string, string[]>
   skipped: number
 }
 
@@ -402,6 +430,8 @@ function classifyItems(itemTexts: string[]): ClassifiedItems {
   const rawNotes: RawNote[] = []
   const folders = new Map<string, { title: string; parentId: string }>()
   const resourceMetas = new Map<string, ResourceMeta>()
+  const tagTitles = new Map<string, string>()
+  const noteTagIds = new Map<string, string[]>()
   let skipped = 0
 
   for (const text of itemTexts) {
@@ -420,8 +450,16 @@ function classifyItems(itemTexts: string[]): ClassifiedItems {
         title: firstLine.length > 0 ? firstLine : UNTITLED_PLACEHOLDER,
         parentId: (props['parent_id'] ?? '').toLowerCase(),
         body: normalizeBody(contentLines.slice(1)),
+        isHtml: props['markup_language'] === '2',
         createdMs: parseJoplinTime(props['user_created_time'] ?? props['created_time']),
         updatedMs: parseJoplinTime(props['user_updated_time'] ?? props['updated_time']),
+        todo:
+          props['is_todo'] === '1'
+            ? {
+                done: Number(props['todo_completed']) > 0,
+                dueDate: localDate(Number(props['todo_due'])),
+              }
+            : null,
       })
     } else if (props['type_'] === '2') {
       folders.set(id, { title: firstLine, parentId: (props['parent_id'] ?? '').toLowerCase() })
@@ -431,36 +469,101 @@ function classifyItems(itemTexts: string[]): ClassifiedItems {
         ext: props['file_extension'] ?? '',
         title: firstLine,
       })
+    } else if (props['type_'] === '5') {
+      tagTitles.set(id, firstLine)
+    } else if (props['type_'] === '6') {
+      const noteId = (props['note_id'] ?? '').toLowerCase()
+      noteTagIds.set(noteId, [
+        ...(noteTagIds.get(noteId) ?? []),
+        (props['tag_id'] ?? '').toLowerCase(),
+      ])
     }
-    // Tags (5), note-tag links (6), settings, … — known but not imported.
+    // Settings, revisions, … — known but not imported.
   }
-  return { rawNotes, folders, resourceMetas, skipped }
+  return { rawNotes, folders, resourceMetas, tagTitles, noteTagIds, skipped }
 }
 
 /**
- * Rewrite a note body's Joplin `:/id` references: resource refs → the ingested
- * vault path (collecting the shipped {@link JexResource} into `attachments`),
- * internal note links → a `[[Target]]` wikilink, and any unresolved ref left
- * untouched as a stable placeholder.
+ * An epoch-ms `todo_due` as a local `YYYY-MM-DD`, or null when unset (`0`) or
+ * unreadable: `formatDate` throws on an invalid date, which would fail the
+ * whole archive.
+ */
+function localDate(ms: number): string | null {
+  const date = new Date(ms)
+  return ms > 0 && !Number.isNaN(date.getTime()) ? formatDate(date) : null
+}
+
+/**
+ * An HTML note's body as Markdown, converted as the ENEX importer converts
+ * ENML. Joplin stores a web clip as a `<style>` tag and the page, often a
+ * whole document: Turndown reads such a string as nothing, so only the parsed
+ * `<body>` converts, and neither the styles nor the `<head>` are note text.
+ */
+function htmlToMarkdown(html: string): string {
+  const body = new DOMParser().parseFromString(html, 'text/html').body
+  prepareTablesForGfm(body)
+  const td = createHtmlTurndown()
+  td.remove('style')
+  return td.turndown(body)
+}
+
+/** Each `<img src=":/id">` as `![alt](:/id)`, for {@link rewriteNoteBody} to resolve. */
+function imgTagsToMarkdown(body: string): string {
+  return body.replace(JOPLIN_IMG_TAG_RE, (tag, _quote: string, id: string) => {
+    const alt = /\balt=(["'])(.*?)\1/i.exec(tag)?.[2] ?? ''
+    return `![${alt}](:/${id})`
+  })
+}
+
+/** A note body with its Joplin references rewritten, and what that shipped or left. */
+interface RewrittenBody {
+  markdown: string
+  /** The resources the body embeds, in first-referenced order. */
+  attachments: JexResource[]
+  /** Resource links left as links (see {@link JexParseResult.fileLinks}). */
+  fileLinks: number
+}
+
+/**
+ * Rewrite a note body's Joplin references: a resource embed → the ingested
+ * vault path (collecting the shipped {@link JexResource}), a resource link →
+ * that path as a plain link (counted, not shipped), an internal note link → a
+ * `[[Target|label]]` wikilink, and any unresolved ref left untouched as a
+ * stable placeholder.
  */
 function rewriteNoteBody(
   body: string,
   resourcesById: Map<string, JexResource>,
   noteTitleById: Map<string, string>,
-  attachments: JexResource[],
-): string {
-  return body.replace(JOPLIN_REF_RE, (match, bang: string, label: string, refIdRaw: string) => {
-    const refId = refIdRaw.toLowerCase()
-    const resource = resourcesById.get(refId)
-    if (resource !== undefined) {
-      if (!attachments.some((a) => a.path === resource.path)) attachments.push(resource)
-      return `${bang}[${label}](${resource.path})`
-    }
-    const targetTitle = noteTitleById.get(refId)
-    // Preserve an internal note link as an Agaric wikilink (best-effort).
-    if (targetTitle !== undefined) return `[[${targetTitle}]]`
-    return match
-  })
+): RewrittenBody {
+  const attachments: JexResource[] = []
+  let fileLinks = 0
+  const markdown = body.replace(
+    JOPLIN_REF_RE,
+    (match, bang: string, label: string, refIdRaw: string) => {
+      const refId = refIdRaw.toLowerCase()
+      const resource = resourcesById.get(refId)
+      if (resource !== undefined) {
+        if (bang === '') fileLinks++
+        else if (!attachments.some((a) => a.path === resource.path)) attachments.push(resource)
+        return `${bang}[${label}](${resource.path})`
+      }
+      const targetTitle = noteTitleById.get(refId)
+      if (targetTitle === undefined) return match
+      return label.length > 0 ? `[[${targetTitle}|${label}]]` : `[[${targetTitle}]]`
+    },
+  )
+  return { markdown, attachments, fileLinks }
+}
+
+/**
+ * The task block a to-do note opens with: the note's title behind the
+ * checkbox the importer reads as its state, and its due date as the
+ * `due_date::` line, the form a Markdown export writes a task in.
+ */
+function todoBlock(title: string, todo: NonNullable<RawNote['todo']>): string {
+  const task = `- [${todo.done ? 'x' : ' '}] ${title}`
+  return todo.dueDate === null ? task : `${task}\n  due_date:: ${todo.dueDate}`
 }
 
 /**
@@ -472,7 +575,8 @@ function rewriteNoteBody(
  */
 export function parseJex(archive: Uint8Array): JexParseResult {
   const { itemTexts, resourceBinaries } = splitMembers(readTar(archive))
-  const { rawNotes, folders, resourceMetas, skipped } = classifyItems(itemTexts)
+  const { rawNotes, folders, resourceMetas, tagTitles, noteTagIds, skipped } =
+    classifyItems(itemTexts)
   const resourcesById = indexResources(resourceBinaries, resourceMetas)
 
   // Build note-id → page-title (namespaced) for internal link resolution.
@@ -480,19 +584,25 @@ export function parseJex(archive: Uint8Array): JexParseResult {
   for (const raw of rawNotes) noteTitleById.set(raw.id, pageTitleFor(raw, folders))
 
   // Rewrite each note body's `:/id` refs and collect its attachments.
+  let fileLinks = 0
   const notes: JexNote[] = rawNotes.map((raw) => {
-    const attachments: JexResource[] = []
-    const markdown = rewriteNoteBody(raw.body, resourcesById, noteTitleById, attachments)
+    const body = raw.isHtml ? htmlToMarkdown(raw.body) : imgTagsToMarkdown(raw.body)
+    const rewritten = rewriteNoteBody(body, resourcesById, noteTitleById)
+    fileLinks += rewritten.fileLinks
+    const sections = [raw.todo === null ? '' : todoBlock(raw.title, raw.todo), rewritten.markdown]
+    // A link to a tag the archive lacks (or holds encrypted) names nothing.
+    const tags = (noteTagIds.get(raw.id) ?? []).flatMap((id) => tagTitles.get(id) ?? [])
     return {
       title: pageTitleFor(raw, folders),
-      markdown,
+      markdown: sections.filter((section) => section.length > 0).join('\n\n'),
       createdMs: raw.createdMs,
       updatedMs: raw.updatedMs,
-      attachments,
+      tags,
+      attachments: rewritten.attachments,
     }
   })
 
-  return { notes, skipped }
+  return { notes, skipped, fileLinks }
 }
 
 /**
@@ -512,8 +622,12 @@ function pageTitleFor(
 /**
  * Compose the final Markdown handed to `importMarkdown` for a note:
  *  1. a YAML frontmatter block (`created`/`updated` ISO strings when known,
- *     plus `source: joplin`), and
+ *     the note's `tags`, plus `source: joplin`), and
  *  2. the note body (with `:/id` refs already rewritten).
+ *
+ * Each tag is a double-quoted block-sequence item: the importer strips that
+ * one pair of quotes and reads nothing else, so a name holding a comma, a `#`
+ * or a quote survives whole, and `C++` or `2024` is one tag, not text.
  */
 export function jexNoteToMarkdown(note: JexNote): string {
   const frontmatter: string[] = ['---']
@@ -522,6 +636,9 @@ export function jexNoteToMarkdown(note: JexNote): string {
   }
   if (note.updatedMs !== null) {
     frontmatter.push(`updated: "${new Date(note.updatedMs).toISOString()}"`)
+  }
+  if (note.tags.length > 0) {
+    frontmatter.push('tags:', ...note.tags.map((tag) => `  - "${tag}"`))
   }
   frontmatter.push('source: joplin')
   frontmatter.push('---')

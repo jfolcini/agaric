@@ -1913,6 +1913,35 @@ describe('DataTab', () => {
       })
     })
 
+    it('warns that a linked file that is not an image was not imported', async () => {
+      mockImportMarkdown.mockResolvedValue(okResult('File Note'))
+      const pdfId = 'e'.repeat(32)
+      const note = joplinItem(`File Note\n\nSee [report.pdf](:/${pdfId}).`, {
+        id: NOTE_ID,
+        parent_id: '',
+        type_: '1',
+      })
+      const pdfMeta = joplinItem('report.pdf', {
+        id: pdfId,
+        mime: 'application/pdf',
+        file_extension: 'pdf',
+        type_: '4',
+      })
+      const jex = buildTar([
+        { name: `${NOTE_ID}.md`, data: textEnc.encode(note) },
+        { name: `${pdfId}.md`, data: textEnc.encode(pdfMeta) },
+        { name: `resources/${pdfId}.pdf`, data: new Uint8Array([37, 80, 68, 70]) },
+      ])
+
+      render(<DataTab />)
+      await importJex(jex, 'files.jex')
+
+      await waitFor(() => {
+        expect(screen.getByTestId('import-warnings-heading')).toHaveTextContent('1 warning')
+      })
+      expect(screen.getByText(t('data.importJexFileLinks', { count: 1 }))).toBeInTheDocument()
+    })
+
     it('fires a single error toast (no double) when the archive has no notes', async () => {
       render(<DataTab />)
       // A tar with no `.md` items yields zero notes → one parse-failure toast.
