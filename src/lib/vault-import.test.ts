@@ -19,6 +19,7 @@ import {
   mdFilesToUnits,
   resolveVaultRef,
   sanitizeSpaceNameForFilename,
+  skippedFiles,
   vaultRelativePath,
 } from '@/lib/vault-import'
 
@@ -298,6 +299,232 @@ describe('mdFilesToUnits', () => {
     const [homeUnit] = mdFilesToUnits([home, topic], null)
 
     expect((await homeUnit?.load())?.vaultNotes).toBeNull()
+  })
+})
+
+/** The content and path each unit of a pick loads, in pick order. */
+async function loadAll(files: File[]): Promise<Array<{ path: string; content: string }>> {
+  const units = mdFilesToUnits(files, indexVaultFiles(files))
+  return Promise.all(
+    units.map(async (unit) => {
+      const { path, content } = await unit.load()
+      return { path, content }
+    }),
+  )
+}
+
+// #6032 — a folder pick dropped every note that was not `.md`, saying nothing.
+describe('folder picks of other note formats (#6032)', () => {
+  it('imports `.markdown`, `.mdx` and `.txt` as Markdown, each titled without its extension', async () => {
+    const files = [
+      folderFile(['- one'], 'one.markdown', 'Vault/one.markdown'),
+      folderFile(['- two'], 'two.mdx', 'Vault/two.mdx'),
+      folderFile(['- three'], 'three.txt', 'Vault/sub/three.txt', 'text/plain'),
+      folderFile([new Uint8Array([1])], 'pic.png', 'Vault/pic.png', 'image/png'),
+    ]
+
+    expect(await loadAll(files)).toEqual([
+      { path: 'Vault/one.md', content: '- one' },
+      { path: 'Vault/two.md', content: '- two' },
+      { path: 'Vault/sub/three.md', content: '- three' },
+    ])
+  })
+
+  it('counts the files a pick skips: not a note, an image or a PDF, and not hidden', () => {
+    const files = [
+      folderFile(['- n'], 'note.md', 'Vault/note.md'),
+      folderFile(['x'], 'pic.PNG', 'Vault/pic.PNG', 'image/png'),
+      folderFile(['x'], 'paper.pdf', 'Vault/paper.pdf', 'application/pdf'),
+      folderFile(['x'], 'data.bin', 'Vault/data.bin', ''),
+      folderFile(['x'], 'sheet.csv', 'Vault/sheet.csv', 'text/csv'),
+      folderFile(['{}'], 'app.json', 'Vault/.obsidian/app.json', 'application/json'),
+      folderFile(['x'], '.DS_Store', 'Vault/.DS_Store', ''),
+    ]
+
+    expect(skippedFiles(files)).toEqual({ other: 2, databases: 0 })
+  })
+})
+
+describe('Notion export (#6032)', () => {
+  const PLAN = '0123456789abcdef0123456789abcdef'
+  const OTHER = 'fedcba9876543210fedcba9876543210'
+  const SUB = 'aaaabbbbccccddddeeeeffff00001111'
+
+  const planMd = [
+    '# Plan',
+    '',
+    'Status: In progress',
+    'Due date: 2026-11-01',
+    'Categoría: diseño',
+    '',
+    `See [Other](Other%20${OTHER}.md), [Sub](Plan%20${PLAN}/Sub%20${SUB}.md) and ![pic](Plan%20${PLAN}/pic.png).`,
+    '',
+    '<aside>',
+    '💡 Mind the deadline.',
+    '',
+    'Second line.',
+    '</aside>',
+    '',
+    '<details>',
+    '<summary>More</summary>',
+    '',
+    'Hidden text',
+    '',
+    '</details>',
+  ].join('\n')
+
+  const notionFiles = (): File[] => [
+    folderFile([planMd], `Plan ${PLAN}.md`, `Export/Plan ${PLAN}.md`),
+    folderFile(['# Other\n\nBody'], `Other ${OTHER}.md`, `Export/Other ${OTHER}.md`),
+    folderFile(['# Sub\n\nChild'], `Sub ${SUB}.md`, `Export/Plan ${PLAN}/Sub ${SUB}.md`),
+    folderFile(['Name,Status'], `Tasks ${OTHER}.csv`, `Export/Tasks ${OTHER}.csv`, 'text/csv'),
+    folderFile(
+      ['Name,Status'],
+      `Tasks ${OTHER}_all.csv`,
+      `Export/Tasks ${OTHER}_all.csv`,
+      'text/csv',
+    ),
+  ]
+
+  it('titles each page without its id, and its links, `%20`-encoded or in a folder, name those titles', async () => {
+    const [plan, other, sub] = await loadAll(notionFiles())
+
+    expect([plan?.path, other?.path, sub?.path]).toEqual([
+      'Export/Plan.md',
+      'Export/Other.md',
+      'Export/Plan/Sub.md',
+    ])
+    // The backend resolves `Other.md` and `Plan/Sub.md` against the folder of
+    // `Export/Plan` to the pages `Export/Other` and `Export/Plan/Sub`.
+    expect(plan?.content).toContain(
+      `See [Other](Other.md), [Sub](Plan/Sub.md) and ![pic](Plan%20${PLAN}/pic.png).`,
+    )
+  })
+
+  it('makes the property lines page properties, and a callout of each aside and toggle', async () => {
+    const [plan, other] = await loadAll(notionFiles())
+
+    expect(plan?.content).toBe(
+      [
+        'status:: In progress',
+        'due-date:: 2026-11-01',
+        'categoria:: diseño',
+        '',
+        `See [Other](Other.md), [Sub](Plan/Sub.md) and ![pic](Plan%20${PLAN}/pic.png).`,
+        '',
+        '> [!note] 💡 Mind the deadline.',
+        '>',
+        '> Second line.',
+        '',
+        '> [!note] More',
+        '> Hidden text',
+      ].join('\n'),
+    )
+    // The `# Other` title heading goes; the body has no property lines.
+    expect(other?.content).toBe('Body')
+  })
+
+  it('keeps a heading that is not the title, after the properties, and prose that is not all properties', async () => {
+    const page = folderFile(
+      ['# Plan: Q3\n\nOwner: Ann\n\nNote: this line\nis prose\n'],
+      `Plan ${PLAN}.md`,
+      `Export/Plan ${PLAN}.md`,
+    )
+
+    const [loaded] = await loadAll([page])
+
+    expect(loaded?.content).toBe('owner:: Ann\n\n# Plan: Q3\n\nNote: this line\nis prose\n')
+  })
+
+  it('reports the database tables apart from other skipped files', () => {
+    expect(skippedFiles(notionFiles())).toEqual({ other: 0, databases: 2 })
+  })
+
+  it('leaves a plain folder alone when only some names end in an id', async () => {
+    const aside = '# a\n\nStatus: draft\n\n<aside>\nx\n</aside>\n'
+    const files = [
+      folderFile([aside], 'a.md', 'Vault/a.md'),
+      folderFile(['- b'], 'b.md', 'Vault/b.md'),
+      folderFile(['- odd'], `Odd ${PLAN}.md`, `Vault/Odd ${PLAN}.md`),
+      folderFile(['x,y'], 'table.csv', 'Vault/table.csv', 'text/csv'),
+    ]
+
+    const loaded = await loadAll(files)
+
+    expect(loaded.map((l) => l.path)).toEqual(['Vault/a.md', 'Vault/b.md', `Vault/Odd ${PLAN}.md`])
+    expect(loaded[0]?.content).toBe(aside)
+    expect(skippedFiles(files)).toEqual({ other: 1, databases: 0 })
+  })
+})
+
+describe('Org files (#6032)', () => {
+  const org = [
+    '#+TITLE: Org Tasks',
+    '#+STARTUP: overview',
+    ':PROPERTIES:',
+    ':category: work',
+    ':END:',
+    '',
+    'Intro with [[https://orgmode.org][Org]], [[file:notes/my other.org][Other]] and [[file:pic.png]].',
+    '# a comment',
+    '',
+    '* TODO [#A] Write report',
+    '  SCHEDULED: <2026-11-02 Mon> DEADLINE: <2026-11-05 Thu>',
+    '  :PROPERTIES:',
+    '  :Owner: Alice',
+    '  :END:',
+    '  Body line.',
+    '  - nested item',
+    '    - deeper',
+    '** DONE Gather data',
+    '   CLOSED: [2026-10-30 Fri 10:00]',
+    '   #+BEGIN_SRC python',
+    '   def f():',
+    '       return 1',
+    '   ,* not a headline',
+    '   #+END_SRC',
+    '| a | b |',
+    '|---+---|',
+    '* Plain [[Page][label]] and [[Page]]',
+  ].join('\n')
+
+  it('makes headlines nested blocks with their task syntax, drawers properties and links Markdown', async () => {
+    const [loaded] = await loadAll([folderFile([org], 'tasks.org', 'Vault/tasks.org', '')])
+
+    expect(loaded?.content).toBe(
+      [
+        'category:: work',
+        '#+STARTUP: overview',
+        '',
+        'Intro with [Org](https://orgmode.org), [Other](notes/my%20other.md) and ![](pic.png).',
+        '',
+        '- TODO [#A] Write report',
+        '  SCHEDULED: <2026-11-02 Mon> DEADLINE: <2026-11-05 Thu>',
+        '  Owner:: Alice',
+        '  Body line.',
+        '  - nested item',
+        '    - deeper',
+        '  - DONE Gather data',
+        '    ```python',
+        '    def f():',
+        '        return 1',
+        '    * not a headline',
+        '    ```',
+        '    | a | b |',
+        '    |---+---|',
+        '- Plain [[Page|label]] and [[Page]]',
+        '',
+      ].join('\n'),
+    )
+  })
+
+  it('titles the page by `#+TITLE`, else by its file name', async () => {
+    const titled = folderFile([org], 'tasks.org', 'Vault/sub/tasks.org', '')
+    const untitled = folderFile(['* Only a headline'], 'loose.org', 'Vault/loose.org', '')
+
+    const loaded = await loadAll([titled, untitled])
+
+    expect(loaded.map((l) => l.path)).toEqual(['Vault/sub/Org Tasks.md', 'Vault/loose.md'])
   })
 })
 

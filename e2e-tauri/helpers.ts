@@ -721,6 +721,67 @@ export async function confirmDialog(label: string): Promise<void> {
 }
 
 /**
+ * Pick the folder `folder` holding `files` in the Data tab's folder-pick input
+ * `inputTestId` and wait until the result region reads `summary`.
+ * WebKitWebDriver cannot pick a folder (Send Keys with a directory hands the
+ * input the directory itself as one File), so the input's FileList is set in
+ * the page, each File carrying the `webkitRelativePath` a folder picker gives.
+ */
+export async function importFolder(
+  inputTestId: string,
+  folder: string,
+  files: Record<string, Buffer>,
+  summary: string,
+): Promise<void> {
+  await navigateTo('Settings')
+  const dataTab = $('#settings-tab-data')
+  await dataTab.waitForClickable({ timeout: NAV_TIMEOUT })
+  await dataTab.click()
+  await $('[data-testid="settings-panel-data"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
+  await $(`[data-testid="${inputTestId}"]`).waitForExist({ timeout: ACTION_TIMEOUT })
+  const entries = Object.entries(files).map(([name, bytes]) => ({
+    name,
+    rel: `${folder}/${name}`,
+    b64: bytes.toString('base64'),
+  }))
+  await browser.execute(
+    (testId: string, list: Array<{ name: string; rel: string; b64: string }>) => {
+      const input = document.querySelector<HTMLInputElement>(`[data-testid="${testId}"]`)
+      if (input === null) throw new Error(`no import input ${testId}`)
+      const picked = new DataTransfer()
+      for (const { name, rel, b64 } of list) {
+        const file = new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], name)
+        Object.defineProperty(file, 'webkitRelativePath', { value: rel })
+        picked.items.add(file)
+      }
+      input.files = picked.files
+      if (input.files?.[0]?.webkitRelativePath !== list[0]?.rel) {
+        throw new Error('the input lost the files or their relative paths')
+      }
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+    },
+    inputTestId,
+    entries,
+  )
+  const result = $('[data-testid="import-result"]')
+  await result.waitForDisplayed({ timeout: ACTION_TIMEOUT })
+  let text = ''
+  await browser
+    .waitUntil(
+      async () => {
+        text = await result.getText()
+        return text.includes(summary)
+      },
+      { timeout: ACTION_TIMEOUT },
+    )
+    .catch(() => {
+      throw new Error(
+        `the import result reads ${JSON.stringify(text)}, not ${JSON.stringify(summary)}`,
+      )
+    })
+}
+
+/**
  * Re-open a page from the Pages view by its exact title. The title is the
  * `span.page-browser-item-title` inside the row's `button.page-browser-item`
  * (PageBrowser/PageRow.tsx); the button itself also holds the metadata

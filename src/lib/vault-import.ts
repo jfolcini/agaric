@@ -18,6 +18,8 @@ import type { VaultFile } from '@/lib/bindings'
 import { type EnexNote, enexNoteToMarkdown, sanitizeNoteTitleToFilename } from '@/lib/enex-import'
 import { scanAttachmentRefs } from '@/lib/import-attachments'
 import { type JexNote, jexNoteToMarkdown } from '@/lib/jex-import'
+import { isNotionExport, notionToMarkdown, stripNotionIds } from '@/lib/notion-import'
+import { orgToMarkdown } from '@/lib/org-import'
 
 /**
  * Source format accepted by the `import_bibliography` command (#1454).
@@ -223,38 +225,103 @@ function linkedNotePaths(content: string, notesByName: Map<string, string[]>): s
 }
 
 /**
- * The filename `importMarkdown` gets for `file`. #1446 Part B — a folder/vault
- * pick carries `webkitRelativePath`, so the backend maps `a/b/API.md` →
- * namespace `a/b/API`. A plain file pick has an empty `webkitRelativePath`, so
- * fall back to the basename.
+ * The extensions a pick imports as pages, also the plain picker's `accept`
+ * list: Markdown and text files are read as Markdown, an Org file through
+ * {@link orgToMarkdown}.
  */
-function importPath(file: File): string {
-  return file.webkitRelativePath || file.name
+export const NOTE_EXTENSIONS = ['.md', '.markdown', '.mdx', '.txt', '.org'] as const
+
+/** A file a note may embed and the import can attach: an image or a PDF. */
+const ATTACHMENT_RE = /\.(?:png|jpe?g|gif|webp|svg|bmp|ico|avif|pdf)$/i
+
+/** The extension of `name` among {@link NOTE_EXTENSIONS}, or null. */
+function noteExtension(name: string): string | null {
+  const lower = name.toLowerCase()
+  return NOTE_EXTENSIONS.find((ext) => lower.endsWith(ext)) ?? null
+}
+
+/** The names of a pick's Markdown files, which tell a Notion export. */
+function mdNames(files: readonly File[]): string[] {
+  return files.filter((file) => noteExtension(file.name) === '.md').map((file) => file.name)
 }
 
 /**
- * Markdown/folder/vault producer: one unit per `.md` file, as the plain picker
- * accepts, so a folder pick's other files are attachments only (#5740).
- * Content is read lazily inside `load` (so a cancel avoids reading
- * not-yet-reached files), `path` is the folder-relative path for the #1446
- * namespace mapping (basename fallback for a plain pick), and vault siblings
- * and the notes a file links are collected only when a `vaultIndex` is present.
+ * The files of a pick that import as nothing: neither a note nor a file a
+ * note may embed, nor hidden (`.obsidian/`, `.DS_Store`). A Notion export's
+ * database tables (`.csv`) are counted apart, as `databases`, since each row
+ * of one is also a page of the export.
+ */
+export function skippedFiles(files: readonly File[]): { other: number; databases: number } {
+  const notion = isNotionExport(mdNames(files))
+  let other = 0
+  let databases = 0
+  for (const file of files) {
+    const path = file.webkitRelativePath || file.name
+    if (noteExtension(file.name) !== null || ATTACHMENT_RE.test(file.name)) continue
+    if (/(?:^|\/)\./.test(path)) continue
+    if (notion && file.name.toLowerCase().endsWith('.csv')) databases++
+    else other++
+  }
+  return { other, databases }
+}
+
+/**
+ * The filename `importMarkdown` gets for a note, ending in `.md`, the only
+ * extension the backend takes off a title. #1446 Part B — a folder/vault pick
+ * carries `webkitRelativePath`, so the backend maps `a/b/API.md` → namespace
+ * `a/b/API`. A plain file pick has an empty `webkitRelativePath`, so fall
+ * back to the basename. A Notion export's ids leave every segment.
+ */
+function importPath(file: File, extension: string, notion: boolean): string {
+  const path = file.webkitRelativePath || file.name
+  const md = `${path.slice(0, path.length - extension.length)}.md`
+  return notion ? stripNotionIds(md) : md
+}
+
+/** `path` with its file name replaced by `title`, as an Org `#+TITLE` names the page. */
+function retitle(path: string, title: string): string {
+  return `${path.slice(0, path.lastIndexOf('/') + 1)}${sanitizeNoteTitleToFilename(title)}.md`
+}
+
+/**
+ * Folder/vault/file producer: one unit per note, a file with one of the
+ * {@link NOTE_EXTENSIONS}, so a folder pick's other files are attachments
+ * only (#5740). Content is read lazily inside `load` (so a cancel avoids
+ * reading not-yet-reached files), `path` is the folder-relative path for the
+ * #1446 namespace mapping (basename fallback for a plain pick), and vault
+ * siblings and the notes a file links are collected only when a `vaultIndex`
+ * is present. An Org file is converted, and a Notion export's pages lose the
+ * ids in their names and links (#6032).
  */
 export function mdFilesToUnits(files: File[], vaultIndex: VaultIndex | null): ImportUnit[] {
-  const notes = files.filter((file) => file.name.toLowerCase().endsWith('.md'))
+  const notion = isNotionExport(mdNames(files))
+  const notes = files.flatMap((file) => {
+    const extension = noteExtension(file.name)
+    return extension === null
+      ? []
+      : [{ file, extension, path: importPath(file, extension, notion) }]
+  })
   const notesByName = new Map<string, string[]>()
-  for (const file of notes) {
-    const name = file.name.slice(0, -'.md'.length).toLowerCase()
-    notesByName.set(name, [...(notesByName.get(name) ?? []), importPath(file)])
+  for (const { path } of notes) {
+    const name = basename(path).slice(0, -'.md'.length).toLowerCase()
+    notesByName.set(name, [...(notesByName.get(name) ?? []), path])
   }
-  return notes.map((file) => ({
+  return notes.map(({ file, extension, path: filePath }) => ({
     name: file.name,
     // Count bytes from the file size (known without reading) so a load
     // failure still advances the byte counter, matching the pre-refactor loop.
     bytes: file.size,
     load: async () => {
-      const content = await file.text()
-      const path = importPath(file)
+      const text = await file.text()
+      let content = text
+      let path = filePath
+      if (extension === '.org') {
+        const org = orgToMarkdown(text)
+        content = org.markdown
+        if (org.title !== null && org.title !== '') path = retitle(path, org.title)
+      } else if (notion && extension === '.md') {
+        content = notionToMarkdown(text, basename(path).slice(0, -'.md'.length))
+      }
       // #1925 — on a vault/folder import, ship matched sibling bytes; a
       // single-file import (no index) has no siblings. A folder note always
       // ships its note names, even none: that marks it as a folder's, whose

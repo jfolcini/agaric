@@ -1604,6 +1604,41 @@ describe('DataTab', () => {
       expect(mockImportMarkdown.mock.calls[0]?.[4]).toBeNull()
     })
 
+    // #6032 — a folder pick's other files were dropped with no word.
+    it('says how many files the pick skipped, and a Notion export its database tables', async () => {
+      mockImportMarkdown.mockResolvedValue(okResult)
+
+      render(<DataTab />)
+      const folderInput = screen.getByTestId('import-folder-input') as HTMLInputElement
+      const id = '0123456789abcdef0123456789abcdef'
+      Object.defineProperty(folderInput, 'files', {
+        value: [
+          folderFile(['# Plan'], `Plan ${id}.md`, `Export/Plan ${id}.md`),
+          folderFile(['a,b'], `Tasks ${id}.csv`, `Export/Tasks ${id}.csv`, 'text/csv'),
+          folderFile(['x'], 'deck.pptx', 'Export/deck.pptx', ''),
+          folderFile(['x'], 'song.mp3', 'Export/song.mp3', 'audio/mpeg'),
+        ],
+      })
+
+      await act(async () => {
+        folderInput.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+
+      await waitFor(() => {
+        expect(screen.getByTestId('import-warnings-heading')).toHaveTextContent('2 warnings')
+      })
+      expect(screen.getByText(t('data.importFolderSkipped', { count: 2 }))).toBeInTheDocument()
+      expect(screen.getByText(t('data.importNotionDatabases', { count: 1 }))).toBeInTheDocument()
+    })
+
+    it('lets the files picker choose every note format a folder imports', () => {
+      render(<DataTab />)
+      expect(screen.getByTestId('import-file-input')).toHaveAttribute(
+        'accept',
+        '.md,.markdown,.mdx,.txt,.org',
+      )
+    })
+
     it('passes null vaultFiles for a single-file (non-folder) import', async () => {
       mockImportMarkdown.mockResolvedValueOnce(okResult)
 

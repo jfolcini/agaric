@@ -32,11 +32,13 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import {
   type ImportUnit,
+  NOTE_EXTENSIONS,
   enexNotesToUnits,
   importErrorReason,
   indexVaultFiles,
   jexNotesToUnits,
   mdFilesToUnits,
+  skippedFiles,
 } from '@/lib/vault-import'
 import { useSpaceStore } from '@/stores/space'
 
@@ -126,6 +128,15 @@ export function ImportSection(): React.ReactElement {
       )
       const vaultIndex = isVaultImport ? indexVaultFiles(fileArray) : null
       const units = mdFilesToUnits(fileArray, vaultIndex)
+      // A file that is no note and no attachment is said, not dropped (#6032).
+      const skipped = skippedFiles(fileArray)
+      const preWarnings: string[] = []
+      if (skipped.other > 0) {
+        preWarnings.push(t('data.importFolderSkipped', { count: skipped.other }))
+      }
+      if (skipped.databases > 0) {
+        preWarnings.push(t('data.importNotionDatabases', { count: skipped.databases }))
+      }
 
       const { totalBlocks, succeededFiles, failedFiles, cancelled, navTitle } = await run({
         event: e,
@@ -133,6 +144,7 @@ export function ImportSection(): React.ReactElement {
         units,
         notes: false,
         loggerFailLabel: 'file import failed',
+        initialWarnings: preWarnings,
       })
 
       const viewAction =
@@ -388,7 +400,7 @@ export function ImportSection(): React.ReactElement {
           <SettingRow label={t('data.importFilesLabel')}>
             <input
               type="file"
-              accept=".md"
+              accept={NOTE_EXTENSIONS.join(',')}
               multiple
               ref={fileInputRef}
               className="hidden"

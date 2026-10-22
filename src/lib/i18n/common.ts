@@ -357,7 +357,8 @@ export const common: Record<string, string> = {
   'dialog.cancel': 'Cancel',
   'dialog.confirm': 'Confirm',
   'data.importTitle': 'Import',
-  'data.importDesc': 'Import Logseq, Obsidian, or Markdown files as pages.',
+  'data.importDesc':
+    'Import Markdown, text and Org files, Logseq graphs, Obsidian vaults, Notion exports, and Evernote and Joplin notes as pages.',
   'data.importButton': 'Choose files',
   // #1927 — second affordance: a `webkitdirectory` picker so a whole
   // folder/vault can be imported (folder hierarchy → page namespace).
@@ -389,10 +390,19 @@ export const common: Record<string, string> = {
     'Did not import {{count}} linked, not embedded, file; its link stays in the note.',
   'data.importJexFileLinks_other':
     'Did not import {{count}} linked, not embedded, files; their links stay in the notes.',
+  // A folder pick's file that is neither a note nor an image or PDF a note may
+  // embed (#6032).
+  'data.importFolderSkipped_one': 'Skipped {{count}} file that is not a note, an image or a PDF.',
+  'data.importFolderSkipped_other': 'Skipped {{count}} files that are not notes, images or PDFs.',
+  // A Notion export's database table; its rows are pages of the export too.
+  'data.importNotionDatabases_one':
+    'Skipped {{count}} Notion database table (.csv); its rows import as pages.',
+  'data.importNotionDatabases_other':
+    'Skipped {{count}} Notion database tables (.csv); their rows import as pages.',
   // #1454 — fifth affordance: import a BibTeX (`.bib`) or CSL-JSON
   // (`.json`) bibliography. One reference page per entry.
   'data.importBibliographyButton': 'Import bibliography (.bib/.json)',
-  'data.importFilesLabel': 'Markdown files',
+  'data.importFilesLabel': 'Markdown, text or Org files',
   'data.importFolderLabel': 'Folder',
   'data.importObsidianLabel': 'Obsidian vault',
   'data.importEnexLabel': 'Evernote',
