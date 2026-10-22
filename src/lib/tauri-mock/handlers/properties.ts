@@ -29,6 +29,7 @@ import {
   readActiveSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
 import { resolveRefValue } from '@/lib/tauri-mock/names'
+import { valueFieldsOf } from '@/lib/tauri-mock/revert'
 import {
   appSettings,
   blocks,
@@ -602,10 +603,13 @@ export const propertiesHandlers = {
       if (!b || b['deleted_at']) continue
       const fromState = (b['todo_state'] as string | null) ?? null
       b['todo_state'] = newState
+      // `prior` as `set_property_in_tx_with_declaration` records it, which the
+      // undo restores: the value the set overwrote, every slot null for none.
       pushOp('set_property', {
         block_id: id,
         key: 'todo_state',
         value_text: newState,
+        prior: valueFieldsOf({ value_text: fromState }),
       })
       writeTaskStampTransitions(id, fromState, newState)
       updated++

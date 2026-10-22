@@ -847,6 +847,123 @@ describe('PageBlockMenu: a selection of several blocks', () => {
     )
   })
 
+  describe('setting one task state, as block mode’s batch toolbar does', () => {
+    const tree: Row[] = [
+      [0, 'a'],
+      [0, 'b'],
+      [1, 'c'],
+      [0, 'd'],
+      [1, 'e'],
+    ]
+    const states = (view: Opened) => view.ids.map((id) => backendBlock(id).todo_state)
+
+    /** Page mode on `tree`, `c` DONE and `e` TODO, with `b` to `d` selected and the menu open on `c`. */
+    async function openOnSelection(): Promise<{ view: Opened; menu: HTMLElement }> {
+      const view = await open(tree)
+      dispatch('set_todo_state', { blockId: view.ids[2], state: 'DONE' })
+      dispatch('set_todo_state', { blockId: view.ids[4], state: 'TODO' })
+      await act(async () => {
+        await view.store.getState().load()
+      })
+      selectBlocks(view.editor, 1, 3)
+      const menu = await rightClick(view, view.ids[2] as string)
+      return { view, menu }
+    }
+
+    it('sets it on every selected block, not on the blocks under them', async () => {
+      const { view, menu } = await openOnSelection()
+      expect(await axe(menu)).toHaveNoViolations()
+
+      await choose(view, t('contextMenu.setTodoSelected', { state: 'DOING' }))
+
+      await waitFor(() => expect(states(view)).toEqual([null, 'DOING', 'DOING', 'DOING', 'TODO']))
+      // One step for the page's undo, as block mode's toolbar records it.
+      expect(useUndoStore.getState().pages.get(view.pageId)?.undoStack).toHaveLength(1)
+    })
+
+    it('clears it on every selected block', async () => {
+      const { view } = await openOnSelection()
+
+      await choose(view, t('contextMenu.clearTodoSelected'))
+
+      await waitFor(() => expect(states(view)).toEqual([null, null, null, null, 'TODO']))
+    })
+
+    it('one undo gives every selected block back the state it had', async () => {
+      // The setup's ops a minute before the row's, out of the undo's group.
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+      const { view } = await openOnSelection()
+      vi.setSystemTime(new Date('2026-01-01T00:01:00Z'))
+      await choose(view, t('contextMenu.setTodoSelected', { state: 'DOING' }))
+      await waitFor(() => expect(states(view)).toEqual([null, 'DOING', 'DOING', 'DOING', 'TODO']))
+
+      await act(async () => {
+        await useUndoStore.getState().undo(view.pageId)
+      })
+
+      expect(states(view)).toEqual([null, null, 'DONE', null, 'TODO'])
+    })
+
+    it('tells the user when the command is refused, and shows the states the backend kept', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+        if (cmd === 'set_todo_state_batch') throw new Error('disk full')
+        return structuredClone(dispatch(cmd, args))
+      })
+      const { view } = await openOnSelection()
+
+      await choose(view, t('contextMenu.setTodoSelected', { state: 'DONE' }))
+
+      const failed = t('blockTree.updateFailedMessage', { failCount: 3, totalCount: 3 })
+      await waitFor(() =>
+        expect(vi.mocked(toast.error).mock.calls.map(([message]) => message)).toContain(failed),
+      )
+      expect(states(view)).toEqual([null, null, 'DONE', null, 'TODO'])
+      await waitFor(() =>
+        expect(view.ids.map((id) => view.store.getState().blocksById.get(id)?.todo_state)).toEqual([
+          null,
+          null,
+          'DONE',
+          null,
+          'TODO',
+        ]),
+      )
+    })
+
+    it('waits for a save in flight, and keeps what it saves', async () => {
+      const { view } = await openOnSelection()
+      let release = (): void => {}
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+        if (cmd === 'edit_block') await gate
+        return structuredClone(dispatch(cmd, args))
+      })
+      act(() => {
+        view.editor.view.dispatch(view.editor.state.tr.insertText('!', 8))
+      })
+      const saving = view.handle.current?.flush()
+
+      fireEvent.click(row(t('contextMenu.setTodoSelected', { state: 'DONE' })))
+      expect(states(view)).toEqual([null, null, 'DONE', null, 'TODO'])
+      release()
+      await act(async () => {
+        await saving
+      })
+
+      await waitFor(() => expect(states(view)).toEqual([null, 'DONE', 'DONE', 'DONE', 'TODO']))
+      expect(backendBlock(view.ids[1] as string).content).toBe('b!')
+    })
+
+    it('is not offered on one block', async () => {
+      const view = await open(tree)
+      await rightClick(view, view.ids[2] as string)
+
+      expect(maybeRow(t('contextMenu.clearTodoSelected'))).toBeNull()
+    })
+  })
+
   it('indents the selection once, its top blocks, in their order', async () => {
     const view = await open([
       [0, 'x'],

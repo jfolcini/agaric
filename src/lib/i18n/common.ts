@@ -210,6 +210,8 @@ export const common: Record<string, string> = {
   'contextMenu.delete': 'Delete',
   'contextMenu.deleteSelected': 'Delete {{count}} selected',
   'contextMenu.cycleTodoSelected': 'Cycle task state',
+  'contextMenu.setTodoSelected': 'Set task state to {{state}}',
+  'contextMenu.clearTodoSelected': 'Clear task state',
   'contextMenu.cyclePrioritySelected': 'Cycle priority',
   'contextMenu.indent': 'Indent',
   'contextMenu.dedent': 'Dedent',

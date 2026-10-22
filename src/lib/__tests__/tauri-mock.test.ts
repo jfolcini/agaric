@@ -26,7 +26,7 @@ vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 
-import type { McpAgent } from '@/lib/bindings'
+import type { BlockRow, McpAgent, UndoResult } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { clearMockErrors, injectMockError, resetMock, SEED_IDS, setupMock } from '@/lib/tauri-mock'
 import { deriveLinkEdges } from '@/lib/tauri-mock/link-scan'
@@ -1070,6 +1070,32 @@ describe('redo_page_op', () => {
         undoSeq: undoResult.reversed_op.seq,
       }),
     ).toThrow(/not produced by undo/)
+  })
+})
+
+describe('set_todo_state_batch undo', () => {
+  it('gives each block back the state it held, a redo sets it again, and an undo again takes it back', () => {
+    const [held, none] = [SEED_IDS.BLOCK_GS_1, SEED_IDS.BLOCK_GS_2]
+    invoke('set_todo_state', { blockId: held, state: 'TODO' })
+    const before = opLog.length
+    invoke('set_todo_state_batch', { blockIds: [held, none], state: 'DOING' })
+    const refs = opLog
+      .slice(before)
+      .filter((o) => o.op_type === 'set_property' && o.payload.includes('"todo_state"'))
+      .map(({ device_id, seq }) => ({ device_id, seq }))
+    const states = () =>
+      [held, none].map((id) => (invoke('get_block', { blockId: id }) as BlockRow).todo_state)
+
+    const undone = invoke('revert_ops', { ops: refs }) as UndoResult[]
+    expect(states()).toEqual(['TODO', null])
+    // As `reverse_set_property`: a set back to a held value, a delete where there was none.
+    expect(undone.map((r) => r.new_op_type)).toEqual(['delete_property', 'set_property'])
+
+    const redone = invoke('revert_ops', { ops: undone.map((r) => r.new_op_ref) }) as UndoResult[]
+    expect(states()).toEqual(['DOING', 'DOING'])
+
+    invoke('revert_ops', { ops: redone.map((r) => r.new_op_ref) })
+    expect(states()).toEqual(['TODO', null])
   })
 })
 

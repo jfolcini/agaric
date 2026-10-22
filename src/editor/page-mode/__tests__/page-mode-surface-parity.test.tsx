@@ -94,6 +94,7 @@ const ROW_ACTION: Record<BlockMenuActionId, keyof BlockActions | null> = {
   copySubtreeContent: null,
   copySelectionContent: null,
   cycleTodo: 'onToggleTodo',
+  setTodo: 'onBatchSetTodo',
   cyclePriority: 'onTogglePriority',
   turnInto: 'onTurnInto',
   moveArrange: null,
@@ -234,6 +235,7 @@ describe('the block menu', () => {
     const actions = {
       current: {
         cycle: vi.fn(),
+        setTodo: vi.fn(),
         cyclePriority: vi.fn(),
         openPropertyDrawer: vi.fn(),
         openHistory: vi.fn(),

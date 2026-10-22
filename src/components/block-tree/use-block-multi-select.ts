@@ -56,6 +56,50 @@ export interface UseBlockMultiSelectReturn {
   handleBatchDelete: () => Promise<void>
 }
 
+/**
+ * Set task state `state` on every block of `ids` in one IPC, as the batch
+ * toolbar does in block mode and the block menu's bulk form in page mode,
+ * then say how many it set or failed to.
+ */
+export async function setTodoStateOnBlocks(
+  pageStore: StoreApi<PageBlockState>,
+  rootParentId: string | null,
+  ids: string[],
+  state: string | null,
+  t: TFunction,
+): Promise<void> {
+  const idSet = new Set(ids)
+  // Optimistic FE update — flip the badge instantly while the
+  // single-IPC batch round-trips. On failure the catch below
+  // surfaces an error toast; the next page load will re-read
+  // the truthful state from the backend.
+  pageStore.setState((s) => ({
+    blocks: s.blocks.map((b) => (idSet.has(b.id) ? { ...b, todo_state: state } : b)),
+  }))
+  // One IPC for the whole batch (was N).
+  // Backend wraps the per-block op_log appends + materialised
+  // `blocks.todo_state` writes in a single IMMEDIATE tx.
+  let successCount = 0
+  let failCount = 0
+  try {
+    successCount = unwrap(await commands.setTodoStateBatch(ids, state))
+    // Treat any id we asked for that the backend silently
+    // skipped (missing / already-deleted) as a "fail" for the
+    // toast counter so the user sees an honest summary.
+    failCount = Math.max(0, ids.length - successCount)
+  } catch {
+    failCount = ids.length
+  }
+  if (successCount > 0 && rootParentId) {
+    useUndoStore.getState().onNewAction(rootParentId)
+  }
+  if (failCount > 0) {
+    notify.error(t('blockTree.updateFailedMessage', { failCount, totalCount: ids.length }))
+  } else {
+    notify.success(t('blockTree.setStateMessage', { successCount, state: state ?? 'none' }))
+  }
+}
+
 export function useBlockMultiSelect({
   selectedBlockIds,
   clearSelected,
@@ -79,48 +123,8 @@ export function useBlockMultiSelect({
       batchInProgressRef.current = true
       setBatchInProgress(true)
       try {
-        const ids = selectedBlockIds
-        const idSet = new Set(ids)
-        // Optimistic FE update — flip the badge instantly while the
-        // single-IPC batch round-trips. On failure the catch below
-        // surfaces an error toast; the next page load will re-read
-        // the truthful state from the backend.
-        pageStore.setState((s) => ({
-          blocks: s.blocks.map((b) => (idSet.has(b.id) ? { ...b, todo_state: state } : b)),
-        }))
-        // One IPC for the whole batch (was N).
-        // Backend wraps the per-block op_log appends + materialised
-        // `blocks.todo_state` writes in a single IMMEDIATE tx.
-        let successCount = 0
-        let failCount = 0
-        try {
-          successCount = unwrap(await commands.setTodoStateBatch(ids, state))
-          // Treat any id we asked for that the backend silently
-          // skipped (missing / already-deleted) as a "fail" for the
-          // toast counter so the user sees an honest summary.
-          failCount = Math.max(0, ids.length - successCount)
-        } catch {
-          failCount = ids.length
-        }
-        if (successCount > 0 && rootParentId) {
-          useUndoStore.getState().onNewAction(rootParentId)
-        }
+        await setTodoStateOnBlocks(pageStore, rootParentId, selectedBlockIds, state, t)
         clearSelected()
-        if (failCount > 0) {
-          notify.error(
-            t('blockTree.updateFailedMessage', {
-              failCount,
-              totalCount: ids.length,
-            }),
-          )
-        } else {
-          notify.success(
-            t('blockTree.setStateMessage', {
-              successCount,
-              state: state ?? 'none',
-            }),
-          )
-        }
       } finally {
         batchInProgressRef.current = false
         setBatchInProgress(false)

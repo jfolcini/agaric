@@ -26,6 +26,7 @@ export const BLOCK_MENU_ACTION_IDS = [
   'copySubtreeContent',
   'copySelectionContent',
   'cycleTodo',
+  'setTodo',
   'cyclePriority',
   'turnInto',
   'moveArrange',
@@ -66,7 +67,7 @@ export interface BlockContextMenuProps {
    * The action keys consumed by this menu are: `onOpenLinkInNewTab`, `onDelete`, `onIndent`,
    * `onDedent`, `onToggleTodo`, `onTogglePriority`, `onToggleCollapse`,
    * `onMoveUp`, `onMoveDown`, `onMerge`, `onDuplicate`, `onShowHistory`,
-   * `onShowProperties`, `onZoomIn`, `onTurnInto`, and `onBatchDelete`.
+   * `onShowProperties`, `onZoomIn`, `onTurnInto`, `onBatchDelete`, and `onBatchSetTodo`.
    */
   actions: BlockActions
   hasChildren?: boolean | undefined

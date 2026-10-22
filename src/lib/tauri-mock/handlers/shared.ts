@@ -33,7 +33,12 @@ import {
   linkTokenRe,
   scanLinkTargets,
 } from '@/lib/tauri-mock/link-scan'
-import { applyRevertForOp, reconstructAddAttachment } from '@/lib/tauri-mock/revert'
+import {
+  applyRevertForOp,
+  priorIsHeld,
+  reconstructAddAttachment,
+  valueFieldsOf,
+} from '@/lib/tauri-mock/revert'
 import {
   attachments,
   blocks,
@@ -1883,9 +1888,9 @@ export type TypedHandlers = {
 export const MOCK_LOCAL_DEVICE = 'mock-device'
 
 /**
- * Did `(block_id, key)` hold a value immediately BEFORE this op? A value the
- * op recorded (`from_value`) says yes, as `prior` does for `reverse_set_property`
- * (#6014). Otherwise mirror `find_prior_property`: scan the op log backwards for
+ * Did `(block_id, key)` hold a value immediately BEFORE this op? A `prior` the
+ * op recorded answers, as it does for `reverse_set_property` (#6014), and a
+ * `from_value` says yes. Otherwise mirror `find_prior_property`: scan the op log backwards for
  * the nearest earlier `set_property` / `delete_property` on the same pair — a
  * set left a value, a delete left none, and nothing at all left none.
  *
@@ -1899,6 +1904,8 @@ function hasPriorPropertyValue(op: MockOpLogEntry): boolean {
   let blockId: unknown
   try {
     const payload = JSON.parse(op.payload) as Record<string, unknown>
+    const prior = payload['prior'] as Record<string, unknown> | undefined
+    if (prior !== undefined) return priorIsHeld(prior)
     if (payload['from_value'] != null) return true
     key = payload['key']
     blockId = payload['block_id']
@@ -2024,6 +2031,31 @@ function syntheticDeleteAttachment(addPayload: Record<string, unknown>): Record<
 }
 
 /**
+ * The forward payload of a `set_property` or `delete_property` op's reverse.
+ *
+ * Over the `prior` the backend records (#6014), as `reverse_set_property` and
+ * `reverse_delete_property` build it: a set back to a held prior, else a
+ * delete, carrying the value it undoes as its own `prior` so reverting it (a
+ * redo) applies that value again.
+ *
+ * Otherwise in the mock's own `from_value` form, which {@link reversePayloadFor} describes.
+ */
+function propertyReversePayload(
+  opType: string,
+  p: Record<string, unknown>,
+): Record<string, unknown> {
+  const blockId = p['block_id']
+  const key = p['key'] as string
+  const prior = p['prior'] as Record<string, unknown> | undefined
+  if (prior !== undefined) {
+    const undone = opType === 'set_property' ? valueFieldsOf(p) : valueFieldsOf({})
+    return { block_id: blockId, key, ...(priorIsHeld(prior) ? prior : {}), prior: undone }
+  }
+  if (opType === 'delete_property') return { block_id: blockId, key, from_value: null }
+  return { block_id: blockId, key, from_value: currentPropertyValue(blockId as string, key) }
+}
+
+/**
  * #4870 — the FORWARD payload of {@link reverseOpTypeFor}`(target)`:
  * what the backend's reverse row carries, in place of the bookkeeping stash
  * (`{ reversed }` / `{ re_applied }` / `{ reverted }`) the mock used to write.
@@ -2070,12 +2102,9 @@ export function reversePayloadFor(target: MockOpLogEntry): Record<string, unknow
     case 'set_scheduled_date': {
       return { block_id: blockId, date: p['from_date'] ?? null, from_date: p['date'] ?? null }
     }
-    case 'set_property': {
-      const key = p['key'] as string
-      return { block_id: blockId, key, from_value: currentPropertyValue(blockId as string, key) }
-    }
+    case 'set_property':
     case 'delete_property': {
-      return { block_id: blockId, key: p['key'], from_value: null }
+      return propertyReversePayload(target.op_type, p)
     }
     // #5057 — the symmetric swap `reverse_rename_attachment` computes. Without
     // it this fell to `default:`, which reads `block_id` — absent on an

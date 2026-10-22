@@ -72,6 +72,8 @@ export interface BlockActions {
    * multi-selection so "Delete N selected" applies to the whole selection.
    */
   onBatchDelete?: (() => void) | undefined
+  /** Set one task state (none to clear) on the whole selection, as block mode's batch toolbar does. */
+  onBatchSetTodo?: ((state: string | null) => void | Promise<void>) | undefined
 }
 
 const BlockActionsContext = createContext<BlockActions | null>(null)
