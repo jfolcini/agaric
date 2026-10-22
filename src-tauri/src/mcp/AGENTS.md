@@ -77,7 +77,7 @@ A read tool that needs to write belongs in `tools_rw.rs`; do not add a mutation 
 
 ### Space scoping
 
-Every tool requires `space_id` except `list_spaces` and `list_property_defs` (property definitions are vault-wide), and confines the call to that space: listings return its rows, and a tool that addresses a block or page by id rejects a target in another space (`validate_block_in_space`, or `get_page_inner` for `get_page`). An agent sees and uses only its spaces; this guards against mistakes and is not isolation: rendered Markdown still names linked pages in other spaces. The accepted gaps are listed in `docs/features/agent-access.md` and pinned by `agents/tests.rs`'s `gap_*` tests.
+Every tool requires `space_id` except `list_spaces` (`list_property_defs` takes one too: property definitions are per space, and an agent's space limits apply), and confines the call to that space: listings return its rows, and a tool that addresses a block or page by id rejects a target in another space (`validate_block_in_space`, or `get_page_inner` for `get_page`). An agent sees and uses only its spaces; this guards against mistakes and is not isolation: rendered Markdown still names linked pages in other spaces. The accepted gaps are listed in `docs/features/agent-access.md` and pinned by `agents/tests.rs`'s `gap_*` tests.
 
 An RW tool checks inside its own write transaction through `with_space_guard` (`handler_utils.rs`), never a separate transaction before it. The guard fails open unless the write opens a `CommandTx` in the same task, so a new guarded tool joins `each_write_tool_opens_one_command_transaction_5402`.
 
