@@ -12,9 +12,13 @@
  * (D10), else the page before the `#`: typing `[[Page#Heading]]` never creates
  * `Page#Heading` (N6). A page titled with the text up to a later `|`, or with
  * all of it, wins over the first `|` (D10): `[[A | B]]` links `A | B`.
+ *
+ * Typed as `![[` (Obsidian's embed syntax) in an otherwise empty paragraph,
+ * the same popup writes the pick as the embed `{{embed [[ULID]]}}` rather
+ * than as a link.
  */
 
-import { type Editor, Extension, InputRule } from '@tiptap/core'
+import { type Content, type Editor, Extension, InputRule } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 
 import {
@@ -24,6 +28,7 @@ import {
 } from '@/editor/extensions/picker-plugin'
 import { storableLinkLabel } from '@/editor/markdown-common'
 import type { PickerItem } from '@/editor/SuggestionList'
+import { EMBED_TOKEN_PREFIX } from '@/lib/embed-token'
 import { t } from '@/lib/i18n'
 import { linkBodyReadings } from '@/lib/name-tokens'
 
@@ -127,6 +132,15 @@ export function blockLinkNode(
   return stored && stored !== title
     ? { type: 'block_link', attrs: { id, label: stored } }
     : { type: 'block_link', attrs: { id } }
+}
+
+/** The embed of page `id`, `{{embed [[id]]}}`; the link stays a node so it serializes bare. */
+function pageEmbedContent(id: string): Content {
+  return [
+    { type: 'text', text: EMBED_TOKEN_PREFIX },
+    { type: 'block_link', attrs: { id } },
+    { type: 'text', text: '}}' },
+  ]
 }
 
 /** The link body typed after the popup's `[[` trigger over `range`, or `null` when unreadable. */
@@ -269,6 +283,16 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
           const item = props as PickerItem
           const body = typedBodyAt(editor, range)
           const typed = body === null ? null : parseTypedLink(body)
+          // `![[` embeds only when the embed will be its paragraph's whole text,
+          // the one place an embed renders; elsewhere (`Hello![[`, `\![[`) the
+          // `!` stays text before a link. An embed takes the `!` with it and
+          // keeps no label, which `{{embed [[ULID]]}}` has no room for.
+          const { doc } = editor.state
+          const embed =
+            doc.textBetween(range.from - 1, range.from) === '!' &&
+            doc.resolve(range.from - 1).parentOffset === 0 &&
+            range.to === doc.resolve(range.to).end()
+          const replaced = embed ? { from: range.from - 1, to: range.to } : range
           if (item.isCreate && extensionOptions.onCreate) {
             // Shared create path: deletes the trigger range synchronously
             // (closing the popup and the double-create window) and tracks
@@ -276,13 +300,21 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
             const label = typed?.base ?? item.label
             createPickerTokenFromCommand({
               editor,
-              range,
+              range: replaced,
               label,
               onCreate: extensionOptions.onCreate,
-              tokenFor: (id) => blockLinkNode(id, typed?.label, label),
+              tokenFor: (id) =>
+                embed ? pageEmbedContent(id) : blockLinkNode(id, typed?.label, label),
               loggerComponent: 'BlockLinkPicker',
               errorMessage: 'Failed to create page for block link',
             })
+          } else if (embed) {
+            editor
+              .chain()
+              .focus()
+              .deleteRange(replaced)
+              .insertContent(pageEmbedContent(item.id))
+              .run()
           } else {
             const label = body === null ? undefined : pickedLinkLabel(item, body)
             editor.chain().focus().deleteRange(range).insertBlockLink(item.id, label).run()

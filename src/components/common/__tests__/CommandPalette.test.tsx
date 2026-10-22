@@ -2127,3 +2127,48 @@ describe('CommandPalette — instant local rendering (#2853)', () => {
     }
   })
 })
+
+// #5691 — Obsidian's quick switcher: a query nothing matches offers to create
+// the page, through the New page dialog every new-page entry point opens.
+describe('CommandPalette — Create page when nothing matches', () => {
+  async function typeQuery(query: string): Promise<void> {
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.change(screen.getByTestId('command-palette-input'), { target: { value: query } })
+    await screen.findByTestId('palette-no-results')
+  }
+
+  it('closes the palette and opens the New page dialog holding the query', async () => {
+    const opened: string[] = []
+    const listener = (e: Event) => opened.push((e as CustomEvent<string>).detail)
+    window.addEventListener(OPEN_NEW_PAGE_DIALOG_EVENT, listener)
+    try {
+      await typeQuery('  Roadmap 2027 ')
+      const row = screen.getByRole('option', {
+        name: t('pageBrowser.createPageNamed', { name: 'Roadmap 2027' }),
+      })
+      fireEvent.click(row)
+    } finally {
+      window.removeEventListener(OPEN_NEW_PAGE_DIALOG_EVENT, listener)
+    }
+    expect(opened).toEqual(['Roadmap 2027'])
+    expect(useCommandPaletteStore.getState().open).toBe(false)
+  })
+
+  it('offers no Create page while the query matches something', async () => {
+    mockedSearchBlocksPartitioned.mockResolvedValue(
+      partitionedResp([makePageRow('PAGE_R', 'Roadmap')], []),
+    )
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.change(screen.getByTestId('command-palette-input'), { target: { value: 'Roadmap' } })
+    await screen.findByTestId('palette-page-header-PAGE_R')
+    expect(screen.queryByTestId('palette-create-page')).toBeNull()
+  })
+
+  it('has no a11y violations with the Create page row shown', async () => {
+    await typeQuery('Roadmap 2027')
+    expect(screen.getByTestId('palette-create-page')).toBeInTheDocument()
+    expect(await axe(screen.getByTestId('command-palette'))).toHaveNoViolations()
+  })
+})

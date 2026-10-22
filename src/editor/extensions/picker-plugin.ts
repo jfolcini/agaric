@@ -12,7 +12,7 @@
  * existing behaviour byte-equivalently.
  */
 
-import type { Editor } from '@tiptap/core'
+import type { Content, Editor } from '@tiptap/core'
 import type { PluginKey, Transaction } from '@tiptap/pm/state'
 import { Suggestion, type SuggestionOptions } from '@tiptap/suggestion'
 
@@ -326,8 +326,8 @@ export interface CreatePickerTokenFromCommandOptions {
   label: string
   /** Create IPC — resolves the new entity's id. */
   onCreate: (label: string) => Promise<string>
-  /** Builds the TipTap content descriptor for the created id. */
-  tokenFor: (id: string) => Record<string, unknown>
+  /** Builds the TipTap content for the created id. */
+  tokenFor: (id: string) => Content
   /** Component name passed to the logger (e.g. `'AtTagPicker'`). */
   loggerComponent: string
   /** Error message used when `onCreate` rejects. */
