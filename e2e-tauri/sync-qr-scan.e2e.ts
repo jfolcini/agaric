@@ -33,14 +33,21 @@ async function pointCameraAtQr(svg: string): Promise<void> {
     canvas.height = side
     const context = canvas.getContext('2d')
     if (context === null) throw new Error('no 2d canvas')
+    // Each repaint moves the QR a pixel, cycling through one module (the backend
+    // draws 8 units per module): html5-qrcode samples the frame down to a few
+    // pixels per module, and some payloads never decode from a frame that holds
+    // still, which a hand-held camera never does.
+    let jitter = 0
     const draw = () => {
       context.fillStyle = '#fff'
       context.fillRect(0, 0, side, side)
       context.fillStyle = '#000'
+      const origin = offset + jitter
       for (const square of markup.matchAll(/M(\d+) (\d+)h(\d+)v(\d+)H\d+V\d+/g)) {
         const [left = 0, top = 0, w = 0, h = 0] = square.slice(1).map(Number)
-        context.fillRect(offset + left * scale, offset + top * scale, w * scale, h * scale)
+        context.fillRect(origin + left * scale, origin + top * scale, w * scale, h * scale)
       }
+      jitter = (jitter + 1) % 8
     }
     // A canvas stream emits a frame only when the canvas changes.
     draw()
