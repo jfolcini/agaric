@@ -3,6 +3,8 @@ import test from 'node:test'
 
 import { scanLogcat } from './android-launch-smoke.mjs'
 
+const APP_PID = '4100'
+
 const START =
   '10-22 04:00:01.000  500  520 I ActivityTaskManager: START u0 {cmp=com.agaric.app/.MainActivity} from uid 2000'
 
@@ -20,7 +22,7 @@ const HEALTHY = [
 ].join('\n')
 
 void test('a 0.15.0-style abort log is reported with both the panic and the SIGABRT', () => {
-  const { verified, findings } = scanLogcat(CRASH_0_15_0)
+  const { verified, findings } = scanLogcat(CRASH_0_15_0, APP_PID)
   assert.equal(verified, true)
   assert.deepEqual(
     findings.map((f) => f.name),
@@ -35,21 +37,31 @@ void test('a Java crash is reported as FATAL EXCEPTION', () => {
     '10-22 04:00:02.100 4100 4100 E AndroidRuntime: Process: com.agaric.app, PID: 4100',
   ].join('\n')
   assert.deepEqual(
-    scanLogcat(log).findings.map((f) => f.name),
+    scanLogcat(log, APP_PID).findings.map((f) => f.name),
     ['FATAL EXCEPTION'],
   )
 })
 
 void test('a healthy launch log has no findings and is verified', () => {
-  assert.deepEqual(scanLogcat(HEALTHY), { verified: true, findings: [] })
+  assert.deepEqual(scanLogcat(HEALTHY, APP_PID), { verified: true, findings: [] })
 })
 
 void test('"panicked" outside the Rust tag is not a Rust panic', () => {
   const log = `${START}\n10-22 04:00:02.100 900 900 I SomeOtherTag: nobody panicked here`
-  assert.deepEqual(scanLogcat(log).findings, [])
+  assert.deepEqual(scanLogcat(log, APP_PID).findings, [])
 })
 
 void test('a log that never names the app is unverified, not clean', () => {
   assert.equal(scanLogcat('').verified, false)
   assert.equal(scanLogcat('10-22 04:00:01.000 1 1 I init: booted').verified, false)
+})
+
+void test('a crash in another process during the wait is not the app crashing', () => {
+  const log = [
+    HEALTHY,
+    '10-22 04:00:04.000  900  900 F libc    : Fatal signal 6 (SIGABRT), code -1 (SI_QUEUE) in tid 900 (system_server), pid 900 (system_server)',
+    '10-22 04:00:04.100  950  950 E AndroidRuntime: FATAL EXCEPTION: main',
+    '10-22 04:00:04.100  950  950 E AndroidRuntime: Process: com.android.systemui, PID: 950',
+  ].join('\n')
+  assert.deepEqual(scanLogcat(log, APP_PID).findings, [])
 })

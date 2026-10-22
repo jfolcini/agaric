@@ -35,19 +35,29 @@ const CRASH_SHAPES = [
   },
 ]
 
+/** The pid column of a `logcat -v threadtime` line, or '' when the line has none. */
+function linePid(line) {
+  return /^\S+\s+\S+\s+(\d+)\s+\d+\s+[VDIWEF]\s/.exec(line)?.[1] ?? ''
+}
+
 /**
- * Scan a `logcat -d` dump.
+ * Scan a `logcat -d -v threadtime` dump for crashes of the app, whose pid is
+ * `pid`. The buffer is device-wide, so a crash line counts only when the app
+ * logged it or it names the app: a system process that dies during the wait
+ * must not block a release.
  *
  * Fails closed: a dump with no line naming the app proves nothing about the
  * app (an empty buffer, the wrong device, a cleared log), so `verified` is
  * false and the caller must treat that as a failure, not as "no crash found".
  */
-export function scanLogcat(text) {
+export function scanLogcat(text, pid) {
   const lines = text.split('\n')
   const findings = []
   let sawApp = false
   for (const line of lines) {
-    if (line.includes(PKG)) sawApp = true
+    const named = line.includes(PKG)
+    if (named) sawApp = true
+    if (!named && (!pid || linePid(line) !== pid)) continue
     for (const shape of CRASH_SHAPES) {
       if (shape.matches(line)) findings.push({ name: shape.name, line: line.trim() })
     }
@@ -140,7 +150,7 @@ async function main() {
   }
 
   const log = adb(['logcat', '-d', '-v', 'threadtime'])
-  const { verified, findings } = scanLogcat(log)
+  const { verified, findings } = scanLogcat(log, pid)
   if (death || findings.length > 0 || !verified) {
     const reasons = [
       ...(death ? [death] : []),
