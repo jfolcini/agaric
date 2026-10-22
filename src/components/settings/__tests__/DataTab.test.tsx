@@ -1957,7 +1957,7 @@ describe('DataTab', () => {
       })
     })
 
-    it('warns that a linked file that is not an image was not imported', async () => {
+    it('warns that a linked, not embedded, file was not imported', async () => {
       mockImportMarkdown.mockResolvedValue(okResult('File Note'))
       const pdfId = 'e'.repeat(32)
       const note = joplinItem(`File Note\n\nSee [report.pdf](:/${pdfId}).`, {

@@ -1230,6 +1230,20 @@ describe('parseJex Joplin fidelity (#6032)', () => {
     expect(fileLinks).toBe(2)
   })
 
+  // The warning the count drives says "linked, not embedded", not "not an image".
+  it('counts a link to an image, with no `!`, as a file left unshipped', () => {
+    const { notes, fileLinks } = parseJex(
+      buildTar([
+        ...resourceMembers(RES_ID, 'pic.png', 'image/png', 'png'),
+        noteMember('4f'.repeat(16), 'Shot', `[shot](:/${RES_ID})`),
+      ]),
+    )
+    const note = noteTitled(notes, 'Shot')
+    expect(note.markdown).toBe('[shot](pic.png)')
+    expect(note.attachments).toEqual([])
+    expect(fileLinks).toBe(1)
+  })
+
   it('renames a resource whose title holds a space or a parenthesis, so the importer ingests it', () => {
     const shot = '2d'.repeat(16)
     const archive = buildTar([
@@ -1248,6 +1262,7 @@ describe('parseJex Joplin fidelity (#6032)', () => {
       `[app](joplin://${NOTE2_ID})`,
       `[anchored](:/${NOTE2_ID}#part-2)`,
       `[titled](:/${NOTE2_ID} "Tip")`,
+      `[spaced](:/${NOTE2_ID}  "Tip")`,
       `[](:/${NOTE2_ID})`,
       `![shot](:/${RES_ID} "Caption")`,
       `<img src=":/${RES_ID}" alt="sized" width="200" height="100">`,
@@ -1260,6 +1275,7 @@ describe('parseJex Joplin fidelity (#6032)', () => {
         '[[Note Two|app]]',
         '[[Note Two|anchored]]',
         '[[Note Two|titled]]',
+        '[[Note Two|spaced]]',
         '[[Note Two]]',
         '![shot](pic.png)',
         '![sized](pic.png)',

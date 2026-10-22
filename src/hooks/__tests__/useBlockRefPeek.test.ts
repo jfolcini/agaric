@@ -242,6 +242,22 @@ describe('useBlockRefPeek', () => {
       expect(result.current.refId).toBe(REF)
     })
 
+    it.each([
+      ['Ctrl', 'Control', { ctrlKey: true }],
+      ['Cmd', 'Meta', { metaKey: true }],
+    ])('a %s tap as the pointer crosses the link opens nothing', (_, key, modifier) => {
+      const { container, chip } = mountPageLink()
+      const { result } = renderHook(() => useBlockRefPeek(container))
+
+      act(() => {
+        fireEvent.pointerEnter(chip, { pointerType: 'mouse', ...modifier })
+        vi.advanceTimersByTime(200)
+        fireEvent.keyUp(window, { key })
+        vi.advanceTimersByTime(1000)
+      })
+      expect(result.current.refId).toBeNull()
+    })
+
     // The pointer rests on a link in the block being typed in.
     it('a key pressed with Ctrl cancels the pending preview and closes an open one', () => {
       const { container, chip } = mountPageLink()

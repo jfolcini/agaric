@@ -29,11 +29,10 @@
  *    `vaultFiles` — the SAME vault-attachment path a folder import (and the
  *    `.enex` importer, #2513 part 1) uses, so the backend ingests the bytes and
  *    canonicalizes the ref to `attachment:<id>`.
- *  - **Resource links** `[label](:/<resId>)`, Joplin's form for a file that is
- *    not an image, → `[label](path)`, counted in
- *    {@link JexParseResult.fileLinks}: the backend ingests only `![]()`, and
- *    an image ref to a PDF would render as a broken image, so the file is not
- *    imported and its bytes are not shipped.
+ *  - **Resource links** `[label](:/<resId>)`, with no `!`, → `[label](path)`,
+ *    counted in {@link JexParseResult.fileLinks}: the backend ingests only
+ *    `![]()`, and an image ref to a PDF would render as a broken image, so the
+ *    file is not imported and its bytes are not shipped, whatever its type.
  *  - **Internal note links** `[label](:/<noteId>)` → `[[Target Title|label]]`
  *    when the target note exists in the archive; an unresolved `:/id` is left
  *    untouched as a stable placeholder rather than producing a broken embed.

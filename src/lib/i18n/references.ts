@@ -49,6 +49,7 @@ export const references: Record<string, string> = {
   // A `[[page]]` chip peeks on Ctrl/Cmd + hover: the page's title and first blocks.
   'refPeek.pageDialogLabelUnknown': 'Page preview',
   'refPeek.pageEmpty': 'This page is empty.',
+  'refPeek.pageNoPreview': 'The first blocks of this page are blank.',
   'refPeek.pageUnresolved':
     'This page is not in the current space. Switch space to follow the link.',
   'refPeek.pageError': 'Could not load this page just now.',

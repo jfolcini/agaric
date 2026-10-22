@@ -115,16 +115,7 @@ export function delegatedLinkClickProps(open: OpenLinkInNewTab): LinkClickProps 
       const linkId = pageLinkIdAt(e.target)
       if (linkId === undefined) return
       e.preventDefault()
-      // Stopped at this container, not at the React root this runs on, so a
-      // listener between the two still sees the click: the ref peek closes on it.
-      const click = e.nativeEvent
-      e.currentTarget.addEventListener(
-        'click',
-        (native) => {
-          if (native === click) native.stopPropagation()
-        },
-        { capture: true, once: true },
-      )
+      e.stopPropagation()
       open(linkId, true)
     },
   }

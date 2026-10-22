@@ -83,7 +83,13 @@ type PeekTarget =
       pageTitle: string | null
       refCount: number
     }
-  | { status: 'page'; title: string; blocks: { id: string; content: string }[] }
+  | {
+      status: 'page'
+      title: string
+      blocks: { id: string; content: string }[]
+      /** The page has blocks past the fetched ones, so blank ones do not make it empty. */
+      hasMore: boolean
+    }
 
 async function fetchPeekTarget(
   refId: string,
@@ -120,6 +126,7 @@ async function fetchPeekTarget(
         blocks: children.items
           .map((block) => ({ id: block.id, content: block.content ?? '' }))
           .filter((block) => block.content.trim().length > 0),
+        hasMore: children.has_more,
       }
     }
 
@@ -311,7 +318,9 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
         <>
           <p className="truncate text-sm font-medium">{data.title}</p>
           {data.blocks.length === 0 ? (
-            <p className="text-xs text-muted-foreground">{t('refPeek.pageEmpty')}</p>
+            <p className="text-xs text-muted-foreground">
+              {t(data.hasMore ? 'refPeek.pageNoPreview' : 'refPeek.pageEmpty')}
+            </p>
           ) : (
             <div className="ref-peek-content flex flex-col gap-1 text-sm">
               {data.blocks.map((block) => (
