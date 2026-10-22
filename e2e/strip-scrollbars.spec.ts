@@ -42,8 +42,9 @@ test('the tab bar, the recents strip and the filter row keep no scrollbar while 
     page.getByTestId('quick-access-bar').locator('[data-slot="scroll-area-viewport"]'),
   )
   // Below the phone breakpoint the filter row scrolls sideways, a mouse window's too.
-  await page.setViewportSize({ width: 700, height: 900 })
+  // Pages opens first: at 700 px the sidebar that holds its button collapses.
   await navigateToView(page, 'Pages')
+  await page.setViewportSize({ width: 700, height: 900 })
   const filters = await bars(page.getByTestId('page-browser-filter-row'))
 
   const fits = { barHeight: 0, overflowX: 0 }
