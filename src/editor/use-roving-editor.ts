@@ -48,6 +48,7 @@ import { BlockRef } from '@/editor/extensions/block-ref'
 import { BlockRefPicker, blockRefPickerPluginKey } from '@/editor/extensions/block-ref-picker'
 import { CalloutBlockquote } from '@/editor/extensions/callout-blockquote'
 import { CheckboxInputRule } from '@/editor/extensions/checkbox-input-rule'
+import { codeHighlightPlugin } from '@/editor/extensions/code-highlight'
 import { EmojiPicker, emojiPickerPluginKey } from '@/editor/extensions/emoji-picker'
 import { ExternalLink } from '@/editor/extensions/external-link'
 import { withFlankingShortcuts } from '@/editor/extensions/flanking-marks'
@@ -313,10 +314,22 @@ function patchStyleProperties(
 /** CodeBlockLowlight with configurable shortcut to toggle code blocks. @internal Exported for testing. */
 export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
   // `.extend()` copies the parent's `addProseMirrorPlugins` into this config and also
-  // binds `this.parent` to the parent's result, so the inherited function runs on top of
-  // its own output and installs lowlight twice (each rescans the whole doc per transaction).
+  // binds `this.parent` to the parent's result, so without an override the inherited
+  // function runs on top of its own output and installs the highlighter twice. The stock
+  // lowlight plugin (key `lowlight$`) gives way to `codeHighlightPlugin`, which
+  // re-highlights only the code blocks a transaction changed.
   addProseMirrorPlugins() {
-    return this.parent?.() ?? []
+    const stock = (this.parent?.() ?? []).filter(
+      (plugin) => !(plugin as unknown as { key: string }).key.startsWith('lowlight$'),
+    )
+    return [
+      ...stock,
+      codeHighlightPlugin({
+        name: this.name,
+        lowlight: this.options.lowlight,
+        defaultLanguage: this.options.defaultLanguage,
+      }),
+    ]
   },
   addKeyboardShortcuts() {
     return {
