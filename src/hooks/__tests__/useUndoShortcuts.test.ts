@@ -108,12 +108,17 @@ vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),
 }))
 
+// #6049 — a spy that still drops the caches; which caches is `derived-caches.test.ts`.
+vi.mock('@/hooks/derived-caches', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/hooks/derived-caches')>()
+  return { invalidateDerivedCaches: vi.fn(actual.invalidateDerivedCaches) }
+})
+
 import { toast } from 'sonner'
 
+import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { announce } from '@/lib/announcer'
 import { type NameChange, subscribeToNameChanges } from '@/lib/name-change-bus'
-import { propertyKeysQueryKey } from '@/lib/property-keys-cache'
-import { queryClient } from '@/lib/query-client'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import { keyFor, useResolveStore } from '@/stores/resolve'
@@ -928,18 +933,20 @@ describe('refresh after undo/redo', () => {
     unmount()
   })
 
-  // An undone `set_property` can add or remove a key, and fires no property event.
-  it('marks the property key and value lists stale after an undo (#5296)', async () => {
-    const keys = propertyKeysQueryKey('SPACE_TEST')
-    queryClient.setQueryData(keys, ['status'])
-    mockUndo.mockResolvedValueOnce({ type: 'undo' })
+  // An undone `set_property` can add or remove a key and fires no property
+  // event (#5296); an undone `add_attachment` drops a row no list re-reads (#6049).
+  it.each([
+    ['an undo', 'z', mockUndo],
+    ['a redo', 'y', mockRedo],
+  ])('drops every derived cache after %s', async (_label, key, reverse) => {
+    reverse.mockResolvedValueOnce({ type: 'reversed' })
 
     const { unmount } = renderHook(() => useUndoShortcuts())
 
-    fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+    fireEvent.keyDown(document, { key, ctrlKey: true })
 
     await vi.waitFor(() => {
-      expect(queryClient.getQueryState(keys)?.isInvalidated).toBe(true)
+      expect(vi.mocked(invalidateDerivedCaches)).toHaveBeenCalledTimes(1)
     })
 
     unmount()
@@ -985,6 +992,7 @@ describe('refresh after undo/redo', () => {
     await Promise.resolve()
 
     expect(events).toEqual([])
+    expect(vi.mocked(invalidateDerivedCaches)).not.toHaveBeenCalled()
 
     unsubscribe()
     unmount()
