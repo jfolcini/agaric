@@ -22,6 +22,22 @@ type Blocks = Map<string, BlockRow>
 type Properties = Map<string, Map<string, Record<string, unknown>>>
 type BlockTags = Map<string, Set<string>>
 
+/** `PropertyValueFields` (`agaric-store/src/op.rs`) read off `p`, a missing slot null. */
+export function valueFieldsOf(p: Record<string, unknown>): Record<string, unknown> {
+  return {
+    value_text: p['value_text'] ?? null,
+    value_num: p['value_num'] ?? null,
+    value_date: p['value_date'] ?? null,
+    value_ref: p['value_ref'] ?? null,
+    value_bool: p['value_bool'] ?? null,
+  }
+}
+
+/** Whether a recorded `prior` held a value, as `PropertyValueFields::into_held` reads it. */
+export function priorIsHeld(prior: Record<string, unknown>): boolean {
+  return Object.values(prior).some((v) => v != null)
+}
+
 /**
  * #958 — assign dense 1-based `position` to every LIVE child of `parentId`, in
  * `position ASC, id ASC` order: reverting a move must collapse the moved block
@@ -153,6 +169,16 @@ function revertBlockRowField(
   switch (opType) {
     case 'edit_block': {
       b['content'] = (payload['from_text'] as string | null) ?? null
+      return true
+    }
+    // A key the row holds as a column, set or deleted with the `prior` the
+    // backend records (#6014): the column takes that value back.
+    case 'set_property':
+    case 'delete_property': {
+      const prior = payload['prior'] as Record<string, unknown> | undefined
+      const key = payload['key'] as string
+      if (prior === undefined || !Object.hasOwn(b, key)) return false
+      b[key] = prior['value_text'] ?? prior['value_date'] ?? null
       return true
     }
     // NOTE: `move_block` is intentionally handled in `applyRevertForOp`

@@ -889,6 +889,22 @@ describe('PageBlockMenu: a selection of several blocks', () => {
       await waitFor(() => expect(states(view)).toEqual([null, null, null, null, 'TODO']))
     })
 
+    it('one undo gives every selected block back the state it had', async () => {
+      // The setup's ops a minute before the row's, out of the undo's group.
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+      const { view } = await openOnSelection()
+      vi.setSystemTime(new Date('2026-01-01T00:01:00Z'))
+      await choose(view, t('contextMenu.setTodoSelected', { state: 'DOING' }))
+      await waitFor(() => expect(states(view)).toEqual([null, 'DOING', 'DOING', 'DOING', 'TODO']))
+
+      await act(async () => {
+        await useUndoStore.getState().undo(view.pageId)
+      })
+
+      expect(states(view)).toEqual([null, null, 'DONE', null, 'TODO'])
+    })
+
     it('tells the user when the command is refused, and shows the states the backend kept', async () => {
       mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
         if (cmd === 'set_todo_state_batch') throw new Error('disk full')
