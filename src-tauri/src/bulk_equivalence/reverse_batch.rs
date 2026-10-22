@@ -204,6 +204,7 @@ async fn seed_distinguishing_prelude(pool: &SqlitePool, base_ts: i64) {
             block_id: skew.clone(),
             to_text: "CORRECT-causal-prev".into(),
             prev_edit: Some((DEV_A.to_owned(), 1)),
+            prior_text: None,
         }),
         base_ts + 5,
     )
@@ -216,6 +217,7 @@ async fn seed_distinguishing_prelude(pool: &SqlitePool, base_ts: i64) {
             block_id: skew.clone(),
             to_text: "WRONG-intruder".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         base_ts + 8,
     )
@@ -228,6 +230,7 @@ async fn seed_distinguishing_prelude(pool: &SqlitePool, base_ts: i64) {
             block_id: skew,
             to_text: "latest".into(),
             prev_edit: Some((DEV_A.to_owned(), 2)),
+            prior_text: None,
         }),
         base_ts + 10,
     )
@@ -257,6 +260,7 @@ async fn seed_distinguishing_prelude(pool: &SqlitePool, base_ts: i64) {
             block_id: peer,
             to_text: "my local edit".into(),
             prev_edit: Some((PEER.to_owned(), 1)),
+            prior_text: None,
         }),
         base_ts + 25,
     )
@@ -396,6 +400,7 @@ mod stamping_tests {
                 block_id: b.clone(),
                 to_text: format!("v{i}"),
                 prev_edit: None,
+                prior_text: None,
             }));
         }
         let out = stamp_prev_edit(chain);
@@ -429,6 +434,7 @@ mod stamping_tests {
                 block_id: b.clone(),
                 to_text: "v1".into(),
                 prev_edit: None,
+                prior_text: None,
             }),
         ];
         match &stamp_prev_edit(chain)[1] {

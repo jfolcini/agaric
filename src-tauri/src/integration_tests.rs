@@ -599,6 +599,7 @@ async fn recovery_skips_already_flushed_draft_without_duplicate() {
         block_id: BlockId::test_id("FLUSHED-BLOCK"),
         to_text: "flushed content".into(),
         prev_edit: None,
+        prior_text: None,
     });
     op_log::append_local_op(&pool, DEV, payload).await.unwrap();
 

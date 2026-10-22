@@ -580,6 +580,7 @@ async fn flush_draft_rollback_neither_op_nor_draft_deleted() {
             block_id: BlockId::test_id(BLOCK_A),
             to_text: "rollback test".to_owned(),
             prev_edit: None,
+            prior_text: None,
         });
 
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();

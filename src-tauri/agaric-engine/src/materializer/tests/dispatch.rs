@@ -107,6 +107,7 @@ async fn dispatch_op_edit_block() {
             block_id: BlockId::test_id("blk-2"),
             to_text: "edited".into(),
             prev_edit: None,
+            prior_text: None,
         }),
     )
     .await;
@@ -463,6 +464,7 @@ async fn dispatch_op_move_block() {
             new_parent_id: Some(BlockId::test_id("blk-parent")),
             new_position: 2,
             new_index: None,
+            prior: None,
         }),
     )
     .await;
@@ -575,6 +577,7 @@ async fn dispatch_background_edit() {
             block_id: BlockId::test_id("blk-bg"),
             to_text: "edited bg".into(),
             prev_edit: None,
+            prior_text: None,
         }),
     )
     .await;

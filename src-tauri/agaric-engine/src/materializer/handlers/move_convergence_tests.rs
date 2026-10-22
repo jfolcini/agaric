@@ -236,6 +236,7 @@ async fn run_engine_arm() -> (Option<String>, i64) {
         new_parent_id: Some(BlockId::from_trusted(P2_ID)),
         new_position: agaric_store::pagination::index_to_provisional_position(MOVE_INDEX),
         new_index: Some(MOVE_INDEX),
+        prior: None,
     });
     let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, mv)
         .await
@@ -280,6 +281,7 @@ async fn run_fallback_arm() -> (Option<String>, i64) {
             new_parent_id: Some(BlockId::from_trusted(P2_ID)),
             new_position: agaric_store::pagination::index_to_provisional_position(MOVE_INDEX),
             new_index: Some(MOVE_INDEX),
+            prior: None,
         },
     )
     .await
@@ -433,6 +435,7 @@ async fn run_engine_cycle_arm() -> (Option<String>, Option<String>) {
         new_parent_id: Some(BlockId::from_trusted(C1A_ID)),
         new_position: agaric_store::pagination::index_to_provisional_position(0),
         new_index: Some(0),
+        prior: None,
     });
     let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, mv)
         .await
@@ -501,6 +504,7 @@ async fn run_fallback_cycle_arm() -> (Option<String>, Option<String>) {
             new_parent_id: Some(BlockId::from_trusted(C1A_ID)),
             new_position: agaric_store::pagination::index_to_provisional_position(0),
             new_index: Some(0),
+            prior: None,
         },
     )
     .await
@@ -713,6 +717,7 @@ async fn move_via_apply_op_tx(
         new_parent_id: new_parent.map(BlockId::from_trusted),
         new_position: agaric_store::pagination::index_to_provisional_position(new_index),
         new_index: Some(new_index),
+        prior: None,
     });
     let record = agaric_store::op_log::append_local_op(pool, DEVICE_ID, mv)
         .await
@@ -1097,6 +1102,7 @@ async fn append_move(
             new_parent_id: Some(BlockId::from_trusted(new_parent)),
             new_position: agaric_store::pagination::index_to_provisional_position(new_index),
             new_index: Some(new_index),
+            prior: None,
         }),
     )
     .await
@@ -1190,6 +1196,7 @@ async fn run_fallback_sweep_arm() -> (
             new_parent_id: Some(BlockId::from_trusted(P2_ID)),
             new_position: agaric_store::pagination::index_to_provisional_position(MOVE_INDEX),
             new_index: Some(MOVE_INDEX),
+            prior: None,
         },
     )
     .await
@@ -2666,6 +2673,7 @@ async fn run_fallback_unsweep_arm(
             new_parent_id: Some(BlockId::from_trusted(P2_ID)),
             new_position: agaric_store::pagination::index_to_provisional_position(MOVE_INDEX),
             new_index: Some(MOVE_INDEX),
+            prior: None,
         },
     )
     .await
@@ -2803,6 +2811,7 @@ async fn unsweep_short_circuits_a_move_within_one_cohort_4188() {
             new_parent_id: Some(BlockId::from_trusted(C1B_ID)),
             new_position: agaric_store::pagination::index_to_provisional_position(0),
             new_index: Some(0),
+            prior: None,
         },
     )
     .await

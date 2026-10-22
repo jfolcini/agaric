@@ -279,6 +279,7 @@ async fn subtree_ops_take_engine_path_after_hydration() {
             block_id: BlockId::from_trusted(CHILD_ID),
             to_text: "child edited".into(),
             prev_edit: None,
+            prior_text: None,
         }),
     )
     .await;
@@ -290,6 +291,7 @@ async fn subtree_ops_take_engine_path_after_hydration() {
             new_parent_id: Some(BlockId::from_trusted(PAGE_ID)),
             new_position: 1,
             new_index: Some(1),
+            prior: None,
         }),
     )
     .await;
@@ -1060,6 +1062,7 @@ async fn a_lost_block_returns_to_its_sql_place_among_reordered_siblings_5670() {
             new_parent_id: Some(BlockId::from_trusted(PAGE_ID)),
             new_position: 1,
             new_index: Some(0),
+            prior: None,
         }),
     )
     .await;

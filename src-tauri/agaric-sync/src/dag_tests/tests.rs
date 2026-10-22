@@ -51,6 +51,7 @@ fn make_edit(block_id: &str, to_text: &str, prev_edit: Option<(String, i64)>) ->
         block_id: BlockId::test_id(block_id),
         to_text: to_text.into(),
         prev_edit,
+        prior_text: None,
     })
 }
 
@@ -1550,6 +1551,7 @@ async fn find_lca_after_compaction_returns_invalid_operation() {
             block_id: BlockId::test_id("B1"),
             prev_edit: Some((DEV_A.to_owned(), 1)),
             to_text: "v2".to_owned(),
+            prior_text: None,
         }),
         1_704_067_260_000,
     )
@@ -1565,6 +1567,7 @@ async fn find_lca_after_compaction_returns_invalid_operation() {
             block_id: BlockId::test_id("B1"),
             prev_edit: Some((DEV_A.to_owned(), 2)),
             to_text: "v3".to_owned(),
+            prior_text: None,
         }),
         now,
     )

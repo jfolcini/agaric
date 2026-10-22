@@ -857,6 +857,7 @@ fn edit(block_id: &str, to_text: &str) -> OpPayload {
         block_id: BlockId::test_id(block_id),
         to_text: to_text.into(),
         prev_edit: None,
+        prior_text: None,
     })
 }
 
@@ -971,6 +972,7 @@ async fn a_cross_page_move_raises_the_destination_only_5371() {
             new_parent_id: Some(BlockId::test_id("SK_PAGE_DST")),
             new_position: 0,
             new_index: None,
+            prior: None,
         }),
         FIXED_TS + 2,
     )
@@ -1268,6 +1270,7 @@ async fn an_un_sweeping_move_gives_the_page_back_its_swept_row_5371() {
         new_parent_id: None,
         new_position: 0,
         new_index: Some(0),
+        prior: None,
     });
     let record = make_op_record_at(&pool, mv, FIXED_TS + 1).await;
     handle_foreground_task(

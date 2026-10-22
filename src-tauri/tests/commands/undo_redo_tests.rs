@@ -3539,6 +3539,7 @@ async fn revert_ops_from_different_devices() {
         block_id: block.id.clone(),
         to_text: "from-device-B".into(),
         prev_edit: None,
+        prior_text: None,
     });
     let device_b_op =
         op_log::append_local_op_at(&pool, "device-B", edit_payload, 4_070_908_800_000)
@@ -4974,6 +4975,7 @@ async fn apply_reverse_move_block_refreshes_space_id_657() {
         new_parent_id: Some(BlockId::test_id("PAGE2657")),
         new_position: 1,
         new_index: None,
+        prior: None,
     });
     let mut tx = pool.begin().await.unwrap();
     apply_reverse_in_tx(
@@ -6776,6 +6778,7 @@ async fn undo_of_move_keeps_engine_order_in_step_with_sql() {
             new_parent_id: Some(BlockId::from_trusted(S1)),
             new_position: 3,
             new_index: Some(2),
+            prior: None,
         }),
     )
     .await;
@@ -6815,6 +6818,7 @@ async fn undo_of_move_keeps_engine_order_in_step_with_sql() {
             new_parent_id: Some(BlockId::from_trusted(S1)),
             new_position: 3,
             new_index: Some(2),
+            prior: None,
         }),
     )
     .await;
@@ -6928,6 +6932,7 @@ async fn undo_of_delete_keeps_engine_in_step_for_next_move() {
             new_parent_id: Some(BlockId::from_trusted(S1)),
             new_position: 3,
             new_index: Some(2),
+            prior: None,
         }),
     )
     .await;
@@ -7026,6 +7031,7 @@ async fn undo_of_create_keeps_engine_in_step_for_next_move() {
             new_parent_id: Some(BlockId::from_trusted(S1)),
             new_position: 1,
             new_index: Some(0),
+            prior: None,
         }),
     )
     .await;
@@ -7100,6 +7106,7 @@ async fn undo_page_op_skips_replicated_foreign_op_2481() {
             block_id: child_ids[1].clone().into(),
             to_text: "foreign edit never applied".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         4_070_908_800_000,
     )
@@ -7227,6 +7234,7 @@ async fn revert_ops_rejects_replicated_ref_explicitly_2549() {
             block_id: created.id.clone(),
             to_text: "foreign".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         4_070_908_800_000,
     )
@@ -7282,6 +7290,7 @@ async fn seed_group_with_interleaved_replicated_op(
             block_id: child_ids[0].clone().into(),
             to_text: "v1".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         t1,
     )
@@ -7294,6 +7303,7 @@ async fn seed_group_with_interleaved_replicated_op(
             block_id: child_ids[1].clone().into(),
             to_text: "foreign".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         t1 + 1000,
     )
@@ -7307,6 +7317,7 @@ async fn seed_group_with_interleaved_replicated_op(
             block_id: child_ids[0].clone().into(),
             to_text: "v2".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         t1 + 2000,
     )
@@ -7576,6 +7587,7 @@ async fn undo_op_rejects_replicated_foreign_ref_2468() {
             block_id: created.id.clone(),
             to_text: "foreign".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         4_070_908_800_000,
     )
@@ -8119,6 +8131,7 @@ async fn undo_ops_aborts_whole_batch_on_foreign_ref_2468() {
             block_id: created.id.clone(),
             to_text: "foreign".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         4_070_908_800_000,
     )
@@ -8295,6 +8308,7 @@ async fn undo_page_op_skips_replicated_op_newer_than_local_2549() {
             block_id: child_ids[0].clone().into(),
             to_text: "foreign-edit".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         FIXED_TS + 999_999_999,
     )
@@ -8397,6 +8411,7 @@ async fn restore_page_to_op_ignores_replicated_op_in_sweep_2549() {
             block_id: b1.id.clone(),
             to_text: "foreign-edit".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         FIXED_TS + 500_000,
     )
@@ -8498,6 +8513,7 @@ async fn undo_page_group_skips_replicated_rows_2549() {
             block_id: created.id.clone(),
             to_text: "foreign".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         agaric_lib::db::now_ms() + 999_999,
     )
@@ -9856,6 +9872,7 @@ async fn undo_renests_by_a_peer_placement_op_5267() {
             new_parent_id: Some(page.clone()),
             new_position: 1,
             new_index: Some(0),
+            prior: None,
         }),
         after_local + 1,
     )
@@ -10604,4 +10621,431 @@ async fn undo_of_a_set_over_a_key_a_peer_deleted_deletes_it_6014() {
         "batch kernel: the key is gone, not back to the logged \"old\""
     );
     mat.shutdown();
+}
+
+// ======================================================================
+// #6046 — undo on a device that syncs with another. Foreign state arrives
+// through the engine; its op rows, when any arrive, are audit-only, so an
+// undo rebuilt from this device's op log alone misses it.
+// ======================================================================
+
+/// One device of a two-device test.
+struct Peer {
+    pool: SqlitePool,
+    mat: Materializer,
+    id: &'static str,
+    _dir: tempfile::TempDir,
+}
+
+async fn peer(id: &'static str) -> Peer {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap::bootstrap_spaces(&pool, id, &mat)
+        .await
+        .unwrap();
+    Peer {
+        pool,
+        mat,
+        id,
+        _dir: dir,
+    }
+}
+
+/// Ships `space`'s doc from `from` to `to` as the catch-up does. Only the doc
+/// travels: no op row reaches `to`.
+async fn ship(from: &Peer, to: &Peer, space: &BlockId) {
+    use agaric_sync::sync_protocol::loro_sync::{apply_remote, prepare_outgoing_for_pool};
+
+    settle(&from.mat).await;
+    let msg = prepare_outgoing_for_pool(
+        &from.pool,
+        &from.mat.loro_state().registry,
+        &SpaceId::from_trusted(space.as_str()),
+        from.id,
+        None,
+    )
+    .await
+    .unwrap()
+    .expect("#1257 freshness gate must not refuse a consistent engine");
+    apply_remote(&to.pool, &to.mat.loro_state().registry, to.id, msg)
+        .await
+        .unwrap();
+    settle(&to.mat).await;
+}
+
+/// Makes, on `on`, a space holding a page with the blocks "x", "y" and "z".
+/// Returns the space, the page and the three blocks in order.
+async fn page_of_three(on: &Peer) -> (BlockId, BlockId, [BlockId; 3]) {
+    let space = create_space_inner(&on.pool, on.id, &on.mat, "Shared".into(), None)
+        .await
+        .unwrap();
+    let page = create_page_in_space_inner(
+        &on.pool,
+        on.id,
+        &on.mat,
+        None,
+        "Plan".into(),
+        space.as_str().to_owned(),
+    )
+    .await
+    .unwrap();
+    let mut blocks = Vec::new();
+    for (index, text) in [(0, "x"), (1, "y"), (2, "z")] {
+        let block = create_block_inner(
+            &on.pool,
+            on.id,
+            &on.mat,
+            "content".into(),
+            text.into(),
+            Some(page.clone()),
+            Some(index),
+        )
+        .await
+        .unwrap();
+        blocks.push(block.id);
+    }
+    settle(&on.mat).await;
+    let blocks: [BlockId; 3] = blocks.try_into().expect("three blocks");
+    (space, page, blocks)
+}
+
+/// `parent`'s live children, in order.
+async fn children(pool: &SqlitePool, parent: &BlockId) -> Vec<BlockId> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT id FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+         ORDER BY position ASC, id ASC",
+    )
+    .bind(parent.as_str())
+    .fetch_all(pool)
+    .await
+    .unwrap()
+    .iter()
+    .map(|id| BlockId::from_trusted(id))
+    .collect()
+}
+
+/// Indents `z` under `x`, as Tab does.
+async fn indent(on: &Peer, z: &BlockId, x: &BlockId) {
+    move_block_inner(&on.pool, on.id, &on.mat, z.clone(), Some(x.clone()), 0)
+        .await
+        .unwrap();
+    settle(&on.mat).await;
+    assert_eq!(
+        children(&on.pool, x).await,
+        vec![z.clone()],
+        "sanity: the block is indented"
+    );
+}
+
+/// #6046 — B makes the blocks, A indents one and undoes it. A's op log holds
+/// no create for a block born on B, so the undo found no slot to restore and
+/// refused; the move now records the slot it left. The positional undo runs
+/// the single-op kernel, the ref undo the batch kernel, each on a block that
+/// no earlier move or undo on A has placed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_moving_a_peer_born_block_restores_its_slot_6046() {
+    let b = peer(OTHER_DEV).await;
+    let (space, page, [x, y, z]) = page_of_three(&b).await;
+    let a = peer(DEV).await;
+    ship(&b, &a, &space).await;
+    b.mat.shutdown();
+    let laid_out = vec![x.clone(), y.clone(), z.clone()];
+    assert_eq!(
+        children(&a.pool, &page).await,
+        laid_out,
+        "sanity: B's blocks reached A"
+    );
+    assert!(
+        op_refs_of_type(&a.pool, "create_block", z.as_str())
+            .await
+            .is_empty(),
+        "sanity: A's op log holds no create for z"
+    );
+
+    indent(&a, &z, &x).await;
+    undo_page_op_inner(&a.pool, DEV, &a.mat, page.as_str().to_owned(), 0)
+        .await
+        .expect("#6046: the positional undo of the move must not refuse");
+    settle(&a.mat).await;
+    assert_eq!(
+        children(&a.pool, &page).await,
+        laid_out,
+        "single-op kernel: z is back in its slot"
+    );
+
+    indent(&a, &y, &x).await;
+    let moved = op_refs_of_type(&a.pool, "move_block", y.as_str())
+        .await
+        .pop()
+        .expect("sanity: the indent is a move");
+    undo_op_inner(&a.pool, DEV, &a.mat, moved)
+        .await
+        .expect("#6046: the ref undo of the move must not refuse");
+    settle(&a.mat).await;
+    assert_eq!(
+        children(&a.pool, &page).await,
+        laid_out,
+        "batch kernel: y is back in its slot"
+    );
+    a.mat.shutdown();
+}
+
+/// #6046 — A makes the blocks, B moves "z" to the top, and A indents it and
+/// undoes that. B's move reached A through the engine alone, so the undo
+/// rebuilt the slot from A's own create of "z" and put it back at the end,
+/// reverting B's move. The move now records the slot it left: the top.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_moving_a_block_a_peer_moved_restores_the_peers_slot_6046() {
+    let a = peer(DEV).await;
+    let (space, page, [x, y, z]) = page_of_three(&a).await;
+    let b = peer(OTHER_DEV).await;
+    ship(&a, &b, &space).await;
+    move_block_inner(&b.pool, OTHER_DEV, &b.mat, z.clone(), Some(page.clone()), 0)
+        .await
+        .unwrap();
+    ship(&b, &a, &space).await;
+    b.mat.shutdown();
+    let peer_layout = vec![z.clone(), x.clone(), y.clone()];
+    assert_eq!(
+        children(&a.pool, &page).await,
+        peer_layout,
+        "sanity: B's move reached A"
+    );
+
+    indent(&a, &z, &x).await;
+    undo_page_op_inner(&a.pool, DEV, &a.mat, page.as_str().to_owned(), 0)
+        .await
+        .unwrap();
+    settle(&a.mat).await;
+    assert_eq!(
+        children(&a.pool, &page).await,
+        peer_layout,
+        "z is back where B put it, not where A created it"
+    );
+    a.mat.shutdown();
+}
+
+/// `block`'s text.
+async fn text_of(pool: &SqlitePool, block: &BlockId) -> Option<String> {
+    get_block_inner(pool, block.clone()).await.unwrap().content
+}
+
+/// The newest `edit_block` op on `block`: its ref and its payload.
+async fn newest_edit(pool: &SqlitePool, block: &BlockId) -> (OpRef, EditBlockPayload) {
+    let edit = op_refs_of_type(pool, "edit_block", block.as_str())
+        .await
+        .pop()
+        .expect("sanity: the block has an edit");
+    let record = op_log::get_op_by_seq(&ReadPool(pool.clone()), &edit.device_id, edit.seq)
+        .await
+        .unwrap();
+    (edit, serde_json::from_str(&record.payload).unwrap())
+}
+
+/// A edits "x" to "v1"; B, holding A's doc, edits it to "v2" at a LOWER `seq`
+/// than A's edit, since `seq` counts per device; and the doc comes back to A.
+/// `with_peer_row` also brings B's op row, as the op-log batch does. Without
+/// it A holds B's text with no op behind it, as after a Loro merge.
+async fn peer_edit_at_a_lower_seq(with_peer_row: bool) -> (Peer, BlockId, BlockId) {
+    let a = peer(DEV).await;
+    let (space, page, [x, _, _]) = page_of_three(&a).await;
+    edit_block_inner(&a.pool, DEV, &a.mat, x.clone(), "v1".into())
+        .await
+        .unwrap();
+    let b = peer(OTHER_DEV).await;
+    ship(&a, &b, &space).await;
+    edit_block_inner(&b.pool, OTHER_DEV, &b.mat, x.clone(), "v2".into())
+        .await
+        .unwrap();
+    let (a_edit, _) = newest_edit(&a.pool, &x).await;
+    let (b_edit, _) = newest_edit(&b.pool, &x).await;
+    assert!(
+        b_edit.seq < a_edit.seq,
+        "sanity: B's edit ({}) has the lower seq than A's ({})",
+        b_edit.seq,
+        a_edit.seq
+    );
+    if with_peer_row {
+        let row: (String, i64, Option<String>, String, String, String, i64) = sqlx::query_as(
+            "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at \
+             FROM op_log WHERE device_id = ? AND seq = ?",
+        )
+        .bind(&b_edit.device_id)
+        .bind(b_edit.seq)
+        .fetch_one(&b.pool)
+        .await
+        .unwrap();
+        let transfer = agaric_sync::sync_protocol::types::OpTransfer {
+            device_id: row.0,
+            seq: row.1,
+            parent_seqs: row.2,
+            hash: row.3,
+            op_type: row.4,
+            payload: row.5,
+            created_at: row.6,
+            origin: "user".to_owned(),
+        };
+        agaric_sync::sync_protocol::insert_replicated_op(&a.pool, &transfer)
+            .await
+            .expect("B's edit row must ingest");
+    }
+    ship(&b, &a, &space).await;
+    b.mat.shutdown();
+    assert_eq!(
+        text_of(&a.pool, &x).await.as_deref(),
+        Some("v2"),
+        "sanity: B's edit reached A"
+    );
+    (a, page, x)
+}
+
+/// #6046 — A edits a block B edited and undoes it: B's text comes back. B's
+/// edit has the lower `seq`, so the causal order the edit stamped its
+/// predecessor by put A's own older edit first, and the undo brought back
+/// "v1", erasing "v2" on every device. The edit now points at the row that
+/// holds the live text, and records no text of its own.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn text_undo_after_a_peer_edit_at_a_lower_seq_restores_the_peers_text_6046() {
+    let (a, page, x) = peer_edit_at_a_lower_seq(true).await;
+    edit_block_inner(&a.pool, DEV, &a.mat, x.clone(), "v3".into())
+        .await
+        .unwrap();
+    let (_, edit) = newest_edit(&a.pool, &x).await;
+    assert_eq!(
+        edit.prior_text, None,
+        "B's row holds the overwritten text, so the edit records none"
+    );
+
+    undo_page_op_inner(&a.pool, DEV, &a.mat, page.as_str().to_owned(), 0)
+        .await
+        .unwrap();
+    settle(&a.mat).await;
+    assert_eq!(
+        text_of(&a.pool, &x).await.as_deref(),
+        Some("v2"),
+        "B's text is back, not A's older \"v1\""
+    );
+    a.mat.shutdown();
+}
+
+/// #6046 — the same with no op row from B, as after a Loro merge: no row
+/// holds the text the edit overwrites, so the edit records it. The ref undo
+/// runs the batch kernel.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn text_undo_restores_a_peer_text_no_op_row_holds_6046() {
+    let (a, _page, x) = peer_edit_at_a_lower_seq(false).await;
+    edit_block_inner(&a.pool, DEV, &a.mat, x.clone(), "v3".into())
+        .await
+        .unwrap();
+    let (edit_ref, edit) = newest_edit(&a.pool, &x).await;
+    assert_eq!(
+        edit.prior_text.as_deref(),
+        Some("v2"),
+        "the edit records the text no row holds"
+    );
+
+    undo_op_inner(&a.pool, DEV, &a.mat, edit_ref).await.unwrap();
+    settle(&a.mat).await;
+    assert_eq!(
+        text_of(&a.pool, &x).await.as_deref(),
+        Some("v2"),
+        "B's text is back, not A's older \"v1\""
+    );
+    a.mat.shutdown();
+}
+
+/// Sets `block`'s `status` the way a peer's sync projects it: no local op.
+async fn peer_sets_status(pool: &SqlitePool, block: &BlockId, status: &str) {
+    sqlx::query("UPDATE block_properties SET value_text = ? WHERE block_id = ? AND key = 'status'")
+        .bind(status)
+        .bind(block.as_str())
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+async fn status_of(pool: &SqlitePool, block: &BlockId) -> Option<String> {
+    peer_values(pool, block).await.0
+}
+
+/// #6046 — every undo and redo records the value it overwrites, so each
+/// restores what was live when the one it reverses ran, a value a peer set in
+/// between included. Undoing a redo used to restore the last value this
+/// device's op log held, over the peer's. Covers the three places a reverse is
+/// appended: the positional undo, the redo, and the ref undo.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_and_redo_keep_a_value_a_peer_set_in_between_6046() {
+    let a = peer_set_properties_synced_to_a().await;
+    set_property_inner(
+        &a.pool,
+        DEV,
+        &a.mat,
+        a.block.as_str().into(),
+        "status".into(),
+        Some("done".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&a.mat).await;
+
+    peer_sets_status(&a.pool, &a.block, "blocked").await;
+    let undo = undo_page_op_inner(&a.pool, DEV, &a.mat, a.page.as_str().to_owned(), 0)
+        .await
+        .unwrap();
+    settle(&a.mat).await;
+    assert_eq!(
+        status_of(&a.pool, &a.block).await.as_deref(),
+        Some("active"),
+        "sanity: the undo restores what the set overwrote"
+    );
+
+    peer_sets_status(&a.pool, &a.block, "waiting").await;
+    let redo = redo_page_op_inner(
+        &a.pool,
+        DEV,
+        &a.mat,
+        undo.new_op_ref.device_id.clone(),
+        undo.new_op_ref.seq,
+    )
+    .await
+    .unwrap();
+    settle(&a.mat).await;
+    assert_eq!(
+        status_of(&a.pool, &a.block).await.as_deref(),
+        Some("blocked"),
+        "the redo restores what the positional undo overwrote, not the set's \"done\""
+    );
+
+    peer_sets_status(&a.pool, &a.block, "paused").await;
+    let undo_of_redo = undo_op_inner(&a.pool, DEV, &a.mat, redo.new_op_ref)
+        .await
+        .unwrap();
+    settle(&a.mat).await;
+    assert_eq!(
+        status_of(&a.pool, &a.block).await.as_deref(),
+        Some("waiting"),
+        "undoing the redo keeps the peer's value, not the undo's \"active\""
+    );
+
+    redo_page_op_inner(
+        &a.pool,
+        DEV,
+        &a.mat,
+        undo_of_redo.new_op_ref.device_id.clone(),
+        undo_of_redo.new_op_ref.seq,
+    )
+    .await
+    .unwrap();
+    settle(&a.mat).await;
+    assert_eq!(
+        status_of(&a.pool, &a.block).await.as_deref(),
+        Some("paused"),
+        "redoing the ref undo restores what it overwrote, not the redo's \"blocked\""
+    );
+    a.mat.shutdown();
 }

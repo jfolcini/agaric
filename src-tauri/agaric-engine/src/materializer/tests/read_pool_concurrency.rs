@@ -217,6 +217,7 @@ async fn concurrent_dispatch() {
             block_id: BlockId::test_id("STRESS_SERIAL_01"),
             to_text: format!("concurrent-v{i}"),
             prev_edit: None,
+            prior_text: None,
         });
         handles.push(tokio::spawn(async move {
             let record = make_op_record(&pool_c, payload).await;

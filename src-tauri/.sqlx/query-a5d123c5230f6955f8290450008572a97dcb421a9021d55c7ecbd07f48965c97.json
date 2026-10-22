@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT parent_id FROM blocks WHERE id = ? AND deleted_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "parent_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "parent_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "a5d123c5230f6955f8290450008572a97dcb421a9021d55c7ecbd07f48965c97"
+}

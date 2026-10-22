@@ -26,6 +26,7 @@ async fn hash_verification_from_db_read() {
             block_id: BlockId::test_id("BLK-H1"),
             to_text: "second".into(),
             prev_edit: None,
+            prior_text: None,
         }),
     ] {
         append_local_op(&pool, "dev-hash", payload).await.unwrap();
@@ -233,4 +234,52 @@ async fn set_property_without_prior_keeps_its_pre_6014_bytes_and_hash() {
         compute_op_hash("dev-6014", 1, None, "set_property", PRE_6014_PAYLOAD),
         "the hash is the one the pre-#6014 bytes give"
     );
+}
+
+/// #6046: a `move_block` with no `prior` and an `edit_block` with no
+/// `prior_text` are stored as exactly the bytes they were stored as before the
+/// fields existed, so they hash as they did, and those stored bytes still
+/// decode.
+#[tokio::test]
+async fn move_and_edit_without_priors_keep_their_pre_6046_bytes_and_hashes() {
+    const PRE_6046_MOVE: &str = r#"{"block_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","new_index":2,"new_parent_id":"01ARZ3NDEKTSV4RRFFQ69G5FAW","new_position":3}"#;
+    const PRE_6046_EDIT: &str =
+        r#"{"block_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","prev_edit":["dev-other",4],"to_text":"v2"}"#;
+    let (pool, _dir) = test_pool().await;
+    let mv: MoveBlockPayload = serde_json::from_str(PRE_6046_MOVE).unwrap();
+    assert_eq!(mv.prior, None, "a pre-#6046 move decodes with no prior");
+    let edit: EditBlockPayload = serde_json::from_str(PRE_6046_EDIT).unwrap();
+    assert_eq!(
+        edit.prior_text, None,
+        "a pre-#6046 edit decodes with no prior text"
+    );
+
+    // One device per op, so each is its device's first and chains to nothing.
+    for (device, payload, op_type, bytes) in [
+        (
+            "dev-6046-a",
+            OpPayload::MoveBlock(mv),
+            "move_block",
+            PRE_6046_MOVE,
+        ),
+        (
+            "dev-6046-b",
+            OpPayload::EditBlock(edit),
+            "edit_block",
+            PRE_6046_EDIT,
+        ),
+    ] {
+        let record = append_local_op_at(&pool, device, payload, FIXED_TS)
+            .await
+            .unwrap();
+        assert_eq!(
+            record.payload, bytes,
+            "{op_type}: stored bytes are unchanged"
+        );
+        assert_eq!(
+            record.hash,
+            compute_op_hash(device, 1, None, op_type, bytes),
+            "{op_type}: the hash is the one the pre-#6046 bytes give"
+        );
+    }
 }

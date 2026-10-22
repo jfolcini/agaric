@@ -1612,9 +1612,10 @@ export function insertAtSlotAndRenumber(
 /**
  * #5155 — the slot a bare append under `parentId` resolves to: the parent's
  * live-child count, not counting the row being placed. The backend records it
- * in the create op so a later move of the block can be undone, and it lands the
- * block before a trailing tombstone (`live_tree_slot`). A top-level append keeps
- * the end-of-group sentinel, because the backend leaves its `index` unset.
+ * in the create op, which lands the block before a trailing tombstone
+ * (`live_tree_slot`) and gives the undo of a move written before #6046 its slot
+ * to restore. A top-level append keeps the end-of-group sentinel, because the
+ * backend leaves its `index` unset.
  */
 export function appendSlot(parentId: string | null, blockId: string): number {
   if (parentId == null) return Number.MAX_SAFE_INTEGER
@@ -2034,6 +2035,16 @@ function currentPropertyValue(blockId: string, key: string): Record<string, unkn
   }
 }
 
+/** `blockId`'s parent and its 1-based rank among that parent's live children,
+ *  the `old_*` pair a move records. */
+function livePlacement(blockId: string): { parent_id: string | null; position: number } {
+  const parentId = (blocks.get(blockId)?.['parent_id'] as string | null | undefined) ?? null
+  const siblings = [...blocks.values()]
+    .filter((s) => ((s['parent_id'] as string | null) ?? null) === parentId && !s['deleted_at'])
+    .toSorted(comparePositionThenId)
+  return { parent_id: parentId, position: siblings.findIndex((s) => s['id'] === blockId) + 1 }
+}
+
 /**
  * The `DeleteAttachmentPayload` that undoes an `add_attachment`, as
  * `build_reverse_add_attachment` builds it: the LIVE row's path and name where
@@ -2103,10 +2114,14 @@ export function reversePayloadFor(target: MockOpLogEntry): Record<string, unknow
       return { block_id: blockId, from_text: p['to_text'], to_text: p['from_text'] }
     }
     case 'move_block': {
+      // #6046 — where the block sits as the reverse runs, not where `target`
+      // put it, as `with_recorded_prior_in_tx` records the backend's: undoing
+      // the reverse (a redo, or the undo of a redo) puts the block back there.
+      const live = livePlacement(blockId as string)
       return {
         block_id: blockId,
-        old_parent_id: p['new_parent_id'] ?? null,
-        old_position: p['new_position'],
+        old_parent_id: live.parent_id,
+        old_position: live.position,
         new_parent_id: p['old_parent_id'] ?? null,
         new_position: p['old_position'],
       }

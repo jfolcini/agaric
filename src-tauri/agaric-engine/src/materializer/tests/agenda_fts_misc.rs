@@ -30,6 +30,7 @@ async fn apply_op_arc_record_does_not_leak_strong_count() {
             block_id: BlockId::test_id("ARC_OP_1"),
             to_text: "edited-content".into(),
             prev_edit: None,
+            prior_text: None,
         }),
     )
     .await;
@@ -293,6 +294,7 @@ async fn move_block_into_template_page_rebuilds_projected_agenda_cache() {
             new_parent_id: Some(BlockId::test_id("MV_TPL_PAGE")),
             new_position: 0,
             new_index: Some(0),
+            prior: None,
         }),
     )
     .await;
@@ -432,6 +434,7 @@ async fn adaptive_fts_threshold_small_db() {
             block_id: BlockId::test_id("ADAPT_SM"),
             to_text: "edited-500".into(),
             prev_edit: None,
+            prior_text: None,
         }),
     )
     .await;
@@ -495,6 +498,7 @@ async fn adaptive_fts_threshold_large_corpus() {
             block_id: BlockId::test_id("ADAPT_LG"),
             to_text: "edit-500".into(),
             prev_edit: None,
+            prior_text: None,
         }),
     )
     .await;
@@ -523,6 +527,7 @@ async fn adaptive_fts_threshold_large_corpus() {
             block_id: BlockId::test_id("ADAPT_LG"),
             to_text: "edit-1000".into(),
             prev_edit: None,
+            prior_text: None,
         }),
     )
     .await;
@@ -560,6 +565,7 @@ async fn dispatch_background_or_warn_succeeds_when_queue_open() {
             block_id: BlockId::test_id("BLK_OR_WARN"),
             to_text: "new content".into(),
             prev_edit: None,
+            prior_text: None,
         }),
     )
     .await;
@@ -1019,6 +1025,7 @@ async fn fts_optimize_restamps_fts_last_optimize_ms() {
             block_id: BlockId::test_id("FTS_STAMP"),
             to_text: "edited-500".into(),
             prev_edit: None,
+            prior_text: None,
         }),
     )
     .await;
@@ -1429,6 +1436,7 @@ async fn an_un_sweeping_move_re_indexes_the_subtree_it_revived_4733() {
             new_parent_id: Some(BlockId::test_id("fts-cohort-x")),
             new_position: 0,
             new_index: Some(0),
+            prior: None,
         }),
     )
     .await;
@@ -1486,6 +1494,7 @@ async fn a_sweeping_move_de_indexes_the_subtree_it_buried_4733() {
             new_parent_id: Some(BlockId::test_id("fts-cohort-p")),
             new_position: 0,
             new_index: Some(0),
+            prior: None,
         }),
     )
     .await;

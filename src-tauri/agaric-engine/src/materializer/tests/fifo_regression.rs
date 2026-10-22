@@ -161,6 +161,7 @@ async fn h6_batch_and_concurrent_apply_op_serialize_in_fifo() {
             block_id: BlockId::test_id("H6_Y"),
             to_text: "y-edited".into(),
             prev_edit: None,
+            prior_text: None,
         }),
     )
     .await;

@@ -7115,6 +7115,7 @@ async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
             new_parent_id: Some(agaric_core::ulid::BlockId::from_trusted(BLOCK_P)),
             new_position: 1,
             new_index: Some(0),
+            prior: None,
         }),
         ts,
     )

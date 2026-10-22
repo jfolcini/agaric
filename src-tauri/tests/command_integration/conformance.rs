@@ -348,6 +348,7 @@ async fn apply_op(pool: &SqlitePool, mat: &Materializer, op: &Value, created_ids
             block_id: label_block_id("blockId"),
             to_text: arg_str("toText").unwrap_or_default(),
             prev_edit: None,
+            prior_text: None,
         }),
         "move_block" => {
             let new_index = arg("newIndex").and_then(Value::as_i64).expect("newIndex");
@@ -358,6 +359,7 @@ async fn apply_op(pool: &SqlitePool, mat: &Materializer, op: &Value, created_ids
                 // non-authoritative breadcrumb (see MoveBlockPayload docs).
                 new_position: new_index,
                 new_index: Some(new_index),
+                prior: None,
             })
         }
         "delete_block" => OpPayload::DeleteBlock(DeleteBlockPayload {
@@ -1826,6 +1828,7 @@ async fn engine_parity_guard_rejects_sql_only_move_dedent_divergence() {
             new_parent_id: Some(BlockId::from_trusted(&new_parent_id)),
             new_position,
             new_index: move_op["args"]["newIndex"].as_i64(),
+            prior: None,
         },
     )
     .await
@@ -1911,6 +1914,7 @@ async fn engine_parity_guard_retightens_a_healed_purge_gap_allowance() {
             new_parent_id: Some(BlockId::from_trusted(&s1)),
             new_position: 4,
             new_index: Some(3),
+            prior: None,
         },
     )
     .await
@@ -4573,10 +4577,10 @@ async fn move_blocks_batch_interleaved_same_parent_engine_ground_truth_2274() {
 /// land the batch layout back; and a second grouped undo must restore the
 /// original layout again. The full Ctrl+Z / Ctrl+Y / Ctrl+Z trace with settled
 /// layout assertions, on the INTERLEAVED fixture whose contiguous-run ground
-/// truth is pinned above (B, D, A, C). The reverse of each `move_block` op is
-/// reconstructed from the block's OWN prior op (`find_prior_position`), so the
-/// grouped undo restores the exact pre-batch layout INDEPENDENT of how the
-/// forward batch computed slots (Closes #2305 undo story).
+/// truth is pinned above (B, D, A, C). Each `move_block` op, forward or
+/// reverse, records the slot it left (#6046), so each grouped undo restores
+/// the exact layout before the group INDEPENDENT of how the forward batch
+/// computed slots (Closes #2305 undo story).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batched_move_undo_group_redo_undo_roundtrip_engine_2274() {
     let s1 = seed_label_to_id("S1");
@@ -4591,10 +4595,8 @@ async fn batched_move_undo_group_redo_undo_roundtrip_engine_2274() {
     let state = mat.loro_state();
 
     // Seed only the page shell; the children are born through REAL
-    // `create_block` ops (by a DIFFERENT device, so the DEV move group is
-    // bounded by the same-device rule) — undoing a move needs each block's
-    // prior placement in the op_log (`find_prior_position`), which raw seeds
-    // don't have.
+    // `create_block` ops by a DIFFERENT device, so the DEV move group is
+    // bounded by the same-device rule.
     let seed_page = json!({"id": "S1", "block_type": "page", "content": "Home", "parent_id": null, "position": 1});
     insert_seed_block(&pool, &seed_page).await;
     assign_all_to_test_space(&pool).await;
@@ -4623,24 +4625,6 @@ async fn batched_move_undo_group_redo_undo_roundtrip_engine_2274() {
         ids[2].clone(),
         ids[3].clone(),
     );
-
-    // Backdate the creates 10 s (H-13 bypass sentinel): in production the
-    // creates precede the drag by wall-clock time, and `find_prior_position`'s
-    // cross-device `(created_at, seq, device_id)` tie-break is arbitrary when
-    // an entire test runs inside one millisecond.
-    sqlx::query("INSERT INTO _op_log_mutation_allowed (token) VALUES (1)")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE op_log SET created_at = created_at - 10000 WHERE device_id = ?")
-        .bind(OTHER_DEV)
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("DELETE FROM _op_log_mutation_allowed")
-        .execute(&pool)
-        .await
-        .unwrap();
 
     let layout = |pool: &SqlitePool| {
         let pool = pool.clone();
@@ -4916,9 +4900,10 @@ async fn move_blocks_batch_cross_parent_selection_contiguous_2305() {
 }
 
 /// #2305 (Refs #914) — grouped undo of a contiguous-run batch restores the
-/// EXACT pre-batch layout (ids AND dense positions). The reverse of each
-/// `move_block` op comes from the block's own prior op, so undo is independent
-/// of the forward slot arithmetic. ENGINE path, non-contiguous downward fixture.
+/// EXACT pre-batch layout (ids AND dense positions). Each `move_block` op
+/// records the slot it left (#6046) and the group reverts newest-first, so undo
+/// is independent of the forward slot arithmetic. ENGINE path, non-contiguous
+/// downward fixture.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn move_blocks_batch_undo_restores_exact_original_layout_2305() {
     let s1 = seed_label_to_id("S1");
@@ -4932,8 +4917,8 @@ async fn move_blocks_batch_undo_restores_exact_original_layout_2305() {
     assign_all_to_test_space(&pool).await;
     seed_block_into_engine(state, &seed_page);
 
-    // Children born via REAL create ops (a DIFFERENT device, so the DEV move
-    // group is bounded) — undo needs each block's prior placement in the op_log.
+    // Children born via REAL create ops on a DIFFERENT device, so the DEV move
+    // group is bounded.
     const OTHER_DEV: &str = "cmd-test-device-OTHER-2305";
     let mut ids = Vec::new();
     for (i, label) in ["A", "B", "C", "D", "E"].iter().enumerate() {
@@ -4952,22 +4937,6 @@ async fn move_blocks_batch_undo_restores_exact_original_layout_2305() {
     }
     settle(&mat).await;
     let (a, c) = (ids[0].clone(), ids[2].clone());
-
-    // Backdate the creates 10 s (H-13 bypass sentinel) so the cross-device
-    // `(created_at, seq, device_id)` prior lookup is unambiguous.
-    sqlx::query("INSERT INTO _op_log_mutation_allowed (token) VALUES (1)")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE op_log SET created_at = created_at - 10000 WHERE device_id = ?")
-        .bind(OTHER_DEV)
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("DELETE FROM _op_log_mutation_allowed")
-        .execute(&pool)
-        .await
-        .unwrap();
 
     let layout = |pool: &SqlitePool| {
         let pool = pool.clone();
@@ -5038,7 +5007,9 @@ async fn move_blocks_batch_undo_restores_exact_original_layout_2305() {
 /// call, so this is a DIFFERENT code path than the fixtures above). Both
 /// reverses are `MoveBlock` on distinct block ids, so the new ascending
 /// `(parent, slot)` application order in `revert_ops_in_tx` activates instead
-/// of newest-first LIFO.
+/// of newest-first LIFO — for moves written before #6046, which record no
+/// prior placement and are reversed from the op log. This test strips the
+/// recorded priors to make its moves read so.
 ///
 /// `reverse_move_block` computes each block's re-insertion slot against the
 /// CURRENT live children of its ORIGINAL parent — which, at the time the
@@ -5178,6 +5149,24 @@ async fn undo_group_cross_parent_swap_restores_exact_layout_2305() {
     .await
     .unwrap();
     settle(&mat).await;
+
+    // The two moves as written before #6046: no recorded prior placement.
+    sqlx::query("INSERT INTO _op_log_mutation_allowed (token) VALUES (1)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE op_log SET payload = json_remove(payload, '$.prior') \
+         WHERE device_id = ? AND op_type = 'move_block'",
+    )
+    .bind(DEV)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM _op_log_mutation_allowed")
+        .execute(&pool)
+        .await
+        .unwrap();
 
     // Sanity: the forward swap landed as expected before touching undo.
     assert_eq!(

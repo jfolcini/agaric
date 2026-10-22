@@ -796,6 +796,7 @@ async fn revert_ops_restores_local_content_over_replicated_prior_2549() {
             block_id: BlockId::test_id(blk),
             to_text: "local-1".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         2_000,
     )
@@ -811,6 +812,7 @@ async fn revert_ops_restores_local_content_over_replicated_prior_2549() {
             block_id: BlockId::test_id(blk),
             to_text: "foreign".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         3_000,
     )
@@ -823,6 +825,7 @@ async fn revert_ops_restores_local_content_over_replicated_prior_2549() {
             block_id: BlockId::test_id(blk),
             to_text: "local-2".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         4_000,
     )
@@ -879,6 +882,7 @@ async fn revert_ops_rejects_replicated_target_2549() {
             block_id: BlockId::test_id(blk),
             to_text: "foreign".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         3_000,
     )
@@ -945,10 +949,21 @@ async fn find_prev_edit_in_tx_stamps_replicated_causal_predecessor_3644() {
             block_id: blk_id.clone(),
             to_text: "foreign".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         2_000,
     )
     .await;
+
+    // The block as Loro left it: holding the foreign text.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, position) \
+         VALUES (?, 'content', 'foreign', 1)",
+    )
+    .bind(blk_id.as_str())
+    .execute(&pool)
+    .await
+    .unwrap();
 
     let mut conn = pool.acquire().await.unwrap();
     let prev = agaric_lib::commands::blocks::find_prev_edit_in_tx(&mut conn, blk_id.as_str())
@@ -956,10 +971,10 @@ async fn find_prev_edit_in_tx_stamps_replicated_causal_predecessor_3644() {
         .unwrap();
     assert_eq!(
         prev,
-        Some((foreign.device_id.clone(), foreign.seq)),
-        "#3644: prev_edit must be stamped at the latest edit/create in causal \
-         order, replicated included — that is the value being overwritten. \
-         Got the older local row {local:?} instead",
+        (Some((foreign.device_id.clone(), foreign.seq)), None),
+        "#3644: prev_edit must be stamped at the row holding the live text, \
+         replicated included — that is the value being overwritten — and the \
+         edit then records no text of its own. The older local row is {local:?}",
         local = (local.device_id.clone(), local.seq)
     );
 }

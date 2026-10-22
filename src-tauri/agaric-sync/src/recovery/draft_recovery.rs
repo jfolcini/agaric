@@ -191,6 +191,7 @@ async fn write_back_unflushed_draft(
         block_id: BlockId::from_trusted(draft.block_id.as_str()),
         to_text: draft.content.clone(),
         prev_edit,
+        prior_text: None,
     });
 
     // F01: Use a single IMMEDIATE transaction to atomically write the

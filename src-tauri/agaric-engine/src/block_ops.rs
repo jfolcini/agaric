@@ -417,12 +417,13 @@ pub async fn create_block_in_tx(
 
     // 1b. #400: `index` is a 0-based slot; slot 0 ("first child") is valid and
     // a stray negative clamps. #5155: an append under a parent records a slot,
-    // the live-child count, so a later move of the block can be undone — a
-    // create with neither `index` nor `position` has no slot to restore. The
-    // block lands at that slot, before any trailing tombstone, as Enter at the
-    // end of the last block places one; a slotless append went after them. A
-    // top-level append keeps `None`: root slots are per-space in the engine but
-    // global in SQL, and nothing moves a top-level block.
+    // the live-child count, which the undo of a move that records no `prior`
+    // (one written before #6046) restores — a create with neither `index` nor
+    // `position` has no slot to restore. The block lands at that slot, before
+    // any trailing tombstone, as Enter at the end of the last block places one;
+    // a slotless append went after them. A top-level append keeps `None`: root
+    // slots are per-space in the engine but global in SQL, and nothing moves a
+    // top-level block.
     let appended = index.is_none();
     let index = match (index, parent_id.as_deref()) {
         (Some(i), _) => Some(i.max(0)),

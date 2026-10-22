@@ -256,6 +256,7 @@ async fn append_under(
         new_parent_id: Some(BlockId::from_trusted(new_parent_id)),
         new_position: agaric_store::pagination::index_to_provisional_position(new_index),
         new_index: Some(new_index),
+        prior: None,
     });
     let record = op_log::append_local_op_in_tx(tx, device_id, payload, now_ms()).await?;
     apply_op_projected(tx, &record, state, false).await?;

@@ -58,7 +58,7 @@ A command needed both standalone and inside a larger tx (e.g. a `bootstrap_*` pa
 
 `create_block_in_tx` (`src-tauri/agaric-engine/src/block_ops.rs`) takes `client_id: Option<BlockId>`. `Some(id)` (optimistic create via `create_block_inner_with_id`) is used verbatim or refused with `AppError::Ulid` / `AppError::Conflict`; never fall back to a generated id, because the frontend already spliced the block in under the client id.
 
-An append (no `index`) under a parent records its slot, the live-child count, in `CreateBlockPayload.index`; a create with no slot makes the block's first move non-reversible (#5155). A new create path that bypasses `create_block_in_tx` must do the same, with an undo test.
+An append (no `index`) under a parent records its slot, the live-child count, in `CreateBlockPayload.index`; a create with no slot makes the block's first move non-reversible only when that move records no `prior` placement (one written before #6046, or a boot repair's; #5155). A new create path that bypasses `create_block_in_tx` must do the same, with an undo test.
 
 ## `*_by_ids` bulk commands and `MAX_BATCH_BLOCK_IDS`
 

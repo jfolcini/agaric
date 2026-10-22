@@ -500,6 +500,7 @@ impl ChainModel {
                     block_id: BlockId::from_trusted(target),
                     to_text: new_content.clone(),
                     prev_edit: None,
+                    prior_text: None,
                 }))
             }
             OpKind::Delete { live_index } => {
@@ -623,6 +624,7 @@ impl ChainModel {
                     new_parent_id,
                     new_position: *position,
                     new_index: None,
+                    prior: None,
                 }))
             }
             OpKind::SetProperty {

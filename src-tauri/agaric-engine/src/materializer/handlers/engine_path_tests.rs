@@ -193,6 +193,7 @@ async fn apply_op_tx_edit_block_engine_path() {
         block_id: BlockId::from_trusted(BLOCK_ID),
         to_text: "after-edit-content".into(),
         prev_edit: None,
+        prior_text: None,
     });
     let edit_record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, edit_payload)
         .await
@@ -450,6 +451,7 @@ async fn apply_op_tx_move_block_engine_path() {
         new_parent_id: Some(BlockId::from_trusted(PAGE_ID)),
         new_position: 42,
         new_index: None,
+        prior: None,
     });
     let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
         .await
@@ -1236,6 +1238,7 @@ async fn apply_op_tx_move_records_into_the_replay_sink_2896() {
         new_parent_id: Some(BlockId::from_trusted(PAGE_ID)),
         new_position: 2,
         new_index: Some(1),
+        prior: None,
     });
     let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
         .await

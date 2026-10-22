@@ -261,17 +261,22 @@ async fn run_sweep_once(pool: &SqlitePool, phase: &'static str) {
 /// which wraps additional pre-flight validation (target-block existence,
 /// content-length cap, `prev_edit` lookup) in the same `BEGIN IMMEDIATE` tx
 /// so the entire flush is atomic.
+///
+/// `overwrites` is the edit's `prev_edit` and `prior_text`, as
+/// `commands::blocks::find_prev_edit_in_tx` reads them (#6046).
 pub async fn flush_draft_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,
     block_id: &str,
     content: &str,
-    prev_edit: Option<(String, i64)>,
+    overwrites: (Option<(String, i64)>, Option<String>),
 ) -> Result<OpRecord, AppError> {
+    let (prev_edit, prior_text) = overwrites;
     let op = OpPayload::EditBlock(EditBlockPayload {
         block_id: BlockId::from_trusted(block_id),
         to_text: content.to_owned(),
         prev_edit,
+        prior_text,
     });
 
     let record = append_local_op_in_tx(tx, device_id, op, now_ms()).await?;
@@ -311,7 +316,8 @@ pub async fn flush_draft(
     // no op_log dispatch to couple.
     // allow-raw-tx: test-/bench-only flush wrapper, no production caller (#3110)
     let mut tx = begin_immediate_logged(pool, "flush_draft").await?;
-    let record = flush_draft_in_tx(&mut tx, device_id, block_id, content, prev_edit).await?;
+    let record =
+        flush_draft_in_tx(&mut tx, device_id, block_id, content, (prev_edit, None)).await?;
     tx.commit().await?;
     Ok(record)
 }

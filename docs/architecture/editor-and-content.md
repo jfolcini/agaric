@@ -106,11 +106,11 @@ Reverse-op table (canonical):
 | Source op | Reverse op |
 | --- | --- |
 | `create_block` | `delete_block` (soft delete) |
-| `edit_block` | `edit_block` with the captured previous content |
+| `edit_block` | `edit_block` with the text the edit overwrote (`prior_text` when recorded, else the text its `prev_edit` names) |
 | `delete_block` | `restore_block` |
 | `restore_block` | `delete_block` |
 | `purge_block` | **non-reversible** |
-| `move_block` | `move_block` to the previous parent + position |
+| `move_block` | `move_block` to the parent + slot the move recorded (`prior`); **non-reversible** when it recorded none and the op log holds none |
 | `set_property` | `set_property` with the value the set recorded (`prior`), or `delete_property` if the key was absent |
 | `delete_property` | `set_property` with the value the delete recorded (`prior`) |
 | `add_tag` | `remove_tag` |
@@ -120,7 +120,7 @@ Reverse-op table (canonical):
 | `add_attachment` | `delete_attachment` |
 | `delete_attachment` | conditional: `add_attachment` with captured metadata if available; otherwise non-reversible |
 
-Prior-state lookups for `edit_block` reverses use the **op log** (walk backwards from the target seq to find the predecessor value), not the materialised `blocks` row. The materialised state is the current value; the op log holds history. A `set_property` or `delete_property` records the value it overwrote or removed as `prior`, read from the materialised state in its transaction (all five slots empty when a set found the key absent), because the op log cannot always supply it: a value a peer set or deleted arrives through the engine with no local op behind it (#5918, #6014). A reverse falls back to the op log only for an op that records no `prior`, such as one written before it existed.
+Each op records what it overwrites, read from the materialised state in its transaction, because the op log cannot always supply it: a value a peer set or deleted, a block a peer created or moved, and a peer's edit arrive through the engine with no local op behind them (#5918, #6014, #6046). A `set_property` or `delete_property` records the value as `prior` (all five slots empty when a set found the key absent); a `move_block` records the block's parent and slot as `prior`; an `edit_block` points `prev_edit` at the newest op whose text is the block's live content, and records that text as `prior_text` only when no op holds it, as after a Loro merge. A reverse `set_property` or `move_block` that an undo or redo appends records its `prior` the same way (`with_recorded_prior_in_tx` in `commands/history.rs`), so undoing it restores what was live when it ran. A reverse falls back to the op log only for an op that records nothing, such as one written before the field existed. A group of moves that recorded their placement is reverted newest-first; the ascending `(parent, slot)` order is kept for moves rebuilt from the op log.
 
 ## Recurrence
 

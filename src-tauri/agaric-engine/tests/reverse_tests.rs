@@ -122,6 +122,7 @@ async fn reverse_edit_block_produces_edit_with_prior_text() {
             block_id: BlockId::test_id("BLK3"),
             to_text: "first edit".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         1_736_942_460_000,
     )
@@ -132,6 +133,7 @@ async fn reverse_edit_block_produces_edit_with_prior_text() {
             block_id: BlockId::test_id("BLK3"),
             to_text: "second edit".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         1_736_942_520_000,
     )
@@ -196,6 +198,7 @@ async fn reverse_edit_follows_prev_edit_not_timestamp_under_skew_1526() {
             block_id: blk.clone(),
             to_text: "CORRECT-causal-prev".into(),
             prev_edit: Some((DEV_A.to_string(), 1)),
+            prior_text: None,
         }),
         FIXED_TS + 5,
     )
@@ -213,6 +216,7 @@ async fn reverse_edit_follows_prev_edit_not_timestamp_under_skew_1526() {
             block_id: blk.clone(),
             to_text: "WRONG-intruder".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         FIXED_TS + 8,
     )
@@ -227,6 +231,7 @@ async fn reverse_edit_follows_prev_edit_not_timestamp_under_skew_1526() {
             block_id: blk.clone(),
             to_text: "latest".into(),
             prev_edit: Some((DEV_A.to_string(), 2)),
+            prior_text: None,
         }),
         FIXED_TS + 10,
     )
@@ -290,6 +295,7 @@ async fn reverse_edit_falls_back_to_timestamp_when_prev_edit_none_1526() {
             block_id: BlockId::test_id("FALLBK"),
             to_text: "prior".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         FIXED_TS + 5,
     )
@@ -300,6 +306,7 @@ async fn reverse_edit_falls_back_to_timestamp_when_prev_edit_none_1526() {
             block_id: BlockId::test_id("FALLBK"),
             to_text: "latest".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         FIXED_TS + 10,
     )
@@ -340,6 +347,7 @@ async fn reverse_edit_dangling_prev_edit_falls_back_to_timestamp_1526() {
             block_id: BlockId::test_id("DANGLE"),
             to_text: "latest".into(),
             prev_edit: Some((TEST_DEVICE.to_string(), 999)),
+            prior_text: None,
         }),
         FIXED_TS + 10,
     )
@@ -376,6 +384,7 @@ async fn reverse_edit_block_when_prior_is_create_uses_content() {
             block_id: BlockId::test_id("BLK4"),
             to_text: "edited".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         1_736_942_460_000,
     )
@@ -410,6 +419,7 @@ async fn reverse_move_block_produces_move_with_prior_position() {
             new_parent_id: Some(BlockId::test_id("P2")),
             new_position: 3,
             new_index: None,
+            prior: None,
         }),
         1_736_942_460_000,
     )
@@ -421,6 +431,7 @@ async fn reverse_move_block_produces_move_with_prior_position() {
             new_parent_id: Some(BlockId::test_id("P3")),
             new_position: 5,
             new_index: None,
+            prior: None,
         }),
         1_736_942_520_000,
     )
@@ -458,6 +469,7 @@ async fn reverse_move_block_when_prior_is_create_uses_create_position() {
             new_parent_id: Some(BlockId::test_id("OTHER")),
             new_position: 7,
             new_index: None,
+            prior: None,
         }),
         1_736_942_460_000,
     )
@@ -500,6 +512,7 @@ async fn reverse_move_block_when_prior_create_lacks_position_is_non_reversible()
             new_parent_id: Some(BlockId::test_id("OTHERNP")),
             new_position: 7,
             new_index: None,
+            prior: None,
         }),
         1_736_942_460_000,
     )
@@ -839,6 +852,112 @@ async fn reverse_set_property_over_an_absent_key_deletes_it_6014() {
     );
 }
 
+/// Both kernels' reverse of `rec`, which must agree.
+async fn both_kernels(pool: &SqlitePool, rec: &agaric_store::op_log::OpRecord) -> OpPayload {
+    let single = compute_reverse(pool, TEST_DEVICE, rec.seq).await.unwrap();
+    let batched: Vec<OpPayload> = compute_reverse_batch(pool, std::slice::from_ref(rec))
+        .await
+        .unwrap()
+        .into_iter()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(batched, vec![single.clone()], "the kernels disagree");
+    single
+}
+
+/// #6046: a move restores the placement it recorded, in both kernels, over
+/// the op log's last local placement. A peer's move arrives through the
+/// engine with no local op, so the log answers with a stale slot.
+#[tokio::test]
+async fn reverse_move_block_restores_its_recorded_prior_6046() {
+    let (pool, _dir) = test_pool().await;
+    let block_id = BlockId::test_id("BLK_6046_MV");
+    append_op(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: block_id.clone(),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::test_id("P1")),
+            position: None,
+            index: Some(0),
+            content: "x".into(),
+        }),
+        FIXED_TS,
+    )
+    .await;
+    let moved = append_op(
+        &pool,
+        OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: block_id.clone(),
+            new_parent_id: Some(BlockId::test_id("P3")),
+            new_position: 1,
+            new_index: Some(0),
+            prior: Some(BlockPlacement {
+                parent_id: Some(BlockId::test_id("P2")),
+                index: 4,
+            }),
+        }),
+        FIXED_TS + 1_000,
+    )
+    .await;
+
+    assert_eq!(
+        both_kernels(&pool, &moved).await,
+        OpPayload::MoveBlock(MoveBlockPayload {
+            block_id,
+            new_parent_id: Some(BlockId::test_id("P2")),
+            new_position: 5,
+            new_index: Some(4),
+            prior: None,
+        }),
+        "the recorded slot under P2, not the create's slot under P1"
+    );
+}
+
+/// #6046: an edit restores the text it recorded, in both kernels, over the
+/// text its `prev_edit` pointer names: a Loro merge left the block holding
+/// text no op wrote.
+#[tokio::test]
+async fn reverse_edit_block_restores_its_recorded_prior_text_6046() {
+    let (pool, _dir) = test_pool().await;
+    let block_id = BlockId::test_id("BLK_6046_ED");
+    let created = append_op(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: block_id.clone(),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            index: None,
+            content: "logged".into(),
+        }),
+        FIXED_TS,
+    )
+    .await;
+    let edit = append_op(
+        &pool,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: block_id.clone(),
+            to_text: "mine".into(),
+            prev_edit: Some((created.device_id.clone(), created.seq)),
+            prior_text: Some("merged".into()),
+        }),
+        FIXED_TS + 1_000,
+    )
+    .await;
+
+    assert_eq!(
+        both_kernels(&pool, &edit).await,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id,
+            to_text: "merged".into(),
+            prev_edit: Some((edit.device_id.clone(), edit.seq)),
+            prior_text: None,
+        }),
+        "the recorded text, not the create's"
+    );
+}
+
 /// `reverse_add_attachment` mints a SYNTHETIC `delete_attachment` — the only
 /// producer of a `DeleteAttachmentPayload` that is not
 /// `commands::attachments::delete_attachment_inner`.
@@ -1073,9 +1192,9 @@ async fn reverse_restore_block_produces_delete_block() {
 /// `batch::build_reverse_edit_block` already gave for the identical input.
 /// While the two kernels disagreed, the same op was FATAL under Ctrl+Z and
 /// SKIPPABLE under a bulk restore; the parity oracle compares `Ok` payloads
-/// only and could not see the split. The sibling `move_block` /
-/// `set_property` / `delete_property` arms keep `NotFound` — those are
-/// genuinely missing prior-context rows, not absent inverses.
+/// only and could not see the split. The sibling `set_property` /
+/// `delete_property` arms keep `NotFound` — those are genuinely missing
+/// prior-context rows, not absent inverses.
 #[tokio::test]
 async fn reverse_edit_block_without_prior_returns_non_reversible_3645() {
     let (pool, _dir) = test_pool().await;
@@ -1085,6 +1204,7 @@ async fn reverse_edit_block_without_prior_returns_non_reversible_3645() {
             block_id: BlockId::test_id("ORPHAN_EDIT"),
             to_text: "new text".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         FIXED_TS,
     )
@@ -1103,8 +1223,11 @@ async fn reverse_edit_block_without_prior_returns_non_reversible_3645() {
     );
 }
 
+/// #6046: a move that records no prior placement and has no local create or
+/// move behind it has no inverse. `NonReversible` lets "Restore page to here"
+/// skip it; a `NotFound` aborted the whole restore.
 #[tokio::test]
-async fn reverse_move_block_without_prior_returns_not_found() {
+async fn reverse_move_block_without_any_prior_is_non_reversible_6046() {
     let (pool, _dir) = test_pool().await;
     let rec = append_op(
         &pool,
@@ -1113,14 +1236,23 @@ async fn reverse_move_block_without_prior_returns_not_found() {
             new_parent_id: Some(BlockId::test_id("P1")),
             new_position: 5,
             new_index: None,
+            prior: None,
         }),
         FIXED_TS,
     )
     .await;
-    assert!(matches!(
-        compute_reverse(&pool, TEST_DEVICE, rec.seq).await,
-        Err(AppError::NotFound(_))
-    ));
+    let single = compute_reverse(&pool, TEST_DEVICE, rec.seq).await;
+    assert!(
+        matches!(&single, Err(AppError::NonReversible { op_type }) if op_type == "move_block"),
+        "single-op kernel: got {single:?}"
+    );
+    let batched = compute_reverse_batch(&pool, std::slice::from_ref(&rec))
+        .await
+        .expect("a move with no inverse is skippable, not fatal to the batch");
+    assert!(
+        matches!(batched.as_slice(), [Err(AppError::NonReversible { op_type })] if op_type == "move_block"),
+        "batch kernel: got {batched:?}"
+    );
 }
 
 #[tokio::test]
@@ -1219,6 +1351,7 @@ async fn undo_chain_edit_round_trip() {
             block_id: BlockId::test_id("BLK_UC1"),
             to_text: "modified".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         1_736_942_460_000,
     )
@@ -1261,6 +1394,7 @@ async fn undo_chain_move_round_trip() {
             new_parent_id: Some(BlockId::test_id("PAGE2")),
             new_position: 5,
             new_index: None,
+            prior: None,
         }),
         1_736_942_460_000,
     )
@@ -1519,6 +1653,7 @@ async fn reverse_edit_same_timestamp_uses_seq_ordering() {
             block_id: BlockId::test_id("BLK_SEQ"),
             to_text: "v1".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         same_ts,
     )
@@ -1529,6 +1664,7 @@ async fn reverse_edit_same_timestamp_uses_seq_ordering() {
             block_id: BlockId::test_id("BLK_SEQ"),
             to_text: "v2".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         same_ts,
     )
@@ -1566,6 +1702,7 @@ async fn reverse_edit_block_prev_edit_points_to_reversed_op_from_different_devic
             block_id: BlockId::test_id("BLK_XD"),
             to_text: "edited by B".into(),
             prev_edit: Some((TEST_DEVICE.to_owned(), 1)),
+            prior_text: None,
         }),
         1_736_942_460_000,
     )
@@ -2227,6 +2364,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
             block_id: BlockId::test_id("B3_BLK1"),
             to_text: "B3_BLK1 v0.5".into(),
             prev_edit: Some(create_refs["B3_BLK1"].clone()),
+            prior_text: None,
         }),
         next_ts(&mut ts),
     )
@@ -2239,6 +2377,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
             block_id: BlockId::test_id("B3_BLK1"),
             to_text: "FOREIGN-never-applied".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         next_ts(&mut ts),
     )
@@ -2257,6 +2396,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
                 } else {
                     Some(create_refs[bid].clone())
                 },
+                prior_text: None,
             }),
             next_ts(&mut ts),
         )
@@ -2274,6 +2414,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
                 new_parent_id: Some(BlockId::test_id("B3_NEW_PARENT")),
                 new_position: 9,
                 new_index: None,
+                prior: None,
             }),
             next_ts(&mut ts),
         )
@@ -2508,6 +2649,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
             block_id: skew_blk.clone(),
             to_text: "CORRECT-causal-prev".into(),
             prev_edit: Some((B3_DEV_A.to_string(), 1)),
+            prior_text: None,
         }),
         skew_t + 5,
     )
@@ -2520,6 +2662,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
             block_id: skew_blk.clone(),
             to_text: "WRONG-intruder".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         skew_t + 8,
     )
@@ -2532,6 +2675,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
             block_id: skew_blk.clone(),
             to_text: "latest".into(),
             prev_edit: Some((B3_DEV_A.to_string(), causal_prev.seq)),
+            prior_text: None,
         }),
         skew_t + 10,
     )
@@ -2575,6 +2719,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
             block_id: peer_blk.clone(),
             to_text: "my local edit".into(),
             prev_edit: Some((peer_audit.device_id.clone(), peer_audit.seq)),
+            prior_text: None,
         }),
         skew_t + 25,
     )
@@ -2925,6 +3070,7 @@ async fn compute_reverse_batch_chunks_large_edit_batch_c5() {
                 block_id: bid.clone(),
                 to_text: format!("v{}", i + 1),
                 prev_edit: None,
+                prior_text: None,
             }),
             next_ts(&mut ts),
         )
@@ -3081,6 +3227,7 @@ async fn compute_reverse_edit_skips_replicated_prior_text_2549() {
             block_id: BlockId::test_id(blk),
             to_text: "local-1".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         2_000,
     )
@@ -3094,6 +3241,7 @@ async fn compute_reverse_edit_skips_replicated_prior_text_2549() {
             block_id: BlockId::test_id(blk),
             to_text: "foreign".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         3_000,
     )
@@ -3105,6 +3253,7 @@ async fn compute_reverse_edit_skips_replicated_prior_text_2549() {
             block_id: BlockId::test_id(blk),
             to_text: "local-2".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         4_000,
     )
@@ -3302,6 +3451,7 @@ async fn compute_reverse_edit_follows_replicated_prev_edit_target_3644() {
             block_id: BlockId::test_id(blk),
             to_text: "local-1".into(),
             prev_edit: Some((TEST_DEVICE.to_string(), 1)),
+            prior_text: None,
         }),
         2_000,
     )
@@ -3315,6 +3465,7 @@ async fn compute_reverse_edit_follows_replicated_prev_edit_target_3644() {
             block_id: BlockId::test_id(blk),
             to_text: "foreign".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         3_000,
     )
@@ -3327,6 +3478,7 @@ async fn compute_reverse_edit_follows_replicated_prev_edit_target_3644() {
             block_id: BlockId::test_id(blk),
             to_text: "local-2".into(),
             prev_edit: Some((foreign.device_id.clone(), foreign.seq)),
+            prior_text: None,
         }),
         4_000,
     )
@@ -3400,6 +3552,7 @@ async fn batch_reverse_edit_without_prior_is_skippable_not_fatal_3280() {
             block_id: peer_blk.clone(),
             to_text: "my edit".into(),
             prev_edit: None,
+            prior_text: None,
         }),
         2_000,
     )
@@ -3426,6 +3579,7 @@ async fn batch_reverse_edit_without_prior_is_skippable_not_fatal_3280() {
             block_id: local_blk.clone(),
             to_text: "v1".into(),
             prev_edit: Some((TEST_DEVICE.to_string(), 2)),
+            prior_text: None,
         }),
         4_000,
     )
@@ -3559,6 +3713,7 @@ async fn reverse_edit_tie_breaks_on_device_id_3646() {
                     block_id: BlockId::test_id("TIETXT"),
                     to_text: format!("from {dev}"),
                     prev_edit: None,
+                    prior_text: None,
                 }),
                 FIXED_TS,
             )
@@ -3572,6 +3727,7 @@ async fn reverse_edit_tie_breaks_on_device_id_3646() {
                 block_id: BlockId::test_id("TIETXT"),
                 to_text: "anchor".into(),
                 prev_edit: None,
+                prior_text: None,
             }),
             FIXED_TS,
         )
@@ -3611,6 +3767,7 @@ async fn reverse_move_tie_breaks_on_device_id_3646() {
                     new_parent_id: Some(BlockId::test_id(parent(dev))),
                     new_position: slot(dev),
                     new_index: None,
+                    prior: None,
                 }),
                 FIXED_TS,
             )
@@ -3625,6 +3782,7 @@ async fn reverse_move_tie_breaks_on_device_id_3646() {
                 new_parent_id: Some(BlockId::test_id("TIEPZ")),
                 new_position: 9,
                 new_index: None,
+                prior: None,
             }),
             FIXED_TS,
         )
@@ -3882,6 +4040,7 @@ async fn compute_reverse_batch_move_group_stays_aligned_across_chunks_4656() {
                 new_parent_id: None,
                 new_position: pos,
                 new_index: None,
+                prior: None,
             }),
             next_ts(&mut ts),
         )
@@ -4112,6 +4271,7 @@ async fn compute_reverse_batch_prev_edit_group_resolves_its_own_prev_edit_pointe
                 block_id: bid.clone(),
                 to_text: format!("v{i}"),
                 prev_edit: Some(target),
+                prior_text: None,
             }),
             next_ts(&mut ts),
         )
@@ -4185,6 +4345,7 @@ async fn compute_reverse_batch_aborts_on_a_fatal_non_skippable_error_4656() {
             block_id: bid.clone(),
             to_text: "v1".into(),
             prev_edit: Some((create.device_id.clone(), create.seq)),
+            prior_text: None,
         }),
         2_000,
     )

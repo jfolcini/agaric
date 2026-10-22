@@ -136,6 +136,7 @@ async fn apply_op_tag_inheritance_noop_for_edit_and_set_property() {
         block_id: BlockId::from_trusted("B_NOOP"),
         to_text: "bye".into(),
         prev_edit: None,
+        prior_text: None,
     });
     let sp = OpPayload::SetProperty(SetPropertyPayload {
         block_id: BlockId::from_trusted("B_NOOP"),
@@ -1220,6 +1221,7 @@ async fn move_block_incremental_matches_full_rebuild_2669() {
             new_parent_id: Some(BlockId::from_trusted("P2")),
             new_position: 1,
             new_index: Some(0),
+            prior: None,
         }),
     )
     .await

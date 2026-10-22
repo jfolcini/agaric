@@ -1,5 +1,5 @@
 use crate::db::{CommandTx, WriteCtx};
-use agaric_store::op::MoveBlockPayload;
+use agaric_store::op::{BlockPlacement, MoveBlockPayload};
 use tracing::instrument;
 
 use super::super::*;
@@ -264,6 +264,7 @@ pub(crate) async fn move_block_in_tx(
         new_parent_id: new_parent_block_id.clone(),
         new_position: provisional_position,
         new_index: Some(new_index),
+        prior: live_placement(tx, &block_id).await?,
     };
 
     // 4. Append to op_log within transaction
@@ -442,6 +443,32 @@ pub async fn move_block(
     ))
     .await
     .map_err(sanitize_internal_error)
+}
+
+/// Where `block_id` sits now, the placement its move records for undo
+/// (#6046); `None` when it is not live. The slot is counted the way a reverse
+/// move places it: among the parent's other live children, `(position, id)`.
+pub(crate) async fn live_placement(
+    tx: &mut CommandTx,
+    block_id: &str,
+) -> Result<Option<BlockPlacement>, AppError> {
+    let Some(parent_id) = sqlx::query_scalar!(
+        "SELECT parent_id FROM blocks WHERE id = ? AND deleted_at IS NULL",
+        block_id
+    )
+    .fetch_optional(&mut ***tx)
+    .await?
+    else {
+        return Ok(None);
+    };
+    let siblings = ordered_live_children(tx, parent_id.as_deref()).await?;
+    Ok(siblings
+        .iter()
+        .position(|id| id == block_id)
+        .map(|index| BlockPlacement {
+            parent_id: parent_id.as_deref().map(BlockId::from_trusted),
+            index: i64::try_from(index).expect("a Vec index fits in i64"),
+        }))
 }
 
 /// Pre-batch ordering of the target parent's LIVE children (position ASC, id
