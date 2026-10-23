@@ -122,9 +122,8 @@ const api: PageSaveApi = {
       scope: SCOPE,
       blockId: id,
     }),
-  restore: async (id, deletedAt) => {
-    dispatch('restore_block', { blockId: id, deletedAtRef: deletedAt })
-  },
+  restore: async (id, deletedAt) =>
+    refsOf('restore_block', { blockId: id, deletedAtRef: deletedAt }),
   move: async (id, parentId, index) =>
     refsOf('move_block', { blockId: id, newParentId: parentId, newIndex: index }),
   edit: async (id, markdown) => {

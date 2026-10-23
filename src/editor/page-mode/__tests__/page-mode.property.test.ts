@@ -202,9 +202,11 @@ function mockPage(rows: readonly Row[]): MockPage {
           }).op_refs
         }),
       restore: (id, deletedAt) =>
-        answer(() => {
-          command('restore_block', { blockId: id, deletedAtRef: deletedAt })
-        }),
+        answer(
+          () =>
+            command<WithRefs<unknown>>('restore_block', { blockId: id, deletedAtRef: deletedAt })
+              .op_refs,
+        ),
       move: (id, parentId, index) =>
         answer(
           () =>

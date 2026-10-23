@@ -86,8 +86,12 @@ export const commands = {
 	 *  `key`. Delegates to [`list_property_loss_values_inner`].
 	 */
 	listPropertyLossValues: (blockIds: BlockId[], targetSpaceId: SpaceId, key: string, cursor: string | null, limit: number | null) => typedError<PageResponse<PropertyLossValue>, AppError>(__TAURI_INVOKE("list_property_loss_values", { blockIds, targetSpaceId, key, cursor, limit })),
-	/**  Tauri command: restore a soft-deleted block. Delegates to [`restore_block_inner`]. */
-	restoreBlock: (blockId: BlockId, deletedAtRef: number) => typedError<RestoreResponse, AppError>(__TAURI_INVOKE("restore_block", { blockId, deletedAtRef })),
+	/**
+	 *  Tauri command: restore a soft-deleted block. Delegates to [`restore_block_inner`].
+	 *  The response carries the produced op ref, so the restore is an undo step of
+	 *  its own, as for [`create_block`].
+	 */
+	restoreBlock: (blockId: BlockId, deletedAtRef: number) => typedError<WithOps<RestoreResponse>, AppError>(__TAURI_INVOKE("restore_block", { blockId, deletedAtRef })),
 	/**  Tauri command: permanently purge a soft-deleted block. Delegates to [`purge_block_inner`]. */
 	purgeBlock: (blockId: BlockId) => typedError<PurgeResponse, AppError>(__TAURI_INVOKE("purge_block", { blockId })),
 	/**

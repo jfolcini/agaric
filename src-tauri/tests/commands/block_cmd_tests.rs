@@ -2232,6 +2232,60 @@ async fn restore_block_restores_block_and_descendants() {
     );
 }
 
+/// #5691 — the `#[tauri::command]` wrapper runs `restore_block_inner` under
+/// `capture_op_refs`; the one ref it harvests names the restore, and undoing it
+/// trashes the block again, so a page-level undo after a restore undoes the
+/// restore rather than the delete before it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_block_op_refs_undo_the_restore_5691() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    insert_block(&pool, "RST_REF", "content", "restored", None, Some(1)).await;
+    let deleted = delete_block_inner(&pool, DEV, &mat, "RST_REF".into())
+        .await
+        .unwrap();
+
+    let resp = capture_op_refs(restore_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "RST_REF".into(),
+        deleted.deleted_at,
+    ))
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(resp.inner.restored_count, 1);
+    let [op_ref] = resp.op_refs.as_slice() else {
+        panic!("one op ref, got {:?}", resp.op_refs);
+    };
+    let (op_type, block_id): (String, Option<String>) =
+        sqlx::query_as("SELECT op_type, block_id FROM op_log WHERE device_id = ? AND seq = ?")
+            .bind(&op_ref.device_id)
+            .bind(op_ref.seq)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(op_type, "restore_block");
+    assert_eq!(block_id.as_deref(), Some("RST_REF"));
+
+    let undone = undo_op_inner(&pool, DEV, &mat, op_ref.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(undone.reversed_op_type, "restore_block");
+    let deleted_at: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind("RST_REF")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        deleted_at.is_some(),
+        "undoing the restore trashes the block again"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn restore_block_not_deleted_returns_invalid_operation() {
     let (pool, _dir) = test_pool().await;

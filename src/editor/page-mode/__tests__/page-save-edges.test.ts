@@ -90,7 +90,7 @@ function stubApi(rows: TreeRow[]) {
   }
   const api: PageSaveApi = {
     create: (id) => log(`create ${id}`),
-    restore: (id) => log(`restore ${id}`).then(() => undefined),
+    restore: (id) => log(`restore ${id}`),
     move: (id) => log(`move ${id}`),
     edit: (id) => log(`edit ${id}`),
     remove: (id) => log(`delete ${id}`).then((refs) => ({ deletedAt: 1, refs })),
@@ -220,19 +220,24 @@ describe('what a save leaves', () => {
     expect(vi.mocked(computeContentDelta)).not.toHaveBeenCalled()
   })
 
-  it('a restore adds no refs of its own', async () => {
+  it('a restore adds its ref ahead of the edit, and marks the save as one that restored', async () => {
     const { ed, backend, save } = open([
       [A, 0, 'foo'],
       [B, 0, 'bar'],
     ])
     caret(ed, 1, 0)
     press(ed, 'Backspace')
-    await save()
+    expect((await save()).restored).toBe(false)
     ed.commands.undo()
 
     const result = await save()
 
-    expect(result.refs).toHaveLength(1)
+    expect(result.restored).toBe(true)
+    expect(backend.calls.slice(-3)).toEqual([`restore ${B}`, 'tree', `edit ${A}`])
+    expect(result.refs).toEqual([
+      { device_id: 'fake', seq: 3 },
+      { device_id: 'fake', seq: 4 },
+    ])
     expect(backend.live()).toEqual([
       [A, 0, 'foo'],
       [B, 0, 'bar'],

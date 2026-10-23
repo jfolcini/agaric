@@ -1,0 +1,134 @@
+{
+  "description": "#5691 — a restore is an undo step of its own. Page mode records the ref `restore_block` returns, so a page-level undo after the restore reverses THAT op: S2 is trashed again. S3 is deleted and never touched again, so a reversal that reached the delete instead (restoring the cohort) or a no-op undo both leave a different terminal state.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "restored, then trashed again",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "bystander (deleted, never restored)",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 4,
+      "ops": [
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "restore_block"
+        },
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_restore",
+      "returns": ["undo_op#reversed_op_type=restore_block#new_op_type=delete_block#is_redo=false"]
+    }
+  ],
+  "name": "restore_block_undo",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "delete_block",
+      "comment": "O1 — the delete the restore takes back."
+    },
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "delete_block",
+      "comment": "O2 — a bystander tombstone."
+    },
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "restore_block",
+      "comment": "O3 — the restore whose ref the undo store holds."
+    },
+    {
+      "args": {
+        "opRef": "O3"
+      },
+      "command": "undo_op",
+      "comment": "Reverses the restore by its ref: S2 goes back to the trash.",
+      "name": "undo_the_restore",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "restored, then trashed again",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "bystander (deleted, never restored)",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
