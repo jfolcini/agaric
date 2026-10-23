@@ -724,6 +724,8 @@ struct SubtreeRow {
     priority: Option<String>,
     due_date: Option<String>,
     scheduled_date: Option<String>,
+    /// The `deleted_at` the seed tombstones the node at; NULL seeds it live.
+    tombstone: Option<i64>,
 }
 
 /// A [`SubtreeRow`] with its properties, tags and page aliases read, ready for
@@ -734,6 +736,7 @@ struct SeedNode {
     content: String,
     parent_id: Option<String>,
     position: i64,
+    tombstone: Option<i64>,
     properties: Vec<(String, crate::loro::engine::PropertyValue)>,
     tags: Vec<String>,
     aliases: Vec<String>,
@@ -760,21 +763,12 @@ async fn read_seed_node(
         priority,
         due_date,
         scheduled_date,
+        tombstone,
     } = row;
     // A NULL `position` (the both-`None` create sentinel) maps to the
     // engine's append sentinel `i64::MAX`, exactly as the sql_only create
     // path feeds `apply_create_block`.
     let position = position.unwrap_or(i64::MAX);
-    let prop_rows = sqlx::query!(
-        r#"SELECT key, value_text, value_num, value_date, value_ref, value_bool
-                 FROM block_properties WHERE block_id = ?"#,
-        id,
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-    // Recover the engine's native `PropertyValue` by the same precedence as
-    // `PropertyValue::from(&SetPropertyPayload)` (text→num→date→ref→bool);
-    // the `exactly_one_value` CHECK guarantees exactly one column is set.
     // #4801: the reserved keys are `blocks` columns, stored as `Str` in
     // the engine (see `reproject_block_properties_from_engine`).
     let mut properties: Vec<(String, PropertyValue)> = [
@@ -786,22 +780,7 @@ async fn read_seed_node(
     .into_iter()
     .filter_map(|(key, value)| value.map(|v| (key.to_owned(), PropertyValue::Str(v))))
     .collect();
-    properties.extend(prop_rows.into_iter().map(|r| {
-        let pv = if let Some(t) = r.value_text {
-            PropertyValue::Str(t)
-        } else if let Some(n) = r.value_num {
-            PropertyValue::Num(n)
-        } else if let Some(d) = r.value_date {
-            PropertyValue::Str(d)
-        } else if let Some(rf) = r.value_ref {
-            PropertyValue::Str(rf)
-        } else if let Some(b) = r.value_bool {
-            PropertyValue::Bool(b != 0)
-        } else {
-            PropertyValue::Null
-        };
-        (r.key, pv)
-    }));
+    properties.extend(read_seed_property_rows(conn, &id).await?);
     let tag_rows = sqlx::query!("SELECT tag_id FROM block_tags WHERE block_id = ?", id)
         .fetch_all(&mut *conn)
         .await?;
@@ -820,11 +799,50 @@ async fn read_seed_node(
         content,
         parent_id,
         position,
+        tombstone,
         properties,
         tags,
         aliases,
         attachments,
     })
+}
+
+/// `block_id`'s `block_properties` rows as the engine's native values,
+/// recovered by the same precedence as `PropertyValue::from(&SetPropertyPayload)`
+/// (text→num→date→ref→bool); the `exactly_one_value` CHECK guarantees exactly
+/// one column is set.
+async fn read_seed_property_rows(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+) -> Result<Vec<(String, crate::loro::engine::PropertyValue)>, AppError> {
+    use crate::loro::engine::PropertyValue;
+
+    let prop_rows = sqlx::query!(
+        r#"SELECT key, value_text, value_num, value_date, value_ref, value_bool
+                 FROM block_properties WHERE block_id = ?"#,
+        block_id,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(prop_rows
+        .into_iter()
+        .map(|r| {
+            let pv = if let Some(t) = r.value_text {
+                PropertyValue::Str(t)
+            } else if let Some(n) = r.value_num {
+                PropertyValue::Num(n)
+            } else if let Some(d) = r.value_date {
+                PropertyValue::Str(d)
+            } else if let Some(rf) = r.value_ref {
+                PropertyValue::Str(rf)
+            } else if let Some(b) = r.value_bool {
+                PropertyValue::Bool(b != 0)
+            } else {
+                PropertyValue::Null
+            };
+            (r.key, pv)
+        })
+        .collect())
 }
 
 /// `(attachment_id, fields)` of `block_id`'s `attachments` rows (#5608).
@@ -917,6 +935,9 @@ fn seed_nodes_into_engine(
             engine.apply_add_page_alias(&n.id, alias)?;
         }
         seed_attachments(engine, n)?;
+        if let Some(deleted_at) = n.tombstone {
+            engine.apply_delete_block(&n.id, &deleted_at.to_string())?;
+        }
         if !touched_parents.contains(&n.parent_id) {
             touched_parents.push(n.parent_id.clone());
         }
@@ -966,14 +987,17 @@ fn seed_attachments(
 /// engine so subsequent ops route through the live engine path.
 ///
 /// ## Order & scope
-/// The subtree is read LIVE-only (`deleted_at IS NULL`), parent-before-child
+/// The subtree is read whole, trashed rows included, parent-before-child
 /// (depth-ordered recursive descent from the page), so every parent is present
 /// in the engine before its children are seeded. The walk stops at a nested
 /// page (#5239): a page keeps its own space (#4480) and enters a doc only
-/// through its own `space` op. On boot replay SQL already holds the ops after
-/// the space op, so `admit_deleted_since` (the op's `created_at`) also admits
-/// the rows tombstoned since; a later delete's replay tombstones them again
-/// (#5647).
+/// through its own `space` op. A trashed row is seeded tombstoned at its own
+/// `deleted_at`, as a delete leaves every member of its cohort, so a restore
+/// after a move finds the same cohort on every device; a row no doc holds is
+/// purged by the next peer that imports the move (#6080). On boot replay SQL
+/// already holds the ops after the space op, so a row tombstoned at or after
+/// `admit_deleted_since` (the op's `created_at`) is seeded live instead; a
+/// later delete's replay tombstones it again (#5647).
 ///
 /// ## Full seed (nodes + properties + tags + aliases)
 /// Seeding only tree nodes would zero the `EngineMissingTarget` counter but
@@ -1020,9 +1044,10 @@ pub(crate) async fn hydrate_page_subtree_into_engine(
 ) -> Result<(), AppError> {
     use crate::loro::projection;
 
-    // 1. Read the whole owning-page group: LIVE rows, and those tombstoned at
-    //    or after `admit_deleted_since`, parent-before-child (depth-ordered
-    //    recursive descent from the page). The child ordering key is
+    // 1. Read the whole owning-page group, trashed rows included,
+    //    parent-before-child (depth-ordered recursive descent from the page).
+    //    `tombstone` is a trashed row's `deleted_at`, NULL for a row tombstoned
+    //    at or after `admit_deleted_since`. The child ordering key is
     //    `position` so siblings seed in tree order.
     //    #5239: the walk stops BEFORE a nested page — it keeps its own space
     //    (#4480) and joins a doc only through its own `space` op — so the row
@@ -1039,10 +1064,11 @@ pub(crate) async fn hydrate_page_subtree_into_engine(
              SELECT b.id, d.depth + 1 FROM blocks b \
              INNER JOIN descendants d ON b.parent_id = d.id \
              WHERE d.depth < 100 AND b.block_type != 'page' \
-               AND (b.deleted_at IS NULL OR b.deleted_at >= ?2) \
          ) \
          SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
-                b.todo_state, b.priority, b.due_date, b.scheduled_date \
+                b.todo_state, b.priority, b.due_date, b.scheduled_date, \
+                CASE WHEN ?2 IS NULL OR b.deleted_at < ?2 THEN b.deleted_at END \
+                    AS tombstone \
            FROM descendants d \
            JOIN blocks b ON b.id = d.id \
           ORDER BY d.depth ASC, b.position ASC",

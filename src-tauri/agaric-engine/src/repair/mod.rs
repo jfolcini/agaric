@@ -201,7 +201,7 @@ impl UnreachablePage {
 
     /// Stamp the page's space AFTER its moves — the `SetProperty(space)` half
     /// of `create_page_in_space_inner`, on a found page as much as a created
-    /// one. The stamp's apply hydrates the page's LIVE subtree into the
+    /// one. The stamp's apply hydrates the page's subtree into the
     /// space's Loro doc (`hydrate_page_subtree_into_engine`, #2326; nodes
     /// already there are skipped), and that is what carries the re-homed
     /// blocks into the engine: their own move took the SQL-only fallback (no

@@ -2096,6 +2096,145 @@ async fn a_moved_page_survives_on_its_peer_when_the_old_space_arrives_first_5712
     a_move_reaches_b_whole(true).await;
 }
 
+/// `(parent_id, space_id, deleted_at)` of `id`'s row, `None` when it is gone.
+async fn trash_row(
+    pool: &SqlitePool,
+    id: &str,
+) -> Option<(Option<String>, Option<String>, Option<i64>)> {
+    sqlx::query_as("SELECT parent_id, space_id, deleted_at FROM blocks WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+}
+
+/// The `deleted_at` `mat`'s doc for `space` holds on `id`: `None` when the
+/// doc has no node for it, `Some(None)` when the node is live.
+fn doc_deleted_at(
+    mat: &crate::materializer::Materializer,
+    device: &str,
+    space: &BlockId,
+    id: &str,
+) -> Option<Option<String>> {
+    let space_id = agaric_store::space::SpaceId::from_trusted(space.as_str());
+    let mut guard = mat
+        .loro_state()
+        .registry
+        .for_space(&space_id, device)
+        .unwrap();
+    let engine = guard.engine_mut();
+    engine
+        .contains_block(id)
+        .then(|| engine.read_deleted_at(id).unwrap())
+}
+
+/// #6080: A trashes `first`, which takes `nested` with it, and B pulls; then
+/// A moves the page to `new` and B pulls both docs, the old one first or not.
+/// Returns `first` and `nested`, and the trash's `deleted_at`.
+async fn trash_then_move(fx: &MoveFixture, old_space_first: bool) -> ([String; 2], i64) {
+    let deleted_at =
+        crate::commands::delete_block_inner(&fx.pool_a, "device-A", &fx.mat_a, fx.first.clone())
+            .await
+            .unwrap()
+            .deleted_at;
+    fx.mat_a.flush_background().await.unwrap();
+    fx.pull(&[&fx.old, &fx.new], SessionEnd::Completed).await;
+    let nested: String = sqlx::query_scalar("SELECT id FROM blocks WHERE parent_id = ?")
+        .bind(fx.first.as_str())
+        .fetch_one(&fx.pool_a)
+        .await
+        .unwrap();
+    fx.move_on_a(&[&fx.page], &fx.new).await;
+    let first = if old_space_first { &fx.old } else { &fx.new };
+    fx.pull(&fx.spaces_with_first(first), SessionEnd::Completed)
+        .await;
+    ([fx.first.as_str().to_owned(), nested], deleted_at)
+}
+
+/// #6080: blocks in the Trash move with their page. On both devices they stay
+/// in the Trash at the same `deleted_at`, and the new doc holds them
+/// tombstoned, so no sync purges them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_trashed_block_moves_with_its_page_and_stays_in_the_trash_on_both_devices_6080() {
+    for old_space_first in [true, false] {
+        let fx = move_fixture().await;
+        let (trashed, deleted_at) = trash_then_move(&fx, old_space_first).await;
+        let devices = [
+            (&fx.pool_a, &fx.mat_a, "device-A"),
+            (&fx.pool_b, &fx.mat_b, "device-B"),
+        ];
+        for (pool, _, device) in devices {
+            for id in &trashed {
+                assert_eq!(
+                    trash_row(pool, id).await.map(|row| (row.1, row.2)),
+                    Some((Some(fx.new.as_str().to_owned()), Some(deleted_at))),
+                    "old space first {old_space_first}, {device}: {id} is in the Trash in `new`"
+                );
+            }
+        }
+        for (_, mat, device) in devices {
+            for id in &trashed {
+                assert_eq!(
+                    (
+                        doc_deleted_at(mat, device, &fx.new, id),
+                        doc_deleted_at(mat, device, &fx.old, id)
+                    ),
+                    (Some(Some(deleted_at.to_string())), None),
+                    "old space first {old_space_first}, {device}: only the new doc holds {id}, \
+                     tombstoned"
+                );
+            }
+        }
+        fx.assert_b_matches_a(&format!("old space first {old_space_first}"))
+            .await;
+        fx.shutdown();
+    }
+}
+
+/// #6080: restoring the block after the move reaches the peer. Both devices
+/// hold it and its child live, under the same parents, in the new doc.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restoring_a_block_trashed_before_a_move_reaches_the_peer_6080() {
+    let fx = move_fixture().await;
+    let ([first, nested], deleted_at) = trash_then_move(&fx, true).await;
+    let restored = crate::commands::restore_block_inner(
+        &fx.pool_a,
+        "device-A",
+        &fx.mat_a,
+        fx.first.clone(),
+        deleted_at,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        restored.restored_count, 2,
+        "the restore takes `first` and `nested`"
+    );
+    fx.mat_a.flush_background().await.unwrap();
+    fx.pull(&fx.spaces_with_first(&fx.new), SessionEnd::Completed)
+        .await;
+    let new = Some(fx.new.as_str().to_owned());
+    for (pool, mat, device) in [
+        (&fx.pool_a, &fx.mat_a, "device-A"),
+        (&fx.pool_b, &fx.mat_b, "device-B"),
+    ] {
+        for (id, parent) in [(&first, fx.page.as_str()), (&nested, first.as_str())] {
+            assert_eq!(
+                trash_row(pool, id).await,
+                Some((Some(parent.to_owned()), new.clone(), None)),
+                "{device}: {id} is live under {parent} in `new`"
+            );
+            assert_eq!(
+                doc_deleted_at(mat, device, &fx.new, id),
+                Some(None),
+                "{device}: the new doc holds {id} live"
+            );
+        }
+    }
+    fx.assert_b_matches_a("restore after the move").await;
+    fx.shutdown();
+}
+
 /// A device's `block_properties` rows, the text values included.
 async fn property_rows(pool: &SqlitePool) -> Vec<(String, String, Option<String>)> {
     sqlx::query_as("SELECT block_id, key, value_text FROM block_properties ORDER BY block_id, key")

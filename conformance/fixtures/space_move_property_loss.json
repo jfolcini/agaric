@@ -1,5 +1,5 @@
 {
-  "description": "#5841 S0.6 — a cross-space move drops each property its target space does not define identically, after the caller acknowledges the losses. The harness space declares `stage` as a select [draft, final]; the space `create_space` makes (`C1`) starts with the editable defaults (`effort`, `url`, `assignee`, …) and is given its own `stage` select with a third option. Moving the page `S1` takes its content blocks `S2` and `S3`, so it would drop `stage` twice (other options) and `effort` once (declared in the target only); `note` is declared in neither space and stays. A move without the acknowledgement, or with a stale one, is refused with `UnacknowledgedPropertyLoss` and writes nothing; the acknowledged one appends the drops before the `space` op. The query steps then read the move back the other way, after the page's blocks took `url` and `assignee` values in `C1` that the harness space does not declare and `S3` went to the Trash, which still counts. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "description": "#5841 S0.6 — a cross-space move drops each property its target space does not define identically, after the caller acknowledges the losses. The harness space declares `stage` as a select [draft, final]; the space `create_space` makes (`C1`) starts with the editable defaults (`effort`, `url`, `assignee`, …) and is given its own `stage` select with a third option. Moving the page `S1` takes its content blocks `S2` and `S3`, so it would drop `stage` twice (other options) and `effort` once (declared in the target only); `note` is declared in neither space and stays. `S3` is in the Trash when the page moves and goes with it, and a restore after the move brings it back in `C1` (#6080). A move without the acknowledgement, or with a stale one, is refused with `UnacknowledgedPropertyLoss` and writes nothing; the acknowledged one appends the drops before the `space` op. The query steps then read the move back the other way, after the page's blocks took `url` and `assignee` values in `C1` that the harness space does not declare and `S3` went back to the Trash, which still counts. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -57,7 +57,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 15,
+      "count": 17,
       "ops": [
         {
           "key": "stage",
@@ -83,6 +83,9 @@
           "op_type": "set_property"
         },
         {
+          "op_type": "delete_block"
+        },
+        {
           "op_type": "delete_property"
         },
         {
@@ -106,6 +109,9 @@
         {
           "key": "assignee",
           "op_type": "set_property"
+        },
+        {
+          "op_type": "restore_block"
         },
         {
           "key": "url",
@@ -275,6 +281,13 @@
     },
     {
       "args": {
+        "blockId": "S3"
+      },
+      "command": "delete_block",
+      "comment": "`S3` goes to the Trash before the move, which takes it along: `C1`'s doc holds it tombstoned (#6080). It holds no value to drop."
+    },
+    {
+      "args": {
         "acknowledgedLoss": [
           {
             "count": 2,
@@ -328,6 +341,13 @@
     },
     {
       "args": {
+        "blockId": "S3"
+      },
+      "command": "restore_block",
+      "comment": "Restored after the move, live again in `C1`'s doc."
+    },
+    {
+      "args": {
         "blockId": "S3",
         "key": "url",
         "value": {
@@ -335,7 +355,7 @@
         }
       },
       "command": "set_property",
-      "comment": "`S3`'s `url`, before it goes to the Trash."
+      "comment": "`S3`'s `url`, before it goes back to the Trash."
     },
     {
       "args": {
