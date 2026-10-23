@@ -74,14 +74,15 @@ use agaric_lib::commands::pages::{
     ListPagesWithMetadataFilter, PageSort, PageSubtree, list_pages_with_metadata_inner,
 };
 use agaric_lib::commands::{
-    PAGE_LINKS_EDGE_CAP, PropertyFilter, ResolvedBlock, SearchBlockRow, SearchFilter,
+    PAGE_LINKS_EDGE_CAP, PropertyFilter, PropertyLoss, ResolvedBlock, SearchBlockRow, SearchFilter,
     batch_resolve_inner, count_agenda_batch_by_source_inner, count_backlinks_batch_inner,
-    create_block_inner, export_page_markdown_inner, filtered_blocks_query_inner,
-    get_batch_properties_inner, get_block_inner, get_properties_inner,
+    create_block_inner, delete_block_inner, export_page_markdown_inner,
+    filtered_blocks_query_inner, get_batch_properties_inner, get_block_inner, get_properties_inner,
     list_all_tags_in_space_inner, list_attachments_batch_inner, list_backlinks_grouped_inner,
     list_blocks_inner, list_journal_pages_in_range_inner, list_page_links_inner,
     list_projected_agenda_inner, list_unlinked_references_inner, load_page_subtree_inner,
-    query_by_property_inner, revert_ops_inner, search_blocks_inner,
+    preview_space_move_inner, query_by_property_inner, restore_block_inner, revert_ops_inner,
+    search_blocks_inner,
 };
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
@@ -2888,6 +2889,215 @@ fn bench_move_block(c: &mut Criterion) {
     assert_under_budget("move_block (2K-block page) @ 100K", &acc, BUDGET_MS);
 }
 
+/// `delete_block` and `restore_block` — the commands page mode's save calls
+/// when a block leaves or comes back to the page (`PageModeEditor`'s `remove`
+/// and `restore`), on one leaf of the 2K-block page (#5691). Each iteration
+/// deletes the leaf and restores it, so every iteration deletes and restores
+/// the same shape. One probe times the delete and the other the restore; the
+/// other call of the pair, the `flush_background` after each call and the
+/// shape check run untimed. The shape check runs per call, not once before
+/// the loop, because a mutator must not preflight the measured fixture.
+/// Measurement only: no budget until `bench-slo` has measured them.
+fn bench_delete_restore_block(c: &mut Criterion) {
+    const DELETE: &str = "delete_block (leaf of 2K-block page) @ 100K";
+    const RESTORE: &str = "restore_block (leaf of 2K-block page) @ 100K";
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_delete_restore_block"));
+    let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+    let children = rt.block_on(seed_write_path_fixture(&pool, &materializer));
+    let target = children[WRITE_PATH_PAGE_CHILDREN / 2].clone();
+    let fallbacks = agaric_lib::materializer::sql_only_fallback_count();
+
+    let (pool_ref, materializer_ref, target_ref) = (&pool, &materializer, &target);
+    let (delete_acc, restore_acc) = (Acc::new(), Acc::new());
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    for (name, acc, times_delete) in [
+        ("delete_block_2k_page_in_100k", &delete_acc, true),
+        ("restore_block_2k_page_in_100k", &restore_acc, false),
+    ] {
+        group.bench_function(name, |b| {
+            b.to_async(&rt).iter_custom(|iters| async move {
+                let mut elapsed = Duration::ZERO;
+                for _ in 0..iters {
+                    let start = Instant::now();
+                    let deleted = delete_block_inner(
+                        pool_ref,
+                        "dev-bench",
+                        materializer_ref,
+                        target_ref.clone().into(),
+                    )
+                    .await
+                    .unwrap();
+                    let delete_time = start.elapsed();
+                    materializer_ref.flush_background().await.unwrap();
+                    let start = Instant::now();
+                    let restored = restore_block_inner(
+                        pool_ref,
+                        "dev-bench",
+                        materializer_ref,
+                        target_ref.clone().into(),
+                        deleted.deleted_at,
+                    )
+                    .await
+                    .unwrap();
+                    let restore_time = start.elapsed();
+                    materializer_ref.flush_background().await.unwrap();
+                    assert_eq!(
+                        (
+                            deleted.block_id.as_str(),
+                            deleted.descendants_affected,
+                            deleted.affected_page_ids.len()
+                        ),
+                        (target_ref.as_str(), 1, 0),
+                        "delete_block @ 100K: a leaf delete tombstones the leaf alone (#5691)"
+                    );
+                    assert_eq!(
+                        (restored.block_id.as_str(), restored.restored_count),
+                        (target_ref.as_str(), 1),
+                        "restore_block @ 100K: a leaf restore revives the leaf alone (#5691)"
+                    );
+                    elapsed += if times_delete {
+                        delete_time
+                    } else {
+                        restore_time
+                    };
+                }
+                acc.record(elapsed, iters);
+                elapsed
+            });
+        });
+    }
+    group.finish();
+
+    let calls = delete_acc.iters() + restore_acc.iters();
+    let (delete_ops, restore_ops, deleted_at, child_count) = rt.block_on(async {
+        let ops = |op_type: &'static str| {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM op_log WHERE op_type = ? AND block_id = ?",
+            )
+            .bind(op_type)
+            .bind(&target)
+            .fetch_one(&pool)
+        };
+        let deleted_at: Option<i64> =
+            sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(&target)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let child_count: i64 =
+            sqlx::query_scalar("SELECT child_block_count FROM pages_cache WHERE page_id = ?")
+                .bind(WRITE_PATH_PAGE_ID)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        (
+            ops("delete_block").await.unwrap(),
+            ops("restore_block").await.unwrap(),
+            deleted_at,
+            child_count,
+        )
+    });
+    // Both probes run the whole pair per iteration, so each op count is the
+    // sum of both probes' iterations.
+    assert_eq!(
+        (
+            u64::try_from(delete_ops).unwrap(),
+            u64::try_from(restore_ops).unwrap()
+        ),
+        (calls, calls),
+        "delete_block / restore_block @ 100K: every call must append exactly one op (#5691)"
+    );
+    assert_eq!(
+        (deleted_at, child_count),
+        (None, WRITE_PATH_PAGE_CHILDREN as i64),
+        "delete_block / restore_block @ 100K: the leaf ends live and the page keeps its 2K children"
+    );
+    assert_eq!(
+        agaric_lib::materializer::sql_only_fallback_count(),
+        fallbacks,
+        "delete_block / restore_block @ 100K: the calls must take the engine path, not the SQL-only fallback"
+    );
+
+    report_measurement_only(DELETE, &delete_acc);
+    report_measurement_only(RESTORE, &restore_acc);
+}
+
+/// `preview_space_move` — the cross-space move's confirmation read: one page
+/// whose 2K children each hold a property the target space does not define the
+/// same way, so the preview counts every row of the page group (#5691). Its
+/// SQL joins `block_properties` over `id = root OR page_id = root`, so the cost
+/// grows with the page. Not a save-path command (the move dialog calls it).
+/// Measurement only: no budget until `bench-slo` has measured it.
+fn bench_preview_space_move(c: &mut Criterion) {
+    const NAME: &str = "preview_space_move (2K-block page) @ 100K";
+    const KEY: &str = "slo_move_key";
+    const TARGET_SPACE: &str = "01SLOMOVETARGET00000000001";
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_preview_space_move"));
+    let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+    rt.block_on(seed_write_path_fixture(&pool, &materializer));
+    // The source space defines `KEY` and the target does not, so every value
+    // is a loss.
+    rt.block_on(async {
+        sqlx::query(
+            "INSERT INTO property_definitions (space_id, key, value_type, created_at) \
+             VALUES (?, ?, 'text', '2025-01-01T00:00:00Z')",
+        )
+        .bind(SLO_SPACE_ID)
+        .bind(KEY)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) \
+             SELECT id, ?, 'v' FROM blocks WHERE page_id = ? AND id <> ?",
+        )
+        .bind(KEY)
+        .bind(WRITE_PATH_PAGE_ID)
+        .bind(WRITE_PATH_PAGE_ID)
+        .execute(&pool)
+        .await
+        .unwrap();
+    });
+    let preview =
+        || preview_space_move_inner(&pool, vec![WRITE_PATH_PAGE_ID.into()], TARGET_SPACE.into());
+
+    let losses = rt.block_on(preview()).unwrap();
+    assert_eq!(
+        losses,
+        vec![PropertyLoss {
+            key: KEY.into(),
+            count: WRITE_PATH_PAGE_CHILDREN as i64
+        }],
+        "preview_space_move @ 100K: every child's value is a loss, and nothing else is"
+    );
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    group.bench_function("preview_space_move_2k_page_in_100k", |b| {
+        b.to_async(&rt).iter_custom(|iters| {
+            let (preview, acc) = (&preview, &acc);
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let _ = preview().await.unwrap();
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+
+    report_measurement_only(NAME, &acc);
+}
+
 /// `revert_ops_inner` — 50-op batch revert against a single page with
 /// 100K total ops in its history. Aspirational budget: 200 ms.
 ///
@@ -5055,6 +5265,9 @@ criterion_group!(
     bench_edit_block,
     bench_set_property,
     bench_move_block,
+    // #5691 — the other save-path commands; no budget yet.
+    bench_delete_restore_block,
+    bench_preview_space_move,
     // #2601 — graduated from the problem tier: the bounded-horizon
     // materialization makes the warm-cache read an O(window) index scan that
     // clears its budget with margin at every fixture size.
