@@ -93,6 +93,12 @@ export interface RunOptions {
   loggerFailLabel: string
   /** Soft warnings seeded before the loop (e.g. `.jex` skipped-item count). */
   initialWarnings?: string[]
+  /**
+   * Soft warnings listed first but worked out after the loop, from the
+   * vault-relative paths of the files the imported units attached (e.g. a
+   * folder's skipped files).
+   */
+  finalWarnings?: (attached: ReadonlySet<string>) => string[]
   /** Failures seeded before the loop (e.g. `.enex`/`.jex` parse failures). */
   initialFailures?: FailedFile[]
 }
@@ -203,6 +209,7 @@ export function useImportRunner(): UseImportRunner {
       notes,
       loggerFailLabel,
       initialWarnings,
+      finalWarnings,
       initialFailures,
     }: RunOptions): Promise<RunOutcome> => {
       setTotalFiles(units.length)
@@ -216,6 +223,7 @@ export function useImportRunner(): UseImportRunner {
       const failedFiles: FailedFile[] = initialFailures ? [...initialFailures] : []
       let succeededFiles = 0
       const importedPageIds = new Set<string>()
+      const attached = new Set<string>()
       // A folder's notes link into one another once all of them are imported.
       const anchors: ImportAnchor[] = []
       const deferred: string[] = []
@@ -278,6 +286,7 @@ export function useImportRunner(): UseImportRunner {
           deferred.push(...result.deferred)
           succeededFiles += 1
           importedPageIds.add(result.page_id)
+          for (const file of vaultFiles ?? []) attached.add(file.path)
           lastTitle = result.page_title
         } catch (err) {
           // #1935 — a whole-unit import failure is a real ERROR (not a
@@ -311,6 +320,8 @@ export function useImportRunner(): UseImportRunner {
           allWarnings.push(importErrorReason(err))
         }
       }
+
+      allWarnings.unshift(...(finalWarnings?.(attached) ?? []))
 
       // #5258, #6049 — an imported page, journal day, link or property must not
       // hide behind a cache filled before the import.

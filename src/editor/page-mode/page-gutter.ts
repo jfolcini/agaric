@@ -32,7 +32,7 @@ import { t } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 
 /** The attribute the grip carries. */
-export const GRIP = 'data-page-grip'
+const GRIP = 'data-page-grip'
 
 /** The attribute of the block the grip is on, whose chevron stays shown (`index.css`). */
 const GRIP_ON = 'data-page-grip-on'
@@ -282,7 +282,7 @@ export class PageGrip {
     this.frame = null
     this.block?.removeAttribute(GRIP_ON)
     this.block = null
-    if (!this.element.hidden) this.element.hidden = true
+    this.element.hidden = true
   }
 
   private readonly click = (): void => {

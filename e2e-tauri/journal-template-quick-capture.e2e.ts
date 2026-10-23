@@ -10,13 +10,9 @@
 // with the capture when the journal is opened.
 //
 // Quick Capture's desktop trigger is an OS-level chord the WebDriver cannot
-// press, so that capture goes through the phone-width FAB
-// (`QuickCaptureFab`, shown below 768px): the window is narrowed for the
-// capture and widened back before the journal is read.
-//
-// The second case presses the default chord at the X server (`pressChord`)
-// with the window minimized, the way it is pressed from another app, and
-// asserts the capture lands on today.
+// press, so both cases press the default chord at the X server
+// (`pressChord`). The second presses it with the window minimized, the way it
+// is pressed from another app, and asserts the capture lands on today.
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -78,23 +74,16 @@ describe('Agaric real-backend Quick Capture and the journal template (#5395, #57
     await $('h2*=No blocks for').waitForDisplayed({ timeout: ACTION_TIMEOUT })
     await expectAbsent(TEMPLATE_BLOCK, 'the template block before the capture')
 
-    // 3. Capture into the missing day through the phone-width FAB.
-    const desktop = await browser.getWindowSize()
-    await browser.setWindowSize(600, 900)
-    try {
-      const fab = $('[data-testid="quick-capture-fab"]')
-      await fab.waitForClickable({ timeout: ACTION_TIMEOUT })
-      await fab.click()
-      const textarea = $('[data-testid="quick-capture-textarea"]')
-      await textarea.waitForDisplayed({ timeout: ACTION_TIMEOUT })
-      await textarea.setValue(CAPTURE)
-      const save = $('[data-testid="quick-capture-save"]')
-      await save.waitForClickable({ timeout: ACTION_TIMEOUT })
-      await save.click()
-      await textarea.waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
-    } finally {
-      await browser.setWindowSize(desktop.width, desktop.height)
-    }
+    // 3. Capture into the missing day through the OS chord. The phone-width
+    //    FAB shows on a touch screen only, which this webview has not.
+    pressChord('ctrl+alt+n')
+    const textarea = $('[data-testid="quick-capture-textarea"]')
+    await textarea.waitForDisplayed({ timeout: ACTION_TIMEOUT })
+    await textarea.setValue(CAPTURE)
+    const save = $('[data-testid="quick-capture-save"]')
+    await save.waitForClickable({ timeout: ACTION_TIMEOUT })
+    await save.click()
+    await textarea.waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
 
     // 4. The day, re-read after a nav round-trip: the template first, the
     //    capture after it.

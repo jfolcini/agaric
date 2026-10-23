@@ -7,7 +7,10 @@ import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { _resetHardwareKeyboardLatchForTests } from '@/hooks/useHasHardwareKeyboard'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
+
+vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: vi.fn(() => true) }))
 
 interface MqlMock {
   matches: boolean
@@ -43,6 +46,7 @@ function setInnerWidth(px: number): void {
 
 beforeEach(() => {
   _resetHardwareKeyboardLatchForTests()
+  vi.mocked(useIsTouch).mockReturnValue(true)
 })
 
 afterEach(() => {
@@ -98,6 +102,14 @@ describe('useShouldShowMobileChrome', () => {
     const { getByTestId } = render(<Probe />)
     expect(getByTestId('probe').textContent).toBe('desktop')
     // Even with no keyboard signal, ≥ 1024 is desktop-shaped.
+    expect(getByTestId('probe').textContent).toBe('desktop')
+  })
+
+  it.each([390, 900])('a %i px mouse window shows desktop chrome', (width) => {
+    vi.mocked(useIsTouch).mockReturnValue(false)
+    setInnerWidth(width)
+    installMatchMedia(() => false)
+    const { getByTestId } = render(<Probe />)
     expect(getByTestId('probe').textContent).toBe('desktop')
   })
 

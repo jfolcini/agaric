@@ -5,7 +5,7 @@
  */
 import type { Locator, Page } from '@playwright/test'
 
-import { expect, openPage, openPageMobile, seedSearchBlocks, test, waitForBoot } from './helpers'
+import { expect, navigateToView, seedSearchBlocks, test, waitForBoot } from './helpers'
 
 test.use({ launchOptions: { ignoreDefaultArgs: ['--hide-scrollbars'] } })
 
@@ -51,7 +51,10 @@ for (const width of ['desktop', 'phone'] as const) {
       page,
       [SMALL_FLOW, WIDE_FLOW, NARROW_MATH, WIDE_MATH].map((content) => ({ content })),
     )
-    await (width === 'phone' ? openPageMobile : openPage)(page, 'Projects')
+    // Through the Pages view at either width: a narrow mouse window has the
+    // hamburger, not the search sheet a touch phone opens pages from.
+    await navigateToView(page, 'Pages')
+    await page.getByText('Projects', { exact: true }).click()
     await expect(page.locator('[data-testid="mermaid-diagram"] svg')).toHaveCount(2)
     await expect(page.locator('[data-testid="katex-block"] .katex')).toHaveCount(2)
 

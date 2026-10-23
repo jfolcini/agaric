@@ -318,7 +318,7 @@ Boolean operators **don't work inside regex mode** — there the free-text remai
 
 ## Mobile
 
-Desktop drives three search surfaces with three keybindings: `Ctrl+F` opens in-page find, `Cmd/Ctrl+K` opens the palette, `Ctrl+Shift+F` opens the find-in-files view. Touch devices can't reach any of those on their own. The mobile search Sheet collapses all three into a single Sheet behind one icon (`<SearchSheetTrigger />`, magnifying-glass, top-right of the header). The icon mounts when `useShouldShowMobileChrome()` is true — a phone viewport, or a tablet with no hardware keyboard (see [Known limitations](#known-limitations)). Desktop keeps its keybindings and puts `<HeaderSearchButton />` in the same header slot; it opens the palette, and its tooltip names the palette and find-in-page bindings.
+Desktop drives three search surfaces with three keybindings: `Ctrl+F` opens in-page find, `Cmd/Ctrl+K` opens the palette, `Ctrl+Shift+F` opens the find-in-files view. Touch devices can't reach any of those on their own. The mobile search Sheet collapses all three into a single Sheet behind one icon (`<SearchSheetTrigger />`, magnifying-glass, top-right of the header). The icon mounts when `useShouldShowMobileChrome()` is true — a touch phone, or a touch tablet with no hardware keyboard (see [Known limitations](#known-limitations)). Desktop keeps its keybindings and puts `<HeaderSearchButton />` in the same header slot; it opens the palette, and its tooltip names the palette and find-in-page bindings.
 
 The Sheet has two segments rendered as a Radix `ToggleGroup`:
 
@@ -342,6 +342,6 @@ Two safety nets:
 
 ### Known limitations
 
-- **Tablet / hardware-keyboard detection.** The trigger also renders on a keyboard-less tablet: `useHasHardwareKeyboard` runs a `navigator.keyboard` + first-keydown probe, and `useShouldShowMobileChrome` shows the touch trigger when `isMobile || (isTablet && !hasKeyboard)`.
+- **Tablet / hardware-keyboard detection.** The trigger also renders on a keyboard-less tablet: `useHasHardwareKeyboard` runs a `navigator.keyboard` + first-keydown probe, and `useShouldShowMobileChrome` shows the touch trigger when `isTouch && (isMobile || (isTablet && !hasKeyboard))`.
 
 [`regex`]: https://docs.rs/regex/latest/regex/

@@ -68,16 +68,18 @@ test('a batch move lists the properties it drops and their blocks, and drops the
   await expect(chips(page)).toHaveCount(0)
 })
 
-test('Cancel from the batch toolbar moves nothing and gives focus back to Move @spaces @pages', async ({
+test('Cancel from the batch toolbar, worked by Enter, moves nothing and gives focus back to Move @spaces @pages', async ({
   page,
 }) => {
   await navigateToView(page, 'Pages')
   await page.getByTestId(`page-select-${PAGE_MEETINGS}`).click()
   const toolbar = page.getByRole('toolbar', { name: '1 selected', exact: true })
-  await toolbar.getByTestId('page-batch-move-btn').click()
+  // Enter, not a click: the list behind the toolbar must not open its focused page too.
+  await toolbar.getByTestId('page-batch-move-btn').press('Enter')
+  await expect(toolbar.getByTestId('page-batch-space-picker')).toBeVisible()
   await chooseSelectOption(page, 'Choose a space…', 'Work')
   const move = toolbar.getByTestId('page-batch-space-confirm')
-  await move.click()
+  await move.press('Enter')
 
   const dialog = activeAlertDialog(page)
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()

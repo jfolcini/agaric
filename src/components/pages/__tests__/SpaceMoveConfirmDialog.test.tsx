@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from '@/__tests__/helpers/axe'
 import { SpaceMoveConfirmDialog } from '@/components/pages/SpaceMoveConfirmDialog'
 import { useSpaceMove } from '@/hooks/useSpaceMove'
+import { unresolvedBlockLabel } from '@/lib/block-title'
 import { t } from '@/lib/i18n'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import {
@@ -28,6 +29,8 @@ import {
   propertyDefs,
   spacePropertyDefs,
 } from '@/lib/tauri-mock/seed'
+import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -193,6 +196,37 @@ describe('SpaceMoveConfirmDialog', () => {
       'Plandraft',
       `Plan › old${t('spaceMove.inTrash')}final`,
     ])
+  })
+
+  it('shows a reference value as the title of the block it points at', async () => {
+    const user = userEvent.setup()
+    useSpaceStore.setState({ currentSpaceId: SPACE_A })
+    properties.get(CHILD)?.set('due', row(CHILD, 'due', { value_ref: PAGE }))
+    render(<Harness />)
+    const dialog = await openConfirmation(user)
+
+    await user.click(within(dialog).getByRole('button', { name: /^due/ }))
+
+    const holder = await within(dialog).findByText('Plan › card')
+    expect(holder.closest('li')).toHaveTextContent(/^Plan › cardPlan$/)
+  })
+
+  it('still lists a reference value whose title fails to load', async () => {
+    const user = userEvent.setup()
+    useSpaceStore.setState({ currentSpaceId: SPACE_A })
+    useResolveStore.setState({ cache: new Map(), version: 0 })
+    properties.get(CHILD)?.set('due', row(CHILD, 'due', { value_ref: PAGE }))
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'batch_resolve') throw new Error('resolve failed')
+      return dispatch(cmd, args)
+    })
+    render(<Harness />)
+    const dialog = await openConfirmation(user)
+
+    await user.click(within(dialog).getByRole('button', { name: /^due/ }))
+
+    const holder = await within(dialog).findByText('Plan › card')
+    expect(holder.closest('li')).toHaveTextContent(`Plan › card${unresolvedBlockLabel(PAGE)}`)
   })
 
   it('lists the holders a page at a time, and Load more brings the rest', async () => {

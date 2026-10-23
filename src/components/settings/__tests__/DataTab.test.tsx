@@ -1631,6 +1631,35 @@ describe('DataTab', () => {
       expect(screen.getByText(t('data.importNotionDatabases', { count: 1 }))).toBeInTheDocument()
     })
 
+    it('does not count as skipped a file an imported note embedded, and lists the skipped files first', async () => {
+      mockImportMarkdown.mockResolvedValue({ ...okResult, warnings: ['a note warning'] })
+
+      render(<DataTab />)
+      const folderInput = screen.getByTestId('import-folder-input') as HTMLInputElement
+      Object.defineProperty(folderInput, 'files', {
+        value: [
+          folderFile(['![[data.csv]]'], 'note.md', 'Vault/note.md'),
+          folderFile(['a,b'], 'data.csv', 'Vault/data.csv', 'text/csv'),
+          folderFile(['x'], 'deck.pptx', 'Vault/deck.pptx', ''),
+        ],
+      })
+
+      await act(async () => {
+        folderInput.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+
+      await waitFor(() => {
+        expect(screen.getByTestId('import-warnings-heading')).toHaveTextContent('2 warnings')
+      })
+      expect(mockImportMarkdown.mock.calls[0]?.[4]).toEqual([
+        { path: 'data.csv', bytes: [97, 44, 98] },
+      ])
+      expect(screen.getAllByTestId('import-warning-item').map((item) => item.textContent)).toEqual([
+        t('data.importFolderSkipped', { count: 1 }),
+        'a note warning',
+      ])
+    })
+
     it('lets the files picker choose every note format a folder imports', () => {
       render(<DataTab />)
       expect(screen.getByTestId('import-file-input')).toHaveAttribute(
