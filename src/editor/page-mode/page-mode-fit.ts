@@ -18,7 +18,7 @@ import { t } from '@/lib/i18n'
 import type { FlatBlock } from '@/lib/tree-utils'
 
 /** The most blocks page mode opens; a longer page stays in block mode. */
-export const PAGE_MODE_BLOCK_CAP = 500
+export const PAGE_MODE_BLOCK_CAP = 1000
 
 export interface PageModeBlocker {
   kind: 'overCap'
