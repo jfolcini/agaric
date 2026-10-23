@@ -288,10 +288,20 @@ export function useSearchResults({
   // explicit `setItems([])` clear: `keepPreviousData` would otherwise retain the
   // last query's pages as a placeholder after the input empties, so derive `[]`
   // directly when the query is inactive (same guard TagFilterPanel uses).
-  const results = useMemo<SearchBlockRow[]>(
-    () => (queryEnabled ? (data?.pages.flatMap((p) => p.items) ?? []) : []),
-    [queryEnabled, data],
-  )
+  //
+  // Keep the first occurrence of each id: the bm25-rank cursor shifts when the
+  // index changes between two fetches, so a later page can repeat a row an
+  // earlier page already returned (#5659). A shifted cursor can also skip a row;
+  // that is accepted.
+  const results = useMemo<SearchBlockRow[]>(() => {
+    if (!queryEnabled) return []
+    const seen = new Set<string>()
+    return (data?.pages.flatMap((p) => p.items) ?? []).filter((row) => {
+      if (seen.has(row.id)) return false
+      seen.add(row.id)
+      return true
+    })
+  }, [queryEnabled, data])
   // usePaginatedQuery's `loading` was true during ANY in-flight fetch (initial AND
   // load-more), driving the skeleton and the LoadMoreButton busy state alike —
   // `isFetching` reproduces that (`isLoading` would be false during load-more).
