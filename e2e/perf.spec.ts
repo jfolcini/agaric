@@ -1532,7 +1532,7 @@ interface ModeSample {
 
 /**
  * #5691 — page mode against block mode on the same page, at 500, 2,000 and
- * 5,000 blocks (page mode's 500-block cap is lifted for the run), every block
+ * 5,000 blocks (`PAGE_MODE_BLOCK_CAP` is lifted for the run), every block
  * a task with a priority, a due date, a property, a list style and an
  * attachment, a third with a scheduled date too and a tenth an image, so each
  * carries its checkbox, list marker, badge, chips and previews in both modes,

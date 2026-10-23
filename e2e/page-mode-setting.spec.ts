@@ -141,13 +141,13 @@ test.describe('page mode’s setting and switch (#5691) @editor @pages @settings
     await seedPage(
       page,
       'Over the cap',
-      Array.from({ length: 501 }, (_, i) => `block ${i}`),
+      Array.from({ length: 1001 }, (_, i) => `block ${i}`),
     )
     await chooseInSettings(page, 'Page')
 
     await openViaPalette(page, 'Over the cap')
 
-    const why = 'Page mode opens pages of up to 500 blocks; this one has 501.'
+    const why = 'Page mode opens pages of up to 1000 blocks; this one has 1001.'
     await expect(page.locator('[data-testid="block-static"]').first()).toBeVisible()
     await expect(page.locator(EDITOR)).toHaveCount(0)
     const pageRadio = modeSwitch(page, 'Page')
