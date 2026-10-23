@@ -1028,9 +1028,13 @@ describe('enexNoteToMarkdown', () => {
 })
 
 describe('sanitizeNoteTitleToFilename', () => {
-  it('keeps slashes (namespace separator) and collapses whitespace', () => {
-    expect(sanitizeNoteTitleToFilename('Projects/Roadmap')).toBe('Projects/Roadmap')
+  it('collapses whitespace', () => {
     expect(sanitizeNoteTitleToFilename('  A\n\tB  ')).toBe('A B')
+  })
+
+  it('#6032 — keeps a slash or backslash as a look-alike, so the title is one page, not a namespace', () => {
+    expect(sanitizeNoteTitleToFilename('TCP/IP')).toBe('TCP∕IP')
+    expect(sanitizeNoteTitleToFilename('C:\\Temp')).toBe('C:⧵Temp')
   })
 
   it('falls back to the placeholder for an empty title', () => {

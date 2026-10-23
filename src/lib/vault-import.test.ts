@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { enexNoteToMarkdown, type EnexNote, sanitizeNoteTitleToFilename } from '@/lib/enex-import'
+import { enexNoteToMarkdown, type EnexNote } from '@/lib/enex-import'
 import { jexNoteToMarkdown, type JexNote } from '@/lib/jex-import'
 import {
   basename,
@@ -569,6 +569,14 @@ describe('Org files (#6032)', () => {
     expect(loaded.map((l) => l.path)).toEqual(['Vault/sub/Org Tasks.md', 'Vault/loose.md'])
   })
 
+  it('#6032 — keeps a / in a `#+TITLE` as a look-alike, so the page stays in its folder', async () => {
+    const titled = folderFile(['#+TITLE: TCP/IP\n* A\n'], 'net.org', 'Vault/net.org', '')
+
+    const loaded = await loadAll([titled])
+
+    expect(loaded.map((l) => l.path)).toEqual(['Vault/TCP∕IP.md'])
+  })
+
   const orgContent = async (text: string): Promise<string | undefined> =>
     (await loadAll([folderFile([text], 'a.org', 'Vault/a.org', '')]))[0]?.content
 
@@ -629,6 +637,12 @@ describe('enexNotesToUnits', () => {
     expect(loaded0?.path).toBe('Alpha.md')
     // No attachments ⇒ null vaultFiles (consistent with the single-file path).
     expect(loaded0?.vaultFiles).toBeNull()
+  })
+
+  it('#6032 — names a note titled with a / as one page, the / a look-alike', async () => {
+    const [unit] = enexNotesToUnits([note('TCP/IP')])
+    expect(unit?.name).toBe('TCP∕IP.md')
+    expect((await unit?.load())?.path).toBe('TCP∕IP.md')
   })
 
   it('ships decoded en-media attachment bytes as vaultFiles', async () => {
@@ -697,7 +711,13 @@ describe('jexNotesToUnits', () => {
     attachments,
   })
 
-  it('produces one unit per note, filename from the (Evernote) title sanitizer, content from jexNoteToMarkdown', async () => {
+  it('#6032 — keeps the / between a notebook and its note as the namespace', async () => {
+    const [unit] = jexNotesToUnits([note('A∕B/TCP∕IP')])
+    expect(unit?.name).toBe('A∕B/TCP∕IP.md')
+    expect((await unit?.load())?.path).toBe('A∕B/TCP∕IP.md')
+  })
+
+  it('produces one unit per note, filename from the title, content from jexNoteToMarkdown', async () => {
     const pic = note('Picture Note')
     const [unit] = jexNotesToUnits([pic])
     expect(unit?.name).toBe('Picture Note.md')
@@ -717,8 +737,8 @@ describe('jexNotesToUnits', () => {
       note('A|B'),
     ])
     expect(units.map((u) => u.name)).toEqual([
-      `${sanitizeNoteTitleToFilename('Article | Medium')}.md`,
-      `${sanitizeNoteTitleToFilename('A|B')}.md`,
+      'Article | Medium.md',
+      'A|B.md',
       'Links.md',
       'Other.md',
     ])

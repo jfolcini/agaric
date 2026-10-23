@@ -394,10 +394,9 @@ export function enexNotesToUnits(notes: EnexNote[]): ImportUnit[] {
  * Joplin producer: one {@link ImportUnit} per parsed note. Mirrors
  * {@link enexNotesToUnits} — content composed eagerly, resources shipped as
  * `vaultFiles`, and (#2899) the `number[]` conversion deferred into `load()`
- * for the same peak-memory reason. Note that the filename uses the SAME
- * Evernote-title sanitizer (`sanitizeNoteTitleToFilename` from
- * `@/lib/enex-import`) the pre-refactor `.jex` handler used, preserving exact
- * filename behaviour.
+ * for the same peak-memory reason. The filename is the note's title as
+ * `parseJex` built it, each notebook and note name already sanitized, so the
+ * `/` between them is the namespace.
  *
  * A note link is written `[[Title]]`, and one to a title holding a `|` reads as
  * that page only once it exists, else it splits on the `|` (#5160 D10), so
@@ -408,7 +407,7 @@ export function jexNotesToUnits(notes: JexNote[]): ImportUnit[] {
   const piped = (note: JexNote) => Number(note.title.includes('|'))
   const ordered = notes.toSorted((a, b) => piped(b) - piped(a))
   return ordered.map((note) => {
-    const name = `${sanitizeNoteTitleToFilename(note.title)}.md`
+    const name = `${note.title}.md`
     const content = jexNoteToMarkdown(note)
     return {
       name,

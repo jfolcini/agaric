@@ -711,17 +711,29 @@ function tagToToken(tag: string): string {
 }
 
 /**
- * Sanitize a note title for use as the imported page name / import filename.
+ * The look-alike for each character a page name splits into namespace levels on:
+ * `/`, and `\`, which the backend reads as `/` (#6032).
+ */
+const SEPARATOR_LOOKALIKES = { '/': '\u2215', '\\': '\u29F5' } as const
+
+/** `title` as one namespace level: each separator swapped for its look-alike. */
+export function escapeTitleSeparators(title: string): string {
+  return title.replace(
+    /[/\\]/g,
+    (c) => SEPARATOR_LOOKALIKES[c as keyof typeof SEPARATOR_LOOKALIKES],
+  )
+}
+
+/**
+ * Sanitize a note title for use as ONE imported page name / import filename.
  *
- * The markdown importer treats `/` in a filename as a namespace separator
- * (the folder→namespace convention), so we deliberately KEEP `/` here: an
- * Evernote note titled `Projects/Roadmap` lands as the namespaced page
- * `Projects/Roadmap`, consistent with a folder import. We only collapse
- * whitespace (newlines/tabs are invalid in a page name) and fall back to the
- * {@link UNTITLED_PLACEHOLDER} for an otherwise-empty result.
+ * A `/` or `\` in a note's title is part of its name, not a namespace, so it
+ * is escaped ({@link escapeTitleSeparators}): Evernote's `TCP/IP` stays one
+ * page. Whitespace collapses (newlines/tabs are invalid in a page name), and
+ * an otherwise-empty result falls back to the {@link UNTITLED_PLACEHOLDER}.
  */
 export function sanitizeNoteTitleToFilename(title: string): string {
-  const cleaned = title.replace(/\s+/g, ' ').trim()
+  const cleaned = escapeTitleSeparators(title.replace(/\s+/g, ' ').trim())
   return cleaned.length > 0 ? cleaned : UNTITLED_PLACEHOLDER
 }
 
