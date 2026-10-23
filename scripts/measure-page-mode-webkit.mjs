@@ -12,8 +12,8 @@
 // adds, e.g. CONFIGS=page,page+css CSS='.page-mode-editor [data-page-block] { … }').
 //
 // It serves `dist/` with `vite preview` against the in-page mock, drives MiniBrowser through
-// WebKitWebDriver, and seeds a page per size and repeat through the mock's IPC: paragraphs of
-// 6 to 45 words, a task in eight (one in sixteen DONE), a heading in 25, a code block in 40.
+// WebKitWebDriver, and seeds a page per size and repeat through the mock's IPC (`seed`):
+// paragraphs of mixed length, with tasks, headings and code blocks among them.
 // The cap is lifted for the run (`window.__pageModeBlockCap`, honoured by VITE_E2E builds only).
 // Each repeat rotates the order the configs open the page in, so drifting load on the box hits
 // every config alike. Per config:
@@ -22,7 +22,7 @@
 //  - key p50 / p95: 50 keys typed into the block nearest the middle, each from its event
 //    timestamp to the task after the next frame; INP: the worst Event Timing interaction;
 //  - scroll: 120 px a frame from top to bottom; long frames are rAF intervals over 50 ms.
-// `blocks` is block mode as it opens: 500 rows mounted and a "Show more" row
+// `blocks` is block mode as it opens: `INITIAL_MOUNT_LIMIT` rows mounted and a "Show more" row
 // (`use-block-mount-limit.ts`); `blocks-all` clicks it until every row is mounted.
 // Prints median [min–max] over the repeats. Xvfb rasterizes in software, so read frame times
 // against the other configs in the same run, never as absolute numbers; read a difference
@@ -47,22 +47,25 @@ if (CONFIGS.some((c) => c.endsWith('+css')) && !process.env.CSS) {
   throw new Error('a +css config needs CSS')
 }
 
-const children = [
-  spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'], { stdio: 'ignore' }),
-  spawn('WebKitWebDriver', [`--port=${WD_PORT}`], { stdio: 'ignore' }),
-]
+const preview = spawn(
+  'node_modules/.bin/vite',
+  ['preview', '--port', String(PORT), '--strictPort'],
+  {
+    stdio: ['ignore', 'pipe', 'inherit'],
+  },
+)
+const children = [preview, spawn('WebKitWebDriver', [`--port=${WD_PORT}`], { stdio: 'ignore' })]
 process.on('exit', () => {
   for (const child of children) child.kill()
 })
-for (let i = 0; ; i += 1) {
-  const up = await fetch(ORIGIN).then(
-    (r) => r.ok,
-    () => false,
-  )
-  if (up) break
-  if (i > 60) throw new Error(`no preview on ${ORIGIN}: was dist/ built with VITE_E2E=1?`)
-  await new Promise((r) => setTimeout(r, 500))
-}
+// Its own banner, not a fetch: a server already on PORT answers a fetch while `--strictPort`
+// makes this one exit, and the run would measure that server.
+await new Promise((resolve, reject) => {
+  preview.stdout.on('data', (chunk) => {
+    if (String(chunk).includes('Local:')) resolve()
+  })
+  preview.on('exit', (code) => reject(new Error(`vite preview on ${ORIGIN} exited (${code})`)))
+})
 
 const browser = await remote({
   hostname: 'localhost',
