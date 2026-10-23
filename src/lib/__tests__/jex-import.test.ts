@@ -1051,6 +1051,24 @@ describe('parseJex notebook hierarchy', () => {
     ])
     expect(parseJex(archive).notes.map((n) => n.title)).toEqual(['Beta/Alpha/Cycled'])
   })
+
+  it('#6032 — keeps a / in a note title as a look-alike, and a link to the note names that title', () => {
+    const target = 'd1'.repeat(16)
+    const linker = 'd2'.repeat(16)
+    const archive = buildTar([
+      childNote(target, 'TCP/IP', ''),
+      itemMember(linker, joplinItem(`Linker\n\nsee [it](:/${target})`, { id: linker, type_: '1' })),
+    ])
+    const { notes } = parseJex(archive)
+    expect(notes.map((n) => n.title)).toEqual(['TCP∕IP', 'Linker'])
+    expect(notes[1]?.markdown).toBe('see [[TCP∕IP|it]]')
+  })
+
+  it('#6032 — keeps a / in a notebook title as a look-alike, so the notebook is one namespace level', () => {
+    const book = 'd3'.repeat(16)
+    const archive = buildTar([folderMember(book, 'A/B'), childNote('d4'.repeat(16), 'Note', book)])
+    expect(parseJex(archive).notes.map((n) => n.title)).toEqual(['A∕B/Note'])
+  })
 })
 
 // --- Joplin fidelity (#6032) --------------------------------------------------

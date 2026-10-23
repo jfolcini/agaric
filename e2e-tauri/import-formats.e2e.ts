@@ -27,11 +27,13 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
+  expectAbsent,
   expectImageRendered,
   importFolder,
   navigateTo,
   openDataTab,
   openPageTitled,
+  pageEntryTitled,
   runScopedMarker,
   waitForAppReady,
   waitForImportResult,
@@ -212,5 +214,69 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     await navigateTo('Journal')
     await openPageTitled(`${book}/${sub}/${marker}-deep`)
     await blockStaticByMarker(`${marker}-deep-body`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+  })
+
+  // #6032 — a `/` in a title is part of the name, kept as the look-alike `∕`,
+  // where it once split the note into a namespace.
+  it('imports an .enex note titled with a / as one page, the / a look-alike', async () => {
+    await waitForAppReady()
+    const marker = runScopedMarker('wdio-enex-slash')
+    const title = `${marker}-TCP∕IP`
+    const enml = `<en-note><div>${marker}-body</div></en-note>`
+    const enex = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<en-export>',
+      `<note><title>${marker}-TCP/IP</title><content><![CDATA[${enml}]]></content></note>`,
+      '</en-export>',
+    ].join('\n')
+    await importFile('import-enex-input', 'export.enex', enex, `Imported “${title}”`)
+
+    await navigateTo('Journal')
+    await navigateTo('Pages')
+    await pageEntryTitled(title).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await expectAbsent(`span[title="${marker}-TCP/IP"]`, 'the page IP under the namespace TCP')
+    await openPageTitled(title)
+    await blockStaticByMarker(`${marker}-body`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+  })
+
+  it('imports a .jex note and notebook titled with a / as one level each, linked by that title', async () => {
+    await waitForAppReady()
+    const marker = runScopedMarker('wdio-jex-slash')
+    const ids = { book: '7'.repeat(32), target: '8'.repeat(32), linker: '9'.repeat(32) }
+    const jex = tar([
+      [`${ids.book}.md`, joplinItem(`${marker}-A/B`, { id: ids.book, parent_id: '', type_: '2' })],
+      [
+        `${ids.target}.md`,
+        joplinItem(`${marker}-TCP/IP\n\n${marker}-body`, {
+          id: ids.target,
+          parent_id: ids.book,
+          type_: '1',
+        }),
+      ],
+      [
+        `${ids.linker}.md`,
+        joplinItem(`${marker}-linker\n\n${marker}-link [it](:/${ids.target})`, {
+          id: ids.linker,
+          parent_id: '',
+          type_: '1',
+        }),
+      ],
+    ])
+    await importFile('import-jex-input', 'export.jex', jex, 'Imported “2 notes”')
+
+    const title = `${marker}-A∕B/${marker}-TCP∕IP`
+    await navigateTo('Journal')
+    await openPageTitled(title)
+    await blockStaticByMarker(`${marker}-body`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await navigateTo('Journal')
+    await openPageTitled(`${marker}-linker`)
+    const link = blockStaticByMarker(`${marker}-link`)
+    await link.waitForDisplayed({ timeout: NAV_TIMEOUT })
+    const id = await link.getAttribute('data-block-id')
+    const chip = $(`li[data-block-id="${id}"] [data-testid="block-link-chip"]`)
+    await browser.waitUntil(async () => (await chip.getAttribute('title')) === title, {
+      timeout: NAV_TIMEOUT,
+      timeoutMsg: `the link to the note never resolved to the page ${title}`,
+    })
   })
 })

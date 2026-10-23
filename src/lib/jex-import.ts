@@ -40,7 +40,8 @@
  * Folders are mapped to namespaces: a note under `Projects/Roadmap` lands as the
  * namespaced page `Projects/Roadmap/<title>`, mirroring the folder→namespace
  * convention a `.md` folder import uses (the importer treats `/` in the page
- * name as a namespace separator).
+ * name as a namespace separator). A `/` inside one notebook or note title is
+ * escaped to a look-alike ({@link escapeTitleSeparators}), so it adds no level.
  *
  * GRACEFUL DEGRADATION: a malformed/partial archive never crashes the whole
  * import — an item whose metadata can't be parsed, or an encrypted item
@@ -54,7 +55,9 @@
 import { formatDate } from '@/lib/date-utils'
 import {
   createHtmlTurndown,
+  escapeTitleSeparators,
   prepareTablesForGfm,
+  sanitizeNoteTitleToFilename,
   sanitizeResourceName,
   UNTITLED_PLACEHOLDER,
 } from '@/lib/enex-import'
@@ -360,7 +363,7 @@ function resolveFolderPath(
     depth++
     const folder = folders.get(current)
     if (folder === undefined) break
-    const title = folder.title.replace(/\s+/g, ' ')
+    const title = escapeTitleSeparators(folder.title.replace(/\s+/g, ' '))
     if (title.length > 0) parts.unshift(title)
     current = folder.parentId
   }
@@ -608,14 +611,16 @@ export function parseJex(archive: Uint8Array): JexParseResult {
  * Compose a note's namespaced page title from its folder chain: the resolved
  * `parent_id` namespace path prefixed onto the note title (`Folder/Sub/Title`),
  * or just the title for a root-level note. `/` is the importer's namespace
- * separator, so this is what drives folder→namespace mapping.
+ * separator, so this is what drives folder→namespace mapping; each name's own
+ * `/` is escaped first.
  */
 function pageTitleFor(
   raw: RawNote,
   folders: Map<string, { title: string; parentId: string }>,
 ): string {
   const namespace = resolveFolderPath(raw.parentId, folders)
-  return namespace.length > 0 ? `${namespace}/${raw.title}` : raw.title
+  const title = sanitizeNoteTitleToFilename(raw.title)
+  return namespace.length > 0 ? `${namespace}/${title}` : title
 }
 
 /**
