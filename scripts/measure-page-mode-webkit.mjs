@@ -363,6 +363,8 @@ try {
   })
   for (const size of SIZES) {
     for (let repeat = 0; repeat < REPEATS; repeat += 1) {
+      // A config may have left page mode on, in which the journal's day would open.
+      await browser.execute(() => localStorage.setItem('agaric-edit-mode', 'blocks'))
       await browser.url(ORIGIN)
       await sidebar('Journal').waitForClickable({ timeout: 30_000 })
       await sidebar('Journal').click()

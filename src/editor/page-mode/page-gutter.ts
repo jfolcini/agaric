@@ -170,7 +170,6 @@ export class PageGrip {
     element.className = 'page-grip'
     element.hidden = true
     // Outside the editor: a press keeps its focus and caret, and no text selection starts.
-    element.setAttribute('data-editor-portal', '')
     element.addEventListener('mousedown', (event) => event.preventDefault())
     element.addEventListener('pointerleave', this.leave)
     button.type = 'button'
@@ -229,7 +228,7 @@ export class PageGrip {
     const block =
       pointedAt instanceof Element ? pointedAt.closest<HTMLElement>('[data-page-block-id]') : null
     if (block === null) this.hide()
-    else if (block !== this.block) this.place(block)
+    else this.place(block)
   }
 
   /** The pointer left the editor or the grip, for anything but the other. */
@@ -254,19 +253,23 @@ export class PageGrip {
   /**
    * Put it at `block`'s top left corner, in the frame the editor's root sits in
    * (`PageModeEditor` positions it), so it scrolls with the block; its classes
-   * move it left of there, into the block's gutter (`index.css`).
+   * move it left of there, into the block's gutter (`index.css`). Measured on
+   * every move, on its block too: a window resize moves the block with no
+   * change to the document.
    */
   private place(block: HTMLElement): void {
     const { element, view } = this
-    if (element.parentElement !== view.dom.parentElement) view.dom.after(element)
-    this.block?.removeAttribute(GRIP_ON)
-    this.block = block
-    block.setAttribute(GRIP_ON, '')
-    element.toggleAttribute(
-      'data-chevron',
-      block.querySelector(':scope > .page-block-gutter') !== null,
-    )
-    element.hidden = false
+    if (block !== this.block) {
+      if (element.parentElement !== view.dom.parentElement) view.dom.after(element)
+      this.block?.removeAttribute(GRIP_ON)
+      this.block = block
+      block.setAttribute(GRIP_ON, '')
+      element.toggleAttribute(
+        'data-chevron',
+        block.querySelector(':scope > .page-block-gutter') !== null,
+      )
+      element.hidden = false
+    }
     // The editor is mounted: the pointer is on it.
     const at = block.getBoundingClientRect()
     const origin = (view.dom.parentElement as HTMLElement).getBoundingClientRect()

@@ -230,7 +230,6 @@ describe('the grip', () => {
     expect(handle).toHaveAttribute('aria-haspopup', 'menu')
     expect(handle).toHaveAttribute('title', t('pageMode.gripTip'))
     expect(handle).toHaveAttribute('tabindex', '-1')
-    expect(frame(container)).toHaveAttribute('data-editor-portal')
     expect(frame(container)).toBeVisible()
     expect(await axe(container)).toHaveNoViolations()
   })
@@ -255,6 +254,18 @@ describe('the grip', () => {
     fireEvent.click(grip(container))
 
     expect(menus).toEqual([C, A])
+  })
+
+  it('follows its block as it moves with no change to the document, a resize say, once the pointer moves', async () => {
+    const { container } = mount(TREE)
+    placeAt(container, C, 64)
+    await point(textOf(container, C))
+    expect(frame(container).style.top).toBe('64px')
+
+    placeAt(container, C, 96)
+    await point(textOf(container, C))
+
+    expect(frame(container).style.top).toBe('96px')
   })
 
   it('stays as the pointer moves from the editor onto it and back, and hides as the pointer leaves both', async () => {
