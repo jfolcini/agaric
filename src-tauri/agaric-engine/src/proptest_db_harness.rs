@@ -649,17 +649,6 @@ impl ChainModel {
                 let (value_text, value_date, value_ref) = match key.as_str() {
                     "due_date" | "scheduled_date" => (None, Some(date.clone()), None),
                     SPACE_PROPERTY_KEY => {
-                        // A space reassignment re-seeds the target's subtree
-                        // into the new space's engine from LIVE rows only
-                        // (`hydrate_page_subtree_into_engine`), so a tombstone
-                        // in the chain would be dropped from the engine and its
-                        // later restore would take the SQL-only fallback the
-                        // apply-path suites forbid. Same structural rule as
-                        // "restore only a seed whose parent is live": emit the
-                        // op only while nothing is soft-deleted.
-                        if !self.deleted_at.is_empty() {
-                            return None;
-                        }
                         let space = HARNESS_SPACE_IDS[option_index % HARNESS_SPACE_IDS.len()];
                         (None, None, Some(BlockId::from_trusted(space)))
                     }

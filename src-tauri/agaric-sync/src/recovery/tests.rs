@@ -3576,17 +3576,25 @@ async fn apply_like_a_command(
     device_id: &str,
     payload: OpPayload,
 ) -> agaric_store::op_log::OpRecord {
+    apply_like_a_command_at(pool, mat, device_id, payload, agaric_store::db::now_ms()).await
+}
+
+/// [`apply_like_a_command`] stamped `created_at`, for a test that needs two ops
+/// in one millisecond.
+async fn apply_like_a_command_at(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    device_id: &str,
+    payload: OpPayload,
+    created_at: i64,
+) -> agaric_store::op_log::OpRecord {
     let mut tx = agaric_store::db::begin_immediate_logged(pool, "test_local_apply_5418")
         .await
         .unwrap();
-    let record = agaric_store::op_log::append_local_op_in_tx(
-        &mut tx,
-        device_id,
-        payload,
-        agaric_store::db::now_ms(),
-    )
-    .await
-    .unwrap();
+    let record =
+        agaric_store::op_log::append_local_op_in_tx(&mut tx, device_id, payload, created_at)
+            .await
+            .unwrap();
     let effects =
         agaric_engine::apply::kernel::apply_op_projected(&mut tx, &record, mat.loro_state(), false)
             .await
@@ -4422,8 +4430,10 @@ async fn crash_tail_restore_then_delete_again_5647() {
 /// `delete_after` deleted there later in the tail. SQL already names the new
 /// space when the move replays (or, deleted, resolves none), so the move must
 /// still prune the old space's doc and seed the new one, rows tombstoned
-/// since included.
-async fn crash_tail_space_move(delete_after: bool) {
+/// since included, and the row trashed before the move tombstoned at its own
+/// delete (#6080). With `same_ms` the move is stamped in the millisecond the
+/// row was trashed, a tie that `deleted_at` cannot order against the move.
+async fn crash_tail_space_move(delete_after: bool, same_ms: bool) {
     use agaric_store::op::{DeleteBlockPayload, SPACE_PROPERTY_KEY, SetPropertyPayload};
 
     const S1: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
@@ -4434,16 +4444,29 @@ async fn crash_tail_space_move(delete_after: bool) {
     // reprojection left, which is what replay's hydration reads.
     const B: &str = "01HZ0000000000000000005640";
     const C: &str = "T5647SC";
+    const D: &str = "T6080SD";
     let device_id = "dev-5647-space-move";
-    let ids = [A, B, C];
+    let ids = [A, B, C, D];
     let (pool, _dir) = test_pool().await;
     let session = Materializer::new(pool.clone());
     seed_space_and_page(&pool, session.loro_state(), device_id, S1, A).await;
     seed_space_and_page(&pool, session.loro_state(), device_id, S2, B).await;
     apply_like_a_command(&pool, &session, device_id, create_under(C, A, 0)).await;
+    apply_like_a_command(&pool, &session, device_id, create_under(D, A, 1)).await;
+    let trash_d = OpPayload::DeleteBlock(DeleteBlockPayload {
+        block_id: BlockId::test_id(D),
+    });
+    let trashed_at = apply_like_a_command(&pool, &session, device_id, trash_d)
+        .await
+        .created_at;
     let saved =
         agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session).await;
     assert_eq!(saved, 2, "the pass persists both spaces");
+    let move_at = if same_ms {
+        trashed_at
+    } else {
+        agaric_store::db::now_ms()
+    };
     let move_to_s2 = OpPayload::SetProperty(SetPropertyPayload {
         block_id: BlockId::test_id(A),
         key: SPACE_PROPERTY_KEY.into(),
@@ -4454,7 +4477,7 @@ async fn crash_tail_space_move(delete_after: bool) {
         value_bool: None,
         prior: None,
     });
-    apply_like_a_command(&pool, &session, device_id, move_to_s2).await;
+    apply_like_a_command_at(&pool, &session, device_id, move_to_s2, move_at).await;
     let deleted_at = if delete_after {
         let delete = OpPayload::DeleteBlock(DeleteBlockPayload {
             block_id: BlockId::test_id(A),
@@ -4490,6 +4513,12 @@ async fn crash_tail_space_move(delete_after: bool) {
             "{moved} carries the later delete, if any"
         );
     }
+    let trashed = block(&booted_s2, D);
+    assert_eq!(
+        (block(&booted_s1, D).1, trashed.1.is_some(), trashed.2),
+        (None, true, Some(trashed_at.to_string())),
+        "{D}, trashed before the move, is only in the new space's doc, tombstoned at its delete"
+    );
     assert_eq!(
         booted_s1, session_s1,
         "the old doc must match the session's"
@@ -4508,12 +4537,17 @@ async fn crash_tail_space_move(delete_after: bool) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn crash_tail_space_move_reaches_the_engine_5647() {
-    crash_tail_space_move(false).await;
+    crash_tail_space_move(false, false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn crash_tail_space_move_then_delete_reaches_the_engine_5647() {
-    crash_tail_space_move(true).await;
+    crash_tail_space_move(true, false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn crash_tail_space_move_in_the_millisecond_of_a_delete_6080() {
+    crash_tail_space_move(false, true).await;
 }
 
 /// `(id, filename, fs_path, created_at)` of every `attachments` row, by id.
