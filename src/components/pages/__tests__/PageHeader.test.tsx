@@ -2236,8 +2236,8 @@ describe('PageHeader  header outlet migration', () => {
 // ── Move to space (Phase 2) ──────────────────────────────────────
 //
 // The kebab menu learns a new entry that reveals a sub-menu of every
-// space except the current one. Selecting a target calls `setProperty`
-// to rewrite `space=<targetSpaceId>` and fires a success toast. The
+// space except the current one. Selecting a target previews the move and
+// calls `moveBlocksToSpace` (#5841 S0.6) and fires a success toast. The
 // entry is hidden when the page itself is a space block (spaces can't
 // be nested inside other spaces).
 
@@ -2280,9 +2280,10 @@ describe('PageHeader Move to space (Phase 2)', () => {
       if (cmd === 'list_property_defs')
         return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
-      if (cmd === 'set_property') {
+      if (cmd === 'preview_space_move') return []
+      if (cmd === 'move_blocks_to_space') {
         const record = args as Record<string, unknown> | undefined
-        return { block_id: record?.['blockId'] }
+        return (record?.['blockIds'] as string[] | undefined)?.length ?? 0
       }
       return null
     })
@@ -2345,7 +2346,9 @@ describe('PageHeader Move to space (Phase 2)', () => {
     expect(screen.queryByText(/Move to space/i)).not.toBeInTheDocument()
   })
 
-  it('click on a target fires set_property and shows the success toast', async () => {
+  // #5841 S0.6 — the move is `move_blocks_to_space`, which a lossless move
+  // reaches straight after its preview, with no acknowledgement.
+  it('click on a target fires move_blocks_to_space and shows the success toast', async () => {
     const user = userEvent.setup()
     setupPage()
 
@@ -2356,16 +2359,10 @@ describe('PageHeader Move to space (Phase 2)', () => {
     await user.click(await screen.findByRole('menuitem', { name: 'Work' }))
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
-        blockId: 'PAGE_1',
-        key: 'space',
-        value: {
-          value_text: null,
-          value_num: null,
-          value_date: null,
-          value_ref: 'SPACE_WORK',
-          value_bool: null,
-        },
+      expect(mockedInvoke).toHaveBeenCalledWith('move_blocks_to_space', {
+        blockIds: ['PAGE_1'],
+        spaceId: 'SPACE_WORK',
+        acknowledgedLoss: null,
       })
     })
     await waitFor(() => {
@@ -2450,7 +2447,7 @@ describe('PageHeader Move to space (Phase 2)', () => {
     }
   })
 
-  it('shows error toast when set_property rejects', async () => {
+  it('shows error toast when move_blocks_to_space rejects', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return emptyPage
@@ -2459,7 +2456,8 @@ describe('PageHeader Move to space (Phase 2)', () => {
       if (cmd === 'list_property_defs')
         return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
-      if (cmd === 'set_property') throw new Error('write failed')
+      if (cmd === 'preview_space_move') return []
+      if (cmd === 'move_blocks_to_space') throw new Error('write failed')
       return null
     })
     useResolveStore.getState().set('PAGE_1', 'Test', false)

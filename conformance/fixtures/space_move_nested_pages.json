@@ -1,0 +1,370 @@
+{
+  "description": "#5841 S0.6 — what a cross-space move takes: the page and its blocks, a trashed one included, and not a nested page, which keeps its own space (#4480). The harness space declares `stage`; `S6`, the target, declares nothing, so every `stage` value the move takes is a loss and `note`, declared nowhere, is not. Plan `S1` holds `card` (`S2`), which holds the nested page `S3` with its block `S4`; `S5`, a block of Plan, is in the Trash. Moving Plan counts `S1`, `S2` and the trashed `S5` and leaves `S3` and `S4` out; moving the nested page counts its own two; moving both counts all five. The ops only trash `S5`: no move runs, so the nested page the backend would re-root stays where the seed put it. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Plan",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Nested",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": "B2",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "inside",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "later",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Target",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B6",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 8,
+      "ops": [
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "key": "note",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B1",
+        "key": "note",
+        "value": "x",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B1",
+        "key": "stage",
+        "value": "draft",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B2",
+        "key": "stage",
+        "value": "final",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B3",
+        "key": "stage",
+        "value": "draft",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B4",
+        "key": "stage",
+        "value": "final",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B5",
+        "key": "stage",
+        "value": "draft",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B6",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "trash_a_block_of_the_page",
+      "returns": ["B5#deleted_at=DELETED#descendants_affected=1"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "moving_the_page_leaves_the_nested_page",
+      "rows": ["stage#count=3"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "moving_the_nested_page_takes_its_own_blocks",
+      "rows": ["stage#count=2"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "moving_both_takes_every_block",
+      "rows": ["stage#count=5"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "the_holders_of_the_page_move",
+      "rows": [
+        "B1#page_id=B1#deleted=false#value_text=draft",
+        "B2#page_id=B1#deleted=false#value_text=final",
+        "B5#page_id=B1#deleted=true#value_text=draft"
+      ],
+      "total_count": null
+    }
+  ],
+  "name": "space_move_nested_pages",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S5"
+      },
+      "command": "delete_block",
+      "comment": "S5 keeps its space and its value in the Trash; the move still takes it.",
+      "name": "trash_a_block_of_the_page",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockIds": ["S1"],
+        "targetSpaceId": "S6"
+      },
+      "command": "preview_space_move",
+      "comment": "S1, S2 and the trashed S5 count; the nested page S3 and its block S4 do not.",
+      "name": "moving_the_page_leaves_the_nested_page"
+    },
+    {
+      "args": {
+        "blockIds": ["S3"],
+        "targetSpaceId": "S6"
+      },
+      "command": "preview_space_move",
+      "comment": "S3 and S4: a nested page is a move of its own.",
+      "name": "moving_the_nested_page_takes_its_own_blocks"
+    },
+    {
+      "args": {
+        "blockIds": ["S1", "S3"],
+        "targetSpaceId": "S6"
+      },
+      "command": "preview_space_move",
+      "comment": "The two groups do not overlap, so all five count once each.",
+      "name": "moving_both_takes_every_block"
+    },
+    {
+      "args": {
+        "blockIds": ["S1"],
+        "key": "stage",
+        "limit": 10,
+        "targetSpaceId": "S6"
+      },
+      "command": "list_property_loss_values",
+      "comment": "By block id: S1, S2, then the trashed S5 marked deleted; no S3 or S4.",
+      "name": "the_holders_of_the_page_move"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Plan",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Nested",
+        "id": "S3",
+        "parent_id": "S2",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "inside",
+        "id": "S4",
+        "parent_id": "S3",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "later",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "page",
+        "content": "Target",
+        "id": "S6",
+        "parent_id": null,
+        "position": 2
+      }
+    ],
+    "properties": [
+      {
+        "block_id": "S6",
+        "key": "is_space",
+        "value": {
+          "value_text": "true"
+        }
+      },
+      {
+        "block_id": "S1",
+        "key": "stage",
+        "value": {
+          "value_text": "draft"
+        }
+      },
+      {
+        "block_id": "S1",
+        "key": "note",
+        "value": {
+          "value_text": "x"
+        }
+      },
+      {
+        "block_id": "S2",
+        "key": "stage",
+        "value": {
+          "value_text": "final"
+        }
+      },
+      {
+        "block_id": "S3",
+        "key": "stage",
+        "value": {
+          "value_text": "draft"
+        }
+      },
+      {
+        "block_id": "S4",
+        "key": "stage",
+        "value": {
+          "value_text": "final"
+        }
+      },
+      {
+        "block_id": "S5",
+        "key": "stage",
+        "value": {
+          "value_text": "draft"
+        }
+      }
+    ],
+    "property_defs": [
+      {
+        "key": "stage",
+        "options": null,
+        "value_type": "text"
+      }
+    ],
+    "tags": []
+  }
+}

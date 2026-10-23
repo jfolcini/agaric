@@ -14,7 +14,9 @@
  *    selection — the least-surprising reading of a toggle, and idempotent
  *    for the pages already starred.
  *  - **Add tag** — pick a tag from the active space, then `addTagsByIds`.
- *  - **Move to space** — pick a target space, then `moveBlocksToSpace`.
+ *  - **Move to space** — pick a target space, then `useSpaceMove`: it
+ *    confirms the properties the target defines differently before
+ *    `moveBlocksToSpace` drops them.
  *  - **Set property** — pick one of `todo_state` / `priority` / `due_date` /
  *    `scheduled_date`, then a value (or Clear), and confirm via
  *    `setPropertyBatch`.
@@ -39,6 +41,7 @@ import { useTranslation } from 'react-i18next'
 
 import { BatchActionToolbar } from '@/components/common/BatchActionToolbar'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
+import { SpaceMoveConfirmDialog } from '@/components/pages/SpaceMoveConfirmDialog'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -47,6 +50,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { spaceMoveFailureMessage, useSpaceMove } from '@/hooks/useSpaceMove'
 import { useStarredPages } from '@/hooks/useStarredPages'
 import { unwrap } from '@/lib/app-error'
 import type { TagCacheRow } from '@/lib/bindings'
@@ -347,12 +351,15 @@ export function PageBrowserBatchToolbar({
     }
   }, [selectedIds, selectedTagId, busy, closePickers, onClearSelection, onMutated, t])
 
+  // #5841 S0.6 — the move previews the properties the target space defines
+  // differently and asks before dropping them (`useSpaceMove`).
+  const spaceMove = useSpaceMove()
+  const { requestMove } = spaceMove
   const handleMoveToSpace = useCallback(async () => {
     if (selectedIds.length === 0 || selectedSpaceId === '' || busy) return
     const ids = [...selectedIds]
-    setBusy(true)
-    try {
-      const count = unwrap(await commands.moveBlocksToSpace(ids, selectedSpaceId))
+    const targetName = availableSpaces.find((s) => s.id === selectedSpaceId)?.name ?? ''
+    const onMoved = (count: number) => {
       // #4450 — the moved pages must stop being offered by the ORIGIN
       // space's `[[` picker cache; `list_all_pages_in_space` is what fills
       // it, and a move publishes nothing to invalidate it otherwise, so a
@@ -391,9 +398,14 @@ export function PageBrowserBatchToolbar({
       onClearSelection()
       onMutated()
       notify.success(t('pageBrowser.batch.moved', { count }))
-    } catch (err) {
+    }
+    const onFailed = (err: unknown) => {
       logger.error('PageBrowserBatchToolbar', 'bulk move failed', { count: ids.length }, err)
-      notify.error(t('pageBrowser.batch.moveFailed'))
+      notify.error(spaceMoveFailureMessage(err, t('pageBrowser.batch.moveFailed')))
+    }
+    setBusy(true)
+    try {
+      await requestMove({ ids, targetSpaceId: selectedSpaceId, targetName, onMoved, onFailed })
     } finally {
       setBusy(false)
     }
@@ -401,7 +413,9 @@ export function PageBrowserBatchToolbar({
     selectedIds,
     selectedSpaceId,
     busy,
+    availableSpaces,
     currentSpaceId,
+    requestMove,
     closePickers,
     onClearSelection,
     onMutated,
@@ -492,6 +506,12 @@ export function PageBrowserBatchToolbar({
         variant="destructive"
         onConfirm={handleTrash}
         className="page-batch-trash-confirm"
+      />
+
+      <SpaceMoveConfirmDialog
+        confirmation={spaceMove.confirmation}
+        onConfirm={spaceMove.confirm}
+        onDismiss={spaceMove.dismiss}
       />
 
       {/* Bookmark / unbookmark the whole selection (pure localStorage). One toggle:
@@ -596,7 +616,9 @@ export function PageBrowserBatchToolbar({
             variant="default"
             size="sm"
             onClick={handleMoveToSpace}
-            disabled={busy || selectedSpaceId === ''}
+            // Not `busy`: a disabled button drops the focus the confirmation hands back
+            // on Cancel, and `handleMoveToSpace` already ignores a click while busy.
+            disabled={selectedSpaceId === ''}
             data-testid="page-batch-space-confirm"
           >
             {t('pageBrowser.batch.confirmMove')}

@@ -2174,6 +2174,92 @@ async fn move_page_to_space_target_not_a_live_space_rejected() {
     );
 }
 
+/// #5841 S0.6 — a page holding a value its target space defines another way
+/// is refused until `acknowledge_property_loss` names the losses; the refusal
+/// says which keys, how many values and what to pass, and passing it moves
+/// the page and drops the value.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_page_to_space_refuses_a_lossy_move_until_acknowledged() {
+    let (tools, mat, pool, space_a, _dir) = mk_tools().await;
+    let space_b = mk_space(&pool, " space B").await;
+    crate::commands::create_property_def_inner(
+        &pool,
+        &space_b,
+        "stage".into(),
+        "number".into(),
+        None,
+    )
+    .await
+    .unwrap();
+    let page = mk_page(&pool, &mat, &space_a, "Page").await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.as_str().into(),
+        "stage".into(),
+        Some("draft".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let ctx = test_ctx_agent();
+    let call = |ack: Option<Value>| {
+        let mut args = json!({
+            "page_id": page.clone(),
+            "space_id": space_a.clone(),
+            "target_space_id": space_b.clone(),
+        });
+        if let Some(ack) = ack {
+            args["acknowledge_property_loss"] = ack;
+        }
+        tools.call_tool("move_page_to_space", args, &ctx)
+    };
+
+    for ack in [None, Some(json!({"stage": 2}))] {
+        let err = call(ack.clone())
+            .await
+            .expect_err("an unacknowledged loss is refused");
+        assert_eq!(
+            err.validation_code(),
+            Some(ValidationCode::UnacknowledgedPropertyLoss),
+            "ack {ack:?}: {err:?}"
+        );
+        let message = err.to_string();
+        assert!(
+            message.contains("stage (1)")
+                && message.contains(r#""acknowledge_property_loss": {"stage":1}"#),
+            "the refusal names the loss and what to pass: {message}"
+        );
+        assert_eq!(
+            space_of(&pool, &page).await.as_deref(),
+            Some(space_a.as_str())
+        );
+    }
+
+    call(Some(json!({"stage": 1})))
+        .await
+        .expect("an acknowledged move goes through");
+    settle(&mat).await;
+    assert_eq!(
+        space_of(&pool, &page).await.as_deref(),
+        Some(space_b.as_str())
+    );
+    let held: Option<String> = sqlx::query_scalar(
+        "SELECT value_text FROM block_properties WHERE block_id = ? AND key = 'stage'",
+    )
+    .bind(&page)
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert_eq!(held, None, "the value the target types differently is gone");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn create_tag_creates_in_space_and_reuses_the_name() {
     let (tools, mat, pool, space, emitter, _dir) = mk_tools_recording().await;

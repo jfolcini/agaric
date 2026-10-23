@@ -28,7 +28,7 @@ use super::*;
 /// large enough to overflow even the chunked batch helpers' work and,
 /// before chunking, SQLite's bind-parameter limit. Capping the op count
 /// here returns a clean error instead.
-const MAX_REVERT_OPS: usize = 1000;
+pub(crate) const MAX_REVERT_OPS: usize = 1000;
 
 /// #928: Re-densify the LIVE children of `parent_id` to dense 1-based positions
 /// inside an existing transaction.

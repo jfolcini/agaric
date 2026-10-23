@@ -48,6 +48,8 @@ export const ValidationCode = {
   DuplicateAgentName: 'DuplicateAgentName',
   /** A write to a built-in property definition, which is fixed in code (#5841). */
   BuiltinPropertyLocked: 'BuiltinPropertyLocked',
+  /** A cross-space move's acknowledged property losses are stale; preview again (#5841). */
+  UnacknowledgedPropertyLoss: 'UnacknowledgedPropertyLoss',
 } as const satisfies { [K in GeneratedValidationCode]: K }
 
 /**

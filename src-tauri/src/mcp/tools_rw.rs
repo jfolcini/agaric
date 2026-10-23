@@ -18,7 +18,7 @@
 //! | `add_tag` | [`add_tag_inner`] | Tag block must already exist in the block's space. |
 //! | `create_page` | [`create_block_inner_with_space`] | `block_type = "page"`, `parent_id = None`. |
 //! | `delete_block` | [`delete_block_inner`] | Soft delete. Reversible via `reverse.rs`. |
-//! | `move_page_to_space` | [`move_blocks_to_space_inner`] | Page blocks only: a page moves with its content blocks. |
+//! | `move_page_to_space` | [`move_blocks_to_space_inner`] | Page blocks only: a page moves with its content blocks. A move that would drop properties the target space defines differently is refused until `acknowledge_property_loss` names them. |
 //! | `create_tag` | [`create_block_inner_with_space`] | `block_type = "tag"`; returns the space's same-name tag when one exists. |
 //! | `delete_property` | [`delete_property_inner`] | Rejects `space`; the inner refuses system-managed keys. |
 //! | `undo` | [`revert_ops_inner`] | Reverts `op_refs` as one op group. Refuses an op another origin wrote. |
@@ -79,6 +79,7 @@ use super::tools_ro::{self, ReadOnlyTools};
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
 use crate::commands::blocks::crud::{DeleteInTx, delete_block_in_tx, dispatch_deletes};
 use crate::commands::blocks::move_ops::move_blocks_batch_in_tx;
+use crate::commands::blocks::space_move::describe_losses;
 use crate::commands::pages::markdown::{
     anchor_free, append_block_resolving_names, append_block_resolving_names_in_tx,
     edit_block_resolving_names, edit_block_resolving_names_in_tx,
@@ -86,15 +87,16 @@ use crate::commands::pages::markdown::{
 use crate::commands::properties::set_property_inner_in_tx;
 use crate::commands::tags::{add_tag_in_tx, remove_tag_inner_in_tx};
 use crate::commands::{
-    DeletePropertyResponse, DeleteResponse, MovedBlocks, SourceSaveFlags, TagResponse,
-    add_tag_inner, append_markdown_inner, apply_page_source_inner, capture_to_journal_inner,
-    create_block_inner_with_space, delete_block_inner, delete_property_inner,
-    get_active_block_inner, move_blocks_batch_inner, move_blocks_to_space_inner, remove_tag_inner,
-    restore_block_inner, revert_ops_inner, set_page_aliases_inner, set_property_inner,
+    DeletePropertyResponse, DeleteResponse, MovedBlocks, PropertyLoss, SourceSaveFlags,
+    TagResponse, add_tag_inner, append_markdown_inner, apply_page_source_inner,
+    capture_to_journal_inner, create_block_inner_with_space, delete_block_inner,
+    delete_property_inner, get_active_block_inner, move_blocks_batch_inner,
+    move_blocks_to_space_inner, preview_space_move_inner, remove_tag_inner, restore_block_inner,
+    revert_ops_inner, set_page_aliases_inner, set_property_inner,
 };
 use crate::db::{CommandTx, validate_block_in_space};
 use crate::materializer::Materializer;
-use agaric_core::error::AppError;
+use agaric_core::error::{AppError, ValidationCode};
 use agaric_core::ulid::BlockId;
 use agaric_store::op::OpRef;
 use agaric_store::space::{SpaceId, SpaceScope};
@@ -197,6 +199,9 @@ struct MovePageToSpaceArgs {
     page_id: String,
     space_id: String,
     target_space_id: String,
+    /// Key → count of the values the move drops, as its refusal listed them.
+    #[serde(default)]
+    acknowledge_property_loss: std::collections::BTreeMap<String, i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -659,7 +664,10 @@ fn tool_desc_move_page_to_space() -> ToolDescription {
     ToolDescription {
         name: TOOL_MOVE_PAGE_TO_SPACE.to_string(),
         description: "Move a page, with its content blocks, to another space. Reversible via \
-                      page history."
+                      page history. Property definitions are per space: a value whose key the \
+                      target space does not define identically is removed by the move. Such a \
+                      move is refused until `acknowledge_property_loss` lists those keys with \
+                      the counts the refusal names."
             .to_string(),
         input_schema: json!({
             "type": "object",
@@ -672,6 +680,11 @@ fn tool_desc_move_page_to_space() -> ToolDescription {
                     "description": "ULID of the space the agent is operating in. The move is rejected with a Validation error if `page_id` lives in a different space.",
                 },
                 "target_space_id": { "type": "string", "description": "ULID of the live space to move the page into (see list_spaces)." },
+                "acknowledge_property_loss": {
+                    "type": "object",
+                    "additionalProperties": { "type": "integer" },
+                    "description": "Property key → number of values the move removes, exactly as a refusal of this move listed them. Omit it for a move that removes nothing.",
+                },
             },
         }),
     }
@@ -1421,7 +1434,12 @@ async fn handle_move_page_to_space(
             page.block_type,
         )));
     }
-    with_space_guard(
+    let acknowledged: Vec<PropertyLoss> = args
+        .acknowledge_property_loss
+        .into_iter()
+        .map(|(key, count)| PropertyLoss { key, count })
+        .collect();
+    let moved = with_space_guard(
         &space_id,
         vec![page_id.as_str().to_owned()],
         move_blocks_to_space_inner(
@@ -1430,14 +1448,56 @@ async fn handle_move_page_to_space(
             materializer,
             vec![page_id.clone()],
             target_space_id.as_str().to_owned(),
+            &acknowledged,
         ),
     )
-    .await?;
+    .await;
+    if let Err(err) = moved {
+        return Err(explain_unacknowledged_loss(pool, err, &page_id, &target_space_id).await);
+    }
     emit_blocks_changed_for(pool, emitter, page_id.clone()).await;
     to_tool_result(&json!({
         "page_id": page_id.as_str(),
         "space_id": target_space_id.as_str(),
     }))
+}
+
+/// A refused property-loss acknowledgement, rewritten to say what to pass: the
+/// keys and counts the move would drop now, as a JSON object. Any other error
+/// passes through.
+async fn explain_unacknowledged_loss(
+    pool: &SqlitePool,
+    err: AppError,
+    page_id: &BlockId,
+    target_space_id: &SpaceId,
+) -> AppError {
+    if err.validation_code() != Some(ValidationCode::UnacknowledgedPropertyLoss) {
+        return err;
+    }
+    let losses = match preview_space_move_inner(
+        pool,
+        vec![page_id.clone()],
+        target_space_id.as_str().to_owned(),
+    )
+    .await
+    {
+        Ok(losses) => losses,
+        Err(preview_err) => return preview_err,
+    };
+    let ack: serde_json::Map<String, Value> = losses
+        .iter()
+        .map(|loss| (loss.key.clone(), Value::from(loss.count)))
+        .collect();
+    AppError::validation_coded(
+        ValidationCode::UnacknowledgedPropertyLoss,
+        format!(
+            "tool `{TOOL_MOVE_PAGE_TO_SPACE}`: the target space does not define these properties \
+             the way this page's space does, so the move would remove their values: {}. To move \
+             anyway, call again with \"acknowledge_property_loss\": {}",
+            describe_losses(&losses),
+            Value::Object(ack),
+        ),
+    )
 }
 
 /// Emits no `blocks:changed`: a tag sits on no page, and an empty page set

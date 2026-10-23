@@ -4,10 +4,11 @@
 // - Delete: Settings › Spaces enables Delete only for a space whose scoped
 //   `list_blocks` probe finds no page (SpacesTab.tsx). The mock ignores the
 //   scope, so it disables Delete for every space.
-// - Move to space: the page header's Move to space is `set_property(space)`,
-//   which re-stamps `blocks.space_id` on the page and every block of it and
-//   moves its `pages_cache` row; the Pages list, search and the Tags view's
-//   usage counts all read those copies.
+// - Move to space: the page header's Move to space is `move_blocks_to_space`
+//   (after `preview_space_move` finds nothing to drop), which re-stamps
+//   `blocks.space_id` on the page and every block of it and moves its
+//   `pages_cache` row; the Pages list, search and the Tags view's usage counts
+//   all read those copies.
 // - Window title: `useAppSpaceLifecycle` writes `<Page> · <Space> · Agaric`
 //   through the window plugin. WebDriver's Get Title reads `document.title`,
 //   which stays the `<title>` of index.html, so the spec asks the window for

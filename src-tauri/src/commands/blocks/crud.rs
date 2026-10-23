@@ -1335,18 +1335,27 @@ pub async fn delete_blocks_by_ids(
 /// single-row path (the `space` key is exempt from the cross-space ref
 /// guard — it is precisely *how* blocks move between spaces).
 ///
+/// **Property losses (#5841 S0.6):** a property the target space does not
+/// define identically is dropped (`space_move`). `acknowledged` must equal
+/// what `preview_space_move` reports now, recomputed in this tx; a move that
+/// loses nothing needs none. The drops are `DeleteProperty` ops carrying the
+/// value, appended before the moves, so one undo moves the pages back and
+/// then restores the values.
+///
 /// Returns the number of blocks actually moved (NOT the input list length).
 ///
 /// # Errors
 ///
-/// - [`AppError::Validation`] — empty input list, > [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) entries, or `space_id` is not a live space block
-#[instrument(skip(pool, device_id, materializer, block_ids), err)]
+/// - [`AppError::Validation`] — empty input list, > [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) entries, `space_id` is not a live space block, or the drops and moves would exceed one undo
+/// - [`ValidationCode::UnacknowledgedPropertyLoss`] — the losses differ from `acknowledged`
+#[instrument(skip(pool, device_id, materializer, block_ids, acknowledged), err)]
 pub async fn move_blocks_to_space_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
     block_ids: Vec<BlockId>,
     space_id: String,
+    acknowledged: &[super::PropertyLoss],
 ) -> Result<i64, AppError> {
     if block_ids.is_empty() {
         return Err(AppError::validation(
@@ -1381,6 +1390,17 @@ pub async fn move_blocks_to_space_inner(
     .await?
     .into_iter()
     .collect();
+
+    super::space_move::drop_acknowledged_losses_in_tx(
+        &mut tx,
+        materializer,
+        device_id,
+        &block_ids_json,
+        &space_id,
+        alive.len(),
+        acknowledged,
+    )
+    .await?;
 
     let mut moved: i64 = 0;
     for block_id in block_ids {
@@ -1418,13 +1438,15 @@ pub async fn move_blocks_to_space_inner(
 
 /// Tauri command: move N blocks to a target space (#81).
 /// Delegates to [`move_blocks_to_space_inner`]. Returns the number of
-/// blocks actually moved.
+/// blocks actually moved. `acknowledged_loss` is what `preview_space_move`
+/// listed and the user confirmed; `None` when it listed nothing.
 #[tauri::command]
 #[specta::specta]
 pub async fn move_blocks_to_space(
     ctx: State<'_, WriteCtx>,
     block_ids: Vec<BlockId>,
     space_id: SpaceId,
+    acknowledged_loss: Option<Vec<super::PropertyLoss>>,
 ) -> Result<i64, AppError> {
     // b2 (#2248): required-target-space commands take the `SpaceId` newtype at
     // the wire boundary. The lenient `Deserialize` only uppercases, so reject a
@@ -1437,6 +1459,7 @@ pub async fn move_blocks_to_space(
         ctx.materializer(),
         block_ids,
         space_id.into_string(),
+        &acknowledged_loss.unwrap_or_default(),
     )
     .await
     .map_err(sanitize_internal_error)

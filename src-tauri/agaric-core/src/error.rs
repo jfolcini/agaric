@@ -105,6 +105,11 @@ pub enum ValidationCode {
     /// (`agaric_store::op::BUILTIN_PROPERTY_DEFS`, #5841): those are fixed in
     /// code and the same in every vault.
     BuiltinPropertyLocked,
+    /// A cross-space move whose acknowledged property losses differ from what
+    /// it would drop now (`move_blocks_to_space`, #5841): another write changed
+    /// the pages or a definition since the preview, so the caller previews
+    /// again and asks once more.
+    UnacknowledgedPropertyLoss,
 }
 
 /// Helper struct matching the `{ kind, message, code? }` JSON shape that
@@ -798,7 +803,7 @@ mod tests {
         // The exact strings the old `"<Code>: …"` message prefixes spelled —
         // and the strings the TS `ValidationCode` union in bindings.ts (and
         // its runtime mirror in validation-codes.ts) discriminates on.
-        let cases: [(ValidationCode, &str); 12] = [
+        let cases: [(ValidationCode, &str); 13] = [
             (ValidationCode::InvalidGlob, "InvalidGlob"),
             (ValidationCode::InvalidRegex, "InvalidRegex"),
             (ValidationCode::InvalidDateFilter, "InvalidDateFilter"),
@@ -813,6 +818,10 @@ mod tests {
             (
                 ValidationCode::BuiltinPropertyLocked,
                 "BuiltinPropertyLocked",
+            ),
+            (
+                ValidationCode::UnacknowledgedPropertyLoss,
+                "UnacknowledgedPropertyLoss",
             ),
         ];
         for (code, expected) in cases {
@@ -856,6 +865,7 @@ mod tests {
                 ValidationCode::InvalidAgentName => "InvalidAgentName",
                 ValidationCode::DuplicateAgentName => "DuplicateAgentName",
                 ValidationCode::BuiltinPropertyLocked => "BuiltinPropertyLocked",
+                ValidationCode::UnacknowledgedPropertyLoss => "UnacknowledgedPropertyLoss",
             }
         }
         for code in [
@@ -871,6 +881,7 @@ mod tests {
             ValidationCode::InvalidAgentName,
             ValidationCode::DuplicateAgentName,
             ValidationCode::BuiltinPropertyLocked,
+            ValidationCode::UnacknowledgedPropertyLoss,
         ] {
             assert_eq!(
                 serde_json::to_value(code).expect("code serializes"),

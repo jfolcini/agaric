@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH roots AS (\n               SELECT id FROM blocks\n               WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at IS NULL\n           ),\n           moved AS (\n               SELECT id FROM roots\n               UNION\n               SELECT b.id FROM blocks b JOIN roots r ON b.page_id = r.id\n           )\n           SELECT bp.key AS \"key!: String\", COUNT(*) AS \"count!: i64\"\n           FROM moved m\n           JOIN blocks b ON b.id = m.id\n           JOIN block_properties bp ON bp.block_id = b.id\n           LEFT JOIN property_definitions src ON src.space_id = b.space_id AND src.key = bp.key\n           LEFT JOIN property_definitions dst ON dst.space_id = ?2 AND dst.key = bp.key\n           WHERE b.space_id IS NOT ?2\n             AND NOT (src.value_type IS dst.value_type AND src.options IS dst.options)\n           GROUP BY bp.key\n           ORDER BY bp.key",
+  "describe": {
+    "columns": [
+      {
+        "name": "key!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "key"
+          }
+        }
+      },
+      {
+        "name": "count!: i64",
+        "ordinal": 1,
+        "type_info": "Null",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "c953d4e79b50077deda252039653e943991d5ddef9344203eba3992fccb55160"
+}

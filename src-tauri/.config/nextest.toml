@@ -129,8 +129,11 @@ setup = "iroh-no-proxy-windows"
 #   * `spaces::move_sync_proptest` (#5712) — each case replays A's script
 #     and B's pull rounds from a pre-built seed, and full-suite contention
 #     stretches it toward the default window.
+#   * `space_move_cmd_tests::move_beyond_one_undo_is_refused` (#5841) — it
+#     writes `MAX_REVERT_OPS` property values, then drops one fewer through
+#     the engine, so it runs far longer than its neighbours.
 [[profile.default.overrides]]
-filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/a_snapshot_past_the_old_frame_cap_syncs_over_quic_5761/) | test(/find_lca_terminates_on_any_graph/) | test(/n_way_concurrent_mixed_streams_all_to_all_converges/) | test(/mock_matches_backend_on_generated_op_chains_4669/) | test(/conformance_fixtures_match_backend/) | test(/move_sync_proptest::/)'
+filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/a_snapshot_past_the_old_frame_cap_syncs_over_quic_5761/) | test(/find_lca_terminates_on_any_graph/) | test(/n_way_concurrent_mixed_streams_all_to_all_converges/) | test(/mock_matches_backend_on_generated_op_chains_4669/) | test(/conformance_fixtures_match_backend/) | test(/move_sync_proptest::/) | test(/move_beyond_one_undo_is_refused/)'
 slow-timeout = { period = "30s", terminate-after = 4 }
 
 # The weekly deep-checks lane (#4282). `scheduled-deep-checks.yml`'s `bench-slo`

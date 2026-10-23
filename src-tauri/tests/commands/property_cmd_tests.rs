@@ -3818,6 +3818,7 @@ async fn recurrence_done_copies_link_made_cross_space_by_move_5272() {
         &mat,
         vec![page.id.clone(), target.id.clone()],
         "R5272_SPACE_A".into(),
+        &[],
     )
     .await
     .unwrap();
@@ -3864,6 +3865,7 @@ async fn recurrence_done_copies_link_made_cross_space_by_move_5272() {
         &mat,
         vec![target.id.clone()],
         "R5272_SPACE_B".into(),
+        &[],
     )
     .await
     .unwrap();

@@ -1910,6 +1910,7 @@ async fn delete_block_reports_cascaded_nested_pages_4523() {
             "DB4523_SIB".into(),
         ],
         "DB4523_SPACE".into(),
+        &[],
     )
     .await
     .unwrap();
@@ -2023,6 +2024,7 @@ async fn delete_block_canonicalises_the_echoed_seed_id_4523() {
         &mat,
         vec!["DB4523C_PAGE".into(), "DB4523C_KID".into()],
         "DB4523C_SPACE".into(),
+        &[],
     )
     .await
     .unwrap();
@@ -2094,6 +2096,7 @@ async fn delete_block_refusals_report_no_cohort_to_evict_4523() {
         &mat,
         vec!["DB4523E_LIVE".into(), "DB4523E_GONE".into()],
         "DB4523E_SPACE".into(),
+        &[],
     )
     .await
     .unwrap();
@@ -7722,6 +7725,7 @@ async fn delete_blocks_by_ids_reports_cascaded_nested_pages_4480() {
             "DBI4480_SIB".into(),
         ],
         "DBI4480_SPACE".into(),
+        &[],
     )
     .await
     .unwrap();
@@ -8281,6 +8285,7 @@ async fn move_blocks_to_space_moves_all_in_one_tx() {
         &mat,
         ids.clone().into_iter().map(Into::into).collect::<Vec<_>>(),
         "MBS_SPACE".into(),
+        &[],
     )
     .await
     .unwrap();
@@ -8354,6 +8359,7 @@ async fn move_blocks_to_space_rehomes_existing_member() {
         &mat,
         vec!["MBS2_BLK".into()],
         "MBS2_SPACE_B".into(),
+        &[],
     )
     .await
     .unwrap();
@@ -8405,6 +8411,7 @@ async fn move_blocks_to_space_propagates_space_id_to_descendants_533() {
         &mat,
         vec!["MBS6_PAGE".into()],
         "MBS6_SPACE_A".into(),
+        &[],
     )
     .await
     .unwrap();
@@ -8425,6 +8432,7 @@ async fn move_blocks_to_space_propagates_space_id_to_descendants_533() {
         &mat,
         vec!["MBS6_PAGE".into()],
         "MBS6_SPACE_B".into(),
+        &[],
     )
     .await
     .unwrap();
@@ -8545,6 +8553,7 @@ async fn move_blocks_to_space_leaves_nested_pages_in_the_origin_space_4480() {
         &mat,
         vec!["MBS7_PAGE".into(), "MBS7_KID".into(), "MBS7_SIB".into()],
         "MBS7_SPACE_A".into(),
+        &[],
     )
     .await
     .unwrap();
@@ -8569,6 +8578,7 @@ async fn move_blocks_to_space_leaves_nested_pages_in_the_origin_space_4480() {
         &mat,
         vec!["MBS7_PAGE".into()],
         "MBS7_SPACE_B".into(),
+        &[],
     )
     .await
     .unwrap();
@@ -8789,7 +8799,7 @@ async fn move_blocks_to_space_rescopes_link_and_tag_counts_5275() {
         "P's block holds x"
     );
 
-    move_blocks_to_space_inner(&pool, DEV, &mat, vec![moving.clone()], SPACE_B.into())
+    move_blocks_to_space_inner(&pool, DEV, &mat, vec![moving.clone()], SPACE_B.into(), &[])
         .await
         .unwrap();
     settle(&mat).await;
@@ -8871,7 +8881,7 @@ async fn move_blocks_to_space_moves_the_graph_edges_5426() {
     );
 
     // P leaves for B: the edge crosses spaces and belongs to neither graph.
-    move_blocks_to_space_inner(&pool, DEV, &mat, vec![moving.clone()], SPACE_B.into())
+    move_blocks_to_space_inner(&pool, DEV, &mat, vec![moving.clone()], SPACE_B.into(), &[])
         .await
         .unwrap();
     settle(&mat).await;
@@ -8887,7 +8897,7 @@ async fn move_blocks_to_space_moves_the_graph_edges_5426() {
     );
 
     // T follows: the edge is inside B now.
-    move_blocks_to_space_inner(&pool, DEV, &mat, vec![target.clone()], SPACE_B.into())
+    move_blocks_to_space_inner(&pool, DEV, &mat, vec![target.clone()], SPACE_B.into(), &[])
         .await
         .unwrap();
     settle(&mat).await;
@@ -8982,6 +8992,7 @@ async fn move_blocks_to_space_skips_missing_and_deleted() {
         &mat,
         vec![live.id.clone(), deleted.id, "MBS3_GHOST".into()],
         "MBS3_SPACE".into(),
+        &[],
     )
     .await
     .unwrap();
@@ -9013,6 +9024,7 @@ async fn move_blocks_to_space_normalises_lowercase_ids() {
         &mat,
         vec!["mbs4_blk01".into()],
         "mbs4_space".into(),
+        &[],
     )
     .await
     .unwrap();
@@ -9026,7 +9038,8 @@ async fn move_blocks_to_space_rejects_empty_list() {
     let mat = Materializer::new(pool.clone());
     seed_space(&pool, "MBS5_SPACE").await;
 
-    let result = move_blocks_to_space_inner(&pool, DEV, &mat, vec![], "MBS5_SPACE".into()).await;
+    let result =
+        move_blocks_to_space_inner(&pool, DEV, &mat, vec![], "MBS5_SPACE".into(), &[]).await;
     assert!(
         matches!(result, Err(AppError::Validation { .. })),
         "empty block_ids must be rejected, got {result:?}"
@@ -9049,6 +9062,7 @@ async fn move_blocks_to_space_rejects_oversize_list() {
         &mat,
         oversize.into_iter().map(Into::into).collect::<Vec<_>>(),
         "MBS6_SPACE".into(),
+        &[],
     )
     .await;
     assert!(
@@ -9074,6 +9088,7 @@ async fn move_blocks_to_space_rejects_non_space_target() {
         &mat,
         vec!["MBS7_BLK".into()],
         "MBS7_NOTSPACE".into(),
+        &[],
     )
     .await;
     assert!(
@@ -9139,6 +9154,7 @@ async fn move_blocks_to_space_atomic_rollback_on_inner_failure() {
         &mat,
         vec!["MBS_RB_A".into(), "MBS_RB_B".into()],
         "MBS_RB_SPACE".into(),
+        &[],
     )
     .await
     .expect("valid target must commit for the control");
@@ -9188,6 +9204,7 @@ async fn move_blocks_to_space_atomic_rollback_on_inner_failure() {
         &mat,
         vec!["MBS_RB_A".into(), "MBS_RB_B".into()],
         "MBS_RB_NOTSPACE".into(),
+        &[],
     )
     .await;
     assert!(
@@ -9759,6 +9776,7 @@ async fn seed_link_made_cross_space_5272(
         mat,
         vec![page.id.clone(), target.id.clone()],
         "X5272_SPACE_A".into(),
+        &[],
     )
     .await
     .unwrap();
@@ -9780,6 +9798,7 @@ async fn seed_link_made_cross_space_5272(
         mat,
         vec![target.id.clone()],
         "X5272_SPACE_B".into(),
+        &[],
     )
     .await
     .unwrap();
@@ -9822,6 +9841,7 @@ async fn edit_block_keeps_link_made_cross_space_by_move_5272() {
         &mat,
         vec![other.id.clone()],
         "X5272_SPACE_B".into(),
+        &[],
     )
     .await
     .unwrap();
@@ -9892,6 +9912,7 @@ async fn create_block_accepts_cross_space_link_its_page_already_holds_5272() {
         &mat,
         vec![other_page.id.clone()],
         "X5272_SPACE_A".into(),
+        &[],
     )
     .await
     .unwrap();

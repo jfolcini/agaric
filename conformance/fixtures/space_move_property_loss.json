@@ -1,0 +1,445 @@
+{
+  "description": "#5841 S0.6 — a cross-space move drops each property its target space does not define identically, after the caller acknowledges the losses. The harness space declares `stage` as a select [draft, final]; the space `create_space` makes (`C1`) starts with the editable defaults (`effort`, `url`, `assignee`, …) and is given its own `stage` select with a third option. Moving the page `S1` takes its content blocks `S2` and `S3`, so it would drop `stage` twice (other options) and `effort` once (declared in the target only); `note` is declared in neither space and stays. A move without the acknowledgement, or with a stale one, is refused with `UnacknowledgedPropertyLoss` and writes nothing; the acknowledged one appends the drops before the `space` op. The query steps then read the move back the other way, after the page's blocks took `url` and `assignee` values in `C1` that the harness space does not declare and `S3` went to the Trash, which still counts. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Plan",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "later",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Other",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 15,
+      "ops": [
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "key": "note",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "key": "effort",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "url",
+          "op_type": "set_property"
+        },
+        {
+          "key": "url",
+          "op_type": "set_property"
+        },
+        {
+          "key": "assignee",
+          "op_type": "set_property"
+        },
+        {
+          "key": "url",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B1",
+        "key": "assignee",
+        "value": "ann",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B1",
+        "key": "note",
+        "value": "x",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B1",
+        "key": "url",
+        "value": "a",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B2",
+        "key": "url",
+        "value": "b",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B3",
+        "key": "url",
+        "value": "c",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B4",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "create_the_target_space",
+      "returns": ["create_space#space_id=B4"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_target_defines_stage_with_other_options",
+      "returns": [
+        "stage#value_type=select#options=[\"draft\",\"final\",\"archived\"]#builtin=false"
+      ]
+    },
+    {
+      "code": "UnacknowledgedPropertyLoss",
+      "error": "validation",
+      "name": "a_lossy_move_without_an_acknowledgement_is_refused",
+      "returns": []
+    },
+    {
+      "code": "UnacknowledgedPropertyLoss",
+      "error": "validation",
+      "name": "a_stale_acknowledgement_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_acknowledged_move_drops_and_moves",
+      "returns": ["move_blocks_to_space#moved=1"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "moving_back_would_drop_the_target_only_keys",
+      "rows": ["assignee#count=1", "url#count=3"],
+      "total_count": null
+    },
+    {
+      "cursor": "v1:{id}",
+      "error": null,
+      "has_more": true,
+      "name": "the_url_values_page_one",
+      "rows": [
+        "B1#page_id=B1#deleted=false#value_text=a",
+        "B2#page_id=B1#deleted=false#value_text=b"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "the_url_values_page_two",
+      "rows": ["B3#page_id=B1#deleted=true#value_text=c"],
+      "total_count": null
+    }
+  ],
+  "name": "space_move_property_loss",
+  "ops": [
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Other"
+      },
+      "command": "create_space",
+      "comment": "The target space, `C1`, with the editable defaults and none of the harness space's rows.",
+      "name": "create_the_target_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "stage",
+        "options": "[\"draft\",\"final\",\"archived\"]",
+        "spaceId": "C1",
+        "valueType": "select"
+      },
+      "command": "create_property_def",
+      "comment": "The same key and type as the harness space's `stage`, with one more option: not identical, so its values drop.",
+      "name": "the_target_defines_stage_with_other_options",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S1"],
+        "spaceId": "C1"
+      },
+      "command": "move_blocks_to_space",
+      "comment": "No acknowledgement: refused, nothing written.",
+      "expect_code": "UnacknowledgedPropertyLoss",
+      "expect_error": "validation",
+      "name": "a_lossy_move_without_an_acknowledgement_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledgedLoss": [
+          {
+            "count": 2,
+            "key": "stage"
+          }
+        ],
+        "blockIds": ["S1"],
+        "spaceId": "C1"
+      },
+      "command": "move_blocks_to_space",
+      "comment": "An acknowledgement that misses `effort`: refused.",
+      "expect_code": "UnacknowledgedPropertyLoss",
+      "expect_error": "validation",
+      "name": "a_stale_acknowledgement_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledgedLoss": [
+          {
+            "count": 2,
+            "key": "stage"
+          },
+          {
+            "count": 1,
+            "key": "effort"
+          }
+        ],
+        "blockIds": ["S1"],
+        "spaceId": "C1"
+      },
+      "command": "move_blocks_to_space",
+      "comment": "The acknowledged move, in any key order: two `stage` drops and one `effort` drop, ordered by block then key, then the `space` op.",
+      "name": "the_acknowledged_move_drops_and_moves",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "url",
+        "value": {
+          "value_text": "b"
+        }
+      },
+      "command": "set_property",
+      "comment": "In `C1` now, where `url` is a default text definition the harness space does not have. Set on `S2` first, so insertion order is not block order."
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "key": "url",
+        "value": {
+          "value_text": "a"
+        }
+      },
+      "command": "set_property",
+      "comment": "The page's own `url`."
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "key": "assignee",
+        "value": {
+          "value_text": "ann"
+        }
+      },
+      "command": "set_property",
+      "comment": "Another default the harness space lacks, set after `url` so insertion order is not key order."
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "url",
+        "value": {
+          "value_text": "c"
+        }
+      },
+      "command": "set_property",
+      "comment": "`S3`'s `url`, before it goes to the Trash."
+    },
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "delete_block",
+      "comment": "In the Trash `S3` keeps its page and space, and a move re-stamps it, so its value still counts."
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockIds": ["S1"],
+        "targetSpaceId": "$SPACE"
+      },
+      "command": "preview_space_move",
+      "comment": "Moving the page back: `assignee` and `url` would drop, ordered by key, the trashed `S3`'s `url` counted; `note` stays.",
+      "name": "moving_back_would_drop_the_target_only_keys"
+    },
+    {
+      "args": {
+        "blockIds": ["S1"],
+        "key": "url",
+        "limit": 2,
+        "targetSpaceId": "$SPACE"
+      },
+      "command": "list_property_loss_values",
+      "comment": "The detail of `url`, two values per page, by block id: `S1` and `S2`.",
+      "name": "the_url_values_page_one"
+    },
+    {
+      "args": {
+        "blockIds": ["S1"],
+        "key": "url",
+        "limit": 2,
+        "targetSpaceId": "$SPACE"
+      },
+      "command": "list_property_loss_values",
+      "comment": "The second page, through the first page's cursor: the trashed `S3`, marked deleted.",
+      "cursor_from": "the_url_values_page_one",
+      "name": "the_url_values_page_two"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Plan",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "later",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      }
+    ],
+    "properties": [
+      {
+        "block_id": "S1",
+        "key": "stage",
+        "value": {
+          "value_text": "draft"
+        }
+      },
+      {
+        "block_id": "S1",
+        "key": "note",
+        "value": {
+          "value_text": "x"
+        }
+      },
+      {
+        "block_id": "S2",
+        "key": "stage",
+        "value": {
+          "value_text": "final"
+        }
+      },
+      {
+        "block_id": "S2",
+        "key": "effort",
+        "value": {
+          "value_text": "1h"
+        }
+      }
+    ],
+    "property_defs": [
+      {
+        "key": "stage",
+        "options": "[\"draft\",\"final\"]",
+        "value_type": "select"
+      }
+    ],
+    "tags": []
+  }
+}

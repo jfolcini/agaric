@@ -72,9 +72,20 @@ export const commands = {
 	/**
 	 *  Tauri command: move N blocks to a target space (#81).
 	 *  Delegates to [`move_blocks_to_space_inner`]. Returns the number of
-	 *  blocks actually moved.
+	 *  blocks actually moved. `acknowledged_loss` is what `preview_space_move`
+	 *  listed and the user confirmed; `None` when it listed nothing.
 	 */
-	moveBlocksToSpace: (blockIds: BlockId[], spaceId: SpaceId) => typedError<number, AppError>(__TAURI_INVOKE("move_blocks_to_space", { blockIds, spaceId })),
+	moveBlocksToSpace: (blockIds: BlockId[], spaceId: SpaceId, acknowledgedLoss: PropertyLoss[] | null) => typedError<number, AppError>(__TAURI_INVOKE("move_blocks_to_space", { blockIds, spaceId, acknowledgedLoss })),
+	/**
+	 *  Tauri command: the properties a cross-space move would drop. Delegates to
+	 *  [`preview_space_move_inner`].
+	 */
+	previewSpaceMove: (blockIds: BlockId[], targetSpaceId: SpaceId) => typedError<PropertyLoss[], AppError>(__TAURI_INVOKE("preview_space_move", { blockIds, targetSpaceId })),
+	/**
+	 *  Tauri command: one page of the values a cross-space move would drop under
+	 *  `key`. Delegates to [`list_property_loss_values_inner`].
+	 */
+	listPropertyLossValues: (blockIds: BlockId[], targetSpaceId: SpaceId, key: string, cursor: string | null, limit: number | null) => typedError<PageResponse<PropertyLossValue>, AppError>(__TAURI_INVOKE("list_property_loss_values", { blockIds, targetSpaceId, key, cursor, limit })),
 	/**  Tauri command: restore a soft-deleted block. Delegates to [`restore_block_inner`]. */
 	restoreBlock: (blockId: BlockId, deletedAtRef: number) => typedError<RestoreResponse, AppError>(__TAURI_INVOKE("restore_block", { blockId, deletedAtRef })),
 	/**  Tauri command: permanently purge a soft-deleted block. Delegates to [`purge_block_inner`]. */
@@ -3316,6 +3327,34 @@ export type PropertyFilter = {
 };
 
 /**
+ *  One key a cross-space move would drop, and how many values it holds.
+ *  `move_blocks_to_space` takes the list back as its acknowledgement.
+ */
+export type PropertyLoss = {
+	key: string,
+	count: number,
+};
+
+/**
+ *  One value a cross-space move would drop: the block holding it, its page,
+ *  and the typed value (`PropertyRow`'s slots).
+ */
+export type PropertyLossValue = {
+	block_id: string,
+	page_id: string | null,
+	page_title: string | null,
+	content: string | null,
+	/**  The block is in the Trash; it moves with its page all the same. */
+	deleted: boolean,
+	key: string,
+	value_text: string | null,
+	value_num: number | null,
+	value_date: string | null,
+	value_ref: string | null,
+	value_bool: number | null,
+};
+
+/**
  *  Predicate on a `has-property:` primitive.
  * 
  *  Invalid states are unrepresentable: a single internally-tagged
@@ -4648,7 +4687,14 @@ export type ValidationCode =
  *  (`agaric_store::op::BUILTIN_PROPERTY_DEFS`, #5841): those are fixed in
  *  code and the same in every vault.
  */
-"BuiltinPropertyLocked";
+"BuiltinPropertyLocked" | 
+/**
+ *  A cross-space move whose acknowledged property losses differ from what
+ *  it would drop now (`move_blocks_to_space`, #5841): another write changed
+ *  the pages or a definition since the preview, so the caller previews
+ *  again and asks once more.
+ */
+"UnacknowledgedPropertyLoss";
 
 /**
  *  A single referenced sibling file carried over IPC for an attachment-aware

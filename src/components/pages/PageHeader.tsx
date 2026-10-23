@@ -21,12 +21,14 @@ import { PagePropertyTable } from '@/components/pages/PagePropertyTable'
 import { PageQuickActions } from '@/components/pages/PageQuickActions'
 import { PageTagSection } from '@/components/pages/PageTagSection'
 import { PageTitleEditor } from '@/components/pages/PageTitleEditor'
+import { SpaceMoveConfirmDialog } from '@/components/pages/SpaceMoveConfirmDialog'
 import { Breadcrumb, type BreadcrumbCrumb } from '@/components/ui/breadcrumb'
 import { useBlockTags } from '@/hooks/useBlockTags'
 import { useEmojiRecents } from '@/hooks/useEmojiRecents'
 import { usePageAliases } from '@/hooks/usePageAliases'
 import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import { usePageTemplateMeta } from '@/hooks/usePageTemplateMeta'
+import { spaceMoveFailureMessage, useSpaceMove } from '@/hooks/useSpaceMove'
 import { refreshAfterUndoRedo } from '@/hooks/useUndoShortcuts'
 import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { announce } from '@/lib/announcer'
@@ -333,50 +335,48 @@ export function PageHeader({
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const moveTargets = availableSpaces.filter((s) => s.id !== currentSpaceId)
 
-  const handleMoveToSpace = useCallback(
-    async (targetSpaceId: string) => {
-      setKebabOpen(false)
-      const target = availableSpaces.find((s) => s.id === targetSpaceId)
-      const targetName = target?.name ?? ''
-      const originSpaceId = useSpaceStore.getState().currentSpaceId
-      try {
-        unwrap(
-          await commands.setProperty(pageId, 'space', {
-            value_text: null,
-            value_num: null,
-            value_date: null,
-            value_ref: targetSpaceId,
-            value_bool: null,
-          }),
-        )
-        announcePagesMovedOut([pageId], originSpaceId)
-        notify.success(t('space.movedToast', { space: targetName }))
-        announce(t('announce.pageMoved'))
-        // #2785 — do NOT `pageStore.getState().load()` here. `load()`
-        // scopes its fetch to `useSpaceStore.getState().currentSpaceId`,
-        // which is still the OLD space right after this `await` — the
-        // backend's membership check now rejects the (page, old-space)
-        // pair, so the reload throws and surfaces a spurious "Failed to
-        // load blocks" error toast while leaving the stale, now-foreign
-        // view on screen. Reloading this store is meaningless anyway:
-        // the page no longer belongs to the space it is scoped to.
-        // Close it in every tab instead, as a delete does: the page is no
-        // longer valid in the current view.
-        // (Switching the app's active space to follow the page was
-        // considered and rejected — `setCurrentSpace` drives
-        // `createPerSpaceSlice`'s cross-store reconcile, which flushes
-        // and restores the TARGET space's own last-active tab/view, not
-        // necessarily this page, so "following" would not reliably land
-        // back on the moved page anyway.)
-        useTabsStore.getState().removePages([pageId])
-      } catch (err) {
-        logger.error('PageHeader', 'Failed to move page to space', { pageId, targetSpaceId }, err)
-        notify.error(t('space.moveFailed'))
-        announce(t('announce.pageMoveFailed'))
-      }
-    },
-    [availableSpaces, pageId, t],
-  )
+  // #5841 S0.6 — `move_blocks_to_space`, not `set_property(space)`: it
+  // previews the properties the target defines differently and asks before
+  // dropping them (`useSpaceMove`).
+  const spaceMove = useSpaceMove()
+  const { requestMove } = spaceMove
+  const handleMoveToSpace = async (targetSpaceId: string) => {
+    setKebabOpen(false)
+    // The confirmation returns focus to what held it when it opened; the
+    // menu row is gone by then, so hand it to the kebab now.
+    kebab.current?.focus()
+    const target = availableSpaces.find((s) => s.id === targetSpaceId)
+    const targetName = target?.name ?? ''
+    const originSpaceId = useSpaceStore.getState().currentSpaceId
+    const onMoved = () => {
+      announcePagesMovedOut([pageId], originSpaceId)
+      notify.success(t('space.movedToast', { space: targetName }))
+      announce(t('announce.pageMoved'))
+      // #2785 — do NOT `pageStore.getState().load()` here. `load()`
+      // scopes its fetch to `useSpaceStore.getState().currentSpaceId`,
+      // which is still the OLD space right after this `await` — the
+      // backend's membership check now rejects the (page, old-space)
+      // pair, so the reload throws and surfaces a spurious "Failed to
+      // load blocks" error toast while leaving the stale, now-foreign
+      // view on screen. Reloading this store is meaningless anyway:
+      // the page no longer belongs to the space it is scoped to.
+      // Close it in every tab instead, as a delete does: the page is no
+      // longer valid in the current view.
+      // (Switching the app's active space to follow the page was
+      // considered and rejected — `setCurrentSpace` drives
+      // `createPerSpaceSlice`'s cross-store reconcile, which flushes
+      // and restores the TARGET space's own last-active tab/view, not
+      // necessarily this page, so "following" would not reliably land
+      // back on the moved page anyway.)
+      useTabsStore.getState().removePages([pageId])
+    }
+    const onFailed = (err: unknown) => {
+      logger.error('PageHeader', 'Failed to move page to space', { pageId, targetSpaceId }, err)
+      notify.error(spaceMoveFailureMessage(err, t('space.moveFailed')))
+      announce(t('announce.pageMoveFailed'))
+    }
+    await requestMove({ ids: [pageId], targetSpaceId, targetName, onMoved, onFailed })
+  }
 
   // Sync editableTitle when prop changes (e.g., navigating to a different page)
   useEffect(() => {
@@ -647,6 +647,12 @@ export function PageHeader({
       </ViewHeader>
 
       <ConfirmDialog {...deleteConfirmDialogProps} />
+
+      <SpaceMoveConfirmDialog
+        confirmation={spaceMove.confirmation}
+        onConfirm={spaceMove.confirm}
+        onDismiss={spaceMove.dismiss}
+      />
 
       <PageOutline
         open={outlineOpen}

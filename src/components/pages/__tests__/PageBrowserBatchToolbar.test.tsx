@@ -6,7 +6,8 @@
  * Validates the three bulk actions wired to the typed Tauri bindings:
  *  - Trash       → delete_blocks_by_ids
  *  - Add tag     → list_all_tags_in_space (picker) + add_tags_by_ids
- *  - Move space  → move_blocks_to_space (target list from the space store)
+ *  - Move space  → preview_space_move, then move_blocks_to_space (target list
+ *                  from the space store; a lossy move is `SpaceMoveConfirmDialog`'s)
  *
  * Each action asserts the exact `invoke` command + args, that the
  * selection clears (`onClearSelection`) and the list refreshes
@@ -415,7 +416,7 @@ describe('PageBrowserBatchToolbar', () => {
 
   it('Move to space lists target spaces (excluding current) and fires move_blocks_to_space', async () => {
     const user = userEvent.setup()
-    stubInvoke({ move_blocks_to_space: () => 3 })
+    stubInvoke({ preview_space_move: () => [], move_blocks_to_space: () => 3 })
     const { onClearSelection, onMutated } = renderToolbar()
 
     await user.click(screen.getByTestId('page-batch-move-btn'))
@@ -435,6 +436,7 @@ describe('PageBrowserBatchToolbar', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('move_blocks_to_space', {
         blockIds: SELECTED,
         spaceId: 'SPACE_OTHER',
+        acknowledgedLoss: null,
       })
     })
     expect(onClearSelection).toHaveBeenCalledTimes(1)
@@ -955,7 +957,7 @@ describe('batch move-to-space — name-cache fan-out (#4450)', () => {
 
   async function confirmMove(ids: string[], destSpaceId: string): Promise<void> {
     const user = userEvent.setup()
-    stubInvoke({ move_blocks_to_space: () => ids.length })
+    stubInvoke({ preview_space_move: () => [], move_blocks_to_space: () => ids.length })
     renderToolbar({ selectedIds: ids })
     await user.click(screen.getByTestId('page-batch-move-btn'))
     const select = await screen.findByRole('combobox', {
@@ -967,6 +969,7 @@ describe('batch move-to-space — name-cache fan-out (#4450)', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('move_blocks_to_space', {
         blockIds: ids,
         spaceId: destSpaceId,
+        acknowledgedLoss: null,
       })
     })
   }
@@ -1031,6 +1034,7 @@ describe('batch move-to-space — name-cache fan-out (#4450)', () => {
         makePageHeading({ id: 'P_MOVED', content: 'Moved Page' }),
         makePageHeading({ id: 'P_STAYS', content: 'Stays Page' }),
       ],
+      preview_space_move: () => [],
       move_blocks_to_space: () => 1,
     })
 
@@ -1052,6 +1056,7 @@ describe('batch move-to-space — name-cache fan-out (#4450)', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('move_blocks_to_space', {
         blockIds: ['P_MOVED'],
         spaceId: 'SPACE_OTHER',
+        acknowledgedLoss: null,
       })
     })
 
@@ -1118,7 +1123,7 @@ describe('batch actions — resolve cache and graph', () => {
 
   it('Move to space renders the moved pages broken in the origin space', async () => {
     const user = userEvent.setup()
-    stubInvoke({ move_blocks_to_space: () => 1 })
+    stubInvoke({ preview_space_move: () => [], move_blocks_to_space: () => 1 })
     renderToolbar({ selectedIds: ['P1'] })
 
     await user.click(screen.getByTestId('page-batch-move-btn'))

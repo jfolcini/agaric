@@ -689,6 +689,23 @@ const WIRE: Readonly<Record<string, WireShape>> = {
     totalKey: null,
   },
 
+  // ── What a cross-space move drops (#5841 S0.6) ──
+  //
+  // A bare `Vec<PropertyLoss>` ordered by key, then one key's values paged by
+  // block id. MUST match the two arms in the Rust twin.
+  preview_space_move: {
+    rows: { kind: 'bare-array' },
+    token: { kind: 'id', idKey: 'key', attrKeys: ['count'] },
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  list_property_loss_values: {
+    rows: PAGED,
+    token: { kind: 'id', idKey: 'block_id', attrKeys: ['page_id', 'deleted', 'value_text'] },
+    hasMoreKey: 'has_more',
+    totalKey: 'total_count',
+  },
+
   // ── Attachment metadata (#3830) ──
   //
   // Seeded on both stacks by a fixture's `seed.attachments` section, which is
