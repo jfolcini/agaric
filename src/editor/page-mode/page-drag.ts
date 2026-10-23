@@ -1,9 +1,10 @@
 /**
- * Page mode's drag (#5691): a block's grip drags the block with the blocks
- * under it, as block mode's does. Pointer events, as block mode's pointer
- * sensor: a press becomes a drag only past `MOUSE_DRAG_ACTIVATION_DISTANCE`, so
- * a click on the grip still opens its menu. The drop lands before or after the
- * block under the pointer, as the pointer is over its upper or lower half, at
+ * Page mode's drag (#5691): the grip (`PageGrip`, on the block under the
+ * pointer) drags its block with the blocks under it, as block mode's does.
+ * Pointer events, as block mode's pointer sensor: a press becomes a drag only
+ * past `MOUSE_DRAG_ACTIVATION_DISTANCE`, so a click on the grip still opens its
+ * menu. The drop lands before or after the block under the pointer, as the
+ * pointer is over its upper or lower half, at
  * the depth its sideways travel asks for, within what keeps the page a tree
  * (`dropTarget`, block mode's `projectDepth`). It edits the document
  * (`dropBlock`), and the save writes the move through the block commands, as
@@ -24,7 +25,7 @@ import {
 import { dropBlock } from '@/editor/page-mode/page-block-actions'
 import { hiddenBlocks } from '@/editor/page-mode/page-collapse'
 import { blockIndex, depthOf, startOf, subtreeEnd } from '@/editor/page-mode/page-document'
-import { GRIP } from '@/editor/page-mode/page-gutter'
+import { PageGrip } from '@/editor/page-mode/page-gutter'
 import { blockIdOf } from '@/editor/token-ids'
 import { MAX_SPEED, SCROLL_ZONE } from '@/hooks/useAutoScrollOnDrag'
 import { shouldReduceMotion } from '@/lib/preferences'
@@ -129,6 +130,7 @@ const DRAGGING = 'page-block-dragging'
 
 class DragController {
   private readonly view: EditorView
+  private readonly grip: PageGrip
   private press: { id: string; x: number; y: number } | null = null
   private dragging = false
   private pointer = { x: 0, y: 0 }
@@ -140,14 +142,13 @@ class DragController {
 
   constructor(view: EditorView) {
     this.view = view
-    view.dom.addEventListener('pointerdown', this.down)
+    this.grip = new PageGrip(view)
+    this.grip.element.addEventListener('pointerdown', this.down)
   }
 
   private readonly down = (event: PointerEvent): void => {
-    if (event.button !== 0 || this.press !== null || !(event.target instanceof Element)) return
-    const block = event.target.closest(`[${GRIP}]`)?.closest('[data-page-block-id]')
-    const id = block?.getAttribute('data-page-block-id') ?? null
-    if (id === null) return
+    const id = this.grip.blockId
+    if (event.button !== 0 || this.press !== null || id === null) return
     this.press = { id, x: event.clientX, y: event.clientY }
     window.addEventListener('pointermove', this.move)
     window.addEventListener('pointerup', this.up)
@@ -176,6 +177,7 @@ class DragController {
       return
     }
     this.dragging = true
+    this.grip.hold(true)
     this.indentWidth = resolveIndentWidth()
     window.addEventListener('click', swallowClick, { capture: true, once: true })
     window.addEventListener('keydown', this.escape, true)
@@ -279,6 +281,7 @@ class DragController {
     if (this.frame !== null) cancelAnimationFrame(this.frame)
     for (const dom of this.faded) dom.classList.remove(DRAGGING)
     this.bar?.remove()
+    this.grip.hold(false)
     this.press = null
     this.dragging = false
     this.drop = null
@@ -287,13 +290,17 @@ class DragController {
     this.frame = null
   }
 
+  update(view: EditorView, previous: EditorState): void {
+    this.grip.update(view, previous)
+  }
+
   destroy(): void {
     this.end()
-    this.view.dom.removeEventListener('pointerdown', this.down)
+    this.grip.destroy()
   }
 }
 
-/** The drag of a block by its grip (`page-gutter.ts`). */
+/** The editor's grip (`page-gutter.ts`), and the drag of a block by it. */
 export const PageDrag = Extension.create({
   name: 'pageDrag',
   addProseMirrorPlugins() {

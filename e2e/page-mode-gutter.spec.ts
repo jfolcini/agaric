@@ -1,12 +1,14 @@
 /**
- * Page mode's gutter (#5691) against the mock backend: each block's grip and
- * chevron where block mode's are, revealed as block mode's (and kept while the
- * pointer walks to them), with no axe violations; a drag by the grip moving
- * the block with the blocks under it, read back from the backend and again
- * after leaving the page and coming back; Escape, or the window losing focus,
- * cancelling a drag; the chevron's collapse, which block mode shows too; Enter
- * and Backspace around a collapsed block; and the grip's block menu, from a
- * click or the keyboard, with the keys on a focused grip left to it.
+ * Page mode's gutter (#5691) against the mock backend: the editor's one grip,
+ * on the block under the pointer, and a block's chevron where block mode's
+ * are, revealed as the pointer reaches the block (and kept while it walks to
+ * them), with no axe violations; a drag by the grip moving its block with the
+ * blocks under it, read back from the backend and again after leaving the page
+ * and coming back; Escape, or the window losing focus, cancelling a drag; the
+ * chevron's collapse, which block mode shows too; Enter and Backspace around a
+ * collapsed block; and the grip's block menu, with the menu key's at the
+ * caret, the keys on a focused chevron left to it, and a press beside the grip
+ * leaving the caret.
  */
 
 import { createRequire } from 'node:module'
@@ -76,8 +78,8 @@ async function reopen(page: Page, title: string, count: number): Promise<void> {
 
 const block = (page: Page, id: string | undefined): Locator =>
   page.locator(`${EDITOR} [data-page-block-id="${id}"]`)
-const grip = (page: Page, id: string | undefined): Locator =>
-  block(page, id).locator(':scope > .page-block-gutter > [data-testid="drag-handle"]')
+/** The editor's one grip, wherever the pointer put it. */
+const grip = (page: Page): Locator => page.locator('[data-page-grip]')
 const chevron = (page: Page, id: string | undefined): Locator =>
   block(page, id).locator(':scope > .page-block-gutter > [data-testid="collapse-toggle"]')
 const menu = (page: Page) => page.getByRole('menu', { name: 'Block actions' })
@@ -137,6 +139,12 @@ async function caretAtEnd(page: Page, index: number, start = false): Promise<voi
   await expect(page.locator(EDITOR)).toBeFocused()
 }
 
+/** Point at block `id`, and wait for the grip to follow the pointer there. */
+async function pointAt(page: Page, id: string | undefined): Promise<void> {
+  await block(page, id).hover()
+  await expect(block(page, id)).toHaveAttribute('data-page-grip-on', '')
+}
+
 async function center(locator: Locator): Promise<{ x: number; y: number }> {
   const box = await locator.boundingBox()
   if (box === null) throw new Error('no box')
@@ -144,9 +152,9 @@ async function center(locator: Locator): Promise<{ x: number; y: number }> {
 }
 
 /**
- * Press block `id`'s grip and move the pointer down or up to `y`, `dx` right
- * of where it pressed, in steps past the drag's start distance, as a hand
- * does; released unless `hold`.
+ * Point at block `id`, press the grip there and move the pointer down or up to
+ * `y`, `dx` right of where it pressed, in steps past the drag's start
+ * distance, as a hand does; released unless `hold`.
  */
 async function drag(
   page: Page,
@@ -154,8 +162,8 @@ async function drag(
   y: number,
   { dx = 0, hold = false } = {},
 ): Promise<void> {
-  await block(page, id).hover()
-  const from = await center(grip(page, id))
+  await pointAt(page, id)
+  const from = await center(grip(page))
   await page.mouse.move(from.x, from.y)
   await page.mouse.down()
   await page.mouse.move(from.x, from.y + 12, { steps: 3 })
@@ -177,7 +185,7 @@ test.describe('page mode gutter (#5691) @editor @pages', () => {
     await page.emulateMedia({ reducedMotion: 'reduce' })
   })
 
-  test('the grip and chevron sit where block mode’s do, show on hovering their block, and pass axe', async ({
+  test('the grip sits on the block under the pointer, and it and the chevron where block mode’s do, and pass axe', async ({
     page,
   }) => {
     const { ids } = await seedRows(page, 'Gutter place', [
@@ -185,22 +193,23 @@ test.describe('page mode gutter (#5691) @editor @pages', () => {
       [1, 'child'],
     ])
     await openViaPalette(page, 'Gutter place')
-    const row = page.locator('[data-testid="sortable-block"]').first()
-    await row.hover()
-    const blockGrip = await row.getByTestId('drag-handle').boundingBox()
-    const blockChevron = await row.getByTestId('collapse-toggle').boundingBox()
+    const rows = page.locator('[data-testid="sortable-block"]')
+    await rows.first().hover()
+    const parentGrip = await rows.first().getByTestId('drag-handle').boundingBox()
+    const blockChevron = await rows.first().getByTestId('collapse-toggle').boundingBox()
+    await rows.nth(1).hover()
+    const childGrip = await rows.nth(1).getByTestId('drag-handle').boundingBox()
     await modeSwitch(page, 'Page').click()
     await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(2)
 
-    await page.mouse.move(0, 0)
-    await expect(grip(page, ids[1])).toHaveCSS('opacity', '0')
     await block(page, ids[0]).hover()
-    await expect(grip(page, ids[0])).toHaveCSS('opacity', '1')
+    await expect(grip(page)).toBeVisible()
     await expect(chevron(page, ids[0])).toHaveCSS('opacity', '1')
-    await expect(grip(page, ids[1])).toHaveCSS('opacity', '0')
-    await expect(chevron(page, ids[1])).toHaveCount(0)
-    expect(await grip(page, ids[0]).boundingBox()).toEqual(blockGrip)
+    expect(await grip(page).boundingBox()).toEqual(parentGrip)
     expect(await chevron(page, ids[0]).boundingBox()).toEqual(blockChevron)
+    await block(page, ids[1]).hover()
+    await expect.poll(() => grip(page).boundingBox()).toEqual(childGrip)
+    await expect(chevron(page, ids[1])).toHaveCount(0)
 
     await page.addScriptTag({ path: axePath })
     const violations = await page.evaluate(async () => {
@@ -211,6 +220,34 @@ test.describe('page mode gutter (#5691) @editor @pages', () => {
       return found.map((v) => v.id)
     })
     expect(violations).toEqual([])
+  })
+
+  test('one grip, outside the text, however many blocks: it follows the pointer and hides as the pointer leaves', async ({
+    page,
+  }) => {
+    const rows: Row[] = Array.from({ length: 30 }, (_, i) => [0, `line ${i}`])
+    const { ids } = await seedRows(page, 'Gutter one', rows)
+    await openInPageMode(page, 'Gutter one', 30)
+
+    for (const index of [0, 7, 12]) {
+      const row = block(page, ids[index])
+      await row.hover()
+      const box = await row.boundingBox()
+      if (box === null) throw new Error('no box')
+      // On that block's row, wherever it was before.
+      await expect
+        .poll(async () => {
+          const at = await grip(page).boundingBox()
+          return at !== null && at.y >= box.y && at.y + at.height <= box.y + box.height
+        })
+        .toBe(true)
+    }
+    await expect(grip(page)).toHaveCount(1)
+    await expect(page.locator(`${EDITOR} [data-page-grip]`)).toHaveCount(0)
+    await expect(page.locator(`${EDITOR} .page-block-gutter`)).toHaveCount(0)
+
+    await page.mouse.move(0, 0)
+    await expect(grip(page)).toBeHidden()
   })
 
   test('a drag by the grip moves the block with the blocks under it, sideways nests it, and the moves stay', async ({
@@ -227,6 +264,8 @@ test.describe('page mode gutter (#5691) @editor @pages', () => {
     await drag(page, ids[1], await lowerHalf(page, ids[3]), { hold: true })
     await expect(page.getByTestId('page-drop-indicator')).toBeVisible()
     await expect(block(page, ids[2])).toHaveClass(/page-block-dragging/)
+    // Not following the pointer over the blocks it passes while the drag lasts.
+    await expect(grip(page)).toBeHidden()
     await page.mouse.up()
 
     await expect(page.getByTestId('page-drop-indicator')).toHaveCount(0)
@@ -305,18 +344,20 @@ test.describe('page mode gutter (#5691) @editor @pages', () => {
     await openInPageMode(page, 'Gutter walk', 2)
     await page.mouse.move(0, 0)
     const text = await block(page, ids[0]).locator('.page-block-content').boundingBox()
-    const handle = await grip(page, ids[0]).boundingBox()
-    if (text === null || handle === null) throw new Error('no box')
+    if (text === null) throw new Error('no box')
+    await page.mouse.move(text.x + 20, text.y + 4)
+    await expect(grip(page)).toBeVisible()
+    const handle = await grip(page).boundingBox()
+    if (handle === null) throw new Error('no box')
     const y = handle.y + handle.height / 2
-    await page.mouse.move(text.x + 20, y)
-    await expect(grip(page, ids[0])).toHaveCSS('opacity', '1')
 
     // A few pixels at a time, across the gap between the text and the gutter.
     for (let x = text.x + 20; x >= handle.x + handle.width / 2; x -= 3) {
       await page.mouse.move(x, y)
-      await expect(grip(page, ids[0])).toHaveCSS('opacity', '1')
+      await expect(grip(page)).toBeVisible()
       await expect(chevron(page, ids[0])).toHaveCSS('opacity', '1')
     }
+    expect(await grip(page).boundingBox()).toEqual(handle)
   })
 
   test('the chevron collapses a block, which block mode then shows collapsed, and the other way round', async ({
@@ -404,7 +445,7 @@ test.describe('page mode gutter (#5691) @editor @pages', () => {
     await expect(chevron(page, ids[0])).toHaveAttribute('aria-expanded', 'false')
   })
 
-  test('a click on the grip opens its block’s menu; on a focused grip Enter does, keys type nothing, and Escape gives it the focus back', async ({
+  test('a click on the grip opens the menu of the block under the pointer; the menu key opens the caret’s; a press beside the grip leaves the caret', async ({
     page,
   }) => {
     const { ids } = await seedRows(page, 'Gutter menu', [
@@ -412,9 +453,10 @@ test.describe('page mode gutter (#5691) @editor @pages', () => {
       [0, 'second'],
     ])
     await openInPageMode(page, 'Gutter menu', 2)
+    await caretAtEnd(page, 0)
 
-    await block(page, ids[1]).hover()
-    await grip(page, ids[1]).click()
+    await pointAt(page, ids[1])
+    await grip(page).click()
     await expect(menu(page)).toBeVisible()
     await menu(page)
       .getByRole('menuitem', { name: /^Copy block reference/ })
@@ -422,26 +464,31 @@ test.describe('page mode gutter (#5691) @editor @pages', () => {
     await expect.poll(() => readClipboard(page)).toBe(`((${ids[1]}))`)
     await expect(menu(page)).toHaveCount(0)
 
-    await grip(page, ids[1]).focus()
-    await expect(grip(page, ids[1])).toBeFocused()
-    await page.keyboard.type('x')
-    await expect(block(page, ids[1]).locator('.page-block-content')).toHaveText('second')
-    await page.keyboard.press('Enter')
-    await expect(menu(page)).toBeVisible()
-    await page.keyboard.press('Escape')
-    await expect(menu(page)).toHaveCount(0)
-    await expect(grip(page, ids[1])).toBeFocused()
+    // No tab stop: the keys open the menu at the caret, whichever block the grip is on.
+    await expect(grip(page)).toHaveAttribute('tabindex', '-1')
+    await caretAtEnd(page, 0)
+    await block(page, ids[1]).hover()
+    await page.keyboard.press('Shift+F10')
+    await menu(page)
+      .getByRole('menuitem', { name: /^Copy block reference/ })
+      .click()
+    await expect.poll(() => readClipboard(page)).toBe(`((${ids[0]}))`)
+    await expect(page.locator(EDITOR)).toBeFocused()
 
-    // Tab moves on from it, as from any button; the block keeps its depth.
-    await page.keyboard.press('Tab')
-    await expect(grip(page, ids[1])).not.toBeFocused()
+    // In the second block's lane, left of where the grip sits on it.
+    await pointAt(page, ids[1])
+    const second = await block(page, ids[1]).boundingBox()
+    const handle = await grip(page).boundingBox()
+    if (second === null || handle === null) throw new Error('no box')
+    await page.mouse.click(handle.x - 8, second.y + second.height / 2)
+    await page.keyboard.type('!')
     expect(await shown(page)).toEqual([
-      ['first', 0],
+      ['first!', 0],
       ['second', 0],
     ])
   })
 
-  test('a focused chevron folds on Enter and Space and keeps the focus; Tab and Shift+Tab on it or a grip move the focus, not the cursor’s block', async ({
+  test('a focused chevron folds on Enter and Space and keeps the focus; Tab and Shift+Tab on it move the focus, not the cursor’s block', async ({
     page,
   }) => {
     const { ids } = await seedRows(page, 'Gutter keys', [
@@ -464,22 +511,16 @@ test.describe('page mode gutter (#5691) @editor @pages', () => {
     await expect(block(page, ids[2])).toBeVisible()
     await expect(chevron(page, ids[1])).toBeFocused()
 
-    // With the cursor in "two", the editor's Tab would indent it under "one"; with it in
-    // "child", Shift+Tab would outdent that.
+    // With the cursor in "two", the editor's Tab would indent it under "one", and its
+    // Shift+Tab would do nothing; with it in "child", Shift+Tab would outdent that.
     await caretAtEnd(page, 1)
     await chevron(page, ids[1]).focus()
     await page.keyboard.press('Tab')
-    await expect(grip(page, ids[2])).toBeFocused()
+    await expect(chevron(page, ids[1])).not.toBeFocused()
     await caretAtEnd(page, 2)
-    await grip(page, ids[2]).focus()
+    await chevron(page, ids[1]).focus()
     await page.keyboard.press('Shift+Tab')
-    await expect(chevron(page, ids[1])).toBeFocused()
-    await page.keyboard.press('Shift+Tab')
-    await expect(grip(page, ids[1])).toBeFocused()
-    await caretAtEnd(page, 1)
-    await grip(page, ids[1]).focus()
-    await page.keyboard.press('Tab')
-    await expect(chevron(page, ids[1])).toBeFocused()
+    await expect(chevron(page, ids[1])).not.toBeFocused()
     expect(await shown(page)).toEqual(layout)
   })
 })

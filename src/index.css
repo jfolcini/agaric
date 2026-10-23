@@ -1200,17 +1200,33 @@
 .page-mode-editor .page-block-controls {
   @apply absolute top-0 right-full mr-1 select-none;
 }
-/* A block's grip and chevron (`page-gutter.ts`) sit where block mode's control
-   lane does: left of the checkbox's slot, on the first line, the chevron
-   nearer the text. */
+/* A block's chevron (`page-gutter.ts`) sits where block mode's control lane
+   does: left of the checkbox's slot, on the first line. */
 .page-mode-editor .page-block-gutter {
   @apply absolute top-0 right-full mr-7 flex min-h-8 min-w-12 items-center justify-end gap-0.5 select-none;
 }
-/* The gap between the gutter and the block (the gutter's margin) is the block's
-   too, so its hover, and the controls it shows, hold while the pointer crosses it. */
+/* The editor's one grip (`page-gutter.ts`), outside its text, placed at the top
+   left corner of the block under the pointer and moved from there into that
+   block's lane as the gutter above would hold it: its margin, then the
+   chevron (`w-5`) and the gutter's gap, when the block has one. The text's
+   font size, as the lane's. */
+.page-grip {
+  @apply absolute -ml-7 flex min-h-8 -translate-x-full items-center select-none;
+  font-size: var(--agaric-font-size, 1rem);
+}
+.page-grip[data-chevron] {
+  @apply -ml-12.5;
+}
+/* Its block's chevron stays shown while the pointer is on the grip, outside the
+   block, as it is while the pointer is on the block. */
+.page-mode-editor [data-page-grip-on] > .page-block-gutter > .collapse-toggle {
+  @apply pointer-events-auto opacity-100;
+}
+/* The block's lane, the gutter and the gap after it, is the block's too, so
+   pointing anywhere in it puts the grip there and shows the chevron. */
 .page-mode-editor [data-page-block]::before {
   content: '';
-  @apply absolute inset-y-0 right-full w-7;
+  @apply absolute inset-y-0 right-full w-19;
 }
 /* What a collapsed block hides (`page-collapse.ts`). */
 .page-mode-editor [data-page-block].page-block-hidden {

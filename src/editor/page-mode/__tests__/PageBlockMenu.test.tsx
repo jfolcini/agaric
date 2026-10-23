@@ -1,7 +1,8 @@
 /**
- * Page mode's block menu (#5972) over the mock backend: a right click, a click
- * on its grip, or the menu key, on a block opens block mode's menu on it, and
- * each row's effect is read back from the backend after the save.
+ * Page mode's block menu (#5972) over the mock backend: a right click on a
+ * block, a click on the grip on the block under the pointer, or the menu key at
+ * the caret's block opens block mode's menu on it, and each row's effect is
+ * read back from the backend after the save.
  */
 
 import type { InvokeArgs } from '@tauri-apps/api/core'
@@ -99,10 +100,14 @@ function blockText(view: Opened, id: string): HTMLElement {
   return el
 }
 
-/** Block `id`'s grip. */
-function grip(view: Opened, id: string): HTMLElement {
-  const el = view.container.querySelector(`[data-page-block-id="${id}"] [data-page-grip]`)
-  if (!(el instanceof HTMLElement)) throw new Error(`no grip for block ${id}`)
+/** Point at block `id`, and resolve the grip once it has followed the pointer there. */
+async function gripOn(view: Opened, id: string): Promise<HTMLElement> {
+  fireEvent.pointerMove(blockText(view, id))
+  await act(async () => {
+    await new Promise((resolve) => requestAnimationFrame(resolve))
+  })
+  const el = view.container.querySelector('[data-page-grip]')
+  if (!(el instanceof HTMLElement)) throw new Error(`no grip on block ${id}`)
   return el
 }
 
@@ -242,24 +247,7 @@ describe('PageBlockMenu: opening', () => {
     await waitFor(() => expect(mockedWriteText).toHaveBeenCalledWith(`((${view.ids[0]}))`))
   })
 
-  it('opens from a click on a block’s grip, on that block, not the caret’s', async () => {
-    const view = await open([
-      [0, 'first'],
-      [0, 'second'],
-    ])
-    act(() => {
-      view.editor.commands.setTextSelection(3)
-    })
-
-    await act(async () => {
-      fireEvent.click(grip(view, view.ids[1] as string))
-    })
-    fireEvent.click(await screen.findByRole('menuitem', { name: /^Copy block reference/ }))
-
-    await waitFor(() => expect(mockedWriteText).toHaveBeenCalledWith(`((${view.ids[1]}))`))
-  })
-
-  it('opens from Enter or the menu key on a focused grip, on its block, and gives the grip the focus back', async () => {
+  it('opens from a click on the grip, on the block under the pointer, not the caret’s, and gives the editor the focus back', async () => {
     const user = userEvent.setup()
     const view = await open([
       [0, 'first'],
@@ -268,20 +256,40 @@ describe('PageBlockMenu: opening', () => {
     act(() => {
       view.editor.commands.setTextSelection(3)
     })
-    const handle = grip(view, view.ids[1] as string)
-    act(() => handle.focus())
 
-    await user.keyboard('{Enter}')
+    await act(async () => {
+      fireEvent.click(await gripOn(view, view.ids[1] as string))
+    })
     expect(await screen.findByRole('menu')).toBeInTheDocument()
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
-    expect(handle).toHaveFocus()
+    expect(view.editor.view.dom).toHaveFocus()
 
     await act(async () => {
-      fireEvent.keyDown(handle, { key: 'ContextMenu' })
+      fireEvent.click(await gripOn(view, view.ids[1] as string))
     })
     fireEvent.click(await screen.findByRole('menuitem', { name: /^Copy block reference/ }))
     await waitFor(() => expect(mockedWriteText).toHaveBeenCalledWith(`((${view.ids[1]}))`))
+  })
+
+  it('with the grip on another block, the menu key still opens the caret’s block’s menu', async () => {
+    const view = await open([
+      [0, 'first'],
+      [0, 'second'],
+    ])
+    const { editor } = view
+    vi.spyOn(editor.view, 'coordsAtPos').mockReturnValue({ left: 5, right: 5, top: 5, bottom: 20 })
+    act(() => {
+      editor.commands.setTextSelection(3)
+    })
+    expect(await gripOn(view, view.ids[1] as string)).toHaveAttribute('tabindex', '-1')
+
+    await act(async () => {
+      fireEvent.keyDown(editor.view.dom, { key: 'ContextMenu' })
+    })
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^Copy block reference/ }))
+
+    await waitFor(() => expect(mockedWriteText).toHaveBeenCalledWith(`((${view.ids[0]}))`))
   })
 
   it('offers Collapse on a block with blocks under it, which hides them as block mode saves it, and Expand then', async () => {

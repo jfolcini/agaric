@@ -170,9 +170,8 @@ describe('the checkbox', () => {
     expect(block).toHaveAttribute('data-todo-state', 'TODO')
     expect(block).toHaveAttribute('data-page-block', '')
     expect(block).toHaveAttribute('data-depth', '0')
-    // After the gutter, as block mode's row has the grip lane, then the checkbox, then the text.
+    // The checkbox, then the text, as block mode's row; no gutter on a block with none under it.
     expect([...block.children].map((child) => child.className)).toEqual([
-      'page-block-gutter',
       'page-block-controls',
       'page-block-content',
     ])
