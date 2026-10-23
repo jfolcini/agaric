@@ -9,6 +9,7 @@ import { devices, type Locator, type Page } from '@playwright/test'
 import {
   expect,
   focusBlockById,
+  navigateToView,
   openPage,
   openPageMobile,
   readClipboard,
@@ -47,7 +48,14 @@ async function openSeeded(page: Page, width: keyof typeof VIEWPORTS, seeds: stri
     page,
     seeds.map((content) => ({ content })),
   )
-  await (width === 'phone' ? openPageMobile : openPage)(page, 'Projects')
+  await openProjects(page)
+}
+
+/** Through the Pages view at either width: a narrow mouse window has the hamburger, not the
+ * search sheet a touch phone opens pages from. */
+async function openProjects(page: Page) {
+  await navigateToView(page, 'Pages')
+  await page.getByText('Projects', { exact: true }).click()
 }
 
 test.describe('display math overflow (#5638) @editor @mobile', () => {
@@ -94,7 +102,7 @@ test.describe('display math overflow (#5638) @editor @mobile', () => {
     await page.setViewportSize(VIEWPORTS.phone)
     await waitForBoot(page)
     const [id] = await seedSearchBlocks(page, [{ content: WIDE_MATH }])
-    await openPageMobile(page, 'Projects')
+    await openProjects(page)
     // Tap the equation, not the wrapped source shown while KaTeX loads: that is
     // taller, so a corner measured on it lands on the row below once it renders.
     await expect(page.getByTestId('katex-block').locator('.katex')).toBeVisible()
