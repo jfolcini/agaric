@@ -227,7 +227,7 @@ describe('JournalPage / BlockTree integration — auto-create race', () => {
     // had a chance to settle. Two ticks: one for the page-create
     // promise chain, one for the BlockTree mount + create_block
     // promise chain that runs after the React re-render triggered by
-    // `setCreatedPages`.
+    // `setCreated`.
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0))
     })

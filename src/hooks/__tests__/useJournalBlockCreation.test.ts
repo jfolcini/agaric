@@ -260,7 +260,7 @@ describe('useJournalBlockCreation', () => {
     // Explicit regression: when the space has no journal template, the
     // hook must not call `create_block`. Seed-block creation is delegated to
     // `BlockTree.autoCreateFirstBlock`, which observes the empty page
-    // when DaySection mounts BlockTree after `setCreatedPages` fires.
+    // when DaySection mounts BlockTree after `setCreated` fires.
     stubInvoke({ create_page_in_space: () => 'PNEW', first_child_for_blocks: () => ({}) })
 
     const { result, pageCreatedCalls } = setup()
