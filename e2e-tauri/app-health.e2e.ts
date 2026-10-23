@@ -45,7 +45,7 @@ async function openAppHealth(): Promise<void> {
   await $('[data-testid="settings-panel-status"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
 }
 
-/** The Materializer status cards, label to number, once all four have loaded. */
+/** The Materializer status cards, label to number, once all six have loaded. */
 async function readMetrics(): Promise<Record<string, number>> {
   let metrics: Record<string, number> = {}
   await browser.waitUntil(
@@ -58,7 +58,7 @@ async function readMetrics(): Promise<Record<string, number>> {
           ]),
         ),
       )
-      return Object.keys(metrics).length === 4
+      return Object.keys(metrics).length === 6
     },
     { timeout: NAV_TIMEOUT, timeoutMsg: 'the Materializer status cards never loaded' },
   )

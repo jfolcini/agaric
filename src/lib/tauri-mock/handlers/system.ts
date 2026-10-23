@@ -37,6 +37,8 @@ export const systemHandlers = {
     bg_high_water: 0,
     fg_errors: 0,
     bg_errors: 0,
+    sql_only_fallback_count: 0,
+    descendant_fanout_dropped: 0,
   }),
 
   // #2974 — Flathub no-self-update guard. The mock represents a plain

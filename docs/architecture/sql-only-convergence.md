@@ -112,16 +112,20 @@ masked by `create_edit_convergence_tests.rs` and `move_convergence_tests.rs`.
 ## Instrumentation
 
 `sql_only_fallback::record(op, reason)` bumps a process-global monotonic
-`AtomicU64` and emits a `debug!` (`target:
-"materializer::sql_only_fallback"`) tagged with the op type and reason. It is
-purely additive and does not alter control flow. `debug!` rather than `warn!`
-is deliberate: sync_daemon tests thread synthetic ops over bare-block fixtures
-with no space chain, so a warn would spam the suite.
+`AtomicU64` and emits a `warn!` tagged with the op type and reason. It is
+purely additive and does not alter control flow. A block SQL holds and its
+space's engine does not stops syncing, so the warning goes to the log at the
+default level (#6047).
+
+A new page or tag root is not recorded: it has no row to resolve a space from
+until its create projects it, and the `SetProperty(space)` every
+root-creating command appends next hydrates it. Counted, every page created
+would read as a miss.
 
 Production observability is the counter, surfaced as
 `StatusInfo::sql_only_fallback_count` (#1326) via the materializer coordinator's
-status builder. A nonzero count in a normal session means an op took the
-fallback and is worth explaining.
+status builder and shown in Settings › App health. A nonzero count in a normal
+session means an op took the fallback and is worth explaining.
 
 The in-transaction `apply_*_via_loro` handlers are not the only recorders
 (#4472). The post-commit engine fan-outs (`dispatch_delete_descendants`,

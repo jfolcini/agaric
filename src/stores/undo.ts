@@ -429,9 +429,10 @@ function withoutEntry(undoStack: UndoStackEntry[], entry: UndoStackEntry): UndoS
  * every `non_reversible` arm: `reverse_move_preflight` also rejects when the
  * prior parent is merely SOFT-DELETED (a trash restore revives it — and
  * `TrashView` never touches this store, so the dropped entry really would
- * have worked afterwards) or when it has transiently become a descendant of
- * the moved block (a later move breaks the cycle). Those are temporarily,
- * not permanently, impossible.
+ * have worked afterwards), when it has transiently become a descendant of
+ * the moved block (a later move breaks the cycle), or when it is in another
+ * space than the block (moving the page back makes it reversible, #6047).
+ * Those are temporarily, not permanently, impossible.
  *
  * They are dropped anyway, deliberately. The `{ kind, message }` envelope
  * carries no sub-kind to separate them from the genuinely irreversible arms

@@ -4891,8 +4891,9 @@ async fn pend18_list_page_history_scope_parity() {
 }
 
 // ======================================================================
-// #657 — reverse RestoreBlock / MoveBlock must refresh `space_id` in
-// step with `page_id` (#533 parity with the forward paths they mirror).
+// #657 — reverse RestoreBlock must refresh `space_id` in step with
+// `page_id` (#533 parity with the forward path it mirrors). A reverse
+// MoveBlock into another space is refused instead (#6047).
 // ======================================================================
 
 /// Seed two registered spaces, a page in each, and a child subtree under
@@ -4960,52 +4961,7 @@ async fn page_and_space_of(pool: &SqlitePool, id: &str) -> (Option<String>, Opti
     (row.get("page_id"), row.get("space_id"))
 }
 
-/// #657 (MoveBlock half): undoing a move re-parents the subtree across a
-/// space boundary — the reverse arm must rewrite `space_id` alongside
-/// `page_id`, not leave the subtree's space membership stale until the
-/// background RebuildPageIds chain lands.
-#[tokio::test]
-async fn apply_reverse_move_block_refreshes_space_id_657() {
-    let (pool, _dir) = test_pool().await;
-    seed_two_space_pages_657(&pool).await;
-
-    // Reverse-of-a-move payload: put CHILD657 under the space-B page.
-    let payload = OpPayload::MoveBlock(agaric_store::op::MoveBlockPayload {
-        block_id: BlockId::test_id("CHILD657"),
-        new_parent_id: Some(BlockId::test_id("PAGE2657")),
-        new_position: 1,
-        new_index: None,
-        prior: None,
-    });
-    let mut tx = pool.begin().await.unwrap();
-    apply_reverse_in_tx(
-        &mut tx,
-        &agaric_engine::loro::shared::LoroState::new(),
-        DEV,
-        &payload,
-        agaric_lib::db::now_ms(),
-        None,
-    )
-    .await
-    .unwrap();
-    tx.commit().await.unwrap();
-
-    for id in ["CHILD657", "GRAND657"] {
-        let (page_id, space_id) = page_and_space_of(&pool, id).await;
-        assert_eq!(
-            page_id.as_deref(),
-            Some("PAGE2657"),
-            "{id}: page_id refreshed"
-        );
-        assert_eq!(
-            space_id.as_deref(),
-            Some("SPACEB657"),
-            "{id}: space_id must follow page_id synchronously on reverse move (#657)"
-        );
-    }
-}
-
-/// #657 (RestoreBlock half): undoing a delete restores the subtree into a
+/// #657: undoing a delete restores the subtree into a
 /// page whose space assignment changed while the subtree was tombstoned —
 /// the reverse arm must stamp the CURRENT space, not resurrect the stale one.
 #[tokio::test]
@@ -9337,6 +9293,187 @@ async fn assert_homed_in(
             "{when}: {id} must be out of {other}'s doc"
         );
     }
+}
+
+/// #6047 — two pages in A, and a block moved from the first to the second
+/// (by an agent, in the issue). Returns `(from, to, block, the move's ref)`.
+async fn block_moved_between_pages_6047(
+    pool: &SqlitePool,
+    mat: &Materializer,
+) -> (BlockId, BlockId, BlockId, OpRef) {
+    let from = space_page(pool, mat).await;
+    let to = create_page_in_space_inner(pool, DEV, mat, None, "To".into(), TEST_SPACE_ID.into())
+        .await
+        .unwrap();
+    let block = append_child(pool, mat, &from, "moved").await;
+    move_block_inner(pool, DEV, mat, block.clone(), Some(to.clone()), 0)
+        .await
+        .unwrap();
+    settle(mat).await;
+    let seq: i64 = sqlx::query_scalar(
+        "SELECT seq FROM op_log WHERE op_type = 'move_block' AND block_id = ? AND device_id = ?",
+    )
+    .bind(block.as_str())
+    .bind(DEV)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let move_ref = OpRef {
+        device_id: DEV.into(),
+        seq,
+    };
+    (from, to, block, move_ref)
+}
+
+/// Edit `block` and assert the edit took `space`'s engine, not the SQL-only
+/// fallback that never syncs.
+async fn assert_next_edit_takes_the_engine(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    block: &BlockId,
+    space: &str,
+) {
+    let fallbacks_before = agaric_engine::apply::sql_only_fallback::count();
+    edit_block_inner(pool, DEV, mat, block.clone(), "edited after revert".into())
+        .await
+        .unwrap();
+    settle(mat).await;
+    assert_eq!(
+        agaric_engine::apply::sql_only_fallback::count() - fallbacks_before,
+        0,
+        "the edit after the revert must take {space}'s engine, not the SQL-only fallback"
+    );
+    let mut guard = mat
+        .loro_state()
+        .registry
+        .for_space(&SpaceId::from_trusted(space), DEV)
+        .expect("for_space");
+    let content = guard
+        .engine_mut()
+        .read_block_content(block.as_str())
+        .expect("read_block_content");
+    drop(guard);
+    assert_eq!(
+        content.as_deref(),
+        Some("edited after revert"),
+        "{space}'s doc carries the edit"
+    );
+}
+
+/// #6047 — reverting a move after the destination page moved to another space
+/// is refused: putting the block back under its old parent would land it in a
+/// space whose doc no longer holds it, and every later edit would skip the
+/// engine and never sync.
+///
+/// Counter-delta test: reads the process-global `sql_only_fallback::count()`
+/// (`src-tauri/tests/AGENTS.md` § "Process-global state"; nextest only).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn revert_of_a_move_refuses_a_prior_parent_in_another_space_6047() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (_from, to, block, move_ref) = block_moved_between_pages_6047(&pool, &mat).await;
+
+    // The user moves the destination page to B.
+    ensure_test_space_b(&pool).await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        to.as_str().into(),
+        "space".into(),
+        None,
+        None,
+        None,
+        Some(TEST_SPACE_B_ID.into()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert_homed_in(
+        &pool,
+        &mat,
+        &[&to, &block],
+        TEST_SPACE_B_ID,
+        TEST_SPACE_ID,
+        "sanity",
+    )
+    .await;
+
+    // The Activity Feed's (and the History view's) revert.
+    let err = revert_ops_inner(&pool, DEV, &mat, vec![move_ref])
+        .await
+        .expect_err("reverting the move must be refused once its prior parent is in another space");
+    assert!(
+        matches!(err, AppError::NonReversible { .. }),
+        "the refusal is NonReversible, as for the preflight's other refusals, got: {err:?}"
+    );
+
+    let parent: Option<String> = sqlx::query_scalar("SELECT parent_id FROM blocks WHERE id = ?")
+        .bind(block.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        parent.as_deref(),
+        Some(to.as_str()),
+        "the refused revert leaves the block where it is"
+    );
+    assert_homed_in(
+        &pool,
+        &mat,
+        &[&block],
+        TEST_SPACE_B_ID,
+        TEST_SPACE_ID,
+        "after the refusal",
+    )
+    .await;
+    assert_next_edit_takes_the_engine(&pool, &mat, &block, TEST_SPACE_B_ID).await;
+    mat.shutdown();
+}
+
+/// #6047 — the other half: within one space the revert still puts the block
+/// back, in SQL and in the engine.
+///
+/// Counter-delta test: reads the process-global `sql_only_fallback::count()`
+/// (`src-tauri/tests/AGENTS.md` § "Process-global state"; nextest only).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn revert_of_a_move_within_one_space_puts_the_block_back_6047() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (from, _to, block, move_ref) = block_moved_between_pages_6047(&pool, &mat).await;
+
+    revert_ops_inner(&pool, DEV, &mat, vec![move_ref])
+        .await
+        .expect("a revert within one space must apply");
+    settle(&mat).await;
+
+    let (parent, page): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT parent_id, page_id FROM blocks WHERE id = ?")
+            .bind(block.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(parent.as_deref(), Some(from.as_str()), "SQL parent is back");
+    assert_eq!(page.as_deref(), Some(from.as_str()), "SQL page is back");
+    let mut guard = mat
+        .loro_state()
+        .registry
+        .for_space(&SpaceId::from_trusted(TEST_SPACE_ID), DEV)
+        .expect("for_space");
+    let engine_parent = guard
+        .engine_mut()
+        .read_parent(block.as_str())
+        .expect("read_parent");
+    drop(guard);
+    assert_eq!(
+        engine_parent.as_deref(),
+        Some(from.as_str()),
+        "the engine's parent is back too"
+    );
+    assert_next_edit_takes_the_engine(&pool, &mat, &block, TEST_SPACE_ID).await;
+    mat.shutdown();
 }
 
 /// #5262 — a page in A with one block, born on a peer: the root's

@@ -4,9 +4,11 @@
  * The Settings › App health tab's body (#5269), below the integrity check
  * (#5360, #5629), so it renders no `<h1>` of its own: SettingsView owns the
  * page heading. Polls getStatus() every 5 seconds.
- * Displays 4 metrics: foreground queue depth, background queue depth,
- * grand-total ops dispatched (foreground + background combined), and the
- * background-only dispatched count.
+ * Displays 6 metrics: foreground queue depth, background queue depth,
+ * grand-total ops dispatched (foreground + background combined), the
+ * background-only dispatched count, and the two counts of writes the sync
+ * engine missed (`sql_only_fallback_count`, `descendant_fanout_dropped`),
+ * which stay at zero unless a block has stopped syncing (#6047).
  *
  * SyncStatusCard — the overall sync state, at the top of Settings › Sync &
  * devices once a device is paired (#5629). Status only: the device list below
@@ -290,6 +292,32 @@ export function StatusPanel(): React.ReactElement {
                   <MetricLabel
                     label={t('status.backgroundDispatchedLabel')}
                     tooltip={t('status.backgroundDispatchedTooltip')}
+                  />
+                }
+              />
+
+              <MetricCard
+                className="status-metric"
+                value={
+                  <span className="status-metric-value">{status.sql_only_fallback_count}</span>
+                }
+                labelSlot={
+                  <MetricLabel
+                    label={t('status.sqlOnlyFallbackLabel')}
+                    tooltip={t('status.sqlOnlyFallbackTooltip')}
+                  />
+                }
+              />
+
+              <MetricCard
+                className="status-metric"
+                value={
+                  <span className="status-metric-value">{status.descendant_fanout_dropped}</span>
+                }
+                labelSlot={
+                  <MetricLabel
+                    label={t('status.fanoutDroppedLabel')}
+                    tooltip={t('status.fanoutDroppedTooltip')}
                   />
                 }
               />

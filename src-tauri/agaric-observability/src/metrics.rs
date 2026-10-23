@@ -142,7 +142,7 @@ pub fn register_instruments(meter_provider: &SdkMeterProvider, counters: Materia
         .with_description(
             "Cumulative count of SQL-only fallbacks (space unresolved / engine \
              missing target). Two recorder classes, separable by the `op` field \
-             on the target=materializer::sql_only_fallback debug lines: an \
+             on the sql_only_fallback warn lines: an \
              in-transaction apply handler that fell back to the SQL-only \
              projection, and a post-commit engine fan-out that skipped a cohort \
              member absent from its space's engine (#4472). Nonzero in \

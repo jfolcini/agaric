@@ -512,9 +512,8 @@ pub struct StatusInfo {
     /// never reset. **In production every arm is unreachable on a
     /// well-formed, fully-reconciled op log**, so a non-zero value signals an
     /// unexpected space-resolution or engine-membership miss that warrants
-    /// investigation — pair with the
-    /// `target=materializer::sql_only_fallback` debug lines (which carry
-    /// `op` + `reason`) for triage. Sourced from
+    /// investigation — pair with the `sql_only_fallback` warn lines (which
+    /// carry `op` + `reason`) for triage. Sourced from
     /// [`super::handlers::sql_only_fallback::count`].
     pub sql_only_fallback_count: u64,
     /// #2031: process-global count of post-commit descendant fan-out

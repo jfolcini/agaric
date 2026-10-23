@@ -137,10 +137,16 @@ pub async fn apply_create_block_via_loro(
         None => p.block_id.clone(),
     };
     let Some(space_id) = resolve_op_space(&mut *conn, &resolution_anchor, replay).await? else {
-        super::sql_only_fallback::record(
-            "create_block",
-            super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
-        );
+        // A new page or tag root has no row to resolve from until this create
+        // projects it; the `SetProperty(space)` its command appends next
+        // hydrates it, so it is not counted: else every page create would
+        // read as a miss.
+        if p.parent_id.is_some() || !matches!(p.block_type.as_str(), "page" | "tag") {
+            super::sql_only_fallback::record(
+                "create_block",
+                super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
+            );
+        }
         return apply_create_block_sql_only(conn, p.clone()).await;
     };
 
