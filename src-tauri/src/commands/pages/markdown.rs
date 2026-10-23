@@ -4856,7 +4856,8 @@ enum LinkMatch {
 impl LinkMatches {
     fn push(map: &mut HashMap<String, Vec<String>>, key: String, id: String) {
         let ids = map.entry(key).or_default();
-        if ids.len() < MAX_NAME_CANDIDATES {
+        // One page's aliases `Ärger` and `ärger` fold to one key: one page.
+        if ids.len() < MAX_NAME_CANDIDATES && !ids.contains(&id) {
             ids.push(id);
         }
     }

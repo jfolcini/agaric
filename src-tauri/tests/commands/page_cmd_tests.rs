@@ -6089,6 +6089,32 @@ async fn paste_blocks_folds_a_names_case_beyond_ascii() {
     );
 }
 
+/// #6052 — two aliases of one page that fold alike (`Ärger`, `ärger`, which
+/// `NOCASE` keeps apart) name that page once, not a tie.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_blocks_links_a_page_whose_aliases_fold_alike() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let plan = dup_page(&pool, &mat, "Plan").await;
+    set_page_aliases_inner(
+        &pool,
+        DEV,
+        &mat,
+        plan.as_str(),
+        vec!["Ärger".into(), "ärger".into()],
+    )
+    .await
+    .unwrap();
+    let anchor = dup_child(&pool, &mat, &page, "anchor").await;
+    settle(&mat).await;
+
+    let rows = paste(&pool, &mat, &anchor, paste_text("- see [[ÄRGER]]")).await;
+
+    let contents: Vec<Option<&str>> = rows.iter().map(|r| r.content.as_deref()).collect();
+    assert_eq!(contents, [Some(format!("see [[{plan}]]").as_str())]);
+}
+
 /// #5160 D9 — a pasted `[[Title|label]]` stores `[[ULID|label]]`; a label equal
 /// to the target's title is dropped; Logseq's `[label]([[Title]])` is the same
 /// token; and the link graph, which backlinks read, sees the labelled link.
