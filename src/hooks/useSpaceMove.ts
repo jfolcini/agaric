@@ -18,6 +18,7 @@ import { isValidation, unwrap, validationCode } from '@/lib/app-error'
 import type { PropertyLoss } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { formatErrorForDisplay } from '@/lib/error-display'
+import { logger } from '@/lib/logger'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
 
 export interface SpaceMoveRequest {
@@ -63,7 +64,12 @@ async function moveOrAskAgain(
   try {
     const count = unwrap(await commands.moveBlocksToSpace(request.ids, request.targetSpaceId, ack))
     ask(null)
-    request.onMoved(count)
+    // The pages moved: a throw from here on is the caller's bug, not a failed move.
+    try {
+      request.onMoved(count)
+    } catch (err) {
+      logger.error('useSpaceMove', 'onMoved threw after the move', { count }, err)
+    }
     return true
   } catch (err) {
     if (validationCode(err) !== ValidationCode.UnacknowledgedPropertyLoss) throw err

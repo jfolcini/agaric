@@ -53,6 +53,14 @@ export function BatchActionToolbar({
       role="toolbar"
       aria-label={t('batch.selectedCount', { count: selectedCount })}
       aria-describedby={!suppressRangeSelectHint ? 'batch-range-select-hint' : undefined}
+      // A button here acts on its own Enter or Space. The list behind the
+      // toolbar hears keys at the document and would act on the same press
+      // (Pages opened its focused page). A toolbar that handles keys must be
+      // focusable, but it is no Tab stop: its buttons are.
+      tabIndex={-1}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') e.stopPropagation()
+      }}
       // Wraps: a phone cannot fit the actions on one line, and the clipped
       // ones (Pages' Bookmark and Delete) were unreachable.
       className={cn(

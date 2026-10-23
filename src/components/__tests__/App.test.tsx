@@ -23,6 +23,7 @@ import { makePageHeading } from '@/__tests__/fixtures'
 import { App } from '@/App'
 import { getPaletteCommand } from '@/hooks/palette-commands'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { announce } from '@/lib/announcer'
 import type { BugReport } from '@/lib/bindings'
 import { markGestureCoachMarkSeen } from '@/lib/gesture-coachmark'
@@ -54,6 +55,9 @@ vi.mock('@/lib/platform/window', () => ({
 // without fiddling with window.innerWidth + matchMedia polyfills.
 vi.mock('@/hooks/useIsMobile', () => ({
   useIsMobile: vi.fn(() => false),
+}))
+vi.mock('@/hooks/useIsTouch', () => ({
+  useIsTouch: vi.fn(() => false),
 }))
 
 vi.mock('@/lib/announcer', () => ({
@@ -108,6 +112,7 @@ vi.mock('@/hooks/useSyncTrigger', () => ({
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedUseIsMobile = vi.mocked(useIsMobile)
+const mockedUseIsTouch = vi.mocked(useIsTouch)
 
 const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
@@ -118,6 +123,7 @@ beforeEach(() => {
   // render the same way they do in the app. Individual tests flip this via
   // mockedUseIsMobile.
   mockedUseIsMobile.mockReturnValue(false)
+  mockedUseIsTouch.mockReturnValue(false)
 
   // Start with boot already completed so BootGate renders children immediately.
   // This avoids the async boot cycle on every test — boot logic is tested in boot.test.ts.
@@ -2820,12 +2826,23 @@ describe('App — header search trigger', () => {
     expect(screen.queryByTestId('search-sheet-trigger')).toBeNull()
   })
 
-  it('shows only the sheet trigger on mobile', async () => {
+  it('shows only the sheet trigger on a touch phone', async () => {
     mockedUseIsMobile.mockReturnValue(true)
+    mockedUseIsTouch.mockReturnValue(true)
 
     render(<App />)
 
     expect(await screen.findByTestId('search-sheet-trigger')).toBeInTheDocument()
     expect(screen.queryByTestId('header-search-button')).toBeNull()
+  })
+
+  it('keeps the palette button and no quick-capture button in a narrow mouse window', async () => {
+    mockedUseIsMobile.mockReturnValue(true)
+
+    render(<App />)
+
+    expect(await screen.findByTestId('header-search-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('search-sheet-trigger')).toBeNull()
+    expect(screen.queryByTestId('quick-capture-fab')).toBeNull()
   })
 })

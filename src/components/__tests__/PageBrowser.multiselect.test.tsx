@@ -151,6 +151,26 @@ describe('PageBrowser multi-select', () => {
     })
   })
 
+  it('Enter or Space on a toolbar button presses it and opens no page', async () => {
+    const onPageSelect = vi.fn()
+    const user = userEvent.setup()
+    render(<PageBrowser onPageSelect={onPageSelect} />)
+    await screen.findByText('Alpha')
+    await user.click(selectCheckbox('P1'))
+
+    screen.getByRole('button', { name: t('pageBrowser.select.selectAll') }).focus()
+    await user.keyboard('{Enter}')
+    expect(onPageSelect).not.toHaveBeenCalled()
+    expect(screen.getByText(t('batch.selectedCount', { count: 4 }))).toBeInTheDocument()
+
+    screen.getByRole('button', { name: t('pageBrowser.select.clear') }).focus()
+    await user.keyboard(' ')
+    expect(onPageSelect).not.toHaveBeenCalled()
+    await waitFor(() => {
+      expect(screen.queryByRole('toolbar')).not.toBeInTheDocument()
+    })
+  })
+
   it('bulk Trash fires delete_blocks_by_ids with the selected ids and clears', async () => {
     const user = userEvent.setup()
     render(<PageBrowser />)

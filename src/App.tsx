@@ -634,8 +634,8 @@ function App() {
                     <GlobalDateControls />
                   </>
                 )}
-                {/* One search trigger per chrome. Mobile chrome — phone OR
-                    (tablet AND no hardware keyboard), per
+                {/* One search trigger per chrome. Mobile chrome — touch phone OR
+                    (touch tablet AND no hardware keyboard), per
                     `useShouldShowMobileChrome()` — gets the sheet trigger;
                     every other session gets the button that opens the same
                     Ctrl+K palette the shortcut does. */}

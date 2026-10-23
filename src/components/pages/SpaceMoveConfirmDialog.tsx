@@ -15,6 +15,7 @@ import type React from 'react'
 import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { fetchAndCacheLinks } from '@/components/block-tree/use-block-link-resolve'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
@@ -28,6 +29,8 @@ import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
 import { propertyRowDisplay } from '@/lib/query-result-columns'
+import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 export interface SpaceMoveConfirmDialogProps {
   confirmation: SpaceMoveConfirmation | null
@@ -128,7 +131,7 @@ function LossValues({ id, ids, targetSpaceId, propertyKey }: LossValuesProps): R
         queryKey: ['spaceMoveLossValues', targetSpaceId, propertyKey, ids],
         queryFn: async ({ pageParam }): Promise<PageResponse<PropertyLossValue>> => {
           try {
-            return unwrap(
+            const page = unwrap(
               await commands.listPropertyLossValues(
                 ids,
                 targetSpaceId,
@@ -137,6 +140,8 @@ function LossValues({ id, ids, targetSpaceId, propertyKey }: LossValuesProps): R
                 PAGINATION_LIMIT,
               ),
             )
+            await resolveRefValues(page.items)
+            return page
           } catch (err) {
             logger.warn('SpaceMoveConfirmDialog', 'failed to load values', { propertyKey }, err)
             throw err
@@ -150,6 +155,7 @@ function LossValues({ id, ids, targetSpaceId, propertyKey }: LossValuesProps): R
       },
       queryClient,
     )
+  const resolveTitle = useResolveStore((s) => s.resolveTitle)
   const rows = data?.pages.flatMap((page) => page.items) ?? []
   return (
     <div id={id} className="flex flex-col gap-1 px-3 pb-2">
@@ -170,7 +176,9 @@ function LossValues({ id, ids, targetSpaceId, propertyKey }: LossValuesProps): R
                 </span>
               )}
               <span className="max-w-[40%] shrink-0 truncate text-muted-foreground">
-                {propertyRowDisplay(row) ?? ''}
+                {row.value_ref === null
+                  ? (propertyRowDisplay(row) ?? '')
+                  : resolveTitle(row.value_ref)}
               </span>
             </li>
           ))}
@@ -185,6 +193,19 @@ function LossValues({ id, ids, targetSpaceId, propertyKey }: LossValuesProps): R
       />
     </div>
   )
+}
+
+/** Asks the backend for the titles of the referenced blocks the resolve store has no answer for. */
+async function resolveRefValues(rows: readonly PropertyLossValue[]): Promise<void> {
+  const store = useResolveStore.getState()
+  const ids = new Set(
+    rows.flatMap((row) =>
+      row.value_ref === null || store.has(row.value_ref) ? [] : [row.value_ref],
+    ),
+  )
+  if (ids.size === 0) return
+  const spaceId = useSpaceStore.getState().currentSpaceId
+  await fetchAndCacheLinks(ids, spaceId, () => useSpaceStore.getState().currentSpaceId !== spaceId)
 }
 
 /** The page's title, then the block's text when the value is on a block of it. */

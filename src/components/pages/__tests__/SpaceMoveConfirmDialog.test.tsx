@@ -28,6 +28,7 @@ import {
   propertyDefs,
   spacePropertyDefs,
 } from '@/lib/tauri-mock/seed'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -193,6 +194,19 @@ describe('SpaceMoveConfirmDialog', () => {
       'Plandraft',
       `Plan › old${t('spaceMove.inTrash')}final`,
     ])
+  })
+
+  it('shows a reference value as the title of the block it points at', async () => {
+    const user = userEvent.setup()
+    useSpaceStore.setState({ currentSpaceId: SPACE_A })
+    properties.get(CHILD)?.set('due', row(CHILD, 'due', { value_ref: PAGE }))
+    render(<Harness />)
+    const dialog = await openConfirmation(user)
+
+    await user.click(within(dialog).getByRole('button', { name: /^due/ }))
+
+    const holder = await within(dialog).findByText('Plan › card')
+    expect(holder.closest('li')).toHaveTextContent(/^Plan › cardPlan$/)
   })
 
   it('lists the holders a page at a time, and Load more brings the rest', async () => {

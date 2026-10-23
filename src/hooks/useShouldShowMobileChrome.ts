@@ -8,7 +8,8 @@
  * shortcut either.
  *
  * This hook composes the existing breakpoint with a hardware-keyboard
- * probe:
+ * probe, on a touch device only (`useIsTouch()`): a narrow mouse window
+ * keeps the desktop chrome.
  *
  *   - Phones (< 768 px): always show the mobile chrome.
  *   - Tablets (768 ≤ width < 1024): show the mobile chrome ONLY if no
@@ -26,6 +27,7 @@ import { useEffect, useState } from 'react'
 
 import { useHasHardwareKeyboard } from '@/hooks/useHasHardwareKeyboard'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useIsTouch } from '@/hooks/useIsTouch'
 
 const TABLET_BREAKPOINT = 1024
 
@@ -34,6 +36,7 @@ function readIsTablet(): boolean {
 }
 
 export function useShouldShowMobileChrome(): boolean {
+  const isTouch = useIsTouch()
   const isMobile = useIsMobile()
   const hasKeyboard = useHasHardwareKeyboard()
   const [isTablet, setIsTablet] = useState<boolean>(readIsTablet)
@@ -48,8 +51,5 @@ export function useShouldShowMobileChrome(): boolean {
     return () => mql.removeEventListener('change', onChange)
   }, [])
 
-  // Parenthesised explicitly so a future reader doesn't have to
-  // remember JS operator precedence — `&&` binds tighter than `||`,
-  // and that's what we want, but spelling it out is cheap insurance.
-  return isMobile || (isTablet && !hasKeyboard)
+  return isTouch && (isMobile || (isTablet && !hasKeyboard))
 }

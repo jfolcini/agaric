@@ -9,8 +9,8 @@
  * to the bottom-right that opens the same dialog.
  *
  * Gating mirrors the other touch-only entry points (`SearchSheetTrigger`):
- * it renders only when `useShouldShowMobileChrome()` is true (phone, or
- * tablet without a hardware keyboard) and renders nothing on desktop, so
+ * it renders only when `useShouldShowMobileChrome()` is true (touch phone, or
+ * touch tablet without a hardware keyboard) and renders nothing otherwise, so
  * it never subscribes / paints for keyboard-driven sessions.
  *
  * It reuses the SAME `setQuickCaptureOpen` setter that the chord and the
