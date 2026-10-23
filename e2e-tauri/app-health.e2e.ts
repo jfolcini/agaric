@@ -45,7 +45,7 @@ async function openAppHealth(): Promise<void> {
   await $('[data-testid="settings-panel-status"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
 }
 
-/** The Materializer status cards, label to number, once all four have loaded. */
+/** The Materializer status cards, label to number, once all six have loaded. */
 async function readMetrics(): Promise<Record<string, number>> {
   let metrics: Record<string, number> = {}
   await browser.waitUntil(
@@ -58,7 +58,7 @@ async function readMetrics(): Promise<Record<string, number>> {
           ]),
         ),
       )
-      return Object.keys(metrics).length === 4
+      return Object.keys(metrics).length === 6
     },
     { timeout: NAV_TIMEOUT, timeoutMsg: 'the Materializer status cards never loaded' },
   )
@@ -133,10 +133,13 @@ describe('Agaric real-backend App health and bug report (#5741, #5740) @boot @se
     const rose = (m: Record<string, number>, card: string) =>
       (m[card] ?? 0) - (before[card] ?? 0) >= 2 * words.length
     await openAppHealth()
-    await waitForMetrics(
+    const after = await waitForMetrics(
       (m) => idle(m) && rose(m, 'Ops processed') && rose(m, 'Background dispatched'),
       `the op counts never rose enough from ${JSON.stringify(before)} with both queues back at 0`,
     )
+    // A boot and ordinary edits take the sync engine's path for every write (#6047).
+    expect(after['Writes the sync engine missed']).toBe(0)
+    expect(after['Cascades the sync engine missed']).toBe(0)
   })
 
   it('puts the integrity section in the bug report, copies the body verbatim, and saves the ZIP with the logs', async () => {

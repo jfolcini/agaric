@@ -112,6 +112,10 @@ export const block: Record<string, string> = {
     'Cache rebuild and FTS indexing tasks. Non-critical, best-effort processing.',
   'status.opsDispatchedTooltip': 'Total operations processed since app start.',
   'status.backgroundDispatchedTooltip': 'Total background cache tasks completed since app start.',
+  'status.sqlOnlyFallbackTooltip':
+    'Changes saved to the database but not to the sync engine since app start, so they do not reach your other devices. Should stay at zero; if not, run the integrity check.',
+  'status.fanoutDroppedTooltip':
+    'Deletes or restores of nested blocks the sync engine did not follow since app start. Should stay at zero; if not, run the integrity check.',
   'status.peerCountTooltip': 'Number of paired devices',
   'status.lastSyncedTooltip': 'Time since last successful sync',
   'status.opsReceivedTooltip':
@@ -126,6 +130,8 @@ export const block: Record<string, string> = {
   'status.backgroundQueueLabel': 'Background queue',
   'status.opsDispatchedLabel': 'Ops processed',
   'status.backgroundDispatchedLabel': 'Background dispatched',
+  'status.sqlOnlyFallbackLabel': 'Writes the sync engine missed',
+  'status.fanoutDroppedLabel': 'Cascades the sync engine missed',
   'status.foregroundErrorsMessage_one': '{{count}} foreground error',
   'status.foregroundErrorsMessage_other': '{{count}} foreground errors',
   'status.backgroundErrorsMessage_one': '{{count}} background error',

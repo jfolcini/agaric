@@ -109,6 +109,7 @@ Materializer metrics, in Settings › App health. Useful for diagnosing slowness
 
 - **Materializer queue depth**: how far behind the read-side projection is (foreground and background queues).
 - **Op counts**: total ops; ops dispatched.
+- **Writes and cascades the sync engine missed**: changes saved to the database but not to the sync engine, which therefore never reach your other devices. Both stay at zero; anything else is worth an integrity check (#6047).
 - Polls the backend periodically.
 
 Once a device is paired, the aggregated sync state (overall state, last successful sync, peer count) is the first card of Settings › Sync & devices. It shows status only; to retry, use *Sync all* or a device's *Sync now* in the list below it.

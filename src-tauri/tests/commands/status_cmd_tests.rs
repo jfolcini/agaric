@@ -244,3 +244,89 @@ async fn get_status_reports_bg_dropped_counter() {
         "retry_queue_pending must reflect the row we just wrote"
     );
 }
+
+/// #6047 — Settings › App health tells the user the SQL-only fallback count
+/// "should stay at zero", so an ordinary first session must leave it there:
+/// bootstrap's two seeded spaces (renamed and recoloured here, though they are
+/// in no doc by design, #4775), a space of the user's own, then a page, a tag,
+/// a journal day, a block and an edit.
+///
+/// Counter-delta test: reads the process-global count
+/// (`src-tauri/tests/AGENTS.md` § "Process-global state"; nextest only).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_status_reports_no_sql_only_fallback_for_an_ordinary_first_session_6047() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let personal = agaric_lib::spaces::SPACE_PERSONAL_ULID;
+    let personal_scope = SpaceScope::Active(SpaceId::from_trusted(personal));
+    let before = get_status_inner(&mat, None).await.sql_only_fallback_count;
+
+    agaric_lib::spaces::bootstrap_spaces(&pool, DEV, &mat)
+        .await
+        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        BlockId::from_trusted(personal),
+        "Home".into(),
+    )
+    .await
+    .unwrap();
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        personal.into(),
+        "accent_color".into(),
+        Some("accent-red".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    create_space_inner(&pool, DEV, &mat, "Third".into(), Some("accent-blue".into()))
+        .await
+        .unwrap();
+    let page = create_page_in_space_inner(&pool, DEV, &mat, None, "Page".into(), personal.into())
+        .await
+        .unwrap();
+    create_block_inner_with_space(
+        &pool,
+        DEV,
+        &mat,
+        "tag".into(),
+        "tag".into(),
+        None,
+        None,
+        &personal_scope,
+        None,
+    )
+    .await
+    .unwrap();
+    journal_for_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        chrono::NaiveDate::from_ymd_opt(2026, 10, 23).unwrap(),
+        personal,
+    )
+    .await
+    .unwrap();
+    let block = append_child(&pool, &mat, &page, "body").await;
+    edit_block_inner(&pool, DEV, &mat, block, "edited".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let after = get_status_inner(&mat, None).await.sql_only_fallback_count;
+    assert_eq!(
+        after - before,
+        0,
+        "a first session's ordinary writes must not read as writes the sync engine missed"
+    );
+    mat.shutdown();
+}

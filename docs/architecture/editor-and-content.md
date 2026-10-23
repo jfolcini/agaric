@@ -110,7 +110,7 @@ Reverse-op table (canonical):
 | `delete_block` | `restore_block` |
 | `restore_block` | `delete_block` |
 | `purge_block` | **non-reversible** |
-| `move_block` | `move_block` to the parent + slot the move recorded (`prior`); **non-reversible** when it recorded none and the op log holds none |
+| `move_block` | `move_block` to the parent + slot the move recorded (`prior`); **non-reversible** when it recorded none and the op log holds none, and refused while that parent is trashed, under the block, or in another space than the block (#6047) |
 | `set_property` | `set_property` with the value the set recorded (`prior`), or `delete_property` if the key was absent |
 | `delete_property` | `set_property` with the value the delete recorded (`prior`) |
 | `add_tag` | `remove_tag` |

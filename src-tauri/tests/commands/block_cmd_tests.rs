@@ -2941,12 +2941,12 @@ async fn purge_block_cascades_all_satellite_tables() {
 /// A move re-parents a multi-level subtree across spaces; the shared
 /// `rederive_page_and_space_ids` helper must refresh BOTH `page_id` and
 /// `space_id` for the whole subtree SYNCHRONOUSLY (before the async
-/// `RebuildPageIds` chain lands). The undo arm — which used to skip the
-/// `space_id` step — must do the same on the reverse. Assertions read
-/// state WITHOUT `flush_background`, so they observe only the in-tx
-/// rederive, pinning the drift fix.
+/// `RebuildPageIds` chain lands). Assertions read state WITHOUT
+/// `flush_background`, so they observe only the in-tx rederive, pinning the
+/// drift fix. Undoing it is refused: the prior parent is in another space
+/// (#6047).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn move_and_undo_rederive_page_and_space_ids_synchronously() {
+async fn move_rederives_page_and_space_ids_synchronously_and_its_undo_is_refused() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -3045,34 +3045,26 @@ async fn move_and_undo_rederive_page_and_space_ids_synchronously() {
 
     // --- UNDO the move. The move op is recorded against the destination
     //     page's history (B is the moved child's new owner), so undo there
-    //     at depth 0. Again no flush, so the reverse arm's synchronous
-    //     rederive is what's under test. ---
-    undo_page_op_inner(&pool, DEV, &mat, page_b.id.clone().into_string(), 0)
+    //     at depth 0. #6047: its prior parent is in another space, so the
+    //     undo is refused and leaves the subtree in B. ---
+    let err = undo_page_op_inner(&pool, DEV, &mat, page_b.id.clone().into_string(), 0)
         .await
-        .unwrap();
+        .expect_err("an undo back into another space is refused (#6047)");
+    assert!(
+        matches!(err, AppError::NonReversible { .. }),
+        "refused as NonReversible, got: {err:?}"
+    );
 
-    let (c_pid, c_sid) = read_pid_sid(child_id).await;
-    let (g_pid, g_sid) = read_pid_sid(grand_id).await;
-    assert_eq!(
-        c_pid.as_deref(),
-        Some(page_a.id.as_str()),
-        "undo restores child page_id → A"
-    );
-    assert_eq!(
-        g_pid.as_deref(),
-        Some(page_a.id.as_str()),
-        "undo restores grandchild page_id → A"
-    );
-    assert_eq!(
-        c_sid.as_deref(),
-        Some(TEST_SPACE_ID),
-        "undo must re-derive child space_id → space A (sync reverse arm)"
-    );
-    assert_eq!(
-        g_sid.as_deref(),
-        Some(TEST_SPACE_ID),
-        "undo must re-derive grandchild space_id → space A (sync) — pins the #664 drift fix"
-    );
+    for id in [child_id, grand_id] {
+        assert_eq!(
+            read_pid_sid(id.clone()).await,
+            (
+                Some(page_b.id.as_str().to_owned()),
+                Some(TEST_SPACE_B_ID.to_owned())
+            ),
+            "{id}: the refused undo leaves the subtree in B"
+        );
+    }
 }
 
 /// Read every block's `(id, page_id, space_id)` triple, ordered, so the

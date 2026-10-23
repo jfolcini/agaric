@@ -50,15 +50,16 @@
 //!
 //! This module makes each fallback *observable* without changing any
 //! control flow: a process-global counter (incremented at every
-//! fallback site) plus a debug log. A nonzero [`count`] in production
-//! signals an unexpected fallback that warrants investigation (both
-//! reasons are unreachable on a well-formed, fully-reconciled op log).
-//!
-//! The log uses `debug!` (not `warn!`): the SQL-only path is still the
-//! expected route for the many materializer / recovery / sync_daemon
-//! tests that thread synthetic ops over bare-block fixtures with no
-//! space chain, so a `warn!` would spam the test suite. Production
-//! observability comes from the counter plus the debug log.
+//! fallback site, shown in Settings › App health) plus a `warn!`. A
+//! nonzero [`count`] in production signals an unexpected fallback that
+//! warrants investigation (both reasons are unreachable on a well-formed,
+//! fully-reconciled op log): SQL holds a block its space's engine does
+//! not, so the block's edits stop syncing (#6047). Not counted, since no
+//! engine could hold the block yet, or ever: a new page or tag root (its space
+//! is set by the op right after its create), the `is_space` op that registers
+//! a space (`create_space` seeds the block into its doc right after), and an
+//! edit or property of the seeded Personal or Work block (in no doc by design,
+//! #4775).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -124,7 +125,10 @@ static SQL_ONLY_FALLBACK_COUNT: AtomicU64 = AtomicU64::new(0);
 /// `apply_*_via_loro` handler falling back to its `apply_*_sql_only`
 /// projection in-transaction, or (since #4472) a post-commit fan-out skipping
 /// one cohort member's engine mirror. Increments the global counter and emits
-/// a debug log. Purely additive — does not alter control flow.
+/// a `warn!`. Purely additive — does not alter control flow.
+///
+/// The event keeps its module path as target: the default log filter is
+/// `agaric=info`, which a custom target outside `agaric*` would not pass.
 ///
 /// The message is deliberately site-NEUTRAL. The older wording, "materializer
 /// apply fell back to the sql_only path", was true of the first class only:
@@ -137,8 +141,7 @@ static SQL_ONLY_FALLBACK_COUNT: AtomicU64 = AtomicU64::new(0);
 /// for the two fan-outs).
 pub fn record(op: &'static str, reason: SqlOnlyFallbackReason) {
     SQL_ONLY_FALLBACK_COUNT.fetch_add(1, Ordering::Relaxed);
-    tracing::debug!(
-        target: "materializer::sql_only_fallback",
+    tracing::warn!(
         op,
         ?reason,
         "materializer: SQL stands for this block with no engine mirror"

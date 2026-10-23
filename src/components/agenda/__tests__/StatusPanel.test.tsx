@@ -3,7 +3,7 @@
  *
  * Validates:
  *  - Calls get_status on mount
- *  - Renders all 4 metrics
+ *  - Renders all 6 metrics, the two sync-engine miss counters among them (#6047)
  *  - Polls every 5 seconds (uses fake timers)
  *  - Cleans up interval on unmount
  *  - a11y compliance
@@ -15,7 +15,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -126,7 +126,7 @@ describe('StatusPanel', () => {
     })
   })
 
-  it('renders all 4 metrics', async () => {
+  it('renders all 6 metrics', async () => {
     stubInvoke({ get_status: () => mockStatus })
 
     render(<StatusPanel />)
@@ -141,6 +141,25 @@ describe('StatusPanel', () => {
     expect(screen.getByText('Background queue')).toBeInTheDocument()
     expect(screen.getByText('Ops processed')).toBeInTheDocument()
     expect(screen.getByText('Background dispatched')).toBeInTheDocument()
+  })
+
+  // #6047 — a write that missed the sync engine never reaches the user's other
+  // devices, so its counters sit with the others instead of only in the log.
+  it('shows the two counts of writes the sync engine missed', async () => {
+    stubInvoke({
+      get_status: () => ({
+        ...mockStatus,
+        sql_only_fallback_count: 5,
+        descendant_fanout_dropped: 2,
+      }),
+    })
+
+    render(<StatusPanel />)
+
+    const card = async (label: string) =>
+      within((await screen.findByText(label)).closest('.status-metric') as HTMLElement)
+    expect((await card('Writes the sync engine missed')).getByText('5')).toBeInTheDocument()
+    expect((await card('Cascades the sync engine missed')).getByText('2')).toBeInTheDocument()
   })
 
   it('renders the panel title', async () => {
@@ -547,7 +566,7 @@ describe('StatusPanel', () => {
 
       await screen.findByText('Foreground queue')
       const metricCards = container.querySelectorAll('.status-metric')
-      expect(metricCards).toHaveLength(4)
+      expect(metricCards).toHaveLength(6)
       for (const card of [metricCards[0], metricCards[1]]) {
         expect(card?.className).not.toContain('border-status-')
         expect(card?.className).not.toContain('text-status-')
@@ -612,20 +631,22 @@ describe('StatusPanel', () => {
       })
     })
 
-    it('has tooltip triggers for all four metric labels', async () => {
+    it('has tooltip triggers for all six metric labels', async () => {
       stubInvoke({ get_status: () => mockStatus })
 
       const { container } = render(<StatusPanel />)
 
       await screen.findByText('Foreground queue')
 
-      // All 4 labels should be wrapped in tooltip trigger spans with cursor-help
+      // All 6 labels should be wrapped in tooltip trigger spans with cursor-help
       const tooltipTriggers = container.querySelectorAll('.cursor-help')
-      expect(tooltipTriggers).toHaveLength(4)
+      expect(tooltipTriggers).toHaveLength(6)
       expect(tooltipTriggers[0]?.textContent).toBe('Foreground queue')
       expect(tooltipTriggers[1]?.textContent).toBe('Background queue')
       expect(tooltipTriggers[2]?.textContent).toBe('Ops processed')
       expect(tooltipTriggers[3]?.textContent).toBe('Background dispatched')
+      expect(tooltipTriggers[4]?.textContent).toBe('Writes the sync engine missed')
+      expect(tooltipTriggers[5]?.textContent).toBe('Cascades the sync engine missed')
     })
   })
 
@@ -638,7 +659,7 @@ describe('StatusPanel', () => {
       await screen.findByText('Foreground queue')
 
       const tooltipTriggers = container.querySelectorAll('.cursor-help')
-      expect(tooltipTriggers).toHaveLength(4)
+      expect(tooltipTriggers).toHaveLength(6)
       for (const trigger of tooltipTriggers) {
         expect(trigger.getAttribute('tabindex')).toBe('0')
       }

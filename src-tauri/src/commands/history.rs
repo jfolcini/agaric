@@ -78,6 +78,11 @@ async fn reproject_live_sibling_group(
 /// purge of the parent), a dangling `parent_id` (opaque FK abort), or a
 /// `parent_id` CYCLE (both subtrees unreachable from every page root).
 ///
+/// #6047: the target parent may also now sit in another space than the block
+/// (the block's page moved space after the move). Each block lives in one
+/// space's engine, so the reverse could not reach the engine there, and every
+/// later edit of the block would be SQL-only and never sync.
+///
 /// Failures are classified [`AppError::NonReversible`] — the same contract
 /// `compute_reverse` uses for ops discovered non-reversible at runtime — so
 /// the interactive paths abort loudly (the whole tx rolls back) while a
@@ -90,9 +95,10 @@ async fn reverse_move_preflight(
 ) -> Result<(), AppError> {
     // A move back to top level (`new_parent_id = None`) has no target parent
     // to validate and can never form a cycle.
-    let Some(pid) = p.new_parent_id.as_ref().map(BlockId::as_str) else {
+    let Some(parent) = p.new_parent_id.as_ref() else {
         return Ok(());
     };
+    let pid = parent.as_str();
 
     // Target parent must exist and be live — same probe as the forward path
     // (`move_block_in_tx`). A purged parent would otherwise abort the COMMIT
@@ -109,6 +115,26 @@ async fn reverse_move_preflight(
             block_id = %p.block_id,
             prior_parent = %pid,
             "reverse move rejected: the prior parent is missing or soft-deleted",
+        );
+        return Err(AppError::NonReversible {
+            op_type: "move_block".into(),
+        });
+    }
+
+    // A block with no space (a trashed block, or one from before its page had
+    // a space) is in no engine either way, so only two resolved spaces count.
+    let block_space = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+    let parent_space = agaric_store::space::resolve_block_space(&mut **tx, parent).await?;
+    if let (Some(block_space), Some(parent_space)) = (&block_space, &parent_space)
+        && block_space != parent_space
+    {
+        tracing::warn!(
+            block_id = %p.block_id,
+            prior_parent = %pid,
+            block_space = %block_space,
+            prior_parent_space = %parent_space,
+            "reverse move rejected: the prior parent is in another space than the block \
+             (the page moved space since)",
         );
         return Err(AppError::NonReversible {
             op_type: "move_block".into(),
@@ -199,7 +225,7 @@ async fn reverse_move_block(
     let move_block_id_str = p.block_id.as_str();
 
     // Validate the reconstructed target against the CURRENT tree (parent
-    // liveness + cycle probe) BEFORE any write. `revert_ops_in_tx` runs the
+    // liveness, same space, cycle probe) BEFORE any write. `revert_ops_in_tx` runs the
     // same preflight pre-append so a point-in-time restore can SKIP the op;
     // this in-helper check is the authoritative guard for every entry point
     // (single undo, redo, batch revert).
@@ -1844,8 +1870,8 @@ async fn apply_reverses_in_order(
         let (op_ref, reverse_payload, created_at, reversed_op_type) = &reverses[idx];
         // Preflight state-dependent reverses against the CURRENT (in-tx) tree
         // BEFORE appending: a reverse move whose reconstructed prior parent is
-        // gone/tombstoned, or that would form a `parent_id` cycle, is
-        // non-reversible against today's tree. Checking pre-append keeps the
+        // gone/tombstoned or in another space, or that would form a `parent_id`
+        // cycle, is non-reversible against today's tree. Checking pre-append keeps the
         // append-only op_log free of never-applied reverse ops when the
         // point-in-time restore path SKIPS the op (#2020); the interactive
         // paths (`skip_non_reversible = false`) abort the whole batch with the
