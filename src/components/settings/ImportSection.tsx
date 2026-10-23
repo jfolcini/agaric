@@ -36,6 +36,7 @@ import {
   enexNotesToUnits,
   importErrorReason,
   indexVaultFiles,
+  isNotionPick,
   jexNotesToUnits,
   mdFilesToUnits,
   skippedFiles,
@@ -127,15 +128,19 @@ export function ImportSection(): React.ReactElement {
         (f) => typeof f.webkitRelativePath === 'string' && f.webkitRelativePath.length > 0,
       )
       const vaultIndex = isVaultImport ? indexVaultFiles(fileArray) : null
-      const units = mdFilesToUnits(fileArray, vaultIndex)
+      const notion = isNotionPick(fileArray)
+      const units = mdFilesToUnits(fileArray, vaultIndex, notion)
       // A file that is no note and no attachment is said, not dropped (#6032).
-      const skipped = skippedFiles(fileArray)
-      const preWarnings: string[] = []
-      if (skipped.other > 0) {
-        preWarnings.push(t('data.importFolderSkipped', { count: skipped.other }))
-      }
-      if (skipped.databases > 0) {
-        preWarnings.push(t('data.importNotionDatabases', { count: skipped.databases }))
+      const skippedWarnings = (attached: ReadonlySet<string>): string[] => {
+        const skipped = skippedFiles(fileArray, notion, attached)
+        const warnings: string[] = []
+        if (skipped.other > 0) {
+          warnings.push(t('data.importFolderSkipped', { count: skipped.other }))
+        }
+        if (skipped.databases > 0) {
+          warnings.push(t('data.importNotionDatabases', { count: skipped.databases }))
+        }
+        return warnings
       }
 
       const { totalBlocks, succeededFiles, failedFiles, cancelled, navTitle } = await run({
@@ -144,7 +149,7 @@ export function ImportSection(): React.ReactElement {
         units,
         notes: false,
         loggerFailLabel: 'file import failed',
-        initialWarnings: preWarnings,
+        finalWarnings: skippedWarnings,
       })
 
       const viewAction =

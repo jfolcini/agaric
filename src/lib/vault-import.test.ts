@@ -15,6 +15,7 @@ import {
   importErrorReason,
   indexVaultFiles,
   inferBibliographyFormat,
+  isNotionPick,
   jexNotesToUnits,
   mdFilesToUnits,
   resolveVaultRef,
@@ -202,7 +203,7 @@ describe('collectVaultFiles', () => {
 describe('mdFilesToUnits', () => {
   it('uses the basename as name and file.size as bytes; load reads content + basename path', async () => {
     const file = new File(['# Hello'], 'test.md', { type: 'text/markdown' })
-    const [unit] = mdFilesToUnits([file], null)
+    const [unit] = mdFilesToUnits([file], null, false)
     expect(unit?.name).toBe('test.md')
     expect(unit?.bytes).toBe(file.size)
 
@@ -223,7 +224,7 @@ describe('mdFilesToUnits', () => {
       'image/png',
     )
     const index = indexVaultFiles([md, png])
-    const [unit] = mdFilesToUnits([md], index)
+    const [unit] = mdFilesToUnits([md], index, false)
 
     const loaded = await unit?.load()
     // #1446 — the folder-relative path drives the namespace mapping.
@@ -237,7 +238,7 @@ describe('mdFilesToUnits', () => {
     // A plain (non-folder) pick has no vault index. If load() tried to
     // collect vault files anyway it would read a null index and throw.
     const file = new File(['![](assets/diagram.png)'], 'note.md', { type: 'text/markdown' })
-    const [unit] = mdFilesToUnits([file], null)
+    const [unit] = mdFilesToUnits([file], null, false)
 
     const loaded = await unit?.load()
     expect(loaded?.vaultFiles).toBeNull()
@@ -251,7 +252,7 @@ describe('mdFilesToUnits', () => {
     const loud = folderFile(['- loud'], 'LOUD.MD', 'Vault/LOUD.MD')
     const files = [note, pic, loud]
 
-    const units = mdFilesToUnits(files, indexVaultFiles(files))
+    const units = mdFilesToUnits(files, indexVaultFiles(files), false)
 
     expect(units.map((u) => u.name)).toEqual(['note.md', 'LOUD.MD'])
     const loaded = await units[0]?.load()
@@ -270,7 +271,7 @@ describe('mdFilesToUnits', () => {
     const deepTwin = folderFile(['- deep twin'], 'twin.md', 'Vault/a/twin.md')
     const files = [home, topic, twin, deepTwin]
 
-    const [homeUnit, topicUnit] = mdFilesToUnits(files, indexVaultFiles(files))
+    const [homeUnit, topicUnit] = mdFilesToUnits(files, indexVaultFiles(files), false)
 
     expect((await homeUnit?.load())?.vaultNotes).toEqual([
       'Vault/sub/topic.md',
@@ -286,7 +287,7 @@ describe('mdFilesToUnits', () => {
     const note = folderFile(['- body'], 'Note.md', 'Vault/Note.md')
     const files = [plain, padded, note]
 
-    const [plainUnit, paddedUnit] = mdFilesToUnits(files, indexVaultFiles(files))
+    const [plainUnit, paddedUnit] = mdFilesToUnits(files, indexVaultFiles(files), false)
 
     expect((await plainUnit?.load())?.vaultNotes).toEqual(['Vault/Note.md'])
     expect((await paddedUnit?.load())?.vaultNotes).toEqual(['Vault/Note.md'])
@@ -296,7 +297,7 @@ describe('mdFilesToUnits', () => {
     const home = new File(['- [[topic]]'], 'home.md', { type: 'text/markdown' })
     const topic = new File(['- body'], 'topic.md', { type: 'text/markdown' })
 
-    const [homeUnit] = mdFilesToUnits([home, topic], null)
+    const [homeUnit] = mdFilesToUnits([home, topic], null, false)
 
     expect((await homeUnit?.load())?.vaultNotes).toBeNull()
   })
@@ -304,7 +305,7 @@ describe('mdFilesToUnits', () => {
 
 /** The content and path each unit of a pick loads, in pick order. */
 async function loadAll(files: File[]): Promise<Array<{ path: string; content: string }>> {
-  const units = mdFilesToUnits(files, indexVaultFiles(files))
+  const units = mdFilesToUnits(files, indexVaultFiles(files), isNotionPick(files))
   return Promise.all(
     units.map(async (unit) => {
       const { path, content } = await unit.load()
@@ -341,7 +342,17 @@ describe('folder picks of other note formats (#6032)', () => {
       folderFile(['x'], '.DS_Store', 'Vault/.DS_Store', ''),
     ]
 
-    expect(skippedFiles(files)).toEqual({ other: 2, databases: 0 })
+    expect(skippedFiles(files, false, new Set())).toEqual({ other: 2, databases: 0 })
+  })
+
+  it('does not count as skipped a file a note embedded, whatever its type', () => {
+    const files = [
+      folderFile(['![[data.csv]]'], 'note.md', 'Vault/note.md'),
+      folderFile(['a,b'], 'data.csv', 'Vault/data.csv', 'text/csv'),
+      folderFile(['{}'], 'raw.json', 'Vault/sub/raw.json', 'application/json'),
+    ]
+
+    expect(skippedFiles(files, false, new Set(['data.csv']))).toEqual({ other: 1, databases: 0 })
   })
 })
 
@@ -464,8 +475,11 @@ describe('Notion export (#6032)', () => {
     expect(loaded?.content).toBe('Space: Room 4\nOwner: Ann\n\nBody')
   })
 
-  it('reports the database tables apart from other skipped files', () => {
-    expect(skippedFiles(notionFiles())).toEqual({ other: 0, databases: 2 })
+  it('reports the database tables apart from other skipped files, each once though Notion writes it twice', () => {
+    const files = notionFiles()
+
+    expect(isNotionPick(files)).toBe(true)
+    expect(skippedFiles(files, true, new Set())).toEqual({ other: 0, databases: 1 })
   })
 
   it('leaves a plain folder alone when only some names end in an id', async () => {
@@ -481,7 +495,7 @@ describe('Notion export (#6032)', () => {
 
     expect(loaded.map((l) => l.path)).toEqual(['Vault/a.md', 'Vault/b.md', `Vault/Odd ${PLAN}.md`])
     expect(loaded[0]?.content).toBe(aside)
-    expect(skippedFiles(files)).toEqual({ other: 1, databases: 0 })
+    expect(skippedFiles(files, isNotionPick(files), new Set())).toEqual({ other: 1, databases: 0 })
   })
 })
 
@@ -553,6 +567,39 @@ describe('Org files (#6032)', () => {
     const loaded = await loadAll([titled, untitled])
 
     expect(loaded.map((l) => l.path)).toEqual(['Vault/sub/Org Tasks.md', 'Vault/loose.md'])
+  })
+
+  const orgContent = async (text: string): Promise<string | undefined> =>
+    (await loadAll([folderFile([text], 'a.org', 'Vault/a.org', '')]))[0]?.content
+
+  it('keeps as text a property drawer with no `:END:`, which Org does not read as one', async () => {
+    const text = ['* Task', '  :PROPERTIES:', '  :Owner: Alice', '  Body line.', '* Next']
+
+    expect(await orgContent(text.join('\n'))).toBe(
+      ['- Task', '  :PROPERTIES:', '  :Owner: Alice', '  Body line.', '- Next', ''].join('\n'),
+    )
+  })
+
+  it('fences a source block longer than any backtick run in it, so the code stays whole', async () => {
+    const text = [
+      '* Doc',
+      '  #+BEGIN_SRC markdown',
+      '  ```sh',
+      '  ls',
+      '  ```',
+      '  #+END_SRC',
+      '  After.',
+    ]
+
+    expect(await orgContent(text.join('\n'))).toBe(
+      ['- Doc', '  ````markdown', '  ```sh', '  ls', '  ```', '  ````', '  After.', ''].join('\n'),
+    )
+  })
+
+  it('keeps as text a page property the app reserves, which the import would drop unsaid', async () => {
+    const text = [':PROPERTIES:', ':Space: Room 4', ':Owner: Ann', ':END:', 'Intro.']
+
+    expect(await orgContent(text.join('\n'))).toBe('Owner:: Ann\n:Space: Room 4\nIntro.\n')
   })
 })
 

@@ -240,29 +240,35 @@ function noteExtension(name: string): string | null {
   return NOTE_EXTENSIONS.find((ext) => lower.endsWith(ext)) ?? null
 }
 
-/** The names of a pick's Markdown files, which tell a Notion export. */
-function mdNames(files: readonly File[]): string[] {
-  return files.filter((file) => noteExtension(file.name) === '.md').map((file) => file.name)
+/** Whether a pick is a Notion export, as the names of its Markdown files tell. */
+export function isNotionPick(files: readonly File[]): boolean {
+  const mdNames = files.filter((file) => noteExtension(file.name) === '.md')
+  return isNotionExport(mdNames.map((file) => file.name))
 }
 
 /**
- * The files of a pick that import as nothing: neither a note nor a file a
- * note may embed, nor hidden (`.obsidian/`, `.DS_Store`). A Notion export's
- * database tables (`.csv`) are counted apart, as `databases`, since each row
- * of one is also a page of the export.
+ * The files of a pick that imported as nothing: neither a note, nor a file a
+ * note may embed, nor one a note did embed (`attached`, vault-relative paths),
+ * nor hidden (`.obsidian/`, `.DS_Store`). A Notion export's database tables
+ * are counted apart, as `databases`, since each row of one is also a page of
+ * the export; Notion writes each as `X.csv` and again as `X_all.csv`.
  */
-export function skippedFiles(files: readonly File[]): { other: number; databases: number } {
-  const notion = isNotionExport(mdNames(files))
+export function skippedFiles(
+  files: readonly File[],
+  notion: boolean,
+  attached: ReadonlySet<string>,
+): { other: number; databases: number } {
   let other = 0
-  let databases = 0
+  const databases = new Set<string>()
   for (const file of files) {
     const path = file.webkitRelativePath || file.name
     if (noteExtension(file.name) !== null || ATTACHMENT_RE.test(file.name)) continue
-    if (/(?:^|\/)\./.test(path)) continue
-    if (notion && file.name.toLowerCase().endsWith('.csv')) databases++
-    else other++
+    if (/(?:^|\/)\./.test(path) || attached.has(vaultRelativePath(path))) continue
+    if (notion && file.name.toLowerCase().endsWith('.csv')) {
+      databases.add(path.replace(/_all\.csv$/i, '.csv'))
+    } else other++
   }
-  return { other, databases }
+  return { other, databases: databases.size }
 }
 
 /**
@@ -293,8 +299,11 @@ function retitle(path: string, title: string): string {
  * is present. An Org file is converted, and a Notion export's pages lose the
  * ids in their names and links (#6032).
  */
-export function mdFilesToUnits(files: File[], vaultIndex: VaultIndex | null): ImportUnit[] {
-  const notion = isNotionExport(mdNames(files))
+export function mdFilesToUnits(
+  files: File[],
+  vaultIndex: VaultIndex | null,
+  notion: boolean,
+): ImportUnit[] {
   const notes = files.flatMap((file) => {
     const extension = noteExtension(file.name)
     return extension === null
