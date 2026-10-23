@@ -23,6 +23,8 @@ import { propertiesHandlers } from '@/lib/tauri-mock/handlers/properties'
 import {
   type TypedHandlers,
   appErrorRejection,
+  assertTagFilterWithinCap,
+  assertValidDateFormat,
   assertValidSetPropertyValue,
   blockLastEditedAt,
   buildPageMetaRow,
@@ -1011,6 +1013,9 @@ export const pagesHandlers = {
     const startDate = a['startDate'] as string
     const endDate = a['endDate'] as string
     const spaceId = readActiveSpaceScope('list_journal_pages_in_range', a)
+    assertValidDateFormat(startDate)
+    assertValidDateFormat(endDate)
+    if (startDate > endDate) throw validationRejection('start_date must be <= end_date')
     const datePattern = /^\d{4}-\d{2}-\d{2}$/
     const items: Record<string, unknown>[] = []
     for (const b of blocks.values()) {
@@ -1044,6 +1049,7 @@ export const pagesHandlers = {
     const a = args as Record<string, unknown>
     const spaceId = readActiveSpaceScope('list_all_pages_in_space', a)
     const rawTagIds = a['tagIds'] as string[] | null | undefined
+    assertTagFilterWithinCap(rawTagIds)
     const tagFilter = rawTagIds && rawTagIds.length > 0 ? new Set(rawTagIds) : null
     const items: PageHeading[] = []
     for (const b of blocks.values()) {

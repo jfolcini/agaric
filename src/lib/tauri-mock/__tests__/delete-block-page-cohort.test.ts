@@ -86,11 +86,11 @@ describe('tauri-mock delete_block — cascaded page cohort (#4523)', () => {
   // The seed is soft-deleted, so the cascade is a no-op and there is nothing to
   // evict. Pins that `deleteCohort`'s early return still yields a LIST — a
   // handler reading `.length` off `undefined` would throw instead.
-  it('reports an empty cohort for an already-deleted seed', () => {
+  it('refuses an already-deleted seed, as `verify_deletable_in_tx` does', () => {
     dispatch('delete_block', { blockId: KID })
-    const resp = dispatch('delete_block', { blockId: KID }) as Record<string, unknown>
 
-    expect(resp['descendants_affected']).toBe(0)
-    expect(resp['affected_page_ids']).toEqual([])
+    expect(() => dispatch('delete_block', { blockId: KID })).toThrow(
+      expect.objectContaining({ kind: 'invalid_operation' }),
+    )
   })
 })

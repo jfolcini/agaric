@@ -6,10 +6,8 @@
  *  - every migrated mutation (`create_block` / `edit_block` / `delete_block` /
  *    `move_block` / `set_property` / `delete_property` / `add_tag` /
  *    `remove_tag`) returns the ref(s) of the op-log row(s) it appended
- *    (`WithOps` wire shape). Idempotent tag no-ops (mock-only leniency, kept
- *    for the `tag_add_remove` conformance fixture — the REAL command rejects
- *    them) surface `op_refs: []`, as does a `delete_property` of a key the
- *    block does not hold (#5898), exactly like the backend;
+ *    (`WithOps` wire shape). A `delete_property` of a key the block does not
+ *    hold surfaces `op_refs: []` (#5898), exactly like the backend;
  *  - `undo_op` reverses EXACTLY the referenced op — newer ops landing after
  *    capture cannot shift the target (the #2446 race the migration kills);
  *  - the reject rules mirror `undo_op_inner`: unknown ref → `not_found`;
@@ -302,21 +300,12 @@ describe('#2468 — op_refs capture on migrated mutation handlers', () => {
     expect(restored?.value_text).toBe('2h')
   })
 
-  it('add_tag / remove_tag repeats surface empty op_refs (idempotent no-op)', () => {
+  it('add_tag / remove_tag each surface their op_ref', () => {
     const add = dispatch('add_tag', { blockId: A, tagId: TAG }) as WithOpsResp
     expect(add.op_refs).toHaveLength(1)
 
-    // The duplicate add still logs its op (LWW convergence, pinned by the
-    // `tag_add_remove` conformance fixture) but exposes NO undoable ref —
-    // reversing it would remove the edge the FIRST add owns.
-    const addAgain = dispatch('add_tag', { blockId: A, tagId: TAG }) as WithOpsResp
-    expect(addAgain.op_refs).toEqual([])
-
     const remove = dispatch('remove_tag', { blockId: A, tagId: TAG }) as WithOpsResp
     expect(remove.op_refs).toHaveLength(1)
-
-    const removeAgain = dispatch('remove_tag', { blockId: A, tagId: TAG }) as WithOpsResp
-    expect(removeAgain.op_refs).toEqual([])
   })
 })
 

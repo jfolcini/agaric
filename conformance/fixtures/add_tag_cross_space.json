@@ -1,0 +1,207 @@
+{
+  "description": "#6054 — `add_tag` refuses a tag from another space with `validation` (`apply_tag_to_block_resolved`); the mock had no check. `create_space` makes a second space (`C1`) and moves the tag S4 into it. Tagging S2, which lives in the harness space, with S4 is refused; tagging it with S3, a tag of its own space, succeeds, so `block_tags` holds that edge alone.",
+  "expected": {
+    "block_tags": [
+      {
+        "block_id": "B2",
+        "tag_id": "B3"
+      }
+    ],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "local",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "remote",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Elsewhere",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 4,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "add_tag"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B5",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_second_space",
+      "returns": ["create_space#space_id=B5"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_tag_moves_to_the_second_space",
+      "returns": ["move_blocks_to_space#moved=1"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_tag_from_another_space_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_tag_from_the_same_space_applies",
+      "returns": ["B2#tag_id=B3"]
+    }
+  ],
+  "name": "add_tag_cross_space",
+  "ops": [
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Elsewhere"
+      },
+      "command": "create_space",
+      "name": "a_second_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S4"],
+        "spaceId": "C1"
+      },
+      "command": "move_blocks_to_space",
+      "name": "the_tag_moves_to_the_second_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "tagId": "S4"
+      },
+      "command": "add_tag",
+      "comment": "S2's page is in the harness space and S4 is in `C1`.",
+      "expect_error": "validation",
+      "name": "a_tag_from_another_space_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "tagId": "S3"
+      },
+      "command": "add_tag",
+      "name": "a_tag_from_the_same_space_applies",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "tag",
+        "content": "local",
+        "id": "S3",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "tag",
+        "content": "remote",
+        "id": "S4",
+        "parent_id": null,
+        "position": 3
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

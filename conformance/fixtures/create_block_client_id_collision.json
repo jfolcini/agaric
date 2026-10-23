@@ -1,0 +1,310 @@
+{
+  "description": "#6054 — `create_block` refuses a client-supplied id that a block already holds, live or trashed (`resolve_block_id_in_tx`, #2849), with `conflict`, and leaves that block as it was. The mock used to overwrite the row. S2 is live and S3 is trashed by the first op; both creates name them and both are refused, so S2 keeps `original` and S3 stays in the trash. S4 is purged, so no row holds its id: a create naming it takes it verbatim, which the edit by that id shows (#5691). A page ignores the client id, so the same id creates one.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "original",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "trashed",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "optimistic, edited",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Fresh page",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B6",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 9,
+      "ops": [
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "purge_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B5",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": "conflict",
+      "name": "a_live_id_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "conflict",
+      "name": "a_trashed_id_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_fresh_client_id_is_the_block_id",
+      "returns": ["B4#block_type=content#content=optimistic#parent_id=B1#position=2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_block_answers_to_its_client_id",
+      "returns": ["B4#content=optimistic, edited"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_space_for_the_page",
+      "returns": ["create_space#space_id=B5"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_page_ignores_the_client_id",
+      "returns": ["B6#block_type=page#content=Fresh page#parent_id=null#position=2"]
+    }
+  ],
+  "name": "create_block_client_id_collision",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S4"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S4"
+      },
+      "command": "purge_block"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "blockType": "content",
+        "content": "usurper",
+        "index": 0,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "expect_error": "conflict",
+      "name": "a_live_id_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "blockType": "content",
+        "content": "usurper",
+        "index": 0,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "comment": "`blocks.id` is the primary key whether or not the row is trashed.",
+      "expect_error": "conflict",
+      "name": "a_trashed_id_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "blockType": "content",
+        "content": "optimistic",
+        "index": 1,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "comment": "#5691 — S4 was purged, so no row holds its id and the create takes it verbatim: the optimistic create's row keeps the id the frontend spliced in.",
+      "name": "a_fresh_client_id_is_the_block_id",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "toText": "optimistic, edited"
+      },
+      "command": "edit_block",
+      "comment": "Addressed by the client's id, so a stack that minted its own id refuses this edit as `not_found`.",
+      "name": "the_block_answers_to_its_client_id",
+      "via": "command"
+    },
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Work"
+      },
+      "command": "create_space",
+      "comment": "The page path needs a live space, which the harness space is not.",
+      "name": "a_space_for_the_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "blockType": "page",
+        "content": "Fresh page",
+        "parentId": null,
+        "scope": {
+          "kind": "active",
+          "space_id": "C2"
+        }
+      },
+      "command": "create_block",
+      "comment": "A page takes the page path, which mints its own id, so the same client id creates a new page.",
+      "name": "a_page_ignores_the_client_id",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "original",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "trashed",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "purged",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

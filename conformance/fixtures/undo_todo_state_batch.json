@@ -1,0 +1,151 @@
+{
+  "description": "An undo of `set_todo_state_batch` gives each block the state it held: its `set_property` ops record `prior` (#6014), so `reverse_set_property` sets a held state back and deletes one the block did not hold. S2 holds CANCELLED, chosen because it stamps neither `created_at` nor `completed_at`, so the op labels below stay one per block until S3's stamp.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Batch undo",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "held",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "CANCELLED"
+      },
+      {
+        "block_type": "content",
+        "content": "none",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 5,
+      "ops": [
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
+          "op_type": "set_todo_state"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "hold_cancelled",
+      "returns": ["B2#todo_state=CANCELLED"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "batch_doing",
+      "returns": ["set_todo_state_batch#updated=2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_batch",
+      "returns": [
+        "revert_ops#reversed_op_type=set_property#new_op_type=delete_property#is_redo=false",
+        "revert_ops#reversed_op_type=set_property#new_op_type=set_property#is_redo=false"
+      ]
+    }
+  ],
+  "name": "undo_todo_state_batch",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "state": "CANCELLED"
+      },
+      "command": "set_todo_state",
+      "comment": "O1 — S2's prior state, which the undo must give back.",
+      "name": "hold_cancelled",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S2", "S3"],
+        "state": "DOING"
+      },
+      "command": "set_todo_state_batch",
+      "comment": "O2 sets S2 (prior CANCELLED), O3 sets S3 (prior none), O4 is S3's `created_at` stamp on its edge into an open state.",
+      "name": "batch_doing",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O3", "O2"]
+      },
+      "command": "revert_ops",
+      "comment": "The batch's two state ops, newest first. S3 held none, so its reverse is a `delete_property`; S2 held CANCELLED, so its reverse is a `set_property` back to it. The settled snapshot shows S2 CANCELLED and S3 none.",
+      "name": "undo_batch",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Batch undo",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "held",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "none",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

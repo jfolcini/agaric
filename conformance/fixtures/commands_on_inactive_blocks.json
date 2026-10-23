@@ -1,0 +1,319 @@
+{
+  "description": "#6054 — found by the differential fuzz (`conformance_fuzz`): the block commands refuse a block that is not live, each the way its backend guard does, and the mock answered every one of these with success. S2 and the tag S5 are in the trash and S3 was purged, so no block has its id; S4 is live. `edit_block` and `move_block` read the live row only (`not_found` for both); `delete_block` is `not_found` for a missing block and `invalid_operation` for a trashed one (`verify_deletable_in_tx`); `set_property` is `not_found` and `validation` (`fetch_live_block_in_tx`); `restore_block` is `not_found` for a missing block and `invalid_operation` for a live one (`verify_restorable_in_tx`); a child under a trashed parent is `not_found` (`validate_parent_in_tx`); a trashed tag is `not_found` (`add_tag_in_tx`).",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "trashed",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "live",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "gone",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 4,
+      "ops": [
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "purge_block"
+        },
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "edit_trashed",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "move_trashed",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "delete_missing",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "invalid_operation",
+      "name": "delete_trashed",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "set_property_missing",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "set_property_trashed",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "restore_missing",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "invalid_operation",
+      "name": "restore_live",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "child_of_trashed",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "tag_with_trashed_tag",
+      "returns": []
+    }
+  ],
+  "name": "commands_on_inactive_blocks",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "purge_block"
+    },
+    {
+      "args": {
+        "blockId": "S5"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "edited"
+      },
+      "command": "edit_block",
+      "expect_error": "not_found",
+      "name": "edit_trashed",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "newIndex": 0,
+        "newParentId": "S1"
+      },
+      "command": "move_block",
+      "expect_error": "not_found",
+      "name": "move_trashed",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "delete_block",
+      "expect_error": "not_found",
+      "name": "delete_missing",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "delete_block",
+      "expect_error": "invalid_operation",
+      "name": "delete_trashed",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "reviewer",
+        "value": {
+          "value_text": "ada"
+        }
+      },
+      "command": "set_property",
+      "expect_error": "not_found",
+      "name": "set_property_missing",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "reviewer",
+        "value": {
+          "value_text": "ada"
+        }
+      },
+      "command": "set_property",
+      "expect_error": "validation",
+      "name": "set_property_trashed",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "restore_block",
+      "expect_error": "not_found",
+      "name": "restore_missing",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S4"
+      },
+      "command": "restore_block",
+      "expect_error": "invalid_operation",
+      "name": "restore_live",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "child",
+        "index": 0,
+        "parentId": "S2",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "expect_error": "not_found",
+      "name": "child_of_trashed",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "tagId": "S5"
+      },
+      "command": "add_tag",
+      "comment": "The tag, not the block, is in the trash: `add_tag_in_tx` reads the tag's live row too.",
+      "expect_error": "not_found",
+      "name": "tag_with_trashed_tag",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "trashed",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "purged",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "live",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "tag",
+        "content": "gone",
+        "id": "S5",
+        "parent_id": null,
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

@@ -19,6 +19,7 @@ import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import {
   type TypedHandlers,
   appErrorRejection,
+  assertValidDateFormat,
   assertValidReservedPropertyValue,
   assertValidSetPropertyValue,
   definitionSpaceOf,
@@ -398,6 +399,18 @@ export const propertiesHandlers = {
         `SetProperty must have exactly 1 non-null value field, found ${valueCount}`,
       )
     }
+    // `validate_set_property`, then `validate_property_value`: every
+    // `value_date` is a non-blank calendar day.
+    if (valueDate !== null) {
+      if (valueDate.trim() === '') throw validationRejection('set_property.value_date.empty')
+      assertValidDateFormat(valueDate)
+    }
+    // `fetch_live_block_in_tx`.
+    const target = blocks.get(blockId)
+    if (!target) throw notFoundRejection(`block '${blockId}' does not exist`)
+    if (target['deleted_at'] != null) {
+      throw validationRejection(`block '${blockId}' has been soft-deleted`)
+    }
     // #5160 D11 — `read_typed_ref`: text under a `ref` definition is the block
     // it names in the block's space.
     if (
@@ -450,10 +463,7 @@ export const propertiesHandlers = {
     // `list_all_tags_in_space` / space-scoped queries (which read `space_id`)
     // stay consistent with the backend for any path that still sets space via
     // a property write. Page row only, as in `move_blocks_to_space`.
-    if (key === 'space') {
-      const target = blocks.get(blockId)
-      if (target) target['space_id'] = valueRef
-    }
+    if (key === 'space') target['space_id'] = valueRef
     const op = pushOp('set_property', { block_id: blockId, key, from_value: fromValue })
     const b = blocks.get(blockId)
     // #2468 — `WithOps<BlockRow>`.
@@ -467,20 +477,25 @@ export const propertiesHandlers = {
     if (SYSTEM_MANAGED_PROPERTY_KEYS.has(key)) {
       throw validationRejection(`cannot delete system-managed property '${key}'`)
     }
+    // `delete_property_core`'s activeness gate, after the key check as there.
+    const b = blocks.get(blockId)
+    if (!b) throw notFoundRejection(`block '${blockId}' does not exist`)
+    if (b['deleted_at'] != null) {
+      throw validationRejection(`block '${blockId}' has been soft-deleted`)
+    }
     // #3079 — reserved column-backed keys clear the block COLUMN (backend
     // routes the delete through `reserved_key_blocks_column` → clears
     // `blocks.<col>`), NOT a block_properties row (which never holds a
     // reserved key). The old handler only touched the properties map, so a
     // reserved-key delete was a silent no-op that left the column set.
     if (RESERVED_PROPERTY_COLUMN[key] !== undefined) {
-      const b = blocks.get(blockId)
-      const fromValue = (b?.[key] as string | null | undefined) ?? null
+      const fromValue = (b[key] as string | null | undefined) ?? null
       // #5898 — a key the block does not hold appends nothing.
       if (fromValue === null) return { block_id: blockId, key, op_refs: [] }
-      if (b) b[key] = null
+      b[key] = null
       const op = pushOp('delete_property', { block_id: blockId, key, from_value: null })
       // #5378 — `delete_property_core` clears the task stamps with the state.
-      if (b && key === 'todo_state') writeTaskStampTransitions(blockId, fromValue, null)
+      if (key === 'todo_state') writeTaskStampTransitions(blockId, fromValue, null)
       return {
         block_id: blockId,
         key,

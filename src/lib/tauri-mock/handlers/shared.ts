@@ -188,6 +188,18 @@ export function createPageInSpace(
   return id
 }
 
+/** Backend `MAX_FILTER_TAG_IDS` (`commands/tags.rs`): the cap on a caller's `tagIds` filter. */
+export function assertTagFilterWithinCap(tagIds: readonly string[] | null | undefined): void {
+  if ((tagIds?.length ?? 0) > 1000) throw validationRejection('tag_ids.too_many')
+}
+
+/** The backend's `validate_date_format`: a `YYYY-MM-DD` real calendar day, else `validation`. */
+export function assertValidDateFormat(s: string): void {
+  if (!isJournalDayTitle(s)) {
+    throw validationRejection(`expected YYYY-MM-DD format with calendar-valid date, got '${s}'`)
+  }
+}
+
 /** `YYYY-MM-DD` and a real calendar day: the backend's `validate_date_format`. */
 function isJournalDayTitle(title: string): boolean {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(title)

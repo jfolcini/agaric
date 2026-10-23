@@ -31,6 +31,7 @@ import { logger } from '@/lib/logger'
 import { clearMockErrors, injectMockError, resetMock, SEED_IDS, setupMock } from '@/lib/tauri-mock'
 import { deriveLinkEdges } from '@/lib/tauri-mock/link-scan'
 import {
+  blockTags,
   blocks,
   makeBlock,
   opLog,
@@ -598,7 +599,8 @@ describe('get_status', () => {
 describe('move_block', () => {
   it('updates parent_id and assigns a dense 1-based position from the slot (#400)', () => {
     // QUICK_NOTES has 2 seed children (slots 0,1). A slot of 99 clamps to the
-    // end → the moved block lands last with dense rank 3.
+    // end → the moved block lands last with dense rank 3, while the response
+    // carries the provisional rank `newIndex + 1`, as the backend's does.
     const result = invoke('move_block', {
       blockId: SEED_IDS.BLOCK_GS_1,
       newParentId: SEED_IDS.PAGE_QUICK_NOTES,
@@ -606,7 +608,7 @@ describe('move_block', () => {
     }) as Record<string, unknown>
     expect(result['block_id']).toBe(SEED_IDS.BLOCK_GS_1)
     expect(result['new_parent_id']).toBe(SEED_IDS.PAGE_QUICK_NOTES)
-    expect(result['new_position']).toBe(3)
+    expect(result['new_position']).toBe(100)
     // verify persisted
     const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
     expect(block['parent_id']).toBe(SEED_IDS.PAGE_QUICK_NOTES)
@@ -1122,9 +1124,11 @@ describe('add_tag + list_tags_for_block', () => {
     expect(tags).toContain(SEED_IDS.TAG_IDEA)
   })
 
-  it('adding the same tag twice does not duplicate', () => {
+  it('adding the same tag twice is refused and does not duplicate', () => {
     invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
-    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
+    expect(() =>
+      invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK }),
+    ).toThrow(expect.objectContaining({ kind: 'invalid_operation' }))
     const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as string[]
     expect(tags).toHaveLength(1)
   })
@@ -1157,6 +1161,7 @@ describe('add_tag + list_tags_for_block', () => {
     // id-GREATEST tags, and the backend's `ORDER BY tag_id LIMIT 1001` keeps
     // the 1000 id-LEAST. Applied in ascending order the two are indistinguishable.
     for (const tagId of tagIds.toReversed()) {
+      blocks.set(tagId, makeBlock(tagId, 'tag', tagId, null, 0))
       invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId })
     }
     const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as string[]
@@ -1258,8 +1263,10 @@ describe('remove_tag', () => {
     expect(tags[0]).toBe(SEED_IDS.TAG_PERSONAL)
   })
 
-  it('removing non-existent tag is a no-op', () => {
-    invoke('remove_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
+  it('removing a tag the block does not carry is refused', () => {
+    expect(() =>
+      invoke('remove_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK }),
+    ).toThrow(expect.objectContaining({ kind: 'not_found' }))
     const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as string[]
     expect(tags).toHaveLength(0)
   })
@@ -1434,16 +1441,11 @@ describe('restore_block', () => {
     expect(restored['deleted_at']).toBeNull()
   })
 
-  it('is a no-op when restoring a non-deleted block (restores nothing)', () => {
-    // #1775: a live target has no cohort to restore, so the cohort walk clears
-    // nothing — `restored_count` is 0, mirroring the backend projection's
-    // `WHERE deleted_at = ?` matching no rows. The block stays live.
-    const result = invoke('restore_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<
-      string,
-      unknown
-    >
-    expect(result['block_id']).toBe(SEED_IDS.BLOCK_GS_1)
-    expect(result['restored_count']).toBe(0)
+  it('refuses to restore a block that is not deleted', () => {
+    // `verify_restorable_in_tx` refuses a live target; the block stays live.
+    expect(() => invoke('restore_block', { blockId: SEED_IDS.BLOCK_GS_1 })).toThrow(
+      expect.objectContaining({ kind: 'invalid_operation' }),
+    )
 
     const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
     expect(block['deleted_at']).toBeNull()
@@ -4060,8 +4062,11 @@ describe('scope-filter parity', () => {
         invoke('set_scheduled_date', { blockId, date: opts.asTask.scheduled_date })
       }
     }
+    // Written to the edge map directly: the `add_tag` command refuses a tag of
+    // another space, and the scope tests need the edge to exist.
     if (opts.tagId) {
-      invoke('add_tag', { blockId, tagId: opts.tagId })
+      if (!blockTags.has(blockId)) blockTags.set(blockId, new Set())
+      blockTags.get(blockId)?.add(opts.tagId)
     }
     return { pageId, blockId }
   }
