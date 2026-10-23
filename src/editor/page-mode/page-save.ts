@@ -76,7 +76,7 @@ export interface TreeRow {
 
 export interface PageSaveApi {
   create: (id: string, parentId: string, index: number, markdown: string) => Promise<OpRef[]>
-  restore: (id: string, deletedAt: number) => Promise<void>
+  restore: (id: string, deletedAt: number) => Promise<OpRef[]>
   move: (id: string, parentId: string, index: number) => Promise<OpRef[]>
   edit: (id: string, markdown: string) => Promise<OpRef[]>
   remove: (id: string) => Promise<{ deletedAt: number; refs: OpRef[] }>
@@ -97,6 +97,8 @@ export interface SaveResult {
   refs: OpRef[]
   /** Whether it created, restored, moved or deleted a block, not only edited text. */
   structural: boolean
+  /** Whether it restored a block: an undo step never merged into the delete before it. */
+  restored: boolean
   /** The blocks whose text it wrote. */
   edited: Set<string>
   /** The first write that failed; its block keeps its saved state for the next save. */
@@ -438,9 +440,9 @@ async function run(op: SaveOp, state: PageSaveState, api: PageSaveApi): Promise<
       return refs
     }
     case 'restore': {
-      await api.restore(op.id, op.deletedAt)
+      const refs = await api.restore(op.id, op.deletedAt)
       await reread(state, api, op.id)
-      return []
+      return refs
     }
     case 'move': {
       const refs = await api.move(op.id, op.parentId, op.index)
@@ -509,6 +511,7 @@ async function runAll(
       if (op.kind !== 'settle') state.writes += 1
       if (op.kind === 'edit') result.edited.add(op.id)
       else if (op.kind !== 'settle') result.structural = true
+      if (op.kind === 'restore') result.restored = true
     } catch (err) {
       failed ??= op
       if (result.failed === null) {
@@ -529,6 +532,7 @@ export async function savePage(
   result: SaveResult = {
     refs: [],
     structural: false,
+    restored: false,
     edited: new Set(),
     error: undefined,
     failed: null,

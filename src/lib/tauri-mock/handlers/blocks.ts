@@ -1745,8 +1745,13 @@ export const blocksHandlers = {
       throw invalidOperationRejection(`block '${blockId}' is not deleted`)
     }
     const restoredCount = restoreRefusingDuplicateTagNames(() => restoreCohort(blocks, blockId))
-    pushOp('restore_block', { block_id: blockId })
-    return { block_id: blockId, restored_count: restoredCount }
+    const op = pushOp('restore_block', { block_id: blockId })
+    // `WithOps<RestoreResponse>`.
+    return {
+      block_id: blockId,
+      restored_count: restoredCount,
+      op_refs: [{ device_id: op.device_id, seq: op.seq }],
+    }
   },
 
   // #3079 — physically erase the ENTIRE subtree, mirroring the backend's

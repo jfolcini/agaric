@@ -253,7 +253,7 @@ export class FakeBackend implements PageSaveApi {
     return Promise.resolve({ deletedAt: this.clock, refs: this.ref() })
   }
 
-  restore = (id: string, deletedAt: number): Promise<void> => {
+  restore = (id: string, deletedAt: number): Promise<OpRef[]> => {
     this.check('restore', id)
     const block = this.blocks.get(id)
     if (block?.deletedAt !== deletedAt)
@@ -265,7 +265,7 @@ export class FakeBackend implements PageSaveApi {
       up.deletedAt = null
       up = this.blocks.get(up.parentId)
     }
-    return Promise.resolve()
+    return Promise.resolve(this.ref())
   }
 
   tree = (): Promise<TreeRow[]> => {

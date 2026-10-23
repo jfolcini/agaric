@@ -3181,20 +3181,22 @@ pub async fn delete_block(
 }
 
 /// Tauri command: restore a soft-deleted block. Delegates to [`restore_block_inner`].
+/// The response carries the produced op ref, so the restore is an undo step of
+/// its own, as for [`create_block`].
 #[tauri::command]
 #[specta::specta]
 pub async fn restore_block(
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     deleted_at_ref: i64,
-) -> Result<RestoreResponse, AppError> {
-    restore_block_inner(
+) -> Result<WithOps<RestoreResponse>, AppError> {
+    capture_op_refs(restore_block_inner(
         ctx.pool(),
         ctx.device_id(),
         ctx.materializer(),
         block_id,
         deleted_at_ref,
-    )
+    ))
     .await
     .map_err(sanitize_internal_error)
 }

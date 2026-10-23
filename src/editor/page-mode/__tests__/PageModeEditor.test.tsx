@@ -323,6 +323,36 @@ describe('PageModeEditor', () => {
     expect(backendPage(pageId)).toEqual(split)
   })
 
+  it('a restore is a page-level undo step of its own, so undoing it after leaving page mode trashes the block again', async () => {
+    const { pageId, ids } = seedPage(['first', 'second', 'third'])
+    const { container, handle, unmount } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    act(() => {
+      editor.view.dispatch(editor.state.tr.delete(at(editor, 1, 0) - 2, at(editor, 2, 0) - 2))
+    })
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    act(() => {
+      editor.commands.undo()
+    })
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    expect(backendPage(pageId)).toHaveLength(3)
+    unmount()
+
+    expect(useUndoStore.getState().pages.get(pageId)?.undoStack).toHaveLength(2)
+    await act(async () => {
+      await useUndoStore.getState().undo(pageId)
+    })
+
+    expect(backendPage(pageId)).toEqual([
+      [ids[0], 'first'],
+      [ids[2], 'third'],
+    ])
+  })
+
   it('tells the user when a save fails, and the next save writes the text', async () => {
     const { pageId, ids } = seedPage(['first'])
     const { container, handle } = renderPageMode(pageId)

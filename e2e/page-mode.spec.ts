@@ -1,7 +1,7 @@
 /**
  * Page mode (#5691) against the mock backend, on a 200-block page: the page as
  * one document, its keys, its continuous save read back from the backend, undo
- * restoring a deleted block by id, page-level undo by block, the switch back to
+ * restoring a deleted block by id, page-level undo by block and of a restore, the switch back to
  * blocks, and axe. Then
  * what keeps the page whole: changes made elsewhere (an edit, a block created,
  * moved or deleted, one deleted while typed in), cut and paste as a move,
@@ -318,6 +318,32 @@ test.describe('page mode (#5691) @editor @pages', () => {
       expect.objectContaining({ blockId: seeded.ids[31] }),
     ])
     expect(await getInvokeCalls(page, 'create_block')).toEqual([])
+  })
+
+  test('a page-level Ctrl+Z after leaving page mode takes back the restore, not the delete before it', async ({
+    page,
+  }) => {
+    await caret(page, 31, 0)
+    await page.keyboard.press('Backspace')
+    await expect
+      .poll(async () => (await backend(page, seeded.pageId)).map((b) => b.id))
+      .not.toContain(seeded.ids[31])
+    await page.keyboard.press('Control+z')
+    await expect
+      .poll(async () => (await backend(page, seeded.pageId)).map((b) => b.id))
+      .toContain(seeded.ids[31])
+
+    // The editor's own history goes with it; only the page's undo stack is left.
+    await modeSwitch(page, 'Blocks').click()
+    await expect(page.getByText('block 31', { exact: true })).toBeVisible()
+    await blurEditors(page)
+    await page.keyboard.press('Control+z')
+
+    await expect(page.getByText('block 30block 31', { exact: true })).toBeVisible()
+    expect((await backend(page, seeded.pageId)).slice(30, 32).map((b) => b.text)).toEqual([
+      'block 30block 31',
+      'block 32',
+    ])
   })
 
   test('a page-level Ctrl+Z takes back the last block typed in, not the one left before it', async ({

@@ -451,7 +451,7 @@ describe('when the backend refuses', () => {
     backend.reset()
     backend.restore = (id) => {
       backend.calls.push(`restore ${id}`)
-      return Promise.resolve()
+      return Promise.resolve([])
     }
     ed.commands.undo()
 

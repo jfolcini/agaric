@@ -266,9 +266,8 @@ function commandsApi(read: () => Promise<TreeRow[]>): PageSaveApi {
           }),
         )
       ).op_refs,
-    restore: async (id, deletedAt) => {
-      await retryOnPoolBusy(() => commands.restoreBlock(id, deletedAt).then(unwrap))
-    },
+    restore: async (id, deletedAt) =>
+      (await retryOnPoolBusy(() => commands.restoreBlock(id, deletedAt).then(unwrap))).op_refs,
     move: async (id, parentId, index) =>
       (await retryOnPoolBusy(() => commands.moveBlock(id, parentId, index).then(unwrap))).op_refs,
     edit: async (id, markdown) =>
@@ -662,7 +661,10 @@ function PageModeDocument({
         const [edited] = result.edited
         const coalesce =
           result.structural || result.edited.size !== 1 ? undefined : `edit:${edited}`
-        if (result.refs.length > 0) notifyUndoNewAction(pageId, result.refs, coalesce)
+        // A restore never joins the delete it takes back: undoing that pair would undo nothing.
+        if (result.refs.length > 0) {
+          notifyUndoNewAction(pageId, result.refs, coalesce, { merge: !result.restored })
+        }
         if (result.error !== undefined) {
           logger.warn(
             'PageModeEditor',

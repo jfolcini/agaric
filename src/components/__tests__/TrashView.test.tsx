@@ -256,7 +256,7 @@ describe('TrashView', () => {
     stubInvoke({
       list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
       batch_resolve: () => [],
-      restore_block: () => ({ block_id: 'B1', restored_count: 1 }),
+      restore_block: () => ({ block_id: 'B1', restored_count: 1, op_refs: [] }),
       trash_descendant_counts: () => ({}),
     })
 
@@ -565,7 +565,7 @@ describe('TrashView', () => {
       batch_resolve: () => [],
       restore_block: () => {
         restored = true
-        return { block_id: 'B1', restored_count: 1 }
+        return { block_id: 'B1', restored_count: 1, op_refs: [] }
       },
       trash_descendant_counts: () => ({}),
     })
@@ -599,7 +599,7 @@ describe('TrashView', () => {
     stubInvoke({
       list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
       batch_resolve: () => [],
-      restore_block: () => ({ block_id: 'B1', restored_count: 1 }),
+      restore_block: () => ({ block_id: 'B1', restored_count: 1, op_refs: [] }),
       trash_descendant_counts: () => ({}),
     })
 
@@ -643,7 +643,7 @@ describe('TrashView', () => {
       batch_resolve: () => [],
       restore_block: () => {
         restored = true
-        return { block_id: 'B1', restored_count: 1 }
+        return { block_id: 'B1', restored_count: 1, op_refs: [] }
       },
       trash_descendant_counts: () => ({}),
     })
@@ -684,7 +684,7 @@ describe('TrashView', () => {
     stubInvoke({
       list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
       batch_resolve: () => [],
-      restore_block: () => ({ block_id: 'B1', restored_count: 1 }),
+      restore_block: () => ({ block_id: 'B1', restored_count: 1, op_refs: [] }),
       trash_descendant_counts: () => ({}),
     })
 
@@ -821,7 +821,7 @@ describe('TrashView', () => {
       batch_resolve: () => [],
       restore_block: () => {
         restored = true
-        return { block_id: 'B1', restored_count: 1 }
+        return { block_id: 'B1', restored_count: 1, op_refs: [] }
       },
       trash_descendant_counts: () => ({}),
     })
@@ -870,7 +870,7 @@ describe('TrashView', () => {
     stubInvoke({
       list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
       batch_resolve: () => [],
-      restore_block: () => ({ block_id: 'P1', restored_count: 1 }),
+      restore_block: () => ({ block_id: 'P1', restored_count: 1, op_refs: [] }),
       trash_descendant_counts: () => ({}),
     })
 
@@ -903,7 +903,7 @@ describe('TrashView', () => {
       batch_resolve: () => [],
       restore_block: () => {
         restored = true
-        return { block_id: 'C1', restored_count: 1 }
+        return { block_id: 'C1', restored_count: 1, op_refs: [] }
       },
       trash_descendant_counts: () => ({}),
     })
@@ -2511,7 +2511,7 @@ describe('TrashView', () => {
       list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
       batch_resolve: () => [],
       trash_descendant_counts: () => ({ R1: 5 }),
-      restore_block: () => ({ block_id: 'R1', restored_count: 6 }),
+      restore_block: () => ({ block_id: 'R1', restored_count: 6, op_refs: [] }),
     })
 
     render(<TrashView />)
@@ -3192,7 +3192,7 @@ describe('TrashView restores — chips and the journal page map', () => {
 
   it('single restore', async () => {
     const user = userEvent.setup()
-    stubRestore({ restore_block: () => ({ block_id: 'R1', restored_count: 2 }) })
+    stubRestore({ restore_block: () => ({ block_id: 'R1', restored_count: 2, op_refs: [] }) })
     expect(await journalFetchesOnMount()).toBe(1)
     render(<TrashView />)
 
