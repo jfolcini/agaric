@@ -161,16 +161,11 @@ describe('#3331 — soft-delete lifecycle reversal walks the cohort', () => {
 
   it('undo_op of a restore_block re-deletes the whole restored subtree', () => {
     dispatch('delete_block', { blockId: P })
-    const restore = dispatch('restore_block', { blockId: P }) as Record<string, unknown>
+    const restore = dispatch('restore_block', { blockId: P }) as WithOpsResp
     expect(restore['restored_count']).toBe(5)
     expect(liveIds()).toHaveLength(6)
 
-    // `restore_block` is a `WithOps`-less handler; take its op off the log.
-    const restoreOp = opLog.findLast((o) => o.op_type === 'restore_block')
-    expect(restoreOp).toBeDefined()
-    dispatch('undo_op', {
-      opRef: { device_id: restoreOp?.device_id, seq: restoreOp?.seq },
-    })
+    dispatch('undo_op', { opRef: restore.op_refs[0] })
 
     expect(liveIds()).toEqual([PAGE])
   })
