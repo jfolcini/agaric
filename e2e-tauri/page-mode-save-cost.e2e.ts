@@ -61,7 +61,7 @@ const CAP = 1000
 const REPEATS = Number(process.env['AGARIC_PERF_REPEATS'] ?? 5)
 /** Longer than the save's debounce: no save after this long means the edit's saves are done. */
 const QUIET_MS = 1500
-/** Long enough for the retry sweeper to take up what the seed shed, twice over. */
+/** Long enough for the retry sweeper to take up what the seed shed. */
 const SEED_SETTLE_MS = 300_000
 const TYPED = ' quiz'
 const TITLE = runScopedMarker('wdio-pm-save-cost')
@@ -91,22 +91,31 @@ const blockSamples: BlockSample[] = []
 const opCount = async () => (await invoke<{ total_ops: number }>('get_compaction_status')).total_ops
 
 /**
- * Wait until the materializer has nothing queued, retries included, so its
- * catch-up runs beside no timed edit. A batch of `CAP` blocks sheds tasks to
- * the retry queue, which its sweeper takes up a minute or more later.
+ * Wait until the materializer has nothing queued, retries included, and has
+ * finished nothing since the last poll, so its catch-up runs beside no timed
+ * edit. Queue depth alone misses a batch the consumer has already taken off
+ * the queue, so a still-moving processed count means it is not idle. A batch
+ * of `CAP` blocks sheds tasks to the retry queue, which its sweeper takes up
+ * later, on its own schedule.
  */
 async function materializerIdle(timeout: number): Promise<void> {
+  let processed = -1
   await browser.waitUntil(
     async () => {
       const status = await invoke<{
         foreground_queue_depth: number
         background_queue_depth: number
         retry_queue_pending: number | null
+        total_ops_dispatched: number
+        total_background_dispatched: number
       }>('get_status')
+      const before = processed
+      processed = status.total_ops_dispatched + status.total_background_dispatched
       return (
         status.foreground_queue_depth === 0 &&
         status.background_queue_depth === 0 &&
-        (status.retry_queue_pending ?? 0) === 0
+        (status.retry_queue_pending ?? 0) === 0 &&
+        processed === before
       )
     },
     { timeout, interval: 500, timeoutMsg: 'the materializer never went idle' },
