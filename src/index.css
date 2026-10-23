@@ -1185,9 +1185,15 @@
 .page-mode-editor [data-page-block] {
   @apply relative rounded-md px-3 py-1;
   min-height: 1.75rem;
-  /* Its own formatting context: a list marker's float stays inside it, so a
-     keystroke lays out its block, not every block after it. */
-  display: flow-root;
+}
+/* A list marker's float stays inside its block. Cleared rather than made a
+   formatting context (`flow-root`, `contain: layout`): WebKit lays out every
+   block that is one on each key, so typing slowed with the page's length
+   (`scripts/measure-page-mode-webkit.mjs`). */
+.page-mode-editor [data-page-block]::after {
+  content: '';
+  display: block;
+  clear: both;
 }
 /* A task's checkbox (`page-tasks.ts`) sits in that slot, on the first line, as
    block mode's row places it. */
@@ -1265,9 +1271,11 @@
 .page-mode-editor .page-block-current > .page-block-rendered {
   display: none;
 }
-/* Block mode draws them without the text's inset. */
+/* Block mode draws them without the text's inset, and its formatting context
+   keeps their margins inside the block, as that inset otherwise does. */
 .page-mode-editor [data-page-block][data-rendered]:not(.page-block-current) {
   padding-block: 0;
+  display: flow-root;
 }
 .page-mode-editor .page-block-rendered {
   margin-inline: -0.75rem;

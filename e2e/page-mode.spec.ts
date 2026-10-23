@@ -1335,6 +1335,51 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     expect(violations).toEqual([])
   })
 
+  test('a list marker taller than its line stays in its block, which is no formatting context of its own', async ({
+    page,
+  }) => {
+    const { ids } = await seedRows(page, 'Page marker room', [
+      [0, '###### small'],
+      [0, 'after'],
+    ])
+    await ipc(page, 'set_property', {
+      blockId: ids[0],
+      key: 'listStyle',
+      value: {
+        value_text: 'bullet',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    await openInPageMode(page, 'Page marker room', 2)
+    await expect(
+      page.locator(`${EDITOR} [data-page-block]`).first().getByTestId('list-marker'),
+    ).toHaveText('•')
+    const geometry = await page.evaluate((selector) => {
+      const [first, second] = document.querySelectorAll(`${selector} [data-page-block]`)
+      const marker = first?.querySelector(':scope > [data-testid="list-marker"]')
+      const heading = first?.querySelector('.page-block-content h6')
+      if (!first || !second || !marker || !heading) return null
+      return {
+        markerBottom: marker.getBoundingClientRect().bottom,
+        headingBottom: heading.getBoundingClientRect().bottom,
+        contentBottom:
+          first.getBoundingClientRect().bottom -
+          Number.parseFloat(getComputedStyle(first).paddingBottom),
+        displays: [getComputedStyle(first).display, getComputedStyle(second).display],
+      }
+    }, EDITOR)
+    // Taller than the heading's line, so only the block's clearing keeps it above the block's inset.
+    expect(geometry?.markerBottom).toBeGreaterThan(geometry?.headingBottom ?? Infinity)
+    // Within a pixel: without the clearing it overhangs the block's whole bottom inset.
+    expect(geometry?.markerBottom).toBeLessThanOrEqual((geometry?.contentBottom ?? -Infinity) + 1)
+    // A block that is a formatting context of its own (`flow-root`) WebKit lays out again on
+    // every key, so typing slowed with the page's length (`scripts/measure-page-mode-webkit.mjs`).
+    expect(geometry?.displays).toEqual(['block', 'block'])
+  })
+
   test('a page with attachments opens in page mode; an image opens full screen, a dropped file attaches, and they stay', async ({
     page,
   }) => {

@@ -4,7 +4,9 @@
  * its properties and attachments (`page-tasks.ts`), its list marker
  * (`page-lists.ts`), and a query's results or an embed (`page-rendered.ts`).
  * A page longer than `PAGE_MODE_BLOCK_CAP` stays in block mode:
- * ProseMirror renders the whole document.
+ * ProseMirror renders the whole document, and a key costs more the longer
+ * it is. `scripts/measure-page-mode-webkit.mjs` measures that on WebKitGTK,
+ * and `e2e/perf.spec.ts -g 'page mode'` on Chromium.
  *
  * Collapse is block mode's view of the tree, not something blocks hold, so it
  * keeps no page out: page mode hides what block mode hides (`page-collapse.ts`).
@@ -32,7 +34,7 @@ export interface PageFit {
   attachments: Record<string, AttachmentRow[]>
 }
 
-/** The cap, which only the perf harness's e2e build may raise (`e2e/perf.spec.ts`, `-g 'page mode'`). */
+/** The cap, which only the perf harnesses' e2e build may raise (the two above). */
 function blockCap(): number {
   if (import.meta.env.VITE_E2E) {
     const raised = (window as { __pageModeBlockCap?: unknown }).__pageModeBlockCap
