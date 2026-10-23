@@ -695,3 +695,41 @@ async fn list_property_loss_values_pages_by_block() {
         );
     }
 }
+
+/// The detail lists the values the preview counts, key by key, and none of
+/// a key the preview leaves out: `space_move_losses` and
+/// `space_move_loss_values` repeat one CTE and filter. A move checks its
+/// acknowledgement against the first alone, then drops the rows of the second,
+/// so a drift between them would drop values the user was not shown.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_detail_lists_exactly_the_values_the_preview_counts() {
+    let f = fixture().await;
+    let counted = f.preview().await;
+    assert_eq!(counted, fixture_losses(), "the preview has losses to match");
+    let keys = sqlx::query_scalar::<_, String>("SELECT DISTINCT key FROM block_properties")
+        .fetch_all(&f.pool)
+        .await
+        .unwrap();
+    for key in keys {
+        let listed = list_property_loss_values_inner(
+            &f.pool,
+            vec![f.page.clone()],
+            f.b.clone(),
+            key.clone(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let expected = counted
+            .iter()
+            .find(|loss| loss.key == key)
+            .map_or(0, |loss| loss.count);
+        assert!(!listed.has_more, "{key}: one page holds every value");
+        assert_eq!(
+            i64::try_from(listed.items.len()).unwrap(),
+            expected,
+            "values listed for {key}"
+        );
+    }
+}
