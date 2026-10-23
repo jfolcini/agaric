@@ -995,9 +995,12 @@ fn seed_attachments(
 /// `deleted_at`, as a delete leaves every member of its cohort, so a restore
 /// after a move finds the same cohort on every device; a row no doc holds is
 /// purged by the next peer that imports the move (#6080). On boot replay SQL
-/// already holds the ops after the space op, so a row tombstoned at or after
+/// already holds the ops after the space op, so a row tombstoned after
 /// `admit_deleted_since` (the op's `created_at`) is seeded live instead; a
-/// later delete's replay tombstones it again (#5647).
+/// later delete's replay tombstones it again (#5647). A tie is seeded
+/// tombstoned: `deleted_at` cannot order a delete in the move's own
+/// millisecond against the move, and one that replayed before it is not
+/// replayed again, while one still to come stamps the same value.
 ///
 /// ## Full seed (nodes + properties + tags + aliases)
 /// Seeding only tree nodes would zero the `EngineMissingTarget` counter but
@@ -1047,7 +1050,7 @@ pub(crate) async fn hydrate_page_subtree_into_engine(
     // 1. Read the whole owning-page group, trashed rows included,
     //    parent-before-child (depth-ordered recursive descent from the page).
     //    `tombstone` is a trashed row's `deleted_at`, NULL for a row tombstoned
-    //    at or after `admit_deleted_since`. The child ordering key is
+    //    after `admit_deleted_since`. The child ordering key is
     //    `position` so siblings seed in tree order.
     //    #5239: the walk stops BEFORE a nested page — it keeps its own space
     //    (#4480) and joins a doc only through its own `space` op — so the row
@@ -1067,7 +1070,7 @@ pub(crate) async fn hydrate_page_subtree_into_engine(
          ) \
          SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
                 b.todo_state, b.priority, b.due_date, b.scheduled_date, \
-                CASE WHEN ?2 IS NULL OR b.deleted_at < ?2 THEN b.deleted_at END \
+                CASE WHEN ?2 IS NULL OR b.deleted_at <= ?2 THEN b.deleted_at END \
                     AS tombstone \
            FROM descendants d \
            JOIN blocks b ON b.id = d.id \

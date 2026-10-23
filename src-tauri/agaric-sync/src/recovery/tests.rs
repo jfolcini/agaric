@@ -3576,17 +3576,25 @@ async fn apply_like_a_command(
     device_id: &str,
     payload: OpPayload,
 ) -> agaric_store::op_log::OpRecord {
+    apply_like_a_command_at(pool, mat, device_id, payload, agaric_store::db::now_ms()).await
+}
+
+/// [`apply_like_a_command`] stamped `created_at`, for a test that needs two ops
+/// in one millisecond.
+async fn apply_like_a_command_at(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    device_id: &str,
+    payload: OpPayload,
+    created_at: i64,
+) -> agaric_store::op_log::OpRecord {
     let mut tx = agaric_store::db::begin_immediate_logged(pool, "test_local_apply_5418")
         .await
         .unwrap();
-    let record = agaric_store::op_log::append_local_op_in_tx(
-        &mut tx,
-        device_id,
-        payload,
-        agaric_store::db::now_ms(),
-    )
-    .await
-    .unwrap();
+    let record =
+        agaric_store::op_log::append_local_op_in_tx(&mut tx, device_id, payload, created_at)
+            .await
+            .unwrap();
     let effects =
         agaric_engine::apply::kernel::apply_op_projected(&mut tx, &record, mat.loro_state(), false)
             .await
@@ -4423,8 +4431,9 @@ async fn crash_tail_restore_then_delete_again_5647() {
 /// space when the move replays (or, deleted, resolves none), so the move must
 /// still prune the old space's doc and seed the new one, rows tombstoned
 /// since included, and the row trashed before the move tombstoned at its own
-/// delete (#6080).
-async fn crash_tail_space_move(delete_after: bool) {
+/// delete (#6080). With `same_ms` the move is stamped in the millisecond the
+/// row was trashed, a tie that `deleted_at` cannot order against the move.
+async fn crash_tail_space_move(delete_after: bool, same_ms: bool) {
     use agaric_store::op::{DeleteBlockPayload, SPACE_PROPERTY_KEY, SetPropertyPayload};
 
     const S1: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
@@ -4453,11 +4462,11 @@ async fn crash_tail_space_move(delete_after: bool) {
     let saved =
         agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session).await;
     assert_eq!(saved, 2, "the pass persists both spaces");
-    // Replay seeds a row trashed in the move's own millisecond live, so the
-    // move must stamp a later one.
-    while agaric_store::db::now_ms() <= trashed_at {
-        std::hint::spin_loop();
-    }
+    let move_at = if same_ms {
+        trashed_at
+    } else {
+        agaric_store::db::now_ms()
+    };
     let move_to_s2 = OpPayload::SetProperty(SetPropertyPayload {
         block_id: BlockId::test_id(A),
         key: SPACE_PROPERTY_KEY.into(),
@@ -4468,7 +4477,7 @@ async fn crash_tail_space_move(delete_after: bool) {
         value_bool: None,
         prior: None,
     });
-    apply_like_a_command(&pool, &session, device_id, move_to_s2).await;
+    apply_like_a_command_at(&pool, &session, device_id, move_to_s2, move_at).await;
     let deleted_at = if delete_after {
         let delete = OpPayload::DeleteBlock(DeleteBlockPayload {
             block_id: BlockId::test_id(A),
@@ -4528,12 +4537,17 @@ async fn crash_tail_space_move(delete_after: bool) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn crash_tail_space_move_reaches_the_engine_5647() {
-    crash_tail_space_move(false).await;
+    crash_tail_space_move(false, false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn crash_tail_space_move_then_delete_reaches_the_engine_5647() {
-    crash_tail_space_move(true).await;
+    crash_tail_space_move(true, false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn crash_tail_space_move_in_the_millisecond_of_a_delete_6080() {
+    crash_tail_space_move(false, true).await;
 }
 
 /// `(id, filename, fs_path, created_at)` of every `attachments` row, by id.

@@ -2145,6 +2145,13 @@ async fn trash_then_move(fx: &MoveFixture, old_space_first: bool) -> ([String; 2
         .await
         .unwrap();
     fx.move_on_a(&[&fx.page], &fx.new).await;
+    for id in [fx.first.as_str(), nested.as_str()] {
+        assert_eq!(
+            doc_deleted_at(&fx.mat_a, "device-A", &fx.new, id),
+            Some(Some(deleted_at.to_string())),
+            "A's new doc holds {id} tombstoned at its delete"
+        );
+    }
     let first = if old_space_first { &fx.old } else { &fx.new };
     fx.pull(&fx.spaces_with_first(first), SessionEnd::Completed)
         .await;
