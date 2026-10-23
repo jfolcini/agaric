@@ -25,8 +25,7 @@ import { renderRichContent } from '@/components/RichContentRenderer'
 import type { SourceLines } from '@/editor/source-buffer'
 import { frontMatterProperties, readBlocks } from '@/editor/source-buffer-blocks'
 import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
-import { linkBodyReadings, scanNameTokens } from '@/lib/name-tokens'
-import { foldAsciiUppercase } from '@/lib/sqlite-collation'
+import { linkBodyReadings, normalizeTagName, scanNameTokens } from '@/lib/name-tokens'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -82,7 +81,7 @@ function newNameId({ ids, titles }: NewNames, name: string): string {
   return id
 }
 
-/** Titles the resolve cache holds in the active space, exact first, then ASCII case folded. */
+/** Titles the resolve cache holds in the active space, exact first, then folded as a tag name is. */
 function useTitleIds(): (name: string) => string | null {
   const cache = useResolveStore((s) => s.cache)
   const version = useResolveStore((s) => s.version)
@@ -95,10 +94,10 @@ function useTitleIds(): (name: string) => string | null {
       if (!key.startsWith(prefix) || entry.deleted) continue
       const id = key.slice(prefix.length)
       if (!exact.has(entry.title)) exact.set(entry.title, id)
-      const fold = foldAsciiUppercase(entry.title)
+      const fold = normalizeTagName(entry.title)
       if (!folded.has(fold)) folded.set(fold, id)
     }
-    return (name: string) => exact.get(name) ?? folded.get(foldAsciiUppercase(name)) ?? null
+    return (name: string) => exact.get(name) ?? folded.get(normalizeTagName(name)) ?? null
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- the cache Map is mutated in place; `version` is what changes when it does.
   }, [cache, version, spaceId])
 }

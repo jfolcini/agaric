@@ -60,6 +60,13 @@ const TAG_GUARD_RE = /[A-Za-z][A-Za-z0-9+.-]*:\/\/\S+|\]\([^)\n]*\)/g
 /** `LOGSEQ_LABELLED_LINK_RE`'s head, `[label](`, ending right before a `[[…]]` link. */
 const LOGSEQ_LABEL_HEAD_RE = /\[([^\]\n]*)\]\($/
 
+/**
+ * `agaric_core::tag_norm::normalize_tag_name`: NFC, lowercase, NFC. The key a
+ * tag name resolves by, and a page title or alias when its case differs.
+ */
+export const normalizeTagName = (name: string): string =>
+  name.normalize('NFC').toLowerCase().normalize('NFC')
+
 /** Whether `#name` names a tag: the name holds a non-digit. */
 export function isTagName(name: string): boolean {
   // content-regex-allow: a compile-time constant tested against a whole name already cut at its boundaries, not a splice of user prose

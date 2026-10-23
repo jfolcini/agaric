@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id AS \"id!\", content AS \"content!\"\n               FROM blocks\n               WHERE block_type = 'page'\n                 AND deleted_at IS NULL\n                 AND space_id = ?1\n                 AND content COLLATE NOCASE IN (SELECT value FROM json_each(?2))\n               ORDER BY id ASC",
+  "query": "SELECT id AS \"id!\", content AS \"content!\"\n               FROM blocks\n               WHERE block_type = 'page'\n                 AND deleted_at IS NULL\n                 AND space_id = ?1\n                 AND content IS NOT NULL\n               ORDER BY id ASC",
   "describe": {
     "columns": [
       {
@@ -27,12 +27,12 @@
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 1
     },
     "nullable": [
       false,
       true
     ]
   },
-  "hash": "37b9cbd37ace1cdba8a47f2508431c5bcddf3a15c9722d631d47b9b45d3b6b6e"
+  "hash": "f9c5aff52717fa9f27b776e2d45ad1b6b7331c9c43bf87bc80fd62815a623d86"
 }

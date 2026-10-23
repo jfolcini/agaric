@@ -2473,8 +2473,8 @@ fn front_matter_fence(slice: &str) -> Option<(&str, usize)> {
 /// Parse a YAML inline flow sequence (`[a, b, "c, d"]`) into its individual
 /// items, IN ORDER (#1917, item boundaries preserved for #2829). Items are
 /// split on top-level commas (commas inside a quoted item do NOT split), each
-/// item is trimmed and unquoted via [`strip_yaml_quotes`], and empty items
-/// are dropped.
+/// item is trimmed and unquoted via [`flow_item`], and empty items are
+/// dropped.
 ///
 /// Callers that only need the canonical display/round-trip scalar (the same
 /// shape an exported `aliases: a, b` would carry) join the returned items
@@ -2508,9 +2508,9 @@ fn parse_flow_sequence_items(raw: &str) -> Vec<String> {
                     prev_backslash = false;
                 }
                 ',' => {
-                    let item = strip_yaml_quotes(current.trim());
+                    let item = flow_item(&current);
                     if !item.is_empty() {
-                        items.push(item.to_string());
+                        items.push(item);
                     }
                     current.clear();
                 }
@@ -2518,11 +2518,33 @@ fn parse_flow_sequence_items(raw: &str) -> Vec<String> {
             },
         }
     }
-    let item = strip_yaml_quotes(current.trim());
+    let item = flow_item(&current);
     if !item.is_empty() {
-        items.push(item.to_string());
+        items.push(item);
     }
     items
+}
+
+/// One flow-sequence item, trimmed and unquoted. A double-quoted item also
+/// loses the `\\` and `\"` escapes the exporter's `yaml_flow_item` writes;
+/// any other backslash stays as written.
+fn flow_item(raw: &str) -> String {
+    let raw = raw.trim();
+    let Some(inner) = raw.strip_prefix('"').and_then(|s| s.strip_suffix('"')) else {
+        return strip_yaml_quotes(raw).to_string();
+    };
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars().peekable();
+    while let Some(c) = chars.next() {
+        match (c, chars.peek()) {
+            ('\\', Some(&escaped @ ('\\' | '"'))) => {
+                out.push(escaped);
+                chars.next();
+            }
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// One open YAML block scalar (#1590). When a key line ends with a `|` / `>`
@@ -5497,6 +5519,44 @@ mod tests_attachment_ref_order_3675 {
             vec!["e1.png", "e2.png", "i1.png", "i2.png"],
             "both embeds (in source order) then both images (in source order)"
         );
+    }
+}
+
+/// #6052 — `conformance/attachment-refs.vectors.json`, which
+/// `import-attachments.test.ts` reads for the TypeScript pre-scan.
+#[cfg(test)]
+mod tests_attachment_ref_vectors_6052 {
+    use super::{detect_attachment_refs, inline_code_spans};
+
+    #[derive(serde::Deserialize)]
+    struct Vectors {
+        cases: Vec<Case>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct Case {
+        name: String,
+        input: String,
+        refs: Vec<String>,
+    }
+
+    #[test]
+    fn detect_attachment_refs_matches_the_vectors() {
+        let vectors: Vectors = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../conformance/attachment-refs.vectors.json"
+        )))
+        .expect("attachment-refs vectors must be valid JSON");
+        assert!(!vectors.cases.is_empty());
+        for case in &vectors.cases {
+            let mut refs: Vec<String> = Vec::new();
+            for found in detect_attachment_refs(&case.input, &inline_code_spans(&case.input)) {
+                if !refs.contains(&found.original_ref) {
+                    refs.push(found.original_ref);
+                }
+            }
+            assert_eq!(refs, case.refs, "{:?}", case.name);
+        }
     }
 }
 

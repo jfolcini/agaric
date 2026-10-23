@@ -84,6 +84,13 @@ describe('PageSourcePreview', () => {
     expect(screen.getAllByTestId('property-chip')[0]).toHaveTextContent('[gs]')
   })
 
+  it('shows a link whose case differs in a non-ASCII letter as the page it names (#6052)', () => {
+    useResolveStore.getState().set('01J0000000000000000000UBER', 'Über', false, true)
+    render(<PageSourcePreview lines={{ text: '- see [[über]]', lineIds: [BLOCK] }} />)
+
+    expect(screen.getByTestId('block-link-chip')).toHaveTextContent('Über')
+  })
+
   it('says the page would have no blocks for an empty buffer', () => {
     render(<PageSourcePreview lines={{ text: '', lineIds: [null] }} />)
 

@@ -41,6 +41,62 @@
     "Q&A": "01BX5ZZKBKACTAV9WEVGEMMVSZ",
     "Q": "01BX5ZZKBKACTAV9WEVGEMMVT0"
   },
+  "pageNameFoldCases": [
+    {
+      "name": "an ASCII case variant names the page",
+      "title": "Weekly Review",
+      "link": "weekly review",
+      "resolves": true
+    },
+    {
+      "name": "#6052 a non-ASCII lowercase letter names the page its capital titles",
+      "title": "\u00dcber",
+      "link": "\u00fcber",
+      "resolves": true
+    },
+    {
+      "name": "#6052 a non-ASCII capital names the page its lowercase titles",
+      "title": "\u00fcber",
+      "link": "\u00dcBER",
+      "resolves": true
+    },
+    {
+      "name": "an NFD spelling names the page its NFC spelling titles",
+      "title": "Caf\u00e9",
+      "link": "CAFE\u0301",
+      "resolves": true
+    },
+    {
+      "name": "capital sharp s folds to sharp s",
+      "title": "Stra\u00dfe",
+      "link": "STRA\u1e9eE",
+      "resolves": true
+    },
+    {
+      "name": "a Greek capital sigma at a word end folds to final sigma",
+      "title": "\u039f\u0394\u039f\u03a3",
+      "link": "\u03bf\u03b4\u03bf\u03c2",
+      "resolves": true
+    },
+    {
+      "name": "an accent is not folded away",
+      "title": "\u00dcber",
+      "link": "Uber",
+      "resolves": false
+    },
+    {
+      "name": "#6092 the division slash an importer writes for a title's / is not a /",
+      "title": "a\u2215b",
+      "link": "a/b",
+      "resolves": false
+    },
+    {
+      "name": "#6092 the reverse solidus operator an importer writes for a title's \\ is not a \\",
+      "title": "a\u29f5b",
+      "link": "a\\b",
+      "resolves": false
+    }
+  ],
   "codeFenceCases": [
     {
       "name": "a tilde fence is a fence (#5160 S5): the tag inside is literal",

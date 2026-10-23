@@ -6065,6 +6065,30 @@ async fn paste_blocks_resolves_names_in_the_anchors_space() {
     assert_eq!(stray, 0, "a name in code creates nothing");
 }
 
+/// #6052 — a name whose case differs from a title or an alias in a non-ASCII
+/// letter links that page, as a tag name would, and creates none.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_blocks_folds_a_names_case_beyond_ascii() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let uber = dup_page(&pool, &mat, "Über").await;
+    let plan = dup_page(&pool, &mat, "Plan").await;
+    set_page_aliases_inner(&pool, DEV, &mat, plan.as_str(), vec!["Ärger".into()])
+        .await
+        .unwrap();
+    let anchor = dup_child(&pool, &mat, &page, "anchor").await;
+    settle(&mat).await;
+
+    let rows = paste(&pool, &mat, &anchor, paste_text("- see [[über]] [[ÄRGER]]")).await;
+
+    let contents: Vec<Option<&str>> = rows.iter().map(|r| r.content.as_deref()).collect();
+    assert_eq!(
+        contents,
+        [Some(format!("see [[{uber}]] [[{plan}]]").as_str())]
+    );
+}
+
 /// #5160 D9 — a pasted `[[Title|label]]` stores `[[ULID|label]]`; a label equal
 /// to the target's title is dropped; Logseq's `[label]([[Title]])` is the same
 /// token; and the link graph, which backlinks read, sees the labelled link.
@@ -11598,25 +11622,29 @@ async fn import_does_not_adopt_an_empty_page_matched_only_by_alias() {
 }
 
 /// D12 — the title is matched case-folded, as a link is: `Roadmap.md` adopts
-/// an empty `roadmap` (the placeholder a `[[roadmap]]` link makes), no twin.
+/// an empty `roadmap` (the placeholder a `[[roadmap]]` link makes), no twin,
+/// and `Über.md` an empty `über` (#6052).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn import_adopts_an_empty_page_whose_title_differs_only_in_case() {
-    let (pool, dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-    let roadmap = dup_page(&pool, &mat, "roadmap").await;
-    settle(&mat).await;
+    for (placeholder, title) in [("roadmap", "Roadmap"), ("über", "Über")] {
+        let (pool, dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let page = dup_page(&pool, &mat, placeholder).await;
+        settle(&mat).await;
 
-    let result = import_file(&pool, &mat, dir.path(), "Roadmap.md", "- road body").await;
+        let file = format!("{title}.md");
+        let result = import_file(&pool, &mat, dir.path(), &file, "- body").await;
 
-    assert_eq!(pages_titled(&pool, "Roadmap").await, Vec::<String>::new());
-    let children: Vec<String> = dup_children(&pool, &roadmap)
-        .await
-        .into_iter()
-        .map(|(_, content)| content)
-        .collect();
-    assert_eq!(children, ["road body"]);
-    assert_eq!(result.warnings, Vec::<String>::new());
-    mat.shutdown();
+        assert_eq!(pages_titled(&pool, title).await, Vec::<String>::new());
+        let children: Vec<String> = dup_children(&pool, &page)
+            .await
+            .into_iter()
+            .map(|(_, content)| content)
+            .collect();
+        assert_eq!(children, ["body"], "{title}");
+        assert_eq!(result.warnings, Vec::<String>::new());
+        mat.shutdown();
+    }
 }
 
 /// D12 — an adopted page's own aliases are not "used by another page": the
@@ -16118,6 +16146,77 @@ async fn import_markdown_alias_and_tag_with_embedded_comma_not_split_2829() {
         "a tag containing a literal comma must survive as ONE tag, not be split \
          on every comma; got {tag_names:?}"
     );
+
+    mat.shutdown();
+}
+
+/// #6052 — an alias or tag holding `"` or `\` is escaped by the export and
+/// comes back as written on re-import, not with the escapes kept.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_alias_and_tag_with_quote_or_backslash_round_trip_6052() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    const SRC_PAGE: &str = "01AAAAAAAAAAAAAAAAAAAESC01";
+    const TAG: &str = "01AAAAAAAAAAAAAAAAAAAESCTG";
+    let mut aliases = [
+        r#"The "Big" Idea"#,
+        r"C:\Users\me\notes",
+        r"back\slash",
+        "Plain",
+    ];
+    insert_block(&pool, SRC_PAGE, "page", "Escaped Source", None, Some(0)).await;
+    assign_to_space(&pool, SRC_PAGE, TEST_SPACE_ID).await;
+    for alias in aliases {
+        insert_alias(&pool, SRC_PAGE, alias).await;
+    }
+    insert_block(&pool, TAG, "tag", r#"say "hi" \o/"#, None, None).await;
+    assign_to_space(&pool, TAG, TEST_SPACE_ID).await;
+    insert_block_tag(&pool, SRC_PAGE, TAG).await;
+
+    let md = export_page_markdown_inner(&pool, SRC_PAGE).await.unwrap();
+    assert!(
+        md.contains(r#""The \"Big\" Idea""#) && md.contains(r#""say \"hi\" \\o/""#),
+        "seed: the export escapes them:\n{md}"
+    );
+    sqlx::query("DELETE FROM page_aliases WHERE page_id = ?")
+        .bind(SRC_PAGE)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md,
+        Some("EscapedReimport.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let new_page_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'EscapedReimport'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let mut reimported = get_page_aliases_inner(&pool, &new_page_id).await.unwrap();
+    reimported.sort();
+    aliases.sort_unstable();
+    assert_eq!(reimported, aliases);
+    let tag_ids: Vec<String> =
+        sqlx::query_scalar("SELECT tag_id FROM block_tags WHERE block_id = ?")
+            .bind(&new_page_id)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(tag_ids, [TAG], "the tag resolves to the existing one");
 
     mat.shutdown();
 }
