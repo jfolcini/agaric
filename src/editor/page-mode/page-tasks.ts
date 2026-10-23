@@ -260,15 +260,16 @@ const sameMetadata = (a: Metadata | null, b: Metadata): boolean =>
 
 /**
  * A block as a node view: its text; before it, outside the editable text,
- * block mode's grip and chevron (`page-gutter.ts`), and its checkbox while the
- * block holds a task state; after it a query's results or an embed while its
- * text is one (`page-rendered.ts`); and under it the attachments, priority
- * badge, date chips, repeat rule and property chips while it holds any.
+ * block mode's chevron while blocks are under it (`page-gutter.ts`), and its
+ * checkbox while the block holds a task state; after it a query's results or
+ * an embed while its text is one (`page-rendered.ts`); and under it the
+ * attachments, priority badge, date chips, repeat rule and property chips
+ * while it holds any.
  */
 class PageBlockView implements NodeView {
   readonly dom = document.createElement('div')
   readonly contentDOM = document.createElement('div')
-  private readonly gutter = new PageGutter(() => this.fold())
+  private readonly gutter = new PageGutter(this.dom, () => this.fold())
   private checkbox: Control<BlockInlineControlsProps> | null = null
   private rendered: Control<StaticBlockProps> | null = null
   private metadata: Control<PageBlockMetadataProps> | null = null
@@ -297,11 +298,11 @@ class PageBlockView implements NodeView {
     this.gate = gateOf(editor)
     this.dom.setAttribute('data-page-block', '')
     for (const [key, value] of Object.entries(attributes)) this.dom.setAttribute(key, String(value))
-    // The gutter's controls show on hovering the block, as block mode's row (`GUTTER_BUTTON_BASE`).
+    // The chevron shows on hovering the block, as block mode's row (`COLLAPSE_TOGGLE_HIDDEN_AT_REST`).
     this.dom.classList.add('group')
-    this.gutter.show(foldIn(decorations))
     this.contentDOM.className = 'page-block-content'
-    this.dom.append(this.gutter.element, this.contentDOM)
+    this.dom.append(this.contentDOM)
+    this.gutter.show(foldIn(decorations))
     this.show()
     this.showRendered(renderedText(node))
     this.unsubscribe = tasks.subscribe(() => this.show())
@@ -373,7 +374,7 @@ class PageBlockView implements NodeView {
     if (checkbox === null) {
       checkbox = new Control(BlockInlineControls, props, this.editor, 'page-block-controls')
       this.checkbox = checkbox
-      this.gutter.element.after(checkbox.element)
+      this.dom.insertBefore(checkbox.element, this.marker ?? this.contentDOM)
       if (this.revealed) checkbox.mount()
     } else {
       checkbox.update(props)
@@ -490,8 +491,8 @@ class PageBlockView implements NodeView {
   /** The controls' own clicks and keys are their buttons', not the editor's. */
   stopEvent(event: Event): boolean {
     const target = event.target as Node | null
-    return [this.gutter, this.checkbox, this.rendered, this.metadata].some((control) =>
-      control?.element.contains(target),
+    return [this.gutter, this.checkbox, this.rendered, this.metadata].some(
+      (control) => control?.element?.contains(target) === true,
     )
   }
 

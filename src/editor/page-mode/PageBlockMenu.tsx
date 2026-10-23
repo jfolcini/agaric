@@ -1,8 +1,9 @@
 /**
  * PageBlockMenu — block mode's block menu (`BlockContextMenu`) on the block
- * under a right click in page mode, on a block's grip clicked (or Enter on it,
- * `page-gutter.ts`), or on the caret's block on the menu key or Shift+F10
- * (#5972). The rows that change structure edit the document
+ * under a right click in page mode, on the grip's block when the grip is
+ * clicked (`page-gutter.ts`), on a block whose focused chevron takes the menu
+ * key or Shift+F10, or else on the caret's block on those keys (#5972). The
+ * rows that change structure edit the document
  * (`page-block-actions.ts`) and the save writes them; Collapse is the block's
  * chevron (`page-collapse.ts`); the rest go through the commands block mode's
  * menu runs, after the save (`PageTaskActions`).
@@ -39,7 +40,7 @@ import {
   moveBlocks,
 } from '@/editor/page-mode/page-block-actions'
 import { type Fold, foldOf, toggleFold } from '@/editor/page-mode/page-collapse'
-import { GRIP } from '@/editor/page-mode/page-gutter'
+import { GRIP_MENU, type GripMenuDetail } from '@/editor/page-mode/page-gutter'
 import { indentIds, outdentIds, treeRows } from '@/editor/page-mode/page-keys'
 import { blockText } from '@/editor/page-mode/page-slash-commands'
 import type { PickerItem } from '@/editor/SuggestionList'
@@ -83,7 +84,7 @@ interface OpenMenu {
   /** The block's type as the document holds it, which the store lags while it is typed in. */
   blockType: BlockTypeToken
   fold: Fold | null
-  /** The gutter control it opened from with the keyboard, which takes the focus back; else the editor. */
+  /** The chevron it opened from with the keyboard, which takes the focus back; else the editor. */
   trigger: HTMLElement | null
 }
 
@@ -140,11 +141,6 @@ export function PageBlockMenu({
           trigger instanceof HTMLElement && trigger === document.activeElement ? trigger : null,
       })
     }
-    /** The block of the gutter control `target` is in, as `selector` finds the control; none for the text. */
-    const gutterBlock = (target: EventTarget | null, selector: string): Element | null =>
-      target instanceof Element && target.closest(selector) !== null
-        ? target.closest('[data-page-block-id]')
-        : null
     const onContextMenu = (e: MouseEvent): void => {
       const target = e.target
       if (e.defaultPrevented || !(target instanceof Element)) return
@@ -166,10 +162,8 @@ export function PageBlockMenu({
         selectedIds: selectedBlocks(view, blockId),
       })
     }
-    /** Open on the block of `control`, its grip or chevron, below it. */
-    const showAtGrip = (control: Element, block: Element): void => {
-      const blockId = block.getAttribute('data-page-block-id')
-      if (blockId === null) return
+    /** Open on block `blockId` below `control`, the grip or the block's chevron. */
+    const showAtControl = (control: Element, blockId: string): void => {
       const box = control.getBoundingClientRect()
       show(
         {
@@ -182,10 +176,13 @@ export function PageBlockMenu({
     }
     const onKeyDown = (e: KeyboardEvent): void => {
       if (e.key !== 'ContextMenu' && !(e.key === 'F10' && e.shiftKey)) return
-      const block = gutterBlock(e.target, '.page-block-gutter')
-      if (block !== null) {
+      // On a focused chevron, its block's menu.
+      const gutter = e.target instanceof Element ? e.target.closest('.page-block-gutter') : null
+      const owner =
+        gutter?.closest('[data-page-block-id]')?.getAttribute('data-page-block-id') ?? null
+      if (owner !== null) {
         e.preventDefault()
-        showAtGrip(e.target as Element, block)
+        showAtControl(e.target as Element, owner)
         return
       }
       const { head } = view.state.selection
@@ -199,19 +196,18 @@ export function PageBlockMenu({
         selectedIds: selectedBlocks(view, blockId),
       })
     }
-    // A drag's release is not a click: the drag swallows it (`page-drag.ts`).
-    const onClick = (e: MouseEvent): void => {
-      const block = gutterBlock(e.target, `[${GRIP}]`)
-      if (block === null) return
-      showAtGrip((e.target as Element).closest(`[${GRIP}]`) as Element, block)
+    // Not on a drag's release, which the drag swallows (`page-drag.ts`).
+    const onGrip = (e: Event): void => {
+      const { blockId, grip } = (e as CustomEvent<GripMenuDetail>).detail
+      showAtControl(grip, blockId)
     }
     view.dom.addEventListener('contextmenu', onContextMenu)
     view.dom.addEventListener('keydown', onKeyDown)
-    view.dom.addEventListener('click', onClick)
+    view.dom.addEventListener(GRIP_MENU, onGrip)
     return () => {
       view.dom.removeEventListener('contextmenu', onContextMenu)
       view.dom.removeEventListener('keydown', onKeyDown)
-      view.dom.removeEventListener('click', onClick)
+      view.dom.removeEventListener(GRIP_MENU, onGrip)
     }
   }, [editor, pageStore])
 

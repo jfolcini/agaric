@@ -13,8 +13,8 @@
  * (`page-lists.ts`). In page mode the document owns text and structure. With
  * the *Show Markdown syntax around the cursor* setting on, block mode's reveal
  * draws the syntax around the caret here too (`MarkdownReveal`). A collapsed
- * block hides the deeper blocks after it (`page-collapse.ts`), and a block's
- * grip drags it with them (`page-drag.ts`).
+ * block hides the deeper blocks after it (`page-collapse.ts`), and the grip on
+ * the block under the pointer drags it with them (`page-drag.ts`).
  */
 
 import type { Extensions } from '@tiptap/core'

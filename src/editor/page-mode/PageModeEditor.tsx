@@ -41,9 +41,10 @@
  * writes to the block runs after the save, on the same chain, and the page is
  * read again after it.
  *
- * Each block's grip drags it with the blocks under it, an edit of the
- * document the save writes as block mode's moves, and its chevron collapses
- * it in block mode's own layout of the page (`page-gutter.ts`).
+ * The grip, on the block under the pointer, drags that block with the blocks
+ * under it, an edit of the document the save writes as block mode's moves,
+ * and a block's chevron collapses it in block mode's own layout of the page
+ * (`page-gutter.ts`).
  *
  * Chips go where block mode's go (`useBlockNavigateToLink`, a block of this
  * page by moving the cursor to it), and each save's ops reach `UndoStore`
@@ -967,11 +968,12 @@ function PageModeDocument({
   return (
     <>
       <BlockResolversProvider value={resolvers}>
-        {/* Where Escape leaves the focus: ringed, and Tab from it goes back into the text. */}
+        {/* Where Escape leaves the focus: ringed, and Tab from it goes back into the text.
+            Positioned: the grip is placed in it (`page-gutter.ts`). */}
         <EditorContent
           editor={editor}
           tabIndex={-1}
-          className="rounded-md focus-ring-visible"
+          className="relative rounded-md focus-ring-visible"
           {...{ [SURFACE]: '' }}
           {...linkClick}
         />
