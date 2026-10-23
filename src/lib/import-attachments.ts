@@ -10,18 +10,17 @@
  * matched files.
  *
  * {@link scanAttachmentRefs} is that pre-scan. It is a PURE function and the
- * frontend mirror of the Rust detector in `src-tauri/src/import.rs`
+ * frontend mirror of the Rust detector in `src-tauri/agaric-engine/src/import.rs`
  * (`detect_attachment_refs`, `is_skippable_attachment_ref`, the
  * `OBSIDIAN_EMBED_RE` / `MARKDOWN_IMAGE_RE` regexes, the fenced-code-block
  * `is_code` skipping in `parse_logseq_markdown`, and `inline_code_spans`).
  *
- * IMPORTANT — these two detectors MUST stay in sync. The FE scanner decides
- * which sibling bytes to ship; the BE detector decides which refs to rewrite.
- * If the FE detects a ref the BE does not, we ship bytes the BE ignores (a
- * harmless waste). If the FE MISSES a ref the BE matches, the BE warns about a
- * missing vault file and leaves the ref un-rewritten. Either way the behaviour
- * must be predictable, so any change to the Rust regexes / skip rules must be
- * reflected here (and vice-versa).
+ * The FE scanner decides which sibling bytes to ship; the BE detector decides
+ * which refs to rewrite. If the FE detects a ref the BE does not, we ship bytes
+ * the BE ignores (a harmless waste). If the FE MISSES a ref the BE matches, the
+ * BE warns about a missing vault file and leaves the ref un-rewritten. Both
+ * sides' tests read `conformance/attachment-refs.vectors.json`, so a change to
+ * either detector shows there.
  */
 
 /**

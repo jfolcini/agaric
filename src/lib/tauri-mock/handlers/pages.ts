@@ -16,6 +16,7 @@ import {
   foldPropertyKey,
   isInlinePropertyKey,
 } from '@/lib/inline-property-parse'
+import { normalizeTagName } from '@/lib/name-tokens'
 import { compareNocase, compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { TASK_STATE_TO_MARKER } from '@/lib/task-states'
 import { blocksHandlers, parseOutline } from '@/lib/tauri-mock/handlers/blocks'
@@ -46,12 +47,7 @@ import {
   readActiveSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
 import { tagsHandlers } from '@/lib/tauri-mock/handlers/tags'
-import {
-  findEmptyPageTitled,
-  normalizeTagName,
-  resolveInboundNames,
-  resolveTagNames,
-} from '@/lib/tauri-mock/names'
+import { findEmptyPageTitled, resolveInboundNames, resolveTagNames } from '@/lib/tauri-mock/names'
 import {
   blockTags,
   blocks,

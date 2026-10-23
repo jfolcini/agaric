@@ -5,8 +5,8 @@
  * Mirrors `resolve_inbound_page_links` / `resolve_tag_names` in
  * `src-tauri/src/commands/pages/markdown.rs` (#5160 N4):
  *
- *   - a page is the exact title, else the unique case-insensitive title (as
- *     SQLite's `NOCASE` folds, ASCII letters), else the unique alias, else
+ *   - a page is the exact title, else the unique title folded as a tag name
+ *     is (`normalizeTagName`), else the unique alias folded so, else
  *     created; two pages that tie are never guessed: the token stays text and
  *     a warning names it;
  *   - a `[[Page#anchor]]` token is the page titled `Page#anchor` when one
@@ -28,10 +28,11 @@ import { ULID_RE } from '@/editor/markdown-common'
 import {
   type LinkReading,
   linkBodyReadings,
+  normalizeTagName,
   type PageToken,
   scanNameTokens,
 } from '@/lib/name-tokens'
-import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
+import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import {
   appendSlot,
   insertAtSlotAndRenumber,
@@ -53,10 +54,6 @@ export interface ResolvedNames {
 
 type Match = { id: string } | 'ambiguous' | null
 
-/** `agaric_core::tag_norm::normalize_tag_name`: NFC, lowercase, NFC. */
-export const normalizeTagName = (name: string): string =>
-  name.normalize('NFC').toLowerCase().normalize('NFC')
-
 function inSpace(row: Row, spaceId: string): boolean {
   return row['deleted_at'] == null && (row['space_id'] === spaceId || ownerSpaceOf(row) === spaceId)
 }
@@ -72,18 +69,18 @@ const only = (ids: string[]): Match =>
 
 /** The title arms of `LinkMatches::find`: the exact title, else the case-folded one. */
 function findTitled(name: string, pages: readonly Row[]): Match {
-  const folded = foldAsciiUppercase(name)
+  const folded = normalizeTagName(name)
   const titled = (same: (title: string) => boolean): string[] =>
     pages.filter((p) => same((p['content'] as string | null) ?? '')).map((p) => p['id'] as string)
-  return only(titled((t) => t === name)) ?? only(titled((t) => foldAsciiUppercase(t) === folded))
+  return only(titled((t) => t === name)) ?? only(titled((t) => normalizeTagName(t) === folded))
 }
 
 /** `LinkMatches::find` over the live pages of the space. */
 function findPage(name: string, pages: readonly Row[]): Match {
-  const folded = foldAsciiUppercase(name)
+  const folded = normalizeTagName(name)
   const aliased = pages
     .filter((p) =>
-      (pageAliases.get(p['id'] as string) ?? []).some((a) => foldAsciiUppercase(a) === folded),
+      (pageAliases.get(p['id'] as string) ?? []).some((a) => normalizeTagName(a) === folded),
     )
     .map((p) => p['id'] as string)
   return findTitled(name, pages) ?? only(aliased)

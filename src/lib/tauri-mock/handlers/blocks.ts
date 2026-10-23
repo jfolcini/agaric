@@ -13,6 +13,7 @@ import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64
 import type { PasteInput, PasteSplice } from '@/lib/bindings'
 import { INLINE_PROPERTY_RESERVED_KEYS } from '@/lib/inline-property-parse'
 import { LIST_STYLE_KEY } from '@/lib/list-style'
+import { normalizeTagName } from '@/lib/name-tokens'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import type { TodoState } from '@/lib/task-states'
 import { TASK_STATE_TO_MARKER, taskStateFromMarker } from '@/lib/task-states'
@@ -38,7 +39,7 @@ import {
   validationRejection,
   readActiveSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
-import { normalizeTagName, resolveInboundNames } from '@/lib/tauri-mock/names'
+import { resolveInboundNames } from '@/lib/tauri-mock/names'
 import {
   attachmentBytes,
   attachments,

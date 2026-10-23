@@ -1292,8 +1292,8 @@ fn render_frontmatter(output: &mut String, data: &PageExportData) {
     // YAML double-quoted scalar with `\`, `"` and all control characters
     // (`\n`, `\t`, `\r`, and `\xNN` for the rest) escaped, which is valid for
     // *any* string. Legacy scalar property values keep their verbatim
-    // emission below. #1920 — the emit helpers now live in `markdown_yaml`
-    // (symmetric with the import-side `strip_yaml_quotes`).
+    // emission below. #1920 — the emit helpers now live in `markdown_yaml`;
+    // the import side unquotes a flow item in `import::flow_item`.
     use super::markdown_yaml::{yaml_flow_sequence, yaml_scalar_emit};
 
     if !properties.is_empty() || !aliases.is_empty() || !tag_names_fm.is_empty() {
@@ -4281,10 +4281,11 @@ async fn create_import_page(
     // a page of another title. A page with content is never touched.
     let title = [page_title.to_string()];
     let matches = snapshot_page_link_matches(&mut tx, space_id, &title).await?;
-    let same_title = matches
-        .exact
-        .get(page_title)
-        .or_else(|| matches.folded.get(&page_title.to_ascii_lowercase()));
+    let same_title = matches.exact.get(page_title).or_else(|| {
+        matches
+            .folded
+            .get(&agaric_core::tag_norm::normalize_tag_name(page_title))
+    });
     match same_title.map(Vec::as_slice) {
         Some([id]) if !page_has_blocks(&mut tx, id).await? => {
             return Ok((tx, id.clone()));
@@ -4835,10 +4836,12 @@ fn deferred_anchor(
 struct LinkMatches {
     /// Exact title → ids.
     exact: HashMap<String, Vec<String>>,
-    /// Title folded as SQLite's `NOCASE` folds it (ASCII letters) → ids.
+    /// Title folded as a tag name is (`normalize_tag_name`: NFC, Unicode
+    /// lowercase, NFC) → ids.
     folded: HashMap<String, Vec<String>>,
-    /// Alias folded the same way → page ids; `page_aliases.alias` is unique
-    /// `NOCASE`, so at most one.
+    /// Alias folded the same way → page ids. `page_aliases.alias` is unique
+    /// only under `NOCASE`, which folds ASCII alone, so `Über` and `über` can
+    /// tie.
     aliases: HashMap<String, Vec<String>>,
     /// Every matched page's title by id.
     titles: HashMap<String, String>,
@@ -4853,7 +4856,8 @@ enum LinkMatch {
 impl LinkMatches {
     fn push(map: &mut HashMap<String, Vec<String>>, key: String, id: String) {
         let ids = map.entry(key).or_default();
-        if ids.len() < MAX_NAME_CANDIDATES {
+        // One page's aliases `Ärger` and `ärger` fold to one key: one page.
+        if ids.len() < MAX_NAME_CANDIDATES && !ids.contains(&id) {
             ids.push(id);
         }
     }
@@ -4883,7 +4887,7 @@ impl LinkMatches {
     /// The ids the first rule of [`Self::find`] that matches `name` finds;
     /// empty when none does.
     fn first_rule_ids(&self, name: &str) -> &[String] {
-        let folded = name.to_ascii_lowercase();
+        let folded = agaric_core::tag_norm::normalize_tag_name(name);
         [
             self.exact.get(name),
             self.folded.get(&folded),
@@ -4975,38 +4979,43 @@ pub(crate) async fn match_tag_names(
 }
 
 /// Read the [`LinkMatches`] for `link_names` in `space_id`: the live pages
-/// whose title matches a name `NOCASE` (which covers the exact matches), then
-/// the live pages one of the names is an alias of.
+/// whose folded title is a folded name (which covers the exact matches), then
+/// the live pages one of the names is an alias of. SQLite cannot apply the
+/// fold, so every page and alias of the space is read and folded here; with
+/// no index on `content`, SQLite reads every page row for a title filter
+/// anyway.
 async fn snapshot_page_link_matches(
     conn: &mut sqlx::SqliteConnection,
     space_id: &str,
     link_names: &[String],
 ) -> Result<LinkMatches, AppError> {
-    let lookup_names = link_lookup_names(link_names);
+    use agaric_core::tag_norm::normalize_tag_name;
+    let keys: HashSet<String> = link_lookup_names(link_names)
+        .iter()
+        .map(|name| normalize_tag_name(name))
+        .collect();
     let mut matches = LinkMatches::default();
-    if lookup_names.is_empty() {
+    if keys.is_empty() {
         return Ok(matches);
     }
-    let names_json = serde_json::to_string(&lookup_names)?;
     let rows = sqlx::query!(
         r#"SELECT id AS "id!", content AS "content!"
                FROM blocks
                WHERE block_type = 'page'
                  AND deleted_at IS NULL
                  AND space_id = ?1
-                 AND content COLLATE NOCASE IN (SELECT value FROM json_each(?2))
+                 AND content IS NOT NULL
                ORDER BY id ASC"#,
         space_id,
-        names_json,
     )
     .fetch_all(&mut *conn)
     .await?;
     for r in rows {
-        LinkMatches::push(
-            &mut matches.folded,
-            r.content.to_ascii_lowercase(),
-            r.id.clone(),
-        );
+        let key = normalize_tag_name(&r.content);
+        if !keys.contains(&key) {
+            continue;
+        }
+        LinkMatches::push(&mut matches.folded, key, r.id.clone());
         matches.titles.insert(r.id.clone(), r.content.clone());
         LinkMatches::push(&mut matches.exact, r.content, r.id);
     }
@@ -5017,22 +5026,20 @@ async fn snapshot_page_link_matches(
                WHERE b.block_type = 'page'
                  AND b.deleted_at IS NULL
                  AND b.space_id = ?1
-                 AND a.alias COLLATE NOCASE IN (SELECT value FROM json_each(?2))
                ORDER BY a.page_id ASC"#,
         space_id,
-        names_json,
     )
     .fetch_all(&mut *conn)
     .await?;
     for r in rows {
+        let key = normalize_tag_name(&r.alias);
+        if !keys.contains(&key) {
+            continue;
+        }
         if let Some(title) = r.title {
             matches.titles.insert(r.page_id.clone(), title);
         }
-        LinkMatches::push(
-            &mut matches.aliases,
-            r.alias.to_ascii_lowercase(),
-            r.page_id,
-        );
+        LinkMatches::push(&mut matches.aliases, key, r.page_id);
     }
     Ok(matches)
 }
@@ -7231,6 +7238,18 @@ mod tests {
         code_fence_cases: Vec<CodeFenceCase>,
         cases: Vec<ReferenceTokenCase>,
         name_rule_cases: Vec<NameRuleCase>,
+        page_name_fold_cases: Vec<PageNameFoldCase>,
+    }
+
+    /// #6052 — whether `[[link]]` names the one page, titled `title`, when the
+    /// two differ by case or normalisation. `names.test.ts` drives the mock's
+    /// paste over the same rows.
+    #[derive(serde::Deserialize)]
+    struct PageNameFoldCase {
+        name: String,
+        title: String,
+        link: String,
+        resolves: bool,
     }
 
     /// #5160 — what the name pass of import, paste and source mode does with
@@ -7556,6 +7575,26 @@ mod tests {
         }
     }
 
+    #[test]
+    fn page_name_fold_vectors_pin_which_titles_a_link_names() {
+        let vectors: ReferenceTokenVectors = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../conformance/reference-tokens.vectors.json"
+        )))
+        .expect("reference-token conformance fixture must be valid JSON");
+        assert!(!vectors.page_name_fold_cases.is_empty());
+        for row in &vectors.page_name_fold_cases {
+            const PAGE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+            let matches = fixture_matches(&HashMap::from([(row.title.clone(), PAGE.into())]));
+            assert_eq!(
+                matches!(matches.find(&row.link), Some(LinkMatch::Unique(id)) if id == PAGE),
+                row.resolves,
+                "{:?}",
+                row.name
+            );
+        }
+    }
+
     /// The fixture's `title → id` map as `id → title`, the shape the rewrite
     /// reads titles in.
     fn invert(names: &HashMap<String, String>) -> HashMap<String, String> {
@@ -7591,7 +7630,11 @@ mod tests {
     fn fixture_matches(pages: &HashMap<String, String>) -> LinkMatches {
         let mut matches = LinkMatches::default();
         for (title, id) in pages {
-            LinkMatches::push(&mut matches.folded, title.to_ascii_lowercase(), id.clone());
+            LinkMatches::push(
+                &mut matches.folded,
+                agaric_core::tag_norm::normalize_tag_name(title),
+                id.clone(),
+            );
             LinkMatches::push(&mut matches.exact, title.clone(), id.clone());
         }
         matches

@@ -8,6 +8,9 @@
  * `conformance/fixtures/paste_blocks.json`.
  */
 
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { PageBuffer, PageSourceReport } from '@/lib/bindings'
@@ -82,6 +85,30 @@ beforeEach(() => {
   put(NO_SPACE_PAGE, 'page', 'Elsewhere', null)['space_id'] = null
   properties.delete(NO_SPACE_PAGE)
   put(NO_SPACE_ANCHOR, 'content', 'spaceless', NO_SPACE_PAGE)
+})
+
+interface PageNameFoldCase {
+  name: string
+  title: string
+  link: string
+  resolves: boolean
+}
+
+const { pageNameFoldCases } = JSON.parse(
+  readFileSync(
+    path.resolve(import.meta.dirname, '../../../../conformance/reference-tokens.vectors.json'),
+    'utf8',
+  ),
+) as { pageNameFoldCases: PageNameFoldCase[] }
+
+// #6052 — the rows `page_name_fold_vectors_pin_which_titles_a_link_names` reads in Rust.
+describe('paste_blocks folds a page name as the backend does (#6052)', () => {
+  it.each(pageNameFoldCases.map((row) => [row.name, row] as const))('%s', (_name, row) => {
+    const titled = id('TITLED')
+    put(titled, 'page', row.title, null)
+    const rows = paste(ANCHOR, `- [[${row.link}]]`)
+    expect(rows.at(-1)?.content === `[[${titled}]]`).toBe(row.resolves)
+  })
 })
 
 describe('paste_blocks resolves names in the anchor’s space (#5160 N4)', () => {

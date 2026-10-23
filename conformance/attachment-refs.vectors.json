@@ -1,0 +1,105 @@
+{
+  "description": "The attachment references an import reads in one block's text: `detect_attachment_refs` in `src-tauri/agaric-engine/src/import.rs` and its pre-scan `scanAttachmentRefs` in `src/lib/import-attachments.ts`, each listing the distinct refs in the order it finds them. `tsRefs` is the TypeScript side's answer where it differs, and such a row says why in `note`.",
+  "cases": [
+    {
+      "name": "an Obsidian embed",
+      "input": "Here: ![[diagram.png]] done",
+      "refs": ["diagram.png"]
+    },
+    {
+      "name": "an Obsidian embed's |display suffix is dropped",
+      "input": "![[diagram.png|big diagram]]",
+      "refs": ["diagram.png"]
+    },
+    {
+      "name": "an Obsidian embed's name may hold a space",
+      "input": "![[my image.png]]",
+      "refs": ["my image.png"]
+    },
+    {
+      "name": "a markdown image",
+      "input": "![a cat](images/cat.png)",
+      "refs": ["images/cat.png"]
+    },
+    {
+      "name": "a Logseq asset path",
+      "input": "![](assets/screenshot_1.png)",
+      "refs": ["assets/screenshot_1.png"]
+    },
+    {
+      "name": "embeds come before images, each in source order",
+      "input": "![](i1.png) ![[e1.png]] ![](i2.png)",
+      "refs": ["e1.png", "i1.png", "i2.png"]
+    },
+    {
+      "name": "a ref named twice is one ref",
+      "input": "![](assets/a.png) and again ![alt](assets/a.png)",
+      "refs": ["assets/a.png"]
+    },
+    {
+      "name": "a ref in inline code is skipped",
+      "input": "`![](skip.png)` ![](keep.png) `![[skip.pdf]]`",
+      "refs": ["keep.png"]
+    },
+    {
+      "name": "URLs, data: URIs and attachment: refs are skipped",
+      "input": "![](http://e.com/a.png) ![](https://e.com/b.png) ![](data:image/png;base64,iVBOR) ![](//cdn.example.com/c.png) ![alt](attachment:01ABC) ![[attachment:01ARZ3NDEKTSV4RRFFQ69G5FAV]]",
+      "refs": []
+    },
+    {
+      "name": "an image with a title is not a ref",
+      "input": "![a](assets/x.png \"a title\")",
+      "refs": []
+    },
+    {
+      "name": "a markdown image whose name holds a space is not a ref",
+      "input": "![](my image.png)",
+      "refs": [],
+      "note": "#6032: today's behaviour, which #6032 changes; flip this row with the fix."
+    },
+    {
+      "name": "a markdown image whose name holds a ) is cut at it",
+      "input": "![](a(1).png)",
+      "refs": ["a(1"],
+      "note": "#6032: today's behaviour, which #6032 changes; flip this row with the fix."
+    },
+    {
+      "name": "a percent-encoded name is kept encoded",
+      "input": "![](my%20image.png)",
+      "refs": ["my%20image.png"],
+      "note": "#6032: today's behaviour, which #6032 changes; flip this row with the fix."
+    },
+    {
+      "name": "an angle-bracketed destination with a space is not a ref",
+      "input": "![](<my image.png>)",
+      "refs": [],
+      "note": "#6032: today's behaviour, which #6032 changes; flip this row with the fix."
+    },
+    {
+      "name": "an angle-bracketed destination keeps its brackets",
+      "input": "![](<a.png>)",
+      "refs": ["<a.png>"],
+      "note": "#6032: today's behaviour, which #6032 changes; flip this row with the fix."
+    },
+    {
+      "name": "a link to a file is not a ref",
+      "input": "[paper](paper.pdf)",
+      "refs": [],
+      "note": "#6032: today's behaviour, which #6032 changes; flip this row with the fix."
+    },
+    {
+      "name": "U+FEFF ends a markdown image's name in JS, not in Rust",
+      "input": "![](a\ufeffb.png)",
+      "refs": ["a\ufeffb.png"],
+      "tsRefs": [],
+      "note": "Rust's \\s is Unicode White_Space, which U+FEFF is not; JS's \\s holds U+FEFF. No vault file is named so."
+    },
+    {
+      "name": "U+0085 around an embed name is trimmed in Rust, not in JS",
+      "input": "![[\u0085a.png]]",
+      "refs": ["a.png"],
+      "tsRefs": ["\u0085a.png"],
+      "note": "Rust's trim strips Unicode White_Space, which holds U+0085; JS's trim does not strip it. No vault file is named so."
+    }
+  ]
+}
