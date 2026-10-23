@@ -31,7 +31,7 @@
 **Suites:**
 - the whole workspace under nextest;
 - clippy and `SQLX_OFFLINE` check;
-- bindings unchanged;
+- bindings regenerated (a doc comment on `StatusInfo`);
 - vitest over the agenda components, the mock and the stores;
 - typecheck and lint;
 - Playwright: settings, history and undo;
