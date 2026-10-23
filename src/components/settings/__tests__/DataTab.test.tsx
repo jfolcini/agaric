@@ -1631,8 +1631,8 @@ describe('DataTab', () => {
       expect(screen.getByText(t('data.importNotionDatabases', { count: 1 }))).toBeInTheDocument()
     })
 
-    it('does not count as skipped a file an imported note embedded', async () => {
-      mockImportMarkdown.mockResolvedValue(okResult)
+    it('does not count as skipped a file an imported note embedded, and lists the skipped files first', async () => {
+      mockImportMarkdown.mockResolvedValue({ ...okResult, warnings: ['a note warning'] })
 
       render(<DataTab />)
       const folderInput = screen.getByTestId('import-folder-input') as HTMLInputElement
@@ -1649,12 +1649,15 @@ describe('DataTab', () => {
       })
 
       await waitFor(() => {
-        expect(screen.getByTestId('import-warnings-heading')).toHaveTextContent('1 warning')
+        expect(screen.getByTestId('import-warnings-heading')).toHaveTextContent('2 warnings')
       })
       expect(mockImportMarkdown.mock.calls[0]?.[4]).toEqual([
         { path: 'data.csv', bytes: [97, 44, 98] },
       ])
-      expect(screen.getByText(t('data.importFolderSkipped', { count: 1 }))).toBeInTheDocument()
+      expect(screen.getAllByTestId('import-warning-item').map((item) => item.textContent)).toEqual([
+        t('data.importFolderSkipped', { count: 1 }),
+        'a note warning',
+      ])
     })
 
     it('lets the files picker choose every note format a folder imports', () => {

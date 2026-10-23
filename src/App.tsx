@@ -154,7 +154,7 @@ function AppToaster({ isDark }: { isDark: boolean }): ReactElement {
  * persistent rail (see `Sidebar`'s mobile branch), so this button is the
  * way in; Ctrl+B remains as a secondary.
  * Gated on exactly the same `useIsMobile()` predicate the Sheet branch uses —
- * not the wider `useShouldShowMobileChrome()` — so the affordance can never be
+ * not `useShouldShowMobileChrome()`, which also needs touch — so the affordance can never be
  * absent while the rail is, and can never appear next to the desktop sidebar.
  *
  * Self-gating in its own component rather than an inline `isMobile && …` in
