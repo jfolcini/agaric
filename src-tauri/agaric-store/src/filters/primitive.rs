@@ -945,6 +945,53 @@ fn compile_property_like(
     )
 }
 
+/// The text a column-backed key's `blocks` column is compared with. Those
+/// columns hold text, so a `Num` is its shortest decimal form: `1`, as
+/// `priority` stores it, not `1.0`.
+pub(crate) fn column_text(value: &PropertyValue) -> String {
+    match value {
+        PropertyValue::Text { value }
+        | PropertyValue::Ref { value }
+        | PropertyValue::Date { value } => value.clone(),
+        PropertyValue::Num { value } => value.to_string(),
+    }
+}
+
+/// `HasProperty` on a key migration 0088 keeps out of `block_properties`
+/// (`db::reserved_key_blocks_column`), compiled against `column`, its
+/// alias-qualified `blocks` column. A NULL column is a key the block does not
+/// hold, so each predicate reads as its `block_properties` form does.
+pub(crate) fn compile_column_property(column: &str, predicate: &PropertyPredicate) -> WhereClause {
+    let compare = |op: &str, value: &PropertyValue| {
+        WhereClause::new(
+            format!("{column} {op} ?"),
+            vec![Bind::Text(column_text(value))],
+        )
+    };
+    let like = |pattern: String| {
+        WhereClause::new(
+            format!("{column} LIKE ? ESCAPE '\\'"),
+            vec![Bind::Text(pattern)],
+        )
+    };
+    let escaped = |value: &PropertyValue| agaric_core::sql_utils::escape_like(&column_text(value));
+    match predicate {
+        PropertyPredicate::Exists => WhereClause::new(format!("{column} IS NOT NULL"), Vec::new()),
+        PropertyPredicate::NotExists => WhereClause::new(format!("{column} IS NULL"), Vec::new()),
+        PropertyPredicate::Eq { value } => compare("=", value),
+        PropertyPredicate::Ne { value } => WhereClause::new(
+            format!("({column} IS NULL OR {column} <> ?)"),
+            vec![Bind::Text(column_text(value))],
+        ),
+        PropertyPredicate::Lt { value } => compare("<", value),
+        PropertyPredicate::Gt { value } => compare(">", value),
+        PropertyPredicate::Lte { value } => compare("<=", value),
+        PropertyPredicate::Gte { value } => compare(">=", value),
+        PropertyPredicate::Contains { value } => like(format!("%{}%", escaped(value))),
+        PropertyPredicate::StartsWith { value } => like(format!("{}%", escaped(value))),
+    }
+}
+
 /// #1280 — canonical Pages SQL for a multi-value text-membership leaf
 /// (`state:` over `b.todo_state`), byte-shape identical to the legacy FTS
 /// metadata oracle. INCLUDE mirrors
@@ -1185,8 +1232,10 @@ impl Projection for PagesProjection {
         // - Exists / NotExists test the key alone.
         // - Eq / Ne over `Text` compare `block_properties.value_text`.
         // - Eq / Ne over `Ref` compare `block_properties.value_ref` (a
-        //   column that has existed since migration 0001; the `space`
-        //   property uses it).
+        //   column that has existed since migration 0001).
+        if let Some(column) = crate::db::reserved_key_blocks_column(key) {
+            return compile_column_property(&format!("{alias}.{column}"), predicate);
+        }
         match predicate {
             PropertyPredicate::Exists => WhereClause::new(
                 format!(

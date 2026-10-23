@@ -59,7 +59,7 @@ import { requireActiveScope } from '@/lib/space-scope'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
-/** #5281 — a restore is refused when a live tag in the space already holds the name. */
+/** #5281/#6051 — a restore is refused when a live page or tag of the space holds the name. */
 function restoreFailureKey<K extends string>(
   err: unknown,
   fallback: K,

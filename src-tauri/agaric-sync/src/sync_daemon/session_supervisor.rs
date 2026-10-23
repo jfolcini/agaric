@@ -1653,6 +1653,7 @@ fn record_initiator_failure(
     peer_refs: &[PeerRef],
     peer_id: &str,
     message: String,
+    rejection: Option<&Rejection>,
 ) {
     // Computed before the scheduler call because it reads `peer_refs` and the
     // clock, not the scheduler's map — keeping it outside means the one
@@ -1692,7 +1693,11 @@ fn record_initiator_failure(
         membership,
     );
 
-    if !booking.report {
+    // #6051: a `Busy` refusal (the two devices dialled each other at once) is
+    // the scheduler working, not a failed sync. It is still booked above, as
+    // the backoff is what de-syncs the next pair of dials, and ends quietly.
+    let busy = rejection == Some(&Rejection::Busy);
+    if !booking.report || busy {
         // `reason`, not `message`: `message` is tracing's own implicit field
         // for the format string, and a second one would be dropped silently —
         // taking the only surviving copy of the failure text with it.
@@ -1701,8 +1706,10 @@ fn record_initiator_failure(
             reason = %message,
             failures = booking.consecutive_failures,
             still_serving = still_serving_this_peer,
-            "sync failed against this peer with a cause the user has already been shown; \
-             backoff recorded, repeat report suppressed (#4084/#4120/#4203/#4305)"
+            busy,
+            "sync failed against this peer with a cause the user has already been shown, \
+             or that is no failure to show; backoff recorded, report suppressed \
+             (#4084/#4120/#4203/#4305/#6051)"
         );
         // The report is withheld, not the outcome: over a progress channel this
         // sends what a reported failure sends there. Otherwise the device row
@@ -1818,6 +1825,7 @@ fn refuse_on_identity_mismatch(
             peer_refs,
             peer_id,
             IDENTITY_MISMATCH_MESSAGE.to_string(),
+            None,
         );
         return true;
     }
@@ -1910,6 +1918,7 @@ async fn connect_to_peer(
                     peer,
                     mdns_seen_at,
                 ),
+                None,
             );
             return None;
         }
@@ -1927,6 +1936,7 @@ async fn connect_to_peer(
                 peer_refs,
                 peer_id,
                 connect_failure_message(&e),
+                None,
             );
             return None;
         }
@@ -1945,6 +1955,7 @@ async fn connect_to_peer(
                 peer_refs,
                 peer_id,
                 connect_failure_message(&e),
+                None,
             );
             return None;
         }
@@ -2114,7 +2125,7 @@ async fn record_session_failure(
         // the full reasoning. Neither the backoff nor the generic
         // `Sync failed: …` event is right for it.
         //
-        // The rejection itself has ALREADY reached the UI, verbatim:
+        // A user-facing rejection has ALREADY reached the UI, verbatim:
         // `session_state_machine`'s `SyncMessage::Error` arm emits a
         // `SyncEvent::Error` carrying the responder's own words, which is
         // the signal `PairingDialog` matches to say "wrong code". What is
@@ -2127,6 +2138,16 @@ async fn record_session_failure(
             "peer refused a connection made during a pairing window; not \
              recording it as a sync failure (#3505)"
         );
+        // #6051: the attempt still ends, quietly, as `record_initiator_failure`
+        // ends a failure it does not report; a refusal that is not user-facing
+        // reaches the UI by no other route, and the device row would keep
+        // showing the attempt (#5739).
+        ctx.event_sink.on_sync_event(SyncEvent::Progress {
+            state: "error".into(),
+            remote_device_id: peer_id.to_owned(),
+            ops_received: 0,
+            ops_sent: 0,
+        });
     } else {
         // #4297: the one refusal that is durable state rather than an
         // event. Checked BEFORE the failure is booked because the two
@@ -2138,18 +2159,21 @@ async fn record_session_failure(
         // Guarded on the variant, not on "any rejection": only
         // `Unpaired` means the peer holds no row for us. See
         // `record_peer_unpaired_us`.
-        if matches!(session_rejection(orch), Some(Rejection::Unpaired)) {
+        let rejection = session_rejection(orch);
+        if rejection == Some(Rejection::Unpaired) {
             record_peer_unpaired_us(ctx.pool, peer_refs, peer_id).await;
         }
         // #4120: books the backoff unconditionally; emits the generic
         // wrapper only on the first failure of a streak while the peer
-        // is still pulling from us. See `record_initiator_failure`.
+        // is still pulling from us, and never for a `Busy` refusal. See
+        // `record_initiator_failure`.
         record_initiator_failure(
             ctx.scheduler,
             ctx.event_sink,
             peer_refs,
             peer_id,
             session_failure_message(&e),
+            rejection.as_ref(),
         );
         tracing::warn!(peer_id, error = %e, "sync session failed");
     }
@@ -3108,6 +3132,7 @@ mod tests {
             &refs,
             MIGRATED_PEER,
             "Connection failed: peer did not answer within 10s".into(),
+            None,
         );
         assert_eq!(
             scheduler.failure_count(MIGRATED_PEER),
@@ -3167,6 +3192,7 @@ mod tests {
             &refs,
             RESPONDER_ONLY_PEER,
             "Connection failed: peer did not answer within 10s".into(),
+            None,
         );
         assert_eq!(
             error_messages(&typed).len(),
@@ -3183,6 +3209,7 @@ mod tests {
                 &refs,
                 RESPONDER_ONLY_PEER,
                 "Connection failed: peer did not answer within 10s".into(),
+                None,
             );
         }
 
@@ -3231,6 +3258,7 @@ mod tests {
             &refs,
             RESPONDER_ONLY_PEER,
             "Sync failed: connection lost".into(),
+            None,
         );
 
         assert_eq!(
@@ -3280,6 +3308,7 @@ mod tests {
                     &refs,
                     RESPONDER_ONLY_PEER,
                     "Sync failed: connection lost".into(),
+                    None,
                 );
             }
 
@@ -3330,6 +3359,7 @@ mod tests {
                 &[other.clone()],
                 RESPONDER_ONLY_PEER,
                 "Sync failed: connection lost".into(),
+                None,
             );
         }
         assert_eq!(
@@ -3347,6 +3377,7 @@ mod tests {
             &[responder_only_ref(Some(agaric_store::db::now_ms()))],
             RESPONDER_ONLY_PEER,
             "Sync failed: connection lost".into(),
+            None,
         );
         assert_eq!(
             error_messages(&typed).len(),
@@ -3374,6 +3405,7 @@ mod tests {
                 &refs,
                 RESPONDER_ONLY_PEER,
                 "Sync failed: connection lost".into(),
+                None,
             );
         };
 
@@ -3424,6 +3456,7 @@ mod tests {
                 &refs,
                 RESPONDER_ONLY_PEER,
                 "Sync failed: connection lost".into(),
+                None,
             );
         }
 
@@ -3464,7 +3497,14 @@ mod tests {
         let scheduler = SyncScheduler::new();
         let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
         let fail = |msg: &str| {
-            record_initiator_failure(&scheduler, &sink, &refs, RESPONDER_ONLY_PEER, msg.into());
+            record_initiator_failure(
+                &scheduler,
+                &sink,
+                &refs,
+                RESPONDER_ONLY_PEER,
+                msg.into(),
+                None,
+            );
         };
 
         fail("Connection failed: peer did not answer within 10s"); // reported
@@ -3519,6 +3559,7 @@ mod tests {
             &refs,
             RESPONDER_ONLY_PEER,
             "Sync failed: connection lost".into(),
+            None,
         );
 
         assert_eq!(
@@ -3573,6 +3614,7 @@ mod tests {
                     &refs,
                     RESPONDER_ONLY_PEER,
                     "Sync failed: connection lost".into(),
+                    None,
                 );
             }
             assert_eq!(
@@ -3590,6 +3632,7 @@ mod tests {
                 &[responder_only_ref(Some(agaric_store::db::now_ms()))],
                 RESPONDER_ONLY_PEER,
                 "Sync failed: connection lost".into(),
+                None,
             );
             let expected = if inside_window { 1 } else { 2 };
             assert_eq!(
@@ -3626,6 +3669,7 @@ mod tests {
                 &refs,
                 RESPONDER_ONLY_PEER,
                 "Sync failed: connection lost".into(),
+                None,
             );
         }
 
@@ -3680,6 +3724,7 @@ mod tests {
             &refs,
             RESPONDER_ONLY_PEER,
             "Sync failed: connection lost".into(),
+            None,
         );
     }
 
@@ -3705,7 +3750,14 @@ mod tests {
 
         for _ in 0..6 {
             for msg in [TIMEOUT, SESSION] {
-                record_initiator_failure(&scheduler, &sink, &refs, RESPONDER_ONLY_PEER, msg.into());
+                record_initiator_failure(
+                    &scheduler,
+                    &sink,
+                    &refs,
+                    RESPONDER_ONLY_PEER,
+                    msg.into(),
+                    None,
+                );
             }
         }
 
@@ -3737,7 +3789,14 @@ mod tests {
         let scheduler = SyncScheduler::new();
         let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
         let fail = |msg: &str| {
-            record_initiator_failure(&scheduler, &sink, &refs, RESPONDER_ONLY_PEER, msg.into());
+            record_initiator_failure(
+                &scheduler,
+                &sink,
+                &refs,
+                RESPONDER_ONLY_PEER,
+                msg.into(),
+                None,
+            );
         };
 
         for _ in 0..4 {
@@ -4235,7 +4294,7 @@ mod tests {
         let scheduler = SyncScheduler::new();
         let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
         let fail = |msg: String| {
-            record_initiator_failure(&scheduler, &sink, &refs, RESPONDER_ONLY_PEER, msg);
+            record_initiator_failure(&scheduler, &sink, &refs, RESPONDER_ONLY_PEER, msg, None);
         };
 
         assert_ne!(
@@ -4290,6 +4349,7 @@ mod tests {
                 &refs,
                 RESPONDER_ONLY_PEER,
                 IDENTITY_MISMATCH_MESSAGE.to_string(),
+                None,
             );
         }
 
@@ -4346,6 +4406,7 @@ mod tests {
                     &refs,
                     RESPONDER_ONLY_PEER,
                     IDENTITY_MISMATCH_MESSAGE.to_string(),
+                    None,
                 );
             }
 
@@ -4380,6 +4441,7 @@ mod tests {
                     &refs,
                     RESPONDER_ONLY_PEER,
                     IDENTITY_MISMATCH_MESSAGE.to_string(),
+                    None,
                 );
             }
         }
@@ -4412,6 +4474,7 @@ mod tests {
                 &refs,
                 RESPONDER_ONLY_PEER,
                 IDENTITY_MISMATCH_MESSAGE.to_string(),
+                None,
             );
         };
 
@@ -4445,7 +4508,14 @@ mod tests {
         let scheduler = SyncScheduler::new();
         let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
         let fail = |msg: &str| {
-            record_initiator_failure(&scheduler, &sink, &refs, RESPONDER_ONLY_PEER, msg.into());
+            record_initiator_failure(
+                &scheduler,
+                &sink,
+                &refs,
+                RESPONDER_ONLY_PEER,
+                msg.into(),
+                None,
+            );
         };
 
         fail(IDENTITY_MISMATCH_MESSAGE);

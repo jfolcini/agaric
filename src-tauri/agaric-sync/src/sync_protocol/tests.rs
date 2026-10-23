@@ -731,6 +731,52 @@ async fn orchestrator_handles_error_message() {
     materializer.shutdown();
 }
 
+/// #6051: a peer's refusal fails the session either way, but only one the user
+/// can act on raises a `SyncEvent::Error`. `Busy`, the answer to two devices
+/// dialling each other at once, is the scheduler working, not a failed sync.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_received_rejection_raises_an_error_event_only_when_user_facing() {
+    use crate::sync_daemon::Rejection;
+    use crate::sync_events::{RecordingEventSink, SyncEvent};
+
+    for (rejection, raises_error) in [
+        (Rejection::Busy, false),
+        (Rejection::PairingProofMissing, true),
+    ] {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        let sink = std::sync::Arc::new(RecordingEventSink::new());
+        let mut orch = SyncOrchestrator::new(
+            pool,
+            "local-dev".into(),
+            std::sync::Arc::new(materializer.clone()),
+        )
+        .with_event_sink(Box::new(sink.clone()));
+        let _start = orch.start().await.unwrap();
+
+        let message = rejection.peer_message().to_owned();
+        orch.handle_message(SyncMessage::Error {
+            message: message.clone(),
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(orch.session().state, SyncState::Failed(message));
+        let errors = sink
+            .events()
+            .iter()
+            .filter(|e| matches!(e, SyncEvent::Error { .. }))
+            .count();
+        assert_eq!(
+            errors,
+            usize::from(raises_error),
+            "{rejection:?} must raise {} SyncEvent::Error",
+            usize::from(raises_error)
+        );
+        materializer.shutdown();
+    }
+}
+
 /// #2130: a responder must reject a peer advertising an incompatible
 /// `engine_format_version` UP FRONT in the HeadExchange arm — before any
 /// raw-byte Loro merge — emitting a `SyncEvent::Error`, transitioning to the

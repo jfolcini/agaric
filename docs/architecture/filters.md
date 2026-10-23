@@ -56,6 +56,10 @@ cross-surface; the Pages-only and Search-only groups are surface specialties.
   a SQLite REAL) and `Date { value }` (lexical ISO compare against
   `value_date`). `Contains` / `StartsWith` over a `Num` are meaningless and
   compile to `1=0`.
+- A `HasProperty` key migration 0088 keeps out of `block_properties` reads its
+  `blocks` column instead (`todo_state`, `priority`, `due_date`,
+  `scheduled_date`, and `space` as `space_id`; `db::reserved_key_blocks_column`),
+  with every operand compared as text (`compile_column_property`, #6051).
 - **`DatePredicate`** (#1280) — a predicate over a TEXT-ISO date column
   (`b.due_date`, `b.scheduled_date`): `IsNull` / `Before` / `After` /
   `OnOrBefore` / `OnOrAfter` / `On` / `Between`. Comparisons are **lexical** —

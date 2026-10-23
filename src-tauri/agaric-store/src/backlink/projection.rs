@@ -16,8 +16,11 @@
 //! arm emitted (alias `b`, the `bp` property alias, the per-op
 //! `IS NOT NULL` guards, the ULID-prefix `Created` range). The resolver
 //! (`resolve_filter_with_candidates`) is the parity oracle for this byte
-//! identity AND the production filter engine for the grouped /
-//! unlinked-references surfaces (`backlink::grouped`); it is not test-only.
+//! identity; in production it resolves only the hybrid leaves, since the
+//! flat and grouped surfaces both run `compile_backlink_filters`. A
+//! column-backed property key is the exception to the identity: its leaf
+//! reads the `blocks` column (#6051), where the resolver's still looks in
+//! `block_properties`.
 //! The projection-emitted [`WhereClause`] converts cleanly to the backlink
 //! [`CompiledFilter`] via [`From<Bind> for FilterBind`].
 
@@ -25,7 +28,8 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use crate::filters::primitive::{
-    Bind, DatePredicate, Projection, PropertyPredicate, PropertyValue, WhereClause,
+    Bind, DatePredicate, Projection, PropertyPredicate, PropertyValue, WhereClause, column_text,
+    compile_column_property,
 };
 use agaric_core::sql_utils::escape_like;
 
@@ -133,6 +137,18 @@ impl Projection for BacklinkProjection {
         // Byte-identical to the backlink `PropertyText`/`Num`/`Date` +
         // `PropertyIsSet`/`IsEmpty` leaves (the `bp` alias, the
         // `bp.{col} IS NOT NULL` guard, the `<>` for `Ne`).
+        if let Some(column) = crate::db::reserved_key_blocks_column(key) {
+            let column = format!("b.{column}");
+            // `Ne` holds only for a block that holds the key, as the
+            // property row's `<>` below does.
+            if let PropertyPredicate::Ne { value } = predicate {
+                return WhereClause::new(
+                    format!("{column} <> ?"),
+                    vec![Bind::Text(column_text(value))],
+                );
+            }
+            return compile_column_property(&column, predicate);
+        }
         match predicate {
             PropertyPredicate::Exists => WhereClause::new(
                 "EXISTS (SELECT 1 FROM block_properties bp \

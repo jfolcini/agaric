@@ -102,10 +102,33 @@ describe('HistoryRevertDialog', () => {
     )
     await user.click(screen.getByRole('button', { name: /Revert/i }))
     await waitFor(() => {
-      expect(mockNotify.error).toHaveBeenCalled()
+      expect(mockNotify.error).toHaveBeenCalledWith('Failed to revert operations')
     })
     expect(mockAnnounce).toHaveBeenCalled()
     expect(onSuccess).not.toHaveBeenCalled()
+  })
+
+  // #6051 — a revert refused because it would revive a taken tag name or
+  // page title says so in the backend's own words.
+  it('shows the refusal itself when revertOps refuses a taken name', async () => {
+    const user = userEvent.setup()
+    const message = "a tag named 'work' already exists in space 'SPACE_1'"
+    mockRevert.mockResolvedValueOnce({
+      status: 'error',
+      error: { kind: 'validation', code: 'DuplicatePageTitle', message },
+    })
+    render(
+      <HistoryRevertDialog
+        open
+        onOpenChange={vi.fn()}
+        selectedEntries={ENTRIES}
+        onSuccess={vi.fn()}
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: /Revert/i }))
+    await waitFor(() => {
+      expect(mockNotify.error).toHaveBeenCalledWith(message)
+    })
   })
 
   // #3882 — `history.revertTitle`/`history.revertDescription` interpolated

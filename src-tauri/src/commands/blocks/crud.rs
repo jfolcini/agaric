@@ -459,11 +459,7 @@ pub(crate) async fn edit_block_in_tx(
 
     let existing = existing
         .ok_or_else(|| AppError::NotFound(format!("block '{block_id}' (not found or deleted)")))?;
-    match existing.block_type.as_str() {
-        "page" => reject_duplicate_page_title(tx, &block_id, &to_text).await?,
-        "tag" => reject_duplicate_tag_name(tx, &block_id, &to_text).await?,
-        _ => {}
-    }
+    reject_duplicate_name(tx, &existing.block_type, &block_id, &to_text).await?;
     let block_type = existing.block_type;
     let parent_id = existing.parent_id;
     let position = existing.position;
@@ -632,23 +628,40 @@ async fn reject_duplicate_tag_name(
     Ok(())
 }
 
-/// [`reject_duplicate_tag_name`] for every tag among `restored`, run after a
-/// restore's writes so two tags one batch revives see each other.
-async fn reject_restored_duplicate_tag_names(
+/// The name rule for a page (#4723) or a tag (#5281), refusing `name` when
+/// another live page or tag of its space holds it. No other block type has a
+/// name.
+pub(crate) async fn reject_duplicate_name(
     conn: &mut sqlx::SqliteConnection,
-    restored: &[&String],
+    block_type: &str,
+    block_id: &str,
+    name: &str,
 ) -> Result<(), AppError> {
-    let restored_json = serde_json::to_string(restored)?;
-    let restored_tags = sqlx::query!(
-        r#"SELECT b.id AS "id!", b.content AS "content!" FROM json_each(?1) je
+    match block_type {
+        "page" => reject_duplicate_page_title(conn, block_id, name).await,
+        "tag" => reject_duplicate_tag_name(conn, block_id, name).await,
+        _ => Ok(()),
+    }
+}
+
+/// [`reject_duplicate_name`] for every page and tag among `revived`, run after
+/// a restore's or an undo's writes so two names one batch revives see each
+/// other (#5281, #6051).
+pub(crate) async fn reject_revived_duplicate_names(
+    conn: &mut sqlx::SqliteConnection,
+    revived: &[impl serde::Serialize],
+) -> Result<(), AppError> {
+    let revived_json = serde_json::to_string(revived)?;
+    let named = sqlx::query!(
+        r#"SELECT b.id AS "id!", b.block_type, b.content AS "content!" FROM json_each(?1) je
            JOIN blocks b ON b.id = je.value
-           WHERE b.block_type = 'tag' AND b.content IS NOT NULL"#,
-        restored_json
+           WHERE b.block_type IN ('page', 'tag') AND b.content IS NOT NULL"#,
+        revived_json
     )
     .fetch_all(&mut *conn)
     .await?;
-    for tag in restored_tags {
-        reject_duplicate_tag_name(conn, &tag.id, &tag.content).await?;
+    for block in named {
+        reject_duplicate_name(conn, &block.block_type, &block.id, &block.content).await?;
     }
     Ok(())
 }
@@ -1639,7 +1652,7 @@ async fn dispatch_restore_fanout(
 ///
 /// - [`AppError::NotFound`] — block does not exist
 /// - [`AppError::InvalidOperation`] — block is not deleted, or `deleted_at` timestamp mismatch
-/// - [`AppError::Validation`] — a restored tag's name is held by another live tag of its space (#5281)
+/// - [`AppError::Validation`] — a restored page's title or tag's name is held by another live page or tag of its space (#5281, #6051)
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn restore_block_inner(
     pool: &SqlitePool,
@@ -1790,7 +1803,7 @@ pub async fn restore_block_inner(
         .await?;
 
     let restored: Vec<&String> = restore_cohort.iter().chain(&restored_chain.chain).collect();
-    reject_restored_duplicate_tag_names(&mut tx, &restored).await?;
+    reject_revived_duplicate_names(&mut tx, &restored).await?;
     // #5371: the rebuild swept a trashed page's `pages_cache` row, and the
     // Pages list reads its rows from there.
     agaric_store::cache::insert_missing_pages_cache_rows(&mut tx, &restored).await?;
@@ -2568,7 +2581,7 @@ async fn dispatch_restore_batch_fanout(
 ///
 /// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) entries
 /// - [`AppError::InvalidOperation`] — an input id names a block that is not soft-deleted
-/// - [`AppError::Validation`] — a restored tag's name is held by another live tag of its space (#5281)
+/// - [`AppError::Validation`] — a restored page's title or tag's name is held by another live page or tag of its space (#5281, #6051)
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn restore_blocks_by_ids_inner(
     pool: &SqlitePool,
@@ -2714,7 +2727,7 @@ pub async fn restore_blocks_by_ids_inner(
         .iter()
         .flat_map(|(_, cohort, chain)| cohort.iter().chain(chain))
         .collect();
-    reject_restored_duplicate_tag_names(&mut tx, &restored).await?;
+    reject_revived_duplicate_names(&mut tx, &restored).await?;
     // #5371: as in `restore_block_inner`.
     agaric_store::cache::insert_missing_pages_cache_rows(&mut tx, &restored).await?;
 

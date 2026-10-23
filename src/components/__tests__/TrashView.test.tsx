@@ -3248,7 +3248,8 @@ describe('TrashView restores — chips and the journal page map', () => {
       code: 'DuplicatePageTitle',
       message: "a tag named 'restorable' already exists in space 'SPACE_TEST'",
     })
-  const nameTakenToast = 'A tag with that name already exists. Rename it first, then restore.'
+  const nameTakenToast =
+    'A page or tag with that name already exists. Rename it first, then restore.'
 
   it('a restore refused for a taken tag name says why', async () => {
     const user = userEvent.setup()

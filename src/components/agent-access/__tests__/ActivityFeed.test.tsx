@@ -384,5 +384,26 @@ describe('ActivityFeed', () => {
       expect(mockBatchResolve).not.toHaveBeenCalled()
       expect(heldState()).toEqual(BEFORE)
     })
+
+    // #6051 — a revert refused because it would revive a taken tag name or
+    // page title shows the refusal in its own words, not the generic copy.
+    it.each(REVERTS)(
+      '%s refused for a taken name shows the refusal',
+      async (_, entries, revert) => {
+        const user = userEvent.setup()
+        const message = "a tag named 'work' already exists in space 'SPACE_A'"
+        mockRevert.mockResolvedValue({
+          status: 'error',
+          error: { kind: 'validation', code: 'DuplicatePageTitle', message },
+        })
+        render(<ActivityFeed entries={[...entries]} />)
+
+        await revert(user)
+
+        await waitFor(() => {
+          expect(mockNotify.error).toHaveBeenCalledWith(message)
+        })
+      },
+    )
   })
 })

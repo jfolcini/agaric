@@ -26,7 +26,7 @@ vi.mock('sonner', () => ({
 import { toast } from 'sonner'
 
 import { logger } from '@/lib/logger'
-import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error'
+import { reportIpcError, reportIpcErrorWithReason, validationReason } from '@/lib/report-ipc-error'
 
 const mockT = ((key: string) => `translated:${key}`) as unknown as TFunction
 
@@ -144,5 +144,19 @@ describe('reportIpcErrorWithReason (#4399)', () => {
       mockT,
     )
     expect(toast.error).toHaveBeenCalledWith('translated:property.errorCreate')
+  })
+})
+
+describe('validationReason', () => {
+  it("returns a validation refusal's own message", () => {
+    expect(
+      validationReason({ kind: 'validation', code: 'DuplicatePageTitle', message: 'name taken' }),
+    ).toBe('name taken')
+  })
+
+  it('returns null for any other failure, or a refusal with no words', () => {
+    expect(validationReason({ kind: 'database', message: 'corr-id 42' })).toBeNull()
+    expect(validationReason(new Error('boom'))).toBeNull()
+    expect(validationReason({ kind: 'validation', message: '  ' })).toBeNull()
   })
 })

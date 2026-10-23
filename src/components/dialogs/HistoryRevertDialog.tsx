@@ -17,7 +17,7 @@ import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { HistoryEntry } from '@/lib/bindings'
-import { reportIpcError } from '@/lib/report-ipc-error'
+import { reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 
 export interface HistoryRevertDialogProps {
   open: boolean
@@ -47,7 +47,7 @@ export function HistoryRevertDialog({
       announce(t('announce.opsReverted', { count: ops.length }))
       await onSuccess()
     } catch (err) {
-      reportIpcError('HistoryView', 'history.revertFailed', err, t, {
+      reportIpcErrorWithReason('HistoryView', 'history.revertFailed', err, t, {
         selectedCount: count,
       })
       announce(t('announce.revertFailed'))

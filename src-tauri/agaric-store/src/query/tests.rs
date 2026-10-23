@@ -315,6 +315,68 @@ async fn date_leaf_due_before() {
     assert_eq!(ids(&resp), set(&["01B4000000000000000000000"]));
 }
 
+/// #6051: `has-property` on a column-backed key reads its `blocks` column,
+/// where migration 0088 keeps it, instead of matching no `block_properties`
+/// row.
+#[tokio::test]
+async fn has_property_on_a_column_backed_key_reads_its_blocks_column() {
+    use crate::filters::primitive::{PropertyPredicate, PropertyValue};
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+    let has = |key: &str, predicate: PropertyPredicate| {
+        req(leaf(FilterPrimitive::HasProperty {
+            key: key.to_string(),
+            predicate,
+        }))
+    };
+
+    let resp = compile_and_run(&pool, has("todo_state", PropertyPredicate::Exists))
+        .await
+        .unwrap();
+    assert_eq!(
+        ids(&resp),
+        set(&[
+            "01B1000000000000000000000",
+            "01B2000000000000000000000",
+            "01B3000000000000000000000"
+        ])
+    );
+
+    let before_march_2 = PropertyPredicate::Lt {
+        value: PropertyValue::Date {
+            value: "2026-03-02".to_string(),
+        },
+    };
+    let resp = compile_and_run(&pool, has("due_date", before_march_2))
+        .await
+        .unwrap();
+    assert_eq!(
+        ids(&resp),
+        set(&["01B1000000000000000000000", "01B4000000000000000000000"])
+    );
+
+    // `space` is `blocks.space_id`, which the two tag blocks carry as well.
+    let in_space = PropertyPredicate::Eq {
+        value: PropertyValue::Ref {
+            value: SPACE.to_string(),
+        },
+    };
+    let resp = compile_and_run(&pool, has("space", in_space))
+        .await
+        .unwrap();
+    assert_eq!(
+        ids(&resp),
+        set(&[
+            "01B1000000000000000000000",
+            "01B2000000000000000000000",
+            "01B3000000000000000000000",
+            "01B4000000000000000000000",
+            TAG_RED,
+            TAG_BLUE
+        ])
+    );
+}
+
 #[tokio::test]
 async fn pagination_page_through_equals_one_big_page() {
     let (pool, _d) = test_pool().await;

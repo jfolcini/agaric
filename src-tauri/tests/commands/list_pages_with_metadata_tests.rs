@@ -2594,6 +2594,56 @@ async fn has_property_ne_ref_excludes_matching_value_ref() {
     );
 }
 
+/// #6051: `HasProperty` on a column-backed key reads its `blocks` column,
+/// where migration 0088 keeps it, instead of matching no `block_properties`
+/// row.
+#[tokio::test]
+async fn has_property_on_a_column_backed_key_reads_its_blocks_column() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE0000000000000000CB01", "Urgent").await;
+    seed_priority(&pool, "01PAGE0000000000000000CB01", "1").await;
+    seed_page(&pool, "01PAGE0000000000000000CB02", "Later").await;
+    seed_priority(&pool, "01PAGE0000000000000000CB02", "3").await;
+    seed_page(&pool, "01PAGE0000000000000000CB03", "Unranked").await;
+
+    let titles = |predicate: PropertyPredicate| {
+        let pool = pool.clone();
+        async move {
+            let filter = FilterPrimitive::HasProperty {
+                key: "priority".to_string(),
+                predicate,
+            };
+            list_pages_with_metadata_inner(
+                &pool,
+                filter_with(PageSort::Alphabetical, vec![filter]),
+                None,
+                Some(50),
+            )
+            .await
+            .expect("a has-property filter on a column-backed key must succeed")
+            .items
+            .into_iter()
+            .filter_map(|p| p.content)
+            .collect::<Vec<_>>()
+        }
+    };
+    let text = |value: &str| PropertyValue::Text {
+        value: value.to_string(),
+    };
+
+    assert_eq!(titles(PropertyPredicate::Exists).await, ["Later", "Urgent"]);
+    assert_eq!(
+        titles(PropertyPredicate::Eq { value: text("1") }).await,
+        ["Urgent"]
+    );
+    assert_eq!(
+        titles(PropertyPredicate::Ne { value: text("1") }).await,
+        ["Later", "Unranked"],
+        "Ne keeps the page without the key, as it does for a property row"
+    );
+}
+
 #[tokio::test]
 async fn all_search_only_primitives_rejected_on_pages_surface() {
     // -C — parameterized over ALL FOUR search-only primitives

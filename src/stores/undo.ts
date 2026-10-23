@@ -42,6 +42,7 @@ import { parsePayloadObject } from '@/lib/history-utils'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { validationReason } from '@/lib/report-ipc-error'
 import { paginationLimit } from '@/lib/safe-limit'
 import { requireActiveScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
@@ -473,8 +474,9 @@ function historyEntryBlockId(payload: string): string | null {
   return typeof blockId === 'string' ? blockId : null
 }
 
-function notifySwipeUndoFailed(): void {
-  notify.error(t('undo.undoFailedMessage'))
+/** `reason`: a refusal's own words (#6051), shown in place of the generic copy. */
+function notifySwipeUndoFailed(reason: string | null = null): void {
+  notify.error(reason ?? t('undo.undoFailedMessage'))
   announce(t('announce.undoFailed'))
 }
 
@@ -561,6 +563,10 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       return { status: 'ok', result }
     } catch (err) {
       logger.error('UndoStore', 'redo operation failed', { pageId }, err)
+      // #6051 — a redo can revive a taken name too (redoing the undo of a
+      // create), and that refusal says why; other failures stay silent here.
+      const reason = validationReason(err)
+      if (reason !== null) notify.warning(reason)
       // #3546 — redo carried the same wedge #3353 fixed on the undo path.
       // `redo_page_op` rejects NON-RETRYABLY for three reasons of its own
       // (`redo_page_op_inner`, `src-tauri/src/commands/history.rs`): the
@@ -627,7 +633,8 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       }
     } catch (err) {
       logger.error('UndoStore', 'undo_op failed', { pageId, refCount: newestFirst.length }, err)
-      notify.warning(t('undo.batchUnavailable'))
+      // #6051 — a refusal names what blocks it (an undo reviving a taken name).
+      notify.warning(validationReason(err) ?? t('undo.batchUnavailable'))
       // #3323/#3353 — a NON-RETRYABLE failure (validation, not_found, or
       // non_reversible — see `isPermanentRevertFailure`) gets the identical
       // rejection on retry, wedging Ctrl+Z on this page. Drop the dead entry
@@ -693,7 +700,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       results = unwrap(await commands.undoPageGroup(pageId, initialDepth, UNDO_GROUP_WINDOW_MS))
     } catch (err) {
       logger.error('UndoStore', 'undo_page_group failed', { pageId }, err)
-      notify.warning(t('undo.batchUnavailable'))
+      notify.warning(validationReason(err) ?? t('undo.batchUnavailable'))
       return null
     }
 
@@ -783,7 +790,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       await reloadPage()
     } catch (err) {
       logger.error('UndoStore', 'swipe-delete undo failed', { pageId, blockId }, err)
-      notifySwipeUndoFailed()
+      notifySwipeUndoFailed(validationReason(err))
     }
   }
 

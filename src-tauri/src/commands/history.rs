@@ -1176,6 +1176,11 @@ async fn apply_reverse_restore_block(
         agaric_store::block_descendants::rederive_page_and_space_ids(tx, top).await?;
     }
 
+    let restored: Vec<String> = cohort.into_iter().chain(restored_chain.chain).collect();
+    // #6051: as the rename rule refuses it, an undo revives no page or tag
+    // whose name its space has given another since; the caller rolls back.
+    crate::commands::blocks::crud::reject_revived_duplicate_names(tx, &restored).await?;
+
     // #2655: converge the per-space engine with the SQL restore. The
     // seed is now LIVE again (its `deleted_at` cleared above), so
     // `resolve_block_space` — which filters tombstones — resolves it.
@@ -1188,13 +1193,12 @@ async fn apply_reverse_restore_block(
     // not re-delete the reconnected ancestors in SQL.
     let space_id = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
     drive_reverse_engine(state, device_id, space_id, "restore_block", |engine| {
-        for id in cohort.iter().chain(restored_chain.chain.iter()) {
+        for id in &restored {
             engine.apply_restore_block(id)?;
         }
         Ok(())
     })?;
 
-    let restored: Vec<String> = cohort.into_iter().chain(restored_chain.chain).collect();
     // #5371: the rebuild swept a trashed page's `pages_cache` row, and the
     // Pages list reads its rows from there.
     agaric_store::cache::insert_missing_pages_cache_rows(tx, &restored).await?;
@@ -1221,6 +1225,13 @@ async fn apply_reverse_edit_block(
             p.block_id
         )));
     }
+    // #6051: as the rename rule refuses it, an undo renames no page or tag
+    // onto a name its space has given another since; the caller rolls back.
+    let block_type = agaric_engine::block_ops::fetch_live_block_in_tx(tx, block_id_str)
+        .await?
+        .block_type;
+    crate::commands::blocks::crud::reject_duplicate_name(tx, &block_type, block_id_str, &p.to_text)
+        .await?;
 
     // #2655: splice the prior text into the per-space engine's `LoroText`
     // so the CRDT matches the SQL content, mirroring the forward

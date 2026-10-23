@@ -37,6 +37,7 @@ import { commands, type OpRef } from '@/lib/bindings'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { validationReason } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
 
 // #3546 — the dedicated non-reversible toast branches on the SHARED
@@ -116,7 +117,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
         notify.error(
           isNonReversible(err)
             ? t('agentAccess.undoAgentOp.nonReversible')
-            : t('agentAccess.undoAgentOp.failed'),
+            : (validationReason(err) ?? t('agentAccess.undoAgentOp.failed')),
         )
       } finally {
         setUndoingKeys((prev) => {
@@ -220,7 +221,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
       notify.error(
         isNonReversible(err)
           ? t('agentAccess.revertSession.nonReversible')
-          : t('agentAccess.revertSession.failed'),
+          : (validationReason(err) ?? t('agentAccess.revertSession.failed')),
       )
     } finally {
       setRevertingSessions((prev) => {

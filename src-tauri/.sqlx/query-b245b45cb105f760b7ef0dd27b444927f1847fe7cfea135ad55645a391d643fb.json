@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT b.id AS \"id!\", b.content AS \"content!\" FROM json_each(?1) je\n           JOIN blocks b ON b.id = je.value\n           WHERE b.block_type = 'tag' AND b.content IS NOT NULL",
+  "query": "SELECT b.id AS \"id!\", b.block_type, b.content AS \"content!\" FROM json_each(?1) je\n           JOIN blocks b ON b.id = je.value\n           WHERE b.block_type IN ('page', 'tag') AND b.content IS NOT NULL",
   "describe": {
     "columns": [
       {
@@ -15,8 +15,19 @@
         }
       },
       {
-        "name": "content!",
+        "name": "block_type",
         "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "block_type"
+          }
+        }
+      },
+      {
+        "name": "content!",
+        "ordinal": 2,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -31,8 +42,9 @@
     },
     "nullable": [
       false,
+      false,
       true
     ]
   },
-  "hash": "b83039011a8e19a2a6b1242c4417313effae656fd2c1ef98eea066f1558f1faf"
+  "hash": "b245b45cb105f760b7ef0dd27b444927f1847fe7cfea135ad55645a391d643fb"
 }

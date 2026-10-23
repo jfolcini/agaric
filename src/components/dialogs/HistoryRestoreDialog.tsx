@@ -19,7 +19,7 @@ import { commands } from '@/lib/bindings'
 import type { HistoryEntry } from '@/lib/bindings'
 import { formatTimestamp } from '@/lib/format'
 import { notify } from '@/lib/notify'
-import { reportIpcError } from '@/lib/report-ipc-error'
+import { reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 
 export interface HistoryRestoreDialogProps {
   open: boolean
@@ -53,7 +53,7 @@ export function HistoryRestoreDialog({
       }
       await onSuccess()
     } catch (err) {
-      reportIpcError('HistoryView', 'history.restoreFailed', err, t, {
+      reportIpcErrorWithReason('HistoryView', 'history.restoreFailed', err, t, {
         deviceId: restoreTarget.device_id,
         seq: restoreTarget.seq,
       })

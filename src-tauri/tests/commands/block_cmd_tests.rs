@@ -877,7 +877,7 @@ async fn create_block_tag_reuses_name_of_deleted_tag_5236() {
 // ----------------------------------------------------------------------
 
 fn assert_duplicate_name_refusal<T: std::fmt::Debug>(result: Result<T, AppError>) {
-    let err = result.expect_err("a duplicate tag name in the space must be refused");
+    let err = result.expect_err("a duplicate tag name or page title in the space must be refused");
     assert_eq!(
         err.validation_code(),
         Some(agaric_core::error::ValidationCode::DuplicatePageTitle),
@@ -1131,6 +1131,96 @@ async fn restore_tag_without_a_live_namesake_succeeds_5281() {
 
     assert!(!is_deleted(&pool, &single).await);
     assert!(!is_deleted(&pool, &batched).await);
+}
+
+/// A page in `space_ulid` titled `title`, soft-deleted; returns it and its
+/// `deleted_at` (the restore ref).
+async fn trashed_page(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    title: &str,
+    space_ulid: &str,
+) -> (BlockId, i64) {
+    let page = create_page_in_space_inner(pool, DEV, mat, None, title.into(), space_ulid.into())
+        .await
+        .expect("create page in space");
+    settle(mat).await;
+    let deleted = delete_block_inner(pool, DEV, mat, page.clone())
+        .await
+        .expect("delete the page");
+    settle(mat).await;
+    (page, deleted.deleted_at)
+}
+
+/// #6051 — page titles are unique per space too (#4723), so restoring a page
+/// whose title a live page has taken since is refused the way a tag is. Once
+/// the title is free again the same restore goes through.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_block_rejects_page_whose_title_a_live_page_holds_6051() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let (trashed, deleted_at) = trashed_page(&pool, &mat, "Home", personal).await;
+    let live = create_page_in_space_inner(&pool, DEV, &mat, None, "Home".into(), personal.into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let ops_before = count_ops(&pool).await;
+
+    assert_duplicate_name_refusal(
+        restore_block_inner(&pool, DEV, &mat, trashed.clone(), deleted_at).await,
+    );
+    assert!(
+        is_deleted(&pool, &trashed).await,
+        "the page stays in the trash"
+    );
+    assert_eq!(
+        count_ops(&pool).await,
+        ops_before,
+        "a refusal appends no op"
+    );
+
+    delete_block_inner(&pool, DEV, &mat, live).await.unwrap();
+    settle(&mat).await;
+    restore_block_inner(&pool, DEV, &mat, trashed.clone(), deleted_at)
+        .await
+        .expect("with the title free again, the page restores");
+    assert!(!is_deleted(&pool, &trashed).await);
+}
+
+/// #6051 — the batch, which "Restore all" drains in chunks, refuses whole: the
+/// bystander listed beside the clashing page stays in the trash too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_blocks_by_ids_rejects_page_whose_title_a_live_page_holds_6051() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let (bystander, _) = trashed_tag(&pool, &mat, "notes", personal).await;
+    let (trashed, _) = trashed_page(&pool, &mat, "Home", personal).await;
+    let _live = create_page_in_space_inner(&pool, DEV, &mat, None, "Home".into(), personal.into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let ops_before = count_ops(&pool).await;
+
+    assert_duplicate_name_refusal(
+        restore_blocks_by_ids_inner(&pool, DEV, &mat, vec![bystander.clone(), trashed.clone()])
+            .await,
+    );
+
+    assert!(is_deleted(&pool, &bystander).await, "nothing is restored");
+    assert!(is_deleted(&pool, &trashed).await, "nothing is restored");
+    assert_eq!(
+        count_ops(&pool).await,
+        ops_before,
+        "a refusal appends no op"
+    );
 }
 
 // ======================================================================

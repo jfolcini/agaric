@@ -2194,6 +2194,91 @@ async fn handle_incoming_sync_rejects_busy_peer() {
     materializer.shutdown();
 }
 
+/// #6051: the dialling side of that refusal. Two devices that dial each other at
+/// once each answer the other `Busy`; that is the scheduler working, so the
+/// initiator books the failure (the backoff is what de-syncs the next two dials)
+/// and ends the attempt with a quiet terminal `Progress`, never a red
+/// `SyncEvent::Error`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_busy_refusal_is_booked_and_ends_quietly_6051() {
+    const INIT_DEV: &str = "INIT6051";
+    const RESP_DEV: &str = "RESP6051";
+    let harness = ServiceHarness::new().await;
+
+    // The responder: knows the initiator, and is mid-session with it already.
+    let (resp_pool, _resp_dir) = test_pool().await;
+    let resp_mat = Materializer::new(resp_pool.clone());
+    bind_client_as(&resp_pool, INIT_DEV, &harness).await;
+    let resp_sched = Arc::new(SyncScheduler::new());
+    let _their_own_dial = resp_sched.try_lock_peer(&client_key(&harness)).unwrap();
+    let resp_task = spawn_responder(
+        &harness,
+        resp_pool,
+        RESP_DEV,
+        resp_mat.clone(),
+        resp_sched.clone(),
+        Arc::new(RecordingEventSink::new()),
+        Arc::new(AtomicBool::new(false)),
+    );
+
+    // The initiator: the real daemon layer.
+    let (init_pool, _init_dir) = test_pool().await;
+    let init_mat = Materializer::new(init_pool.clone());
+    let typed_sink = Arc::new(RecordingEventSink::new());
+    let event_sink: Arc<dyn SyncEventSink> = typed_sink.clone();
+    let scheduler = SyncScheduler::new();
+    let cancel = AtomicBool::new(false);
+    let apply_host: Arc<dyn crate::apply_host::ApplyHost> = Arc::new(init_mat.clone());
+    let ctx = SyncSessionContext {
+        pool: &init_pool,
+        device_id: INIT_DEV,
+        materializer: &apply_host,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
+        relay_url: None,
+    };
+    let peer = discovered_service_peer(RESP_DEV, &harness);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        try_sync_with_peer(&ctx, &peer, &[make_peer_ref(RESP_DEV)], None),
+    )
+    .await
+    .expect("try_sync_with_peer timed out");
+    tokio::time::timeout(std::time::Duration::from_secs(20), resp_task)
+        .await
+        .expect("responder task timed out")
+        .expect("responder task panicked")
+        .expect("a refusal is not a responder error");
+
+    assert_eq!(
+        scheduler.failure_count(RESP_DEV),
+        1,
+        "the refusal is booked, so the backoff de-syncs the next pair of dials"
+    );
+    let events = typed_sink.events();
+    let errors = events
+        .iter()
+        .filter(|e| matches!(e, SyncEvent::Error { .. }))
+        .count();
+    let terminal_progress = events
+        .iter()
+        .filter(|e| matches!(e, SyncEvent::Progress { state, .. } if state == "error"))
+        .count();
+    assert_eq!(
+        errors, 0,
+        "no red \"Sync failed\" for a Busy, got {events:?}"
+    );
+    assert_eq!(
+        terminal_progress, 1,
+        "the attempt still ends, quietly, got {events:?}"
+    );
+    resp_mat.shutdown();
+    init_mat.shutdown();
+}
+
 /// S-5 across the two roles (#3511): an inbound session is refused while an
 /// OUTBOUND session with the same physical peer is in flight — *during the
 /// pairing window*, which is the only window in which the two used to disagree.
@@ -11336,6 +11421,17 @@ async fn a_pairing_window_rejection_is_not_a_sync_failure_3505() {
         "#3505: a rejection during a pairing window must not be dressed up as a \
          failed sync. This is what reaches `notify.error` as a red \"Sync failed: \
          …\" toast on a device whose user has not typed a passphrase yet. Got {:?}",
+        out.joiner_events
+    );
+    // #6051: the attempt still ends, so a device row that showed it stops.
+    assert_eq!(
+        out.joiner_events
+            .iter()
+            .filter(|e| matches!(e, SyncEvent::Progress { state, .. } if state == "error"))
+            .count(),
+        1,
+        "a pairing-window refusal ends the attempt with one quiet terminal Progress, \
+         got {:?}",
         out.joiner_events
     );
 }

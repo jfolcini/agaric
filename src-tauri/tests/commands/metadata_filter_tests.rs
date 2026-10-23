@@ -384,6 +384,48 @@ async fn property_filter_exclude_routes_to_not_exists() {
     assert!(ids.contains(&B_NOSTATE));
 }
 
+/// #6051: `prop:` on a column-backed key reads its `blocks` column, where
+/// migration 0088 keeps it, instead of matching no `block_properties` row.
+#[tokio::test]
+async fn property_filter_on_a_column_backed_key_reads_its_blocks_column() {
+    let (pool, _dir) = pool().await;
+    seed_corpus(&pool).await;
+    let matching = |filter: SearchFilter| {
+        let pool = pool.clone();
+        async move {
+            let resp = search_blocks_inner(&pool, "alpha".into(), None, Some(50), filter, None)
+                .await
+                .unwrap();
+            let mut ids: Vec<String> = resp
+                .items
+                .iter()
+                .map(|r| r.id.as_str().to_owned())
+                .collect();
+            ids.sort();
+            ids
+        }
+    };
+    let prop = |key: &str, value: &str| SearchPropertyFilter {
+        key: key.into(),
+        value: value.into(),
+    };
+
+    // `1` parses as a number; `priority` stores it as the text `1`.
+    let priority_1 = matching(SearchFilter {
+        property_filters: vec![prop("priority", "1")],
+        ..search_filter(SearchScope::AllSpaces)
+    })
+    .await;
+    assert_eq!(priority_1, [B_TODO_P1, B_DOING_P1]);
+
+    let unscheduled = matching(SearchFilter {
+        excluded_property_filters: vec![prop("scheduled_date", "")],
+        ..search_filter(SearchScope::AllSpaces)
+    })
+    .await;
+    assert_eq!(unscheduled, [B_TODO_P2, B_DONE, B_NOSTATE]);
+}
+
 #[tokio::test]
 async fn property_filter_and_compose_across_keys() {
     let (pool, _dir) = pool().await;

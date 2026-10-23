@@ -22,6 +22,7 @@ import { matchesFtsIndex, stripForFts } from '@/lib/tauri-mock/handlers/search'
 import {
   type TypedHandlers,
   classifyLinkKind,
+  columnBackedValue,
   contentLinksTo,
   fbqResolvePrefixTagIds,
   inSpaceScope,
@@ -64,6 +65,14 @@ function textCompare(op: string, lhs: string, rhs: string): boolean {
       return lhs === rhs
     }
   }
+}
+
+/** Does `b` hold `key`: a `block_properties` row, or a set column for a
+ *  column-backed key (#6051)? */
+function holdsProperty(b: Record<string, unknown>, key: string): boolean {
+  const column = columnBackedValue(b, key)
+  if (column !== undefined) return column !== null
+  return properties.get(b['id'] as string)?.has(key) ?? false
 }
 
 /**
@@ -126,17 +135,22 @@ function matchesBacklinkFilter(
       const key = filter['key'] as string
       const value = filter['value'] as string
       const op = (filter['op'] as string | undefined) ?? 'Eq'
-      const text = properties.get(id)?.get(key)?.['value_text'] as string | null | undefined
-      // `EXISTS (… key = ? AND value_text <op> ?)` on the backend: a block
-      // without the property matches under no operator, `Neq` included.
+      const column = columnBackedValue(b, key)
+      const text =
+        column === undefined
+          ? (properties.get(id)?.get(key)?.['value_text'] as string | null | undefined)
+          : column
+      // `EXISTS (… key = ? AND value_text <op> ?)` on the backend, or the
+      // column-backed key's `b.<col> <op> ?`: a block without the property
+      // matches under no operator, `Neq` included.
       if (text == null) return false
       return textCompare(op, text, value)
     }
     case 'PropertyIsSet': {
-      return properties.get(id)?.has(filter['key'] as string) ?? false
+      return holdsProperty(b, filter['key'] as string)
     }
     case 'PropertyIsEmpty': {
-      return !(properties.get(id)?.has(filter['key'] as string) ?? false)
+      return !holdsProperty(b, filter['key'] as string)
     }
     case 'HasTag': {
       return refInclusiveTags(id).has(filter['tag_id'] as string)

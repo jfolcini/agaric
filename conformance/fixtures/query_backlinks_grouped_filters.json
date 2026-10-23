@@ -382,6 +382,33 @@
       "cursor": null,
       "error": null,
       "has_more": false,
+      "name": "priority_as_a_property_is_set",
+      "rows": [
+        "B2#page_title=Alpha#truncated=false",
+        "B2->B4#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "B2->B5#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "B3#page_title=Beta#truncated=false",
+        "B3->B7#parent_id=B3#page_id=B3#position=1#deleted_at=null",
+        "filtered#count=3#truncated=false"
+      ],
+      "total_count": 5
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "priority_as_a_property_neq",
+      "rows": [
+        "B2#page_title=Alpha#truncated=false",
+        "B2->B4#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "filtered#count=1#truncated=false"
+      ],
+      "total_count": 5
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
       "name": "empty_or_matches_nothing",
       "rows": ["filtered#count=0#truncated=false"],
       "total_count": 5
@@ -780,6 +807,46 @@
       "command": "list_backlinks_grouped",
       "comment": "Everyone but B4.",
       "name": "property_is_empty"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "priority",
+            "type": "PropertyIsSet"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "#6051 — `priority` lives in its `blocks` column, never in `block_properties` (migration 0088), so a property leaf on it reads the column: B4, B5 and B7.",
+      "name": "priority_as_a_property_is_set"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "priority",
+            "op": "Neq",
+            "type": "PropertyText",
+            "value": "2"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "#6051 — `Neq` holds only for a block holding the key, as for a property row: B4, not the unranked B6 and B8.",
+      "name": "priority_as_a_property_neq"
     },
     {
       "args": {
