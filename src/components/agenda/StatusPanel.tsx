@@ -221,7 +221,7 @@ export function StatusPanel(): React.ReactElement {
       <CardContent>
         {loading && !status && (
           <LoadingSkeleton
-            count={4}
+            count={6}
             height="h-20"
             loading
             ariaLabel={t('status.loadingLabel')}

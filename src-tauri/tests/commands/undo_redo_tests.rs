@@ -9476,6 +9476,70 @@ async fn revert_of_a_move_within_one_space_puts_the_block_back_6047() {
     mat.shutdown();
 }
 
+/// #6047 — the redo is the other way into the same stranding: the move is
+/// undone (both pages are in A, so it applies), the destination page moves to
+/// B, and the redo would put the block back under it. Refused as the revert
+/// is, through `apply_reverse_in_tx` rather than `apply_reverses_in_order`.
+///
+/// Counter-delta test: reads the process-global `sql_only_fallback::count()`
+/// (`src-tauri/tests/AGENTS.md` § "Process-global state"; nextest only).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn redo_of_a_move_refuses_a_target_parent_in_another_space_6047() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (from, to, block, move_ref) = block_moved_between_pages_6047(&pool, &mat).await;
+
+    let undo = undo_op_inner(&pool, DEV, &mat, move_ref)
+        .await
+        .expect("the undo applies while both pages are in A");
+    settle(&mat).await;
+
+    ensure_test_space_b(&pool).await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        to.as_str().into(),
+        "space".into(),
+        None,
+        None,
+        None,
+        Some(TEST_SPACE_B_ID.into()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let err = redo_page_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        undo.new_op_ref.device_id.clone(),
+        undo.new_op_ref.seq,
+    )
+    .await
+    .expect_err("the redo must be refused once its target parent is in another space");
+    assert!(
+        matches!(err, AppError::NonReversible { .. }),
+        "the refusal is NonReversible, got: {err:?}"
+    );
+
+    let parent: Option<String> = sqlx::query_scalar("SELECT parent_id FROM blocks WHERE id = ?")
+        .bind(block.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        parent.as_deref(),
+        Some(from.as_str()),
+        "the refused redo leaves the block where the undo put it"
+    );
+    assert_next_edit_takes_the_engine(&pool, &mat, &block, TEST_SPACE_ID).await;
+    mat.shutdown();
+}
+
 /// #5262 — a page in A with one block, born on a peer: the root's
 /// `create_block` + `set_property(space)` and the block's `create_block` are
 /// replicated audit rows. Then moved A → B here: the page's first LOCAL

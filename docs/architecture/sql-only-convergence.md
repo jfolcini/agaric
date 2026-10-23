@@ -117,10 +117,15 @@ purely additive and does not alter control flow. A block SQL holds and its
 space's engine does not stops syncing, so the warning goes to the log at the
 default level (#6047).
 
-A new page or tag root is not recorded: it has no row to resolve a space from
-until its create projects it, and the `SetProperty(space)` every
-root-creating command appends next hydrates it. Counted, every page created
-would read as a miss.
+Three cases take the SQL-only path and are not recorded, because no engine
+could hold the block yet, or ever. A new page or tag root has no row to
+resolve a space from until its create projects it, and the `SetProperty(space)`
+its command appends next hydrates it. The `is_space` op that registers a space
+runs before the registry knows the block, and `create_space` seeds the block
+into its own doc right after. An edit or property of the seeded Personal or
+Work block finds no doc to take it: every device mints those two under one
+ULID, so they are never seeded (#4775). Counted, every page, space and rename
+of a seeded space would read as a miss, and the count would never rest at zero.
 
 Production observability is the counter, surfaced as
 `StatusInfo::sql_only_fallback_count` (#1326) via the materializer coordinator's

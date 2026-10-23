@@ -3,6 +3,21 @@
 //! engine then projects the result to SQL.
 
 use super::*;
+use crate::spaces::{SPACE_PERSONAL_ULID, SPACE_WORK_ULID};
+
+/// Record an `EngineMissingTarget` fallback for `op` on `block_id`, unless it
+/// is a seeded space block. Every device mints Personal and Work under one
+/// ULID, so neither is in any doc (`hydrate_user_space_blocks`, #4775): an
+/// edit or property of one is SQL-only because it has to be, not because a
+/// block stopped syncing.
+fn record_engine_miss(op: &'static str, block_id: &str) {
+    if !matches!(block_id, SPACE_PERSONAL_ULID | SPACE_WORK_ULID) {
+        super::sql_only_fallback::record(
+            op,
+            super::sql_only_fallback::SqlOnlyFallbackReason::EngineMissingTarget,
+        );
+    }
+}
 
 /// The doc an op on `block_id` routes to: the block's space, or — for a
 /// registered space block, which carries no `space_id` of its own — the
@@ -293,10 +308,7 @@ pub async fn apply_edit_block_via_loro(
         }
     };
     let Some(snapshot) = snapshot else {
-        super::sql_only_fallback::record(
-            "edit_block",
-            super::sql_only_fallback::SqlOnlyFallbackReason::EngineMissingTarget,
-        );
+        record_engine_miss("edit_block", p.block_id.as_str());
         return apply_edit_block_sql_only(conn, p.clone()).await;
     };
 
@@ -413,10 +425,15 @@ pub async fn apply_set_property_via_loro(
     }
 
     let Some(space_id) = resolve_doc_space(&mut *conn, &p.block_id, replay).await? else {
-        super::sql_only_fallback::record(
-            "set_property",
-            super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
-        );
+        // `is_space` is the op that registers the space, so its block cannot
+        // resolve before this op projects it; `create_space` seeds the block
+        // into its doc right after. Not counted, as a new page's create is not.
+        if p.key != "is_space" {
+            super::sql_only_fallback::record(
+                "set_property",
+                super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
+            );
+        }
         return apply_set_property_sql_only(conn, p.clone()).await;
     };
 
@@ -452,10 +469,7 @@ pub async fn apply_set_property_via_loro(
         }
     };
     if !engine_applied {
-        super::sql_only_fallback::record(
-            "set_property",
-            super::sql_only_fallback::SqlOnlyFallbackReason::EngineMissingTarget,
-        );
+        record_engine_miss("set_property", p.block_id.as_str());
         return apply_set_property_sql_only(conn, p.clone()).await;
     }
 

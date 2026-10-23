@@ -54,8 +54,12 @@
 //! nonzero [`count`] in production signals an unexpected fallback that
 //! warrants investigation (both reasons are unreachable on a well-formed,
 //! fully-reconciled op log): SQL holds a block its space's engine does
-//! not, so the block's edits stop syncing (#6047). A new page or tag root,
-//! whose space is set by the op right after its create, is not counted.
+//! not, so the block's edits stop syncing (#6047). Not counted, since no
+//! engine could hold the block yet, or ever: a new page or tag root (its space
+//! is set by the op right after its create), the `is_space` op that registers
+//! a space (`create_space` seeds the block into its doc right after), and an
+//! edit or property of the seeded Personal or Work block (in no doc by design,
+//! #4775).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 

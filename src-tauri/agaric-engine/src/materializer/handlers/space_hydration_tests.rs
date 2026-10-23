@@ -35,6 +35,7 @@ const PAGE_ID: &str = "01HZ00000000000000000000P5";
 const CHILD_ID: &str = "01HZ00000000000000000000C7";
 const GRAND_ID: &str = "01HZ00000000000000000000G8";
 const TAG_ID: &str = "01HZ00000000000000000000T9";
+const NESTED_PAGE_ID: &str = "01HZ00000000000000000000N6";
 const DEVICE_ID: &str = "device-space-hydration";
 
 /// Pool with a REGISTERED space block but NO page yet. The page + subtree are
@@ -181,10 +182,17 @@ async fn no_space_creates_take_sql_only_fallback() {
     )
     .await;
     apply(&pool, &state, create_op(TAG_ID, "tag", None, "tag")).await;
+    apply(
+        &pool,
+        &state,
+        create_op(NESTED_PAGE_ID, "page", Some(PAGE_ID), "nested"),
+    )
+    .await;
     // Each create resolves no space (the page has none yet), so each takes the
-    // SQL-only path. The two under the page count as SpaceUnresolved; the page
-    // and tag roots do not, since their `SetProperty(space)` is still to come.
-    assert_eq!(super::sql_only_fallback::count() - before, 2);
+    // SQL-only path. The three under the page (a nested page among them) count
+    // as SpaceUnresolved; the page and tag roots do not, since their
+    // `SetProperty(space)` is still to come.
+    assert_eq!(super::sql_only_fallback::count() - before, 3);
 
     // Nothing entered the space engine.
     assert!(
