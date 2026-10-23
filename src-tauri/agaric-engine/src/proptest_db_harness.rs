@@ -98,8 +98,8 @@ use std::collections::BTreeMap;
 use agaric_core::ulid::BlockId;
 use agaric_store::op::{
     AddAttachmentPayload, CreateBlockPayload, DeleteAttachmentPayload, DeleteBlockPayload,
-    DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpPayload, PurgeBlockPayload,
-    RestoreBlockPayload, SPACE_PROPERTY_KEY, SetPropertyPayload,
+    DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpPayload, PRIORITY_LEVELS,
+    PurgeBlockPayload, RestoreBlockPayload, SPACE_PROPERTY_KEY, SetPropertyPayload,
 };
 use agaric_store::op_log::{OpRecord, append_local_op_at};
 
@@ -124,10 +124,11 @@ const DEFAULT_POOL_SIZE: usize = 4;
 /// Property keys the generator draws from — short identifiers matching
 /// production property shapes (`status`, `priority`, …).
 ///
-/// #4679: the two reserved DATE keys carry `value_date` and `space` carries a
-/// `value_ref` into one of [`HARNESS_SPACE_IDS`]; `resolve_inner` routes the
-/// payload shape by key so every emitted `SetProperty` is one the command
-/// layer's `validate_property_value` accepts (pinned by
+/// #4679: the two reserved DATE keys carry `value_date`, `space` carries a
+/// `value_ref` into one of [`HARNESS_SPACE_IDS`] and `priority` one of its
+/// built-in options; `resolve_inner` routes the payload shape by key so every
+/// emitted `SetProperty` is one the command layer's `validate_property_value`
+/// accepts under the key's built-in definition (pinned by
 /// `every_generated_set_property_passes_command_validation_4679`).
 const PROP_KEYS: &[&str] = &[
     "status",
@@ -205,14 +206,15 @@ pub enum OpKind {
     },
     /// #4679: carries one candidate value per payload shape; `resolve_inner`
     /// picks the one the selected key takes (`date` for the reserved date
-    /// keys, `space_index` into [`HARNESS_SPACE_IDS`] for `space`, `value` as
-    /// `value_text` otherwise) and ignores the rest.
+    /// keys, `option_index` into [`HARNESS_SPACE_IDS`] for `space` and into
+    /// [`PRIORITY_LEVELS`] for `priority`, `value` as `value_text` otherwise)
+    /// and ignores the rest.
     SetProperty {
         live_index: usize,
         key_index: usize,
         value: String,
         date: String,
-        space_index: usize,
+        option_index: usize,
     },
     DeleteProperty {
         live_index: usize,
@@ -280,8 +282,8 @@ fn op_kind_strategy() -> impl Strategy<Value = OpKind> {
                 live_index, parent_choice, position,
             }),
         3 => (any::<usize>(), any::<usize>(), prop_value_strategy(), prop_date_strategy(), any::<usize>())
-            .prop_map(|(live_index, key_index, value, date, space_index)| OpKind::SetProperty {
-                live_index, key_index, value, date, space_index,
+            .prop_map(|(live_index, key_index, value, date, option_index)| OpKind::SetProperty {
+                live_index, key_index, value, date, option_index,
             }),
         // #181: `DeleteProperty` is emitted by the random generator now
         // that `reverse::reverse_set_property` honours an intervening
@@ -632,7 +634,7 @@ impl ChainModel {
                 key_index,
                 value,
                 date,
-                space_index,
+                option_index,
             } => {
                 let live = self.live_ids();
                 if live.is_empty() {
@@ -658,9 +660,16 @@ impl ChainModel {
                         if !self.deleted_at.is_empty() {
                             return None;
                         }
-                        let space = HARNESS_SPACE_IDS[space_index % HARNESS_SPACE_IDS.len()];
+                        let space = HARNESS_SPACE_IDS[option_index % HARNESS_SPACE_IDS.len()];
                         (None, None, Some(BlockId::from_trusted(space)))
                     }
+                    // The command path refuses a value outside the built-in
+                    // options (#5841).
+                    "priority" => (
+                        Some(PRIORITY_LEVELS[option_index % PRIORITY_LEVELS.len()].to_owned()),
+                        None,
+                        None,
+                    ),
                     _ => (Some(value.clone()), None, None),
                 };
                 // `space` is deliberately NOT recorded in `props`: a
@@ -1009,7 +1018,8 @@ mod tests {
     use proptest::test_runner::{Config, TestRunner};
 
     /// #4679 acceptance: every `SetProperty` the generator emits is one the
-    /// command layer's `validate_property_value` accepts. Before this the
+    /// command layer's `validate_property_value` accepts, under the key's
+    /// built-in definition where it has one. Before this the
     /// `due_date` arm carried its value in `value_text`, which the LOCAL
     /// command path rejects and the apply path projects as a column CLEAR —
     /// the generator was modelling an op production cannot produce.
@@ -1026,20 +1036,23 @@ mod tests {
                 let OpPayload::SetProperty(p) = payload else {
                     continue;
                 };
-                crate::block_ops::validate_property_value(&p, None).unwrap_or_else(|e| {
-                    panic!("generated SetProperty rejected by the command layer: {e} — {p:?}")
-                });
+                let builtin = agaric_store::op::builtin_property_def(&p.key)
+                    .map(crate::block_ops::PropertyDeclaration::from);
+                crate::block_ops::validate_property_value(&p, builtin.as_ref()).unwrap_or_else(
+                    |e| panic!("generated SetProperty rejected by the command layer: {e} — {p:?}"),
+                );
                 let shape = match p.key.as_str() {
                     "due_date" | "scheduled_date" => "date",
                     SPACE_PROPERTY_KEY => "space",
+                    "priority" => "option",
                     _ => "text",
                 };
                 *seen.entry(shape).or_default() += 1;
             }
         }
         // Non-vacuity: each routed shape was actually generated, so the
-        // validation above ran on a date op and a space op, not only on text.
-        for shape in ["date", "space", "text"] {
+        // validation above ran on a date, a space and an option op, not only on text.
+        for shape in ["date", "space", "option", "text"] {
             assert!(
                 seen.get(shape).copied().unwrap_or(0) > 0,
                 "generator never emitted a {shape}-shaped SetProperty in 64 chains: {seen:?}"

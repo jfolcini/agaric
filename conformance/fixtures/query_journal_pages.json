@@ -117,6 +117,30 @@
       "name": "journal_pages_january",
       "rows": ["B2", "B3", "B1", "B6"],
       "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "range_bound_not_in_date_shape",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "range_bound_not_a_calendar_day",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "range_start_after_end",
+      "rows": [],
+      "total_count": null
     }
   ],
   "name": "query_journal_pages",
@@ -167,6 +191,48 @@
       "command": "list_journal_pages_in_range",
       "comment": "`ordered` because the sort key is the page's date TITLE, which the fixture controls — and the seed is deliberately NOT in date order, so the expected sequence differs from the canonical `B1, B2, …` sort and this step really does pin `ORDER BY content ASC`.",
       "name": "journal_pages_january"
+    },
+    {
+      "args": {
+        "endDate": "2026-01-31",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "startDate": "2026-1-01"
+      },
+      "command": "list_journal_pages_in_range",
+      "comment": "#6054 — `validate_date_format` refuses a bound that is not `YYYY-MM-DD`; the mock compared it as a string and answered.",
+      "expect_error": "validation",
+      "name": "range_bound_not_in_date_shape"
+    },
+    {
+      "args": {
+        "endDate": "2026-02-30",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "startDate": "2026-01-01"
+      },
+      "command": "list_journal_pages_in_range",
+      "comment": "#6054 — the shape is right but February has no 30th, so chrono refuses it.",
+      "expect_error": "validation",
+      "name": "range_bound_not_a_calendar_day"
+    },
+    {
+      "args": {
+        "endDate": "2026-01-01",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "startDate": "2026-01-31"
+      },
+      "command": "list_journal_pages_in_range",
+      "comment": "#6054 — `start_date must be <= end_date`; the mock answered an empty list.",
+      "expect_error": "validation",
+      "name": "range_start_after_end"
     }
   ],
   "seed": {

@@ -1,0 +1,102 @@
+{
+  "description": "#6054 — found by the differential fuzz (`conformance_fuzz`), shrunk. `move_block` answers `new_position` as the PROVISIONAL rank `newIndex + 1` (`index_to_provisional_position`), not the dense rank the block lands on: moving the only child of S1 to slot 1 answers 2, while the snapshot holds it at 1. The mock answered the dense rank.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "only child",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 2,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "move_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "op1",
+      "returns": ["B2#block_type=content#content=only child#parent_id=B1#position=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "op2",
+      "returns": ["B2#new_parent_id=B1#new_position=2"]
+    }
+  ],
+  "name": "move_block_returns_provisional_rank",
+  "ops": [
+    {
+      "args": {
+        "blockType": "content",
+        "content": "only child",
+        "index": 0,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "name": "op1",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C1",
+        "newIndex": 1,
+        "newParentId": "S1"
+      },
+      "command": "move_block",
+      "name": "op2",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

@@ -90,7 +90,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use super::conformance_command::{relabel_records, run_command_op};
+use super::conformance_command::{Declarations, relabel_records, run_command_op};
 use super::conformance_snapshot::{Snapshot, build_snapshot_with_order};
 
 // ---------------------------------------------------------------------------
@@ -405,8 +405,8 @@ async fn apply_op(pool: &SqlitePool, mat: &Materializer, op: &Value, created_ids
             // The restore op's `deleted_at_ref` is the originating delete op's
             // `created_at` — the epoch-ms guard the projection matches against
             // `blocks.deleted_at` to scope the un-delete to that delete's
-            // cohort. The mock's `restore_block` carries no such guard (it
-            // clears `deleted_at` unconditionally), so the fixture op args have
+            // cohort. The mock's `restore_block` takes no such guard (its
+            // cohort marker is not this timestamp), so the fixture op args have
             // none; the runner sources it the way `restore_block_inner` does —
             // by reading the live tombstone's `deleted_at` from the DB now.
             let id = arg_label_id("blockId").expect("restore_block.blockId");
@@ -1214,7 +1214,11 @@ pub struct FixtureReplay {
 /// Seed a fresh backend from `fixture["seed"]`, apply `fixture["ops"]` through
 /// the durable-op path, guard every settled boundary, and build the normalized
 /// snapshot.
-pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
+pub async fn replay_fixture(
+    fixture: &Value,
+    name: &str,
+    declarations: Declarations,
+) -> FixtureReplay {
     let name = name.to_owned();
     let (pool, app_data_dir) = test_pool().await;
     let mat = test_materializer(&pool);
@@ -1531,10 +1535,16 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
                     .collect(),
                 _ => Vec::new(),
             };
+            // #6054 — a command refuses an absent target and so gaps nothing;
+            // only the payload replay reaching one means the fixture is wrong.
             let old_parents =
-                read_gapped_parent_candidates(&pool, &name, command, &structural_targets)
+                match read_gapped_parent_candidates(&pool, &name, command, &structural_targets)
                     .await
-                    .unwrap_or_else(|message| panic!("{message}"));
+                {
+                    Ok(parents) => parents,
+                    Err(_) if via_command => Vec::new(),
+                    Err(message) => panic!("{message}"),
+                };
             // #4670 — a REJECTED command changed nothing, so the structural
             // bookkeeping and the removed-value check below only apply to an
             // op that ran; the engine-parity guard after them stays
@@ -1548,6 +1558,7 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
                     &op,
                     &created_ids,
                     &op_refs,
+                    declarations,
                 )
                 .await;
                 settle(&mat).await;
@@ -1640,7 +1651,7 @@ async fn run_fixture(path: &PathBuf) {
         .unwrap_or_else(|e| panic!("parse fixture {}: {e}", path.display()));
     let name = fixture["name"].as_str().unwrap_or("<unnamed>").to_owned();
 
-    let replay = replay_fixture(&fixture, &name).await;
+    let replay = replay_fixture(&fixture, &name, Declarations::Enforced).await;
     let snapshot_value = replay.snapshot.clone();
 
     // 5. #3347 — optional post-op READ steps. Each runs one query command

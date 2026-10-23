@@ -1171,9 +1171,12 @@ export const blocksHandlers = {
 
   create_block: (args) => {
     const a = args as Record<string, unknown>
-    // #2849 PR2 — honor a client-supplied ULID verbatim (the backend uses it as
-    // the block id iff well-formed + non-colliding); fall back to a minted id.
-    const id = (a['blockId'] as string | null | undefined) ?? fakeId()
+    const blockType = a['blockType'] as string
+    // #2849 PR2 — honor a client-supplied ULID verbatim, else mint one. A
+    // colliding id is refused below, as `resolve_block_id_in_tx` refuses it.
+    // The page path mints its own id, so a page ignores it.
+    const clientId = blockType === 'page' ? null : (a['blockId'] as string | null | undefined)
+    const id = clientId ?? fakeId()
     const parentId = (a['parentId'] as string) ?? null
     // `scope: SpaceScope` mirrors the backend
     // `create_block_inner_with_space` semantics: a new page or tag is
@@ -1181,13 +1184,16 @@ export const blocksHandlers = {
     // (backlink counts, alias resolution, etc.) recognise it as belonging to
     // that space.
     const spaceId = readActiveSpaceScope('create_block', a)
-    const blockType = a['blockType'] as string
     // #763 — the block's `page_id` is the ROOT page of the parent chain, not the
     // immediate parent. The backend resolves the parent's own `page_id` (which,
     // for a content parent, already holds the root page; for a page parent, is
     // its own id). Stamping the raw `parentId` mis-set `page_id` to a content
     // parent — the same class as the #1775 seed-loader / move-handler fix.
     const createParent = parentId != null ? blocks.get(parentId) : null
+    // `validate_parent_in_tx`: the parent is a live block.
+    if (parentId != null && (!createParent || createParent['deleted_at'] != null)) {
+      throw notFoundRejection(`parent block '${parentId}'`)
+    }
     // #4725 — the tag view is read-only; `create_block_in_tx` rejects a tag parent.
     if (createParent?.['block_type'] === 'tag') {
       throw validationRejection(
@@ -1217,6 +1223,13 @@ export const blocksHandlers = {
           op_refs: [] as { device_id: string; seq: number }[],
         }
       }
+    }
+    // `resolve_block_id_in_tx`: a client id already in `blocks`, live or not.
+    if (clientId != null && blocks.has(clientId)) {
+      throw appErrorRejection({
+        kind: 'conflict',
+        message: `block id '${clientId}' already exists`,
+      })
     }
     // A page or tag created at the root of an active space: the backend stamps
     // the space in the same transaction (`create_page_in_space_inner`,
@@ -1572,7 +1585,10 @@ export const blocksHandlers = {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const b = blocks.get(blockId)
-    if (!b) throw notFoundRejection(`block '${blockId}' not found`)
+    // `edit_block_in_tx` reads the live row only.
+    if (!b || b['deleted_at'] != null) {
+      throw notFoundRejection(`block '${blockId}' (not found or deleted)`)
+    }
     // #4723 — page titles are unique per space: mirrors the backend's
     // `reject_duplicate_page_title` (the page itself is not its own clash).
     if (b['block_type'] === 'page') {
@@ -1619,6 +1635,12 @@ export const blocksHandlers = {
   delete_block: (args) => {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
+    // `verify_deletable_in_tx`.
+    const target = blocks.get(blockId)
+    if (!target) throw notFoundRejection(`block '${blockId}'`)
+    if (target['deleted_at'] != null) {
+      throw invalidOperationRejection(`block '${blockId}' is already deleted`)
+    }
     const now = nextCohortMarker()
     const cohort = deleteCohort(blocks, blockId, now)
     const op = pushOp('delete_block', { block_id: blockId })
@@ -1715,6 +1737,13 @@ export const blocksHandlers = {
   restore_block: (args) => {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
+    // `verify_restorable_in_tx`, less its `deleted_at_ref` match: the mock's
+    // cohort marker is not the backend's timestamp.
+    const target = blocks.get(blockId)
+    if (!target) throw notFoundRejection(`block '${blockId}'`)
+    if (target['deleted_at'] == null) {
+      throw invalidOperationRejection(`block '${blockId}' is not deleted`)
+    }
     const restoredCount = restoreRefusingDuplicateTagNames(() => restoreCohort(blocks, blockId))
     pushOp('restore_block', { block_id: blockId })
     return { block_id: blockId, restored_count: restoredCount }
@@ -1896,7 +1925,10 @@ export const blocksHandlers = {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const b = blocks.get(blockId)
-    if (!b) throw notFoundRejection(`block '${blockId}' not found`)
+    // `validate_move_in_tx` reads the live row only.
+    if (!b || b['deleted_at'] != null) {
+      throw notFoundRejection(`block '${blockId}' (not found or deleted)`)
+    }
     const oldParentId = (b['parent_id'] as string | null) ?? null
     // #958 — record `old_position` as the block's 1-based DENSE RANK among its
     // current siblings, NOT its raw stored `position`. The seed stores some
@@ -1969,11 +2001,13 @@ export const blocksHandlers = {
       old_parent_id: oldParentId,
       old_position: oldPosition,
     })
-    // #2468 — `WithOps<MoveResponse>`.
+    // #2468 — `WithOps<MoveResponse>`. Its `new_position` is the backend's
+    // provisional rank, `newIndex + 1` (`index_to_provisional_position`), not
+    // the dense rank the block lands on.
     return {
       block_id: blockId,
       new_parent_id: newParentId,
-      new_position: newPosition,
+      new_position: newIndex + 1,
       op_refs: [{ device_id: op.device_id, seq: op.seq }],
     }
   },

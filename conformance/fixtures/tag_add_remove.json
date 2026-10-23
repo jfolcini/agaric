@@ -1,9 +1,13 @@
 {
-  "description": "Tag association convergence: add a tag, add the SAME tag again (must dedupe to a single block_tags edge — #622/#709 LWW), add a second tag, then remove the first (must remove that edge only). Seed pages S3/S4 are the tag blocks (block_tags.tag_id has an FK to blocks.id, so a tag must be a real block). Drives add_tag/remove_tag through the foreground engine pipeline; asserts the SETTLED block_tags projection holds exactly the surviving edge (S2->S4).",
+  "description": "Tag association through the two commands: add a tag, add the SAME tag again (refused with `invalid_operation`, so `block_tags` keeps one edge and the op log one `add_tag`, #2468), add a second tag, remove the first (that edge only goes), then remove it again (refused with `not_found`). S5 is tagged with S4 and then trashed: tagging it, or untagging it, is refused with `not_found`, and its edge stays. S3 and S4 are `tag` blocks, as `add_tag_in_tx` requires. The settled `block_tags` holds S2->S4 and the trashed S5->S4. The op apply's own dedupe of a repeated `AddTag` (#622/#709) is pinned in the engine's tests, not here: the mock has no op apply to compare.",
   "expected": {
     "block_tags": [
       {
         "block_id": "B2",
+        "tag_id": "B4"
+      },
+      {
+        "block_id": "B5",
         "tag_id": "B4"
       }
     ],
@@ -35,7 +39,7 @@
         "todo_state": null
       },
       {
-        "block_type": "page",
+        "block_type": "tag",
         "content": "project",
         "deleted_at": null,
         "due_date": null,
@@ -48,7 +52,7 @@
         "todo_state": null
       },
       {
-        "block_type": "page",
+        "block_type": "tag",
         "content": "urgent",
         "deleted_at": null,
         "due_date": null,
@@ -59,13 +63,29 @@
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "trashed",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
       }
     ],
     "op_log_digest": {
-      "count": 4,
+      "count": 5,
       "ops": [
         {
           "op_type": "add_tag"
+        },
+        {
+          "op_type": "delete_block"
         },
         {
           "op_type": "add_tag"
@@ -81,8 +101,47 @@
     "page_links": [],
     "properties": []
   },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": "invalid_operation",
+      "name": "re_adding_an_applied_tag_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "removing_an_unattached_tag_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "tagging_a_trashed_block_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "untagging_a_trashed_block_is_refused",
+      "returns": []
+    }
+  ],
   "name": "tag_add_remove",
   "ops": [
+    {
+      "args": {
+        "blockId": "S5",
+        "tagId": "S4"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S5"
+      },
+      "command": "delete_block"
+    },
     {
       "args": {
         "blockId": "S2",
@@ -95,7 +154,10 @@
         "blockId": "S2",
         "tagId": "S3"
       },
-      "command": "add_tag"
+      "command": "add_tag",
+      "expect_error": "invalid_operation",
+      "name": "re_adding_an_applied_tag_is_refused",
+      "via": "command"
     },
     {
       "args": {
@@ -110,6 +172,37 @@
         "tagId": "S3"
       },
       "command": "remove_tag"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "tagId": "S3"
+      },
+      "command": "remove_tag",
+      "expect_error": "not_found",
+      "name": "removing_an_unattached_tag_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "tagId": "S3"
+      },
+      "command": "add_tag",
+      "expect_error": "not_found",
+      "name": "tagging_a_trashed_block_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "tagId": "S4"
+      },
+      "command": "remove_tag",
+      "comment": "S5 still holds S4 in the trash; the refusal keeps the edge.",
+      "expect_error": "not_found",
+      "name": "untagging_a_trashed_block_is_refused",
+      "via": "command"
     }
   ],
   "scenarios": ["tag-dedupe-lww", "tag-remove-single-edge"],
@@ -130,18 +223,25 @@
         "position": 1
       },
       {
-        "block_type": "page",
+        "block_type": "tag",
         "content": "project",
         "id": "S3",
         "parent_id": null,
         "position": 2
       },
       {
-        "block_type": "page",
+        "block_type": "tag",
         "content": "urgent",
         "id": "S4",
         "parent_id": null,
         "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "trashed",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 2
       }
     ],
     "properties": [],

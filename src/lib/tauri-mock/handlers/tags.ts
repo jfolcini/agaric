@@ -13,6 +13,9 @@ import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import {
   type TagExprNode,
   type TypedHandlers,
+  assertTagFilterWithinCap,
+  invalidOperationRejection,
+  notFoundRejection,
   ownerSpaceOf,
   refInclusiveTags,
   validationRejection,
@@ -246,47 +249,60 @@ function evalTagQuery(
   return { items, next_cursor: null, has_more: false, total_count: null }
 }
 
+/** The live block `id` names, or the `not_found` both tag commands refuse with. */
+function liveBlock(id: string): Record<string, unknown> {
+  const b = blocks.get(id)
+  if (!b || b['deleted_at'] != null) throw notFoundRejection(`block '${id}' (not found or deleted)`)
+  return b
+}
+
+/**
+ * `resolve_block_space`: the block's own `space_id`, else its page's. The
+ * mock's older `space` property answers where neither column is set.
+ */
+function blockSpaceOf(b: Record<string, unknown>): string | null {
+  const page = blocks.get((b['page_id'] as string | null) ?? '')
+  return (
+    (b['space_id'] as string | null | undefined) ??
+    (page?.['space_id'] as string | null | undefined) ??
+    ownerSpaceOf(b)
+  )
+}
+
 export const tagsHandlers = {
+  // #2468 — the refusals `add_tag_in_tx` raises, in its order. The tag's
+  // `block_type = 'tag'` check is not mirrored: the payload-replayed
+  // conformance fixtures tag with pages, which the backend's op apply accepts.
   add_tag: (args) => {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const tagId = a['tagId'] as string
-    // #2468 — duplicate add: the REAL `add_tag` command REJECTS it
-    // (`InvalidOperation("tag already applied")`, `add_tag_inner`). The mock
-    // stays lenient because the `tag_add_remove` conformance fixture drives
-    // the backend's op-APPLY pipeline (which logs the duplicate op for LWW
-    // convergence, #622/#709) through this one command surface. On that
-    // mock-only lenient path the `WithOps<TagResponse>` response carries
-    // EMPTY `op_refs`: reversing the duplicate would remove an edge an
-    // earlier op also added, so it is not an undoable ref and the FE must
-    // not push an undo entry for it.
-    const alreadyAttached = blockTags.get(blockId)?.has(tagId) ?? false
+    const block = liveBlock(blockId)
+    const tag = liveBlock(tagId)
+    // An orphan tag is adopted into a spaced block's space by the backend;
+    // the mock leaves it unspaced, which only the space readers can see.
+    const blockSpace = blockSpaceOf(block)
+    const tagSpace = blockSpaceOf(tag)
+    if (blockSpace !== tagSpace && !(blockSpace !== null && tagSpace === null)) {
+      throw validationRejection(
+        `cross-space tag: block '${blockId}' (space ${blockSpace}) cannot use tag '${tagId}' (space ${tagSpace})`,
+      )
+    }
+    if (blockTags.get(blockId)?.has(tagId)) throw invalidOperationRejection('tag already applied')
     if (!blockTags.has(blockId)) blockTags.set(blockId, new Set())
     blockTags.get(blockId)?.add(tagId)
     const op = pushOp('add_tag', { block_id: blockId, tag_id: tagId })
-    return {
-      block_id: blockId,
-      tag_id: tagId,
-      op_refs: alreadyAttached ? [] : [{ device_id: op.device_id, seq: op.seq }],
-    }
+    return { block_id: blockId, tag_id: tagId, op_refs: [{ device_id: op.device_id, seq: op.seq }] }
   },
 
   remove_tag: (args) => {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const tagId = a['tagId'] as string
-    // #2468 — unattached remove: the REAL `remove_tag` command REJECTS it
-    // (`NotFound("tag association")`, `remove_tag_inner`); the mock stays
-    // lenient (see add_tag — conformance-fixture constraint) and surfaces no
-    // undoable ref on that mock-only path.
-    const wasAttached = blockTags.get(blockId)?.has(tagId) ?? false
-    blockTags.get(blockId)?.delete(tagId)
+    liveBlock(blockId)
+    if (!blockTags.get(blockId)?.delete(tagId)) throw notFoundRejection('tag association')
     const op = pushOp('remove_tag', { block_id: blockId, tag_id: tagId })
-    return {
-      block_id: blockId,
-      tag_id: tagId,
-      op_refs: wasAttached ? [{ device_id: op.device_id, seq: op.seq }] : [],
-    }
+    return { block_id: blockId, tag_id: tagId, op_refs: [{ device_id: op.device_id, seq: op.seq }] }
   },
 
   // #81 / bulk add one tag to N blocks. Lenient skip of
@@ -318,6 +334,7 @@ export const tagsHandlers = {
   // → `Or`; no leaves at all short-circuits to an empty page.
   query_by_tags: (args) => {
     const a = args as Record<string, unknown>
+    assertTagFilterWithinCap(a['tagIds'] as string[] | null)
     const leaves: TagExprNode[] = [
       ...((a['tagIds'] as string[] | null) ?? []).map((value): TagExprNode => ({
         type: 'Tag',

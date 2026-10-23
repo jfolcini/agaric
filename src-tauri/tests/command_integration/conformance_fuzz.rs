@@ -7,12 +7,17 @@
 //! that gap by generating the sequences instead of hand-writing them:
 //!
 //! 1. `op_chain_strategy` (the materializer proptests' generator) produces a
-//!    structurally valid op chain;
-//! 2. [`chain_to_fixture`] renders it in the conformance fixture vocabulary;
-//! 3. [`replay_fixture`] drives it through the REAL backend and snapshots;
-//! 4. [`MockBridge`] drives the SAME fixture through the TS mock and snapshots;
-//! 5. the two snapshots must be equal, and proptest shrinks any mismatch to a
-//!    minimal chain, which is written out as a ready-to-commit fixture.
+//!    structurally valid op chain, and [`invalid_strategy`] a few commands the
+//!    backend refuses to splice into it;
+//! 2. [`chain_to_fixture`] renders both in the conformance fixture vocabulary,
+//!    every op a `via: "command"` op;
+//! 3. [`replay_fixture`] drives it through the REAL backend's commands, records
+//!    what each returned or refused, and snapshots;
+//! 4. [`MockBridge`] drives the SAME fixture, each op declaring the refusal the
+//!    backend recorded, through the TS mock;
+//! 5. the snapshots and the per-command records must be equal, and proptest
+//!    shrinks any mismatch to a minimal chain, which is written out as a
+//!    ready-to-commit fixture.
 //!
 //! ## Why a child process
 //!
@@ -21,9 +26,10 @@
 //! loop, where shrinking replays a chain dozens of times: one esbuild bundle
 //! and one process start, then one line per candidate chain. The bundle entry
 //! point is `src/lib/tauri-mock/__tests__/conformance-fuzz-bridge.ts`, and it
-//! calls the SAME `replayFixture` that `conformance.test.ts` runs over the
-//! committed corpus under vitest — so the two module pipelines are
-//! cross-checked on every PR by the corpus, and only the driver is new here.
+//! calls the SAME replay (`replayFixtureWithRecords`, which `replayFixture`
+//! wraps) that `conformance.test.ts` runs over the committed corpus under
+//! vitest — so the two module pipelines are cross-checked on every PR by the
+//! corpus, and only the driver is new here.
 //!
 //! ## Why `#[ignore]`
 //!
@@ -39,18 +45,27 @@
 //!
 //! Whatever the generator cannot emit, this lane cannot compare. Today that is
 //! the attachment ops (no mock handler and no fixture vocabulary),
-//! `SetProperty(space)` (see [`chain_to_fixture`]), `[[…]]` link tokens (the
-//! generator's content alphabet has no brackets, so `page_links` is always
-//! empty here — it is pinned by the `edit_then_move_link_survives` and
-//! `page_links_stats` fixtures instead), and everything the snapshot itself
-//! omits (return values, error paths, timestamps, caches). The reached-command
-//! tally the lane prints is the honest statement of what it did cover.
+//! `SetProperty(space)` (see [`chain_to_fixture`]), `[[…]]`, `#[…]` and `((…))`
+//! tokens (the generator's content alphabet has no brackets, so `page_links`
+//! is always empty here — it is pinned by the `edit_then_move_link_survives`
+//! and `page_links_stats` fixtures instead), the read commands and the caches
+//! they serve, and the timestamps the snapshot omits. Of the refusals, it
+//! reaches the ones [`Invalid`] lists, plus the repeated `add_tag` and the
+//! unattached `remove_tag` that the generator's own tag ops draw. An
+//! out-of-range `limit` is not among them, because only a read takes one (the
+//! `query_history` and `query_search_blocks_modes` fixtures pin those
+//! refusals). The reached-command and refusal tallies the lane prints are the
+//! honest statement of what it did cover.
 
 use std::cell::RefCell;
 
 use super::conformance::replay_fixture;
-use agaric_engine::proptest_db_harness::{OpKind, op_chain_strategy, resolve_chain};
+use super::conformance_command::{Declarations, relabel_records};
+use super::conformance_snapshot::canonical_label_map;
+use agaric_engine::proptest_db_harness::{op_chain_strategy, resolve_chain};
 use agaric_store::op::{OpPayload, SPACE_PROPERTY_KEY};
+use proptest::prelude::{Just, Strategy, any, prop_oneof};
+use proptest::sample::Index;
 use proptest::test_runner::{Config, TestCaseError, TestError, TestRunner};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -60,13 +75,14 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 /// Cases per run. Low by default (each case migrates a fresh SQLite DB and
 /// round-trips a child process); the lane bumps it via `PROPTEST_CASES`.
-/// 256, measured rather than picked: 64 reached only seven of the ten commands
-/// the renderer can emit, so the lane was comparing less than it claimed. At
-/// 256 all ten appear and the run takes ~48s (11s of that is the property
-/// itself; the rest is proptest generating and the backend replaying). See the
-/// nextest `slow-timeout` override that goes with it — 48s against the default
-/// 2x30s window is not enough headroom.
+/// 256, measured rather than picked: 64 left part of the commands the renderer
+/// can emit unreached, so the lane was comparing less than it claimed. See the
+/// nextest `slow-timeout` override that goes with it: a run does not fit the
+/// default 2x30s window.
 const DEFAULT_CASES: u32 = 256;
+
+/// The name every generated fixture carries.
+const FUZZ_FIXTURE: &str = "conformance_fuzz_generated";
 
 /// Chain length. Long enough for create/move/delete/restore interleavings,
 /// short enough that a shrunk counter-example is readable as a fixture.
@@ -80,22 +96,24 @@ const SEED_PAGE: &str = "S1";
 /// The seeded block every generated tag edge points at. The generator draws
 /// `tag_id` from the same ULID pool as block ids, so an un-remapped edge would
 /// name a block that was never created — the same remap `prepare_chain_b5`
-/// applies.
+/// applies. A `tag` block, because the `add_tag` command refuses any other.
 const SEED_TAG: &str = "S2";
+
+/// The most refused commands one chain splices in: enough to interleave them
+/// with the valid ops, few enough that the chain stays mostly valid.
+const MAX_INVALID: usize = 3;
 
 /// The commands a generated chain is expected to reach. Asserted as a floor on
 /// the reached tally so the lane cannot quietly degrade to "create + edit" when
 /// the generator or the renderer narrows — the failure mode #4669 names as
 /// "coverage that is assumed rather than visible".
 ///
-/// MEASURED, not assumed. Over [`DEFAULT_CASES`] the tally came out
-/// `create_block` 287, `edit_block` 93, `set_property` 78, `move_block` 70,
-/// `delete_block` 44, `add_tag` 40, `remove_tag` 35 — and then a long tail:
-/// `restore_block` 7, `delete_property` 4, `purge_block` 4. The seed is random
-/// per run (that is the point of a fuzz lane), so asserting on the tail would
-/// make this flaky rather than strict: at ~4 expected hits, a run that draws
-/// zero is a couple of percent, and a weekly lane that reddens on its own RNG
-/// teaches people to re-run it without reading it.
+/// MEASURED, not assumed: over [`DEFAULT_CASES`] the generator reaches these
+/// seven many times each, and `restore_block` and `delete_property` only a
+/// handful. The seed is random per run (that is the point of a fuzz lane), so
+/// asserting on the tail would make this flaky rather than strict, and a
+/// weekly lane that reddens on its own RNG teaches people to re-run it without
+/// reading it.
 ///
 /// So the floor covers the seven robust ones and the tail is REPORTED instead —
 /// every run prints the full tally, which is what makes a narrowing visible
@@ -115,12 +133,12 @@ const EXPECTED_COMMANDS: &[&str] = &[
 // ---------------------------------------------------------------------------
 
 /// The fixture seed every generated chain starts from: a page to hang the tree
-/// off and a page to use as a tag target.
+/// off and a tag to use as a tag target.
 fn seed() -> Value {
     json!({
         "blocks": [
             { "id": SEED_PAGE, "block_type": "page", "content": "Home", "parent_id": null, "position": 1 },
-            { "id": SEED_TAG, "block_type": "page", "content": "tag", "parent_id": null, "position": 2 },
+            { "id": SEED_TAG, "block_type": "tag", "content": "tag", "parent_id": null, "position": 2 },
         ],
         "properties": [],
         "tags": [],
@@ -145,10 +163,21 @@ fn seed() -> Value {
 ///   (`parity_property_key` here, the `key === 'space'` skip in
 ///   `conformance-snapshot.ts`). Rendering it would add op_log-digest noise for
 ///   an effect neither side can observe.
-fn chain_to_fixture(payloads: &[OpPayload], name: &str) -> Value {
+///
+/// Each `(index, invalid)` in `invalid` is rendered by [`render_invalid`]
+/// before the payload at `index` (past the end: after the last one). Every op
+/// is a `via: "command"` op named `opN`, so its return or refusal is recorded.
+fn chain_to_fixture(payloads: &[OpPayload], invalid: &[(Index, Invalid)], name: &str) -> Value {
     let mut label_of: BTreeMap<String, String> = BTreeMap::new();
     let mut creates = 0usize;
     let mut ops: Vec<Value> = Vec::new();
+    let mut splices: Vec<(usize, Invalid)> = invalid
+        .iter()
+        .map(|(at, kind)| (at.index(payloads.len() + 1), *kind))
+        .collect();
+    // Stable: two refusals at one index keep their generated order.
+    splices.sort_by_key(|(at, _)| *at);
+    let mut splices = splices.into_iter().peekable();
 
     // A reference to a block the chain created resolves to its `Cn` label; a
     // reference the renderer cannot resolve (only possible for a purged id,
@@ -161,7 +190,10 @@ fn chain_to_fixture(payloads: &[OpPayload], name: &str) -> Value {
             .clone()
     };
 
-    for payload in payloads {
+    for (at, payload) in payloads.iter().enumerate() {
+        while let Some((_, kind)) = splices.next_if(|(splice_at, _)| *splice_at == at) {
+            ops.extend(render_invalid(kind, &mut creates));
+        }
         let op = match payload {
             OpPayload::CreateBlock(c) => {
                 creates += 1;
@@ -201,9 +233,9 @@ fn chain_to_fixture(payloads: &[OpPayload], name: &str) -> Value {
                 "blockId": label(&label_of, d.block_id.as_str()),
             }}),
             OpPayload::RestoreBlock(r) => json!({ "command": "restore_block", "args": {
-                // `deleted_at_ref` is sourced from the live tombstone by the
-                // Rust runner, exactly as `restore_block_inner` does, so the
-                // fixture op carries no guard (the mock has none either).
+                // The Rust runner passes the live tombstone as `deleted_at_ref`,
+                // as the trash view does, so the fixture op carries no guard
+                // (the mock takes none).
                 "blockId": label(&label_of, r.block_id.as_str()),
             }}),
             OpPayload::PurgeBlock(p) => json!({ "command": "purge_block", "args": {
@@ -241,8 +273,158 @@ fn chain_to_fixture(payloads: &[OpPayload], name: &str) -> Value {
         };
         ops.push(op);
     }
+    for (_, kind) in splices {
+        ops.extend(render_invalid(kind, &mut creates));
+    }
+    for (n, op) in ops.iter_mut().enumerate() {
+        op["via"] = json!("command");
+        op["name"] = json!(format!("op{}", n + 1));
+    }
 
     json!({ "name": name, "seed": seed(), "ops": ops, "expected": null })
+}
+
+/// A command on a block in a state the generator's model never targets
+/// (#6054), mostly one the backend refuses. Spliced into a chain so the lane
+/// compares refusals as well as successes. Each is rendered with the ops that
+/// put its target in that state, so its outcome does not depend on the chain
+/// around it. (`Deleted(Restore)` and `Deleted(Purge)` are the accepted cases.)
+#[derive(Debug, Clone, Copy)]
+enum Invalid {
+    /// A command on a block that was created and purged: no row has its id.
+    Missing(Target),
+    /// A command on a block in the trash.
+    Deleted(Target),
+    /// A `create_block` whose client id the seed page already holds.
+    CollidingId,
+    /// A `due_date` that is not a calendar day.
+    BadDate,
+    /// A tag applied to a page of another space.
+    CrossSpace,
+}
+
+/// The command an [`Invalid::Missing`] or [`Invalid::Deleted`] names its
+/// block in.
+#[derive(Debug, Clone, Copy)]
+enum Target {
+    Edit,
+    SetProperty,
+    DeleteProperty,
+    AddTag,
+    RemoveTag,
+    Move,
+    Delete,
+    Restore,
+    Purge,
+    CreateChild,
+}
+
+fn invalid_strategy() -> impl Strategy<Value = Invalid> {
+    let target = || {
+        prop_oneof![
+            Just(Target::Edit),
+            Just(Target::SetProperty),
+            Just(Target::DeleteProperty),
+            Just(Target::AddTag),
+            Just(Target::RemoveTag),
+            Just(Target::Move),
+            Just(Target::Delete),
+            Just(Target::Restore),
+            Just(Target::Purge),
+            Just(Target::CreateChild),
+        ]
+    };
+    prop_oneof![
+        target().prop_map(Invalid::Missing),
+        target().prop_map(Invalid::Deleted),
+        Just(Invalid::CollidingId),
+        Just(Invalid::BadDate),
+        Just(Invalid::CrossSpace),
+    ]
+}
+
+/// The harness space, as a `create_block` scope.
+fn harness_scope() -> Value {
+    json!({ "kind": "active", "space_id": "$SPACE" })
+}
+
+/// `invalid` as fixture ops, counting every block they create into `creates`
+/// so the chain's own `Cn` labels stay aligned.
+fn render_invalid(invalid: Invalid, creates: &mut usize) -> Vec<Value> {
+    let mut create = |ops: &mut Vec<Value>| -> String {
+        *creates += 1;
+        ops.push(json!({ "command": "create_block", "args": {
+            "parentId": SEED_PAGE, "blockType": "content", "content": "doomed", "index": 0,
+            "scope": harness_scope(),
+        }}));
+        format!("C{creates}")
+    };
+    let mut ops = Vec::new();
+    match invalid {
+        Invalid::Missing(target) | Invalid::Deleted(target) => {
+            let label = create(&mut ops);
+            ops.push(json!({ "command": "delete_block", "args": { "blockId": label } }));
+            if matches!(invalid, Invalid::Missing(_)) {
+                ops.push(json!({ "command": "purge_block", "args": { "blockId": label } }));
+            }
+            ops.push(target_op(target, &label));
+        }
+        Invalid::CollidingId => ops.push(json!({ "command": "create_block", "args": {
+            "blockId": SEED_PAGE, "parentId": SEED_PAGE, "blockType": "content",
+            "content": "usurper", "index": 0, "scope": harness_scope(),
+        }})),
+        Invalid::BadDate => ops.push(json!({ "command": "set_property", "args": {
+            "blockId": SEED_PAGE, "key": "due_date", "value": { "value_date": "2026-02-30" },
+        }})),
+        Invalid::CrossSpace => {
+            *creates += 2;
+            let (space, page) = (*creates - 1, *creates);
+            ops.push(json!({ "command": "create_space", "args": {
+                "name": format!("Away {space}"), "accentColor": null,
+            }}));
+            ops.push(json!({ "command": "create_page_in_space", "args": {
+                "content": "away", "parentId": null, "spaceId": format!("C{space}"),
+            }}));
+            ops.push(json!({ "command": "add_tag", "args": {
+                "blockId": format!("C{page}"), "tagId": SEED_TAG,
+            }}));
+        }
+    }
+    ops
+}
+
+/// `target` aimed at `label`. A child create is not counted into the chain's
+/// `Cn` labels: under a missing or trashed parent it is refused and mints no
+/// block, and a stack that accepts it has already diverged.
+fn target_op(target: Target, label: &str) -> Value {
+    let block = json!({ "blockId": label });
+    match target {
+        Target::Edit => json!({ "command": "edit_block", "args": {
+            "blockId": label, "toText": "edited",
+        }}),
+        Target::SetProperty => json!({ "command": "set_property", "args": {
+            "blockId": label, "key": "reviewer", "value": { "value_text": "ada" },
+        }}),
+        Target::DeleteProperty => json!({ "command": "delete_property", "args": {
+            "blockId": label, "key": "reviewer",
+        }}),
+        Target::AddTag => json!({ "command": "add_tag", "args": {
+            "blockId": label, "tagId": SEED_TAG,
+        }}),
+        Target::RemoveTag => json!({ "command": "remove_tag", "args": {
+            "blockId": label, "tagId": SEED_TAG,
+        }}),
+        Target::Move => json!({ "command": "move_block", "args": {
+            "blockId": label, "newParentId": SEED_PAGE, "newIndex": 0,
+        }}),
+        Target::Delete => json!({ "command": "delete_block", "args": block }),
+        Target::Restore => json!({ "command": "restore_block", "args": block }),
+        Target::Purge => json!({ "command": "purge_block", "args": block }),
+        Target::CreateChild => json!({ "command": "create_block", "args": {
+            "parentId": label, "blockType": "content", "content": "child", "index": 0,
+            "scope": harness_scope(),
+        }}),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -315,9 +497,9 @@ impl MockBridge {
         }
     }
 
-    /// Replay `fixture` through the mock and return its normalized snapshot, or
-    /// the mock's own rejection message.
-    fn snapshot(&mut self, fixture: &Value) -> Result<Value, String> {
+    /// Replay `fixture` through the mock and return its normalized snapshot and
+    /// command records, or the mock's own rejection message.
+    fn replay(&mut self, fixture: &Value) -> Result<(Value, Value), String> {
         writeln!(self.stdin, "{fixture}").map_err(|e| format!("write to mock bridge: {e}"))?;
         self.stdin
             .flush()
@@ -334,7 +516,7 @@ impl MockBridge {
         let response: Value = serde_json::from_str(&line)
             .map_err(|e| format!("parse mock response '{line}': {e}"))?;
         if response["ok"] == json!(true) {
-            Ok(response["snapshot"].clone())
+            Ok((response["snapshot"].clone(), response["records"].clone()))
         } else {
             Err(response["error"]
                 .as_str()
@@ -355,17 +537,42 @@ impl Drop for MockBridge {
 // The property
 // ---------------------------------------------------------------------------
 
+/// What the backend made of a generated chain: its snapshot, and the
+/// relabelled record of every op, as a committed fixture's `expected` and
+/// `expected_ops` hold them.
+struct BackendRun {
+    snapshot: Value,
+    records: Vec<Value>,
+}
+
+/// Each op declares the refusal the backend recorded for it, so the mock's own
+/// declaration check fails on a refusal that differs (#6054), and a written
+/// counter-example is a fixture the corpus accepts as it stands.
+fn declare_refusals(fixture: &mut Value, records: &[Value]) {
+    let ops = fixture["ops"].as_array_mut().expect("rendered ops");
+    for (op, record) in ops.iter_mut().zip(records) {
+        for (key, field) in [("expect_error", "error"), ("expect_code", "code")] {
+            if !record[field].is_null() {
+                op[key] = record[field].clone();
+            }
+        }
+    }
+}
+
 /// Write a counter-example out as a ready-to-commit fixture: the generated
-/// chain plus the backend's snapshot as `expected`, so dropping it into
-/// `conformance/fixtures/` turns the shrunk divergence into a permanent
-/// regression test on BOTH runners.
-fn write_counterexample(fixture: &Value, backend: &Value) -> PathBuf {
+/// chain plus the backend's snapshot and records as `expected` and
+/// `expected_ops`, so dropping it into `conformance/fixtures/` turns the shrunk
+/// divergence into a permanent regression test on BOTH runners.
+fn write_counterexample(fixture: &Value, backend: &BackendRun) -> PathBuf {
     let mut out = fixture.clone();
     out["description"] = json!(
         "#4669 — minimized counter-example from the differential-fuzz lane. \
                Backend-authored `expected`; move into conformance/fixtures/ to pin it."
     );
-    out["expected"] = backend.clone();
+    out["expected"] = backend.snapshot.clone();
+    if !backend.records.is_empty() {
+        out["expected_ops"] = json!(backend.records);
+    }
     // `CARGO_TARGET_TMPDIR`, not `<repo>/target`: the latter is NOT gitignored
     // (only `src-tauri/target` is), so writing there left the counter-example
     // as untracked noise at the repo root — one `git add -A` from being
@@ -392,6 +599,7 @@ fn mock_matches_backend_on_generated_op_chains_4669() {
     // in this thread — so a `borrow_mut` here can never contend.
     let bridge = RefCell::new(MockBridge::start());
     let reached: RefCell<BTreeMap<String, usize>> = RefCell::new(BTreeMap::new());
+    let refused: RefCell<BTreeMap<String, usize>> = RefCell::new(BTreeMap::new());
     let mut config = Config::default();
     if std::env::var_os("PROPTEST_CASES").is_none() {
         config.cases = DEFAULT_CASES;
@@ -406,34 +614,54 @@ fn mock_matches_backend_on_generated_op_chains_4669() {
     // `Runtime::new` spins up a fresh thread pool it then drops.
     let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
 
-    let result = runner.run(&op_chain_strategy(CHAIN_LEN), |sketches: Vec<OpKind>| {
-        let fixture = chain_to_fixture(&resolve_chain(&sketches), "conformance_fuzz_generated");
-        for op in fixture["ops"].as_array().expect("rendered ops") {
+    let strategy = (
+        op_chain_strategy(CHAIN_LEN),
+        proptest::collection::vec((any::<Index>(), invalid_strategy()), 0..=MAX_INVALID),
+    );
+    let result = runner.run(&strategy, |(sketches, invalid)| {
+        let mut fixture = chain_to_fixture(&resolve_chain(&sketches), &invalid, FUZZ_FIXTURE);
+        let backend = runtime.block_on(async {
+            let replay = replay_fixture(&fixture, FUZZ_FIXTURE, Declarations::Recorded).await;
+            let labels = canonical_label_map(&replay.canonical_order);
+            let records = relabel_records(&replay.op_records, &labels);
+            BackendRun {
+                snapshot: replay.snapshot,
+                records: records.as_array().cloned().unwrap_or_default(),
+            }
+        });
+        declare_refusals(&mut fixture, &backend.records);
+        let ops = fixture["ops"].as_array().expect("rendered ops");
+        for (op, record) in ops.iter().zip(&backend.records) {
             let command = op["command"].as_str().expect("rendered command");
             *reached.borrow_mut().entry(command.to_owned()).or_default() += 1;
+            if let Some(kind) = record["error"].as_str() {
+                *refused
+                    .borrow_mut()
+                    .entry(format!("{command} -> {kind}"))
+                    .or_default() += 1;
+            }
         }
 
-        let backend = runtime.block_on(async {
-            replay_fixture(&fixture, "conformance_fuzz_generated")
-                .await
-                .snapshot
-        });
-        let mock = bridge.borrow_mut().snapshot(&fixture).map_err(|error| {
-            let path = write_counterexample(&fixture, &backend);
-            TestCaseError::fail(format!(
-                "the mock REJECTED a chain the backend applied: {error}\n\
+        let (mock_snapshot, mock_records) =
+            bridge.borrow_mut().replay(&fixture).map_err(|error| {
+                let path = write_counterexample(&fixture, &backend);
+                TestCaseError::fail(format!(
+                    "the mock diverged from the backend's record of a command: {error}\n\
                      counter-example written to {}",
-                path.display()
-            ))
-        })?;
+                    path.display()
+                ))
+            })?;
 
-        if mock == backend {
+        let records = json!(backend.records);
+        if mock_snapshot == backend.snapshot && mock_records == records {
             return Ok(());
         }
         let path = write_counterexample(&fixture, &backend);
         Err(TestCaseError::fail(format!(
-            "mock ⇄ backend snapshot divergence\n  backend: {backend}\n  mock:    {mock}\n\
-             counter-example written to {} — move it into conformance/fixtures/ to pin it",
+            "mock ⇄ backend divergence\n  backend: {} {records}\n  mock:    {mock_snapshot} \
+             {mock_records}\ncounter-example written to {} — move it into conformance/fixtures/ \
+             to pin it",
+            backend.snapshot,
             path.display()
         )))
     });
@@ -447,6 +675,11 @@ fn mock_matches_backend_on_generated_op_chains_4669() {
     );
     for (command, count) in &reached {
         eprintln!("  {command}: {count}");
+    }
+    let refused = refused.into_inner();
+    eprintln!("#6054 and the backend refused, by command and kind:");
+    for (refusal, count) in &refused {
+        eprintln!("  {refusal}: {count}");
     }
 
     if let Err(error) = result {

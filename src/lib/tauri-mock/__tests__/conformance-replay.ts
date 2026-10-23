@@ -222,7 +222,10 @@ export function loadSeed(fixture: Fixture): void {
     const id = seedLabelToId(b['id'] as string)
     const row = blocks.get(id)
     if (!row) continue
-    row['page_id'] = row['block_type'] === 'page' ? id : resolveRootPageId(row)
+    // A root that is not a page owns itself, as the Rust stamp's
+    // `SET page_id = id WHERE page_id IS NULL` leaves it.
+    row['page_id'] =
+      row['block_type'] === 'page' || row['parent_id'] == null ? id : resolveRootPageId(row)
   }
   // The harness space's definitions (#5841), as the Rust seed declares them.
   for (const d of fixture.seed.property_defs ?? []) {
@@ -510,15 +513,32 @@ function replayOps(fixture: Fixture): CommandRecord[] {
  * normalized snapshot — the SAME shape the Rust runner authors as `expected`.
  */
 export function replayFixture(fixture: Fixture): NormalizedSnapshot {
+  return replayFixtureWithRecords(fixture).snapshot
+}
+
+/**
+ * {@link replayFixture}, plus the relabelled record of every `via: "command"`
+ * op: what the #6054 differential fuzz compares against the backend's.
+ */
+export function replayFixtureWithRecords(fixture: Fixture): {
+  snapshot: NormalizedSnapshot
+  records: CommandRecord[]
+} {
   clearMock()
   loadSeed(fixture)
   // The Rust runner stamps the seed into the test space before any op, so a
   // command that resolves names in the anchor's space (`paste_blocks`, #5160
   // N4) sees one; the stamp writes nothing the snapshot reads.
   stampMockSpace()
-  replayOps(fixture)
+  const records = replayOps(fixture)
   const state: MockState = { blocks, properties, blockTags, opLog }
-  return buildSnapshot(state, canonicalOrder(fixture))
+  const order = canonicalOrder(fixture)
+  return { snapshot: buildSnapshot(state, order), records: relabelRecords(records, order) }
+}
+
+function relabelRecords(records: CommandRecord[], order: string[]): CommandRecord[] {
+  const labels = canonicalLabelMap(order)
+  return records.map((r) => ({ ...r, returns: r.returns.map((t) => relabelToken(t, labels)) }))
 }
 
 /**
@@ -539,7 +559,5 @@ export function replayFixtureInSpace(fixture: Fixture): CommandRecord[] {
   stampMockSpace()
   const records = replayOps(fixture)
   stampMockSpace()
-  const labels = canonicalLabelMap(canonicalOrder(fixture))
-  for (const r of records) r.returns = r.returns.map((t) => relabelToken(t, labels))
-  return records
+  return relabelRecords(records, canonicalOrder(fixture))
 }

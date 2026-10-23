@@ -197,6 +197,17 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // #5281 — the renamed row; a rename onto a name its space already holds
     // is refused, which only the command sees.
     ("edit_block", "id", &["content"], &[]),
+    // #6054 — the four the differential fuzz drives as commands, so it compares
+    // what each returns or refuses, not only the state it leaves.
+    (
+        "move_block",
+        "block_id",
+        &["new_parent_id", "new_position"],
+        &[],
+    ),
+    ("restore_block", "block_id", &["restored_count"], &[]),
+    ("add_tag", "block_id", &["tag_id"], &[]),
+    ("remove_tag", "block_id", &["tag_id"], &[]),
     (
         "move_blocks_batch",
         "block_id",
@@ -361,6 +372,7 @@ pub(super) async fn apply_op_via_command(
             .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'spaceId'"))
     };
     let block_id = || BlockId::from(arg_label_id("blockId").expect("blockId").as_str());
+    let tag_id = || BlockId::from(arg_label_id("tagId").expect("tagId").as_str());
     // A batch command's `blockIds` is a LIST of the same labels `blockId`
     // takes, each expanded through `resolve_op_arg_id`, so a fixture names
     // seed rows and op-created blocks in a batch exactly as it does singly.
@@ -865,13 +877,40 @@ pub(super) async fn apply_op_via_command(
                 arg_label_id("parentId").map(|id| BlockId::from(id.as_str())),
                 arg("index").and_then(Value::as_i64),
                 &scope("scope"),
-                None,
+                // #2849 — the optimistic create's client id, a label like any other.
+                arg_label_id("blockId").map(|id| BlockId::from(id.as_str())),
             )
             .await,
         ),
         "edit_block" => {
             to_json(edit_block_inner(pool, DEV, mat, block_id(), req_str("toText")).await)
         }
+        "move_block" => to_json(
+            move_block_inner(
+                pool,
+                DEV,
+                mat,
+                block_id(),
+                arg_label_id("newParentId").map(|id| BlockId::from(id.as_str())),
+                req_i64("newIndex"),
+            )
+            .await,
+        ),
+        // The guard is the live tombstone, as the trash view passes it; a block
+        // with none passes 0, which the command refuses as not restorable.
+        "restore_block" => {
+            let id = block_id();
+            let deleted_at_ref: Option<i64> =
+                sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                    .bind(id.as_str())
+                    .fetch_optional(pool)
+                    .await
+                    .expect("restore_block: read the tombstone")
+                    .flatten();
+            to_json(restore_block_inner(pool, DEV, mat, id, deleted_at_ref.unwrap_or(0)).await)
+        }
+        "add_tag" => to_json(add_tag_inner(pool, DEV, mat, block_id(), tag_id()).await),
+        "remove_tag" => to_json(remove_tag_inner(pool, DEV, mat, block_id(), tag_id()).await),
         "record_page_open" => to_json(
             agaric_lib::commands::pages::record_page_open_inner(
                 pool,
@@ -1136,9 +1175,20 @@ pub(super) fn check_declaration(
     }
 }
 
+/// Whether a `via: "command"` op's refusal must be declared in the fixture.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Declarations {
+    /// A committed fixture: every refusal is declared (#3946).
+    Enforced,
+    /// A generated chain (#6054): the backend's record IS the declaration the
+    /// fuzzer then hands the mock.
+    Recorded,
+}
+
 /// Run one `via: "command"` op, enforce its declarations, and build its
 /// `expected_ops` record with raw ids (the caller relabels once the canonical
 /// order is final).
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_command_op(
     pool: &SqlitePool,
     mat: &Materializer,
@@ -1147,6 +1197,7 @@ pub(super) async fn run_command_op(
     op: &Value,
     created_ids: &[String],
     op_refs: &[(String, i64)],
+    declarations: Declarations,
 ) -> Value {
     let command = op["command"].as_str().expect("op command");
     let name = op["name"].as_str().unwrap_or_else(|| {
@@ -1169,13 +1220,15 @@ pub(super) async fn run_command_op(
                 serde_json::to_value(e.validation_code()).expect("serialize ValidationCode"),
             ),
         };
-    check_declaration(
-        &at,
-        declared(&at, op, "expect_error").as_deref(),
-        declared(&at, op, "expect_code").as_deref(),
-        error.as_str(),
-        code.as_str(),
-    );
+    if declarations == Declarations::Enforced {
+        check_declaration(
+            &at,
+            declared(&at, op, "expect_error").as_deref(),
+            declared(&at, op, "expect_code").as_deref(),
+            error.as_str(),
+            code.as_str(),
+        );
+    }
     json!({ "name": name, "returns": returns, "error": error, "code": code })
 }
 
@@ -1353,7 +1406,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 51;
+    const MUTATING_ARM_COUNT: usize = 55;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {
