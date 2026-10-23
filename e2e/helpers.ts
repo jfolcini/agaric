@@ -1014,11 +1014,7 @@ async function clickIntoStaticBlock(block: Locator): Promise<void> {
 
 /** Click a block to enter edit mode and wait for the TipTap editor. */
 export async function focusBlock(page: Page, index = 0) {
-  await clickIntoStaticBlock(page.locator('[data-testid="block-static"]').nth(index))
-  const editor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
-  await expect(editor).toBeVisible()
-  await editor.focus()
-  return editor
+  return editBlock(page, page.locator('[data-testid="block-static"]').nth(index))
 }
 
 /**
@@ -1032,12 +1028,27 @@ export async function focusBlock(page: Page, index = 0) {
  *     visual position.
  */
 export async function focusBlockById(page: Page, blockId: string) {
-  await clickIntoStaticBlock(
-    page.locator(`[data-testid="block-static"][data-block-id="${blockId}"]`),
-  )
+  return editBlock(page, page.locator(`[data-testid="block-static"][data-block-id="${blockId}"]`))
+}
+
+/**
+ * Click `block` into edit mode and return its editor once the editor's own focus has settled.
+ * The mount focuses a frame later (TipTap's delayed `focus`) and ProseMirror puts its selection
+ * back 20 ms after a focus; either undoes a caret that keys sent meanwhile have moved, since
+ * Chrome holds `selectionchange` back while keys stream in. A frame callback queued now runs
+ * after the mount's, and a 20 ms timer queued in it runs after ProseMirror's.
+ */
+async function editBlock(page: Page, block: Locator) {
+  await clickIntoStaticBlock(block)
   const editor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
   await expect(editor).toBeVisible()
   await editor.focus()
+  await editor.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => setTimeout(resolve, 20))
+      }),
+  )
   return editor
 }
 
