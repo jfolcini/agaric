@@ -18,7 +18,8 @@ Android WebView cannot be measured here, since the container has no KVM. Page mo
 **Changed:**
 - the constant;
 - the over-cap e2e spec, which seeds one block past the cap and reads the switch's reason;
-- a perf-spec comment that named the old number.
+- a perf-spec comment that named the old number;
+- `COMPARISON.md`'s copies of the cap, and its line that kept every journal view in blocks: the Daily view has had page mode since #6077.
 
 The unit tests read the constant, so they move with it.
 
