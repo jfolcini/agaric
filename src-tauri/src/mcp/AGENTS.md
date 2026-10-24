@@ -47,7 +47,7 @@ The name is that of the agent whose token the connection presented; `clientInfo`
 - `session_id` — the connection's ULID.
 - `op_ref` + `additional_op_refs` — drained from the `LAST_APPEND` task-local. One entry per tool call, however many ops it wrote, so a consumer that reverts it (`ActivityFeed.tsx`'s Undo and session revert) sends every ref, and `useMcpActivityFeed.ts` keeps them all.
 
-An RW write tells open views to reload through `view_notify.rs`. A tool that touches no page (a top-level tag) emits no `blocks:changed`: the frontend reads an empty page set as "reload every mounted page".
+An RW write tells open views to reload through `view_notify.rs`. A tool that touches no page (`create_tag`) names the block itself in `blocks:changed`: the frontend reads an empty page set as "reload every mounted page".
 
 ## JSON-RPC error codes
 
