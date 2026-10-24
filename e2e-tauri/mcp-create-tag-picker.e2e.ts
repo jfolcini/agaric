@@ -4,11 +4,11 @@
 //
 // Bug class (reached users): the `#` picker filters a tag list it fetched once
 // per block tree, and MCP `create_tag` emitted no `blocks:changed`, so nothing
-// dropped that list. Typing the agent's tag offered only "Create", the backend
-// refused the duplicate name, and the block was left untagged. This spec fills
-// the list with a first tag, has the agent create a second while the journal
-// stays open, types it, and reads the stored block's chip after a nav
-// round-trip (AGENTS.md § Testing invariants, rule 4).
+// dropped that list: typing the agent's tag offered only "Create". This spec
+// fills the list with a first tag, has the agent create a second while the
+// journal stays open, waits for the picker to offer it, and reads the stored
+// block's chip after a nav round-trip. `create_tag` answers once `tags_cache`,
+// which the picker reads, holds the tag, so each name is typed right away.
 //
 // Globals (`$`, `browser`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -71,7 +71,7 @@ describe('Agaric real-backend MCP create_tag reaches the # picker (#6049) @mcp @
       // 2. The agent creates a tag while the journal and its list stay open.
       await agent.call('create_tag', { name: TAG, space_id: spaceId })
 
-      // 3. The picker offers it, so the typed name resolves to the agent's tag.
+      // 3. The picker offers it, and the typed name becomes its chip.
       await typeMarkerVerified(`${MARKER} #${TAG}`)
       await waitForPickerToOffer(TAG)
       await browser.keys([' '])

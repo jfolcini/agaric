@@ -1501,8 +1501,8 @@ async fn explain_unacknowledged_loss(
     )
 }
 
-/// Emits no `blocks:changed`: a tag sits on no page, and an empty page set
-/// reloads every mounted page store.
+/// `blocks:changed` names the tag itself: no page owns a tag, and an empty set
+/// would reload every mounted page store.
 async fn handle_create_tag(
     pool: &SqlitePool,
     materializer: &Materializer,
@@ -1525,8 +1525,10 @@ async fn handle_create_tag(
         None,
     )
     .await?;
-    // No page owns a tag, so the set names the tag itself: an empty set would
-    // reload every open page, and the `#` picker's cached tag list drops either way.
+    // The `#` picker refills from `tags_cache`, which the background queue
+    // rebuilds after the commit, so a refill before that would keep a list
+    // without the tag. The wait fails only on shutdown, when no view listens.
+    let _ = materializer.flush_background().await;
     emitter.emit_blocks_changed(vec![resp.id.as_str().to_owned()]);
     to_tool_result(&resp)
 }

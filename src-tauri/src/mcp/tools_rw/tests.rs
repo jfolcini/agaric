@@ -2302,6 +2302,60 @@ async fn create_tag_creates_in_space_and_reuses_the_name() {
     );
 }
 
+/// The space's tag names as `list_all_tags_in_space` reads them at the moment
+/// `blocks:changed` goes out: what a `#` picker refilling on that event gets.
+struct TagNamesAtEmit {
+    pool: SqlitePool,
+    space_id: String,
+    seen: std::sync::Mutex<Vec<Vec<String>>>,
+}
+
+impl ViewChangeEmitter for TagNamesAtEmit {
+    fn emit_blocks_changed(&self, _changed_page_ids: Vec<String>) {
+        let tags = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(
+                crate::commands::tags::list_all_tags_in_space_inner(&self.pool, &self.space_id),
+            )
+        })
+        .expect("list the space's tags");
+        self.seen
+            .lock()
+            .unwrap()
+            .push(tags.into_iter().map(|tag| tag.name).collect());
+    }
+
+    fn emit_property_changed(&self, _block_id: String, _changed_keys: Vec<String>) {}
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_tag_signals_once_the_tag_list_holds_the_tag_6049() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let space_id = mk_space(&pool, " test space").await;
+    let emitter = Arc::new(TagNamesAtEmit {
+        pool: pool.clone(),
+        space_id: space_id.clone(),
+        seen: std::sync::Mutex::default(),
+    });
+    let tools = ReadWriteTools::new(pool.clone(), pool.clone(), mat, DEV.to_string())
+        .with_view_emitter(emitter.clone());
+
+    tools
+        .call_tool(
+            "create_tag",
+            json!({"name": "work", "space_id": space_id}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("happy path");
+
+    assert_eq!(
+        *emitter.seen.lock().unwrap(),
+        vec![vec!["work".to_owned()]],
+        "a picker refilled on the signal must list the new tag",
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_property_cross_space_rejected() {
     let (tools, mat, pool, space_a, _dir) = mk_tools().await;
