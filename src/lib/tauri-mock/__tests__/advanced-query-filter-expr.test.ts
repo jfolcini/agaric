@@ -11,12 +11,20 @@
  *      complement).
  *   2. The `run_advanced_query` handler end-to-end: space scoping, the matched
  *      block rows, and keyset pagination.
+ *   3. `Not` over each leaf the mock once answered with a silent `true` (#6054
+ *      D2), and the leaves the advanced-query surface refuses.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { setSpace } from '@/lib/tauri-mock/__tests__/mock-store-helpers'
-import { dispatch, metaRowMatchesExpr, type PageMetaRow } from '@/lib/tauri-mock/handlers'
+import {
+  dispatch,
+  metaRowMatchesExpr,
+  metaRowMatchesFilter,
+  type PageMetaRow,
+} from '@/lib/tauri-mock/handlers'
+import { buildPageMetaRow } from '@/lib/tauri-mock/handlers/shared'
 import {
   blockTags,
   blocks,
@@ -245,5 +253,115 @@ describe('run_advanced_query — FLAT FilterExpr interpretation', () => {
     // The two pages together cover the full filtered set with no overlap.
     const all = [...page1.rows, ...page2.rows].map((r) => r['id'] as string).toSorted()
     expect(all).toEqual([PAGE_A, B1, B2, B3].toSorted())
+  })
+})
+
+describe('run_advanced_query — Not over every leaf it admits (#6054 D2)', () => {
+  const PAGE = id('P0')
+  const PARENT = id('P1') // TODO, parent of CHILD
+  const CHILD = id('P2')
+  const LINKER = id('P3') // links to CHILD
+  // A literal ULID dated 2025-06-15; the padded ids date to the epoch.
+  const DATED = '01JXRE5J000000000000000001'
+  const ALL = [PAGE, PARENT, CHILD, LINKER, DATED].toSorted()
+
+  beforeEach(() => {
+    clearMock()
+    blocks.set(PAGE, makeBlock(PAGE, 'page', 'Page', null, 1))
+    setSpace(PAGE, SPACE_A)
+    for (const [blockId, parent, content] of [
+      [PARENT, PAGE, 'parent'],
+      [CHILD, PARENT, 'child'],
+      [LINKER, PAGE, `see [[${CHILD}]]`],
+      [DATED, PAGE, 'dated'],
+    ] as const) {
+      const b = makeBlock(blockId, 'content', content, parent, 1)
+      b['page_id'] = PAGE
+      blocks.set(blockId, b)
+    }
+    ;(blocks.get(PARENT) as Record<string, unknown>)['todo_state'] = 'TODO'
+  })
+
+  function runIds(filter: Record<string, unknown>): string[] {
+    const res = dispatch('run_advanced_query', {
+      request: { spaceId: SPACE_A, filter },
+    }) as { rows: Array<Record<string, unknown>> }
+    return res.rows.map((r) => r['id'] as string).toSorted()
+  }
+
+  const leaf = (primitive: Record<string, unknown>) => ({ type: 'Leaf', primitive })
+  const not = (child: Record<string, unknown>) => ({ type: 'Not', child })
+  const others = (...kept: string[]) => ALL.filter((x) => !kept.includes(x))
+
+  it('ChildOf matches the direct children; Not keeps the rows with a NULL parent', () => {
+    const childOf = leaf({ type: 'ChildOf', parent: PARENT })
+    expect(runIds(childOf)).toEqual([CHILD])
+    expect(runIds(not(childOf))).toEqual(others(CHILD))
+  })
+
+  it("Space matches the blocks of the space's pages; Not of it is empty", () => {
+    expect(runIds(leaf({ type: 'Space', space_id: SPACE_A }))).toEqual(ALL)
+    expect(runIds(not(leaf({ type: 'Space', space_id: SPACE_A })))).toEqual([])
+    expect(runIds(not(leaf({ type: 'Space', space_id: SPACE_B })))).toEqual(ALL)
+  })
+
+  it("Created compares the id's ULID time; Not keeps the older rows", () => {
+    const created = leaf({ type: 'Created', after: '2025-01-01', before: null })
+    expect(runIds(created)).toEqual([DATED])
+    expect(runIds(not(created))).toEqual(others(DATED))
+    expect(runIds(leaf({ type: 'Created', after: null, before: '2025-06-15T00:00:00Z' }))).toEqual(
+      others(DATED),
+    )
+  })
+
+  it('Created refuses a bound that is not a date, under a Not too', () => {
+    expect(() => runIds(not(leaf({ type: 'Created', after: '2025-13-01', before: null })))).toThrow(
+      expect.objectContaining({ kind: 'validation', code: 'InvalidDateFilter' }),
+    )
+  })
+
+  it('LinkedFrom matches the blocks the source links to; Not keeps the rest', () => {
+    const linkedFrom = leaf({ type: 'LinkedFrom', source: LINKER })
+    expect(runIds(linkedFrom)).toEqual([CHILD])
+    expect(runIds(not(linkedFrom))).toEqual(others(CHILD))
+  })
+
+  it('HasParentMatching judges the parent row; Not keeps the rows without one', () => {
+    const hpm = leaf({
+      type: 'HasParentMatching',
+      matcher: leaf({ type: 'State', values: ['TODO'] }),
+    })
+    expect(runIds(hpm)).toEqual([CHILD])
+    expect(runIds(not(hpm))).toEqual(others(CHILD))
+  })
+
+  it("HasParentMatching reads the parent's last-edited stamp, not the outer row's", () => {
+    const rolling = leaf({
+      type: 'HasParentMatching',
+      matcher: leaf({ type: 'LastEdited', spec: { type: 'Rolling', days: 3650 } }),
+    })
+    const now = (): string => new Date().toISOString()
+    const rowOf = (blockId: string) =>
+      buildPageMetaRow(blocks.get(blockId) as Record<string, unknown>, [], [])
+    // CHILD was "just edited", but its parent PARENT dates to the epoch.
+    expect(metaRowMatchesExpr(rowOf(CHILD), rolling, now)).toBe(false)
+    // A row under DATED (2025-06-15) matches whatever its own stamp says.
+    const under = makeBlock(id('P4'), 'content', 'under', DATED, 1)
+    blocks.set(id('P4'), under)
+    expect(metaRowMatchesExpr(rowOf(id('P4')), rolling, () => null)).toBe(true)
+  })
+
+  it('metaRowMatchesFilter refuses a Search-only leaf rather than matching every row', () => {
+    expect(() => metaRowMatchesFilter(rowWithPriority(PAGE, null), { type: 'Regex' })).toThrow(
+      expect.objectContaining({ kind: 'validation', code: 'InvalidFilter' }),
+    )
+  })
+
+  it('refuses a leaf the surface does not admit, under a Not and inside a matcher', () => {
+    const invalidFilter = expect.objectContaining({ kind: 'validation', code: 'InvalidFilter' })
+    expect(() => runIds(not(leaf({ type: 'Regex', pattern: 'x' })))).toThrow(invalidFilter)
+    expect(() =>
+      runIds(leaf({ type: 'HasParentMatching', matcher: leaf({ type: 'Orphan' }) })),
+    ).toThrow(invalidFilter)
   })
 })

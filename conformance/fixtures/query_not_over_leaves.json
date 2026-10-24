@@ -1,0 +1,1369 @@
+{
+  "description": "#6054 D2 — `Not` over the leaves the mock used to answer with a silent `true`, which under a `Not` became an empty set where the backend gives the complement. The advanced query covers `ChildOf`, `Space`, `Created`, `LinkedFrom` and `HasParentMatching` (whose matcher reads the PARENT row, its last-edited stamp included), plus the refusals of a Search-only leaf, of a Pages-only leaf inside a matcher and of a malformed `created` bound. The References panel covers `PropertyNum`, `PropertyDate`, `DueDate` and `CreatedInRange`, plus the `DueDate` `Contains` and malformed-bound refusals. Every leaf has rows on both sides and a row with no value: B6 and B7 hold no property or due date, the root pages B1 and B2 have no parent. B7's id is a literal ULID from 2025-06-15; the padded seed ids date to the epoch. Re-author `expected` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Target",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Notes",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "parent task",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      },
+      {
+        "block_type": "content",
+        "content": "four on [[000000000000000000000000S1]]",
+        "deleted_at": null,
+        "due_date": "2026-01-10",
+        "id": "B4",
+        "page_id": "B2",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "five on [[000000000000000000000000S1]] and [[000000000000000000000000S4]]",
+        "deleted_at": null,
+        "due_date": "2026-06-01",
+        "id": "B5",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "six on [[000000000000000000000000S1]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "seven on [[000000000000000000000000S1]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 11,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "key": "effort",
+          "op_type": "set_property"
+        },
+        {
+          "key": "effort",
+          "op_type": "set_property"
+        },
+        {
+          "key": "review",
+          "op_type": "set_property"
+        },
+        {
+          "key": "review",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_due_date"
+        }
+      ]
+    },
+    "page_links": [
+      {
+        "kind": "page_link",
+        "source_id": "B4",
+        "source_page_id": "B2",
+        "target_id": "B1"
+      },
+      {
+        "kind": "page_link",
+        "source_id": "B5",
+        "source_page_id": "B2",
+        "target_id": "B1"
+      },
+      {
+        "kind": "page_link",
+        "source_id": "B5",
+        "source_page_id": "B2",
+        "target_id": "B4"
+      },
+      {
+        "kind": "page_link",
+        "source_id": "B6",
+        "source_page_id": "B2",
+        "target_id": "B1"
+      },
+      {
+        "kind": "page_link",
+        "source_id": "B7",
+        "source_page_id": "B2",
+        "target_id": "B1"
+      }
+    ],
+    "properties": [
+      {
+        "block_id": "B4",
+        "key": "effort",
+        "value": 3.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B4",
+        "key": "review",
+        "value": "2026-03-01",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B5",
+        "key": "effort",
+        "value": 8.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B5",
+        "key": "review",
+        "value": "2026-05-01",
+        "value_type": "Date"
+      }
+    ]
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "child_of",
+      "rows": ["B4"],
+      "total_count": 1
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "not_child_of",
+      "rows": ["B7", "B6", "B5", "B3", "B2", "B1"],
+      "total_count": 6
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "space",
+      "rows": ["B7", "B6", "B5", "B4", "B3", "B2", "B1"],
+      "total_count": 7
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "not_space",
+      "rows": [],
+      "total_count": 0
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "not_space_elsewhere",
+      "rows": ["B7", "B6", "B5", "B4", "B3", "B2", "B1"],
+      "total_count": 7
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "created_after",
+      "rows": ["B7"],
+      "total_count": 1
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "not_created_after",
+      "rows": ["B6", "B5", "B4", "B3", "B2", "B1"],
+      "total_count": 6
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "not_created_malformed_bound",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "linked_from",
+      "rows": ["B4", "B1"],
+      "total_count": 2
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "not_linked_from",
+      "rows": ["B7", "B6", "B5", "B3", "B2"],
+      "total_count": 5
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "has_parent_matching_state",
+      "rows": ["B4"],
+      "total_count": 1
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "not_has_parent_matching_state",
+      "rows": ["B7", "B6", "B5", "B3", "B2", "B1"],
+      "total_count": 6
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "not_has_parent_matching_not_page",
+      "rows": ["B7", "B6", "B5", "B3", "B2", "B1"],
+      "total_count": 6
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "has_parent_matching_last_edited",
+      "rows": ["B4"],
+      "total_count": 1
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "not_has_parent_matching_last_edited",
+      "rows": ["B7", "B6", "B5", "B3", "B2", "B1"],
+      "total_count": 6
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "not_regex_is_refused",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "has_parent_matching_orphan_is_refused",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "property_num_gt",
+      "rows": [
+        "B2#page_title=Notes#truncated=false",
+        "B2->B5#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "filtered#count=1#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "not_property_num_gt",
+      "rows": [
+        "B2#page_title=Notes#truncated=false",
+        "B2->B4#parent_id=B3#page_id=B2#position=1#deleted_at=null",
+        "B2->B6#parent_id=B2#page_id=B2#position=3#deleted_at=null",
+        "B2->B7#parent_id=B2#page_id=B2#position=4#deleted_at=null",
+        "filtered#count=3#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "not_property_num_neq",
+      "rows": [
+        "B2#page_title=Notes#truncated=false",
+        "B2->B4#parent_id=B3#page_id=B2#position=1#deleted_at=null",
+        "B2->B6#parent_id=B2#page_id=B2#position=3#deleted_at=null",
+        "B2->B7#parent_id=B2#page_id=B2#position=4#deleted_at=null",
+        "filtered#count=3#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "not_property_num_contains",
+      "rows": [
+        "B2#page_title=Notes#truncated=false",
+        "B2->B4#parent_id=B3#page_id=B2#position=1#deleted_at=null",
+        "B2->B5#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "B2->B6#parent_id=B2#page_id=B2#position=3#deleted_at=null",
+        "B2->B7#parent_id=B2#page_id=B2#position=4#deleted_at=null",
+        "filtered#count=4#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "property_date_lt",
+      "rows": [
+        "B2#page_title=Notes#truncated=false",
+        "B2->B4#parent_id=B3#page_id=B2#position=1#deleted_at=null",
+        "filtered#count=1#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "not_property_date_lt",
+      "rows": [
+        "B2#page_title=Notes#truncated=false",
+        "B2->B5#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "B2->B6#parent_id=B2#page_id=B2#position=3#deleted_at=null",
+        "B2->B7#parent_id=B2#page_id=B2#position=4#deleted_at=null",
+        "filtered#count=3#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "due_date_gte",
+      "rows": [
+        "B2#page_title=Notes#truncated=false",
+        "B2->B5#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "filtered#count=1#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "not_due_date_gte",
+      "rows": [
+        "B2#page_title=Notes#truncated=false",
+        "B2->B4#parent_id=B3#page_id=B2#position=1#deleted_at=null",
+        "B2->B6#parent_id=B2#page_id=B2#position=3#deleted_at=null",
+        "B2->B7#parent_id=B2#page_id=B2#position=4#deleted_at=null",
+        "filtered#count=3#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "not_due_date_eq",
+      "rows": [
+        "B2#page_title=Notes#truncated=false",
+        "B2->B5#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "B2->B6#parent_id=B2#page_id=B2#position=3#deleted_at=null",
+        "B2->B7#parent_id=B2#page_id=B2#position=4#deleted_at=null",
+        "filtered#count=3#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "not_due_date_neq",
+      "rows": [
+        "B2#page_title=Notes#truncated=false",
+        "B2->B4#parent_id=B3#page_id=B2#position=1#deleted_at=null",
+        "B2->B6#parent_id=B2#page_id=B2#position=3#deleted_at=null",
+        "B2->B7#parent_id=B2#page_id=B2#position=4#deleted_at=null",
+        "filtered#count=3#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "not_due_date_contains_is_refused",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "created_in_range",
+      "rows": [
+        "B2#page_title=Notes#truncated=false",
+        "B2->B7#parent_id=B2#page_id=B2#position=4#deleted_at=null",
+        "filtered#count=1#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "not_created_in_range",
+      "rows": [
+        "B2#page_title=Notes#truncated=false",
+        "B2->B4#parent_id=B3#page_id=B2#position=1#deleted_at=null",
+        "B2->B5#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "B2->B6#parent_id=B2#page_id=B2#position=3#deleted_at=null",
+        "filtered#count=3#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "not_created_in_range_malformed_is_refused",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "query_not_over_leaves",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S4",
+        "toText": "four on [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "toText": "five on [[000000000000000000000000S1]] and [[000000000000000000000000S4]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "toText": "six on [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "01JXRE5J000000000000000001",
+        "toText": "seven on [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "state": "TODO"
+      },
+      "command": "set_todo_state"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "effort",
+        "value": {
+          "value_num": 3
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "key": "effort",
+        "value": {
+          "value_num": 8
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "review",
+        "value": {
+          "value_date": "2026-03-01"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "key": "review",
+        "value": {
+          "value_date": "2026-05-01"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "date": "2026-01-10"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "date": "2026-06-01"
+      },
+      "command": "set_due_date"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "parent": "S3",
+              "type": "ChildOf"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "B4 alone: the one block under B3.",
+      "name": "child_of"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "child": {
+              "primitive": {
+                "parent": "S3",
+                "type": "ChildOf"
+              },
+              "type": "Leaf"
+            },
+            "type": "Not"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "Everyone but B4, the two root pages included: their NULL `parent_id` makes `b.parent_id = ?` NULL, which `NOT COALESCE` keeps.",
+      "name": "not_child_of"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "space_id": "$SPACE",
+              "type": "Space"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "All seven: every block in the space carries its page's `space_id`.",
+      "name": "space"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "child": {
+              "primitive": {
+                "space_id": "$SPACE",
+                "type": "Space"
+              },
+              "type": "Leaf"
+            },
+            "type": "Not"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "`Not` of a leaf every row matches is the empty set, not a permissive match.",
+      "expect_empty": true,
+      "name": "not_space"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "child": {
+              "primitive": {
+                "space_id": "S99",
+                "type": "Space"
+              },
+              "type": "Leaf"
+            },
+            "type": "Not"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "All seven: no block lives in the unknown space S99.",
+      "name": "not_space_elsewhere"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "after": "2025-01-01",
+              "before": null,
+              "type": "Created"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "B7 alone: its ULID dates it 2025-06-15; the padded seed ids date to the epoch.",
+      "name": "created_after"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "child": {
+              "primitive": {
+                "after": "2025-01-01",
+                "before": null,
+                "type": "Created"
+              },
+              "type": "Leaf"
+            },
+            "type": "Not"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "The six epoch-dated seed blocks.",
+      "name": "not_created_after"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "child": {
+              "primitive": {
+                "after": "not-a-date",
+                "before": null,
+                "type": "Created"
+              },
+              "type": "Leaf"
+            },
+            "type": "Not"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "`gate_leaves` refuses an unparseable `created` bound inside a `Not` before anything compiles.",
+      "expect_error": "validation",
+      "name": "not_created_malformed_bound"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "source": "S5",
+              "type": "LinkedFrom"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "B1 and B4, the two blocks B5 links to.",
+      "name": "linked_from"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "child": {
+              "primitive": {
+                "source": "S5",
+                "type": "LinkedFrom"
+              },
+              "type": "Leaf"
+            },
+            "type": "Not"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "The other five, B5 itself included.",
+      "name": "not_linked_from"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "matcher": {
+                "primitive": {
+                  "type": "State",
+                  "values": ["TODO"]
+                },
+                "type": "Leaf"
+              },
+              "type": "HasParentMatching"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "B4 alone: its parent B3 is TODO.",
+      "name": "has_parent_matching_state"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "child": {
+              "primitive": {
+                "matcher": {
+                  "primitive": {
+                    "type": "State",
+                    "values": ["TODO"]
+                  },
+                  "type": "Leaf"
+                },
+                "type": "HasParentMatching"
+              },
+              "type": "Leaf"
+            },
+            "type": "Not"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "Everyone but B4: the root pages have no parent row, and B3's parent B2 has no state.",
+      "name": "not_has_parent_matching_state"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "child": {
+              "primitive": {
+                "matcher": {
+                  "child": {
+                    "primitive": {
+                      "exclude": false,
+                      "type": "BlockType",
+                      "values": ["page"]
+                    },
+                    "type": "Leaf"
+                  },
+                  "type": "Not"
+                },
+                "type": "HasParentMatching"
+              },
+              "type": "Leaf"
+            },
+            "type": "Not"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "`Not` inside the matcher, judged on the parent row: B4 is the one block whose parent is not a page, so all but B4.",
+      "name": "not_has_parent_matching_not_page"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "matcher": {
+                "primitive": {
+                  "spec": {
+                    "days": 3650,
+                    "type": "Rolling"
+                  },
+                  "type": "LastEdited"
+                },
+                "type": "Leaf"
+              },
+              "type": "HasParentMatching"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "B4 alone: the matcher reads the PARENT's last-edited stamp, and only B3, edited by its `set_todo_state`, is a recently edited parent. Reading the child's own stamp would add B5, B6 and B7, whose links were edited in.",
+      "name": "has_parent_matching_last_edited"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "child": {
+              "primitive": {
+                "matcher": {
+                  "primitive": {
+                    "spec": {
+                      "days": 3650,
+                      "type": "Rolling"
+                    },
+                    "type": "LastEdited"
+                  },
+                  "type": "Leaf"
+                },
+                "type": "HasParentMatching"
+              },
+              "type": "Leaf"
+            },
+            "type": "Not"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "Everyone but B4.",
+      "name": "not_has_parent_matching_last_edited"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "child": {
+              "primitive": {
+                "pattern": "task",
+                "type": "Regex"
+              },
+              "type": "Leaf"
+            },
+            "type": "Not"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "`regex` is Search-only: `gate_leaves` refuses it, under a `Not` too, rather than matching every row.",
+      "expect_error": "validation",
+      "name": "not_regex_is_refused"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "matcher": {
+                "primitive": {
+                  "type": "Orphan"
+                },
+                "type": "Leaf"
+              },
+              "type": "HasParentMatching"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "`gate_leaves` descends into the matcher and refuses the Pages-only `orphan` there.",
+      "expect_error": "validation",
+      "name": "has_parent_matching_orphan_is_refused"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "effort",
+            "op": "Gt",
+            "type": "PropertyNum",
+            "value": 5
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "B5 alone: effort 8.",
+      "name": "property_num_gt"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "filter": {
+              "key": "effort",
+              "op": "Gt",
+              "type": "PropertyNum",
+              "value": 5
+            },
+            "type": "Not"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "B4 (effort 3), and B6 and B7, which hold no effort.",
+      "name": "not_property_num_gt"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "filter": {
+              "key": "effort",
+              "op": "Neq",
+              "type": "PropertyNum",
+              "value": 3
+            },
+            "type": "Not"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "`Neq` holds only where the key is held, so B5 alone matches it, and the complement keeps B4, B6 and B7.",
+      "name": "not_property_num_neq"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "filter": {
+              "key": "effort",
+              "op": "Contains",
+              "type": "PropertyNum",
+              "value": 3
+            },
+            "type": "Not"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "`Contains` on a number is the empty set, so its complement is all four.",
+      "name": "not_property_num_contains"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "key": "review",
+            "op": "Lt",
+            "type": "PropertyDate",
+            "value": "2026-04-01"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "B4 alone: review 2026-03-01.",
+      "name": "property_date_lt"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "filter": {
+              "key": "review",
+              "op": "Lt",
+              "type": "PropertyDate",
+              "value": "2026-04-01"
+            },
+            "type": "Not"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "B5 (review 2026-05-01), and B6 and B7, which hold no review.",
+      "name": "not_property_date_lt"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "op": "Gte",
+            "type": "DueDate",
+            "value": "2026-02-01"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "B5 alone: due 2026-06-01.",
+      "name": "due_date_gte"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "filter": {
+              "op": "Gte",
+              "type": "DueDate",
+              "value": "2026-02-01"
+            },
+            "type": "Not"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "B4 (due 2026-01-10), and B6 and B7 with no due date.",
+      "name": "not_due_date_gte"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "filter": {
+              "op": "Eq",
+              "type": "DueDate",
+              "value": "2026-01-10"
+            },
+            "type": "Not"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "`b.due_date = ?` is NULL on B6 and B7, which `NOT COALESCE` keeps: B5, B6, B7.",
+      "name": "not_due_date_eq"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "filter": {
+              "op": "Neq",
+              "type": "DueDate",
+              "value": "2026-01-10"
+            },
+            "type": "Not"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "`Neq` needs a due date, so only B5 matches it; the complement is B4, B6, B7.",
+      "name": "not_due_date_neq"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "filter": {
+              "op": "Contains",
+              "type": "DueDate",
+              "value": "2026"
+            },
+            "type": "Not"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "`compile_due_date` refuses `Contains` while compiling, under a `Not` too.",
+      "expect_error": "validation",
+      "name": "not_due_date_contains_is_refused"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "after": "2025-01-01",
+            "before": null,
+            "type": "CreatedInRange"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "B7 alone, dated 2025-06-15 by its ULID.",
+      "name": "created_in_range"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "filter": {
+              "after": "2025-01-01",
+              "before": null,
+              "type": "CreatedInRange"
+            },
+            "type": "Not"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "B4, B5 and B6, dated to the epoch.",
+      "name": "not_created_in_range"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "filter": {
+              "after": "2025-13-01",
+              "before": null,
+              "type": "CreatedInRange"
+            },
+            "type": "Not"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "`resolve_range_bound` refuses a bound that is not a date.",
+      "expect_error": "validation",
+      "name": "not_created_in_range_malformed_is_refused"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Target",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Notes",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "parent task",
+        "id": "S3",
+        "parent_id": "S2",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S4",
+        "parent_id": "S3",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S5",
+        "parent_id": "S2",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S6",
+        "parent_id": "S2",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "01JXRE5J000000000000000001",
+        "parent_id": "S2",
+        "position": 4
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

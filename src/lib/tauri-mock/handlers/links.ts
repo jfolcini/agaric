@@ -16,7 +16,7 @@
 // `ORDER BY id ASC` branches do (`Cursor::for_id`, `LIMIT ?limit + 1`), so it
 // reuses their paginator rather than growing a second cursor codec that would
 // be free to drift from the backend's `Cursor` shape.
-import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
+import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import { idKey, paginateKeyset } from '@/lib/tauri-mock/handlers/blocks'
 import { matchesFtsIndex, stripForFts } from '@/lib/tauri-mock/handlers/search'
 import {
@@ -24,49 +24,21 @@ import {
   classifyLinkKind,
   columnBackedValue,
   contentLinksTo,
+  createdInRange,
+  datePredicateMatches,
   fbqResolvePrefixTagIds,
   inSpaceScope,
   ownerSpaceOf,
   pageRequestLimit,
+  propertyCompareMatches,
+  propertyEqMatches,
+  propertyLikeMatches,
   refInclusiveTags,
   scanLinkTargets,
   readActiveSpaceScope,
+  validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
 import { blockTags, blocks, linkMetadata, pageAliases, properties } from '@/lib/tauri-mock/seed'
-
-/**
- * `BacklinkFilter::PropertyText`'s `CompareOp` over a stored `value_text`:
- * `<>` / `<` / `>` / `<=` / `>=` are SQLite text compares; `Contains` /
- * `StartsWith` are `LIKE`, ASCII-case-insensitive over a literal needle.
- */
-function textCompare(op: string, lhs: string, rhs: string): boolean {
-  switch (op) {
-    case 'Neq': {
-      return lhs !== rhs
-    }
-    case 'Lt': {
-      return compareUtf8Bytes(lhs, rhs) < 0
-    }
-    case 'Gt': {
-      return compareUtf8Bytes(lhs, rhs) > 0
-    }
-    case 'Lte': {
-      return compareUtf8Bytes(lhs, rhs) <= 0
-    }
-    case 'Gte': {
-      return compareUtf8Bytes(lhs, rhs) >= 0
-    }
-    case 'Contains': {
-      return foldAsciiUppercase(lhs).includes(foldAsciiUppercase(rhs))
-    }
-    case 'StartsWith': {
-      return foldAsciiUppercase(lhs).startsWith(foldAsciiUppercase(rhs))
-    }
-    default: {
-      return lhs === rhs
-    }
-  }
-}
 
 /** Does `b` hold `key`: a `block_properties` row, or a set column for a
  *  column-backed key (#6051)? */
@@ -80,17 +52,85 @@ function holdsProperty(b: Record<string, unknown>, key: string): boolean {
  * Narrow a backlink candidate set by `BacklinkFilter`s, AND-joined, as
  * `compile_backlink_filters` does for `eval_backlink_query_grouped` on the
  * backend (`agaric-store/src/backlink/filters.rs`). Pinned by
- * `conformance/fixtures/query_backlinks_grouped_filters.json`.
- *
- * Not modelled: `CreatedInRange`, `DueDate`, `PropertyNum` and `PropertyDate`.
- * Such a leaf matches every block, so it narrows nothing at the top level and
- * empties the set under a `Not`.
+ * `conformance/fixtures/query_backlinks_grouped_filters.json` and
+ * `query_not_over_leaves.json`.
  */
 function applyBacklinkFilters(
   items: Record<string, unknown>[],
   filterList: Array<Record<string, unknown>>,
 ): Record<string, unknown>[] {
   return items.filter((b) => filterList.every((f) => matchesBacklinkFilter(b, f)))
+}
+
+/** `CompareOp` → `DatePredicate` for the `DueDate` leaf (`compare_op_to_date_predicate`). */
+const DUE_DATE_PREDICATES: Readonly<Record<string, string>> = {
+  Eq: 'On',
+  Lt: 'Before',
+  Lte: 'OnOrBefore',
+  Gt: 'After',
+  Gte: 'OnOrAfter',
+}
+
+/**
+ * The `DueDate` leaf's predicate over `b.due_date`. `Neq` is
+ * `(b.due_date != ? AND b.due_date IS NOT NULL)`, which has no `DatePredicate`;
+ * `Contains` / `StartsWith` are refused.
+ */
+function dueDatePredicate(filter: Record<string, unknown>): (due: string | null) => boolean {
+  const op = filter['op'] as string
+  const date = filter['value'] as string
+  if (op === 'Neq') return (due) => due != null && due !== date
+  const type = DUE_DATE_PREDICATES[op]
+  if (type === undefined) {
+    throw validationRejection(`DueDate filter does not support ${op} operator`)
+  }
+  return (due) => datePredicateMatches(due, { type, date })
+}
+
+/** Which `block_properties` value type each property leaf compares. */
+const PROPERTY_LEAF_VALUE_TYPES: Readonly<Record<string, string>> = {
+  PropertyText: 'Text',
+  PropertyNum: 'Num',
+  PropertyDate: 'Date',
+}
+
+/**
+ * `PropertyText` / `PropertyNum` / `PropertyDate` (`prop_cmp`): `EXISTS (… key = ?
+ * AND value_<type> IS NOT NULL AND value_<type> <op> ?)`, so a block without the
+ * property matches under no operator, `Neq` included. A column-backed key
+ * compares its column as text whatever the leaf's type (`compile_column_property`).
+ * `Contains` / `StartsWith` on a number match nothing.
+ */
+function propertyLeafMatches(b: Record<string, unknown>, filter: Record<string, unknown>): boolean {
+  const key = filter['key'] as string
+  const op = filter['op'] as string
+  const column = columnBackedValue(b, key)
+  const prop =
+    column === undefined
+      ? (properties.get(b['id'] as string)?.get(key) ?? null)
+      : column === null
+        ? null
+        : { value_text: column }
+  const value =
+    column === undefined
+      ? { type: PROPERTY_LEAF_VALUE_TYPES[filter['type'] as string], value: filter['value'] }
+      : { type: 'Text', value: String(filter['value']) }
+  switch (op) {
+    case 'Eq': {
+      return propertyEqMatches(prop, value)
+    }
+    case 'Neq': {
+      // `<>` over a non-NULL value is `<` or `>`.
+      return propertyCompareMatches(prop, 'Lt', value) || propertyCompareMatches(prop, 'Gt', value)
+    }
+    case 'Contains':
+    case 'StartsWith': {
+      return propertyLikeMatches(prop, op === 'Contains', value)
+    }
+    default: {
+      return propertyCompareMatches(prop, op, value)
+    }
+  }
 }
 
 function matchesBacklinkFilter(
@@ -132,20 +172,16 @@ function matchesBacklinkFilter(
       // because it does not test blank-ness first.
       return matchesFtsIndex(stripForFts(b['content'] as string | null), query)
     }
-    case 'PropertyText': {
-      const key = filter['key'] as string
-      const value = filter['value'] as string
-      const op = (filter['op'] as string | undefined) ?? 'Eq'
-      const column = columnBackedValue(b, key)
-      const text =
-        column === undefined
-          ? (properties.get(id)?.get(key)?.['value_text'] as string | null | undefined)
-          : column
-      // `EXISTS (… key = ? AND value_text <op> ?)` on the backend, or the
-      // column-backed key's `b.<col> <op> ?`: a block without the property
-      // matches under no operator, `Neq` included.
-      if (text == null) return false
-      return textCompare(op, text, value)
+    case 'PropertyText':
+    case 'PropertyNum':
+    case 'PropertyDate': {
+      return propertyLeafMatches(b, filter)
+    }
+    case 'DueDate': {
+      return dueDatePredicate(filter)((b['due_date'] as string | null | undefined) ?? null)
+    }
+    case 'CreatedInRange': {
+      return createdInRange(id, filter['after'], filter['before'])
     }
     case 'PropertyIsSet': {
       return holdsProperty(b, filter['key'] as string)
@@ -177,7 +213,7 @@ function matchesBacklinkFilter(
       return !matchesBacklinkFilter(b, filter['filter'] as Record<string, unknown>)
     }
     default: {
-      return true
+      throw validationRejection(`unknown variant \`${String(filter['type'])}\``)
     }
   }
 }
