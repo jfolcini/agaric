@@ -26,15 +26,14 @@ pub struct OpRecord {
     /// Rust-only sidecar caching the parsed `block_id` so callers
     /// on the materializer hot path (`dispatch::enqueue_background_tasks`)
     /// do not have to re-parse `payload` for the JSON `block_id` field.
-    /// Populated at every construction site:
+    /// Populated by the local constructors, not by the wire one:
     ///   * `append_local_op_in_tx` / `append_merge_op` reads it from the
     ///     typed [`OpPayload`](crate::op::OpPayload) (no JSON parse).
     ///   * DB-read paths (`get_op_by_seq`, `get_ops_since`) populate it
     ///     from the indexed `op_log.block_id` column added in
     ///     migration 0030 (no JSON parse).
-    ///   * `From<OpTransfer>` and bespoke row-by-row constructors fall
-    ///     back to `extract_block_id_from_payload` — one parse, exactly
-    ///     once, replacing the previous per-call-site parse.
+    ///   * `From<OpTransfer>` leaves it `None`, so whatever needs a
+    ///     sync'd record's block reads it from `payload` (#6048).
     ///
     /// Marked `#[serde(skip, default)]` so the wire format is unchanged
     /// (sync still ships `OpTransfer`, which mirrors only the persisted

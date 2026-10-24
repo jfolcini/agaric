@@ -224,8 +224,8 @@ pub struct SyncOrchestrator {
     /// cache rebuild triggered by the just-applied `LoroSync` (SQLite is
     /// single-writer — an oversized-block FTS rebuild can hold the lock past
     /// the busy_timeout, #611). Instead they are drained in
-    /// [`complete_pull_session`](Self::complete_pull_session), after a
-    /// materializer flush settles that rebuild, so the audit write runs
+    /// [`complete_pull_session`](Self::complete_pull_session), after it fires
+    /// that rebuild and flushes the materializer, so the audit write runs
     /// uncontended.
     pending_ingest_records: Vec<OpTransfer>,
     /// #5712: this session's claim on the registry's in-flight inbound syncs,

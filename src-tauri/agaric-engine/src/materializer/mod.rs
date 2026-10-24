@@ -283,7 +283,7 @@ pub(super) struct TagOpHint {
 
 // `dispatch::enqueue_background_tasks` reads `block_id` for the
 // edit/delete/restore/purge arms straight from the cached
-// `OpRecord::block_id` sidecar (populated at append-time / sync ingress)
+// `OpRecord::block_id` sidecar (populated at append-time)
 // rather than re-parsing `record.payload`. `CreateBlockHint` still exists
 // because the `create_block` arm also needs `block_type` (tag vs. page vs.
 // content), which the sidecar doesn't carry.

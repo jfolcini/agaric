@@ -96,7 +96,7 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
 // (2026-04): the `BlockIdHint` payload-shape type that survived
 // H-5/H-6 has now also been deleted — the four `dispatch.rs` arms
 // (edit/delete/restore/purge) that parsed it now read from the cached
-// `OpRecord::block_id` sidecar populated at append-time / sync ingress.
+// `OpRecord::block_id` sidecar populated at append-time.
 // See the comment above `CreateBlockHint` in `super` for context.
 
 #[cfg(test)]
