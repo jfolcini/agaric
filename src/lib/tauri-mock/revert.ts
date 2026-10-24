@@ -226,11 +226,20 @@ function revertPropertyMap(
   blockId: string,
   properties: Properties,
   b: Record<string, unknown> | undefined,
+  blocks: Blocks,
 ): boolean {
   if (opType !== 'set_property' && opType !== 'delete_property') return false
 
   const key = payload['key'] as string
   const fromValue = payload['from_value'] as Record<string, unknown> | null | undefined
+
+  // #6099 — the revert of a move is a move, refused as the move is when its
+  // name is taken where it lands. A trashed block holds no name.
+  if (key === 'space' && b && !b['deleted_at']) {
+    const content = (b['content'] as string | null | undefined) ?? null
+    const lands = (fromValue?.['value_ref'] as string | null | undefined) ?? null
+    rejectTakenName(blocks, b, content, lands)
+  }
 
   /**
    * #5057 — `space` is column-backed, so restoring the property map alone
@@ -390,13 +399,18 @@ function revertLifecycleCohort(opType: string, blocks: Blocks, blockId: string):
 }
 
 /**
- * #6051 — refuse a revert that would name page or tag `b` `name` while another
- * live page or tag of its space holds that name, as a rename is refused. Mock
- * twin of `reject_duplicate_name` (`src-tauri/src/commands/blocks/crud.rs`).
+ * #6051 — refuse a revert that would name page or tag `b` `name` in `spaceId`
+ * (its own space unless a move's revert takes it elsewhere) while another live
+ * page or tag there holds that name, as a rename is refused. Mock twin of
+ * `reject_duplicate_name` (`src-tauri/src/commands/blocks/crud.rs`).
  */
-function rejectTakenName(blocks: Blocks, b: BlockRow, name: string | null): void {
+function rejectTakenName(
+  blocks: Blocks,
+  b: BlockRow,
+  name: string | null,
+  spaceId: string | null = (b['space_id'] as string | null | undefined) ?? null,
+): void {
   const kind = b['block_type']
-  const spaceId = (b['space_id'] as string | null | undefined) ?? null
   if ((kind !== 'page' && kind !== 'tag') || spaceId === null || name === null) return
   const identity = (s: string): string => (kind === 'tag' ? normalizeTagName(s) : s)
   const taken = [...blocks.values()].some(
@@ -599,7 +613,7 @@ export function applyRevertForOp(
   // wired in by the caller.
   if (
     state.properties &&
-    revertPropertyMap(target.op_type, payload, blockId, state.properties, b)
+    revertPropertyMap(target.op_type, payload, blockId, state.properties, b, blocks)
   ) {
     return
   }

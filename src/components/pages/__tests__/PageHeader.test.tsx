@@ -2475,6 +2475,40 @@ describe('PageHeader Move to space (Phase 2)', () => {
     expect(useResolveStore.getState().resolveStatus('PAGE_1')).toBe('active')
   })
 
+  // #6099 — the target space already has a page titled alike.
+  it('names the clash when the target space holds the title', async () => {
+    const user = userEvent.setup()
+    const taken = "a page titled 'Test' already exists in this space"
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      if (cmd === 'get_page_aliases') return []
+      if (cmd === 'preview_space_move') return []
+      if (cmd === 'move_blocks_to_space') {
+        const rejection: AppError = {
+          kind: 'validation',
+          code: 'DuplicatePageTitle',
+          message: taken,
+        }
+        throw rejection
+      }
+      return null
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText(/Move to space/i))
+    await user.click(await screen.findByRole('menuitem', { name: 'Work' }))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(taken)
+    })
+  })
+
   it('has no a11y violations with the Move to space sub-menu expanded', async () => {
     const user = userEvent.setup()
     setupPage()

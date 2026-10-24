@@ -1,0 +1,473 @@
+{
+  "description": "#6099 — a move into another space refuses, whole and changing nothing, a page title or tag name a live page or tag of that space holds, as a rename does; so does the move's undo. The ops make three spaces, Home (`C1`), Work (`C3`) and an empty Archive (`C8`), a `Work` tag in Home (`C2`), an `Inbox` page in Work (`C4`) and one in Home (`C7`), a `work` tag (`C5`) and a `Plan` page (`C6`) in Work. Moving `Inbox` into Home is refused with `DuplicatePageTitle`, and so is moving `Plan` and `Inbox` together, so `Plan` stays too; moving `work` is refused under the tag fold. `Plan` alone moves into Archive (O17). Once Work has a new `Plan` (`C9`), undoing O17 is refused the same way. The snapshot carries no `space_id`, so a refused move shows as ranks that did not change and ops that were not appended. Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "Work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Inbox",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Plan",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B6",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Inbox",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B7",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Archive",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B8",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Plan",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B9",
+        "parent_id": null,
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 19,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B1",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B3",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B8",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "home",
+      "returns": ["create_space#space_id=B1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_work_tag_in_home",
+      "returns": ["B2#block_type=tag#content=Work#parent_id=null#position=2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "work",
+      "returns": ["create_space#space_id=B3"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "inbox_in_work",
+      "returns": ["create_page_in_space#page_id=B4"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_work_tag_in_work",
+      "returns": ["B5#block_type=tag#content=work#parent_id=null#position=3"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "plan_in_work",
+      "returns": ["create_page_in_space#page_id=B6"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "inbox_in_home",
+      "returns": ["create_page_in_space#page_id=B7"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "archive",
+      "returns": ["create_space#space_id=B8"]
+    },
+    {
+      "code": "DuplicatePageTitle",
+      "error": "validation",
+      "name": "a_page_onto_a_taken_title_is_refused",
+      "returns": []
+    },
+    {
+      "code": "DuplicatePageTitle",
+      "error": "validation",
+      "name": "a_batch_holding_a_taken_title_is_refused_whole",
+      "returns": []
+    },
+    {
+      "code": "DuplicatePageTitle",
+      "error": "validation",
+      "name": "a_tag_onto_a_taken_name_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_free_title_moves",
+      "returns": ["move_blocks_to_space#moved=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_new_plan_in_work",
+      "returns": ["create_page_in_space#page_id=B9"]
+    },
+    {
+      "code": "DuplicatePageTitle",
+      "error": "validation",
+      "name": "undoing_the_move_onto_a_taken_title_is_refused",
+      "returns": []
+    }
+  ],
+  "name": "space_move_onto_a_taken_name",
+  "ops": [
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Home"
+      },
+      "command": "create_space",
+      "comment": "O1, O2 — the space the refused moves enter.",
+      "name": "home",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "tag",
+        "content": "Work",
+        "parentId": null,
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "create_block",
+      "comment": "O3, O4 — Home's `Work`. Each tag is made while its space holds the highest root rank, where the provisional rank a create returns is the same on both stacks.",
+      "name": "the_work_tag_in_home",
+      "via": "command"
+    },
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Work"
+      },
+      "command": "create_space",
+      "comment": "O5, O6 — the space every move leaves.",
+      "name": "work",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "Inbox",
+        "parentId": null,
+        "spaceId": "C3"
+      },
+      "command": "create_page_in_space",
+      "comment": "O7, O8 — the page whose title Home will hold.",
+      "name": "inbox_in_work",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "tag",
+        "content": "work",
+        "parentId": null,
+        "scope": {
+          "kind": "active",
+          "space_id": "C3"
+        }
+      },
+      "command": "create_block",
+      "comment": "O9, O10 — the same tag name as Home's `Work` under the tag fold.",
+      "name": "the_work_tag_in_work",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "Plan",
+        "parentId": null,
+        "spaceId": "C3"
+      },
+      "command": "create_page_in_space",
+      "comment": "O11, O12 — a title no other space holds.",
+      "name": "plan_in_work",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "Inbox",
+        "parentId": null,
+        "spaceId": "C1"
+      },
+      "command": "create_page_in_space",
+      "comment": "O13, O14 — Home's own `Inbox`.",
+      "name": "inbox_in_home",
+      "via": "command"
+    },
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Archive"
+      },
+      "command": "create_space",
+      "comment": "O15, O16 — an empty space, the one move that goes through lands in.",
+      "name": "archive",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["C4"],
+        "spaceId": "C1"
+      },
+      "command": "move_blocks_to_space",
+      "comment": "Refused: Home would hold two live `Inbox` pages. No op is appended and no rank moves.",
+      "expect_code": "DuplicatePageTitle",
+      "expect_error": "validation",
+      "name": "a_page_onto_a_taken_title_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["C6", "C4"],
+        "spaceId": "C1"
+      },
+      "command": "move_blocks_to_space",
+      "comment": "Refused whole: `Plan` alone would move, but `Inbox` with it is taken, so `Plan` stays in Work too.",
+      "expect_code": "DuplicatePageTitle",
+      "expect_error": "validation",
+      "name": "a_batch_holding_a_taken_title_is_refused_whole",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["C5"],
+        "spaceId": "C1"
+      },
+      "command": "move_blocks_to_space",
+      "comment": "Refused: `work` and `Work` are one tag name.",
+      "expect_code": "DuplicatePageTitle",
+      "expect_error": "validation",
+      "name": "a_tag_onto_a_taken_name_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["C6"],
+        "spaceId": "C8"
+      },
+      "command": "move_blocks_to_space",
+      "comment": "O17 — `Plan` is free in Archive, so it moves, and Work's group closes up behind it.",
+      "name": "a_free_title_moves",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "Plan",
+        "parentId": null,
+        "spaceId": "C3"
+      },
+      "command": "create_page_in_space",
+      "comment": "O18, O19 — Work gives the moved page's title to a new page.",
+      "name": "a_new_plan_in_work",
+      "via": "command"
+    },
+    {
+      "args": {
+        "opRef": "O17"
+      },
+      "command": "undo_op",
+      "comment": "Refused: undoing the move would give Work two live `Plan` pages, so the moved page stays in Archive and no op is appended.",
+      "expect_code": "DuplicatePageTitle",
+      "expect_error": "validation",
+      "name": "undoing_the_move_onto_a_taken_title_is_refused",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [],
+    "properties": [],
+    "tags": []
+  }
+}

@@ -2174,6 +2174,35 @@ async fn move_page_to_space_target_not_a_live_space_rejected() {
     );
 }
 
+/// #6099 — a page whose title the target space holds stays put, and the agent
+/// is told the clash in the words a rename gets.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_page_to_space_onto_a_taken_title_rejected() {
+    let (tools, mat, pool, space_a, _dir) = mk_tools().await;
+    let space_b = mk_space(&pool, " space B").await;
+    let page = mk_page(&pool, &mat, &space_a, "Inbox").await;
+    mk_page(&pool, &mat, &space_b, "Inbox").await;
+    settle(&mat).await;
+
+    let err = tools
+        .call_tool(
+            "move_page_to_space",
+            json!({"page_id": page.clone(), "space_id": space_a.clone(), "target_space_id": space_b}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("B already has an Inbox");
+    assert!(
+        matches!(&err, AppError::Validation { code: Some(ValidationCode::DuplicatePageTitle), message }
+            if message == "a page titled 'Inbox' already exists in this space"),
+        "got {err:?}"
+    );
+    assert_eq!(
+        space_of(&pool, &page).await.as_deref(),
+        Some(space_a.as_str())
+    );
+}
+
 /// #5841 S0.6 — a page holding a value its target space defines another way
 /// is refused until `acknowledge_property_loss` names the losses; the refusal
 /// says which keys, how many values and what to pass, and passing it moves

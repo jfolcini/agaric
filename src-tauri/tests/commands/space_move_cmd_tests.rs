@@ -733,3 +733,200 @@ async fn the_detail_lists_exactly_the_values_the_preview_counts() {
         );
     }
 }
+
+// ======================================================================
+// #6099 — a move brings no page title or tag name into a space where a live
+// page or tag holds it, and neither does the move's undo.
+// ======================================================================
+
+struct Spaces {
+    pool: SqlitePool,
+    mat: Materializer,
+    _dir: tempfile::TempDir,
+    a: String,
+    b: String,
+    c: String,
+}
+
+async fn spaces() -> Spaces {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let mut ids = Vec::new();
+    for name in ["A", "B", "C"] {
+        let id = create_space_inner(&pool, DEV, &mat, name.into(), None)
+            .await
+            .unwrap();
+        ids.push(id.into_string());
+    }
+    let [a, b, c] = ids.try_into().unwrap();
+    Spaces {
+        pool,
+        mat,
+        _dir: dir,
+        a,
+        b,
+        c,
+    }
+}
+
+impl Spaces {
+    async fn page(&self, space: &str, title: &str) -> BlockId {
+        create_page_in_space_inner(&self.pool, DEV, &self.mat, None, title.into(), space.into())
+            .await
+            .unwrap()
+    }
+
+    async fn tag(&self, space: &str, name: &str) -> BlockId {
+        create_block_inner_with_space(
+            &self.pool,
+            DEV,
+            &self.mat,
+            "tag".into(),
+            name.into(),
+            None,
+            None,
+            &SpaceScope::Active(SpaceId::from_trusted(space)),
+            None,
+        )
+        .await
+        .unwrap()
+        .id
+    }
+
+    async fn move_to(&self, blocks: &[&BlockId], space: &str) -> Result<i64, AppError> {
+        let blocks = blocks.iter().map(|&block| block.clone()).collect();
+        let moved =
+            move_blocks_to_space_inner(&self.pool, DEV, &self.mat, blocks, space.into(), &[]).await;
+        settle(&self.mat).await;
+        moved
+    }
+
+    async fn space_of(&self, block: &BlockId) -> String {
+        sqlx::query_scalar::<_, String>("SELECT space_id FROM blocks WHERE id = ?")
+            .bind(block.as_str())
+            .fetch_one(&self.pool)
+            .await
+            .unwrap()
+    }
+
+    async fn op_count(&self) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM op_log")
+            .fetch_one(&self.pool)
+            .await
+            .unwrap()
+    }
+}
+
+/// Refused with a rename's code and words: `message`.
+fn assert_taken<T: std::fmt::Debug>(result: Result<T, AppError>, message: &str) {
+    match result.expect_err(message) {
+        AppError::Validation { code, message: got } => {
+            assert_eq!(code, Some(ValidationCode::DuplicatePageTitle), "{got}");
+            assert_eq!(got, message);
+        }
+        other => panic!("{message}: got {other:?}"),
+    }
+}
+
+/// Page `Inbox` of A moved into B, which has its own `Inbox`: refused, nothing
+/// moved and no op appended. A batch that also holds a free title is refused
+/// whole.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_move_onto_a_taken_page_title_is_refused_whole_6099() {
+    let s = spaces().await;
+    let inbox = s.page(&s.a, "Inbox").await;
+    let plan = s.page(&s.a, "Plan").await;
+    s.page(&s.b, "Inbox").await;
+    let ops = s.op_count().await;
+
+    for batch in [vec![&inbox], vec![&plan, &inbox]] {
+        assert_taken(
+            s.move_to(&batch, &s.b).await,
+            "a page titled 'Inbox' already exists in this space",
+        );
+    }
+    assert_eq!(s.op_count().await, ops, "no op was appended");
+    assert_eq!(s.space_of(&inbox).await, s.a, "Inbox did not move");
+    assert_eq!(s.space_of(&plan).await, s.a, "nor did Plan, moved with it");
+}
+
+/// The same for a tag, under the fold its name is unique by: `work` does not
+/// move into a space holding `Work`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_move_onto_a_taken_tag_name_is_refused_6099() {
+    let s = spaces().await;
+    let work = s.tag(&s.a, "work").await;
+    s.tag(&s.b, "Work").await;
+    let ops = s.op_count().await;
+
+    assert_taken(
+        s.move_to(&[&work], &s.b).await,
+        "a tag named 'work' already exists in this space",
+    );
+    assert_eq!(s.op_count().await, ops, "no op was appended");
+    assert_eq!(s.space_of(&work).await, s.a, "the tag did not move");
+}
+
+/// A title free in the target moves: the page is no clash with itself. Two
+/// pages titled alike, which one move would bring into a space holding
+/// neither, clash with each other.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_move_takes_a_free_title_but_not_two_alike_6099() {
+    let s = spaces().await;
+    let in_a = s.page(&s.a, "Notes").await;
+    let in_b = s.page(&s.b, "Notes").await;
+
+    assert_taken(
+        s.move_to(&[&in_a, &in_b], &s.c).await,
+        "a page titled 'Notes' already exists in this space",
+    );
+    assert_eq!(s.space_of(&in_a).await, s.a);
+    assert_eq!(s.space_of(&in_b).await, s.b);
+
+    assert_eq!(s.move_to(&[&in_a], &s.c).await.unwrap(), 1);
+    assert_eq!(s.space_of(&in_a).await, s.c, "Notes moved into C");
+}
+
+/// The undo of a move is a move back, refused once the space it left has given
+/// the title to another page: the page stays where the move put it and no op
+/// is appended. With the title free there again the undo goes through.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_a_move_onto_a_taken_title_is_refused_6099() {
+    let s = spaces().await;
+    let plan = s.page(&s.a, "Plan").await;
+    s.move_to(&[&plan], &s.b).await.unwrap();
+    let seq: i64 = sqlx::query_scalar(
+        "SELECT MAX(seq) FROM op_log WHERE op_type = 'set_property' AND block_id = ?",
+    )
+    .bind(plan.as_str())
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    let move_ref = agaric_store::op::OpRef {
+        device_id: DEV.into(),
+        seq,
+    };
+    let holder = s.page(&s.a, "Plan").await;
+    let ops = s.op_count().await;
+
+    let taken = "a page titled 'Plan' already exists in this space";
+    assert_taken(
+        undo_op_inner(&s.pool, DEV, &s.mat, move_ref.clone()).await,
+        taken,
+    );
+    assert_taken(
+        revert_ops_inner(&s.pool, DEV, &s.mat, vec![move_ref.clone()]).await,
+        taken,
+    );
+    assert_eq!(s.space_of(&plan).await, s.b, "the page stays in B");
+    assert_eq!(s.op_count().await, ops, "no op was appended");
+
+    delete_block_inner(&s.pool, DEV, &s.mat, holder)
+        .await
+        .unwrap();
+    settle(&s.mat).await;
+    undo_op_inner(&s.pool, DEV, &s.mat, move_ref)
+        .await
+        .expect("with the title free in A, the undo moves the page back");
+    assert_eq!(s.space_of(&plan).await, s.a);
+}
