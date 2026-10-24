@@ -1,5 +1,6 @@
 // ---------------------------------------------------------------------------
-// Real-backend refresh of open views after a sync (#5256, #5258, #5242, #5255).
+// Real-backend refresh of open views after a sync (#5256, #5258, #5242, #5255),
+// and the Last edited order it leaves (#6048).
 //
 // The real-lane twin of `e2e/sync-refresh.spec.ts` (testing invariant 4). There
 // the "peer" is a direct mock invoke plus an emitted `sync:complete`; here it
@@ -26,6 +27,7 @@
 import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
+  chooseSelectOption,
   navigateTo,
   reopenPageByTitle,
   runScopedMarker,
@@ -46,6 +48,7 @@ const TODAY_TASK = runScopedMarker('wdio-peer-today-task')
 const LATE_TASK = runScopedMarker('wdio-peer-late-task')
 const TAGGED = runScopedMarker('wdio-peer-tagged')
 const DAY_ENTRY = runScopedMarker('wdio-peer-day-entry')
+const LATE_BLOCK = runScopedMarker('wdio-peer-late-block')
 // Not run-scoped: every spec file boots its own vault (see search-bm25-order).
 // Titles are matched whole, and the tag is typed, so it doubles no letter.
 const TASKS_PAGE = 'peer tasks'
@@ -56,6 +59,8 @@ const CREATED = 'peer created page'
 const RENAMED = 'peer renamed page'
 const OPEN_TITLE = 'peer open page'
 const RETITLED = 'peer retitled page'
+const EDITED_PAGE = 'peer edited page'
+const NEWER_PAGE = 'peer newer page'
 const TAG = 'marigold'
 
 const SYNC_BUTTON = '[data-slot="sidebar"] button[aria-label="Sync"]'
@@ -70,6 +75,24 @@ const SEARCH_STATUS = '[data-testid="search-results-count"]'
 /** A Pages list row's title span (PageBrowser/PageRow.tsx), by exact title. */
 function pageRow(title: string): string {
   return `//span[contains(@class, "page-browser-item-title")][normalize-space(.)="${title}"]`
+}
+
+/** The Pages list's titles, in the order it lists them (PageRow.tsx's `data-index`). */
+function listedTitles(): Promise<string[]> {
+  return browser.execute(() => {
+    const rows = [...document.querySelectorAll('[data-page-item]')]
+    rows.sort((a, b) => Number(a.getAttribute('data-index')) - Number(b.getAttribute('data-index')))
+    return rows.map(
+      (row) => row.querySelector('.page-browser-item-title')?.getAttribute('title') ?? '',
+    )
+  })
+}
+
+/** Whether the Pages list shows `upper` above `lower`. */
+async function listsAbove(upper: string, lower: string): Promise<boolean> {
+  const titles = await listedTitles()
+  const at = titles.indexOf(upper)
+  return at !== -1 && titles.includes(lower) && at < titles.indexOf(lower)
 }
 
 /** The DOM text of `selector`, or '' when it is not rendered; read whether or not it is visible. */
@@ -392,6 +415,32 @@ describe('Agaric real-backend refresh of open views after a sync (#5365) @sync',
         return open && !seen.includes('No blocks for')
       },
       () => `the open week still shows ${date} without its page: ${seen}`,
+    )
+  })
+
+  // Last edited is the order the backend stores, so this reads it the way a
+  // persistence check does: from a remounted list, not the one left open.
+  it('a block the peer adds lifts its page above a newer one in Last edited (#6048)', async () => {
+    const device = pairedPeer()
+    const editedId = await pullPeerWrites(device, () => device.createInSpace('page', EDITED_PAGE))
+    // A pull of its own, so the two pages never share a millisecond.
+    await pullPeerWrites(device, () => device.createInSpace('page', NEWER_PAGE))
+    await navigateTo('Pages')
+    // The page count mounts left of the sort trigger once the list loads and
+    // shifts it right, so a click aimed before the shift lands on the count.
+    await $('[data-testid="page-browser-count"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await chooseSelectOption('[aria-label="Sort order"]', 'Last edited')
+    await waitInFreshView(
+      () => navigateTo('Pages'),
+      () => listsAbove(NEWER_PAGE, EDITED_PAGE),
+      "Last edited never listed the peer's newer page above the older one",
+    )
+
+    await pullPeerWrites(device, () => device.createBlock(editedId, LATE_BLOCK))
+    await waitInFreshView(
+      () => navigateTo('Pages'),
+      () => listsAbove(EDITED_PAGE, NEWER_PAGE),
+      'Last edited kept the page the peer added a block to below the newer page',
     )
   })
 })

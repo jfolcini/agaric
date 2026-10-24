@@ -398,19 +398,12 @@ impl From<OpRecord> for OpTransfer {
 
 impl From<OpTransfer> for OpRecord {
     fn from(t: OpTransfer) -> Self {
-        // The wire transfer carries no `block_id` sidecar.
-        // Intentionally leave `block_id` as `None` here — parsing
-        // `payload` for it would add a second `serde_json::from_str`
-        // per sync'd op on top of the validation parse that
-        // `apply_remote_ops` already performs, regressing exactly the
-        // Hot path is meant to optimise. The sync receive path
-        // (`apply_remote_ops`) populates the sidecar from its
-        // existing validation parse so the cost stays at one parse
-        // per op on the sync side. Tests / fixtures that build an
-        // `OpRecord` directly without going through that flow should
-        // populate `block_id` themselves (see e.g.
-        // `merge::detect::tests::make_remote_record` and
-        // `dag::tests::make_remote_record`).
+        // The wire transfer carries no `block_id` sidecar, and this leaves it
+        // `None` rather than parse `payload` per conversion: whatever needs a
+        // sync'd record's block reads it from `payload`, as the audit ingest
+        // does (`dag::ingest_remote_record`, #6048). Fixtures that build an
+        // `OpRecord` directly populate `block_id` themselves (see
+        // `dag_tests::tests::make_remote_record`).
         Self {
             device_id: t.device_id,
             seq: t.seq,

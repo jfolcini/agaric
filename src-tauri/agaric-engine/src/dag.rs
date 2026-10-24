@@ -455,9 +455,14 @@ async fn ingest_remote_record(
     )
     .await?;
     // #5371: a peer's edit moves its page up "Last edited" here, the one
-    // place its op reaches this device's op log; it is never applied.
-    if inserted && let Some(block_id) = record.block_id.as_deref() {
-        agaric_store::cache::raise_pages_last_edited_ms(&mut tx, &[(block_id, record.created_at)])
+    // place its op reaches this device's op log; it is never applied. The
+    // block comes from the payload, as the indexed column's does: a record
+    // decoded off the wire carries no `block_id` sidecar (#6048).
+    if inserted
+        && let (Some(block_id), _) =
+            agaric_store::op_log::extract_indexed_ids_from_payload(&record.payload)
+    {
+        agaric_store::cache::raise_pages_last_edited_ms(&mut tx, &[(&block_id, record.created_at)])
             .await?;
     }
 

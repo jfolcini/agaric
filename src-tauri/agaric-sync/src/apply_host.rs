@@ -23,6 +23,9 @@ pub trait ApplyHost: Send + Sync + std::fmt::Debug {
         changed_blocks: &[BlockId],
         purged_blocks: &[BlockId],
     ) -> Result<(), AppError>;
+    /// End the inbound-sync rebuild debounce now, enqueueing its pending
+    /// fan-out for the next [`flush`](Self::flush) to drain.
+    fn fire_pending_inbound_rebuild(&self);
     /// Await both foreground and background materialize queues draining.
     async fn flush(&self) -> Result<(), AppError>;
 
@@ -88,6 +91,10 @@ impl ApplyHost for Materializer {
     /// in that case, which is the pre-#3328 behaviour.
     fn app_data_dir(&self) -> Option<std::path::PathBuf> {
         Materializer::app_data_dir(self)
+    }
+
+    fn fire_pending_inbound_rebuild(&self) {
+        Materializer::fire_pending_inbound_rebuild(self);
     }
 
     async fn flush(&self) -> Result<(), AppError> {
@@ -215,6 +222,8 @@ pub mod test_support {
             });
             Ok(())
         }
+
+        fn fire_pending_inbound_rebuild(&self) {}
 
         async fn flush(&self) -> Result<(), AppError> {
             self.lock().flushes += 1;

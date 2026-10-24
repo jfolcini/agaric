@@ -1245,8 +1245,8 @@ impl Materializer {
         // that cache-assertion call sites (and the existing lifecycle cache /
         // fan-out-count tests) rely on. A no-op when nothing is armed; a
         // redundant later loop-fire is harmless (idempotent + batch-deduped).
-        // The inbound-sync debounce is deliberately NOT fired here; its call
-        // sites use the dedicated `flush_inbound_rebuild_debounce` test helper.
+        // The inbound-sync debounce is deliberately NOT fired here; a caller
+        // that needs it drained fires it first (`fire_pending_inbound_rebuild`).
         self.fire_pending_lifecycle_rebuild();
         let notify = Arc::new(tokio::sync::Notify::new());
         self.enqueue_background(MaterializeTask::Barrier(Arc::clone(&notify)))

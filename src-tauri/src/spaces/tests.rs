@@ -2538,7 +2538,12 @@ async fn a_session_without_the_new_doc_sweeps_the_moved_page_5712() {
 /// One real QUIC session in which B pulls from A, each side running the
 /// production session code: `run_sync_session` against `handle_incoming_sync`.
 /// Returns B's terminal state.
-async fn pull_over_quic(fx: &MoveFixture) -> agaric_sync::sync_protocol::SyncState {
+async fn pull_over_quic(
+    pool_a: &SqlitePool,
+    mat_a: &crate::materializer::Materializer,
+    pool_b: &SqlitePool,
+    mat_b: &crate::materializer::Materializer,
+) -> agaric_sync::sync_protocol::SyncState {
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
 
@@ -2547,18 +2552,18 @@ async fn pull_over_quic(fx: &MoveFixture) -> agaric_sync::sync_protocol::SyncSta
     let timeout = std::time::Duration::from_secs(30);
     let harness = agaric_sync::transport::test_support::ServiceHarness::new().await;
     // A resolves B from the key the QUIC handshake authenticated.
-    agaric_store::peer_refs::upsert_peer_ref(&fx.pool_a, "device-B")
+    agaric_store::peer_refs::upsert_peer_ref(pool_a, "device-B")
         .await
         .unwrap();
     agaric_store::peer_refs::bind_endpoint_id(
-        &fx.pool_a,
+        pool_a,
         "device-B",
         &harness.client_endpoint.id().to_string(),
     )
     .await
     .unwrap();
     let service = Arc::clone(&harness.service);
-    let (pool_a, mat_a) = (fx.pool_a.clone(), fx.mat_a.clone());
+    let (pool_a, mat_a) = (pool_a.clone(), mat_a.clone());
     let responder = tokio::spawn(async move {
         let session = service
             .accept()
@@ -2582,12 +2587,12 @@ async fn pull_over_quic(fx: &MoveFixture) -> agaric_sync::sync_protocol::SyncSta
 
     let mut client = harness.dial().await;
     let mut orch = agaric_sync::sync_protocol::SyncOrchestrator::new(
-        fx.pool_b.clone(),
+        pool_b.clone(),
         "device-B".into(),
-        Arc::new(fx.mat_b.clone()),
+        Arc::new(mat_b.clone()),
     )
     .with_expected_remote_id("device-A".into());
-    let host: Arc<dyn agaric_sync::apply_host::ApplyHost> = Arc::new(fx.mat_b.clone());
+    let host: Arc<dyn agaric_sync::apply_host::ApplyHost> = Arc::new(mat_b.clone());
     let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
     tokio::time::timeout(
         timeout,
@@ -2597,7 +2602,7 @@ async fn pull_over_quic(fx: &MoveFixture) -> agaric_sync::sync_protocol::SyncSta
             &mut client.recv,
             &client.conn,
             &AtomicBool::new(false),
-            &fx.pool_b,
+            pool_b,
             &host,
             &sink,
         ),
@@ -2663,7 +2668,7 @@ async fn crossing_moves_reach_the_peer_whole_over_quic_5712() {
     fx.move_on_a(&[&fx.page], &fx.new).await;
     fx.move_on_a(&[&away], &fx.old).await;
     assert_eq!(
-        pull_over_quic(&fx).await,
+        pull_over_quic(&fx.pool_a, &fx.mat_a, &fx.pool_b, &fx.mat_b).await,
         agaric_sync::sync_protocol::SyncState::Complete,
         "B's pull completes"
     );
@@ -2675,5 +2680,206 @@ async fn crossing_moves_reach_the_peer_whole_over_quic_5712() {
         b_only,
         "B keeps its own rows on both pages"
     );
+    fx.shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// #6048: "Last edited" on the device that receives a block by sync
+// ---------------------------------------------------------------------------
+
+/// Two vaults holding the space `space`, which A created and B pulled over
+/// QUIC, audit records included.
+struct SyncedPair {
+    pool_a: SqlitePool,
+    mat_a: crate::materializer::Materializer,
+    pool_b: SqlitePool,
+    mat_b: crate::materializer::Materializer,
+    space: BlockId,
+    _dir_a: TempDir,
+    _dir_b: TempDir,
+}
+
+impl SyncedPair {
+    async fn new() -> Self {
+        use crate::materializer::Materializer;
+
+        let (pool_a, dir_a) = test_pool().await;
+        let mat_a = Materializer::new(pool_a.clone());
+        super::bootstrap::bootstrap_spaces(&pool_a, "device-A", &mat_a)
+            .await
+            .unwrap();
+        let space =
+            crate::commands::create_space_inner(&pool_a, "device-A", &mat_a, "Shared".into(), None)
+                .await
+                .unwrap();
+        let (pool_b, dir_b) = test_pool().await;
+        let mat_b = Materializer::new(pool_b.clone());
+        super::bootstrap::bootstrap_spaces(&pool_b, "device-B", &mat_b)
+            .await
+            .unwrap();
+        let pair = Self {
+            pool_a,
+            mat_a,
+            pool_b,
+            mat_b,
+            space,
+            _dir_a: dir_a,
+            _dir_b: dir_b,
+        };
+        pair.pull().await;
+        pair
+    }
+
+    async fn page_on_a(&self, title: &str) -> BlockId {
+        crate::commands::create_page_in_space_inner(
+            &self.pool_a,
+            "device-A",
+            &self.mat_a,
+            None,
+            title.into(),
+            self.space.as_str().to_owned(),
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn block_on_a(&self, parent: &BlockId, content: &str) -> BlockId {
+        crate::commands::create_block_inner(
+            &self.pool_a,
+            "device-A",
+            &self.mat_a,
+            "content".into(),
+            content.into(),
+            Some(parent.clone()),
+            None,
+        )
+        .await
+        .unwrap()
+        .id
+    }
+
+    /// B pulls from A, then drains the rebuild the session armed, as
+    /// `SpacePlacementSink` does after every pull that changed something.
+    async fn pull(&self) {
+        self.mat_a.flush_background().await.unwrap();
+        assert_eq!(
+            pull_over_quic(&self.pool_a, &self.mat_a, &self.pool_b, &self.mat_b).await,
+            agaric_sync::sync_protocol::SyncState::Complete,
+            "B's pull completes"
+        );
+        self.mat_b.flush_inbound_rebuilds().await.unwrap();
+    }
+
+    /// The App health check finds no `pages_cache.last_edited_ms` divergence
+    /// on B, and B's Last-edited time on each of `pages` is A's.
+    async fn assert_b_last_edited_matches_a(&self, pages: &[&BlockId], label: &str) {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 24).unwrap();
+        let divergences: Vec<String> = crate::reconciliation_oracle::reconcile_all(
+            &self.pool_b,
+            self.mat_b.loro_state(),
+            None,
+            today,
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|d| d.artefact == "pages_cache.last_edited_ms")
+        .map(|d| d.to_string())
+        .collect();
+        assert_eq!(
+            (divergences, last_edited_ms(&self.pool_b, pages).await),
+            (
+                Vec::<String>::new(),
+                last_edited_ms(&self.pool_a, pages).await
+            ),
+            "{label}: B's Last edited must pass the App health check and equal A's"
+        );
+    }
+
+    fn shutdown(&self) {
+        self.mat_a.shutdown();
+        self.mat_b.shutdown();
+    }
+}
+
+/// Each page's `pages_cache.last_edited_ms`, `None` for a page with no row.
+async fn last_edited_ms(pool: &SqlitePool, pages: &[&BlockId]) -> Vec<Option<i64>> {
+    let mut times = Vec::new();
+    for page in pages {
+        times.push(
+            sqlx::query_scalar("SELECT last_edited_ms FROM pages_cache WHERE page_id = ?")
+                .bind(page.as_str())
+                .fetch_optional(pool)
+                .await
+                .unwrap(),
+        );
+    }
+    times
+}
+
+/// #6048: A adds a block to a page B holds. B projects the block with
+/// `page_id` NULL, so its op raises the page only once the rebuild has
+/// filled it in.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_peers_new_block_raises_its_pages_last_edited_6048() {
+    let fx = SyncedPair::new().await;
+    let page = fx.page_on_a("Plan").await;
+    fx.pull().await;
+
+    fx.block_on_a(&page, "from the phone").await;
+    fx.pull().await;
+
+    fx.assert_b_last_edited_matches_a(&[&page], "a peer's new block")
+        .await;
+    fx.shutdown();
+}
+
+/// #6048: A moves a block to another page. B keeps the block's old
+/// `page_id` until the rebuild; the move raises the new page and, as a local
+/// move does, leaves the old one alone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_peers_cross_page_move_raises_the_new_page_6048() {
+    let fx = SyncedPair::new().await;
+    let from = fx.page_on_a("From").await;
+    let to = fx.page_on_a("To").await;
+    let block = fx.block_on_a(&from, "moving").await;
+    fx.pull().await;
+
+    crate::commands::move_block_inner(
+        &fx.pool_a,
+        "device-A",
+        &fx.mat_a,
+        block,
+        Some(to.clone()),
+        1,
+    )
+    .await
+    .unwrap();
+    fx.pull().await;
+
+    fx.assert_b_last_edited_matches_a(&[&from, &to], "a peer's cross-page move")
+        .await;
+    fx.shutdown();
+}
+
+/// #6048: A creates a page with blocks under it. B gives the page its row
+/// before the blocks have their `page_id`, so the blocks' ops still have to
+/// raise it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_peers_new_page_takes_its_newest_blocks_time_6048() {
+    let fx = SyncedPair::new().await;
+    let page = fx.page_on_a("Fresh").await;
+    // The blocks' ops must be newer than the page's own, or the page's own
+    // time is already the newest and a miss shows nothing.
+    let page_ms = last_edited_ms(&fx.pool_a, &[&page]).await[0].unwrap();
+    while agaric_store::db::now_ms() <= page_ms {
+        tokio::task::yield_now().await;
+    }
+    let first = fx.block_on_a(&page, "first").await;
+    fx.block_on_a(&first, "nested").await;
+    fx.pull().await;
+
+    fx.assert_b_last_edited_matches_a(&[&page], "a peer's new page")
+        .await;
     fx.shutdown();
 }

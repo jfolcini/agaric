@@ -1937,6 +1937,64 @@ impl SyncOrchestrator {
         Ok(batches)
     }
 
+    /// #2481: ingest the buffered audit records now that the streaming phase
+    /// is done. Fire the debounced inbound-sync cache rebuild this session's
+    /// `LoroSync` imports armed and flush the materializer FIRST, so this
+    /// write does not race that rebuild (SQLite single-writer; an
+    /// oversized-block FTS rebuild can otherwise hold the write lock past
+    /// the busy_timeout and fail the audit write, #611), and so `page_id`,
+    /// which the projection leaves NULL on a synced-in block and stale on a
+    /// moved one, is current when each ingested op raises its page's
+    /// `last_edited_ms` (#6048). Best-effort throughout — the op log is
+    /// not load-bearing for state, so a flush error or a single corrupt
+    /// record (hash mismatch, NUL byte) is logged and skipped, never
+    /// faulting an otherwise-successful pull (which would re-ship + re-fault
+    /// the same record every session → permanent backoff over non-state
+    /// data). The unresolved-parent-gap case is already handled inside
+    /// `insert_replicated_op` under the Audit profile (warn-and-land).
+    ///
+    /// #3325: the per-record failure policy is NOT uniform, and the ordering
+    /// it enforces is what keeps the frontier honest — see
+    /// [`ingest_replicated_batch`](crate::sync_protocol::ingest_replicated_batch),
+    /// which owns it. In short: a *transient* failure defers the rest of that
+    /// device's chain (our advertised `MAX(seq)` for it must not step over a
+    /// record we do not hold, or the peer never offers it again), while a
+    /// *corrupt* record is skipped permanently and the frontier is allowed
+    /// past it.
+    async fn ingest_pending_records(&mut self) {
+        if self.pending_ingest_records.is_empty() {
+            return;
+        }
+        self.host.fire_pending_inbound_rebuild();
+        if let Err(e) = self.host.flush().await {
+            tracing::warn!(
+                device_id = %self.device_id,
+                error = %e,
+                "#2481: materializer flush before op-log ingest failed; \
+                 ingesting anyway (best-effort)"
+            );
+        }
+        let records = std::mem::take(&mut self.pending_ingest_records);
+        let outcome = crate::sync_protocol::ingest_replicated_batch(
+            &self.pool,
+            &records,
+            &self.device_id,
+            &self.session.remote_device_id,
+        )
+        .await;
+        tracing::debug!(
+            device_id = %self.device_id,
+            remote_device_id = %self.session.remote_device_id,
+            ingested = outcome.ingested,
+            already_held = outcome.already_held,
+            rejected = outcome.rejected,
+            deferred = outcome.deferred,
+            out_of_order = outcome.out_of_order,
+            total = records.len(),
+            "#2481: ingested buffered op-log audit records at session completion"
+        );
+    }
+
     /// Complete a pull session on the puller (initiator) side: record the
     /// `synced_at` bookkeeping and return the terminal `SyncComplete`.
     ///
@@ -1949,55 +2007,7 @@ impl SyncOrchestrator {
     /// marking us due every tick. Skips the write only when the peer was never
     /// identified — never fabricates a bogus empty-`peer_id` row.
     async fn complete_pull_session(&mut self) -> Result<Option<SyncMessage>, AppError> {
-        // #2481: ingest the buffered audit records now that the streaming phase
-        // is done. Flush the materializer FIRST so this write does not race the
-        // background inbound-sync cache rebuild triggered by this session's
-        // `LoroSync` imports (SQLite single-writer; an oversized-block FTS
-        // rebuild can otherwise hold the write lock past the busy_timeout and
-        // fail the audit write, #611). Best-effort throughout — the op log is
-        // not load-bearing for state, so a flush error or a single corrupt
-        // record (hash mismatch, NUL byte) is logged and skipped, never
-        // faulting an otherwise-successful pull (which would re-ship + re-fault
-        // the same record every session → permanent backoff over non-state
-        // data). The unresolved-parent-gap case is already handled inside
-        // `insert_replicated_op` under the Audit profile (warn-and-land).
-        //
-        // #3325: the per-record failure policy is NOT uniform, and the ordering
-        // it enforces is what keeps the frontier honest — see
-        // [`ingest_replicated_batch`], which owns it. In short: a *transient*
-        // failure defers the rest of that device's chain (our advertised
-        // `MAX(seq)` for it must not step over a record we do not hold, or the
-        // peer never offers it again), while a *corrupt* record is skipped
-        // permanently and the frontier is allowed past it.
-        if !self.pending_ingest_records.is_empty() {
-            if let Err(e) = self.host.flush().await {
-                tracing::warn!(
-                    device_id = %self.device_id,
-                    error = %e,
-                    "#2481: materializer flush before op-log ingest failed; \
-                     ingesting anyway (best-effort)"
-                );
-            }
-            let records = std::mem::take(&mut self.pending_ingest_records);
-            let outcome = crate::sync_protocol::ingest_replicated_batch(
-                &self.pool,
-                &records,
-                &self.device_id,
-                &self.session.remote_device_id,
-            )
-            .await;
-            tracing::debug!(
-                device_id = %self.device_id,
-                remote_device_id = %self.session.remote_device_id,
-                ingested = outcome.ingested,
-                already_held = outcome.already_held,
-                rejected = outcome.rejected,
-                deferred = outcome.deferred,
-                out_of_order = outcome.out_of_order,
-                total = records.len(),
-                "#2481: ingested buffered op-log audit records at session completion"
-            );
-        }
+        self.ingest_pending_records().await;
 
         // #5712: every space's doc this session carried has landed, so a block
         // its imports took out of a doc that no engine holds now was purged,
