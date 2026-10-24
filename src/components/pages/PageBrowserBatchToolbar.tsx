@@ -52,7 +52,7 @@ import {
 } from '@/components/ui/select'
 import { spaceMoveFailureMessage, useSpaceMove } from '@/hooks/useSpaceMove'
 import { useStarredPages } from '@/hooks/useStarredPages'
-import { unwrap } from '@/lib/app-error'
+import { takenNameReason, unwrap } from '@/lib/app-error'
 import type { TagCacheRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
@@ -238,7 +238,7 @@ export function PageBrowserBatchToolbar({
         })
         .catch((err: unknown) => {
           logger.error('PageBrowserBatchToolbar', 'bulk trash undo failed', { ids }, err)
-          notify.error(t('pageBrowser.batch.trashUndoFailed'))
+          notify.error(takenNameReason(err) ?? t('pageBrowser.batch.trashUndoFailed'))
         })
     },
     [onMutated, t],

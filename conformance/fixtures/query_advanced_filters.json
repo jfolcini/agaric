@@ -127,6 +127,30 @@
       "cursor": null,
       "error": null,
       "has_more": false,
+      "name": "advanced_has_property_on_a_column_backed_key",
+      "rows": ["B5", "B4", "B3", "B2"],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_has_property_ne_on_a_column_backed_key",
+      "rows": ["B5", "B4", "B2", "B1"],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_has_property_space_reads_space_id",
+      "rows": ["B5", "B4", "B3", "B2", "B1"],
+      "total_count": 5
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
       "name": "agenda_unfinished_before_march",
       "rows": ["B2"],
       "total_count": null
@@ -269,6 +293,73 @@
       "command": "run_advanced_query",
       "comment": "#3314 finding 1 (Between half): SQL BETWEEN is inclusive on BOTH endpoints. S2 sits on `from`, S4 on `to`. `ordered` since #3821 closed (#3927): the engine's terminal tiebreaker is `b.id DESC` and the mock's `resolveSortTerms` now mirrors it, so this sequence pins `run_advanced_query`'s DEFAULT sort arm. An unordered step credits that arm while comparing sets, which is no evidence about an ORDERING branch at all.",
       "name": "advanced_due_date_between_is_inclusive"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "todo_state",
+              "predicate": {
+                "type": "Exists"
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "#6051 — `todo_state` lives in its `blocks` column, never in `block_properties` (migration 0088), so `has-property` reads the column: S2..S5 hold a state, the page S1 does not.",
+      "name": "advanced_has_property_on_a_column_backed_key"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "todo_state",
+              "predicate": {
+                "type": "Ne",
+                "value": {
+                  "type": "Text",
+                  "value": "DONE"
+                }
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "#6051 — `Ne` on a column reads as it does on a property row: every block not holding `DONE`, the page without a state included.",
+      "name": "advanced_has_property_ne_on_a_column_backed_key"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "key": "space",
+              "predicate": {
+                "type": "Exists"
+              },
+              "type": "HasProperty"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "#6051 — `space` is `blocks.space_id`, the space of the block's page, so every seeded block holds it.",
+      "name": "advanced_has_property_space_reads_space_id"
     },
     {
       "args": {

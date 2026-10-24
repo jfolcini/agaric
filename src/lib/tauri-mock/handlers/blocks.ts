@@ -979,24 +979,43 @@ function rejectDuplicateTagName(tagId: string, name: string): void {
     throw appErrorRejection({
       kind: 'validation',
       code: 'DuplicatePageTitle',
-      message: `a tag named '${name}' already exists in space '${spaceId as string}'`,
+      message: `a tag named '${name}' already exists in this space`,
     })
   }
 }
 
 /**
- * #5281 — run `restore`, then refuse it, undoing every row it revived, when it
- * brought a tag back under a name another live tag of its space holds. Mock
- * twin of `reject_restored_duplicate_tag_names`, which runs after the backend's
- * writes inside the transaction its refusal rolls back.
+ * #4723 — refuse titling `page` `title` when another live page of its space
+ * holds that title. Mock twin of `reject_duplicate_page_title`
+ * (`src-tauri/src/commands/blocks/crud.rs`); the page itself is not its own
+ * clash.
  */
-function restoreRefusingDuplicateTagNames<T>(restore: () => T): T {
+function rejectDuplicatePageTitle(page: Record<string, unknown>, title: string): void {
+  const spaceId = ownerSpaceOf(page)
+  if (spaceId === null || findLivePageByTitle(title, spaceId, page['id'] as string) === null) {
+    return
+  }
+  throw appErrorRejection({
+    kind: 'validation',
+    code: 'DuplicatePageTitle',
+    message: `a page titled '${title}' already exists in this space`,
+  })
+}
+
+/**
+ * #5281/#6051 — run `restore`, then refuse it, undoing every row it revived,
+ * when it brought a page or tag back under a name another live page or tag of
+ * its space holds. Mock twin of `reject_revived_duplicate_names`, which runs
+ * after the backend's writes inside the transaction its refusal rolls back.
+ */
+function restoreRefusingDuplicateNames<T>(restore: () => T): T {
   const deletedBefore = new Map([...blocks].map(([id, b]) => [id, b['deleted_at']]))
   const result = restore()
   try {
     for (const [id, b] of blocks) {
-      if (b['block_type'] !== 'tag' || b['deleted_at'] || !deletedBefore.get(id)) continue
-      if (b['content'] != null) rejectDuplicateTagName(id, b['content'] as string)
+      if (b['deleted_at'] || !deletedBefore.get(id) || typeof b['content'] !== 'string') continue
+      if (b['block_type'] === 'tag') rejectDuplicateTagName(id, b['content'])
+      if (b['block_type'] === 'page') rejectDuplicatePageTitle(b, b['content'])
     }
   } catch (err) {
     for (const [id, deletedAt] of deletedBefore) {
@@ -1590,19 +1609,7 @@ export const blocksHandlers = {
     if (!b || b['deleted_at'] != null) {
       throw notFoundRejection(`block '${blockId}' (not found or deleted)`)
     }
-    // #4723 — page titles are unique per space: mirrors the backend's
-    // `reject_duplicate_page_title` (the page itself is not its own clash).
-    if (b['block_type'] === 'page') {
-      const spaceId = ownerSpaceOf(b)
-      const toText = a['toText'] as string
-      if (spaceId !== null && findLivePageByTitle(toText, spaceId, blockId) !== null) {
-        throw appErrorRejection({
-          kind: 'validation',
-          code: 'DuplicatePageTitle',
-          message: `a page titled '${toText}' already exists in space '${spaceId}'`,
-        })
-      }
-    }
+    if (b['block_type'] === 'page') rejectDuplicatePageTitle(b, a['toText'] as string)
     if (b['block_type'] === 'tag') rejectDuplicateTagName(blockId, a['toText'] as string)
     const oldContent = b['content'] as string | null
     b['content'] = a['toText'] as string
@@ -1745,7 +1752,7 @@ export const blocksHandlers = {
     if (target['deleted_at'] == null) {
       throw invalidOperationRejection(`block '${blockId}' is not deleted`)
     }
-    const restoredCount = restoreRefusingDuplicateTagNames(() => restoreCohort(blocks, blockId))
+    const restoredCount = restoreRefusingDuplicateNames(() => restoreCohort(blocks, blockId))
     const op = pushOp('restore_block', { block_id: blockId })
     // `WithOps<RestoreResponse>`.
     return {
@@ -1825,7 +1832,7 @@ export const blocksHandlers = {
     // chain. `affected_count` sums the DOWNWARD cohorts only — an ancestor
     // dragged back to keep the row reachable is an effect, not a restore the
     // caller asked for.
-    const count = restoreRefusingDuplicateTagNames(() =>
+    const count = restoreRefusingDuplicateNames(() =>
       restoreRoots.reduce((sum, id) => sum + restoreCohort(blocks, id), 0),
     )
     for (const id of restoreRoots) pushOp('restore_block', { block_id: id })

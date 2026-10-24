@@ -884,10 +884,10 @@ fn compare_op_to_date_predicate(op: &CompareOp, value: &str) -> Option<DatePredi
 ///
 /// **Parity contract:** each leaf fragment reproduces the EXACT operator,
 /// `ESCAPE`, `IS NOT NULL` guard, and value-mangling of the corresponding
-/// `resolve_filter_with_candidates` arm. That resolver is NOT test-only: it
-/// is the LIVE filter engine for the grouped / unlinked-references surfaces
-/// (`backlink::grouped`), and it doubles as the parity oracle for this
-/// flat-path compiler (see `backlink::tests`).
+/// `resolve_filter_with_candidates` arm, which is the parity oracle for this
+/// compiler (see `backlink::tests`). In production the resolver only
+/// pre-resolves the hybrid leaves below: the flat and the grouped /
+/// unlinked-references surfaces all run this compiler.
 ///
 /// **Hybrid leaves** (`Contains`, `HasTag`, `HasTagPrefix`, `SourcePage`) are
 /// resolved once via the existing helpers and embedded as a `json_each` id

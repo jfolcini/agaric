@@ -13,6 +13,7 @@
  */
 
 import type { AppError } from '@/lib/bindings'
+import { normalizeTagName } from '@/lib/name-tokens'
 import { foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { deleteCohort, nextCohortMarker, restoreCohort } from '@/lib/tauri-mock/cohort'
 import { type MockOpLogEntry, opLog } from '@/lib/tauri-mock/seed'
@@ -165,10 +166,13 @@ function revertBlockRowField(
   opType: string,
   payload: Record<string, unknown>,
   b: BlockRow,
+  blocks: Blocks,
 ): boolean {
   switch (opType) {
     case 'edit_block': {
-      b['content'] = (payload['from_text'] as string | null) ?? null
+      const fromText = (payload['from_text'] as string | null) ?? null
+      rejectTakenName(blocks, b, fromText)
+      b['content'] = fromText
       return true
     }
     // A key the row holds as a column, set or deleted with the `prior` the
@@ -367,7 +371,7 @@ function revertPageAlias(
 function revertLifecycleCohort(opType: string, blocks: Blocks, blockId: string): boolean {
   switch (opType) {
     case 'delete_block': {
-      restoreCohort(blocks, blockId)
+      restoreRefusingTakenNames(blocks, blockId)
       return true
     }
     // Undo-of-create and undo-of-restore are the same backend payload
@@ -382,6 +386,59 @@ function revertLifecycleCohort(opType: string, blocks: Blocks, blockId: string):
     default: {
       return false
     }
+  }
+}
+
+/**
+ * #6051 — refuse a revert that would name page or tag `b` `name` while another
+ * live page or tag of its space holds that name, as a rename is refused. Mock
+ * twin of `reject_duplicate_name` (`src-tauri/src/commands/blocks/crud.rs`).
+ */
+function rejectTakenName(blocks: Blocks, b: BlockRow, name: string | null): void {
+  const kind = b['block_type']
+  const spaceId = (b['space_id'] as string | null | undefined) ?? null
+  if ((kind !== 'page' && kind !== 'tag') || spaceId === null || name === null) return
+  const identity = (s: string): string => (kind === 'tag' ? normalizeTagName(s) : s)
+  const taken = [...blocks.values()].some(
+    (other) =>
+      other !== b &&
+      other['block_type'] === kind &&
+      !other['deleted_at'] &&
+      other['space_id'] === spaceId &&
+      typeof other['content'] === 'string' &&
+      identity(other['content']) === identity(name),
+  )
+  if (!taken) return
+  const message =
+    kind === 'tag'
+      ? `a tag named '${name}' already exists in this space`
+      : `a page titled '${name}' already exists in this space`
+  throw Object.assign(new Error(message), {
+    kind: 'validation' as const,
+    code: 'DuplicatePageTitle' as const,
+    message,
+  })
+}
+
+/**
+ * Undo a delete, refusing it whole when a page or tag it revives finds its
+ * name taken: the backend checks after the restore's writes and rolls them
+ * back, so the mock restores, checks, and puts every `deleted_at` back.
+ */
+function restoreRefusingTakenNames(blocks: Blocks, blockId: string): void {
+  const deletedBefore = new Map([...blocks].map(([id, b]) => [id, b['deleted_at']]))
+  restoreCohort(blocks, blockId)
+  try {
+    for (const [id, b] of blocks) {
+      if (!deletedBefore.get(id) || b['deleted_at']) continue
+      rejectTakenName(blocks, b, (b['content'] as string | null | undefined) ?? null)
+    }
+  } catch (err) {
+    for (const [id, deletedAt] of deletedBefore) {
+      const b = blocks.get(id)
+      if (b && b['deleted_at'] !== deletedAt) b['deleted_at'] = deletedAt
+    }
+    throw err
   }
 }
 
@@ -536,7 +593,7 @@ export function applyRevertForOp(
   // themselves and no-op on a missing row, exactly as before.
   if (revertLifecycleCohort(target.op_type, blocks, blockId)) return
 
-  if (b && revertBlockRowField(target.op_type, payload, b)) return
+  if (b && revertBlockRowField(target.op_type, payload, b, blocks)) return
 
   // Property and tag reverts: silent no-op if the relevant aux map wasn't
   // wired in by the caller.

@@ -36,7 +36,7 @@ import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { invalidateCalendarPageDates } from '@/hooks/useCalendarPageDates'
-import { unwrap } from '@/lib/app-error'
+import { takenNameReason, unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { logger } from '@/lib/logger'
@@ -182,7 +182,7 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
             { pageId: deletedTarget.id },
             err,
           )
-          notify.error(t('pageDeleteAction.restoreFailed'))
+          notify.error(takenNameReason(err) ?? t('pageDeleteAction.restoreFailed'))
         })
     },
     [t],

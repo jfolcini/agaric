@@ -1100,6 +1100,29 @@ export function propertyLikeMatches(
   return contains ? hay.includes(needle) : hay.startsWith(needle)
 }
 
+/** The keys `reserved_key_blocks_column` maps to a same-named `blocks` column. */
+const SAME_NAMED_COLUMN_KEYS: ReadonlySet<string> = new Set([
+  'todo_state',
+  'priority',
+  'due_date',
+  'scheduled_date',
+])
+
+/**
+ * The value block `b` holds for a key migration 0088 keeps out of
+ * `block_properties`, read from its `blocks` column as
+ * `reserved_key_blocks_column` names it (`space` is `space_id`, the space of
+ * the block's page), or `undefined` for a key that lives in `block_properties`.
+ */
+export function columnBackedValue(
+  b: Record<string, unknown>,
+  key: string,
+): string | null | undefined {
+  if (key === 'space') return ownerSpaceOf(b)
+  if (!SAME_NAMED_COLUMN_KEYS.has(key)) return undefined
+  return (b[key] as string | null | undefined) ?? null
+}
+
 /**
  * Evaluate a `HasProperty` primitive against a page's seeded `block_properties`
  * (`properties` map, keyed on the page block id), mirroring the backend's
@@ -1108,14 +1131,26 @@ export function propertyLikeMatches(
  * `predicate: PropertyPredicate` (D8 — invalid op/value combos are
  * unrepresentable): `Exists` / `NotExists`, `Eq` / `Ne`, the `Lt`/`Gt`/`Lte`/
  * `Gte` ordered compares (#1280), and `Contains`/`StartsWith` LIKE matches
- * (#1913).
+ * (#1913). A column-backed key reads its column instead, as text whatever the
+ * operand's type (`compile_column_property`, #6051).
  */
 export function hasPropertyMatches(r: PageMetaRow, f: Record<string, unknown>): boolean {
   const key = f['key'] as string
   const predicate = f['predicate'] as Record<string, unknown> | undefined
   const ptype = predicate?.['type'] as string | undefined
-  const prop = properties.get(r.id)?.get(key) ?? null
-  const value = predicate?.['value'] as Record<string, unknown> | undefined
+  const block = blocks.get(r.id)
+  const column = block === undefined ? undefined : columnBackedValue(block, key)
+  const operand = predicate?.['value'] as Record<string, unknown> | undefined
+  const prop =
+    column === undefined
+      ? (properties.get(r.id)?.get(key) ?? null)
+      : column === null
+        ? null
+        : { value_text: column }
+  const value =
+    column === undefined || operand === undefined
+      ? operand
+      : { type: 'Text', value: String(operand['value']) }
   switch (ptype) {
     case 'Exists': {
       return prop != null

@@ -1293,11 +1293,19 @@ impl SyncOrchestrator {
             SyncMessage::Error { message } => {
                 self.state = SyncState::Failed(message.clone());
                 self.session.state = SyncState::Failed(message.clone());
-                self.emit(crate::sync_events::SyncEvent::Error {
-                    message,
-                    remote_device_id: self.session.remote_device_id.clone(),
-                    code: None,
-                });
+                // #6051: `Busy`, the answer when both devices dial at once, is
+                // no sync failure. Every other refusal still reaches the UI in
+                // the responder's own words.
+                if !matches!(
+                    crate::sync_daemon::Rejection::from_peer_message(&message),
+                    Some(crate::sync_daemon::Rejection::Busy)
+                ) {
+                    self.emit(crate::sync_events::SyncEvent::Error {
+                        message,
+                        remote_device_id: self.session.remote_device_id.clone(),
+                        code: None,
+                    });
+                }
                 Ok(None)
             }
 

@@ -11257,3 +11257,210 @@ async fn undo_and_redo_keep_a_value_a_peer_set_in_between_6046() {
     );
     a.mat.shutdown();
 }
+
+// ======================================================================
+// #6051 — an undo that would revive a tag name or page title another live
+// tag or page of its space now holds is refused whole, as the rename is,
+// and changes nothing.
+// ======================================================================
+
+/// A block of `block_type` named `name` in [`TEST_SPACE_ID`], made through
+/// the commands.
+async fn named_block_6051(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    block_type: &str,
+    name: &str,
+) -> BlockId {
+    ensure_test_space(pool).await;
+    mark_block_as_space(pool, TEST_SPACE_ID).await;
+    let id = if block_type == "page" {
+        create_page_in_space_inner(pool, DEV, mat, None, name.into(), TEST_SPACE_ID.into())
+            .await
+            .unwrap()
+    } else {
+        create_block_inner_with_space(
+            pool,
+            DEV,
+            mat,
+            block_type.into(),
+            name.into(),
+            None,
+            None,
+            &test_space_scope(),
+            None,
+        )
+        .await
+        .unwrap()
+        .id
+    };
+    settle(mat).await;
+    id
+}
+
+/// The ref of the newest `op_type` op on `block`.
+async fn newest_op_ref_6051(pool: &SqlitePool, op_type: &str, block: &BlockId) -> OpRef {
+    let seq: i64 = sqlx::query_scalar(
+        "SELECT MAX(seq) FROM op_log WHERE op_type = ? AND block_id = ? AND device_id = ?",
+    )
+    .bind(op_type)
+    .bind(block.as_str())
+    .bind(DEV)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    OpRef {
+        device_id: DEV.into(),
+        seq,
+    }
+}
+
+async fn deleted_and_content_6051(pool: &SqlitePool, block: &BlockId) -> (bool, Option<String>) {
+    let (deleted_at, content): (Option<i64>, Option<String>) =
+        sqlx::query_as("SELECT deleted_at, content FROM blocks WHERE id = ?")
+            .bind(block.as_str())
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    (deleted_at.is_some(), content)
+}
+
+async fn op_count_6051(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+fn assert_name_taken_6051<T: std::fmt::Debug>(result: Result<T, AppError>, what: &str) {
+    let err = result.expect_err(what);
+    assert_eq!(
+        err.validation_code(),
+        Some(agaric_core::error::ValidationCode::DuplicatePageTitle),
+        "{what}: the refusal names the clash as a rename's does; got {err:?}"
+    );
+}
+
+/// Delete tag `work`, make a new `work`, undo the delete: refused, the old tag
+/// stays in the trash and no op is appended. Once the new tag is gone the same
+/// undo restores it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_a_tag_delete_is_refused_while_its_name_is_taken_6051() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let old = named_block_6051(&pool, &mat, "tag", "work").await;
+    delete_block_inner(&pool, DEV, &mat, old.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let delete_ref = newest_op_ref_6051(&pool, "delete_block", &old).await;
+    let new = named_block_6051(&pool, &mat, "tag", "work").await;
+    let ops_before = op_count_6051(&pool).await;
+
+    assert_name_taken_6051(
+        undo_op_inner(&pool, DEV, &mat, delete_ref.clone()).await,
+        "undoing the delete while a live tag holds `work`",
+    );
+    assert_name_taken_6051(
+        revert_ops_inner(&pool, DEV, &mat, vec![delete_ref.clone()]).await,
+        "reverting the delete from History or MCP while a live tag holds `work`",
+    );
+    assert_eq!(
+        deleted_and_content_6051(&pool, &old).await,
+        (true, Some("work".into())),
+        "the refused undo leaves the old tag in the trash"
+    );
+    assert_eq!(op_count_6051(&pool).await, ops_before, "and appends no op");
+
+    delete_block_inner(&pool, DEV, &mat, new).await.unwrap();
+    settle(&mat).await;
+    undo_op_inner(&pool, DEV, &mat, delete_ref)
+        .await
+        .expect("with the name free again, the undo restores the tag");
+    assert_eq!(
+        deleted_and_content_6051(&pool, &old).await,
+        (false, Some("work".into()))
+    );
+    mat.shutdown();
+}
+
+/// The same for a page title, and a point-in-time restore refuses whole rather
+/// than skipping the one op: the maintainer's rule for #6051.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_a_page_delete_is_refused_while_its_title_is_taken_6051() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let old = named_block_6051(&pool, &mat, "page", "Home").await;
+    let child = append_child(&pool, &mat, &old, "a note").await;
+    settle(&mat).await;
+    let before_the_delete = newest_op_ref_6051(&pool, "create_block", &child).await;
+    delete_block_inner(&pool, DEV, &mat, old.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let delete_ref = newest_op_ref_6051(&pool, "delete_block", &old).await;
+    let _new = named_block_6051(&pool, &mat, "page", "Home").await;
+    let ops_before = op_count_6051(&pool).await;
+
+    assert_name_taken_6051(
+        revert_ops_inner(&pool, DEV, &mat, vec![delete_ref]).await,
+        "reverting the delete while a live page is titled `Home`",
+    );
+    assert_name_taken_6051(
+        restore_page_to_op_inner(
+            &pool,
+            DEV,
+            &mat,
+            old.as_str().into(),
+            before_the_delete.device_id,
+            before_the_delete.seq,
+        )
+        .await,
+        "restoring the page to before its delete while a live page is titled `Home`",
+    );
+    assert_eq!(
+        deleted_and_content_6051(&pool, &old).await,
+        (true, Some("Home".into())),
+        "the refused undo leaves the old page in the trash"
+    );
+    assert!(
+        deleted_and_content_6051(&pool, &child).await.0,
+        "and its child with it"
+    );
+    assert_eq!(op_count_6051(&pool).await, ops_before, "and appends no op");
+    mat.shutdown();
+}
+
+/// Undoing a rename back onto a name a live tag or page of the space has taken
+/// since is refused, and the block keeps its current name.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_a_rename_onto_a_taken_name_is_refused_6051() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    for (block_type, old_name, new_name) in [("tag", "work", "job"), ("page", "Plan", "Draft")] {
+        let renamed = named_block_6051(&pool, &mat, block_type, old_name).await;
+        edit_block_inner(&pool, DEV, &mat, renamed.clone(), new_name.into())
+            .await
+            .unwrap();
+        settle(&mat).await;
+        let rename_ref = newest_op_ref_6051(&pool, "edit_block", &renamed).await;
+        let _holder = named_block_6051(&pool, &mat, block_type, old_name).await;
+        let ops_before = op_count_6051(&pool).await;
+
+        assert_name_taken_6051(
+            undo_op_inner(&pool, DEV, &mat, rename_ref).await,
+            &format!("undoing the {block_type} rename while `{old_name}` is taken"),
+        );
+        assert_name_taken_6051(
+            undo_page_op_inner(&pool, DEV, &mat, renamed.as_str().into(), 0).await,
+            &format!("the positional undo of the {block_type} rename"),
+        );
+        assert_eq!(
+            deleted_and_content_6051(&pool, &renamed).await,
+            (false, Some(new_name.into())),
+            "the refused undo leaves the {block_type} named `{new_name}`"
+        );
+        assert_eq!(op_count_6051(&pool).await, ops_before, "and appends no op");
+    }
+    mat.shutdown();
+}

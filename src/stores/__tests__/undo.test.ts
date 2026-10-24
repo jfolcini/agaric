@@ -1598,6 +1598,100 @@ describe('useUndoStore', () => {
       })
     })
 
+    // #6051 — an undo the backend refuses because it would revive a page
+    // title or tag name its space has given away since says so, in the
+    // refusal's own words, and keeps its entry: freeing the name makes the
+    // same Ctrl+Z succeed. Every other failure keeps the generic copy.
+    describe('#6051 — a refusal naming a taken name is shown in its own words', () => {
+      const CLASH = "a tag named 'work' already exists in this space"
+      const clash = { kind: 'validation', code: 'DuplicatePageTitle', message: CLASH }
+
+      it('undoOp shows the refusal, not "Undo failed"', async () => {
+        useUndoStore.getState().onNewAction('page1', [ref(5)])
+        mockedUndoOp.mockRejectedValueOnce(clash)
+
+        await useUndoStore.getState().undo('page1')
+
+        expect(mockedToastWarning).toHaveBeenCalledWith(CLASH)
+      })
+
+      it('undoOps (a coalesced group) shows the refusal', async () => {
+        useUndoStore.getState().onNewAction('page1', [ref(1), ref(2)])
+        mockedUndoOps.mockRejectedValueOnce(clash)
+
+        await useUndoStore.getState().undo('page1')
+
+        expect(mockedToastWarning).toHaveBeenCalledWith(CLASH)
+      })
+
+      it('any other refusal or failure keeps the generic copy', async () => {
+        useUndoStore.getState().onNewAction('page1', [ref(5)])
+        mockedUndoOp.mockRejectedValueOnce({ kind: 'validation', message: 'duplicate op ref' })
+        await useUndoStore.getState().undo('page1')
+        useUndoStore.getState().onNewAction('page1', [ref(6)])
+        mockedUndoOp.mockRejectedValueOnce({ kind: 'pool_busy', message: 'pool exhausted' })
+        await useUndoStore.getState().undo('page1')
+
+        expect(mockedToastWarning.mock.calls).toEqual([
+          ['Undo failed; nothing was undone.'],
+          ['Undo failed; nothing was undone.'],
+        ])
+      })
+
+      it('the positional group undo shows the refusal', async () => {
+        mockedUndoPageGroup.mockRejectedValueOnce(clash)
+
+        await useUndoStore.getState().undo('page1')
+
+        expect(mockedToastWarning).toHaveBeenCalledWith(CLASH)
+      })
+
+      it('a redo the backend refuses shows the refusal', async () => {
+        mockedUndoPageGroup.mockResolvedValueOnce(
+          ok([makeUndoResult({ deviceId: 'dev1', seq: 5, newSeq: 6 })]),
+        )
+        await useUndoStore.getState().undo('page1')
+        mockedRedoPageOp.mockRejectedValueOnce(clash)
+
+        await useUndoStore.getState().redo('page1')
+
+        expect(mockedToastWarning).toHaveBeenCalledWith(CLASH)
+      })
+
+      it('a refused undo keeps its entry, and the same Ctrl+Z works once the name is free', async () => {
+        useUndoStore.getState().onNewAction('page1', [ref(5)])
+        mockedUndoOp.mockRejectedValueOnce(clash)
+
+        expect(await useUndoStore.getState().undo('page1')).toBeNull()
+        expect(useUndoStore.getState().pages.get('page1')?.undoStack[0]?.refs).toEqual([ref(5)])
+
+        const restored = makeUndoResult({ deviceId: 'dev1', seq: 5, newSeq: 100 })
+        mockedUndoOp.mockResolvedValueOnce(ok(restored))
+        expect(await useUndoStore.getState().undo('page1')).toEqual(restored)
+        expect(mockedUndoOp.mock.calls).toEqual([[ref(5)], [ref(5)]])
+        expect(useUndoStore.getState().pages.get('page1')?.undoStack).toEqual([])
+      })
+
+      it('a refused redo keeps its ref, and the same redo works once the name is free', async () => {
+        mockedUndoPageGroup.mockResolvedValueOnce(
+          ok([makeUndoResult({ deviceId: 'dev1', seq: 5, newSeq: 6 })]),
+        )
+        await useUndoStore.getState().undo('page1')
+        mockedRedoPageOp.mockRejectedValueOnce(clash)
+
+        expect(await useUndoStore.getState().redo('page1')).toBeNull()
+        expect(useUndoStore.getState().pages.get('page1')?.redoStack).toEqual([ref(6)])
+
+        const redone = makeUndoResult({ deviceId: 'dev1', seq: 6, newSeq: 7, isRedo: true })
+        mockedRedoPageOp.mockResolvedValueOnce(ok(redone))
+        expect(await useUndoStore.getState().redo('page1')).toEqual(redone)
+        expect(mockedRedoPageOp.mock.calls).toEqual([
+          ['dev1', 6],
+          ['dev1', 6],
+        ])
+      })
+    })
+
     // #3353 — follow-up to #3323: the drop-dead-entry fix only covered a
     // `Validation` rejection. `NotFound` (missing op ref past the
     // `op_log_compact` retention window) and `NonReversible` (reverse-move
@@ -1992,6 +2086,20 @@ describe('useUndoStore', () => {
         { pageId: 'page1', blockId: 'BLOCK_SWIPE' },
         err,
       )
+    })
+
+    // #6051 — restoring the swiped block would revive a taken name: the
+    // toast says so instead of "Undo failed".
+    it('shows the refusal in its own words when undoOp refuses a taken name', async () => {
+      mockedListPageHistory.mockResolvedValue(
+        ok(historyPage([historyEntry('delete_block', 'BLOCK_SWIPE', DELETE_REF)])),
+      )
+      const message = "a page titled 'Home' already exists in this space"
+      mockedUndoOp.mockRejectedValue({ kind: 'validation', code: 'DuplicatePageTitle', message })
+
+      await useUndoStore.getState().undoDeleteOf('page1', 'BLOCK_SWIPE', mockLoad)
+
+      expect(mockedToastError).toHaveBeenCalledWith(message)
     })
 
     // #4328 — the backend's reject rules now land on the exact row the toast

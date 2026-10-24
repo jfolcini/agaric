@@ -1,0 +1,273 @@
+{
+  "description": "#6051 — restoring a trashed page from the Trash refuses, as restoring a trashed tag does (#5281), when a live page of its space holds its title (#4723): the same `DuplicatePageTitle` code, all-or-nothing. The ops make a space (`C1`) and the pages `Home` (C2), `Notes` (C3) and `Spare` (C4), all before any delete so every create lands on a dense root. C2 and C3 are trashed and C4 is renamed to `Home`. Restoring C2 alone is refused; restoring C3 and C2 together is refused whole, so the bystander C3 stays trashed too, and neither refusal appends an op. Once C4 is trashed the same batch restores both.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Notes",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 14,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "restore_block"
+        },
+        {
+          "op_type": "restore_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B1",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_space",
+      "returns": ["create_space#space_id=B1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_old_home_page",
+      "returns": ["create_page_in_space#page_id=B2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_notes_page",
+      "returns": ["create_page_in_space#page_id=B3"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_spare_page",
+      "returns": ["create_page_in_space#page_id=B4"]
+    },
+    {
+      "code": "DuplicatePageTitle",
+      "error": "validation",
+      "name": "restoring_onto_a_held_title_is_refused",
+      "returns": []
+    },
+    {
+      "code": "DuplicatePageTitle",
+      "error": "validation",
+      "name": "a_batch_with_a_held_title_restores_nothing",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_batch_restores_once_the_title_is_free",
+      "returns": ["restore_blocks_by_ids#affected_count=2"]
+    }
+  ],
+  "name": "restore_page_onto_a_taken_title",
+  "ops": [
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Work"
+      },
+      "command": "create_space",
+      "comment": "The space every page below lives in.",
+      "name": "a_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "Home",
+        "parentId": null,
+        "spaceId": "C1"
+      },
+      "command": "create_page_in_space",
+      "comment": "The page the restores would revive.",
+      "name": "the_old_home_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "Notes",
+        "parentId": null,
+        "spaceId": "C1"
+      },
+      "command": "create_page_in_space",
+      "comment": "A bystander for the batch restore: trashed, listed, and still trashed after the refusal.",
+      "name": "the_notes_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "Spare",
+        "parentId": null,
+        "spaceId": "C1"
+      },
+      "command": "create_page_in_space",
+      "comment": "Takes `Home` once C2 is trashed.",
+      "name": "the_spare_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C2"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "C3"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "C4",
+        "toText": "Home"
+      },
+      "command": "edit_block",
+      "comment": "A live page now holds the trashed page's title."
+    },
+    {
+      "args": {
+        "blockId": "C2"
+      },
+      "command": "restore_block",
+      "comment": "Refused: C2 would be a second live `Home` in the space.",
+      "expect_code": "DuplicatePageTitle",
+      "expect_error": "validation",
+      "name": "restoring_onto_a_held_title_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["C3", "C2"]
+      },
+      "command": "restore_blocks_by_ids",
+      "comment": "The batch is one transaction, so `Notes` stays trashed with `Home`.",
+      "expect_code": "DuplicatePageTitle",
+      "expect_error": "validation",
+      "name": "a_batch_with_a_held_title_restores_nothing",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C4"
+      },
+      "command": "delete_block",
+      "comment": "Trashing the other `Home` frees the title."
+    },
+    {
+      "args": {
+        "blockIds": ["C3", "C2"]
+      },
+      "command": "restore_blocks_by_ids",
+      "comment": "With `Home` free, the same batch restores both.",
+      "name": "the_batch_restores_once_the_title_is_free",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [],
+    "properties": [],
+    "tags": []
+  }
+}

@@ -106,8 +106,8 @@ Reverse-op table (canonical):
 | Source op | Reverse op |
 | --- | --- |
 | `create_block` | `delete_block` (soft delete) |
-| `edit_block` | `edit_block` with the text the edit overwrote (`prior_text` when recorded, else the text its `prev_edit` names) |
-| `delete_block` | `restore_block` |
+| `edit_block` | `edit_block` with the text the edit overwrote (`prior_text` when recorded, else the text its `prev_edit` names); for a page or tag, refused while another live page or tag of its space holds that name (#6051) |
+| `delete_block` | `restore_block`; refused while another live page or tag of the space holds the name of a page or tag it would revive (#6051) |
 | `restore_block` | `delete_block` |
 | `purge_block` | **non-reversible** |
 | `move_block` | `move_block` to the parent + slot the move recorded (`prior`); **non-reversible** when it recorded none and the op log holds none, and refused while that parent is trashed, under the block, or in another space than the block (#6047) |

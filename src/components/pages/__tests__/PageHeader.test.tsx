@@ -462,7 +462,7 @@ describe('PageHeader duplicate-title rename (#4723)', () => {
         const rejection: AppError = {
           kind: 'validation',
           code: 'DuplicatePageTitle',
-          message: "a page titled 'Taken' already exists in space 'S'",
+          message: "a page titled 'Taken' already exists in this space",
         }
         throw rejection
       }

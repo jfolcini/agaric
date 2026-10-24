@@ -32,7 +32,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import type { ActivityEntry } from '@/hooks/useMcpActivityFeed'
 import { useMinuteClock } from '@/hooks/useMinuteClock'
 import { reloadChangedPageStores } from '@/hooks/useSyncEvents'
-import { isNonReversible, unwrap } from '@/lib/app-error'
+import { isNonReversible, takenNameReason, unwrap } from '@/lib/app-error'
 import { commands, type OpRef } from '@/lib/bindings'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { logger } from '@/lib/logger'
@@ -116,7 +116,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
         notify.error(
           isNonReversible(err)
             ? t('agentAccess.undoAgentOp.nonReversible')
-            : t('agentAccess.undoAgentOp.failed'),
+            : (takenNameReason(err) ?? t('agentAccess.undoAgentOp.failed')),
         )
       } finally {
         setUndoingKeys((prev) => {
@@ -220,7 +220,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
       notify.error(
         isNonReversible(err)
           ? t('agentAccess.revertSession.nonReversible')
-          : t('agentAccess.revertSession.failed'),
+          : (takenNameReason(err) ?? t('agentAccess.revertSession.failed')),
       )
     } finally {
       setRevertingSessions((prev) => {

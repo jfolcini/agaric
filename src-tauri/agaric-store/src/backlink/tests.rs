@@ -1442,6 +1442,65 @@ async fn sort_ids_reserved_key_orders_by_blocks_column_both_directions() {
     );
 }
 
+/// #6051: a property filter on a column-backed key reads its `blocks` column,
+/// as the sort above does, instead of matching no `block_properties` row.
+#[tokio::test]
+async fn property_filter_on_a_column_backed_key_reads_its_blocks_column() {
+    let (pool, _dir) = test_pool().await;
+    setup_backlinks(&pool).await;
+    for (id, priority) in [("SRC_A", "1"), ("SRC_B", "3")] {
+        sqlx::query("UPDATE blocks SET priority = ? WHERE id = ?")
+            .bind(priority)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let matching = |filter: BacklinkFilter| {
+        let pool = pool.clone();
+        async move {
+            let page = default_page();
+            let resp = eval_backlink_query(&pool, "TARGET", Some(vec![filter]), None, &page, None)
+                .await
+                .unwrap();
+            resp.items
+                .iter()
+                .map(|b| b.id.as_str().to_owned())
+                .collect::<Vec<_>>()
+        }
+    };
+
+    let key = || "priority".to_owned();
+    assert_eq!(
+        matching(BacklinkFilter::PropertyIsSet { key: key() }).await,
+        ["SRC_A", "SRC_B"]
+    );
+    assert_eq!(
+        matching(BacklinkFilter::PropertyIsEmpty { key: key() }).await,
+        ["SRC_C"]
+    );
+    assert_eq!(
+        matching(BacklinkFilter::PropertyText {
+            key: key(),
+            op: CompareOp::Neq,
+            value: "1".into(),
+        })
+        .await,
+        ["SRC_B"],
+        "Neq holds only for a block that holds the key, as for a property row"
+    );
+    assert_eq!(
+        matching(BacklinkFilter::PropertyNum {
+            key: key(),
+            op: CompareOp::Eq,
+            value: 1.0,
+        })
+        .await,
+        ["SRC_A"],
+        "a number matches the text the column stores"
+    );
+}
+
 // ======================================================================
 // Pagination
 // ======================================================================
@@ -7066,10 +7125,10 @@ async fn eval_grouped_keyset_per_page_cost_is_bounded_2042() {
 // Proves the new `compile_backlink_filter` path (`eval_backlink_query`'s
 // correlated SQL WHERE fragment) returns IDENTICAL `items` (as an id set),
 // `total_count`, and `filtered_count` to a reference computed via the
-// `resolve_filter` + base-set-intersection logic. That resolver is NOT kept
-// solely as a parity oracle: it is also the production filter engine for the
-// grouped / unlinked-references surfaces (`backlink::grouped`). Here it
-// serves double duty as the oracle for the flat compiler (#346 P1 contract).
+// `resolve_filter` + base-set-intersection logic, the oracle for the
+// compiler (#346 P1 contract). In production the resolver only pre-resolves
+// the hybrid leaves; the grouped / unlinked-references surfaces
+// (`backlink::grouped`) run the same compiler as the flat one.
 //
 // EVERY leaf type is covered, with emphasis on the negative / broad trees
 // (`Not`, `PropertyIsEmpty`, broad `BlockType`, `Not(HasTag)`,

@@ -113,10 +113,33 @@ describe('HistoryRestoreDialog', () => {
     )
     await user.click(screen.getByRole('button', { name: /Restore/i }))
     await waitFor(() => {
-      expect(mockNotify.error).toHaveBeenCalled()
+      expect(mockNotify.error).toHaveBeenCalledWith('Failed to restore — please try again')
     })
     // The failure-announce must fire and the success path must not run.
     expect(mockAnnounce).toHaveBeenCalled()
     expect(onSuccess).not.toHaveBeenCalled()
+  })
+
+  // #6051 — a restore that would revive a taken tag name or page title is
+  // refused whole; the toast says why instead of inviting a retry.
+  it('shows the refusal itself when restorePageToOp refuses a taken name', async () => {
+    const user = userEvent.setup()
+    const message = "a page titled 'Home' already exists in this space"
+    mockRestore.mockResolvedValueOnce({
+      status: 'error',
+      error: { kind: 'validation', code: 'DuplicatePageTitle', message },
+    })
+    render(
+      <HistoryRestoreDialog
+        open
+        onOpenChange={vi.fn()}
+        restoreTarget={TARGET}
+        onSuccess={vi.fn()}
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: /Restore/i }))
+    await waitFor(() => {
+      expect(mockNotify.error).toHaveBeenCalledWith(message)
+    })
   })
 })

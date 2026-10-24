@@ -19,6 +19,7 @@ import {
   isPoolBusy,
   isValidation,
   retryOnPoolBusy,
+  takenNameReason,
   validationCode,
 } from '@/lib/app-error'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
@@ -285,5 +286,19 @@ describe('isValidation / validationCode (#2251 structured sub-kind)', () => {
       const err = { kind: 'validation', message: 'reason text', code }
       expect(validationCode(err)).toBe(code)
     }
+  })
+})
+
+describe('takenNameReason (#6051)', () => {
+  it("returns a taken-name refusal's own words", () => {
+    const err = { kind: 'validation', code: 'DuplicatePageTitle', message: 'name taken' }
+    expect(takenNameReason(err)).toBe('name taken')
+  })
+
+  it('returns null for every other refusal or failure', () => {
+    expect(takenNameReason({ kind: 'validation', code: 'InvalidRegex', message: 'x' })).toBeNull()
+    expect(takenNameReason({ kind: 'validation', message: 'title must not be empty' })).toBeNull()
+    expect(takenNameReason({ kind: 'database', message: 'corr-id 42' })).toBeNull()
+    expect(takenNameReason(new Error('boom'))).toBeNull()
   })
 })

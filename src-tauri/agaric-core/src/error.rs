@@ -83,11 +83,12 @@ pub enum ValidationCode {
     /// of the generic "failed to save property" toast — which is the whole
     /// point of validating at the point of entry.
     InvalidRepeatRule,
-    /// Renaming a page to a title another live page in the same space
-    /// already carries (`edit_block_inner`, #4723), or renaming or restoring
-    /// a tag onto a name another live tag of its space holds (#5281; a tag
-    /// opens as a page, its name the title). Coded so the title editor can
-    /// name the clash instead of the generic rename failure.
+    /// Renaming or restoring a page onto a title another live page in the
+    /// same space already carries (`edit_block_inner`, #4723), or a tag onto
+    /// a name another live tag of its space holds (#5281; a tag opens as a
+    /// page, its name the title), whether by a rename, a restore from the
+    /// Trash or an undo (#6051). Coded so the title editor can name the clash
+    /// instead of the generic rename failure.
     DuplicatePageTitle,
     /// Giving a page an alias another page already holds, in any space or the
     /// Trash (`set_page_aliases`, its undo; #5387). Coded so the alias editor
