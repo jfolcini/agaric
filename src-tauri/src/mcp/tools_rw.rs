@@ -669,7 +669,8 @@ fn tool_desc_move_page_to_space() -> ToolDescription {
                       page history. Property definitions are per space: a value whose key the \
                       target space does not define identically is removed by the move. Such a \
                       move is refused until `acknowledge_property_loss` lists those keys with \
-                      the counts the refusal names."
+                      the counts the refusal names. A page whose title the target space \
+                      already holds is refused."
             .to_string(),
         input_schema: json!({
             "type": "object",
