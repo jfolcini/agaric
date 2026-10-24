@@ -33,6 +33,7 @@ import {
   linkTokenRe,
   scanLinkTargets,
 } from '@/lib/tauri-mock/link-scan'
+import { isValidRepeatRuleMock } from '@/lib/tauri-mock/recurrence'
 import {
   applyRevertForOp,
   priorIsHeld,
@@ -483,46 +484,6 @@ export function assertValidReservedPropertyValue(
       `Property '${key}' value '${value}' is not in allowed options: ${options.join(', ')}`,
     )
   }
-}
-
-/** Bare recurrence keywords, matched before any `+` is stripped. */
-const REPEAT_KEYWORDS = new Set(['daily', 'weekly', 'monthly', 'yearly'])
-
-/**
- * #3647 — mock mirror of the backend's `repeat` grammar gate.
- *
- * THE RUST SIDE IS AUTHORITATIVE. `agaric_store::recurrence_math::
- * validate_repeat_rule_shape` does not describe the grammar at all — it runs
- * the production parser (`try_shift_date_once`) and reads its verdict, so it
- * cannot drift from what recurrence honours. This function cannot do that (no
- * parser in the mock), so it is a hand-written mirror confined to the test
- * double, kept honest by `repeat-rule-mock-parity.test.ts`, which asserts it
- * against the SAME accept/reject table the Rust tests use. Never call it from
- * production code — production has exactly one notion of a valid rule, and it
- * lives in Rust.
- *
- * Mirrors, arm for arm: normalize (trim + lowercase) → strip a `.+` / `++`
- * anchoring prefix → bare keyword, else strip one optional leading `+`,
- * require at least 2 chars, split off the last character as the unit, parse
- * the rest as a signed integer, require it to be positive and the unit to be
- * one of `d`/`w`/`m`/`y`.
- */
-export function isValidRepeatRuleMock(rule: string): boolean {
-  const normalized = rule.trim().toLowerCase()
-  if (normalized === '') return false
-  const interval =
-    normalized.startsWith('.+') || normalized.startsWith('++') ? normalized.slice(2) : normalized
-  if (REPEAT_KEYWORDS.has(interval)) return true
-  const numUnit = interval.startsWith('+') ? interval.slice(1) : interval
-  if (numUnit.length < 2) return false
-  const num = numUnit.slice(0, -1)
-  const unit = numUnit.slice(-1)
-  if (!['d', 'w', 'm', 'y'].includes(unit)) return false
-  // The Rust side parses the count as `i64`, so a sign is allowed, spaces and
-  // decimals are not, and an out-of-range literal fails to parse. 18 digits is
-  // always inside `i64`; nothing longer is a real rule.
-  if (!/^[+-]?\d{1,18}$/.test(num)) return false
-  return Number.parseInt(num, 10) > 0
 }
 
 /**

@@ -1,12 +1,11 @@
 /**
- * #3647 — parity between the tauri-mock's `repeat` grammar mirror and the
+ * #3647 — parity between the tauri-mock's `repeat` grammar gate and the
  * backend's.
  *
- * The backend gate (`agaric_store::recurrence_math::validate_repeat_rule_shape`)
- * does not describe the grammar: it runs the production interval parser and
- * reads its verdict, so it cannot drift from what recurrence honours. The mock
- * has no parser to run, so `isValidRepeatRuleMock` is a hand-written mirror —
- * and a hand-written mirror needs a pinned table.
+ * Both gates run their stack's interval parser and read its verdict
+ * (`agaric_store::recurrence_math::validate_repeat_rule_shape`, and its port
+ * `isValidRepeatRuleMock` in `src/lib/tauri-mock/recurrence.ts`), so the table
+ * below pins the port against the backend's.
  *
  * The accept/reject rows below are the SAME corpus the Rust tests use
  * (`repeat_rule_validation_tests_3647::CORPUS` in
@@ -18,10 +17,8 @@
 
 import { describe, expect, it } from 'vitest'
 
-import {
-  assertValidSetPropertyValue,
-  isValidRepeatRuleMock,
-} from '@/lib/tauri-mock/handlers/shared'
+import { assertValidSetPropertyValue } from '@/lib/tauri-mock/handlers/shared'
+import { isValidRepeatRuleMock } from '@/lib/tauri-mock/recurrence'
 
 /** Rules the recurrence engine honours — the mock must accept every one. */
 const VALID = [

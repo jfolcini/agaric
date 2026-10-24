@@ -2694,29 +2694,6 @@ describe('PageModeEditor properties (#5743)', () => {
     dispatch('set_todo_state', { blockId: task, state: 'DOING' })
     dispatch('set_due_date', { blockId: task, date: '2026-10-20' })
     setProp(task, 'repeat', '+1w')
-    // The mock has no recurrence: this is the backend's, the next occurrence
-    // made with the completion (`build_recurrence_sibling_in_tx`).
-    let next = ''
-    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
-      const answer = dispatch(cmd, args)
-      const { blockId, state } = (args ?? {}) as { blockId?: string; state?: string }
-      if (cmd === 'set_todo_state' && blockId === task && state === 'DONE') {
-        next = (
-          dispatch('create_block', {
-            blockType: 'content',
-            content: 'water plants',
-            parentId: pageId,
-            index: 1,
-            scope: SCOPE,
-            blockId: null,
-          }) as BlockRow
-        ).id
-        dispatch('set_todo_state', { blockId: next, state: 'TODO' })
-        dispatch('set_due_date', { blockId: next, date: '2026-10-27' })
-        setProp(next, 'repeat', '+1w')
-      }
-      return answer
-    })
     const { container } = renderPageMode(pageId)
     const editor = await editorIn(container)
     await waitFor(() => {
@@ -2733,11 +2710,13 @@ describe('PageModeEditor properties (#5743)', () => {
       )
     })
 
+    // The completion appends the next occurrence under the page (`build_recurrence_sibling_in_tx`).
     await waitFor(() => {
       expect(editor.state.doc.childCount).toBe(3)
     })
-    expect(blockIdOf(editor.state.doc.child(1))).toBe(next)
-    expect(docTexts(editor)).toEqual(['water plants', 'water plants', 'plain'])
+    const next = blockIdOf(editor.state.doc.child(2))
+    expect([...ids, pageId]).not.toContain(next)
+    expect(docTexts(editor)).toEqual(['water plants', 'plain', 'water plants'])
     await waitFor(() => {
       expect(
         container

@@ -1,0 +1,1312 @@
+{
+  "description": "#6054 D3 — the end conditions `remaining_repeat_bounds` reads on the edge into DONE, and what `copy_repeat_bounds` carries onto the next occurrence. `repeat-until` stops the chain once the shifted due date passes it, and is copied when it does not; with no date to shift it is not checked at all. `repeat-count` stops the chain once `repeat-seq` reaches it, and is copied with `repeat-seq` one higher (from 0 when unset); a `repeat-seq` without a `repeat-count` is not carried. A `++` rule that cannot catch up with today in its step budget refuses the completion, and nothing is written: the date is 1900-01-01, so this holds whatever the date the fixture runs. Both batch writers skip recurrence (`warn_if_batch_skips_recurrence`). Every DONE rides `via: \"command\"`: payload-replayed ops do not run recurrence on the backend. Seed: S1 (Bounded) > S2 (until passed), S3 (until ahead), S4 (count spent), S5 (count 3, seq 1), S6 (seq alone), S7 (until, undated), S8 (count 1, no seq), S9 (`++1d` from 1900), S10 (batch), S11 (property batch). Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Bounded",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "until passed",
+        "deleted_at": null,
+        "due_date": "2025-06-15",
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "until ahead",
+        "deleted_at": null,
+        "due_date": "2025-06-15",
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "count spent",
+        "deleted_at": null,
+        "due_date": "2025-06-15",
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "count counts",
+        "deleted_at": null,
+        "due_date": "2025-06-15",
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "seq alone",
+        "deleted_at": null,
+        "due_date": "2025-06-15",
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "until undated",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "count no seq",
+        "deleted_at": null,
+        "due_date": "2025-06-15",
+        "id": "B8",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 7,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "catch up",
+        "deleted_at": null,
+        "due_date": "1900-01-01",
+        "id": "B9",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 8,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "batch",
+        "deleted_at": null,
+        "due_date": "2025-06-15",
+        "id": "B10",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 9,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "property batch",
+        "deleted_at": null,
+        "due_date": "2025-06-15",
+        "id": "B11",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 10,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "until ahead",
+        "deleted_at": null,
+        "due_date": "2025-06-22",
+        "id": "B12",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 11,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      },
+      {
+        "block_type": "content",
+        "content": "count counts",
+        "deleted_at": null,
+        "due_date": "2025-06-16",
+        "id": "B13",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 12,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "count counts",
+        "deleted_at": null,
+        "due_date": "2025-06-17",
+        "id": "B14",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 13,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "seq alone",
+        "deleted_at": null,
+        "due_date": "2025-06-16",
+        "id": "B15",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 14,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      },
+      {
+        "block_type": "content",
+        "content": "until undated",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B16",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 15,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      },
+      {
+        "block_type": "content",
+        "content": "count no seq",
+        "deleted_at": null,
+        "due_date": "2025-06-16",
+        "id": "B17",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 16,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      }
+    ],
+    "op_log_digest": {
+      "count": 76,
+      "ops": [
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-until",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-until",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-count",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-seq",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-count",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-seq",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-seq",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-until",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-count",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "key": "repeat-until",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-origin",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "key": "repeat-count",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-seq",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-origin",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "key": "repeat-count",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-seq",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-origin",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "key": "repeat-origin",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-until",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-origin",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "key": "repeat-count",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-seq",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-origin",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "repeat",
+        "value": "daily",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B2",
+        "key": "repeat-until",
+        "value": "2025-06-15",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B3",
+        "key": "repeat",
+        "value": "weekly",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B3",
+        "key": "repeat-until",
+        "value": "2025-12-31",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B4",
+        "key": "repeat",
+        "value": "daily",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B4",
+        "key": "repeat-count",
+        "value": 2.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B4",
+        "key": "repeat-seq",
+        "value": 2.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B5",
+        "key": "repeat",
+        "value": "daily",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B5",
+        "key": "repeat-count",
+        "value": 3.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B5",
+        "key": "repeat-seq",
+        "value": 1.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B6",
+        "key": "repeat",
+        "value": "daily",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B6",
+        "key": "repeat-seq",
+        "value": 4.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B7",
+        "key": "repeat",
+        "value": "daily",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B7",
+        "key": "repeat-until",
+        "value": "2020-01-01",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B8",
+        "key": "repeat",
+        "value": "daily",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B8",
+        "key": "repeat-count",
+        "value": 1.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B9",
+        "key": "repeat",
+        "value": "++1d",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B10",
+        "key": "repeat",
+        "value": "daily",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B11",
+        "key": "repeat",
+        "value": "daily",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B12",
+        "key": "repeat",
+        "value": "weekly",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B12",
+        "key": "repeat-origin",
+        "value": "B3",
+        "value_type": "Ref"
+      },
+      {
+        "block_id": "B12",
+        "key": "repeat-until",
+        "value": "2025-12-31",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B13",
+        "key": "repeat",
+        "value": "daily",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B13",
+        "key": "repeat-count",
+        "value": 3.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B13",
+        "key": "repeat-origin",
+        "value": "B5",
+        "value_type": "Ref"
+      },
+      {
+        "block_id": "B13",
+        "key": "repeat-seq",
+        "value": 2.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B14",
+        "key": "repeat",
+        "value": "daily",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B14",
+        "key": "repeat-count",
+        "value": 3.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B14",
+        "key": "repeat-origin",
+        "value": "B5",
+        "value_type": "Ref"
+      },
+      {
+        "block_id": "B14",
+        "key": "repeat-seq",
+        "value": 3.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B15",
+        "key": "repeat",
+        "value": "daily",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B15",
+        "key": "repeat-origin",
+        "value": "B6",
+        "value_type": "Ref"
+      },
+      {
+        "block_id": "B16",
+        "key": "repeat",
+        "value": "daily",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B16",
+        "key": "repeat-origin",
+        "value": "B7",
+        "value_type": "Ref"
+      },
+      {
+        "block_id": "B16",
+        "key": "repeat-until",
+        "value": "2020-01-01",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B17",
+        "key": "repeat",
+        "value": "daily",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B17",
+        "key": "repeat-count",
+        "value": 1.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B17",
+        "key": "repeat-origin",
+        "value": "B8",
+        "value_type": "Ref"
+      },
+      {
+        "block_id": "B17",
+        "key": "repeat-seq",
+        "value": 1.0,
+        "value_type": "Num"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "until_passed_ends_the_chain",
+      "returns": ["B2#todo_state=DONE"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "until_ahead_is_carried",
+      "returns": ["B3#todo_state=DONE"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "count_spent_ends_the_chain",
+      "returns": ["B4#todo_state=DONE"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "count_counts_up",
+      "returns": ["B5#todo_state=DONE"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "count_counts_up_again",
+      "returns": ["B13#todo_state=DONE"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "count_reached_ends_the_chain",
+      "returns": ["B14#todo_state=DONE"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "seq_without_count_is_not_carried",
+      "returns": ["B6#todo_state=DONE"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "until_without_a_date_is_not_checked",
+      "returns": ["B7#todo_state=DONE"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "count_without_seq_starts_at_one",
+      "returns": ["B8#todo_state=DONE"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "catch_up_out_of_budget_refuses",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "todo_batch_skips_recurrence",
+      "returns": ["set_todo_state_batch#updated=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "property_batch_skips_recurrence",
+      "returns": ["set_property_batch#updated=1"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "occurrences_only_where_the_chain_goes_on",
+      "rows": [
+        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null",
+        "B4#parent_id=B1#page_id=B1#position=3#deleted_at=null",
+        "B5#parent_id=B1#page_id=B1#position=4#deleted_at=null",
+        "B6#parent_id=B1#page_id=B1#position=5#deleted_at=null",
+        "B7#parent_id=B1#page_id=B1#position=6#deleted_at=null",
+        "B8#parent_id=B1#page_id=B1#position=7#deleted_at=null",
+        "B9#parent_id=B1#page_id=B1#position=8#deleted_at=null",
+        "B10#parent_id=B1#page_id=B1#position=9#deleted_at=null",
+        "B11#parent_id=B1#page_id=B1#position=10#deleted_at=null",
+        "B12#parent_id=B1#page_id=B1#position=11#deleted_at=null",
+        "B13#parent_id=B1#page_id=B1#position=12#deleted_at=null",
+        "B14#parent_id=B1#page_id=B1#position=13#deleted_at=null",
+        "B15#parent_id=B1#page_id=B1#position=14#deleted_at=null",
+        "B16#parent_id=B1#page_id=B1#position=15#deleted_at=null",
+        "B17#parent_id=B1#page_id=B1#position=16#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "second_occurrence_shifts_from_the_first",
+      "rows": ["B14#parent_id=B1#page_id=B1#position=13#deleted_at=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "unchecked_until_is_carried",
+      "rows": [
+        "B7#parent_id=B1#page_id=B1#position=6#deleted_at=null",
+        "B16#parent_id=B1#page_id=B1#position=15#deleted_at=null"
+      ],
+      "total_count": null
+    }
+  ],
+  "name": "recurrence_end_conditions",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "date": "2025-06-15"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "date": "2025-06-15"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "date": "2025-06-15"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "date": "2025-06-15"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "date": "2025-06-15"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S8",
+        "date": "2025-06-15"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S9",
+        "date": "1900-01-01"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S10",
+        "date": "2025-06-15"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S11",
+        "date": "2025-06-15"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "state": "DONE"
+      },
+      "command": "set_todo_state",
+      "comment": "The next date, 2025-06-16, is past `repeat-until` 2025-06-15: no occurrence.",
+      "name": "until_passed_ends_the_chain",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "state": "DONE"
+      },
+      "command": "set_todo_state",
+      "comment": "C1, due 2025-06-22, carrying `repeat-until` 2025-12-31.",
+      "name": "until_ahead_is_carried",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "state": "DONE"
+      },
+      "command": "set_todo_state",
+      "comment": "`repeat-seq` 2 has reached `repeat-count` 2: no occurrence.",
+      "name": "count_spent_ends_the_chain",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "state": "DONE"
+      },
+      "command": "set_todo_state",
+      "comment": "C2 carries `repeat-count` 3 and `repeat-seq` 2.",
+      "name": "count_counts_up",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C2",
+        "state": "DONE"
+      },
+      "command": "set_todo_state",
+      "comment": "C3 carries `repeat-seq` 3, due 2025-06-17.",
+      "name": "count_counts_up_again",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C3",
+        "state": "DONE"
+      },
+      "command": "set_todo_state",
+      "comment": "`repeat-seq` 3 has reached `repeat-count` 3: no occurrence.",
+      "name": "count_reached_ends_the_chain",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "state": "DONE"
+      },
+      "command": "set_todo_state",
+      "comment": "C4 carries neither `repeat-seq` nor `repeat-count`.",
+      "name": "seq_without_count_is_not_carried",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S7",
+        "state": "DONE"
+      },
+      "command": "set_todo_state",
+      "comment": "No date to shift, so the past `repeat-until` does not stop C5, which carries it.",
+      "name": "until_without_a_date_is_not_checked",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S8",
+        "state": "DONE"
+      },
+      "command": "set_todo_state",
+      "comment": "C6 carries `repeat-count` 1 and `repeat-seq` 1.",
+      "name": "count_without_seq_starts_at_one",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S9",
+        "state": "DONE"
+      },
+      "command": "set_todo_state",
+      "comment": "10 000 days from 1900-01-01 is 1927: the step budget runs out before today, and the completion is refused with nothing written.",
+      "expect_error": "validation",
+      "name": "catch_up_out_of_budget_refuses",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S10"],
+        "state": "DONE"
+      },
+      "command": "set_todo_state_batch",
+      "comment": "The batch writer skips recurrence.",
+      "name": "todo_batch_skips_recurrence",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S11"],
+        "key": "todo_state",
+        "value": "DONE"
+      },
+      "command": "set_property_batch",
+      "comment": "So does the property batch writer.",
+      "name": "property_batch_skips_recurrence",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "request": {
+          "limit": 30,
+          "parentId": "S1"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "Six occurrences after S2..S11, in the order they were made: none for S2, S4, C3, S9, S10 or S11.",
+      "name": "occurrences_only_where_the_chain_goes_on"
+    },
+    {
+      "args": {
+        "request": {
+          "key": "due_date",
+          "limit": 100,
+          "valueDate": "2025-06-17"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_property",
+      "comment": "Exactly C3, the occurrence of an occurrence.",
+      "name": "second_occurrence_shifts_from_the_first"
+    },
+    {
+      "args": {
+        "request": {
+          "key": "repeat-until",
+          "limit": 100,
+          "valueDate": "2020-01-01"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_property",
+      "comment": "S7 and C5, which carries the bound it was not checked against.",
+      "name": "unchecked_until_is_carried"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Bounded",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "until passed",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "until ahead",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "count spent",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "count counts",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": "seq alone",
+        "id": "S6",
+        "parent_id": "S1",
+        "position": 5
+      },
+      {
+        "block_type": "content",
+        "content": "until undated",
+        "id": "S7",
+        "parent_id": "S1",
+        "position": 6
+      },
+      {
+        "block_type": "content",
+        "content": "count no seq",
+        "id": "S8",
+        "parent_id": "S1",
+        "position": 7
+      },
+      {
+        "block_type": "content",
+        "content": "catch up",
+        "id": "S9",
+        "parent_id": "S1",
+        "position": 8
+      },
+      {
+        "block_type": "content",
+        "content": "batch",
+        "id": "S10",
+        "parent_id": "S1",
+        "position": 9
+      },
+      {
+        "block_type": "content",
+        "content": "property batch",
+        "id": "S11",
+        "parent_id": "S1",
+        "position": 10
+      }
+    ],
+    "properties": [
+      {
+        "block_id": "S2",
+        "key": "repeat",
+        "value": {
+          "value_text": "daily"
+        }
+      },
+      {
+        "block_id": "S2",
+        "key": "repeat-until",
+        "value": {
+          "value_date": "2025-06-15"
+        }
+      },
+      {
+        "block_id": "S3",
+        "key": "repeat",
+        "value": {
+          "value_text": "weekly"
+        }
+      },
+      {
+        "block_id": "S3",
+        "key": "repeat-until",
+        "value": {
+          "value_date": "2025-12-31"
+        }
+      },
+      {
+        "block_id": "S4",
+        "key": "repeat",
+        "value": {
+          "value_text": "daily"
+        }
+      },
+      {
+        "block_id": "S4",
+        "key": "repeat-count",
+        "value": {
+          "value_num": 2
+        }
+      },
+      {
+        "block_id": "S4",
+        "key": "repeat-seq",
+        "value": {
+          "value_num": 2
+        }
+      },
+      {
+        "block_id": "S5",
+        "key": "repeat",
+        "value": {
+          "value_text": "daily"
+        }
+      },
+      {
+        "block_id": "S5",
+        "key": "repeat-count",
+        "value": {
+          "value_num": 3
+        }
+      },
+      {
+        "block_id": "S5",
+        "key": "repeat-seq",
+        "value": {
+          "value_num": 1
+        }
+      },
+      {
+        "block_id": "S6",
+        "key": "repeat",
+        "value": {
+          "value_text": "daily"
+        }
+      },
+      {
+        "block_id": "S6",
+        "key": "repeat-seq",
+        "value": {
+          "value_num": 4
+        }
+      },
+      {
+        "block_id": "S7",
+        "key": "repeat",
+        "value": {
+          "value_text": "daily"
+        }
+      },
+      {
+        "block_id": "S7",
+        "key": "repeat-until",
+        "value": {
+          "value_date": "2020-01-01"
+        }
+      },
+      {
+        "block_id": "S8",
+        "key": "repeat",
+        "value": {
+          "value_text": "daily"
+        }
+      },
+      {
+        "block_id": "S8",
+        "key": "repeat-count",
+        "value": {
+          "value_num": 1
+        }
+      },
+      {
+        "block_id": "S9",
+        "key": "repeat",
+        "value": {
+          "value_text": "++1d"
+        }
+      },
+      {
+        "block_id": "S10",
+        "key": "repeat",
+        "value": {
+          "value_text": "daily"
+        }
+      },
+      {
+        "block_id": "S11",
+        "key": "repeat",
+        "value": {
+          "value_text": "daily"
+        }
+      }
+    ],
+    "tags": []
+  }
+}

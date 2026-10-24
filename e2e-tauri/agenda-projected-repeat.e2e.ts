@@ -15,7 +15,8 @@
 // transaction (`build_recurrence_sibling_in_tx`): `.+` counts the interval
 // from today, `++` steps the stale date forward until it passes today, and
 // the rule and its bounds edited in the block's property drawer are the ones
-// that completion reads. The mock models none of that recurrence.
+// that completion reads. The mock makes the same occurrence
+// (`src/lib/tauri-mock/recurrence.ts`), but only this lane projects it.
 //
 // Each task lives on a page of its own: the journal's Due panel leaves out
 // the day's own blocks (`excludePageId`). Checkboxes, dates and rules are

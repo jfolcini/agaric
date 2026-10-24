@@ -531,6 +531,37 @@ test.describe('Block interactions @editor', () => {
     await expect(firstBlock.locator('[data-testid="task-checkbox-done"]')).toBeVisible()
   })
 
+  test('marking a weekly task DONE makes its next occurrence a week later, which stays', async ({
+    page,
+  }) => {
+    await openPage(page, 'Getting Started')
+    const id = await page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .getAttribute('data-block-id')
+    await ipc(page, 'set_todo_state', { blockId: id, state: 'DOING' })
+    await ipc(page, 'set_due_date', { blockId: id, date: '2025-06-15' })
+    await ipc(page, 'set_property', {
+      blockId: id,
+      key: 'repeat',
+      value: { value_text: 'weekly', value_num: null, value_date: null, value_ref: null },
+    })
+    await reopenPage(page, 'Getting Started')
+    const task = page.locator(`[data-testid="sortable-block"][data-block-id="${id}"]`)
+    await task.locator('[data-testid="task-marker"]').click()
+    await expect(task.locator('[data-testid="task-checkbox-done"]')).toBeVisible()
+
+    await reopenPage(page, 'Getting Started')
+    const next = page.locator(`[data-testid="sortable-block"]:not([data-block-id="${id}"])`, {
+      hasText: 'Welcome to Agaric!',
+    })
+    await expect(next).toHaveCount(1)
+    await expect(next.locator('[data-testid="task-checkbox-todo"]')).toBeVisible()
+    await expect(next.locator('.due-date-chip')).toHaveText('Jun 22, 2025')
+    await expect(next.locator('.repeat-indicator')).toBeVisible()
+    await expect(task.locator('[data-testid="task-checkbox-done"]')).toBeVisible()
+  })
+
   test('delete button removes block on hover', async ({ page }) => {
     await openPage(page, 'Getting Started')
 

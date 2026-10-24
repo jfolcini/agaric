@@ -10,7 +10,7 @@
 // occurrences stayed, so a rule set again on the next occurrence of a task
 // limited to one was born spent, and completing it made no next occurrence.
 // Removing the rule now removes both. The count is written by recurrence
-// alone, so only a real completion on the real backend reaches it.
+// alone, so only a completion reaches it.
 //
 // The two tests share one vault, so each writes its own titled page.
 //
