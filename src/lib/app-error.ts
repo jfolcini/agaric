@@ -171,6 +171,16 @@ export function validationCode(err: unknown): ValidationCode | null {
 }
 
 /**
+ * The backend's own words for a refusal because a live page or tag of the
+ * space already holds the name (`DuplicatePageTitle`), or `null` for any other
+ * failure. The refusal names the title and is fixed by renaming one of the
+ * two, so it is shown as written; every other failure keeps its caller's copy.
+ */
+export function takenNameReason(err: unknown): string | null {
+  return isValidation(err) && err.code === 'DuplicatePageTitle' ? err.message : null
+}
+
+/**
  * Unwrap a `commands.*` result, throwing on error to preserve the
  * reject-based semantics of the `invoke()` wrappers #2927 retired.
  * Component call sites — which cannot use the raw `invoke()` bypass, per the

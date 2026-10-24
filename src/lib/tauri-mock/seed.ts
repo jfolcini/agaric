@@ -220,6 +220,38 @@ export function pushOpAt(
 }
 
 /**
+ * `handler` made all-or-nothing, as the backend runs a batch of reverses in one
+ * transaction: when one op is refused part-way, every row the earlier ones
+ * changed and every op they appended is put back before the refusal goes out.
+ */
+export function allOrNothing<A extends unknown[], R>(
+  handler: (...args: A) => R,
+): (...args: A) => R {
+  return (...args) => {
+    const saved = structuredClone({ blocks, properties, blockTags, attachments, pageAliases })
+    const opCount = opLog.length
+    const seq = opSeqCounter
+    try {
+      return handler(...args)
+    } catch (err) {
+      refill(blocks, saved.blocks)
+      refill(properties, saved.properties)
+      refill(blockTags, saved.blockTags)
+      refill(attachments, saved.attachments)
+      refill(pageAliases, saved.pageAliases)
+      opLog.length = opCount
+      opSeqCounter = seq
+      throw err
+    }
+  }
+}
+
+function refill<K, V>(live: Map<K, V>, saved: Map<K, V>): void {
+  live.clear()
+  for (const [key, value] of saved) live.set(key, value)
+}
+
+/**
  * Give `pageId` a real op-log edit at `createdAt`, so its
  * `MAX(op_log.created_at)` — the only last-edited source the engine has — is
  * exactly `createdAt`.

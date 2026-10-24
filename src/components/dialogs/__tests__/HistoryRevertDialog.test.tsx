@@ -112,7 +112,7 @@ describe('HistoryRevertDialog', () => {
   // page title says so in the backend's own words.
   it('shows the refusal itself when revertOps refuses a taken name', async () => {
     const user = userEvent.setup()
-    const message = "a tag named 'work' already exists in space 'SPACE_1'"
+    const message = "a tag named 'work' already exists in this space"
     mockRevert.mockResolvedValueOnce({
       status: 'error',
       error: { kind: 'validation', code: 'DuplicatePageTitle', message },

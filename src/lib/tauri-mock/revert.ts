@@ -13,6 +13,7 @@
  */
 
 import type { AppError } from '@/lib/bindings'
+import { normalizeTagName } from '@/lib/name-tokens'
 import { foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { deleteCohort, nextCohortMarker, restoreCohort } from '@/lib/tauri-mock/cohort'
 import { type MockOpLogEntry, opLog } from '@/lib/tauri-mock/seed'
@@ -388,11 +389,6 @@ function revertLifecycleCohort(opType: string, blocks: Blocks, blockId: string):
   }
 }
 
-/** `agaric_core::tag_norm::normalize_tag_name`, as `names.ts`'s twin spells
- *  it; that module imports `handlers/shared.ts`, which imports this one. */
-const normalizeTagName = (name: string): string =>
-  name.normalize('NFC').toLowerCase().normalize('NFC')
-
 /**
  * #6051 — refuse a revert that would name page or tag `b` `name` while another
  * live page or tag of its space holds that name, as a rename is refused. Mock
@@ -415,8 +411,8 @@ function rejectTakenName(blocks: Blocks, b: BlockRow, name: string | null): void
   if (!taken) return
   const message =
     kind === 'tag'
-      ? `a tag named '${name}' already exists in space '${spaceId}'`
-      : `a page titled '${name}' already exists in space '${spaceId}'`
+      ? `a tag named '${name}' already exists in this space`
+      : `a page titled '${name}' already exists in this space`
   throw Object.assign(new Error(message), {
     kind: 'validation' as const,
     code: 'DuplicatePageTitle' as const,

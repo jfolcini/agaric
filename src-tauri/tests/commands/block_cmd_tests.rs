@@ -924,9 +924,12 @@ async fn edit_block_rejects_tag_rename_onto_live_tag_name_5281() {
     settle(&mat).await;
     let ops_before = count_ops(&pool).await;
 
-    assert_duplicate_name_refusal(
-        edit_block_inner(&pool, DEV, &mat, notes.id.clone(), "meeting".into()).await,
+    let result = edit_block_inner(&pool, DEV, &mat, notes.id.clone(), "meeting".into()).await;
+    assert_eq!(
+        result.as_ref().err().map(ToString::to_string).as_deref(),
+        Some("Validation error: a tag named 'meeting' already exists in this space")
     );
+    assert_duplicate_name_refusal(result);
 
     assert_eq!(
         page_content(&pool, &notes.id).await.as_deref(),
@@ -1503,6 +1506,10 @@ async fn edit_block_rejects_duplicate_page_title_in_space() {
         err.validation_code(),
         Some(agaric_core::error::ValidationCode::DuplicatePageTitle),
         "refusal must carry the DuplicatePageTitle code; got: {err:?}"
+    );
+    assert_eq!(
+        err.to_string(),
+        "Validation error: a page titled 'Home' already exists in this space"
     );
     assert_eq!(page_content(&pool, &other).await.as_deref(), Some("Other"));
 }

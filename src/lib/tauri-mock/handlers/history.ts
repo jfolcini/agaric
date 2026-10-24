@@ -29,6 +29,7 @@ import {
 } from '@/lib/tauri-mock/handlers/shared'
 import { applyRevertForOp } from '@/lib/tauri-mock/revert'
 import {
+  allOrNothing,
   attachments,
   type MockOpLogEntry,
   blockTags,
@@ -376,7 +377,7 @@ export const historyHandlers = {
   // newest-first, returning one UndoResult per reverted op. Shares
   // `applyUndoForTarget` with the ref-addressed path so the reverse effects
   // stay identical to the single-op one.
-  undo_page_group: (args) => {
+  undo_page_group: allOrNothing((args) => {
     const a = (args ?? {}) as Record<string, unknown>
     const depth = (a['depth'] as number) ?? 0
     const windowMs = (a['windowMs'] as number) ?? 0
@@ -393,9 +394,9 @@ export const historyHandlers = {
     const pageId = a['pageId'] as string
     const group = enumerateUndoGroup(pageId, depth, windowMs, pageSubtreeIds(pageId))
     return group.map((picked) => applyUndoForTarget(effectiveUndoTarget(picked)))
-  },
+  }),
 
-  revert_ops: (args) => {
+  revert_ops: allOrNothing((args) => {
     const a = args as Record<string, unknown>
     const ops = a['ops'] as Array<{ device_id: string; seq: number }>
     const results: Array<Record<string, unknown>> = []
@@ -431,7 +432,7 @@ export const historyHandlers = {
     }
 
     return results
-  },
+  }),
 
   undo_page_op: (args) => {
     const a = args as Record<string, unknown>
@@ -587,7 +588,7 @@ export const historyHandlers = {
   // `undo_op`, plus duplicate detection) BEFORE any reversal is applied, so a
   // bad ref anywhere in the set reverts nothing. Ops revert newest-first and
   // the results come back newest-first, matching the real command.
-  undo_ops: (args) => {
+  undo_ops: allOrNothing((args) => {
     const a = args as Record<string, unknown>
     const ops = (a['ops'] as Array<{ device_id: string; seq: number }> | undefined) ?? []
     // Backend parity: `undo_ops_inner` returns `Ok(vec![])` for an empty
@@ -605,7 +606,7 @@ export const historyHandlers = {
     // Validate ALL before applying ANY (atomic-abort).
     const targets = newestFirst.map((ref) => resolveUndoTarget(ref))
     return targets.map((target) => applyUndoForTarget(target))
-  },
+  }),
 
   compute_edit_diff: (args) => {
     const a = args as Record<string, unknown>
@@ -770,7 +771,7 @@ export const historyHandlers = {
   // reverted newest-first, the target itself is kept (the page is rewound to
   // the state that op left), and the two op types a restore skips on sight are
   // counted rather than aborting the walk (#2020).
-  restore_page_to_op: (args) => {
+  restore_page_to_op: allOrNothing((args) => {
     const a = args as Record<string, unknown>
     const targetDeviceId = a['targetDeviceId'] as string
     const targetSeq = a['targetSeq'] as number
@@ -818,7 +819,7 @@ export const historyHandlers = {
       non_reversible_skipped: nonReversibleSkipped,
       results,
     }
-  },
+  }),
 
   // ---------------------------------------------------------------------------
   // Link metadata

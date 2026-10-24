@@ -32,12 +32,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import type { ActivityEntry } from '@/hooks/useMcpActivityFeed'
 import { useMinuteClock } from '@/hooks/useMinuteClock'
 import { reloadChangedPageStores } from '@/hooks/useSyncEvents'
-import { isNonReversible, unwrap } from '@/lib/app-error'
+import { isNonReversible, takenNameReason, unwrap } from '@/lib/app-error'
 import { commands, type OpRef } from '@/lib/bindings'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { validationReason } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
 
 // #3546 — the dedicated non-reversible toast branches on the SHARED
@@ -117,7 +116,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
         notify.error(
           isNonReversible(err)
             ? t('agentAccess.undoAgentOp.nonReversible')
-            : (validationReason(err) ?? t('agentAccess.undoAgentOp.failed')),
+            : (takenNameReason(err) ?? t('agentAccess.undoAgentOp.failed')),
         )
       } finally {
         setUndoingKeys((prev) => {
@@ -221,7 +220,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
       notify.error(
         isNonReversible(err)
           ? t('agentAccess.revertSession.nonReversible')
-          : (validationReason(err) ?? t('agentAccess.revertSession.failed')),
+          : (takenNameReason(err) ?? t('agentAccess.revertSession.failed')),
       )
     } finally {
       setRevertingSessions((prev) => {

@@ -14,12 +14,13 @@ import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { announce } from '@/lib/announcer'
-import { unwrap } from '@/lib/app-error'
+import { takenNameReason, unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { HistoryEntry } from '@/lib/bindings'
 import { formatTimestamp } from '@/lib/format'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { reportIpcErrorWithReason } from '@/lib/report-ipc-error'
+import { reportIpcError } from '@/lib/report-ipc-error'
 
 export interface HistoryRestoreDialogProps {
   open: boolean
@@ -53,10 +54,14 @@ export function HistoryRestoreDialog({
       }
       await onSuccess()
     } catch (err) {
-      reportIpcErrorWithReason('HistoryView', 'history.restoreFailed', err, t, {
-        deviceId: restoreTarget.device_id,
-        seq: restoreTarget.seq,
-      })
+      const context = { deviceId: restoreTarget.device_id, seq: restoreTarget.seq }
+      const takenName = takenNameReason(err)
+      if (takenName === null) {
+        reportIpcError('HistoryView', 'history.restoreFailed', err, t, context)
+      } else {
+        logger.warn('HistoryView', 'restore refused: a name is taken', context, err)
+        notify.error(takenName)
+      }
       announce(t('announce.restoreToHereFailed'))
     }
     setRestoring(false)

@@ -979,7 +979,7 @@ function rejectDuplicateTagName(tagId: string, name: string): void {
     throw appErrorRejection({
       kind: 'validation',
       code: 'DuplicatePageTitle',
-      message: `a tag named '${name}' already exists in space '${spaceId as string}'`,
+      message: `a tag named '${name}' already exists in this space`,
     })
   }
 }
@@ -998,7 +998,7 @@ function rejectDuplicatePageTitle(page: Record<string, unknown>, title: string):
   throw appErrorRejection({
     kind: 'validation',
     code: 'DuplicatePageTitle',
-    message: `a page titled '${title}' already exists in space '${spaceId}'`,
+    message: `a page titled '${title}' already exists in this space`,
   })
 }
 

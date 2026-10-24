@@ -1,5 +1,5 @@
 {
-  "description": "#6051 — an undo refuses to revive a tag name another live tag of its space holds, as a rename does, and changes nothing. The ops make a space (`C1`) and four tags in it, `work` (C2), `spare` (C3), `notes` (C4) and `extra` (C5), all before any delete so every create lands on a dense root. C2 is trashed and C3 renamed to `work`: undoing the delete (O11) would put two live `work` tags in the space, so it is refused with `DuplicatePageTitle`, C2 stays in the trash and no op is appended. C4 is renamed to `job` (O13) and C5 takes `notes`: undoing O13 is refused the same way, so C4 keeps `job`. Once C3 is trashed `work` is free, and the same undo of O11 restores C2.",
+  "description": "#6051 — an undo refuses to revive a tag name another live tag of its space holds, as a rename does, and changes nothing. The ops make a space (`C1`) and four tags in it, `work` (C2), `spare` (C3), `notes` (C4) and `extra` (C5), all before any delete so every create lands on a dense root. C2 is trashed and C3 renamed to `work`: undoing the delete (O11) would put two live `work` tags in the space, so it is refused with `DuplicatePageTitle`, C2 stays in the trash and no op is appended. C4 is renamed to `job` (O13) and C5 takes `notes`: undoing O13 is refused the same way, so C4 keeps `job`. Reverting or undoing O14 and O11 together is refused whole, so C5 keeps `notes` though O14 alone reverts cleanly. Once C3 is trashed `work` is free, and the same undo of O11 restores C2.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -181,6 +181,18 @@
       "returns": []
     },
     {
+      "code": "DuplicatePageTitle",
+      "error": "validation",
+      "name": "a_revert_refused_part_way_changes_nothing",
+      "returns": []
+    },
+    {
+      "code": "DuplicatePageTitle",
+      "error": "validation",
+      "name": "an_undo_refused_part_way_changes_nothing",
+      "returns": []
+    },
+    {
       "code": null,
       "error": null,
       "name": "undoing_the_delete_once_the_name_is_free",
@@ -310,6 +322,28 @@
       "expect_code": "DuplicatePageTitle",
       "expect_error": "validation",
       "name": "undoing_the_rename_onto_a_held_name_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O14", "O11"]
+      },
+      "command": "revert_ops",
+      "comment": "Refused whole: reverting O14 first gives C5 back `extra`, then reviving C2 meets C3's `work`. C5 keeps `notes` and no op is appended.",
+      "expect_code": "DuplicatePageTitle",
+      "expect_error": "validation",
+      "name": "a_revert_refused_part_way_changes_nothing",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O14", "O11"]
+      },
+      "command": "undo_ops",
+      "comment": "The same pair as an undo: refused whole the same way.",
+      "expect_code": "DuplicatePageTitle",
+      "expect_error": "validation",
+      "name": "an_undo_refused_part_way_changes_nothing",
       "via": "command"
     },
     {

@@ -613,7 +613,7 @@ describe('TagList', () => {
           Promise.reject({
             kind: 'validation',
             code: 'DuplicatePageTitle',
-            message: "a tag named 'taken' already exists in space 'SPACE_TEST'",
+            message: "a tag named 'taken' already exists in this space",
           }),
       })
 

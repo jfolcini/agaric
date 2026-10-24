@@ -391,7 +391,7 @@ describe('ActivityFeed', () => {
       '%s refused for a taken name shows the refusal',
       async (_, entries, revert) => {
         const user = userEvent.setup()
-        const message = "a tag named 'work' already exists in space 'SPACE_A'"
+        const message = "a tag named 'work' already exists in this space"
         mockRevert.mockResolvedValue({
           status: 'error',
           error: { kind: 'validation', code: 'DuplicatePageTitle', message },

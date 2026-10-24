@@ -377,6 +377,57 @@ async fn has_property_on_a_column_backed_key_reads_its_blocks_column() {
     );
 }
 
+/// #6051: `Contains` and `StartsWith` on a column-backed key match the text the
+/// `blocks` column holds, as `LIKE` does for a property row's text: ASCII case
+/// folded, the substring anywhere for one and only at the start for the other.
+#[tokio::test]
+async fn has_property_substring_on_a_column_backed_key_reads_its_blocks_column() {
+    use crate::filters::primitive::{PropertyPredicate, PropertyValue};
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+    let matching = |predicate: PropertyPredicate| {
+        req(leaf(FilterPrimitive::HasProperty {
+            key: "todo_state".to_string(),
+            predicate,
+        }))
+    };
+    let text = |value: &str| PropertyValue::Text {
+        value: value.to_string(),
+    };
+
+    // B1 and B3 are `TODO`, B2 is `DONE`, B4 holds no state.
+    let resp = compile_and_run(
+        &pool,
+        matching(PropertyPredicate::Contains { value: text("on") }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(ids(&resp), set(&["01B2000000000000000000000"]));
+
+    let resp = compile_and_run(
+        &pool,
+        matching(PropertyPredicate::StartsWith { value: text("to") }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        ids(&resp),
+        set(&["01B1000000000000000000000", "01B3000000000000000000000"])
+    );
+
+    let resp = compile_and_run(
+        &pool,
+        matching(PropertyPredicate::StartsWith { value: text("on") }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        ids(&resp),
+        set(&[]),
+        "`on` sits inside `DONE`, not at its start"
+    );
+}
+
 #[tokio::test]
 async fn pagination_page_through_equals_one_big_page() {
     let (pool, _d) = test_pool().await;

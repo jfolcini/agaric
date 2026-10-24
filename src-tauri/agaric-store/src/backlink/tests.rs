@@ -7125,10 +7125,10 @@ async fn eval_grouped_keyset_per_page_cost_is_bounded_2042() {
 // Proves the new `compile_backlink_filter` path (`eval_backlink_query`'s
 // correlated SQL WHERE fragment) returns IDENTICAL `items` (as an id set),
 // `total_count`, and `filtered_count` to a reference computed via the
-// `resolve_filter` + base-set-intersection logic. That resolver is NOT kept
-// solely as a parity oracle: it is also the production filter engine for the
-// grouped / unlinked-references surfaces (`backlink::grouped`). Here it
-// serves double duty as the oracle for the flat compiler (#346 P1 contract).
+// `resolve_filter` + base-set-intersection logic, the oracle for the
+// compiler (#346 P1 contract). In production the resolver only pre-resolves
+// the hybrid leaves; the grouped / unlinked-references surfaces
+// (`backlink::grouped`) run the same compiler as the flat one.
 //
 // EVERY leaf type is covered, with emphasis on the negative / broad trees
 // (`Not`, `PropertyIsEmpty`, broad `BlockType`, `Not(HasTag)`,

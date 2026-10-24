@@ -291,6 +291,8 @@ struct BackoffState {
     consecutive_failures: u32,
     /// The user-facing failure texts already *reported* for this peer during
     /// the current streak, oldest first, capped at [`MAX_REMEMBERED_REPORTS`].
+    /// A `Busy` refusal's text is remembered too, though the supervisor never
+    /// shows it (#6051); it can only match a later `Busy`, also never shown.
     ///
     /// #4120: lives here, next to the streak it belongs to, because the two
     /// places the streak resets — [`SyncScheduler::record_success`] (which
@@ -909,9 +911,9 @@ impl SyncScheduler {
                 consecutive_failures,
             };
         }
-        // Recorded only when the caller is about to tell the user, so the
-        // stored entries always answer "what has this user been shown about
-        // this peer?".
+        // Recorded whenever a report is granted, so the stored entries answer
+        // "what has this user been shown about this peer?" — all but a `Busy`
+        // refusal, which the supervisor withholds after booking it (#6051).
         remember(state, entry);
         FailureBooking {
             report: true,
@@ -927,7 +929,7 @@ impl SyncScheduler {
     /// failure first (`src/sync_daemon/tests.rs`'s wiring test). Production
     /// never calls it: the report memory is written by
     /// [`record_failure_and_take_report`](Self::record_failure_and_take_report)
-    /// at the moment the user is actually told.
+    /// when it grants a report.
     ///
     /// A no-op for a peer with no backoff entry, which is also why the wiring
     /// test books the failure first.

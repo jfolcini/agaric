@@ -273,6 +273,35 @@ describe('usePageDeleteAction', () => {
     })
   })
 
+  // #6051 — the Undo is refused when a live page of the space has taken the
+  // title since the delete; the toast names the title instead of a bare failure.
+  it('an Undo refused for a taken title says which title', async () => {
+    const message = "a page titled 'Taken' already exists in this space"
+    stubInvoke({
+      delete_block: () =>
+        withOps({
+          block_id: 'PAGE_1',
+          deleted_at: 1767225600000,
+          descendants_affected: 0,
+          affected_page_ids: [],
+        }),
+      restore_blocks_by_ids: () =>
+        Promise.reject({ kind: 'validation', code: 'DuplicatePageTitle', message }),
+    })
+    const handle = renderHarness()
+    act(() => {
+      handle.api.requestDelete('PAGE_1', 'Taken')
+    })
+    await userEvent.setup().click(await screen.findByRole('button', { name: /^Delete page$/i }))
+    await waitFor(() => expect(toast.success).toHaveBeenCalled())
+
+    act(() => {
+      lastUndoAction()()
+    })
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(message))
+  })
+
   it('does not change resolve status, the tabs, or call onDeleted when delete fails', async () => {
     stubInvoke({ delete_block: () => Promise.reject(new Error('backend boom')) })
     useResolveStore.getState().set('PAGE_1', 'Original title', false)

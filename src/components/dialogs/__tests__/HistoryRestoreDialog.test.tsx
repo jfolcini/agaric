@@ -124,7 +124,7 @@ describe('HistoryRestoreDialog', () => {
   // refused whole; the toast says why instead of inviting a retry.
   it('shows the refusal itself when restorePageToOp refuses a taken name', async () => {
     const user = userEvent.setup()
-    const message = "a page titled 'Home' already exists in space 'SPACE_1'"
+    const message = "a page titled 'Home' already exists in this space"
     mockRestore.mockResolvedValueOnce({
       status: 'error',
       error: { kind: 'validation', code: 'DuplicatePageTitle', message },

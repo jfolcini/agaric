@@ -3241,15 +3241,11 @@ describe('TrashView restores — chips and the journal page map', () => {
     expect(await journalFetchesOnMount()).toBe(0)
   })
 
-  // #5281 — the backend refuses to revive a tag whose name a live tag now holds.
+  // #5281/#6051 — the backend refuses to revive a tag whose name a live tag now
+  // holds, and the toast shows the refusal's own words.
+  const nameTakenToast = "a tag named 'restorable' already exists in this space"
   const nameTaken = () =>
-    Promise.reject({
-      kind: 'validation',
-      code: 'DuplicatePageTitle',
-      message: "a tag named 'restorable' already exists in space 'SPACE_TEST'",
-    })
-  const nameTakenToast =
-    'A page or tag with that name already exists. Rename it first, then restore.'
+    Promise.reject({ kind: 'validation', code: 'DuplicatePageTitle', message: nameTakenToast })
 
   it('a restore refused for a taken tag name says why', async () => {
     const user = userEvent.setup()
@@ -3271,5 +3267,17 @@ describe('TrashView restores — chips and the journal page map', () => {
     await user.click(screen.getByRole('button', { name: /Restore selected/i }))
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(nameTakenToast))
+  })
+
+  it('any other refusal keeps the generic copy', async () => {
+    const user = userEvent.setup()
+    stubRestore({
+      restore_block: () => Promise.reject({ kind: 'validation', message: 'deleted_at mismatch' }),
+    })
+    render(<TrashView />)
+
+    await user.click(await screen.findByTestId('trash-restore-btn'))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to restore block'))
   })
 })

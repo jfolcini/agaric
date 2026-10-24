@@ -261,6 +261,39 @@ describe('PageBrowserBatchToolbar', () => {
     })
   })
 
+  // #6051 — the Undo is refused whole when a page it revives finds its title
+  // taken: the toast names the title. Any other failure keeps the generic copy.
+  const takenTitle = "a page titled 'P1' already exists in this space"
+  it.each([
+    [
+      'a taken title',
+      { kind: 'validation', code: 'DuplicatePageTitle', message: takenTitle },
+      takenTitle,
+    ],
+    ['any other failure', new Error('backend boom'), t('pageBrowser.batch.trashUndoFailed')],
+  ])('an Undo refused for %s says so', async (_, rejection, toastText) => {
+    const user = userEvent.setup()
+    stubInvoke({
+      delete_blocks_by_ids: () => trashReply(SELECTED),
+      restore_blocks_by_ids: () => Promise.reject(rejection),
+    })
+    renderToolbar()
+
+    await user.click(screen.getByTestId('page-batch-trash-btn'))
+    await user.click(
+      await screen.findByRole('button', { name: t('pageBrowser.batch.trashConfirmAction') }),
+    )
+    await waitFor(() => {
+      expect(mockedToastSuccess).toHaveBeenCalled()
+    })
+    const call = mockedToastSuccess.mock.calls.at(-1)
+    ;(call?.[1] as { action?: { onClick?: () => void } } | undefined)?.action?.onClick?.()
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(toastText)
+    })
+  })
+
   // #4963 — `onMutated` refreshes THIS list; the graph, the reference panels
   // and the journal badge counts read the structure counter instead, and the
   // trash bumps it through `notifyPagesRemoved` while the undo has no such

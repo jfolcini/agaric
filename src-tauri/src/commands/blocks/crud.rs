@@ -581,7 +581,7 @@ async fn reject_duplicate_page_title(
     if clash.is_some() {
         return Err(AppError::validation_coded(
             ValidationCode::DuplicatePageTitle,
-            format!("a page titled '{to_text}' already exists in space '{space_id}'"),
+            format!("a page titled '{to_text}' already exists in this space"),
         ));
     }
     Ok(())
@@ -622,7 +622,7 @@ async fn reject_duplicate_tag_name(
     {
         return Err(AppError::validation_coded(
             ValidationCode::DuplicatePageTitle,
-            format!("a tag named '{name}' already exists in space '{space_id}'"),
+            format!("a tag named '{name}' already exists in this space"),
         ));
     }
     Ok(())

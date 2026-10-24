@@ -12,9 +12,9 @@
 //!    `compile_backlink_filter`) into a single correlated SQL WHERE
 //!    fragment that is spliced into a second `COUNT(*)`; `filtered_count`
 //!    comes from that count, not from a materialised Rust set. (The Rust
-//!    `FxHashSet` resolver `resolve_filter_with_candidates` now backs the
-//!    GROUPED / unlinked-references surfaces in `backlink::grouped`, not
-//!    this flat path.)
+//!    `FxHashSet` resolver `resolve_filter_with_candidates` only
+//!    pre-resolves the hybrid leaves; `backlink::grouped` runs the same
+//!    compiler.)
 //! 2. **Page query (Created / default sort)** — single SQL with
 //!    `(?N IS NULL OR b.id > ?N+1)` keyset clause, the compiled filter
 //!    fragment spliced in-line (correlated on `b`) when filters are
@@ -72,9 +72,9 @@ use agaric_core::error::AppError;
 ///    fragment, so it correctly reflects the *intersection* with the
 ///    backlink base set (filters like `SourcePage` resolve to ids
 ///    outside the base set, so a naive Rust `set.len()` would over-count).
-///    The Rust `FxHashSet` resolver (`resolve_filter_with_candidates`) is
-///    no longer used here; it now backs the GROUPED surfaces in
-///    `backlink::grouped`.
+///    The Rust `FxHashSet` resolver (`resolve_filter_with_candidates`)
+///    only pre-resolves the hybrid leaves; the grouped surfaces in
+///    `backlink::grouped` run the same compiler.
 /// 3. **Sort + page** — for `Created` sort we emit a single SQL with a
 ///    `(?N IS NULL OR b.id > ?N+1)` keyset clause and (when filtered) a
 ///    `b.id IN (SELECT value FROM json_each(?))` constraint, projecting

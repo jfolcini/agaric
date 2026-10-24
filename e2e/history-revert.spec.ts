@@ -1,4 +1,6 @@
 import {
+  activeAlertDialog,
+  createPageFromPagesView,
   deleteBlockViaContextMenu,
   expect,
   navigateToView,
@@ -169,5 +171,37 @@ test.describe('HistoryView batch revert @pages', () => {
 
     // Selection should still be active
     await expect(page.getByText('1 selected')).toBeVisible()
+  })
+
+  // #6051 — reverting a page's delete is refused once a live page of the space
+  // holds its title: the toast names the title, and nothing is restored.
+  test('reverting a delete onto a taken title says so and restores nothing', async ({ page }) => {
+    const title = 'Taken title'
+    await navigateToView(page, 'Pages')
+    await createPageFromPagesView(page, title)
+    await page.getByRole('button', { name: 'Page actions', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Delete page', exact: true }).click()
+    await activeAlertDialog(page).getByRole('button', { name: 'Delete page', exact: true }).click()
+    await expect(page.getByTestId('header-label')).toHaveText('Pages')
+    await createPageFromPagesView(page, title)
+
+    await navigateToView(page, 'History')
+    const deleteEntry = page
+      .locator('[data-history-item]')
+      .filter({
+        has: page.locator('[data-testid="history-type-badge"]', { hasText: 'delete_block' }),
+      })
+      .first()
+    await deleteEntry.getByRole('checkbox').click()
+    await page.getByRole('button', { name: /Revert selected/i }).click()
+    await page.getByRole('button', { name: 'Revert', exact: true }).click()
+    await expect(
+      page.getByText(`a page titled '${title}' already exists in this space`, { exact: true }),
+    ).toBeVisible()
+
+    await navigateToView(page, 'Pages')
+    await expect(page.getByRole('grid').getByText(title, { exact: true })).toHaveCount(1)
+    await navigateToView(page, 'Trash')
+    await expect(page.locator('[data-testid="trash-item"]', { hasText: title })).toHaveCount(1)
   })
 })

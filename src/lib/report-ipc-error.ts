@@ -65,15 +65,6 @@ export function reportIpcErrorWithReason(
   context?: Record<string, unknown>,
 ): void {
   logger.error(module, `${messageKey} (IPC error)`, context, err)
-  notify.error(validationReason(err) ?? t(messageKey))
-}
-
-/**
- * The message of a `validation` rejection, the one kind the backend writes for
- * a human and passes through unsanitized (see {@link reportIpcErrorWithReason}),
- * or `null` for any other failure. For a caller whose toast is not a plain
- * `notify.error` of one key.
- */
-export function validationReason(err: unknown): string | null {
-  return isValidation(err) && err.message.trim() !== '' ? err.message : null
+  const reason = isValidation(err) && err.message.trim() !== '' ? err.message : null
+  notify.error(reason ?? t(messageKey))
 }

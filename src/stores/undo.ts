@@ -35,14 +35,13 @@
 import { create } from 'zustand'
 
 import { announce } from '@/lib/announcer'
-import { isNonReversible, isNotFound, isValidation, unwrap } from '@/lib/app-error'
+import { isNonReversible, isNotFound, isValidation, takenNameReason, unwrap } from '@/lib/app-error'
 import type { OpRef, UndoResult } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { parsePayloadObject } from '@/lib/history-utils'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { validationReason } from '@/lib/report-ipc-error'
 import { paginationLimit } from '@/lib/safe-limit'
 import { requireActiveScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
@@ -425,10 +424,19 @@ function withoutEntry(undoStack: UndoStackEntry[], entry: UndoStackEntry): UndoS
  *   (`purge_block`, an unreconstructible `edit_block`, or a reverse-move
  *   the preflight refused).
  *
- * #3546 — "permanent" is exact for `validation` and `not_found`, whose
- * verdicts are functions of immutable op-log history. It is NOT exact for
- * every `non_reversible` arm: `reverse_move_preflight` also rejects when the
- * prior parent is merely SOFT-DELETED (a trash restore revives it — and
+ * #3546 — "permanent" is exact for `not_found` and for the `validation`
+ * verdicts above, which are functions of immutable op-log history. Two
+ * `validation` refusals read the current tree instead (#6051): a revived page
+ * or tag name that a live page or tag of the space now holds
+ * (`DuplicatePageTitle`), and a restored alias another page now holds
+ * (`DuplicatePageAlias`). The name clash is NOT permanent and keeps its entry:
+ * its toast names the title, and once the user renames or deletes the holder
+ * the same Ctrl+Z succeeds. The alias clash is dropped, since its toast is the
+ * generic copy and a retained entry would fail blind.
+ *
+ * "Permanent" is NOT exact for every `non_reversible` arm:
+ * `reverse_move_preflight` also rejects when the prior parent is merely
+ * SOFT-DELETED (a trash restore revives it — and
  * `TrashView` never touches this store, so the dropped entry really would
  * have worked afterwards), when it has transiently become a descendant of
  * the moved block (a later move breaks the cycle), or when it is in another
@@ -450,7 +458,11 @@ function withoutEntry(undoStack: UndoStackEntry[], entry: UndoStackEntry): UndoS
  * intact, so only this class is dropped here.
  */
 function isPermanentRevertFailure(err: unknown): boolean {
-  return isValidation(err) || isNotFound(err) || isNonReversible(err)
+  return (
+    (isValidation(err) && err.code !== 'DuplicatePageTitle') ||
+    isNotFound(err) ||
+    isNonReversible(err)
+  )
 }
 
 /**
@@ -474,7 +486,7 @@ function historyEntryBlockId(payload: string): string | null {
   return typeof blockId === 'string' ? blockId : null
 }
 
-/** `reason`: a refusal's own words (#6051), shown in place of the generic copy. */
+/** `reason`: a taken-name refusal's own words (#6051), shown in place of the generic copy. */
 function notifySwipeUndoFailed(reason: string | null = null): void {
   notify.error(reason ?? t('undo.undoFailedMessage'))
   announce(t('announce.undoFailed'))
@@ -564,8 +576,8 @@ export const useUndoStore = create<UndoStore>((set, get) => {
     } catch (err) {
       logger.error('UndoStore', 'redo operation failed', { pageId }, err)
       // #6051 — a redo can revive a taken name too (redoing the undo of a
-      // create), and that refusal says why; other failures stay silent here.
-      const reason = validationReason(err)
+      // create); that refusal says why. Other failures stay silent here.
+      const reason = takenNameReason(err)
       if (reason !== null) notify.warning(reason)
       // #3546 — redo carried the same wedge #3353 fixed on the undo path.
       // `redo_page_op` rejects NON-RETRYABLY for three reasons of its own
@@ -576,7 +588,9 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       // change for a ref already sitting in a session-scoped redo stack, so
       // rolling the ref back on made every subsequent Ctrl+Shift+Z reissue
       // the same doomed IPC — redo dead for the page until a reset. Same
-      // bug, same predicate, same fix as `undoByRefs`.
+      // bug, same predicate, same fix as `undoByRefs`. A taken name (#6051)
+      // is the refusal that can change: the predicate keeps that ref, and
+      // the same redo succeeds once the name is free.
       const retain = !isPermanentRevertFailure(err)
       // `undoDepth` is restored either way: the redo did NOT happen, so the
       // op is still undone and the positional anchor must reflect that. Only
@@ -633,8 +647,8 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       }
     } catch (err) {
       logger.error('UndoStore', 'undo_op failed', { pageId, refCount: newestFirst.length }, err)
-      // #6051 — a refusal names what blocks it (an undo reviving a taken name).
-      notify.warning(validationReason(err) ?? t('undo.batchUnavailable'))
+      // #6051 — an undo reviving a taken name says which name.
+      notify.warning(takenNameReason(err) ?? t('undo.batchUnavailable'))
       // #3323/#3353 — a NON-RETRYABLE failure (validation, not_found, or
       // non_reversible — see `isPermanentRevertFailure`) gets the identical
       // rejection on retry, wedging Ctrl+Z on this page. Drop the dead entry
@@ -700,7 +714,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       results = unwrap(await commands.undoPageGroup(pageId, initialDepth, UNDO_GROUP_WINDOW_MS))
     } catch (err) {
       logger.error('UndoStore', 'undo_page_group failed', { pageId }, err)
-      notify.warning(validationReason(err) ?? t('undo.batchUnavailable'))
+      notify.warning(takenNameReason(err) ?? t('undo.batchUnavailable'))
       return null
     }
 
@@ -790,7 +804,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       await reloadPage()
     } catch (err) {
       logger.error('UndoStore', 'swipe-delete undo failed', { pageId, blockId }, err)
-      notifySwipeUndoFailed(validationReason(err))
+      notifySwipeUndoFailed(takenNameReason(err))
     }
   }
 

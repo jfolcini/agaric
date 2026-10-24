@@ -14,10 +14,12 @@ import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { announce } from '@/lib/announcer'
-import { unwrap } from '@/lib/app-error'
+import { takenNameReason, unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { HistoryEntry } from '@/lib/bindings'
-import { reportIpcErrorWithReason } from '@/lib/report-ipc-error'
+import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
+import { reportIpcError } from '@/lib/report-ipc-error'
 
 export interface HistoryRevertDialogProps {
   open: boolean
@@ -47,9 +49,13 @@ export function HistoryRevertDialog({
       announce(t('announce.opsReverted', { count: ops.length }))
       await onSuccess()
     } catch (err) {
-      reportIpcErrorWithReason('HistoryView', 'history.revertFailed', err, t, {
-        selectedCount: count,
-      })
+      const takenName = takenNameReason(err)
+      if (takenName === null) {
+        reportIpcError('HistoryView', 'history.revertFailed', err, t, { selectedCount: count })
+      } else {
+        logger.warn('HistoryView', 'revert refused: a name is taken', { selectedCount: count }, err)
+        notify.error(takenName)
+      }
       announce(t('announce.revertFailed'))
     }
     setReverting(false)
