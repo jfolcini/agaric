@@ -572,15 +572,9 @@ fn op_transfer_and_op_record_remain_structurally_identical_i_sync_4() {
     );
 }
 
-/// The wire-side `From<OpTransfer>` conversion must NOT parse
-/// the payload — `apply_remote_ops` already does a validation parse
-/// and populates the sidecar from that single parse. Doing it here
-/// would double the JSON parse cost on the sync hot path (catch-up
-/// after Android resume, multi-thousand-op batches), regressing
-/// Exactly the workload was filed against. Leaving the sidecar
-/// `None` on the wire conversion is correct as long as
-/// `apply_remote_ops` (the validation-parse piggyback) runs before
-/// any code path that observes `record.block_id` for a sync'd op.
+/// The wire-side `From<OpTransfer>` conversion does not parse the payload,
+/// so a sync'd record's `block_id` sidecar is `None`: whatever needs its
+/// block reads it from `payload`, as the audit ingest does (#6048).
 #[test]
 fn op_transfer_from_leaves_block_id_unpopulated_l13() {
     let payload = r#"{"block_id":"BLK_L13_RX","block_type":"content","content":"hi","parent_id":null,"position":0}"#;
@@ -598,9 +592,7 @@ fn op_transfer_from_leaves_block_id_unpopulated_l13() {
     let record: OpRecord = transfer.into();
     assert_eq!(
         record.block_id, None,
-        "From<OpTransfer> must NOT parse — block_id sidecar is \
-         populated by `apply_remote_ops` from its existing validation \
-         parse so sync stays at one parse per op (not two)"
+        "From<OpTransfer> must NOT parse the payload for the block_id sidecar"
     );
 }
 

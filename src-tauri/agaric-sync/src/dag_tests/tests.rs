@@ -71,8 +71,8 @@ fn make_remote_record(
     payload: &str,
 ) -> OpRecord {
     let hash = compute_op_hash(device_id, seq, parent_seqs.as_deref(), op_type, payload);
-    // Cache the parsed block_id on the sidecar (mirrors the
-    // production `From<OpTransfer>` path). #2621: op_log's test-only
+    // Cache the parsed block_id on the sidecar, as a local append's record
+    // carries it (`From<OpTransfer>` leaves it `None`). #2621: op_log's test-only
     // single-field `extract_block_id_from_payload` is no longer reachable
     // cross-crate now that op_log lives in `agaric-store`; use the equivalent
     // production single-pass extractor (its `.0` is the block_id).
@@ -140,14 +140,19 @@ async fn an_ingested_peer_edit_raises_its_pages_last_edited_5371() {
         .await
         .unwrap();
 
-    let record = make_remote_record(
+    // As the audit ingest receives it: decoded off the wire, so without the
+    // `block_id` sidecar (#6048).
+    let transfer = crate::sync_protocol::OpTransfer::from(make_remote_record(
         "remote-dev",
         1,
         None,
         "edit_block",
         r#"{"block_id":"C5371","to_text":"peer","prev_edit":null}"#,
+    ));
+    assert!(
+        insert_replicated_op(&pool, &transfer).await.unwrap(),
+        "a new row"
     );
-    assert!(insert_remote_op(&pool, &record).await.unwrap(), "a new row");
 
     let last_edited: i64 =
         sqlx::query_scalar("SELECT last_edited_ms FROM pages_cache WHERE page_id = 'P5371'")

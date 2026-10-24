@@ -1091,8 +1091,8 @@ impl Materializer {
     }
 
     /// #5251: disarm the inbound-sync rebuild debounce and, if it was armed,
-    /// enqueue its fan-out now. Mirrors [`Self::fire_pending_lifecycle_rebuild`].
-    fn fire_pending_inbound_rebuild(&self) {
+    /// enqueue its fan-out now. Mirrors `fire_pending_lifecycle_rebuild`.
+    pub fn fire_pending_inbound_rebuild(&self) {
         let was_armed = {
             let mut st = self
                 .inbound_rebuild_debounce
@@ -1530,8 +1530,7 @@ fn push_edit_block_invalidations(
     tasks: &mut Vec<MaterializeTask>,
 ) -> Result<(), AppError> {
     // Use the cached `OpRecord::block_id` sidecar
-    // populated at append-time (or parsed once on the sync
-    // ingress in `From<OpTransfer> for OpRecord`) so this
+    // populated at append-time so this
     // dispatch path no longer re-parses `record.payload`
     // for the same value.
     let block_id = record.block_id.as_deref().unwrap_or_default();

@@ -518,12 +518,14 @@ CRDT sync). A corrupt record (hash mismatch) is logged and skipped best-effort,
 never faulting the pull.
 
 The puller **buffers** received records during the stream and ingests them once,
-at session completion (`complete_pull_session`), after a materializer flush. The
-inline write would otherwise contend with the background inbound-sync cache
-rebuild that the just-applied `LoroSync` enqueued — SQLite is single-writer, and
-an oversized-block FTS rebuild can hold the write lock past the 5 s
-`busy_timeout` (#611). Flushing first drains that rebuild so the audit write runs
-uncontended.
+at session completion (`complete_pull_session`), after it fires the debounced
+inbound-sync cache rebuild the just-applied `LoroSync` armed and flushes the
+materializer. The inline write would otherwise contend with that rebuild —
+SQLite is single-writer, and an oversized-block FTS rebuild can hold the write
+lock past the 5 s `busy_timeout` (#611). Draining it first also makes `page_id`
+current, which the projection leaves NULL on a synced-in block and stale on a
+moved one, so each ingested op raises the `pages_cache.last_edited_ms` of the
+page its block is on now (#6048).
 
 The batches ride the **same streaming phase and drain** (`next_message`) as the
 `LoroSync` deltas, so the receiver ingests them in its normal `handle_message`
