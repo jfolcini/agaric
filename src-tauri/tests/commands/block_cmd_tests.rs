@@ -8410,7 +8410,8 @@ async fn move_blocks_to_space_moves_all_in_one_tx() {
     let mut ids = Vec::new();
     for i in 0..4 {
         let id = format!("MBS_BLK_{i}");
-        insert_block(&pool, &id, "page", "pg", None, Some(i + 1)).await;
+        // Titled apart: the space they move into holds a title once (#6099).
+        insert_block(&pool, &id, "page", &id, None, Some(i + 1)).await;
         ids.push(id);
     }
 

@@ -18,7 +18,7 @@
 //! | `add_tag` | [`add_tag_inner`] | Tag block must already exist in the block's space. |
 //! | `create_page` | [`create_block_inner_with_space`] | `block_type = "page"`, `parent_id = None`. |
 //! | `delete_block` | [`delete_block_inner`] | Soft delete. Reversible via `reverse.rs`. |
-//! | `move_page_to_space` | [`move_blocks_to_space_inner`] | Page blocks only: a page moves with its content blocks. A move that would drop properties the target space defines differently is refused until `acknowledge_property_loss` names them. |
+//! | `move_page_to_space` | [`move_blocks_to_space_inner`] | Page blocks only: a page moves with its content blocks. A move that would drop properties the target space defines differently is refused until `acknowledge_property_loss` names them; a title the target space holds is refused. |
 //! | `create_tag` | [`create_block_inner_with_space`] | `block_type = "tag"`; returns the space's same-name tag when one exists. |
 //! | `delete_property` | [`delete_property_inner`] | Rejects `space`; the inner refuses system-managed keys. |
 //! | `undo` | [`revert_ops_inner`] | Reverts `op_refs` as one op group. Refuses an op another origin wrote. |
@@ -669,7 +669,8 @@ fn tool_desc_move_page_to_space() -> ToolDescription {
                       page history. Property definitions are per space: a value whose key the \
                       target space does not define identically is removed by the move. Such a \
                       move is refused until `acknowledge_property_loss` lists those keys with \
-                      the counts the refusal names."
+                      the counts the refusal names. A page whose title the target space \
+                      already holds is refused."
             .to_string(),
         input_schema: json!({
             "type": "object",

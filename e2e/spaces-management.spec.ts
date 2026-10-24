@@ -30,7 +30,10 @@
  */
 
 import {
+  clearConsoleErrors,
+  createPageFromPagesView,
   expect,
+  getConsoleErrors,
   getInvokeCalls,
   installIpcRecorder,
   navigateToView,
@@ -404,6 +407,45 @@ test.describe('Spaces — move a page between spaces @spaces', () => {
     await expect(
       page.locator('[data-page-item]').filter({ hasText: 'Getting Started' }),
     ).toBeVisible()
+  })
+
+  // #6099 — a space holds a page title once, so a move onto a taken title is
+  // refused and says why.
+  test('Move to space refuses a page whose title the destination already holds', async ({
+    page,
+  }) => {
+    await createSpaceInSettings(page, 'Work')
+    await switchToSpace(page, 'Work')
+    await clickPagesNav(page)
+    await createPageFromPagesView(page, 'Getting Started')
+    await switchToSpace(page, 'Personal')
+
+    await openPage(page, 'Getting Started')
+    await page.getByRole('button', { name: 'Page actions', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Move to space', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Work', exact: true }).click()
+    await expect(
+      page.getByText("a page titled 'Getting Started' already exists in this space", {
+        exact: true,
+      }),
+    ).toBeVisible()
+    // The refused move is logged as every failed move is; nothing else is.
+    expect(getConsoleErrors(page)).toEqual([
+      expect.stringContaining('Failed to move page to space'),
+    ])
+    clearConsoleErrors(page)
+
+    // Away and back: the page is still in Personal, and Work still holds one.
+    await page.getByRole('button', { name: 'Journal', exact: true }).click()
+    await openPagesView(page)
+    await expect(
+      page.locator('[data-page-item]').filter({ hasText: 'Getting Started' }),
+    ).toHaveCount(1)
+    await switchToSpace(page, 'Work')
+    await openPagesView(page)
+    await expect(
+      page.locator('[data-page-item]').filter({ hasText: 'Getting Started' }),
+    ).toHaveCount(1)
   })
 
   // #2813 — #2803's `handleMoveToSpace` fix closes the page in every tab

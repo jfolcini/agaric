@@ -1179,7 +1179,7 @@ async fn apply_reverse_restore_block(
     let restored: Vec<String> = cohort.into_iter().chain(restored_chain.chain).collect();
     // #6051: as the rename rule refuses it, an undo revives no page or tag
     // whose name its space has given another since; the caller rolls back.
-    crate::commands::blocks::crud::reject_revived_duplicate_names(tx, &restored).await?;
+    crate::commands::blocks::crud::reject_taken_names(tx, &restored).await?;
 
     // #2655: converge the per-space engine with the SQL restore. The
     // seed is now LIVE again (its `deleted_at` cleared above), so
@@ -1362,13 +1362,19 @@ async fn apply_reverse_set_property(
             tx, state, device_id, p, None,
         )
         .await?;
+        // A trashed block resolves no space and holds no name.
+        let Some(space) = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?
+        else {
+            return Ok(());
+        };
+        // #6099: as the forward move refuses it, the undo or redo of a move
+        // brings no name into a space that has given it to another since; the
+        // caller rolls back.
+        crate::commands::blocks::crud::reject_taken_names(tx, &[p.block_id.as_str()]).await?;
         // #5267: the forward move re-rooted the nested pages the hydration
         // above stops at; only an undo puts them back, so this stays here
         // rather than in the forward path.
-        if let Some(space) =
-            agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?
-            && Some(space.as_str()) == p.value_ref.as_ref().map(BlockId::as_str)
-        {
+        if Some(space.as_str()) == p.value_ref.as_ref().map(BlockId::as_str) {
             agaric_engine::apply::loro_apply::renest_pages_detached_by_space_move(
                 tx,
                 state,

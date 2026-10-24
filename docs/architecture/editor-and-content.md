@@ -111,7 +111,7 @@ Reverse-op table (canonical):
 | `restore_block` | `delete_block` |
 | `purge_block` | **non-reversible** |
 | `move_block` | `move_block` to the parent + slot the move recorded (`prior`); **non-reversible** when it recorded none and the op log holds none, and refused while that parent is trashed, under the block, or in another space than the block (#6047) |
-| `set_property` | `set_property` with the value the set recorded (`prior`), or `delete_property` if the key was absent |
+| `set_property` | `set_property` with the value the set recorded (`prior`), or `delete_property` if the key was absent; for `space`, a move back, refused while another live page or tag of that space holds the moved page's or tag's name (#6099) |
 | `delete_property` | `set_property` with the value the delete recorded (`prior`) |
 | `add_tag` | `remove_tag` |
 | `remove_tag` | `add_tag` |

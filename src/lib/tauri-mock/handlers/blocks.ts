@@ -41,6 +41,7 @@ import {
 } from '@/lib/tauri-mock/handlers/shared'
 import { resolveInboundNames } from '@/lib/tauri-mock/names'
 import {
+  allOrNothing,
   attachmentBytes,
   attachments,
   blockDrafts,
@@ -1003,19 +1004,27 @@ function rejectDuplicatePageTitle(page: Record<string, unknown>, title: string):
 }
 
 /**
+ * The name rule for page or tag `b` under the name and space it holds now.
+ * Mock twin of `reject_duplicate_name`.
+ */
+function rejectDuplicateName(b: Record<string, unknown>): void {
+  if (typeof b['content'] !== 'string') return
+  if (b['block_type'] === 'tag') rejectDuplicateTagName(b['id'] as string, b['content'])
+  if (b['block_type'] === 'page') rejectDuplicatePageTitle(b, b['content'])
+}
+
+/**
  * #5281/#6051 — run `restore`, then refuse it, undoing every row it revived,
  * when it brought a page or tag back under a name another live page or tag of
- * its space holds. Mock twin of `reject_revived_duplicate_names`, which runs
- * after the backend's writes inside the transaction its refusal rolls back.
+ * its space holds. Mock twin of `reject_taken_names`, which runs after the
+ * backend's writes inside the transaction its refusal rolls back.
  */
 function restoreRefusingDuplicateNames<T>(restore: () => T): T {
   const deletedBefore = new Map([...blocks].map(([id, b]) => [id, b['deleted_at']]))
   const result = restore()
   try {
     for (const [id, b] of blocks) {
-      if (b['deleted_at'] || !deletedBefore.get(id) || typeof b['content'] !== 'string') continue
-      if (b['block_type'] === 'tag') rejectDuplicateTagName(id, b['content'])
-      if (b['block_type'] === 'page') rejectDuplicatePageTitle(b, b['content'])
+      if (!b['deleted_at'] && deletedBefore.get(id)) rejectDuplicateName(b)
     }
   } catch (err) {
     for (const [id, deletedAt] of deletedBefore) {
@@ -2132,7 +2141,9 @@ export const blocksHandlers = {
 
   // #81 / bulk move N blocks to a space via the canonical
   // set_property(space) op. Lenient skip of missing / deleted; returns count moved.
-  move_blocks_to_space: (args) => {
+  // All-or-nothing, as the backend's one transaction: a refusal after the
+  // writes below (#6099) puts every row and op back.
+  move_blocks_to_space: allOrNothing((args) => {
     const a = args as Record<string, unknown>
     const inputIds = (a['blockIds'] as string[]) ?? []
     const spaceId = a['spaceId'] as string
@@ -2226,6 +2237,12 @@ export const blocksHandlers = {
       })
       count++
     }
+    // #6099 — after the writes, as `reject_taken_names` runs, so two names this
+    // move brings into the space see each other.
+    for (const blockId of inputIds) {
+      const b = blocks.get(blockId)
+      if (b && !b['deleted_at']) rejectDuplicateName(b)
+    }
     // Arrivals land ahead of residents because the engine ranks the group by
     // each node's legacy position meta, and an arrival's meta is the small
     // per-space rank it was seeded with while a resident's is the `position`
@@ -2250,7 +2267,7 @@ export const blocksHandlers = {
       })
     }
     return count
-  },
+  }),
 
   // #5841 S0.6 — what a cross-space move would drop (`space-move.ts`).
   preview_space_move: (args) => {

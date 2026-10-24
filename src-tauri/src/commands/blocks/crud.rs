@@ -644,19 +644,19 @@ pub(crate) async fn reject_duplicate_name(
     }
 }
 
-/// [`reject_duplicate_name`] for every page and tag among `revived`, run after
-/// a restore's or an undo's writes so two names one batch revives see each
-/// other (#5281, #6051).
-pub(crate) async fn reject_revived_duplicate_names(
+/// [`reject_duplicate_name`] for every page and tag among `blocks`, run after
+/// the writes of a restore, an undo or a move into a space, so two names one
+/// batch brings into a space see each other (#5281, #6051, #6099).
+pub(crate) async fn reject_taken_names(
     conn: &mut sqlx::SqliteConnection,
-    revived: &[impl serde::Serialize],
+    blocks: &[impl serde::Serialize],
 ) -> Result<(), AppError> {
-    let revived_json = serde_json::to_string(revived)?;
+    let blocks_json = serde_json::to_string(blocks)?;
     let named = sqlx::query!(
         r#"SELECT b.id AS "id!", b.block_type, b.content AS "content!" FROM json_each(?1) je
            JOIN blocks b ON b.id = je.value
            WHERE b.block_type IN ('page', 'tag') AND b.content IS NOT NULL"#,
-        revived_json
+        blocks_json
     )
     .fetch_all(&mut *conn)
     .await?;
@@ -1361,6 +1361,7 @@ pub async fn delete_blocks_by_ids(
 ///
 /// - [`AppError::Validation`] — empty input list, > [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) entries, `space_id` is not a live space block, or the drops and moves would exceed one undo
 /// - [`ValidationCode::UnacknowledgedPropertyLoss`] — the losses differ from `acknowledged`
+/// - [`ValidationCode::DuplicatePageTitle`] — a moved page's title or tag's name is taken in `space_id`, by a live page or tag there or by another one this move brings
 #[instrument(skip(pool, device_id, materializer, block_ids, acknowledged), err)]
 pub async fn move_blocks_to_space_inner(
     pool: &SqlitePool,
@@ -1443,6 +1444,9 @@ pub async fn move_blocks_to_space_inner(
         tx.enqueue_background(op_record);
         moved += 1;
     }
+    // #6099: as a rename is refused, a move brings no page title or tag name
+    // into a space where another live page or tag holds it; the tx rolls back.
+    reject_taken_names(&mut tx, &alive.iter().collect::<Vec<_>>()).await?;
 
     tx.commit_and_dispatch(materializer).await?;
 
@@ -1803,7 +1807,7 @@ pub async fn restore_block_inner(
         .await?;
 
     let restored: Vec<&String> = restore_cohort.iter().chain(&restored_chain.chain).collect();
-    reject_revived_duplicate_names(&mut tx, &restored).await?;
+    reject_taken_names(&mut tx, &restored).await?;
     // #5371: the rebuild swept a trashed page's `pages_cache` row, and the
     // Pages list reads its rows from there.
     agaric_store::cache::insert_missing_pages_cache_rows(&mut tx, &restored).await?;
@@ -2727,7 +2731,7 @@ pub async fn restore_blocks_by_ids_inner(
         .iter()
         .flat_map(|(_, cohort, chain)| cohort.iter().chain(chain))
         .collect();
-    reject_revived_duplicate_names(&mut tx, &restored).await?;
+    reject_taken_names(&mut tx, &restored).await?;
     // #5371: as in `restore_block_inner`.
     agaric_store::cache::insert_missing_pages_cache_rows(&mut tx, &restored).await?;
 
