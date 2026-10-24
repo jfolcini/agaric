@@ -1,5 +1,5 @@
 {
-  "description": "Tag idempotency across a remove: add_tag, remove_tag, then add_tag again (re-add the same edge). Asserts the settled block_tags projection holds exactly ONE surviving edge (S2->S3) with no duplicate row, proving re-adding a previously-removed tag resurrects a single canonical edge rather than accumulating. Exercises add_tag / remove_tag / add_tag through the engine pipeline. Re-author `expected` via CONFORMANCE_UPDATE=1.",
+  "description": "Tag idempotency across a remove (S3 is a `tag` block, as `add_tag` requires): add_tag, remove_tag, then add_tag again (re-add the same edge). Asserts the settled block_tags projection holds exactly ONE surviving edge (S2->S3) with no duplicate row, proving re-adding a previously-removed tag resurrects a single canonical edge rather than accumulating. Exercises add_tag / remove_tag / add_tag through the engine pipeline. Re-author `expected` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [
       {
@@ -35,7 +35,7 @@
         "todo_state": null
       },
       {
-        "block_type": "page",
+        "block_type": "tag",
         "content": "tag-a",
         "deleted_at": null,
         "due_date": null,
@@ -107,7 +107,7 @@
         "position": 1
       },
       {
-        "block_type": "page",
+        "block_type": "tag",
         "content": "tag-a",
         "id": "S3",
         "parent_id": null,

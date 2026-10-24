@@ -1,5 +1,5 @@
 {
-  "description": "Interleaved lifecycle on a seed block: edit content, cross-parent move (same page), add a tag, set a typed property, then create a new child under the destination parent. Exercises edit + move + tag + set_property + create funneled through the engine pipeline in one sequence; asserts the settled state carries the edited content, the re-parented dense position, the tag edge, the property row, and the freshly-created sibling. Re-author `expected` via CONFORMANCE_UPDATE=1.",
+  "description": "Interleaved lifecycle on a seed block: edit content, cross-parent move (same page), add a tag (S4 is a `tag` block, as `add_tag` requires), set a typed property, then create a new child under the destination parent. Exercises edit + move + tag + set_property + create funneled through the engine pipeline in one sequence; asserts the settled state carries the edited content, the re-parented dense position, the tag edge, the property row, and the freshly-created sibling. Re-author `expected` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [
       {
@@ -48,7 +48,7 @@
         "todo_state": null
       },
       {
-        "block_type": "page",
+        "block_type": "tag",
         "content": "project-tag",
         "deleted_at": null,
         "due_date": null,
@@ -177,7 +177,7 @@
         "position": 2
       },
       {
-        "block_type": "page",
+        "block_type": "tag",
         "content": "project-tag",
         "id": "S4",
         "parent_id": null,

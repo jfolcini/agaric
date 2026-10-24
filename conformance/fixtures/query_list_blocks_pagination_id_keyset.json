@@ -116,7 +116,7 @@
         "todo_state": null
       },
       {
-        "block_type": "page",
+        "block_type": "tag",
         "content": "topic",
         "deleted_at": null,
         "due_date": null,
@@ -489,7 +489,7 @@
         "position": 6
       },
       {
-        "block_type": "page",
+        "block_type": "tag",
         "content": "topic",
         "id": "S8",
         "parent_id": null,

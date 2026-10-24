@@ -1,5 +1,5 @@
 {
-  "description": "Tag association through the two commands: add a tag, add the SAME tag again (refused with `invalid_operation`, so `block_tags` keeps one edge and the op log one `add_tag`, #2468), add a second tag, remove the first (that edge only goes), then remove it again (refused with `not_found`). S5 is tagged with S4 and then trashed: tagging it, or untagging it, is refused with `not_found`, and its edge stays. S3 and S4 are `tag` blocks, as `add_tag_in_tx` requires. The settled `block_tags` holds S2->S4 and the trashed S5->S4. The op apply's own dedupe of a repeated `AddTag` (#622/#709) is pinned in the engine's tests, not here: the mock has no op apply to compare.",
+  "description": "Tag association through the two commands: add a tag, add the SAME tag again (refused with `invalid_operation`, so `block_tags` keeps one edge and the op log one `add_tag`, #2468), add a second tag, remove the first (that edge only goes), then remove it again (refused with `not_found`). S5 is tagged with S4 and then trashed: tagging it, or untagging it, is refused with `not_found`, and its edge stays. S3 and S4 are `tag` blocks, as `add_tag_in_tx` requires: using the page S1 as the tag is refused with `invalid_operation`. The settled `block_tags` holds S2->S4 and the trashed S5->S4. The op apply's own dedupe of a repeated `AddTag` (#622/#709) is pinned in the engine's tests, not here: the mock has no op apply to compare.",
   "expected": {
     "block_tags": [
       {
@@ -125,6 +125,18 @@
       "error": "not_found",
       "name": "untagging_a_trashed_block_is_refused",
       "returns": []
+    },
+    {
+      "code": null,
+      "error": "invalid_operation",
+      "name": "tagging_with_a_non_tag_block_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "invalid_operation",
+      "name": "a_tag_tagging_itself_is_refused",
+      "returns": []
     }
   ],
   "name": "tag_add_remove",
@@ -202,6 +214,28 @@
       "comment": "S5 still holds S4 in the trash; the refusal keeps the edge.",
       "expect_error": "not_found",
       "name": "untagging_a_trashed_block_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "tagId": "S1"
+      },
+      "command": "add_tag",
+      "comment": "S1 is a page, not a `tag` block: the refusal keeps `block_tags` as it was.",
+      "expect_error": "invalid_operation",
+      "name": "tagging_with_a_non_tag_block_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "tagId": "S3"
+      },
+      "command": "add_tag",
+      "comment": "A tag block cannot tag itself: refused before any lookup.",
+      "expect_error": "invalid_operation",
+      "name": "a_tag_tagging_itself_is_refused",
       "via": "command"
     }
   ],
