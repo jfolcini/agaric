@@ -1293,11 +1293,13 @@ impl SyncOrchestrator {
             SyncMessage::Error { message } => {
                 self.state = SyncState::Failed(message.clone());
                 self.session.state = SyncState::Failed(message.clone());
-                // #6051: a refusal the user neither caused nor can act on, such
-                // as `Busy` when both devices dial at once, is no sync failure.
-                if crate::sync_daemon::Rejection::from_peer_message(&message)
-                    .is_none_or(|rejection| rejection.user_facing_message().is_some())
-                {
+                // #6051: `Busy`, the answer when both devices dial at once, is
+                // no sync failure. Every other refusal still reaches the UI in
+                // the responder's own words.
+                if !matches!(
+                    crate::sync_daemon::Rejection::from_peer_message(&message),
+                    Some(crate::sync_daemon::Rejection::Busy)
+                ) {
                     self.emit(crate::sync_events::SyncEvent::Error {
                         message,
                         remote_device_id: self.session.remote_device_id.clone(),

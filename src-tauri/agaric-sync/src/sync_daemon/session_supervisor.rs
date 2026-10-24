@@ -2125,7 +2125,7 @@ async fn record_session_failure(
         // the full reasoning. Neither the backoff nor the generic
         // `Sync failed: …` event is right for it.
         //
-        // A user-facing rejection has ALREADY reached the UI, verbatim:
+        // Every rejection but `Busy` has ALREADY reached the UI, verbatim:
         // `session_state_machine`'s `SyncMessage::Error` arm emits a
         // `SyncEvent::Error` carrying the responder's own words, which is
         // the signal `PairingDialog` matches to say "wrong code". What is
@@ -2139,9 +2139,9 @@ async fn record_session_failure(
              recording it as a sync failure (#3505)"
         );
         // #6051: the attempt still ends, quietly, as `record_initiator_failure`
-        // ends a failure it does not report; a refusal that is not user-facing
-        // reaches the UI by no other route, and the device row would keep
-        // showing the attempt (#5739).
+        // ends a failure it does not report; a `Busy` refusal reaches the UI
+        // by no other route, and the device row would keep showing the
+        // attempt (#5739).
         ctx.event_sink.on_sync_event(SyncEvent::Progress {
             state: "error".into(),
             remote_device_id: peer_id.to_owned(),

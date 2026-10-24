@@ -731,17 +731,18 @@ async fn orchestrator_handles_error_message() {
     materializer.shutdown();
 }
 
-/// #6051: a peer's refusal fails the session either way, but only one the user
-/// can act on raises a `SyncEvent::Error`. `Busy`, the answer to two devices
-/// dialling each other at once, is the scheduler working, not a failed sync.
+/// #6051: a peer's refusal fails the session either way, and raises a
+/// `SyncEvent::Error` unless it is `Busy`, the answer to two devices dialling
+/// each other at once. `Unpaired` has no user-facing message but still shows.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_received_rejection_raises_an_error_event_only_when_user_facing() {
+async fn a_received_rejection_raises_an_error_event_unless_busy() {
     use crate::sync_daemon::Rejection;
     use crate::sync_events::{RecordingEventSink, SyncEvent};
 
     for (rejection, raises_error) in [
         (Rejection::Busy, false),
         (Rejection::PairingProofMissing, true),
+        (Rejection::Unpaired, true),
     ] {
         let (pool, _dir) = test_pool().await;
         let materializer = Materializer::new(pool.clone());
