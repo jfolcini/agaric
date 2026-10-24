@@ -1091,7 +1091,7 @@ impl Materializer {
     }
 
     /// #5251: disarm the inbound-sync rebuild debounce and, if it was armed,
-    /// enqueue its fan-out now. Mirrors [`Self::fire_pending_lifecycle_rebuild`].
+    /// enqueue its fan-out now. Mirrors `fire_pending_lifecycle_rebuild`.
     pub fn fire_pending_inbound_rebuild(&self) {
         let was_armed = {
             let mut st = self
