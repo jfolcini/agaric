@@ -110,7 +110,8 @@ export function codedSyncErrorMessage(payload: SyncErrorPayload): string | null 
  * drains, so open views reload the touched pages. `changed_page_ids` carries
  * the IDENTICAL semantics as `SyncCompletePayload.changed_page_ids` (#1071),
  * which is what lets this handler reuse the exact same
- * `reloadChangedPageStores` targeted-reload path.
+ * `reloadChangedPageStores` targeted-reload path. MCP `create_tag` names the
+ * tag, which no page owns: no page store reloads, and the derived caches drop.
  * Serialize-only on the Rust side (rides the Tauri event, not specta), so this
  * hand-written shape is the single source of truth.
  */

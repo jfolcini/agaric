@@ -109,6 +109,7 @@
 
 import { execFileSync } from 'node:child_process'
 import {
+  existsSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -1501,4 +1502,34 @@ export class McpClient {
   close(): void {
     this.socket.destroy()
   }
+}
+
+/**
+ * Turn agent access on and make a read-write agent named `name` on every space,
+ * through the app's own commands; returns the socket to connect to and the
+ * agent's token, once the socket exists.
+ */
+export async function startReadWriteAgent(
+  name: string,
+): Promise<{ socketPath: string; token: string }> {
+  await invoke('mcp_set_enabled', { enabled: true })
+  const { socket_path: socketPath } = await invoke<{ socket_path: string }>('get_mcp_status')
+  const { token } = await invoke<{ token: string }>('create_mcp_agent', {
+    name,
+    mode: 'read_write',
+    spaceIds: null,
+  })
+  await browser.waitUntil(() => existsSync(socketPath), {
+    timeout: NAV_TIMEOUT,
+    timeoutMsg: `MCP socket never appeared at ${socketPath}`,
+  })
+  return { socketPath, token }
+}
+
+/** The id of the default space, read through `client`. */
+export async function defaultSpaceId(client: McpClient): Promise<string> {
+  const spaces = (await client.call('list_spaces', {})) as { id: string; is_default: boolean }[]
+  const id = spaces.find((space) => space.is_default)?.id
+  if (id === undefined) throw new Error('list_spaces returned no default space')
+  return id
 }

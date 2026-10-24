@@ -2293,10 +2293,12 @@ async fn create_tag_creates_in_space_and_reuses_the_name() {
         tag_id.as_str(),
         "the space's tag is returned, not a second one"
     );
+    // #6049 — a tag is on no page, so each call names the tag itself: the
+    // empty set would reload every open page.
     assert_eq!(
         emitter.blocks_changed(),
-        Vec::<Vec<String>>::new(),
-        "a tag is on no page, so no open page reloads",
+        vec![vec![tag_id.clone()], vec![tag_id]],
+        "create_tag must emit blocks:changed naming the tag",
     );
 }
 

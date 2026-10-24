@@ -9,16 +9,15 @@
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
 
-import { existsSync } from 'node:fs'
-
 import {
   ACTION_TIMEOUT,
   McpClient,
   NAV_TIMEOUT,
   blockStaticsByMarker,
-  invoke,
+  defaultSpaceId,
   reopenPageByTitle,
   runScopedMarker,
+  startReadWriteAgent,
   waitForAppReady,
 } from './helpers'
 
@@ -51,17 +50,7 @@ describe('Agaric real-backend MCP write burst @mcp', () => {
   it('stays responsive while a burst of MCP writes reloads the open page', async () => {
     await waitForAppReady()
 
-    await invoke('mcp_set_enabled', { enabled: true })
-    const { socket_path: socketPath } = await invoke<{ socket_path: string }>('get_mcp_status')
-    const { token } = await invoke<{ token: string }>('create_mcp_agent', {
-      name: AGENT,
-      mode: 'read_write',
-      spaceIds: null,
-    })
-    await browser.waitUntil(() => existsSync(socketPath), {
-      timeout: NAV_TIMEOUT,
-      timeoutMsg: `MCP socket never appeared at ${socketPath}`,
-    })
+    const { socketPath, token } = await startReadWriteAgent(AGENT)
     const clients = await Promise.all(
       Array.from({ length: CONNECTIONS }, () => McpClient.connect(socketPath, token)),
     )
@@ -69,9 +58,7 @@ describe('Agaric real-backend MCP write burst @mcp', () => {
     if (first === undefined) throw new Error('no MCP connection')
 
     try {
-      const spaces = (await first.call('list_spaces', {})) as { id: string; is_default: boolean }[]
-      const spaceId = spaces.find((space) => space.is_default)?.id
-      if (spaceId === undefined) throw new Error('no default space')
+      const spaceId = await defaultSpaceId(first)
       const page = (await first.call('create_page', { title: TITLE, space_id: spaceId })) as {
         id: string
       }

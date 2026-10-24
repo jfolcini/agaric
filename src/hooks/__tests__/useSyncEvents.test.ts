@@ -1054,6 +1054,27 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
+    // #6049 — MCP `create_tag` names the tag, which no page owns.
+    it('reloads no page store for an id none holds, and still drops the picker name caches', async () => {
+      const changes: NameChange[] = []
+      const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+
+      getListenerCallback('blocks:changed')({ payload: { changed_page_ids: ['TAG_1'] } })
+
+      expect(mockLoad).not.toHaveBeenCalled()
+      expect(mockLoad1Embed).not.toHaveBeenCalled()
+      expect(mockLoad2).not.toHaveBeenCalled()
+      expect(changes).toEqual([{ kind: 'invalidated' }])
+
+      unsubscribe()
+      unmount()
+    })
+
     it('does NOT toast or touch the sync store (no ops counter)', async () => {
       const { unmount } = renderHook(() => useSyncEvents())
 

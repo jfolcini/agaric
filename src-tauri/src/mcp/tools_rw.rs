@@ -435,7 +435,9 @@ impl ToolRegistry for ReadWriteTools {
                 TOOL_MOVE_PAGE_TO_SPACE => {
                     handle_move_page_to_space(&pool, &materializer, &device_id, emitter, args).await
                 }
-                TOOL_CREATE_TAG => handle_create_tag(&pool, &materializer, &device_id, args).await,
+                TOOL_CREATE_TAG => {
+                    handle_create_tag(&pool, &materializer, &device_id, emitter, args).await
+                }
                 TOOL_DELETE_PROPERTY => {
                     handle_delete_property(&pool, &materializer, &device_id, emitter, args).await
                 }
@@ -1372,9 +1374,8 @@ async fn handle_create_page(
     )
     .await?;
     // A newly-created page resolves to itself (page_id = id), so `blocks:changed`
-    // carries the new page id. No mounted store renders a page that did not
-    // exist a moment ago, so this is a no-op for open views today — emitted for
-    // consistency and to feed any future page-list consumer of the one signal.
+    // carries the new page id. No mounted store renders it yet; the event drops
+    // the `[[` picker's cached names and the Pages list.
     emit_blocks_changed_for(pool, emitter, resp.id.clone()).await;
     to_tool_result(&resp)
 }
@@ -1506,6 +1507,7 @@ async fn handle_create_tag(
     pool: &SqlitePool,
     materializer: &Materializer,
     device_id: &str,
+    emitter: &dyn ViewChangeEmitter,
     args: Value,
 ) -> Result<Value, AppError> {
     let args: CreateTagArgs = parse_args(TOOL_CREATE_TAG, args)?;
@@ -1523,6 +1525,9 @@ async fn handle_create_tag(
         None,
     )
     .await?;
+    // No page owns a tag, so the set names the tag itself: an empty set would
+    // reload every open page, and the `#` picker's cached tag list drops either way.
+    emitter.emit_blocks_changed(vec![resp.id.as_str().to_owned()]);
     to_tool_result(&resp)
 }
 

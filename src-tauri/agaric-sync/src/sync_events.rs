@@ -384,6 +384,9 @@ pub const EVENT_BLOCKS_CHANGED: &str = "blocks:changed";
 /// set falls back to reloading every mounted store. Keeping the payload shape
 /// (`changed_page_ids: string[]`) equal to the `sync:complete` field is what
 /// lets the frontend consumer share one code path with no new vocabulary.
+///
+/// A write no page owns (MCP `create_tag`) names the block itself, so the
+/// frontend still drops its derived caches without the empty set's full reload.
 #[derive(Debug, Clone, Serialize)]
 pub struct BlocksChangedEvent {
     #[serde(default)]
