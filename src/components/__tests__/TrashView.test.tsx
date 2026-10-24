@@ -3269,6 +3269,20 @@ describe('TrashView restores — chips and the journal page map', () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(nameTakenToast))
   })
 
+  it('a restore-all refused for a taken tag name says why', async () => {
+    const user = userEvent.setup()
+    stubRestore({ restore_blocks_by_ids: nameTaken })
+    render(<TrashView />)
+
+    await screen.findByText('restorable')
+    await user.click(screen.getByTestId('trash-restore-all-btn'))
+    await user.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: /^Restore$/i }),
+    )
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(nameTakenToast))
+  })
+
   it('any other refusal keeps the generic copy', async () => {
     const user = userEvent.setup()
     stubRestore({

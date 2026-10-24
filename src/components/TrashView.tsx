@@ -493,7 +493,11 @@ export function TrashView(): React.ReactElement {
         announce(t('announce.restoreAllPartial', { count: err.affectedCount }))
         return
       }
-      notify.error(t('trash.restoreAllFailed'))
+      // The drain wraps the failing chunk's error, so the refusal is its cause.
+      notify.error(
+        takenNameReason(err instanceof PartialPurgeError ? err.cause : err) ??
+          t('trash.restoreAllFailed'),
+      )
       announce(t('announce.restoreAllFailed'))
     }
   }, [currentSpaceId, reload, clearSelection, t])
