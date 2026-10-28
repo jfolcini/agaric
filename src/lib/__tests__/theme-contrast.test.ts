@@ -260,22 +260,22 @@ const DOCUMENTED_GUARANTEES: ReadonlyArray<{
     documented: 7.44,
   },
   {
-    // index.css .theme-solarized-dark: "0.66 is ≈4.8:1" on the lifted --popover
-    name: 'Solarized Dark — --muted-foreground on --popover ≈4.8:1',
+    // index.css .theme-solarized-dark: 0.69 "clears 4.5:1 on every surface it sits on" (#6160)
+    name: 'Solarized Dark — --muted-foreground on --popover ≈5.4:1',
     selector: '.theme-solarized-dark',
     fg: 'muted-foreground',
     bg: 'popover',
     min: AA_NORMAL,
-    documented: 4.8,
+    documented: 5.39,
   },
   {
-    // index.css .theme-one-dark-pro: "0.70 is ≈4.6:1" on the lifted --popover
-    name: 'One Dark Pro — --muted-foreground on --popover ≈4.6:1',
+    // index.css .theme-one-dark-pro: 0.73 "clears 4.5:1 on every surface it sits on" (#6160)
+    name: 'One Dark Pro — --muted-foreground on --popover ≈5.1:1',
     selector: '.theme-one-dark-pro',
     fg: 'muted-foreground',
     bg: 'popover',
     min: AA_NORMAL,
-    documented: 4.57,
+    documented: 5.11,
   },
   {
     // index.css ~466-468: "muted-foreground … L 0.58 → 0.50 raises it to ≈5.45:1"
