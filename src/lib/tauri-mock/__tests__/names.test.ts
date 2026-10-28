@@ -44,10 +44,6 @@ function put(
   const row = makeBlock(blockId, type, content, parent, blocks.size)
   if (type === 'page' || type === 'tag') {
     row['space_id'] = SPACE
-    properties.set(
-      blockId,
-      new Map([['space', { key: 'space', value_ref: SPACE, value_text: null }]]),
-    )
   } else {
     row['page_id'] = parent
   }
@@ -83,7 +79,6 @@ beforeEach(() => {
   put(FOO_LOWER, 'page', 'foo', null)
   put(WORK, 'tag', 'Work', null)
   put(NO_SPACE_PAGE, 'page', 'Elsewhere', null)['space_id'] = null
-  properties.delete(NO_SPACE_PAGE)
   put(NO_SPACE_ANCHOR, 'content', 'spaceless', NO_SPACE_PAGE)
 })
 

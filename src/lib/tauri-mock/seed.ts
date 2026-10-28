@@ -442,43 +442,6 @@ export function seedBlocks(): void {
   blocks.set(SEED_IDS.PAGE_PROJECTS, makeBlock(SEED_IDS.PAGE_PROJECTS, 'page', 'Projects', null, 3))
   blocks.set(SEED_IDS.PAGE_MEETINGS, makeBlock(SEED_IDS.PAGE_MEETINGS, 'page', 'Meetings', null, 4))
 
-  // Every seeded page belongs to the canonical Personal space —
-  // the new `get_journal_page_by_date` / `list_journal_pages_in_range`
-  // handlers filter by the `space` ref property to mirror the real
-  // backend's per-space scoping. Without this, e2e tests that exercise
-  // the journal view (DuePanel, calendar dot dots, navigation) would
-  // see today's seeded daily page as foreign-space and silently hide
-  // it.
-  for (const pageId of [
-    SEED_IDS.PAGE_GETTING_STARTED,
-    SEED_IDS.PAGE_QUICK_NOTES,
-    SEED_IDS.PAGE_DAILY,
-    SEED_IDS.PAGE_PROJECTS,
-    SEED_IDS.PAGE_MEETINGS,
-    // Tag blocks are space-scoped in the backend. #3081 — the SOLE source of
-    // truth is the denormalized `blocks.space_id` column (#533), which the
-    // backend stamps directly for pages and tags; `list_all_tags_in_space`
-    // filters on it. We stamp `space_id` on the block row below AND keep the
-    // legacy `space` property (page-scope handlers like `load_page_subtree` /
-    // trash still read the property). Without the `space_id` stamp the Tags
-    // view would show zero seed tags.
-    SEED_IDS.TAG_WORK,
-    SEED_IDS.TAG_PERSONAL,
-    SEED_IDS.TAG_IDEA,
-    SEED_IDS.PAGE_TMPL_MEETING,
-  ]) {
-    if (!properties.has(pageId)) properties.set(pageId, new Map())
-    properties.get(pageId)?.set('space', {
-      block_id: pageId,
-      key: 'space',
-      value_text: null,
-      value_num: null,
-      value_date: null,
-      value_ref: 'SPACE_PERSONAL',
-      value_bool: null,
-    })
-  }
-
   // Content blocks — children of "Getting Started"
   blocks.set(
     SEED_IDS.BLOCK_GS_1,
@@ -667,20 +630,15 @@ export function seedBlocks(): void {
   blocks.set(SEED_IDS.TAG_PERSONAL, makeBlock(SEED_IDS.TAG_PERSONAL, 'tag', 'personal', null, 1))
   blocks.set(SEED_IDS.TAG_IDEA, makeBlock(SEED_IDS.TAG_IDEA, 'tag', 'idea', null, 2))
 
-  // #3081 — mirror the backend `blocks.space_id` column (the SOLE source of
-  // truth, #533) on the space-scoped seed blocks. The backend stamps this
-  // directly for pages and tags; `list_all_tags_in_space` now filters on it
-  // (matching the backend) instead of a retired `block_properties(key='space')`
-  // row, so the seed tags must carry it or the Tags view shows zero seed tags.
-  // Runs AFTER the tag blocks are created above (the `space` property loop
-  // earlier runs before them).
+  // Every seeded page and tag belongs to the canonical Personal space: the
+  // `blocks.space_id` column (#533), which every space-scoped read resolves
+  // through `ownerSpaceOf`.
   for (const id of [
     SEED_IDS.PAGE_GETTING_STARTED,
     SEED_IDS.PAGE_QUICK_NOTES,
     SEED_IDS.PAGE_DAILY,
     SEED_IDS.PAGE_PROJECTS,
     SEED_IDS.PAGE_MEETINGS,
-    SEED_IDS.PAGE_TMPL_MEETING,
     SEED_IDS.TAG_WORK,
     SEED_IDS.TAG_PERSONAL,
     SEED_IDS.TAG_IDEA,
@@ -841,10 +799,10 @@ export function seedBlocks(): void {
   pageAliases.set(SEED_IDS.PAGE_PROJECTS, ['proj'])
 
   // -- Seed template page (Meeting Notes template) --
-  blocks.set(
-    SEED_IDS.PAGE_TMPL_MEETING,
-    makeBlock(SEED_IDS.PAGE_TMPL_MEETING, 'page', 'Meeting Notes Template', null, 5),
-  )
+  blocks.set(SEED_IDS.PAGE_TMPL_MEETING, {
+    ...makeBlock(SEED_IDS.PAGE_TMPL_MEETING, 'page', 'Meeting Notes Template', null, 5),
+    space_id: 'SPACE_PERSONAL',
+  })
   blocks.set(
     SEED_IDS.BLOCK_TMPL_M1,
     makeBlock(SEED_IDS.BLOCK_TMPL_M1, 'content', '## Attendees', SEED_IDS.PAGE_TMPL_MEETING, 0),
@@ -981,20 +939,10 @@ function seedFacetFixturePage(): void {
   // canonical seed sets no page-level priority, so '1' here is unique and the
   // facet narrows to exactly this page.
   page['priority'] = '1'
-  blocks.set(pageId, page)
+  blocks.set(pageId, { ...page, space_id: 'SPACE_PERSONAL' })
   // Same ≈90d-old real op-log edit the canonical pages get, so this opt-in
   // fixture lands in the same `last-edited:` bucket they do.
   stampPageLastEdited(pageId, offsetIso(-90))
-  if (!properties.has(pageId)) properties.set(pageId, new Map())
-  properties.get(pageId)?.set('space', {
-    block_id: pageId,
-    key: 'space',
-    value_text: null,
-    value_num: null,
-    value_date: null,
-    value_ref: 'SPACE_PERSONAL',
-    value_bool: null,
-  })
   // Page-level tag so the `Tag` facet (which reads `blockTags.get(pageId)`)
   // matches this page directly.
   blockTags.set(pageId, new Set([SEED_IDS.TAG_WORK]))
@@ -1021,7 +969,10 @@ function seedBulkPages(): void {
   for (let i = 1; i <= count; i++) {
     const pageId = fakeId()
     const title = `Bulk Page ${String(i).padStart(3, '0')}`
-    blocks.set(pageId, makeBlock(pageId, 'page', title, null, 100 + i))
+    blocks.set(pageId, {
+      ...makeBlock(pageId, 'page', title, null, 100 + i),
+      space_id: 'SPACE_PERSONAL',
+    })
     // Recent, monotonically-decreasing-by-index op-log edits: bulk pages are
     // newer than the canonical seed pages (≈90 days old) so they sort FIRST
     // under `recently-modified` and match the `last-edited:` rolling-window
@@ -1030,16 +981,6 @@ function seedBulkPages(): void {
     const bulkTs = new Date()
     bulkTs.setHours(bulkTs.getHours() - (i - 1))
     stampPageLastEdited(pageId, bulkTs.toISOString())
-    if (!properties.has(pageId)) properties.set(pageId, new Map())
-    properties.get(pageId)?.set('space', {
-      block_id: pageId,
-      key: 'space',
-      value_text: null,
-      value_num: null,
-      value_date: null,
-      value_ref: 'SPACE_PERSONAL',
-      value_bool: null,
-    })
     const childId = fakeId()
     blocks.set(childId, makeBlock(childId, 'content', `${title} body`, pageId, 0))
   }

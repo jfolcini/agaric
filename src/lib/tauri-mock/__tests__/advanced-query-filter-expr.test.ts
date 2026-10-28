@@ -15,6 +15,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import { setSpace } from '@/lib/tauri-mock/__tests__/mock-store-helpers'
 import { dispatch, metaRowMatchesExpr, type PageMetaRow } from '@/lib/tauri-mock/handlers'
 import {
   blockTags,
@@ -42,19 +43,6 @@ function clearMock(): void {
   blockTags.clear()
   propertyDefs.clear()
   opLog.length = 0
-}
-
-/** Stamp a block's `space` property on its owning page (what `fbqInSpace` reads). */
-function setSpace(blockId: string, spaceId: string): void {
-  if (!properties.has(blockId)) properties.set(blockId, new Map())
-  properties.get(blockId)?.set('space', {
-    key: 'space',
-    value_text: null,
-    value_num: null,
-    value_date: null,
-    value_ref: spaceId,
-    value_bool: null,
-  })
 }
 
 /** A minimal `PageMetaRow` carrying just the priority the composition tests read. */

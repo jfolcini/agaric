@@ -84,8 +84,7 @@ export function readActiveSpaceScope(cmd: string, args: Record<string, unknown>)
 /**
  * #4723 — the live `page` in `spaceId` titled exactly `content`, skipping
  * `excludeId` (the page being renamed). Mock twin of the backend's
- * `find_live_page_by_title`; a page's space is its `space` ref property, the
- * mock's scoping mechanism.
+ * `find_live_page_by_title`.
  */
 export function findLivePageByTitle(
   content: string | null,
@@ -154,23 +153,9 @@ export function createPageInSpace(
     priority: null,
     due_date: null,
     scheduled_date: null,
-    // #3081 — the `blocks.space_id` column, which the alias readers below
-    // scope on; the `space` property stays for the handlers that read it.
     space_id: spaceId,
   }
   blocks.set(id, row)
-  if (spaceId) {
-    if (!properties.has(id)) properties.set(id, new Map())
-    properties.get(id)?.set('space', {
-      block_id: id,
-      key: 'space',
-      value_text: null,
-      value_num: null,
-      value_date: null,
-      value_ref: spaceId,
-      value_bool: null,
-    })
-  }
   pushOp('create_block', {
     block_id: id,
     content: row.content,
@@ -644,14 +629,25 @@ export {
 }
 
 /**
- * The space a block's edges belong to: the space property of its OWNING page
- * (`page_id`, falling back to the block's own id when it IS a page). Mirrors
- * the backend's `COALESCE(b.page_id, b.id) IN (… space …)` join predicate,
- * which every space-scoped link handler applies.
+ * A block's space: the `space_id` of its OWNING page (`page_id`, falling back
+ * to the block's own id when it IS a page or a top-level tag). The space
+ * writers fan `space_id` out over the page group (`setPageGroupSpace`), but
+ * `create_block` leaves a block it creates under a page unstamped, so a
+ * reader that may meet one goes through the owner.
  */
 export function ownerSpaceOf(b: Record<string, unknown>): string | null {
   const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
-  return (properties.get(ownerId)?.get('space')?.['value_ref'] as string | null) ?? null
+  return (blocks.get(ownerId)?.['space_id'] as string | null | undefined) ?? null
+}
+
+/** A live block flagged `is_space = 'true'`, as `require_live_space_in_tx` reads it. */
+export function isLiveSpace(id: string): boolean {
+  const b = blocks.get(id)
+  return (
+    b !== undefined &&
+    b['deleted_at'] == null &&
+    properties.get(id)?.get('is_space')?.['value_text'] === 'true'
+  )
 }
 
 /** `SpaceScope` predicate for a link SOURCE block. */
@@ -1817,9 +1813,7 @@ export function fbqTagFilterMatches(
 
 /** Space-scope gate (mirrors `filtered_blocks_query_inner`). */
 export function fbqInSpace(b: Record<string, unknown>, spaceId: string): boolean {
-  const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
-  const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
-  return ownerSpace === spaceId
+  return ownerSpaceOf(b) === spaceId
 }
 
 // ─── Compile-time contract linkage to the generated bindings (#2241) ─────────

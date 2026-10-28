@@ -28,23 +28,7 @@ const OTHER_A = '000000000000000000000OTHERA'
 const BETA_B = '0000000000000000000000BETAB'
 
 function seedPage(id: string, title: string, spaceId: string, position: number): void {
-  blocks.set(id, makeBlock(id, 'page', title, null, position))
-  properties.set(
-    id,
-    new Map([
-      [
-        'space',
-        {
-          key: 'space',
-          value_text: null,
-          value_num: null,
-          value_date: null,
-          value_ref: spaceId,
-          value_bool: null,
-        },
-      ],
-    ]),
-  )
+  blocks.set(id, { ...makeBlock(id, 'page', title, null, position), space_id: spaceId })
 }
 
 describe('tauri-mock page-title uniqueness (#4723)', () => {
@@ -80,7 +64,7 @@ describe('tauri-mock page-title uniqueness (#4723)', () => {
 
     expect(id).not.toBe(HOME_A)
     expect(blocks.get(id)?.['content']).toBe('Home')
-    expect(properties.get(id)?.get('space')?.['value_ref']).toBe(SPACE_B)
+    expect(blocks.get(id)?.['space_id']).toBe(SPACE_B)
     // #5057 — `create_page_in_space_inner` creates the block and then sets its
     // `space` in ONE transaction, so the backend's op log carries BOTH ops. The
     // mock appended only the `create_block`, which left an e2e undo of "new page

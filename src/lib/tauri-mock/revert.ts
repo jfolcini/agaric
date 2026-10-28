@@ -34,6 +34,16 @@ export function valueFieldsOf(p: Record<string, unknown>): Record<string, unknow
   }
 }
 
+/**
+ * Write `blockId`'s space as the backend's projection writes it, over the whole
+ * page group: `UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?`.
+ */
+export function setPageGroupSpace(blocks: Blocks, blockId: string, spaceId: string | null): void {
+  for (const b of blocks.values()) {
+    if (b['id'] === blockId || b['page_id'] === blockId) b['space_id'] = spaceId
+  }
+}
+
 /** Whether a recorded `prior` held a value, as `PropertyValueFields::into_held` reads it. */
 export function priorIsHeld(prior: Record<string, unknown>): boolean {
   return Object.values(prior).some((v) => v != null)
@@ -241,19 +251,15 @@ function revertPropertyMap(
     rejectTakenName(blocks, b, content, lands)
   }
 
-  /**
-   * #5057 — `space` is column-backed, so restoring the property map alone
-   * leaves the row in the space it was just moved out of. The forward
-   * `set_property` mirrors `space` into `blocks.space_id`, and the backend's
-   * reverse clears the column through `DeleteProperty(space)` →
-   * `reserved_key_blocks_column`. The four OTHER column-backed keys ride
-   * dedicated op types that `revertBlockRowField` already restores; `space`
-   * rides the generic one, which is why it needs this. Page row only, as in the
-   * forward write and `move_blocks_to_space`.
-   */
-  const mirrorSpaceColumn = (): void => {
-    if (key !== 'space' || !b) return
-    b['space_id'] = (fromValue?.['value_ref'] as string | null | undefined) ?? null
+  // #5057 — `space` is the `blocks.space_id` column, not a property row. The
+  // four other column-backed keys ride dedicated op types that
+  // `revertBlockRowField` restores; `space` rides the generic one.
+  if (key === 'space') {
+    if (b && (opType === 'set_property' || fromValue != null)) {
+      const spaceId = (fromValue?.['value_ref'] as string | null | undefined) ?? null
+      setPageGroupSpace(blocks, blockId, spaceId)
+    }
+    return true
   }
 
   if (opType === 'set_property') {
@@ -265,7 +271,6 @@ function revertPropertyMap(
       if (!properties.has(blockId)) properties.set(blockId, new Map())
       properties.get(blockId)?.set(key, { key, ...fromValue })
     }
-    mirrorSpaceColumn()
     return true
   }
 
@@ -273,7 +278,6 @@ function revertPropertyMap(
   if (fromValue == null) return true
   if (!properties.has(blockId)) properties.set(blockId, new Map())
   properties.get(blockId)?.set(key, { key, ...fromValue })
-  mirrorSpaceColumn()
   return true
 }
 

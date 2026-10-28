@@ -27,22 +27,17 @@
  * ## The space model is fabricated on both sides
  *
  * The backend scopes a block via the `blocks.space_id` COLUMN, which the Rust
- * runner stamps out-of-band with `assign_all_to_test_space`. The mock scopes a
- * block via a `space` REF PROPERTY on its owning page — and, since #3081, ALSO
- * via a literal `space_id` column of its own, which is what
- * `list_all_tags_in_space` filters on; `stampMockSpace` writes both, see its
- * docstring. `stampMockSpace` is the
- * mirror image of the Rust stamp — without it every space-scoped read returns
- * empty on the mock and the two stacks would "agree" only on emptiness. It is
- * called BOTH before and after the op replay (mirroring the Rust runner's two
- * `assign_all_to_test_space` calls) and writes the `properties` store directly
- * with no op-log entry. It cannot perturb the #763 snapshot assertion — but the
- * reason is that the snapshot builder skips the `space` key outright, NOT the
- * call ordering; see `stampMockSpace`'s own docstring below.
+ * runner stamps out-of-band with `assign_all_to_test_space`. The mock has the
+ * same column, and `stampMockSpace` is the mirror image of the Rust stamp —
+ * without it every space-scoped read returns empty on the mock and the two
+ * stacks would "agree" only on emptiness. It is called BOTH before and after
+ * the op replay (mirroring the Rust runner's two `assign_all_to_test_space`
+ * calls) and writes the column directly with no op-log entry, which the #763
+ * snapshot does not project.
  */
 
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { blocks, opLog, properties } from '@/lib/tauri-mock/seed'
+import { blocks, opLog } from '@/lib/tauri-mock/seed'
 
 /**
  * The harness space id. MUST equal `TEST_SPACE_ID` in
@@ -1123,127 +1118,30 @@ export function relabelToken(token: string, labels: ReadonlyMap<string, string>)
 // ---------------------------------------------------------------------------
 
 /**
- * Give every PAGE and root TAG block the mock's space marker — a `space` ref
- * property pointing at {@link CONFORMANCE_SPACE_ID}. Every other block resolves
- * its space through its owning page (`fbqInSpace`), so those are the whole
- * surface.
- *
- * TOMBSTONED pages are stamped too: the Rust `assign_all_to_test_space` is a
- * blanket `UPDATE blocks SET space_id = …` with no `deleted_at` filter, so
- * skipping them here would make a tombstone-visible scoped read (trash / a
- * restore fixture) return rows on the backend and nothing on the mock — a
- * HARNESS divergence wearing the costume of an implementation one.
- *
- * Call it BOTH before and after the op replay, mirroring the Rust runner's two
- * `assign_all_to_test_space` calls: the backend replays every op with space
- * membership already resolved (write-time same-space filters — e.g.
- * `reindex_block_links` Phase 3 — depend on it), and the second call catches
- * pages the ops created.
- *
- * The #763 snapshot builder explicitly skips the `space` key (the backend keeps
- * it in the `blocks.space_id` column, not `block_properties`), so these writes
- * are invisible to the snapshot regardless of call order.
- *
- * ## #3833 item 1 — why this DEFAULTS rather than OVERWRITES
- *
- * The Rust twin is not a blanket stamp. It is
- *
- * ```sql
- * UPDATE blocks SET space_id = ?TEST
- *  WHERE id <> ?TEST AND id = page_id AND space_id IS NULL
- * ```
- *
- * — two guards this function used to lack, both of which decide what happens
- * to a page the fixture has ALREADY placed somewhere:
- *
- *   * `space_id IS NULL` makes the backend stamp a DEFAULT. A fixture that
- *     seeds a `space` property pointing at another space keeps it, "so
- *     cross-space tests still work" (`common.rs`). Overwriting it here put
- *     such a page in the test space on the mock and left it elsewhere on the
- *     backend — a HARNESS divergence wearing the costume of an implementation
- *     one, which is the exact failure this file's header warns about. No
- *     query-carrying fixture seeds a cross-space page today, so the hole was
- *     latent; the first one that did would have been debugged as a mock bug.
- *   * `id <> ?TEST` excludes the space block from its own membership. Inert
- *     while no fixture seeds a page with that id, and mirrored anyway: the two
- *     stamps must not disagree about a row either can see.
- *
- * ## #3833 item 1 — why BOTH the property and the `space_id` column are written
- *
- * The mock is a DUAL-WRITE model of space membership. `blocks.space_id` is the
- * #533 sole source of truth on the backend, and the mock has a literal
- * analogue of that column (`seed.ts`'s `makeBlock` initialises `space_id:
- * null`), maintained by `create_block` (`handlers/blocks.ts`) and by
- * `set_property` (`handlers/properties.ts`, which routes a `space` write to
- * BOTH). The `space` REF PROPERTY is the mock's own, older mechanism, and it is
- * what the query handlers under this differential resolve through
- * (`fbqInSpace` reads the owning page's `space` property).
- *
- * Writing only the property would leave every conformance page with
- * `space_id === null` on the mock while its backend twin holds
- * `TEST_SPACE_ID` — inert for the 20 wired read commands, which all go through
- * `fbqInSpace`, but NOT inert in general: `list_all_tags_in_space`
- * (`handlers/tags.ts`) already filters on `space_id` today, so the first
- * fixture that wires it would have compared a stamped backend against an
- * unstamped mock. So the stamp writes the column too, and the mirror is real
- * rather than "this side's analogue".
- *
- * The GUARD, by contrast, reads the property alone, and that is not an
- * asymmetry: every mechanism that can place a mock page in a space before the
- * stamp runs writes the property, and the two that write the column
- * (`create_block`, `set_property`) write it as well — the property is a
- * superset signal, so testing it cannot miss an existing membership the column
- * records. A cross-space page reaches the stamp with its property set and its
- * column still null (the fixture seed loader in `conformance.test.ts` writes
- * only the property map), so the preserve branch RECONCILES the column onto the
- * seeded space rather than skipping outright — the backend skips that row
- * because its column already holds the right value, which is the state this
- * mirrors, not the write it omits.
- *
- * The backend's stamp is THREE statements, and the column follows all three
- * (the property follows only the second, and only for `page` and `tag` blocks,
- * the rows `create_block` writes it on):
+ * Stamp `blocks.space_id` as the Rust `assign_all_to_test_space` does, in its
+ * three statements:
  *
  *   1. `UPDATE blocks SET page_id = id WHERE page_id IS NULL` — a root row owns
  *      itself. Mirrored READ-ONLY by {@link ownerPageOf} rather than by
  *      mutating `page_id`, which the mock's handlers read everywhere.
- *   2. the `id = page_id AND space_id IS NULL` default, above.
+ *   2. `UPDATE blocks SET space_id = ?TEST WHERE id <> ?TEST AND id = page_id
+ *      AND space_id IS NULL` — a DEFAULT, never an overwrite (#3833 item 1): a
+ *      page a fixture placed in another space keeps it, and the space block is
+ *      not a member of itself.
  *   3. `UPDATE blocks SET space_id = (SELECT pg.space_id … WHERE pg.id =
  *      blocks.page_id) WHERE id <> ?TEST AND id <> page_id` — propagate a
- *      root's membership to every block paged to it. Without this the mock's
- *      column would be right for pages and null for their children, where the
- *      backend's is populated for both.
+ *      root's membership to every block paged to it.
+ *
+ * TOMBSTONED rows are stamped too: the Rust stamp has no `deleted_at` filter,
+ * so skipping them would make a tombstone-visible scoped read (trash / a
+ * restore fixture) return rows on the backend and nothing on the mock.
  */
 export function stampMockSpace(): void {
-  // Statement 2 — DEFAULT a root row's membership, preserving a seeded one.
   for (const b of blocks.values()) {
     const id = b['id'] as string
-    // `WHERE id <> ?TEST_SPACE_ID` — the space is not a member of itself.
-    if (id === CONFORMANCE_SPACE_ID) continue
-    // `AND id = page_id`, over statement 1's normalisation of a null `page_id`.
-    if (ownerPageOf(b) !== id) continue
-    // `AND space_id IS NULL` — stamp the DEFAULT, never an existing membership.
-    const seeded = properties.get(id)?.get('space')?.['value_ref'] as string | null | undefined
-    if (seeded != null) {
-      b['space_id'] = seeded
-      continue
-    }
-    b['space_id'] = CONFORMANCE_SPACE_ID
-    // The mock's own, older scoping mechanism, on the rows `create_block`
-    // writes it on: a page or a tag. A seeded root tag without it is in the
-    // space by column and outside it by property, which no created tag is.
-    if (b['block_type'] !== 'page' && b['block_type'] !== 'tag') continue
-    if (!properties.has(id)) properties.set(id, new Map())
-    properties.get(id)?.set('space', {
-      key: 'space',
-      value_text: null,
-      value_num: null,
-      value_date: null,
-      value_ref: CONFORMANCE_SPACE_ID,
-      value_bool: null,
-    })
+    if (id === CONFORMANCE_SPACE_ID || ownerPageOf(b) !== id) continue
+    b['space_id'] ??= CONFORMANCE_SPACE_ID
   }
-  // Statement 3 — propagate each root's membership to the blocks paged to it.
   for (const b of blocks.values()) {
     const id = b['id'] as string
     if (id === CONFORMANCE_SPACE_ID) continue

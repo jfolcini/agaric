@@ -26,6 +26,7 @@ import {
   contentLinksTo,
   fbqResolvePrefixTagIds,
   inSpaceScope,
+  ownerSpaceOf,
   pageRequestLimit,
   refInclusiveTags,
   scanLinkTargets,
@@ -561,8 +562,7 @@ export const linksHandlers = {
     // Both endpoints of an edge must live in the active space. Matches the
     // backend's `b1.space = ?` AND `b2.space = ?` join predicate.
     const spaceId = readActiveSpaceScope('list_page_links', a)
-    const pageSpace = (pid: string): string | null =>
-      (properties.get(pid)?.get('space')?.['value_ref'] as string | null) ?? null
+    const pageSpace = (pid: string): string | null => ownerSpaceOf({ id: pid })
     const linkSet = new Set<string>()
     const pageLinks: Array<{ source_id: string; target_id: string; ref_count: number }> = []
     for (const b of blocks.values()) {

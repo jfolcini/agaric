@@ -102,10 +102,11 @@ beforeEach(() => {
   clearMock()
 
   // Two pages in two spaces.
-  blocks.set(PAGE, makeBlock(PAGE, 'page', 'Page', null, 1))
-  setProp(PAGE, 'space', { value_ref: SPACE })
-  blocks.set(PAGE_OTHER, makeBlock(PAGE_OTHER, 'page', 'Other', null, 1))
-  setProp(PAGE_OTHER, 'space', { value_ref: OTHER_SPACE })
+  blocks.set(PAGE, { ...makeBlock(PAGE, 'page', 'Page', null, 1), space_id: SPACE })
+  blocks.set(PAGE_OTHER, {
+    ...makeBlock(PAGE_OTHER, 'page', 'Other', null, 1),
+    space_id: OTHER_SPACE,
+  })
 
   // A tag named "work", in SPACE (`list_tags_by_prefix` reads one space).
   const tagWork = makeBlock(TAG_WORK, 'tag', 'work', null, 1)
@@ -205,8 +206,10 @@ describe('legacy ↔ rich inline-query equivalence', () => {
   it('a backlinks query lists the blocks linking to the target, not its children', async () => {
     const pageRef = id('PAGEREF')
     const referrer = id('BREF')
-    blocks.set(pageRef, makeBlock(pageRef, 'page', 'Referrer page', null, 2))
-    setProp(pageRef, 'space', { value_ref: SPACE })
+    blocks.set(pageRef, {
+      ...makeBlock(pageRef, 'page', 'Referrer page', null, 2),
+      space_id: SPACE,
+    })
     const ref = makeBlock(referrer, 'text', `see [[${PAGE}]]`, pageRef, 0)
     ref['page_id'] = pageRef
     blocks.set(referrer, ref)

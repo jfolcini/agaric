@@ -23,7 +23,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { blocks, makeBlock, properties, seedBlocks } from '@/lib/tauri-mock/seed'
+import { blocks, makeBlock, seedBlocks } from '@/lib/tauri-mock/seed'
 
 const DATE = '2026-03-04'
 const SPACE = id('SP')
@@ -54,9 +54,9 @@ function seedDue(label: string, todoState: string | null): string {
     ...makeBlock(blockId, 'content', label, null, 1),
     due_date: DATE,
     todo_state: todoState,
+    // `list_agenda` reads the asked space only.
+    space_id: SPACE,
   })
-  // `list_agenda` reads the asked space only.
-  properties.set(blockId, new Map([['space', { key: 'space', value_ref: SPACE }]]))
   return blockId
 }
 

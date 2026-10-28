@@ -50,9 +50,7 @@ function put(
   row['page_id'] = pageId
   blocks.set(blockId, row)
   // `childrenOf` lists the asked space only, and a page carries its blocks' space.
-  if (type === 'page') {
-    properties.set(blockId, new Map([['space', { key: 'space', value_ref: SPACE }]]))
-  }
+  if (type === 'page') row['space_id'] = SPACE
   return row
 }
 

@@ -19,17 +19,9 @@ const SPACE = '01SPACEA000000000000000001'
 const TARGET = '0000000000000000000TARGETA'
 const SOURCE = '0000000000000000000SOURCEA'
 
-// `inSpaceScope` reads the owning page's `space` REF property, not a column
-// (`ownerSpaceOf` in handlers/shared.ts).
-function spaceProperty() {
-  return {
-    key: 'space',
-    value_text: null,
-    value_num: null,
-    value_date: null,
-    value_ref: SPACE,
-    value_bool: null,
-  }
+// A page of SPACE: `inSpaceScope` reads the owning page's `space_id`.
+function pageInSpace(id: string, content: string) {
+  return { ...makeBlock(id, 'page', content, null, 1), space_id: SPACE }
 }
 
 // `dispatch` is synchronous: it RETURNS the payload and THROWS the rejection.
@@ -52,8 +44,7 @@ describe('#4667 get_backlinks limit', () => {
       [TARGET, 'Target'],
       [SOURCE, `links to [[${TARGET}]]`],
     ] as const) {
-      blocks.set(id, makeBlock(id, 'page', content, null, 1))
-      properties.set(id, new Map([['space', spaceProperty()]]))
+      blocks.set(id, pageInSpace(id, content))
     }
   })
 
@@ -66,8 +57,7 @@ describe('#4667 get_backlinks limit', () => {
     // falls to 50, and the 51st is what `has_more` is about.
     for (let i = 0; i < 50; i += 1) {
       const id = `0000000000000000000EXTRA${String(i).padStart(2, '0')}`
-      blocks.set(id, makeBlock(id, 'page', `also links [[${TARGET}]]`, null, 1))
-      properties.set(id, new Map([['space', spaceProperty()]]))
+      blocks.set(id, pageInSpace(id, `also links [[${TARGET}]]`))
     }
     const page = backlinksWithLimit(null) as { items: unknown[]; has_more: boolean }
     expect({ count: page.items.length, has_more: page.has_more }).toEqual({

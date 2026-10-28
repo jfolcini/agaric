@@ -783,12 +783,9 @@ describe('tauri-mock apply_page_source front matter (#5160 S8)', () => {
     return null
   }
 
-  // `space` is the mock's space-membership row, not a property the page shows.
   const pageKeys = (): Record<string, unknown> =>
     Object.fromEntries(
-      [...(properties.get(PAGE) ?? [])]
-        .filter(([key]) => key !== 'space')
-        .map(([key, row]) => [key, row['value_text']]),
+      [...(properties.get(PAGE) ?? [])].map(([key, row]) => [key, row['value_text']]),
     )
   const pageTags = (): unknown[] =>
     [...(blockTags.get(PAGE) ?? [])].map((tagId) => blocks.get(tagId)?.['content'])

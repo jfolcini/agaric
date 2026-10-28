@@ -2,9 +2,8 @@
  * #5057 review — undoing a cross-space move must return the page to the space
  * it came FROM.
  *
- * `move_blocks_to_space` writes membership twice: the `space` property row and
- * the denormalized `blocks.space_id` column every space-scoped query reads. Its
- * op carried no `from_value`, so the revert had nothing to restore and cleared
+ * `move_blocks_to_space` writes membership to the `blocks.space_id` column
+ * every space-scoped query reads. Its op carried no `from_value`, so the revert had nothing to restore and cleared
  * the column — the page left the destination space without rejoining the
  * original, dropping out of every space listing. The backend's
  * `set_property_in_tx` records the prior value, and the mock's generic
@@ -13,6 +12,8 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import { stampMockSpace } from '@/lib/tauri-mock/__tests__/conformance-query'
+import { clearMock } from '@/lib/tauri-mock/__tests__/mock-store-helpers'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import {
   blockTags,
@@ -27,18 +28,6 @@ import {
 const PAGE = '00000000000000000000PAGEZZ'
 const SPACE_A = '01SPACEA000000000000000001'
 const SPACE_B = '01SPACEB000000000000000001'
-
-function spaceRow(blockId: string, spaceId: string): Record<string, unknown> {
-  return {
-    block_id: blockId,
-    key: 'space',
-    value_text: null,
-    value_num: null,
-    value_date: null,
-    value_ref: spaceId,
-    value_bool: null,
-  }
-}
 
 /** A live space block, the shape `require_live_space_in_tx` demands. */
 function seedSpace(spaceId: string, name: string, position: number): void {
@@ -62,7 +51,7 @@ function seedSpace(spaceId: string, name: string, position: number): void {
   )
 }
 
-/** A page living in SPACE_A, both ways the mock records membership. */
+/** A page living in SPACE_A. */
 function seedPageInSpaceA(): void {
   blocks.clear()
   properties.clear()
@@ -78,18 +67,14 @@ function seedPageInSpaceA(): void {
   const row = makeBlock(PAGE, 'page', 'Test Page', null, 0)
   row['space_id'] = SPACE_A
   blocks.set(PAGE, row)
-  properties.set(PAGE, new Map([['space', spaceRow(PAGE, SPACE_A)]]))
   // #5259 — the page's BIRTH op, as `create_page_in_space` appends it: a page's
   // FIRST `set_property(space)` is never a positional-undo target, so without
   // this row the move below would be that first op and Ctrl+Z would refuse it.
   pushOp('set_property', { block_id: PAGE, key: 'space', from_value: null })
 }
 
-function memberships(): { column: unknown; property: unknown } {
-  return {
-    column: blocks.get(PAGE)?.['space_id'],
-    property: properties.get(PAGE)?.get('space')?.['value_ref'],
-  }
+function membership(): unknown {
+  return blocks.get(PAGE)?.['space_id']
 }
 
 describe('undoing a cross-space move (#5057)', () => {
@@ -97,11 +82,11 @@ describe('undoing a cross-space move (#5057)', () => {
 
   it('returns the page to its original space, not to none', () => {
     expect(dispatch('move_blocks_to_space', { blockIds: [PAGE], spaceId: SPACE_B })).toBe(1)
-    expect(memberships()).toEqual({ column: SPACE_B, property: SPACE_B })
+    expect(membership()).toBe(SPACE_B)
 
     dispatch('undo_page_op', { pageId: PAGE, undoDepth: 0 })
 
-    expect(memberships()).toEqual({ column: SPACE_A, property: SPACE_A })
+    expect(membership()).toBe(SPACE_A)
   })
 
   it('returns a peer-born page to the space it arrived in (#5262)', () => {
@@ -116,17 +101,16 @@ describe('undoing a cross-space move (#5057)', () => {
     expect(dispatch('move_blocks_to_space', { blockIds: [PAGE], spaceId: SPACE_B })).toBe(1)
     dispatch('undo_page_op', { pageId: PAGE, undoDepth: 0 })
 
-    expect(memberships()).toEqual({ column: SPACE_A, property: SPACE_A })
+    expect(membership()).toBe(SPACE_A)
   })
 
-  it('clears both records when the page had no space to begin with', () => {
+  it('clears the membership when the page had no space to begin with', () => {
     const row = blocks.get(PAGE)
     if (row) row['space_id'] = null
-    properties.get(PAGE)?.delete('space')
     opLog.length = 0
 
     expect(dispatch('move_blocks_to_space', { blockIds: [PAGE], spaceId: SPACE_B })).toBe(1)
-    expect(memberships()).toEqual({ column: SPACE_B, property: SPACE_B })
+    expect(membership()).toBe(SPACE_B)
 
     // #5259 — this move is the page's FIRST `set_property(space)`, i.e. its
     // birth, which positional undo stops at: reverting it would leave the page
@@ -134,14 +118,46 @@ describe('undoing a cross-space move (#5057)', () => {
     expect(() => dispatch('undo_page_op', { pageId: PAGE, undoDepth: 0 })).toThrow(
       'no op found at undo_depth 0',
     )
-    expect(memberships()).toEqual({ column: SPACE_B, property: SPACE_B })
+    expect(membership()).toBe(SPACE_B)
 
     // The explicit History-view revert still reaches it. `from_value: null`
-    // means "no membership before", so the revert removes both records rather
-    // than inventing a space to fall back to.
+    // means "no membership before", so the revert clears it rather than
+    // inventing a space to fall back to.
     const move = opLog.at(-1)
     if (!move) throw new Error('the move appended no op')
     dispatch('revert_ops', { ops: [{ device_id: move.device_id, seq: move.seq }] })
-    expect(memberships()).toEqual({ column: null, property: undefined })
+    expect(membership()).toBe(null)
+  })
+})
+
+// The backend writes a space over the page group (`UPDATE blocks SET space_id = ?
+// WHERE id = ? OR page_id = ?`), so a child stamped with its page's space, as
+// `stampMockSpace` stamps it, follows every space write.
+describe('a space write covers the page group', () => {
+  it('carries a stamped child along with its page', () => {
+    clearMock()
+    blocks.set('P1', makeBlock('P1', 'page', 'Home', null, 1))
+    blocks.set('C1', makeBlock('C1', 'content', 'card', 'P1', 1))
+    blocks.set('T1', makeBlock('T1', 'tag', 'remote', null, 2))
+    const work = dispatch('create_space', { name: 'Work', accentColor: null }) as string
+    const home = dispatch('create_space', { name: 'Home', accentColor: null }) as string
+    stampMockSpace()
+    const childSpace = (): unknown => blocks.get('C1')?.['space_id']
+
+    expect(dispatch('move_blocks_to_space', { blockIds: ['P1', 'T1'], spaceId: work })).toBe(2)
+    expect(() => dispatch('add_tag', { blockId: 'C1', tagId: 'T1' })).not.toThrow()
+    expect(childSpace()).toBe(work)
+
+    const typed = { value_text: null, value_num: null, value_date: null, value_bool: null }
+    dispatch('set_property', { blockId: 'P1', key: 'space', value: { ...typed, value_ref: home } })
+    expect(childSpace()).toBe(home)
+
+    const cleared = dispatch('delete_property', { blockId: 'P1', key: 'space' }) as {
+      op_refs: Array<{ device_id: string; seq: number }>
+    }
+    expect(childSpace()).toBe(null)
+
+    dispatch('revert_ops', { ops: cleared.op_refs })
+    expect(childSpace()).toBe(home)
   })
 })

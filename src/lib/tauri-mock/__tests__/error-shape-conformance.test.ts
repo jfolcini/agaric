@@ -57,24 +57,7 @@ function resetMockState(): void {
   propertyDefs.clear()
   opLog.length = 0
 
-  blocks.set(PAGE, makeBlock(PAGE, 'page', 'Test Page', null, 0))
-  properties.set(
-    PAGE,
-    new Map([
-      [
-        'space',
-        {
-          block_id: PAGE,
-          key: 'space',
-          value_text: null,
-          value_num: null,
-          value_date: null,
-          value_ref: SPACE,
-          value_bool: null,
-        },
-      ],
-    ]),
-  )
+  blocks.set(PAGE, { ...makeBlock(PAGE, 'page', 'Test Page', null, 0), space_id: SPACE })
   blocks.set(CHILD, makeBlock(CHILD, 'content', 'hello', PAGE, 1))
   blocks.set(TAG, makeBlock(TAG, 'tag', 'urgent', null, 2))
 }

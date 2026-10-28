@@ -37,7 +37,6 @@ import {
   opLog,
   pageAliases,
   peerRefs,
-  properties,
   todayDate,
 } from '@/lib/tauri-mock/seed'
 
@@ -974,7 +973,7 @@ describe('get_batch_properties', () => {
 // #5279 — the backend keeps a page's space in `blocks.space_id`, so no property
 // read returns a `space` row, not even right after a move.
 describe('property reads after a space move', () => {
-  it('return no space row while the page lands in the target space', () => {
+  it('return no space row after set_property(space) or move_blocks_to_space', () => {
     const page = SEED_IDS.PAGE_GETTING_STARTED
     const typed = { value_text: null, value_num: null, value_date: null, value_bool: null }
     invoke('set_property', {
@@ -982,22 +981,114 @@ describe('property reads after a space move', () => {
       key: 'category',
       value: { ...typed, value_text: 'guide', value_ref: null },
     })
+    const expectNoSpaceRow = (spaceId: string): void => {
+      const inSpace = invoke('list_all_pages_in_space', {
+        scope: { kind: 'active', space_id: spaceId },
+        tagIds: null,
+      }) as Array<{ id: string }>
+      expect(inSpace.map((p) => p.id)).toEqual([page])
+      const props = invoke('get_properties', { blockId: page }) as Record<string, unknown>[]
+      expect(props.map((p) => p['key'])).toEqual(['category'])
+      expect(invoke('get_property', { blockId: page, key: 'space' })).toBeNull()
+      const batch = invoke('get_batch_properties', { blockIds: [page] }) as Record<
+        string,
+        Record<string, unknown>[]
+      >
+      expect(batch[page]?.map((p) => p['key'])).toEqual(['category'])
+      expect(invoke('list_property_keys', {})).not.toContain('space')
+    }
+
     const work = invoke('create_space', { name: 'Work', accentColor: null }) as string
     invoke('set_property', { blockId: page, key: 'space', value: { ...typed, value_ref: work } })
+    expectNoSpaceRow(work)
 
-    const inWork = invoke('list_all_pages_in_space', {
-      scope: { kind: 'active', space_id: work },
-      tagIds: null,
-    }) as Array<{ id: string }>
-    expect(inWork.map((p) => p.id)).toEqual([page])
-    const props = invoke('get_properties', { blockId: page }) as Record<string, unknown>[]
-    expect(props.map((p) => p['key'])).toEqual(['category'])
-    expect(invoke('get_property', { blockId: page, key: 'space' })).toBeNull()
-    const batch = invoke('get_batch_properties', { blockIds: [page] }) as Record<
-      string,
-      Record<string, unknown>[]
-    >
-    expect(batch[page]?.map((p) => p['key'])).toEqual(['category'])
+    const home = invoke('create_space', { name: 'Home', accentColor: null }) as string
+    expect(invoke('move_blocks_to_space', { blockIds: [page], spaceId: home })).toBe(1)
+    expectNoSpaceRow(home)
+  })
+})
+
+// #533 — `space` is the `blocks.space_id` column on the backend: `set_property`
+// writes it behind `validate_space_target_in_tx`'s refusals, and `delete_property`
+// clears it, appending nothing when the block holds none.
+describe('set_property and delete_property on the space key', () => {
+  const typed = { value_text: null, value_num: null, value_date: null, value_bool: null }
+  const setSpace = (blockId: string, valueRef: string): unknown =>
+    invoke('set_property', { blockId, key: 'space', value: { ...typed, value_ref: valueRef } })
+  const pagesIn = (spaceId: string): string[] =>
+    (
+      invoke('list_all_pages_in_space', {
+        scope: { kind: 'active', space_id: spaceId },
+        tagIds: null,
+      }) as Array<{ id: string }>
+    ).map((p) => p.id)
+  const tagsIn = (spaceId: string): string[] =>
+    (
+      invoke('list_all_tags_in_space', {
+        scope: { kind: 'active', space_id: spaceId },
+      }) as Array<{ tag_id: string }>
+    ).map((t) => t.tag_id)
+
+  it('moves a page or a top-level tag, and refuses a content block', () => {
+    const work = invoke('create_space', { name: 'Work', accentColor: null }) as string
+
+    expect(() => setSpace(SEED_IDS.BLOCK_GS_1, work)).toThrow(
+      expect.objectContaining({ kind: 'validation' }),
+    )
+    expect(pagesIn(work)).toEqual([])
+
+    setSpace(SEED_IDS.PAGE_GETTING_STARTED, work)
+    setSpace(SEED_IDS.TAG_WORK, work)
+    expect(pagesIn(work)).toEqual([SEED_IDS.PAGE_GETTING_STARTED])
+    expect(tagsIn(work)).toEqual([SEED_IDS.TAG_WORK])
+  })
+
+  it('refuses a target that is no live space', () => {
+    const page = SEED_IDS.PAGE_GETTING_STARTED
+
+    expect(() => setSpace(page, SEED_IDS.PAGE_QUICK_NOTES)).toThrow(
+      expect.objectContaining({ kind: 'validation' }),
+    )
+    expect(() => setSpace(page, 'NO_SUCH_SPACE')).toThrow(
+      expect.objectContaining({ kind: 'validation' }),
+    )
+    const gone = invoke('create_space', { name: 'Gone', accentColor: null }) as string
+    invoke('delete_block', { blockId: gone })
+    expect(() => setSpace(page, gone)).toThrow(
+      expect.objectContaining({
+        kind: 'validation',
+        message: `space_id '${gone}' does not refer to a live, registered space block`,
+      }),
+    )
+    // `move_blocks_to_space` checks through `require_live_space_in_tx`, worded its own way.
+    expect(() => invoke('move_blocks_to_space', { blockIds: [page], spaceId: gone })).toThrow(
+      expect.objectContaining({
+        kind: 'validation',
+        message: `space_id '${gone}' does not refer to a live space block (is_space = 'true')`,
+      }),
+    )
+    expect(pagesIn('SPACE_PERSONAL')).toContain(page)
+  })
+
+  it('clears the space with delete_property, and its undo puts the page back', () => {
+    const page = SEED_IDS.PAGE_GETTING_STARTED
+    const work = invoke('create_space', { name: 'Work', accentColor: null }) as string
+    setSpace(page, work)
+
+    const cleared = invoke('delete_property', { blockId: page, key: 'space' }) as {
+      op_refs: Array<{ device_id: string; seq: number }>
+    }
+    expect(cleared.op_refs).toHaveLength(1)
+    expect(pagesIn(work)).toEqual([])
+    expect(pagesIn('SPACE_PERSONAL')).not.toContain(page)
+
+    // A space the block no longer holds appends nothing to delete.
+    expect(invoke('delete_property', { blockId: page, key: 'space' })).toMatchObject({
+      op_refs: [],
+    })
+
+    invoke('revert_ops', { ops: cleared.op_refs })
+    expect(pagesIn(work)).toEqual([page])
   })
 })
 
@@ -3431,6 +3522,15 @@ describe('import_markdown', () => {
     expect(Array.isArray(result['warnings'])).toBe(true)
   })
 
+  // The mock lets a missing space through where the backend refuses it; the page
+  // then belongs to no space, an empty id being none.
+  it('puts the page in no space when none is named', () => {
+    const result = invoke('import_markdown', { content: 'Body', filename: 'Spaceless.md' }) as {
+      page_id: string
+    }
+    expect(getRow(result.page_id)['space_id']).toBeNull()
+  })
+
   // #5160 D12: an import adopts an empty page of the file's title, exact or
   // case-folded, never one matched only by alias (`create_import_page`).
   it('adopts an empty page by its title, never by an alias (matches backend)', () => {
@@ -3439,7 +3539,6 @@ describe('import_markdown', () => {
         ...makeBlock(id, 'page', title, null, blocks.size),
         space_id: 'SPACE_PERSONAL',
       })
-      properties.set(id, new Map([['space', { key: 'space', value_ref: 'SPACE_PERSONAL' }]]))
     }
     emptyPage('PAGE_ROADMAP', 'Roadmap')
     pageAliases.set('PAGE_ROADMAP', ['Plan'])
@@ -4435,7 +4534,7 @@ describe('scope-filter parity', () => {
       scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
     }) as Record<string, unknown>
     // The new page should resolve via the alias / batch_resolve under
-    // SPACE_PERSONAL — proves the space property was stamped.
+    // SPACE_PERSONAL — proves its space was stamped.
     const resolved = invoke('batch_resolve', {
       ids: [newPage['id'] as string],
       scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
@@ -4580,8 +4679,8 @@ describe('list_pages_with_metadata — compound filters', () => {
   })
 
   it('HasProperty Eq with a Ref value compares against value_ref', () => {
-    // Every seed page carries `space = SPACE_PERSONAL` as a ref property, so an
-    // Eq Ref predicate over `space` matches the whole space.
+    // Every seed page's `space_id` is SPACE_PERSONAL, which a `space` predicate
+    // reads as a ref, so an Eq Ref over `space` matches the whole space.
     const all = listPages([])
     const refHit = listPages([
       {

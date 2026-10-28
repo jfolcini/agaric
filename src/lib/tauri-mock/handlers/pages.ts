@@ -37,6 +37,7 @@ import {
   encodeNextCursor,
   metaRowMatchesFilter,
   notFoundRejection,
+  isLiveSpace,
   isPageSort,
   ownerSpaceOf,
   type PageSortRow,
@@ -81,7 +82,7 @@ function pageSortRows(spaceId: string): PageSortRow[] {
   const rows: PageSortRow[] = []
   for (const b of blocks.values()) {
     if (b['block_type'] !== 'page' || b['deleted_at']) continue
-    if (properties.get(b['id'] as string)?.get('space')?.['value_ref'] !== spaceId) continue
+    if (ownerSpaceOf(b) !== spaceId) continue
     const id = b['id'] as string
     rows.push({
       ...buildPageMetaRow(b, byPage.get(id) ?? [], edges),
@@ -983,7 +984,7 @@ function importKeepsProperty(spaceId: string, key: string, value: string): boole
 export const pagesHandlers = {
   // Indexed lookup for a single date-formatted journal page in
   // the active space. Real backend implementation: a SELECT on
-  // `idx_blocks_journal_date` with a `space` ref-property subquery.
+  // `idx_blocks_journal_date` scoped on `blocks.space_id`.
   get_journal_page_by_date: (args) => {
     const a = args as Record<string, unknown>
     const date = a['date'] as string
@@ -992,9 +993,7 @@ export const pagesHandlers = {
       if (b['block_type'] !== 'page') continue
       if (b['deleted_at']) continue
       if (b['content'] !== date) continue
-      const blockProps = properties.get(b['id'] as string)
-      const spaceProp = blockProps?.get('space')
-      if (spaceProp?.['value_ref'] !== spaceId) continue
+      if (ownerSpaceOf(b) !== spaceId) continue
       return b
     }
     return null
@@ -1020,9 +1019,7 @@ export const pagesHandlers = {
       const content = b['content'] as string | null
       if (!content || !datePattern.test(content)) continue
       if (content < startDate || content > endDate) continue
-      const blockProps = properties.get(b['id'] as string)
-      const spaceProp = blockProps?.get('space')
-      if (spaceProp?.['value_ref'] !== spaceId) continue
+      if (ownerSpaceOf(b) !== spaceId) continue
       items.push(b)
     }
     // `datePattern` admits only `NNNN-NN-NN`, so every compare resolves on a
@@ -1051,9 +1048,7 @@ export const pagesHandlers = {
     for (const b of blocks.values()) {
       if (b['block_type'] !== 'page') continue
       if (b['deleted_at']) continue
-      const blockProps = properties.get(b['id'] as string)
-      const spaceProp = blockProps?.get('space')
-      if (spaceProp?.['value_ref'] !== spaceId) continue
+      if (ownerSpaceOf(b) !== spaceId) continue
       if (tagFilter) {
         const tagsForBlock = blockTags.get(b['id'] as string)
         if (!tagsForBlock) continue
@@ -1092,9 +1087,7 @@ export const pagesHandlers = {
     const rootBlockId = a['rootBlockId'] as string
     const spaceId = readActiveSpaceScope('load_page_subtree', a)
     // Space-membership check — mirrors the backend.
-    const rootProps = properties.get(rootBlockId)
-    const rootSpace = rootProps?.get('space')
-    if (rootSpace?.['value_ref'] !== spaceId) {
+    if (ownerSpaceOf(blocks.get(rootBlockId) ?? { id: rootBlockId }) !== spaceId) {
       // #2463 / #2810 — mirrors `load_page_subtree_inner`'s `Validation`
       // rejection (`src-tauri/src/commands/pages/listing.rs`), not
       // `not_found`; carries the structured `PageNotInSpace` code the
@@ -1225,11 +1218,8 @@ export const pagesHandlers = {
     for (const b of blocks.values()) {
       if (b['block_type'] !== 'page') continue
       if (b['deleted_at']) continue
-      const blockProps = properties.get(b['id'] as string)
-      if (!blockProps) continue
-      const spaceProp = blockProps.get('space')
-      if (spaceProp?.['value_ref'] !== spaceId) continue
-      const tplProp = blockProps.get('template')
+      if (ownerSpaceOf(b) !== spaceId) continue
+      const tplProp = properties.get(b['id'] as string)?.get('template')
       if (tplProp?.['value_text'] !== 'true') continue
       ids.push(b['id'] as string)
     }
@@ -1427,8 +1417,7 @@ export const pagesHandlers = {
         // `b.deleted_at IS NULL`: a soft-deleted page keeps its alias rows
         // (only a purge cascades them) but stops resolving.
         if (page['deleted_at']) continue
-        // `b.space_id = ?`, the #533 column — not the `space` property row
-        // migrations 0087/0088 retired (#3081).
+        // `b.space_id = ?`, the #533 column.
         if (page['space_id'] !== spaceId) continue
         return [pid, (page['content'] as string) ?? null]
       }
@@ -1456,8 +1445,7 @@ export const pagesHandlers = {
       const page = blocks.get(pid)
       if (!page) continue
       if (page['deleted_at']) continue
-      // `b.space_id = ?`, the #533 column — not the `space` property row
-      // migrations 0087/0088 retired (#3081).
+      // `b.space_id = ?`, the #533 column.
       if (page['space_id'] !== spaceId) continue
       const title = (page['content'] as string | null) ?? null
       for (const alias of aliases) {
@@ -1712,23 +1700,14 @@ export const pagesHandlers = {
       return match !== null && importKeepsProperty(spaceId, match[1] ?? '', (match[2] ?? '').trim())
     }).length
 
-    // Create the page block + stamp `space` ref property, unless an empty page
-    // of the space already carries the title (#5160 D12).
+    // Create the page block in the space, unless an empty page of the space
+    // already carries the title (#5160 D12).
     const adopted = spaceId ? findEmptyPageTitled(pageTitle, spaceId) : null
     const pageId = adopted ?? fakeId()
     if (adopted === null) {
-      blocks.set(pageId, makeBlock(pageId, 'page', pageTitle, null, blocks.size))
-    }
-    if (spaceId && adopted === null) {
-      if (!properties.has(pageId)) properties.set(pageId, new Map())
-      properties.get(pageId)?.set('space', {
-        block_id: pageId,
-        key: 'space',
-        value_text: null,
-        value_num: null,
-        value_date: null,
-        value_ref: spaceId,
-        value_bool: null,
+      blocks.set(pageId, {
+        ...makeBlock(pageId, 'page', pageTitle, null, blocks.size),
+        space_id: spaceId === '' ? null : spaceId,
       })
     }
 
@@ -1814,13 +1793,11 @@ export const pagesHandlers = {
     const format = (a['format'] as string | null) ?? null
     const spaceId = (a['spaceId'] as string | undefined) ?? ''
 
-    // #2463 kind-parity — the backend rejects an empty / unknown space id
-    // with `AppError::Validation`, same as `import_markdown`. The mock's
-    // known spaces are the canonical hardcoded 'SPACE_PERSONAL' (see
-    // `list_spaces` above, which never lives in `blocks`) plus any
-    // `create_space`-created block.
-    if (spaceId !== 'SPACE_PERSONAL' && !blocks.has(spaceId)) {
-      throw validationRejection('space_id does not refer to a live space block')
+    // #2463 — `require_live_space_in_tx`.
+    if (!isLiveSpace(spaceId)) {
+      throw validationRejection(
+        `space_id '${spaceId}' does not refer to a live space block (is_space = 'true')`,
+      )
     }
 
     // `format: null` = auto-detect. Trivial content sniff mirroring the
@@ -1842,16 +1819,9 @@ export const pagesHandlers = {
 
     for (let i = 0; i < entryCount; i++) {
       const pageId = fakeId()
-      blocks.set(pageId, makeBlock(pageId, 'page', `Reference ${i + 1}`, null, blocks.size))
-      if (!properties.has(pageId)) properties.set(pageId, new Map())
-      properties.get(pageId)?.set('space', {
-        block_id: pageId,
-        key: 'space',
-        value_text: null,
-        value_num: null,
-        value_date: null,
-        value_ref: spaceId,
-        value_bool: null,
+      blocks.set(pageId, {
+        ...makeBlock(pageId, 'page', `Reference ${i + 1}`, null, blocks.size),
+        space_id: spaceId,
       })
     }
 
