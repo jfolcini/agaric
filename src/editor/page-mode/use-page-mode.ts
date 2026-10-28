@@ -43,7 +43,10 @@ export interface PageModeState {
   opening: PageModeOpening | null
   onBlocked: (blocker: PageModeBlocker) => void
   changeMode: (mode: EditMode) => void
-  /** Run `then` once page mode's text is saved: at once outside it, never if the save failed. */
+  /**
+   * Run `then` once page mode's text is saved and the page store read again, page mode set to
+   * open again where the page is now: at once outside it, never if the save failed.
+   */
   afterFlush: (then: () => void) => void
 }
 
@@ -77,6 +80,8 @@ export function usePageMode(pageId: string): PageModeState {
   const total = usePageBlockStore((s) => s.truncatedTotal)
   const blocker = useMemo(() => blockerIn(total ?? blockCount), [blockCount, total])
   const [opening, setOpening] = useState<ForPage<PageModeOpening> | null>(null)
+  // A page shown again opens as any page does, not where a switch on it once opened.
+  if (opening !== null && opening.pageId !== pageId) setOpening(null)
   // Where block mode is to show the page scrolled to, and whether its tree has read the page yet.
   const placeInBlocks = useRef<{ place: ScrollPlace; read: boolean } | null>(null)
   const loading = usePageBlockStore((s) => s.loading)
@@ -114,15 +119,24 @@ export function usePageMode(pageId: string): PageModeState {
   )
 
   // A failed save keeps page mode open (its toast says so), not showing the page without the text.
+  // Page mode opens again on the store, which its own saves do not refresh, and where the page is
+  // now, not where it first opened.
   const afterFlush = useCallback(
     (then: () => void) => {
       if (editorRef.current === null) then()
       else
         void saved().then((ok) => {
-          if (ok) then()
+          if (!ok) return
+          void pageStore
+            .getState()
+            .load()
+            .finally(() => {
+              takeCursor()
+              then()
+            })
         })
     },
-    [saved],
+    [saved, pageStore, takeCursor],
   )
 
   const onBlocked = useCallback(
@@ -195,7 +209,7 @@ export function usePageMode(pageId: string): PageModeState {
     mode: available && blocker === null ? mode : 'blocks',
     blocked: blocker === null ? null : blockerMessage(blocker),
     editorRef,
-    opening: opening?.pageId === pageId ? opening : null,
+    opening,
     onBlocked,
     changeMode,
     afterFlush,

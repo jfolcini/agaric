@@ -14,7 +14,7 @@
 
 import { createRequire } from 'node:module'
 
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 
 import {
   activeSuggestionPopup,
@@ -2183,5 +2183,86 @@ test.describe('page mode keeps the keyboard’s place (#5691) @editor @pages', (
     // Block mode's rows above it take their measured heights as they mount, which moves it a little.
     const back = await topBlock(page)
     expect(Math.abs((back?.top ?? 0) - (inPage?.top ?? 0))).toBeLessThanOrEqual(16)
+  })
+})
+
+/** Open Edit as Markdown from the page kebab; resolves the buffer once it took the focus. */
+async function openSource(page: Page, shows: string): Promise<Locator> {
+  await page.getByRole('button', { name: 'Page actions', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Edit as Markdown', exact: true }).click()
+  const buffer = page.getByRole('textbox', { name: 'Markdown source', exact: true })
+  await expect(buffer).toContainText(shows)
+  await expect(buffer).toBeFocused()
+  return buffer
+}
+
+const texts = async (page: Page): Promise<string[]> => (await shown(page)).map((b) => b.text)
+
+test.describe('page mode after Edit as Markdown (#5691) @editor @pages @markdown', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('Cancel, or Save with nothing changed, shows what was typed before, and the next edit keeps it', async ({
+    page,
+  }) => {
+    const { pageId } = await seedRows(page, 'Back from Markdown', [
+      [0, 'first'],
+      [0, 'second'],
+    ])
+    await openInPageMode(page, 'Back from Markdown', 2)
+    await caret(page, 1, 'end')
+    await page.keyboard.type('!')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('third')
+
+    await openSource(page, '- third')
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+
+    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(3)
+    await expect.poll(() => texts(page)).toEqual(['first', 'second!', 'third'])
+    await caret(page, 1, 'end')
+    await page.keyboard.type('?')
+    await expect
+      .poll(async () => (await backend(page, pageId)).map((b) => b.text))
+      .toEqual(['first', 'second!?', 'third'])
+
+    const buffer = await openSource(page, 'second!?')
+    await buffer.press('ControlOrMeta+s')
+
+    await expect(buffer).toHaveCount(0)
+    await expect.poll(() => texts(page)).toEqual(['first', 'second!?', 'third'])
+    await caret(page, 1, 'end')
+    await page.keyboard.type('.')
+    await expect
+      .poll(async () => (await backend(page, pageId)).map((b) => b.text))
+      .toEqual(['first', 'second!?.', 'third'])
+    await openViaPalette(page, 'Getting Started')
+    await openViaPalette(page, 'Back from Markdown')
+    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(3)
+    expect(await texts(page)).toEqual(['first', 'second!?.', 'third'])
+  })
+
+  test('Cancel leaves the focus on the kebab, not on the block page mode first opened on', async ({
+    page,
+  }) => {
+    const { ids } = await seedRows(page, 'Caret after Markdown', [
+      [0, 'first'],
+      [0, 'second'],
+      [0, 'third'],
+    ])
+    await openViaPalette(page, 'Caret after Markdown')
+    await focusBlockById(page, ids[1] as string)
+    await modeSwitch(page, 'Page').click()
+    await expect(page.locator(EDITOR)).toBeFocused()
+    await expect.poll(async () => (await cursor(page)).index).toBe(1)
+    await caret(page, 2, 2)
+
+    await openSource(page, '- third')
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+
+    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(3)
+    await expect(page.getByRole('button', { name: 'Page actions', exact: true })).toBeFocused()
+    await expect(page.locator(EDITOR)).not.toBeFocused()
   })
 })
