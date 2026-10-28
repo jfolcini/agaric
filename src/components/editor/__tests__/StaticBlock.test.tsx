@@ -2046,5 +2046,23 @@ describe('StaticBlock', () => {
       )
       expect(screen.getByTestId('list-marker')).toHaveTextContent('3.')
     })
+
+    // A marker is only for a bullet or numbered block: a heading or a code
+    // block carrying a style (an import, another device) shows none, while
+    // the list block beside it keeps its own.
+    it.each([
+      ['heading', '# Title'],
+      ['code block', '```\ncode\n```'],
+    ])('renders no marker on a %s that carries a list style', (_kind, content) => {
+      render(
+        <ListMarkerProvider value={{ styleOf: () => 'bullet', ordinalOf: () => undefined }}>
+          <StaticBlock blockId="B1" content={content} onFocus={vi.fn()} />
+          <StaticBlock blockId="B2" content="item" onFocus={vi.fn()} />
+        </ListMarkerProvider>,
+      )
+      const markers = screen.getAllByTestId('list-marker')
+      expect(markers).toHaveLength(1)
+      expect(markers[0]?.parentElement).toHaveAttribute('data-block-id', 'B2')
+    })
   })
 })

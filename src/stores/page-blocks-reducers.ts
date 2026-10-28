@@ -26,6 +26,7 @@ import {
 } from '@/lib/block-tree-ops'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { i18n } from '@/lib/i18n'
+import { clearListStyle, contentShowsListMarker } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notifyPageAdded, notifyTagAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
@@ -349,6 +350,21 @@ export function createReducers({
         // that follows it either.
         if (merge) notifyUndoNewAction(rootParentId, resp.op_refs, `edit:${blockId}`)
         else notifyUndoNewAction(rootParentId, resp.op_refs, undefined, { merge: false })
+        // A list block whose text this device stops opening with a paragraph
+        // leaves the list (`showsListMarker`), once the text is saved. Sync,
+        // undo and restore reach the store through `load()`, so they clear nothing.
+        // Caught here: the text is saved, so a failure must not roll it back.
+        try {
+          if (
+            previousContent !== undefined &&
+            contentShowsListMarker(previousContent ?? '') &&
+            !contentShowsListMarker(content)
+          ) {
+            await clearListStyle(blockId)
+          }
+        } catch (err) {
+          logger.warn('page-blocks', 'clearing the list style failed', { blockId }, err)
+        }
         return true
       } catch (err) {
         // Rollback optimistic update — also a single-block touch.

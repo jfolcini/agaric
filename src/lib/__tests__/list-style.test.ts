@@ -24,11 +24,13 @@ import type { PropertyRow } from '@/lib/bindings'
 import {
   asListStyle,
   clearListStyle,
+  contentShowsListMarker,
   LIST_STYLE_KEY,
   LIST_STYLE_OPTIONS_JSON,
   listStyleForBlockType,
   listStyleFromRows,
   setListStyle,
+  showsListMarker,
 } from '@/lib/list-style'
 
 const row = (over: Partial<PropertyRow>): PropertyRow => ({
@@ -106,6 +108,41 @@ describe('listStyleForBlockType (#4552 slice 2)', () => {
     expect(listStyleForBlockType('quote')).toBe('none')
     expect(listStyleForBlockType('code')).toBe('none')
     expect(listStyleForBlockType('callout')).toBe('none')
+  })
+})
+
+describe('showsListMarker', () => {
+  it('lets only a paragraph that is no query or embed show a marker', () => {
+    expect(showsListMarker('paragraph', false)).toBe(true)
+    expect(showsListMarker('paragraph', true)).toBe(false)
+    for (const type of ['heading', 'codeBlock', 'blockquote', 'horizontalRule', 'table']) {
+      expect(showsListMarker(type, false)).toBe(false)
+    }
+    expect(showsListMarker(undefined, false)).toBe(false)
+  })
+})
+
+describe('contentShowsListMarker', () => {
+  it.each(['item', '', 'two\nlines', '- [ ] task', '![x](a.png)'])(
+    'a paragraph shows a marker: %j',
+    (content) => {
+      expect(contentShowsListMarker(content)).toBe(true)
+    },
+  )
+
+  it.each([
+    '# Title',
+    '###### small',
+    '```\ncode\n```',
+    '> quoted',
+    '> [!INFO] note',
+    '---',
+    '| a | b |\n| - | - |\n| 1 | 2 |',
+    '$$\nx\n$$',
+    '{{query tag:work}}',
+    '{{embed ((01ARZ3NDEKTSV4RRFFQ69G5FAV))}}',
+  ])('any other block shows none: %j', (content) => {
+    expect(contentShowsListMarker(content)).toBe(false)
   })
 })
 

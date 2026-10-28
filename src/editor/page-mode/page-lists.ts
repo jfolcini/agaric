@@ -12,17 +12,19 @@
  * prefix out of the text; a `[` after the `- ` waits, so `- [ ] ` stays a task
  * marker. Enter on a list block gives the block it makes the same style, and
  * Enter on an empty one leaves the list instead; Backspace at a list block's
- * start takes its style off, and the next one joins it. A style shows at once
- * and is written through block mode's command after the save, so a new block
- * exists first (`setStyle`, `PageModeEditor`).
+ * start takes its style off, and the next one joins it. A list block whose
+ * text stops opening with a paragraph leaves the list (`leftTheirList`). A
+ * style shows at once and is written through block mode's command after the
+ * save, so a new block exists first (`setStyle`, `PageModeEditor`).
  */
 
 import { Extension, InputRule } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { type EditorState, Plugin } from '@tiptap/pm/state'
 
+import { docShowsListMarker } from '@/editor/extensions/list-marker-decoration'
 import { serialize } from '@/editor/markdown-serializer'
-import { blockDocJson, depthOf } from '@/editor/page-mode/page-document'
+import { blockDocJson, depthOf, REMOTE_PATCH } from '@/editor/page-mode/page-document'
 import { inOwnTextblock, pickerOpen, splitPageBlock } from '@/editor/page-mode/page-keys'
 import { blockIdOf } from '@/editor/token-ids'
 import type { PropertyRow } from '@/lib/bindings'
@@ -151,6 +153,32 @@ function idsIn(state: EditorState): Set<string> {
   return ids
 }
 
+/**
+ * The list blocks of `doc` whose text opened with a paragraph in `before` and
+ * no longer does: a heading, a fence, a quote, a rule or a table typed, pasted
+ * or picked there. A marker is only for a bullet or numbered block, so they
+ * leave the list. A block whose text did not open with one keeps its style,
+ * and a change brought in from elsewhere (`REMOTE_PATCH`) clears nothing.
+ */
+function leftTheirList(before: PMNode, doc: PMNode, lists: PageLists): string[] {
+  const left: string[] = []
+  let shown: Map<string, boolean> | null = null
+  doc.forEach((node) => {
+    const id = blockIdOf(node)
+    if (id === null || lists.styleOf(id) === 'none' || docShowsListMarker(node)) return
+    if (shown === null) {
+      const was = new Map<string, boolean>()
+      before.forEach((old) => {
+        const oldId = blockIdOf(old)
+        if (oldId !== null) was.set(oldId, docShowsListMarker(old))
+      })
+      shown = was
+    }
+    if (shown.get(id) === true) left.push(id)
+  })
+  return left
+}
+
 // Configured only through `pageListKeys`, so `source` is always set.
 const PageListKeys = Extension.create<{ source: PageListSource }>({
   name: 'pageListKeys',
@@ -212,6 +240,13 @@ const PageListKeys = Extension.create<{ source: PageListSource }>({
         },
       })
     return [rule(/^\s*[-+*]\s([^[\n])$/, 'bullet'), rule(/^\d+\.\s(.)$/, 'ordered')]
+  },
+  onTransaction({ editor, transaction }) {
+    if (!transaction.docChanged || transaction.getMeta(REMOTE_PATCH) === true) return
+    const { source } = this.options
+    for (const id of leftTheirList(transaction.before, editor.state.doc, source.lists)) {
+      source.setStyle(id, 'none')
+    }
   },
   addProseMirrorPlugins() {
     const { source } = this.options

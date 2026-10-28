@@ -53,6 +53,7 @@ import {
   type BlockInlineControlsProps,
 } from '@/components/editor/BlockInlineControls'
 import { StaticBlock, type StaticBlockProps } from '@/components/editor/StaticBlock'
+import { docShowsListMarker } from '@/editor/extensions/list-marker-decoration'
 import { serialize } from '@/editor/markdown-serializer'
 import { isCurrentBlock } from '@/editor/page-mode/page-block-focus'
 import { foldIn, toggleFold } from '@/editor/page-mode/page-collapse'
@@ -283,6 +284,7 @@ class PageBlockView implements NodeView {
   private readonly gate: ControlsGate
   private readonly unsubscribe: () => void
   private readonly unsubscribeMarker: () => void
+  private readonly lists: PageLists
 
   constructor(
     node: PMNode,
@@ -307,12 +309,17 @@ class PageBlockView implements NodeView {
     this.showRendered(renderedText(node))
     this.unsubscribe = tasks.subscribe(() => this.show())
     const id = blockIdOf(node)
-    if (id === null) this.unsubscribeMarker = () => {}
-    else {
-      this.showMarker(lists.markerOf(id))
-      this.unsubscribeMarker = lists.subscribe(id, () => this.showMarker(lists.markerOf(id)))
-    }
+    this.lists = lists
+    this.showMarker(this.listMarker())
+    this.unsubscribeMarker =
+      id === null ? () => {} : lists.subscribe(id, () => this.showMarker(this.listMarker()))
     this.gate.watch(this.dom, id, () => this.reveal())
+  }
+
+  /** The marker the block shows: its list style's, while its text opens with a paragraph. */
+  private listMarker(): string {
+    const id = blockIdOf(this.node)
+    return id === null || !docShowsListMarker(this.node) ? '' : this.lists.markerOf(id)
   }
 
   /** Block mode's list marker, before the text on its first line; none for a plain block. */
@@ -332,7 +339,7 @@ class PageBlockView implements NodeView {
       this.marker.setAttribute('data-testid', 'list-marker')
       this.dom.insertBefore(this.marker, this.contentDOM)
     }
-    this.marker.textContent = text
+    if (this.marker.textContent !== text) this.marker.textContent = text
   }
 
   /** Mount the controls, and from now on every control the block gains. */
@@ -477,6 +484,7 @@ class PageBlockView implements NodeView {
     }
     this.node = node
     this.gutter.show(foldIn(decorations))
+    this.showMarker(this.listMarker())
     if (!isCurrentBlock(decorations)) this.showRendered(renderedText(node))
     return true
   }

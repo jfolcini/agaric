@@ -13,12 +13,14 @@
  */
 
 import { Extension } from '@tiptap/core'
+import type { Node as PMNode } from '@tiptap/pm/model'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { EditorState, Transaction } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 
+import { renderedText } from '@/editor/page-mode/page-rendered'
 import { listMarkerText } from '@/lib/list-marker-glyph'
-import type { ListStyle } from '@/lib/list-style'
+import { type ListStyle, showsListMarker } from '@/lib/list-style'
 
 export interface ListMarkerState {
   style: ListStyle
@@ -36,7 +38,8 @@ export function setListMarkerMeta(tr: Transaction, next: ListMarkerState): Trans
 }
 
 /**
- * The marker the plugin is currently showing (`'none'` before any push).
+ * The marker the plugin is currently showing (`'none'` before any push, and
+ * while the block does not open with a paragraph: `docShowsListMarker`).
  * #4552 slice 3 — the Enter / Backspace handlers read the focused block's
  * style from here: it is what `EditableBlock` pushed from `ListMarkerContext`,
  * and those handlers sit above the property batch provider with no other
@@ -44,16 +47,19 @@ export function setListMarkerMeta(tr: Transaction, next: ListMarkerState): Trans
  * the exact marker it cleared, numbering included.
  */
 export function listMarkerOf(state: EditorState): ListMarkerState {
-  return listMarkerPluginKey.getState(state) ?? EMPTY_STATE
+  const marker = listMarkerPluginKey.getState(state) ?? EMPTY_STATE
+  return docShowsListMarker(state.doc) ? marker : EMPTY_STATE
+}
+
+/** Whether `doc`, holding one block's top-level nodes, shows a list marker (`showsListMarker`). */
+export function docShowsListMarker(doc: PMNode): boolean {
+  return showsListMarker(doc.firstChild?.type.name, renderedText(doc) !== null)
 }
 
 /** Build the marker decoration set for the given state (exported for tests). */
 export function buildDecorations(state: EditorState): DecorationSet {
-  const marker = listMarkerPluginKey.getState(state) ?? EMPTY_STATE
+  const marker = listMarkerOf(state)
   if (marker.style === 'none') return DecorationSet.empty
-  const first = state.doc.firstChild
-  // Only textblocks (paragraph / heading) carry a list marker in this model.
-  if (!first || !first.isTextblock) return DecorationSet.empty
   const text = listMarkerText(marker.style, marker.ordinal)
   // Position 1 = inside the first block, before its inline content.
   const widget = Decoration.widget(

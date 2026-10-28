@@ -55,6 +55,7 @@ import {
   SCOPE,
   seedPage,
 } from '@/editor/page-mode/__tests__/page-node-view-fixtures'
+import { REMOTE_PATCH } from '@/editor/page-mode/page-document'
 import { pickerOpen } from '@/editor/page-mode/page-keys'
 import { PageLists } from '@/editor/page-mode/page-lists'
 import type { PropertyRow } from '@/lib/bindings'
@@ -298,6 +299,60 @@ describe('the list keys and input rules', () => {
 
     expect(setStyle).not.toHaveBeenCalled()
     expect(lists.styleOf(A)).toBe('none')
+  })
+
+  it('a list block whose text stops opening with a paragraph leaves the list; one that never did keeps its style', () => {
+    const { editor, lists, setStyle } = open(
+      [
+        [A, 0, 'one'],
+        [B, 0, 'two'],
+        [C, 0, '# Title'],
+        [D, 0, 'four'],
+      ],
+      { [A]: style('bullet'), [B]: style('ordered'), [C]: style('bullet'), [D]: style('bullet') },
+    )
+
+    caret(editor, 0, 0)
+    typeText(editor, '# ')
+    caret(editor, 1, 0)
+    typeText(editor, '``` ')
+    caret(editor, 2, 5)
+    typeText(editor, '!')
+    caret(editor, 3, 4)
+    typeText(editor, '!')
+
+    expect(rowsOf(editor.state.doc).map(([, , md]) => md)).toEqual([
+      '# one',
+      '```\ntwo\n```',
+      '# Title!',
+      'four!',
+    ])
+    expect(styles(editor, lists)).toEqual(['none', 'none', 'bullet', 'bullet'])
+    expect(setStyle.mock.calls).toEqual([
+      [A, 'none'],
+      [B, 'none'],
+    ])
+  })
+
+  it('a change brought in from elsewhere that makes a list block a heading writes no style; the same change made here does', () => {
+    const { editor, lists, setStyle } = open(
+      [
+        [A, 0, 'one'],
+        [B, 0, 'two'],
+      ],
+      { [A]: style('bullet'), [B]: style('bullet') },
+    )
+    const toHeading = (index: number) =>
+      editor.state.tr.setNodeMarkup(posIn(editor, index, 0) - 1, editor.schema.nodes['heading'], {
+        level: 1,
+      })
+
+    editor.view.dispatch(toHeading(0).setMeta('addToHistory', false).setMeta(REMOTE_PATCH, true))
+    editor.view.dispatch(toHeading(1))
+
+    expect(rowsOf(editor.state.doc).map(([, , md]) => md)).toEqual(['# one', '# two'])
+    expect(styles(editor, lists)).toEqual(['bullet', 'none'])
+    expect(setStyle.mock.calls).toEqual([[B, 'none']])
   })
 
   it('Enter continues the list into the block it makes; on an empty list block it leaves the list', () => {
@@ -551,6 +606,19 @@ describe('the marker each block draws', () => {
     expect(marker.contentEditable).toBe('false')
     expect(marker.nextElementSibling).toHaveClass('page-block-content')
     expect(await axe(container)).toHaveNoViolations()
+  })
+
+  it('draws none on a heading or a code block, whatever its style; the list block keeps its own', () => {
+    const { container } = mount(
+      [
+        [A, 0, '# Title'],
+        [B, 0, '```\ncode\n```'],
+        [C, 0, 'item'],
+      ],
+      { [A]: style('bullet'), [B]: style('ordered'), [C]: style('bullet') },
+    )
+
+    expect(markers(container)).toEqual(['', '', '•'])
   })
 })
 

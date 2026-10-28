@@ -1,7 +1,7 @@
 /**
  * #5974 — a numbered block's marker is drawn by the block's node view, outside
  * its editable text, so the syntax revealed at the start of its text can never
- * come before it: `## 1. Title` stays that on ArrowLeft, never `1. ## Title`
+ * come before it: `1. [label` stays that on ArrowLeft, never `[1. label`
  * (block mode's widget order, `list-marker-decoration.ts`, has no part here).
  */
 
@@ -33,8 +33,8 @@ afterEach(() => {
 })
 
 describe('MarkdownReveal beside a page-mode list marker', () => {
-  it('draws a heading’s # run and a link’s bracket after the marker, whichever side of the caret', () => {
-    const rows: Row[] = [[A, 0, '## [label](https://e.com) x']]
+  it('draws a link’s brackets after the marker, whichever side of the caret', () => {
+    const rows: Row[] = [[A, 0, '[label](https://e.com) x']]
     const lists = new PageLists(
       {
         [A]: [
@@ -60,17 +60,16 @@ describe('MarkdownReveal beside a page-mode list marker', () => {
     const block = blockEl(mounted.container, A)
     const listMarker = getIn(block, '[data-testid="list-marker"]')
     const drawn = () => [...block.querySelectorAll('.md-reveal-marker')]
-    expect(drawn().map((el) => el.textContent)).toEqual(['## ', '[', '](https://e.com)'])
+    expect(drawn().map((el) => el.textContent)).toEqual(['[', '](https://e.com)'])
     const leads = () =>
       drawn().every(
         (el) => listMarker.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING,
       )
     expect(leads()).toBe(true)
 
-    // ArrowLeft over `[`, then over the `#` run: the caret is left of both, the list marker still first.
+    // ArrowLeft over `[`: the caret is left of it, the list marker still first.
     press(mounted.editor, 'ArrowLeft')
-    press(mounted.editor, 'ArrowLeft')
-    expect(drawn().map((el) => el.textContent)).toEqual(['## ', '[', '](https://e.com)'])
+    expect(drawn().map((el) => el.textContent)).toEqual(['[', '](https://e.com)'])
     expect(leads()).toBe(true)
   })
 })

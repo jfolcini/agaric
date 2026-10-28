@@ -82,6 +82,10 @@ first-class inline decoration, not as native `<ul>` chrome.
    (a widget decoration / `::before` in the *content column*), never in the
    gutter. The gutter's hit-targets are already contested and historically
    fragile; a content-column decoration also matches how Notion draws markers.
+   Only a list block shows one, in block mode and page mode: a block whose text
+   opens with anything but a paragraph shows none whatever `listStyle` it holds,
+   and one whose text stops opening with a paragraph leaves the list
+   (maintainer's rule, 2026-10-28; `showsListMarker`, `src/lib/list-style.ts`).
 3. **Ordered numbers are computed**, not stored: the number is the block's
    position among consecutive same-`listStyle`, same-depth siblings, recomputed
    on reorder/insert. This mirrors the serializer, which already emits positional

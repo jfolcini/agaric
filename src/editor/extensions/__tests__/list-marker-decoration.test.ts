@@ -23,6 +23,8 @@ const schema = new Schema({
   nodes: {
     doc: { content: 'block+' },
     paragraph: { group: 'block', content: 'text*' },
+    // A textblock that is not a paragraph: a list marker is only for a list block.
+    heading: { group: 'block', content: 'text*' },
     // A leaf, non-textblock node to exercise the "first child not a textblock"
     // guard (like a horizontal rule).
     hr: { group: 'block' },
@@ -80,6 +82,22 @@ describe('ListMarkerDecoration decorations', () => {
     const hrDoc = { type: 'doc', content: [{ type: 'hr' }] }
     const state = withMarker(stateWith(hrDoc), { style: 'bullet', ordinal: undefined })
     expect(buildDecorations(state).find()).toHaveLength(0)
+  })
+
+  it('produces no decoration on a heading carrying a style, and drops it once one is typed', () => {
+    const headingDoc = {
+      type: 'doc',
+      content: [{ type: 'heading', content: [{ type: 'text', text: 'Title' }] }],
+    }
+    const heading = withMarker(stateWith(headingDoc), { style: 'ordered', ordinal: 2 })
+    expect(buildDecorations(heading).find()).toHaveLength(0)
+    expect(listMarkerOf(heading)).toEqual({ style: 'none', ordinal: undefined })
+
+    // A bullet paragraph turned into a heading in place (`# ` typed) loses its marker at once.
+    const bullet = withMarker(stateWith(paraDoc), { style: 'bullet', ordinal: undefined })
+    expect(buildDecorations(bullet).find()).toHaveLength(1)
+    const turned = bullet.apply(bullet.tr.setNodeMarkup(0, schema.nodes['heading']))
+    expect(buildDecorations(turned).find()).toHaveLength(0)
   })
 })
 

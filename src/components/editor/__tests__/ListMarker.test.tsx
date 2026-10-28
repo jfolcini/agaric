@@ -27,12 +27,12 @@ describe('listMarkerText', () => {
 
 describe('ListMarker', () => {
   it('renders nothing for none', () => {
-    const { container } = render(<ListMarker style="none" />)
+    const { container } = render(<ListMarker style="none" content="item" />)
     expect(container.firstChild).toBeNull()
   })
 
   it('renders the bullet glyph, aria-hidden and non-editable', () => {
-    render(<ListMarker style="bullet" />)
+    render(<ListMarker style="bullet" content="item" />)
     const marker = screen.getByTestId('list-marker')
     expect(marker).toHaveTextContent(BULLET_GLYPH)
     expect(marker).toHaveAttribute('aria-hidden', 'true')
@@ -40,8 +40,27 @@ describe('ListMarker', () => {
   })
 
   it('renders the computed ordinal for ordered', () => {
-    render(<ListMarker style="ordered" ordinal={4} />)
+    render(<ListMarker style="ordered" ordinal={4} content="item" />)
     expect(screen.getByTestId('list-marker')).toHaveTextContent('4.')
+  })
+
+  // Only a bullet or numbered block shows a marker: a block that opens with
+  // anything but a paragraph shows none, whatever style it carries.
+  it.each([
+    ['a heading', '# Title'],
+    ['a code block', '```\ncode\n```'],
+    ['a quote', '> quoted'],
+    ['a callout', '> [!INFO] note'],
+    ['a divider', '---'],
+    ['a table', '| a | b |\n| - | - |\n| 1 | 2 |'],
+  ])('renders nothing for %s, bullet or ordered', (_kind, content) => {
+    const { container } = render(
+      <>
+        <ListMarker style="bullet" content={content} />
+        <ListMarker style="ordered" ordinal={2} content={content} />
+      </>,
+    )
+    expect(container.firstChild).toBeNull()
   })
 })
 
