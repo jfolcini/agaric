@@ -22,6 +22,8 @@ export interface PageModeSlotProps {
   editorRef: PageModeState['editorRef']
   opening: PageModeState['opening']
   onNavigateToPage?: NavigateToPageFn | undefined
+  /** Edit as Markdown, from page mode's footer; none where the page has no Markdown mode. */
+  onEditSource?: (() => void) | undefined
 }
 
 export function PageModeSlot({
@@ -31,6 +33,7 @@ export function PageModeSlot({
   editorRef,
   opening,
   onNavigateToPage,
+  onEditSource,
 }: PageModeSlotProps): React.ReactElement {
   const loading = <LoadingSkeleton count={3} />
   if (!ready) return loading
@@ -42,6 +45,7 @@ export function PageModeSlot({
         onBlocked={onBlocked}
         onNavigateToPage={onNavigateToPage}
         opening={opening}
+        onEditSource={onEditSource}
         ref={editorRef}
       />
     </Suspense>

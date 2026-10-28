@@ -78,6 +78,7 @@ The buffer uses the block editor's bindings from the catalog, your rebinds inclu
 | `Ctrl+Shift+↑` / `Ctrl+Shift+↓` | Move the line, with the lines indented under it, past the sibling above / below it; a selection moves the siblings it touches together. Nothing at the top or bottom, and nothing moves into or out of the front matter |
 | `Ctrl+Enter` / `Ctrl+L` | Step the task of the block at the cursor: none, `[ ]`, `[/]`, `[x]`, `[-]`, none again |
 | `Ctrl+S` | Save |
+| `Ctrl+E` / `Ctrl+Shift+M` | Go to page mode as the *Page* link does, saving a changed buffer first; nothing on touch or on a page over page mode's block cap |
 | `Escape` | Close an open picker; else close the buffer, asking first when it changed |
 
 ## Global navigation

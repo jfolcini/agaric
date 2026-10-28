@@ -266,13 +266,31 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
   // aliases and tags, which it reads once per mount (#5160 S8).
   const kebabRef = useRef<HTMLButtonElement>(null)
   const [sourceClosed, setSourceClosed] = useState(0)
+  const focusKebab = useRef(false)
   const handleCloseSource = useCallback(() => {
+    focusKebab.current = true
     setSourcePageId(null)
     setSourceClosed((closed) => closed + 1)
   }, [])
   useEffect(() => {
-    if (sourceClosed > 0) kebabRef.current?.focus()
+    if (!focusKebab.current) return
+    focusKebab.current = false
+    kebabRef.current?.focus()
   }, [sourceClosed])
+  // The buffer's link to page mode, which opens on the store, so that is read again first. The
+  // header is read again too, and the caret goes to the page's start: nothing else takes the focus.
+  const { changeMode } = pageMode
+  const handleSwitchToPage = useCallback(() => {
+    void pageStore
+      .getState()
+      .load()
+      .finally(() => {
+        setSourcePageId(null)
+        setSourceClosed((closed) => closed + 1)
+        setFocused(pageStore.getState().blocks[0]?.id ?? null)
+        changeMode('page')
+      })
+  }, [pageStore, changeMode, setFocused])
 
   // Clear undo state for the previous page when navigating away or unmounting
   useEffect(
@@ -387,7 +405,12 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
       )}
 
       {sourceMode ? (
-        <PageSourceEditor pageId={pageId} onClose={handleCloseSource} />
+        <PageSourceEditor
+          pageId={pageId}
+          onClose={handleCloseSource}
+          onSwitchToPage={pageMode.available ? handleSwitchToPage : undefined}
+          pageModeBlocked={pageMode.blocked}
+        />
       ) : pageMode.wanted && isTagPage !== true ? (
         <PageModeSlot
           pageId={pageId}
@@ -396,6 +419,7 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
           editorRef={pageMode.editorRef}
           opening={pageMode.opening}
           onNavigateToPage={onNavigateToPage}
+          onEditSource={handleEditSource}
         />
       ) : (
         isTagPage !== true && (

@@ -55,6 +55,7 @@
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { Selection, type Transaction } from '@tiptap/pm/state'
 import { type Editor, EditorContent, useEditor } from '@tiptap/react'
+import { FileCode } from 'lucide-react'
 import type React from 'react'
 import {
   lazy,
@@ -81,6 +82,7 @@ import { BlockResolversProvider } from '@/components/block-tree/use-block-resolv
 import { SelectionBubbleMenu } from '@/components/editor-toolbar/SelectionBubbleMenu'
 import { processFileAttachments } from '@/components/editor/EditableBlock'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
+import { Button } from '@/components/ui/button'
 import { getActiveEditor, setActiveEditor } from '@/editor/active-editor'
 import { PageAttachments } from '@/editor/page-mode/page-attachments'
 import { commitPageTyped } from '@/editor/page-mode/page-commit'
@@ -176,6 +178,8 @@ export interface PageModeEditorProps {
   onNavigateToPage?: NavigateToPageFn | undefined
   /** Where to open: on block mode's caret, scrolled as block mode was. */
   opening?: PageModeOpening | null | undefined
+  /** Edit as Markdown, from the footer; no link without it. */
+  onEditSource?: (() => void) | undefined
   ref?: React.Ref<PageModeEditorHandle>
 }
 
@@ -192,6 +196,7 @@ export function PageModeEditor({
   onBlocked,
   onNavigateToPage,
   opening,
+  onEditSource,
   ref,
 }: PageModeEditorProps): React.ReactElement {
   const pageStore = usePageBlockStoreApi()
@@ -241,6 +246,7 @@ export function PageModeEditor({
       onBlocked={onBlocked}
       onNavigateToPage={onNavigateToPage}
       opening={opening ?? null}
+      onEditSource={onEditSource}
       ref={ref}
     />
   )
@@ -350,6 +356,7 @@ interface PageModeDocumentProps {
   onBlocked: (blocker: PageModeBlocker) => void
   onNavigateToPage?: NavigateToPageFn | undefined
   opening: PageModeOpening | null
+  onEditSource?: (() => void) | undefined
   ref?: React.Ref<PageModeEditorHandle> | undefined
 }
 
@@ -361,6 +368,7 @@ function PageModeDocument({
   onBlocked,
   onNavigateToPage,
   opening,
+  onEditSource,
   ref,
 }: PageModeDocumentProps): React.ReactElement {
   const { t: translate } = useTranslation()
@@ -971,7 +979,8 @@ function PageModeDocument({
 
   return (
     <>
-      {/* The document's frame, as GitLab's editor draws one: the toolbar, the text, and a hint under it. */}
+      {/* The document's frame, as GitLab's editor draws one: the toolbar, the text, and a footer
+          under it with a hint and the switch to Edit as Markdown. */}
       <div className="rounded-md border border-border">
         {editor !== null && (
           <PageToolbar editor={editor} actions={actions} lists={lists} pageStore={pageStore} />
@@ -987,9 +996,15 @@ function PageModeDocument({
             {...linkClick}
           />
         </BlockResolversProvider>
-        <p className="border-t border-border px-4 py-2 text-xs text-muted-foreground">
-          {t('pageMode.footerHint')}
-        </p>
+        <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-2 text-xs text-muted-foreground">
+          <p>{t('pageMode.footerHint')}</p>
+          {onEditSource !== undefined && (
+            <Button variant="link" size="xs" className="px-0" onClick={onEditSource}>
+              <FileCode aria-hidden="true" />
+              {t('pageSource.edit')}
+            </Button>
+          )}
+        </div>
       </div>
       {/* Block mode's own: the marks and the link on a selection, and Ctrl+K. */}
       {editor !== null && <SelectionBubbleMenu editor={editor} />}
