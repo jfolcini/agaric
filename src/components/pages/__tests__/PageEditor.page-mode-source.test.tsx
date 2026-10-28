@@ -170,6 +170,8 @@ describe('PageEditor: page mode opened again, after Edit as Markdown or another 
     const { pageId, ids } = seedPage(['first', 'second', 'third'], 'Caret before Markdown')
     const { container } = render(<PageEditor pageId={pageId} title="Caret before Markdown" />)
     await screen.findByTestId('block-tree')
+    // Offered once `get_block` says the page is not a tag's; `?.()` before then does nothing.
+    await waitFor(() => expect(header.onEditModeChange).toBeDefined())
     // Blocks to Page while block mode edits the second block: page mode opens there.
     useBlockStore.setState({ focusedBlockId: ids[1] as string })
     await act(async () => header.onEditModeChange?.('page'))
@@ -197,6 +199,7 @@ describe('PageEditor: page mode opened again, after Edit as Markdown or another 
     const other = seedPage(['elsewhere'], 'Another page')
     const { container, rerender } = render(<PageEditor pageId={pageId} title="Left and back" />)
     await screen.findByTestId('block-tree')
+    await waitFor(() => expect(header.onEditModeChange).toBeDefined())
     useBlockStore.setState({ focusedBlockId: ids[1] as string })
     await act(async () => header.onEditModeChange?.('page'))
     const before = await editorIn(container)
