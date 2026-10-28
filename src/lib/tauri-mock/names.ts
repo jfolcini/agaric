@@ -55,7 +55,7 @@ export interface ResolvedNames {
 type Match = { id: string } | 'ambiguous' | null
 
 function inSpace(row: Row, spaceId: string): boolean {
-  return row['deleted_at'] == null && (row['space_id'] === spaceId || ownerSpaceOf(row) === spaceId)
+  return row['deleted_at'] == null && row['space_id'] === spaceId
 }
 
 function livePages(spaceId: string): Row[] {

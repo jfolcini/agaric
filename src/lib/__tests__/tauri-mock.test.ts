@@ -973,7 +973,7 @@ describe('get_batch_properties', () => {
 // #5279 — the backend keeps a page's space in `blocks.space_id`, so no property
 // read returns a `space` row, not even right after a move.
 describe('property reads after a space move', () => {
-  it('return no space row while the page lands in the target space', () => {
+  it('return no space row after set_property(space) or move_blocks_to_space', () => {
     const page = SEED_IDS.PAGE_GETTING_STARTED
     const typed = { value_text: null, value_num: null, value_date: null, value_bool: null }
     invoke('set_property', {
@@ -981,50 +981,30 @@ describe('property reads after a space move', () => {
       key: 'category',
       value: { ...typed, value_text: 'guide', value_ref: null },
     })
+    const expectNoSpaceRow = (spaceId: string): void => {
+      const inSpace = invoke('list_all_pages_in_space', {
+        scope: { kind: 'active', space_id: spaceId },
+        tagIds: null,
+      }) as Array<{ id: string }>
+      expect(inSpace.map((p) => p.id)).toEqual([page])
+      const props = invoke('get_properties', { blockId: page }) as Record<string, unknown>[]
+      expect(props.map((p) => p['key'])).toEqual(['category'])
+      expect(invoke('get_property', { blockId: page, key: 'space' })).toBeNull()
+      const batch = invoke('get_batch_properties', { blockIds: [page] }) as Record<
+        string,
+        Record<string, unknown>[]
+      >
+      expect(batch[page]?.map((p) => p['key'])).toEqual(['category'])
+      expect(invoke('list_property_keys', {})).not.toContain('space')
+    }
+
     const work = invoke('create_space', { name: 'Work', accentColor: null }) as string
     invoke('set_property', { blockId: page, key: 'space', value: { ...typed, value_ref: work } })
+    expectNoSpaceRow(work)
 
-    const inWork = invoke('list_all_pages_in_space', {
-      scope: { kind: 'active', space_id: work },
-      tagIds: null,
-    }) as Array<{ id: string }>
-    expect(inWork.map((p) => p.id)).toEqual([page])
-    const props = invoke('get_properties', { blockId: page }) as Record<string, unknown>[]
-    expect(props.map((p) => p['key'])).toEqual(['category'])
-    expect(invoke('get_property', { blockId: page, key: 'space' })).toBeNull()
-    const batch = invoke('get_batch_properties', { blockIds: [page] }) as Record<
-      string,
-      Record<string, unknown>[]
-    >
-    expect(batch[page]?.map((p) => p['key'])).toEqual(['category'])
-    expect(invoke('list_property_keys', {})).not.toContain('space')
-  })
-
-  it('return no space row after move_blocks_to_space either', () => {
-    const page = SEED_IDS.PAGE_GETTING_STARTED
-    const typed = { value_text: null, value_num: null, value_date: null, value_bool: null }
-    invoke('set_property', {
-      blockId: page,
-      key: 'category',
-      value: { ...typed, value_text: 'guide', value_ref: null },
-    })
-    const work = invoke('create_space', { name: 'Work', accentColor: null }) as string
-    expect(invoke('move_blocks_to_space', { blockIds: [page], spaceId: work })).toBe(1)
-
-    const inWork = invoke('list_all_pages_in_space', {
-      scope: { kind: 'active', space_id: work },
-      tagIds: null,
-    }) as Array<{ id: string }>
-    expect(inWork.map((p) => p.id)).toEqual([page])
-    const props = invoke('get_properties', { blockId: page }) as Record<string, unknown>[]
-    expect(props.map((p) => p['key'])).toEqual(['category'])
-    expect(invoke('get_property', { blockId: page, key: 'space' })).toBeNull()
-    const batch = invoke('get_batch_properties', { blockIds: [page] }) as Record<
-      string,
-      Record<string, unknown>[]
-    >
-    expect(batch[page]?.map((p) => p['key'])).toEqual(['category'])
-    expect(invoke('list_property_keys', {})).not.toContain('space')
+    const home = invoke('create_space', { name: 'Home', accentColor: null }) as string
+    expect(invoke('move_blocks_to_space', { blockIds: [page], spaceId: home })).toBe(1)
+    expectNoSpaceRow(home)
   })
 })
 
@@ -1074,7 +1054,19 @@ describe('set_property and delete_property on the space key', () => {
     )
     const gone = invoke('create_space', { name: 'Gone', accentColor: null }) as string
     invoke('delete_block', { blockId: gone })
-    expect(() => setSpace(page, gone)).toThrow(expect.objectContaining({ kind: 'validation' }))
+    expect(() => setSpace(page, gone)).toThrow(
+      expect.objectContaining({
+        kind: 'validation',
+        message: `space_id '${gone}' does not refer to a live, registered space block`,
+      }),
+    )
+    // `move_blocks_to_space` checks through `require_live_space_in_tx`, worded its own way.
+    expect(() => invoke('move_blocks_to_space', { blockIds: [page], spaceId: gone })).toThrow(
+      expect.objectContaining({
+        kind: 'validation',
+        message: `space_id '${gone}' does not refer to a live space block (is_space = 'true')`,
+      }),
+    )
     expect(pagesIn('SPACE_PERSONAL')).toContain(page)
   })
 

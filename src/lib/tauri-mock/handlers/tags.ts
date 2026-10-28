@@ -281,7 +281,7 @@ function blockSpaceOf(b: Record<string, unknown>): string | null {
   return (
     (b['space_id'] as string | null | undefined) ??
     (page?.['space_id'] as string | null | undefined) ??
-    ownerSpaceOf(b)
+    null
   )
 }
 

@@ -37,6 +37,7 @@ import {
   encodeNextCursor,
   metaRowMatchesFilter,
   notFoundRejection,
+  isLiveSpace,
   isPageSort,
   ownerSpaceOf,
   type PageSortRow,
@@ -1792,13 +1793,11 @@ export const pagesHandlers = {
     const format = (a['format'] as string | null) ?? null
     const spaceId = (a['spaceId'] as string | undefined) ?? ''
 
-    // #2463 kind-parity — the backend rejects an empty / unknown space id
-    // with `AppError::Validation`, same as `import_markdown`. The mock's
-    // known spaces are the canonical hardcoded 'SPACE_PERSONAL' (see
-    // `list_spaces` above, which never lives in `blocks`) plus any
-    // `create_space`-created block.
-    if (spaceId !== 'SPACE_PERSONAL' && !blocks.has(spaceId)) {
-      throw validationRejection('space_id does not refer to a live space block')
+    // #2463 — `require_live_space_in_tx`.
+    if (!isLiveSpace(spaceId)) {
+      throw validationRejection(
+        `space_id '${spaceId}' does not refer to a live space block (is_space = 'true')`,
+      )
     }
 
     // `format: null` = auto-detect. Trivial content sniff mirroring the

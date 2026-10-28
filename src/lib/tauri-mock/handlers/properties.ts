@@ -25,6 +25,7 @@ import {
   assertValidReservedPropertyValue,
   assertValidSetPropertyValue,
   definitionSpaceOf,
+  isLiveSpace,
   notFoundRejection,
   ownerSpaceOf,
   propertyDefinition,
@@ -34,7 +35,7 @@ import {
 } from '@/lib/tauri-mock/handlers/shared'
 import { resolveRefValue } from '@/lib/tauri-mock/names'
 import { shiftDate } from '@/lib/tauri-mock/recurrence'
-import { valueFieldsOf } from '@/lib/tauri-mock/revert'
+import { setPageGroupSpace, valueFieldsOf } from '@/lib/tauri-mock/revert'
 import {
   appSettings,
   blocks,
@@ -192,6 +193,40 @@ function setReservedColumnProperty(
   if (b) b[key] = channelValue
   const op = pushOp('set_property', { block_id: blockId, key, from_value: null })
   return b ? { ...b, op_refs: [{ device_id: op.device_id, seq: op.seq }] } : null
+}
+
+/**
+ * #533 — `space` is the `blocks.space_id` column, never a `block_properties`
+ * row (migration 0088). `validate_space_target_in_tx`: only a page or a
+ * top-level tag holds it, and it names a live space. Returns the
+ * `WithOps<BlockRow>` response.
+ */
+function setSpaceProperty(
+  target: Record<string, unknown>,
+  valueRef: string | null,
+): Record<string, unknown> {
+  const blockId = target['id'] as string
+  if (
+    target['block_type'] !== 'page' &&
+    !(target['block_type'] === 'tag' && target['parent_id'] == null)
+  ) {
+    throw validationRejection(
+      `property 'space' can only be set on a page or top-level tag block; block '${blockId}' is a '${target['block_type'] as string}' block`,
+    )
+  }
+  if (valueRef === null || !isLiveSpace(valueRef)) {
+    throw validationRejection(
+      `space_id '${valueRef}' does not refer to a live, registered space block`,
+    )
+  }
+  const fromSpace = (target['space_id'] as string | null | undefined) ?? null
+  setPageGroupSpace(blocks, blockId, valueRef)
+  const op = pushOp('set_property', {
+    block_id: blockId,
+    key: 'space',
+    from_value: fromSpace === null ? null : typedValueOf({ value_ref: fromSpace }),
+  })
+  return { ...target, op_refs: [{ device_id: op.device_id, seq: op.seq }] }
 }
 
 /**
@@ -543,36 +578,7 @@ export const propertiesHandlers = {
       // #5394 — `set_property_inner` routes `todo_state` through `set_todo_state_in_tx`.
       return key === 'todo_state' ? writeTodoState(blockId, valueText, write) : write()
     }
-    // #533 — `space` is the `blocks.space_id` column, never a `block_properties`
-    // row (migration 0088). `validate_space_target_in_tx`: only a page or a
-    // top-level tag holds it, and it names a live space.
-    if (key === 'space') {
-      if (
-        target['block_type'] !== 'page' &&
-        !(target['block_type'] === 'tag' && target['parent_id'] == null)
-      ) {
-        throw validationRejection(
-          `property 'space' can only be set on a page or top-level tag block; block '${blockId}' is a '${target['block_type'] as string}' block`,
-        )
-      }
-      if (
-        valueRef === null ||
-        blocks.get(valueRef)?.['deleted_at'] != null ||
-        properties.get(valueRef)?.get('is_space')?.['value_text'] !== 'true'
-      ) {
-        throw validationRejection(
-          `space_id '${valueRef}' does not refer to a live, registered space block`,
-        )
-      }
-      const fromSpace = (target['space_id'] as string | null | undefined) ?? null
-      target['space_id'] = valueRef
-      const op = pushOp('set_property', {
-        block_id: blockId,
-        key,
-        from_value: fromSpace === null ? null : typedValueOf({ value_ref: fromSpace }),
-      })
-      return { ...target, op_refs: [{ device_id: op.device_id, seq: op.seq }] }
-    }
+    if (key === 'space') return setSpaceProperty(target, valueRef)
     const op = writePropertyRow(blockId, key, {
       value_text: valueText,
       value_num: valueNum,
@@ -621,7 +627,7 @@ export const propertiesHandlers = {
     if (key === 'space') {
       const fromSpace = (b['space_id'] as string | null | undefined) ?? null
       if (fromSpace === null) return { block_id: blockId, key, op_refs: [] }
-      b['space_id'] = null
+      setPageGroupSpace(blocks, blockId, null)
       const op = pushOp('delete_property', {
         block_id: blockId,
         key,

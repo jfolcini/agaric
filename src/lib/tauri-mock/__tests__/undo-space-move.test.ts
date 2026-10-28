@@ -12,6 +12,8 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import { stampMockSpace } from '@/lib/tauri-mock/__tests__/conformance-query'
+import { clearMock } from '@/lib/tauri-mock/__tests__/mock-store-helpers'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import {
   blockTags,
@@ -125,5 +127,37 @@ describe('undoing a cross-space move (#5057)', () => {
     if (!move) throw new Error('the move appended no op')
     dispatch('revert_ops', { ops: [{ device_id: move.device_id, seq: move.seq }] })
     expect(membership()).toBe(null)
+  })
+})
+
+// The backend writes a space over the page group (`UPDATE blocks SET space_id = ?
+// WHERE id = ? OR page_id = ?`), so a child stamped with its page's space, as
+// `stampMockSpace` stamps it, follows every space write.
+describe('a space write covers the page group', () => {
+  it('carries a stamped child along with its page', () => {
+    clearMock()
+    blocks.set('P1', makeBlock('P1', 'page', 'Home', null, 1))
+    blocks.set('C1', makeBlock('C1', 'content', 'card', 'P1', 1))
+    blocks.set('T1', makeBlock('T1', 'tag', 'remote', null, 2))
+    const work = dispatch('create_space', { name: 'Work', accentColor: null }) as string
+    const home = dispatch('create_space', { name: 'Home', accentColor: null }) as string
+    stampMockSpace()
+    const childSpace = (): unknown => blocks.get('C1')?.['space_id']
+
+    expect(dispatch('move_blocks_to_space', { blockIds: ['P1', 'T1'], spaceId: work })).toBe(2)
+    expect(() => dispatch('add_tag', { blockId: 'C1', tagId: 'T1' })).not.toThrow()
+    expect(childSpace()).toBe(work)
+
+    const typed = { value_text: null, value_num: null, value_date: null, value_bool: null }
+    dispatch('set_property', { blockId: 'P1', key: 'space', value: { ...typed, value_ref: home } })
+    expect(childSpace()).toBe(home)
+
+    const cleared = dispatch('delete_property', { blockId: 'P1', key: 'space' }) as {
+      op_refs: Array<{ device_id: string; seq: number }>
+    }
+    expect(childSpace()).toBe(null)
+
+    dispatch('revert_ops', { ops: cleared.op_refs })
+    expect(childSpace()).toBe(home)
   })
 })

@@ -630,13 +630,24 @@ export {
 
 /**
  * A block's space: the `space_id` of its OWNING page (`page_id`, falling back
- * to the block's own id when it IS a page or a top-level tag). The backend
- * fans `space_id` out over the whole page group; the mock stamps only the page
- * or tag row, so every reader goes through the owner.
+ * to the block's own id when it IS a page or a top-level tag). The space
+ * writers fan `space_id` out over the page group (`setPageGroupSpace`), but
+ * `create_block` leaves a block it creates under a page unstamped, so a
+ * reader that may meet one goes through the owner.
  */
 export function ownerSpaceOf(b: Record<string, unknown>): string | null {
   const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
   return (blocks.get(ownerId)?.['space_id'] as string | null | undefined) ?? null
+}
+
+/** A live block flagged `is_space = 'true'`, as `require_live_space_in_tx` reads it. */
+export function isLiveSpace(id: string): boolean {
+  const b = blocks.get(id)
+  return (
+    b !== undefined &&
+    b['deleted_at'] == null &&
+    properties.get(id)?.get('is_space')?.['value_text'] === 'true'
+  )
 }
 
 /** `SpaceScope` predicate for a link SOURCE block. */

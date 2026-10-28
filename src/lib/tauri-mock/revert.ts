@@ -34,6 +34,16 @@ export function valueFieldsOf(p: Record<string, unknown>): Record<string, unknow
   }
 }
 
+/**
+ * Write `blockId`'s space as the backend's projection writes it, over the whole
+ * page group: `UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?`.
+ */
+export function setPageGroupSpace(blocks: Blocks, blockId: string, spaceId: string | null): void {
+  for (const b of blocks.values()) {
+    if (b['id'] === blockId || b['page_id'] === blockId) b['space_id'] = spaceId
+  }
+}
+
 /** Whether a recorded `prior` held a value, as `PropertyValueFields::into_held` reads it. */
 export function priorIsHeld(prior: Record<string, unknown>): boolean {
   return Object.values(prior).some((v) => v != null)
@@ -246,7 +256,8 @@ function revertPropertyMap(
   // `revertBlockRowField` restores; `space` rides the generic one.
   if (key === 'space') {
     if (b && (opType === 'set_property' || fromValue != null)) {
-      b['space_id'] = (fromValue?.['value_ref'] as string | null | undefined) ?? null
+      const spaceId = (fromValue?.['value_ref'] as string | null | undefined) ?? null
+      setPageGroupSpace(blocks, blockId, spaceId)
     }
     return true
   }

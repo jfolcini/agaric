@@ -28,6 +28,7 @@ import {
   findLivePageByTitle,
   insertAtSlotAndRenumber,
   invalidOperationRejection,
+  isLiveSpace,
   nextCohortMarker,
   notFoundRejection,
   ownerSpaceOf,
@@ -40,6 +41,7 @@ import {
   readActiveSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
 import { resolveInboundNames } from '@/lib/tauri-mock/names'
+import { setPageGroupSpace } from '@/lib/tauri-mock/revert'
 import {
   allOrNothing,
   attachmentBytes,
@@ -1286,9 +1288,9 @@ export const blocksHandlers = {
       priority: null,
       due_date: null,
       scheduled_date: null,
-      // The backend fans `space_id` out over the page group; the mock stamps the
-      // page or tag row only, and readers resolve a block's space through
-      // `ownerSpaceOf`.
+      // The backend also stamps a non-page block with its page's space, in the
+      // same transaction; the mock stamps a page or tag only, so a reader that
+      // can meet a block created here falls back to `ownerSpaceOf`.
       space_id: blockType === 'page' || blockType === 'tag' ? spaceId : null,
     }
     // The root group is per space (`spaceRootGroup`); the global
@@ -2123,13 +2125,10 @@ export const blocksHandlers = {
     // `require_live_space_in_tx` runs ONCE, before any per-block write: the
     // target must be a LIVE block flagged `is_space = 'true'`. The per-block
     // leniency below covers a dead BLOCK id, never a bad TARGET.
-    const target = blocks.get(spaceId)
-    if (
-      !target ||
-      target['deleted_at'] ||
-      properties.get(spaceId)?.get('is_space')?.['value_text'] !== 'true'
-    ) {
-      throw validationRejection(`block '${spaceId}' is not a live space`)
+    if (!isLiveSpace(spaceId)) {
+      throw validationRejection(
+        `space_id '${spaceId}' does not refer to a live space block (is_space = 'true')`,
+      )
     }
     // #5841 S0.6 — the drops land before the `space` ops, as on the backend.
     dropAcknowledgedLosses(inputIds, spaceId, a['acknowledgedLoss'])
@@ -2140,8 +2139,6 @@ export const blocksHandlers = {
       const b = blocks.get(blockId)
       if (!b || b['deleted_at']) continue
       // The prior membership, so a revert restores THAT space (#5057 review).
-      // The backend projects `space` to `blocks.space_id`, fanned out over the
-      // page group; the mock stamps the page row, which `ownerSpaceOf` reads.
       const fromSpace = (b['space_id'] as string | null | undefined) ?? null
       const fromValue =
         fromSpace === null
@@ -2153,7 +2150,7 @@ export const blocksHandlers = {
               value_ref: fromSpace,
               value_bool: null,
             }
-      b['space_id'] = spaceId
+      setPageGroupSpace(blocks, blockId, spaceId)
       if ((b['parent_id'] as string | null) === null) {
         arrivedAtRoot.add(blockId)
         // #5100: the backend purges the block from the doc of the space it left

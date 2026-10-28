@@ -32,9 +32,16 @@ function importBibliography(
   return dispatch('import_bibliography', { content, format, spaceId }) as ImportBibliographyResult
 }
 
+/** A live space block, the shape `require_live_space_in_tx` demands. */
+function seedSpace(spaceId: string): void {
+  blocks.set(spaceId, makeBlock(spaceId, 'page', spaceId, null, 0))
+  properties.set(spaceId, new Map([['is_space', { key: 'is_space', value_text: 'true' }]]))
+}
+
 beforeEach(() => {
   blocks.clear()
   properties.clear()
+  seedSpace(SPACE)
 })
 
 describe('import_bibliography mock handler', () => {
@@ -53,7 +60,9 @@ describe('import_bibliography mock handler', () => {
     expect(result.warnings.length).toBeGreaterThan(0)
 
     // One placeholder page per entry, stamped into the target space.
-    const pages = [...blocks.values()].filter((b) => b['block_type'] === 'page')
+    const pages = [...blocks.values()].filter(
+      (b) => b['block_type'] === 'page' && b['id'] !== SPACE,
+    )
     expect(pages).toHaveLength(2)
     for (const page of pages) expect(page['space_id']).toBe(SPACE)
   })
@@ -68,7 +77,9 @@ describe('import_bibliography mock handler', () => {
     const result = importBibliography(csl, 'csl-json', SPACE)
 
     expect(result.pages_created).toBe(3)
-    expect([...blocks.values()].filter((b) => b['block_type'] === 'page')).toHaveLength(3)
+    expect(
+      [...blocks.values()].filter((b) => b['block_type'] === 'page' && b['id'] !== SPACE),
+    ).toHaveLength(3)
   })
 
   it('falls back to 0 entries for malformed or non-array JSON', () => {
@@ -90,9 +101,9 @@ describe('import_bibliography mock handler', () => {
     expect(csl.pages_created).toBe(2)
   })
 
-  it('accepts a space id that exists as a block in the mock DB', () => {
+  it('accepts any live space, not only Personal', () => {
     const spaceId = '00000000000000000000SPACEB'
-    blocks.set(spaceId, makeBlock(spaceId, 'page', 'Work', null, 0))
+    seedSpace(spaceId)
 
     const result = importBibliography('@misc{x, note={y}}', 'bibtex', spaceId)
 
@@ -112,9 +123,25 @@ describe('import_bibliography mock handler', () => {
     expect(isAppError(thrown)).toBe(true)
     expect(isValidation(thrown)).toBe(true)
     expect((thrown as { message: string }).message).toBe(
-      'space_id does not refer to a live space block',
+      "space_id '00000000000000000000NOSPACE' does not refer to a live space block (is_space = 'true')",
     )
     // Nothing was created on the failure path.
-    expect(blocks.size).toBe(0)
+    expect(blocks.size).toBe(1)
+  })
+
+  it('rejects a live page that is no space, and a deleted space', () => {
+    const page = '000000000000000000000PAGE1'
+    blocks.set(page, makeBlock(page, 'page', 'Notes', null, 1))
+    const gone = '000000000000000000000GONE1'
+    seedSpace(gone)
+    const goneRow = blocks.get(gone)
+    if (goneRow) goneRow['deleted_at'] = '2026-01-01T00:00:00Z'
+
+    for (const spaceId of [page, gone]) {
+      expect(() => importBibliography('@misc{x, note={y}}', 'bibtex', spaceId)).toThrow(
+        expect.objectContaining({ kind: 'validation' }),
+      )
+    }
+    expect(blocks.size).toBe(3)
   })
 })

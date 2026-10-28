@@ -14,6 +14,7 @@ import { compareNocase, compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlit
 import {
   type TypedHandlers,
   appErrorRejection,
+  isLiveSpace,
   notFoundRejection,
   returnNull,
   returnUndefined,
@@ -21,13 +22,11 @@ import {
 } from '@/lib/tauri-mock/handlers/shared'
 import {
   appSettings,
-  blocks,
   fakeId,
   mcpAgents,
   mcpEnabled,
   pairingPeerReveal,
   peerRefs,
-  properties,
 } from '@/lib/tauri-mock/seed'
 
 /** #4549 — the `app_settings` key `get_sync_relay_settings_inner` reads; `'1'` = on. */
@@ -105,14 +104,6 @@ function validAgentName(raw: string): string {
           : null
   if (reason !== null) throw agentRejection('InvalidAgentName', reason)
   return name
-}
-
-/** A live space, as the `spaces` registry joined to a live block answers it. */
-function isLiveSpace(id: string): boolean {
-  return (
-    !blocks.get(id)?.['deleted_at'] &&
-    properties.get(id)?.get('is_space')?.['value_text'] === 'true'
-  )
 }
 
 // #3463 — the mock used to accept ANY passphrase (`confirm_pairing:
