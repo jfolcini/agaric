@@ -137,6 +137,20 @@ describe('the link bubble', () => {
     )
   })
 
+  it('shows once a native drag ends the press, which WebKitGTK ends with no pointerup', async () => {
+    setup(LINK, 2)
+    act(() => {
+      fireEvent.pointerDown(editor.view.dom, { button: 0 })
+      editor.commands.setTextSelection(7)
+    })
+    act(() => {
+      fireEvent.dragStart(window)
+    })
+    await waitFor(() =>
+      expect(toolbar('pageMode.linkActions')).toHaveTextContent('https://example.com'),
+    )
+  })
+
   it('has no a11y violations', async () => {
     setup(LINK, 7)
     expect(await axe(toolbar('pageMode.linkActions') as HTMLElement)).toHaveNoViolations()

@@ -43,14 +43,14 @@ import { readAttachment } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
-export interface SelectedImage {
+interface SelectedImage {
   pos: number
   src: string
   alt: string
 }
 
 /** The image the selection holds as a node. Duck-typed: `instanceof` fails across ProseMirror copies. */
-export function selectedImage(selection: Selection): SelectedImage | null {
+function selectedImage(selection: Selection): SelectedImage | null {
   const node = (selection as Partial<NodeSelection>).node
   if (node?.type.name !== 'image') return null
   return {
@@ -61,7 +61,7 @@ export function selectedImage(selection: Selection): SelectedImage | null {
 }
 
 /** Sets the selected image's alt text, keeping its width, and keeps the image selected. */
-export function setImageAlt(editor: Editor, text: string): boolean {
+function setImageAlt(editor: Editor, text: string): boolean {
   const image = selectedImage(editor.state.selection)
   if (image === null) return false
   const alt = formatImageAlt(text.trim(), parseImageAlt(image.alt).width)

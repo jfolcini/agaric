@@ -23,17 +23,13 @@
 
 import { es as esDateFns } from 'date-fns/locale/es'
 
-import { editor } from '@/lib/i18n/es/editor'
 import { errors } from '@/lib/i18n/es/errors'
-import { pages } from '@/lib/i18n/es/pages'
 import { settings } from '@/lib/i18n/es/settings'
 import { registerDateLocale } from '@/lib/i18n/locales'
 
 registerDateLocale('es', esDateFns)
 
 export const es: Record<string, string> = {
-  ...editor,
   ...errors,
-  ...pages,
   ...settings,
 }

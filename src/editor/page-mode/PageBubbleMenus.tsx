@@ -13,7 +13,7 @@
  * - Image: `ImageBubbleMenu`, shared with block mode.
  * Edit as Markdown has none of them: there each is its Markdown text.
  *
- * Every action edits the document, so page mode's save carries it like any edit.
+ * Every edit is a transaction on the document, so page mode's save carries it like any edit.
  */
 
 import { findParentNode } from '@tiptap/core'
@@ -89,6 +89,12 @@ const CARET_BUBBLES = [
   ['pageCodeBubble', showForCode],
 ] as const
 
+/**
+ * What ends a press, as `useEditorBlur` and `markdown-reveal` end one: WebKitGTK ends a
+ * native drag with no `pointerup`, and a context menu can swallow the release.
+ */
+const PRESS_ENDS = ['pointerup', 'pointercancel', 'dragstart', 'contextmenu'] as const
+
 /** Holds the bubbles back while the button is down in `editor`, and shows the caret's on release. */
 function useShowOnRelease(editor: Editor): void {
   useEffect(() => {
@@ -111,12 +117,10 @@ function useShowOnRelease(editor: Editor): void {
       })
     }
     window.addEventListener('pointerdown', down, true)
-    window.addEventListener('pointerup', up, true)
-    window.addEventListener('pointercancel', up, true)
+    for (const type of PRESS_ENDS) window.addEventListener(type, up, true)
     return () => {
       window.removeEventListener('pointerdown', down, true)
-      window.removeEventListener('pointerup', up, true)
-      window.removeEventListener('pointercancel', up, true)
+      for (const type of PRESS_ENDS) window.removeEventListener(type, up, true)
       pressed.delete(editor)
     }
   }, [editor])

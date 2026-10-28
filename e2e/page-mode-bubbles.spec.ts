@@ -92,7 +92,7 @@ test.describe('page mode bubble menus @editor @pages', () => {
     await waitForBoot(page)
   })
 
-  test('caret in a link shows its bubble; Open opens the href and Remove unlinks it', async ({
+  test('caret in a link shows its bubble; it edits, opens and unlinks the link', async ({
     page,
   }) => {
     const { ids } = await seedPage(page, 'Bubble link', ['see [example](https://example.com) here'])
@@ -104,6 +104,12 @@ test.describe('page mode bubble menus @editor @pages', () => {
     await expect(link).toContainText('https://example.com')
     // A caret in a link is not a selection: the marks bubble stays away.
     await expect(page.getByTestId('selection-bubble-menu')).toBeHidden()
+
+    await link.getByRole('button', { name: 'External link' }).click()
+    await expect(page.getByTestId('link-url-input')).toHaveValue('https://example.com')
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('link-edit-popover')).toBeHidden()
+    await block(page, ids[0]).locator('a').click()
 
     await installIpcRecorder(page)
     await link.getByRole('button', { name: 'Open link' }).click()
