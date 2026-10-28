@@ -319,11 +319,18 @@ export function SelectionBubbleMenu({
   // Safe here ONLY because of the `'use no memo'` directive at the top of this
   // component — see the note there and #4469.
   const { containerRef, onKeyDown: rovingOnKeyDown, onFocus: rovingOnFocus } = useRovingTabindex()
+  const menuEl = useRef<HTMLElement | null>(null)
+  const menuRef = useCallback(
+    (node: HTMLElement | null) => {
+      menuEl.current = node
+      containerRef(node)
+    },
+    [containerRef],
+  )
 
   return (
     <BubbleMenu
-      tabIndex={-1}
-      ref={containerRef}
+      ref={menuRef}
       onKeyDown={rovingOnKeyDown}
       onFocus={rovingOnFocus}
       editor={editor}
@@ -332,7 +339,17 @@ export function SelectionBubbleMenu({
       // `.block-editor`; an upward-opening bubble overlapped it. `flip` (on by
       // default) still lifts the bubble above the selection only when there is
       // no room below (near the viewport bottom).
-      options={{ placement: 'bottom', offset: 8 }}
+      //
+      // Each plugin view TipTap builds makes the container a tab stop ahead of the buttons,
+      // and ProseMirror rebuilds the views whenever a plugin registers; the toolbar's one
+      // stop is its active button.
+      options={{
+        placement: 'bottom',
+        offset: 8,
+        onShow: () => {
+          if (menuEl.current) menuEl.current.tabIndex = -1
+        },
+      }}
       shouldShow={({ state: editorState }) => {
         // #925 f4 — never float the bubble on touch over a LIVE selection;
         // dragging a selection collides with the OS's native selection

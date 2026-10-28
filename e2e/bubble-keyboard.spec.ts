@@ -65,9 +65,7 @@ async function selectWord(
 async function pressBold(page: Page, key: 'Enter' | ' '): Promise<void> {
   const bubble = page.getByTestId('selection-bubble-menu')
   await expect(bubble).toBeVisible()
-  // TipTap makes the bubble itself a tab stop, ahead of its buttons.
-  await page.keyboard.press('Tab')
-  await expect(bubble).toBeFocused()
+  // One tab stop (WAI-ARIA toolbar): the bubble itself is not one.
   await page.keyboard.press('Tab')
   await expect(bubble.getByRole('button', { name: 'Bold' })).toBeFocused()
   await page.keyboard.press(key)

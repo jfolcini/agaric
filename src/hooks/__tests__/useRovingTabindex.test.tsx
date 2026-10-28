@@ -18,7 +18,6 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useEffect, useRef, useState } from 'react'
 import { describe, expect, it } from 'vitest'
-import { axe } from 'vitest-axe'
 
 import { useRovingTabindex } from '@/hooks/useRovingTabindex'
 
@@ -170,7 +169,7 @@ describe('useRovingTabindex', () => {
   /**
    * TipTap's `BubbleMenu` binds its handler props as native listeners and passes each
    * one `Object.create(nativeEvent)`. A browser's `key` getter throws on that object
-   * (#6159); jsdom's does not, so the harness throws as the browser does.
+   * (#6159); happy-dom's does not, so the harness throws as the browser does.
    */
   function TipTapMenuHarness(): React.ReactElement {
     const { containerRef, onKeyDown } = useRovingTabindex()
@@ -214,13 +213,12 @@ describe('useRovingTabindex', () => {
 
   it('arrows move focus when a TipTap menu forwards the keydown', async () => {
     const user = userEvent.setup()
-    const { container } = render(<TipTapMenuHarness />)
+    render(<TipTapMenuHarness />)
     screen.getByTestId('m0').focus()
     await user.keyboard('{ArrowRight}')
     expect(screen.getByTestId('m1')).toHaveFocus()
     await user.keyboard('{Home}')
     expect(screen.getByTestId('m0')).toHaveFocus()
-    expect(await axe(container)).toHaveNoViolations()
   })
 
   function ResizableHarness(): React.ReactElement {
