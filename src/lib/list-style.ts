@@ -11,10 +11,12 @@
  * value literals. See `docs/architecture/list-ergonomics.md` for the model.
  */
 
+import { parse } from '@/editor/markdown-serializer'
 import { unwrap } from '@/lib/app-error'
 import type { PropertyRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import type { BlockTypeToken } from '@/lib/block-type-convert'
+import { parseEmbedToken } from '@/lib/embed-token'
 
 /** The block-property key under which list-ness is stored. */
 export const LIST_STYLE_KEY = 'listStyle'
@@ -82,4 +84,26 @@ export function listStyleForBlockType(type: BlockTypeToken): ListStyle {
   if (type === 'numbered-list') return 'ordered'
   if (type === 'bullet-list') return 'bullet'
   return 'none'
+}
+
+/**
+ * Whether a block shows its list style's marker. A marker is only for a bullet
+ * or numbered block, in block mode and in page mode alike, and such a block
+ * opens with a paragraph that is not a query or an embed. A heading, code
+ * block, quote, callout, table, divider or math block shows none, whatever
+ * `listStyle` row it carries: an import, *Edit as Markdown*, the property
+ * drawer or another device can store one on it. `firstNodeType` is the type of
+ * the block's first top-level node.
+ */
+export function showsListMarker(firstNodeType: string | undefined, queryOrEmbed: boolean): boolean {
+  return firstNodeType === 'paragraph' && !queryOrEmbed
+}
+
+/** {@link showsListMarker} for a block's stored markdown, read as `StaticBlock` reads it. */
+export function contentShowsListMarker(content: string): boolean {
+  const query = content.startsWith('{{query ') && content.endsWith('}}')
+  return showsListMarker(
+    parse(content).content?.[0]?.type,
+    query || parseEmbedToken(content) !== null,
+  )
 }

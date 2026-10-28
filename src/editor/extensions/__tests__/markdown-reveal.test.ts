@@ -1268,7 +1268,6 @@ describe('MarkdownReveal beside a list marker', () => {
 
   it('draws the syntax revealed at a block’s start after its list marker, whichever side of the caret', () => {
     for (const [source, caret, drawn] of [
-      ['## Title', 3, 1],
       ['**bold** rest', 3, 2],
       ['[label](https://a.io) rest', 3, 2],
     ] as const) {
@@ -1277,12 +1276,12 @@ describe('MarkdownReveal beside a list marker', () => {
       ed.commands.setTextSelection(caret)
       expect(followsListMarker(ed)).toEqual(Array(drawn).fill(true))
     }
-    // Left of the # run, the run is drawn past the caret: still after the list marker.
-    const heading = createEditor(HEADING, [ListMarkerDecoration])
-    heading.view.dispatch(setListMarkerMeta(heading.state.tr, { style: 'ordered', ordinal: 1 }))
-    heading.commands.setTextSelection(1)
-    pressKey(heading, 'ArrowLeft')
-    expect(followsListMarker(heading)).toEqual([true])
+    // Left of the `[`, the bracket is drawn past the caret: still after the list marker.
+    const link = createEditor('[label](https://a.io) rest', [ListMarkerDecoration])
+    link.view.dispatch(setListMarkerMeta(link.state.tr, { style: 'ordered', ordinal: 1 }))
+    link.commands.setTextSelection(2)
+    pressKey(link, 'ArrowLeft')
+    expect(followsListMarker(link)).toEqual([true, true])
   })
 })
 

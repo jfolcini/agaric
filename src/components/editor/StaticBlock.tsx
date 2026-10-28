@@ -190,7 +190,7 @@ function StaticBlockInner({
         onDragOver={onDragOver}
         onDrop={onDrop}
       >
-        <ListMarker style={listStyle} ordinal={listOrdinal} />
+        <ListMarker style={listStyle} ordinal={listOrdinal} content={content} />
         {richContent ?? (
           <span className="block-placeholder text-muted-foreground italic">
             {t('block.emptyPlaceholder')}

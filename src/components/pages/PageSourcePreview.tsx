@@ -161,7 +161,7 @@ export function PageSourcePreview({ lines }: { lines: SourceLines }): React.Reac
               </span>
             )}
             <div className="block-static min-w-0 flex-1">
-              <ListMarker style={block.listStyle} ordinal={ordinal} />
+              <ListMarker style={block.listStyle} ordinal={ordinal} content={block.text} />
               {renderRichContent(withNameIds(block.text, idOf, newNames), options)}
             </div>
             {block.properties.map(([key, value], j) => (

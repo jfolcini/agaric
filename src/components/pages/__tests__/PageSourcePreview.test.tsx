@@ -91,6 +91,15 @@ describe('PageSourcePreview', () => {
     expect(screen.getByTestId('block-link-chip')).toHaveTextContent('Über')
   })
 
+  it('draws a list marker only on a list block, not on a heading written as one', () => {
+    render(<PageSourcePreview lines={{ text: '- - # Title\n- - item', lineIds: [null, null] }} />)
+
+    const [heading, item] = screen.getAllByTestId('page-source-preview-block')
+    expect(within(heading as HTMLElement).getByRole('heading')).toHaveTextContent('Title')
+    expect(within(heading as HTMLElement).queryByTestId('list-marker')).not.toBeInTheDocument()
+    expect(within(item as HTMLElement).getByTestId('list-marker')).toHaveTextContent('•')
+  })
+
   it('says the page would have no blocks for an empty buffer', () => {
     render(<PageSourcePreview lines={{ text: '', lineIds: [null] }} />)
 

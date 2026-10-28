@@ -194,7 +194,12 @@ describe('PageBlockStore', () => {
       store.setState({ blocks: [block] })
 
       // edit('A', '# Title') — heading — then createBelow('A', 'Paragraph').
-      stubInvoke(mockedInvoke, { edit_block: echoEditBlock, create_block: echoCreateBlock })
+      stubInvoke(mockedInvoke, {
+        edit_block: echoEditBlock,
+        create_block: echoCreateBlock,
+        // The paragraph that became a heading leaves any list it was in.
+        delete_property: () => withOps({ block_id: 'A', key: 'listStyle' }),
+      })
 
       await store.getState().splitBlock('A', '# Title\nParagraph')
 
