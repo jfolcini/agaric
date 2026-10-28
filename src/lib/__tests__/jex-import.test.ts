@@ -19,8 +19,7 @@
  *  - how a header's numeric field is padded, and which item kinds a resource's
  *    vault name may come from.
  *
- * ACCEPTED GAPS (#4816, re-swept in #4691). Eight mutants survive. Five are
- * equivalent:
+ * ACCEPTED GAPS (#4816), recorded in `mutation-accepted.tsv`. Equivalent:
  *  - unreachable operands `tsc` demands: `lines[i] ?? ''` (the index is in
  *    bounds) and `c === undefined` (a header block is always 512 bytes);
  *  - `raw === undefined` in `parseJoplinTime`: without it `Date.parse(undefined)`
@@ -30,10 +29,10 @@
  *  - `readTar` walking `offset - BLOCK`: a header the archive cuts short puts its
  *    data past the end, and a negative size ends the scan, so it yields no member.
  *
- * Three are not equivalent and stay tracked: the `''` that a missing `id`, a
- * note's missing `parent_id` and a notebook's missing `parent_id` fall back to.
- * Another fallback text changes the result only for an archive that also uses
- * that text as an id, so no realistic test tells them apart.
+ * Accepted though not equivalent: the `''` that a missing `id`, a note's missing
+ * `parent_id` and a notebook's missing `parent_id` fall back to. Another
+ * fallback text changes the result only for an archive that also uses that
+ * text as an id, so no realistic test tells them apart.
  */
 
 import { runInNewContext } from 'node:vm'
@@ -1171,6 +1170,31 @@ describe('parseJex Joplin fidelity (#6032)', () => {
     expect(noteTitled(notes, 'Done task').markdown).toBe('- [x] Done task\n\ndetails')
     expect(noteTitled(notes, 'Bare task').markdown).toBe('- [ ] Bare task')
     expect(noteTitled(notes, 'Plain note').markdown).toBe('details')
+  })
+
+  it('trims the title line a tag and a task block take their names from', () => {
+    const tagId = '8e'.repeat(16)
+    const taskId = '9f'.repeat(16)
+    const archive = buildTar([
+      noteMember(taskId, '  Spaced task  ', '', { is_todo: '1', todo_completed: '0' }),
+      itemMember(tagId, joplinItem('  work  ', { id: tagId, type_: '5' })),
+      itemMember(
+        'af'.repeat(16),
+        joplinItem('', { id: 'af'.repeat(16), note_id: taskId, tag_id: tagId, type_: '6' }),
+      ),
+    ])
+    const [note] = parseJex(archive).notes
+    expect(note?.markdown).toBe('- [ ] Spaced task')
+    expect(note?.tags).toEqual(['work'])
+  })
+
+  it('names the task block of a to-do with no title line with the placeholder', () => {
+    const blank = noteMember('ba'.repeat(16), '', '', { is_todo: '1', todo_completed: '0' })
+    const spaces = noteMember('cb'.repeat(16), '   ', '', { is_todo: '1', todo_completed: '0' })
+    expect(parseJex(buildTar([blank, spaces])).notes.map((n) => n.markdown)).toEqual([
+      `- [ ] ${UNTITLED_PLACEHOLDER}`,
+      `- [ ] ${UNTITLED_PLACEHOLDER}`,
+    ])
   })
 
   it('drops a due date that is not a date instead of failing the archive', () => {
