@@ -69,6 +69,7 @@ function stubPropertiesInvoke(overrides: TypedInvokeHandlers = {}): void {
     set_todo_state: todoRow,
     set_priority: priorityRow,
     get_property: () => null,
+    get_batch_properties: () => ({}),
     ...overrides,
   })
 }
