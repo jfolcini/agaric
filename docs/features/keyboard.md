@@ -28,7 +28,7 @@ Settings → Keyboard. Each row shows the action, then its current keys, then an
 | `Ctrl+.` | Collapse / expand block children |
 | `Alt+.` | Zoom in to the focused block |
 | `Escape` | Zoom back out |
-| `Ctrl+Alt+1` … `Ctrl+Alt+6` | Turn the focused block into a heading (level 1-6), taking off its list style; in page mode, every block the selection touches. `Ctrl+1` … `Ctrl+9` select tabs and `Alt+1` … `Alt+9` switch spaces (see **Global navigation**) |
+| `Ctrl+Alt+1` … `Ctrl+Alt+6` | Turn the focused block into a heading (level 1-6), taking off its list style; in page mode, every block the selection touches that opens with text or a heading. `Ctrl+1` … `Ctrl+9` select tabs and `Alt+1` … `Alt+9` switch spaces (see **Global navigation**) |
 | `Ctrl+Enter` / `Ctrl+L` | Cycle the block's task state |
 | `Ctrl+Shift+P` | Open the **Property Drawer** for the block |
 | `Ctrl+Shift+D` | Open the date picker (inserts a date at the cursor). The *due* and *scheduled* pickers are toolbar-only — they have no default binding |

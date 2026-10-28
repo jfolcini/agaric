@@ -21,7 +21,7 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { readText, writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
-import { isEditableTarget, matchesShortcutBinding } from '@/lib/keyboard-config'
+import { headingChordLevel, isEditableTarget, matchesShortcutBinding } from '@/lib/keyboard-config'
 import {
   clearTreeInteractionIfHolder,
   isLastInteractedTree,
@@ -572,17 +572,14 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
   useEffect(
     () =>
       addOwnedBlockListener(pageStore, focusedBlockId, 'keydown', (e) => {
-        for (let level = 1; level <= 6; level++) {
-          if (matchesShortcutBinding(e, `heading${level}`)) {
-            // #713 — a non-owning tree's slash-command path would route into
-            // `applyContentEdit` against ITS idle editor (content-overwrite
-            // risk); the gate (addOwnedBlockListener) confines the chord to the
-            // owning tree.
-            e.preventDefault()
-            handleSlashCommand({ id: `h${level}`, label: `Heading ${level}` })
-            return
-          }
-        }
+        const level = headingChordLevel(e)
+        if (level === null) return
+        // #713 — a non-owning tree's slash-command path would route into
+        // `applyContentEdit` against ITS idle editor (content-overwrite
+        // risk); the gate (addOwnedBlockListener) confines the chord to the
+        // owning tree.
+        e.preventDefault()
+        handleSlashCommand({ id: `h${level}`, label: `Heading ${level}` })
       }),
     [focusedBlockId, pageStore, handleSlashCommand],
   )
