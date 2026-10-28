@@ -57,6 +57,8 @@ interface TurnIntoMenuProps {
   blockId?: string | undefined
   /** The block's list style, in place of `useListMarker`'s, where no provider gives it (page mode). */
   listStyle?: ListStyle | undefined
+  /** What turning the block into code does beyond the editor, where there is no `blockId` (page mode). */
+  onTurnIntoCode?: (() => void) | undefined
   /** Close the hosting popover after a one-shot turn-into selection. */
   onClose: () => void
 }
@@ -68,6 +70,7 @@ export function TurnIntoMenu({
   editor,
   blockId,
   listStyle: givenListStyle,
+  onTurnIntoCode,
   onClose,
 }: TurnIntoMenuProps): React.ReactElement {
   const { t } = useTranslation()
@@ -255,6 +258,7 @@ export function TurnIntoMenu({
           <CodeLanguageSelector
             editor={editor}
             blockId={blockId}
+            onTurnIntoCode={onTurnIntoCode}
             isCodeBlock={state.codeBlock}
             currentLanguage={state.codeLanguage}
             onClose={onClose}

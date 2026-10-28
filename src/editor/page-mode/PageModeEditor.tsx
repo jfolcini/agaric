@@ -970,7 +970,6 @@ function PageModeDocument({
 
   return (
     <>
-      {/* Block mode's toolbar, its block commands answered by page mode's own (`page-toolbar.tsx`). */}
       {editor !== null && (
         <PageToolbar editor={editor} actions={actions} lists={lists} pageStore={pageStore} />
       )}

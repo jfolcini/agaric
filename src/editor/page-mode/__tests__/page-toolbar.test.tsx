@@ -9,6 +9,7 @@
  */
 
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { Editor } from '@tiptap/core'
 import type React from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -65,6 +66,7 @@ function mount(todo: Record<string, string> = {}) {
   const actions: { current: PageToolbarActions } = {
     current: {
       setTodo: vi.fn(),
+      setListStyle: vi.fn(),
       cyclePriority: vi.fn(),
       openDatePicker: vi.fn(),
       openDateLinkPicker: vi.fn(),
@@ -91,7 +93,8 @@ const button = (name: string) => screen.getByRole('button', { name })
 /** Select from the start of block `from` to the end of block `to`. */
 function select(ed: Editor, from: number, to: number): void {
   act(() => {
-    ed.commands.setTextSelection({ from: posIn(ed, from, 0), to: posIn(ed, to, 5) })
+    const end = ed.state.doc.child(to).textContent.length
+    ed.commands.setTextSelection({ from: posIn(ed, from, 0), to: posIn(ed, to, end) })
   })
 }
 
@@ -135,6 +138,25 @@ describe('PageToolbar', () => {
       name: t('contextMenu.turnIntoType.bulletList'),
     })
     expect(bullet.getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('Turn into code takes the list style off every block the selection touches', () => {
+    const { actions, editor: ed } = mount()
+    select(ed, 0, 1)
+    press(button(t('toolbar.turnInto')))
+    press(screen.getByRole('menuitem', { name: t('contextMenu.turnIntoType.code') }))
+    press(button('javascript'))
+    expect(ed.state.doc.child(0).firstChild?.type.name).toBe('codeBlock')
+    expect(vi.mocked(actions.setListStyle).mock.calls).toEqual([
+      [A, 'none'],
+      [B, 'none'],
+    ])
+  })
+
+  it('the task button says it sets or clears TODO, as Ctrl+Enter cycles the task here', async () => {
+    mount()
+    await userEvent.setup().hover(button(t('toolbar.todoToggle')))
+    expect(await screen.findByRole('tooltip', { name: t('pageMode.todoToggleTip') })).toBeTruthy()
   })
 
   it('the task button sets TODO on the selected blocks, and clears it once all are tasks', () => {

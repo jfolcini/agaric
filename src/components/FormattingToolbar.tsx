@@ -59,6 +59,10 @@ interface FormattingToolbarProps {
   currentPriority?: string | null
   /** The focused block's list style, for Turn into, where no `ListMarkerProvider` gives it (page mode). */
   listStyle?: ListStyle | undefined
+  /** What Turn into → Code block does beyond the editor, where there is no `blockId` (page mode). */
+  onTurnIntoCode?: (() => void) | undefined
+  /** Tooltip keys in place of the bar's own, by item key: where a button acts differently (page mode). */
+  tips?: Readonly<Record<string, string>> | undefined
   /** Item keys left off the bar: the controls a surface has no use for (page mode's Discard). */
   hiddenItems?: ReadonlySet<string> | undefined
   /** Added to the bar's classes (page mode's sticky bar). */
@@ -77,6 +81,8 @@ export function FormattingToolbar({
   blockId,
   currentPriority,
   listStyle,
+  onTurnIntoCode,
+  tips,
   hiddenItems,
   className,
 }: FormattingToolbarProps): React.ReactElement {
@@ -163,6 +169,7 @@ export function FormattingToolbar({
           setOpen: setTurnIntoPopoverOpen,
           blockId,
           listStyle,
+          onTurnIntoCode,
         })
       }
       case 'toolbar.tableOps': {
@@ -196,8 +203,9 @@ export function FormattingToolbar({
       default: {
         const cfg = configByKey.get(item.key)
         if (!cfg) return null
+        const tip = tips?.[item.key]
         return renderConfigButton(
-          cfg,
+          tip === undefined ? cfg : { ...cfg, tip },
           state as Record<string, unknown>,
           mode,
           t,

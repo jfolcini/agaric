@@ -8,13 +8,14 @@
  * chips and keys already run, after the save:
  *
  * - Turn into and a callout's type: on every block the selection touches, so
- *   a block's style (text, a heading, a list) stays one of them.
+ *   a block's style (text, a heading, a list, code) stays one of them.
  * - The task button: TODO on every block the selection touches, none once all
  *   of them are tasks.
  * - Priority, the date pickers, properties, the query builder and the emoji
  *   picker: on the caret's block, as page mode's keys and slash menu run them.
  *
  * Discard is left off: page mode saves as it goes, with no edit to throw away.
+ * The task button's tooltip says what it does here: Ctrl+Enter cycles the task.
  */
 
 import type { Editor } from '@tiptap/react'
@@ -29,6 +30,7 @@ import { blockIdsBetween } from '@/editor/page-mode/page-block-actions'
 import type { PageLists } from '@/editor/page-mode/page-lists'
 import { caretBlockId } from '@/editor/page-mode/page-tasks'
 import type { PickerItem } from '@/editor/SuggestionList'
+import type { ListStyle } from '@/lib/list-style'
 import { CALLOUT_COMMANDS, SLASH_COMMANDS, TURN_INTO_COMMANDS } from '@/lib/slash-commands'
 import {
   type BlockCommandHandler,
@@ -40,6 +42,7 @@ import type { PageBlockState } from '@/stores/page-blocks'
 /** The session's commands the toolbar's block commands run. */
 export interface PageToolbarActions {
   setTodo: (ids: string[], state: string | null) => void
+  setListStyle: (id: string, style: ListStyle) => void
   cyclePriority: (id: string) => void
   openDatePicker: (id: string, mode: 'due' | 'schedule') => void
   openDateLinkPicker: () => void
@@ -51,22 +54,25 @@ export interface PageToolbarActions {
 }
 
 const HIDDEN = new Set(['toolbar.discard'])
+const TIPS = { 'toolbar.todoToggle': 'pageMode.todoToggleTip' }
 
 const ITEMS = [...SLASH_COMMANDS, ...TURN_INTO_COMMANDS, ...CALLOUT_COMMANDS]
 
+const selectedBlocks = (editor: Editor): string[] => {
+  const { from, to } = editor.state.selection
+  return blockIdsBetween(editor.state.doc, from, to)
+}
+
 /** What page mode does for each block command the toolbar sends. */
-export function pageToolbarCommands(
+function pageToolbarCommands(
   editor: Editor,
   actions: React.RefObject<PageToolbarActions>,
   pageStore: StoreApi<PageBlockState>,
 ): Partial<Record<BlockCommandName, BlockCommandHandler>> {
-  const selected = (): string[] => {
-    const { from, to } = editor.state.selection
-    return blockIdsBetween(editor.state.doc, from, to)
-  }
   const onSelected = (itemId: string): void => {
     const item = ITEMS.find((candidate) => candidate.id === itemId)
-    if (item !== undefined) for (const id of selected()) actions.current.turnInto(id, item)
+    if (item === undefined) return
+    for (const id of selectedBlocks(editor)) actions.current.turnInto(id, item)
   }
   const onCaret = (itemId: string) => (): void => {
     const item = ITEMS.find((candidate) => candidate.id === itemId)
@@ -79,7 +85,7 @@ export function pageToolbarCommands(
     INSERT_CALLOUT: (_id, detail) => onSelected(`callout-${typeOf(detail) ?? 'info'}`),
     INSERT_DIVIDER: onCaret('divider'),
     TOGGLE_TODO_STATE: () => {
-      const ids = selected()
+      const ids = selectedBlocks(editor)
       const { blocksById } = pageStore.getState()
       const tasks = ids.every((id) => (blocksById.get(id)?.todo_state ?? null) !== null)
       actions.current.setTodo(ids, tasks ? null : 'TODO')
@@ -94,7 +100,7 @@ export function pageToolbarCommands(
   }
 }
 
-export interface PageToolbarProps {
+interface PageToolbarProps {
   editor: Editor
   actions: React.RefObject<PageToolbarActions>
   lists: PageLists
@@ -134,6 +140,10 @@ export function PageToolbar({
       editor={editor}
       currentPriority={priority}
       listStyle={listStyle}
+      onTurnIntoCode={() => {
+        for (const id of selectedBlocks(editor)) actions.current.setListStyle(id, 'none')
+      }}
+      tips={TIPS}
       hiddenItems={HIDDEN}
       className="sticky top-0 z-10 bg-background"
     />

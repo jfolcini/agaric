@@ -118,6 +118,8 @@ interface TurnIntoButtonProps {
   blockId?: string | undefined
   /** That block's list style, where no `ListMarkerProvider` gives it (page mode). */
   listStyle?: ListStyle | undefined
+  /** What turning that block into code does beyond the editor (page mode). */
+  onTurnIntoCode?: (() => void) | undefined
   /** The popover's content in place of `TurnIntoMenu`: *Edit as Markdown*'s (#5160). */
   menu?: React.ReactNode
 }
@@ -137,6 +139,7 @@ export function renderTurnIntoButton({
   setOpen,
   blockId,
   listStyle,
+  onTurnIntoCode,
   menu,
 }: TurnIntoButtonProps): React.ReactElement {
   if (mode === 'sentinel') {
@@ -195,6 +198,7 @@ export function renderTurnIntoButton({
             editor={editor}
             blockId={blockId}
             listStyle={listStyle}
+            onTurnIntoCode={onTurnIntoCode}
             onClose={() => setOpen(false)}
           />
         )}
