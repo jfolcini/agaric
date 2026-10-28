@@ -358,6 +358,37 @@ describe('the grip', () => {
     expect(fireEvent.mouseDown(textOf(container, A), { clientX: 50 })).toBe(true)
   })
 
+  it('a press in a block’s lane is no click for the editor’s click handlers; one in the block is', () => {
+    const { container, editor } = mount(TREE)
+    const clicks = vi.fn(() => false)
+    act(() => {
+      editor.registerPlugin(new Plugin({ props: { handleClick: clicks } }))
+    })
+    placeAt(container, A, 0)
+    const text = textOf(container, A)
+    // Where a browser puts a press on or beside block A: the start of its text.
+    const at = { configurable: true }
+    Object.defineProperties(document, {
+      caretPositionFromPoint: { ...at, value: () => ({ offsetNode: text.firstChild, offset: 0 }) },
+      elementFromPoint: { ...at, value: () => text },
+    })
+    const click = (clientX: number) => {
+      fireEvent.mouseDown(blockEl(container, A), { button: 0, clientX, clientY: 10 })
+      fireEvent.mouseUp(blockEl(container, A), { button: 0, clientX, clientY: 10 })
+    }
+    try {
+      click(30)
+      expect(clicks).not.toHaveBeenCalled()
+
+      click(50)
+      expect(clicks).toHaveBeenCalledTimes(1)
+    } finally {
+      for (const name of ['caretPositionFromPoint', 'elementFromPoint']) {
+        Reflect.deleteProperty(document, name)
+      }
+    }
+  })
+
   it('follows its block as it moves with no change to the document, a resize say, once the pointer moves', async () => {
     const { container } = mount(TREE)
     placeAt(container, C, 64)
