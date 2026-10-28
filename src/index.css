@@ -1297,7 +1297,7 @@
    faded out, they keep their place, so nothing moves as they show, and Tab
    still reaches them. */
 .page-mode-editor .page-block-metadata :is(.property-chip, .property-overflow, .attachment-badge) {
-  @apply opacity-0 transition-opacity;
+  @apply opacity-0;
 }
 .page-mode-editor
   [data-page-block]:is(:hover, :focus-within, .page-block-current)

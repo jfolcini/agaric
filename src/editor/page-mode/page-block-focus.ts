@@ -1,7 +1,7 @@
 /**
  * Page mode's current block (#5691): while the document has focus, the block
- * holding the cursor wears block mode's editing box (`page-block-current`),
- * and shows its chevron as block mode's focused row does (`block-active`).
+ * holding the cursor is marked for `index.css` (`page-block-current`), and
+ * shows its chevron as block mode's focused row does (`block-active`).
  * Built from the selection alone, never by walking the document. A node view
  * reads it from its decorations (`isCurrentBlock`).
  */

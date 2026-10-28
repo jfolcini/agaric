@@ -3,8 +3,7 @@
  * document in a frame, with the footer's hint under it, and a block's property
  * chips and attachment badge hidden at rest, shown on the pointer, the caret or
  * the focus, and reachable by Tab, while its dates and priority stay shown,
- * with no axe violations. The screenshots of the page in both modes, in the
- * run's output, are the look's record.
+ * with no axe violations.
  */
 
 import { createRequire } from 'node:module'
@@ -121,7 +120,6 @@ test.describe('page mode document look (#5691) @editor @pages', () => {
     await page.mouse.move(0, 0)
     const task = page.locator(`${EDITOR} [data-page-block-id="${ids[3]}"]`)
     await expect(task.locator('.due-date-chip')).toBeVisible()
-    await page.screenshot({ path: test.info().outputPath('page-mode-look.png') })
 
     await expect(page.getByText(HINT)).toBeVisible()
     // The task's dates and priority stay shown at rest; its property chip does not.
@@ -136,15 +134,6 @@ test.describe('page mode document look (#5691) @editor @pages', () => {
     expect(await gap(ids[4])).toBe('12px')
     expect(await gap(ids[7])).toBe('4px')
     expect(await axeViolations(page)).toEqual([])
-
-    // The same page in block mode, for the record: the two modes must not look alike.
-    await page
-      .getByRole('radiogroup', { name: 'Editing mode' })
-      .getByRole('radio', { name: 'Blocks' })
-      .click()
-    await expect(page.getByTestId('block-static').first()).toBeVisible()
-    await page.mouse.move(0, 0)
-    await page.screenshot({ path: test.info().outputPath('block-mode-look.png') })
   })
 
   test('a property chip shows on the pointer, the caret and the focus, Shift+Tab reaches it, and it passes axe', async ({
