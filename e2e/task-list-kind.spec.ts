@@ -342,16 +342,19 @@ test.describe('a task is a list kind, exclusive with bulleted and numbered @edit
     await page.keyboard.type('- D', { delay: 30 })
     await caretIn(page, 4, 'start')
     await page.keyboard.type('1. E', { delay: 30 })
+    // And on the task seeded with a bullet too: the style it stores is already `bullet`.
+    await caretIn(page, 2, 'start')
+    await page.keyboard.type('- G', { delay: 30 })
     await caretIn(page, 0, 'end')
-    await expect.poll(() => todos(page, ids)).toEqual([null, 'TODO', 'TODO', null, null, 'TODO'])
+    await expect.poll(() => todos(page, ids)).toEqual([null, 'TODO', null, null, null, 'TODO'])
     await expect
       .poll(() => listStyles(page, ids))
       .toEqual(['bullet', null, 'bullet', 'bullet', 'ordered', null])
-    await expect.poll(() => shown(blocks())).toEqual(['•', '☐', '☐', '•', '1.', '☐'])
+    await expect.poll(() => shown(blocks())).toEqual(['•', '☐', '•', '•', '1.', '☐'])
 
     await openViaPalette(page, 'Getting Started')
     await openInPageMode(page, title)
-    await expect.poll(() => shown(blocks())).toEqual(['•', '☐', '☐', '•', '1.', '☐'])
+    await expect.poll(() => shown(blocks())).toEqual(['•', '☐', '•', '•', '1.', '☐'])
     expect(await listStyles(page, ids)).toEqual([
       'bullet',
       null,
@@ -360,6 +363,6 @@ test.describe('a task is a list kind, exclusive with bulleted and numbered @edit
       'ordered',
       null,
     ])
-    expect(await todos(page, ids)).toEqual([null, 'TODO', 'TODO', null, null, 'TODO'])
+    expect(await todos(page, ids)).toEqual([null, 'TODO', null, null, null, 'TODO'])
   })
 })

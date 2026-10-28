@@ -837,7 +837,8 @@ function PageModeDocument({
       },
       // Shown at once, so the next key reads it; written once the block exists, as block mode writes it.
       setListStyle: (id, style) => {
-        if (lists.styleOf(id) === style) return
+        // A task that stores `style` too (an older version left one) is not shown as it, so it still needs the write.
+        if (lists.styleOf(id) === style && lists.shownStyleOf(id) === style) return
         const seq = lists.want(id, style)
         // Refused, or not run as the block was not saved: it shows the style last read.
         let written: ListStyle | null = null
