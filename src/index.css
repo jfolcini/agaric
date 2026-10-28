@@ -624,10 +624,10 @@
   --secondary: oklch(0.3 0.04 210); /* base02 */
   --secondary-foreground: oklch(0.68 0.01 195);
   --muted: oklch(0.3 0.04 210);
-  /* base0 lifted 0.62 → 0.66: dialogs, cards and popovers sit on the lifted
-   * --popover (L 0.27), where base0 was 4.1:1; 0.66 is ≈4.8:1 and still
-   * below --foreground (base1, 0.68). */
-  --muted-foreground: oklch(0.66 0.01 200);
+  /* base0 lifted 0.62 → 0.69: on the lifted --popover (L 0.27) base0 was 4.1:1,
+   * and 0.66 left it 4.3:1 on --muted and 4.1:1 on --accent; 0.69 clears 4.5:1
+   * on every surface it sits on (#6160). */
+  --muted-foreground: oklch(0.69 0.01 200);
   --accent: oklch(0.32 0.05 235);
   --accent-foreground: oklch(0.75 0.12 235);
   --destructive: oklch(0.65 0.19 30);
@@ -750,7 +750,8 @@
   --secondary: oklch(0.37 0.03 275); /* current-line */
   --secondary-foreground: oklch(0.96 0.01 90);
   --muted: oklch(0.37 0.03 275);
-  --muted-foreground: oklch(0.7 0.06 275);
+  /* 4.5:1 on --muted and --accent, which 0.70 missed at 3.9:1 and 4.0:1 (#6160). */
+  --muted-foreground: oklch(0.75 0.06 275);
   --accent: oklch(0.37 0.07 335);
   --accent-foreground: oklch(0.85 0.18 335); /* pink */
   --destructive: oklch(0.68 0.22 25); /* red */
@@ -857,9 +858,10 @@
   --secondary: oklch(0.35 0.02 260); /* selection */
   --secondary-foreground: oklch(0.75 0.02 255);
   --muted: oklch(0.35 0.02 260);
-  /* 0.65 → 0.70: on the lifted --popover (L 0.33) 0.65 was 3.8:1; 0.70 is
-   * ≈4.6:1 and still below --foreground (0.75). */
-  --muted-foreground: oklch(0.7 0.02 260);
+  /* 0.65 → 0.73: on the lifted --popover (L 0.33) 0.65 was 3.8:1, and 0.70
+   * left it 4.2:1 on --muted and 4.2:1 on --accent; 0.73 clears 4.5:1 on every
+   * surface it sits on (#6160) and stays below --foreground (0.75). */
+  --muted-foreground: oklch(0.73 0.02 260);
   --accent: oklch(0.35 0.05 235);
   --accent-foreground: oklch(0.78 0.12 235);
   --destructive: oklch(0.7 0.16 25); /* red */
@@ -1933,14 +1935,16 @@
   background: transparent;
 }
 /* Where github.css's colour, or the dark palette's below, falls under 4.5:1 on
-   a code block's `bg-muted`: a token's, which keeps it in each theme. */
+   a code block's `bg-muted` (or github.css's #f0fff4 behind an added line): a
+   token's, which keeps it in each theme. */
 .hljs-doctag,
 .hljs-keyword,
 .hljs-meta .hljs-keyword,
 .hljs-template-tag,
 .hljs-template-variable,
 .hljs-type,
-.hljs-variable.language_ {
+.hljs-variable.language_,
+.dark .hljs-variable.language_ {
   color: var(--alert-error-foreground);
 }
 .hljs-built_in,
@@ -1952,6 +1956,7 @@
 .hljs-formula {
   color: var(--muted-foreground);
 }
+.hljs-addition,
 .hljs-name,
 .hljs-quote,
 .hljs-selector-pseudo,

@@ -260,22 +260,22 @@ const DOCUMENTED_GUARANTEES: ReadonlyArray<{
     documented: 7.44,
   },
   {
-    // index.css .theme-solarized-dark: "0.66 is ≈4.8:1" on the lifted --popover
-    name: 'Solarized Dark — --muted-foreground on --popover ≈4.8:1',
+    // index.css .theme-solarized-dark: 0.69 "clears 4.5:1 on every surface it sits on" (#6160)
+    name: 'Solarized Dark — --muted-foreground on --popover ≈5.4:1',
     selector: '.theme-solarized-dark',
     fg: 'muted-foreground',
     bg: 'popover',
     min: AA_NORMAL,
-    documented: 4.8,
+    documented: 5.39,
   },
   {
-    // index.css .theme-one-dark-pro: "0.70 is ≈4.6:1" on the lifted --popover
-    name: 'One Dark Pro — --muted-foreground on --popover ≈4.6:1',
+    // index.css .theme-one-dark-pro: 0.73 "clears 4.5:1 on every surface it sits on" (#6160)
+    name: 'One Dark Pro — --muted-foreground on --popover ≈5.1:1',
     selector: '.theme-one-dark-pro',
     fg: 'muted-foreground',
     bg: 'popover',
     min: AA_NORMAL,
-    documented: 4.57,
+    documented: 5.11,
   },
   {
     // index.css ~466-468: "muted-foreground … L 0.58 → 0.50 raises it to ≈5.45:1"
@@ -423,6 +423,15 @@ const THEME_PAIRS = [
     bg: 'sidebar-accent',
     min: AA_NORMAL,
   },
+  // Muted text on the surfaces it sits on, and the tokens `.hljs-*` paint a code
+  // block's comments, keywords, built-ins, names and sections with on `bg-muted` (#6160).
+  { pair: 'muted text / code comment', fg: 'muted-foreground', bg: 'muted', min: AA_NORMAL },
+  { pair: 'muted text on hover', fg: 'muted-foreground', bg: 'accent', min: AA_NORMAL },
+  { pair: 'muted text on secondary', fg: 'muted-foreground', bg: 'secondary', min: AA_NORMAL },
+  { pair: 'code keyword', fg: 'alert-error-foreground', bg: 'muted', min: AA_NORMAL },
+  { pair: 'code built-in', fg: 'alert-warning-foreground', bg: 'muted', min: AA_NORMAL },
+  { pair: 'code name / quote', fg: 'alert-tip-foreground', bg: 'muted', min: AA_NORMAL },
+  { pair: 'code section', fg: 'alert-info-foreground', bg: 'muted', min: AA_NORMAL },
 ] as const
 
 const CASES = [false, true].flatMap((highContrast) =>
