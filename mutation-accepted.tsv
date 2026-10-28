@@ -107,10 +107,10 @@ frontend	src/editor/page-mode/page-save.ts	ConditionalExpression	5	1	if (id !== 
 frontend	src/editor/page-mode/page-save.ts	ConditionalExpression	5	1	if (id === null) return
 frontend	src/editor/page-mode/page-save.ts	ConditionalExpression	5	1	if (parentId === undefined) return
 frontend	src/editor/page-mode/page-save.ts	ConditionalExpression	5	1	if (restoring !== undefined && restored.has(restoring)) {
+# #5962 page-save: `start <= shorter` steps past `shorter` only when both texts end there, equal, and losesText is false either way; the `>=` variant shares this key and is killed
+frontend	src/editor/page-mode/page-save.ts	EqualityOperator	8	1	while (start < shorter && was[start] === now[start]) start += 1
 frontend	src/editor/page-mode/page-save.ts	LogicalOperator	52	2	const content = new Map(rows.map((row) => [row.id, row.content ?? '']))
 frontend	src/editor/page-mode/page-save.ts	ObjectLiteral	21	1	state.saved.set(up, { node: null, markdown: content.get(up) as string })
-frontend	src/editor/page-mode/page-save.ts	ObjectLiteral	63	1	await runAll(planDeletes(desired, state), state, api, result, { stopOnFailure: false })
-frontend	src/editor/page-mode/page-save.ts	ObjectLiteral	76	1	const edited = await runAll(planEdits(desired, state), state, api, result, {
 frontend	src/editor/page-mode/page-save.ts	StringLiteral	67	2	const content = new Map(rows.map((row) => [row.id, row.content ?? '']))
 frontend	src/editor/page-mode/page-tags.ts	BooleanLiteral	8	1	return true
 frontend	src/editor/page-mode/page-tasks.ts	ArrayDeclaration	27	1	properties: id === null ? [] : this.tasks.propertiesOf(id),

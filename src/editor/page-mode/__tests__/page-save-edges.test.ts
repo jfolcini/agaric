@@ -16,7 +16,8 @@
  *   ancestor: only that the ancestor is saved is read, as the save then
  *   deletes it, and the document does not show it.
  * - `id === null` in `desiredBlocks`: every page block has an id.
- * - `{ stopOnFailure: false }` made `{}`: `undefined` is as false.
+ * - `start <= shorter` in `losesText`: it steps past `shorter` only when the
+ *   two texts are equal.
  * - `op.kind === 'restore'` made true, and `restoring !== undefined` made true:
  *   the save plans again after each op, which runs the same writes.
  */
@@ -34,6 +35,7 @@ import {
   posIn,
   press,
   type Row,
+  rowsOf,
   treeRows,
   type,
 } from '@/editor/page-mode/__tests__/page-mode-fixtures'
@@ -61,6 +63,7 @@ const C = blockId(3)
 const D = blockId(4)
 const NEW_1 = '01NEW000000000000000000001'
 const NEW_2 = '01NEW000000000000000000002'
+const NEW_3 = '01NEW000000000000000000003'
 
 let editor: Editor | null = null
 
@@ -292,6 +295,31 @@ describe('which failure stops a save', () => {
     expect(result.failed?.id).toBe(NEW_1)
   })
 
+  it('a new block it refuses holds back every block under it, however deep', async () => {
+    const { ed, backend, save } = open([[A, 0, 'a']])
+    caret(ed, 0, 1)
+    press(ed, 'Enter')
+    type(ed, 'x')
+    press(ed, 'Enter')
+    press(ed, 'Tab')
+    type(ed, 'y')
+    press(ed, 'Enter')
+    press(ed, 'Tab')
+    type(ed, 'z')
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'a'],
+      [NEW_1, 0, 'x'],
+      [NEW_2, 1, 'y'],
+      [NEW_3, 2, 'z'],
+    ])
+    backend.failing = (kind, id) => kind === 'create' && id === NEW_1
+
+    await save()
+
+    expect(backend.calls).toEqual([`create ${NEW_1}`])
+    expect(backend.live()).toEqual([[A, 0, 'a']])
+  })
+
   it('a failed move stops the moves after it', async () => {
     const { ed, backend, save } = open([
       [A, 0, 'a'],
@@ -338,6 +366,174 @@ describe('which failure stops a save', () => {
     await save()
 
     expect(backend.calls).toEqual([`delete ${B}`, `delete ${C}`])
+  })
+})
+
+describe('which edits wait for the half split off them', () => {
+  it('holds back the edit of a block split between two of the same letter', async () => {
+    const { ed, backend, save } = open([[A, 0, 'foo']])
+    caret(ed, 0, 2)
+    press(ed, 'Enter')
+    backend.failing = (kind) => kind === 'create'
+
+    await save()
+
+    expect(backend.calls).toEqual([`create ${NEW_1}`])
+    expect(backend.live()).toEqual([[A, 0, 'foo']])
+  })
+
+  it('holds it back once the first half has grown longer than the whole was', async () => {
+    const { ed, backend, save } = open([[A, 0, 'foo bar']])
+    caret(ed, 0, 3)
+    press(ed, 'Enter')
+    caret(ed, 0, 3)
+    type(ed, ' and more')
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'foo and more'],
+      [NEW_1, 0, ' bar'],
+    ])
+    backend.failing = (kind) => kind === 'create'
+
+    await save()
+
+    expect(backend.calls).toEqual([`create ${NEW_1}`])
+    expect(backend.live()).toEqual([[A, 0, 'foo bar']])
+  })
+
+  it('holds back the edit of a block that joins its own lines: a line break is text', async () => {
+    const { ed, backend, save } = open([[A, 0, 'foo\n\nbar']])
+    const secondLine = posIn(ed, 0, 'foo'.length) + 2
+    ed.commands.setTextSelection(secondLine + 'bar'.length)
+    press(ed, 'Enter')
+    type(ed, 'new')
+    ed.commands.setTextSelection(secondLine)
+    press(ed, 'Backspace')
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'foobar'],
+      [NEW_1, 0, 'new'],
+    ])
+    backend.failing = (kind) => kind === 'create'
+
+    await save()
+
+    expect(backend.calls).toEqual([`create ${NEW_1}`])
+    expect(backend.live()).toEqual([[A, 0, 'foo\n\nbar']])
+  })
+
+  it('writes the edit of a block whose text only took a mark', async () => {
+    const { ed, backend, save } = open([[A, 0, 'foo bar']])
+    caret(ed, 0, 7)
+    press(ed, 'Enter')
+    type(ed, 'new')
+    ed.commands.setTextSelection({ from: posIn(ed, 0, 0), to: posIn(ed, 0, 3) })
+    ed.commands.toggleBold()
+    backend.failing = (kind) => kind === 'create'
+
+    await save()
+
+    expect(backend.calls).toEqual([`create ${NEW_1}`, `edit ${A}`])
+    expect(backend.live()).toEqual([[A, 0, '**foo** bar']])
+  })
+
+  it('writes the edit of a block an undo brought back, which no saved text can be compared with', async () => {
+    const { ed, backend, save } = open([
+      [A, 0, 'foo'],
+      [B, 0, 'bar'],
+    ])
+    caret(ed, 1, 0)
+    press(ed, 'Backspace')
+    await save()
+    ed.commands.undo()
+    caret(ed, 1, 3)
+    type(ed, '!')
+    press(ed, 'Enter')
+    type(ed, 'new')
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'foo'],
+      [B, 0, 'bar!'],
+      [NEW_1, 0, 'new'],
+    ])
+    backend.reset()
+    backend.failing = (kind) => kind === 'create'
+
+    await save()
+
+    expect(backend.calls).toEqual([
+      `restore ${B}`,
+      'tree',
+      `create ${NEW_1}`,
+      `edit ${A}`,
+      `edit ${B}`,
+    ])
+    expect(backend.live()).toEqual([
+      [A, 0, 'foo'],
+      [B, 0, 'bar!'],
+    ])
+  })
+})
+
+describe('which deletes wait for a block that failed to write', () => {
+  it('holds back the delete of a block holding only a chip, joined into one whose edit fails', async () => {
+    const tag = `#[${blockId(9)}]`
+    const { ed, backend, save } = open([
+      [A, 0, 'foo'],
+      [B, 0, tag],
+    ])
+    caret(ed, 1, 0)
+    press(ed, 'Backspace')
+    expect(rowsOf(ed.state.doc)).toEqual([[A, 0, `foo${tag}`]])
+    backend.failing = (kind) => kind === 'edit'
+
+    await save()
+
+    expect(backend.calls).toEqual([`edit ${A}`])
+    expect(backend.live()).toEqual([
+      [A, 0, 'foo'],
+      [B, 0, tag],
+    ])
+  })
+
+  it('does not hold back the delete of an empty block', async () => {
+    const { ed, backend, save } = open([
+      [A, 0, 'foo'],
+      [B, 0, ''],
+      [C, 0, 'bar'],
+    ])
+    caret(ed, 1, 0)
+    press(ed, 'Backspace')
+    caret(ed, 1, 3)
+    type(ed, '!')
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'foo'],
+      [C, 0, 'bar!'],
+    ])
+    backend.failing = (kind) => kind === 'edit'
+
+    await save()
+
+    expect(backend.calls).toEqual([`edit ${C}`, `delete ${B}`])
+    expect(backend.live()).toEqual([
+      [A, 0, 'foo'],
+      [C, 0, 'bar'],
+    ])
+  })
+
+  it('deletes a block with a peer’s block under it that the document never showed, which goes along', async () => {
+    const rows: Row[] = [
+      [A, 0, 'a'],
+      [B, 0, 'b'],
+      [D, 1, 'peer'],
+    ]
+    const ed = openPage(rows.slice(0, 2))
+    editor = ed
+    const backend = new FakeBackend(rows)
+    const state = createSaveState(PAGE, treeRows(rows), ed.state.doc)
+    ed.view.dispatch(ed.state.tr.delete(posIn(ed, 1, 0) - 2, ed.state.doc.content.size))
+
+    await savePage(ed.state.doc, state, backend)
+
+    expect(backend.calls).toEqual([`delete ${B}`])
+    expect(backend.live()).toEqual([[A, 0, 'a']])
   })
 })
 
