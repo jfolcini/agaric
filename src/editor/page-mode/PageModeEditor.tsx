@@ -115,6 +115,7 @@ import {
 import type { PageTaskActions } from '@/editor/page-mode/page-tasks'
 import { PageToolbar } from '@/editor/page-mode/page-toolbar'
 import { PageBlockMenu } from '@/editor/page-mode/PageBlockMenu'
+import { PageBubbleMenus } from '@/editor/page-mode/PageBubbleMenus'
 import { applyRemote } from '@/editor/page-mode/remote-patch'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { blockIdOf } from '@/editor/token-ids'
@@ -992,6 +993,8 @@ function PageModeDocument({
       </div>
       {/* Block mode's own: the marks and the link on a selection, and Ctrl+K. */}
       {editor !== null && <SelectionBubbleMenu editor={editor} />}
+      {/* The caret's link, table, code block or selected image (#5691). */}
+      {editor !== null && <PageBubbleMenus editor={editor} />}
       <PageBlockMenu
         editor={editor}
         pageId={pageId}

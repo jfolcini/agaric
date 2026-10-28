@@ -17,6 +17,7 @@ import type { Editor } from '@tiptap/react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ImageBubbleMenu } from '@/components/editor-toolbar/ImageBubbleMenu'
 import { SelectionBubbleMenu } from '@/components/editor-toolbar/SelectionBubbleMenu'
 import type { EditorSurfaceProps } from '@/components/editor/editor-surface-context'
 import { FormattingToolbar } from '@/components/FormattingToolbar'
@@ -35,6 +36,7 @@ export function EditorSurface({
     <>
       <FormattingToolbar editor={ed} blockId={blockId} currentPriority={currentPriority} />
       <SelectionBubbleMenu editor={ed} blockId={blockId} />
+      <ImageBubbleMenu editor={ed} />
       <EditorContent editor={ed} />
       {isDragOver && (
         <p className="px-3 pb-1 text-xs text-muted-foreground select-none" aria-live="polite">

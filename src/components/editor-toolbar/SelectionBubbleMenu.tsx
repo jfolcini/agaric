@@ -26,6 +26,7 @@ import { useTranslation } from 'react-i18next'
 
 import { LinkEditPopover } from '@/components/editor-toolbar/LinkEditPopover'
 import {
+  bubbleMenuClass,
   createMarkToggles,
   MARK_TOGGLE_SHORTCUT_IDS,
   toolbarActiveClass,
@@ -370,7 +371,7 @@ export function SelectionBubbleMenu({
       // stacking context and would otherwise paint on top — intercepting clicks
       // on the mark buttons. A z-index lifts the (position:absolute) bubble
       // above those z-auto siblings within that context.
-      className="selection-bubble-menu z-50 flex items-center gap-0.5 rounded-md border border-border bg-popover px-1 py-0.5 shadow-(--shadow-floating) animate-in fade-in-0 zoom-in-95 duration-fast ease-smooth"
+      className={`selection-bubble-menu ${bubbleMenuClass}`}
       data-testid="selection-bubble-menu"
     >
       {markToggles.map((btn) => {
