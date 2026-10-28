@@ -19,6 +19,7 @@ Set out to give page mode GitLab-style bubble menus (#5691, the maintainer's dec
 - **`ImageLightbox` carries `data-editor-portal`.** Without it, block mode leaves the block when the lightbox takes focus, and the lightbox closes at once.
 - **The alt-text editor is a portalled popover,** not a field in the bubble. Block mode's key handler sits around the bubble, and took a field's Enter as "split block".
 - **English keys only.** The `es` catalog translates one namespace per translation PR. The builder's partial Spanish page and editor files went back out, and the agents' brief now says so.
+- **The reveal spec's axe check measures at rest.** CI's first run caught the code bubble mid fade-in, at 2.19:1, from `block-syntax-reveal.spec.ts`'s contrast check. At rest it passes, so the check now waits for running animations first, as `mobile-overflow.spec.ts` already does.
 - **Rebase.** It was rebased onto the toolbar (#6148) and the document look (#6151). The only conflicts were the docs lines, merged to keep both.
 
 **Possibly open, not reproduced:** block mode's capturing keydown listener could take Enter on a focused bubble button as a block key. This is already true of `SelectionBubbleMenu`, and is noted for the follow-up.

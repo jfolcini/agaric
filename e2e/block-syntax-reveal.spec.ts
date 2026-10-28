@@ -254,6 +254,8 @@ test.describe('block syntax revealed around the cursor in page mode (#5691) @edi
     ] as const) {
       await caretAt(page, PAGE_EDITOR, text, 1)
       expect(await shownSyntax(page)).toEqual(drawn)
+      // The code block's bubble fades in under the caret: measure it at rest.
+      await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished)))
       const violations = await page.evaluate(async () => {
         // @ts-expect-error injected global
         const results = await window.axe.run({
