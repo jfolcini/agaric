@@ -1503,6 +1503,7 @@ describe('PageEditor page mode (#5691)', () => {
   })
 
   it('saves page mode’s text before Edit as Markdown loads the page', async () => {
+    stubInvoke({ load_page_subtree: () => ({ blocks: [], truncated: false, total: 0 }) })
     writePreference(PREFERENCES.editMode, 'page')
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
     await modeSwitch()
