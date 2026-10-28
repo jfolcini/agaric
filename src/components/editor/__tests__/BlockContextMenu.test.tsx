@@ -1592,6 +1592,19 @@ describe('BlockContextMenu', () => {
       expect(toggle.querySelectorAll('svg').length).toBeGreaterThanOrEqual(2)
     })
 
+    it('shows each heading row’s chord, and none on a row without one', () => {
+      renderMenu({ onTurnInto: vi.fn() })
+      expandTurnInto()
+
+      for (const level of [1, 2, 3]) {
+        const row = screen.getByRole('menuitem', {
+          name: new RegExp(t(`contextMenu.turnIntoType.h${level}`)),
+        })
+        expect(within(row).getByText(`Ctrl+Alt+${level}`)).toBeInTheDocument()
+      }
+      expect(screen.getByRole('menuitem', { name: TEXT }).textContent).toBe(TEXT)
+    })
+
     it('clicking a non-active type converts the block and closes the menu', async () => {
       const user = userEvent.setup()
       const onTurnInto = vi.fn()

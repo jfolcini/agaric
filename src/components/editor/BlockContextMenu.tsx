@@ -660,11 +660,15 @@ function buildTurnIntoGroup(ctx: MenuGroupContext): MenuItem[] {
           const blockType = opt.blockType as BlockTypeToken
           const isActive = activeBlockType === blockType
           if (blockType === 'callout') return buildCalloutRows(ctx, isActive, Icon)
+          const headingChord = /^h[1-6]$/.test(blockType)
+            ? shortcutHint(`heading${blockType.slice(1)}`)
+            : ''
           const row: MenuItem = {
             id: 'turnInto',
             label: t(turnIntoTypeKey(opt.blockType)),
             icon: Icon ? <Icon className="h-3.5 w-3.5" /> : <span className="h-3.5 w-3.5" />,
             active: isActive,
+            ...(headingChord === '' ? {} : { shortcut: headingChord }),
             indented: true,
             disclosureId: turnIntoGroupId,
             disclosureLabel: t('contextMenu.turnInto'),
