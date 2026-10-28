@@ -1,0 +1,842 @@
+{
+  "description": "#6054 D3 — the edge into DONE makes a repeating task's next occurrence (`set_todo_state_in_tx` -> `build_recurrence_sibling_in_tx`), on both callers that write one state: `set_todo_state` and `set_property` with key `todo_state`. The occurrence is appended under the original's parent (`create_block`), then written in the backend's order: `todo_state` TODO, `repeat`, the shifted `due_date` and `scheduled_date`, `repeat-origin`; the digest pins that order. Every rule here is `+` mode, which shifts from the task's own date: `daily`, `weekly` across a year end on both dates, `monthly` from Jan 31 (clamped to Feb 28, and the clamp sticks on the next completion), and `+3d`. The `.+` and `++` modes shift from `chrono::Local::now()`, so no fixture can pin their dates; the mock's unit tests pin them with a fixed now. A DONE task completed again makes nothing, an undated task's occurrence has no dates, and an occurrence's own occurrence points `repeat-origin` at the first task of the chain. Payload-replayed ops do not run recurrence on the backend, so every DONE here rides `via: \"command\"`. Seed: S1 (Chores) > S2 (daily), S3 (weekly), S4 (monthly), S5 (+3d), S6 > [S7 (daily, undated), S8]. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Chores",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "water plants",
+        "deleted_at": null,
+        "due_date": "2025-06-15",
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "weekly review",
+        "deleted_at": null,
+        "due_date": "2025-12-30",
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": "2025-12-28",
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "pay rent",
+        "deleted_at": null,
+        "due_date": "2025-01-31",
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "stretch",
+        "deleted_at": null,
+        "due_date": "2025-06-15",
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "garden",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "weed",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B1",
+        "parent_id": "B6",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "mulch",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B1",
+        "parent_id": "B6",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "water plants",
+        "deleted_at": null,
+        "due_date": "2025-06-16",
+        "id": "B9",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      },
+      {
+        "block_type": "content",
+        "content": "weekly review",
+        "deleted_at": null,
+        "due_date": "2026-01-06",
+        "id": "B10",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 7,
+        "priority": null,
+        "scheduled_date": "2026-01-04",
+        "todo_state": "TODO"
+      },
+      {
+        "block_type": "content",
+        "content": "pay rent",
+        "deleted_at": null,
+        "due_date": "2025-02-28",
+        "id": "B11",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 8,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "pay rent",
+        "deleted_at": null,
+        "due_date": "2025-03-28",
+        "id": "B12",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 9,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      },
+      {
+        "block_type": "content",
+        "content": "stretch",
+        "deleted_at": null,
+        "due_date": "2025-06-18",
+        "id": "B13",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 10,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      },
+      {
+        "block_type": "content",
+        "content": "weed",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B14",
+        "page_id": "B1",
+        "parent_id": "B6",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      }
+    ],
+    "op_log_digest": {
+      "count": 48,
+      "ops": [
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_scheduled_date"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "key": "repeat-origin",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_scheduled_date"
+        },
+        {
+          "key": "repeat-origin",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "key": "repeat-origin",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "key": "repeat-origin",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "key": "repeat-origin",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-origin",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "repeat",
+        "value": "daily",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B3",
+        "key": "repeat",
+        "value": "weekly",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B4",
+        "key": "repeat",
+        "value": "monthly",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B5",
+        "key": "repeat",
+        "value": "+3d",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B7",
+        "key": "repeat",
+        "value": "daily",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B9",
+        "key": "repeat",
+        "value": "daily",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B9",
+        "key": "repeat-origin",
+        "value": "B2",
+        "value_type": "Ref"
+      },
+      {
+        "block_id": "B10",
+        "key": "repeat",
+        "value": "weekly",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B10",
+        "key": "repeat-origin",
+        "value": "B3",
+        "value_type": "Ref"
+      },
+      {
+        "block_id": "B11",
+        "key": "repeat",
+        "value": "monthly",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B11",
+        "key": "repeat-origin",
+        "value": "B4",
+        "value_type": "Ref"
+      },
+      {
+        "block_id": "B12",
+        "key": "repeat",
+        "value": "monthly",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B12",
+        "key": "repeat-origin",
+        "value": "B4",
+        "value_type": "Ref"
+      },
+      {
+        "block_id": "B13",
+        "key": "repeat",
+        "value": "+3d",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B13",
+        "key": "repeat-origin",
+        "value": "B5",
+        "value_type": "Ref"
+      },
+      {
+        "block_id": "B14",
+        "key": "repeat",
+        "value": "daily",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B14",
+        "key": "repeat-origin",
+        "value": "B7",
+        "value_type": "Ref"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "daily_done_makes_the_next_day",
+      "returns": ["B2#todo_state=DONE"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "done_again_makes_nothing",
+      "returns": ["B2#todo_state=DONE"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "weekly_done_shifts_both_dates",
+      "returns": ["B3#todo_state=DONE"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "monthly_done_clamps_the_month_end",
+      "returns": ["B4#todo_state=DONE"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "next_occurrence_done_keeps_the_clamped_day",
+      "returns": ["B11#todo_state=DONE"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "property_write_done_makes_the_next_occurrence",
+      "returns": ["B5"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undated_task_starts",
+      "returns": ["B7#todo_state=DOING"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undated_done_appends_under_its_parent",
+      "returns": ["B7#todo_state=DONE"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "occurrences_append_under_the_page",
+      "rows": [
+        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null",
+        "B4#parent_id=B1#page_id=B1#position=3#deleted_at=null",
+        "B5#parent_id=B1#page_id=B1#position=4#deleted_at=null",
+        "B6#parent_id=B1#page_id=B1#position=5#deleted_at=null",
+        "B9#parent_id=B1#page_id=B1#position=6#deleted_at=null",
+        "B10#parent_id=B1#page_id=B1#position=7#deleted_at=null",
+        "B11#parent_id=B1#page_id=B1#position=8#deleted_at=null",
+        "B12#parent_id=B1#page_id=B1#position=9#deleted_at=null",
+        "B13#parent_id=B1#page_id=B1#position=10#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "nested_occurrence_appends_under_its_parent",
+      "rows": [
+        "B7#parent_id=B6#page_id=B1#position=1#deleted_at=null",
+        "B8#parent_id=B6#page_id=B1#position=2#deleted_at=null",
+        "B14#parent_id=B6#page_id=B1#position=3#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "second_monthly_occurrence_keeps_the_clamped_day",
+      "rows": ["B12#parent_id=B1#page_id=B1#position=9#deleted_at=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "occurrences_carry_no_created_at",
+      "rows": ["B7#parent_id=B6#page_id=B1#position=1#deleted_at=null"],
+      "total_count": null
+    }
+  ],
+  "name": "recurrence_done_creates_sibling",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "date": "2025-06-15"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "date": "2025-12-30"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "date": "2025-12-28"
+      },
+      "command": "set_scheduled_date"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "date": "2025-01-31"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "date": "2025-06-15"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "state": "DONE"
+      },
+      "command": "set_todo_state",
+      "comment": "C1, due 2025-06-16, appended under S1 after S6.",
+      "name": "daily_done_makes_the_next_day",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "state": "DONE"
+      },
+      "command": "set_todo_state",
+      "comment": "Only the edge INTO done recurs: DONE -> DONE makes no second occurrence.",
+      "name": "done_again_makes_nothing",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "state": "DONE"
+      },
+      "command": "set_todo_state",
+      "comment": "C2: due 2025-12-30 -> 2026-01-06 and scheduled 2025-12-28 -> 2026-01-04, both across the year end.",
+      "name": "weekly_done_shifts_both_dates",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "state": "DONE"
+      },
+      "command": "set_todo_state",
+      "comment": "C3: Jan 31 -> Feb 28, the destination month's last day.",
+      "name": "monthly_done_clamps_the_month_end",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C3",
+        "state": "DONE"
+      },
+      "command": "set_todo_state",
+      "comment": "C4: Feb 28 -> Mar 28, not Mar 31 (#679), its `repeat-origin` S4 copied from C3 rather than C3 itself.",
+      "name": "next_occurrence_done_keeps_the_clamped_day",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "key": "todo_state",
+        "value": {
+          "value_text": "DONE"
+        }
+      },
+      "command": "set_property",
+      "comment": "The generic property write recurs too (#5394): C5, due 2025-06-18.",
+      "name": "property_write_done_makes_the_next_occurrence",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S7",
+        "state": "DOING"
+      },
+      "command": "set_todo_state",
+      "comment": "DOING first, so the edge into DONE below starts from an open state.",
+      "name": "undated_task_starts",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S7",
+        "state": "DONE"
+      },
+      "command": "set_todo_state",
+      "comment": "C6 under S6 after S8, with no dates: nothing to shift.",
+      "name": "undated_done_appends_under_its_parent",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "request": {
+          "limit": 20,
+          "parentId": "S1"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "The occurrences sit after S2..S6 in the order they were made: C1, C2, C3, C4 (C3's own, under the same parent), C5.",
+      "name": "occurrences_append_under_the_page"
+    },
+    {
+      "args": {
+        "request": {
+          "limit": 20,
+          "parentId": "S6"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "C6 is appended under its original's parent, after S8.",
+      "name": "nested_occurrence_appends_under_its_parent"
+    },
+    {
+      "args": {
+        "request": {
+          "key": "due_date",
+          "limit": 100,
+          "valueDate": "2025-03-28"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_property",
+      "comment": "Exactly C4 carries the second monthly shift, from the clamped Feb 28.",
+      "name": "second_monthly_occurrence_keeps_the_clamped_day"
+    },
+    {
+      "args": {
+        "request": {
+          "key": "created_at",
+          "limit": 100
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_property",
+      "comment": "Only S7, which entered DOING, holds a `created_at`: an occurrence's TODO is a plain `set_property_in_tx` write, which stamps nothing.",
+      "name": "occurrences_carry_no_created_at"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Chores",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "water plants",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "weekly review",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "pay rent",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "stretch",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": "garden",
+        "id": "S6",
+        "parent_id": "S1",
+        "position": 5
+      },
+      {
+        "block_type": "content",
+        "content": "weed",
+        "id": "S7",
+        "parent_id": "S6",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "mulch",
+        "id": "S8",
+        "parent_id": "S6",
+        "position": 2
+      }
+    ],
+    "properties": [
+      {
+        "block_id": "S2",
+        "key": "repeat",
+        "value": {
+          "value_text": "daily"
+        }
+      },
+      {
+        "block_id": "S3",
+        "key": "repeat",
+        "value": {
+          "value_text": "weekly"
+        }
+      },
+      {
+        "block_id": "S4",
+        "key": "repeat",
+        "value": {
+          "value_text": "monthly"
+        }
+      },
+      {
+        "block_id": "S5",
+        "key": "repeat",
+        "value": {
+          "value_text": "+3d"
+        }
+      },
+      {
+        "block_id": "S7",
+        "key": "repeat",
+        "value": {
+          "value_text": "daily"
+        }
+      }
+    ],
+    "tags": []
+  }
+}

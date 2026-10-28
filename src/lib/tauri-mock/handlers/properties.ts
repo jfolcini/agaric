@@ -15,7 +15,9 @@ import {
   REPEAT_RULE_BOUNDS,
   SYSTEM_MANAGED_PROPERTY_KEYS,
 } from '@/lib/property-save-utils'
+import { isIsoDate } from '@/lib/search-query/is-iso-date'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
+import { blocksHandlers } from '@/lib/tauri-mock/handlers/blocks'
 import {
   type TypedHandlers,
   appErrorRejection,
@@ -31,10 +33,12 @@ import {
   readActiveSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
 import { resolveRefValue } from '@/lib/tauri-mock/names'
+import { shiftDate } from '@/lib/tauri-mock/recurrence'
 import { valueFieldsOf } from '@/lib/tauri-mock/revert'
 import {
   appSettings,
   blocks,
+  type MockOpLogEntry,
   properties,
   propertyDefs,
   pushOp,
@@ -91,23 +95,36 @@ function deletePropertyRow(blockId: string, key: string): { device_id: string; s
   return { device_id: op.device_id, seq: op.seq }
 }
 
-/** Stamp `key` with today's date, appending the op with the value its undo restores. */
-function stampToday(blockId: string, key: string): void {
+/**
+ * `set_property_in_tx` for a `block_properties` key: the row, and the op with
+ * the value its undo restores (`from_value: null` when the block held none).
+ */
+function writePropertyRow(
+  blockId: string,
+  key: string,
+  value: Record<string, unknown>,
+): MockOpLogEntry {
   const prior = properties.get(blockId)?.get(key)
   if (!properties.has(blockId)) properties.set(blockId, new Map())
   properties.get(blockId)?.set(key, {
     key,
     value_text: null,
     value_num: null,
-    value_date: todayDate(),
+    value_date: null,
     value_ref: null,
     value_bool: null,
+    ...value,
   })
-  pushOp('set_property', {
+  return pushOp('set_property', {
     block_id: blockId,
     key,
     from_value: prior ? typedValueOf(prior) : null,
   })
+}
+
+/** Stamp `key` with today's date. */
+function stampToday(blockId: string, key: string): void {
+  writePropertyRow(blockId, key, { value_date: todayDate() })
 }
 
 /**
@@ -181,12 +198,110 @@ function setReservedColumnProperty(
   // `done`) fails instead of landing raw on the column.
   assertValidReservedPropertyValue(key, channel, channelValue)
   const b = blocks.get(blockId)
-  const fromValue = (b?.[key] as string | null | undefined) ?? null
   if (b) b[key] = channelValue
   const op = pushOp('set_property', { block_id: blockId, key, from_value: null })
-  // #5394 — `set_property_inner` routes `todo_state` through `set_todo_state_inner`.
-  if (b && key === 'todo_state') writeTaskStampTransitions(blockId, fromValue, channelValue)
   return b ? { ...b, op_refs: [{ device_id: op.device_id, seq: op.seq }] } : null
+}
+
+/**
+ * `set_todo_state_in_tx` (`commands/properties.rs`), which every single-block
+ * `todo_state` writer runs: `write` sets the state and appends its op, the
+ * #5074 stamps follow, and the edge into DONE makes the task's next occurrence
+ * (`handle_recurrence_in_tx`). The backend writes it all in one transaction,
+ * so the occurrence is read before the first write: a rule that cannot advance
+ * refuses the whole write. The batch writers skip the occurrence, as the
+ * backend's do.
+ */
+function writeTodoState<R>(
+  blockId: string,
+  toState: string | null,
+  write: (fromState: string | null) => R,
+): R {
+  const fromState = (blocks.get(blockId)?.['todo_state'] as string | null | undefined) ?? null
+  const next = toState === 'DONE' && fromState !== 'DONE' ? nextOccurrence(blockId) : null
+  const result = write(fromState)
+  writeTaskStampTransitions(blockId, fromState, toState)
+  if (next !== null) createOccurrence(next)
+  return result
+}
+
+/** What `build_recurrence_sibling_in_tx` reads before it writes the next occurrence. */
+interface Occurrence {
+  original: Record<string, unknown>
+  rule: string
+  due: string | null
+  scheduled: string | null
+  until: string | null
+  count: number | null
+  seq: number | null
+  originId: string
+}
+
+/** A date column shifted by `rule`, refused as `shift_date`'s `Err` refuses. */
+function shiftedColumn(date: unknown, rule: string): string | null {
+  if (typeof date !== 'string') return null
+  const shifted = shiftDate(date, rule, new Date())
+  if ('err' in shifted) throw validationRejection(shifted.err)
+  return shifted.ok
+}
+
+/**
+ * The reads of `build_recurrence_sibling_in_tx` (`agaric-engine/src/recurrence/compute.rs`)
+ * and `remaining_repeat_bounds`: null when the block has no `repeat` rule or
+ * an end condition fires. `repeat-until` is checked against the shifted due
+ * date, else the scheduled one, and only when there is one; one that is not a
+ * `YYYY-MM-DD` date ends the chain.
+ */
+function nextOccurrence(blockId: string): Occurrence | null {
+  const props = properties.get(blockId)
+  const read = (key: string, column: string): unknown => props?.get(key)?.[column] ?? null
+  const rule = read('repeat', 'value_text') as string | null
+  const original = blocks.get(blockId)
+  if (rule === null || !original) return null
+  const due = shiftedColumn(original['due_date'], rule)
+  const scheduled = shiftedColumn(original['scheduled_date'], rule)
+  const reference = due ?? scheduled
+  const until = read('repeat-until', 'value_date') as string | null
+  if (until !== null && reference !== null && (!isIsoDate(until) || reference > until)) return null
+  // `as i64` truncates the counter's `f64`.
+  const count = read('repeat-count', 'value_num') as number | null
+  const seq = read('repeat-seq', 'value_num') as number | null
+  if (count !== null && Math.trunc(seq ?? 0) >= Math.trunc(count)) return null
+  const originId = (read('repeat-origin', 'value_ref') as string | null) ?? blockId
+  return { original, rule, due, scheduled, until, count, seq, originId }
+}
+
+/**
+ * `create_recurrence_sibling`: the next occurrence appended under the
+ * original's parent, then its properties in the backend's order
+ * (`seed_sibling_todo_and_repeat`, `copy_shifted_dates`, `copy_repeat_bounds`).
+ * The state is the column alone: a `set_property_in_tx` write stamps nothing.
+ * `repeat-seq` advances only beside a `repeat-count` (`copy_repeat_counter`).
+ */
+function createOccurrence(next: Occurrence): void {
+  const { original } = next
+  const { id } = blocksHandlers.create_block({
+    blockType: original['block_type'],
+    content: original['content'] ?? '',
+    parentId: original['parent_id'] ?? null,
+    index: null,
+    scope: {
+      kind: 'active',
+      space_id: (original['space_id'] as string | null) ?? ownerSpaceOf(original),
+    },
+  })
+  setReservedColumnProperty(id, 'todo_state', 'value_text', 'TODO', null)
+  writePropertyRow(id, 'repeat', { value_text: next.rule })
+  if (next.due !== null) setReservedColumnProperty(id, 'due_date', 'value_date', null, next.due)
+  if (next.scheduled !== null) {
+    setReservedColumnProperty(id, 'scheduled_date', 'value_date', null, next.scheduled)
+  }
+  if (next.until !== null) writePropertyRow(id, 'repeat-until', { value_date: next.until })
+  if (next.count !== null) {
+    writePropertyRow(id, 'repeat-count', { value_num: next.count })
+    writePropertyRow(id, 'repeat-seq', { value_num: Math.trunc(next.seq ?? 0) + 1 })
+  }
+  writePropertyRow(id, 'repeat-origin', { value_ref: next.originId })
 }
 
 /** The `value_type` vocabulary `validate_property_def_shape` matches on. */
@@ -432,31 +547,11 @@ export const propertiesHandlers = {
     const reservedChannel = RESERVED_PROPERTY_COLUMN[key]
     if (reservedChannel !== undefined) {
       // #3091 — reserved-value validation runs inside setReservedColumnProperty.
-      return setReservedColumnProperty(blockId, key, reservedChannel, valueText, valueDate)
+      const write = () =>
+        setReservedColumnProperty(blockId, key, reservedChannel, valueText, valueDate)
+      // #5394 — `set_property_inner` routes `todo_state` through `set_todo_state_in_tx`.
+      return key === 'todo_state' ? writeTodoState(blockId, valueText, write) : write()
     }
-    // Capture the prior typed value (if any) so revert can restore it.
-    // `from_value: null` signals "property did not exist" — revert removes it.
-    const priorRow = properties.get(blockId)?.get(key)
-    const fromValue = priorRow
-      ? {
-          value_text: (priorRow['value_text'] as string | null) ?? null,
-          value_num: (priorRow['value_num'] as number | null) ?? null,
-          value_date: (priorRow['value_date'] as string | null) ?? null,
-          value_ref: (priorRow['value_ref'] as string | null) ?? null,
-          value_bool: (priorRow['value_bool'] as number | null) ?? null,
-        }
-      : null
-    if (!properties.has(blockId)) {
-      properties.set(blockId, new Map())
-    }
-    properties.get(blockId)?.set(key, {
-      key,
-      value_text: valueText,
-      value_num: valueNum,
-      value_date: valueDate,
-      value_ref: valueRef,
-      value_bool: valueBool === null ? null : valueBool ? 1 : 0,
-    })
     // #533/#3081 — `space` is column-backed: the backend projects a
     // `SetProperty(space)` op to the denormalized `blocks.space_id` column (it
     // writes NO `block_properties` row). Mirror that here so the mock's
@@ -464,7 +559,13 @@ export const propertiesHandlers = {
     // stay consistent with the backend for any path that still sets space via
     // a property write. Page row only, as in `move_blocks_to_space`.
     if (key === 'space') target['space_id'] = valueRef
-    const op = pushOp('set_property', { block_id: blockId, key, from_value: fromValue })
+    const op = writePropertyRow(blockId, key, {
+      value_text: valueText,
+      value_num: valueNum,
+      value_date: valueDate,
+      value_ref: valueRef,
+      value_bool: valueBool === null ? null : valueBool ? 1 : 0,
+    })
     const b = blocks.get(blockId)
     // #2468 — `WithOps<BlockRow>`.
     return b ? { ...b, op_refs: [{ device_id: op.device_id, seq: op.seq }] } : null
@@ -591,16 +692,14 @@ export const propertiesHandlers = {
 
   set_todo_state: (args) => {
     const a = args as Record<string, unknown>
-    const b = blocks.get(a['blockId'] as string)
-    if (!b) throw notFoundRejection(`block '${a['blockId'] as string}' not found`)
-    const fromState = (b['todo_state'] as string | null) ?? null
-    b['todo_state'] = (a['state'] as string | null) ?? null
-    pushOp('set_todo_state', {
-      block_id: a['blockId'],
-      state: b['todo_state'],
-      from_state: fromState,
+    const blockId = a['blockId'] as string
+    const b = blocks.get(blockId)
+    if (!b) throw notFoundRejection(`block '${blockId}' not found`)
+    const state = (a['state'] as string | null) ?? null
+    writeTodoState(blockId, state, (fromState) => {
+      b['todo_state'] = state
+      pushOp('set_todo_state', { block_id: blockId, state, from_state: fromState })
     })
-    writeTaskStampTransitions(a['blockId'] as string, fromState, b['todo_state'] as string | null)
     return { ...b }
   },
 

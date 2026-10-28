@@ -9,11 +9,10 @@
 // This spec gives one block a property and makes the other a weekly task due
 // today, through the real IPC, opens the page in page mode, types a
 // `status:: done` line and presses ArrowDown, then completes the task with its
-// checkbox. The real backend makes the next occurrence in the same transaction
-// (`build_recurrence_sibling_in_tx`), which the mock does not model: page mode
-// brings it in with the page's reload. The spec reads back what the backend
-// holds, after navigating away and back. `e2e/page-mode.spec.ts` is the per-PR
-// pair against the mock.
+// checkbox. The backend makes the next occurrence in the same transaction
+// (`build_recurrence_sibling_in_tx`), and page mode brings it in with the
+// page's reload. The spec reads back what the backend holds, after navigating
+// away and back. `e2e/page-mode.spec.ts` is the per-PR pair against the mock.
 //
 // Globals (`$`, `$$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
