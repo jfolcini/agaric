@@ -44,7 +44,6 @@ function filteredIds(filters: Array<Record<string, unknown>>): string[] {
 }
 
 const not = (filter: Record<string, unknown>) => ({ type: 'Not', filter })
-const sources = (...ids: string[]) => ids.toSorted()
 
 describe('list_backlinks_grouped — Not over the property, due-date and created leaves', () => {
   beforeEach(() => {
@@ -71,48 +70,6 @@ describe('list_backlinks_grouped — Not over the property, due-date and created
       )
       ;(blocks.get(source) as Record<string, unknown>)['due_date'] = due
     }
-  })
-
-  it('PropertyNum compares value_num; Not keeps the blocks without the key', () => {
-    const gt = { type: 'PropertyNum', key: 'effort', op: 'Gt', value: 5 }
-    expect(filteredIds([gt])).toEqual([HIGH])
-    expect(filteredIds([not(gt)])).toEqual(sources(LOW, BARE, DATED))
-    // `Neq` needs the key held, so only HIGH matches it.
-    expect(filteredIds([not({ ...gt, op: 'Neq', value: 3 })])).toEqual(sources(LOW, BARE, DATED))
-    // `Contains` on a number is the empty set.
-    expect(filteredIds([not({ ...gt, op: 'Contains', value: 3 })])).toEqual(
-      sources(LOW, HIGH, BARE, DATED),
-    )
-  })
-
-  it('PropertyDate compares value_date; Not keeps the blocks without the key', () => {
-    const lt = { type: 'PropertyDate', key: 'review', op: 'Lt', value: '2026-04-01' }
-    expect(filteredIds([lt])).toEqual([LOW])
-    expect(filteredIds([not(lt)])).toEqual(sources(HIGH, BARE, DATED))
-  })
-
-  it('DueDate compares the column; Not keeps the blocks with no due date', () => {
-    const gte = { type: 'DueDate', op: 'Gte', value: '2026-02-01' }
-    expect(filteredIds([gte])).toEqual([HIGH])
-    expect(filteredIds([not(gte)])).toEqual(sources(LOW, BARE, DATED))
-    expect(filteredIds([not({ ...gte, op: 'Eq', value: '2026-01-10' })])).toEqual(
-      sources(HIGH, BARE, DATED),
-    )
-    expect(filteredIds([not({ ...gte, op: 'Neq', value: '2026-01-10' })])).toEqual(
-      sources(LOW, BARE, DATED),
-    )
-  })
-
-  it('DueDate refuses Contains, under a Not too', () => {
-    expect(() => filteredIds([not({ type: 'DueDate', op: 'Contains', value: '2026' })])).toThrow(
-      expect.objectContaining({ kind: 'validation' }),
-    )
-  })
-
-  it("CreatedInRange compares the id's ULID time; Not keeps the older blocks", () => {
-    const after = { type: 'CreatedInRange', after: '2025-01-01', before: null }
-    expect(filteredIds([after])).toEqual([DATED])
-    expect(filteredIds([not(after)])).toEqual(sources(LOW, HIGH, BARE))
   })
 
   it('CreatedInRange refuses a bound that is not a date', () => {

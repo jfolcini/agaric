@@ -24,7 +24,6 @@ import {
   metaRowMatchesFilter,
   type PageMetaRow,
 } from '@/lib/tauri-mock/handlers'
-import { buildPageMetaRow } from '@/lib/tauri-mock/handlers/shared'
 import {
   blockTags,
   blocks,
@@ -263,7 +262,6 @@ describe('run_advanced_query — Not over every leaf it admits (#6054 D2)', () =
   const LINKER = id('P3') // links to CHILD
   // A literal ULID dated 2025-06-15; the padded ids date to the epoch.
   const DATED = '01JXRE5J000000000000000001'
-  const ALL = [PAGE, PARENT, CHILD, LINKER, DATED].toSorted()
 
   beforeEach(() => {
     clearMock()
@@ -291,64 +289,11 @@ describe('run_advanced_query — Not over every leaf it admits (#6054 D2)', () =
 
   const leaf = (primitive: Record<string, unknown>) => ({ type: 'Leaf', primitive })
   const not = (child: Record<string, unknown>) => ({ type: 'Not', child })
-  const others = (...kept: string[]) => ALL.filter((x) => !kept.includes(x))
-
-  it('ChildOf matches the direct children; Not keeps the rows with a NULL parent', () => {
-    const childOf = leaf({ type: 'ChildOf', parent: PARENT })
-    expect(runIds(childOf)).toEqual([CHILD])
-    expect(runIds(not(childOf))).toEqual(others(CHILD))
-  })
-
-  it("Space matches the blocks of the space's pages; Not of it is empty", () => {
-    expect(runIds(leaf({ type: 'Space', space_id: SPACE_A }))).toEqual(ALL)
-    expect(runIds(not(leaf({ type: 'Space', space_id: SPACE_A })))).toEqual([])
-    expect(runIds(not(leaf({ type: 'Space', space_id: SPACE_B })))).toEqual(ALL)
-  })
-
-  it("Created compares the id's ULID time; Not keeps the older rows", () => {
-    const created = leaf({ type: 'Created', after: '2025-01-01', before: null })
-    expect(runIds(created)).toEqual([DATED])
-    expect(runIds(not(created))).toEqual(others(DATED))
-    expect(runIds(leaf({ type: 'Created', after: null, before: '2025-06-15T00:00:00Z' }))).toEqual(
-      others(DATED),
-    )
-  })
 
   it('Created refuses a bound that is not a date, under a Not too', () => {
     expect(() => runIds(not(leaf({ type: 'Created', after: '2025-13-01', before: null })))).toThrow(
       expect.objectContaining({ kind: 'validation', code: 'InvalidDateFilter' }),
     )
-  })
-
-  it('LinkedFrom matches the blocks the source links to; Not keeps the rest', () => {
-    const linkedFrom = leaf({ type: 'LinkedFrom', source: LINKER })
-    expect(runIds(linkedFrom)).toEqual([CHILD])
-    expect(runIds(not(linkedFrom))).toEqual(others(CHILD))
-  })
-
-  it('HasParentMatching judges the parent row; Not keeps the rows without one', () => {
-    const hpm = leaf({
-      type: 'HasParentMatching',
-      matcher: leaf({ type: 'State', values: ['TODO'] }),
-    })
-    expect(runIds(hpm)).toEqual([CHILD])
-    expect(runIds(not(hpm))).toEqual(others(CHILD))
-  })
-
-  it("HasParentMatching reads the parent's last-edited stamp, not the outer row's", () => {
-    const rolling = leaf({
-      type: 'HasParentMatching',
-      matcher: leaf({ type: 'LastEdited', spec: { type: 'Rolling', days: 3650 } }),
-    })
-    const now = (): string => new Date().toISOString()
-    const rowOf = (blockId: string) =>
-      buildPageMetaRow(blocks.get(blockId) as Record<string, unknown>, [], [])
-    // CHILD was "just edited", but its parent PARENT dates to the epoch.
-    expect(metaRowMatchesExpr(rowOf(CHILD), rolling, now)).toBe(false)
-    // A row under DATED (2025-06-15) matches whatever its own stamp says.
-    const under = makeBlock(id('P4'), 'content', 'under', DATED, 1)
-    blocks.set(id('P4'), under)
-    expect(metaRowMatchesExpr(rowOf(id('P4')), rolling, () => null)).toBe(true)
   })
 
   it('metaRowMatchesFilter refuses a Search-only leaf rather than matching every row', () => {

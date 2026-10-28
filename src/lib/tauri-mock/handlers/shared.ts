@@ -740,9 +740,9 @@ export function titleSortKey(title: string): string {
 /**
  * Does a page row satisfy one compound-filter primitive? Each arm mirrors the
  * SQL its primitive compiles to (`src-tauri/agaric-store/src/filters/primitive.rs`,
- * `query/projection.rs`). The Search-only leaves (`Regex`, `CaseSensitive`,
- * `WholeWord`, `Snippet`) are post-FTS toggles no projection compiles, so they
- * refuse here as the backend's surface gates refuse them.
+ * `query/projection.rs`). Callers refuse their surface's off-limits leaves first,
+ * as the backend's surface gates do; the Search-only toggles (`Regex`,
+ * `CaseSensitive`, `WholeWord`, `Snippet`) have no arm here.
  *
  * `lastEditedAt` selects which last-edited stamp the `LastEdited` arm reads;
  * it defaults to the row's own `lastModifiedAt`. See {@link LastEditedSource}.
@@ -894,7 +894,7 @@ export function metaRowMatchesFilter(
  * looser forms (unpadded fields, a leap second) are refused here though the
  * backend reads them.
  */
-function resolveRangeBound(bound: unknown): string | null {
+export function resolveRangeBound(bound: unknown): string | null {
   if (bound == null) return null
   const raw = bound as string
   const rfc3339 = /^(\d{4}-\d{2}-\d{2})[Tt ]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/.exec(
@@ -1046,8 +1046,8 @@ const QUERY_PRIMITIVE_TYPES: ReadonlySet<string> = new Set([
 
 /**
  * `gate_leaves` (`agaric-store/src/query/engine.rs`): refuse, at the first
- * offender in tree order, a leaf the advanced-query surface does not admit,
- * including inside a `HasParentMatching` matcher.
+ * offender in tree order, a leaf the advanced-query surface does not admit or
+ * a malformed `Created` bound, including inside a `HasParentMatching` matcher.
  */
 export function assertQueryFilterLeaves(expr: Record<string, unknown>): void {
   switch (expr['type'] as string) {
@@ -1060,6 +1060,10 @@ export function assertQueryFilterLeaves(expr: Record<string, unknown>): void {
           code: 'InvalidFilter',
           message: `\`${type}\` is not a valid filter on the advanced-query surface`,
         })
+      }
+      if (type === 'Created') {
+        resolveRangeBound(p['after'])
+        resolveRangeBound(p['before'])
       }
       if (type === 'HasParentMatching') {
         assertQueryFilterLeaves((p['matcher'] as Record<string, unknown> | undefined) ?? {})

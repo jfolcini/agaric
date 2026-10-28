@@ -34,6 +34,7 @@ import {
   propertyEqMatches,
   propertyLikeMatches,
   refInclusiveTags,
+  resolveRangeBound,
   scanLinkTargets,
   readActiveSpaceScope,
   validationRejection,
@@ -59,7 +60,37 @@ function applyBacklinkFilters(
   items: Record<string, unknown>[],
   filterList: Array<Record<string, unknown>>,
 ): Record<string, unknown>[] {
+  // The backend answers an empty candidate set before it compiles the filters.
+  if (items.length === 0) return items
+  for (const f of filterList) assertBacklinkFilter(f)
   return items.filter((b) => filterList.every((f) => matchesBacklinkFilter(b, f)))
+}
+
+/**
+ * The refusals `compile_backlink_filter` raises while compiling, before any row
+ * is read: a `DueDate` `Contains` / `StartsWith` and a malformed
+ * `CreatedInRange` bound, anywhere in the tree.
+ */
+function assertBacklinkFilter(filter: Record<string, unknown>): void {
+  switch (filter['type'] as string) {
+    case 'DueDate': {
+      dueDatePredicate(filter)
+      return
+    }
+    case 'CreatedInRange': {
+      resolveRangeBound(filter['after'])
+      resolveRangeBound(filter['before'])
+      return
+    }
+    case 'And':
+    case 'Or': {
+      for (const f of filter['filters'] as Array<Record<string, unknown>>) assertBacklinkFilter(f)
+      return
+    }
+    case 'Not': {
+      assertBacklinkFilter(filter['filter'] as Record<string, unknown>)
+    }
+  }
 }
 
 /** `CompareOp` → `DatePredicate` for the `DueDate` leaf (`compare_op_to_date_predicate`). */

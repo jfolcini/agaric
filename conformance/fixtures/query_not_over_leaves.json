@@ -1,5 +1,5 @@
 {
-  "description": "#6054 D2 — `Not` over the leaves the mock used to answer with a silent `true`, which under a `Not` became an empty set where the backend gives the complement. The advanced query covers `ChildOf`, `Space`, `Created`, `LinkedFrom` and `HasParentMatching` (whose matcher reads the PARENT row, its last-edited stamp included), plus the refusals of a Search-only leaf, of a Pages-only leaf inside a matcher and of a malformed `created` bound. The References panel covers `PropertyNum`, `PropertyDate`, `DueDate` and `CreatedInRange`, plus the `DueDate` `Contains` and malformed-bound refusals. Every leaf has rows on both sides and a row with no value: B6 and B7 hold no property or due date, the root pages B1 and B2 have no parent. B7's id is a literal ULID from 2025-06-15; the padded seed ids date to the epoch. Re-author `expected` via CONFORMANCE_UPDATE=1.",
+  "description": "#6054 D2 — `Not` over the leaves the mock used to answer with a silent `true`, which under a `Not` became an empty set where the backend gives the complement. The advanced query covers `ChildOf`, `Space`, `Created`, `LinkedFrom` and `HasParentMatching` (whose matcher reads the PARENT row, its last-edited stamp included), plus the refusals of a Search-only leaf, of a Pages-only leaf inside a matcher and of a malformed `created` bound. The References panel covers `PropertyNum`, `PropertyDate`, `DueDate` and `CreatedInRange`, plus the `DueDate` `Contains` and malformed-bound refusals. The `or_*_after_matching_arm` steps put each refused leaf behind an `Or` arm every row matches, since both surfaces refuse while compiling, before a row is read; `pages_child_of_is_refused` pins the Pages surface gate. Every leaf has rows on both sides and a row with no value: B6 and B7 hold no property or due date, the root pages B1 and B2 have no parent. B7's id is a literal ULID from 2025-06-15; the padded seed ids date to the epoch. Re-author `expected` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -509,6 +509,46 @@
       "name": "not_created_in_range_malformed_is_refused",
       "rows": [],
       "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "or_created_malformed_bound_after_matching_arm",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "or_created_in_range_malformed_after_matching_arm",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "or_due_date_contains_after_matching_arm",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "pages_child_of_is_refused",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "no_backlinks_malformed_bound_answers_empty",
+      "rows": ["filtered#count=0#truncated=false"],
+      "total_count": 0
     }
   ],
   "name": "query_not_over_leaves",
@@ -1309,6 +1349,137 @@
       "comment": "`resolve_range_bound` refuses a bound that is not a date.",
       "expect_error": "validation",
       "name": "not_created_in_range_malformed_is_refused"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "children": [
+              {
+                "primitive": {
+                  "space_id": "$SPACE",
+                  "type": "Space"
+                },
+                "type": "Leaf"
+              },
+              {
+                "primitive": {
+                  "after": "not-a-date",
+                  "before": null,
+                  "type": "Created"
+                },
+                "type": "Leaf"
+              }
+            ],
+            "type": "Or"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "`gate_leaves` refuses the malformed bound before any row is read, so an `Or` arm every row matches first does not answer for it.",
+      "expect_error": "validation",
+      "name": "or_created_malformed_bound_after_matching_arm"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "filters": [
+              {
+                "block_type": "content",
+                "type": "BlockType"
+              },
+              {
+                "after": "2025-13-01",
+                "before": null,
+                "type": "CreatedInRange"
+              }
+            ],
+            "type": "Or"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "`compile_backlink_filters` compiles the whole tree before any row is read, so the malformed bound refuses behind an arm every source matches.",
+      "expect_error": "validation",
+      "name": "or_created_in_range_malformed_after_matching_arm"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "filters": [
+          {
+            "filters": [
+              {
+                "block_type": "content",
+                "type": "BlockType"
+              },
+              {
+                "op": "Contains",
+                "type": "DueDate",
+                "value": "2026"
+              }
+            ],
+            "type": "Or"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "`compile_due_date` refuses `Contains` at compile time, behind an arm every source matches too.",
+      "expect_error": "validation",
+      "name": "or_due_date_contains_after_matching_arm"
+    },
+    {
+      "args": {
+        "filter": {
+          "filters": [
+            {
+              "parent": "S3",
+              "type": "ChildOf"
+            }
+          ],
+          "sort": "alphabetical",
+          "spaceId": "$SPACE"
+        },
+        "limit": 50
+      },
+      "command": "list_pages_with_metadata",
+      "comment": "`child-of` is not in `PAGES_ALLOWED_KEYS`: `validate_pages_filters` refuses it rather than matching no page.",
+      "expect_error": "validation",
+      "name": "pages_child_of_is_refused"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "filters": [
+          {
+            "after": "2025-13-01",
+            "before": null,
+            "type": "CreatedInRange"
+          }
+        ],
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "Nothing links to B3: the backend answers the empty set before it compiles the filters, so the malformed bound that refuses above is never read.",
+      "name": "no_backlinks_malformed_bound_answers_empty"
     }
   ],
   "seed": {
