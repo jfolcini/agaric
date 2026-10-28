@@ -311,6 +311,12 @@
       "error": "validation",
       "name": "add_tags_by_ids_refuses_an_empty_list",
       "returns": []
+    },
+    {
+      "code": null,
+      "error": "invalid_operation",
+      "name": "add_tags_by_ids_refuses_a_non_tag",
+      "returns": []
     }
   ],
   "name": "batch_writes",
@@ -517,6 +523,17 @@
       "comment": "Same guard.",
       "expect_error": "validation",
       "name": "add_tags_by_ids_refuses_an_empty_list",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S2"],
+        "tagId": "S1"
+      },
+      "command": "add_tags_by_ids",
+      "comment": "S1 is a page, not a `tag` block: the whole batch is refused, as `add_tag` refuses the same target.",
+      "expect_error": "invalid_operation",
+      "name": "add_tags_by_ids_refuses_a_non_tag",
       "via": "command"
     }
   ],

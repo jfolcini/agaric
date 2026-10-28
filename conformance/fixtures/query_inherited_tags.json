@@ -1,5 +1,5 @@
 {
-  "description": "#3826 — `list_inherited_tags_for_block` over the DERIVED `block_tag_inherited` table, the one command in this group whose rows the #763 snapshot does not model at all (the snapshot covers blocks / block_properties / block_tags / block_links / op_log). Tagging the PAGE makes its child inherit the tag via `propagate_tag_to_descendants`, and the two steps pin the #1423 contract that the inherited list and the DIRECT list are disjoint: the child holds the tag in one and not the other. The tag edge is driven as an OP over a `page`-typed tag target, the idiom every existing tag fixture uses: a root-level `tag`-typed seed block would take a `page_id` from the raw seed insert that the mock's seed loader does not reproduce, a harness asymmetry unrelated to the command under test.",
+  "description": "#3826 — `list_inherited_tags_for_block` over the DERIVED `block_tag_inherited` table, the one command in this group whose rows the #763 snapshot does not model at all (the snapshot covers blocks / block_properties / block_tags / block_links / op_log). Tagging the PAGE makes its child inherit the tag via `propagate_tag_to_descendants`, and the two steps pin the #1423 contract that the inherited list and the DIRECT list are disjoint: the child holds the tag in one and not the other. The tag edge is driven as an OP over S3, a root-level `tag` block, as `add_tag` requires of its target.",
   "expected": {
     "block_tags": [
       {
@@ -35,7 +35,7 @@
         "todo_state": null
       },
       {
-        "block_type": "page",
+        "block_type": "tag",
         "content": "urgent",
         "deleted_at": null,
         "due_date": null,
@@ -123,7 +123,7 @@
         "position": 1
       },
       {
-        "block_type": "page",
+        "block_type": "tag",
         "content": "urgent",
         "id": "S3",
         "parent_id": null,

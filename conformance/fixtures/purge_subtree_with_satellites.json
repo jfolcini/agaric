@@ -1,5 +1,5 @@
 {
-  "description": "#3079 — purge_block physically erases the ENTIRE descendant subtree plus every satellite row (block_properties, block_tags), not just the target. A custom property and a tag are attached to a grandchild, the subtree is soft-deleted, then purged: only the untouched root page survives and the properties/block_tags tables are empty.",
+  "description": "#3079 — purge_block physically erases the ENTIRE descendant subtree plus every satellite row (block_properties, block_tags), not just the target. A custom property and a tag (the `tag` block S5) are attached to a grandchild, the subtree is soft-deleted, then purged: only the untouched root page and the tag block survive and the properties/block_tags tables are empty.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -12,6 +12,19 @@
         "page_id": "B1",
         "parent_id": null,
         "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "label",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 2,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -53,7 +66,7 @@
     {
       "args": {
         "blockId": "S3",
-        "tagId": "S1"
+        "tagId": "S5"
       },
       "command": "add_tag"
     },
@@ -99,6 +112,13 @@
         "content": "childB",
         "id": "S4",
         "parent_id": "S2",
+        "position": 2
+      },
+      {
+        "block_type": "tag",
+        "content": "label",
+        "id": "S5",
+        "parent_id": null,
         "position": 2
       }
     ],

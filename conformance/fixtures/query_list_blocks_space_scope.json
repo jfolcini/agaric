@@ -1,5 +1,5 @@
 {
-  "description": "`list_blocks` scopes EVERY dispatch branch to the asked space (`b.space_id = ?`), not only the by-type one: `list_by_tag`, `list_agenda`, `list_agenda_range` and `list_children` each carry the same space predicate. The seed puts two pages in the harness space, `Home` with a child `here` and `Away` with a child `there`; both children carry the tag `topic` and the due date 2026-01-01. The ops then create a second space and move `Away` into it, so `there` keeps its tag, its agenda date and its parent but no longer belongs to the harness space. Each read asks the harness space and names only `here`, or nothing: an unscoped branch answers `there` as well.",
+  "description": "`list_blocks` scopes EVERY dispatch branch to the asked space (`b.space_id = ?`), not only the by-type one: `list_by_tag`, `list_agenda`, `list_agenda_range` and `list_children` each carry the same space predicate. The seed puts two pages in the harness space, `Home` with a child `here` and `Away` with a child `there`; both children carry the tag `topic` (a `tag` block) and the due date 2026-01-01. The ops then create a second space and move `Away` into it, so `there` keeps its tag, its agenda date and its parent but no longer belongs to the harness space. Each read asks the harness space and names only `here`, or nothing: an unscoped branch answers `there` as well.",
   "expected": {
     "block_tags": [
       {
@@ -65,7 +65,7 @@
         "todo_state": null
       },
       {
-        "block_type": "page",
+        "block_type": "tag",
         "content": "topic",
         "deleted_at": null,
         "due_date": null,
@@ -321,7 +321,7 @@
         "position": 1
       },
       {
-        "block_type": "page",
+        "block_type": "tag",
         "content": "topic",
         "id": "S5",
         "parent_id": null,

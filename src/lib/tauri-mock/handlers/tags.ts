@@ -257,6 +257,24 @@ function liveBlock(id: string): Record<string, unknown> {
 }
 
 /**
+ * The live `tag` block `id` names, as `add_tag_in_tx` / `ensure_tag_block_in_tx`
+ * require of a tag target: `not_found` when absent or trashed, `invalid_operation`
+ * when it is any other block type.
+ */
+function liveTagBlock(id: string): Record<string, unknown> {
+  const b = blocks.get(id)
+  if (!b || b['deleted_at'] != null) {
+    throw notFoundRejection(`tag block '${id}' (not found or deleted)`)
+  }
+  if (b['block_type'] !== 'tag') {
+    throw invalidOperationRejection(
+      `block '${id}' has block_type '${String(b['block_type'])}', expected 'tag'`,
+    )
+  }
+  return b
+}
+
+/**
  * `resolve_block_space`: the block's own `space_id`, else its page's. The
  * mock's older `space` property answers where neither column is set.
  */
@@ -270,15 +288,14 @@ function blockSpaceOf(b: Record<string, unknown>): string | null {
 }
 
 export const tagsHandlers = {
-  // #2468 — the refusals `add_tag_in_tx` raises, in its order. The tag's
-  // `block_type = 'tag'` check is not mirrored: the payload-replayed
-  // conformance fixtures tag with pages, which the backend's op apply accepts.
+  // #2468 — the refusals `add_tag_in_tx` raises, in its order.
   add_tag: (args) => {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const tagId = a['tagId'] as string
+    if (blockId === tagId) throw invalidOperationRejection('a block cannot tag itself')
     const block = liveBlock(blockId)
-    const tag = liveBlock(tagId)
+    const tag = liveTagBlock(tagId)
     // An orphan tag is adopted into a spaced block's space by the backend;
     // the mock leaves it unspaced, which only the space readers can see.
     const blockSpace = blockSpaceOf(block)
@@ -305,8 +322,9 @@ export const tagsHandlers = {
     return { block_id: blockId, tag_id: tagId, op_refs: [{ device_id: op.device_id, seq: op.seq }] }
   },
 
-  // #81 / bulk add one tag to N blocks. Lenient skip of
-  // missing / deleted / self / already-tagged; returns the count newly tagged.
+  // #81 / bulk add one tag to N blocks. The tag must be a live `tag` block
+  // (`ensure_tag_block_in_tx`); lenient skip of missing / deleted / self /
+  // already-tagged blocks; returns the count newly tagged.
   add_tags_by_ids: (args) => {
     const a = args as Record<string, unknown>
     const inputIds = (a['blockIds'] as string[]) ?? []
@@ -314,6 +332,7 @@ export const tagsHandlers = {
     if (inputIds.length === 0) {
       throw validationRejection('block_ids list cannot be empty')
     }
+    liveTagBlock(tagId)
     let count = 0
     for (const blockId of inputIds) {
       const b = blocks.get(blockId)

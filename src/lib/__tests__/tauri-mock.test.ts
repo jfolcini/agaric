@@ -1135,6 +1135,33 @@ describe('add_tag + list_tags_for_block', () => {
     expect(tags).toHaveLength(1)
   })
 
+  // `add_tag_in_tx` / `ensure_tag_block_in_tx`: the tag must be a `tag` block.
+  it('refuses a tag target that is not a tag block, one and in bulk', () => {
+    const refusal = expect.objectContaining({
+      kind: 'invalid_operation',
+      message: `block '${SEED_IDS.PAGE_QUICK_NOTES}' has block_type 'page', expected 'tag'`,
+    })
+    expect(() =>
+      invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.PAGE_QUICK_NOTES }),
+    ).toThrow(refusal)
+    expect(() =>
+      invoke('add_tags_by_ids', {
+        blockIds: [SEED_IDS.BLOCK_GS_1],
+        tagId: SEED_IDS.PAGE_QUICK_NOTES,
+      }),
+    ).toThrow(refusal)
+    expect(invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 })).toEqual([])
+  })
+
+  it('refuses a tag block tagging itself', () => {
+    expect(() =>
+      invoke('add_tag', { blockId: SEED_IDS.TAG_WORK, tagId: SEED_IDS.TAG_WORK }),
+    ).toThrow(
+      expect.objectContaining({ kind: 'invalid_operation', message: 'a block cannot tag itself' }),
+    )
+    expect(invoke('list_tags_for_block', { blockId: SEED_IDS.TAG_WORK })).toEqual([])
+  })
+
   it('returns empty array for block with no tags', () => {
     const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_2 }) as string[]
     expect(tags).toHaveLength(0)

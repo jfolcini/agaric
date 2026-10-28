@@ -1,10 +1,10 @@
 {
-  "description": "#3829 — READ-command differential over `list_trash`, `list_all_pages_in_space` and `list_template_page_ids_in_space`. The trash half is the multi-cohort shape #3818 turns on: S5 is deleted on its own, THEN its parent S4 (a separate cohort, so S5 keeps its own tombstone and stays a trash ROOT), while S6's delete cascades over S7 in ONE cohort (so S7 is NOT a root). The backend's root predicate is `parent_id IS NULL OR NOT EXISTS (parent p WHERE p.deleted_at = b.deleted_at)`, ordered `deleted_at DESC, id ASC`, space-scoped; a mock that lists every tombstone, or orders on anything but `deleted_at DESC` diverges here. NOT pinned: the space filter (the harness has one space, so every tombstone is in it) and the `id ASC` tiebreak (every delete mints its own cohort on both stacks, so no two roots share a `deleted_at`). The pages half pins the deleted-page exclusion (S3 is a template page that is deleted, so it is in neither listing), the tag filter (`tagIds: [S8]` keeps only S2; an EMPTY list is unfiltered on both stacks) and the case-insensitive content sort, and each page row's four task columns: S1, S8 and S11 hold one each, and S2 holds its date through the tag filter's own SELECT.",
+  "description": "#3829 — READ-command differential over `list_trash`, `list_all_pages_in_space` and `list_template_page_ids_in_space`. The trash half is the multi-cohort shape #3818 turns on: S5 is deleted on its own, THEN its parent S4 (a separate cohort, so S5 keeps its own tombstone and stays a trash ROOT), while S6's delete cascades over S7 in ONE cohort (so S7 is NOT a root). The backend's root predicate is `parent_id IS NULL OR NOT EXISTS (parent p WHERE p.deleted_at = b.deleted_at)`, ordered `deleted_at DESC, id ASC`, space-scoped; a mock that lists every tombstone, or orders on anything but `deleted_at DESC` diverges here. NOT pinned: the space filter (the harness has one space, so every tombstone is in it) and the `id ASC` tiebreak (every delete mints its own cohort on both stacks, so no two roots share a `deleted_at`). The pages half pins the deleted-page exclusion (S3 is a template page that is deleted, so it is in neither listing), the tag filter (`tagIds: [S14]`, a `tag` block as `add_tag` requires of its target, keeps only S2; an EMPTY list is unfiltered on both stacks) and the case-insensitive content sort, and each page row's four task columns: S1, S8 and S11 hold one each, and S2 holds its date through the tag filter's own SELECT.",
   "expected": {
     "block_tags": [
       {
         "block_id": "B2",
-        "tag_id": "B8"
+        "tag_id": "B14"
       }
     ],
     "blocks": [
@@ -173,6 +173,19 @@
         "page_id": "B13",
         "parent_id": null,
         "position": 9,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "urgent",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B14",
+        "page_id": "B14",
+        "parent_id": null,
+        "position": 10,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -354,7 +367,7 @@
     {
       "args": {
         "blockId": "S2",
-        "tagId": "S8"
+        "tagId": "S14"
       },
       "command": "add_tag"
     },
@@ -477,10 +490,10 @@
           "kind": "active",
           "space_id": "$SPACE"
         },
-        "tagIds": ["S8"]
+        "tagIds": ["S14"]
       },
       "command": "list_all_pages_in_space",
-      "comment": "Only S2 carries the direct tag S8.",
+      "comment": "Only S2 carries the direct tag S14, a `tag` block that is no page.",
       "name": "pages_tag_filter_keeps_tagged_only"
     },
     {
@@ -599,6 +612,13 @@
         "id": "S13",
         "parent_id": null,
         "position": 9
+      },
+      {
+        "block_type": "tag",
+        "content": "urgent",
+        "id": "S14",
+        "parent_id": null,
+        "position": 10
       }
     ],
     "properties": [],

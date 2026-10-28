@@ -1,5 +1,5 @@
 {
-  "description": "#3826 — READ-command differential over `list_tags_for_block`. The #763 snapshot diffs the `block_tags` EDGES; these steps diff the per-block read built on them: that a removed edge is gone (not returned with a flag), that a removal on one block leaves an identical edge on another block untouched, and that a block whose every tag was removed answers with an empty list rather than a stale one. Tag edges are driven as OPS over `page`-typed tag targets, the idiom every existing tag fixture uses: a root-level `tag`-typed seed block would take a `page_id` from the raw seed insert that the mock's seed loader does not reproduce, a harness asymmetry unrelated to the command under test.",
+  "description": "#3826 — READ-command differential over `list_tags_for_block`. The #763 snapshot diffs the `block_tags` EDGES; these steps diff the per-block read built on them: that a removed edge is gone (not returned with a flag), that a removal on one block leaves an identical edge on another block untouched, and that a block whose every tag was removed answers with an empty list rather than a stale one. Tag edges are driven as OPS over S5 and S6, root-level `tag` blocks, as `add_tag` requires of its target.",
   "expected": {
     "block_tags": [
       {
@@ -86,7 +86,7 @@
         "todo_state": null
       },
       {
-        "block_type": "page",
+        "block_type": "tag",
         "content": "alpha",
         "deleted_at": null,
         "due_date": null,
@@ -99,7 +99,7 @@
         "todo_state": null
       },
       {
-        "block_type": "page",
+        "block_type": "tag",
         "content": "beta",
         "deleted_at": null,
         "due_date": null,
@@ -310,14 +310,14 @@
         "position": 4
       },
       {
-        "block_type": "page",
+        "block_type": "tag",
         "content": "alpha",
         "id": "S5",
         "parent_id": null,
         "position": 2
       },
       {
-        "block_type": "page",
+        "block_type": "tag",
         "content": "beta",
         "id": "S6",
         "parent_id": null,
