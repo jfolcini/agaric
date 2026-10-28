@@ -164,7 +164,8 @@ export function useRovingTabindex(): UseRovingTabindexReturn {
       const from = current >= 0 ? current : activeIndex.current
 
       let next: number | null = null
-      switch (e.key) {
+      // TipTap's menus pass `Object.create(nativeEvent)`, where the inherited `key` getter throws.
+      switch (e.nativeEvent.key) {
         case 'ArrowRight':
         case 'ArrowDown': {
           next = (from + 1) % items.length

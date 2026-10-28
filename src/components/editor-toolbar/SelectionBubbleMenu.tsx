@@ -11,8 +11,9 @@
  * group requires a selection to be meaningful, so a contextual hover bar is
  * the right surface and frees the always-visible toolbar from these 6 buttons.
  *
- * Click handlers use `onPointerDown + preventDefault` so focus never leaves
- * the editor; active marks get `aria-pressed="true"` + `bg-accent`.
+ * Buttons act on `pointerdown` with preventDefault, so a press never takes focus
+ * from the editor, and on a keyboard click (`toolbarPressHandlers`); active marks
+ * get `aria-pressed="true"` + `bg-accent`.
  */
 
 import { getMarkRange, posToDOMRect } from '@tiptap/core'
@@ -25,6 +26,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useTranslation } from 'react-i18next'
 
 import { LinkEditPopover } from '@/components/editor-toolbar/LinkEditPopover'
+import { toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
 import {
   bubbleMenuClass,
   createMarkToggles,
@@ -393,10 +395,7 @@ export function SelectionBubbleMenu({
               aria-keyshortcuts={ariaKeyshortcutsFor(btn.label)}
               disabled={disabled}
               className={cn(active && toolbarActiveClass)}
-              onPointerDown={(e) => {
-                e.preventDefault()
-                btn.action()
-              }}
+              {...toolbarPressHandlers(btn.action)}
             >
               <btn.icon />
             </Button>
@@ -413,8 +412,7 @@ export function SelectionBubbleMenu({
           aria-label={t('toolbar.link')}
           aria-pressed={state.link}
           className={cn(state.link && toolbarActiveClass)}
-          onPointerDown={(e) => {
-            e.preventDefault()
+          {...toolbarPressHandlers(() => {
             if (!linkPopoverOpen) {
               if (state.link) {
                 const range = getLinkMarkRange(editor)
@@ -427,7 +425,7 @@ export function SelectionBubbleMenu({
               }
             }
             setLinkPopoverOpen((prev) => !prev)
-          }}
+          })}
         >
           <Link2 />
         </Button>
