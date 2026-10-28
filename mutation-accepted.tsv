@@ -31,6 +31,15 @@ frontend	src/editor/page-mode/page-block-ids.ts	LogicalOperator	5	1	if (attr !==
 frontend	src/editor/page-mode/page-block-ids.ts	OptionalChaining	53	1	if (attr !== undefined && pos !== undefined) return doc.nodeAt(pos)?.type === type
 frontend	src/editor/page-mode/page-block-ids.ts	StringLiteral	46	1	export const pageBlockIdsKey = new PluginKey('pageBlockIds')
 frontend	src/editor/page-mode/page-block-ids.ts	StringLiteral	7	1	name: 'pageBlockIds',
+# #6107 page-collapse: `true` and `<` arms: a split leaves a collapsed cursor in a block it made, never a selection running past those blocks or ending on the boundary after them; the `false` and `>` arms share these keys and are killed by the Enter tests' caret
+frontend	src/editor/page-mode/page-collapse.ts	ConditionalExpression	23	1	if (anchor >= from && caret <= to) {
+frontend	src/editor/page-mode/page-collapse.ts	EqualityOperator	23	1	if (anchor >= from && caret <= to) {
+# #6107 page-collapse: `>` arm: the cursor a split leaves is in a block it made, never on the boundary before it; the `<` arm shares this key and is killed by 'goes after what it hides, and the cursor stays where it was'
+frontend	src/editor/page-mode/page-collapse.ts	EqualityOperator	5	1	if (anchor >= from && caret <= to) {
+# #6107 page-collapse: the key's text only names the plugin for lookup by string (tiptap's unregisterPlugin('pageCollapse')), which no code does; every reader holds `pageCollapseKey`. Tried: grep for the string and for unregisterPlugin; no test can see the text change.
+frontend	src/editor/page-mode/page-collapse.ts	StringLiteral	61	1	export const pageCollapseKey = new PluginKey<CollapseState>('pageCollapse')
+# #6107 page-collapse: tiptap reads an extension's name only for its storage, commands or a lookup by name; this one has none and pageModeExtensions passes it by reference. Only page-mode-surface-parity.test.tsx compares the text, outside this module's mutation scope.
+frontend	src/editor/page-mode/page-collapse.ts	StringLiteral	7	1	name: 'pageCollapse',
 # #6108 page-gutter: the frame is out of the document until place() inserts it, which unhides it
 frontend	src/editor/page-mode/page-gutter.ts	BooleanLiteral	18	1	element.hidden = true
 # #6108 page-gutter: a lane-press listener left on after destroy() only prevents what the live grip's listener prevents

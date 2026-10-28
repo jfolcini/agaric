@@ -170,8 +170,7 @@ export function foldIn(decorations: readonly Decoration[]): Fold | null {
 export function toggleFold(id: string): Command {
   return (state, dispatch) => {
     const index = blockIndex(state.doc, id)
-    const fold = index === null ? null : foldAt(state, index)
-    if (index === null || fold === null) return false
+    if (index === null || foldAt(state, index) === null) return false
     if (dispatch) {
       const tr = state.tr.setMeta(pageCollapseKey, id)
       // A caret under the block shows it (the reveal): the block is expanded. None is past every block.
@@ -219,6 +218,8 @@ function keepHidden(before: EditorState, after: EditorState): Transaction | null
   const from = startOf(doc, made)
   const to = startOf(doc, first)
   const at = startOf(doc, past)
+  // The new blocks move, never what it hides: an undo puts back what a step took out, which
+  // would take back a peer's edit of a hidden block since (`remote-patch.ts`).
   const tr = after.tr.insert(at, doc.slice(from, to).content).delete(from, to)
   const { anchor, head: caret } = after.selection
   if (anchor >= from && caret <= to) {
@@ -237,9 +238,6 @@ export const PageCollapse = Extension.create<PageCollapseOptions>({
   // After the id rules (`page-block-ids.ts`): `keepHidden` needs the blocks a split made to hold
   // their ids, and plugins run by priority, the last registered first among equals.
   priority: 90,
-  addOptions() {
-    return { pageId: null }
-  },
   addProseMirrorPlugins() {
     const { pageId } = this.options
     const type = this.editor.schema.nodes[PAGE_BLOCK] as NodeType
@@ -264,24 +262,14 @@ export const PageCollapse = Extension.create<PageCollapseOptions>({
             }
             const reshaped = toggled !== undefined || (tr.docChanged && changesBlocks(tr, type))
             const caret = caretIndex(state)
-            // Only a hidden caret, or one a reveal is on for, can be under a collapsed block.
-            const look =
-              reshaped ||
-              value.revealed.size > 0 ||
-              (caret !== null && value.hidden.has(idOf(state.doc.child(caret))))
-            const revealed =
-              look && caret !== null ? collapsedAbove(state.doc, caret, collapsed) : NONE
+            const revealed = caret === null ? NONE : collapsedAbove(state.doc, caret, collapsed)
             if (reshaped || !sameIds(revealed, value.revealed)) {
               return { collapsed, revealed, ...layout(state.doc, collapsed, revealed) }
             }
-            if (!tr.docChanged) return value
             return { ...value, decorations: value.decorations.map(tr.mapping, tr.doc) }
           },
         },
-        appendTransaction(transactions, before, after) {
-          if (!transactions.some((tr) => tr.docChanged && changesBlocks(tr, type))) return null
-          return keepHidden(before, after)
-        },
+        appendTransaction: (_transactions, before, after) => keepHidden(before, after),
         view: () => ({
           update: (view, previous) => {
             const now = stateOf(view.state).collapsed
