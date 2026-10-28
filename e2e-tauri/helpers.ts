@@ -345,7 +345,22 @@ export async function openJournalBlockEditor(): Promise<void> {
       })
     }
   }
-  await $(editorSelector).click()
+  // Every path above ends with the editor focused, so wait for that rather than
+  // click it: the day re-lays out after "Add block", and the new editor jumps
+  // while it does (below a heading Escape just left). A click at a centre taken
+  // mid-jump lands beside the editor, the press blurs it, and the blank block
+  // it held is dropped, leaving no editor at all.
+  await browser.waitUntil(
+    () =>
+      browser.execute(
+        (sel: string) => document.activeElement === document.querySelector(sel),
+        editorSelector,
+      ),
+    {
+      timeout: ACTION_TIMEOUT,
+      timeoutMsg: 'openJournalBlockEditor: the block editor never took focus',
+    },
+  )
 }
 
 /**
@@ -1130,9 +1145,8 @@ export async function openPageSource(markers: string[]) {
   const kebab = $('button[aria-label="Page actions"]')
   await kebab.waitForClickable({ timeout: ACTION_TIMEOUT })
   await kebab.click()
-  const editAsMarkdown = $('[role="menuitem"]*=Edit as Markdown')
-  await editAsMarkdown.waitForClickable({ timeout: ACTION_TIMEOUT })
-  await editAsMarkdown.click()
+  // The menu reaches down to the toasts in the bottom-right corner.
+  await clickUncovered($('[role="menuitem"]*=Edit as Markdown'), 'the "Edit as Markdown" item')
   const source = $(PAGE_SOURCE)
   await browser.waitUntil(
     async () => {
@@ -1263,19 +1277,56 @@ async function dismissToasts(): Promise<void> {
 }
 
 /**
+ * Click `element` once nothing covers its centre, as a user clicks what they
+ * can see. Toasts are closed first (`dismissToasts`), but one can still
+ * arrive, or leave with its hit area, between `waitForClickable` and
+ * WebDriver's click, which then reports "element click intercepted". So the
+ * hit test and the click run in one script, where nothing can move in
+ * between. Not for a Radix menu trigger, which opens on `pointerdown`.
+ */
+export async function clickUncovered(element: ReturnType<typeof $>, what: string): Promise<void> {
+  await element.waitForDisplayed({ timeout: ACTION_TIMEOUT })
+  let cover = ''
+  await browser
+    .waitUntil(
+      async () => {
+        await dismissToasts()
+        cover = await browser.execute(
+          (target: HTMLElement) => {
+            if (target.matches(':disabled, [data-disabled], [aria-disabled="true"]'))
+              return 'disabled'
+            // As WebDriver's click does: a point outside the viewport hits nothing.
+            target.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+            const { left, top, width, height } = target.getBoundingClientRect()
+            const hit = document.elementFromPoint(left + width / 2, top + height / 2)
+            if (hit === null || !target.contains(hit))
+              return hit?.outerHTML.slice(0, 160) ?? 'nothing'
+            target.click()
+            return ''
+          },
+          await element.getElement(),
+        )
+        return cover === ''
+      },
+      { timeout: ACTION_TIMEOUT },
+    )
+    .catch(() => {
+      throw new Error(`${what} was never clickable; at its centre: ${cover}`)
+    })
+}
+
+/**
  * Click the source editor's button whose text holds `name` (Save reads
  * `Save (2 changes)` once the buffer changed; Save and Cancel sit beside the
- * Edit / Preview / Changes tabs, not inside them) with no toast left over it
- * (`dismissToasts`), then move the pointer off it. The "Markdown saved" toast
- * slides in under a pointer left on Save, WebKit reports that as the pointer
- * entering it, and sonner then expands the stack and holds every toast open
- * over the rest of the spec.
+ * Edit / Preview / Changes tabs, not inside them) with no toast over it
+ * (`clickUncovered`), then move the pointer away from the toasts' corner. The
+ * "Markdown saved" toast slides in under a pointer left there, WebKit reports
+ * that as the pointer entering it, and sonner then expands the stack and holds
+ * every toast open over the rest of the spec.
  */
 export async function clickPageSourceButton(name: string): Promise<void> {
   const button = $(PAGE_SOURCE).$('./ancestor::*[@data-slot="tabs"]/..').$(`button*=${name}`)
-  await dismissToasts()
-  await button.waitForClickable({ timeout: ACTION_TIMEOUT })
-  await button.click()
+  await clickUncovered(button, `the source editor's ${name} button`)
   await browser.action('pointer').move({ x: 2, y: 2, origin: 'viewport' }).perform()
 }
 
