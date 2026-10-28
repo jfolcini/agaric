@@ -576,6 +576,8 @@ const PAGES_HEADER_VIEWS: Readonly<Record<string, string | RegExp>> = {
  * Create a page called `title` from the Pages view (#5637): its header's New
  * Page button opens the New page dialog, Enter creates the page, and the new
  * page opens in the editor. The page must already be on the Pages view.
+ * Returns once the page has focused the first block it seeds: that focus lands
+ * after the title shows, and dismisses a menu opened in between.
  */
 export async function createPageFromPagesView(page: Page, title: string): Promise<void> {
   await page
@@ -588,6 +590,7 @@ export async function createPageFromPagesView(page: Page, title: string): Promis
   await input.fill(title)
   await input.press('Enter')
   await expect(page.locator('[aria-label="Page title"]')).toHaveText(title)
+  await expect(page.locator('[data-testid="block-editor"] [contenteditable="true"]')).toBeFocused()
 }
 
 /**
