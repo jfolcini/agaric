@@ -7,13 +7,14 @@
 
 import type { Editor } from '@tiptap/core'
 import type { NodeType } from '@tiptap/pm/model'
-import { TextSelection } from '@tiptap/pm/state'
+import { EditorState, NodeSelection, TextSelection } from '@tiptap/pm/state'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { loadCollapsedIds } from '@/components/block-tree/use-block-collapse'
 import {
   blockId,
   caret,
+  FakeBackend,
   idMinter,
   openPage,
   PAGE,
@@ -21,12 +22,21 @@ import {
   press,
   type Row,
   rowsOf,
+  treeRows,
   type,
 } from '@/editor/page-mode/__tests__/page-mode-fixtures'
 import { canMerge, mergeBlock } from '@/editor/page-mode/page-block-actions'
-import { foldOf, pageCollapseKey, toggleFold } from '@/editor/page-mode/page-collapse'
+import {
+  foldIn,
+  foldOf,
+  isHiddenAt,
+  pageCollapseKey,
+  toggleFold,
+} from '@/editor/page-mode/page-collapse'
 import { PAGE_BLOCK, startOf } from '@/editor/page-mode/page-document'
 import { indentIds } from '@/editor/page-mode/page-keys'
+import { createSaveState, savePage } from '@/editor/page-mode/page-save'
+import { applyRemote } from '@/editor/page-mode/remote-patch'
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 
 const [A, B, C, D, E, F] = [1, 2, 3, 4, 5, 6].map(blockId) as [
@@ -106,16 +116,43 @@ describe('collapse', () => {
     expect([...loadCollapsedIds(PAGE)]).toEqual([A])
     expect(hidden(ed)).toEqual([B, C, D])
 
-    // Typing writes nothing there; only a toggle does.
+    // Typing, or a change to the blocks, writes nothing there; only a toggle does.
     const write = vi.spyOn(window.localStorage, 'setItem')
     try {
       type(ed, 'x')
+      press(ed, 'Enter')
       expect(write).not.toHaveBeenCalled()
       toggle(ed, A)
       expect(write).toHaveBeenCalledTimes(1)
     } finally {
       write.mockRestore()
     }
+  })
+
+  it('with no page, opens with nothing collapsed, whatever block mode’s old global layout holds', () => {
+    writePreference(PREFERENCES.blockCollapseLegacy, [A])
+    const ed = build(TREE)
+
+    expect(hidden(ed)).toEqual([])
+  })
+
+  it('a state made again where it stands, as a sync’s history drop does, keeps the caret’s block shown', () => {
+    writePreference(PREFERENCES.blockCollapse, [A], PAGE)
+    const ed = build(TREE, PAGE)
+    caret(ed, 2, 1)
+    const remake = () => {
+      const { doc, selection, plugins } = ed.state
+      ed.view.updateState(EditorState.create({ doc, selection, plugins }))
+    }
+
+    remake()
+    expect(hidden(ed)).toEqual([])
+    caret(ed, 4, 0)
+    expect(hidden(ed)).toEqual([B, C, D])
+
+    ed.commands.selectAll()
+    remake()
+    expect(hidden(ed)).toEqual([B, C, D])
   })
 
   it('shows the caret’s block: a collapsed block above it shows what it hides until the caret leaves, unsaved', () => {
@@ -274,6 +311,80 @@ describe('collapse', () => {
     expect(hidden(ed)).toEqual([])
   })
 
+  it('collapsing a block leaves a caret after what it hides where it is', () => {
+    const ed = build(TREE)
+    caret(ed, 4, 1)
+
+    toggle(ed, A)
+
+    expect(ed.state.selection.from).toBe(posIn(ed, 4, 1))
+  })
+
+  it('asked without a dispatch, says whether a block folds', () => {
+    const ed = build(TREE)
+
+    expect(toggleFold(A)(ed.state)).toBe(true)
+    expect(toggleFold(E)(ed.state)).toBe(false)
+  })
+
+  it('Ctrl+. on a block whose rule is selected collapses that block', () => {
+    const ed = build([
+      [A, 0, '---'],
+      [B, 1, 'b'],
+    ])
+    ed.view.dispatch(ed.state.tr.setSelection(NodeSelection.create(ed.state.doc, 1)))
+    expect(ed.state.selection.$head.depth).toBe(1)
+
+    expect(press(ed, '.', { ctrlKey: true })).toBe(true)
+
+    expect(hidden(ed)).toEqual([B])
+  })
+
+  it('a block with blocks under it is drawn expanded or collapsed', () => {
+    const ed = build(TREE)
+    const foldOfBlock = (index: number) =>
+      foldIn(
+        pageCollapseKey
+          .getState(ed.state)
+          ?.decorations.find(startOf(ed.state.doc, index), startOf(ed.state.doc, index + 1)) ?? [],
+      )
+
+    expect(foldOfBlock(0)).toBe('expanded')
+    toggle(ed, A)
+    expect(foldOfBlock(0)).toBe('collapsed')
+  })
+
+  it('says a position is hidden only inside a block a collapsed block hides, and never in block mode', () => {
+    const ed = build(TREE)
+    caret(ed, 4, 0)
+    toggle(ed, A)
+    const { doc } = ed.state
+
+    expect(isHiddenAt(ed.state, posIn(ed, 1, 0))).toBe(true)
+    // Inside the block, before its text.
+    expect(isHiddenAt(ed.state, startOf(doc, 2) + 1)).toBe(true)
+    expect(isHiddenAt(ed.state, posIn(ed, 0, 0))).toBe(false)
+    // Between blocks, in none.
+    expect(isHiddenAt(ed.state, startOf(doc, 1))).toBe(false)
+    expect(isHiddenAt(EditorState.create({ doc }), posIn(ed, 1, 0))).toBe(false)
+  })
+
+  it('the caret moving between blocks under expanded blocks works out nothing again', () => {
+    const ed = build([
+      [A, 0, 'a'],
+      [B, 1, 'b'],
+      [C, 0, 'c'],
+      [D, 1, 'd'],
+    ])
+    caret(ed, 1, 1)
+    const before = pageCollapseKey.getState(ed.state)?.hidden
+
+    caret(ed, 3, 1)
+
+    // A new set hides the grip (`page-gutter.ts`), as a change to what is hidden does.
+    expect(pageCollapseKey.getState(ed.state)?.hidden).toBe(before)
+  })
+
   it('typing in a block works out nothing again: what is hidden is mapped', () => {
     const ed = build(TREE)
     caret(ed, 0, 1)
@@ -361,6 +472,26 @@ describe('Enter in a collapsed block', () => {
       [C, 0, 'c'],
     ])
     expect(hidden(ed)).toEqual([B])
+  })
+
+  it('then Ctrl+Z takes back the Enter, not a peer’s edit of what the block hides since', async () => {
+    const ed = build(ROWS)
+    const backend = new FakeBackend(ROWS)
+    const save = createSaveState(PAGE, treeRows(ROWS), ed.state.doc)
+    caret(ed, 0, 2)
+    toggle(ed, A)
+    press(ed, 'Enter')
+    await savePage(ed.state.doc, save, backend)
+    await backend.edit(B, 'b from a peer')
+    applyRemote(ed.view, save, await backend.tree(), idMinter('01KEPT'))
+
+    ed.commands.undo()
+
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'ab'],
+      [B, 1, 'b from a peer'],
+      [C, 0, 'c'],
+    ])
   })
 })
 
