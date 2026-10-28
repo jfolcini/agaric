@@ -1935,7 +1935,8 @@
   background: transparent;
 }
 /* Where github.css's colour, or the dark palette's below, falls under 4.5:1 on
-   a code block's `bg-muted`: a token's, which keeps it in each theme. */
+   a code block's `bg-muted` (or github.css's #f0fff4 behind an added line): a
+   token's, which keeps it in each theme. */
 .hljs-doctag,
 .hljs-keyword,
 .hljs-meta .hljs-keyword,
@@ -1955,6 +1956,7 @@
 .hljs-formula {
   color: var(--muted-foreground);
 }
+.hljs-addition,
 .hljs-name,
 .hljs-quote,
 .hljs-selector-pseudo,
@@ -1963,10 +1965,6 @@
 }
 .hljs-section {
   color: var(--alert-info-foreground);
-}
-/* github.css's #22863a is 4.47:1 on the #f0fff4 it paints behind an added line. */
-.hljs-addition {
-  color: #1f7a34;
 }
 .dark .hljs {
   color: #adbac7;

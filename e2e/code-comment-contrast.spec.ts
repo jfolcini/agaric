@@ -36,6 +36,18 @@ const BLOCKS = [
   '```diff\n+ added\n- removed\n```',
 ]
 
+// One token per block above that proves the block is highlighted (comments are counted apart).
+const HIGHLIGHTED = [
+  '.hljs-regexp',
+  '.hljs-title.function_',
+  '.hljs-selector-pseudo',
+  '.hljs-name',
+  '.hljs-section',
+  '.hljs-literal',
+  '.hljs-addition',
+  '.hljs-deletion',
+]
+
 for (const theme of THEMES) {
   test(`every syntax colour in a code block clears 4.5:1 in the ${theme} theme @editor`, async ({
     page,
@@ -52,8 +64,9 @@ for (const theme of THEMES) {
     )
     await navigateToView(page, 'Pages')
     await page.getByText('Projects', { exact: true }).click()
-    await expect(page.locator('.hljs-comment', { hasText: 'a muted comment' })).toBeVisible()
-    await expect(page.locator('pre', { hasText: 'removed' })).toBeVisible()
+    // Blocks highlight one after another; axe on a block still plain would pass vacuously.
+    await expect(page.locator('.hljs-comment')).toHaveCount(3)
+    for (const token of HIGHLIGHTED) await expect(page.locator(token).first()).toBeVisible()
 
     await page.addScriptTag({ path: axePath })
     const result = await page.evaluate(() =>

@@ -423,6 +423,15 @@ const THEME_PAIRS = [
     bg: 'sidebar-accent',
     min: AA_NORMAL,
   },
+  // Muted text on the surfaces it sits on, and the tokens `.hljs-*` paint a code
+  // block's comments, keywords, built-ins, names and sections with on `bg-muted` (#6160).
+  { pair: 'muted text / code comment', fg: 'muted-foreground', bg: 'muted', min: AA_NORMAL },
+  { pair: 'muted text on hover', fg: 'muted-foreground', bg: 'accent', min: AA_NORMAL },
+  { pair: 'muted text on secondary', fg: 'muted-foreground', bg: 'secondary', min: AA_NORMAL },
+  { pair: 'code keyword', fg: 'alert-error-foreground', bg: 'muted', min: AA_NORMAL },
+  { pair: 'code built-in', fg: 'alert-warning-foreground', bg: 'muted', min: AA_NORMAL },
+  { pair: 'code name / quote', fg: 'alert-tip-foreground', bg: 'muted', min: AA_NORMAL },
+  { pair: 'code section', fg: 'alert-info-foreground', bg: 'muted', min: AA_NORMAL },
 ] as const
 
 const CASES = [false, true].flatMap((highContrast) =>
