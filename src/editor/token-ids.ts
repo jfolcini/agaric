@@ -124,9 +124,7 @@ export function withPageIds(slice: Slice, pageIds: ReadonlySet<string | null>): 
   slice.content.forEach((node) => {
     const id = blockIdOf(node)
     nodes.push(
-      id === null || pageIds.has(id)
-        ? node
-        : node.type.create({ ...node.attrs, blockId: null }, node.content),
+      pageIds.has(id) ? node : node.type.create({ ...node.attrs, blockId: null }, node.content),
     )
   })
   return new PMSlice(Fragment.from(nodes), slice.openStart, slice.openEnd)

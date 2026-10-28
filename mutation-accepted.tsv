@@ -137,7 +137,10 @@ frontend	src/editor/page-mode/page-tasks.ts	LogicalOperator	5	1	if (saved === un
 frontend	src/editor/page-mode/page-tasks.ts	OptionalChaining	1	1	this.checkbox?.destroy()
 frontend	src/editor/page-mode/page-tasks.ts	OptionalChaining	5	1	if (first?.type.name !== 'paragraph') return null
 frontend	src/editor/page-mode/page-tasks.ts	StringLiteral	7	1	name: 'pageTaskKeys',
+# #5966 token-ids: `id === null` made false lets an id-less block whose tokens a cut took put null in `taken`; idsAfter reads `taken` only for a block whose own id is not null
 frontend	src/editor/token-ids.ts	ConditionalExpression	5	1	if (id === null || !goneAt(mapping, start) || !goneAt(mapping, tokens.last(node, offset))) {
+# #5966 token-ids: `kept !== null` made true sends an id-less block to the arm that pushes `kept`, null, as the else arm does; the null it adds to `held` is read only by later id-less blocks, which push null either way. The key also covers the whole condition made true or false at this column, which the Enter and undo-after-a-peer tests kill today
+frontend	src/editor/token-ids.ts	ConditionalExpression	12	1	} else if (kept !== null && !held.has(kept) && taken.get(i)?.has(kept) !== true) {
 frontend	src/lib/agenda-filters.ts	BlockStatement	13	1	case 'tag': {
 frontend	src/lib/agenda-filters.ts	BlockStatement	9	1	} catch {
 frontend	src/lib/agenda-filters.ts	ConditionalExpression	1	1	case 'tag': {
