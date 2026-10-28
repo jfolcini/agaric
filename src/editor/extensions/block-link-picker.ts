@@ -51,13 +51,13 @@ declare module '@tiptap/core' {
 
 /**
  * The page `[[text]]` names among `items`, by the one rule the backend applies
- * (#5160 N4): the exact full title, else the unique title that folds to `text` (NFC, case-insensitive; `normalizeTagName`),
- * else the unique alias whose `aliasText` folds to it, else `undefined`, which
- * creates the page. Two pages a title matches alike, exactly or by case, are
- * never guessed: `null` leaves the text as typed. Titles are compared whole,
- * namespace included (`item.title`), so typing an existing namespaced title
- * creates no twin; prefix-only alias hits (`[[my]]` for alias `my-alias`)
- * never resolve.
+ * (#5160 N4): the exact full title, else the unique title that folds to `text`
+ * (`normalizeTagName`: NFC, case-insensitive), else the unique alias whose
+ * `aliasText` folds to it, else `undefined`, which creates the page. Two pages a
+ * title matches alike, exactly or folded, are never guessed: `null` leaves the
+ * text as typed. Titles are compared whole, namespace included (`item.title`),
+ * so typing an existing namespaced title creates no twin; prefix-only alias hits
+ * (`[[my]]` for alias `my-alias`) never resolve.
  */
 export function matchBlockLinkItem(
   items: PickerItem[],

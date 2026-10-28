@@ -560,6 +560,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       // toggle or resize handle) or beside the text (a bubble menu's button),
       // belongs to that control: the block rules would act on the editor's
       // stale selection. Escape still leaves editing.
+      // The container (`currentTarget`) never holds focus: only unit tests dispatch on it.
       const { target, currentTarget } = event
       if (event.key !== 'Escape' && target !== editor.view.dom && target !== currentTarget) return
 
