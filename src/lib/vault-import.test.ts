@@ -354,6 +354,22 @@ describe('folder picks of other note formats (#6032)', () => {
 
     expect(skippedFiles(files, false, new Set(['data.csv']))).toEqual({ other: 1, databases: 0 })
   })
+
+  it('takes a `.jpg` as an image, and counts a file whose image extension is not its last', () => {
+    const jpg = folderFile(['x'], 'photo.jpg', 'Vault/photo.jpg', 'image/jpeg')
+    const bak = folderFile(['x'], 'pic.png.bak', 'Vault/pic.png.bak', '')
+
+    expect(skippedFiles([jpg], false, new Set())).toEqual({ other: 0, databases: 0 })
+    expect(skippedFiles([bak], false, new Set())).toEqual({ other: 1, databases: 0 })
+  })
+
+  it('does not count a hidden file of a plain pick, which has no folder path', () => {
+    const hidden = new File(['x'], '.DS_Store')
+    const shown = new File(['x'], 'data.bin')
+
+    expect(skippedFiles([hidden], false, new Set())).toEqual({ other: 0, databases: 0 })
+    expect(skippedFiles([shown], false, new Set())).toEqual({ other: 1, databases: 0 })
+  })
 })
 
 describe('Notion export (#6032)', () => {
@@ -482,6 +498,54 @@ describe('Notion export (#6032)', () => {
     expect(skippedFiles(files, true, new Set())).toEqual({ other: 0, databases: 1 })
   })
 
+  it('counts a file of the export that is neither a page nor a table as other', () => {
+    const files = [...notionFiles(), folderFile(['x'], 'data.bin', 'Export/data.bin', '')]
+
+    expect(skippedFiles(files, true, new Set())).toEqual({ other: 1, databases: 1 })
+  })
+
+  it('takes `_all` off only the end of a table name, so a table named like a file stays one', () => {
+    const files = [
+      folderFile(['a'], `log_all.csv ${OTHER}.csv`, `Export/log_all.csv ${OTHER}.csv`, 'text/csv'),
+      folderFile(
+        ['a'],
+        `log_all.csv ${OTHER}_all.csv`,
+        `Export/log_all.csv ${OTHER}_all.csv`,
+        'text/csv',
+      ),
+    ]
+
+    expect(skippedFiles(files, true, new Set())).toEqual({ other: 0, databases: 1 })
+  })
+
+  it('reads a pick as Notion by its Markdown names alone, however many images its pages hold', async () => {
+    const files = [
+      ...notionFiles(),
+      ...['a', 'b', 'c', 'd'].map((n) =>
+        folderFile(['x'], `${n}.png`, `Export/Plan ${PLAN}/${n}.png`, 'image/png'),
+      ),
+    ]
+
+    const loaded = await loadAll(files)
+
+    expect(loaded.map((l) => l.path)).toEqual([
+      'Export/Plan.md',
+      'Export/Other.md',
+      'Export/Plan/Sub.md',
+    ])
+  })
+
+  it('keeps a text note of the export as written, reading only its Markdown pages as Notion', async () => {
+    const files = [
+      ...notionFiles(),
+      folderFile(['# readme\n\nStatus: draft'], 'readme.txt', 'Export/readme.txt', 'text/plain'),
+    ]
+
+    const loaded = await loadAll(files)
+
+    expect(loaded[3]).toEqual({ path: 'Export/readme.md', content: '# readme\n\nStatus: draft' })
+  })
+
   it('leaves a plain folder alone when only some names end in an id', async () => {
     const aside = '# a\n\nStatus: draft\n\n<aside>\nx\n</aside>\n'
     const files = [
@@ -567,6 +631,14 @@ describe('Org files (#6032)', () => {
     const loaded = await loadAll([titled, untitled])
 
     expect(loaded.map((l) => l.path)).toEqual(['Vault/sub/Org Tasks.md', 'Vault/loose.md'])
+  })
+
+  it('titles the page by its file name when its `#+TITLE` is empty', async () => {
+    const loaded = await loadAll([
+      folderFile(['#+TITLE:\n* A\n'], 'bare.org', 'Vault/bare.org', ''),
+    ])
+
+    expect(loaded.map((l) => l.path)).toEqual(['Vault/bare.md'])
   })
 
   it('#6032 — keeps a / in a `#+TITLE` as a look-alike, so the page stays in its folder', async () => {

@@ -303,9 +303,6 @@ frontend	src/lib/tree-utils.ts	EqualityOperator	5	1	if (depth > depthCeiling) de
 frontend	src/lib/tree-utils.ts	EqualityOperator	5	1	if (depth > maxDepth) depth = maxDepth
 frontend	src/lib/tree-utils.ts	EqualityOperator	5	1	if (depth < minDepth) depth = minDepth
 frontend	src/lib/tree-utils.ts	EqualityOperator	5	1	if (depth > previousItem.depth) {
-frontend	src/lib/vault-import.ts	ConditionalExpression	10	2	}
-frontend	src/lib/vault-import.ts	ConditionalExpression	5	1	// up by another ref — dedup by the file object so we read each once).
-frontend	src/lib/vault-import.ts	Regex	14	10	/**
 frontend	src/stores/page-blocks-move.ts	ArrayDeclaration	33	1	const updatedBag: FlatBlock[] = []
 frontend	src/stores/page-blocks-move.ts	BlockStatement	11	1	if (!cur) {
 frontend	src/stores/page-blocks-move.ts	CallExpression	1	1	seen.add(id)
