@@ -557,12 +557,32 @@ struct BulletBody<'a> {
     text: &'a str,
 }
 
-/// A bullet's text split into its markers and the block's own text. An
-/// `ordered` outline marker (`1. `, `1) `) is the style; after `-`, `+` or `*`
-/// a second marker may follow (`- - x`, `- 1. x`), then a checkbox. An import
-/// also reads a task keyword where no checkbox was written (`- TODO x`), and
-/// a priority cookie after either (`- TODO [#A] x`).
-fn bullet_body(text: &str, ordered: bool, mode: ParseMode) -> BulletBody<'_> {
+/// A bullet's text, after its `marker`, split into its markers and the block's
+/// own text. An ordered outline marker (`1. `, `1) `) is the style; after `-`,
+/// `+` or `*` a second marker may follow (`- - x`, `- 1. x`), then a checkbox.
+/// An import also reads a task keyword where no checkbox was written
+/// (`- TODO x`), and a priority cookie after either (`- TODO [#A] x`). A
+/// Document buffer reads the style off the one marker, `-` and `*` a bullet
+/// and `+` none, and a checkbox after any marker is a task, which has no style
+/// (#5691 D2, D3).
+fn bullet_body<'a>(marker: &str, text: &'a str, mode: ParseMode) -> BulletBody<'a> {
+    let ordered = marker.ends_with(['.', ')']);
+    if mode == ParseMode::Document {
+        let (todo_state, text) = split_block_task_marker(text);
+        let list_style = if todo_state.is_some() || marker == "+" {
+            None
+        } else if ordered {
+            Some(LIST_STYLE_ORDERED)
+        } else {
+            Some(LIST_STYLE_BULLET)
+        };
+        return BulletBody {
+            list_style,
+            todo_state,
+            priority: None,
+            text,
+        };
+    }
     let (list_style, text) = if ordered {
         (Some(LIST_STYLE_ORDERED), text)
     } else {
@@ -629,11 +649,17 @@ pub fn source_fence_opener(line: &str) -> Option<FenceRun> {
     line_fence(line, ParseMode::Source)
 }
 
+/// [`fence_opener`] for a Document buffer, which reads one list marker and no
+/// task keyword (#5691).
+pub fn document_fence_opener(line: &str) -> Option<FenceRun> {
+    line_fence(line, ParseMode::Document)
+}
+
 fn line_fence(line: &str, mode: ParseMode) -> Option<FenceRun> {
     let trimmed = line.trim_start();
     match bullet_marker(trimmed) {
-        Some((len, ordered)) => {
-            fence_run(bullet_body(bullet_text(trimmed, len), ordered, mode).text)
+        Some((len, _)) => {
+            fence_run(bullet_body(&trimmed[..len], bullet_text(trimmed, len), mode).text)
         }
         None => fence_run(trimmed),
     }
@@ -1278,7 +1304,7 @@ fn logseq_ids(blocks: &[ParsedBlock], ends_in_code: &[bool]) -> std::collections
 /// nested past the import depth limit is not flattened: a save refuses it
 /// where an import would reshape it.
 pub fn parse_source_outline(content: &str) -> ParseOutput {
-    source_outline(content, false, None)
+    source_outline(content, ParseMode::Source, false, None)
 }
 
 /// [`parse_source_outline`] for a buffer whose block ids travel beside the
@@ -1289,14 +1315,37 @@ pub fn parse_source_text(
     content: &str,
     id_lines: &std::collections::HashSet<usize>,
 ) -> ParseOutput {
-    source_outline(content, false, Some(id_lines))
+    source_outline(content, ParseMode::Source, false, Some(id_lines))
 }
 
-/// [`parse_source_outline`], reading text from outside Agaric when `foreign`:
+/// [`parse_source_outline`] for a buffer in the Document dialect (#5691): a
+/// blank line separates blocks, and a line with no list marker is a block of
+/// its own, a paragraph, whose lines run to the next blank line. Neighbouring
+/// list lines need no blank line, and nest by indentation as in the source
+/// buffer. `-` and `*` mark a bullet block, `N.` and `N)` a numbered one, a
+/// checkbox after any marker a task (`- [ ] x`), which has no list style, and
+/// `+` a block with none, which is how a plain block under a list block is
+/// written. A heading is a paragraph's line and owns nothing. A line holding
+/// only `\` is an empty block, or inside a block an empty line.
+pub fn parse_document_outline(content: &str) -> ParseOutput {
+    source_outline(content, ParseMode::Document, false, None)
+}
+
+/// [`parse_document_outline`] for a buffer whose block ids travel beside the
+/// text, as [`parse_source_text`] reads one.
+pub fn parse_document_text(
+    content: &str,
+    id_lines: &std::collections::HashSet<usize>,
+) -> ParseOutput {
+    source_outline(content, ParseMode::Document, false, Some(id_lines))
+}
+
+/// A buffer read in `mode`, reading text from outside Agaric when `foreign`:
 /// flattened past [`MAX_IMPORT_DEPTH`] as an import is, an unterminated fence
 /// ending with its list item as CommonMark reads it.
 fn source_outline(
     content: &str,
+    mode: ParseMode,
     foreign: bool,
     id_lines: Option<&std::collections::HashSet<usize>>,
 ) -> ParseOutput {
@@ -1315,14 +1364,7 @@ fn source_outline(
     } else {
         read_page_properties(&normalized, &mut output)
     };
-    output.blocks = parse_outline(
-        &body,
-        ParseMode::Source,
-        foreign,
-        id_lines,
-        false,
-        &mut output.warnings,
-    );
+    output.blocks = parse_outline(&body, mode, foreign, id_lines, false, &mut output.warnings);
     output
 }
 
@@ -1377,7 +1419,7 @@ fn read_page_properties(normalized: &str, output: &mut ParseOutput) -> String {
 /// README or an LLM answer gives the blocks its headings, paragraphs, list
 /// items and fences are.
 pub fn parse_pasted_text(text: &str) -> Vec<ParsedBlock> {
-    let mut blocks = source_outline(text, true, None).blocks;
+    let mut blocks = source_outline(text, ParseMode::Source, true, None).blocks;
     blocks.iter_mut().for_each(restore_text_anchor);
     blocks
 }
@@ -1432,16 +1474,18 @@ pub fn strip_title_heading<'a>(content: &'a str, title: &str) -> &'a str {
     }
 }
 
-/// The two readings of the block grammar. Import normalises a file written by
-/// another tool; Source reads back the buffer Edit as Markdown renders and must
-/// return exactly the tree it was rendered from. A paste reads as Source does.
+/// The readings of the block grammar. Import normalises a file written by
+/// another tool; Source and Document read back the buffer Edit as Markdown
+/// renders, in its two dialects, and must return exactly the tree it was
+/// rendered from. A paste reads as Source does.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ParseMode {
     Import,
     Source,
+    Document,
 }
 
-/// The block scan both modes share: lines into blocks, then anchors, unless
+/// The block scan every mode shares: lines into blocks, then anchors, unless
 /// the ids travel beside the text on `id_lines`, then, for `foreign` text (an
 /// import or a paste, not the page's own buffer), the depth clamp, appending
 /// one warning per lossy transform to `warnings`. An import keeps every
@@ -1740,7 +1784,7 @@ fn parse_block_lines(
         if trimmed.is_empty() {
             // A fence keeps its blank lines; a source buffer keeps a block's
             // interior ones too.
-            if mode == ParseMode::Source || scan.fence.is_some() {
+            if mode != ParseMode::Import || scan.fence.is_some() {
                 scan.blank_run.push(line);
             }
             scan.after_blank = true;
@@ -1763,7 +1807,7 @@ impl<'a> Scan<'a> {
             // A source buffer writes the anchor of a block that ends in code
             // on a line of its own, which ends the fence; the anchor is text
             // until the post-pass reads it. Every other line is code.
-            if self.mode == ParseMode::Source
+            if self.mode != ParseMode::Import
                 && self.id_lines.is_none()
                 && ANCHOR_LINE_RE.is_match(trimmed)
             {
@@ -1775,9 +1819,10 @@ impl<'a> Scan<'a> {
         }
         let item = bullet_marker(trimmed)
             .filter(|&(len, ordered)| self.starts_item(trimmed, indent, len, ordered));
-        if let Some((len, ordered)) = item {
-            self.bullet(trimmed, indent, len, ordered, number);
-        } else if let Some(level) = heading_level(trimmed) {
+        let heading = heading_level(trimmed).filter(|_| self.mode != ParseMode::Document);
+        if let Some((len, _)) = item {
+            self.bullet(trimmed, indent, len, number);
+        } else if let Some(level) = heading {
             self.heading(trimmed, indent, level);
         } else if let Some((key, value)) = self.property_line(trimmed, indent) {
             self.attach_property(key, value, indent);
@@ -1812,7 +1857,7 @@ impl<'a> Scan<'a> {
         };
         if self.foreign && indent < fence.column {
             self.fence = None;
-        } else if self.mode == ParseMode::Source && self.carries_id(trimmed, number) {
+        } else if self.mode != ParseMode::Import && self.carries_id(trimmed, number) {
             let run =
                 String::from_utf8(vec![fence.run.ch; fence.run.len]).expect("a fence run is ASCII");
             self.lossy.unclosed_fences.push(format!(
@@ -1901,18 +1946,20 @@ impl<'a> Scan<'a> {
     /// text and is numbered 1, and a bullet only when it has text or sits
     /// inside an item (CommonMark § 5.2, save that Agaric's own export and
     /// clipboard write an empty child as a bare `-` at its parent's content
-    /// column, which must read back as the block it was). So wrapped prose
-    /// keeps a line that opens with `42.`, inside a list item as well as
-    /// outside one.
+    /// column, which must read back as the block it was, and a Document buffer
+    /// an empty `1.` there too). So wrapped prose keeps a line that opens with
+    /// `42.`, inside a list item as well as outside one.
     fn starts_item(&self, trimmed: &str, indent: usize, len: usize, ordered: bool) -> bool {
         if !self.continues_paragraph(indent) {
             return true;
         }
         let has_text = !trimmed[len..].trim().is_empty();
+        let in_item = self.open.iter().any(|open| open.kind == Kind::Bullet);
         if ordered {
-            has_text && trimmed[..len - 1].parse::<u32>() == Ok(1)
+            (has_text || (self.mode == ParseMode::Document && in_item))
+                && trimmed[..len - 1].parse::<u32>() == Ok(1)
         } else {
-            has_text || self.open.iter().any(|open| open.kind == Kind::Bullet)
+            has_text || in_item
         }
     }
 
@@ -1945,8 +1992,8 @@ impl<'a> Scan<'a> {
     /// (#4552), a checkbox or, on import, a task keyword its `todo_state`, an
     /// Org `[#A]` its `priority` ([`bullet_body`]), and a fence its text opens
     /// is its own.
-    fn bullet(&mut self, trimmed: &str, indent: usize, len: usize, ordered: bool, number: usize) {
-        let body = bullet_body(bullet_text(trimmed, len), ordered, self.mode);
+    fn bullet(&mut self, trimmed: &str, indent: usize, len: usize, number: usize) {
+        let body = bullet_body(&trimmed[..len], bullet_text(trimmed, len), self.mode);
         let text = body.text;
         let properties: Vec<(String, String)> = [
             (LIST_STYLE_KEY, body.list_style),
@@ -1993,17 +2040,21 @@ impl<'a> Scan<'a> {
     /// A line that starts a block of its own without a marker: a paragraph, or
     /// a fence or thematic break, nested by its indentation like a bullet. A
     /// fence it opens stays inside the list item holding it, if any: a line
-    /// left of that item's content column ends both.
+    /// left of that item's content column ends both. In a Document buffer it is
+    /// always a paragraph, whose first line may carry an escape
+    /// ([`needs_bare_line_escape`]).
     fn text_block(&mut self, trimmed: &str, indent: usize, number: usize) {
         self.pop_to(indent, None);
         let fence = fence_run(trimmed);
-        let kind = if fence.is_some() || is_thematic_break(trimmed) {
-            Kind::Verbatim
+        let (text, kind) = if self.mode == ParseMode::Document {
+            (unescape_bare_line(trimmed), Kind::Paragraph)
+        } else if fence.is_some() || is_thematic_break(trimmed) {
+            (trimmed, Kind::Verbatim)
         } else {
-            Kind::Paragraph
+            (trimmed, Kind::Paragraph)
         };
         let column = self.item_column();
-        self.push_block(trimmed, Vec::new(), fence.is_some(), indent, indent, kind);
+        self.push_block(text, Vec::new(), fence.is_some(), indent, indent, kind);
         if let Some(run) = fence {
             self.fence = Some(Fence {
                 run,
@@ -2052,7 +2103,7 @@ impl<'a> Scan<'a> {
             properties,
             is_code,
             block_anchor: None,
-            line: (self.mode == ParseMode::Source).then_some(self.line),
+            line: (self.mode != ParseMode::Import).then_some(self.line),
         });
         self.ends_in_code.push(is_code);
         self.open.push(Open {
@@ -2066,7 +2117,8 @@ impl<'a> Scan<'a> {
     /// Whether a line that starts no block continues the innermost open block:
     /// it is indented to a bullet's content column, or it follows the block's
     /// last line with no blank line between (lazily) and is not a fence or a
-    /// thematic break. A heading, a fence and a break are never continued.
+    /// thematic break, which in a Document buffer it may be (#5691 D1). A
+    /// heading, a fence and a break are never continued.
     fn continues(&self, trimmed: &str, indent: usize) -> bool {
         let Some(top) = self.open.last() else {
             return false;
@@ -2074,7 +2126,9 @@ impl<'a> Scan<'a> {
         match top.kind {
             Kind::Bullet if indent >= top.content => true,
             Kind::Bullet | Kind::Paragraph => {
-                !self.after_blank && fence_run(trimmed).is_none() && !is_thematic_break(trimmed)
+                !self.after_blank
+                    && (self.mode == ParseMode::Document
+                        || (fence_run(trimmed).is_none() && !is_thematic_break(trimmed)))
             }
             Kind::Heading(_) | Kind::Verbatim => false,
         }
@@ -2102,7 +2156,9 @@ impl<'a> Scan<'a> {
                     self.kept_refs,
                 );
             }
-            ParseMode::Source => append_source_line(block, &self.blank_run, line, is_code, width),
+            ParseMode::Source | ParseMode::Document => {
+                append_source_line(block, &self.blank_run, line, is_code, width, self.mode);
+            }
         }
         self.ends_in_code[index] = is_code;
     }
@@ -2120,7 +2176,7 @@ impl<'a> Scan<'a> {
         let (key, value) = split_property_line(trimmed)?;
         let stored = !is_reserved_line_key(key) && self.owner_at(indent).is_some();
         if value.trim().is_empty() {
-            let clears = self.mode == ParseMode::Source && !self.foreign && stored;
+            let clears = self.mode != ParseMode::Import && !self.foreign && stored;
             return clears.then_some((key, ""));
         }
         (self.mode == ParseMode::Import || stored).then_some((key, value))
@@ -2146,7 +2202,7 @@ impl<'a> Scan<'a> {
         let key = key.trim().to_string();
         let value = match self.mode {
             ParseMode::Import => value.trim().to_string(),
-            ParseMode::Source => read_source_property_value(value),
+            ParseMode::Source | ParseMode::Document => read_source_property_value(value),
         };
         // #1568: a reserved body property is dropped, never written, and the
         // surrounding good content imports, as the frontmatter path does.
@@ -2177,7 +2233,7 @@ fn clean_text(
 ) -> (String, usize) {
     match mode {
         ParseMode::Import if !line_is_code => strip_block_refs_counted(text, kept_refs),
-        ParseMode::Import | ParseMode::Source => (text.to_string(), 0),
+        ParseMode::Import | ParseMode::Source | ParseMode::Document => (text.to_string(), 0),
     }
 }
 
@@ -2233,6 +2289,7 @@ fn append_source_line(
     line: &str,
     line_is_code: bool,
     width: usize,
+    mode: ParseMode,
 ) {
     for blank in blank_run {
         last.content.push('\n');
@@ -2243,7 +2300,7 @@ fn append_source_line(
     last.content.push_str(if line_is_code {
         unescape_code_line(text)
     } else {
-        unescape_continuation(text, ParseMode::Source)
+        unescape_continuation(text, mode)
     });
     if line_is_code {
         last.is_code = true;
@@ -2295,18 +2352,51 @@ pub fn needs_planning_line_escape(line: &str) -> bool {
     is_planning_line(line.trim_start_matches(|c: char| c.is_whitespace() || c == '\\'))
 }
 
+/// `true` when a Document buffer must backslash-escape `line`, a line inside
+/// a block, so it does not read as a blank line, which would end the block or
+/// be dropped: it holds nothing but whitespace and backslashes. A line holding
+/// only `\` is an interior blank line (#5691 D4). Injective as
+/// [`continuation_line_is_ambiguous`] is.
+pub fn needs_blank_line_escape(line: &str) -> bool {
+    line.trim_start_matches(|c: char| c.is_whitespace() || c == '\\')
+        .is_empty()
+}
+
+/// `true` when a Document buffer must backslash-escape `text`, the first line
+/// of a block written with no marker, so it reads back as that text: it is
+/// empty, which a line holding only `\` stands for (#5691 D4), opens with
+/// whitespace, which would nest it, or reads as a list item or a `key:: value`
+/// line. It looks past a leading run of backslashes, as
+/// [`needs_list_marker_escape`] does, so the escape is injective.
+pub fn needs_bare_line_escape(text: &str) -> bool {
+    let body = text.trim_start_matches('\\');
+    body.is_empty()
+        || body.starts_with(char::is_whitespace)
+        || is_bullet_line(body)
+        || line_is_property_shaped(body)
+}
+
+/// A Document block's first line, written with no marker, with the escape
+/// [`needs_bare_line_escape`] asks for, if any, removed.
+fn unescape_bare_line(text: &str) -> &str {
+    text.strip_prefix('\\')
+        .filter(|rest| needs_bare_line_escape(rest))
+        .unwrap_or(text)
+}
+
 /// A continuation line's text with the renderer's escape, if any, removed:
-/// one leading `\` whose payload is [`continuation_line_is_ambiguous`], or on
-/// import [`needs_planning_line_escape`]. An ordinary line that begins with
-/// `\` (a LaTeX command, say) is kept verbatim. The renderer anchors the `\`
-/// before the line's own leading whitespace, so an indented ambiguous line
-/// reaches here as `\<ws><token>` and the payload is matched on its trimmed
-/// shape.
+/// one leading `\` whose payload is [`continuation_line_is_ambiguous`], on
+/// import [`needs_planning_line_escape`], or in a Document buffer
+/// [`needs_blank_line_escape`]. An ordinary line that begins with `\` (a
+/// LaTeX command, say) is kept verbatim. The renderer anchors the `\` before
+/// the line's own leading whitespace, so an indented ambiguous line reaches
+/// here as `\<ws><token>` and the payload is matched on its trimmed shape.
 fn unescape_continuation(text: &str, mode: ParseMode) -> &str {
     match text.strip_prefix('\\') {
         Some(rest)
             if continuation_line_is_ambiguous(rest)
-                || (mode == ParseMode::Import && needs_planning_line_escape(rest)) =>
+                || (mode == ParseMode::Import && needs_planning_line_escape(rest))
+                || (mode == ParseMode::Document && needs_blank_line_escape(rest)) =>
         {
             rest
         }
@@ -2330,7 +2420,7 @@ fn extract_block_anchors(blocks: &mut [ParsedBlock], ends_in_code: &[bool], mode
         }
         let strip = match mode {
             ParseMode::Import => strip_block_anchor_marker,
-            ParseMode::Source => strip_written_anchor_marker,
+            ParseMode::Source | ParseMode::Document => strip_written_anchor_marker,
         };
         if let (stripped, Some(anchor)) = strip(&block.content) {
             block.content = stripped;
@@ -7657,6 +7747,50 @@ mod tests_obsidian_embeds {
         assert_eq!(
             link_logseq_refs("no refs", target),
             ("no refs".to_string(), 0)
+        );
+    }
+}
+
+/// The Document dialect's reading of the markers its writer never writes
+/// (#5691 D2, D3): `*` is a bullet as `-` is, `N)` a numbered block as `N.` is,
+/// `+` a block with no list style, and a checkbox after any of them a task,
+/// which has no list style.
+#[cfg(test)]
+mod tests_document_dialect_5691 {
+    use super::{ParsedBlock, parse_document_outline};
+
+    fn property<'a>(block: &'a ParsedBlock, key: &str) -> Option<&'a str> {
+        block
+            .properties
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn a_document_reads_each_marker_as_its_list_kind() {
+        let md = "- a\n* b\n+ c\n1. d\n1) e\n- [ ] f\n* [x] g\n+ [/] h\n1. [-] i\n";
+        let blocks = parse_document_outline(md).blocks;
+        let read: Vec<(&str, Option<&str>, Option<&str>)> = blocks
+            .iter()
+            .map(|b| {
+                let style = property(b, "listStyle");
+                (b.content.as_str(), style, property(b, "todo_state"))
+            })
+            .collect();
+        assert_eq!(
+            read,
+            [
+                ("a", Some("bullet"), None),
+                ("b", Some("bullet"), None),
+                ("c", None, None),
+                ("d", Some("ordered"), None),
+                ("e", Some("ordered"), None),
+                ("f", None, Some("TODO")),
+                ("g", None, Some("DONE")),
+                ("h", None, Some("DOING")),
+                ("i", None, Some("CANCELLED")),
+            ]
         );
     }
 }

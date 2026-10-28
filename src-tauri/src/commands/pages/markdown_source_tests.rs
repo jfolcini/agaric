@@ -17,6 +17,9 @@ use super::*;
 #[path = "markdown_source_apply_tests.rs"]
 mod apply;
 
+#[path = "markdown_document_tests.rs"]
+mod document;
+
 pub(super) const PAGE: &str = "01J0000000000000000000PAGE";
 
 /// The ids content refs point at. Every one has a name, so the renderer tries
