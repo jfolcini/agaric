@@ -54,6 +54,14 @@ export function matchesShortcutBinding(
   return alternatives.some((alt) => matchesSingleBinding(e, alt))
 }
 
+/** The level of the heading chord (`heading1`–`heading6`) `e` matches, or null. */
+export function headingChordLevel(e: Parameters<typeof matchesShortcutBinding>[0]): number | null {
+  for (let level = 1; level <= 6; level += 1) {
+    if (matchesShortcutBinding(e, `heading${level}`)) return level
+  }
+  return null
+}
+
 function matchesSingleBinding(
   e: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey' | 'key'> & { code?: string },
   binding: string,

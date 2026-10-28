@@ -1,6 +1,6 @@
 /**
  * The *Edit as Markdown* buffer's outline keys (#5160 phase 5): the keyboard
- * catalog's indent, dedent, task-cycle and move bindings acting on lines. A
+ * catalog's indent, dedent, task-cycle, move and heading bindings acting on lines. A
  * real TipTap editor with the buffer's extensions; keys go through
  * ProseMirror's `handleKeyDown`, so a key the buffer takes is one the
  * browser does not see.
@@ -264,6 +264,32 @@ describe('cycling a task', () => {
       ['1. [-] done', A],
       ['plain text', B],
     ])
+  })
+})
+
+describe('the heading chords', () => {
+  it('turn the block at the caret into each heading, keeping its id, as Turn into does', () => {
+    const ed = build([
+      ['- a', A],
+      ['- b', B],
+    ])
+    const seen: Line[] = []
+    for (const level of [1, 2, 3, 4, 5, 6]) {
+      caret(ed, 1, 1)
+      expect(press(ed, String(level), { ctrlKey: true, altKey: true })).toBe(true)
+      seen.push(lines(ed)[1] as Line)
+    }
+    expect(seen).toEqual([1, 2, 3, 4, 5, 6].map((level) => [`- ${'#'.repeat(level)} b`, B]))
+    expect(lines(ed)[0]).toEqual(['- a', A])
+  })
+
+  it('take a numbered block out of its list, as a heading does', () => {
+    const ed = build([['- 1. a', A]])
+    caret(ed, 0, 5)
+
+    press(ed, '1', { ctrlKey: true, altKey: true })
+
+    expect(lines(ed)).toEqual([['- # a', A]])
   })
 })
 

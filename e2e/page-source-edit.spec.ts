@@ -634,6 +634,23 @@ test.describe('Edit as Markdown (#5140 Phase 4b) @editor @pages @markdown @mobil
     await expect(staticBlock(page, GS1).locator('h1')).toContainText(WELCOME)
   })
 
+  test('a heading chord makes the line at the cursor that heading, which stays', async ({
+    page,
+  }) => {
+    const editor = await openSourceMode(page)
+    await caretAtEnd(page, editor, WELCOME)
+
+    await page.keyboard.press('Control+Alt+2')
+
+    await expect(sourceLine(editor, WELCOME)).toHaveText(
+      '- ## Welcome to Agaric! This is your personal knowledge base.',
+    )
+    await editor.press('ControlOrMeta+s')
+    await expect(sourceEditor(page)).toHaveCount(0)
+    await reopenPage(page, PAGE)
+    await expect(staticBlock(page, GS1).locator('h2')).toContainText(WELCOME)
+  })
+
   test('the block-menu button moves the block at the cursor, which saves in the new order', async ({
     page,
   }) => {

@@ -122,9 +122,6 @@ const ROW_ACTION: Record<BlockMenuActionId, keyof BlockActions | null> = {
   delete: 'onDelete',
 }
 
-const HEADING_KEYS =
-  'block mode runs them from the block tree’s listener, which page mode does not mount; /h1–/h6 and Turn into make headings here'
-
 /** The catalog's categories whose chords the block editor answers. */
 const EDITOR_CHORD_CATEGORIES = new Set([
   'keyboard.category.navigation',
@@ -137,12 +134,6 @@ const EDITOR_CHORD_CATEGORIES = new Set([
 const CHORD_NOT_IN_PAGE_MODE: Record<string, string> = {
   zoomIn: 'page mode shows the whole page; it has no zoom',
   zoomOut: 'page mode shows the whole page; it has no zoom, and its Escape leaves the text',
-  heading1: HEADING_KEYS,
-  heading2: HEADING_KEYS,
-  heading3: HEADING_KEYS,
-  heading4: HEADING_KEYS,
-  heading5: HEADING_KEYS,
-  heading6: HEADING_KEYS,
 }
 
 /** The commands page mode runs once a save has created the block (`page-slash-commands.tsx`). */

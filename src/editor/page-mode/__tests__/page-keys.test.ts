@@ -11,13 +11,17 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   blockId,
   caret,
+  idMinter,
   openPage,
   posIn,
   press,
   type Row,
   rowsOf,
 } from '@/editor/page-mode/__tests__/page-mode-fixtures'
-import { mountNodeViews } from '@/editor/page-mode/__tests__/page-node-view-fixtures'
+import { listSource, mountNodeViews } from '@/editor/page-mode/__tests__/page-node-view-fixtures'
+import { PageLists } from '@/editor/page-mode/page-lists'
+import type { PropertyRow } from '@/lib/bindings'
+import { LIST_STYLE_KEY } from '@/lib/list-style'
 import { PREFERENCES, removePreference, writePreference } from '@/lib/preferences'
 import { MAX_BLOCK_DEPTH } from '@/lib/tree-utils'
 
@@ -264,6 +268,62 @@ describe('the indent and dedent shortcuts', () => {
       [A, 0, 'a'],
       [B, 1, 'b'],
     ])
+  })
+})
+
+describe('the heading chords', () => {
+  const heading = (level: number): [string, KeyboardEventInit] => [
+    String(level),
+    { ctrlKey: true, altKey: true },
+  ]
+
+  it('make the block at the cursor each heading, as block mode’s write `#` to `######`', () => {
+    const ed = build([[A, 0, 'a **b**']])
+    for (const level of [1, 2, 3, 4, 5, 6]) {
+      caret(ed, 0, 1)
+      expect(press(ed, ...heading(level))).toBe(true)
+      expect(rowsOf(ed.state.doc)).toEqual([[A, 0, `${'#'.repeat(level)} a **b**`]])
+    }
+  })
+
+  it('make every block the selection touches a heading, and leave a block that opens with code', () => {
+    const ed = build([
+      [A, 0, 'a'],
+      [B, 1, '# b'],
+      [C, 0, '```\nc\n```'],
+      [D, 0, 'd'],
+    ])
+    ed.commands.setTextSelection({ from: posIn(ed, 0, 0), to: posIn(ed, 2, 0) })
+
+    press(ed, ...heading(3))
+
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, '### a'],
+      [B, 1, '### b'],
+      [C, 0, '```\nc\n```'],
+      [D, 0, 'd'],
+    ])
+  })
+
+  it('take a list block out of its list, as a heading does', () => {
+    const rows: Row[] = [[A, 0, 'a']]
+    const bullet: PropertyRow = {
+      key: LIST_STYLE_KEY,
+      value_text: 'bullet',
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
+    }
+    const lists = new PageLists({ [A]: [bullet] }, [{ id: A, depth: 0 }])
+    const source = listSource(lists)
+    editor = openPage(rows, idMinter(), undefined, source)
+    caret(editor, 0, 0)
+
+    press(editor, ...heading(2))
+
+    expect(rowsOf(editor.state.doc)).toEqual([[A, 0, '## a']])
+    expect(source.setStyle.mock.calls).toEqual([[A, 'none']])
   })
 })
 

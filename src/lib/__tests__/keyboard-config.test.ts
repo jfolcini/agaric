@@ -8,6 +8,7 @@ import {
   getCurrentShortcuts,
   getCustomOverrides,
   getShortcutKeys,
+  headingChordLevel,
   matchesShortcutBinding,
   normalizeBinding,
   resetAllShortcuts,
@@ -1045,6 +1046,18 @@ describe('keyboard-config', () => {
       expect(
         matchesShortcutBinding(fakeEvent('1', { ctrlKey: true, shiftKey: true }), 'heading1'),
       ).toBe(false)
+    })
+
+    it('headingChordLevel reads each heading chord’s level, a rebind included, and null for another key', () => {
+      for (const level of [1, 2, 3, 4, 5, 6]) {
+        expect(headingChordLevel(fakeEvent(String(level), { ctrlKey: true, altKey: true }))).toBe(
+          level,
+        )
+      }
+      expect(headingChordLevel(fakeEvent('1', { ctrlKey: true }))).toBeNull()
+      setCustomShortcut('heading4', 'Ctrl + Shift + H')
+      expect(headingChordLevel(fakeEvent('h', { ctrlKey: true, shiftKey: true }))).toBe(4)
+      expect(headingChordLevel(fakeEvent('4', { ctrlKey: true, altKey: true }))).toBeNull()
     })
 
     it('returns false for non-matching event', () => {

@@ -28,7 +28,7 @@ Settings → Keyboard. Each row shows the action, then its current keys, then an
 | `Ctrl+.` | Collapse / expand block children |
 | `Alt+.` | Zoom in to the focused block |
 | `Escape` | Zoom back out |
-| `Ctrl+Alt+1` … `Ctrl+Alt+6` | Turn the focused block into a heading (level 1-6). `Ctrl+1` … `Ctrl+9` select tabs and `Alt+1` … `Alt+9` switch spaces (see **Global navigation**) |
+| `Ctrl+Alt+1` … `Ctrl+Alt+6` | Turn the focused block into a heading (level 1-6), taking off its list style; in page mode, every block the selection touches that opens with text or a heading. `Ctrl+1` … `Ctrl+9` select tabs and `Alt+1` … `Alt+9` switch spaces (see **Global navigation**) |
 | `Ctrl+Enter` / `Ctrl+L` | Cycle the block's task state |
 | `Ctrl+Shift+P` | Open the **Property Drawer** for the block |
 | `Ctrl+Shift+D` | Open the date picker (inserts a date at the cursor). The *due* and *scheduled* pickers are toolbar-only — they have no default binding |
@@ -77,6 +77,7 @@ The buffer uses the block editor's bindings from the catalog, your rebinds inclu
 | `Ctrl+Shift+→` / `Ctrl+Shift+←` | Indent / dedent, whatever the Tab setting |
 | `Ctrl+Shift+↑` / `Ctrl+Shift+↓` | Move the line, with the lines indented under it, past the sibling above / below it; a selection moves the siblings it touches together. Nothing at the top or bottom, and nothing moves into or out of the front matter |
 | `Ctrl+Enter` / `Ctrl+L` | Step the task of the block at the cursor: none, `[ ]`, `[/]`, `[x]`, `[-]`, none again |
+| `Ctrl+Alt+1` … `Ctrl+Alt+6` | Turn the block at the cursor into that heading, as the toolbar's *Turn into* does |
 | `Ctrl+S` | Save |
 | `Ctrl+E` / `Ctrl+Shift+M` | Go to page mode as the *Page* link does, saving a changed buffer first; nothing on touch or on a page over page mode's block cap |
 | `Escape` | Close an open picker; else close the buffer, asking first when it changed |

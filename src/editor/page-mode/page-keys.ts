@@ -13,7 +13,8 @@
  * picker keeps its own keys. A key pressed on a chip or a control in the
  * document is that control's, as the keys act at the caret, which is
  * elsewhere; Escape on a chip still leaves the text. Alt+Enter at a page link
- * or block ref follows it, as block mode's does.
+ * or block ref follows it, as block mode's does. Block mode's heading chords
+ * make each block the selection touches that heading (`headingBlocks`).
  */
 
 import { Extension } from '@tiptap/core'
@@ -58,7 +59,7 @@ import {
 } from '@/lib/block-tree-ops'
 import { isTabIndentEnabled } from '@/lib/editor-preferences'
 import { t } from '@/lib/i18n'
-import { matchesShortcutBinding } from '@/lib/keyboard-config'
+import { headingChordLevel, matchesShortcutBinding } from '@/lib/keyboard-config'
 import { notify } from '@/lib/notify'
 import { computeSelectionRoots, type TreeItem } from '@/lib/tree-utils'
 
@@ -283,6 +284,29 @@ const joinForward: Command = (state, dispatch, view) => {
   return true
 }
 
+/**
+ * A heading chord: each block the selection touches whose text opens with a
+ * paragraph or a heading opens with a heading of `level` instead, as block
+ * mode's chord writes `# `. A list block's style goes with it (`leftTheirList`).
+ */
+function headingBlocks(level: number): Command {
+  return (state, dispatch) => {
+    const heading = state.schema.nodes['heading'] as NodeType
+    const first = state.doc.resolve(state.selection.from).index(0)
+    const last = state.doc.resolve(state.selection.to).index(0)
+    const tr = state.tr
+    state.doc.forEach((block, pos, index) => {
+      const opening = block.firstChild
+      if (index < first || index > last || opening === null) return
+      if (opening.type.name === 'paragraph' || opening.type === heading) {
+        tr.setNodeMarkup(pos + 1, heading, { level })
+      }
+    })
+    if (tr.docChanged) dispatch?.(tr.scrollIntoView())
+    return true
+  }
+}
+
 /** The attribute on the box around page mode's text: where Escape leaves the focus. */
 export const SURFACE = 'data-page-mode-surface'
 
@@ -341,6 +365,11 @@ export const PageKeys = Extension.create<PageKeysOptions>({
               event.preventDefault()
               openSlashPicker(editor, 'turn')
               return true
+            }
+            const level = headingChordLevel(event)
+            if (level !== null) {
+              event.preventDefault()
+              return headingBlocks(level)(view.state, view.dispatch)
             }
             const link = matchesShortcutBinding(event, 'followLink')
               ? linkAtCaret(view.state)

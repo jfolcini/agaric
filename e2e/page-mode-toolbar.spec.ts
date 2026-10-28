@@ -3,7 +3,7 @@
  * backend: bold, a heading, a block turned from a list into a heading and
  * back, a bulleted and a numbered block across a selection, a task and a
  * table, each read back from the backend, then again after leaving the page
- * and coming back.
+ * and coming back; and block mode's heading chords, read back the same way.
  */
 
 import { createRequire } from 'node:module'
@@ -220,5 +220,43 @@ test.describe('page mode toolbar (#5691) @editor @pages', () => {
     await expect(page.locator(`${EDITOR} [data-page-block-id="${ids[1]}"] h2`)).toHaveText('beta')
     await expect(page.locator(`${EDITOR} [data-page-block-id="${ids[4]}"] table`)).toHaveCount(1)
     await page.screenshot({ path: 'test-results/page-mode-toolbar.png' })
+  })
+
+  test('the heading chords make each heading level and clear a list style, which stay', async ({
+    page,
+  }) => {
+    const seeded = await seed(page, ['one', 'two', 'three', 'four', 'five'])
+    const { pageId } = seeded
+    const ids = seeded.ids as [string, string, string, string, string]
+    await ipc(page, 'set_property', {
+      blockId: ids[1],
+      key: 'listStyle',
+      value: { value_text: 'bullet' },
+    })
+    await openViaPalette(page, TITLE)
+    await page
+      .getByRole('radiogroup', { name: 'Editing mode' })
+      .getByRole('radio', { name: 'Page' })
+      .click()
+    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(5)
+
+    // A heading chord on a heading changes its level.
+    await select(page, 0)
+    await page.keyboard.press('Control+Alt+6')
+    await expect.poll(async () => (await contents(page, pageId))[0]).toBe('###### one')
+    for (const level of [1, 2, 3, 4, 5]) {
+      await select(page, level - 1)
+      await page.keyboard.press(`Control+Alt+${level}`)
+    }
+    const headings = ['# one', '## two', '### three', '#### four', '##### five']
+    await expect.poll(() => contents(page, pageId)).toEqual(headings)
+    await expect.poll(() => listStyles(page, ids)).toEqual([null, null, null, null, null])
+
+    await reopen(page)
+    expect(await contents(page, pageId)).toEqual(headings)
+    expect(await listStyles(page, ids)).toEqual([null, null, null, null, null])
+    for (const [i, id] of ids.entries()) {
+      await expect(page.locator(`${EDITOR} [data-page-block-id="${id}"] h${i + 1}`)).toHaveCount(1)
+    }
   })
 })

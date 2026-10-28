@@ -1,6 +1,6 @@
 /**
  * The *Edit as Markdown* buffer's outline keys (#5160 phase 5): the keyboard
- * catalog's indent, dedent, task-cycle and move bindings by id, user overrides
+ * catalog's indent, dedent, task-cycle, move and heading bindings by id, user overrides
  * included, acting on lines of markdown as the block editor acts on blocks.
  * Tab and Shift+Tab indent and dedent too while *Tab indents blocks* is on
  * (Settings → Editor), the opt-out that gives Tab back to focus navigation;
@@ -23,9 +23,11 @@ import {
   isBlank,
   lineStarts,
   subtreeEnd,
+  turnInto,
 } from '@/editor/source-buffer-blocks'
+import type { BlockTypeToken } from '@/lib/block-type-convert'
 import { isTabIndentEnabled } from '@/lib/editor-preferences'
-import { matchesShortcutBinding } from '@/lib/keyboard-config'
+import { headingChordLevel, matchesShortcutBinding } from '@/lib/keyboard-config'
 import { isTabKey } from '@/lib/keyboard-config/keys'
 import { nextTaskState, TASK_STATE_TO_MARKER, taskStateFromMarker } from '@/lib/task-states'
 
@@ -237,6 +239,14 @@ function moveLines(direction: -1 | 1): Command {
   return (state, dispatch) => moveRange(...touchedLines(state), direction)(state, dispatch)
 }
 
+/** Turn the block the caret is in into a heading of `level`, as Turn into's row does. */
+function turnIntoHeading(level: number): Command {
+  return (state, dispatch) => {
+    const block = blockAtCursor(state)
+    return block === null || turnInto(block, `h${level}` as BlockTypeToken)(state, dispatch)
+  }
+}
+
 /** The command a key runs in the buffer, or `null` for a key it leaves alone. */
 function commandFor(event: KeyboardEvent): Command | null {
   if (matchesShortcutBinding(event, 'indentBlock')) return indentBlocks
@@ -244,6 +254,8 @@ function commandFor(event: KeyboardEvent): Command | null {
   if (matchesShortcutBinding(event, 'moveBlockUp')) return moveLines(-1)
   if (matchesShortcutBinding(event, 'moveBlockDown')) return moveLines(1)
   if (matchesShortcutBinding(event, 'cycleTaskState')) return cycleTask
+  const level = headingChordLevel(event)
+  if (level !== null) return turnIntoHeading(level)
   const plainTab = isTabKey(event) && !event.ctrlKey && !event.metaKey && !event.altKey
   if (plainTab && isTabIndentEnabled()) return event.shiftKey ? dedentBlocks : indentBlocks
   return null
