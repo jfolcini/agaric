@@ -42,7 +42,7 @@
  */
 
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { blocks, properties } from '@/lib/tauri-mock/seed'
+import { blocks, opLog, properties } from '@/lib/tauri-mock/seed'
 
 /**
  * The harness space id. MUST equal `TEST_SPACE_ID` in
@@ -163,20 +163,57 @@ export interface QueryResult {
 // ---------------------------------------------------------------------------
 
 const SEED_LABEL = /^S\d+$/
+/** `\d{1,6}`, as `resolveOpArgId` bounds it in `conformance-replay.ts`. */
+const CREATED_LABEL = /^C(\d{1,6})$/
 
-function expandToken(s: string): string {
+/**
+ * #4669 — the ids of blocks CREATED by the ops replayed so far, in op order,
+ * read from the mock op_log's `create_block` entries. This is the mock twin of
+ * the Rust runner's `read_created_block_ids_in_op_order`, and it is what makes
+ * a `Cn` label resolvable, in an op arg (`expandOpArgs`) and in a query arg.
+ */
+export function createdBlockIdsInOpOrder(): string[] {
+  const out: string[] = []
+  for (const entry of opLog) {
+    if (entry.op_type !== 'create_block') continue
+    let id: unknown
+    try {
+      id = (JSON.parse(entry.payload) as Record<string, unknown>)['block_id']
+    } catch {
+      continue // malformed payload: no create id to contribute
+    }
+    if (typeof id === 'string' && !out.includes(id)) out.push(id)
+  }
+  return out
+}
+
+/** `$SPACE`, `Sn`, and `Cn` — the n-th block the ops created, failing closed
+ *  past the last one. Mirror of `expand_token` in the Rust twin. */
+function expandToken(s: string, createdIds: readonly string[]): string {
   if (s === SPACE_TOKEN) return CONFORMANCE_SPACE_ID
   if (SEED_LABEL.test(s)) return s.padStart(26, '0')
+  const created = CREATED_LABEL.exec(s)
+  if (created) {
+    const n = Number(created[1])
+    const id = n >= 1 ? createdIds[n - 1] : undefined
+    if (id == null) {
+      throw new Error(
+        `conformance query arg '${s}' names the ${n}th op-created block, but the ops ` +
+          `created ${createdIds.length}`,
+      )
+    }
+    return id
+  }
   return s
 }
 
-export function expandQueryArgs(v: unknown): unknown {
-  if (typeof v === 'string') return expandToken(v)
-  if (Array.isArray(v)) return v.map(expandQueryArgs)
+export function expandQueryArgs(v: unknown, createdIds: readonly string[]): unknown {
+  if (typeof v === 'string') return expandToken(v, createdIds)
+  if (Array.isArray(v)) return v.map((val) => expandQueryArgs(val, createdIds))
   if (v !== null && typeof v === 'object') {
     const out: Record<string, unknown> = {}
     for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-      out[k] = expandQueryArgs(val)
+      out[k] = expandQueryArgs(val, createdIds)
     }
     return out
   }
@@ -1086,9 +1123,10 @@ export function relabelToken(token: string, labels: ReadonlyMap<string, string>)
 // ---------------------------------------------------------------------------
 
 /**
- * Give every PAGE block the mock's space marker — a `space` ref property
- * pointing at {@link CONFORMANCE_SPACE_ID}. Non-page blocks resolve their space
- * through their owning page (`fbqInSpace`), so pages are the whole surface.
+ * Give every PAGE and root TAG block the mock's space marker — a `space` ref
+ * property pointing at {@link CONFORMANCE_SPACE_ID}. Every other block resolves
+ * its space through its owning page (`fbqInSpace`), so those are the whole
+ * surface.
  *
  * TOMBSTONED pages are stamped too: the Rust `assign_all_to_test_space` is a
  * blanket `UPDATE blocks SET space_id = …` with no `deleted_at` filter, so
@@ -1192,10 +1230,10 @@ export function stampMockSpace(): void {
       continue
     }
     b['space_id'] = CONFORMANCE_SPACE_ID
-    // The mock's own, older scoping mechanism: `page` blocks only, so the set
-    // of rows carrying a `space` PROPERTY is exactly what it was before the
-    // column joined it.
-    if (b['block_type'] !== 'page') continue
+    // The mock's own, older scoping mechanism, on the rows `create_block`
+    // writes it on: a page or a tag. A seeded root tag without it is in the
+    // space by column and outside it by property, which no created tag is.
+    if (b['block_type'] !== 'page' && b['block_type'] !== 'tag') continue
     if (!properties.has(id)) properties.set(id, new Map())
     properties.get(id)?.set('space', {
       key: 'space',
@@ -1604,6 +1642,7 @@ export async function runQuerySteps(
   assertUniqueStepNames(steps)
   const out: QueryResult[] = []
   const cursors = new Map<string, string | null>()
+  const createdIds = createdBlockIdsInOpOrder()
   for (const step of steps) {
     const shape = WIRE[step.command]
     if (!shape) {
@@ -1627,7 +1666,7 @@ export async function runQuerySteps(
           `the two stacks simply disagree, that is a divergence to fix, not a reason.`,
       )
     }
-    const args = expandQueryArgs(step.args ?? {}) as Record<string, unknown>
+    const args = expandQueryArgs(step.args ?? {}, createdIds) as Record<string, unknown>
     if (step.cursor_from != null) {
       if (!cursors.has(step.cursor_from)) {
         throw new Error(

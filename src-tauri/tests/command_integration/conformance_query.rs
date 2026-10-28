@@ -111,7 +111,7 @@ use super::common::tags::{
     query_by_tags_inner,
 };
 use super::common::*;
-use super::conformance::seed_label_to_id;
+use super::conformance::{read_created_block_ids_in_op_order, resolve_op_arg_id, seed_label_to_id};
 use super::conformance_snapshot::token_key;
 use agaric_core::ulid::{BlockId, PageId};
 use agaric_store::backlink::{BacklinkFilter, BacklinkSort, LinkKind};
@@ -126,28 +126,40 @@ use std::collections::BTreeMap;
 pub const SPACE_TOKEN: &str = "$SPACE";
 
 /// Expand one fixture-local token: `$SPACE` → the harness space id, `S<n>` → the
-/// 26-char expansion of that seed label. Anything else passes through.
-fn expand_token(s: &str) -> String {
+/// 26-char expansion of that seed label, `C<n>` → the n-th block the ops
+/// created, as an op arg resolves it ([`resolve_op_arg_id`]). Anything else
+/// passes through.
+fn expand_token(s: &str, created_ids: &[String]) -> String {
     if s == SPACE_TOKEN {
         return TEST_SPACE_ID.to_owned();
     }
-    let is_seed_label =
-        s.len() >= 2 && s.starts_with('S') && s[1..].chars().all(|c| c.is_ascii_digit());
-    if is_seed_label {
+    let digits = |prefix: char, max: usize| {
+        s.strip_prefix(prefix).is_some_and(|rest| {
+            !rest.is_empty() && rest.len() <= max && rest.bytes().all(|b| b.is_ascii_digit())
+        })
+    };
+    if digits('S', usize::MAX) {
         return seed_label_to_id(s);
+    }
+    if digits('C', 6) {
+        return resolve_op_arg_id(s, created_ids);
     }
     s.to_owned()
 }
 
 /// Recursively expand every string in a query step's args. Applied identically
 /// on the TS side, so both stacks receive byte-identical arguments.
-pub fn expand_query_args(v: &Value) -> Value {
+pub fn expand_query_args(v: &Value, created_ids: &[String]) -> Value {
     match v {
-        Value::String(s) => Value::String(expand_token(s)),
-        Value::Array(a) => Value::Array(a.iter().map(expand_query_args).collect()),
+        Value::String(s) => Value::String(expand_token(s, created_ids)),
+        Value::Array(a) => Value::Array(
+            a.iter()
+                .map(|val| expand_query_args(val, created_ids))
+                .collect(),
+        ),
         Value::Object(o) => Value::Object(
             o.iter()
-                .map(|(k, val)| (k.clone(), expand_query_args(val)))
+                .map(|(k, val)| (k.clone(), expand_query_args(val, created_ids)))
                 .collect(),
         ),
         other => other.clone(),
@@ -2555,6 +2567,8 @@ pub async fn run_query_steps(
     // state the backend had just rebuilt for itself and the mock never
     // produces — a divergence that would present as a mock bug.
     let cache_before = derived_cache_digest(pool).await;
+    // What a `Cn` arg names: the ops are settled, so this is the whole list.
+    let created_ids = read_created_block_ids_in_op_order(pool).await;
 
     let mut out: Vec<Value> = Vec::with_capacity(steps.len());
     let mut cursors: BTreeMap<String, Option<String>> = BTreeMap::new();
@@ -2570,7 +2584,7 @@ pub async fn run_query_steps(
         // per step and shared with `StepArgs::at` through `step_context`, so
         // the two families of failure carry the identical prefix.
         let at = step_context(fixture_name, &name, command);
-        let mut args = expand_query_args(step.get("args").unwrap_or(&Value::Null));
+        let mut args = expand_query_args(step.get("args").unwrap_or(&Value::Null), &created_ids);
         if let Some(from) = step.get("cursor_from").and_then(Value::as_str) {
             let cursor = cursors.get(from).cloned().unwrap_or_else(|| {
                 panic!("fixture '{fixture_name}' query step '{name}' reads `cursor_from` '{from}', which is not an EARLIER step in this fixture")

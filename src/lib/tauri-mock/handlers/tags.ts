@@ -17,6 +17,7 @@ import {
   invalidOperationRejection,
   notFoundRejection,
   ownerSpaceOf,
+  pageRequestLimit,
   refInclusiveTags,
   validationRejection,
   readActiveSpaceScope,
@@ -354,6 +355,9 @@ export const tagsHandlers = {
   query_by_tags: (args) => {
     const a = args as Record<string, unknown>
     assertTagFilterWithinCap(a['tagIds'] as string[] | null)
+    // `PageRequest::new` refuses the limit before any query runs; the mock then
+    // serves every match on one page.
+    pageRequestLimit(a['limit'])
     const leaves: TagExprNode[] = [
       ...((a['tagIds'] as string[] | null) ?? []).map((value): TagExprNode => ({
         type: 'Tag',

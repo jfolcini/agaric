@@ -2162,7 +2162,9 @@ export const searchHandlers = {
       children: [],
     }
     const spaceId = request['spaceId'] as string
-    const limit = Math.min(Number((request['limit'] as number | null | undefined) ?? 50), 100)
+    // `validate_limit` (engine.rs) is `PageRequest::new`'s policy: `[1, 200]`,
+    // refused rather than clamped, 50 when absent.
+    const limit = pageRequestLimit(request['limit'])
     // `fulltext`: an empty string is "no term", same convention as
     // `search_blocks`'s `!query` short-circuit.
     const fulltext = (request['fulltext'] as string | null | undefined) ?? ''
@@ -2635,7 +2637,7 @@ export const searchHandlers = {
     const a = args as Record<string, unknown>
     const beforeDate = a['beforeDate'] as string
     const todoStates = a['todoStates'] as string[]
-    const limit = (a['limit'] as number | null) ?? 200
+    const limit = pageRequestLimit(a['limit'])
     // Honour `scope: SpaceScope`: drop blocks whose owning page does not
     // carry `space = ?spaceId`.
     const spaceId = readActiveSpaceScope('list_unfinished_tasks', a)

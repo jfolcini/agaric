@@ -606,7 +606,7 @@ async fn read_raw_state(pool: &SqlitePool) -> super::conformance_snapshot::RawSt
 /// Read the ids of blocks CREATED via ops, in creation (seq) order, from the
 /// op_log's indexed `block_id` sidecar. Drives the canonical relabel order for
 /// the post-seed portion of the block set.
-async fn read_created_block_ids_in_op_order(pool: &SqlitePool) -> Vec<String> {
+pub(super) async fn read_created_block_ids_in_op_order(pool: &SqlitePool) -> Vec<String> {
     let rows = sqlx::query_as::<_, (Option<String>,)>(
         "SELECT block_id FROM op_log WHERE device_id = ? AND op_type = 'create_block' ORDER BY seq",
     )
@@ -1454,14 +1454,18 @@ pub async fn replay_fixture(
     }
     assign_all_to_test_space(&pool).await;
     // The raw seed bypasses the materializer, so give every seeded page the
-    // `pages_cache` row and counts production would hold (the mock derives
-    // both live). Rows before counts: the count recompute only UPDATEs rows.
+    // `pages_cache` row and counts, and every seeded tag the `tags_cache` row,
+    // production would hold (the mock derives all three live). Rows before
+    // counts: the count recompute only UPDATEs rows.
     agaric_store::cache::rebuild_pages_cache(&pool)
         .await
         .expect("seed pages_cache rows");
     agaric_store::cache::rebuild_pages_cache_counts(&pool)
         .await
         .expect("seed pages_cache counts");
+    agaric_store::cache::rebuild_tags_cache(&pool)
+        .await
+        .expect("seed tags_cache rows");
 
     let mut canonical_order: Vec<String> = seed["blocks"]
         .as_array()
@@ -1619,6 +1623,18 @@ pub async fn replay_fixture(
     // Catch any top-level pages created mid-op so their descendants resolve a
     // space (otherwise a follow-up cross-space ref/link op would be rejected).
     assign_all_to_test_space(&pool).await;
+    // The stamp writes `blocks.space_id` alone, and a page an op created
+    // outside any space (a `create_space` block) keeps a `pages_cache` row
+    // naming none. Copy the column into the cache as every production write
+    // of `space_id` does (migration 0124's backfill), or a read of the cache
+    // disagrees with a read of the column.
+    sqlx::query(
+        "UPDATE pages_cache SET space_id = \
+         (SELECT b.space_id FROM blocks b WHERE b.id = pages_cache.page_id)",
+    )
+    .execute(&pool)
+    .await
+    .expect("sync pages_cache.space_id with the stamp");
 
     // 3. Canonical order: seed blocks first, then op-created blocks in seq
     // order. The loop maintains this after every op; this final read is an
