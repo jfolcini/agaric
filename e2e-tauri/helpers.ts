@@ -1238,16 +1238,41 @@ export async function pageSourceClipboard(
 }
 
 /**
+ * Close every toast and wait until each has left the page. In the lane's
+ * 1024×768 window the toasts sit in the bottom-right corner, at the source
+ * editor's Save and Cancel, and a toast on its way out of a stack keeps a hit
+ * area beyond its own box (sonner's `[data-removed='true']::before`) that
+ * reaches over Save: one that expires between `waitForClickable` and `click`
+ * takes the click ("element click intercepted"). The close buttons are
+ * pressed from the page, since one toast can lie over another's.
+ */
+async function dismissToasts(): Promise<void> {
+  await browser.execute(() => {
+    for (const close of document.querySelectorAll<HTMLElement>(
+      '[data-sonner-toast] [data-close-button]',
+    )) {
+      close.click()
+    }
+  })
+  await browser.waitUntil(
+    async () =>
+      (await browser.execute(() => document.querySelectorAll('[data-sonner-toast]').length)) === 0,
+    { timeout: ACTION_TIMEOUT, timeoutMsg: 'a toast stayed after its close button was pressed' },
+  )
+}
+
+/**
  * Click the source editor's button whose text holds `name` (Save reads
  * `Save (2 changes)` once the buffer changed; Save and Cancel sit beside the
- * Edit / Preview / Changes tabs, not inside them), then move the pointer
- * off it. The "Markdown saved" toast slides in under a pointer left on Save,
- * WebKit reports that as the pointer entering it, and sonner then expands the
- * stack and holds every toast open: two saves later the stack covers Save and
- * Cancel for good.
+ * Edit / Preview / Changes tabs, not inside them) with no toast left over it
+ * (`dismissToasts`), then move the pointer off it. The "Markdown saved" toast
+ * slides in under a pointer left on Save, WebKit reports that as the pointer
+ * entering it, and sonner then expands the stack and holds every toast open
+ * over the rest of the spec.
  */
 export async function clickPageSourceButton(name: string): Promise<void> {
   const button = $(PAGE_SOURCE).$('./ancestor::*[@data-slot="tabs"]/..').$(`button*=${name}`)
+  await dismissToasts()
   await button.waitForClickable({ timeout: ACTION_TIMEOUT })
   await button.click()
   await browser.action('pointer').move({ x: 2, y: 2, origin: 'viewport' }).perform()
