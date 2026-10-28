@@ -1244,19 +1244,20 @@ export async function pageSourceClipboard(
  * area beyond its own box (sonner's `[data-removed='true']::before`) that
  * reaches over Save: one that expires between `waitForClickable` and `click`
  * takes the click ("element click intercepted"). The close buttons are
- * pressed from the page, since one toast can lie over another's.
+ * pressed from the page, since one toast can lie over another's, and pressed
+ * again on every poll, since a loading toast has none until it settles.
  */
 async function dismissToasts(): Promise<void> {
-  await browser.execute(() => {
-    for (const close of document.querySelectorAll<HTMLElement>(
-      '[data-sonner-toast] [data-close-button]',
-    )) {
-      close.click()
-    }
-  })
   await browser.waitUntil(
-    async () =>
-      (await browser.execute(() => document.querySelectorAll('[data-sonner-toast]').length)) === 0,
+    () =>
+      browser.execute(() => {
+        for (const close of document.querySelectorAll<HTMLElement>(
+          '[data-sonner-toast]:not([data-removed="true"]) [data-close-button]',
+        )) {
+          close.click()
+        }
+        return document.querySelectorAll('[data-sonner-toast]').length === 0
+      }),
     { timeout: ACTION_TIMEOUT, timeoutMsg: 'a toast stayed after its close button was pressed' },
   )
 }

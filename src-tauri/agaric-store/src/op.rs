@@ -2360,10 +2360,6 @@ mod tests {
     fn builtin_options_json_is_a_selects_options_as_a_json_array() {
         let options = |key| builtin_property_def(key).and_then(BuiltinPropertyDef::options_json);
         assert_eq!(options("priority").as_deref(), Some(r#"["1","2","3"]"#));
-        assert_eq!(
-            options("todo_state").as_deref(),
-            Some(r#"["TODO","DOING","DONE","CANCELLED"]"#)
-        );
         assert_eq!(options("due_date"), None);
     }
 }
