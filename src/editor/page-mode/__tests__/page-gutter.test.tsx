@@ -11,6 +11,7 @@
  */
 
 import { act, fireEvent, render } from '@testing-library/react'
+import { Plugin } from '@tiptap/pm/state'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
@@ -254,6 +255,107 @@ describe('the grip', () => {
     fireEvent.click(grip(container))
 
     expect(menus).toEqual([C, A])
+  })
+
+  it('sits at its block’s corner measured from the frame the editor’s root sits in', async () => {
+    const { container, editor } = mount(TREE)
+    const origin = editor.view.dom.parentElement as HTMLElement
+    vi.spyOn(origin, 'getBoundingClientRect').mockReturnValue(new DOMRect(10, 20, 700, 400))
+    placeAt(container, C, 84)
+
+    await point(textOf(container, C))
+
+    expect(frame(container).style.top).toBe('64px')
+    expect(frame(container).style.left).toBe('30px')
+  })
+
+  it('a press and release on it, with no drag, opens its block’s menu and leaves it shown', async () => {
+    const { container, editor } = mount(TREE)
+    const menus: string[] = []
+    editor.view.dom.addEventListener(GRIP_MENU, (event) => {
+      menus.push((event as CustomEvent<GripMenuDetail>).detail.blockId)
+    })
+    await point(textOf(container, C))
+
+    fireEvent.pointerDown(frame(container), { button: 0, clientX: 5, clientY: 5 })
+    fireEvent.pointerUp(window, { button: 0, clientX: 5, clientY: 5 })
+    fireEvent.click(grip(container))
+
+    expect(menus).toEqual([C])
+    expect(frame(container)).toBeVisible()
+  })
+
+  it('hides through a drag of its block, however the pointer moves, and shows again once it moves after', async () => {
+    const { container } = mount(TREE)
+    await point(textOf(container, C))
+
+    fireEvent.pointerDown(frame(container), { button: 0, clientX: 5, clientY: 5 })
+    fireEvent.pointerMove(window, { clientX: 5, clientY: 50 })
+    expect(frame(container)).not.toBeVisible()
+    await point(textOf(container, A))
+    expect(frame(container)).not.toBeVisible()
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await point(textOf(container, A))
+    expect(frame(container)).toBeVisible()
+  })
+
+  it('stays as the selection moves, which moves no block', async () => {
+    const { container, editor } = mount(TREE)
+    await point(textOf(container, C))
+
+    caret(editor, 0, 1)
+
+    expect(frame(container)).toBeVisible()
+  })
+
+  it('hides as the pointer moves onto the editor outside every block', async () => {
+    const { container, editor } = mount(TREE)
+    await point(textOf(container, A))
+
+    await point(editor.view.dom)
+
+    expect(frame(container)).not.toBeVisible()
+  })
+
+  it('stays hidden when the pointer leaves within the frame it moved in', async () => {
+    const { container, editor } = mount(TREE)
+    await point(textOf(container, A))
+
+    fireEvent.pointerMove(textOf(container, C))
+    fireEvent.pointerLeave(editor.view.dom, { relatedTarget: document.body })
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+    })
+
+    expect(frame(container)).not.toBeVisible()
+  })
+
+  it('is one again when the editor’s plugins change, which redraws it, and leaves no block marked as under it', async () => {
+    const { container, editor } = mount(TREE)
+    await point(textOf(container, A))
+
+    act(() => {
+      editor.registerPlugin(new Plugin({}))
+    })
+    expect(blockEl(container, A)).not.toHaveAttribute('data-page-grip-on')
+
+    placeAt(container, C, 64)
+    await point(textOf(container, C))
+    expect(frame(container)).toBeVisible()
+    expect(frame(container).style.top).toBe('64px')
+  })
+
+  it('a press in a block’s lane, left of the block, keeps the caret; one in the block, or left of anything else, is the editor’s', () => {
+    const { container } = mount(TREE)
+    placeAt(container, A, 0)
+    vi.spyOn(textOf(container, A), 'getBoundingClientRect').mockReturnValue(
+      new DOMRect(64, 0, 576, 32),
+    )
+
+    expect(fireEvent.mouseDown(blockEl(container, A), { clientX: 39 })).toBe(false)
+    expect(fireEvent.mouseDown(blockEl(container, A), { clientX: 40 })).toBe(true)
+    expect(fireEvent.mouseDown(textOf(container, A), { clientX: 50 })).toBe(true)
   })
 
   it('follows its block as it moves with no change to the document, a resize say, once the pointer moves', async () => {

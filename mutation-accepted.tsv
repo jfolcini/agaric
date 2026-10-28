@@ -31,6 +31,32 @@ frontend	src/editor/page-mode/page-block-ids.ts	LogicalOperator	5	1	if (attr !==
 frontend	src/editor/page-mode/page-block-ids.ts	OptionalChaining	53	1	if (attr !== undefined && pos !== undefined) return doc.nodeAt(pos)?.type === type
 frontend	src/editor/page-mode/page-block-ids.ts	StringLiteral	46	1	export const pageBlockIdsKey = new PluginKey('pageBlockIds')
 frontend	src/editor/page-mode/page-block-ids.ts	StringLiteral	7	1	name: 'pageBlockIds',
+# #6108 page-gutter: the frame is out of the document until place() inserts it, which unhides it
+frontend	src/editor/page-mode/page-gutter.ts	BooleanLiteral	18	1	element.hidden = true
+# #6108 page-gutter: a lane-press listener left on after destroy() only prevents what the live grip's listener prevents
+frontend	src/editor/page-mode/page-gutter.ts	BooleanLiteral	64	1	this.view.dom.removeEventListener('mousedown', this.pressLane, true)
+# #6108 page-gutter: re-placing the same block re-applies the same attributes; the grip is never hidden while it has a block
+frontend	src/editor/page-mode/page-gutter.ts	ConditionalExpression	5	1	if (block !== this.block) {
+# #6108 page-gutter: blockId is null only while the frame is hidden (display:none), when no click reaches the button; the guard is for the type
+frontend	src/editor/page-mode/page-gutter.ts	ConditionalExpression	5	1	if (blockId === null) return
+# #6108 page-gutter: inserting the frame where it already is leaves the DOM as it was
+frontend	src/editor/page-mode/page-gutter.ts	ConditionalExpression	5	1	if (element.parentElement !== view.dom.parentElement) view.dom.after(element)
+# #6108 page-gutter: redrawing the same fold draws the same chevron on the same button
+frontend	src/editor/page-mode/page-gutter.ts	ConditionalExpression	5	1	if (fold === this.shown) return
+# #6108 page-gutter: `true` arm only, cancelAnimationFrame(null) is a no-op; the `false` arm shares this key and is killed by 'stays hidden when the pointer leaves within the frame it moved in'
+frontend	src/editor/page-mode/page-gutter.ts	ConditionalExpression	5	1	if (this.frame !== null) cancelAnimationFrame(this.frame)
+# #6108 page-gutter: element is non-null whenever shown is, and show(null) from null returns at the guard
+frontend	src/editor/page-mode/page-gutter.ts	OptionalChaining	1	1	this.element?.remove()
+# #6108 page-gutter: block is null only while the frame is hidden (display:none), when no press or click reaches it; the chain is for the type
+frontend	src/editor/page-mode/page-gutter.ts	OptionalChaining	8	1	return this.block?.getAttribute('data-page-block-id') ?? null
+# #6108 page-gutter: every sender and listener reads the constant, so its text is never compared
+frontend	src/editor/page-mode/page-gutter.ts	StringLiteral	26	1	export const GRIP_MENU = 'page-grip-menu'
+# #6108 page-gutter: index.css matches the attribute's presence, not its value
+frontend	src/editor/page-mode/page-gutter.ts	StringLiteral	29	1	block.setAttribute(GRIP_ON, '')
+# #6108 page-gutter: a lane-press listener left on after destroy() only prevents what the live grip's listener prevents
+frontend	src/editor/page-mode/page-gutter.ts	StringLiteral	35	1	this.view.dom.removeEventListener('mousedown', this.pressLane, true)
+# #6108 page-gutter: a leave listener left on after destroy() hides a frame already out of the document
+frontend	src/editor/page-mode/page-gutter.ts	StringLiteral	35	1	this.view.dom.removeEventListener('pointerleave', this.leave)
 frontend	src/editor/page-mode/page-lists.ts	ArrayDeclaration	30	1	const items: OutlineItem[] = []
 frontend	src/editor/page-mode/page-lists.ts	ArrowFunction	19	1	const sameItems = (a: readonly OutlineItem[], b: readonly OutlineItem[]): boolean =>
 frontend	src/editor/page-mode/page-lists.ts	ArrowFunction	34	1	a.length === b.length && a.every((item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth)

@@ -2014,10 +2014,11 @@ jobs:
   # survivors against that issue's last-known set (via
   # `scripts/file-mutation-survivors.mjs`) and updates it only when a
   # genuinely NEW survivor appears, or closes it when the lane empties — a
-  # no-op otherwise, so this never spams weekly. State lives in each tracking
-  # issue's body
-  # (a marked, machine-readable block), not a committed baseline file, so
-  # this job needs `issues: write` only — never `contents: write`.
+  # no-op otherwise, so this never spams weekly. The seen-set lives in each
+  # tracking issue's body (a marked, machine-readable block); mutants triage
+  # proved equivalent live in the committed `mutation-accepted.tsv` (#5986),
+  # which the job only reads. So it needs `issues: write` only — never
+  # `contents: write`.
   #
   # `if: always()`: runs even if `mutants` / `mutants-frontend` failed outright
   # (both lanes are non-blocking and best-effort already) — a missing/absent
