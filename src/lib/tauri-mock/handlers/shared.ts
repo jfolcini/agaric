@@ -1054,10 +1054,18 @@ export function metaRowMatchesExpr(
       )
     }
     default: {
-      // Unknown node kind: permissive (serde refuses it before the backend runs).
-      return true
+      throw unknownFilterNode(expr)
     }
   }
+}
+
+/** Serde refuses a `FilterExpr` node of an unknown kind; so does the mock. */
+function unknownFilterNode(expr: Record<string, unknown>): unknown {
+  return appErrorRejection({
+    kind: 'validation',
+    code: 'InvalidFilter',
+    message: `\`${String(expr['type'])}\` is not a valid filter expression node`,
+  })
 }
 
 /** The primitives `QUERY_ALLOWED_KEYS` admits (`agaric-store/src/query/projection.rs`). */
@@ -1115,6 +1123,10 @@ export function assertQueryFilterLeaves(expr: Record<string, unknown>): void {
     }
     case 'Not': {
       assertQueryFilterLeaves((expr['child'] as Record<string, unknown> | undefined) ?? {})
+      return
+    }
+    default: {
+      throw unknownFilterNode(expr)
     }
   }
 }

@@ -69,6 +69,8 @@ GitHub GraphQL returns 403 from a Claude Code cloud session, so every `gh pr` an
 
 A worktree's `node_modules` is a symlink to the main checkout's (`scripts/seed-worktree.sh`), which lags after a lockfile change: run `npm ci` in the main checkout. Before chasing a typecheck or Playwright red outside your diff, reproduce it on a clean `origin/main` worktree.
 
+A dead agent's `vite preview` on its `PW_PORT` keeps serving the bundle it was built from, and Playwright's `reuseExistingServer` uses it, so a rebased branch's specs run against pre-rebase code. Before trusting a run on a reused port, check `lsof -i :$PW_PORT` or `ss -ltnp`, and kill a server whose cwd or start time predates your build.
+
 ## Guards keyed on paths
 
 Removing the last file of a kind (the last `.py`) trips a fail-closed "found zero" wiring check and leaves dead extension lists: grep `scripts/` and `prek.toml` for the extension first.

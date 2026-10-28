@@ -1427,16 +1427,10 @@ export async function dragBlockWithOffset(
 
 /**
  * Type a slash command filter inside the currently focused editor.
- * Moves to end of line, types ` /` + waits for the suggestion list to
- * appear, then types the query. Splitting the keystrokes around the
- * visibility assertion avoids a race with the slash extension's
- * auto-execute feature: when exactly one item matches a query of
- * length >= 3, a 200ms timer fires the command and closes the popup
- * (see AUTO_EXEC_DELAY_MS in src/editor/extensions/slash-command.ts).
- * Commands like /todo, /doing, /done resolve to a single match, so
- * asserting visibility AFTER the full query is typed can miss the
- * popup's brief life. Asserting right after `/` (empty query → base
- * list, nothing to auto-execute) is race-free.
+ * Moves to end of line, types ` /`, waits for the suggestion list to appear,
+ * then types the query. Waiting between the two keeps the query from being
+ * typed before the picker has opened. The command is never run: selection is
+ * explicit (Enter or click), the slash extension has no auto-execute.
  */
 export async function typeSlashCommand(page: Page, command: string) {
   await page.keyboard.press('End')

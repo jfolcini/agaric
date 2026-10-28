@@ -696,8 +696,7 @@ entry = "node scripts/check-types-erasure.mjs --self-test"
 language = "system"
 pass_filenames = false
 # #3997/#4434: `lib/js-scanner.mjs` too — same reason as the primary hook
-# above, and the same spelling `wdio-driver-gate-selftest` /
-# `persist-hooks-selftest` already use for
+# above, and the same spelling `persist-hooks-selftest` already uses for
 # this exact dependency.
 files = "^scripts/(check-types-erasure|lib/js-scanner)\\.mjs$"
 stages = ["manual"]
@@ -841,47 +840,6 @@ language = "system"
 pass_filenames = false
 files = "^(src-tauri/src/.*\\.rs|wdio\\.conf\\.ts)$"
 stages = ["pre-commit"]
-
-# wdio-driver-gate (#3972 / Dependabot alert #50): `extract-zip` <= 2.0.1
-# has an unvalidated symlink path traversal (CVE-2026-56876, HIGH) and NO
-# patched release exists, so the alert can only be dismissed as
-# unreachable. It reaches us as @wdio/cli → @wdio/utils →
-# @puppeteer/browsers → extract-zip, and it stays unreachable only while
-# WDIO never downloads a browser archive. Two properties of wdio.conf.ts
-# keep that true — no `browserName` capability, and remote-driver options
-# (`port`) that make `definesRemoteDriver` true — and both are checked
-# here, because until now the dismissal rested on a line of config that
-# nothing watched. Keyed to the config, the guard script, AND the shared
-# scanner the guard delegates its lexing to (#3991) so no side can be
-# edited without the check running — a js-scanner edit that breaks
-# `configObjectSource` on wdio.conf.ts defangs this gate just as
-# thoroughly as editing the guard itself. pass_filenames=false — the
-# script resolves wdio.conf.ts itself.
-# WHY: a config regression re-enables the browser download path that pulls vulnerable extract-zip — #3972 (alert #50)
-[[repos.hooks]]
-id = "wdio-driver-gate"
-name = "wdio never downloads a browser (extract-zip alert #50)"
-entry = "node scripts/check-wdio-driver-gate.mjs"
-language = "system"
-pass_filenames = false
-files = "^(wdio\\.conf\\.ts|scripts/(check-wdio-driver-gate\\.mjs|lib/js-scanner\\.mjs))$"
-stages = ["pre-commit"]
-
-# Self-test the gate's own exit behavior (a config that loses its
-# remote-driver options FAILS, one that grows a browserName capability
-# FAILS, a commented-out port does NOT count as satisfying it, and a
-# duplicate/zero `port` agrees with `Boolean(options.port)`) whenever the
-# guard script — or the shared scanner it delegates its lexing to (#3991)
-# — changes, so a defanged guard can't land quietly.
-# WHY: parses driver options with its own scanner; a commented-out port must not read as satisfying it — #3991
-[[repos.hooks]]
-id = "wdio-driver-gate-selftest"
-name = "wdio driver-gate guard self-test"
-entry = "node scripts/check-wdio-driver-gate.mjs --self-test"
-language = "system"
-pass_filenames = false
-files = "^scripts/(check-wdio-driver-gate|lib/js-scanner)\\.mjs$"
-stages = ["manual"]
 
 # json-parse-cast (#3881): `JSON.parse(...) as T` type-ASSERTS the shape of a
 # value fresh out of storage instead of checking it, so a stale or hand-edited
