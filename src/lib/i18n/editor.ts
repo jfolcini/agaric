@@ -70,6 +70,11 @@ export const editor: Record<string, string> = {
   'editor.image.expand': 'Expand image {{name}}',
   // #4712 — the editor's resize handle on an inline image.
   'editor.image.resize': 'Resize image {{name}}',
+  // #5691 — the bubble on a selected inline image, in block and page mode.
+  'editor.image.actions': 'Image actions',
+  'editor.image.editAlt': 'Edit alt text',
+  'editor.image.altText': 'Alt text',
+  'editor.image.remove': 'Remove image',
   'slash.repeatSet': 'Set repeat to {{value}}',
   'slash.repeatFailed': 'Failed to set repeat',
   'slash.repeatRemoved': 'Repeat removed',

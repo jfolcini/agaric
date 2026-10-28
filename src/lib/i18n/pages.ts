@@ -219,6 +219,12 @@ export const pages: Record<string, string> = {
   'pageMode.keptAsNew_other':
     '{{count}} blocks you were editing were deleted elsewhere. Your text is kept as new blocks.',
   'pageMode.switchedToBlocks': '{{reason}} This page is back in block mode.',
+  'pageMode.linkActions': 'Link actions',
+  'pageMode.tableActions': 'Table actions',
+  'pageMode.codeActions': 'Code block actions',
+  'pageMode.codeCopy': 'Copy code',
+  'pageMode.codeCopied': 'Code copied to clipboard',
+  'pageMode.codeCopyFailed': "Couldn't copy the code",
   'pageMode.blocked.overCap':
     'Page mode opens pages of up to {{cap}} blocks; this one has {{blocks}}.',
   'pageSource.preview': 'Preview',

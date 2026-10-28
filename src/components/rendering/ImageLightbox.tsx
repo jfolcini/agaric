@@ -125,6 +125,8 @@ export function ImageLightbox({
           e.preventDefault()
           if (e.currentTarget instanceof HTMLElement) e.currentTarget.focus()
         }}
+        // Opened from the image bubble, it must not end the block's edit (`useEditorBlur`).
+        data-editor-portal
       >
         <DialogTitle className="sr-only">{current.alt}</DialogTitle>
         <DialogDescription className="sr-only">

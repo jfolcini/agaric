@@ -40,6 +40,10 @@ import { dispatchBlockCommand } from '@/stores/block-command-bus'
 /** Shared active-state class applied to toolbar buttons when their feature is on. */
 export const toolbarActiveClass = 'bg-accent text-accent-foreground'
 
+/** The frame of an editor bubble menu. */
+export const bubbleMenuClass =
+  'z-50 flex items-center gap-0.5 rounded-md border border-border bg-popover px-1 py-0.5 shadow-(--shadow-floating) animate-in fade-in-0 zoom-in-95 duration-fast ease-smooth'
+
 /** A row in a toolbar popover menu: the app's menu-row recipe on a ghost Button. */
 export const toolbarMenuRowClass =
   'justify-start rounded-sm px-2 text-sm font-normal w-full active:scale-100 [@media(pointer:coarse)]:min-h-11'
