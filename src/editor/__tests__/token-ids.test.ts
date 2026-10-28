@@ -2,14 +2,6 @@
  * The id rules `source-buffer.ts` and page mode share (`token-ids.ts`), over a
  * bare schema of blocks holding text, a block's first token at its first
  * character and its last at its last.
- *
- * Equivalent mutants, accepted:
- * - `id === null` in `takenIds` dropped: a block with no id would put `null`
- *   in the set of taken ids, which no block ever keeps, as `idsAfter` reads
- *   `null` as no id.
- * - `kept !== null` in `idsAfter` made true: it pushes the `null` it holds.
- * - `id === null` in `withPageIds` made false: a block with no id is made again
- *   with no id.
  */
 
 import { Fragment, type NodeType, Schema, Slice } from '@tiptap/pm/model'
