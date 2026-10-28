@@ -206,6 +206,34 @@ test.describe('Edit as Markdown (#5140 Phase 4b) @editor @pages @markdown @mobil
     await expect(staticBlock(page, GS1)).toBeVisible()
   })
 
+  test('the focus ring goes round the toolbar and the text, from either', async ({ page }) => {
+    const editor = await openSourceMode(page)
+    const toolbar = page.getByTestId('page-source-toolbar')
+    // The element painting the focus ring, Tailwind's `0 0 0 3px` box-shadow,
+    // holds the whole toolbar inside its box.
+    const ringHoldsToolbar = () =>
+      editor.evaluate((text) => {
+        let ringed: Element | null = text
+        while (ringed !== null && !getComputedStyle(ringed).boxShadow.includes('0px 0px 0px 3px')) {
+          ringed = ringed.parentElement
+        }
+        const bar = document.querySelector('[data-testid="page-source-toolbar"]')
+        if (ringed === null || bar === null) return false
+        const [outer, inner] = [ringed.getBoundingClientRect(), bar.getBoundingClientRect()]
+        return (
+          inner.top >= outer.top &&
+          inner.left >= outer.left &&
+          inner.right <= outer.right &&
+          inner.bottom <= outer.bottom
+        )
+      })
+
+    // The ring eases in (`transition-[color,box-shadow]`).
+    await expect.poll(ringHoldsToolbar).toBe(true)
+    await toolbar.getByRole('button').first().focus()
+    await expect.poll(ringHoldsToolbar).toBe(true)
+  })
+
   test('the buffer shows each block’s markdown without its id, which its first line carries', async ({
     page,
   }) => {

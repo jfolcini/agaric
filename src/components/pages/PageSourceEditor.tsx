@@ -31,7 +31,6 @@ import { PageSourceConflictDialog } from '@/components/pages/PageSourceConflictD
 import { notifyPageSourceSaved } from '@/components/pages/PageSourceSaveReport'
 import { findUnresolvedUlidTokens } from '@/components/pages/ulid-tokens'
 import { Button } from '@/components/ui/button'
-import { SHARED_INPUT_CLASSES } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
@@ -48,7 +47,6 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { PREFERENCES, readPreference, removePreference, writePreference } from '@/lib/preferences'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
-import { cn } from '@/lib/utils'
 import { usePageBlockStore } from '@/stores/page-blocks'
 import { latestUndoEntry } from '@/stores/undo'
 
@@ -69,12 +67,12 @@ const MODE_LABELS = {
 
 // Styled here, not in the lazy buffer, so its chunk shares no design-system
 // module with startup that would split one off the startup chunks.
-const BUFFER_CLASS = cn(
-  'w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono shadow-xs transition-[color,box-shadow] outline-hidden dark:bg-input/30',
-  SHARED_INPUT_CLASSES,
-  // `.ProseMirror` sets a one-line min-height outside any layer.
-  'min-h-[50vh]!',
-)
+// The frame holds the toolbar and the text, as block mode's `.block-editor`
+// box does, so the ring of focus anywhere in it goes round both.
+const BUFFER_FRAME_CLASS =
+  'rounded-md border border-input shadow-xs transition-[color,box-shadow] dark:bg-input/30 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring'
+// `.ProseMirror` sets a one-line min-height outside any layer.
+const BUFFER_CLASS = 'w-full px-3 py-2 font-mono outline-hidden min-h-[50vh]!'
 
 function sameLines(a: SourceLines, b: SourceLines): boolean {
   return (
@@ -453,24 +451,26 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
           className="flex flex-col gap-2"
         >
           <Suspense fallback={loading}>
-            <LazyPageSourceBuffer
-              key={opened.generation}
-              ref={bufferRef}
-              pageId={pageId}
-              initial={opened.initial}
-              pageIds={opened.page.lineIds}
-              readOnly={saving}
-              hidden={mode !== 'edit'}
-              saveLabel={saveLabel}
-              nothingToSave={unchanged}
-              label={t('pageSource.editorLabel')}
-              describedBy={opened.draftRestored ? `${draftNoteId} ${hintId}` : hintId}
-              className={BUFFER_CLASS}
-              onChange={handleChange}
-              onKeyDown={handleKeyDown}
-              onSave={handleSave}
-              onCancel={handleCancel}
-            />
+            <div className={BUFFER_FRAME_CLASS}>
+              <LazyPageSourceBuffer
+                key={opened.generation}
+                ref={bufferRef}
+                pageId={pageId}
+                initial={opened.initial}
+                pageIds={opened.page.lineIds}
+                readOnly={saving}
+                hidden={mode !== 'edit'}
+                saveLabel={saveLabel}
+                nothingToSave={unchanged}
+                label={t('pageSource.editorLabel')}
+                describedBy={opened.draftRestored ? `${draftNoteId} ${hintId}` : hintId}
+                className={BUFFER_CLASS}
+                onChange={handleChange}
+                onKeyDown={handleKeyDown}
+                onSave={handleSave}
+                onCancel={handleCancel}
+              />
+            </div>
           </Suspense>
           <p id={hintId} className="text-xs text-muted-foreground">
             {t('pageSource.hint')}
