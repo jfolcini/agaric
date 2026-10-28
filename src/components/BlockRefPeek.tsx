@@ -165,6 +165,16 @@ interface BlockRefPeekProps {
   container: HTMLElement | null
 }
 
+interface Placement {
+  x: number
+  y: number
+  anchor: DOMRect
+}
+
+function placementFor(placement: Placement | null, anchor: DOMRect | null): Placement | null {
+  return placement?.anchor === anchor ? placement : null
+}
+
 /**
  * Action buttons must not take focus: a focus change blurs the editor, which
  * unmounts the roving instance and the chip with it before the click can
@@ -192,7 +202,13 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
     (s) => s.availableSpaces.find((sp) => sp.id === s.currentSpaceId)?.name ?? null,
   )
   const reducedMotion = usePrefersReducedMotion()
-  const [position, setPosition] = useState<{ x: number; y: number } | null>(null)
+  const [placement, setPlacement] = useState<Placement | null>(null)
+  // A placement computed for another chip's rect is no placement: a chip-to-chip
+  // hover opens the new peek without passing through the closed state, and it
+  // must stay hidden until `computePosition` lands rather than paint at the old
+  // chip's coordinates. Keyed on the anchor so that the payload landing (which
+  // re-places the peek) never hides a peek that is already showing.
+  const position = placementFor(placement, anchorRect)
   // A pure read of the resolve cache: a nested `((ref))`, `[[link]]` or `#tag`
   // inside the target renders its title instead of a truncated id.
   const callbacks = useRichContentCallbacks()
@@ -211,14 +227,7 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
 
   useEffect(() => {
     const peek = peekRef.current
-    if (!anchorRect || !peek) {
-      setPosition(null)
-      return
-    }
-    // A chip-to-chip hover opens the new peek without passing through the
-    // closed state; without this reset it would paint at the old chip's
-    // coordinates until `computePosition` resolves.
-    setPosition(null)
+    if (!anchorRect || !peek) return
     const virtualEl = { getBoundingClientRect: () => anchorRect }
     // Same stale-placement guard as `LinkPreviewTooltip` (#2275): two peeks
     // opened in quick succession leave two promises in flight.
@@ -229,12 +238,12 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
     })
       .then(({ x, y }) => {
         if (cancelled) return
-        setPosition({ x, y })
+        setPlacement({ x, y, anchor: anchorRect })
       })
       .catch((err: unknown) => {
         if (cancelled) return
         logger.warn('BlockRefPeek', 'computePosition failed, using fallback', { anchorRect }, err)
-        setPosition({ x: anchorRect.left, y: anchorRect.bottom + 4 })
+        setPlacement({ x: anchorRect.left, y: anchorRect.bottom + 4, anchor: anchorRect })
       })
     return () => {
       cancelled = true

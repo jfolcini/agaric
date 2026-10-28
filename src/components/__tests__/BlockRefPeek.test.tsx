@@ -579,6 +579,27 @@ describe('BlockRefPeek', () => {
       expect(within(peek).queryByRole('button', { name: 'Copy reference' })).toBeNull()
     })
 
+    it('stays visible, and keeps its name, when the blocks land and re-place it', async () => {
+      // Every placement after the first never resolves: the payload landing
+      // re-places the peek, and that gap must not hide an already-shown peek.
+      const { computePosition } = await import('@floating-ui/dom')
+      vi.mocked(computePosition)
+        .mockResolvedValueOnce({ x: 50, y: 120 } as never)
+        .mockReturnValue(new Promise(() => {}))
+      try {
+        const user = userEvent.setup()
+        render(<PageLink />)
+
+        const peek = await ctrlHover(user)
+        await within(peek).findByText('First thought on the page')
+        expect(screen.getByTestId('ref-peek')).toBe(peek)
+        expect(peek).toBeVisible()
+        expect(peek).toHaveAccessibleName('Preview of Design Notes')
+      } finally {
+        vi.mocked(computePosition).mockResolvedValue({ x: 50, y: 120 } as never)
+      }
+    })
+
     it('does not open on a plain hover', async () => {
       const user = userEvent.setup()
       render(<PageLink />)
