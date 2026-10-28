@@ -305,15 +305,11 @@ export function planCreates(
 export function planMoves(desired: readonly DesiredBlock[], state: PageSaveState): SaveOp[] {
   const tree = cloneTree(state.tree)
   const absent = (id: string): boolean => id !== state.pageId && !tree.parentOf.has(id)
-  const wanted = new Map<string, string[]>()
-  for (const block of desired) {
-    const children = wanted.get(block.parentId) ?? []
-    children.push(block.id)
-    wanted.set(block.parentId, children)
-  }
+  const wanted: PageTree = { children: new Map(), parentOf: new Map() }
+  for (const block of desired) childrenOf(wanted, block.parentId).push(block.id)
   const ops: SaveOp[] = []
   for (const parentId of [state.pageId, ...desired.map((block) => block.id)]) {
-    const children = wanted.get(parentId)
+    const children = wanted.children.get(parentId)
     if (children === undefined || absent(parentId)) continue
     const current = childrenOf(tree, parentId)
     const at = new Map(current.map((id, i) => [id, i]))
@@ -408,7 +404,8 @@ export function planDeletes(desired: readonly DesiredBlock[], state: PageSaveSta
     .map((block) => textOf(block.node))
   const carried = (id: string): boolean => {
     const node = state.saved.get(id)?.node ?? null
-    const text = node === null ? '' : textOf(node)
+    if (node === null) return false
+    const text = textOf(node)
     return text !== '' && unwritten.some((holder) => holder.includes(text))
   }
   const going = new Set(
@@ -502,7 +499,7 @@ async function runAll(
   state: PageSaveState,
   api: PageSaveApi,
   result: SaveResult,
-  { stopOnFailure }: { stopOnFailure: boolean },
+  { stopOnFailure }: { stopOnFailure?: boolean } = {},
 ): Promise<SaveOp | null> {
   let failed: SaveOp | null = null
   for (const op of ops) {
@@ -560,7 +557,7 @@ export async function savePage(
   }
   const desired = desiredBlocks(doc, state)
   await runAll(planMoves(desired, state), state, api, result, { stopOnFailure: true })
-  await runAll(planEdits(desired, state), state, api, result, { stopOnFailure: false })
-  await runAll(planDeletes(desired, state), state, api, result, { stopOnFailure: false })
+  await runAll(planEdits(desired, state), state, api, result)
+  await runAll(planDeletes(desired, state), state, api, result)
   return result
 }
