@@ -970,20 +970,26 @@ function PageModeDocument({
 
   return (
     <>
-      {editor !== null && (
-        <PageToolbar editor={editor} actions={actions} lists={lists} pageStore={pageStore} />
-      )}
-      <BlockResolversProvider value={resolvers}>
-        {/* Where Escape leaves the focus: ringed, and Tab from it goes back into the text.
-            Positioned: the grip is placed in it (`page-gutter.ts`). */}
-        <EditorContent
-          editor={editor}
-          tabIndex={-1}
-          className="relative rounded-md focus-ring-visible"
-          {...{ [SURFACE]: '' }}
-          {...linkClick}
-        />
-      </BlockResolversProvider>
+      {/* The document's frame, as GitLab's editor draws one: the toolbar, the text, and a hint under it. */}
+      <div className="rounded-md border border-border">
+        {editor !== null && (
+          <PageToolbar editor={editor} actions={actions} lists={lists} pageStore={pageStore} />
+        )}
+        <BlockResolversProvider value={resolvers}>
+          {/* Where Escape leaves the focus: ringed, and Tab from it goes back into the text.
+              Positioned: the grip is placed in it (`page-gutter.ts`). */}
+          <EditorContent
+            editor={editor}
+            tabIndex={-1}
+            className="relative rounded-md focus-ring-visible"
+            {...{ [SURFACE]: '' }}
+            {...linkClick}
+          />
+        </BlockResolversProvider>
+        <p className="border-t border-border px-4 py-2 text-xs text-muted-foreground">
+          {t('pageMode.footerHint')}
+        </p>
+      </div>
       {/* Block mode's own: the marks and the link on a selection, and Ctrl+K. */}
       {editor !== null && <SelectionBubbleMenu editor={editor} />}
       <PageBlockMenu

@@ -1173,18 +1173,38 @@
   padding-bottom: 0.375rem;
 }
 
-/* Page mode (#5691): the page as one document, each block laid out as block
-   mode's row: its text box, the indent per depth (`PageBlock` sets it as a
-   margin), and the editing box on the block the cursor is in. The text starts
-   where block mode's does, past the slot its rows keep for the task checkbox
-   (`BlockInlineControls`), so switching modes does not shift it. */
+/* Page mode (#5691): the page as one document, laid out as GitLab's rich text
+   editor lays one out (decision of 2026-10-28): no box per block and no mark on
+   the one the cursor is in, a document's spacing between blocks, and the indent
+   per depth (`PageBlock` sets it as a margin). The text sits in a frame
+   (`PageModeEditor`), inset past the lane (`::before` below) that holds a
+   block's checkbox, chevron and grip. */
 .ProseMirror.page-mode-editor {
-  @apply py-0 pr-0 pl-5.5;
+  @apply py-3 pr-4 pl-20;
   min-height: 0;
 }
 .page-mode-editor [data-page-block] {
-  @apply relative rounded-md px-3 py-1;
-  min-height: 1.75rem;
+  @apply relative;
+}
+/* Paragraph spacing, tighter between list items (`page-tasks.ts` marks them);
+   the lane reaches up over it, so the grip stays as the pointer moves down. */
+.page-mode-editor [data-page-block] + [data-page-block] {
+  --page-block-gap: 0.75em;
+  margin-top: var(--page-block-gap);
+}
+.page-mode-editor [data-list-item] + [data-list-item] {
+  --page-block-gap: 0.25em;
+}
+/* A heading's own space above, and a rule under the first two levels. */
+.page-mode-editor .page-block-content :is(h1, h2, h3, h4, h5, h6) {
+  margin-top: 0.75em;
+}
+.page-mode-editor .page-block-content :is(h1, h2) {
+  @apply border-b border-border pb-1;
+  margin-top: 1em;
+}
+.page-mode-editor > [data-page-block]:first-child :is(h1, h2, h3, h4, h5, h6) {
+  margin-top: 0;
 }
 /* A list marker's float stays inside its block. Cleared rather than made a
    formatting context (`flow-root`, `contain: layout`): WebKit lays out every
@@ -1195,15 +1215,15 @@
   display: block;
   clear: both;
 }
-/* A task's checkbox (`page-tasks.ts`) sits in that slot, on the first line, as
-   block mode's row places it. */
+/* A task's checkbox (`page-tasks.ts`) sits left of the text, centred on its
+   first line: its box is a line and a half (`min-h-8`) tall. */
 .page-mode-editor .page-block-controls {
-  @apply absolute top-0 right-full mr-1 select-none;
+  @apply absolute -top-1 right-full mr-1 select-none;
 }
-/* A block's chevron (`page-gutter.ts`) sits where block mode's control lane
-   does: left of the checkbox's slot, on the first line. */
+/* A block's chevron (`page-gutter.ts`) sits left of the checkbox's slot, on the
+   first line. */
 .page-mode-editor .page-block-gutter {
-  @apply absolute top-0 right-full mr-7 flex min-h-8 min-w-12 items-center justify-end gap-0.5 select-none;
+  @apply absolute -top-1 right-full mr-7 flex min-h-8 min-w-12 items-center justify-end gap-0.5 select-none;
 }
 /* The editor's one grip (`page-gutter.ts`), outside its text, placed at the top
    left corner of the block under the pointer and moved from there into that
@@ -1211,7 +1231,7 @@
    chevron (`w-5`) and the gutter's gap, when the block has one. The text's
    font size, as the lane's. */
 .page-grip {
-  @apply absolute -ml-7 flex min-h-8 -translate-x-full items-center select-none;
+  @apply absolute -mt-1 -ml-7 flex min-h-8 -translate-x-full items-center select-none;
   font-size: var(--agaric-font-size, 1rem);
 }
 .page-grip[data-chevron] {
@@ -1226,7 +1246,8 @@
    pointing anywhere in it puts the grip there and shows the chevron. */
 .page-mode-editor [data-page-block]::before {
   content: '';
-  @apply absolute inset-y-0 right-full w-19;
+  @apply absolute bottom-0 right-full w-19;
+  top: calc(-1 * var(--page-block-gap, 0px));
 }
 /* What a collapsed block hides (`page-collapse.ts`). */
 .page-mode-editor [data-page-block].page-block-hidden {
@@ -1248,13 +1269,41 @@
 .page-mode-editor .list-marker + .page-block-content > p.is-editor-empty:first-child {
   display: flow-root;
 }
-/* The priority badge and date chips sit under the text, as block mode's row
-   does; the block's own inset already lines them up with it. */
+/* The priority badge and date chips sit under the text, lined up with it,
+   muted and smaller than block mode's: text, not pills. Muted by the token, as
+   a closed task is; the priority and an overdue or today date keep their colour
+   (`dueDateColor` gives a later date `bg-secondary`). The badge keeps its line
+   box, which the empty row's height below counts on. */
 .page-mode-editor .page-block-metadata {
   @apply select-none;
 }
 .page-mode-editor .page-block-metadata .block-metadata-row {
-  @apply px-0;
+  @apply gap-x-2.5 px-0;
+}
+.page-mode-editor
+  .page-block-metadata
+  :is(.due-date-chip, .scheduled-chip, .repeat-indicator, .priority-badge > span) {
+  @apply bg-transparent px-0 font-normal;
+  font-size: 0.6875rem;
+  line-height: 0.75rem;
+}
+.page-mode-editor
+  .page-block-metadata
+  :is(.due-date-chip.bg-secondary, .scheduled-chip, .repeat-indicator) {
+  @apply text-muted-foreground;
+}
+/* Its property chips and attachment badge show on the block the pointer, the
+   caret or the focus is in, as the chevron does (`COLLAPSE_TOGGLE_HIDDEN_AT_REST`):
+   faded out, they keep their place, so nothing moves as they show, and Tab
+   still reaches them. */
+.page-mode-editor .page-block-metadata :is(.property-chip, .property-overflow, .attachment-badge) {
+  @apply opacity-0 transition-opacity;
+}
+.page-mode-editor
+  [data-page-block]:is(:hover, :focus-within, .page-block-current)
+  > .page-block-metadata
+  :is(.property-chip, .property-overflow, .attachment-badge) {
+  @apply opacity-100;
 }
 /* Until the row mounts (`page-tasks.ts`), its empty box keeps its height, so
    nothing moves as it mounts: the row's top margin, and a date chip's height
@@ -1277,9 +1326,6 @@
   > .page-block-content {
   @apply line-through text-muted-foreground;
 }
-.page-mode-editor .page-block-current {
-  @apply ring-1 ring-border bg-accent/[0.06] shadow-(--shadow-resting);
-}
 /* A query or embed block (`page-rendered.ts`) reads as block mode's: its
    results or the embedded block in place of its text, and its text in place of
    them while the cursor is in it. */
@@ -1287,14 +1333,9 @@
 .page-mode-editor .page-block-current > .page-block-rendered {
   display: none;
 }
-/* Block mode draws them without the text's inset, and its formatting context
-   keeps their margins inside the block, as that inset otherwise does. */
+/* Its formatting context keeps their margins inside the block. */
 .page-mode-editor [data-page-block][data-rendered]:not(.page-block-current) {
-  padding-block: 0;
   display: flow-root;
-}
-.page-mode-editor .page-block-rendered {
-  margin-inline: -0.75rem;
 }
 /* The editor's own list and table rules (`.ProseMirror ul`, `.ProseMirror table`)
    are not block mode's static ones, which an embed's rows and a query's table

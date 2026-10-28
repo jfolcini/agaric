@@ -1556,7 +1556,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
       [0, embed],
       [0, 'last'],
     ])
-    /** Where the query's results and the embed are drawn, to the pixel. */
+    /** Where the query's results and the embed are drawn, to the pixel: x, y, width, height. */
     const boxes = () =>
       page.evaluate(() =>
         ['query-result', 'embed-container'].map((id) => {
@@ -1591,16 +1591,13 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     await expect(inBlock(ids[2], '[data-testid="embed-container"]')).toContainText(welcome)
     await expect(inBlock(ids[1], '.page-block-content')).toBeHidden()
     await expect(inBlock(ids[2], '.page-block-content')).toBeHidden()
-    // Lower by the toolbar page mode shows above the document, where block mode shows none
-    // until a block is focused: the document starts where the toolbar's top is.
-    const shift = await page.evaluate((sel) => {
-      const top = (el: Element | null) => el?.getBoundingClientRect().top ?? 0
-      return Math.round(
-        top(document.querySelector(sel)) -
-          top(document.querySelector('[data-testid="formatting-toolbar"]')),
-      )
-    }, EDITOR)
-    expect(await boxes()).toEqual(inBlockMode.map(([x, y, w, h]) => [x, (y ?? 0) + shift, w, h]))
+    // Lined up with the text, as tall as block mode draws them.
+    const textLeft = Math.round(
+      (await inBlock(ids[0], '.page-block-content').boundingBox())?.x ?? 0,
+    )
+    expect((await boxes()).map(([x, , , height]) => [x, height])).toEqual(
+      inBlockMode.map(([, , , height]) => [textLeft, height]),
+    )
     expect(await axeViolations()).toEqual([])
 
     // The arrows step into the text, which shows in place of the results while the caret is in it.
@@ -2112,7 +2109,8 @@ test.describe('page mode keeps the keyboard’s place (#5691) @editor @pages', (
     await page
       .locator(`${EDITOR} [data-page-block-id="${ids[60]}"]`)
       .evaluate((el) => el.scrollIntoView({ block: 'start' }))
-    await page.locator('#main-content').evaluate((el) => el.scrollBy(0, -10))
+    // Past the space between page mode's blocks, into the block above.
+    await page.locator('#main-content').evaluate((el) => el.scrollBy(0, -20))
     const inPage = await topBlock(page)
     expect(inPage?.id).toBe(ids[59])
 
@@ -2173,7 +2171,8 @@ test.describe('page mode keeps the keyboard’s place (#5691) @editor @pages', (
     await page
       .locator(`${EDITOR} [data-page-block-id="${ids[120]}"]`)
       .evaluate((el) => el.scrollIntoView({ block: 'start' }))
-    await page.locator('#main-content').evaluate((el) => el.scrollBy(0, -10))
+    // Past the space between page mode's blocks, into the block above.
+    await page.locator('#main-content').evaluate((el) => el.scrollBy(0, -20))
     const inPage = await topBlock(page)
     expect(inPage?.id).toBe(ids[119])
 

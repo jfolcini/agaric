@@ -213,6 +213,7 @@ export const pages: Record<string, string> = {
     'Some changes to this page could not be saved yet; they are tried again with your next edit.',
   'pageMode.placeholder':
     'Type [[ to link, @ to tag, (( to reference a block · Shift+Enter for a line break',
+  'pageMode.footerHint': 'Supports Markdown. Type / for commands',
   'pageMode.keptAsNew_one':
     'A block you were editing was deleted elsewhere. Your text is kept as a new block.',
   'pageMode.keptAsNew_other':
