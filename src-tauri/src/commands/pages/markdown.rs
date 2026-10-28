@@ -988,13 +988,57 @@ enum PageRead {
 /// its `^ID` only when it would not read back without it. `Agent` is the page
 /// an MCP agent reads (#5375): the export's names, which may be ambiguous, and
 /// every block's `^ID` written as source mode writes it, so the agent can name
-/// the block it edits next.
+/// the block it edits next. `Document` is `Source` in the Document dialect
+/// ([`Dialect`]), which `import::parse_document_outline` reads back.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RenderMode {
     Export,
     Source,
     Clipboard,
     Agent,
+    Document,
+}
+
+/// The two grammars Edit as Markdown's buffer is written in (#5691). `Source`
+/// writes every block as an outline bullet, its list marker after the bullet.
+/// `Document` writes a plain block as its own paragraph, a list block with its
+/// marker and a task as `- [ ] x`, which has no list style (D3): a blank line
+/// separates blocks but neighbouring list lines (D1), a plain block under a
+/// list block is a `+` item and a line holding only `\` an empty line (D4).
+/// The MCP tools and Duplicate keep `Source` (D5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dialect {
+    Source,
+    Document,
+}
+
+impl Dialect {
+    /// The page's buffer, its front matter and then its block tree, every
+    /// block with its `^ID`, and the ids of the blocks it holds, in order.
+    fn render(self, data: &PageExportData) -> (String, Vec<String>) {
+        let mode = match self {
+            Self::Source => RenderMode::Source,
+            Self::Document => RenderMode::Document,
+        };
+        let mut output = String::new();
+        render_frontmatter(&mut output, data);
+        let ids = render_block_tree(&mut output, data.page.id.as_str(), data, mode)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        (output, ids)
+    }
+
+    /// `text` read as a buffer in this dialect: each block under the id its
+    /// line carries when `id_lines` names them, else under its `^ID`.
+    fn read(self, text: &str, id_lines: Option<&HashSet<usize>>) -> import::ParseOutput {
+        match (self, id_lines) {
+            (Self::Source, None) => import::parse_source_outline(text),
+            (Self::Source, Some(lines)) => import::parse_source_text(text, lines),
+            (Self::Document, None) => import::parse_document_outline(text),
+            (Self::Document, Some(lines)) => import::parse_document_text(text, lines),
+        }
+    }
 }
 
 /// Emits one block as `<indent>- <content>` — the *exact* shape
@@ -1005,7 +1049,8 @@ enum RenderMode {
 /// `key:: value` properties, and, in an export, its non-inline attachments,
 /// each indented one level further. The orphan safety net renders a stray
 /// through this same path at depth 0, so a stray and a walked block cannot
-/// drift apart.
+/// drift apart. A Document buffer places the block by `layout` instead
+/// ([`DocumentLayout::place`]).
 fn render_block(
     output: &mut String,
     block: &BlockRow,
@@ -1013,6 +1058,7 @@ fn render_block(
     data: &PageExportData,
     list_ordinals: &HashMap<String, usize>,
     mode: RenderMode,
+    layout: &mut DocumentLayout,
 ) {
     let PageExportData {
         attachments_by_block,
@@ -1022,16 +1068,19 @@ fn render_block(
         ..
     } = data;
     let id = block.id.clone().into_string();
-    let indent = "  ".repeat(depth);
     let content = block.content.as_deref().unwrap_or("");
     let list_marker = list_marker_for(&id, list_styles, list_ordinals);
     let task_marker = task_marker(block);
+    let (indent, list_marker, prop_indent) = match mode {
+        RenderMode::Document => layout.place(output, block, depth, list_marker),
+        _ => ("  ".repeat(depth), list_marker, "  ".repeat(depth + 1)),
+    };
     match mode {
         RenderMode::Export => {
             let resolved = export_block_text(content, &id, data);
             push_block_bullet(output, &indent, &list_marker, &task_marker, &resolved, mode);
         }
-        RenderMode::Source | RenderMode::Clipboard | RenderMode::Agent => {
+        RenderMode::Source | RenderMode::Clipboard | RenderMode::Agent | RenderMode::Document => {
             push_source_bullet(
                 output,
                 block,
@@ -1055,7 +1104,6 @@ fn render_block(
     // their columns via `typed_property_args_for_string_value`). No new
     // syntax is invented — these are ordinary Logseq property lines. A state
     // already written as a checkbox is not written twice.
-    let prop_indent = "  ".repeat(depth + 1);
     let todo_state = block
         .todo_state
         .as_deref()
@@ -1085,7 +1133,7 @@ fn render_block(
     let no_titles = HashMap::new();
     let (ref_titles, write_value): (_, fn(&str) -> String) = match mode {
         RenderMode::Export | RenderMode::Agent => (ref_titles, str::to_string),
-        RenderMode::Source | RenderMode::Clipboard => {
+        RenderMode::Source | RenderMode::Clipboard | RenderMode::Document => {
             (&no_titles, import::write_source_property_value)
         }
     };
@@ -1114,6 +1162,59 @@ fn render_block(
             let label = attachment_link_label(filename);
             output.push_str(&format!("{prop_indent}- [{label}](attachment:{att_id})\n"));
         }
+    }
+}
+
+/// Where a Document buffer's walk stands (#5691): for each open depth, the
+/// column its block's children are written at and whether that block is
+/// written with a marker, and whether the block before was.
+#[derive(Default)]
+struct DocumentLayout {
+    open: Vec<(usize, bool)>,
+    previous_marked: Option<bool>,
+}
+
+impl DocumentLayout {
+    /// Place `block`, at `depth`, in a Document buffer: write the blank line
+    /// before it, unless it and the block before both open with a marker
+    /// (D1), and return its indent, its marker and the indent of its property
+    /// lines and children. A block with a task state in the checkbox alphabet
+    /// is a task, whatever its `list_marker` (D3), and one with another state
+    /// has no marker. A plain block is bare, but a `+` item where a bare line
+    /// would not read back as its own block: under a block written with a
+    /// marker, whose indented lines continue it (D4), and opening the buffer
+    /// with `---`, which would open front matter.
+    fn place(
+        &mut self,
+        output: &mut String,
+        block: &BlockRow,
+        depth: usize,
+        list_marker: String,
+    ) -> (String, String, String) {
+        self.open.truncate(depth);
+        let (column, under_marker) = self.open.last().copied().unwrap_or((0, false));
+        let opens_rule = output.is_empty()
+            && block
+                .content
+                .as_deref()
+                .is_some_and(|c| c.starts_with("---"));
+        let marker = match block.todo_state.as_deref() {
+            Some(state) if import::task_marker_for(state).is_some() => "- ".to_string(),
+            None if !list_marker.is_empty() => list_marker,
+            _ if under_marker || opens_rule => "+ ".to_string(),
+            _ => String::new(),
+        };
+        let marked = !marker.is_empty();
+        if self
+            .previous_marked
+            .is_some_and(|previous| !(previous && marked))
+        {
+            output.push('\n');
+        }
+        self.previous_marked = Some(marked);
+        let child = column + if marked { marker.len() } else { 2 };
+        self.open.push((child, marked));
+        (" ".repeat(column), marker, " ".repeat(child))
     }
 }
 
@@ -1177,16 +1278,27 @@ fn push_source_bullet(
     let content = block.content.as_deref().unwrap_or("");
     if mode == RenderMode::Agent {
         let named = named_block_text(content, data);
-        push_anchored_source_bullet(output, indent, list_marker, task_marker, &named, id);
+        push_anchored_source_bullet(
+            output,
+            indent,
+            list_marker,
+            task_marker,
+            &named,
+            id,
+            RenderMode::Source,
+        );
         return;
     }
-    let push = if mode == RenderMode::Clipboard {
-        push_clipboard_bullet
-    } else {
-        push_anchored_source_bullet
+    let push = |output: &mut String, content: &str| match mode {
+        RenderMode::Clipboard => {
+            push_clipboard_bullet(output, indent, list_marker, task_marker, content, id)
+        }
+        _ => {
+            push_anchored_source_bullet(output, indent, list_marker, task_marker, content, id, mode)
+        }
     };
     let start = output.len();
-    let is_code = push(output, indent, list_marker, task_marker, content, id);
+    let is_code = push(output, content);
     let Some(named) = humanise_refs_for_source(
         content,
         is_code,
@@ -1197,7 +1309,7 @@ fn push_source_bullet(
         return;
     };
     output.truncate(start);
-    push(output, indent, list_marker, task_marker, &named, id);
+    push(output, &named);
 }
 
 /// `content` as a source bullet without its `^id`, unless the bullet needs it
@@ -1226,13 +1338,23 @@ fn push_clipboard_bullet(
         return code.any;
     }
     output.truncate(start);
-    push_anchored_source_bullet(output, indent, list_marker, task_marker, content, id)
+    push_anchored_source_bullet(
+        output,
+        indent,
+        list_marker,
+        task_marker,
+        content,
+        id,
+        RenderMode::Source,
+    )
 }
 
-/// `content` as a source bullet with `^id` at the end of its last line or,
-/// when that line is code, on a line of its own, which the parser reads as
-/// the end of any fence the block leaves open. Returns whether any line is
-/// code.
+/// `content` as a source bullet, or in `mode` a Document block, with `^id` at
+/// the end of its last line or, when that line is code, on a line of its own,
+/// which the parser reads as the end of any fence the block leaves open; in a
+/// Document buffer also when that line holds nothing, which is written as an
+/// escape the anchor would turn into text ([`import::needs_blank_line_escape`]).
+/// Returns whether any line is code.
 fn push_anchored_source_bullet(
     output: &mut String,
     indent: &str,
@@ -1240,34 +1362,40 @@ fn push_anchored_source_bullet(
     task_marker: &str,
     content: &str,
     id: &str,
+    mode: RenderMode,
 ) -> bool {
     let start = output.len();
-    // Written with the marker, not appended to: the marker can change the last
-    // line's escape (`key::` becomes the property line `key:: ^ID`). Whether
-    // the last line is code does not depend on the marker, since fences are
-    // told by their prefix.
-    let code = push_block_bullet(
-        output,
-        indent,
-        list_marker,
-        task_marker,
-        &format!("{content} ^{id}"),
-        RenderMode::Source,
-    );
-    if !code.last {
-        return code.any;
+    let blank_last = mode == RenderMode::Document
+        && content
+            .rsplit_once('\n')
+            .is_some_and(|(_, last)| import::needs_blank_line_escape(last));
+    if !blank_last {
+        // Written with the marker, not appended to: the marker can change the
+        // last line's escape (`key::` becomes the property line `key:: ^ID`).
+        // Whether the last line is code does not depend on the marker, since
+        // fences are told by their prefix.
+        let anchored = format!("{content} ^{id}");
+        let code = push_block_bullet(output, indent, list_marker, task_marker, &anchored, mode);
+        if !code.last {
+            return code.any;
+        }
+        output.truncate(start);
     }
-    output.truncate(start);
-    let code = push_block_bullet(
-        output,
-        indent,
-        list_marker,
-        task_marker,
-        content,
-        RenderMode::Source,
-    );
-    output.push_str(&format!("{indent}  ^{id}\n"));
+    let code = push_block_bullet(output, indent, list_marker, task_marker, content, mode);
+    let column = continuation_indent(indent, list_marker, mode);
+    output.push_str(&format!("{column}^{id}\n"));
     code.any
+}
+
+/// The indent of a block's continuation lines: two columns past its outline
+/// bullet's or, in a Document buffer, its text's column, a bare block's own.
+fn continuation_indent(indent: &str, list_marker: &str, mode: RenderMode) -> String {
+    let width = if mode == RenderMode::Document {
+        list_marker.len()
+    } else {
+        2
+    };
+    format!("{indent}{}", " ".repeat(width))
 }
 
 /// The `---` YAML frontmatter block, emitted only when the page carries
@@ -1429,7 +1557,7 @@ fn render_page_markdown(page_id: &str, data: &PageExportData) -> String {
 /// properties, aliases and tags as the export's front matter (#5160 S8), then
 /// its block tree. The title and page attachments have their own UIs.
 fn render_page_source(data: &PageExportData) -> String {
-    render_page_source_ids(data).0
+    Dialect::Source.render(data).0
 }
 
 /// The page as an MCP agent reads it (#5375): `# Title`, the export's front
@@ -1490,17 +1618,6 @@ fn agent_markdown_stretch(
     Ok((markdown[begin..stop.1].to_owned(), stop.0.cloned()))
 }
 
-/// [`render_page_source`], with the ids of the blocks it holds in order.
-fn render_page_source_ids(data: &PageExportData) -> (String, Vec<String>) {
-    let mut output = String::new();
-    render_frontmatter(&mut output, data);
-    let ids = render_block_tree(&mut output, data.page.id.as_str(), data, RenderMode::Source)
-        .into_iter()
-        .map(|(id, _)| id)
-        .collect();
-    (output, ids)
-}
-
 /// `source`, a buffer with each block's `^ID` written in it, as the text with
 /// those anchors removed and the id each of its lines carries: the block's on
 /// the line it starts on, none on every other (#5160 A). An anchor ends its
@@ -1510,10 +1627,15 @@ fn render_page_source_ids(data: &PageExportData) -> (String, Vec<String>) {
 /// is no block id, stays. Public so the command tests can write an edited
 /// buffer as the source it was loaded from, anchors and all.
 pub fn anchor_free(source: &str) -> (String, Vec<Option<String>>) {
+    anchor_free_as(source, Dialect::Source)
+}
+
+/// [`anchor_free`] for a buffer in `dialect`.
+pub fn anchor_free_as(source: &str, dialect: Dialect) -> (String, Vec<Option<String>>) {
     let mut lines: Vec<(&str, Option<String>)> =
         source.split('\n').map(|line| (line, None)).collect();
     let mut own_lines = HashSet::new();
-    for block in import::parse_source_outline(source).blocks {
+    for block in dialect.read(source, None).blocks {
         let (Some(word), Some(start)) = (block.block_anchor, block.line) else {
             continue;
         };
@@ -1560,10 +1682,11 @@ fn render_block_tree(
     // numeric is stored: the number is re-derived on every export, so a
     // reorder renumbers and a hand-written `3.` / `7.` normalises on the first
     // round trip.
-    let list_ordinals = compute_list_ordinals(&children_by_parent, &data.list_styles);
+    let list_ordinals = compute_list_ordinals(&children_by_parent, &data.list_styles, mode);
     let roots = children_by_parent
         .get(page_id)
         .map_or(&[][..], Vec::as_slice);
+    let mut layout = DocumentLayout::default();
     let mut rendered = render_subtrees(
         output,
         roots,
@@ -1571,6 +1694,7 @@ fn render_block_tree(
         &list_ordinals,
         data,
         mode,
+        &mut layout,
     );
     let visited: HashSet<String> = rendered.iter().map(|(id, _)| id.clone()).collect();
 
@@ -1585,7 +1709,7 @@ fn render_block_tree(
             continue;
         }
         let start = output.len();
-        render_block(output, block, 0, data, &list_ordinals, mode);
+        render_block(output, block, 0, data, &list_ordinals, mode, &mut layout);
         rendered.push((id, start));
     }
     rendered
@@ -1601,6 +1725,7 @@ fn render_subtrees<'a>(
     list_ordinals: &HashMap<String, usize>,
     data: &PageExportData,
     mode: RenderMode,
+    layout: &mut DocumentLayout,
 ) -> Vec<(String, usize)> {
     // Iterative DFS pre-order. A visited set guards against a pathological
     // parent cycle (a block whose ancestor chain loops back) so export can
@@ -1615,7 +1740,7 @@ fn render_subtrees<'a>(
             continue;
         }
         rendered.push((id.clone(), output.len()));
-        render_block(output, block, depth, data, list_ordinals, mode);
+        render_block(output, block, depth, data, list_ordinals, mode, layout);
 
         // Push this block's children (reversed so they pop in sibling order)
         // at depth + 1.
@@ -1635,7 +1760,8 @@ fn render_subtrees<'a>(
 /// Returns the buffer and the ids it holds, in order.
 fn render_subtree_source(data: &PageExportData, root: &BlockRow) -> (String, Vec<String>) {
     let children_by_parent = group_children_by_parent(data.page.id.as_str(), &data.descendants);
-    let list_ordinals = compute_list_ordinals(&children_by_parent, &data.list_styles);
+    let list_ordinals =
+        compute_list_ordinals(&children_by_parent, &data.list_styles, RenderMode::Source);
     let mut output = String::new();
     let ids = render_subtrees(
         &mut output,
@@ -1644,6 +1770,7 @@ fn render_subtree_source(data: &PageExportData, root: &BlockRow) -> (String, Vec
         &list_ordinals,
         data,
         RenderMode::Source,
+        &mut DocumentLayout::default(),
     )
     .into_iter()
     .map(|(id, _)| id)
@@ -2444,8 +2571,26 @@ pub async fn get_page_buffer_inner(
     pool: &SqlitePool,
     page_id: &str,
 ) -> Result<PageBuffer, AppError> {
-    let source = get_page_source_inner(pool, page_id).await?;
-    let (text, line_ids) = anchor_free(&source);
+    get_page_buffer_as(pool, page_id, Dialect::Source).await
+}
+
+/// [`get_page_buffer_inner`] in `dialect` (#5691).
+///
+/// # Errors
+///
+/// As [`export_page_markdown_inner`].
+#[instrument(skip(pool), err)]
+pub async fn get_page_buffer_as(
+    pool: &SqlitePool,
+    page_id: &str,
+    dialect: Dialect,
+) -> Result<PageBuffer, AppError> {
+    BlockId::from_string(page_id)?;
+    let mut tx = pool.begin().await?;
+    let data = load_page_export_data(&mut tx, page_id, PageRead::Source).await?;
+    tx.commit().await?;
+    let (source, _) = dialect.render(&data);
+    let (text, line_ids) = anchor_free_as(&source, dialect);
     Ok(PageBuffer {
         source,
         text,
@@ -2502,7 +2647,11 @@ fn render_clipboard_source(
     with_children: bool,
 ) -> String {
     let children_by_parent = group_children_by_parent(data.page.id.as_str(), &data.descendants);
-    let list_ordinals = compute_list_ordinals(&children_by_parent, &data.list_styles);
+    let list_ordinals = compute_list_ordinals(
+        &children_by_parent,
+        &data.list_styles,
+        RenderMode::Clipboard,
+    );
     let selected: HashSet<&str> = selected.iter().map(String::as_str).collect();
     let mut roots = Vec::new();
     let mut stack: Vec<&BlockRow> = children_by_parent
@@ -2529,6 +2678,7 @@ fn render_clipboard_source(
         &list_ordinals,
         data,
         RenderMode::Clipboard,
+        &mut DocumentLayout::default(),
     );
     output
 }
@@ -3491,17 +3641,20 @@ fn attachment_link_label(filename: &str) -> String {
 /// `children_by_parent`'s vectors are already sibling-sorted by
 /// `(position, id)` — the same order the DFS emits them in — so a single pass
 /// per group is enough. Blocks with no entry in the returned map are not
-/// `ordered` and take no number.
+/// `ordered` and take no number. A Document buffer writes a block with a task
+/// state as a task whatever its style (#5691 D3), so there it ends a run.
 fn compute_list_ordinals(
     children_by_parent: &HashMap<String, Vec<&BlockRow>>,
     list_styles: &HashMap<String, String>,
+    mode: RenderMode,
 ) -> HashMap<String, usize> {
     let mut ordinals: HashMap<String, usize> = HashMap::new();
     for children in children_by_parent.values() {
         let mut run: usize = 0;
         for child in children {
             let id = child.id.clone().into_string();
-            if list_styles.get(&id).map(String::as_str) == Some("ordered") {
+            let task = mode == RenderMode::Document && child.todo_state.is_some();
+            if list_styles.get(&id).map(String::as_str) == Some("ordered") && !task {
                 run += 1;
                 ordinals.insert(id, run);
             } else {
@@ -3561,6 +3714,11 @@ fn list_marker_for(
 /// block does not write is backslash-escaped ([`first_line_needs_escape`]),
 /// the first-line analogue of the continuation-line escape above.
 ///
+/// A Document buffer (#5691) writes no outline bullet: the line is the
+/// markers, `"+ "` among them ([`DocumentLayout::place`]), and the text, or the
+/// text alone, and the continuation lines sit at the text's column, a line
+/// that would read as blank escaped too ([`import::needs_blank_line_escape`]).
+///
 /// Returns which lines are code, as the parser's fence tracking will see them.
 fn push_block_bullet(
     output: &mut String,
@@ -3575,15 +3733,18 @@ fn push_block_bullet(
         RenderMode::Source | RenderMode::Clipboard | RenderMode::Agent => {
             import::source_fence_opener
         }
+        RenderMode::Document => import::document_fence_opener,
     };
 
     let mut lines = resolved.split('\n');
     let first = lines.next().unwrap_or("");
     let line_start = output.len();
     output.push_str(indent);
-    output.push_str("- ");
+    if mode != RenderMode::Document {
+        output.push_str("- ");
+    }
     let markers = format!("{list_marker}{task_marker}");
-    if first.is_empty() {
+    if first.is_empty() && !markers.is_empty() {
         // An EMPTY first line after a marker: emit the bare marker (`- -`,
         // `- 1.`, `- [ ]`) rather than a line with trailing whitespace. Both
         // forms re-import identically, but only this one is a byte-level
@@ -3607,7 +3768,7 @@ fn push_block_bullet(
     };
     output.push('\n');
 
-    let cont_indent = format!("{indent}  ");
+    let cont_indent = continuation_indent(indent, list_marker, mode);
     for line in lines {
         let line_start = output.len();
         output.push_str(&cont_indent);
@@ -3616,6 +3777,7 @@ fn push_block_bullet(
         } else {
             import::continuation_line_is_ambiguous(line)
                 || (mode == RenderMode::Export && import::needs_planning_line_escape(line))
+                || (mode == RenderMode::Document && import::needs_blank_line_escape(line))
         };
         if needs_escape {
             output.push('\\');
@@ -3660,13 +3822,22 @@ struct CodeLines {
 /// line an import would read as a Logseq/Org task keyword or priority cookie
 /// (D7, `import::needs_task_syntax_escape`), after a checkbox too, so
 /// Export → Import keeps a block whose text starts with `TODO`; the buffer and
-/// the clipboard read neither, so they write no such escape.
+/// the clipboard read neither, so they write no such escape. A Document buffer
+/// reads one list marker, so after one it escapes only a checkbox, and a line
+/// with none as [`import::needs_bare_line_escape`] says.
 fn first_line_needs_escape(
     first: &str,
     list_marker: &str,
     task_marker: &str,
     mode: RenderMode,
 ) -> bool {
+    if mode == RenderMode::Document {
+        return if list_marker.is_empty() {
+            import::needs_bare_line_escape(first)
+        } else {
+            task_marker.is_empty() && import::needs_task_marker_escape(first)
+        };
+    }
     let task_syntax = mode == RenderMode::Export && import::needs_task_syntax_escape(first);
     if !task_marker.is_empty() {
         return task_syntax;

@@ -1,0 +1,652 @@
+{
+  "cases": [
+    {
+      "lineIds": ["01J00000000000000000000000", null],
+      "name": "1: a plain block is its own line",
+      "text": "text\n",
+      "tree": [
+        {
+          "content": "text",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": ["01J00000000000000000000000", null, "01J00000000000000000000001", null],
+      "name": "2: a heading owns nothing; its child is indented after a blank line",
+      "text": "## Findings\n\n  **Bold** text\n",
+      "tree": [
+        {
+          "content": "## Findings",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        },
+        {
+          "content": "**Bold** text",
+          "depth": 1,
+          "id": "01J00000000000000000000001",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": [
+        "01J00000000000000000000000",
+        "01J00000000000000000000001",
+        "01J00000000000000000000002",
+        "01J00000000000000000000003",
+        null
+      ],
+      "name": "3: a list block carries its marker, numbered by position; a task is `- [ ]`",
+      "text": "- a\n1. b\n2. c\n- [ ] d\n",
+      "tree": [
+        {
+          "content": "a",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {
+            "listStyle": "bullet"
+          }
+        },
+        {
+          "content": "b",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {
+            "listStyle": "ordered"
+          }
+        },
+        {
+          "content": "c",
+          "depth": 0,
+          "id": "01J00000000000000000000002",
+          "properties": {
+            "listStyle": "ordered"
+          }
+        },
+        {
+          "content": "d",
+          "depth": 0,
+          "id": "01J00000000000000000000003",
+          "properties": {
+            "todo_state": "TODO"
+          }
+        }
+      ]
+    },
+    {
+      "lineIds": [
+        "01J00000000000000000000000",
+        "01J00000000000000000000001",
+        "01J00000000000000000000002",
+        null
+      ],
+      "name": "3: an empty list block is its marker",
+      "text": "- \n1. \n- [ ] \n",
+      "tree": [
+        {
+          "content": "",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {
+            "listStyle": "bullet"
+          }
+        },
+        {
+          "content": "",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {
+            "listStyle": "ordered"
+          }
+        },
+        {
+          "content": "",
+          "depth": 0,
+          "id": "01J00000000000000000000002",
+          "properties": {
+            "todo_state": "TODO"
+          }
+        }
+      ]
+    },
+    {
+      "lineIds": ["01J00000000000000000000000", "01J00000000000000000000001", null],
+      "name": "3: a task with a list style is a task, which ends a numbered run (D3)",
+      "text": "- [ ] a\n1. b\n",
+      "tree": [
+        {
+          "content": "a",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {
+            "todo_state": "TODO"
+          }
+        },
+        {
+          "content": "b",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {
+            "listStyle": "ordered"
+          }
+        }
+      ]
+    },
+    {
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        null,
+        null,
+        null,
+        "01J00000000000000000000001",
+        null,
+        null
+      ],
+      "name": "4: a block's lines stay together, a line that would start a block escaped",
+      "text": "line one\nline two\n\\- not a bullet\n\\key:: v\n\n- item\n  \\## not a heading\n",
+      "tree": [
+        {
+          "content": "line one\nline two\n- not a bullet\nkey:: v",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        },
+        {
+          "content": "item\n## not a heading",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {
+            "listStyle": "bullet"
+          }
+        }
+      ]
+    },
+    {
+      "lineIds": ["01J00000000000000000000000", null, null, null, null, null, null, null],
+      "name": "5: a fence keeps its blank lines and its markup",
+      "text": "intro\n```sh\necho\n\n- x\n```\nafter\n",
+      "tree": [
+        {
+          "content": "intro\n```sh\necho\n\n- x\n```\nafter",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        null,
+        "01J00000000000000000000001",
+        null,
+        null
+      ],
+      "name": "6: a table and a quote are one block each",
+      "text": "| a | b |\n| - | - |\n\n> a\n> b\n",
+      "tree": [
+        {
+          "content": "| a | b |\n| - | - |",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        },
+        {
+          "content": "> a\n> b",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        "01J00000000000000000000001",
+        null,
+        "01J00000000000000000000002",
+        null
+      ],
+      "name": "7: a paragraph under a paragraph is indented after a blank line",
+      "text": "parent\n\n  child\n\n    grandchild\n",
+      "tree": [
+        {
+          "content": "parent",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        },
+        {
+          "content": "child",
+          "depth": 1,
+          "id": "01J00000000000000000000001",
+          "properties": {}
+        },
+        {
+          "content": "grandchild",
+          "depth": 2,
+          "id": "01J00000000000000000000002",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        "01J00000000000000000000001",
+        "01J00000000000000000000002",
+        null
+      ],
+      "name": "8: a list under a paragraph is indented after a blank line",
+      "text": "para\n\n  - a\n  - b\n",
+      "tree": [
+        {
+          "content": "para",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        },
+        {
+          "content": "a",
+          "depth": 1,
+          "id": "01J00000000000000000000001",
+          "properties": {
+            "listStyle": "bullet"
+          }
+        },
+        {
+          "content": "b",
+          "depth": 1,
+          "id": "01J00000000000000000000002",
+          "properties": {
+            "listStyle": "bullet"
+          }
+        }
+      ]
+    },
+    {
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        "01J00000000000000000000001",
+        "01J00000000000000000000002",
+        null,
+        "01J00000000000000000000003",
+        null
+      ],
+      "name": "9: a blank line separates blocks, but not neighbouring list lines",
+      "text": "a\n\n- b\n  1. c\n\nd\n",
+      "tree": [
+        {
+          "content": "a",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        },
+        {
+          "content": "b",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {
+            "listStyle": "bullet"
+          }
+        },
+        {
+          "content": "c",
+          "depth": 1,
+          "id": "01J00000000000000000000002",
+          "properties": {
+            "listStyle": "ordered"
+          }
+        },
+        {
+          "content": "d",
+          "depth": 0,
+          "id": "01J00000000000000000000003",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": [
+        "01J00000000000000000000000",
+        "01J00000000000000000000001",
+        "01J00000000000000000000002",
+        "01J00000000000000000000003",
+        "01J00000000000000000000004",
+        null
+      ],
+      "name": "10: a plain block under a list block or a task is a `+` item",
+      "text": "1. a\n   + b\n     + c\n- [ ] d\n  + e\n",
+      "tree": [
+        {
+          "content": "a",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {
+            "listStyle": "ordered"
+          }
+        },
+        {
+          "content": "b",
+          "depth": 1,
+          "id": "01J00000000000000000000001",
+          "properties": {}
+        },
+        {
+          "content": "c",
+          "depth": 2,
+          "id": "01J00000000000000000000002",
+          "properties": {}
+        },
+        {
+          "content": "d",
+          "depth": 0,
+          "id": "01J00000000000000000000003",
+          "properties": {
+            "todo_state": "TODO"
+          }
+        },
+        {
+          "content": "e",
+          "depth": 1,
+          "id": "01J00000000000000000000004",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        null,
+        null,
+        "01J00000000000000000000001",
+        null,
+        null
+      ],
+      "name": "11: property lines sit under their block at its text column",
+      "text": "a\n  priority:: 1\n  k:: v\n\n1. b\n   due_date:: 2026-01-02\n",
+      "tree": [
+        {
+          "content": "a",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {
+            "k": "v",
+            "priority": "1"
+          }
+        },
+        {
+          "content": "b",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {
+            "due_date": "2026-01-02",
+            "listStyle": "ordered"
+          }
+        }
+      ]
+    },
+    {
+      "lineIds": [
+        "01J00000000000000000000000",
+        "01J00000000000000000000001",
+        "01J00000000000000000000002",
+        null,
+        "01J00000000000000000000003",
+        null,
+        null
+      ],
+      "name": "12: each checkbox is its state; another state is a line, never a bullet",
+      "text": "- [x] a\n- [/] b\n- [-] c\n\nd\n  todo_state:: WAITING\n",
+      "tree": [
+        {
+          "content": "a",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {
+            "todo_state": "DONE"
+          }
+        },
+        {
+          "content": "b",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {
+            "todo_state": "DOING"
+          }
+        },
+        {
+          "content": "c",
+          "depth": 0,
+          "id": "01J00000000000000000000002",
+          "properties": {
+            "todo_state": "CANCELLED"
+          }
+        },
+        {
+          "content": "d",
+          "depth": 0,
+          "id": "01J00000000000000000000003",
+          "properties": {
+            "todo_state": "WAITING"
+          }
+        }
+      ]
+    },
+    {
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        "01J00000000000000000000001",
+        null,
+        "01J00000000000000000000002",
+        null,
+        "01J00000000000000000000003",
+        null,
+        "01J00000000000000000000004",
+        null,
+        "01J00000000000000000000005",
+        null,
+        "01J00000000000000000000006",
+        null,
+        "01J00000000000000000000007",
+        null,
+        "01J00000000000000000000008",
+        null
+      ],
+      "name": "13: text shaped like markup opening a bare line is escaped",
+      "text": "\\- x\n\n\\* x\n\n\\+ x\n\n\\1. x\n\n\\1) x\n\n\\key:: v\n\n\\  x\n\n\\\\- x\n\n[ ] x\n",
+      "tree": [
+        {
+          "content": "- x",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        },
+        {
+          "content": "* x",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {}
+        },
+        {
+          "content": "+ x",
+          "depth": 0,
+          "id": "01J00000000000000000000002",
+          "properties": {}
+        },
+        {
+          "content": "1. x",
+          "depth": 0,
+          "id": "01J00000000000000000000003",
+          "properties": {}
+        },
+        {
+          "content": "1) x",
+          "depth": 0,
+          "id": "01J00000000000000000000004",
+          "properties": {}
+        },
+        {
+          "content": "key:: v",
+          "depth": 0,
+          "id": "01J00000000000000000000005",
+          "properties": {}
+        },
+        {
+          "content": "  x",
+          "depth": 0,
+          "id": "01J00000000000000000000006",
+          "properties": {}
+        },
+        {
+          "content": "\\- x",
+          "depth": 0,
+          "id": "01J00000000000000000000007",
+          "properties": {}
+        },
+        {
+          "content": "[ ] x",
+          "depth": 0,
+          "id": "01J00000000000000000000008",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": ["01J00000000000000000000000", "01J00000000000000000000001", null],
+      "name": "13: a checkbox opening a list block's or a `+` item's text is escaped",
+      "text": "- \\[ ] x\n  + \\[x] y\n",
+      "tree": [
+        {
+          "content": "[ ] x",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {
+            "listStyle": "bullet"
+          }
+        },
+        {
+          "content": "[x] y",
+          "depth": 1,
+          "id": "01J00000000000000000000001",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": ["01J00000000000000000000000", null, "01J00000000000000000000001", null],
+      "name": "13: a first block opening with `---` is a `+` item, not front matter",
+      "text": "+ ---\n\n---\n",
+      "tree": [
+        {
+          "content": "---",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        },
+        {
+          "content": "---",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        "01J00000000000000000000001",
+        null,
+        null,
+        null,
+        null
+      ],
+      "name": "14: an empty plain block and an interior blank line are a `\\` line",
+      "text": "\\\n\na\n\\\nb\n\\\n",
+      "tree": [
+        {
+          "content": "",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        },
+        {
+          "content": "a\n\nb\n",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        "01J00000000000000000000001",
+        null,
+        "01J00000000000000000000002",
+        null,
+        "01J00000000000000000000003",
+        null
+      ],
+      "name": "15: headings stay flat",
+      "text": "# H\n\npara\n\n## H2\n\n- x\n",
+      "tree": [
+        {
+          "content": "# H",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        },
+        {
+          "content": "para",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {}
+        },
+        {
+          "content": "## H2",
+          "depth": 0,
+          "id": "01J00000000000000000000002",
+          "properties": {}
+        },
+        {
+          "content": "x",
+          "depth": 0,
+          "id": "01J00000000000000000000003",
+          "properties": {
+            "listStyle": "bullet"
+          }
+        }
+      ]
+    },
+    {
+      "lineIds": ["01J00000000000000000000000", null],
+      "name": "19: a list style on a heading keeps its marker",
+      "text": "- ## x\n",
+      "tree": [
+        {
+          "content": "## x",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {
+            "listStyle": "bullet"
+          }
+        }
+      ]
+    }
+  ],
+  "description": "#5691 — Edit as Markdown's Document dialect, one case per hard case of the line-split format: the tree, each block under its id, the text a page holding it is written as, and the id each line of that text carries. Authored by `markdown_document_tests.rs` with CONFORMANCE_UPDATE=1; never hand-edit."
+}
