@@ -21,6 +21,7 @@ import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helper
 import { PropertyDefinitionsList } from '@/components/properties/PropertyDefinitionsList'
 import type { AppError, PageResponse, PropertyDefinition } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { seedBlocks, spacePropertyDefs } from '@/lib/tauri-mock/seed'
 import { useSpaceStore } from '@/stores/space'
@@ -31,7 +32,10 @@ import { useSpaceStore } from '@/stores/space'
 const mockedInvoke = vi.mocked(invoke)
 
 function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
-  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+  // #5841 S0 — the list also loads its usage counts; a test that stubs none shows none.
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands({ count_property_usage: () => [], ...handlers }),
+  )
 }
 
 /** Stub the `list_property_defs` load with one page of definitions. */
@@ -979,6 +983,167 @@ describe('PropertyDefinitionsList', () => {
 
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  // ── #5841 S0: per-space usage count ─────
+  describe('usage count', () => {
+    const usageBadge = (key: string) => screen.queryByTestId(`property-usage-${key}`)
+    const MTG_1 = '0000000000000000000BLOCK17'
+
+    /** The mock backend: Personal's `context` and `project` are each on two blocks. */
+    function seedMock(): void {
+      seedBlocks()
+      mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+    }
+
+    it("shows each definition's live usage count", async () => {
+      seedMock()
+      const { container } = render(<PropertyDefinitionsList />)
+
+      await waitFor(() => {
+        expect(usageBadge('context')).toHaveTextContent('2 uses')
+      })
+      expect(usageBadge('reviewer')).toHaveTextContent('0 uses')
+      await waitFor(async () => {
+        expect(await axe(container)).toHaveNoViolations()
+      })
+    })
+
+    it('counts a trashed block out once the list is opened again', async () => {
+      seedMock()
+      await dispatch('delete_block', { blockId: MTG_1 })
+
+      render(<PropertyDefinitionsList />)
+
+      await waitFor(() => {
+        expect(usageBadge('context')).toHaveTextContent('1 use')
+      })
+    })
+
+    it('shows no count, not 0, while the counts load', async () => {
+      seedMock()
+      mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) =>
+        cmd === 'count_property_usage' ? new Promise<never>(() => {}) : dispatch(cmd, args),
+      )
+
+      render(<PropertyDefinitionsList />)
+
+      expect(await screen.findByText('Reviewer')).toBeInTheDocument()
+      expect(usageBadge('reviewer')).not.toBeInTheDocument()
+      expect(screen.queryByText('0 uses')).not.toBeInTheDocument()
+    })
+
+    it('a failed count load shows no count and only warns', async () => {
+      const warn = vi.spyOn(logger, 'warn')
+      stubInvoke({
+        list_property_defs: () => pageOf([makePropDef('stage')]),
+        count_property_usage: () => Promise.reject(new Error('DB error')),
+      })
+
+      render(<PropertyDefinitionsList />)
+
+      expect(await screen.findByText('Stage')).toBeInTheDocument()
+      await waitFor(() => {
+        expect(warn).toHaveBeenCalledWith(
+          'PropertyDefinitionsList',
+          'count_property_usage failed',
+          { spaceId: PERSONAL.id },
+          expect.any(Error),
+        )
+      })
+      expect(usageBadge('stage')).not.toBeInTheDocument()
+      expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+    })
+
+    // Answer 6: delete counts trashed blocks, the badge does not.
+    it('a refused delete beside a count of 0 says trashed blocks still use the key', async () => {
+      const user = userEvent.setup()
+      seedMock()
+      await dispatch('create_property_def', {
+        spaceId: PERSONAL.id,
+        key: 'stage',
+        valueType: 'text',
+        options: null,
+      })
+      await dispatch('set_property', {
+        blockId: MTG_1,
+        key: 'stage',
+        value: { value_text: 'draft' },
+      })
+      await dispatch('delete_block', { blockId: MTG_1 })
+      render(<PropertyDefinitionsList />)
+      await waitFor(() => {
+        expect(usageBadge('stage')).toHaveTextContent('0 uses')
+      })
+
+      await user.click(screen.getByRole('button', { name: 'Delete property stage' }))
+      await user.click(await screen.findByRole('button', { name: /^Delete$/i }))
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+          t('propertiesView.deleteRefusedInUse', { key: 'stage' }),
+        )
+      })
+      expect(screen.getByText('Stage')).toBeInTheDocument()
+    })
+
+    it('counts a created definition, and a deleted one is gone with its count', async () => {
+      const user = userEvent.setup()
+      seedMock()
+      render(<PropertyDefinitionsList />)
+      await waitFor(() => {
+        expect(usageBadge('reviewer')).toHaveTextContent('0 uses')
+      })
+
+      await user.type(screen.getByPlaceholderText('Property key'), 'estimate')
+      await user.click(screen.getByRole('button', { name: /Create/i }))
+      await waitFor(() => {
+        expect(usageBadge('estimate')).toHaveTextContent('0 uses')
+      })
+
+      await user.click(screen.getByRole('button', { name: 'Delete property reviewer' }))
+      await user.click(await screen.findByRole('button', { name: /^Delete$/i }))
+      await waitFor(() => {
+        expect(usageBadge('reviewer')).not.toBeInTheDocument()
+      })
+      expect(usageBadge('context')).toHaveTextContent('2 uses')
+    })
+
+    it("shows the picked space's counts", async () => {
+      const user = userEvent.setup()
+      seedMock()
+      const workId = (await dispatch('create_space', { name: 'Work', accentColor: null })) as string
+      // Work's `status` is on one page; Personal's, a default too, is on none.
+      const workPage = (await dispatch('create_page_in_space', {
+        parentId: null,
+        content: 'Plan',
+        spaceId: workId,
+      })) as string
+      await dispatch('set_property', {
+        blockId: workPage,
+        key: 'status',
+        value: { value_text: 'active' },
+      })
+      useSpaceStore.setState({
+        currentSpaceId: PERSONAL.id,
+        availableSpaces: [PERSONAL, { id: workId, name: 'Work', accent_color: null }],
+      })
+      render(<PropertyDefinitionsList />)
+      await waitFor(() => {
+        expect(usageBadge('context')).toHaveTextContent('2 uses')
+      })
+      expect(usageBadge('status')).toHaveTextContent('0 uses')
+
+      await user.selectOptions(
+        screen.getByRole('combobox', { name: t('propertiesView.definitionsIn') }),
+        workId,
+      )
+
+      await waitFor(() => {
+        expect(usageBadge('status')).toHaveTextContent('1 use')
+      })
+      expect(usageBadge('context')).not.toBeInTheDocument()
     })
   })
 })

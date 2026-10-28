@@ -1,0 +1,28 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH live AS MATERIALIZED (\n               SELECT id, todo_state, priority, due_date, scheduled_date\n               FROM blocks WHERE space_id = ?1 AND deleted_at IS NULL\n           ),\n           vocab(key) AS (\n               SELECT key FROM property_definitions WHERE space_id = ?1\n               UNION\n               SELECT CAST(je.value AS TEXT) FROM json_each(?2) AS je\n           ),\n           columns AS MATERIALIZED (\n               SELECT COUNT(todo_state) AS todo_state, COUNT(priority) AS priority,\n                      COUNT(due_date) AS due_date, COUNT(scheduled_date) AS scheduled_date,\n                      COUNT(*) AS space\n               FROM live\n           ),\n           used(key, n) AS (\n               SELECT bp.key, COUNT(*) FROM live b JOIN block_properties bp ON bp.block_id = b.id\n               WHERE bp.key IN (SELECT key FROM vocab)\n               GROUP BY bp.key\n               UNION ALL SELECT 'todo_state', todo_state FROM columns\n               UNION ALL SELECT 'priority', priority FROM columns\n               UNION ALL SELECT 'due_date', due_date FROM columns\n               UNION ALL SELECT 'scheduled_date', scheduled_date FROM columns\n               UNION ALL SELECT 'space', space FROM columns\n           )\n           SELECT v.key AS \"key!: String\", COALESCE(u.n, 0) AS \"count!: i64\"\n           FROM vocab v LEFT JOIN used u ON u.key = v.key\n           ORDER BY v.key",
+  "describe": {
+    "columns": [
+      {
+        "name": "key!: String",
+        "ordinal": 0,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "count!: i64",
+        "ordinal": 1,
+        "type_info": "Null",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "6cf6cfdcc45ec3b8dcfe8d4f98e6247fcdf32578e8ee10af7e3f3ed10ba57346"
+}

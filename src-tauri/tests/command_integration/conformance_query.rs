@@ -1506,6 +1506,23 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 next_cursor: None,
             }
         }
+        // ── Per-space usage count (#5841 S0) ──
+        //
+        // `key#count=<n>` per key of the space's vocabulary, ordered by key.
+        "count_property_usage" => {
+            let rows =
+                count_property_usage_inner(pool, &arg_req::<String>(args, "spaceId")).await?;
+            let v = serde_json::to_value(&rows).expect("serialize Vec<PropertyUsage>");
+            RawResult {
+                rows: v
+                    .as_array()
+                    .map(|a| a.iter().map(|r| row_token(r, "key", &["count"])).collect())
+                    .unwrap_or_default(),
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
         // ── What a cross-space move drops (#5841 S0.6) ──
         //
         // `key#count=<n>` per key, ordered by key; then one key's values,
@@ -2914,7 +2931,10 @@ pub(super) mod reader_delegation_tests {
     // behind `PageRequest::new` and `build_page_response`. The drops they
     // describe are written by `move_blocks_to_space`, not a read arm. Writer
     // set unchanged.
-    const SWEPT_ARM_COUNT: usize = 61;
+    // #5841 S0 wired `count_property_usage`: one `query_as!` SELECT over
+    // `blocks`, `block_properties` and `property_definitions`, after a
+    // `spaces` lookup (`commands/properties.rs`). Writer set unchanged.
+    const SWEPT_ARM_COUNT: usize = 62;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///
