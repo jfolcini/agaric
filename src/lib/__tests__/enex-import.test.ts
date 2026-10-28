@@ -342,6 +342,17 @@ describe('parseEnex — <resource>/<en-media> attachments (#2513)', () => {
     expect(note.markdown).toBe('Before after')
   })
 
+  it('leaves a code block a code block when a dangling en-media opens it', () => {
+    // The `<code>` is the code block's only child once the reference is gone;
+    // with a sibling left beside it, it is inline code.
+    const enml =
+      '<pre><en-media hash="deadbeefdeadbeefdeadbeefdeadbeef" type="image/png"/>' +
+      '<code>x = 1</code></pre>'
+    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
+
+    expect(at(parseEnex(xml)).markdown).toBe('```\nx = 1\n```')
+  })
+
   it('does not orphan-crash on a resource that no en-media references', () => {
     // The resource decodes fine but nothing in the body references it, so it
     // is simply never shipped (mirrors the folder import's unreferenced-asset
@@ -706,6 +717,14 @@ describe('parseEnex — ENML an XML parse rejects', () => {
     expect(note.markdown).toBe('x\u00A0y\n\n- [x] done\n\nSee ![](pic.png) here\n\nGone but kept')
     expect(note.attachments.map((a) => a.path)).toEqual(['pic.png'])
   })
+
+  it('keeps a self-closed element empty in a note the XML parse accepts', () => {
+    // Read as HTML, the `<b/>` would open a bold run over the rest of its block.
+    const enml = '<div><b/>plain</div>'
+    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
+
+    expect(at(parseEnex(xml)).markdown).toBe('plain')
+  })
 })
 
 describe('parseEnex — advanced ENML fidelity (#2513)', () => {
@@ -868,6 +887,24 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
     expect(at(parseEnex(xml)).markdown).toBe(
       '| Name | Qty |\n| --- | --- |\n| Apple green | **3** \\| 4 |',
     )
+  })
+
+  it('joins the lines a <br/> splits a cell into with one space', () => {
+    // A line break ends its line with the two spaces of a Markdown hard break,
+    // and a row of the pipe table is one line.
+    const enml = '<table><tbody><tr><td><div>Apple<br/>green</div></td></tr></tbody></table>'
+    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
+
+    expect(at(parseEnex(xml)).markdown).toBe('| Apple green |\n| --- |')
+  })
+
+  it('keeps a web clip table’s caption above it and its header row first', () => {
+    const enml =
+      '<table><caption>Fruit</caption>' +
+      '<thead><tr><th>Name</th></tr></thead><tbody><tr><td>Apple</td></tr></tbody></table>'
+    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
+
+    expect(at(parseEnex(xml)).markdown).toBe('Fruit\n| Name |\n| --- |\n| Apple |')
   })
 
   it('keeps a web clip’s <th> header cell on one line, its pipe escaped', () => {
