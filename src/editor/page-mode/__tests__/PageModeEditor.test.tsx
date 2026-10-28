@@ -3648,6 +3648,18 @@ describe('PageModeEditor lists (#5743)', () => {
     })
   })
 
+  it('numbers the block past a heading carrying a numbered style as a fresh run', async () => {
+    const { pageId } = seedList([
+      ['one', 'ordered'],
+      ['# Title', 'ordered'],
+      ['two', 'ordered'],
+    ])
+    const { container } = renderPageMode(pageId)
+    await editorIn(container)
+
+    expect(markers(container)).toEqual(['1.', '', '1.'])
+  })
+
   it('`- ` and `1. ` then a character make the block a list, without the prefix', async () => {
     const { pageId, ids } = seedPage(['first', 'second'])
     const { container, handle } = renderPageMode(pageId)

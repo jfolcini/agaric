@@ -1206,15 +1206,6 @@
 .page-mode-editor > [data-page-block]:first-child :is(h1, h2, h3, h4, h5, h6) {
   margin-top: 0;
 }
-/* A list marker's float stays inside its block. Cleared rather than made a
-   formatting context (`flow-root`, `contain: layout`): WebKit lays out every
-   block that is one on each key, so typing slowed with the page's length
-   (`scripts/measure-page-mode-webkit.mjs`). */
-.page-mode-editor [data-page-block]::after {
-  content: '';
-  display: block;
-  clear: both;
-}
 /* A task's checkbox (`page-tasks.ts`) sits left of the text, centred on its
    first line: its box is a line and a half (`min-h-8`) tall. */
 .page-mode-editor .page-block-controls {
@@ -1941,18 +1932,38 @@
 .hljs {
   background: transparent;
 }
+/* Where github.css's colour, or the dark palette's below, falls under 4.5:1 on
+   a code block's `bg-muted`: a token's, which keeps it in each theme. */
+.hljs-doctag,
+.hljs-keyword,
+.hljs-meta .hljs-keyword,
+.hljs-template-tag,
+.hljs-template-variable,
+.hljs-type,
+.hljs-variable.language_ {
+  color: var(--alert-error-foreground);
+}
+.hljs-built_in,
+.hljs-symbol {
+  color: var(--alert-warning-foreground);
+}
+.hljs-code,
+.hljs-comment,
+.hljs-formula {
+  color: var(--muted-foreground);
+}
+.hljs-name,
+.hljs-quote,
+.hljs-selector-pseudo,
+.hljs-selector-tag {
+  color: var(--alert-tip-foreground);
+}
+.hljs-section {
+  color: var(--alert-info-foreground);
+}
 .dark .hljs {
   color: #adbac7;
   background: transparent;
-}
-.dark .hljs-doctag,
-.dark .hljs-keyword,
-.dark .hljs-meta .hljs-keyword,
-.dark .hljs-template-tag,
-.dark .hljs-template-variable,
-.dark .hljs-type,
-.dark .hljs-variable.language_ {
-  color: #f47067;
 }
 .dark .hljs-title,
 .dark .hljs-title.class_,
@@ -1977,27 +1988,8 @@
 .dark .hljs-string {
   color: #96d0ff;
 }
-.dark .hljs-built_in,
-.dark .hljs-symbol {
-  color: #f69d50;
-}
-.dark .hljs-code,
-.dark .hljs-comment,
-.dark .hljs-formula {
-  color: #768390;
-}
-.dark .hljs-name,
-.dark .hljs-quote,
-.dark .hljs-selector-pseudo,
-.dark .hljs-selector-tag {
-  color: #8ddb8c;
-}
 .dark .hljs-subst {
   color: #adbac7;
-}
-.dark .hljs-section {
-  color: #316dca;
-  font-weight: 700;
 }
 .dark .hljs-bullet {
   color: #eac55f;

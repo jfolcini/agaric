@@ -100,6 +100,19 @@ describe('PageSourcePreview', () => {
     expect(within(item as HTMLElement).getByTestId('list-marker')).toHaveTextContent('•')
   })
 
+  it('numbers a list past a heading that carries a numbered style as a fresh run', () => {
+    render(
+      <PageSourcePreview
+        lines={{ text: '- 1. one\n- 1. # Title\n- 1. two', lineIds: [null, null, null] }}
+      />,
+    )
+
+    expect(screen.getAllByTestId('list-marker').map((marker) => marker.textContent)).toEqual([
+      '1.',
+      '1.',
+    ])
+  })
+
   it('says the page would have no blocks for an empty buffer', () => {
     render(<PageSourcePreview lines={{ text: '', lineIds: [null] }} />)
 

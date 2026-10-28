@@ -33,10 +33,14 @@ import { computeListOrdinals } from '@/lib/list-ordinals'
 import { type ListStyle, listStyleFromRows } from '@/lib/list-style'
 import type { FlatBlock } from '@/lib/tree-utils'
 
-type OutlineItem = Pick<FlatBlock, 'id' | 'depth'>
+/** A block in the page's order, and whether it shows a list marker (`docShowsListMarker`). */
+type OutlineItem = Pick<FlatBlock, 'id' | 'depth'> & { marked: boolean }
 
 const sameItems = (a: readonly OutlineItem[], b: readonly OutlineItem[]): boolean =>
-  a.length === b.length && a.every((item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth)
+  a.length === b.length &&
+  a.every(
+    (item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth && item.marked === b[i]?.marked,
+  )
 
 /** The page's list styles, as last read or as given since, and the marker each block shows. */
 export class PageLists {
@@ -49,8 +53,12 @@ export class PageLists {
   private readonly listeners = new Map<string, Set<() => void>>()
 
   /** `blocks` are the page's blocks in order, as its document opens on them. */
-  constructor(rows: Record<string, PropertyRow[]>, blocks: readonly OutlineItem[]) {
-    this.items = blocks.map(({ id, depth }) => ({ id, depth }))
+  constructor(
+    rows: Record<string, PropertyRow[]>,
+    blocks: readonly Pick<FlatBlock, 'id' | 'depth'>[],
+  ) {
+    // Each shows its marker until `layout` reads the document.
+    this.items = blocks.map(({ id, depth }) => ({ id, depth, marked: true }))
     this.take(rows)
   }
 
@@ -89,10 +97,16 @@ export class PageLists {
     this.redraw()
   }
 
-  /** Take the blocks' order and depths from `doc`: the ordinals follow them. */
+  /** Take the blocks' order, depths and kinds from `doc`: the ordinals follow them. */
   layout(doc: PMNode): void {
     const items: OutlineItem[] = []
-    doc.forEach((node) => items.push({ id: blockIdOf(node) ?? '', depth: depthOf(node) }))
+    doc.forEach((node) =>
+      items.push({
+        id: blockIdOf(node) ?? '',
+        depth: depthOf(node),
+        marked: docShowsListMarker(node),
+      }),
+    )
     if (sameItems(items, this.items)) return
     this.items = items
     this.redraw()
@@ -114,7 +128,9 @@ export class PageLists {
 
   /** Work the markers out again, and tell the blocks whose marker changed. */
   private redraw(): void {
-    const styleOf = (id: string) => this.styleOf(id)
+    // A block that shows no marker breaks a run of numbered siblings, as a plain one does.
+    const unmarked = new Set(this.items.filter((item) => !item.marked).map((item) => item.id))
+    const styleOf = (id: string): ListStyle => (unmarked.has(id) ? 'none' : this.styleOf(id))
     const ordinals = computeListOrdinals(this.items, styleOf)
     const next = new Map<string, string>()
     for (const { id } of this.items) {

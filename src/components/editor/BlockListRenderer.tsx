@@ -32,7 +32,7 @@ import { useListStyles } from '@/hooks/useListStyles'
 import { delegatedLinkClickProps } from '@/hooks/useOpenInBackgroundTab'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
 import { computeListOrdinals } from '@/lib/list-ordinals'
-import type { ListStyle } from '@/lib/list-style'
+import { contentShowsListMarker, type ListStyle } from '@/lib/list-style'
 import { computeSiblingAriaProps } from '@/lib/outline-aria'
 import type { FlatBlock, Projection } from '@/lib/tree-utils'
 import { SENTINEL_ID } from '@/lib/tree-utils'
@@ -157,16 +157,22 @@ export function BlockListRenderer({
   // via `ListMarkerProvider` so `StaticBlock` and the roving editor's marker
   // decoration read their own block's marker by id — no prop-drilling through
   // the memoized row-wrapper chain. Ordinals are display-only, never stored.
+  // A block that shows no marker (a heading carrying a stored style) counts
+  // as 'none', so it breaks the run as a plain block does.
   const listStyles = useListStyles(visibleItems)
   const ordinals = useMemo(() => {
-    const styleOf = (id: string): ListStyle => listStyles.get(id) ?? 'none'
+    const content = new Map(visibleItems.map((block) => [block.id, block.content ?? '']))
+    const styleOf = (id: string): ListStyle => {
+      const style = listStyles.get(id) ?? 'none'
+      return style !== 'none' && contentShowsListMarker(content.get(id) ?? '') ? style : 'none'
+    }
     return computeListOrdinals(visibleItems, styleOf)
   }, [visibleItems, listStyles])
 
   // #3277 — keep the published context value referentially stable across a
   // plain content edit. `visibleItems` gets a new array identity on EVERY
   // committed edit (the store reallocates `state.blocks` via `.slice()`), but
-  // a content edit cannot change any block's list marker. Re-publishing a new
+  // most content edits change no block's list marker. Re-publishing a new
   // `listMarkerValue` object on every such edit forced every mounted row's
   // `useListMarker` consumer to re-render (Context propagation bypasses
   // ancestor `React.memo`s), even though `listStyles` and `ordinals` were

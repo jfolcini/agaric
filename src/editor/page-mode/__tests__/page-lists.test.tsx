@@ -4,7 +4,7 @@
  * draws, and, through `PageModeEditor`, a style write the backend refuses.
  *
  * Equivalent mutants, accepted:
- * - `sameItems` made always false or compared on fewer fields, its `?.`
+ * - `sameItems` made always false or blind to `id` or `depth`, its `?.`
  *   dropped, and `layout`'s return on it or the plugin's `doc !== previous.doc`
  *   dropped: each only spares a redraw, and a redraw over the same blocks
  *   changes no marker and tells no listener. `b[i]` is read only past the

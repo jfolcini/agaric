@@ -10,6 +10,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { Editor } from '@tiptap/core'
 import { type Ref, useEffect } from 'react'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
@@ -194,6 +195,31 @@ describe('Edit as Markdown link back to page mode', () => {
 
     expect(screen.queryByTestId('block-tree')).toBe(null)
     expect(shownTexts(await editorIn(container))).toEqual(['first'])
+  })
+
+  it('says why the page stays in Blocks when the buffer’s save took it over the cap', async () => {
+    writePreference(PREFERENCES.editMode, 'blocks')
+    const { pageId } = seedPage(['first'], 'Markdown over the cap')
+    const { container } = render(<PageEditor pageId={pageId} title="Markdown over the cap" />)
+    await screen.findByTestId('block-tree')
+    await act(async () => header.onEditSource?.())
+    await screen.findByTestId('page-source-mode')
+    // The buffer's save, as `apply_page_source` writes it.
+    dispatch('create_blocks_batch', {
+      specs: Array.from({ length: PAGE_MODE_BLOCK_CAP }, (_, i) => ({
+        blockType: 'content',
+        content: `block ${i}`,
+        parentId: pageId,
+        position: null,
+      })),
+    })
+
+    await switchToPage(container)
+
+    expect(vi.mocked(toast.info)).toHaveBeenCalledWith(
+      blockerMessage({ kind: 'overCap', count: PAGE_MODE_BLOCK_CAP + 1 }),
+    )
+    expect(screen.getByTestId('block-tree')).toBeInTheDocument()
   })
 
   it('is not offered on touch, where page mode is not', async () => {

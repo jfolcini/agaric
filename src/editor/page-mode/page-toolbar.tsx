@@ -56,7 +56,9 @@ export interface PageToolbarActions {
 const HIDDEN = new Set(['toolbar.discard'])
 const TIPS = { 'toolbar.todoToggle': 'pageMode.todoToggleTip' }
 
-const ITEMS = [...SLASH_COMMANDS, ...TURN_INTO_COMMANDS, ...CALLOUT_COMMANDS]
+const ITEMS = new Map(
+  [...SLASH_COMMANDS, ...TURN_INTO_COMMANDS, ...CALLOUT_COMMANDS].map((item) => [item.id, item]),
+)
 
 const selectedBlocks = (editor: Editor): string[] => {
   const { from, to } = editor.state.selection
@@ -70,12 +72,12 @@ export function pageToolbarCommands(
   pageStore: StoreApi<PageBlockState>,
 ): Partial<Record<BlockCommandName, BlockCommandHandler>> {
   const onSelected = (itemId: string): void => {
-    const item = ITEMS.find((candidate) => candidate.id === itemId)
+    const item = ITEMS.get(itemId)
     if (item === undefined) return
     for (const id of selectedBlocks(editor)) actions.current.turnInto(id, item)
   }
   const onCaret = (itemId: string) => (): void => {
-    const item = ITEMS.find((candidate) => candidate.id === itemId)
+    const item = ITEMS.get(itemId)
     if (item !== undefined) actions.current.command(item)
   }
   const typeOf = (detail: unknown): string | undefined =>

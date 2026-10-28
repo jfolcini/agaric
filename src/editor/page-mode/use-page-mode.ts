@@ -156,8 +156,11 @@ export function usePageMode(pageId: string): PageModeState {
   const changeMode = useCallback(
     (next: EditMode) => {
       if (next === 'page') {
-        if (blocker !== null) {
-          notify.info(blockerMessage(blocker))
+        // Read now, not from this render: Edit as Markdown calls this after a load its save grew.
+        const { blocks, truncatedTotal } = pageStore.getState()
+        const now = blockerIn(truncatedTotal ?? blocks.length)
+        if (now !== null) {
+          notify.info(blockerMessage(now))
           return
         }
         takeCursor()
@@ -187,7 +190,7 @@ export function usePageMode(pageId: string): PageModeState {
           })
       })
     },
-    [saved, blocker, pageId, pageStore, setFocused, takeCursor],
+    [saved, pageId, pageStore, setFocused, takeCursor],
   )
 
   const wanted = available && mode === 'page' && blocker === null
