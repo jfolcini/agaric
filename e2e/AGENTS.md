@@ -69,6 +69,7 @@ test('edits a block', async ({ page }) => {
 - Replace a block editor's text with `replaceEditorText`, never `locator.fill`: `fill` selects all natively, ProseMirror reads that selection only later, and the text is appended or the block never empties.
 
 - No page objects: flat tests, shared behaviour in `e2e/helpers.ts`. Cross-test setup is a fixture on the exported `test`: a module-level `beforeEach` in a shared module binds only to the first spec file a worker loads.
+- A spec reads as behaviour, not UI mechanics: a step two specs repeat becomes a domain operation in `e2e/domain.ts` (`runSlashCommand`, `pickDate`, `expectPersisted`), named by intent and built on `helpers.ts`. Reference: `slash-commands-happy-paths.spec.ts`.
 - Select with `data-testid` / `data-slot`, not CSS classes.
 - `installIpcRecorder` / `getInvokeCalls` / `clearInvokeCalls` assert on IPC traffic. The recorder sees only calls made after boot; counting boot IPC wraps the assignment instead (`boot-ipc-counts.spec.ts`).
 - `fullyParallel` is on; a spec whose tests share global state sets `test.describe.configure({ mode: 'serial' })`.
