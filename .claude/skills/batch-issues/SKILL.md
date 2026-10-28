@@ -77,9 +77,10 @@ Prompt skeleton; keep the git and background lines verbatim:
 **Setup:** . "$HOME/.cargo/env"   (Rust only)
 **Files to create/modify:** path — what
 **Premise check:** before editing, confirm the issue's claims (named symbols, call sites, the prescribed fix) against the current code, and list every caller or writer you will touch. If a claim is false, stop and report instead of building.
+**Red first:** for a behaviour change, write the failing spec before the fix in the change's lane (e2e spec, vitest or Rust test, or conformance fixture), run it and see the assertion you predicted fail, then implement. Report the command and that red; the reviewer re-runs it.
 **Siblings and stale copies:** fix the twin paths of what you change (journal day / week / page editor, single / bulk, local / sync / MCP) or say why not. After changing a name, shape, scope or number, grep the old words across comments, test comments, `docs/`, tool descriptions and workflow comments, and fix every copy. Comments carry the why; measurements and run ids go in your report.
 **Ladder:** read the code you touch first, then stop at the first rung that holds — not needed / already in the codebase / stdlib or platform / installed dependency / one plain line / the minimum that works. Validation, data loss, security, a11y and a red test are never the corner you cut. Names carry the what; a comment only for a why the code cannot show.
-**Do NOT modify:** AGENTS.md; anything outside the list above.
+**Do NOT modify:** AGENTS.md; an existing test under `e2e/**`, `e2e-tauri/**` or `src/**/__tests__/**` (adding tests there is fine; an existing one is the contract, so if the change needs it edited, stop and report why for the reviewer or the maintainer); anything outside the list above.
 **Do NOT run any git command** (stash/reset/checkout/add/commit); only edit files.
 **NEVER use background execution or monitors**; run every command in the foreground, read the output before your final message, and do not end while anything is pending.
 **Verification (targeted):** cd src-tauri && cargo nextest run --workspace -E '<filter>'  |  npx vitest run <paths> && npm run typecheck; then `just e2e-related --range origin/main...HEAD` and run what it selects (Playwright with this worktree's `PW_PORT`)
