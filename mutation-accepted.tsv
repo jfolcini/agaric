@@ -168,7 +168,6 @@ frontend	src/lib/agenda-sort.ts	LogicalOperator	5	1	if (y === undefined || m ===
 frontend	src/lib/agenda-sort.ts	OptionalChaining	1	1	buckets.get(key)?.push(block)
 frontend	src/lib/agenda-sort.ts	OptionalChaining	1	2	buckets.get(key)?.push(block)
 frontend	src/lib/agenda-sort.ts	Regex	79	1	label === NO_PRIORITY ? 'text-muted-foreground' : classForLevel(label.replace(/^P/, ''))
-frontend	src/lib/agenda-sort.ts	StringLiteral	62	1	return INDEX_CLASS[Math.min(idx, INDEX_CLASS.length - 1)] ?? ''
 frontend	src/lib/block-tree-ops.ts	StringLiteral	26	1	return serialize({ type: 'doc', content: [b] }, notifyUnknownNodeTypeToast)
 frontend	src/lib/date-utils.ts	ConditionalExpression	24	1	if (y === undefined || m === undefined || d === undefined) return dateStr
 frontend	src/lib/date-utils.ts	ConditionalExpression	34	1	Number.isInteger(monthIndex1) && monthIndex1 >= 1 && monthIndex1 <= 12 ? monthIndex1 : 1

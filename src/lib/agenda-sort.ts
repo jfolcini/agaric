@@ -342,11 +342,7 @@ export function groupByPriority(blocks: BlockRow[]): AgendaGroup[] {
     'text-status-active-foreground',
   ] as const
 
-  // `lv` always comes from `levels`: the only call site passes
-  // `label.replace(/^P/, '')` where `label` is `` `P${lv}` ``, so the strip is
-  // an exact round-trip and the index is in range. The `?? ''` exists only
-  // for `noUncheckedIndexedAccess`.
-  const classForLevel = (lv: string): string => INDEX_CLASS[levels.indexOf(lv)] ?? ''
+  const classForLevel = (lv: string): string | undefined => INDEX_CLASS[levels.indexOf(lv)]
 
   const result: AgendaGroup[] = []
   for (const [label, group] of buckets) {
