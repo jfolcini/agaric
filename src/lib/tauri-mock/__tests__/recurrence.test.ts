@@ -66,6 +66,14 @@ describe('shift_date', () => {
     expect(shift('1900-01-01', '++1d')).toEqual({ err: expect.stringContaining('cap exceeded') })
   })
 
+  it('catches up on the last step of the budget, and not one step beyond it', () => {
+    // `for _ in 0..10_000`: from N days back, `++1d` passes today on step N + 1.
+    expect(shift(fromToday(-9_999), '++1d')).toEqual({ ok: fromToday(1) })
+    expect(shift(fromToday(-10_000), '++1d')).toEqual({
+      err: expect.stringContaining('cap exceeded'),
+    })
+  })
+
   it('refuses a `++` step that leaves the calendar rail', () => {
     const overflow = shift('2150-01-15', '++100y')
     expect(overflow).toEqual({ err: expect.stringContaining('arithmetic overflow') })
@@ -278,8 +286,15 @@ describe('the `repeat` grammar gate (#3647)', () => {
     expect(isValidRepeatRuleMock(rule)).toBe(true)
   })
 
-  it.each(['  daily  ', 'DAILY', '  ++2W', '\t.+Monthly\n'])('normalizes %j', (rule) => {
-    expect(isValidRepeatRuleMock(rule)).toBe(true)
+  it.each(['  daily  ', 'DAILY', '  ++2W', '\t.+Monthly\n', '\u0085daily'])(
+    'normalizes %j',
+    (rule) => {
+      expect(isValidRepeatRuleMock(rule)).toBe(true)
+    },
+  )
+
+  it('keeps a byte-order mark, which `str::trim` does not strip', () => {
+    expect(isValidRepeatRuleMock('\uFEFFdaily')).toBe(false)
   })
 
   it.each(['+199y', '+9999m', '++500y', '.+2000w'])(

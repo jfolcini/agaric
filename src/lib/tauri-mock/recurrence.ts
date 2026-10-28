@@ -140,9 +140,12 @@ export function shiftDateOnce(base: Day, interval: string): Day | null {
   return typeof shifted === 'string' ? null : shifted
 }
 
-/** `normalize_repeat_rule`. */
+/**
+ * `normalize_repeat_rule`. Rust's `trim` strips `White_Space`, which holds
+ * U+0085 and not U+FEFF; `String.prototype.trim` strips the other way round.
+ */
 export function normalizeRepeatRule(rule: string): string {
-  return rule.trim().toLowerCase()
+  return rule.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '').toLowerCase()
 }
 
 /** `split_repeat_rule`: the anchoring mode, and the interval after it. */
