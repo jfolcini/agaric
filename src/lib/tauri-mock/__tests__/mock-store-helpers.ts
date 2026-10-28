@@ -52,16 +52,9 @@ export function clearMock(): void {
   opLog.length = 0
 }
 
-/** Put a block in a space, the way `fbqInSpace` / `inSpaceScope` read it — a
- *  `space` property whose `value_ref` is the space id. */
+/** Put a page or tag in a space: its `blocks.space_id`, which `ownerSpaceOf` reads. */
 export function setSpace(blockId: string, spaceId: string): void {
-  if (!properties.has(blockId)) properties.set(blockId, new Map())
-  properties.get(blockId)?.set('space', {
-    key: 'space',
-    value_text: null,
-    value_num: null,
-    value_date: null,
-    value_ref: spaceId,
-    value_bool: null,
-  })
+  const row = blocks.get(blockId)
+  if (!row) throw new Error(`setSpace: no block '${blockId}'`)
+  row['space_id'] = spaceId
 }

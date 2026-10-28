@@ -18,6 +18,7 @@ import {
   type TypedHandlers,
   applyUndoForTarget,
   notFoundRejection,
+  ownerSpaceOf,
   pageRequestLimit,
   payloadBlockId,
   resolveUndoTarget,
@@ -217,7 +218,7 @@ function matchesOpType(entry: MockOpLogEntry, opTypeFilter: string | null): bool
 
 /**
  * The `__all__` branch's space predicate: the op's block belongs to the
- * requested space, resolved through its owning page's `space` property.
+ * requested space, resolved through its owning page (`ownerSpaceOf`).
  *
  * More permissive than the backend in one place — a row whose payload names no
  * block is KEPT, where `ol.block_id IN (…)` drops it. That allowance existed
@@ -228,9 +229,7 @@ function matchesOpType(entry: MockOpLogEntry, opTypeFilter: string | null): bool
 function inSpace(entry: MockOpLogEntry, spaceId: string): boolean {
   const blockId = opBlockId(entry)
   if (blockId === null) return true
-  const blk = blocks.get(blockId)
-  const ownerId = (blk?.['page_id'] as string | null) ?? blockId
-  return (properties.get(ownerId)?.get('space')?.['value_ref'] ?? null) === spaceId
+  return ownerSpaceOf(blocks.get(blockId) ?? { id: blockId }) === spaceId
 }
 
 /** Mirrors the `pb.depth < 100` guard on the `page_blocks` CTE. */

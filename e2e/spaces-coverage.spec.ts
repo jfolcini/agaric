@@ -7,7 +7,7 @@
  *
  *   Pages created via `createBlock({ blockType: 'page' })` (without a
  *   space ULID) used to materialize in the blocks table without a
- *   `space` ref property. The PageBrowser's `list_blocks(blockType=page,
+ *   space. The PageBrowser's `list_blocks(blockType=page,
  *   spaceId=<active>)` query then silently skipped them and the user
  *   saw a Pages list shorter than reality. The journal day flow was
  *   the worst offender — every "Add block to today" leaked a page —
@@ -141,7 +141,7 @@ test.describe('page creation routes through create_page_in_space @spaces', () =>
     await expect(page.getByText('Project Brief Template').first()).toBeVisible()
 
     // And it surfaces in the PageBrowser list scoped to the active space —
-    // proving the new page carries the `space` property
+    // proving the new page carries its space
     // (regression net: pre-fix, this assertion failed because the
     // template page was unscoped and the scoped `list_blocks` skipped it).
     await openPagesView(page)

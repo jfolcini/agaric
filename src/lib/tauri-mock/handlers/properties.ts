@@ -63,15 +63,6 @@ const RESERVED_PROPERTY_COLUMN: Record<string, 'value_text' | 'value_date'> = {
   scheduled_date: 'value_date',
 }
 
-/**
- * The block's `block_properties` rows as the backend returns them: without the
- * mock's `space` membership row, which the backend keeps in `blocks.space_id`
- * (#533).
- */
-function blockPropertyRows(blockId: string): Record<string, unknown>[] {
-  return [...(properties.get(blockId)?.values() ?? [])].filter((row) => row['key'] !== 'space')
-}
-
 /** A `block_properties` row's typed value columns: the `from_value` its undo restores. */
 function typedValueOf(row: Record<string, unknown>): Record<string, unknown> {
   return {
@@ -552,13 +543,36 @@ export const propertiesHandlers = {
       // #5394 — `set_property_inner` routes `todo_state` through `set_todo_state_in_tx`.
       return key === 'todo_state' ? writeTodoState(blockId, valueText, write) : write()
     }
-    // #533/#3081 — `space` is column-backed: the backend projects a
-    // `SetProperty(space)` op to the denormalized `blocks.space_id` column (it
-    // writes NO `block_properties` row). Mirror that here so the mock's
-    // `list_all_tags_in_space` / space-scoped queries (which read `space_id`)
-    // stay consistent with the backend for any path that still sets space via
-    // a property write. Page row only, as in `move_blocks_to_space`.
-    if (key === 'space') target['space_id'] = valueRef
+    // #533 — `space` is the `blocks.space_id` column, never a `block_properties`
+    // row (migration 0088). `validate_space_target_in_tx`: only a page or a
+    // top-level tag holds it, and it names a live space.
+    if (key === 'space') {
+      if (
+        target['block_type'] !== 'page' &&
+        !(target['block_type'] === 'tag' && target['parent_id'] == null)
+      ) {
+        throw validationRejection(
+          `property 'space' can only be set on a page or top-level tag block; block '${blockId}' is a '${target['block_type'] as string}' block`,
+        )
+      }
+      if (
+        valueRef === null ||
+        blocks.get(valueRef)?.['deleted_at'] != null ||
+        properties.get(valueRef)?.get('is_space')?.['value_text'] !== 'true'
+      ) {
+        throw validationRejection(
+          `space_id '${valueRef}' does not refer to a live, registered space block`,
+        )
+      }
+      const fromSpace = (target['space_id'] as string | null | undefined) ?? null
+      target['space_id'] = valueRef
+      const op = pushOp('set_property', {
+        block_id: blockId,
+        key,
+        from_value: fromSpace === null ? null : typedValueOf({ value_ref: fromSpace }),
+      })
+      return { ...target, op_refs: [{ device_id: op.device_id, seq: op.seq }] }
+    }
     const op = writePropertyRow(blockId, key, {
       value_text: valueText,
       value_num: valueNum,
@@ -603,6 +617,18 @@ export const propertiesHandlers = {
         op_refs: [{ device_id: op.device_id, seq: op.seq }],
       }
     }
+    // `space` clears the `blocks.space_id` column; its undo restores the space.
+    if (key === 'space') {
+      const fromSpace = (b['space_id'] as string | null | undefined) ?? null
+      if (fromSpace === null) return { block_id: blockId, key, op_refs: [] }
+      b['space_id'] = null
+      const op = pushOp('delete_property', {
+        block_id: blockId,
+        key,
+        from_value: typedValueOf({ value_ref: fromSpace }),
+      })
+      return { block_id: blockId, key, op_refs: [{ device_id: op.device_id, seq: op.seq }] }
+    }
     // #2468 — echoes `(block_id, key)` plus `op_refs`
     // (`WithOps<DeletePropertyResponse>`). #5898 — like `delete_property_core`,
     // a key the block does not hold appends nothing.
@@ -617,7 +643,7 @@ export const propertiesHandlers = {
 
   get_properties: (args) => {
     const a = args as Record<string, unknown>
-    return blockPropertyRows(a['blockId'] as string)
+    return [...(properties.get(a['blockId'] as string)?.values() ?? [])]
   },
 
   // Single-key PK lookup. Returns the row or null.
@@ -625,7 +651,6 @@ export const propertiesHandlers = {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const key = a['key'] as string
-    if (key === 'space') return null
     return properties.get(blockId)?.get(key) ?? null
   },
 
@@ -640,7 +665,7 @@ export const propertiesHandlers = {
     const blockIds = a['blockIds'] as string[]
     const result: Record<string, Record<string, unknown>[]> = {}
     for (const id of blockIds) {
-      const rows = blockPropertyRows(id)
+      const rows = [...(properties.get(id)?.values() ?? [])]
       if (rows.length === 0) continue
       result[id] = rows
     }
@@ -653,13 +678,11 @@ export const propertiesHandlers = {
 
   // #1424 — `GROUP BY key ORDER BY COUNT(*) DESC, key ASC` over every
   // `block_properties` row, deleted holders included (the backend does not
-  // join `blocks`). The mock-only `space` membership row is the
-  // `blocks.space_id` column on the backend (#3081), never a key there.
+  // join `blocks`).
   list_property_keys: () => {
     const counts = new Map<string, number>()
     for (const blockProps of properties.values()) {
       for (const key of blockProps.keys()) {
-        if (key === 'space') continue
         counts.set(key, (counts.get(key) ?? 0) + 1)
       }
     }

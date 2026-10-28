@@ -38,24 +38,7 @@ function seedPage(childIds: string[]): void {
   propertyDefs.clear()
   opLog.length = 0
 
-  blocks.set(PAGE, makeBlock(PAGE, 'page', 'Test Page', null, 0))
-  properties.set(
-    PAGE,
-    new Map([
-      [
-        'space',
-        {
-          block_id: PAGE,
-          key: 'space',
-          value_text: null,
-          value_num: null,
-          value_date: null,
-          value_ref: SPACE,
-          value_bool: null,
-        },
-      ],
-    ]),
-  )
+  blocks.set(PAGE, { ...makeBlock(PAGE, 'page', 'Test Page', null, 0), space_id: SPACE })
   childIds.forEach((id, i) => {
     blocks.set(id, makeBlock(id, 'content', `block ${id}`, PAGE, i + 1))
   })

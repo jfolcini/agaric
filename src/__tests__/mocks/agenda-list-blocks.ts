@@ -19,7 +19,7 @@ import type { Mock } from 'vitest'
 
 import type { BlockRow } from '@/lib/bindings'
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { blocks, properties, seedBlocks } from '@/lib/tauri-mock/seed'
+import { blocks, seedBlocks } from '@/lib/tauri-mock/seed'
 
 /** Seed `rows` into `spaceId`: the mock, like the backend, lists the asked space only. */
 export function seedAgendaListBlocks(
@@ -34,10 +34,6 @@ export function seedAgendaListBlocks(
   blocks.clear()
   for (const row of rows) {
     blocks.set(row.id, { ...row, space_id: spaceId })
-    properties.set(
-      row.page_id ?? row.id,
-      new Map([['space', { key: 'space', value_ref: spaceId }]]),
-    )
   }
   listBlocksSpy.mockImplementation(async (request: unknown, scope: unknown) =>
     dispatch('list_blocks', { request, scope }),

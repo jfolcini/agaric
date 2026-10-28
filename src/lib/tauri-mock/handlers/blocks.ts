@@ -1286,12 +1286,9 @@ export const blocksHandlers = {
       priority: null,
       due_date: null,
       scheduled_date: null,
-      // #3081 — mirror the backend `blocks.space_id` column. Blocks whose space
-      // membership is stamped DIRECTLY on the block itself (`page` via
-      // `create_page_in_space`, `tag` via the atomic `create_tag_in_space`
-      // path) carry the active space here; `content` blocks derive theirs from
-      // their owning page and are left null (not modelled by this mock). This
-      // is the column `list_all_tags_in_space` filters on.
+      // The backend fans `space_id` out over the page group; the mock stamps the
+      // page or tag row only, and readers resolve a block's space through
+      // `ownerSpaceOf`.
       space_id: blockType === 'page' || blockType === 'tag' ? spaceId : null,
     }
     // The root group is per space (`spaceRootGroup`); the global
@@ -1309,26 +1306,6 @@ export const blocksHandlers = {
       row.position = rootRank
     }
     const position = row['position'] as number
-    // Stamp the `space` ref property on new pages AND tags so the rest of the
-    // scope-aware mock handlers that still read the legacy `space` property
-    // (`load_page_subtree`, trash, `count_backlinks_batch`, etc.) treat the
-    // block as living in the active
-    // space — same invariant as `create_page_in_space`. #3081: tags are
-    // dual-written here (property + the `blocks.space_id` column stamped above),
-    // mirroring the seed tags, so a freshly-created tag's page loads via
-    // `load_page_subtree` (property-scoped) instead of throwing PageNotInSpace.
-    if (blockType === 'page' || blockType === 'tag') {
-      if (!properties.has(id)) properties.set(id, new Map())
-      properties.get(id)?.set('space', {
-        block_id: id,
-        key: 'space',
-        value_text: null,
-        value_num: null,
-        value_date: null,
-        value_ref: spaceId,
-        value_bool: null,
-      })
-    }
     const op = pushOp('create_block', {
       block_id: id,
       content: row.content,
@@ -1922,19 +1899,12 @@ export const blocksHandlers = {
   batch_resolve: (args) => {
     const a = args as Record<string, unknown>
     const ids = a['ids'] as string[]
-    // Honour `scope: SpaceScope`: drop blocks whose owning page (`page_id`,
-    // or the block's own id if it IS a page) is not stamped with
-    // `space = ?spaceId`, mirroring the backend's `batch_resolve_inner`
+    // Honour `scope: SpaceScope`, mirroring the backend's `batch_resolve_inner`
     // space-filter.
     const spaceId = readActiveSpaceScope('batch_resolve', a)
     return ids
       .map((id) => blocks.get(id))
-      .filter(Boolean)
-      .filter((b) => {
-        const ownerId = (b?.['page_id'] as string | null) ?? (b?.['id'] as string)
-        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
-        return ownerSpace === spaceId
-      })
+      .filter((b) => b !== undefined && ownerSpaceOf(b) === spaceId)
       .map((b) => ({
         id: b?.['id'] as string,
         title: (b?.['content'] as string | null) ?? null,
@@ -2169,38 +2139,20 @@ export const blocksHandlers = {
     for (const blockId of inputIds) {
       const b = blocks.get(blockId)
       if (!b || b['deleted_at']) continue
-      // Capture the prior membership so a revert restores THAT space, not
-      // nothing. The backend's `set_property_in_tx` records it, and the mock's
-      // generic `set_property` handler does too; omitting it here made an undo
-      // of a cross-space move clear `space_id` and drop the page out of every
-      // space (#5057 review).
-      const priorSpace = properties.get(blockId)?.get('space')
-      const fromValue = priorSpace
-        ? {
-            value_text: null,
-            value_num: null,
-            value_date: null,
-            value_ref: (priorSpace['value_ref'] as string | null) ?? null,
-            value_bool: null,
-          }
-        : null
-      if (!properties.has(blockId)) properties.set(blockId, new Map())
-      properties.get(blockId)?.set('space', {
-        block_id: blockId,
-        key: 'space',
-        value_text: null,
-        value_num: null,
-        value_date: null,
-        value_ref: spaceId,
-        value_bool: null,
-      })
-      // #3081 — the backend routes this through `set_property_in_tx`, which
-      // projects `space` to the denormalized `blocks.space_id` column that
-      // every space-scoped query reads. Stamp the page row only: the backend
-      // fans the column out over the page group (`WHERE id = ? OR page_id =
-      // ?`), but every mock reader of `space_id` reads it on a page or
-      // top-level tag row, so the descendant stamp has no reader here.
+      // The prior membership, so a revert restores THAT space (#5057 review).
+      // The backend projects `space` to `blocks.space_id`, fanned out over the
+      // page group; the mock stamps the page row, which `ownerSpaceOf` reads.
       const fromSpace = (b['space_id'] as string | null | undefined) ?? null
+      const fromValue =
+        fromSpace === null
+          ? null
+          : {
+              value_text: null,
+              value_num: null,
+              value_date: null,
+              value_ref: fromSpace,
+              value_bool: null,
+            }
       b['space_id'] = spaceId
       if ((b['parent_id'] as string | null) === null) {
         arrivedAtRoot.add(blockId)
@@ -2300,10 +2252,7 @@ export const blocksHandlers = {
     const spaceId = readActiveSpaceScope('count_trash', a)
     let count = 0
     for (const b of blocks.values()) {
-      if (!b['deleted_at']) continue
-      const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
-      const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
-      if (ownerSpace === spaceId) count++
+      if (b['deleted_at'] && ownerSpaceOf(b) === spaceId) count++
     }
     return count
   },

@@ -275,10 +275,7 @@ function liveTagBlock(id: string): Record<string, unknown> {
   return b
 }
 
-/**
- * `resolve_block_space`: the block's own `space_id`, else its page's. The
- * mock's older `space` property answers where neither column is set.
- */
+/** `resolve_block_space`: the block's own `space_id`, else its page's. */
 function blockSpaceOf(b: Record<string, unknown>): string | null {
   const page = blocks.get((b['page_id'] as string | null) ?? '')
   return (

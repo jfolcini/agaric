@@ -158,10 +158,6 @@ export function buildSnapshot(
   for (const [blockId, keyMap] of state.properties.entries()) {
     for (const [key, row] of keyMap.entries()) {
       if (key === 'created_at' || key === 'completed_at') continue
-      // The mock stamps a `space` ref property on pages; the backend keeps
-      // `space` in the column-backed `blocks.space_id` (NOT block_properties),
-      // so it never appears in the snapshot's `properties`. Skip it here too.
-      if (key === 'space') continue
       const { value_type, value } = propertyTypedValue(row, relabel)
       propertyRows.push({
         block_id: relabel(blockId),

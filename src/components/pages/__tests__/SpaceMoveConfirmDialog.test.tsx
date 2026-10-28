@@ -89,7 +89,7 @@ function seedMove(): void {
     options: null,
     created_at: '2026-01-01T00:00:00.000Z',
   })
-  blocks.set(PAGE, makeBlock(PAGE, 'page', 'Plan', null, 1))
+  blocks.set(PAGE, { ...makeBlock(PAGE, 'page', 'Plan', null, 1), space_id: SPACE_A })
   blocks.set(CHILD, makeBlock(CHILD, 'content', 'card', PAGE, 1))
   const trashed = makeBlock(TRASHED, 'content', 'old', PAGE, 2)
   trashed['deleted_at'] = 1_700_000_000_000
@@ -97,7 +97,6 @@ function seedMove(): void {
   properties.set(
     PAGE,
     new Map([
-      ['space', row(PAGE, 'space', { value_ref: SPACE_A })],
       ['stage', row(PAGE, 'stage', { value_text: 'draft' })],
       ['note', row(PAGE, 'note', { value_text: 'keep' })],
     ]),
@@ -165,16 +164,16 @@ describe('SpaceMoveConfirmDialog', () => {
     // Asked once, from the preview: nothing changed since.
     expect(within(dialog).queryByRole('status')).not.toBeInTheDocument()
     // Nothing moved while the dialog asks.
-    expect(properties.get(PAGE)?.get('space')?.['value_ref']).toBe(SPACE_A)
-    expect(keysOf(PAGE)).toEqual(['note', 'space', 'stage'])
+    expect(blocks.get(PAGE)?.['space_id']).toBe(SPACE_A)
+    expect(keysOf(PAGE)).toEqual(['note', 'stage'])
 
     await user.click(within(dialog).getByRole('button', { name: t('spaceMove.lossConfirm') }))
 
     await waitFor(() => {
       expect(onMoved).toHaveBeenCalledWith(1)
     })
-    expect(properties.get(PAGE)?.get('space')?.['value_ref']).toBe(SPACE_B)
-    expect(keysOf(PAGE)).toEqual(['note', 'space'])
+    expect(blocks.get(PAGE)?.['space_id']).toBe(SPACE_B)
+    expect(keysOf(PAGE)).toEqual(['note'])
     expect(keysOf(CHILD)).toEqual([])
     expect(keysOf(TRASHED)).toEqual([])
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
@@ -272,8 +271,8 @@ describe('SpaceMoveConfirmDialog', () => {
       expect(onMoved).toHaveBeenCalledWith(1)
     })
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
-    expect(properties.get(PAGE)?.get('space')?.['value_ref']).toBe(SPACE_B)
-    expect(keysOf(PAGE)).toEqual(['note', 'space'])
+    expect(blocks.get(PAGE)?.['space_id']).toBe(SPACE_B)
+    expect(keysOf(PAGE)).toEqual(['note'])
   })
 
   it('asks again with the new losses when the acknowledgement went stale', async () => {
@@ -293,7 +292,7 @@ describe('SpaceMoveConfirmDialog', () => {
         .map((button) => button.textContent),
     ).toEqual(['due1 value', 'stage3 values'])
     expect(onMoved).not.toHaveBeenCalled()
-    expect(properties.get(PAGE)?.get('space')?.['value_ref']).toBe(SPACE_A)
+    expect(blocks.get(PAGE)?.['space_id']).toBe(SPACE_A)
 
     await user.click(within(dialog).getByRole('button', { name: t('spaceMove.lossConfirm') }))
 
@@ -322,7 +321,7 @@ describe('SpaceMoveConfirmDialog', () => {
     const dialog = await screen.findByRole('alertdialog')
     expect(within(dialog).queryByRole('status')).not.toBeInTheDocument()
     expect(onMoved).not.toHaveBeenCalled()
-    expect(properties.get(PAGE)?.get('space')?.['value_ref']).toBe(SPACE_A)
+    expect(blocks.get(PAGE)?.['space_id']).toBe(SPACE_A)
   })
 
   it('cancel leaves the page and its values where they were', async () => {
@@ -336,8 +335,8 @@ describe('SpaceMoveConfirmDialog', () => {
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     })
     expect(onMoved).not.toHaveBeenCalled()
-    expect(properties.get(PAGE)?.get('space')?.['value_ref']).toBe(SPACE_A)
-    expect(keysOf(PAGE)).toEqual(['note', 'space', 'stage'])
+    expect(blocks.get(PAGE)?.['space_id']).toBe(SPACE_A)
+    expect(keysOf(PAGE)).toEqual(['note', 'stage'])
   })
 
   it('hands a failed preview to the caller and opens nothing', async () => {
@@ -354,7 +353,7 @@ describe('SpaceMoveConfirmDialog', () => {
       expect(onFailed).toHaveBeenCalledTimes(1)
     })
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
-    expect(properties.get(PAGE)?.get('space')?.['value_ref']).toBe(SPACE_A)
+    expect(blocks.get(PAGE)?.['space_id']).toBe(SPACE_A)
   })
 
   it('shows an error in place of the values when they fail to load', async () => {

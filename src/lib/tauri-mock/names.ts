@@ -39,7 +39,7 @@ import {
   ownerSpaceOf,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
-import { blocks, fakeId, pageAliases, properties, pushOp } from '@/lib/tauri-mock/seed'
+import { blocks, fakeId, pageAliases, pushOp } from '@/lib/tauri-mock/seed'
 
 type OpRefs = Array<{ device_id: string; seq: number }>
 type Row = Record<string, unknown>
@@ -175,16 +175,6 @@ function createNamed(
   }
   blocks.set(id, row)
   insertAtSlotAndRenumber(null, id, appendSlot(null, id))
-  if (!properties.has(id)) properties.set(id, new Map())
-  properties.get(id)?.set('space', {
-    block_id: id,
-    key: 'space',
-    value_text: null,
-    value_num: null,
-    value_date: null,
-    value_ref: spaceId,
-    value_bool: null,
-  })
   const create = pushOp('create_block', {
     block_id: id,
     content,

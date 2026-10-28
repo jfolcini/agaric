@@ -20,6 +20,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { base64UrlToUtf8, utf8ToBase64Url } from '@/lib/base64url'
+import { setSpace } from '@/lib/tauri-mock/__tests__/mock-store-helpers'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import {
   type CursorKind,
@@ -55,19 +56,6 @@ function clearMock(): void {
   properties.clear()
   propertyDefs.clear()
   opLog.length = 0
-}
-
-/** Stamp a block's `space` property on its owning page (what `fbqInSpace` reads). */
-function setSpace(blockId: string, spaceId: string): void {
-  if (!properties.has(blockId)) properties.set(blockId, new Map())
-  properties.get(blockId)?.set('space', {
-    key: 'space',
-    value_text: null,
-    value_num: null,
-    value_date: null,
-    value_ref: spaceId,
-    value_bool: null,
-  })
 }
 
 interface QueryResponse {

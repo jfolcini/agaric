@@ -48,9 +48,7 @@ function put(
   row['page_id'] = pageId
   blocks.set(blockId, row)
   // `childrenOf` lists the asked space only, and a page carries its blocks' space.
-  if (type === 'page') {
-    properties.set(blockId, new Map([['space', { key: 'space', value_ref: SPACE }]]))
-  }
+  if (type === 'page') row['space_id'] = SPACE
   return row
 }
 
@@ -117,7 +115,7 @@ describe('tauri-mock duplicate_block', () => {
     setProp(SRC, 'colour', { value_text: 'red' })
     setProp(SRC, 'repeatable', { value_text: 'yes' })
     setProp(SRC, 'reviewer', { value_ref: C })
-    for (const key of ['space', 'template']) setProp(SRC, key, { value_ref: PAGE })
+    setProp(SRC, 'template', { value_ref: PAGE })
     for (const key of ['created_at', 'completed_at'])
       setProp(SRC, key, { value_date: '2026-01-01' })
     // #5160 P4 — the rule is copied; one occurrence's bookkeeping is not.

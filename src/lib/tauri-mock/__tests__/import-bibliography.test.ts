@@ -55,10 +55,7 @@ describe('import_bibliography mock handler', () => {
     // One placeholder page per entry, stamped into the target space.
     const pages = [...blocks.values()].filter((b) => b['block_type'] === 'page')
     expect(pages).toHaveLength(2)
-    for (const page of pages) {
-      const spaceProp = properties.get(page['id'] as string)?.get('space')
-      expect(spaceProp?.['value_ref']).toBe(SPACE)
-    }
+    for (const page of pages) expect(page['space_id']).toBe(SPACE)
   })
 
   it('counts CSL-JSON entries by array length', () => {
@@ -101,7 +98,7 @@ describe('import_bibliography mock handler', () => {
 
     expect(result.pages_created).toBe(1)
     const page = [...blocks.values()].find((b) => b['content'] === 'Reference 1')
-    expect(properties.get(page?.['id'] as string)?.get('space')?.['value_ref']).toBe(spaceId)
+    expect(page?.['space_id']).toBe(spaceId)
   })
 
   it('rejects an unknown space id with an AppError-shaped validation error (#2463)', () => {

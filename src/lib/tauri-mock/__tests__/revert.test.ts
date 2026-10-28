@@ -335,12 +335,11 @@ describe('applyRevertForOp', () => {
   })
 
   // #5057 — `space` is the one column-backed key riding the generic
-  // `set_property` op, so its column needs restoring alongside the property map.
-  it('reverts set_property(space) by clearing the space_id column, not just the row', () => {
+  // `set_property` op: its revert restores `space_id` and writes no row.
+  it('reverts set_property(space) by clearing the space_id column', () => {
     const b = makeBlockRow('BLK_SP1', { space_id: 'SPACE_NEW' })
     blocks.set('BLK_SP1', b)
     const properties = new Map<string, Map<string, Record<string, unknown>>>()
-    properties.set('BLK_SP1', new Map([['space', { key: 'space', value_ref: 'SPACE_NEW' }]]))
     const op = makeOp('set_property', {
       block_id: 'BLK_SP1',
       key: 'space',
@@ -349,7 +348,7 @@ describe('applyRevertForOp', () => {
 
     applyRevertForOp(op, blocks, { properties })
 
-    expect(properties.get('BLK_SP1')?.get('space')).toBeUndefined()
+    expect(properties.has('BLK_SP1')).toBe(false)
     expect(b['space_id']).toBeNull()
   })
 
@@ -357,7 +356,6 @@ describe('applyRevertForOp', () => {
     const b = makeBlockRow('BLK_SP2', { space_id: 'SPACE_NEW' })
     blocks.set('BLK_SP2', b)
     const properties = new Map<string, Map<string, Record<string, unknown>>>()
-    properties.set('BLK_SP2', new Map([['space', { key: 'space', value_ref: 'SPACE_NEW' }]]))
     const op = makeOp('set_property', {
       block_id: 'BLK_SP2',
       key: 'space',
@@ -366,7 +364,7 @@ describe('applyRevertForOp', () => {
 
     applyRevertForOp(op, blocks, { properties })
 
-    expect(properties.get('BLK_SP2')?.get('space')?.['value_ref']).toBe('SPACE_OLD')
+    expect(properties.has('BLK_SP2')).toBe(false)
     expect(b['space_id']).toBe('SPACE_OLD')
   })
 

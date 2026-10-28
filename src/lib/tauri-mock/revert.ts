@@ -241,19 +241,14 @@ function revertPropertyMap(
     rejectTakenName(blocks, b, content, lands)
   }
 
-  /**
-   * #5057 — `space` is column-backed, so restoring the property map alone
-   * leaves the row in the space it was just moved out of. The forward
-   * `set_property` mirrors `space` into `blocks.space_id`, and the backend's
-   * reverse clears the column through `DeleteProperty(space)` →
-   * `reserved_key_blocks_column`. The four OTHER column-backed keys ride
-   * dedicated op types that `revertBlockRowField` already restores; `space`
-   * rides the generic one, which is why it needs this. Page row only, as in the
-   * forward write and `move_blocks_to_space`.
-   */
-  const mirrorSpaceColumn = (): void => {
-    if (key !== 'space' || !b) return
-    b['space_id'] = (fromValue?.['value_ref'] as string | null | undefined) ?? null
+  // #5057 — `space` is the `blocks.space_id` column, not a property row. The
+  // four other column-backed keys ride dedicated op types that
+  // `revertBlockRowField` restores; `space` rides the generic one.
+  if (key === 'space') {
+    if (b && (opType === 'set_property' || fromValue != null)) {
+      b['space_id'] = (fromValue?.['value_ref'] as string | null | undefined) ?? null
+    }
+    return true
   }
 
   if (opType === 'set_property') {
@@ -265,7 +260,6 @@ function revertPropertyMap(
       if (!properties.has(blockId)) properties.set(blockId, new Map())
       properties.get(blockId)?.set(key, { key, ...fromValue })
     }
-    mirrorSpaceColumn()
     return true
   }
 
@@ -273,7 +267,6 @@ function revertPropertyMap(
   if (fromValue == null) return true
   if (!properties.has(blockId)) properties.set(blockId, new Map())
   properties.get(blockId)?.set(key, { key, ...fromValue })
-  mirrorSpaceColumn()
   return true
 }
 

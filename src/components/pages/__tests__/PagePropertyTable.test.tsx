@@ -1602,8 +1602,7 @@ describe('PagePropertyTable add-from-definition against the real tauri-mock (#27
 
   beforeEach(() => {
     seedBlocks()
-    // The seed loop stamps every seeded page with a `space` ref property;
-    // clear it so this page starts from a clean, deterministic property list.
+    // Start this page from a clean, deterministic property list.
     properties.set(PAGE_ID, new Map())
     mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
   })
@@ -1770,8 +1769,8 @@ describe('PagePropertyTable create-def flow against the real tauri-mock (#2804)'
 
   beforeEach(() => {
     seedBlocks()
-    // Clear the seeded `space` ref property so this page starts from a
-    // clean, deterministic property list (mirrors the #2792 block above).
+    // Start this page from a clean, deterministic property list (mirrors the
+    // #2792 block above).
     properties.set(PAGE_ID, new Map())
     mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
   })

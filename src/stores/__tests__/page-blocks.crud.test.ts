@@ -18,7 +18,7 @@ import type { BlockRow } from '@/lib/bindings'
 import { t as translate } from '@/lib/i18n'
 import { _resetPrefetchPageSubtreeForTest } from '@/lib/prefetch-page-subtree'
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { properties, seedBlocks, SEED_IDS } from '@/lib/tauri-mock/seed'
+import { blocks as mockBlocks, seedBlocks, SEED_IDS } from '@/lib/tauri-mock/seed'
 import { useNavigationStore } from '@/stores/navigation'
 import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
 import { useRecentPagesStore } from '@/stores/recent-pages'
@@ -901,17 +901,10 @@ describe('PageBlockStore', () => {
       expect(toast.error).not.toHaveBeenCalled()
       expect(toast.info).not.toHaveBeenCalled()
 
-      // Simulate the move: re-stamp the page's `space` ref to another space
+      // Simulate the move: re-stamp the page's `space_id` to another space
       // (what `set_property` writes under PageHeader.handleMoveToSpace).
-      properties.get(SEED_IDS.PAGE_QUICK_NOTES)?.set('space', {
-        block_id: SEED_IDS.PAGE_QUICK_NOTES,
-        key: 'space',
-        value_text: null,
-        value_num: null,
-        value_date: null,
-        value_ref: 'SPACE_WORK',
-        value_bool: null,
-      })
+      const moved = mockBlocks.get(SEED_IDS.PAGE_QUICK_NOTES)
+      if (moved) moved['space_id'] = 'SPACE_WORK'
 
       // Stale old-space state: the moved page tops the ONLY tab and sits in
       // the old space's recents.

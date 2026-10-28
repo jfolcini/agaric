@@ -50,7 +50,7 @@ export function spaceMoveLossValues(ids: string[], target: string): LossValue[] 
     const pageId = (b['page_id'] as string | null) ?? null
     for (const row of properties.get(id)?.values() ?? []) {
       const key = row['key'] as string
-      if (key === 'space' || sameDefinition(key, source, target)) continue
+      if (sameDefinition(key, source, target)) continue
       out.push({
         block_id: id,
         page_id: pageId,

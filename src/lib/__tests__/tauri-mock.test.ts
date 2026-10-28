@@ -37,7 +37,6 @@ import {
   opLog,
   pageAliases,
   peerRefs,
-  properties,
   todayDate,
 } from '@/lib/tauri-mock/seed'
 
@@ -998,6 +997,34 @@ describe('property reads after a space move', () => {
       Record<string, unknown>[]
     >
     expect(batch[page]?.map((p) => p['key'])).toEqual(['category'])
+    expect(invoke('list_property_keys', {})).not.toContain('space')
+  })
+
+  it('return no space row after move_blocks_to_space either', () => {
+    const page = SEED_IDS.PAGE_GETTING_STARTED
+    const typed = { value_text: null, value_num: null, value_date: null, value_bool: null }
+    invoke('set_property', {
+      blockId: page,
+      key: 'category',
+      value: { ...typed, value_text: 'guide', value_ref: null },
+    })
+    const work = invoke('create_space', { name: 'Work', accentColor: null }) as string
+    expect(invoke('move_blocks_to_space', { blockIds: [page], spaceId: work })).toBe(1)
+
+    const inWork = invoke('list_all_pages_in_space', {
+      scope: { kind: 'active', space_id: work },
+      tagIds: null,
+    }) as Array<{ id: string }>
+    expect(inWork.map((p) => p.id)).toEqual([page])
+    const props = invoke('get_properties', { blockId: page }) as Record<string, unknown>[]
+    expect(props.map((p) => p['key'])).toEqual(['category'])
+    expect(invoke('get_property', { blockId: page, key: 'space' })).toBeNull()
+    const batch = invoke('get_batch_properties', { blockIds: [page] }) as Record<
+      string,
+      Record<string, unknown>[]
+    >
+    expect(batch[page]?.map((p) => p['key'])).toEqual(['category'])
+    expect(invoke('list_property_keys', {})).not.toContain('space')
   })
 })
 
@@ -3439,7 +3466,6 @@ describe('import_markdown', () => {
         ...makeBlock(id, 'page', title, null, blocks.size),
         space_id: 'SPACE_PERSONAL',
       })
-      properties.set(id, new Map([['space', { key: 'space', value_ref: 'SPACE_PERSONAL' }]]))
     }
     emptyPage('PAGE_ROADMAP', 'Roadmap')
     pageAliases.set('PAGE_ROADMAP', ['Plan'])
@@ -4435,7 +4461,7 @@ describe('scope-filter parity', () => {
       scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
     }) as Record<string, unknown>
     // The new page should resolve via the alias / batch_resolve under
-    // SPACE_PERSONAL — proves the space property was stamped.
+    // SPACE_PERSONAL — proves its space was stamped.
     const resolved = invoke('batch_resolve', {
       ids: [newPage['id'] as string],
       scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
@@ -4580,8 +4606,8 @@ describe('list_pages_with_metadata — compound filters', () => {
   })
 
   it('HasProperty Eq with a Ref value compares against value_ref', () => {
-    // Every seed page carries `space = SPACE_PERSONAL` as a ref property, so an
-    // Eq Ref predicate over `space` matches the whole space.
+    // Every seed page's `space_id` is SPACE_PERSONAL, which a `space` predicate
+    // reads as a ref, so an Eq Ref over `space` matches the whole space.
     const all = listPages([])
     const refHit = listPages([
       {
