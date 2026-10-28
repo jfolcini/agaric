@@ -9,6 +9,9 @@
  * folded in. A saved buffer leaves a report (`notifyPageSourceSaved`). Cancel
  * and Escape ask first when the buffer is not the page as loaded. Unsaved text
  * survives leaving the page as a localStorage draft, cleared by Save or Cancel.
+ * Page, beside them, goes to page mode instead of closing (#5691): at once for a
+ * buffer as loaded, after the save for a changed one, which a refusal, a
+ * conflict or an unconfirmed emptying keeps here as Save's would.
  *
  * Edit, Preview and Changes switch what is shown in the buffer's place: the
  * buffer as the page will show it (`PageSourcePreview`, loaded lazily like
@@ -34,6 +37,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { SourceLines } from '@/editor/source-buffer'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useIsTouch } from '@/hooks/useIsTouch'
@@ -41,7 +45,7 @@ import { unwrap, validationCode } from '@/lib/app-error'
 import { commands, type PageBuffer } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { formatErrorForDisplay } from '@/lib/error-display'
-import { matchesShortcutBinding } from '@/lib/keyboard-config'
+import { getShortcutKeys, matchesShortcutBinding } from '@/lib/keyboard-config'
 import { diffLines } from '@/lib/line-diff'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -121,12 +125,64 @@ export function refusedLine(message: string): number | null {
   return match === null ? null : Number(match[1]) - 1
 }
 
+/**
+ * The link to page mode, its tooltip naming it and its shortcut as the header's switch does; where
+ * page mode cannot show the page, `aria-disabled` with the reason, which pressing it leaves as is.
+ */
+function PageModeLink({
+  blocked,
+  disabled,
+  onClick,
+}: {
+  blocked: string | null | undefined
+  disabled: boolean
+  onClick: () => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  const blockedId = useId()
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="link"
+            className="mr-auto px-0 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+            aria-disabled={blocked ? true : undefined}
+            aria-describedby={blocked ? blockedId : undefined}
+            onClick={onClick}
+            disabled={disabled}
+          >
+            {t('pageMode.page')}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          {blocked || `${t('pageMode.pageHint')} (${getShortcutKeys('togglePageMode')})`}
+        </TooltipContent>
+      </Tooltip>
+      {blocked && (
+        <span id={blockedId} className="sr-only">
+          {blocked}
+        </span>
+      )}
+    </>
+  )
+}
+
 export interface PageSourceEditorProps {
   pageId: string
   onClose: () => void
+  /** Page mode in place of the buffer, its link shown; none where page mode is not offered. */
+  onSwitchToPage?: (() => void) | undefined
+  /** Why page mode cannot show the page, the link disabled saying so. */
+  pageModeBlocked?: string | null | undefined
 }
 
-export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): React.ReactElement {
+export function PageSourceEditor({
+  pageId,
+  onClose,
+  onSwitchToPage,
+  pageModeBlocked,
+}: PageSourceEditorProps): React.ReactElement {
   const { t } = useTranslation()
   const isTouch = useIsTouch()
   const applyPageSource = usePageBlockStore((s) => s.applyPageSource)
@@ -155,6 +211,13 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
   // Stored again on unmount: the debounce timer dies with the component, and
   // the draft is the only copy of those keystrokes.
   const typed = useRef<Typed | null>(null)
+  // Where a save that lands leaves: closed, or page mode. Each save sets it, so a
+  // refused or cancelled one leaves nothing for the next.
+  const exitTo = useRef<'close' | 'page'>('close')
+  const exit = (): void => {
+    if (exitTo.current === 'page' && onSwitchToPage !== undefined) onSwitchToPage()
+    else onClose()
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -243,7 +306,7 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
       const report = await applyPageSource(text, against, merge, lineIds)
       discardDraft()
       notifyPageSourceSaved(pageId, report, before)
-      onClose()
+      exit()
     } catch (err) {
       if (validationCode(err) === ValidationCode.RequiresRefresh) {
         await showConflict()
@@ -264,18 +327,25 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
     }
   }
 
-  const handleSave = (): void => {
+  const save = (then: 'close' | 'page'): void => {
     if (opened === null) return
+    exitTo.current = then
     const lines = currentLines(opened)
     if (sameLines(lines, opened.page)) {
       discardDraft()
-      onClose()
+      exit()
     } else if (lines.text.trim() === '' && opened.base.text.trim() !== '') {
       setConfirmingDeleteAll(true)
     } else {
       void warnUnresolvedTokens(lines.text)
       void submit(opened.base.source, false)
     }
+  }
+
+  const handleSave = (): void => save('close')
+
+  const handleSwitchToPage = (): void => {
+    if (!pageModeBlocked) save('page')
   }
 
   // A warning, not a refusal: the save goes ahead (#5686).
@@ -317,6 +387,12 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
     if (e.isComposing) return false
     if (matchesShortcutBinding(e, 'savePageSource')) {
       handleSave()
+      return true
+    }
+    if (onSwitchToPage !== undefined && matchesShortcutBinding(e, 'togglePageMode')) {
+      // The header's switch, back as page mode opens, would toggle it off again on the same key.
+      e.stopPropagation()
+      handleSwitchToPage()
       return true
     }
     if (e.key === 'Escape') {
@@ -495,6 +571,13 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
       {/* On touch, Save and Cancel are on the buffer's toolbar pinned above the keyboard (X9). */}
       {(!isTouch || mode !== 'edit') && (
         <div className="flex justify-end gap-2">
+          {onSwitchToPage !== undefined && (
+            <PageModeLink
+              blocked={pageModeBlocked}
+              disabled={saving}
+              onClick={handleSwitchToPage}
+            />
+          )}
           <Button variant="outline" onClick={handleCancel} disabled={saving}>
             {t('action.cancel')}
           </Button>
