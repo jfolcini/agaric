@@ -139,6 +139,113 @@
     {
       "lineIds": [
         "01J00000000000000000000000",
+        "01J00000000000000000000001",
+        "01J00000000000000000000002",
+        "01J00000000000000000000003",
+        "01J00000000000000000000004",
+        "01J00000000000000000000005",
+        "01J00000000000000000000006",
+        "01J00000000000000000000007",
+        "01J00000000000000000000008",
+        "01J00000000000000000000009",
+        null,
+        "01J00000000000000000000010",
+        null
+      ],
+      "name": "3: past nine items the marker is wider, and so is the column of what sits under it",
+      "text": "1. i\n2. i\n3. i\n4. i\n5. i\n6. i\n7. i\n8. i\n9. i\n10. ten\n    more\n    + child\n",
+      "tree": [
+        {
+          "content": "i",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {
+            "listStyle": "ordered"
+          }
+        },
+        {
+          "content": "i",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {
+            "listStyle": "ordered"
+          }
+        },
+        {
+          "content": "i",
+          "depth": 0,
+          "id": "01J00000000000000000000002",
+          "properties": {
+            "listStyle": "ordered"
+          }
+        },
+        {
+          "content": "i",
+          "depth": 0,
+          "id": "01J00000000000000000000003",
+          "properties": {
+            "listStyle": "ordered"
+          }
+        },
+        {
+          "content": "i",
+          "depth": 0,
+          "id": "01J00000000000000000000004",
+          "properties": {
+            "listStyle": "ordered"
+          }
+        },
+        {
+          "content": "i",
+          "depth": 0,
+          "id": "01J00000000000000000000005",
+          "properties": {
+            "listStyle": "ordered"
+          }
+        },
+        {
+          "content": "i",
+          "depth": 0,
+          "id": "01J00000000000000000000006",
+          "properties": {
+            "listStyle": "ordered"
+          }
+        },
+        {
+          "content": "i",
+          "depth": 0,
+          "id": "01J00000000000000000000007",
+          "properties": {
+            "listStyle": "ordered"
+          }
+        },
+        {
+          "content": "i",
+          "depth": 0,
+          "id": "01J00000000000000000000008",
+          "properties": {
+            "listStyle": "ordered"
+          }
+        },
+        {
+          "content": "ten\nmore",
+          "depth": 0,
+          "id": "01J00000000000000000000009",
+          "properties": {
+            "listStyle": "ordered"
+          }
+        },
+        {
+          "content": "child",
+          "depth": 1,
+          "id": "01J00000000000000000000010",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": [
+        "01J00000000000000000000000",
         null,
         null,
         null,

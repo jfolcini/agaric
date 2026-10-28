@@ -264,6 +264,14 @@ fn document_rows() -> Vec<(&'static str, Vec<BlockSpec>, &'static str)> {
             "- [ ] a\n1. b\n",
         ),
         (
+            "3: past nine items the marker is wider, and so is the column of what sits under it",
+            (1..=10)
+                .map(|n| styled(0, if n == 10 { "ten\nmore" } else { "i" }, "ordered"))
+                .chain([plain(1, "child")])
+                .collect(),
+            "1. i\n2. i\n3. i\n4. i\n5. i\n6. i\n7. i\n8. i\n9. i\n10. ten\n    more\n    + child\n",
+        ),
+        (
             "4: a block's lines stay together, a line that would start a block escaped",
             vec![
                 plain(0, "line one\nline two\n- not a bullet\nkey:: v"),

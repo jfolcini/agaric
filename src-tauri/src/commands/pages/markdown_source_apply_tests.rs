@@ -491,3 +491,65 @@ fn a_tasks_hidden_list_style_goes_only_with_an_edit() {
         );
     });
 }
+
+/// D3 — a property line the save changes, removes or adds on a task is an edit
+/// of the block too, and takes the style the buffer hides with it.
+#[test]
+fn a_tasks_hidden_list_style_goes_with_an_edit_to_its_property_lines() {
+    Runtime::new().unwrap().block_on(async {
+        let fx = fixture().await;
+        let k = || BTreeMap::from([("k".to_string(), ("v".to_string(), false))]);
+        let task = |content: &str, style: &'static str, properties: BTreeMap<_, _>| BlockSpec {
+            level: 0,
+            content: content.to_string(),
+            todo_state: Some("TODO".to_string()),
+            priority: None,
+            scheduled_date: None,
+            due_date: None,
+            list_style: Some(style),
+            properties,
+        };
+        let forest = [
+            task("changed", "ordered", k()),
+            task("removed", "bullet", k()),
+            task("added", "ordered", BTreeMap::new()),
+            task("kept", "bullet", k()),
+        ];
+        let ids = create_forest(&fx, &forest).await;
+        write_metadata(&fx.pool, &ids, &forest).await;
+        let buffer = get_page_buffer_as(&fx.pool, &fx.page, Dialect::Document)
+            .await
+            .unwrap();
+        assert_eq!(
+            buffer.text,
+            "- [ ] changed\n  k:: v\n- [ ] removed\n  k:: v\n- [ ] added\n- [ ] kept\n  k:: v\n"
+        );
+
+        let mut lines: Vec<(String, Option<String>)> = buffer
+            .text
+            .split('\n')
+            .map(String::from)
+            .zip(buffer.line_ids.iter().cloned())
+            .collect();
+        lines[1].0 = "  k:: w".to_string();
+        lines.remove(3);
+        lines.insert(4, ("  k:: v".to_string(), None));
+        let text = lines
+            .iter()
+            .map(|(line, _)| line.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let line_ids = lines.iter().map(|(_, id)| id.clone()).collect();
+        let report = save_document(&fx, (text, line_ids), &buffer.source).await;
+
+        assert_eq!(report.edited, 0);
+        assert_eq!((report.properties_set, report.properties_deleted), (2, 4));
+        let styled = sqlx::query_scalar::<_, String>(
+            "SELECT block_id FROM block_properties WHERE key = 'listStyle' ORDER BY block_id",
+        )
+        .fetch_all(&fx.pool)
+        .await
+        .unwrap();
+        assert_eq!(styled, [ids[3].clone()], "only the untouched task keeps it");
+    });
+}
