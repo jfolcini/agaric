@@ -9,6 +9,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import { setSpace } from '@/lib/tauri-mock/__tests__/mock-store-helpers'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, makeBlock, opLog, properties } from '@/lib/tauri-mock/seed'
 
@@ -52,7 +53,7 @@ describe('list_backlinks_grouped — Not over the property, due-date and created
     opLog.length = 0
     for (const page of [TARGET, NOTES]) {
       blocks.set(page, makeBlock(page, 'page', page === TARGET ? 'Target' : 'Notes', null, 1))
-      properties.set(page, new Map([['space', prop('space', { value_ref: SPACE })]]))
+      setSpace(page, SPACE)
     }
     for (const source of [LOW, HIGH, BARE, DATED]) {
       blocks.set(source, makeBlock(source, 'content', `on [[${TARGET}]]`, NOTES, 1))
