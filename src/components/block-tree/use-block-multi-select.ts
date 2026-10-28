@@ -5,6 +5,9 @@ import type { StoreApi } from 'zustand'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
+import { i18n } from '@/lib/i18n'
+import { clearListStyles } from '@/lib/list-style'
+import { logger } from '@/lib/logger'
 import { notifyPagesRemoved } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { buildIndexById, getDragDescendants } from '@/lib/tree-utils'
@@ -60,6 +63,9 @@ export interface UseBlockMultiSelectReturn {
  * Set task state `state` on every block of `ids` in one IPC, as the batch
  * toolbar does in block mode and the block menu's bulk form in page mode,
  * then say how many it set or failed to. Resolves whether it set every one.
+ * A task is a list kind (#5691 D3): once every one is set, the blocks it made
+ * tasks lose their list style through `clearLists`, page mode's own in page
+ * mode; a refused write clears none.
  */
 export async function setTodoStateOnBlocks(
   pageStore: StoreApi<PageBlockState>,
@@ -67,8 +73,12 @@ export async function setTodoStateOnBlocks(
   ids: string[],
   state: string | null,
   t: TFunction,
+  clearLists: (ids: string[]) => unknown = clearListStyles,
 ): Promise<boolean> {
   const idSet = new Set(ids)
+  const { blocksById } = pageStore.getState()
+  const madeTasks =
+    state === null ? [] : ids.filter((id) => (blocksById.get(id)?.todo_state ?? null) === null)
   // Optimistic FE update — flip the badge instantly while the
   // single-IPC batch round-trips. On failure the catch below
   // surfaces an error toast; the next page load will re-read
@@ -98,6 +108,34 @@ export async function setTodoStateOnBlocks(
     return false
   }
   notify.success(t('blockTree.setStateMessage', { successCount, state: state ?? 'none' }))
+  if (madeTasks.length > 0) await clearLists(madeTasks)
+  return true
+}
+
+/**
+ * Clear the task state of those of `ids` that hold one, in one IPC, as making
+ * them bulleted or numbered does (#5691 D3: a task is a third list kind,
+ * exclusive with bulleted and numbered). Call it once the list style is
+ * written, so a refused write clears nothing. Resolves whether it cleared
+ * them all; a failure is logged and told.
+ */
+export async function clearTaskStates(
+  pageStore: StoreApi<PageBlockState>,
+  ids: readonly string[],
+): Promise<boolean> {
+  const { blocksById } = pageStore.getState()
+  const tasks = new Set(ids.filter((id) => (blocksById.get(id)?.todo_state ?? null) !== null))
+  if (tasks.size === 0) return true
+  try {
+    unwrap(await commands.setTodoStateBatch([...tasks], null))
+  } catch (err) {
+    logger.error('BlockTree', 'Failed to clear the task states of new list blocks', { ids }, err)
+    notify.error(i18n.t('blockTree.setTaskStateFailed'))
+    return false
+  }
+  pageStore.setState((s) => ({
+    blocks: s.blocks.map((b) => (tasks.has(b.id) ? { ...b, todo_state: null } : b)),
+  }))
   return true
 }
 

@@ -51,7 +51,10 @@ import { useBlockDnD } from '@/components/block-tree/use-block-dnd'
 import { useBlockFlush } from '@/components/block-tree/use-block-flush'
 import { useBlockLinkResolve } from '@/components/block-tree/use-block-link-resolve'
 import { MOUNT_LIMIT_STEP, useBlockMountLimit } from '@/components/block-tree/use-block-mount-limit'
-import { useBlockMultiSelect } from '@/components/block-tree/use-block-multi-select'
+import {
+  clearTaskStates,
+  useBlockMultiSelect,
+} from '@/components/block-tree/use-block-multi-select'
 import { useBlockNavigateToLink } from '@/components/block-tree/use-block-navigate-to-link'
 import { useBlockProperties } from '@/components/block-tree/use-block-properties'
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
@@ -853,8 +856,11 @@ export function BlockTree({
       // target, so converting a styled block away from a list does not leave
       // it flagged as one. See `useSlashCommandStructural.handleTurnInto`'s
       // matching comment for the full rationale.
+      // A block turned into a list loses its task state (#5691 D3), once the style is written.
+      const style = listStyleForBlockType(blockType)
       try {
-        await setListStyle(blockId, listStyleForBlockType(blockType))
+        await setListStyle(blockId, style)
+        if (style !== 'none') await clearTaskStates(pageStore, [blockId])
       } catch (err) {
         logger.error('BlockTree', 'setListStyle (turn-into) failed', { blockId }, err)
         notify.error(t('slash.turnIntoFailed'))

@@ -86,6 +86,12 @@ first-class inline decoration, not as native `<ul>` chrome.
    opens with anything but a paragraph shows none whatever `listStyle` it holds,
    and one whose text stops opening with a paragraph leaves the list
    (maintainer's rule, 2026-10-28; `showsListMarker`, `src/lib/list-style.ts`).
+   A task is a third list kind (#5691 D3): a block holding a task state shows
+   its checkbox and no marker, whatever `listStyle` it holds, and is numbered
+   as a plain block, so a task ends a numbered run (`shownListStyle`). The
+   kinds are exclusive on write: making a block a task clears its list style
+   (`clearListStyles`), and making a task bulleted or numbered clears its task
+   state (`clearTaskStates`), each once the kind picked is written.
 3. **Ordered numbers are computed**, not stored: the number is the block's
    position among consecutive same-`listStyle`, same-depth siblings, recomputed
    on reorder/insert. This mirrors the serializer, which already emits positional

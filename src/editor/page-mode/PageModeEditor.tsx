@@ -375,11 +375,18 @@ function PageModeDocument({
   const resolve = useBlockResolve()
   const pageStore = usePageBlockStoreApi()
   const onTagClick = useTagClickHandler()
-  const { handleToggleTodo, handleTogglePriority } = useBlockProperties()
   const editorRef = useRef<Editor | null>(null)
   const flushRef = useRef<() => Promise<boolean>>(() => Promise.resolve(true))
   const [properties] = useState(() => new PageProperties(openedWith))
-  const [lists] = useState(() => new PageLists(openedWith, blocks))
+  const [lists] = useState(
+    () =>
+      new PageLists(
+        openedWith,
+        blocks,
+        (id) => (pageStore.getState().blocksById.get(id)?.todo_state ?? null) !== null,
+      ),
+  )
+  useEffect(() => pageStore.subscribe(() => lists.tasksChanged()), [pageStore, lists])
   const [attachments] = useState(() => new PageAttachments(openedWithAttachments))
   // What the checkbox, the badge, the chips and the keys do, once the session runs.
   const actions = useRef<
@@ -414,6 +421,11 @@ function PageModeDocument({
     openHistory: () => {},
     turnInto: () => {},
   })
+  // A block made a task loses its list style through page mode's lists (#5691 D3).
+  const [clearLists] = useState(() => (ids: string[]) => {
+    for (const id of ids) actions.current.setListStyle(id, 'none')
+  })
+  const { handleToggleTodo, handleTogglePriority } = useBlockProperties(clearLists)
   const [drawerBlockId, setDrawerBlockId] = useState<string | null>(null)
   const [historyBlockId, setHistoryBlockId] = useState<string | null>(null)
   // Block mode's chip navigation: another page opens; a block of this page takes the cursor.
@@ -765,7 +777,9 @@ function PageModeDocument({
       // Block mode's batch toolbar's write; a refusal leaves the state it showed, so read again.
       setTodo: (ids, state) =>
         void afterSaveAll(ids, async (saved) => {
-          if (!(await setTodoStateOnBlocks(pageStore, pageId, saved, state, t))) readAgain()
+          if (!(await setTodoStateOnBlocks(pageStore, pageId, saved, state, t, clearLists))) {
+            readAgain()
+          }
         }),
       cyclePriority: (id) => afterSave(id, () => cyclePriority(id)),
       setPriority: (id, level) =>
@@ -944,7 +958,7 @@ function PageModeDocument({
         if (savesInFlight.get(pageId) === leaving) savesInFlight.delete(pageId)
       })
     }
-  }, [editor, pageId, blocks, pageStore, properties, lists, attachments])
+  }, [editor, pageId, blocks, pageStore, properties, lists, attachments, clearLists])
 
   // The picker closed: the caret goes back where it was. The dialog's own
   // restore aims at its date field, which its autofocus took first.

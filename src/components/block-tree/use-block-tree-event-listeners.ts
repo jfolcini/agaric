@@ -32,6 +32,7 @@ import type { StoreApi } from 'zustand'
 
 import { pasteIntoBlock, type PastePayload } from '@/components/block-tree/paste-into-block'
 import type { DatePickerMode } from '@/components/block-tree/use-block-date-picker'
+import { clearTaskStates } from '@/components/block-tree/use-block-multi-select'
 import { setBlockPriority } from '@/components/block-tree/use-block-properties'
 import {
   applyContentEdit,
@@ -230,7 +231,8 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
     // (a BlockTypeToken) via the shared markdown convert + content-edit path,
     // identical to the slash `/turn-*` family and the context-menu Turn-into.
     // #4552 slice 2 — also writes the `listStyle` property `type` implies
-    // (see `useSlashCommandStructural.handleTurnInto`'s matching comment).
+    // (see `useSlashCommandStructural.handleTurnInto`'s matching comment),
+    // then, for a list, clears the task state (#5691 D3).
     const onTurnInto: BlockCommandHandler = (blockId, detail) => {
       const type = (detail as { type?: BlockTypeToken } | undefined)?.type
       if (!type) return
@@ -238,12 +240,15 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       void (async () => {
         const newContent = convertBlockContent(readCurrentContent(ctx), type)
         if (!(await applyContentEdit(ctx, newContent, 'slash.turnIntoFailed'))) return
+        const style = listStyleForBlockType(type)
         try {
-          await setListStyle(blockId, listStyleForBlockType(type))
+          await setListStyle(blockId, style)
         } catch (err) {
           logger.error('BlockTree', 'setListStyle (turn-into) failed', { blockId }, err)
           notify.error(t('slash.turnIntoFailed'))
+          return
         }
+        if (style !== 'none') await clearTaskStates(pageStore, [blockId])
       })()
     }
 

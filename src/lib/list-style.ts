@@ -17,6 +17,9 @@ import type { PropertyRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import type { BlockTypeToken } from '@/lib/block-type-convert'
 import { parseEmbedToken } from '@/lib/embed-token'
+import { i18n } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 
 /** The block-property key under which list-ness is stored. */
 export const LIST_STYLE_KEY = 'listStyle'
@@ -70,6 +73,38 @@ export async function setListStyle(blockId: string, style: ListStyle): Promise<v
 /** Clear a block's list style (equivalent to `setListStyle(id, 'none')`). */
 export async function clearListStyle(blockId: string): Promise<void> {
   unwrap(await commands.deleteProperty(blockId, LIST_STYLE_KEY))
+}
+
+/**
+ * Clear the list style of those of `ids` that store one, as making them tasks
+ * does (#5691 D3: a task is a third list kind, exclusive with bulleted and
+ * numbered). One read finds them, as no command deletes a property on many
+ * blocks. Call it once the task state is written, so a refused write clears
+ * nothing. Resolves whether it cleared them all; a failure is logged and told.
+ */
+export async function clearListStyles(ids: readonly string[]): Promise<boolean> {
+  if (ids.length === 0) return true
+  try {
+    const rows = unwrap(await commands.getBatchProperties([...ids]))
+    for (const id of ids) {
+      if (listStyleFromRows(rows[id]) !== 'none') await clearListStyle(id)
+    }
+    return true
+  } catch (err) {
+    logger.error('list-style', 'Failed to clear the list styles of new tasks', { ids }, err)
+    notify.error(i18n.t('blockTree.clearListStyleFailed'))
+    return false
+  }
+}
+
+/**
+ * The list style a block shows (#5691 D3): a block holding a task state shows
+ * its checkbox and no bullet or number, whatever `listStyle` it stores. It is
+ * numbered as a plain block is (`computeListOrdinals`): a task between two
+ * numbered blocks ends their run, and the next one starts again at `1.`.
+ */
+export function shownListStyle(style: ListStyle, isTask: boolean): ListStyle {
+  return isTask ? 'none' : style
 }
 
 /**
