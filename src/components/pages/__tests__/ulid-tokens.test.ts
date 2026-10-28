@@ -69,10 +69,9 @@ describe('findUlidTokens', () => {
     ])
   })
 
-  it('reads no token in a title, a short id, a labelled link or a value with more text', () => {
+  it('reads no token in a title, a short id or a value with more text', () => {
     const text = [
       '[[Project Plan]] #urgent ((01K00))',
-      `[[${PAGE}|the plan]]`,
       `owner:: ${PAGE} and more`,
       `std::${PAGE}`,
     ].join('\n')
@@ -167,5 +166,43 @@ describe('findUnresolvedUlidTokens', () => {
     )
 
     expect(await findUnresolvedUlidTokens(`((${GONE}))`)).toEqual([])
+  })
+})
+
+describe('findUlidTokens, a labelled link', () => {
+  // The page-mode parser's grammar (`tryConsumeBlockLink`): the label runs to the first `]`,
+  // which must close the token, and holds no newline; an empty one is no label.
+  it('reads `[[ULID|label]]` as one link token, label included', () => {
+    const text = `see [[${PAGE}|my label]] and [[${PAGE}]] and ((${BLOCK})) and #[${TAG}]`
+    const tokens = findUlidTokens(text)
+
+    expect(tokens.map((t) => [t.kind, t.id, text.slice(t.from, t.to)])).toEqual([
+      ['link', PAGE, `[[${PAGE}|my label]]`],
+      ['link', PAGE, `[[${PAGE}]]`],
+      ['ref', BLOCK, `((${BLOCK}))`],
+      ['tag', TAG, `#[${TAG}]`],
+    ])
+  })
+
+  it('reads an empty label, and a `|` inside one', () => {
+    const text = `[[${PAGE}|]] [[${PAGE}|a|b]]`
+    expect(findUlidTokens(text).map((t) => text.slice(t.from, t.to))).toEqual([
+      `[[${PAGE}|]]`,
+      `[[${PAGE}|a|b]]`,
+    ])
+  })
+
+  it('reads no token when the label holds a `]` before the close or a line break', () => {
+    expect(findUlidTokens(`[[${PAGE}|a]b]]`)).toEqual([])
+    expect(findUlidTokens(`[[${PAGE}|a\nb]]`)).toEqual([])
+    expect(findUlidTokens(`[[${PAGE}|unclosed`)).toEqual([])
+  })
+
+  it('asks the backend for the labelled link’s id, not its label', async () => {
+    const batchResolve = stubBatchResolve()
+
+    await resolveUlidTokens(findUlidTokens(`[[${PAGE}|the plan]]`))
+
+    expect(batchResolve.mock.calls[0]?.[0]).toMatchObject({ ids: [PAGE] })
   })
 })

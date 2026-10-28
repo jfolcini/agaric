@@ -1,11 +1,12 @@
 /**
- * The ULIDs *Edit as Markdown* leaves in its text (#5686): `[[ULID]]`, `#[ULID]`
- * and `((ULID))`, and a `key:: ULID` property value. The render writes a title
- * wherever the save reads it back to the same id, so what stays an id is a
- * block ref, a ref property, or a link or tag whose title would not (a
- * duplicate, another space's, a deleted one). The buffer shows each one's title
- * beside it and keeps it whole (`@/editor/source-buffer-ulids`); this module
- * has no editor in it, so the save path reaches it without loading TipTap.
+ * The ULIDs *Edit as Markdown* leaves in its text (#5686): `[[ULID]]`,
+ * `[[ULID|label]]`, `#[ULID]` and `((ULID))`, and a `key:: ULID` property value.
+ * The render writes a title wherever the save reads it back to the same id, so
+ * what stays an id is a block ref, a ref property, or a link or tag whose title
+ * would not (a duplicate, another space's, a deleted one). The buffer shows each
+ * one's title beside it and keeps it whole (`@/editor/source-buffer-ulids`);
+ * this module has no editor in it, so the save path reaches it without loading
+ * TipTap.
  */
 
 import { fetchAndCacheLinks } from '@/components/block-tree/use-block-link-resolve'
@@ -30,8 +31,9 @@ export interface UlidToken {
 
 /** A ULID's shape, as the link scanner (`use-block-link-resolve`) reads it. */
 const ULID = '[0-9A-Z]{26}'
+/** A link's label runs to the first `]`, which must close it, as `tryConsumeBlockLink` reads it. */
 const BRACKET_TOKEN_RE = new RegExp(
-  String.raw`\[\[(${ULID})\]\]|#\[(${ULID})\]|\(\((${ULID})\)\)`,
+  String.raw`\[\[(${ULID})(?:\|[^\]\n]*)?\]\]|#\[(${ULID})\]|\(\((${ULID})\)\)`,
   'g',
 )
 /** A property line (`split_property_line` in `import.rs`) whose value is one ULID. */

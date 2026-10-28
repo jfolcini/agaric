@@ -1,6 +1,6 @@
 /**
- * ULID tokens in the *Edit as Markdown* buffer (#5686): `[[ULID]]`, `#[ULID]`,
- * `((ULID))` and a `key:: ULID` value (`@/components/pages/ulid-tokens`).
+ * ULID tokens in the *Edit as Markdown* buffer (#5686): `[[ULID]]`, `[[ULID|label]]`,
+ * `#[ULID]`, `((ULID))` and a `key:: ULID` value (`@/components/pages/ulid-tokens`).
  *
  * - **A title hint.** Each token is decorated with its target's title, which
  *   the stylesheet shows under it on hover or while the cursor touches it

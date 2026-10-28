@@ -64,7 +64,7 @@ const selectedBlocks = (editor: Editor): string[] => {
 }
 
 /** What page mode does for each block command the toolbar sends. */
-function pageToolbarCommands(
+export function pageToolbarCommands(
   editor: Editor,
   actions: React.RefObject<PageToolbarActions>,
   pageStore: StoreApi<PageBlockState>,

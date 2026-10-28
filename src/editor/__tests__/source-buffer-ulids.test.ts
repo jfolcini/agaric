@@ -372,3 +372,28 @@ describe('the title hint', () => {
     expect(activeUlidToken(ed.state)).toBeNull()
   })
 })
+
+describe('a labelled link', () => {
+  const LABELLED = `- see [[${PAGE}|the plan]] now`
+  const LABELLED_FROM = 6
+  const LABELLED_TO = LABELLED_FROM + PAGE.length + '|the plan'.length + 4
+
+  it('is stepped over whole, from beside it or from inside its id', () => {
+    const ed = build(LABELLED)
+    caret(ed, LABELLED_FROM)
+    expect(press(ed, 'ArrowRight')).toBe(true)
+    expect(head(ed)).toBe(LABELLED_TO)
+
+    caret(ed, LABELLED_FROM + 5)
+    press(ed, 'ArrowLeft')
+    expect(head(ed)).toBe(LABELLED_FROM)
+  })
+
+  it('keeps its label when a paste at a caret inside its id lands after it', () => {
+    const ed = build(LABELLED)
+    caret(ed, LABELLED_FROM + 5)
+
+    paste(ed, '!')
+    expect(text(ed)).toBe(`- see [[${PAGE}|the plan]]! now`)
+  })
+})
