@@ -49,6 +49,7 @@ import {
 } from '@/components/FormattingToolbar/toolbar-config'
 import { ToolbarFrame } from '@/components/FormattingToolbar/ToolbarFrame'
 import type { ToolbarItem } from '@/hooks/useToolbarOverflow'
+import type { ListStyle } from '@/lib/list-style'
 
 interface FormattingToolbarProps {
   editor: Editor
@@ -56,6 +57,12 @@ interface FormattingToolbarProps {
   blockId?: string
   /** Current priority of the focused block (null, '1', '2', '3'). */
   currentPriority?: string | null
+  /** The focused block's list style, for Turn into, where no `ListMarkerProvider` gives it (page mode). */
+  listStyle?: ListStyle | undefined
+  /** Item keys left off the bar: the controls a surface has no use for (page mode's Discard). */
+  hiddenItems?: ReadonlySet<string> | undefined
+  /** Added to the bar's classes (page mode's sticky bar). */
+  className?: string | undefined
 }
 
 function getHeadingLevel(editor: Editor): number {
@@ -69,6 +76,9 @@ export function FormattingToolbar({
   editor,
   blockId,
   currentPriority,
+  listStyle,
+  hiddenItems,
+  className,
 }: FormattingToolbarProps): React.ReactElement {
   const { t } = useTranslation()
   const [formatPopoverOpen, setFormatPopoverOpen] = useState(false)
@@ -120,8 +130,11 @@ export function FormattingToolbar({
   )
   const configByKey = useMemo(() => buildConfigByKey(groups), [groups])
   const items: ToolbarItem[] = useMemo(
-    () => buildToolbarItems(groups, { includeTableOps: state.isInsideTable }),
-    [groups, state.isInsideTable],
+    () =>
+      buildToolbarItems(groups, { includeTableOps: state.isInsideTable }).filter(
+        (item) => hiddenItems?.has(item.key) !== true,
+      ),
+    [groups, state.isInsideTable, hiddenItems],
   )
 
   // ── Item renderer dispatch ────────────────────────────────────────────
@@ -149,6 +162,7 @@ export function FormattingToolbar({
           open: turnIntoPopoverOpen,
           setOpen: setTurnIntoPopoverOpen,
           blockId,
+          listStyle,
         })
       }
       case 'toolbar.tableOps': {
@@ -200,6 +214,7 @@ export function FormattingToolbar({
       label={t('toolbar.formatting')}
       testId="formatting-toolbar"
       controls={blockId ? `editor-${blockId}` : undefined}
+      className={className}
     />
   )
 }

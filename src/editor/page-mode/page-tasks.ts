@@ -507,7 +507,7 @@ class PageBlockView implements NodeView {
 }
 
 /** The block the caret is in. */
-function caretBlockId(state: EditorState): string | null {
+export function caretBlockId(state: EditorState): string | null {
   const { $head } = state.selection
   return $head.depth < 1 ? null : blockIdOf($head.node(1))
 }

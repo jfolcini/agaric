@@ -19,6 +19,7 @@ import { toolbarMenuRowClass } from '@/components/FormattingToolbar/toolbar-conf
 import { TableOpsSelector } from '@/components/TableOpsSelector'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
+import type { ListStyle } from '@/lib/list-style'
 
 interface FormatButtonProps {
   editor: Editor
@@ -115,6 +116,8 @@ interface TurnIntoButtonProps {
   setOpen: (next: boolean | ((prev: boolean) => boolean)) => void
   /** The block this toolbar is anchored to (#4552 — feeds the active-state probe). */
   blockId?: string | undefined
+  /** That block's list style, where no `ListMarkerProvider` gives it (page mode). */
+  listStyle?: ListStyle | undefined
   /** The popover's content in place of `TurnIntoMenu`: *Edit as Markdown*'s (#5160). */
   menu?: React.ReactNode
 }
@@ -133,6 +136,7 @@ export function renderTurnIntoButton({
   open,
   setOpen,
   blockId,
+  listStyle,
   menu,
 }: TurnIntoButtonProps): React.ReactElement {
   if (mode === 'sentinel') {
@@ -186,7 +190,14 @@ export function renderTurnIntoButton({
         onOpenAutoFocus={(e) => e.preventDefault()}
         onCloseAutoFocus={(e) => e.preventDefault()}
       >
-        {menu ?? <TurnIntoMenu editor={editor} blockId={blockId} onClose={() => setOpen(false)} />}
+        {menu ?? (
+          <TurnIntoMenu
+            editor={editor}
+            blockId={blockId}
+            listStyle={listStyle}
+            onClose={() => setOpen(false)}
+          />
+        )}
       </PopoverContent>
     </Popover>
   )
