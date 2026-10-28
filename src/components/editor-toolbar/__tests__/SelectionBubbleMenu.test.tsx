@@ -643,6 +643,29 @@ describe('SelectionBubbleMenu', () => {
     })
   })
 
+  describe('keyboard activation (#6159)', () => {
+    it('Enter or Space on a mark toggle (a click with detail 0) toggles the mark', () => {
+      render(<SelectionBubbleMenu editor={makeEditor()} />)
+      fireEvent.click(screen.getByRole('button', { name: t('toolbar.bold') }), { detail: 0 })
+      expect(mockToggleBold).toHaveBeenCalledTimes(1)
+      expect(mockRun).toHaveBeenCalledTimes(1)
+    })
+
+    it('a pointer press toggles once: its own click (detail 1) does not toggle again', () => {
+      render(<SelectionBubbleMenu editor={makeEditor()} />)
+      const btn = screen.getByRole('button', { name: t('toolbar.italic') })
+      fireEvent.pointerDown(btn)
+      fireEvent.click(btn, { detail: 1 })
+      expect(mockToggleItalic).toHaveBeenCalledTimes(1)
+    })
+
+    it('a keyboard click on External link opens the link popover', () => {
+      render(<SelectionBubbleMenu editor={makeEditor()} />)
+      fireEvent.click(screen.getByRole('button', { name: t('toolbar.link') }), { detail: 0 })
+      expect(document.querySelector('[data-popover]')).toHaveAttribute('data-open', 'true')
+    })
+  })
+
   // ── Link popover actions ─────────────────────────────────────────────
 
   describe('link popover', () => {

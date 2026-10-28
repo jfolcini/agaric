@@ -11,8 +11,9 @@
  * group requires a selection to be meaningful, so a contextual hover bar is
  * the right surface and frees the always-visible toolbar from these 6 buttons.
  *
- * Click handlers use `onPointerDown + preventDefault` so focus never leaves
- * the editor; active marks get `aria-pressed="true"` + `bg-accent`.
+ * Buttons act on `pointerdown` with preventDefault, so a press never takes focus
+ * from the editor, and on a keyboard click (`toolbarPressHandlers`); active marks
+ * get `aria-pressed="true"` + `bg-accent`.
  */
 
 import { getMarkRange, posToDOMRect } from '@tiptap/core'
@@ -25,6 +26,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useTranslation } from 'react-i18next'
 
 import { LinkEditPopover } from '@/components/editor-toolbar/LinkEditPopover'
+import { toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
 import {
   bubbleMenuClass,
   createMarkToggles,
@@ -317,11 +319,18 @@ export function SelectionBubbleMenu({
   // Safe here ONLY because of the `'use no memo'` directive at the top of this
   // component — see the note there and #4469.
   const { containerRef, onKeyDown: rovingOnKeyDown, onFocus: rovingOnFocus } = useRovingTabindex()
+  const menuEl = useRef<HTMLElement | null>(null)
+  const menuRef = useCallback(
+    (node: HTMLElement | null) => {
+      menuEl.current = node
+      containerRef(node)
+    },
+    [containerRef],
+  )
 
   return (
     <BubbleMenu
-      tabIndex={-1}
-      ref={containerRef}
+      ref={menuRef}
       onKeyDown={rovingOnKeyDown}
       onFocus={rovingOnFocus}
       editor={editor}
@@ -330,7 +339,17 @@ export function SelectionBubbleMenu({
       // `.block-editor`; an upward-opening bubble overlapped it. `flip` (on by
       // default) still lifts the bubble above the selection only when there is
       // no room below (near the viewport bottom).
-      options={{ placement: 'bottom', offset: 8 }}
+      //
+      // Each plugin view TipTap builds makes the container a tab stop ahead of the buttons,
+      // and ProseMirror rebuilds the views whenever a plugin registers; the toolbar's one
+      // stop is its active button.
+      options={{
+        placement: 'bottom',
+        offset: 8,
+        onShow: () => {
+          if (menuEl.current) menuEl.current.tabIndex = -1
+        },
+      }}
       shouldShow={({ state: editorState }) => {
         // #925 f4 — never float the bubble on touch over a LIVE selection;
         // dragging a selection collides with the OS's native selection
@@ -393,10 +412,7 @@ export function SelectionBubbleMenu({
               aria-keyshortcuts={ariaKeyshortcutsFor(btn.label)}
               disabled={disabled}
               className={cn(active && toolbarActiveClass)}
-              onPointerDown={(e) => {
-                e.preventDefault()
-                btn.action()
-              }}
+              {...toolbarPressHandlers(btn.action)}
             >
               <btn.icon />
             </Button>
@@ -413,8 +429,7 @@ export function SelectionBubbleMenu({
           aria-label={t('toolbar.link')}
           aria-pressed={state.link}
           className={cn(state.link && toolbarActiveClass)}
-          onPointerDown={(e) => {
-            e.preventDefault()
+          {...toolbarPressHandlers(() => {
             if (!linkPopoverOpen) {
               if (state.link) {
                 const range = getLinkMarkRange(editor)
@@ -427,7 +442,7 @@ export function SelectionBubbleMenu({
               }
             }
             setLinkPopoverOpen((prev) => !prev)
-          }}
+          })}
         >
           <Link2 />
         </Button>

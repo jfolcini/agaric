@@ -16,7 +16,7 @@
 
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { describe, expect, it } from 'vitest'
 
 import { useRovingTabindex } from '@/hooks/useRovingTabindex'
@@ -164,6 +164,61 @@ describe('useRovingTabindex', () => {
     b0.focus()
     await user.keyboard('a')
     expect(b0).toHaveFocus()
+  })
+
+  /**
+   * TipTap's `BubbleMenu` binds its handler props as native listeners and passes each
+   * one `Object.create(nativeEvent)`. A browser's `key` getter throws on that object
+   * (#6159); happy-dom's does not, so the harness throws as the browser does.
+   */
+  function TipTapMenuHarness(): React.ReactElement {
+    const { containerRef, onKeyDown } = useRovingTabindex()
+    const menu = useRef<HTMLDivElement>(null)
+    useEffect(() => {
+      const el = menu.current
+      if (!el) return
+      const listener = (event: KeyboardEvent) => {
+        const forwarded = Object.create(event, {
+          nativeEvent: { value: event },
+          key: {
+            get: () => {
+              throw new TypeError('Illegal invocation')
+            },
+          },
+          preventDefault: { value: () => event.preventDefault() },
+        }) as React.KeyboardEvent<HTMLElement>
+        onKeyDown(forwarded)
+      }
+      el.addEventListener('keydown', listener)
+      return () => el.removeEventListener('keydown', listener)
+    }, [onKeyDown])
+    return (
+      <div
+        role="toolbar"
+        aria-label="menu"
+        ref={(node) => {
+          menu.current = node
+          containerRef(node)
+        }}
+      >
+        <button type="button" data-testid="m0">
+          zero
+        </button>
+        <button type="button" data-testid="m1">
+          one
+        </button>
+      </div>
+    )
+  }
+
+  it('arrows move focus when a TipTap menu forwards the keydown', async () => {
+    const user = userEvent.setup()
+    render(<TipTapMenuHarness />)
+    screen.getByTestId('m0').focus()
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByTestId('m1')).toHaveFocus()
+    await user.keyboard('{Home}')
+    expect(screen.getByTestId('m0')).toHaveFocus()
   })
 
   function ResizableHarness(): React.ReactElement {

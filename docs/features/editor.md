@@ -7,7 +7,7 @@ The editor is a block-based outliner built on TipTap (ProseMirror). Only the foc
 
 Above the focused block sits the **FormattingToolbar** — always visible. It carries icon buttons grouped by purpose: refs+blocks, structure, metadata, history. Low-priority buttons collapse into a `MoreHorizontal` overflow popover when the container is narrow.
 
-When you select text inside a block, the **SelectionBubbleMenu** appears next to the selection. It hosts the six mark toggles (Bold / Italic / Code / Strike / Highlight / Underline) plus an External Link button. It only appears on non-empty selections so it doesn't get in the way of typing.
+When you select text inside a block, the **SelectionBubbleMenu** appears next to the selection. It hosts the six mark toggles (Bold / Italic / Code / Strike / Highlight / Underline) plus an External Link button. It only appears on non-empty selections so it doesn't get in the way of typing. From the keyboard, with *Tab indents blocks* off in Settings → Editor, Tab moves into it, `←` / `→` move between its buttons, and `Enter` or `Space` presses one.
 
 ## Markdown surface
 
