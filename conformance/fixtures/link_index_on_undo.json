@@ -1,0 +1,357 @@
+{
+  "description": "#6054 — an undo indexes links as the write it reverses would: undoing a delete pays the edges owed to the block it brings back (`block_links_unresolved`), and undoing an edit indexes the text it puts back, so a token naming a block in the trash gets no edge.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "tag",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "doomed",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "see [[C1]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "doomed",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "see [[C3]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 9,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "restore_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [
+      {
+        "kind": "page_link",
+        "source_id": "B4",
+        "source_page_id": "B1",
+        "target_id": "B3"
+      }
+    ],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "target",
+      "returns": ["B3#block_type=content#content=doomed#parent_id=B1#position=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "trash_target",
+      "returns": ["B3#deleted_at=DELETED#descendants_affected=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "source",
+      "returns": ["B4#block_type=content#content=see [[C1]]#parent_id=B1#position=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_delete",
+      "returns": ["undo_op#reversed_op_type=delete_block#new_op_type=restore_block#is_redo=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "second_target",
+      "returns": ["B5#block_type=content#content=doomed#parent_id=B1#position=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "trash_second_target",
+      "returns": ["B5#deleted_at=DELETED#descendants_affected=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "second_source",
+      "returns": ["B6#block_type=content#content=see [[C3]]#parent_id=B1#position=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "edit_the_token_away",
+      "returns": ["B6#content=plain"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_edit",
+      "returns": ["undo_op#reversed_op_type=edit_block#new_op_type=edit_block#is_redo=false"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_of_the_undeleted_target",
+      "rows": ["B4#parent_id=B1#page_id=B1#position=3#deleted_at=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_of_the_trashed_target",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "link_index_on_undo",
+  "ops": [
+    {
+      "args": {
+        "blockType": "content",
+        "content": "doomed",
+        "index": 0,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "name": "target",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C1"
+      },
+      "command": "delete_block",
+      "comment": "O2, the op `undo_the_delete` names",
+      "name": "trash_target",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "see [[C1]]",
+        "index": 0,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "comment": "owed an edge: its target is in the trash",
+      "name": "source",
+      "via": "command"
+    },
+    {
+      "args": {
+        "opRef": "O2"
+      },
+      "command": "undo_op",
+      "name": "undo_the_delete",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "doomed",
+        "index": 0,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "name": "second_target",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C3"
+      },
+      "command": "delete_block",
+      "name": "trash_second_target",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "see [[C3]]",
+        "index": 0,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "name": "second_source",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C4",
+        "toText": "plain"
+      },
+      "command": "edit_block",
+      "comment": "O8, the op `undo_the_edit` names",
+      "name": "edit_the_token_away",
+      "via": "command"
+    },
+    {
+      "args": {
+        "opRef": "O8"
+      },
+      "command": "undo_op",
+      "comment": "puts the token back while its target is still in the trash",
+      "name": "undo_the_edit",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockId": "C1",
+        "limit": 50,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "get_backlinks",
+      "name": "backlinks_of_the_undeleted_target"
+    },
+    {
+      "args": {
+        "blockId": "C3",
+        "limit": 50,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "get_backlinks",
+      "comment": "the undo wrote the token while its target was in the trash",
+      "expect_empty": true,
+      "name": "backlinks_of_the_trashed_target"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "tag",
+        "content": "tag",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

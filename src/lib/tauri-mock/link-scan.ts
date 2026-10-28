@@ -80,12 +80,33 @@ export function scanLinkTargets(content: string | null | undefined): string[] {
 }
 
 /** Whether `content` carries at least one `[[targetId]]` or `((targetId))` token. */
-export function contentLinksTo(content: string | null | undefined, targetId: string): boolean {
+function contentLinksTo(content: string | null | undefined, targetId: string): boolean {
   if (!content || (!content.includes('[[') && !content.includes('(('))) return false
   for (const m of content.matchAll(ulidLinkTokenRe())) {
     if (m[1] === targetId) return true
   }
   return false
+}
+
+/**
+ * Whether `source` holds a `block_links` edge to `targetId`. The mock derives
+ * edges from content on every read, where the backend writes them when it
+ * indexes the source, so two facts the content does not carry decide an edge
+ * too: a purged target takes its edges with it (`ON DELETE CASCADE`), and a
+ * target that was not live when the source was indexed got none and is still
+ * owed one (`unresolved`, the mock's `block_links_unresolved`).
+ */
+export function holdsLink(
+  source: Record<string, unknown>,
+  targetId: string,
+  allBlocks: ReadonlyMap<string, unknown>,
+  unresolved: ReadonlyMap<string, ReadonlySet<string>>,
+): boolean {
+  return (
+    allBlocks.has(targetId) &&
+    !unresolved.get(source['id'] as string)?.has(targetId) &&
+    contentLinksTo(source['content'] as string | null, targetId)
+  )
 }
 
 /**
@@ -122,12 +143,13 @@ export function classifyLinkKind(
 
 /**
  * Scan every block's content for `[[ULID]]` and `((ULID))` tokens and return
- * the implied block-link edges. The faithful mock stand-in for the
- * backend's `block_links` table — used to evaluate the link facets (`Orphan` /
- * `HasNoInboundLinks`) and the `MostLinked` sort. Mirrors the `get_backlinks`
- * scan. Each edge captures the source block's `page_id` so `pageLinkStats`
- * can apply the same-page/self/orphan-source inbound exclusion (migration
- * 0070 + `recompute_pages_cache_counts_for_pages`).
+ * the implied block-link edges, each one {@link holdsLink} admits. The
+ * faithful mock stand-in for the backend's `block_links` table — used to
+ * evaluate the link facets (`Orphan` / `HasNoInboundLinks`) and the
+ * `MostLinked` sort. Mirrors the `get_backlinks` scan. Each edge captures the
+ * source block's `page_id` so `pageLinkStats` can apply the same-page/self/
+ * orphan-source inbound exclusion (migration 0070 +
+ * `recompute_pages_cache_counts_for_pages`).
  *
  * A soft-deleted source is KEPT, because the table keeps it: `DeleteBlock`
  * enqueues no `ReindexBlockLinks` (`src-tauri/src/reconciliation_oracle.rs`),
@@ -142,12 +164,16 @@ export function classifyLinkKind(
  * and the conformance snapshot — the one place the mock's derivation is
  * compared against the backend's real `block_links` table — is single-space.
  */
-export function deriveLinkEdges(allBlocks: Map<string, Record<string, unknown>>): MockLinkEdge[] {
+export function deriveLinkEdges(
+  allBlocks: Map<string, Record<string, unknown>>,
+  unresolved: ReadonlyMap<string, ReadonlySet<string>>,
+): MockLinkEdge[] {
   const edges: MockLinkEdge[] = []
   for (const blk of allBlocks.values()) {
     const sourcePageId = (blk['page_id'] as string | null) ?? null
     const content = blk['content'] as string | null
     for (const targetId of scanLinkTargets(content)) {
+      if (!holdsLink(blk, targetId, allBlocks, unresolved)) continue
       edges.push({
         sourceId: blk['id'] as string,
         targetId,

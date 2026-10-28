@@ -26,11 +26,10 @@ import { BUILTIN_PROPERTY_DEFS } from '@/lib/property-save-utils'
 import { pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
 import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
+import { linksTo } from '@/lib/tauri-mock/link-index'
 import {
   type MockLinkEdge,
   classifyLinkKind,
-  contentLinksTo,
-  deriveLinkEdges,
   linkTokenRe,
   scanLinkTargets,
 } from '@/lib/tauri-mock/link-scan'
@@ -550,6 +549,42 @@ export function refInclusiveTags(blockId: string): Set<string> {
 /** `TAG_REF_RE` — `#[ULID]` (`src-tauri/agaric-store/src/cache/mod.rs`). */
 const TAG_REF_RE = /#\[([0-9A-Z]{26})\]/g
 
+/**
+ * `validate_content_refs_in_space` (#6054): refuse a write of `content` into a
+ * block of `sourceSpace` that names a live block of another space by a
+ * `[[…]]`, `((…))` or `#[…]` token, unless a live block on the page of
+ * `onPageOf` already holds that token (#5272). A source or a target in no
+ * space is tolerated.
+ */
+export function rejectCrossSpaceTokens(
+  sourceSpace: string | null,
+  content: string,
+  onPageOf: string,
+): void {
+  if (sourceSpace === null) return
+  const tagRefs = [...content.matchAll(TAG_REF_RE)].map((m) => m[1] as string)
+  for (const target of [...scanLinkTargets(content), ...tagRefs]) {
+    const targetSpace = definitionSpaceOf(target)
+    if (targetSpace === null || targetSpace === sourceSpace) continue
+    if (pageHoldsToken(onPageOf, target)) continue
+    throw validationRejection(
+      `cross-space reference: '${target}' (space ${targetSpace}) is not in space ${sourceSpace}`,
+    )
+  }
+}
+
+/** Whether a live block on `member`'s page holds `token` in its content. */
+function pageHoldsToken(member: string, token: string): boolean {
+  const pageId = blocks.get(member)?.['page_id']
+  if (pageId == null) return false
+  return [...blocks.values()].some(
+    (b) =>
+      b['page_id'] === pageId &&
+      b['deleted_at'] == null &&
+      ((b['content'] as string | null) ?? '').includes(token),
+  )
+}
+
 export type Handler = (args: unknown) => unknown
 
 // #1775 — distinct soft-delete cohort markers. The backend keys restore on a
@@ -620,14 +655,14 @@ export const returnEmptyPage = () => ({
 // snapshot builder can assert on the SAME derivation the handlers run instead
 // of re-declaring the regex. Re-exported here so the domain handler modules
 // keep their single "everything shared comes from ./shared" import.
+export { type MockLinkEdge, classifyLinkKind, linkTokenRe, scanLinkTargets }
 export {
-  type MockLinkEdge,
-  classifyLinkKind,
-  contentLinksTo,
-  deriveLinkEdges,
-  linkTokenRe,
-  scanLinkTargets,
-}
+  indexLinks,
+  linkEdges,
+  linkedTargets,
+  linksTo,
+  relinkRestored,
+} from '@/lib/tauri-mock/link-index'
 
 /**
  * A block's space: the `space_id` of its OWNING page (`page_id`, falling back
@@ -771,7 +806,7 @@ export function metaRowMatchesFilter(
     }
     case 'LinksTo': {
       // An outbound `block_links` edge to `target` (`compile_links_to`).
-      return contentLinksTo(r.content, f['target'] as string)
+      return linksTo({ id: r.id, content: r.content }, f['target'] as string)
     }
     case 'Priority': {
       // Multi-value membership over `blocks.priority`, mirroring the REAL
@@ -860,7 +895,8 @@ export function metaRowMatchesFilter(
     case 'LinkedFrom': {
       // A `block_links` row from `source` to this block; the table keeps a
       // trashed source's rows, so its content still counts.
-      return contentLinksTo(blocks.get(f['source'] as string)?.['content'] as string | null, r.id)
+      const source = blocks.get(f['source'] as string)
+      return source !== undefined && linksTo(source, r.id)
     }
     case 'HasParentMatching': {
       // `EXISTS (SELECT 1 FROM blocks p WHERE p.id = b.parent_id AND <matcher on p>)`:

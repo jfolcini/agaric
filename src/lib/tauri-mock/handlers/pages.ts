@@ -33,7 +33,7 @@ import {
   comparePositionThenId,
   createPageInSpace,
   definitionSpaceOf,
-  deriveLinkEdges,
+  linkEdges,
   encodeNextCursor,
   metaRowMatchesFilter,
   notFoundRejection,
@@ -70,7 +70,7 @@ function pageSortRows(spaceId: string): PageSortRow[] {
   // Block-link edges derived from `[[ULID]]` tokens (mock stand-in for the
   // backend's `block_links` table) so the link facets and `MostLinked` sort
   // reflect the seed's real topology.
-  const edges = deriveLinkEdges(blocks)
+  const edges = linkEdges()
   const lastEditedByPage = pagesLastEditedAt()
   const byPage = new Map<unknown, Array<Record<string, unknown>>>()
   for (const d of blocks.values()) {

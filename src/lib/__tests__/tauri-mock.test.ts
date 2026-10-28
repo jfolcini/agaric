@@ -38,6 +38,7 @@ import {
   pageAliases,
   peerRefs,
   todayDate,
+  unresolvedLinks,
 } from '@/lib/tauri-mock/seed'
 
 /**
@@ -4174,10 +4175,15 @@ describe('scope-filter parity', () => {
       opts.content ?? `foreign block ${opts.linkTarget ? `[[${opts.linkTarget}]]` : ''}`
     const child = invoke('create_block', {
       blockType: 'content',
-      content,
+      content: '',
       parentId: pageId,
     }) as Record<string, unknown>
     const blockId = child['id'] as string
+    // Written to the row directly: `create_block` refuses a token naming a
+    // block of another space, and such a link exists only once one end has
+    // moved space (#5272).
+    const row = blocks.get(blockId)
+    if (row) row['content'] = content
     // Apply task fields if requested.
     if (opts.asTask) {
       if (opts.asTask.todo_state !== undefined) {
@@ -4571,7 +4577,7 @@ describe('scope-filter parity', () => {
     // The foreign backlink counts in its own space and is excluded under active.
     expect(countsForeign[SEED_IDS.PAGE_GETTING_STARTED]).toBe(1)
     expect(counts[SEED_IDS.PAGE_GETTING_STARTED] ?? 0).toBe(
-      deriveLinkEdges(blocks).filter(
+      deriveLinkEdges(blocks, unresolvedLinks).filter(
         (e) => e.targetId === SEED_IDS.PAGE_GETTING_STARTED && e.sourceId !== foreignBlockId,
       ).length,
     )
@@ -4966,7 +4972,7 @@ describe('list_pages_with_metadata — inbound same-page exclusion', () => {
     invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_2 })
     expect(inboundOf('Quick Notes')).toBe(0)
     expect(
-      deriveLinkEdges(blocks).filter(
+      deriveLinkEdges(blocks, unresolvedLinks).filter(
         (e) => e.sourceId === SEED_IDS.BLOCK_GS_2 && e.targetId === SEED_IDS.PAGE_QUICK_NOTES,
       ),
     ).toHaveLength(1)

@@ -16,6 +16,7 @@ import type { AppError } from '@/lib/bindings'
 import { normalizeTagName } from '@/lib/name-tokens'
 import { foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { deleteCohort, nextCohortMarker, restoreCohort } from '@/lib/tauri-mock/cohort'
+import { indexLinks, linkedTargets, relinkRestored } from '@/lib/tauri-mock/link-index'
 import { type MockOpLogEntry, opLog } from '@/lib/tauri-mock/seed'
 
 type BlockRow = Record<string, unknown>
@@ -182,7 +183,9 @@ function revertBlockRowField(
     case 'edit_block': {
       const fromText = (payload['from_text'] as string | null) ?? null
       rejectTakenName(blocks, b, fromText)
+      const linked = linkedTargets(b)
       b['content'] = fromText
+      indexLinks(b, linked)
       return true
     }
     // A key the row holds as a column, set or deleted with the `prior` the
@@ -446,9 +449,12 @@ function rejectTakenName(
 function restoreRefusingTakenNames(blocks: Blocks, blockId: string): void {
   const deletedBefore = new Map([...blocks].map(([id, b]) => [id, b['deleted_at']]))
   restoreCohort(blocks, blockId)
+  const restored = [...blocks.keys()].filter(
+    (id) => deletedBefore.get(id) && !blocks.get(id)?.['deleted_at'],
+  )
   try {
-    for (const [id, b] of blocks) {
-      if (!deletedBefore.get(id) || b['deleted_at']) continue
+    for (const id of restored) {
+      const b = blocks.get(id) as Record<string, unknown>
       rejectTakenName(blocks, b, (b['content'] as string | null | undefined) ?? null)
     }
   } catch (err) {
@@ -458,6 +464,7 @@ function restoreRefusingTakenNames(blocks: Blocks, blockId: string): void {
     }
     throw err
   }
+  relinkRestored(restored)
 }
 
 /**

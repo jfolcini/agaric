@@ -23,11 +23,11 @@ import {
   type TypedHandlers,
   classifyLinkKind,
   columnBackedValue,
-  contentLinksTo,
   createdInRange,
   datePredicateMatches,
   fbqResolvePrefixTagIds,
   inSpaceScope,
+  linksTo,
   ownerSpaceOf,
   pageRequestLimit,
   propertyCompareMatches,
@@ -494,7 +494,7 @@ function unlinkedSources(pageId: string, spaceId: string): Record<string, unknow
     const stripped = stripForFts(content)
     if (!terms.some((t) => matchesFtsIndex(stripped, t))) return false
     // Exclude if it already has a [[link]] to this page.
-    return !contentLinksTo(content, pageId)
+    return !linksTo(b, pageId)
   })
 }
 
@@ -518,13 +518,10 @@ export const linksHandlers = {
     // `get_backlinks_inner` does: drop source blocks whose owning page
     // (`page_id`, or own id if itself a page) lives in a different space.
     const spaceId = readActiveSpaceScope('get_backlinks', a)
-    // Scan all blocks for [[ULID]] tokens matching the target (#3332: the scan
-    // itself is `contentLinksTo`, the single owner of the token grammar).
+    // Every block holding an edge to the target (`linksTo`, over the single
+    // owner of the token grammar, #3332).
     const backlinkItems = [...blocks.values()].filter(
-      (b) =>
-        !b['deleted_at'] &&
-        inSpaceScope(b, spaceId) &&
-        contentLinksTo(b['content'] as string | null, targetId),
+      (b) => !b['deleted_at'] && inSpaceScope(b, spaceId) && linksTo(b, targetId),
     )
     // #4667 — this used to return the WHOLE set with `has_more: false` and no
     // cursor, ignoring `limit` and `cursor` outright, so every page was the
@@ -549,10 +546,7 @@ export const linksHandlers = {
       // `COALESCE(b.page_id, b.id) IN (... space ...)` predicate
       // `count_backlinks_batch_inner` uses.
       const count = [...blocks.values()].filter(
-        (b) =>
-          !b['deleted_at'] &&
-          inSpaceScope(b, spaceId) &&
-          contentLinksTo(b['content'] as string | null, pid),
+        (b) => !b['deleted_at'] && inSpaceScope(b, spaceId) && linksTo(b, pid),
       ).length
       // #3830 — a page nothing links to is ABSENT, not 0: the backend's `GROUP
       // BY bl.target_id` never emits an empty group (callers default `?? 0`).
@@ -576,7 +570,7 @@ export const linksHandlers = {
       (b) =>
         !b['deleted_at'] &&
         inSpaceScope(b, spaceId) &&
-        contentLinksTo(b['content'] as string | null, targetId) &&
+        linksTo(b, targetId) &&
         (kind === null || classifyLinkKind(b['content'] as string | null, targetId) === kind),
     )
     // `COALESCE(tgt.page_id, tgt.id)` — the target's root page, whose own
@@ -643,6 +637,9 @@ export const linksHandlers = {
       if (pageSpace(parentId) !== spaceId) continue
       const content = (b['content'] as string) ?? ''
       for (const targetPageId of scanLinkTargets(content)) {
+        // `plc.source_page_id != plc.target_page_id`: a page's link to itself
+        // is no edge of the graph.
+        if (!linksTo(b, targetPageId) || targetPageId === parentId) continue
         // Ensure target is an existing non-deleted page
         const targetBlock = blocks.get(targetPageId)
         if (!targetBlock || targetBlock['block_type'] !== 'page' || targetBlock['deleted_at'])

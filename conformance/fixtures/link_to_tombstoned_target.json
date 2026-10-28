@@ -1,0 +1,301 @@
+{
+  "description": "#6054 — an edge is written when its source is indexed, and only to a live target: a `[[id]]` naming a block already in the trash gets no edge (`reindex_block_links_conn`'s `deleted_at IS NULL` guard), while an edge made before its target's delete survives it. Found by the differential fuzz: the mock derived both from content and answered the first.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "tag",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "doomed",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "see [[C1]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "kept",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "see [[C3]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 6,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [
+      {
+        "kind": "page_link",
+        "source_id": "B6",
+        "source_page_id": "B1",
+        "target_id": "B5"
+      }
+    ],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "trashed_target",
+      "returns": ["B3#block_type=content#content=doomed#parent_id=B1#position=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "trash_it",
+      "returns": ["B3#deleted_at=DELETED#descendants_affected=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "link_after_the_delete",
+      "returns": ["B4#block_type=content#content=see [[C1]]#parent_id=B1#position=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "live_target",
+      "returns": ["B5#block_type=content#content=kept#parent_id=B1#position=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "link_before_the_delete",
+      "returns": ["B6#block_type=content#content=see [[C3]]#parent_id=B1#position=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "trash_the_linked_target",
+      "returns": ["B5#deleted_at=DELETED#descendants_affected=1"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_after_the_delete",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_before_the_delete",
+      "rows": ["B6#parent_id=B1#page_id=B1#position=1#deleted_at=null"],
+      "total_count": null
+    }
+  ],
+  "name": "link_to_tombstoned_target",
+  "ops": [
+    {
+      "args": {
+        "blockType": "content",
+        "content": "doomed",
+        "index": 0,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "name": "trashed_target",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C1"
+      },
+      "command": "delete_block",
+      "name": "trash_it",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "see [[C1]]",
+        "index": 0,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "name": "link_after_the_delete",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "kept",
+        "index": 0,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "name": "live_target",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "see [[C3]]",
+        "index": 0,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "name": "link_before_the_delete",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C3"
+      },
+      "command": "delete_block",
+      "name": "trash_the_linked_target",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockId": "C1",
+        "limit": 50,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "get_backlinks",
+      "comment": "the target was in the trash when the link was written",
+      "expect_empty": true,
+      "name": "backlinks_after_the_delete"
+    },
+    {
+      "args": {
+        "blockId": "C3",
+        "limit": 50,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "get_backlinks",
+      "name": "backlinks_before_the_delete"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "tag",
+        "content": "tag",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
