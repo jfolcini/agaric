@@ -17,6 +17,7 @@ import {
   invalidOperationRejection,
   notFoundRejection,
   ownerSpaceOf,
+  pageRequestLimit,
   refInclusiveTags,
   validationRejection,
   readActiveSpaceScope,
@@ -367,6 +368,9 @@ export const tagsHandlers = {
     if (leaves.length === 0) {
       return { items: [], next_cursor: null, has_more: false, total_count: null }
     }
+    // `PageRequest::new` refuses the limit after that short-circuit and before
+    // any query runs; the mock then serves every match on one page.
+    pageRequestLimit(a['limit'])
     const mode = (a['mode'] as string) ?? 'or'
     const expr: TagExprNode =
       mode === 'and'
@@ -380,6 +384,7 @@ export const tagsHandlers = {
   // #1472 — nested boolean tag expression `(A AND B) OR (NOT C)` over IPC.
   query_by_tag_expr: (args) => {
     const a = args as Record<string, unknown>
+    pageRequestLimit(a['limit'])
     return evalTagQuery('query_by_tag_expr', a['expr'] as TagExprNode, a)
   },
 

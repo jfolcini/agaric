@@ -24,6 +24,7 @@ import {
 } from '@/lib/tauri-mock/__tests__/conformance-command'
 import {
   CONFORMANCE_SPACE_ID,
+  createdBlockIdsInOpOrder,
   type QueryResult,
   type QueryStep,
   relabelToken,
@@ -120,27 +121,6 @@ export interface Fixture {
 export function seedLabelToId(label: string): string {
   if (label.length >= 26) return label
   return label.padStart(26, '0')
-}
-
-/**
- * #4669 — the ids of blocks CREATED by the ops replayed so far, in op order,
- * read from the mock op_log's `create_block` entries. This is the mock twin of
- * the Rust runner's `read_created_block_ids_in_op_order`, and it is what makes
- * a `Cn` op-arg label resolvable (see `expandOpArgs`).
- */
-export function createdBlockIdsInOpOrder(): string[] {
-  const out: string[] = []
-  for (const entry of opLog) {
-    if (entry.op_type !== 'create_block') continue
-    let id: unknown
-    try {
-      id = (JSON.parse(entry.payload) as Record<string, unknown>)['block_id']
-    } catch {
-      continue // malformed payload: no create id to contribute
-    }
-    if (typeof id === 'string' && !out.includes(id)) out.push(id)
-  }
-  return out
 }
 
 /** Clear every mock store back to empty (no canonical browser-preview seed). */

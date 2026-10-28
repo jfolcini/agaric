@@ -12,12 +12,12 @@
 //! 2. [`chain_to_fixture`] renders both in the conformance fixture vocabulary,
 //!    every op a `via: "command"` op;
 //! 3. [`replay_fixture`] drives it through the REAL backend's commands, records
-//!    what each returned or refused, and snapshots;
+//!    what each returned or refused, snapshots, and runs the [`read_steps`];
 //! 4. [`MockBridge`] drives the SAME fixture, each op declaring the refusal the
 //!    backend recorded, through the TS mock;
-//! 5. the snapshots and the per-command records must be equal, and proptest
-//!    shrinks any mismatch to a minimal chain, which is written out as a
-//!    ready-to-commit fixture.
+//! 5. the snapshots, the per-command records and the read results must be
+//!    equal, and proptest shrinks any mismatch to a minimal chain, which is
+//!    written out as a ready-to-commit fixture.
 //!
 //! ## Why a child process
 //!
@@ -47,20 +47,22 @@
 //! the attachment ops (no mock handler and no fixture vocabulary),
 //! `SetProperty(space)` (see [`chain_to_fixture`]), `[[…]]`, `#[…]` and `((…))`
 //! tokens (the generator's content alphabet has no brackets, so `page_links`
-//! is always empty here — it is pinned by the `edit_then_move_link_survives`
-//! and `page_links_stats` fixtures instead), the read commands and the caches
-//! they serve, and the timestamps the snapshot omits. Of the refusals, it
-//! reaches the ones [`Invalid`] lists, plus the repeated `add_tag` and the
-//! unattached `remove_tag` that the generator's own tag ops draw. An
-//! out-of-range `limit` is not among them, because only a read takes one (the
-//! `query_history` and `query_search_blocks_modes` fixtures pin those
-//! refusals). The reached-command and refusal tallies the lane prints are the
+//! and every backlink read are always empty here — they are pinned by the
+//! `edit_then_move_link_survives` and `page_links_stats` fixtures instead), a
+//! `todo_state` (so `list_unfinished_tasks` answers nothing), and the
+//! timestamps the snapshot omits. The reads are the fixed [`read_steps`], so a
+//! read outside them, and the wall-clock `list_projected_agenda`, go
+//! uncompared. Of the refusals, it reaches the ones [`Invalid`] lists, the
+//! repeated `add_tag` and the unattached `remove_tag` that the generator's own
+//! tag ops draw, and an out-of-range `limit` on each read in [`LIMIT_CAPS`].
+//! The reached-command, refusal and read tallies the lane prints are the
 //! honest statement of what it did cover.
 
 use std::cell::RefCell;
 
 use super::conformance::replay_fixture;
 use super::conformance_command::{Declarations, relabel_records};
+use super::conformance_query::run_query_steps;
 use super::conformance_snapshot::canonical_label_map;
 use agaric_engine::proptest_db_harness::{op_chain_strategy, resolve_chain};
 use agaric_store::op::{OpPayload, SPACE_PROPERTY_KEY};
@@ -428,6 +430,184 @@ fn target_op(target: Target, label: &str) -> Value {
 }
 
 // ---------------------------------------------------------------------------
+// Reads after the chain
+// ---------------------------------------------------------------------------
+
+/// Why a read whose rows sort on the raw block id is compared as a set: the
+/// backend mints a ULID per create and the mock a local id, so the two orders
+/// of op-created rows are unrelated.
+const RAW_ID_ORDER: &str = "sorted by raw block id, which op-created rows do not share between the \
+                            stacks";
+
+/// [`RAW_ID_ORDER`], for a read whose rows sort on a column that ties across
+/// parents before they reach the id.
+const POSITION_TIE_ORDER: &str = "sorted by position across the whole page, so children of \
+                                  different parents tie and break on raw block id, which \
+                                  op-created rows do not share between the stacks";
+
+/// The reads that refuse a `limit` outside `[1, cap]` (invariant 10). Each is
+/// also in [`read_steps`] with a valid limit, which is the step a refusal is
+/// cloned from. `PageRequest::new` is the 200 of the five paginated listings.
+const LIMIT_CAPS: &[(&str, i64)] = &[
+    ("list_blocks", 100),
+    ("list_trash", 100),
+    ("list_pages_with_metadata", 100),
+    ("search_blocks", 100),
+    ("run_advanced_query", 200),
+    ("list_tags_by_prefix", 200),
+    ("get_backlinks", 200),
+    ("list_backlinks_grouped", 200),
+    ("list_unlinked_references", 200),
+    ("query_by_tags", 200),
+    ("list_unfinished_tasks", 200),
+];
+
+/// The read steps every generated chain ends with (#6054): the derived views
+/// the snapshot does not hold, through the corpus's own query vocabulary.
+///
+/// `created` is how many blocks the backend's ops made (`C1..`), `dates` the
+/// days the accepted ops wrote (what an agenda count can find), and `term` a
+/// word of the chain's content (what a search can find); random content and
+/// dates would never meet a fixed one. A wall-clock read
+/// (`list_projected_agenda`) is not among them: no fixture can pin it.
+fn read_steps(created: usize, dates: &[String], term: &str) -> Vec<Value> {
+    let scope = harness_scope();
+    let mut steps = vec![
+        json!({ "name": "pages", "command": "list_pages_with_metadata", "args": {
+            "filter": { "sort": "alphabetical", "spaceId": "$SPACE" }, "limit": 50,
+        }}),
+        json!({ "name": "tags", "command": "list_all_tags_in_space", "args": { "scope": scope } }),
+        json!({ "name": "tags_by_prefix", "command": "list_tags_by_prefix", "args": {
+            "prefix": "t", "limit": 50, "scope": scope,
+        }}),
+        json!({ "name": "children", "command": "list_blocks", "args": {
+            "request": { "parentId": SEED_PAGE, "limit": 100 }, "scope": scope,
+        }}),
+        json!({ "name": "backlink_counts", "command": "count_backlinks_batch", "args": {
+            "pageIds": [SEED_PAGE, SEED_TAG], "scope": scope,
+        }}),
+        json!({ "name": "tagged", "command": "query_by_tags", "unordered": RAW_ID_ORDER, "args": {
+            "tagIds": [SEED_TAG], "prefixes": [], "mode": "or", "includeInherited": true,
+            "limit": 100, "scope": scope,
+        }}),
+        json!({ "name": "agenda_counts", "command": "count_agenda_batch_by_source", "args": {
+            "dates": dates, "scope": scope,
+        }}),
+        json!({ "name": "unfinished", "command": "list_unfinished_tasks",
+            "unordered": "sorted by due or scheduled date, which several rows share, then by raw \
+                          block id, which op-created rows do not share between the stacks",
+            "args": {
+                "beforeDate": "2031-01-01", "todoStates": ["TODO"], "limit": 100, "scope": scope,
+            },
+        }),
+        json!({ "name": "search", "command": "search_blocks", "args": {
+            "query": term, "limit": 50,
+            "filter": { "scope": { "kind": "spaces", "space_ids": ["$SPACE"] } },
+        }}),
+        json!({ "name": "advanced", "command": "run_advanced_query", "unordered": RAW_ID_ORDER,
+            "args": { "request": { "limit": 100, "spaceId": "$SPACE" } },
+        }),
+        json!({ "name": "page_links", "command": "list_page_links", "args": { "scope": scope } }),
+        json!({ "name": "unlinked", "command": "list_unlinked_references",
+            "unordered": RAW_ID_ORDER,
+            "args": { "pageId": SEED_PAGE, "limit": 50, "scope": scope },
+        }),
+        json!({ "name": "trash", "command": "list_trash",
+            "unordered": "sorted by deleted_at, which each stack stamps from its own clock, then \
+                          by raw block id, which op-created rows do not share between the stacks",
+            "args": { "limit": 100, "scope": scope },
+        }),
+        json!({ "name": "trash_count", "command": "count_trash", "args": { "scope": scope } }),
+        json!({ "name": "subtree", "command": "load_page_subtree", "unordered": POSITION_TIE_ORDER,
+            "args": { "rootBlockId": SEED_PAGE, "scope": scope },
+        }),
+    ];
+    for seed in [SEED_PAGE, SEED_TAG] {
+        steps.push(
+            json!({ "name": format!("backlinks_{seed}"), "command": "get_backlinks",
+                "unordered": RAW_ID_ORDER,
+                "args": { "blockId": seed, "limit": 50, "scope": scope },
+            }),
+        );
+        steps.push(json!({ "name": format!("backlink_groups_{seed}"),
+            "command": "list_backlinks_grouped", "unordered": RAW_ID_ORDER,
+            "args": { "blockId": seed, "limit": 50, "scope": scope },
+        }));
+    }
+    let created = (1..=created).map(|n| format!("C{n}"));
+    for block in [SEED_PAGE.to_owned(), SEED_TAG.to_owned()]
+        .into_iter()
+        .chain(created)
+    {
+        for command in ["list_tags_for_block", "list_inherited_tags_for_block"] {
+            steps.push(
+                json!({ "name": format!("{command}_{block}"), "command": command,
+                    "args": { "blockId": block },
+                }),
+            );
+        }
+    }
+    let refusals: Vec<Value> = LIMIT_CAPS
+        .iter()
+        .flat_map(|&(command, cap)| {
+            let valid = steps
+                .iter()
+                .find(|step| step["command"] == command)
+                .unwrap_or_else(|| panic!("LIMIT_CAPS names {command}, which no read step runs"));
+            [0, cap + 1].map(|limit| {
+                let mut step = valid.clone();
+                step["name"] = json!(format!("{}_limit_{limit}", valid["name"].as_str().unwrap()));
+                let args = &mut step["args"];
+                let holder = if args.get("request").is_some() {
+                    &mut args["request"]
+                } else {
+                    args
+                };
+                holder["limit"] = json!(limit);
+                step["expect_error"] = json!("validation");
+                step["comment"] = json!(format!("a limit outside [1, {cap}] is refused"));
+                step
+            })
+        })
+        .collect();
+    steps.extend(refusals);
+    steps
+}
+
+/// The days the chain's accepted `set_property` ops wrote, sorted and once
+/// each.
+fn written_dates(fixture: &Value, records: &[Value]) -> Vec<String> {
+    let ops = fixture["ops"].as_array().expect("rendered ops");
+    let dates: std::collections::BTreeSet<String> = ops
+        .iter()
+        .zip(records)
+        .filter(|(op, record)| op["command"] == "set_property" && record["error"].is_null())
+        .filter_map(|(op, _)| {
+            op["args"]["value"]["value_date"]
+                .as_str()
+                .map(str::to_owned)
+        })
+        .collect();
+    dates.into_iter().collect()
+}
+
+/// The first word of three or more characters the chain wrote, the shortest
+/// a trigram search matches; a word nothing holds when it wrote none.
+fn search_term(fixture: &Value) -> String {
+    let ops = fixture["ops"].as_array().expect("rendered ops");
+    ops.iter()
+        .filter_map(|op| {
+            op["args"]["content"]
+                .as_str()
+                .or(op["args"]["toText"].as_str())
+        })
+        .flat_map(str::split_whitespace)
+        .find(|word| word.len() >= 3)
+        .unwrap_or("absent")
+        .to_owned()
+}
+
+// ---------------------------------------------------------------------------
 // Mock bridge (long-lived node child process)
 // ---------------------------------------------------------------------------
 
@@ -497,9 +677,9 @@ impl MockBridge {
         }
     }
 
-    /// Replay `fixture` through the mock and return its normalized snapshot and
-    /// command records, or the mock's own rejection message.
-    fn replay(&mut self, fixture: &Value) -> Result<(Value, Value), String> {
+    /// Replay `fixture` through the mock and return its normalized snapshot,
+    /// command records and read results, or the mock's own rejection message.
+    fn replay(&mut self, fixture: &Value) -> Result<MockRun, String> {
         writeln!(self.stdin, "{fixture}").map_err(|e| format!("write to mock bridge: {e}"))?;
         self.stdin
             .flush()
@@ -516,7 +696,11 @@ impl MockBridge {
         let response: Value = serde_json::from_str(&line)
             .map_err(|e| format!("parse mock response '{line}': {e}"))?;
         if response["ok"] == json!(true) {
-            Ok((response["snapshot"].clone(), response["records"].clone()))
+            Ok(MockRun {
+                snapshot: response["snapshot"].clone(),
+                records: response["records"].clone(),
+                queries: response["queries"].clone(),
+            })
         } else {
             Err(response["error"]
                 .as_str()
@@ -537,12 +721,28 @@ impl Drop for MockBridge {
 // The property
 // ---------------------------------------------------------------------------
 
-/// What the backend made of a generated chain: its snapshot, and the
-/// relabelled record of every op, as a committed fixture's `expected` and
-/// `expected_ops` hold them.
+/// What the backend made of a generated chain: its snapshot, the relabelled
+/// record of every op, and the result of every read step, as a committed
+/// fixture's `expected`, `expected_ops` and `expected_queries` hold them.
 struct BackendRun {
     snapshot: Value,
     records: Vec<Value>,
+    queries: Value,
+}
+
+/// The mock's answer to the same fixture, in the same three shapes.
+struct MockRun {
+    snapshot: Value,
+    records: Value,
+    queries: Value,
+}
+
+/// The indices of the read steps the mock answered differently.
+fn diverging_reads(backend: &Value, mock: &Value) -> Vec<usize> {
+    let backend = backend.as_array().map_or(&[][..], Vec::as_slice);
+    (0..backend.len())
+        .filter(|&i| mock.get(i) != Some(&backend[i]))
+        .collect()
 }
 
 /// Each op declares the refusal the backend recorded for it, so the mock's own
@@ -560,10 +760,15 @@ fn declare_refusals(fixture: &mut Value, records: &[Value]) {
 }
 
 /// Write a counter-example out as a ready-to-commit fixture: the generated
-/// chain plus the backend's snapshot and records as `expected` and
-/// `expected_ops`, so dropping it into `conformance/fixtures/` turns the shrunk
-/// divergence into a permanent regression test on BOTH runners.
-fn write_counterexample(fixture: &Value, backend: &BackendRun) -> PathBuf {
+/// chain plus the backend's snapshot, records and read results as `expected`,
+/// `expected_ops` and `expected_queries`, so dropping it into
+/// `conformance/fixtures/` turns the shrunk divergence into a permanent
+/// regression test on BOTH runners.
+///
+/// It keeps only the `reads` the mock answered differently, an empty one
+/// declared empty as the corpus requires. A mock that threw has no read
+/// results, so its counter-example keeps none and the ops carry it.
+fn write_counterexample(fixture: &Value, backend: &BackendRun, reads: &[usize]) -> PathBuf {
     let mut out = fixture.clone();
     out["description"] = json!(
         "#4669 — minimized counter-example from the differential-fuzz lane. \
@@ -572,6 +777,23 @@ fn write_counterexample(fixture: &Value, backend: &BackendRun) -> PathBuf {
     out["expected"] = backend.snapshot.clone();
     if !backend.records.is_empty() {
         out["expected_ops"] = json!(backend.records);
+    }
+    let obj = out.as_object_mut().expect("fixture object");
+    obj.remove("queries");
+    if !reads.is_empty() {
+        let mut steps = Vec::new();
+        let mut results = Vec::new();
+        for &i in reads {
+            let (mut step, result) = (fixture["queries"][i].clone(), backend.queries[i].clone());
+            if result["error"].is_null() && result["rows"] == json!([]) {
+                step["expect_empty"] = json!(true);
+                step["comment"] = json!("the backend answers nothing here and the mock did not");
+            }
+            steps.push(step);
+            results.push(result);
+        }
+        obj.insert("queries".into(), json!(steps));
+        obj.insert("expected_queries".into(), json!(results));
     }
     // `CARGO_TARGET_TMPDIR`, not `<repo>/target`: the latter is NOT gitignored
     // (only `src-tauri/target` is), so writing there left the counter-example
@@ -586,7 +808,8 @@ fn write_counterexample(fixture: &Value, backend: &BackendRun) -> PathBuf {
     path
 }
 
-/// The mock's snapshot of a generated op chain equals the real backend's.
+/// The mock's snapshot, command records and reads of a generated op chain
+/// equal the real backend's.
 ///
 /// See the module docs for the pipeline, the child-process rationale, and why
 /// this is `#[ignore]`d out of the per-PR lane.
@@ -600,6 +823,7 @@ fn mock_matches_backend_on_generated_op_chains_4669() {
     let bridge = RefCell::new(MockBridge::start());
     let reached: RefCell<BTreeMap<String, usize>> = RefCell::new(BTreeMap::new());
     let refused: RefCell<BTreeMap<String, usize>> = RefCell::new(BTreeMap::new());
+    let read: RefCell<BTreeMap<String, usize>> = RefCell::new(BTreeMap::new());
     let mut config = Config::default();
     if std::env::var_os("PROPTEST_CASES").is_none() {
         config.cases = DEFAULT_CASES;
@@ -624,9 +848,21 @@ fn mock_matches_backend_on_generated_op_chains_4669() {
             let replay = replay_fixture(&fixture, FUZZ_FIXTURE, Declarations::Recorded).await;
             let labels = canonical_label_map(&replay.canonical_order);
             let records = relabel_records(&replay.op_records, &labels);
+            let records = records.as_array().cloned().unwrap_or_default();
+            // The reads come after the ops have run, because which blocks they
+            // name is what the backend's ops created.
+            let created = replay.canonical_order.len() - seed()["blocks"].as_array().unwrap().len();
+            let steps = read_steps(
+                created,
+                &written_dates(&fixture, &records),
+                &search_term(&fixture),
+            );
+            fixture["queries"] = json!(steps);
+            let queries = run_query_steps(&replay.pool, &fixture, &labels).await;
             BackendRun {
                 snapshot: replay.snapshot,
-                records: records.as_array().cloned().unwrap_or_default(),
+                records,
+                queries,
             }
         });
         declare_refusals(&mut fixture, &backend.records);
@@ -642,26 +878,58 @@ fn mock_matches_backend_on_generated_op_chains_4669() {
             }
         }
 
-        let (mock_snapshot, mock_records) =
-            bridge.borrow_mut().replay(&fixture).map_err(|error| {
-                let path = write_counterexample(&fixture, &backend);
-                TestCaseError::fail(format!(
-                    "the mock diverged from the backend's record of a command: {error}\n\
-                     counter-example written to {}",
-                    path.display()
-                ))
-            })?;
+        let mock = bridge.borrow_mut().replay(&fixture).map_err(|error| {
+            let path = write_counterexample(&fixture, &backend, &[]);
+            TestCaseError::fail(format!(
+                "the mock diverged from the backend's record of a command: {error}\n\
+                 counter-example written to {}",
+                path.display()
+            ))
+        })?;
+        for (step, result) in fixture["queries"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .zip(backend.queries.as_array().into_iter().flatten())
+        {
+            // A grouped read always carries its `filtered#count` trailer and
+            // `count_trash` its count, so a zero one is no answer.
+            if result["rows"].as_array().is_some_and(|rows| {
+                rows.iter().any(|row| {
+                    let row = row.as_str().unwrap_or_default();
+                    !row.starts_with("filtered#count=0#") && row != "count_trash#value=0"
+                })
+            }) {
+                let command = step["command"].as_str().expect("read command").to_owned();
+                *read.borrow_mut().entry(command).or_default() += 1;
+            }
+        }
 
         let records = json!(backend.records);
-        if mock_snapshot == backend.snapshot && mock_records == records {
+        if mock.snapshot == backend.snapshot
+            && mock.records == records
+            && mock.queries == backend.queries
+        {
             return Ok(());
         }
-        let path = write_counterexample(&fixture, &backend);
+        let reads = diverging_reads(&backend.queries, &mock.queries);
+        let path = write_counterexample(&fixture, &backend, &reads);
+        let reads: Vec<String> = reads
+            .iter()
+            .map(|&i| {
+                format!(
+                    "{}\n    backend: {}\n    mock:    {}",
+                    fixture["queries"][i]["name"], backend.queries[i], mock.queries[i]
+                )
+            })
+            .collect();
         Err(TestCaseError::fail(format!(
-            "mock ⇄ backend divergence\n  backend: {} {records}\n  mock:    {mock_snapshot} \
-             {mock_records}\ncounter-example written to {} — move it into conformance/fixtures/ \
-             to pin it",
+            "mock ⇄ backend divergence\n  backend: {} {records}\n  mock:    {} {}\n  \
+             diverging reads: {reads:#?}\ncounter-example written to {} — move it into \
+             conformance/fixtures/ to pin it",
             backend.snapshot,
+            mock.snapshot,
+            mock.records,
             path.display()
         )))
     });
@@ -680,6 +948,10 @@ fn mock_matches_backend_on_generated_op_chains_4669() {
     eprintln!("#6054 and the backend refused, by command and kind:");
     for (refusal, count) in &refused {
         eprintln!("  {refusal}: {count}");
+    }
+    eprintln!("#6054 and the reads that answered rows, by command and case count:");
+    for (command, count) in &read.into_inner() {
+        eprintln!("  {command}: {count}");
     }
 
     if let Err(error) = result {

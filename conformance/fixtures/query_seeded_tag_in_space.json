@@ -1,0 +1,102 @@
+{
+  "description": "#6054 — a tag seeded at the root is in the test space for every read, as a tag `create_block` makes is. Found by the differential fuzz's read leg: `run_advanced_query` serves it on the backend, where the stamp gives it `space_id`, and the mock left it out, because its stamp wrote the `space` property on pages alone; and `list_all_tags_in_space` missed it on the backend, because the raw seed never reached `tags_cache`.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "tag",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 0,
+      "ops": []
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "whole_space",
+      "rows": ["B2", "B1"],
+      "total_count": 2
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "tags",
+      "rows": ["B2#name=tag#usage_count=0"],
+      "total_count": null
+    }
+  ],
+  "name": "query_seeded_tag_in_space",
+  "ops": [],
+  "queries": [
+    {
+      "args": {
+        "request": {
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "name": "whole_space"
+    },
+    {
+      "args": {
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_all_tags_in_space",
+      "name": "tags"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "tag",
+        "content": "tag",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

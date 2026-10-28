@@ -11,11 +11,14 @@
  *
  * Protocol — one JSON object per line, in and out:
  *
- *   in   {"name": …, "seed": {…}, "ops": […]}   (a `Fixture`, minus `expected`)
- *   out  {"ok": true,  "snapshot": {…}, "records": […]}
+ *   in   {"name": …, "seed": {…}, "ops": […], "queries": […]}   (a `Fixture`, minus `expected`)
+ *   out  {"ok": true,  "snapshot": {…}, "records": […], "queries": […]}
  *   out  {"ok": false, "error": "…"}
  *
- * `records` is one entry per `via: "command"` op, as `expected_ops` holds it.
+ * `records` is one entry per `via: "command"` op, as `expected_ops` holds it,
+ * and `queries` one per read step, as `expected_queries` does. The reads run
+ * after the ops and a second space stamp, as the corpus's query leg runs them
+ * (`replayFixtureInSpace`), because the Rust runner stamps again after the ops.
  * Each op arrives declaring the refusal the backend recorded for it (#6054), so
  * a mock that refuses differently fails its declaration check and comes back as
  * `ok: false` rather than killing the process; the Rust side reports it as the
@@ -29,20 +32,25 @@
 
 import { createInterface } from 'node:readline'
 
+import { runQuerySteps, stampMockSpace } from '@/lib/tauri-mock/__tests__/conformance-query'
 import {
+  canonicalOrder,
   type Fixture,
   replayFixtureWithRecords,
 } from '@/lib/tauri-mock/__tests__/conformance-replay'
+import { canonicalLabelMap } from '@/lib/tauri-mock/__tests__/conformance-snapshot'
 
-const rl = createInterface({ input: process.stdin, terminal: false })
+async function answer(fixture: Fixture): Promise<Record<string, unknown>> {
+  const replay = replayFixtureWithRecords(fixture)
+  stampMockSpace()
+  const labels = canonicalLabelMap(canonicalOrder(fixture))
+  return { ok: true, ...replay, queries: await runQuerySteps(fixture.queries ?? [], labels) }
+}
 
-rl.on('line', (line: string) => {
-  const trimmed = line.trim()
-  if (trimmed.length === 0) return
+async function respond(trimmed: string): Promise<void> {
   let response: string
   try {
-    const fixture = JSON.parse(trimmed) as Fixture
-    response = JSON.stringify({ ok: true, ...replayFixtureWithRecords(fixture) })
+    response = JSON.stringify(await answer(JSON.parse(trimmed) as Fixture))
   } catch (error) {
     // A mock rejection is `{ kind, message }`, a JS throw is an `Error`, and a
     // parse failure is a `SyntaxError`. Render all three as one line so the
@@ -52,4 +60,14 @@ rl.on('line', (line: string) => {
     response = JSON.stringify({ ok: false, error: message })
   }
   process.stdout.write(`${response}\n`)
+}
+
+const rl = createInterface({ input: process.stdin, terminal: false })
+
+// The Rust side writes the next request only after reading this one's answer,
+// so two answers never interleave.
+rl.on('line', (line: string) => {
+  const trimmed = line.trim()
+  if (trimmed.length === 0) return
+  void respond(trimmed)
 })
