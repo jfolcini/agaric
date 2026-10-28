@@ -154,7 +154,7 @@ export function useBlockSlashCommands({
     pageStore,
     t,
   })
-  const handleListStyleSyntax = useListStyleSyntax({ focusedBlockId, t })
+  const handleListStyleSyntax = useListStyleSyntax({ focusedBlockId, t, pageStore })
   const [tablePickerOpen, setTablePickerOpen] = useState(false)
   const openTablePicker = () => setTablePickerOpen(true)
 

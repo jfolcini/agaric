@@ -12,7 +12,6 @@
 import type { Editor } from '@tiptap/react'
 import { useMemo } from 'react'
 
-import { clearTaskStates } from '@/components/block-tree/use-block-multi-select'
 import {
   applyContentEdit,
   readCurrentContent,
@@ -29,6 +28,7 @@ import { EMBED_TOKEN_PREFIX } from '@/lib/embed-token'
 import { listStyleForBlockType, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { clearTaskStates } from '@/stores/page-blocks'
 
 /**
  * A heading, a code block, a quote or a callout is not a list: these commands

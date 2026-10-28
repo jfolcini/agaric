@@ -77,6 +77,7 @@ vi.mock('@/lib/bindings', async () => {
       listPropertyDefs: mockListPropertyDefs,
       setProperty: mockSetProperty,
       setTodoState: mockSetTodoState,
+      getBatchProperties: () => Promise.resolve({ status: 'ok', data: {} }),
     },
   }
 })

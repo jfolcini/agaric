@@ -142,7 +142,7 @@ import { searchPropertyKeys } from '@/lib/slash-commands'
 import type { FlatBlock } from '@/lib/tree-utils'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
-import { usePageBlockStoreApi } from '@/stores/page-blocks'
+import { clearTaskStates, usePageBlockStoreApi } from '@/stores/page-blocks'
 import { notifyUndoNewAction } from '@/stores/page-blocks-reducers'
 import { useSpaceStore } from '@/stores/space'
 
@@ -845,6 +845,8 @@ function PageModeDocument({
           try {
             await setListStyle(id, style)
             written = style
+            // A task is a list kind (#5691 D3): a typed `- ` or `1. ` takes the task state off.
+            if (style !== 'none') await clearTaskStates(pageStore, [id])
           } catch (err) {
             logger.error('PageModeEditor', 'Failed to write a list style', { id, style }, err)
             notify.error(

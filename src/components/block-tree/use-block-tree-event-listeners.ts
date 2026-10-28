@@ -32,7 +32,6 @@ import type { StoreApi } from 'zustand'
 
 import { pasteIntoBlock, type PastePayload } from '@/components/block-tree/paste-into-block'
 import type { DatePickerMode } from '@/components/block-tree/use-block-date-picker'
-import { clearTaskStates } from '@/components/block-tree/use-block-multi-select'
 import { setBlockPriority } from '@/components/block-tree/use-block-properties'
 import {
   applyContentEdit,
@@ -49,7 +48,7 @@ import { listStyleForBlockType, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { type BlockCommandHandler, registerBlockCommandTarget } from '@/stores/block-command-bus'
-import type { PageBlockState } from '@/stores/page-blocks'
+import { clearTaskStates, type PageBlockState } from '@/stores/page-blocks'
 
 /** Known callout variants (mirrors `CALLOUT_CONFIG` in RichContentRenderer). */
 const CALLOUT_TYPES = new Set(['info', 'warning', 'tip', 'error', 'note'])

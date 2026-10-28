@@ -119,6 +119,33 @@ export function addOwnedBlockListener<K extends keyof DocumentEventMap>(
   return () => document.removeEventListener(type, listener, options)
 }
 
+/**
+ * Clear the task state of those of `ids` that hold one, in one IPC, as making
+ * them bulleted or numbered does (#5691 D3: a task is a third list kind,
+ * exclusive with bulleted and numbered). Call it once the list style is
+ * written, so a refused write clears nothing. Resolves whether it cleared
+ * them all; a failure is logged and told.
+ */
+export async function clearTaskStates(
+  pageStore: StoreApi<PageBlockState>,
+  ids: readonly string[],
+): Promise<boolean> {
+  const { blocksById } = pageStore.getState()
+  const tasks = new Set(ids.filter((id) => (blocksById.get(id)?.todo_state ?? null) !== null))
+  if (tasks.size === 0) return true
+  try {
+    unwrap(await commands.setTodoStateBatch([...tasks], null))
+  } catch (err) {
+    logger.error('BlockTree', 'Failed to clear the task states of new list blocks', { ids }, err)
+    notify.error(i18n.t('blockTree.setTaskStateFailed'))
+    return false
+  }
+  pageStore.setState((s) => ({
+    blocks: s.blocks.map((b) => (tasks.has(b.id) ? { ...b, todo_state: null } : b)),
+  }))
+  return true
+}
+
 // ── Store factory ────────────────────────────────────────────────────────
 
 export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {

@@ -6,7 +6,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { act, renderHook } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import type { TFunction } from 'i18next'
 import { createElement, type ReactNode } from 'react'
 import { toast } from 'sonner'
@@ -15,16 +15,21 @@ import type { StoreApi } from 'zustand'
 
 import { makeBlock, makeBlockRow, makePropertyRow } from '@/__tests__/fixtures'
 import { echoEditBlock, stubInvoke, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
-import {
-  clearTaskStates,
-  setTodoStateOnBlocks,
-} from '@/components/block-tree/use-block-multi-select'
+import { setTodoStateOnBlocks } from '@/components/block-tree/use-block-multi-select'
 import { useBlockProperties } from '@/components/block-tree/use-block-properties'
 import { makeSyntheticCtx } from '@/components/block-tree/use-block-slash-commands/__tests__/test-utils'
 import { useSlashCommandProperty } from '@/components/block-tree/use-block-slash-commands/useSlashCommandProperty'
 import { useSlashCommandStructural } from '@/components/block-tree/use-block-slash-commands/useSlashCommandStructural'
+import { useCheckboxSyntax } from '@/hooks/useCheckboxSyntax'
+import { useListStyleSyntax } from '@/hooks/useListStyleSyntax'
 import { LIST_STYLE_KEY } from '@/lib/list-style'
-import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
+import { bumpFlushSeq, commitCheckboxState } from '@/stores/inline-property-commit'
+import {
+  clearTaskStates,
+  createPageBlockStore,
+  PageBlockContext,
+  type PageBlockState,
+} from '@/stores/page-blocks'
 
 vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
 
@@ -45,6 +50,7 @@ function setTodo(store: StoreApi<PageBlockState>, state: string | null, id?: str
 }
 
 const todoOf = (id: string) => pageStore.getState().blocksById.get(id)?.todo_state ?? null
+const names = () => mockedInvoke.mock.calls.map(([name]) => name)
 const calls = (command: string) =>
   mockedInvoke.mock.calls.filter(([name]) => name === command).map(([, args]) => args)
 
@@ -275,5 +281,89 @@ describe('slash commands', () => {
     await turnInto?.(ctx, { id: 'turn-bullet-list', label: 'Bullet list' })
     expect(calls('set_todo_state_batch')).toEqual([{ blockIds: ['BLOCK_1'], state: null }])
     expect(store.getState().blocksById.get('BLOCK_1')?.todo_state).toBeNull()
+  })
+})
+
+describe('typed list kinds', () => {
+  const typedList = (style: 'bullet' | 'ordered') => {
+    const { result } = renderHook(() =>
+      useListStyleSyntax({ focusedBlockId: 'BLOCK_2', t, pageStore }),
+    )
+    act(() => result.current(style))
+  }
+  const typedCheckbox = (id: string, state: 'TODO' | 'DOING') => {
+    const { result } = renderHook(() =>
+      useCheckboxSyntax({ focusedBlockId: id, rootParentId: 'PAGE_1', pageStore, t }),
+    )
+    act(() => result.current(state))
+  }
+  const committedCheckbox = (id: string) =>
+    commitCheckboxState({
+      blockId: id,
+      content: '[ ] one',
+      cleanContent: 'one',
+      todoState: 'TODO',
+      mySeq: bumpFlushSeq(id),
+      edit: () => Promise.resolve(true),
+      pageStore,
+      rootParentId: null,
+    })
+
+  it('`- ` typed on a task makes it bulleted, then clears its task state', async () => {
+    typedList('bullet')
+
+    await waitFor(() => expect(todoOf('BLOCK_2')).toBeNull())
+    expect(names()).toEqual(['set_property', 'set_todo_state_batch'])
+    expect(calls('set_todo_state_batch')).toEqual([{ blockIds: ['BLOCK_2'], state: null }])
+  })
+
+  it('a refused `1. ` leaves the task', async () => {
+    stub({ set_property: () => Promise.reject(new Error('refused')) })
+
+    typedList('ordered')
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1))
+    expect(names()).toEqual(['set_property'])
+    expect(todoOf('BLOCK_2')).toBe('TODO')
+  })
+
+  it('`[ ] ` typed on a bulleted block makes it a task, then clears its list style', async () => {
+    typedCheckbox('BLOCK_1', 'TODO')
+
+    await waitFor(() => expect(calls('delete_property')).toHaveLength(1))
+    expect(names()).toEqual(['set_todo_state', 'get_batch_properties', 'delete_property'])
+    expect(calls('delete_property')).toEqual([{ blockId: 'BLOCK_1', key: LIST_STYLE_KEY }])
+  })
+
+  it('a refused `[ ] `, or one on a task already, clears no list style', async () => {
+    stub({ set_todo_state: () => Promise.reject(new Error('refused')) })
+    typedCheckbox('BLOCK_1', 'TODO')
+    await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1))
+    expect(names()).toEqual(['set_todo_state'])
+
+    stub()
+    mockedInvoke.mockClear()
+    typedCheckbox('BLOCK_2', 'DOING')
+    await waitFor(() => expect(todoOf('BLOCK_2')).toBe('DOING'))
+    await act(async () => {})
+    expect(names()).toEqual(['set_todo_state'])
+  })
+
+  it('a `[ ] ` left in the text and committed clears the list style after the state', async () => {
+    await expect(committedCheckbox('BLOCK_1')).resolves.toBe(true)
+
+    expect(names()).toEqual(['set_todo_state', 'get_batch_properties', 'delete_property'])
+    expect(todoOf('BLOCK_1')).toBe('TODO')
+  })
+
+  it('a refused commit, or one on a task already, clears no list style', async () => {
+    stub({ set_todo_state: () => Promise.reject(new Error('refused')) })
+    await committedCheckbox('BLOCK_1')
+    expect(names()).toEqual(['set_todo_state'])
+
+    stub()
+    mockedInvoke.mockClear()
+    await committedCheckbox('BLOCK_2')
+    expect(names()).toEqual(['set_todo_state'])
   })
 })

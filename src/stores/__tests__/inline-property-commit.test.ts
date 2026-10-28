@@ -192,6 +192,7 @@ describe('commitCheckboxState — a typed `- [x]` on a repeating task (#5285)', 
     stubInvoke(vi.mocked(invoke), {
       set_todo_state: () => makeBlockRow({ id: 'BLOCK_1', todo_state: 'DONE' }),
       get_property: (args) => (args['key'] === 'repeat' ? repeat : null),
+      get_batch_properties: () => ({}),
       // The page as the backend holds it after the DONE: the block and its next occurrence.
       load_page_subtree: () => ({
         blocks: [

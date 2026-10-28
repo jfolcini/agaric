@@ -51,10 +51,7 @@ import { useBlockDnD } from '@/components/block-tree/use-block-dnd'
 import { useBlockFlush } from '@/components/block-tree/use-block-flush'
 import { useBlockLinkResolve } from '@/components/block-tree/use-block-link-resolve'
 import { MOUNT_LIMIT_STEP, useBlockMountLimit } from '@/components/block-tree/use-block-mount-limit'
-import {
-  clearTaskStates,
-  useBlockMultiSelect,
-} from '@/components/block-tree/use-block-multi-select'
+import { useBlockMultiSelect } from '@/components/block-tree/use-block-multi-select'
 import { useBlockNavigateToLink } from '@/components/block-tree/use-block-navigate-to-link'
 import { useBlockProperties } from '@/components/block-tree/use-block-properties'
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
@@ -105,7 +102,12 @@ import { getDragDescendants } from '@/lib/tree-utils'
 import { mountedScopedIds } from '@/lib/zoom-scope'
 import { selectCursorBlockId, useBlockStore } from '@/stores/blocks'
 import { deleteBlockIfLeakedEmpty } from '@/stores/empty-block-cleanup'
-import { storeOwnsBlock, usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
+import {
+  clearTaskStates,
+  storeOwnsBlock,
+  usePageBlockStore,
+  usePageBlockStoreApi,
+} from '@/stores/page-blocks'
 import type { DeleteBlockOptions } from '@/stores/page-blocks-types'
 import { useSpaceStore } from '@/stores/space'
 

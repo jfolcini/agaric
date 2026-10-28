@@ -1,7 +1,16 @@
 import type { Locator, Page } from '@playwright/test'
 
 import { blockRow, runSlashCommand } from './domain'
-import { activeMenu, expect, focusBlockById, ipc, saveBlock, test, waitForBoot } from './helpers'
+import {
+  activeMenu,
+  expect,
+  focusBlockById,
+  ipc,
+  replaceEditorText,
+  saveBlock,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * A task is a third list kind beside bulleted and numbered (#5691 D3), in
@@ -51,6 +60,29 @@ async function seed(page: Page, title: string): Promise<string[]> {
   return ids
 }
 
+/** Put page mode's caret at the start or the end of block `index`'s text. */
+function caretIn(page: Page, index: number, at: 'start' | 'end'): Promise<unknown> {
+  return page.evaluate(
+    ({ selector, i, start }) => {
+      const { editor } = document.querySelector(selector) as HTMLElement & {
+        editor: {
+          state: { doc: { child: (n: number) => { nodeSize: number } } }
+          commands: { setTextSelection: (pos: number) => boolean }
+          view: { focus: () => void }
+        }
+      }
+      let pos = 0
+      for (let k = 0; k < i; k += 1) pos += editor.state.doc.child(k).nodeSize
+      editor.commands.setTextSelection(
+        start ? pos + 2 : pos + editor.state.doc.child(i).nodeSize - 2,
+      )
+      editor.view.focus()
+      return new Promise((resolve) => setTimeout(resolve, 20))
+    },
+    { selector: EDITOR, i: index, start: at === 'start' },
+  )
+}
+
 async function openViaPalette(page: Page, title: string): Promise<void> {
   await page.keyboard.press('Escape')
   await expect
@@ -62,6 +94,16 @@ async function openViaPalette(page: Page, title: string): Promise<void> {
   await page.keyboard.press('Enter')
   await expect(page.locator('[aria-label="Page title"]')).toHaveText(title)
   await expect(page.getByTestId('view-transition-wrapper')).toHaveCSS('opacity', '1')
+}
+
+/** Open the seeded page `title`, in page mode. */
+async function openInPageMode(page: Page, title: string): Promise<void> {
+  await openViaPalette(page, title)
+  await page
+    .getByRole('radiogroup', { name: 'Editing mode' })
+    .getByRole('radio', { name: 'Page' })
+    .click()
+  await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(6)
 }
 
 /** Press a toolbar button, from the bar or, when the bar is narrow, its More menu. */
@@ -85,6 +127,13 @@ const listStyles = (page: Page, ids: readonly string[]) =>
             blockId,
           })
         ).find((row) => row.key === 'listStyle')?.value_text ?? null,
+    ),
+  )
+
+const contents = (page: Page, ids: readonly string[]) =>
+  Promise.all(
+    ids.map(
+      async (blockId) => (await ipc<{ content: string }>(page, 'get_block', { blockId })).content,
     ),
   )
 
@@ -186,33 +235,8 @@ test.describe('a task is a list kind, exclusive with bulleted and numbered @edit
     const title = 'Page task kinds'
     const ids = await seed(page, title)
     const blocks = () => ids.map((id) => page.locator(`${EDITOR} [data-page-block-id="${id}"]`))
-    /** Put the caret at the end of block `index`'s text. */
-    const caretAtEnd = (index: number) =>
-      page.evaluate(
-        ({ selector, i }) => {
-          const { editor } = document.querySelector(selector) as HTMLElement & {
-            editor: {
-              state: { doc: { child: (n: number) => { nodeSize: number } } }
-              commands: { setTextSelection: (pos: number) => boolean }
-              view: { focus: () => void }
-            }
-          }
-          let pos = 0
-          for (let k = 0; k <= i; k += 1) pos += editor.state.doc.child(k).nodeSize
-          editor.commands.setTextSelection(pos - 2)
-          editor.view.focus()
-          return new Promise((resolve) => setTimeout(resolve, 20))
-        },
-        { selector: EDITOR, i: index },
-      )
-    const inPageMode = async () => {
-      await openViaPalette(page, title)
-      await page
-        .getByRole('radiogroup', { name: 'Editing mode' })
-        .getByRole('radio', { name: 'Page' })
-        .click()
-      await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(6)
-    }
+    const caretAtEnd = (index: number) => caretIn(page, index, 'end')
+    const inPageMode = () => openInPageMode(page, title)
 
     await inPageMode()
     // The block seeded with both shows only its checkbox.
@@ -249,5 +273,93 @@ test.describe('a task is a list kind, exclusive with bulleted and numbered @edit
     expect(await listStyles(page, ids)).toEqual([null, null, 'bullet', 'bullet', 'ordered', null])
     expect(await todos(page, ids)).toEqual(['TODO', 'TODO', 'TODO', null, null, 'TODO'])
     await page.screenshot({ path: 'test-results/task-list-kind-page.png' })
+  })
+  test('block mode: a typed `- ` or `1. ` takes a task state off, and a typed `[ ] ` a list style', async ({
+    page,
+  }) => {
+    const title = 'Block typed kinds'
+    const ids = await seed(page, title)
+    const [, beta, , delta, epsilon, zeta] = ids as [string, string, string, string, string, string]
+    const rows = () => ids.map((id) => blockRow(page, id))
+    /** Empty block `id`'s text, then type `text` into it key by key, and leave it. */
+    const typeInto = async (id: string, text: string) => {
+      await focusBlockById(page, id)
+      await replaceEditorText(page, '')
+      await page.keyboard.type(text, { delay: 30 })
+      await saveBlock(page, 'Escape')
+    }
+    await openViaPalette(page, title)
+    await expect(blockRow(page, zeta)).toBeVisible()
+    await expect.poll(() => shown(rows())).toEqual(['•', '•', '☐', '☐', '☐', '☐'])
+
+    // A checkbox typed on a bulleted block.
+    await typeInto(beta, '[ ] beta')
+    // A bullet and a number typed on tasks.
+    await typeInto(delta, '- delta')
+    await typeInto(epsilon, '1. epsilon')
+    await expect.poll(() => todos(page, ids)).toEqual([null, 'TODO', 'TODO', null, null, 'TODO'])
+    await expect
+      .poll(() => listStyles(page, ids))
+      .toEqual(['bullet', null, 'bullet', 'bullet', 'ordered', null])
+
+    await openViaPalette(page, 'Getting Started')
+    await openViaPalette(page, title)
+    await expect(blockRow(page, zeta)).toBeVisible()
+    await expect.poll(() => shown(rows())).toEqual(['•', '☐', '☐', '•', '1.', '☐'])
+    expect(await listStyles(page, ids)).toEqual([
+      'bullet',
+      null,
+      'bullet',
+      'bullet',
+      'ordered',
+      null,
+    ])
+    expect(await todos(page, ids)).toEqual([null, 'TODO', 'TODO', null, null, 'TODO'])
+    expect(await contents(page, ids)).toEqual([
+      'alpha',
+      'beta',
+      'gamma',
+      'delta',
+      'epsilon',
+      'zeta',
+    ])
+  })
+
+  test('page mode: a typed `- ` or `1. ` takes a task state off, and a typed `[ ] ` a list style', async ({
+    page,
+  }) => {
+    const title = 'Page typed kinds'
+    const ids = await seed(page, title)
+    const blocks = () => ids.map((id) => page.locator(`${EDITOR} [data-page-block-id="${id}"]`))
+    await openInPageMode(page, title)
+    await expect.poll(() => shown(blocks())).toEqual(['•', '•', '☐', '☐', '☐', '☐'])
+
+    // A checkbox typed on a bulleted block, made its state once the caret leaves it.
+    await caretIn(page, 1, 'start')
+    await page.keyboard.type('[ ] ', { delay: 30 })
+    // A bullet and a number typed on tasks.
+    await caretIn(page, 3, 'start')
+    await page.keyboard.type('- D', { delay: 30 })
+    await caretIn(page, 4, 'start')
+    await page.keyboard.type('1. E', { delay: 30 })
+    await caretIn(page, 0, 'end')
+    await expect.poll(() => todos(page, ids)).toEqual([null, 'TODO', 'TODO', null, null, 'TODO'])
+    await expect
+      .poll(() => listStyles(page, ids))
+      .toEqual(['bullet', null, 'bullet', 'bullet', 'ordered', null])
+    await expect.poll(() => shown(blocks())).toEqual(['•', '☐', '☐', '•', '1.', '☐'])
+
+    await openViaPalette(page, 'Getting Started')
+    await openInPageMode(page, title)
+    await expect.poll(() => shown(blocks())).toEqual(['•', '☐', '☐', '•', '1.', '☐'])
+    expect(await listStyles(page, ids)).toEqual([
+      'bullet',
+      null,
+      'bullet',
+      'bullet',
+      'ordered',
+      null,
+    ])
+    expect(await todos(page, ids)).toEqual([null, 'TODO', 'TODO', null, null, 'TODO'])
   })
 })

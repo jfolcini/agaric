@@ -49,6 +49,7 @@ describe('runUnmountFlush classifies the edit against the loaded content (#5160)
         }),
         set_property: () => undefined,
         set_todo_state: () => undefined,
+        get_batch_properties: () => ({}),
       }),
     )
   })
@@ -135,6 +136,7 @@ describe('settlePendingSaves', () => {
             total_count: null,
           }),
           [ipc]: () => answer.promise,
+          get_batch_properties: () => ({}),
         }),
       )
       const { result, edit } = run('', line)
@@ -283,6 +285,7 @@ describe('one leave commits every kind the edit typed, as page mode does', () =>
           calls.push(`todo:${args['state'] as string}`)
           return undefined
         },
+        get_batch_properties: () => ({}),
         get_property_def: () => null,
         list_property_defs: () => ({
           items: [],

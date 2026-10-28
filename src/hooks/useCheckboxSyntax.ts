@@ -6,7 +6,8 @@
  * Extracted from `useBlockSlashCommands` so the main orchestrator stays
  * focused on slash-command dispatch. Mirrors the TODO/DONE logic from the
  * `/todo` and `/done` slash commands, including the F-37 dependency warning
- * on completion.
+ * on completion. A task is a list kind (#5691 D3): once the state is written,
+ * a block that held none loses its list style.
  */
 
 import type { TFunction } from 'i18next'
@@ -15,6 +16,7 @@ import type { StoreApi } from 'zustand'
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import { clearListStyles } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { reloadIfRepeating } from '@/lib/repeat-utils'
@@ -55,6 +57,7 @@ export function useCheckboxSyntax({
         .then(unwrap)
         .then(() => {
           if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
+          if (priorTodoState === null) void clearListStyles([focusedBlockId])
           // F-37: warn when completing a task that has unresolved dependencies.
           // Single-key PK lookup; the check only
           // needs the `blocked_by` row, not the full vocabulary.

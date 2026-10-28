@@ -39,6 +39,7 @@ vi.mock('@/lib/bindings', async () => {
       // Checkbox-syntax DONE path reads `blocked_by` via the single-key
       // `get_property` command.
       getProperty: vi.fn(),
+      getBatchProperties: vi.fn(() => Promise.resolve({ status: 'ok', data: {} })),
     },
   }
 })
