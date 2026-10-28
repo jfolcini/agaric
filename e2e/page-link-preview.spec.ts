@@ -32,6 +32,37 @@ test.describe('Page-link preview @editor @pages', () => {
     await page.keyboard.up('Control')
   })
 
+  // Placing the preview again once its blocks land used to hide it until the
+  // placement resolved: a blink too brief to poll for, so the page records the
+  // peek's visibility at every DOM change instead.
+  test('a shown preview stays shown while its blocks land', async ({ page }) => {
+    await page.evaluate(() => {
+      const seen: string[] = []
+      Object.assign(window, { peekVisibility: seen })
+      new MutationObserver(() => {
+        const peek = document.querySelector<HTMLElement>('[data-testid="ref-peek"]')
+        if (peek) seen.push(peek.style.visibility)
+      }).observe(document.body, { subtree: true, childList: true, attributes: true })
+    })
+    const chip = page
+      .locator('[data-testid="block-static"] [data-testid="block-link-chip"]')
+      .filter({ hasText: 'Getting Started' })
+    await chip.hover()
+    await page.keyboard.down('Control')
+
+    await expect(page.locator(PEEK)).toContainText('Welcome to Agaric!')
+    await page.evaluate(
+      () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+    )
+    const seen = await page.evaluate(
+      () => (window as unknown as { peekVisibility: string[] }).peekVisibility,
+    )
+    const shown = seen.indexOf('')
+    expect(shown).toBeGreaterThan(-1)
+    expect(seen.slice(shown)).not.toContain('hidden')
+    await page.keyboard.up('Control')
+  })
+
   // The pointer rests on a link while the writer types: Ctrl+← is a chord, not
   // a request to preview.
   test('a Ctrl shortcut typed with the pointer on a page link previews nothing', async ({
