@@ -1210,6 +1210,41 @@ mod tests {
         }
     }
 
+    /// #6106: the value a set writes is the value its undo deletes and its
+    /// redo restores, so a payload reads back each slot it was built with.
+    #[test]
+    fn set_property_payload_value_is_the_value_it_was_built_with() {
+        for value in [
+            PropertyValueFields {
+                value_text: Some("draft".into()),
+                ..Default::default()
+            },
+            PropertyValueFields {
+                value_num: Some(3.0),
+                ..Default::default()
+            },
+            PropertyValueFields {
+                value_date: Some("2026-10-28".into()),
+                ..Default::default()
+            },
+            PropertyValueFields {
+                value_ref: Some(BlockId::from_trusted(TEST_PID)),
+                ..Default::default()
+            },
+            PropertyValueFields {
+                value_bool: Some(true),
+                ..Default::default()
+            },
+        ] {
+            let payload = SetPropertyPayload::with_value(
+                BlockId::from_trusted(TEST_BID),
+                "k".into(),
+                value.clone(),
+            );
+            assert_eq!(payload.value(), value);
+        }
+    }
+
     /// C-3a backwards-compat: pre-existing op-log rows for `delete_attachment`
     /// were written without an `fs_path` field. Those entries must continue to
     /// deserialize, with `fs_path` defaulting to the empty string. The C-3c
@@ -2316,6 +2351,20 @@ mod tests {
                 "'{key}' is user-settable and must NOT be treated as built-in"
             );
         }
+    }
+
+    /// #6106: a built-in's definition and the value check read a select's
+    /// options as the JSON array `property_definitions.options` stores; a
+    /// built-in of another type has none.
+    #[test]
+    fn builtin_options_json_is_a_selects_options_as_a_json_array() {
+        let options = |key| builtin_property_def(key).and_then(BuiltinPropertyDef::options_json);
+        assert_eq!(options("priority").as_deref(), Some(r#"["1","2","3"]"#));
+        assert_eq!(
+            options("todo_state").as_deref(),
+            Some(r#"["TODO","DOING","DONE","CANCELLED"]"#)
+        );
+        assert_eq!(options("due_date"), None);
     }
 }
 
