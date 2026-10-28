@@ -39,6 +39,14 @@ describe('matchBlockLinkItem', () => {
     expect(matchBlockLinkItem(items, 'BAR')?.id).toBe('P3')
   })
 
+  it('matches a typed NFD name to the NFC page, and an NFD alias, as paste does (#6097)', () => {
+    const nfc = 'Caf\u00E9'
+    const nfd = 'Cafe\u0301'
+    expect(matchBlockLinkItem([page('P1', nfc), create], nfd)?.id).toBe('P1')
+    expect(matchBlockLinkItem([page('P1', nfc), create], nfd.toUpperCase())?.id).toBe('P1')
+    expect(matchBlockLinkItem([alias('A1', 'Coffee', nfc), create], nfd)?.id).toBe('A1')
+  })
+
   it('never guesses a case tie: null keeps the text as typed instead of creating', () => {
     const items = [page('P1', 'Foo'), page('P2', 'foo'), create]
     expect(matchBlockLinkItem(items, 'FOO')).toBeNull()

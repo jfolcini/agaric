@@ -22,6 +22,7 @@ import { useCallback, useRef, useState } from 'react'
 import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { unwrap } from '@/lib/app-error'
 import { type ImportAnchor, commands } from '@/lib/bindings'
+import { t } from '@/lib/i18n'
 import { importMarkdown } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
@@ -317,7 +318,7 @@ export function useImportRunner(): UseImportRunner {
           allWarnings.push(...unwrap(linked))
         } catch (err) {
           logger.error('DataSettingsTab', 'linking the imported notes failed', undefined, err)
-          allWarnings.push(importErrorReason(err))
+          allWarnings.push(t('data.importLinkingFailed', { reason: importErrorReason(err) }))
         }
       }
 

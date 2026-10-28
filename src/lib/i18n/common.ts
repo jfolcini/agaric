@@ -473,6 +473,8 @@ export const common: Record<string, string> = {
   // #1935 — surface WHY a file failed (Validation errors carry real
   // text; internal errors are already sanitized backend-side).
   'data.importFailedFileDetail': 'Failed to import {{name}}: {{reason}}',
+  'data.importLinkingFailed':
+    'The links between the imported notes could not be completed: {{reason}}',
   'data.importShowAll': 'Show all',
   'data.importShowLess': 'Show less',
   // Accessible names for the two progress bars (#1929).
