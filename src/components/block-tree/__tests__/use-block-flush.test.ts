@@ -114,6 +114,7 @@ describe('useBlockFlush — checkbox markdown', () => {
       if (cmd === 'edit_block') {
         return Promise.resolve({ ...block, content: 'task', todo_state: 'TODO' })
       }
+      if (cmd === 'get_batch_properties') return Promise.resolve({})
       return strictInvokeFallback(cmd)
     })
 
@@ -212,6 +213,7 @@ describe('useBlockFlush — checkbox markdown', () => {
       }
       // The repeat probe that follows a DONE (#5285); this task does not repeat.
       if (cmd === 'get_property') return Promise.resolve(null)
+      if (cmd === 'get_batch_properties') return Promise.resolve({})
       return strictInvokeFallback(cmd)
     })
 

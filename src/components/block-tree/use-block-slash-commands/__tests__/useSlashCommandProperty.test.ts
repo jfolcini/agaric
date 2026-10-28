@@ -68,6 +68,7 @@ function stubPropertySlashInvoke(overrides: TypedInvokeHandlers = {}): void {
       makeBlockRow({ id: args['blockId'] as string, priority: args['level'] as string | null }),
     // The F-37 `blocked_by` probe /done fires; "no such property" by default.
     get_property: () => null,
+    get_batch_properties: () => ({}),
     ...overrides,
   })
 }

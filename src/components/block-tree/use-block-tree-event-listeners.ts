@@ -48,7 +48,7 @@ import { listStyleForBlockType, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { type BlockCommandHandler, registerBlockCommandTarget } from '@/stores/block-command-bus'
-import type { PageBlockState } from '@/stores/page-blocks'
+import { clearTaskStates, type PageBlockState } from '@/stores/page-blocks'
 
 /** Known callout variants (mirrors `CALLOUT_CONFIG` in RichContentRenderer). */
 const CALLOUT_TYPES = new Set(['info', 'warning', 'tip', 'error', 'note'])
@@ -230,7 +230,8 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
     // (a BlockTypeToken) via the shared markdown convert + content-edit path,
     // identical to the slash `/turn-*` family and the context-menu Turn-into.
     // #4552 slice 2 — also writes the `listStyle` property `type` implies
-    // (see `useSlashCommandStructural.handleTurnInto`'s matching comment).
+    // (see `useSlashCommandStructural.handleTurnInto`'s matching comment),
+    // then, for a list, clears the task state (#5691 D3).
     const onTurnInto: BlockCommandHandler = (blockId, detail) => {
       const type = (detail as { type?: BlockTypeToken } | undefined)?.type
       if (!type) return
@@ -238,12 +239,15 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       void (async () => {
         const newContent = convertBlockContent(readCurrentContent(ctx), type)
         if (!(await applyContentEdit(ctx, newContent, 'slash.turnIntoFailed'))) return
+        const style = listStyleForBlockType(type)
         try {
-          await setListStyle(blockId, listStyleForBlockType(type))
+          await setListStyle(blockId, style)
         } catch (err) {
           logger.error('BlockTree', 'setListStyle (turn-into) failed', { blockId }, err)
           notify.error(t('slash.turnIntoFailed'))
+          return
         }
+        if (style !== 'none') await clearTaskStates(pageStore, [blockId])
       })()
     }
 

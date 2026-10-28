@@ -18,6 +18,7 @@ import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
+import { clearListStyles } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { PRIORITY_CYCLE } from '@/lib/priority-levels'
@@ -134,7 +135,14 @@ export async function setBlockPriority(
   }
 }
 
-export function useBlockProperties(): UseBlockPropertiesReturn {
+/**
+ * `clearLists` clears the list style of a block the cycle makes a task (#5691
+ * D3: a task is a list kind, exclusive with bulleted and numbered): block
+ * mode's command by default, page mode's own in page mode.
+ */
+export function useBlockProperties(
+  clearLists: (ids: string[]) => unknown = clearListStyles,
+): UseBlockPropertiesReturn {
   const pageStore = usePageBlockStoreApi()
   const enqueueTodoToggle = useToggleQueue()
   const enqueuePriorityToggle = useToggleQueue()
@@ -179,6 +187,9 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
           return
         }
 
+        // Only once the state is written: a refused write clears nothing.
+        if (current === null && nextState !== null) await clearLists([blockId])
+
         // F-37: warn when completing a task that has unresolved dependencies
         if (nextState === 'DONE') warnIfBlocked(blockId)
 
@@ -189,7 +200,7 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
         )
         if (nextState === 'DONE') await reloadIfRepeating(blockId, pageStore)
       }),
-    [pageStore, enqueueTodoToggle],
+    [pageStore, enqueueTodoToggle, clearLists],
   )
 
   /** Cycle through the priority levels: `PRIORITY_CYCLE`. */

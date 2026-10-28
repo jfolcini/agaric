@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useListStyleSyntax } from '@/hooks/useListStyleSyntax'
 import { logger } from '@/lib/logger'
+import { createPageBlockStore } from '@/stores/page-blocks'
 
 const mockedSetListStyle = vi.fn()
 
@@ -35,6 +36,7 @@ vi.mock('sonner', () => ({
 
 const mockedLoggerError = vi.mocked(logger.error)
 const mockedToastError = vi.mocked(toast.error)
+const pageStore = createPageBlockStore('PAGE_1')
 const t = ((k: string) => k) as unknown as TFunction as (key: string) => string
 
 describe('useListStyleSyntax', () => {
@@ -44,7 +46,7 @@ describe('useListStyleSyntax', () => {
 
   it('calls setListStyle with the focused block id and the given style', async () => {
     mockedSetListStyle.mockResolvedValue(undefined)
-    const { result } = renderHook(() => useListStyleSyntax({ focusedBlockId: 'B1', t }))
+    const { result } = renderHook(() => useListStyleSyntax({ focusedBlockId: 'B1', t, pageStore }))
 
     await act(async () => {
       result.current('ordered')
@@ -56,7 +58,7 @@ describe('useListStyleSyntax', () => {
 
   it('no-ops when no block is focused', async () => {
     mockedSetListStyle.mockResolvedValue(undefined)
-    const { result } = renderHook(() => useListStyleSyntax({ focusedBlockId: null, t }))
+    const { result } = renderHook(() => useListStyleSyntax({ focusedBlockId: null, t, pageStore }))
 
     await act(async () => {
       result.current('bullet')
@@ -69,7 +71,7 @@ describe('useListStyleSyntax', () => {
   it('logs via logger.error AND surfaces a toast when setListStyle rejects', async () => {
     const failure = new Error('ipc failed')
     mockedSetListStyle.mockRejectedValue(failure)
-    const { result } = renderHook(() => useListStyleSyntax({ focusedBlockId: 'B1', t }))
+    const { result } = renderHook(() => useListStyleSyntax({ focusedBlockId: 'B1', t, pageStore }))
 
     await act(async () => {
       result.current('bullet')
@@ -88,7 +90,7 @@ describe('useListStyleSyntax', () => {
 
   it('drops a rapid second invocation on the same block while the first is in flight', async () => {
     mockedSetListStyle.mockReturnValue(new Promise(() => {}))
-    const { result } = renderHook(() => useListStyleSyntax({ focusedBlockId: 'B1', t }))
+    const { result } = renderHook(() => useListStyleSyntax({ focusedBlockId: 'B1', t, pageStore }))
 
     await act(async () => {
       result.current('ordered')
@@ -101,7 +103,7 @@ describe('useListStyleSyntax', () => {
 
   it('allows a subsequent invocation after the first settles', async () => {
     mockedSetListStyle.mockResolvedValue(undefined)
-    const { result } = renderHook(() => useListStyleSyntax({ focusedBlockId: 'B1', t }))
+    const { result } = renderHook(() => useListStyleSyntax({ focusedBlockId: 'B1', t, pageStore }))
 
     await act(async () => {
       result.current('ordered')

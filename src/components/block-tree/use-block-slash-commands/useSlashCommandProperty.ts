@@ -26,18 +26,29 @@ import { unwrap } from '@/lib/app-error'
 import { recordAttachmentInvalidation } from '@/lib/attachment-invalidation'
 import { commands } from '@/lib/bindings'
 import { guessMimeType, isAttachmentAllowed, readFileBytes } from '@/lib/file-utils'
+import { clearListStyles } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { formatRepeatLabel, reloadIfRepeating } from '@/lib/repeat-utils'
 
+/**
+ * A task is a list kind (#5691 D3): a block the command makes a task loses its
+ * list style once the state is written, through page mode's own clear there.
+ */
 async function handleTodoState(ctx: SlashCommandContext, state: string): Promise<void> {
   try {
     await flushActiveDraft()
+    const wasTask =
+      (ctx.pageStore.getState().blocksById.get(ctx.blockId)?.todo_state ?? null) !== null
     unwrap(await commands.setTodoState(ctx.blockId, state))
     notifyUndo(ctx.rootParentId)
     ctx.pageStore.setState((s) => ({
       blocks: s.blocks.map((b) => (b.id === ctx.blockId ? { ...b, todo_state: state } : b)),
     }))
+    if (!wasTask) {
+      if (ctx.clearListStyle) ctx.clearListStyle()
+      else await clearListStyles([ctx.blockId])
+    }
     if (state === 'DONE') {
       // F-37: warn when completing a task that has unresolved dependencies
       warnIfBlocked(ctx)

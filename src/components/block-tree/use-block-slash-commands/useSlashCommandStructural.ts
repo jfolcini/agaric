@@ -28,6 +28,7 @@ import { EMBED_TOKEN_PREFIX } from '@/lib/embed-token'
 import { listStyleForBlockType, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { clearTaskStates } from '@/stores/page-blocks'
 
 /**
  * A heading, a code block, a quote or a callout is not a list: these commands
@@ -100,6 +101,9 @@ async function handleToggleBlock(
  * slash command has the same shape and carries the same line against this
  * docblock: `useSlashCommandProperty`'s nine handlers, and the two tests that
  * pin the pair.
+ *
+ * A task is a list kind (#5691 D3): once the style is written, the block
+ * loses its task state.
  */
 async function handleListStyle(
   ctx: SlashCommandContext,
@@ -112,7 +116,9 @@ async function handleListStyle(
   } catch (err) {
     logger.error('useSlashCommandStructural', `setListStyle(${style}) failed`, undefined, err)
     notify.error(ctx.t(failKey))
+    return
   }
+  await clearTaskStates(ctx.pageStore, [ctx.blockId])
 }
 
 /**
@@ -123,19 +129,23 @@ async function handleListStyle(
  * #4552 slice 2 — additionally writes the `listStyle` property implied by
  * `type` (`listStyleForBlockType`): `'ordered'`/`'bullet'` for the two list
  * targets, `'none'` (cleared) for every other target, so converting a styled
- * block AWAY from a list does not leave it flagged as one.
+ * block AWAY from a list does not leave it flagged as one. A block turned
+ * into a list loses its task state (#5691 D3), once the style is written.
  */
 async function handleTurnInto(ctx: SlashCommandContext, item: PickerItem): Promise<void> {
   const type = turnIdToBlockType(item.id)
   if (!type) return
   const newContent = convertBlockContent(readCurrentContent(ctx), type)
   if (!(await applyContentEdit(ctx, newContent, 'slash.turnIntoFailed'))) return
+  const style = listStyleForBlockType(type)
   try {
-    await setListStyle(ctx.blockId, listStyleForBlockType(type))
+    await setListStyle(ctx.blockId, style)
   } catch (err) {
     logger.error('useSlashCommandStructural', 'setListStyle (turn-into) failed', undefined, err)
     notify.error(ctx.t('slash.turnIntoFailed'))
+    return
   }
+  if (style !== 'none') await clearTaskStates(ctx.pageStore, [ctx.blockId])
 }
 
 async function handleDivider(ctx: SlashCommandContext): Promise<void> {

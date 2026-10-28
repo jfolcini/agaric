@@ -129,6 +129,7 @@ function stubSlashInvoke(overrides: TypedInvokeHandlers = {}): void {
     // The F-37 `blocked_by` probe that fires when a checkbox lands on DONE;
     // the old catch-all absorbed it silently.
     get_property: () => null,
+    get_batch_properties: () => ({}),
     ...overrides,
   })
 }

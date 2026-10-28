@@ -155,6 +155,7 @@ vi.mock('@/lib/bindings', async () => {
       deleteDraft: (...args: unknown[]) => mockDeleteDraft(...args),
       flushDraft: (...args: unknown[]) => mockFlushDraft(...args),
       setTodoState: (...args: unknown[]) => mockSetTodoState(...args),
+      getBatchProperties: () => Promise.resolve({ status: 'ok', data: {} }),
       addAttachmentWithBytes: (...args: unknown[]) => mockAddAttachmentWithBytes(...args),
     },
   }

@@ -16,6 +16,10 @@
  * text stops opening with a paragraph leaves the list (`leftTheirList`). A
  * style shows at once and is written through block mode's command after the
  * save, so a new block exists first (`setStyle`, `PageModeEditor`).
+ *
+ * A task is a list kind too (#5691 D3): a block holding a task state shows its
+ * checkbox and no marker, whatever style it stores, and is numbered and keyed
+ * as a plain block (`shownStyleOf`).
  */
 
 import { Extension, InputRule } from '@tiptap/core'
@@ -30,7 +34,7 @@ import { blockIdOf } from '@/editor/token-ids'
 import type { PropertyRow } from '@/lib/bindings'
 import { listMarkerText } from '@/lib/list-marker-glyph'
 import { computeListOrdinals } from '@/lib/list-ordinals'
-import { type ListStyle, listStyleFromRows } from '@/lib/list-style'
+import { type ListStyle, listStyleFromRows, shownListStyle } from '@/lib/list-style'
 import type { FlatBlock } from '@/lib/tree-utils'
 
 /** A block in the page's order, and whether it shows a list marker (`docShowsListMarker`). */
@@ -51,19 +55,36 @@ export class PageLists {
   private items: OutlineItem[]
   private markers = new Map<string, string>()
   private readonly listeners = new Map<string, Set<() => void>>()
+  private readonly isTask: (id: string) => boolean
 
-  /** `blocks` are the page's blocks in order, as its document opens on them. */
+  /**
+   * `blocks` are the page's blocks in order, as its document opens on them;
+   * `isTask` says whether a block holds a task state, as the page store has it.
+   */
   constructor(
     rows: Record<string, PropertyRow[]>,
     blocks: readonly Pick<FlatBlock, 'id' | 'depth'>[],
+    isTask: (id: string) => boolean = () => false,
   ) {
     // Each shows its marker until `layout` reads the document.
     this.items = blocks.map(({ id, depth }) => ({ id, depth, marked: true }))
+    this.isTask = isTask
     this.take(rows)
   }
 
+  /** The style block `id` stores, or is given until that write settles. */
   styleOf(id: string): ListStyle {
     return this.wanted.get(id)?.style ?? this.read.get(id) ?? 'none'
+  }
+
+  /** The style block `id` shows: none while it is a task. */
+  shownStyleOf(id: string): ListStyle {
+    return shownListStyle(this.styleOf(id), this.isTask(id))
+  }
+
+  /** A block's task state may have changed: its marker and the numbering follow. */
+  tasksChanged(): void {
+    this.redraw()
   }
 
   /** The marker block `id` shows: `•`, `N.`, or nothing. */
@@ -130,7 +151,7 @@ export class PageLists {
   private redraw(): void {
     // A block that shows no marker breaks a run of numbered siblings, as a plain one does.
     const unmarked = new Set(this.items.filter((item) => !item.marked).map((item) => item.id))
-    const styleOf = (id: string): ListStyle => (unmarked.has(id) ? 'none' : this.styleOf(id))
+    const styleOf = (id: string): ListStyle => (unmarked.has(id) ? 'none' : this.shownStyleOf(id))
     const ordinals = computeListOrdinals(this.items, styleOf)
     const next = new Map<string, string>()
     for (const { id } of this.items) {
@@ -208,7 +229,7 @@ const PageListKeys = Extension.create<{ source: PageListSource }>({
         const { state, view } = editor
         const id = fromBlockId(state)
         if (pickerOpen(state) || id === null) return false
-        const style = source.lists.styleOf(id)
+        const style = source.lists.shownStyleOf(id)
         if (style === 'none') return false
         // An empty list block leaves the list, as block mode's Enter does.
         if (serialize(blockDocJson(state.selection.$from.node(1))).trim() === '') {
@@ -228,7 +249,7 @@ const PageListKeys = Extension.create<{ source: PageListSource }>({
         if (pickerOpen(state) || !empty || !inOwnTextblock($from)) return false
         if ($from.parentOffset !== 0 || $from.index(1) !== 0) return false
         const id = blockIdOf($from.node(1))
-        if (id === null || source.lists.styleOf(id) === 'none') return false
+        if (id === null || source.lists.shownStyleOf(id) === 'none') return false
         source.setStyle(id, 'none')
         return true
       },

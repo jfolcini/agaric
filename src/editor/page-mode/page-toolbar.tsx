@@ -132,7 +132,7 @@ export function PageToolbar({
     [lists, caretId],
   )
   const listStyle = useSyncExternalStore(subscribe, () =>
-    caretId === null ? 'none' : lists.styleOf(caretId),
+    caretId === null ? 'none' : lists.shownStyleOf(caretId),
   )
   const priority = useStore(pageStore, (s) =>
     caretId === null ? null : (s.blocksById.get(caretId)?.priority ?? null),

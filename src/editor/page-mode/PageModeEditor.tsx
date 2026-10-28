@@ -142,7 +142,7 @@ import { searchPropertyKeys } from '@/lib/slash-commands'
 import type { FlatBlock } from '@/lib/tree-utils'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
-import { usePageBlockStoreApi } from '@/stores/page-blocks'
+import { clearTaskStates, usePageBlockStoreApi } from '@/stores/page-blocks'
 import { notifyUndoNewAction } from '@/stores/page-blocks-reducers'
 import { useSpaceStore } from '@/stores/space'
 
@@ -375,11 +375,18 @@ function PageModeDocument({
   const resolve = useBlockResolve()
   const pageStore = usePageBlockStoreApi()
   const onTagClick = useTagClickHandler()
-  const { handleToggleTodo, handleTogglePriority } = useBlockProperties()
   const editorRef = useRef<Editor | null>(null)
   const flushRef = useRef<() => Promise<boolean>>(() => Promise.resolve(true))
   const [properties] = useState(() => new PageProperties(openedWith))
-  const [lists] = useState(() => new PageLists(openedWith, blocks))
+  const [lists] = useState(
+    () =>
+      new PageLists(
+        openedWith,
+        blocks,
+        (id) => (pageStore.getState().blocksById.get(id)?.todo_state ?? null) !== null,
+      ),
+  )
+  useEffect(() => pageStore.subscribe(() => lists.tasksChanged()), [pageStore, lists])
   const [attachments] = useState(() => new PageAttachments(openedWithAttachments))
   // What the checkbox, the badge, the chips and the keys do, once the session runs.
   const actions = useRef<
@@ -414,6 +421,11 @@ function PageModeDocument({
     openHistory: () => {},
     turnInto: () => {},
   })
+  // A block made a task loses its list style through page mode's lists (#5691 D3).
+  const [clearLists] = useState(() => (ids: string[]) => {
+    for (const id of ids) actions.current.setListStyle(id, 'none')
+  })
+  const { handleToggleTodo, handleTogglePriority } = useBlockProperties(clearLists)
   const [drawerBlockId, setDrawerBlockId] = useState<string | null>(null)
   const [historyBlockId, setHistoryBlockId] = useState<string | null>(null)
   // Block mode's chip navigation: another page opens; a block of this page takes the cursor.
@@ -765,7 +777,9 @@ function PageModeDocument({
       // Block mode's batch toolbar's write; a refusal leaves the state it showed, so read again.
       setTodo: (ids, state) =>
         void afterSaveAll(ids, async (saved) => {
-          if (!(await setTodoStateOnBlocks(pageStore, pageId, saved, state, t))) readAgain()
+          if (!(await setTodoStateOnBlocks(pageStore, pageId, saved, state, t, clearLists))) {
+            readAgain()
+          }
         }),
       cyclePriority: (id) => afterSave(id, () => cyclePriority(id)),
       setPriority: (id, level) =>
@@ -823,7 +837,8 @@ function PageModeDocument({
       },
       // Shown at once, so the next key reads it; written once the block exists, as block mode writes it.
       setListStyle: (id, style) => {
-        if (lists.styleOf(id) === style) return
+        // A task that stores `style` too (an older version left one) is not shown as it, so it still needs the write.
+        if (lists.styleOf(id) === style && lists.shownStyleOf(id) === style) return
         const seq = lists.want(id, style)
         // Refused, or not run as the block was not saved: it shows the style last read.
         let written: ListStyle | null = null
@@ -831,6 +846,8 @@ function PageModeDocument({
           try {
             await setListStyle(id, style)
             written = style
+            // A task is a list kind (#5691 D3): a typed `- ` or `1. ` takes the task state off.
+            if (style !== 'none') await clearTaskStates(pageStore, [id])
           } catch (err) {
             logger.error('PageModeEditor', 'Failed to write a list style', { id, style }, err)
             notify.error(
@@ -944,7 +961,7 @@ function PageModeDocument({
         if (savesInFlight.get(pageId) === leaving) savesInFlight.delete(pageId)
       })
     }
-  }, [editor, pageId, blocks, pageStore, properties, lists, attachments])
+  }, [editor, pageId, blocks, pageStore, properties, lists, attachments, clearLists])
 
   // The picker closed: the caret goes back where it was. The dialog's own
   // restore aims at its date field, which its autofocus took first.

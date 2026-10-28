@@ -5,6 +5,7 @@ import type { StoreApi } from 'zustand'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
+import { clearListStyles } from '@/lib/list-style'
 import { notifyPagesRemoved } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { buildIndexById, getDragDescendants } from '@/lib/tree-utils'
@@ -60,6 +61,9 @@ export interface UseBlockMultiSelectReturn {
  * Set task state `state` on every block of `ids` in one IPC, as the batch
  * toolbar does in block mode and the block menu's bulk form in page mode,
  * then say how many it set or failed to. Resolves whether it set every one.
+ * A task is a list kind (#5691 D3): once every one is set, the blocks it made
+ * tasks lose their list style through `clearLists`, page mode's own in page
+ * mode; a refused write clears none.
  */
 export async function setTodoStateOnBlocks(
   pageStore: StoreApi<PageBlockState>,
@@ -67,8 +71,12 @@ export async function setTodoStateOnBlocks(
   ids: string[],
   state: string | null,
   t: TFunction,
+  clearLists: (ids: string[]) => unknown = clearListStyles,
 ): Promise<boolean> {
   const idSet = new Set(ids)
+  const { blocksById } = pageStore.getState()
+  const madeTasks =
+    state === null ? [] : ids.filter((id) => (blocksById.get(id)?.todo_state ?? null) === null)
   // Optimistic FE update — flip the badge instantly while the
   // single-IPC batch round-trips. On failure the catch below
   // surfaces an error toast; the next page load will re-read
@@ -98,6 +106,7 @@ export async function setTodoStateOnBlocks(
     return false
   }
   notify.success(t('blockTree.setStateMessage', { successCount, state: state ?? 'none' }))
+  if (madeTasks.length > 0) await clearLists(madeTasks)
   return true
 }
 

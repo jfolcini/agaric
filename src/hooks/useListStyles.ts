@@ -11,6 +11,8 @@
  *
  * Only `bullet` / `ordered` blocks appear in the map; a `none` block (no
  * `listStyle` property row) is absent — consumers treat "absent" as `'none'`.
+ * So is a task (#5691 D3, `shownListStyle`): the map holds the style each
+ * block shows, which is what its marker and its numbering read.
  *
  * Identity invariant: the returned map keeps its reference when the projected
  * styles are unchanged, so a no-op refetch (or a drag/reorder that does not
@@ -91,7 +93,7 @@
 import { useMemo, useRef } from 'react'
 
 import { useBatchPropertyRows } from '@/hooks/useBatchPropertyRows'
-import { listStyleFromRows } from '@/lib/list-style'
+import { listStyleFromRows, shownListStyle } from '@/lib/list-style'
 import type { ListStyle } from '@/lib/list-style'
 
 /**
@@ -121,13 +123,21 @@ function mapsEqual(a: Map<string, ListStyle>, b: Map<string, ListStyle>): boolea
   return true
 }
 
-export function useListStyles(blocks: ReadonlyArray<{ id: string }>): Map<string, ListStyle> {
+export function useListStyles(
+  blocks: ReadonlyArray<{ id: string; todo_state?: string | null }>,
+): Map<string, ListStyle> {
   const batch = useBatchPropertyRows()
   const get = batch?.get
 
-  const { idSignature, ids } = useMemo(() => {
+  // A task's id is signed with a trailing `\u0001`, so a task state set or cleared recomputes.
+  const { idSignature, ids, tasks } = useMemo(() => {
     const blockIds = blocks.map((b) => b.id)
-    return { idSignature: blockIds.join('\0'), ids: blockIds }
+    const taskIds = new Set(blocks.filter((b) => b.todo_state != null).map((b) => b.id))
+    return {
+      idSignature: blockIds.map((id) => (taskIds.has(id) ? `${id}\u0001` : id)).join('\0'),
+      ids: blockIds,
+      tasks: taskIds,
+    }
   }, [blocks])
 
   const prevRef = useRef<Map<string, ListStyle>>(new Map())
@@ -137,7 +147,7 @@ export function useListStyles(blocks: ReadonlyArray<{ id: string }>): Map<string
     for (const id of ids) {
       const rows = get?.(id)
       if (rows == null) continue
-      const style = listStyleFromRows(rows)
+      const style = shownListStyle(listStyleFromRows(rows), tasks.has(id))
       if (style !== 'none') next.set(id, style)
     }
     // The render-time `prevRef` write below is deliberate; the
@@ -148,6 +158,6 @@ export function useListStyles(blocks: ReadonlyArray<{ id: string }>): Map<string
     const result = mapsEqual(prev, next) ? prev : next
     prevRef.current = result
     return result
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- `ids` is recomputed in the same memo as `idSignature` (the listed dep), so it changes iff the signature changes; `get` re-derives when the shared batch refetches. Mirrors useExtraBlockProperties.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- `ids` and `tasks` are recomputed in the same memo as `idSignature` (the listed dep), so they change iff the signature changes; `get` re-derives when the shared batch refetches. Mirrors useExtraBlockProperties.
   }, [idSignature, get])
 }

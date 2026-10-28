@@ -52,6 +52,7 @@ import {
   type InlinePropertyLine,
   stripPropertyLines,
 } from '@/lib/inline-property-parse'
+import { clearListStyles } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notifyTagAdded } from '@/lib/name-change-bus'
 import type { TagToken } from '@/lib/name-tokens'
@@ -76,7 +77,10 @@ import { useUndoStore } from '@/stores/undo'
  */
 export interface PageBlockStoreLike {
   setState: (updater: (state: { blocks: FlatBlock[] }) => { blocks: FlatBlock[] }) => void
-  getState: () => { load: () => Promise<void> }
+  getState: () => {
+    load: () => Promise<void>
+    blocksById?: ReadonlyMap<string, Pick<FlatBlock, 'todo_state'>>
+  }
 }
 
 /** Per-block flush sequence tokens — see the module docstring. */
@@ -256,7 +260,9 @@ export async function commitInlineProperties(opts: {
  * - On SUCCESS: adopts the backend echo for `todo_state` (falls back to the
  *   sent state), optimistically writes it into `pageStore`, strips the
  *   marker via `edit(cleanContent)`, nudges the undo stack and, for DONE,
- *   reloads the page if the task repeats (`reloadIfRepeating`).
+ *   reloads the page if the task repeats (`reloadIfRepeating`). A block the
+ *   store does not hold as a task loses its list style first (#5691 D3: a
+ *   task is a list kind, exclusive with bulleted and numbered).
  * - On FAILURE (state write rejected): persists the RAW content (marker
  *   intact) via `edit(content)` so the box stays re-parseable, and writes no
  *   optimistic state.
@@ -266,8 +272,8 @@ export async function commitInlineProperties(opts: {
  *   (the newer session owns the block's content + draft lifecycle), mirroring
  *   `commitInlineProperties`'s supersede handling.
  * - `pageStore` is optional: callers/tests that never produce checkbox-marker
- *   content may omit it; when present, only its `blocks` array and `load()`
- *   are touched.
+ *   content may omit it; when present, only its `blocks` array, `blocksById`
+ *   and `load()` are touched.
  *
  * Resolves `false` ONLY when the final content `edit()` failed (mirroring
  * `commitInlineProperties`'s draft-gating contract).
@@ -285,8 +291,10 @@ export async function commitCheckboxState(opts: {
   rootParentId: string | null
 }): Promise<boolean> {
   const { blockId, content, cleanContent, todoState, mySeq, edit, pageStore, rootParentId } = opts
+  const wasTask = (pageStore?.getState().blocksById?.get(blockId)?.todo_state ?? null) !== null
   try {
     const echo = unwrap(await commands.setTodoState(blockId, todoState))
+    if (!wasTask) await clearListStyles([blockId])
     // A newer flush on this block superseded us while the IPC was in
     // flight — bail without applying so we don't clobber it.
     if (readFlushSeq(blockId) !== mySeq) return true

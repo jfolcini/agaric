@@ -25,7 +25,7 @@ import { renderRichContent } from '@/components/RichContentRenderer'
 import type { SourceLines } from '@/editor/source-buffer'
 import { frontMatterProperties, readBlocks } from '@/editor/source-buffer-blocks'
 import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
-import { contentShowsListMarker } from '@/lib/list-style'
+import { contentShowsListMarker, shownListStyle } from '@/lib/list-style'
 import { linkBodyReadings, normalizeTagName, scanNameTokens } from '@/lib/name-tokens'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -145,8 +145,9 @@ export function PageSourcePreview({ lines }: { lines: SourceLines }): React.Reac
         <EmptyState compact headingLevel="p" message={t('pageSource.previewEmpty')} />
       )}
       {blocks.map((block, i) => {
+        const listStyle = shownListStyle(block.listStyle, block.taskState !== null)
         ordinals.length = block.depth + 1
-        const numbered = block.listStyle === 'ordered' && contentShowsListMarker(block.text)
+        const numbered = listStyle === 'ordered' && contentShowsListMarker(block.text)
         const ordinal = numbered ? (ordinals[block.depth] ?? 0) + 1 : 0
         ordinals[block.depth] = ordinal
         return (
@@ -163,7 +164,7 @@ export function PageSourcePreview({ lines }: { lines: SourceLines }): React.Reac
               </span>
             )}
             <div className="block-static min-w-0 flex-1">
-              <ListMarker style={block.listStyle} ordinal={ordinal} content={block.text} />
+              <ListMarker style={listStyle} ordinal={ordinal} content={block.text} />
               {renderRichContent(withNameIds(block.text, idOf, newNames), options)}
             </div>
             {block.properties.map(([key, value], j) => (

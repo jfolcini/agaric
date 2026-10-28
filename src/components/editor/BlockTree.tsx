@@ -102,7 +102,12 @@ import { getDragDescendants } from '@/lib/tree-utils'
 import { mountedScopedIds } from '@/lib/zoom-scope'
 import { selectCursorBlockId, useBlockStore } from '@/stores/blocks'
 import { deleteBlockIfLeakedEmpty } from '@/stores/empty-block-cleanup'
-import { storeOwnsBlock, usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
+import {
+  clearTaskStates,
+  storeOwnsBlock,
+  usePageBlockStore,
+  usePageBlockStoreApi,
+} from '@/stores/page-blocks'
 import type { DeleteBlockOptions } from '@/stores/page-blocks-types'
 import { useSpaceStore } from '@/stores/space'
 
@@ -853,8 +858,11 @@ export function BlockTree({
       // target, so converting a styled block away from a list does not leave
       // it flagged as one. See `useSlashCommandStructural.handleTurnInto`'s
       // matching comment for the full rationale.
+      // A block turned into a list loses its task state (#5691 D3), once the style is written.
+      const style = listStyleForBlockType(blockType)
       try {
-        await setListStyle(blockId, listStyleForBlockType(blockType))
+        await setListStyle(blockId, style)
+        if (style !== 'none') await clearTaskStates(pageStore, [blockId])
       } catch (err) {
         logger.error('BlockTree', 'setListStyle (turn-into) failed', { blockId }, err)
         notify.error(t('slash.turnIntoFailed'))

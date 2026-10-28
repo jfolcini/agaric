@@ -80,6 +80,7 @@ function batchIds(args: Record<string, unknown>): string[] {
 function stubMultiSelectInvoke(overrides: TypedInvokeHandlers = {}): void {
   stubInvoke(mockedInvoke, {
     set_todo_state_batch: (args) => batchIds(args).length,
+    get_batch_properties: () => ({}),
     delete_blocks_by_ids: (args) => ({
       deleted_count: batchIds(args).length,
       affected_page_ids: [],
@@ -128,7 +129,7 @@ describe('useBlockMultiSelect handleBatchSetTodo', () => {
       await result.current.handleBatchSetTodo('TODO')
     })
 
-    expect(mockedInvoke).toHaveBeenCalledTimes(1)
+    expect(mockedInvoke).toHaveBeenCalledTimes(2)
     expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state_batch', {
       blockIds: ['BLOCK_1', 'BLOCK_2'],
       state: 'TODO',
@@ -197,7 +198,7 @@ describe('useBlockMultiSelect handleBatchSetTodo', () => {
     })
 
     expect(result.current.batchInProgress).toBe(false)
-    expect(mockedInvoke).toHaveBeenCalledTimes(1)
+    expect(mockedInvoke).toHaveBeenCalledTimes(2)
   })
 
   it('sets null state to clear todo', async () => {
@@ -712,7 +713,7 @@ describe('useBlockMultiSelect reentrancy guard (#)', () => {
     })
 
     // Both calls should have issued an invoke.
-    expect(mockedInvoke).toHaveBeenCalledTimes(2)
+    expect(mockedInvoke).toHaveBeenCalledTimes(3)
   })
 })
 
