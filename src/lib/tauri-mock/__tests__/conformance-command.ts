@@ -384,6 +384,25 @@ export function checkDeclaration(
 }
 
 /**
+ * Write each op-created id inside `text` back as its `Cn` label (#6054). The
+ * two stacks mint different ids for the same create, so a stored text that
+ * names one is comparable only through its label. Seed ids are the same on
+ * both stacks and stay as they are. The inverse of `expandContentLabels` in
+ * `conformance-replay.ts`. Rust twin: `label_created_ids` in `conformance.rs`.
+ */
+export function labelCreatedIds(text: string, createdIds: readonly string[]): string {
+  return createdIds.reduce((out, id, i) => out.replaceAll(id, `C${i + 1}`), text)
+}
+
+/** A returned row's `content`, through {@link labelCreatedIds}. */
+function labelContent(response: unknown, createdIds: readonly string[]): unknown {
+  if (response == null || typeof response !== 'object' || Array.isArray(response)) return response
+  const content = (response as Record<string, unknown>)['content']
+  if (typeof content !== 'string') return response
+  return { ...response, content: labelCreatedIds(content, createdIds) }
+}
+
+/**
  * Dispatch one `via: "command"` op, enforce its declarations, and build its
  * record with raw ids (the caller relabels once the canonical order is final).
  *
@@ -394,6 +413,7 @@ export function runCommandOp(
   step: CommandOpStep,
   args: Record<string, unknown>,
   fixtureName: string,
+  createdIds: readonly string[],
 ): CommandRecord {
   if (typeof step.name !== 'string') {
     throw new Error(
@@ -406,7 +426,7 @@ export function runCommandOp(
   let error: string | null = null
   let code: string | null = null
   try {
-    returns = projectReturn(step.command, dispatch(step.command, args))
+    returns = projectReturn(step.command, labelContent(dispatch(step.command, args), createdIds))
   } catch (err) {
     const rejection = err as Record<string, unknown> | null
     const kind = rejection?.['kind']

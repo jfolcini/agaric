@@ -45,18 +45,22 @@
 //!
 //! Whatever the generator cannot emit, this lane cannot compare. Today that is
 //! the attachment ops (no mock handler and no fixture vocabulary),
-//! `SetProperty(space)` (see [`chain_to_fixture`]), `[[…]]`, `#[…]` and `((…))`
-//! tokens (the generator's content alphabet has no brackets, so `page_links`
-//! and every backlink read are always empty here — they are pinned by the
-//! `edit_then_move_link_survives` and `page_links_stats` fixtures instead), a
-//! `todo_state` (so `list_unfinished_tasks` answers nothing), and the
-//! timestamps the snapshot omits. The reads are the fixed [`read_steps`], so a
-//! read outside them, and the wall-clock `list_projected_agenda`, go
-//! uncompared. Of the refusals, it reaches the ones [`Invalid`] lists, the
-//! repeated `add_tag` and the unattached `remove_tag` that the generator's own
-//! tag ops draw, and an out-of-range `limit` on each read in [`LIMIT_CAPS`].
-//! The reached-command, refusal and read tallies the lane prints are the
-//! honest statement of what it did cover.
+//! `SetProperty(space)` (see [`chain_to_fixture`]), a `todo_state` (so
+//! `list_unfinished_tasks` answers nothing), and the timestamps the snapshot
+//! omits. The texts carry `[[…]]`, `((…))` and `#[…]` tokens ([`weave_tokens`],
+//! #6054) naming the seed page, the seed tag or an earlier block, live,
+//! trashed, purged or in another space, so `page_links` and the backlink,
+//! tag-ref and inherited-tag reads compare. No text names a space block, and
+//! only an edit names a page of another space (see [`chain_to_fixture`]). The
+//! chain makes no second page in the test space and writes no page title, so
+//! `list_page_links` and `list_unlinked_references` still answer nothing. The
+//! reads are the fixed [`read_steps`], so a read outside them, and the
+//! wall-clock `list_projected_agenda`, go uncompared. Of the refusals, it
+//! reaches the ones [`Invalid`] lists, the repeated `add_tag` and the
+//! unattached `remove_tag` that the generator's own tag ops draw, a cross-space
+//! token in an edit, and an out-of-range `limit` on each read in
+//! [`LIMIT_CAPS`]. The reached-command, refusal and read tallies the lane
+//! prints are the honest statement of what it did cover.
 
 use std::cell::RefCell;
 
@@ -167,11 +171,34 @@ fn seed() -> Value {
 ///   an effect neither side can observe.
 ///
 /// Each `(index, invalid)` in `invalid` is rendered by [`render_invalid`]
-/// before the payload at `index` (past the end: after the last one). Every op
-/// is a `via: "command"` op named `opN`, so its return or refusal is recorded.
-fn chain_to_fixture(payloads: &[OpPayload], invalid: &[(Index, Invalid)], name: &str) -> Value {
+/// before the payload at `index` (past the end: after the last one). The n-th
+/// `create_block` or `edit_block` text carries the link tokens of `weaves[n]`
+/// ([`weave_tokens`]). Every op is a `via: "command"` op named `opN`, so its
+/// return or refusal is recorded.
+fn chain_to_fixture(
+    payloads: &[OpPayload],
+    invalid: &[(Index, Invalid)],
+    weaves: &[Weave],
+    name: &str,
+) -> Value {
     let mut label_of: BTreeMap<String, String> = BTreeMap::new();
     let mut creates = 0usize;
+    // What a woven token may not name. No text names a `CrossSpace` splice's
+    // space block: it is in no space, so the backend's link INSERT declines it
+    // (`NULL = ?3`), which `indexLinks` in the mock does not model. No created
+    // text names its away page either: a create refused for a cross-space
+    // token makes no `Cn` and shifts every later label. An edit may, and is
+    // refused.
+    let (mut not_in_edit, mut not_in_create) = (Vec::new(), Vec::new());
+    let mut weaves = weaves.iter();
+    let mut weave = |text: &str, creates: usize, skip: &[String]| {
+        weave_tokens(
+            text,
+            weaves.next().map_or(&[][..], Vec::as_slice),
+            creates,
+            skip,
+        )
+    };
     let mut ops: Vec<Value> = Vec::new();
     let mut splices: Vec<(usize, Invalid)> = invalid
         .iter()
@@ -195,9 +222,15 @@ fn chain_to_fixture(payloads: &[OpPayload], invalid: &[(Index, Invalid)], name: 
     for (at, payload) in payloads.iter().enumerate() {
         while let Some((_, kind)) = splices.next_if(|(splice_at, _)| *splice_at == at) {
             ops.extend(render_invalid(kind, &mut creates));
+            if matches!(kind, Invalid::CrossSpace) {
+                let (space, page) = (format!("C{}", creates - 1), format!("C{creates}"));
+                not_in_edit.push(space.clone());
+                not_in_create.extend([space, page]);
+            }
         }
         let op = match payload {
             OpPayload::CreateBlock(c) => {
+                let content = weave(&c.content, creates, &not_in_create);
                 creates += 1;
                 let parent = c
                     .parent_id
@@ -207,7 +240,7 @@ fn chain_to_fixture(payloads: &[OpPayload], invalid: &[(Index, Invalid)], name: 
                 json!({ "command": "create_block", "args": {
                     "parentId": parent,
                     "blockType": c.block_type,
-                    "content": c.content,
+                    "content": content,
                     // The generator's 1-based `position` read as the 0-based
                     // insert `index` the command takes. Values past the sibling
                     // count are kept, not clamped here: how each side clamps a
@@ -218,7 +251,7 @@ fn chain_to_fixture(payloads: &[OpPayload], invalid: &[(Index, Invalid)], name: 
             }
             OpPayload::EditBlock(e) => json!({ "command": "edit_block", "args": {
                 "blockId": label(&label_of, e.block_id.as_str()),
-                "toText": e.to_text,
+                "toText": weave(&e.to_text, creates, &not_in_edit),
             }}),
             OpPayload::MoveBlock(m) => {
                 let new_parent = m
@@ -284,6 +317,65 @@ fn chain_to_fixture(payloads: &[OpPayload], invalid: &[(Index, Invalid)], name: 
     }
 
     json!({ "name": name, "seed": seed(), "ops": ops, "expected": null })
+}
+
+/// The three link tokens a block's text can carry (#6054).
+#[derive(Debug, Clone, Copy)]
+enum TokenKind {
+    /// `[[id]]`, a page link.
+    Link,
+    /// `((id))`, a block reference.
+    Ref,
+    /// `#[id]`, a tag reference.
+    TagRef,
+}
+
+/// The tokens one generated text carries: each a kind and a pick among the
+/// blocks that exist when its op runs.
+type Weave = Vec<(TokenKind, Index)>;
+
+/// One [`Weave`] per text op, in op order; a text past the last carries none.
+fn weaves_strategy() -> impl Strategy<Value = Vec<Weave>> {
+    let kind = prop_oneof![
+        Just(TokenKind::Link),
+        Just(TokenKind::Ref),
+        Just(TokenKind::TagRef)
+    ];
+    let weave = proptest::collection::vec((kind, any::<Index>()), 0..=2);
+    proptest::collection::vec(weave, 0..=*CHAIN_LEN.end())
+}
+
+/// `text` with the tokens of `weave` appended, written with labels
+/// (`expand_content_labels` resolves them on both stacks). A target is the seed
+/// page, the seed tag or one of the `creates` blocks made so far, whatever
+/// became of it: one the chain deleted or purged, or a `CrossSpace` page in
+/// another space. Those are the skip and refusal paths of the link
+/// derivations. A label in `skip` is never a target.
+///
+/// The generator's own content alphabet has no brackets, so these are the only
+/// tokens a generated text holds; the shared `content_strategy` stays as it is
+/// for the other proptests that draw from it.
+fn weave_tokens(
+    text: &str,
+    weave: &[(TokenKind, Index)],
+    creates: usize,
+    skip: &[String],
+) -> String {
+    let targets: Vec<String> = [SEED_PAGE.to_owned(), SEED_TAG.to_owned()]
+        .into_iter()
+        .chain((1..=creates).map(|n| format!("C{n}")))
+        .filter(|label| !skip.contains(label))
+        .collect();
+    let mut out = text.to_owned();
+    for (kind, pick) in weave {
+        let target = pick.get(&targets);
+        out.push_str(&match kind {
+            TokenKind::Link => format!(" [[{target}]]"),
+            TokenKind::Ref => format!(" (({target}))"),
+            TokenKind::TagRef => format!(" #[{target}]"),
+        });
+    }
+    out
 }
 
 /// A command on a block in a state the generator's model never targets
@@ -534,6 +626,14 @@ fn read_steps(created: usize, dates: &[String], term: &str) -> Vec<Value> {
             "args": { "blockId": seed, "limit": 50, "scope": scope },
         }));
     }
+    for n in 1..=created {
+        steps.push(
+            json!({ "name": format!("backlinks_C{n}"), "command": "get_backlinks",
+                "unordered": RAW_ID_ORDER,
+                "args": { "blockId": format!("C{n}"), "limit": 50, "scope": scope },
+            }),
+        );
+    }
     let created = (1..=created).map(|n| format!("C{n}"));
     for block in [SEED_PAGE.to_owned(), SEED_TAG.to_owned()]
         .into_iter()
@@ -602,7 +702,8 @@ fn search_term(fixture: &Value) -> String {
                 .or(op["args"]["toText"].as_str())
         })
         .flat_map(str::split_whitespace)
-        .find(|word| word.len() >= 3)
+        // A woven token is a label, not the text either stack stored.
+        .find(|word| word.len() >= 3 && word.chars().all(char::is_alphanumeric))
         .unwrap_or("absent")
         .to_owned()
 }
@@ -841,9 +942,11 @@ fn mock_matches_backend_on_generated_op_chains_4669() {
     let strategy = (
         op_chain_strategy(CHAIN_LEN),
         proptest::collection::vec((any::<Index>(), invalid_strategy()), 0..=MAX_INVALID),
+        weaves_strategy(),
     );
-    let result = runner.run(&strategy, |(sketches, invalid)| {
-        let mut fixture = chain_to_fixture(&resolve_chain(&sketches), &invalid, FUZZ_FIXTURE);
+    let result = runner.run(&strategy, |(sketches, invalid, weaves)| {
+        let mut fixture =
+            chain_to_fixture(&resolve_chain(&sketches), &invalid, &weaves, FUZZ_FIXTURE);
         let backend = runtime.block_on(async {
             let replay = replay_fixture(&fixture, FUZZ_FIXTURE, Declarations::Recorded).await;
             let labels = canonical_label_map(&replay.canonical_order);

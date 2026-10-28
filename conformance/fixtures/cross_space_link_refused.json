@@ -1,0 +1,251 @@
+{
+  "description": "#6054 — a write that introduces a `[[id]]`, `((id))` or `#[id]` naming a block of another space is refused (`validate_content_refs_in_space`), on edit against the block's space and on create against the parent's. Found by the differential fuzz: the mock had no such check and took the edit.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "tag",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "plain",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Away",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "away",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 5,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B4",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "source",
+      "returns": ["B3#block_type=content#content=plain#parent_id=B1#position=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_second_space",
+      "returns": ["create_space#space_id=B4"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_page_there",
+      "returns": ["create_page_in_space#page_id=B5"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "edit_links_the_away_page",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "edit_refs_the_away_page",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "edit_tag_refs_the_away_page",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "create_links_the_away_page",
+      "returns": []
+    }
+  ],
+  "name": "cross_space_link_refused",
+  "ops": [
+    {
+      "args": {
+        "blockType": "content",
+        "content": "plain",
+        "index": 0,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "name": "source",
+      "via": "command"
+    },
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Away"
+      },
+      "command": "create_space",
+      "name": "a_second_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "away",
+        "parentId": null,
+        "spaceId": "C2"
+      },
+      "command": "create_page_in_space",
+      "name": "a_page_there",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C1",
+        "toText": "see [[C3]]"
+      },
+      "command": "edit_block",
+      "expect_error": "validation",
+      "name": "edit_links_the_away_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C1",
+        "toText": "see ((C3))"
+      },
+      "command": "edit_block",
+      "expect_error": "validation",
+      "name": "edit_refs_the_away_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C1",
+        "toText": "see #[C3]"
+      },
+      "command": "edit_block",
+      "expect_error": "validation",
+      "name": "edit_tag_refs_the_away_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "see [[C3]]",
+        "index": 0,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "expect_error": "validation",
+      "name": "create_links_the_away_page",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "tag",
+        "content": "tag",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

@@ -39,7 +39,7 @@ import {
   canonicalLabelMap,
   type NormalizedSnapshot,
 } from '@/lib/tauri-mock/__tests__/conformance-snapshot'
-import { blocks, blockTags, opLog, properties } from '@/lib/tauri-mock/seed'
+import { blocks, blockTags, opLog, properties, unresolvedLinks } from '@/lib/tauri-mock/seed'
 
 // ---------------------------------------------------------------------------
 // Fixture loading
@@ -414,7 +414,7 @@ describe("#3966 every fixture's ops move the projected domain state", () => {
       // block the ops CREATE is missing from this snapshot, which is itself a
       // difference (correctly: a fixture that creates a block is not inert).
       const seedOnly = buildSnapshot(
-        { blocks, properties, blockTags, opLog },
+        { blocks, properties, blockTags, opLog, unresolvedLinks },
         canonicalOrder(fixture),
       )
       if (

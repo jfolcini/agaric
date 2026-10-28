@@ -30,7 +30,9 @@
 //! see [`check_declaration`].
 
 use super::common::*;
-use super::conformance::{resolve_op_arg_id, resolve_op_ref_label};
+use super::conformance::{
+    expand_content_labels, label_created_ids, resolve_op_arg_id, resolve_op_ref_label,
+};
 use super::conformance_query::{
     PROJECTING_STEP, PROPERTY_DEF_ATTRS, SPACE_TOKEN, relabel_token, row_token,
 };
@@ -425,6 +427,8 @@ pub(super) async fn apply_op_via_command(
     let req_str = |k: &str| {
         opt_str(k).unwrap_or_else(|| panic!("conformance op '{command}' is missing arg '{k}'"))
     };
+    // A block's text, whose link tokens may name labels (`expand_content_labels`).
+    let text = |k: &str| expand_content_labels(&req_str(k), created_ids);
     // #5057 — an `OpRef` arg is an `On` label, never a literal: the two
     // runners mint their own `(device_id, seq)`. Mirrors `block_id()` above.
     let op_ref = |k: &str| {
@@ -512,7 +516,7 @@ pub(super) async fn apply_op_via_command(
         // `save_draft` and `delete_draft` have no `*_inner`: their wrappers are
         // the thin layer over these engine functions directly.
         "save_draft" => to_json(
-            agaric_engine::draft::save_draft(pool, DEV, block_id().as_str(), &req_str("content"))
+            agaric_engine::draft::save_draft(pool, DEV, block_id().as_str(), &text("content"))
                 .await,
         ),
         "delete_draft" => {
@@ -836,7 +840,7 @@ pub(super) async fn apply_op_via_command(
                 DEV,
                 mat,
                 arg_label_id("parentId"),
-                req_str("content"),
+                text("content"),
                 arg_label_id("spaceId").unwrap_or_else(|| {
                     panic!("conformance op '{command}' is missing arg 'spaceId'")
                 }),
@@ -873,7 +877,7 @@ pub(super) async fn apply_op_via_command(
                 DEV,
                 mat,
                 req_str("blockType"),
-                req_str("content"),
+                text("content"),
                 arg_label_id("parentId").map(|id| BlockId::from(id.as_str())),
                 arg("index").and_then(Value::as_i64),
                 &scope("scope"),
@@ -882,9 +886,7 @@ pub(super) async fn apply_op_via_command(
             )
             .await,
         ),
-        "edit_block" => {
-            to_json(edit_block_inner(pool, DEV, mat, block_id(), req_str("toText")).await)
-        }
+        "edit_block" => to_json(edit_block_inner(pool, DEV, mat, block_id(), text("toText")).await),
         "move_block" => to_json(
             move_block_inner(
                 pool,
@@ -996,7 +998,7 @@ pub(super) async fn apply_op_via_command(
                 DEV,
                 mat,
                 app_data_dir,
-                req_str("content"),
+                text("content"),
                 opt_str("filename"),
                 arg_label_id("spaceId").expect("spaceId"),
                 None,
@@ -1008,7 +1010,7 @@ pub(super) async fn apply_op_via_command(
                 pool,
                 DEV,
                 mat,
-                req_str("content"),
+                text("content"),
                 opt_str("format"),
                 arg_label_id("spaceId").expect("spaceId"),
             )
@@ -1209,8 +1211,14 @@ pub(super) async fn run_command_op(
     let at = format!("fixture '{fixture_name}' op '{name}' (command '{command}')");
     let (returns, error, code) =
         match apply_op_via_command(pool, mat, app_data_dir, op, created_ids, op_refs).await {
-            Ok(response) => (
-                PROJECTING_STEP.sync_scope(at.clone(), || project_return(command, &response)),
+            Ok(mut response) => (
+                PROJECTING_STEP.sync_scope(at.clone(), || {
+                    // A returned row's text, as the snapshot reads it.
+                    if let Some(Value::String(content)) = response.get_mut("content") {
+                        *content = label_created_ids(content, created_ids);
+                    }
+                    project_return(command, &response)
+                }),
                 Value::Null,
                 Value::Null,
             ),

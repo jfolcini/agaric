@@ -560,8 +560,8 @@ const WIRE: Readonly<Record<string, WireShape>> = {
   //
   // A `HistoryEntry` has no id the two stacks share: `device_id`, `seq` and
   // `created_at` are op identities each stack generates independently, and
-  // `payload` is a JSON blob carrying stack-local ids and free text, which the
-  // token grammar refuses on both counts (a `#` or `->` inside it would ALIAS).
+  // `payload` is a JSON blob carrying stack-local ids and free text, so no
+  // stack could match the other's.
   // `op_type` is what remains, and it is what the #763 op-log digest already
   // compares cross-stack; `is_replicated` rides along because it is the one
   // other per-entry column both stacks fill (migration 0099) and the one
@@ -1189,13 +1189,19 @@ const DELETED_SENTINEL = 'DELETED'
 function attrValue(name: string, v: unknown): string {
   if (v == null) return 'null'
   if (name === 'deleted_at') return DELETED_SENTINEL
-  if (typeof v === 'string') return v
+  if (typeof v === 'string') return escapeSeparators(v)
   // Numbers and booleans are the whole of the Rust twin's remaining arms.
   if (typeof v === 'number' || typeof v === 'boolean') return String(v)
   // Nothing else can reach here from a mock row. If one ever does, `String()`
   // would render every distinct object as "[object Object]", collapsing them
   // onto a single token — an expectation that cannot disagree.
-  return JSON.stringify(v)
+  return escapeSeparators(JSON.stringify(v))
+}
+
+/** `%`, `#` and `->` percent-escaped, so a value cannot run into the next
+ *  segment. Mirror of `escape_separators` in the Rust twin, which says why. */
+function escapeSeparators(rendered: string): string {
+  return rendered.replaceAll('%', '%25').replaceAll('#', '%23').replaceAll('->', '-%3E')
 }
 
 /** Build `<row[idKey]>#<attr>=<value>…` for one row. Mirror of `row_token` in the Rust twin. */

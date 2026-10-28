@@ -27,6 +27,8 @@ export interface MockState {
   blockTags: Map<string, Set<string>>
   /** Ordered op_log: each entry has at least `op_type` and a JSON `payload`. */
   opLog: ReadonlyArray<{ op_type: string; payload: string }>
+  /** The link tokens no edge was written for (`holdsLink`). */
+  unresolvedLinks: ReadonlyMap<string, ReadonlySet<string>>
 }
 
 // ---------------------------------------------------------------------------
@@ -194,15 +196,9 @@ export function buildSnapshot(
   // the row survives EITHER tombstone and readers filter at query time. Joined
   // to the source's page_id.
   //
-  // The target must still EXIST. `reindex_block_links_conn`'s `WHERE EXISTS`
-  // guard is INSERT-time only: an existing row is not unlinked when its target
-  // is deleted later. A purge takes the row with it (`ON DELETE CASCADE`,
-  // migration 0061) and the block out of `state.blocks`; a soft delete leaves
-  // both behind. The backend also declines the INSERT for a target that was
-  // ALREADY tombstoned at reindex time, which this existence test does not
-  // model — a fixture that deletes X and then writes `[[X]]` gets a mock edge
-  // the backend would not have. That fixture simply goes red, so tracking
-  // tombstone order here would buy nothing.
+  // The target must still EXIST, and must have been live when the source was
+  // indexed (`holdsLink`): a purge takes the row with it (`ON DELETE CASCADE`,
+  // migration 0061), and the INSERT declines a target already tombstoned.
   //
   // #3332 — the derivation is `deriveLinkEdges`, the function the MOCK runs,
   // not a private copy of its regex. The Rust side of this comparison reads the
@@ -215,8 +211,7 @@ export function buildSnapshot(
   // property of the pair (`classifyLinkKind` reads the whole content), so every
   // occurrence of a pair already carries the same kind and the first one wins.
   const linkRows = new Map<string, Record<string, unknown>>()
-  for (const edge of deriveLinkEdges(state.blocks)) {
-    if (!state.blocks.has(edge.targetId)) continue
+  for (const edge of deriveLinkEdges(state.blocks, state.unresolvedLinks)) {
     const pair = `${edge.sourceId} ${edge.targetId}`
     if (linkRows.has(pair)) continue
     linkRows.set(pair, {

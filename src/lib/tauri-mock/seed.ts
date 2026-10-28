@@ -45,6 +45,12 @@ export const blockTags = new Map<string, Set<string>>()
 // derives them, the way the backend's reindex does. `source_id → Set<tag_id>`.
 export const blockTagRefs = new Map<string, Set<string>>()
 
+// The link tokens no edge was written for (`block_links_unresolved`,
+// `source_id → Set<target_id>`): the target was not live when the source was
+// indexed. `holdsLink` (`link-scan.ts`) reads it; `indexLinks` and
+// `relinkRestored` (`link-index.ts`) keep it.
+export const unresolvedLinks = new Map<string, Set<string>>()
+
 // Property definitions store, per space (#5841): space_id → key → row
 export const propertyDefs = new Map<string, Map<string, Record<string, unknown>>>()
 
@@ -403,6 +409,7 @@ export function seedBlocks(): void {
   properties.clear()
   blockTags.clear()
   blockTagRefs.clear()
+  unresolvedLinks.clear()
   propertyDefs.clear()
   pageAliases.clear()
   attachments.clear()

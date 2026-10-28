@@ -20,6 +20,7 @@
 import {
   type CommandOpStep,
   type CommandRecord,
+  labelCreatedIds,
   runCommandOp,
 } from '@/lib/tauri-mock/__tests__/conformance-command'
 import {
@@ -52,6 +53,7 @@ import {
   pushOp,
   seedBlocks,
   spacePropertyDefs,
+  unresolvedLinks,
 } from '@/lib/tauri-mock/seed'
 
 export interface Fixture {
@@ -304,6 +306,30 @@ function resolveOpArgId(label: string, createdIds: readonly string[]): string {
   return id
 }
 
+/** A link token whose id is a label: `[[Cn]]`, `((Cn))` or `#[Cn]`, and the
+ *  same with `Sn`. Rust twin: `CONTENT_LABEL_RE` in `conformance.rs`. */
+const CONTENT_LABEL = /\[\[([CS]\d{1,6})\]\]|\(\(([CS]\d{1,6})\)\)|#\[([CS]\d{1,6})\]/g
+
+/**
+ * Resolve the labels inside the link tokens of a `content` or `toText` arg
+ * (#6054), so a fixture's text can link, reference or tag-reference a block an
+ * earlier op created: `see [[C3]]` reaches the command as `see [[<id of C3>]]`.
+ *
+ * The grammar is the three token forms the backend scans (`[[id]]`, `((id))`,
+ * `#[id]`) with a `Cn` or `Sn` label in the id's place; each label resolves as
+ * an id-shaped arg does ({@link resolveOpArgId}), and every other text passes
+ * through untouched, a literal 26-char id included. `labelCreatedIds` is the
+ * inverse the projections apply, so a stored text reads back as written.
+ *
+ * Rust twin: `expand_content_labels` in `conformance.rs`.
+ */
+export function expandContentLabels(text: string, createdIds: readonly string[]): string {
+  return text.replace(CONTENT_LABEL, (token, ...groups: unknown[]) => {
+    const label = groups.slice(0, 3).find((g) => typeof g === 'string') as string
+    return token.replace(label, resolveOpArgId(label, createdIds))
+  })
+}
+
 /** Every op this fixture has appended, in `seq` order — what an `On` label
  *  resolves against. Local rows only, mirroring `read_op_refs_in_op_order`;
  *  the mock has no replicated rows, so the filter is the device id alone. */
@@ -347,7 +373,8 @@ function resolveOpRefLabel(label: string): { device_id: string; seq: number } {
 /**
  * Rewrite an op's args for the mock: labels referenced by id-shaped arg keys
  * are resolved (`S1` → its 26-char seed id, `C1` → the first op-created block).
- * `value_ref` inside a `set_property` value bundle is resolved too.
+ * `value_ref` inside a `set_property` value bundle is resolved too, and so are
+ * the link-token labels inside `content` and `toText` ({@link expandContentLabels}).
  */
 export function expandOpArgs(
   args: Record<string, unknown>,
@@ -368,6 +395,9 @@ export function expandOpArgs(
     'spaceId',
   ]) {
     if (typeof out[key] === 'string') out[key] = resolveOpArgId(out[key] as string, createdIds)
+  }
+  for (const key of ['content', 'toText']) {
+    if (typeof out[key] === 'string') out[key] = expandContentLabels(out[key], createdIds)
   }
   // `$SPACE` names the harness space, as inside a `scope` below. Mirror of the
   // Rust runner's `arg_label_id`.
@@ -463,7 +493,8 @@ function replayOps(fixture: Fixture): CommandRecord[] {
   const records: CommandRecord[] = []
   const names = new Set<string>()
   for (const op of fixture.ops) {
-    const args = expandOpArgs(op.args, createdBlockIdsInOpOrder())
+    const createdIds = createdBlockIdsInOpOrder()
+    const args = expandOpArgs(op.args, createdIds)
     if (op.via == null) {
       dispatch(op.command, args)
       continue
@@ -474,7 +505,7 @@ function replayOps(fixture: Fixture): CommandRecord[] {
           `the only value is "command"`,
       )
     }
-    const record = runCommandOp(op, args, fixture.name)
+    const record = runCommandOp(op, args, fixture.name, createdIds)
     if (names.has(record.name)) {
       throw new Error(
         `fixture '${fixture.name}' has duplicate command op name '${record.name}' — every ` +
@@ -511,9 +542,14 @@ export function replayFixtureWithRecords(fixture: Fixture): {
   // N4) sees one; the stamp writes nothing the snapshot reads.
   stampMockSpace()
   const records = replayOps(fixture)
-  const state: MockState = { blocks, properties, blockTags, opLog }
+  const state: MockState = { blocks, properties, blockTags, opLog, unresolvedLinks }
   const order = canonicalOrder(fixture)
-  return { snapshot: buildSnapshot(state, order), records: relabelRecords(records, order) }
+  const snapshot = buildSnapshot(state, order)
+  const createdIds = createdBlockIdsInOpOrder()
+  for (const b of snapshot.blocks) {
+    if (typeof b['content'] === 'string') b['content'] = labelCreatedIds(b['content'], createdIds)
+  }
+  return { snapshot, records: relabelRecords(records, order) }
 }
 
 function relabelRecords(records: CommandRecord[], order: string[]): CommandRecord[] {

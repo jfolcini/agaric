@@ -15,7 +15,7 @@ import { isIsoDate } from '@/lib/search-query/is-iso-date'
 import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import {
   buildPageMetaRow,
-  deriveLinkEdges,
+  linkEdges,
   fbqInSpace,
   fbqPropertyFilterMatches,
   fbqTagFilterMatches,
@@ -2172,7 +2172,7 @@ export const searchHandlers = {
     const fulltext = (request['fulltext'] as string | null | undefined) ?? ''
     const hasFulltext = fulltext.length > 0
     const foldedQuery = hasFulltext ? foldForFtsIndex(fulltext) : ''
-    const edges = deriveLinkEdges(blocks)
+    const edges = linkEdges()
     const matched: MatchedEntry[] = []
     for (const b of blocks.values()) {
       if (b['deleted_at']) continue

@@ -146,6 +146,41 @@ pub fn resolve_op_arg_id(label: &str, created_ids: &[String]) -> String {
         .clone()
 }
 
+/// A link token whose id is a label: `[[Cn]]`, `((Cn))` or `#[Cn]`, and the
+/// same with `Sn`. TS twin: `CONTENT_LABEL` in `conformance-replay.ts`.
+static CONTENT_LABEL_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"\[\[([CS]\d{1,6})\]\]|\(\(([CS]\d{1,6})\)\)|#\[([CS]\d{1,6})\]")
+        .expect("content label regex")
+});
+
+/// Resolve the labels inside the link tokens of a `content` or `toText` arg
+/// (#6054). The grammar is documented once, on the TS twin
+/// `expandContentLabels` in `conformance-replay.ts`.
+pub fn expand_content_labels(text: &str, created_ids: &[String]) -> String {
+    CONTENT_LABEL_RE
+        .replace_all(text, |caps: &regex::Captures<'_>| {
+            let label = (1..=3)
+                .find_map(|i| caps.get(i))
+                .expect("one alternative matched")
+                .as_str();
+            caps[0].replacen(label, &resolve_op_arg_id(label, created_ids), 1)
+        })
+        .into_owned()
+}
+
+/// Write each op-created id inside `text` back as its `Cn` label, the inverse
+/// of [`expand_content_labels`]: the two stacks mint different ids for the
+/// same create, so a stored text naming one is comparable only through its
+/// label. TS twin: `labelCreatedIds` in `conformance-command.ts`.
+pub fn label_created_ids(text: &str, created_ids: &[String]) -> String {
+    created_ids
+        .iter()
+        .enumerate()
+        .fold(text.to_owned(), |out, (i, id)| {
+            out.replace(id.as_str(), &format!("C{}", i + 1))
+        })
+}
+
 /// Resolve an `On` fixture op arg into the op-log coordinate it names.
 ///
 /// `On` (#5057) names the **n-th op this fixture has appended so far**,
@@ -342,11 +377,11 @@ async fn apply_op(pool: &SqlitePool, mat: &Materializer, op: &Value, created_ids
             parent_id: arg_label_id("parentId").map(|s| BlockId::from(s.as_str())),
             position: None,
             index: arg("index").and_then(Value::as_i64),
-            content: arg_str("content").unwrap_or_default(),
+            content: expand_content_labels(&arg_str("content").unwrap_or_default(), created_ids),
         }),
         "edit_block" => OpPayload::EditBlock(EditBlockPayload {
             block_id: label_block_id("blockId"),
-            to_text: arg_str("toText").unwrap_or_default(),
+            to_text: expand_content_labels(&arg_str("toText").unwrap_or_default(), created_ids),
             prev_edit: None,
             prior_text: None,
         }),
@@ -1649,7 +1684,14 @@ pub async fn replay_fixture(
 
     // 4. Build the mock-comparison snapshot. Per-op parity reads never mutate
     // this state, so canonical relabeling and fixture output remain unchanged.
-    let raw_state = read_raw_state(&pool).await;
+    let mut raw_state = read_raw_state(&pool).await;
+    let created_ids = read_created_block_ids_in_op_order(&pool).await;
+    for block in &mut raw_state.blocks {
+        block.content = block
+            .content
+            .as_deref()
+            .map(|text| label_created_ids(text, &created_ids));
+    }
     let snapshot: Snapshot = build_snapshot_with_order(raw_state, &canonical_order);
     let snapshot_value = serde_json::to_value(&snapshot).unwrap();
 

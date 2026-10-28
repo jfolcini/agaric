@@ -24,16 +24,21 @@ import {
   assertValidReservedPropertyValue,
   comparePositionThenId,
   createPageInSpace,
+  definitionSpaceOf,
   deleteCohort,
   findLivePageByTitle,
+  indexLinks,
   insertAtSlotAndRenumber,
   invalidOperationRejection,
   isLiveSpace,
+  linkedTargets,
   nextCohortMarker,
   notFoundRejection,
   ownerSpaceOf,
   pageRequestLimit,
   refreshDescendantPageIds,
+  rejectCrossSpaceTokens,
+  relinkRestored,
   renumberSiblings,
   restoreCohort,
   spaceRootGroup,
@@ -56,6 +61,7 @@ import {
   propertyDefs,
   pushOp,
   todayDate,
+  unresolvedLinks,
 } from '@/lib/tauri-mock/seed'
 import {
   dropAcknowledgedLosses,
@@ -134,6 +140,7 @@ function purgeCohortAndSatellites(cohort: Iterable<string>): void {
     properties.delete(id)
     blockTags.delete(id)
     blockTagRefs.delete(id)
+    unresolvedLinks.delete(id)
     pageAliases.delete(id)
     blockDrafts.delete(id)
     // #5841 — a purged space's property definitions go with it.
@@ -1024,10 +1031,9 @@ function rejectDuplicateName(b: Record<string, unknown>): void {
 function restoreRefusingDuplicateNames<T>(restore: () => T): T {
   const deletedBefore = new Map([...blocks].map(([id, b]) => [id, b['deleted_at']]))
   const result = restore()
+  const restored = [...blocks].filter(([id, b]) => !b['deleted_at'] && deletedBefore.get(id))
   try {
-    for (const [id, b] of blocks) {
-      if (!b['deleted_at'] && deletedBefore.get(id)) rejectDuplicateName(b)
-    }
+    for (const [, b] of restored) rejectDuplicateName(b)
   } catch (err) {
     for (const [id, deletedAt] of deletedBefore) {
       const b = blocks.get(id)
@@ -1035,6 +1041,7 @@ function restoreRefusingDuplicateNames<T>(restore: () => T): T {
     }
     throw err
   }
+  relinkRestored(restored.map(([id]) => id))
   return result
 }
 
@@ -1231,6 +1238,12 @@ export const blocksHandlers = {
         `cannot create a block under tag '${parentId}': the tag view is read-only`,
       )
     }
+    // `validate_content_refs_in_space`, against the parent's space: a page
+    // resolves its space through itself, so it is skipped, as there.
+    if (parentId != null && blockType !== 'page') {
+      const content = (a['content'] as string | null) ?? ''
+      rejectCrossSpaceTokens(definitionSpaceOf(parentId), content, parentId)
+    }
     // #5236 — a live tag already named `content` in the space is the answer:
     // its own row back, nothing created, no op appended. The match is the
     // engine's normalized identity (`find_live_tag_by_name_in_tx`), smallest
@@ -1308,6 +1321,7 @@ export const blocksHandlers = {
       row.position = rootRank
     }
     const position = row['position'] as number
+    indexLinks(row, new Set())
     const op = pushOp('create_block', {
       block_id: id,
       content: row.content,
@@ -1599,8 +1613,11 @@ export const blocksHandlers = {
     }
     if (b['block_type'] === 'page') rejectDuplicatePageTitle(b, a['toText'] as string)
     if (b['block_type'] === 'tag') rejectDuplicateTagName(blockId, a['toText'] as string)
+    rejectCrossSpaceTokens(definitionSpaceOf(blockId), a['toText'] as string, blockId)
     const oldContent = b['content'] as string | null
+    const linked = linkedTargets(b)
     b['content'] = a['toText'] as string
+    indexLinks(b, linked)
     const op = pushOp('edit_block', {
       block_id: a['blockId'],
       to_text: a['toText'],

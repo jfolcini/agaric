@@ -210,8 +210,9 @@ fn ids_in(rows: &[Value], id_key: &str) -> Vec<String> {
 //   * NEVER attach a clock-derived column verbatim. `deleted_at` is an
 //     epoch-ms stamp that differs on every run, so it is normalised to the
 //     `DELETED` sentinel the #763 snapshot already uses.
-//   * NEVER attach content carrying `#` or `->`; the grammar would not survive
-//     the round trip. Fixture-authored ASCII words are fine.
+//   * An attribute value is percent-escaped where it holds `%`, `#` or `->`
+//     (`escape_separators`), so text such as a `#[id]` tag reference cannot
+//     split into a second segment. A head is refused instead (`token_head`).
 //
 // The TS twin implements the same grammar in `conformance-query.ts`.
 
@@ -291,9 +292,8 @@ const PEER_REF_ATTRS: &[&str] = &[
 /// these two commands were waived for so long. `device_id`, `seq` and
 /// `created_at` are op identities each stack generates independently — the
 /// blocker `compute_edit_diff` and `compute_block_vs_current_diff` still carry,
-/// on the INPUT side. `payload` is a JSON blob holding stack-local block ids and
-/// free text, which [`attr_value`] refuses on the `#` / `->` aliasing rule
-/// anyway. What is left is `op_type`, which the #763 op-log digest ALREADY
+/// on the INPUT side. `payload` is a JSON blob holding stack-local block ids,
+/// which no stack could match. What is left is `op_type`, which the #763 op-log digest ALREADY
 /// compares across the stacks (`{ count, ops }` in `conformance_snapshot.rs`),
 /// plus `is_replicated` — the other per-entry column both stacks fill
 /// (migration 0099) and the one `undoDeleteOf` filters on.
@@ -355,14 +355,13 @@ const JS_PLAIN_RANGE: std::ops::Range<f64> = 1e-6..1e21;
 /// formatters DO disagree on is REFUSED at authoring time rather than
 /// recorded — see [`JS_PLAIN_RANGE`].
 ///
-/// The rendered value is also refused if it contains `#` or `->`, the two
-/// sequences the token grammar uses as separators. That failure mode is not a
-/// red/green flip — both runners build the identical string — it is token
-/// ALIASING: content `a#b` renders `B2#title=a#b#block_type=…`, which a
+/// The rendered value is escaped ([`escape_separators`]) where it holds `#` or
+/// `->`, the two sequences the token grammar uses as separators. Left raw, it
+/// would not flip red or green — both runners build the identical string — it
+/// would ALIAS: content `a#b` renders `B2#title=a#b#block_type=…`, which a
 /// differently-split row can match, so a real projection bug in that column
-/// could compare EQUAL. `RESOLVED_ATTRS` carries `title`, i.e. the raw
-/// `content` column, and `#` is ordinary text in this app — this is reachable,
-/// not theoretical.
+/// could compare EQUAL. Content is user text in which `#` is ordinary (a
+/// `#[id]` tag reference), so this is reachable, not theoretical.
 fn attr_value(name: &str, v: Option<&Value>) -> String {
     let rendered = match v {
         None | Some(Value::Null) => "null".to_owned(),
@@ -384,20 +383,22 @@ fn attr_value(name: &str, v: Option<&Value>) -> String {
         ),
         Some(other) => other.to_string(),
     };
-    assert!(
-        !rendered.contains('#') && !rendered.contains("->"),
-        "{}query attribute '{name}' renders as {rendered:?}, which contains a token \
-         separator ('#' or '->'). Both runners would build the SAME string, so this \
-         does not redden — it ALIASES: a differently-split row can match the same \
-         token, and a real projection bug in this column would compare equal. Pick \
-         fixture content without those sequences.",
-        projecting_at()
-    );
+    escape_separators(&rendered)
+}
+
+/// `rendered` with `%`, `#` and `->` percent-escaped, so an attribute value
+/// cannot run into the next segment or an arrow head: the escape is
+/// reversible, so two different values never render alike. MUST match
+/// `escapeSeparators` in the TS twin.
+fn escape_separators(rendered: &str) -> String {
     rendered
+        .replace('%', "%25")
+        .replace('#', "%23")
+        .replace("->", "-%3E")
 }
 
 /// Refuse a token HEAD carrying a separator, for the same reason [`attr_value`]
-/// refuses one in a value.
+/// escapes one in a value.
 ///
 /// [`attr_value`] guards only the ATTRIBUTE side of
 /// `head ("#" attr-name "=" attr-value)*`, but the head is concatenated with
@@ -3449,32 +3450,21 @@ mod attr_value_tests {
         attr_value("value_num", Some(&json!(1e-7)));
     }
 
-    /// A `#` in an attribute value is NOT a red/green flip — both runners build
-    /// the same string — it is token ALIASING, so the guard has to refuse it at
-    /// authoring time or a projection bug in that column can compare EQUAL.
-    /// `RESOLVED_ATTRS` carries `title`, the raw `content` column, and `#` is
-    /// ordinary text in this app, so this is reachable rather than theoretical.
+    /// A `#` or `->` in an attribute value would ALIAS — both runners build the
+    /// same string, so a differently-split row could compare equal — so it is
+    /// escaped, and `%` with it so two different values never render alike.
     #[test]
-    #[should_panic(expected = "contains a token separator")]
-    fn a_hash_in_an_attribute_value_is_refused() {
-        attr_value("title", Some(&json!("a#b")));
+    fn separators_in_an_attribute_value_are_escaped() {
+        assert_eq!(attr_value("title", Some(&json!("a#[b]"))), "a%23[b]");
+        assert_eq!(attr_value("title", Some(&json!("a->b"))), "a-%3Eb");
+        assert_eq!(attr_value("title", Some(&json!("a%23b"))), "a%2523b");
     }
 
-    /// `->` is the other separator: it splits an arrow HEAD, so a value
-    /// carrying it can alias against a `parent->child` token.
+    /// Ordinary text renders as it is: a lone `-` or `>` is no separator.
     #[test]
-    #[should_panic(expected = "contains a token separator")]
-    fn an_arrow_in_an_attribute_value_is_refused() {
-        attr_value("title", Some(&json!("a->b")));
-    }
-
-    /// The guard must not be so broad it refuses ordinary text — a lone `-` or
-    /// `>` is fine, and refusing them would make the harness unusable for real
-    /// content while proving nothing.
-    #[test]
-    fn ordinary_punctuation_is_not_refused() {
-        for v in [json!("a-b"), json!("a > b"), json!("a_b"), json!("plain")] {
-            let _ = attr_value("title", Some(&v));
+    fn ordinary_punctuation_is_not_escaped() {
+        for v in ["a-b", "a > b", "a_b", "plain"] {
+            assert_eq!(attr_value("title", Some(&json!(v))), v);
         }
     }
 
@@ -4076,36 +4066,15 @@ mod query_runner_context_tests {
     /// #3833 item 5 — the panics inside the TOKEN GRAMMAR name the fixture too,
     /// not only the arg accessors.
     ///
-    /// These three are the ones a NEW fixture is likeliest to meet, because
-    /// they trip on seeded content rather than on harness plumbing: a `#` in a
-    /// page title, a `#` in a property key, a `value_num` outside the range the
-    /// two runners render identically. None of them can reach [`StepArgs`] —
-    /// they fire beneath `row_token` / `property_token`, which take a
-    /// serialized response row — so the context arrives through the
-    /// [`super::PROJECTING_STEP`] task-local instead.
-    #[tokio::test]
-    #[should_panic(
-        expected = "fixture 'grammar_demo' query step 'resolve_the_page' (command \
-                    'batch_resolve'): query attribute 'title' renders as"
-    )]
-    async fn a_separator_in_a_seeded_title_names_the_fixture_and_the_step() {
-        let (pool, _dir) = test_pool().await;
-        insert_block(&pool, PAGE, "page", "Sharp # title", None, Some(0)).await;
-        assign_all_to_test_space(&pool).await;
-        let fixture = json!({
-            "name": "grammar_demo",
-            "queries": [{
-                "name": "resolve_the_page",
-                "command": "batch_resolve",
-                "args": { "ids": [PAGE], "scope": { "kind": "active", "space_id": TEST_SPACE_ID } },
-            }],
-        });
-        let _ = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;
-    }
-
-    /// The HEAD half of the same hazard: a property KEY is user-authored text
-    /// (`set_property` takes it straight from the caller), so `#` in one is
-    /// reachable rather than theoretical.
+    /// These two are the ones a NEW fixture is likeliest to meet, because they
+    /// trip on seeded content rather than on harness plumbing: a `#` in a
+    /// property key, a `value_num` outside the range the two runners render
+    /// identically. Neither can reach [`StepArgs`] — they fire beneath
+    /// `property_token` and `attr_value`, which take a serialized response row
+    /// — so the context arrives through the [`super::PROJECTING_STEP`]
+    /// task-local instead. A property KEY is user-authored text (`set_property`
+    /// takes it straight from the caller), so `#` in one is reachable rather
+    /// than theoretical.
     #[tokio::test]
     #[should_panic(
         expected = "fixture 'grammar_demo' query step 'read_the_properties' (command \

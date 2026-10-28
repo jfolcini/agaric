@@ -35,6 +35,7 @@ import {
   opLog,
   properties,
   propertyDefs,
+  unresolvedLinks,
 } from '@/lib/tauri-mock/seed'
 
 const MOCK_DIR = path.resolve(import.meta.dirname, '..')
@@ -88,6 +89,7 @@ describe('#3332 — the [[ULID]] link scan has a single owner', () => {
       properties.clear()
       blockTags.clear()
       propertyDefs.clear()
+      unresolvedLinks.clear()
       opLog.length = 0
 
       blocks.set(PAGE_A, makeBlock(PAGE_A, 'page', 'Page A', null, 1))
@@ -114,7 +116,7 @@ describe('#3332 — the [[ULID]] link scan has a single owner', () => {
     function expectedSources(targetId: string): string[] {
       return [
         ...new Set(
-          deriveLinkEdges(blocks)
+          deriveLinkEdges(blocks, unresolvedLinks)
             .filter((e) => e.targetId === targetId && !blocks.get(e.sourceId)?.['deleted_at'])
             .map((e) => e.sourceId),
         ),
@@ -163,7 +165,9 @@ describe('#3332 — the [[ULID]] link scan has a single owner', () => {
       }
       expect(res.items.map((b) => b['id'] as string).toSorted()).toEqual(expectedSources(PAGE_B))
       expect(expectedSources(PAGE_B)).toEqual([A1, A2, LBL].toSorted())
-      expect(deriveLinkEdges(blocks).find((e) => e.sourceId === LBL)?.kind).toBe('page_link')
+      expect(deriveLinkEdges(blocks, unresolvedLinks).find((e) => e.sourceId === LBL)?.kind).toBe(
+        'page_link',
+      )
     })
 
     it('a ((ULID)) block-ref token also derives a backlink edge', () => {
@@ -204,7 +208,7 @@ describe('#3332 — the [[ULID]] link scan has a single owner', () => {
         [Y, makeBlock(Y, 'content', 'y', null, 2)],
         [SRC, makeBlock(SRC, 'content', `[[${X}]] then ((${Y}))`, null, 3)],
       ])
-      expect(deriveLinkEdges(all).map((e) => [e.targetId, e.kind])).toEqual([
+      expect(deriveLinkEdges(all, new Map()).map((e) => [e.targetId, e.kind])).toEqual([
         [X, 'page_link'],
         [Y, 'block_ref'],
       ])

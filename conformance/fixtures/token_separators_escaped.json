@@ -1,0 +1,85 @@
+{
+  "description": "#6054 — an attribute value of a projected row is percent-escaped where it holds `%`, `#` or `->`, the separators of the query token grammar, so text such as a `#[id]` tag reference cannot run into the next segment or alias another row's token; `%` goes with them, so two values never render alike. Both runners render the same escaped text.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "50% done #urgent a->b %23",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 1,
+      "ops": [
+        {
+          "op_type": "create_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "text_with_separators",
+      "returns": [
+        "B2#block_type=content#content=50%25 done %23urgent a-%3Eb %2523#parent_id=B1#position=1"
+      ]
+    }
+  ],
+  "name": "token_separators_escaped",
+  "ops": [
+    {
+      "args": {
+        "blockType": "content",
+        "content": "50% done #urgent a->b %23",
+        "index": 0,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "name": "text_with_separators",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

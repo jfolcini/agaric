@@ -1,0 +1,260 @@
+{
+  "description": "#6054 — a write that introduces a `[[id]]` naming a block of another space is refused, but one whose page already holds that token is not (#5272, `page_holds_token`): \"Move to space\" leaves such tokens behind, and editing the text around one must not be refused. The source block `C1`, on the harness page `S1`, links `S2`; `create_space` makes a second space (`C2`) and `S2` moves into it. `C1` keeps its link through an edit, while a block of `S3`, a page that holds no such token, is refused it.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Target",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Other",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "see [[000000000000000000000000S2]] again",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Away",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 5,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [
+      {
+        "kind": "page_link",
+        "source_id": "B4",
+        "source_page_id": "B1",
+        "target_id": "B2"
+      }
+    ],
+    "properties": [
+      {
+        "block_id": "B5",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "the_source",
+      "returns": [
+        "B4#block_type=content#content=see [[000000000000000000000000S2]]#parent_id=B1#position=1"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_second_space",
+      "returns": ["create_space#space_id=B5"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_target_moves_away",
+      "returns": ["move_blocks_to_space#moved=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_page_already_holds_the_token",
+      "returns": ["B4#content=see [[000000000000000000000000S2]] again"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "another_page_holds_no_such_token",
+      "returns": []
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_of_the_moved_target",
+      "rows": ["B4#parent_id=B1#page_id=B1#position=1#deleted_at=null"],
+      "total_count": null
+    }
+  ],
+  "name": "cross_space_link_kept_after_move",
+  "ops": [
+    {
+      "args": {
+        "blockType": "content",
+        "content": "see [[S2]]",
+        "index": 0,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "name": "the_source",
+      "via": "command"
+    },
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Away"
+      },
+      "command": "create_space",
+      "name": "a_second_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S2"],
+        "spaceId": "C2"
+      },
+      "command": "move_blocks_to_space",
+      "name": "the_target_moves_away",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C1",
+        "toText": "see [[S2]] again"
+      },
+      "command": "edit_block",
+      "comment": "the token is still on S1, held by C1 itself",
+      "name": "the_page_already_holds_the_token",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "see [[S2]]",
+        "index": 0,
+        "parentId": "S3",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "comment": "S3 holds no token naming S2",
+      "expect_error": "validation",
+      "name": "another_page_holds_no_such_token",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockId": "S2",
+        "limit": 50,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "get_backlinks",
+      "comment": "the edge made before the move survives the move and the edit",
+      "name": "backlinks_of_the_moved_target"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Target",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "page",
+        "content": "Other",
+        "id": "S3",
+        "parent_id": null,
+        "position": 3
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
