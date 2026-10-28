@@ -1028,6 +1028,78 @@ describe('property reads after a space move', () => {
   })
 })
 
+// #533 — `space` is the `blocks.space_id` column on the backend: `set_property`
+// writes it behind `validate_space_target_in_tx`'s refusals, and `delete_property`
+// clears it, appending nothing when the block holds none.
+describe('set_property and delete_property on the space key', () => {
+  const typed = { value_text: null, value_num: null, value_date: null, value_bool: null }
+  const setSpace = (blockId: string, valueRef: string): unknown =>
+    invoke('set_property', { blockId, key: 'space', value: { ...typed, value_ref: valueRef } })
+  const pagesIn = (spaceId: string): string[] =>
+    (
+      invoke('list_all_pages_in_space', {
+        scope: { kind: 'active', space_id: spaceId },
+        tagIds: null,
+      }) as Array<{ id: string }>
+    ).map((p) => p.id)
+  const tagsIn = (spaceId: string): string[] =>
+    (
+      invoke('list_all_tags_in_space', {
+        scope: { kind: 'active', space_id: spaceId },
+      }) as Array<{ tag_id: string }>
+    ).map((t) => t.tag_id)
+
+  it('moves a page or a top-level tag, and refuses a content block', () => {
+    const work = invoke('create_space', { name: 'Work', accentColor: null }) as string
+
+    expect(() => setSpace(SEED_IDS.BLOCK_GS_1, work)).toThrow(
+      expect.objectContaining({ kind: 'validation' }),
+    )
+    expect(pagesIn(work)).toEqual([])
+
+    setSpace(SEED_IDS.PAGE_GETTING_STARTED, work)
+    setSpace(SEED_IDS.TAG_WORK, work)
+    expect(pagesIn(work)).toEqual([SEED_IDS.PAGE_GETTING_STARTED])
+    expect(tagsIn(work)).toEqual([SEED_IDS.TAG_WORK])
+  })
+
+  it('refuses a target that is no live space', () => {
+    const page = SEED_IDS.PAGE_GETTING_STARTED
+
+    expect(() => setSpace(page, SEED_IDS.PAGE_QUICK_NOTES)).toThrow(
+      expect.objectContaining({ kind: 'validation' }),
+    )
+    expect(() => setSpace(page, 'NO_SUCH_SPACE')).toThrow(
+      expect.objectContaining({ kind: 'validation' }),
+    )
+    const gone = invoke('create_space', { name: 'Gone', accentColor: null }) as string
+    invoke('delete_block', { blockId: gone })
+    expect(() => setSpace(page, gone)).toThrow(expect.objectContaining({ kind: 'validation' }))
+    expect(pagesIn('SPACE_PERSONAL')).toContain(page)
+  })
+
+  it('clears the space with delete_property, and its undo puts the page back', () => {
+    const page = SEED_IDS.PAGE_GETTING_STARTED
+    const work = invoke('create_space', { name: 'Work', accentColor: null }) as string
+    setSpace(page, work)
+
+    const cleared = invoke('delete_property', { blockId: page, key: 'space' }) as {
+      op_refs: Array<{ device_id: string; seq: number }>
+    }
+    expect(cleared.op_refs).toHaveLength(1)
+    expect(pagesIn(work)).toEqual([])
+    expect(pagesIn('SPACE_PERSONAL')).not.toContain(page)
+
+    // A space the block no longer holds appends nothing to delete.
+    expect(invoke('delete_property', { blockId: page, key: 'space' })).toMatchObject({
+      op_refs: [],
+    })
+
+    invoke('revert_ops', { ops: cleared.op_refs })
+    expect(pagesIn(work)).toEqual([page])
+  })
+})
+
 // ---------------------------------------------------------------------------
 // undo_page_op
 // ---------------------------------------------------------------------------
@@ -3456,6 +3528,15 @@ describe('import_markdown', () => {
     expect(result).toHaveProperty('properties_set', 0)
     expect(result).toHaveProperty('warnings')
     expect(Array.isArray(result['warnings'])).toBe(true)
+  })
+
+  // The mock lets a missing space through where the backend refuses it; the page
+  // then belongs to no space, an empty id being none.
+  it('puts the page in no space when none is named', () => {
+    const result = invoke('import_markdown', { content: 'Body', filename: 'Spaceless.md' }) as {
+      page_id: string
+    }
+    expect(getRow(result.page_id)['space_id']).toBeNull()
   })
 
   // #5160 D12: an import adopts an empty page of the file's title, exact or

@@ -1706,7 +1706,7 @@ export const pagesHandlers = {
     if (adopted === null) {
       blocks.set(pageId, {
         ...makeBlock(pageId, 'page', pageTitle, null, blocks.size),
-        space_id: spaceId ?? null,
+        space_id: spaceId === '' ? null : spaceId,
       })
     }
 
