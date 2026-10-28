@@ -115,8 +115,10 @@ frontend	src/editor/page-mode/page-save.ts	StringLiteral	67	2	const content = ne
 frontend	src/editor/page-mode/page-tags.ts	BooleanLiteral	8	1	return true
 frontend	src/editor/page-mode/page-tasks.ts	ArrayDeclaration	27	1	properties: id === null ? [] : this.tasks.propertiesOf(id),
 frontend	src/editor/page-mode/page-tasks.ts	ArrayDeclaration	28	1	attachments: id === null ? [] : this.tasks.attachmentsOf(id),
+# #5964 page-tasks: commitPageTask's edit callback resolves `true` only into what commitCheckboxState returns, which commitPageTask discards; the store, the API calls and the checkbox are the same either way
 frontend	src/editor/page-mode/page-tasks.ts	BooleanLiteral	31	1	if (text === markdown) return true
-frontend	src/editor/page-mode/page-tasks.ts	BooleanLiteral	8	8	return true
+# #5964 page-tasks: the same callback's closing `return true` (after `markdown = text`), equivalent for the same reason: commitPageTask discards what commitCheckboxState returns
+frontend	src/editor/page-mode/page-tasks.ts	BooleanLiteral	8	9	return true
 frontend	src/editor/page-mode/page-tasks.ts	CallExpression	1	1	this.waiting.delete(dom)
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	1	1	node.type !== this.node.type ||
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	13	1	properties: id === null ? [] : this.tasks.propertiesOf(id),
