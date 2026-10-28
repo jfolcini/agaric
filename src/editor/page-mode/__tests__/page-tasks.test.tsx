@@ -807,6 +807,25 @@ describe('the list marker', () => {
     expect(markerIn(container, B)?.textContent).toBe('1.')
   })
 
+  it('marks a list block, and only one, as a list item, which the CSS sets closer than a paragraph', () => {
+    const { container, lists } = mountList(
+      [
+        [A, 0, 'one'],
+        [B, 0, 'two'],
+      ],
+      { [A]: listStyle('bullet') },
+    )
+    expect(blockEl(container, A)).toHaveAttribute('data-list-item')
+    expect(blockEl(container, B)).not.toHaveAttribute('data-list-item')
+
+    act(() => {
+      lists.want(A, 'none')
+      lists.want(B, 'ordered')
+    })
+    expect(blockEl(container, A)).not.toHaveAttribute('data-list-item')
+    expect(blockEl(container, B)).toHaveAttribute('data-list-item')
+  })
+
   it('a block’s view deleted stops listening to its marker', () => {
     const lists = new PageLists({ [B]: listStyle('bullet') }, [
       { id: A, depth: 0 },

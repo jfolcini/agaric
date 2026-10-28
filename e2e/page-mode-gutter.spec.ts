@@ -1,7 +1,7 @@
 /**
  * Page mode's gutter (#5691) against the mock backend: the editor's one grip,
- * on the block under the pointer, and a block's chevron where block mode's
- * are, revealed as the pointer reaches the block (and kept while it walks to
+ * on the block under the pointer, and a block's chevron, left of its text on
+ * its first line, revealed as the pointer reaches the block (and kept while it walks to
  * them), with no axe violations; a drag by the grip moving its block with the
  * blocks under it, read back from the backend and again after leaving the page
  * and coming back; Escape, or the window losing focus, cancelling a drag; the
@@ -185,43 +185,42 @@ test.describe('page mode gutter (#5691) @editor @pages', () => {
     await page.emulateMedia({ reducedMotion: 'reduce' })
   })
 
-  test('the grip sits on the block under the pointer, and it and the chevron where block mode’s do, and pass axe', async ({
+  test('the grip and the chevron sit on the block under the pointer, in the frame left of its text, on its first line, and pass axe', async ({
     page,
   }) => {
     const { ids } = await seedRows(page, 'Gutter place', [
       [0, 'parent'],
       [1, 'child'],
     ])
-    await openViaPalette(page, 'Gutter place')
-    const rows = page.locator('[data-testid="sortable-block"]')
-    await rows.first().hover()
-    const parentGrip = await rows.first().getByTestId('drag-handle').boundingBox()
-    const blockChevron = await rows.first().getByTestId('collapse-toggle').boundingBox()
-    await rows.nth(1).hover()
-    const childGrip = await rows.nth(1).getByTestId('drag-handle').boundingBox()
-    await modeSwitch(page, 'Page').click()
-    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(2)
-
-    // Lower by the toolbar page mode shows above the document, where block mode shows none
-    // until a block is focused: the document starts where the toolbar's top is.
-    const shift = await page.evaluate((sel) => {
-      const top = (el: Element | null) => el?.getBoundingClientRect().top ?? 0
-      return (
-        top(document.querySelector(sel)) -
-        top(document.querySelector('[data-testid="formatting-toolbar"]'))
-      )
-    }, EDITOR)
-    const lower = (box: { y: number } | null) =>
-      box === null ? null : { ...box, y: box.y + shift }
+    await openInPageMode(page, 'Gutter place', 2)
+    const box = async (locator: Locator) => {
+      const at = await locator.boundingBox()
+      if (at === null) throw new Error('no box')
+      return { ...at, right: at.x + at.width, middle: at.y + at.height / 2 }
+    }
+    const frame = await box(page.locator('[data-page-mode-surface]'))
+    const text = (id: string | undefined) => box(block(page, id).locator('.page-block-content'))
 
     await block(page, ids[0]).hover()
     await expect(grip(page)).toBeVisible()
     await expect(chevron(page, ids[0])).toHaveCSS('opacity', '1')
-    expect(await grip(page).boundingBox()).toEqual(lower(parentGrip))
-    expect(await chevron(page, ids[0]).boundingBox()).toEqual(lower(blockChevron))
+    const parentText = await text(ids[0])
+    const parentGrip = await box(grip(page))
+    const parentChevron = await box(chevron(page, ids[0]))
+    // In the frame, the grip just left of the chevron, the chevron left of the text, on its line.
+    expect(parentGrip.x).toBeGreaterThanOrEqual(frame.x)
+    expect(parentChevron.x - parentGrip.right).toBe(2)
+    expect(parentChevron.right).toBeLessThan(parentText.x)
+    expect(Math.abs(parentGrip.middle - parentText.middle)).toBeLessThanOrEqual(1)
+    expect(Math.abs(parentChevron.middle - parentText.middle)).toBeLessThanOrEqual(1)
+    // A block with no chevron has its grip where the chevron would be, as far left of its text.
     await block(page, ids[1]).hover()
-    await expect.poll(() => grip(page).boundingBox()).toEqual(lower(childGrip))
     await expect(chevron(page, ids[1])).toHaveCount(0)
+    const childText = await text(ids[1])
+    await expect
+      .poll(async () => (await box(grip(page))).right)
+      .toBe(parentChevron.right + childText.x - parentText.x)
+    expect(Math.abs((await box(grip(page))).middle - childText.middle)).toBeLessThanOrEqual(1)
 
     await page.addScriptTag({ path: axePath })
     const violations = await page.evaluate(async () => {

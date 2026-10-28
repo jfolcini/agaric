@@ -317,6 +317,8 @@ class PageBlockView implements NodeView {
 
   /** Block mode's list marker, before the text on its first line; none for a plain block. */
   private showMarker(text: string): void {
+    // Spaces list items closer than paragraphs (`index.css`).
+    this.dom.toggleAttribute('data-list-item', text !== '')
     if (text === '') {
       this.marker?.remove()
       this.marker = null
