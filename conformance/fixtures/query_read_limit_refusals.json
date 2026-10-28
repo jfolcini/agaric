@@ -1,5 +1,5 @@
 {
-  "description": "#6054 — three reads refuse a `limit` outside `[1, 200]` with `validation` before any query runs (invariant 10): `run_advanced_query` (`validate_limit`), and `query_by_tags` and `list_unfinished_tasks` (`PageRequest::new`). Found by the differential fuzz's read leg: the mock clamped the first at 100 and took any limit on the other two.",
+  "description": "#6054 — four reads refuse a `limit` outside `[1, 200]` with `validation` before any query runs (invariant 10): `run_advanced_query` (`validate_limit`), and `query_by_tags`, `query_by_tag_expr` and `list_unfinished_tasks` (`PageRequest::new`). `query_by_tags` with no tags and no prefixes answers an empty page before it reaches `PageRequest::new`, so it takes any limit. Found by the differential fuzz's read leg: the mock clamped the first at 100 and took any limit on the others.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -67,6 +67,30 @@
       "error": "validation",
       "has_more": null,
       "name": "tagged_limit_201",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "tagged_no_leaves_limit_0",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "tag_expr_limit_0",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "tag_expr_limit_201",
       "rows": [],
       "total_count": null
     },
@@ -145,6 +169,56 @@
       "comment": "A limit outside [1, 200] is refused.",
       "expect_error": "validation",
       "name": "tagged_limit_201"
+    },
+    {
+      "args": {
+        "limit": 0,
+        "mode": "or",
+        "prefixes": [],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "tagIds": []
+      },
+      "command": "query_by_tags",
+      "comment": "No tags and no prefixes short-circuit to an empty page before the limit is checked, so limit 0 is answered, not refused. The empty result is the negative this pins.",
+      "name": "tagged_no_leaves_limit_0",
+      "expect_empty": true
+    },
+    {
+      "args": {
+        "expr": {
+          "type": "Tag",
+          "value": "S2"
+        },
+        "limit": 0,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_tag_expr",
+      "comment": "A limit outside [1, 200] is refused.",
+      "expect_error": "validation",
+      "name": "tag_expr_limit_0"
+    },
+    {
+      "args": {
+        "expr": {
+          "type": "Tag",
+          "value": "S2"
+        },
+        "limit": 201,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_tag_expr",
+      "comment": "A limit outside [1, 200] is refused.",
+      "expect_error": "validation",
+      "name": "tag_expr_limit_201"
     },
     {
       "args": {

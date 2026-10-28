@@ -1201,9 +1201,8 @@ export function relabelToken(token: string, labels: ReadonlyMap<string, string>)
  * mirrors, not the write it omits.
  *
  * The backend's stamp is THREE statements, and the column follows all three
- * (the property still follows only the first, and only for `page` blocks —
- * widening the property write would change what today's property-reading
- * handlers see, and the property is not the thing item 1 is about):
+ * (the property follows only the second, and only for `page` and `tag` blocks,
+ * the rows `create_block` writes it on):
  *
  *   1. `UPDATE blocks SET page_id = id WHERE page_id IS NULL` — a root row owns
  *      itself. Mirrored READ-ONLY by {@link ownerPageOf} rather than by

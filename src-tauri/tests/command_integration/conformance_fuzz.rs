@@ -493,7 +493,9 @@ fn read_steps(created: usize, dates: &[String], term: &str) -> Vec<Value> {
         json!({ "name": "agenda_counts", "command": "count_agenda_batch_by_source", "args": {
             "dates": dates, "scope": scope,
         }}),
-        json!({ "name": "unfinished", "command": "list_unfinished_tasks", "unordered": RAW_ID_ORDER,
+        json!({ "name": "unfinished", "command": "list_unfinished_tasks",
+            "unordered": "sorted by due or scheduled date, which several rows share, then by raw \
+                          block id, which op-created rows do not share between the stacks",
             "args": {
                 "beforeDate": "2031-01-01", "todoStates": ["TODO"], "limit": 100, "scope": scope,
             },
@@ -507,7 +509,7 @@ fn read_steps(created: usize, dates: &[String], term: &str) -> Vec<Value> {
         }),
         json!({ "name": "page_links", "command": "list_page_links", "args": { "scope": scope } }),
         json!({ "name": "unlinked", "command": "list_unlinked_references",
-            "unordered": POSITION_TIE_ORDER,
+            "unordered": RAW_ID_ORDER,
             "args": { "pageId": SEED_PAGE, "limit": 50, "scope": scope },
         }),
         json!({ "name": "trash", "command": "list_trash",
@@ -528,7 +530,7 @@ fn read_steps(created: usize, dates: &[String], term: &str) -> Vec<Value> {
             }),
         );
         steps.push(json!({ "name": format!("backlink_groups_{seed}"),
-            "command": "list_backlinks_grouped", "unordered": POSITION_TIE_ORDER,
+            "command": "list_backlinks_grouped", "unordered": RAW_ID_ORDER,
             "args": { "blockId": seed, "limit": 50, "scope": scope },
         }));
     }
@@ -890,10 +892,14 @@ fn mock_matches_backend_on_generated_op_chains_4669() {
             .flatten()
             .zip(backend.queries.as_array().into_iter().flatten())
         {
-            if result["rows"]
-                .as_array()
-                .is_some_and(|rows| !rows.is_empty())
-            {
+            // A grouped read always carries its `filtered#count` trailer and
+            // `count_trash` its count, so a zero one is no answer.
+            if result["rows"].as_array().is_some_and(|rows| {
+                rows.iter().any(|row| {
+                    let row = row.as_str().unwrap_or_default();
+                    !row.starts_with("filtered#count=0#") && row != "count_trash#value=0"
+                })
+            }) {
                 let command = step["command"].as_str().expect("read command").to_owned();
                 *read.borrow_mut().entry(command).or_default() += 1;
             }

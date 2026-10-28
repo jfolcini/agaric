@@ -1625,12 +1625,14 @@ pub async fn replay_fixture(
     assign_all_to_test_space(&pool).await;
     // The stamp writes `blocks.space_id` alone, and a page an op created
     // outside any space (a `create_space` block) keeps a `pages_cache` row
-    // naming none. Copy the column into the cache as every production write
-    // of `space_id` does (migration 0124's backfill), or a read of the cache
-    // disagrees with a read of the column.
+    // naming none. Copy the column into that row as a production write of
+    // `space_id` does (`sync_pages_cache_space_ids`), or a read of the cache
+    // disagrees with a read of the column. Only rows naming no space: the
+    // stamp fills nothing else, and a row the backend wrote is its answer.
     sqlx::query(
         "UPDATE pages_cache SET space_id = \
-         (SELECT b.space_id FROM blocks b WHERE b.id = pages_cache.page_id)",
+         (SELECT b.space_id FROM blocks b WHERE b.id = pages_cache.page_id) \
+         WHERE space_id IS NULL",
     )
     .execute(&pool)
     .await
