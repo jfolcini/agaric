@@ -41,7 +41,8 @@
  * equivalent — no input this module can be handed distinguishes them — and are
  * left as gaps rather than chased with tests that pin nothing:
  *   1. fallbacks that cannot fire: the `?? ''` the type system forces on
- *      `Node.textContent`, `Array.pop()` and an in-bounds index;
+ *      `Node.textContent`, `Array.pop()` and an in-bounds index, and the `?.`
+ *      it forces on a table row's parent;
  *   2. fallbacks whose stand-in value cannot matter, because a mime with no
  *      subtype, an empty body, and a hash matching no resource
  *      converge on the same output whatever it is;
@@ -174,7 +175,8 @@ export function createHtmlTurndown(): TurndownService {
   // `<div>`s, whose line breaks would end the row mid-cell; a `|` in the text
   // would open a column, and so would one after an odd backslash run, which
   // only raw `<code>` leaves (Turndown doubles text backslashes). Added after
-  // the plugin's cell rule, so it wins.
+  // the plugin's cell rule, so it wins: the order counts, Turndown never reads
+  // the rule's name (#4815).
   td.addRule('enmlTableCell', {
     filter: ['th', 'td'],
     replacement: (cellContent, node) => {
@@ -686,7 +688,7 @@ export function parseEnex(xmlText: string): EnexNote[] {
 
     const createdMs = parseEnexTimestamp(noteEl.querySelector('created')?.textContent)
     const updatedMs = parseEnexTimestamp(noteEl.querySelector('updated')?.textContent)
-    const rawSourceUrl = noteEl.querySelector('note-attributes > source-url')?.textContent?.trim()
+    const rawSourceUrl = noteEl.querySelector('note-attributes > source-url')?.textContent.trim()
     const sourceUrl = rawSourceUrl !== undefined && rawSourceUrl.length > 0 ? rawSourceUrl : null
 
     return { title, markdown, tags, createdMs, updatedMs, sourceUrl, attachments }
@@ -705,9 +707,7 @@ function tagToToken(tag: string): string {
   const name = tag.trim().replace(/\s+/g, ' ')
   const bare = `#${name}`
   const [token] = scanNameTokens(bare)
-  return token?.kind === 'tag' && token.name === name && token.end === bare.length
-    ? bare
-    : `#[[${name}]]`
+  return token?.kind === 'tag' && token.name === name ? bare : `#[[${name}]]`
 }
 
 /**

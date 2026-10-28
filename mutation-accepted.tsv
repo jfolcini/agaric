@@ -183,7 +183,6 @@ frontend	src/lib/date-utils.ts	StringLiteral	13	1	if (fmt === 'yyyy-MM-dd') retu
 frontend	src/lib/enex-import.ts	ArithmeticOperator	39	1	dv.setUint32(totalLen - 4, Math.floor(originalLenBits / 4294967296) >>> 0, true)
 frontend	src/lib/enex-import.ts	ArrayDeclaration	29	1	const mediaRefs: string[] = []
 frontend	src/lib/enex-import.ts	BooleanLiteral	76	1	dv.setUint32(totalLen - 4, Math.floor(originalLenBits / 4294967296) >>> 0, true)
-frontend	src/lib/enex-import.ts	CallExpression	1	1	media.remove()
 frontend	src/lib/enex-import.ts	ConditionalExpression	5	1	if (cp !== undefined && cp >= 0x20) out += ch
 frontend	src/lib/enex-import.ts	ConditionalExpression	5	1	if (trimmed.length === 0) return ''
 frontend	src/lib/enex-import.ts	ConditionalExpression	8	1	return name === 'td' || name === 'th'
@@ -192,19 +191,22 @@ frontend	src/lib/enex-import.ts	EqualityOperator	17	1	for (let i = 0; i < bin.le
 frontend	src/lib/enex-import.ts	MethodExpression	15	1	const cells = Array.from(tr.children).filter((c) => {
 frontend	src/lib/enex-import.ts	MethodExpression	17	1	const trimmed = enml.trim()
 frontend	src/lib/enex-import.ts	MethodExpression	5	1	if (texts.some((t) => t.length > 0)) rows.push(texts.join(' / '))
+# #4815 enex-import: the `<tr>` querySelector found under the table always has a parent; the chain is for the type
+frontend	src/lib/enex-import.ts	OptionalChaining	12	1	} else if (first.parentElement?.localName !== 'thead') {
 frontend	src/lib/enex-import.ts	OptionalChaining	14	1	const mime = res.querySelector('mime')?.textContent?.trim() ?? 'application/octet-stream'
 frontend	src/lib/enex-import.ts	OptionalChaining	14	1	.map((el) => el.textContent?.trim() ?? '')
 frontend	src/lib/enex-import.ts	OptionalChaining	18	1	const rawTitle = noteEl.querySelector('title')?.textContent?.trim() ?? ''
 frontend	src/lib/enex-import.ts	Regex	13	1	candidate = /\.[^./\\]+$/.test(fileName) ? fileName : `${fileName}.${ext}`
 frontend	src/lib/enex-import.ts	Regex	21	1	return text.replace(/\s+/g, ' ').replace(/\|/g, '/').trim()
 frontend	src/lib/enex-import.ts	Regex	48	1	const sub = (mime.split('/')[1] ?? '').replace(/[^a-z0-9]+/gi, '').toLowerCase()
+# #4815 enex-import: Turndown's `addRule` never reads its key (`Rules.add` unshifts the rule alone), so the name changes nothing
+frontend	src/lib/enex-import.ts	StringLiteral	12	1	td.addRule('enmlTableCell', {
 frontend	src/lib/enex-import.ts	StringLiteral	15	1	headingStyle: 'atx',
 frontend	src/lib/enex-import.ts	StringLiteral	36	1	const sub = (mime.split('/')[1] ?? '').replace(/[^a-z0-9]+/gi, '').toLowerCase()
 frontend	src/lib/enex-import.ts	StringLiteral	40	1	.map((el) => el.textContent?.trim() ?? '')
 frontend	src/lib/enex-import.ts	StringLiteral	56	1	(_match, index: string) => mediaRefs[Number(index)] ?? '',
 frontend	src/lib/enex-import.ts	StringLiteral	59	1	const base = name.replace(/\\/g, '/').split('/').pop() ?? ''
 frontend	src/lib/enex-import.ts	StringLiteral	60	1	const htmlDoc = document.implementation.createHTMLDocument('')
-frontend	src/lib/enex-import.ts	StringLiteral	62	1	const enml = noteEl.querySelector('content')?.textContent ?? ''
 frontend	src/lib/enex-import.ts	StringLiteral	66	1	const hash = media.getAttribute('hash')?.trim().toLowerCase() ?? ''
 frontend	src/lib/enex-import.ts	StringLiteral	69	1	const texts = cells.map((c) => normalizeInlineCell(c.textContent ?? ''))
 frontend	src/lib/export-graph.ts	CallExpression	1	1	resolved.set(id, null)
