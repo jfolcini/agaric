@@ -704,6 +704,45 @@ describe('the view follows its block', () => {
     })
     expect(tasks.cycle).toHaveBeenCalledTimes(1)
   })
+
+  it('a paste on a focused control leaves the text be; one in the text pastes at the caret', async () => {
+    const tasks = new FakeTasks()
+    tasks.setBlock(A, { todo_state: 'TODO' })
+    const { container, editor } = mount([[A, 0, 'one']], tasks)
+    const block = blockEl(container, A)
+    act(() => caret(editor, 0, 3))
+    const paste = (target: Element) =>
+      act(() => {
+        fireEvent.paste(target, {
+          clipboardData: {
+            files: [],
+            types: ['text/plain'],
+            getData: (type: string) => (type === 'text/plain' ? '!' : ''),
+          },
+        })
+      })
+
+    const checkbox = await findIn(block, MARKER)
+    act(() => checkbox.focus())
+    paste(checkbox)
+    expect(rowsOf(editor.state.doc)).toEqual([[A, 0, 'one']])
+
+    paste(block.querySelector('.page-block-content p') as HTMLElement)
+    expect(rowsOf(editor.state.doc)).toEqual([[A, 0, 'one!']])
+  })
+
+  it('a block is its chevron’s hover and focus group, as block mode’s row is', () => {
+    const { container } = mount([
+      [A, 0, 'parent'],
+      [B, 1, 'child'],
+    ])
+    const block = blockEl(container, A)
+    const chevron = block.querySelector('[data-testid="collapse-toggle"]') as HTMLElement
+
+    // At rest the chevron shows only on hovering or focusing within its `group`.
+    expect(chevron).toHaveClass('group-hover:opacity-100', 'group-focus-within:opacity-100')
+    expect(chevron.closest('.group')).toBe(block)
+  })
 })
 
 describe('the list marker', () => {
