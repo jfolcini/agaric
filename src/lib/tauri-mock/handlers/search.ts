@@ -20,6 +20,7 @@ import {
   fbqPropertyFilterMatches,
   fbqTagFilterMatches,
   linkTokenRe,
+  assertQueryFilterLeaves,
   metaRowMatchesExpr,
   metaRowMatchesFilter,
   pageRequestLimit,
@@ -2106,6 +2107,13 @@ export const searchHandlers = {
     const aggSpecs = (request['aggregates'] as Array<Record<string, unknown>> | undefined) ?? []
     const groupBy = request['groupBy'] as Record<string, unknown> | null | undefined
     const cursor = request['cursor'] as string | null | undefined
+    // An omitted filter defaults to the engine's TRUE expression
+    // (`And { children: [] }`), so a filterless query returns the whole space.
+    const filterExpr = (request['filter'] as Record<string, unknown> | undefined) ?? {
+      type: 'And',
+      children: [],
+    }
+    assertQueryFilterLeaves(filterExpr)
 
     // Echo one AggregateResult per requested spec. `count` lands in `count`;
     // every fold operator (sum/avg/min/max) lands a stub `value`.
@@ -2154,13 +2162,7 @@ export const searchHandlers = {
     }
 
     // FLAT structural path: evaluate the `FilterExpr` against every active,
-    // in-space block. An omitted filter defaults to the engine's TRUE
-    // expression (`And { children: [] }`), so a filterless query returns the
-    // whole space.
-    const filterExpr = (request['filter'] as Record<string, unknown> | undefined) ?? {
-      type: 'And',
-      children: [],
-    }
+    // in-space block.
     const spaceId = request['spaceId'] as string
     // `validate_limit` (engine.rs) is `PageRequest::new`'s policy: `[1, 200]`,
     // refused rather than clamped, 50 when absent.

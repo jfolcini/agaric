@@ -67,7 +67,7 @@ export function formatBytes(bytes: number): string {
 }
 
 /** Crockford base32 alphabet used by ULIDs. */
-const CROCKFORD_BASE32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+export const CROCKFORD_BASE32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 
 /**
  * Decode a ULID to a Date by extracting the 48-bit millisecond timestamp

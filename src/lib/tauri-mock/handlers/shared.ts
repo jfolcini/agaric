@@ -21,9 +21,10 @@ import { enUS } from 'date-fns/locale/en-US'
 
 import { utf8ToBase64Url } from '@/lib/base64url'
 import type { AppError, PageResponse, PageSort, commands } from '@/lib/bindings'
-import { ulidToDate } from '@/lib/format'
+import { CROCKFORD_BASE32, ulidToDate } from '@/lib/format'
 import { BUILTIN_PROPERTY_DEFS } from '@/lib/property-save-utils'
 import { pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
+import { isIsoDate } from '@/lib/search-query/is-iso-date'
 import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import {
   type MockLinkEdge,
@@ -737,12 +738,11 @@ export function titleSortKey(title: string): string {
 }
 
 /**
- * Does a page row satisfy one compound-filter primitive? The mock evaluates
- * `Stub` / `HasNoInboundLinks` / `Orphan` / `Tag` / `Priority` / `PathGlob` /
- * `HasProperty` / `LastEdited` faithfully (mirroring the REAL backend
- * semantics in `src-tauri/agaric-store/src/filters/primitive.rs`); any other primitive is
- * a permissive no-op (the backend owns those, and FE tests that need them
- * mock at the IPC boundary directly).
+ * Does a page row satisfy one compound-filter primitive? Each arm mirrors the
+ * SQL its primitive compiles to (`src-tauri/agaric-store/src/filters/primitive.rs`,
+ * `query/projection.rs`). Callers refuse their surface's off-limits leaves first,
+ * as the backend's surface gates do; the Search-only toggles (`Regex`,
+ * `CaseSensitive`, `WholeWord`, `Snippet`) have no arm here.
  *
  * `lastEditedAt` selects which last-edited stamp the `LastEdited` arm reads;
  * it defaults to the row's own `lastModifiedAt`. See {@link LastEditedSource}.
@@ -847,10 +847,86 @@ export function metaRowMatchesFilter(
         f['predicate'] as Record<string, unknown> | undefined,
       )
     }
+    case 'ChildOf': {
+      return r.parentId === f['parent']
+    }
+    case 'Space': {
+      // `b.space_id = ?`: the space of the block's page.
+      return ownerSpaceOf({ id: r.id, page_id: r.pageId }) === f['space_id']
+    }
+    case 'Created': {
+      return createdInRange(r.id, f['after'], f['before'])
+    }
+    case 'LinkedFrom': {
+      // A `block_links` row from `source` to this block; the table keeps a
+      // trashed source's rows, so its content still counts.
+      return contentLinksTo(blocks.get(f['source'] as string)?.['content'] as string | null, r.id)
+    }
+    case 'HasParentMatching': {
+      // `EXISTS (SELECT 1 FROM blocks p WHERE p.id = b.parent_id AND <matcher on p>)`:
+      // any parent row, trashed or not, judged on its own columns and its own
+      // last-edited stamp (`lastEditedAt` is the outer row's).
+      const parent = r.parentId === null ? undefined : blocks.get(r.parentId)
+      return (
+        parent !== undefined &&
+        metaRowMatchesExpr(
+          buildPageMetaRow(parent, [], []),
+          (f['matcher'] as Record<string, unknown> | undefined) ?? {},
+        )
+      )
+    }
     default: {
-      return true
+      throw appErrorRejection({
+        kind: 'validation',
+        code: 'InvalidFilter',
+        message: `\`${String(f['type'])}\` is not a valid filter on this surface`,
+      })
     }
   }
+}
+
+/**
+ * `parse_iso_to_ms` + `ms_to_ulid_prefix` behind `resolve_range_bound`
+ * (`agaric-store/src/backlink/filters.rs`): the 10-char ULID prefix a
+ * `Created` / `CreatedInRange` bound compares ids against, `null` for an absent
+ * bound, an `InvalidDateFilter` refusal for one that does not parse. Parses a
+ * zero-padded `YYYY-MM-DD` (midnight UTC) and an RFC 3339 timestamp; chrono's
+ * looser forms (unpadded fields, a leap second) are refused here though the
+ * backend reads them.
+ */
+export function resolveRangeBound(bound: unknown): string | null {
+  if (bound == null) return null
+  const raw = bound as string
+  const rfc3339 = /^(\d{4}-\d{2}-\d{2})[Tt ]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/.exec(
+    raw,
+  )
+  const ms = isIsoDate(raw)
+    ? Date.parse(`${raw}T00:00:00Z`)
+    : rfc3339 !== null && isIsoDate(rfc3339[1] as string)
+      ? Date.parse(raw.toUpperCase().replace(' ', 'T'))
+      : Number.NaN
+  if (Number.isNaN(ms)) {
+    throw appErrorRejection({
+      kind: 'validation',
+      code: 'InvalidDateFilter',
+      message: `expected ISO 8601 date (YYYY-MM-DD or RFC 3339), got '${raw}'`,
+    })
+  }
+  // `timestamp_millis().cast_unsigned()`, then five bits per Crockford char.
+  let v = BigInt.asUintN(64, BigInt(ms))
+  let prefix = ''
+  for (let i = 0; i < 10; i++) {
+    prefix = `${CROCKFORD_BASE32[Number(v & 31n)]}${prefix}`
+    v >>= 5n
+  }
+  return prefix
+}
+
+/** The `Created` leaf: `b.id >= <after prefix> AND b.id < <before prefix>`. */
+export function createdInRange(id: string, after: unknown, before: unknown): boolean {
+  const lo = resolveRangeBound(after)
+  const hi = resolveRangeBound(before)
+  return (lo === null || id >= lo) && (hi === null || id < hi)
 }
 
 /**
@@ -902,15 +978,10 @@ export function datePredicateMatches(
  *   - `Or`   → AT LEAST ONE child matches; an empty `Or` is FALSE (`1=0`)
  *   - `Not`  → set complement (the backend's 3-valued `NOT COALESCE(...,0)`
  *     collapses to boolean here because the mock's per-row predicate is already
- *     2-valued)
+ *     2-valued: a NULL column or a missing property is "no match")
  *
- * Leaves delegate to the conformance-guarded `metaRowMatchesFilter`, so the
- * tree-walk inherits the same per-primitive faithfulness AND the same
- * documented permissive no-op for engine-only primitives the mock does not
- * model (those leaves return `true`, so a tree that references them over-matches
- * rather than silently dropping rows). The combinators themselves are the
- * engine's exact boolean identities, so this layer adds no new drift surface
- * beyond the already-pinned per-primitive matrix.
+ * Callers gate the tree first ({@link assertQueryFilterLeaves}), as the engine
+ * does, so every leaf reaching `metaRowMatchesFilter` is one it evaluates.
  *
  * `lastEditedAt` is forwarded unchanged to every leaf. `run_advanced_query`
  * passes a memoizing {@link blockLastEditedAt} wrapper so its `LastEdited`
@@ -947,8 +1018,67 @@ export function metaRowMatchesExpr(
       )
     }
     default: {
-      // Unknown node kind: permissive, matching the per-primitive no-op default.
+      // Unknown node kind: permissive (serde refuses it before the backend runs).
       return true
+    }
+  }
+}
+
+/** The primitives `QUERY_ALLOWED_KEYS` admits (`agaric-store/src/query/projection.rs`). */
+const QUERY_PRIMITIVE_TYPES: ReadonlySet<string> = new Set([
+  'Tag',
+  'TagOrRef',
+  'PathGlob',
+  'HasProperty',
+  'LastEdited',
+  'Space',
+  'Priority',
+  'State',
+  'BlockType',
+  'DueDate',
+  'Scheduled',
+  'Created',
+  'LinksTo',
+  'LinkedFrom',
+  'HasParentMatching',
+  'ChildOf',
+])
+
+/**
+ * `gate_leaves` (`agaric-store/src/query/engine.rs`): refuse, at the first
+ * offender in tree order, a leaf the advanced-query surface does not admit or
+ * a malformed `Created` bound, including inside a `HasParentMatching` matcher.
+ */
+export function assertQueryFilterLeaves(expr: Record<string, unknown>): void {
+  switch (expr['type'] as string) {
+    case 'Leaf': {
+      const p = (expr['primitive'] as Record<string, unknown> | undefined) ?? {}
+      const type = p['type'] as string
+      if (!QUERY_PRIMITIVE_TYPES.has(type)) {
+        throw appErrorRejection({
+          kind: 'validation',
+          code: 'InvalidFilter',
+          message: `\`${type}\` is not a valid filter on the advanced-query surface`,
+        })
+      }
+      if (type === 'Created') {
+        resolveRangeBound(p['after'])
+        resolveRangeBound(p['before'])
+      }
+      if (type === 'HasParentMatching') {
+        assertQueryFilterLeaves((p['matcher'] as Record<string, unknown> | undefined) ?? {})
+      }
+      return
+    }
+    case 'And':
+    case 'Or': {
+      for (const c of (expr['children'] as Array<Record<string, unknown>> | undefined) ?? []) {
+        assertQueryFilterLeaves(c)
+      }
+      return
+    }
+    case 'Not': {
+      assertQueryFilterLeaves((expr['child'] as Record<string, unknown> | undefined) ?? {})
     }
   }
 }

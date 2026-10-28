@@ -981,6 +981,20 @@ function importKeepsProperty(spaceId: string, key: string, value: string): boole
   }
 }
 
+/** The primitives `PAGES_ALLOWED_KEYS` admits (`agaric-store/src/filters/primitive.rs`). */
+const PAGES_PRIMITIVE_TYPES: ReadonlySet<string> = new Set([
+  'Tag',
+  'TagOrRef',
+  'PathGlob',
+  'HasProperty',
+  'LastEdited',
+  'Space',
+  'Priority',
+  'Orphan',
+  'Stub',
+  'HasNoInboundLinks',
+])
+
 export const pagesHandlers = {
   // Indexed lookup for a single date-formatted journal page in
   // the active space. Real backend implementation: a SELECT on
@@ -1141,6 +1155,16 @@ export const pagesHandlers = {
 
     // Phase 3 — AND-compose the requested filter primitives, then sort.
     const filters = (filter['filters'] as Array<Record<string, unknown>> | undefined) ?? []
+    // `validate_pages_filters`: refuse an off-surface primitive before any row is read.
+    for (const f of filters) {
+      if (!PAGES_PRIMITIVE_TYPES.has(f['type'] as string)) {
+        throw appErrorRejection({
+          kind: 'validation',
+          code: 'InvalidFilter',
+          message: `\`${String(f['type'])}\` is not a valid filter on the Pages surface`,
+        })
+      }
+    }
     const matched = rows.filter((r) => filters.every((f) => metaRowMatchesFilter(r, f)))
     matched.sort((x, y) => compareMetaRows(x, y, sort))
 
