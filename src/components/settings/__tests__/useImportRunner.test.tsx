@@ -455,7 +455,7 @@ describe('useImportRunner', () => {
     expect(result.current.importResult).toMatchObject({
       importedCount: 1,
       failures: [],
-      warnings: ['locked'],
+      warnings: ['The links between the imported notes could not be completed: locked'],
     })
   })
 

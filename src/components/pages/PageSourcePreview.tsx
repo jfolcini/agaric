@@ -25,6 +25,7 @@ import { renderRichContent } from '@/components/RichContentRenderer'
 import type { SourceLines } from '@/editor/source-buffer'
 import { frontMatterProperties, readBlocks } from '@/editor/source-buffer-blocks'
 import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
+import { contentShowsListMarker } from '@/lib/list-style'
 import { linkBodyReadings, normalizeTagName, scanNameTokens } from '@/lib/name-tokens'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -145,7 +146,8 @@ export function PageSourcePreview({ lines }: { lines: SourceLines }): React.Reac
       )}
       {blocks.map((block, i) => {
         ordinals.length = block.depth + 1
-        const ordinal = block.listStyle === 'ordered' ? (ordinals[block.depth] ?? 0) + 1 : 0
+        const numbered = block.listStyle === 'ordered' && contentShowsListMarker(block.text)
+        const ordinal = numbered ? (ordinals[block.depth] ?? 0) + 1 : 0
         ordinals[block.depth] = ordinal
         return (
           <div

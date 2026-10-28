@@ -1,41 +1,26 @@
 // ---------------------------------------------------------------------------
-// Opt-in measurement: what one page-mode save costs on the real backend, at
-// page mode's cap (#5691), next to block mode's write for the same edit.
+// Opt-in measurement (#5691): what one page-mode save costs on the real
+// backend at page mode's cap, next to block mode's write for the same edit.
 //
 //   AGARIC_PERF=1 just e2e-real e2e-tauri/page-mode-save-cost.e2e.ts
 //
-// Without `AGARIC_PERF` the suite is skipped, as `e2e/perf.spec.ts` gates its
-// journeys: it is a measurement, not a check, and has no budget to fail. That
-// is an opt-in, not the environment precondition e2e-tauri/AGENTS.md forbids
-// skipping on.
-// `AGARIC_PERF_REPEATS` sets how many times each edit is timed (`REPEATS`).
+// Opt-in because it is a measurement with no budget to fail, not an
+// environment precondition (e2e-tauri/AGENTS.md); `AGARIC_PERF_REPEATS` sets
+// the repeats per edit. Debug build under Xvfb: compare the columns within a
+// run, not across machines. The table is also written to `e2e-tauri/artifacts/`.
 //
-// It seeds a page of `PAGE_MODE_BLOCK_CAP` blocks in one `create_blocks_batch`
-// call and opens it in page mode, the cap not lifted. Per repeat, in page mode,
-// on a block of its own: typing, a blur with nothing to save, Enter then a key
-// (a new block), and Tab (an indent). Each edit's time is the `page-mode-save`
-// User Timing measure (`SAVE_MEASURE` in PageModeEditor.tsx), from the start
-// of the save to its last write, summed over every save the edit ran; a
-// PerformanceObserver collects them, since the app keeps only the latest.
-// Its writes are the op log's growth (`get_compaction_status`). Block mode's
-// figure is the one round trip block mode sends for that edit (`edit_block`,
-// `create_block`, `move_block`), timed in the webview on the same page; a blur
-// with nothing to save sends none. Each edit starts with the materializer idle
-// (`materializerIdle`), the seed's catch-up included.
-//
-// The page grows by one block per repeat's Enter, which then moves under the
-// block it was made from: page mode checks the cap as a page opens, and a save
-// does not reread the page, so it stays open.
-//
-// The table is printed and written to `e2e-tauri/artifacts/`, with the load
-// average it ran under. This is a debug build under Xvfb: compare page mode
-// with block mode in the same run, not with another machine. WebKit reports
-// these timings in whole milliseconds.
+// Rows are the edits: typing, a blur with nothing to save, Enter then a key, Tab.
+//   page mode save, ms  the `page-mode-save` User Timing measure, summed over
+//                       every save the edit ran
+//   page mode saves     how many saves the edit ran
+//   page mode writes    ops the edit added to the op log
+//   block mode IPC, ms  the one round trip block mode sends for that edit
+//   block mode writes   ops that round trip added
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
 
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -56,8 +41,9 @@ import {
   typeInPageMode,
 } from './page-mode'
 
-/** `PAGE_MODE_BLOCK_CAP` in src/editor/page-mode/page-mode-fit.ts. */
+/** `PAGE_MODE_BLOCK_CAP`, which the first test checks against its source. */
 const CAP = 1000
+const CAP_SOURCE = path.resolve(import.meta.dirname, '../src/editor/page-mode/page-mode-fit.ts')
 const REPEATS = Number(process.env['AGARIC_PERF_REPEATS'] ?? 5)
 /** Longer than the save's debounce: no save after this long means the edit's saves are done. */
 const QUIET_MS = 1500
@@ -204,6 +190,10 @@ describe('Agaric real-backend page mode save cost at the cap (#5691) @editor @pa
 
   it('opens a page of PAGE_MODE_BLOCK_CAP blocks in page mode', async function (this: Mocha.Context) {
     this.timeout(SEED_SETTLE_MS + 300_000)
+    const sourceCap = /export const PAGE_MODE_BLOCK_CAP = (\d+)/.exec(
+      readFileSync(CAP_SOURCE, 'utf8'),
+    )?.[1]
+    expect(Number(sourceCap)).toBe(CAP)
     await waitForAppReady()
     const spaces = await invoke<{ id: string; name: string }[]>('list_spaces')
     spaceId = (spaces.find((s) => s.name === 'Personal') ?? spaces[0])?.id ?? ''

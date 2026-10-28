@@ -225,3 +225,28 @@ describe('ListMarkerContext identity (#3277 finding 1)', () => {
     expect(getByTestId('ordinal-BLK_C').textContent).toBe('1')
   })
 })
+
+describe('ordinals past a block that shows no marker', () => {
+  it('numbers the block after a heading carrying a numbered style as a fresh run', () => {
+    mockUseListStyles.mockReturnValue(
+      new Map<string, ListStyle>([
+        ['BLK_A', 'ordered'],
+        ['BLK_H', 'ordered'],
+        ['BLK_B', 'ordered'],
+      ]),
+    )
+    const items = [
+      makeBlock({ id: 'BLK_A', content: 'one' }),
+      makeBlock({ id: 'BLK_H', content: '# Title' }),
+      makeBlock({ id: 'BLK_B', content: 'two' }),
+    ]
+
+    const { getByTestId } = render(
+      <BlockListRenderer {...makeProps({ visibleItems: items, blocks: items })} />,
+    )
+
+    expect(getByTestId('ordinal-BLK_A').textContent).toBe('1')
+    expect(getByTestId('ordinal-BLK_H').textContent).toBe('')
+    expect(getByTestId('ordinal-BLK_B').textContent).toBe('1')
+  })
+})

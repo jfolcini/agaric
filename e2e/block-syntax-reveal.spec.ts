@@ -246,7 +246,6 @@ test.describe('block syntax revealed around the cursor in page mode (#5691) @edi
     await caretAt(page, PAGE_EDITOR, 'plain end', 2)
     expect(await shownSyntax(page)).toEqual([])
 
-    // Highlight.js's keyword colour fails contrast in any code block, drawn syntax or not: left out here.
     await page.addScriptTag({ path: axePath })
     for (const [text, drawn] of [
       ['tip', ['> [!NOTE] ']],
@@ -258,10 +257,7 @@ test.describe('block syntax revealed around the cursor in page mode (#5691) @edi
       await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished)))
       const violations = await page.evaluate(async () => {
         // @ts-expect-error injected global
-        const results = await window.axe.run({
-          include: [['.page-editor']],
-          exclude: [['.page-editor pre [class^="hljs-"]']],
-        })
+        const results = await window.axe.run({ include: [['.page-editor']] })
         return results.violations.map((v: { id: string }) => v.id)
       })
       expect(violations).toEqual([])

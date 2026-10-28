@@ -243,4 +243,21 @@ test.describe('the image bubble @editor @pages @attachments', () => {
     await expect(statics.locator('img[alt="a lion"]')).toBeVisible()
     await expect(statics.locator('img[alt="a dog"]')).toHaveCount(0)
   })
+
+  test('in block mode, Enter on a focused bubble button presses it, not the block’s Enter', async ({
+    page,
+  }) => {
+    const { ids } = await seedPage(page, 'Bubble image Enter', [`pic ![a dog](${IMG}) end`])
+    await openViaPalette(page, 'Bubble image Enter')
+    const editor = await focusBlockById(page, ids[0] as string)
+    await editor.locator('img[alt="a dog"]').click()
+    const open = bubble(page, 'image-bubble-menu').getByRole('button', {
+      name: 'Open image a dog in full screen',
+    })
+    await open.focus()
+
+    await page.keyboard.press('Enter')
+
+    await expect(page.getByRole('dialog').locator('img[alt="a dog"]')).toBeVisible()
+  })
 })

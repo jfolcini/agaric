@@ -15,7 +15,7 @@
 //   `check-set-property-args.mjs` and a since-deleted sibling guard
 //     shipped the SAME copy-pasted trio, both blind to regex literals
 //     (#3950) — which is why this module exists at all;
-//   `check-wdio-driver-gate.mjs`'s `stripTsComments` had no string
+//   the since-deleted wdio driver-gate guard's `stripTsComments` had no string
 //     awareness whatsoever, so a `/*` inside a string plus any later `*/`
 //     blanked the code between them and the guard reported OK on a config
 //     it had not read (#3990 item 1, fixed by deleting it in favour of

@@ -30,7 +30,7 @@ import { storableLinkLabel } from '@/editor/markdown-common'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { EMBED_TOKEN_PREFIX } from '@/lib/embed-token'
 import { t } from '@/lib/i18n'
-import { linkBodyReadings } from '@/lib/name-tokens'
+import { linkBodyReadings, normalizeTagName } from '@/lib/name-tokens'
 
 export const blockLinkPickerPluginKey = new PluginKey('blockLinkPicker')
 
@@ -51,13 +51,13 @@ declare module '@tiptap/core' {
 
 /**
  * The page `[[text]]` names among `items`, by the one rule the backend applies
- * (#5160 N4): the exact full title, else the unique case-insensitive title,
- * else the unique alias whose `aliasText` is `text`, else `undefined`, which
- * creates the page. Two pages a title matches alike, exactly or by case, are
- * never guessed: `null` leaves the text as typed. Titles are compared whole,
- * namespace included (`item.title`), so typing an existing namespaced title
- * creates no twin; prefix-only alias hits (`[[my]]` for alias `my-alias`)
- * never resolve.
+ * (#5160 N4): the exact full title, else the unique title that folds to `text`
+ * (`normalizeTagName`: NFC, case-insensitive), else the unique alias whose
+ * `aliasText` folds to it, else `undefined`, which creates the page. Two pages a
+ * title matches alike, exactly or folded, are never guessed: `null` leaves the
+ * text as typed. Titles are compared whole, namespace included (`item.title`),
+ * so typing an existing namespaced title creates no twin; prefix-only alias hits
+ * (`[[my]]` for alias `my-alias`) never resolve.
  */
 export function matchBlockLinkItem(
   items: PickerItem[],
@@ -67,10 +67,13 @@ export function matchBlockLinkItem(
   const unique = (found: PickerItem[]) => (found.length > 1 ? null : found[0])
   const exact = unique(pages.filter((item) => (item.title ?? item.label) === text))
   if (exact !== undefined) return exact
-  const lower = text.toLowerCase()
-  const folded = unique(pages.filter((item) => (item.title ?? item.label).toLowerCase() === lower))
+  const key = normalizeTagName(text)
+  const folded = unique(pages.filter((item) => normalizeTagName(item.title ?? item.label) === key))
   if (folded !== undefined) return folded
-  return items.find((item) => !item.isCreate && item.aliasText?.toLowerCase() === lower)
+  return items.find(
+    (item) =>
+      !item.isCreate && item.aliasText !== undefined && normalizeTagName(item.aliasText) === key,
+  )
 }
 
 /** What a typed `[[…]]` body means (#5160 D9, D10). */
