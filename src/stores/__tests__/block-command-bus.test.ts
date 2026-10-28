@@ -17,6 +17,7 @@ import {
   type BlockCommandName,
   dispatchBlockCommand,
   registerBlockCommandTarget,
+  registerFocusedCommandTarget,
   registeredBlockCommandTargetCount,
 } from '@/stores/block-command-bus'
 import { useBlockStore } from '@/stores/blocks'
@@ -194,5 +195,54 @@ describe('registerBlockCommandTarget', () => {
       registerBlockCommandTarget(makeStore([`B_${i}`]), handlers)
     }
     expect(registeredBlockCommandTargetCount()).toBe(7)
+  })
+})
+
+describe('registerFocusedCommandTarget (#5691, page mode)', () => {
+  it('takes a command, with its block and detail, ahead of the tree owning the focused block', () => {
+    const tree = vi.fn()
+    const page = vi.fn()
+    registerBlockCommandTarget(makeStore(['BLOCK_A']), { TURN_INTO_BLOCK: tree })
+    registerFocusedCommandTarget(() => 'PAGE_BLOCK', { TURN_INTO_BLOCK: page })
+    setFocus('BLOCK_A')
+
+    dispatchBlockCommand('TURN_INTO_BLOCK', { type: 'h1' })
+
+    expect(page).toHaveBeenCalledWith('PAGE_BLOCK', { type: 'h1' })
+    expect(tree).not.toHaveBeenCalled()
+  })
+
+  it('leaves the command to the trees while it names no block', () => {
+    const tree = vi.fn()
+    const page = vi.fn()
+    registerBlockCommandTarget(makeStore(['BLOCK_A']), { CYCLE_PRIORITY: tree })
+    registerFocusedCommandTarget(() => null, { CYCLE_PRIORITY: page })
+    setFocus('BLOCK_A')
+
+    dispatchBlockCommand('CYCLE_PRIORITY')
+
+    expect(tree).toHaveBeenCalledWith('BLOCK_A', undefined)
+    expect(page).not.toHaveBeenCalled()
+  })
+
+  it('swallows a command it has no handler for, rather than sending it to a tree', () => {
+    const tree = vi.fn()
+    registerBlockCommandTarget(makeStore(['BLOCK_A']), { DISCARD_BLOCK_EDIT: tree })
+    registerFocusedCommandTarget(() => 'PAGE_BLOCK', {})
+    setFocus('BLOCK_A')
+
+    dispatchBlockCommand('DISCARD_BLOCK_EDIT')
+
+    expect(tree).not.toHaveBeenCalled()
+  })
+
+  it('cleanup removes it', () => {
+    const page = vi.fn()
+    const cleanup = registerFocusedCommandTarget(() => 'PAGE_BLOCK', { CYCLE_PRIORITY: page })
+    cleanup()
+
+    dispatchBlockCommand('CYCLE_PRIORITY')
+
+    expect(page).not.toHaveBeenCalled()
   })
 })

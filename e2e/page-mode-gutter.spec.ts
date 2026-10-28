@@ -202,13 +202,25 @@ test.describe('page mode gutter (#5691) @editor @pages', () => {
     await modeSwitch(page, 'Page').click()
     await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(2)
 
+    // Lower by the toolbar page mode shows above the document, where block mode shows none
+    // until a block is focused: the document starts where the toolbar's top is.
+    const shift = await page.evaluate((sel) => {
+      const top = (el: Element | null) => el?.getBoundingClientRect().top ?? 0
+      return (
+        top(document.querySelector(sel)) -
+        top(document.querySelector('[data-testid="formatting-toolbar"]'))
+      )
+    }, EDITOR)
+    const lower = (box: { y: number } | null) =>
+      box === null ? null : { ...box, y: box.y + shift }
+
     await block(page, ids[0]).hover()
     await expect(grip(page)).toBeVisible()
     await expect(chevron(page, ids[0])).toHaveCSS('opacity', '1')
-    expect(await grip(page).boundingBox()).toEqual(parentGrip)
-    expect(await chevron(page, ids[0]).boundingBox()).toEqual(blockChevron)
+    expect(await grip(page).boundingBox()).toEqual(lower(parentGrip))
+    expect(await chevron(page, ids[0]).boundingBox()).toEqual(lower(blockChevron))
     await block(page, ids[1]).hover()
-    await expect.poll(() => grip(page).boundingBox()).toEqual(childGrip)
+    await expect.poll(() => grip(page).boundingBox()).toEqual(lower(childGrip))
     await expect(chevron(page, ids[1])).toHaveCount(0)
 
     await page.addScriptTag({ path: axePath })

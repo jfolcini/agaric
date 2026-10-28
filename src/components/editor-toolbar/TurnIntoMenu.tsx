@@ -42,6 +42,7 @@ import { toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
 import { toolbarMenuRowClass } from '@/components/FormattingToolbar/toolbar-config'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
+import type { ListStyle } from '@/lib/list-style'
 import { TURN_INTO_OPTIONS, turnIntoTypeKey } from '@/lib/slash-commands'
 import { cn } from '@/lib/utils'
 import { dispatchBlockCommand } from '@/stores/block-command-bus'
@@ -54,6 +55,10 @@ interface TurnIntoMenuProps {
    * (falls back to `useListMarker`'s outside-a-provider default, `'none'`).
    */
   blockId?: string | undefined
+  /** The block's list style, in place of `useListMarker`'s, where no provider gives it (page mode). */
+  listStyle?: ListStyle | undefined
+  /** What turning the block into code does beyond the editor, where there is no `blockId` (page mode). */
+  onTurnIntoCode?: (() => void) | undefined
   /** Close the hosting popover after a one-shot turn-into selection. */
   onClose: () => void
 }
@@ -61,7 +66,13 @@ interface TurnIntoMenuProps {
 /** Block-type tokens whose "turn into" row expands an inline variant picker. */
 type DisclosureType = 'code' | 'callout'
 
-export function TurnIntoMenu({ editor, blockId, onClose }: TurnIntoMenuProps): React.ReactElement {
+export function TurnIntoMenu({
+  editor,
+  blockId,
+  listStyle: givenListStyle,
+  onTurnIntoCode,
+  onClose,
+}: TurnIntoMenuProps): React.ReactElement {
   const { t } = useTranslation()
   // #4552 — the numbered/bullet-list active state now reads the `listStyle`
   // block property (the source of truth for the NEW writer paths) rather than
@@ -69,7 +80,8 @@ export function TurnIntoMenu({ editor, blockId, onClose }: TurnIntoMenuProps): R
   // the legacy in-block TipTap list nodes. Outside a `ListMarkerProvider` (or
   // with no `blockId`), `useListMarker` reports `'none'`, matching a plain
   // block.
-  const listStyle = useListMarker(blockId ?? '').style
+  const markerStyle = useListMarker(blockId ?? '').style
+  const listStyle = givenListStyle ?? markerStyle
   const state = useEditorState({
     editor,
     // #3056 — `ctx.editor` can be momentarily null during mount/teardown even
@@ -246,6 +258,7 @@ export function TurnIntoMenu({ editor, blockId, onClose }: TurnIntoMenuProps): R
           <CodeLanguageSelector
             editor={editor}
             blockId={blockId}
+            onTurnIntoCode={onTurnIntoCode}
             isCodeBlock={state.codeBlock}
             currentLanguage={state.codeLanguage}
             onClose={onClose}

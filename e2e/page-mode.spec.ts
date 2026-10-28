@@ -1591,7 +1591,16 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     await expect(inBlock(ids[2], '[data-testid="embed-container"]')).toContainText(welcome)
     await expect(inBlock(ids[1], '.page-block-content')).toBeHidden()
     await expect(inBlock(ids[2], '.page-block-content')).toBeHidden()
-    expect(await boxes()).toEqual(inBlockMode)
+    // Lower by the toolbar page mode shows above the document, where block mode shows none
+    // until a block is focused: the document starts where the toolbar's top is.
+    const shift = await page.evaluate((sel) => {
+      const top = (el: Element | null) => el?.getBoundingClientRect().top ?? 0
+      return Math.round(
+        top(document.querySelector(sel)) -
+          top(document.querySelector('[data-testid="formatting-toolbar"]')),
+      )
+    }, EDITOR)
+    expect(await boxes()).toEqual(inBlockMode.map(([x, y, w, h]) => [x, (y ?? 0) + shift, w, h]))
     expect(await axeViolations()).toEqual([])
 
     // The arrows step into the text, which shows in place of the results while the caret is in it.

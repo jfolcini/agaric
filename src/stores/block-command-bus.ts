@@ -146,6 +146,32 @@ export function registerBlockCommandTarget(
   }
 }
 
+/** A surface that edits blocks outside a `BlockTree` (page mode), naming the block a command is for. */
+interface FocusedTarget {
+  /** The block it edits, while it is the surface the user is in; else null. */
+  focused: () => string | null
+  handlers: Partial<Record<BlockCommandName, BlockCommandHandler>>
+}
+
+const focusedTargets = new Set<FocusedTarget>()
+
+/**
+ * Register a surface that has no global `focusedBlockId` (#5691: page mode's
+ * one editor for the whole page). While `focused` names a block, every command
+ * goes to this surface, ahead of the trees; a command it has no handler for
+ * does nothing. Returns the cleanup.
+ */
+export function registerFocusedCommandTarget(
+  focused: () => string | null,
+  handlers: Partial<Record<BlockCommandName, BlockCommandHandler>>,
+): () => void {
+  const target = { focused, handlers }
+  focusedTargets.add(target)
+  return () => {
+    focusedTargets.delete(target)
+  }
+}
+
 /**
  * Resolve the registration whose store owns the current global focused block.
  * Mirrors the old `storeOwnsBlock(pageStore, focusedBlockId)` gate: returns the
@@ -171,6 +197,12 @@ function resolveOwner(): { reg: Registration; blockId: string } | null {
  * exactly the one owning handler — no document listener fan-out.
  */
 export function dispatchBlockCommand(name: BlockCommandName, detail?: unknown): void {
+  for (const target of focusedTargets) {
+    const blockId = target.focused()
+    if (blockId === null) continue
+    target.handlers[name]?.(blockId, detail)
+    return
+  }
   const owner = resolveOwner()
   if (owner == null) return
   const handler = owner.reg.handlers[name]
@@ -189,5 +221,6 @@ export function registeredBlockCommandTargetCount(): number {
 /** Test helper: clear all registrations (avoids cross-test leakage). */
 export function __resetBlockCommandBus(): void {
   registry.clear()
+  focusedTargets.clear()
   notifyMembershipChanged()
 }

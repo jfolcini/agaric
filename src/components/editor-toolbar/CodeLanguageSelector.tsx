@@ -40,6 +40,8 @@ export interface CodeLanguageSelectorProps {
   editor: Editor
   /** The focused block; undefined outside a block context. */
   blockId?: string | undefined
+  /** Called once the selection is turned into code, where there is no `blockId` (page mode). */
+  onTurnIntoCode?: (() => void) | undefined
   isCodeBlock: boolean
   currentLanguage: string
   onClose: () => void
@@ -48,6 +50,7 @@ export interface CodeLanguageSelectorProps {
 export function CodeLanguageSelector({
   editor,
   blockId,
+  onTurnIntoCode,
   isCodeBlock,
   currentLanguage,
   onClose,
@@ -73,6 +76,7 @@ export function CodeLanguageSelector({
     // regression (see use-roving-editor.ts). `attrs` sets the language as
     // part of the toggle — single chain, single `run()`.
     toggleCodeBlockSafely(editor, attrs)
+    onTurnIntoCode?.()
     if (blockId === undefined) return
     setListStyle(blockId, listStyleForBlockType('code')).catch((err: unknown) => {
       logger.error('CodeLanguageSelector', 'setListStyle (turn-into) failed', { blockId }, err)

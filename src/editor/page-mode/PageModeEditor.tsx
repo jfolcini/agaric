@@ -113,6 +113,7 @@ import {
   usePageSlashCommands,
 } from '@/editor/page-mode/page-slash-commands'
 import type { PageTaskActions } from '@/editor/page-mode/page-tasks'
+import { PageToolbar } from '@/editor/page-mode/page-toolbar'
 import { PageBlockMenu } from '@/editor/page-mode/PageBlockMenu'
 import { applyRemote } from '@/editor/page-mode/remote-patch'
 import type { PickerItem } from '@/editor/SuggestionList'
@@ -969,6 +970,9 @@ function PageModeDocument({
 
   return (
     <>
+      {editor !== null && (
+        <PageToolbar editor={editor} actions={actions} lists={lists} pageStore={pageStore} />
+      )}
       <BlockResolversProvider value={resolvers}>
         {/* Where Escape leaves the focus: ringed, and Tab from it goes back into the text.
             Positioned: the grip is placed in it (`page-gutter.ts`). */}
