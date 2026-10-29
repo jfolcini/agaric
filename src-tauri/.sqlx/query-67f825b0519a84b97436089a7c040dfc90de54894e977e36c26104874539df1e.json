@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id AS \"id!: String\" FROM blocks b\n           WHERE b.id IN (SELECT value FROM json_each(?1))\n             AND (+b.space_id = ?2 OR +b.id = ?2)",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "67f825b0519a84b97436089a7c040dfc90de54894e977e36c26104874539df1e"
+}

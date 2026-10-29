@@ -148,7 +148,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 7,
+      "count": 12,
       "ops": [
         {
           "op_type": "create_block"
@@ -156,6 +156,21 @@
         {
           "key": "is_space",
           "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
         },
         {
           "key": "space",

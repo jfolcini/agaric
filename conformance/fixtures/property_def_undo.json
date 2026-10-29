@@ -85,5 +85,115 @@
     ],
     "properties": [],
     "tags": []
-  }
+  },
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 5,
+      "ops": [
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "create_select_def",
+      "returns": ["stage#value_type=select#options=[\"draft\"]#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "edit_options",
+      "returns": ["stage#value_type=select#options=[\"draft\",\"done\"]#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "delete_def",
+      "returns": ["delete_property_def"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_delete",
+      "returns": [
+        "undo_ops#reversed_op_type=set_property_def#new_op_type=set_property_def#is_redo=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_edit",
+      "returns": [
+        "undo_ops#reversed_op_type=set_property_def#new_op_type=set_property_def#is_redo=false"
+      ]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "registry_after_undo",
+      "rows": [
+        "completed_at#value_type=date#options=null#builtin=true",
+        "created_at#value_type=date#options=null#builtin=true",
+        "due_date#value_type=date#options=null#builtin=true",
+        "is_space#value_type=select#options=[\"true\"]#builtin=true",
+        "listStyle#value_type=select#options=[\"bullet\",\"ordered\"]#builtin=true",
+        "priority#value_type=select#options=[\"1\",\"2\",\"3\"]#builtin=true",
+        "repeat#value_type=text#options=null#builtin=true",
+        "repeat-count#value_type=number#options=null#builtin=true",
+        "repeat-origin#value_type=text#options=null#builtin=true",
+        "repeat-seq#value_type=number#options=null#builtin=true",
+        "repeat-until#value_type=date#options=null#builtin=true",
+        "scheduled_date#value_type=date#options=null#builtin=true",
+        "space#value_type=ref#options=null#builtin=true",
+        "stage#value_type=select#options=[\"draft\"]#builtin=false",
+        "todo_state#value_type=select#options=[\"TODO\",\"DOING\",\"DONE\",\"CANCELLED\"]#builtin=true"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "stage_after_undo",
+      "rows": ["stage#value_type=select#options=[\"draft\"]#builtin=false"],
+      "total_count": null
+    }
+  ]
 }

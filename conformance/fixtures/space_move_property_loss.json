@@ -57,7 +57,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 17,
+      "count": 23,
       "ops": [
         {
           "key": "stage",
@@ -81,6 +81,24 @@
         {
           "key": "is_space",
           "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
         },
         {
           "op_type": "delete_block"

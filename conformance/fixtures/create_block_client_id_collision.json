@@ -83,7 +83,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 9,
+      "count": 14,
       "ops": [
         {
           "op_type": "delete_block"
@@ -106,6 +106,21 @@
         {
           "key": "is_space",
           "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
         },
         {
           "op_type": "create_block"

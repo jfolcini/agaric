@@ -1,5 +1,5 @@
 {
-  "description": "#3830 — the two `property_definitions` WRITERS that answer with the row, driven through the command leg (`via: \"command\"`; neither appends an op, so the op log stays empty and `expected` carries only the seeded page). Pins `create_property_def`'s shape validation (bad value_type, bad key) and its INSERT OR IGNORE idempotency — a second create for the same key keeps the FIRST declaration, value_type and all — plus `update_property_def_options`' non-empty-JSON-array check, its select-type-only guard (the seeded text `note`) and its NotFound on an unknown key. #5841: every write to a built-in definition — create, options edit, delete — is refused with `BuiltinPropertyLocked`, a priority outside the fixed levels is refused, and the listing carries the built-ins marked `builtin`. Read back through the `list_property_defs` / `get_property_def` steps pinned by #4939. NOT pinned here: `conflicting_existing_values` (the #4399 probe that refuses a declaration which would orphan values the vault already holds under that key) — the mock has no equivalent, and the seed deliberately declares no `block_properties` row under either key. #4710 adds the `url` declaration and a value under it. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "description": "#3830 — the two `property_definitions` WRITERS that answer with the row, driven through the command leg (`via: \"command\"`; since #5841 S1 each write that changes a definition appends one `set_property_def`, and a refused or idempotent one appends none). Pins `create_property_def`'s shape validation (bad value_type, bad key) and its INSERT OR IGNORE idempotency — a second create for the same key keeps the FIRST declaration, value_type and all — plus `update_property_def_options`' non-empty-JSON-array check, its select-type-only guard (the seeded text `note`) and its NotFound on an unknown key. #5841: every write to a built-in definition — create, options edit, delete — is refused with `BuiltinPropertyLocked`, a priority outside the fixed levels is refused, and the listing carries the built-ins marked `builtin`. Read back through the `list_property_defs` / `get_property_def` steps pinned by #4939. NOT pinned here: `conflicting_existing_values` (the #4399 probe that refuses a declaration which would orphan values the vault already holds under that key) — the mock has no equivalent, and the seed deliberately declares no `block_properties` row under either key. #4710 adds the `url` declaration and a value under it. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -18,15 +18,27 @@
       }
     ],
     "op_log_digest": {
-      "count": 2,
+      "count": 6,
       "ops": [
         {
           "key": "note",
           "op_type": "set_property"
         },
         {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
           "key": "homepage",
           "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
         }
       ]
     },

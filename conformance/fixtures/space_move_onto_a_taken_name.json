@@ -1,5 +1,5 @@
 {
-  "description": "#6099 — a move into another space refuses, whole and changing nothing, a page title or tag name a live page or tag of that space holds, as a rename does; so does the move's undo. The ops make three spaces, Home (`C1`), Work (`C3`) and an empty Archive (`C8`), a `Work` tag in Home (`C2`), an `Inbox` page in Work (`C4`) and one in Home (`C7`), a `work` tag (`C5`) and a `Plan` page (`C6`) in Work. Moving `Inbox` into Home is refused with `DuplicatePageTitle`, and so is moving `Plan` and `Inbox` together, so `Plan` stays too; moving `work` is refused under the tag fold. `Plan` alone moves into Archive (O17). Once Work has a new `Plan` (`C9`), undoing O17 is refused the same way. The snapshot carries no `space_id`, so a refused move shows as ranks that did not change and ops that were not appended. Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "description": "#6099 — a move into another space refuses, whole and changing nothing, a page title or tag name a live page or tag of that space holds, as a rename does; so does the move's undo. The ops make three spaces, Home (`C1`), Work (`C3`) and an empty Archive (`C8`), a `Work` tag in Home (`C2`), an `Inbox` page in Work (`C4`) and one in Home (`C7`), a `work` tag (`C5`) and a `Plan` page (`C6`) in Work. Moving `Inbox` into Home is refused with `DuplicatePageTitle`, and so is moving `Plan` and `Inbox` together, so `Plan` stays too; moving `work` is refused under the tag fold. `Plan` alone moves into Archive (O32). Once Work has a new `Plan` (`C9`), undoing O32 is refused the same way. The snapshot carries no `space_id`, so a refused move shows as ranks that did not change and ops that were not appended. Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -122,7 +122,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 19,
+      "count": 34,
       "ops": [
         {
           "op_type": "create_block"
@@ -132,39 +132,19 @@
           "op_type": "set_property"
         },
         {
-          "op_type": "create_block"
+          "op_type": "set_property_def"
         },
         {
-          "key": "space",
-          "op_type": "set_property"
+          "op_type": "set_property_def"
         },
         {
-          "op_type": "create_block"
+          "op_type": "set_property_def"
         },
         {
-          "key": "is_space",
-          "op_type": "set_property"
+          "op_type": "set_property_def"
         },
         {
-          "op_type": "create_block"
-        },
-        {
-          "key": "space",
-          "op_type": "set_property"
-        },
-        {
-          "op_type": "create_block"
-        },
-        {
-          "key": "space",
-          "op_type": "set_property"
-        },
-        {
-          "op_type": "create_block"
-        },
-        {
-          "key": "space",
-          "op_type": "set_property"
+          "op_type": "set_property_def"
         },
         {
           "op_type": "create_block"
@@ -179,6 +159,71 @@
         {
           "key": "is_space",
           "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
         },
         {
           "key": "space",
@@ -309,7 +354,7 @@
         "name": "Home"
       },
       "command": "create_space",
-      "comment": "O1, O2 — the space the refused moves enter.",
+      "comment": "O1–O7 — the space the refused moves enter.",
       "name": "home",
       "via": "command"
     },
@@ -324,7 +369,7 @@
         }
       },
       "command": "create_block",
-      "comment": "O3, O4 — Home's `Work`. Each tag is made while its space holds the highest root rank, where the provisional rank a create returns is the same on both stacks.",
+      "comment": "O8, O9 — Home's `Work`. Each tag is made while its space holds the highest root rank, where the provisional rank a create returns is the same on both stacks.",
       "name": "the_work_tag_in_home",
       "via": "command"
     },
@@ -334,7 +379,7 @@
         "name": "Work"
       },
       "command": "create_space",
-      "comment": "O5, O6 — the space every move leaves.",
+      "comment": "O10–O16 — the space every move leaves.",
       "name": "work",
       "via": "command"
     },
@@ -345,7 +390,7 @@
         "spaceId": "C3"
       },
       "command": "create_page_in_space",
-      "comment": "O7, O8 — the page whose title Home will hold.",
+      "comment": "O17, O18 — the page whose title Home will hold.",
       "name": "inbox_in_work",
       "via": "command"
     },
@@ -360,7 +405,7 @@
         }
       },
       "command": "create_block",
-      "comment": "O9, O10 — the same tag name as Home's `Work` under the tag fold.",
+      "comment": "O19, O20 — the same tag name as Home's `Work` under the tag fold.",
       "name": "the_work_tag_in_work",
       "via": "command"
     },
@@ -371,7 +416,7 @@
         "spaceId": "C3"
       },
       "command": "create_page_in_space",
-      "comment": "O11, O12 — a title no other space holds.",
+      "comment": "O21, O22 — a title no other space holds.",
       "name": "plan_in_work",
       "via": "command"
     },
@@ -382,7 +427,7 @@
         "spaceId": "C1"
       },
       "command": "create_page_in_space",
-      "comment": "O13, O14 — Home's own `Inbox`.",
+      "comment": "O23, O24 — Home's own `Inbox`.",
       "name": "inbox_in_home",
       "via": "command"
     },
@@ -392,7 +437,7 @@
         "name": "Archive"
       },
       "command": "create_space",
-      "comment": "O15, O16 — an empty space, the one move that goes through lands in.",
+      "comment": "O25–O31 — an empty space, the one move that goes through lands in.",
       "name": "archive",
       "via": "command"
     },
@@ -438,7 +483,7 @@
         "spaceId": "C8"
       },
       "command": "move_blocks_to_space",
-      "comment": "O17 — `Plan` is free in Archive, so it moves, and Work's group closes up behind it.",
+      "comment": "O32 — `Plan` is free in Archive, so it moves, and Work's group closes up behind it.",
       "name": "a_free_title_moves",
       "via": "command"
     },
@@ -449,13 +494,13 @@
         "spaceId": "C3"
       },
       "command": "create_page_in_space",
-      "comment": "O18, O19 — Work gives the moved page's title to a new page.",
+      "comment": "O33, O34 — Work gives the moved page's title to a new page.",
       "name": "a_new_plan_in_work",
       "via": "command"
     },
     {
       "args": {
-        "opRef": "O17"
+        "opRef": "O32"
       },
       "command": "undo_op",
       "comment": "Refused: undoing the move would give Work two live `Plan` pages, so the moved page stays in Archive and no op is appended.",

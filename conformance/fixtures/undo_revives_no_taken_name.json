@@ -1,5 +1,5 @@
 {
-  "description": "#6051 — an undo refuses to revive a tag name another live tag of its space holds, as a rename does, and changes nothing. The ops make a space (`C1`) and four tags in it, `work` (C2), `spare` (C3), `notes` (C4) and `extra` (C5), all before any delete so every create lands on a dense root. C2 is trashed and C3 renamed to `work`: undoing the delete (O11) would put two live `work` tags in the space, so it is refused with `DuplicatePageTitle`, C2 stays in the trash and no op is appended. C4 is renamed to `job` (O13) and C5 takes `notes`: undoing O13 is refused the same way, so C4 keeps `job`. Reverting or undoing O14 and O11 together is refused whole, so C5 keeps `notes` though O14 alone reverts cleanly. Once C3 is trashed `work` is free, and the same undo of O11 restores C2.",
+  "description": "#6051 — an undo refuses to revive a tag name another live tag of its space holds, as a rename does, and changes nothing. The ops make a space (`C1`) and four tags in it, `work` (C2), `spare` (C3), `notes` (C4) and `extra` (C5), all before any delete so every create lands on a dense root. C2 is trashed and C3 renamed to `work`: undoing the delete (O16) would put two live `work` tags in the space, so it is refused with `DuplicatePageTitle`, C2 stays in the trash and no op is appended. C4 is renamed to `job` (O18) and C5 takes `notes`: undoing O18 is refused the same way, so C4 keeps `job`. Reverting or undoing O19 and O16 together is refused whole, so C5 keeps `notes` though O19 alone reverts cleanly. Once C3 is trashed `work` is free, and the same undo of O16 restores C2.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -70,7 +70,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 16,
+      "count": 21,
       "ops": [
         {
           "op_type": "create_block"
@@ -78,6 +78,21 @@
         {
           "key": "is_space",
           "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
         },
         {
           "op_type": "create_block"
@@ -207,7 +222,7 @@
         "name": "Work"
       },
       "command": "create_space",
-      "comment": "O1, O2 — the space every tag below lives in.",
+      "comment": "O1–O7 — the space every tag below lives in.",
       "name": "a_space",
       "via": "command"
     },
@@ -222,7 +237,7 @@
         }
       },
       "command": "create_block",
-      "comment": "O3, O4 — the tag the first undo would revive.",
+      "comment": "O8, O9 — the tag the first undo would revive.",
       "name": "the_work_tag",
       "via": "command"
     },
@@ -237,7 +252,7 @@
         }
       },
       "command": "create_block",
-      "comment": "O5, O6 — takes `work` once C2 is trashed.",
+      "comment": "O10, O11 — takes `work` once C2 is trashed.",
       "name": "the_spare_tag",
       "via": "command"
     },
@@ -252,7 +267,7 @@
         }
       },
       "command": "create_block",
-      "comment": "O7, O8 — the tag that gets renamed.",
+      "comment": "O12, O13 — the tag that gets renamed.",
       "name": "the_notes_tag",
       "via": "command"
     },
@@ -267,7 +282,7 @@
         }
       },
       "command": "create_block",
-      "comment": "O9, O10 — takes `notes` once C4 is renamed.",
+      "comment": "O14, O15 — takes `notes` once C4 is renamed.",
       "name": "the_extra_tag",
       "via": "command"
     },
@@ -276,7 +291,7 @@
         "blockId": "C2"
       },
       "command": "delete_block",
-      "comment": "O11 — the delete the first and last undo name."
+      "comment": "O16 — the delete the first and last undo name."
     },
     {
       "args": {
@@ -284,11 +299,11 @@
         "toText": "work"
       },
       "command": "edit_block",
-      "comment": "O12 — a live tag now holds the trashed tag's name."
+      "comment": "O17 — a live tag now holds the trashed tag's name."
     },
     {
       "args": {
-        "opRef": "O11"
+        "opRef": "O16"
       },
       "command": "undo_op",
       "comment": "Refused: C2 would be a second live `work`. C2 stays trashed and the digest holds no restore here.",
@@ -303,7 +318,7 @@
         "toText": "job"
       },
       "command": "edit_block",
-      "comment": "O13 — the rename the second undo names."
+      "comment": "O18 — the rename the second undo names."
     },
     {
       "args": {
@@ -311,11 +326,11 @@
         "toText": "notes"
       },
       "command": "edit_block",
-      "comment": "O14 — a live tag now holds the renamed tag's old name."
+      "comment": "O19 — a live tag now holds the renamed tag's old name."
     },
     {
       "args": {
-        "opRef": "O13"
+        "opRef": "O18"
       },
       "command": "undo_op",
       "comment": "Refused: renaming C4 back would give the space two live `notes`, so C4 keeps `job`.",
@@ -326,10 +341,10 @@
     },
     {
       "args": {
-        "ops": ["O14", "O11"]
+        "ops": ["O19", "O16"]
       },
       "command": "revert_ops",
-      "comment": "Refused whole: reverting O14 first gives C5 back `extra`, then reviving C2 meets C3's `work`. C5 keeps `notes` and no op is appended.",
+      "comment": "Refused whole: reverting O19 first gives C5 back `extra`, then reviving C2 meets C3's `work`. C5 keeps `notes` and no op is appended.",
       "expect_code": "DuplicatePageTitle",
       "expect_error": "validation",
       "name": "a_revert_refused_part_way_changes_nothing",
@@ -337,7 +352,7 @@
     },
     {
       "args": {
-        "ops": ["O14", "O11"]
+        "ops": ["O19", "O16"]
       },
       "command": "undo_ops",
       "comment": "The same pair as an undo: refused whole the same way.",
@@ -351,11 +366,11 @@
         "blockId": "C3"
       },
       "command": "delete_block",
-      "comment": "O15 — trashing the other `work` frees the name."
+      "comment": "O20 — trashing the other `work` frees the name."
     },
     {
       "args": {
-        "opRef": "O11"
+        "opRef": "O16"
       },
       "command": "undo_op",
       "comment": "With `work` free, the same undo restores C2.",

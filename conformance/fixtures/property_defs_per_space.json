@@ -44,7 +44,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 3,
+      "count": 12,
       "ops": [
         {
           "op_type": "create_block"
@@ -54,8 +54,35 @@
           "op_type": "set_property"
         },
         {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
           "key": "stage",
           "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
         }
       ]
     },

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT value_type FROM property_definitions WHERE space_id = ? AND key = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "value_type",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "property_definitions",
+            "name": "value_type"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6d135bfc09496ee568501a2e8aa68d709aba83be7f4530f35870c477e7e30b53"
+}

@@ -308,6 +308,11 @@ const SNAPSHOT_OPS_INERT: ReadonlyMap<string, string> = new Map<string, string>(
       'and query steps carry the claim',
   ],
   [
+    'property_def_undo',
+    'the writers and their undo touch `property_definitions` only, outside the ' +
+      'projected snapshot; the op digest, returns and query steps carry the claim',
+  ],
+  [
     'peer_ref_writes',
     'the three writers touch `peer_refs` only, which is not one of the ' +
       "snapshot's five arrays, so no op sequence can move it; the " +
