@@ -460,6 +460,48 @@ describe('Delete and Duplicate', () => {
     expect(lines(ed)).toEqual([...PAGE.slice(0, 4), ...PAGE.slice(10)])
   })
 
+  it('Delete of a parent’s first numbered child numbers the next one from 1, which a `2.` under the parent’s text would be a line of', () => {
+    const ed = build([
+      ['3. three', A],
+      ['   1. a', B],
+      ['   2. b', C],
+      ['4. four', null],
+    ])
+
+    run(ed, deleteBlock(block(ed, 1)))
+
+    expect(lines(ed)).toEqual([
+      ['3. three', A],
+      ['   1. b', C],
+      ['4. four', null],
+    ])
+    const { text, lineIds } = readLines(ed.state.doc)
+    expect(readBlocks(text.split('\n'), lineIds).map((read) => [read.depth, read.text])).toEqual([
+      [0, 'three'],
+      [1, 'b'],
+      [0, 'four'],
+    ])
+  })
+
+  it('Delete of a numbered block writes the numbered blocks after it again from where it stood, and no others', () => {
+    const ed = build([
+      ['1. one', A],
+      ['2. two', B],
+      ['3. three', C],
+      ['', null],
+      ['para', null],
+    ])
+
+    run(ed, deleteBlock(block(ed, 0)))
+
+    expect(lines(ed)).toEqual([
+      ['1. two', B],
+      ['2. three', C],
+      ['', null],
+      ['para', null],
+    ])
+  })
+
   it('Delete of the only block leaves one empty line', () => {
     const ed = build([['- a', A]])
 

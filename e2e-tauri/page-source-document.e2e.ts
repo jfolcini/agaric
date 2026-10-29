@@ -44,7 +44,6 @@ interface BlockRow {
   content: string | null
   todo_state: string | null
   priority: string | null
-  space_id: string | null
 }
 
 interface PropertyRow {
@@ -53,7 +52,7 @@ interface PropertyRow {
   value_num: number | null
   value_date: string | null
   value_ref: string | null
-  value_bool: boolean | null
+  value_bool: number | null
 }
 
 /** The page's lines below the typed block, one of each kind. */
@@ -179,8 +178,10 @@ describe('Agaric real-backend Edit as Markdown, Document dialect (#5691) @editor
 
     const { parent_id: pageId } = await invoke<BlockRow>('get_block', { blockId: marker.id })
     if (pageId === null) throw new Error('the typed block has no page')
-    const { space_id: spaceId } = await invoke<BlockRow>('get_block', { blockId: pageId })
-    if (spaceId === null) throw new Error('the page has no space')
+    // The new page opens in the space the app starts in, Personal.
+    const spaces = await invoke<Array<{ id: string; name: string }>>('list_spaces')
+    const spaceId = spaces.find((space) => space.name === 'Personal')?.id
+    if (spaceId === undefined) throw new Error('list_spaces returned no Personal space')
     const built = await storedTree(pageId, spaceId)
     expect(built.map(kindOf)).toEqual([
       [0, MARKER, null, null, null],

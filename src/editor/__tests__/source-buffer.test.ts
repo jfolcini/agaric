@@ -10,6 +10,7 @@ import { Editor } from '@tiptap/core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { linesContent, readLines, sourceBufferExtensions } from '@/editor/source-buffer'
+import { readBlocks } from '@/editor/source-buffer-blocks'
 
 const A = '01J0000000000000000000000A'
 const B = '01J0000000000000000000000B'
@@ -201,6 +202,56 @@ describe('Enter', () => {
       ])
     },
   )
+
+  it('ending a numbered list in its middle leaves a blank line under the cursor too, so the items after it stay blocks of their own', () => {
+    const ed = build([
+      ['1. one', A],
+      ['2. two', B],
+      ['3. three', C],
+    ])
+    caret(ed, 0, 6)
+
+    press(ed, 'Enter')
+    press(ed, 'Enter')
+    ed.commands.insertContent('x')
+
+    expect(lines(ed)).toEqual([
+      ['1. one', A],
+      ['', null],
+      ['x', null],
+      ['', null],
+      ['2. two', B],
+      ['3. three', C],
+    ])
+    const { text, lineIds } = readLines(ed.state.doc)
+    expect(readBlocks(text.split('\n'), lineIds).map((block) => block.text)).toEqual([
+      'one',
+      'x',
+      'two',
+      'three',
+    ])
+  })
+
+  it('at the end of a list item’s further line leaves the same blank line under a paragraph typed there', () => {
+    const ed = build([
+      ['1. one', A],
+      ['   more', null],
+      ['2. two', B],
+    ])
+    caret(ed, 1, 7)
+
+    press(ed, 'Enter')
+    ed.commands.insertContent('x')
+
+    expect(lines(ed)).toEqual([
+      ['1. one', A],
+      ['   more', null],
+      ['', null],
+      ['x', null],
+      ['', null],
+      ['2. two', B],
+    ])
+  })
 
   it('after a thematic break opens a new block after a blank line', () => {
     const ed = build([['***', A]])

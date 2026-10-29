@@ -508,9 +508,34 @@ export function cyclePriority(block: SourceBlock): Command {
   }
 }
 
-/** Delete `block` and its children, as the block editor's Delete does. */
+/** Past the numbered blocks at `depth` in a row from block `from`, each with its children, as an index into the blocks. */
+function numberedRunEnd(buffer: Parsed, from: number, depth: number): number {
+  let to = from
+  for (;;) {
+    const next = buffer.blocks[to]
+    if (next?.depth !== depth || next.listStyle !== 'ordered' || next.todoState !== null) return to
+    to = buffer.subtreeEnds[to] as number
+  }
+}
+
+/**
+ * Delete `block` and its children, as the block editor's Delete does. The
+ * numbered blocks after it are written again from where it stood: a `2.` left
+ * first under its parent would read as a further line of the parent's text.
+ */
 export function deleteBlock(block: SourceBlock): Command {
   return (state, dispatch) => {
+    const buffer = readBuffer(state.doc)
+    const at = indexOf(buffer, block)
+    if (at >= 0) {
+      const end = buffer.subtreeEnds[at] as number
+      const to = numberedRunEnd(buffer, end, (buffer.blocks[at] as DocumentBlock).depth)
+      if (to > end) {
+        const run = Array.from({ length: to - end }, (_, i) => written(buffer, end + i))
+        dispatch?.(rewrite(state, buffer, [at, to], run))
+        return true
+      }
+    }
     const [start, end] = lineRange(state.doc, block.line, block.subtreeEnd)
     const tr = state.tr
     if (start === 0 && end === state.doc.content.size)

@@ -114,13 +114,28 @@ function listContinuation(line: string): { length: number; next: string | null }
 }
 
 /**
+ * A blank line under the empty line the cursor is on when a list line follows
+ * it: what is typed there would be a paragraph right above the list, and a
+ * numbered item past the first cannot interrupt a paragraph, so the rest of
+ * the list would read as that paragraph's lines.
+ */
+function separateFromList(tr: Transaction): void {
+  const { $from } = tr.selection
+  const next = tr.doc.maybeChild($from.index(0) + 1)
+  if (next !== null && LIST_PREFIX.test(next.textContent)) {
+    tr.insert($from.after(), $from.parent.type.create())
+  }
+}
+
+/**
  * Enter: split the line at the cursor, as page mode's Enter makes a new block
  * (#5691 D1). A list line goes on with its marker on the new line, and a line
  * holding only its marker loses it, ending the list, as GitHub and Obsidian do
  * (#5160 X6), with a blank line left so what is typed next is a block of its
- * own. Any other line with text before the cursor gets a blank line after it,
- * which starts a new block; in the front matter and in a fenced code block,
- * where a line is no block, Enter breaks the line and nothing more.
+ * own, and another under the cursor where a list line follows. Any other line
+ * with text before the cursor gets a blank line after it, which starts a new
+ * block; in the front matter and in a fenced code block, where a line is no
+ * block, Enter breaks the line and nothing more.
  */
 const splitLine: Command = (state, dispatch) => {
   const tr = state.tr.deleteSelection()
@@ -136,15 +151,21 @@ const splitLine: Command = (state, dispatch) => {
   if (inCode || index < frontMatterEnd(texts)) {
     tr.split($from.pos)
   } else if (list !== null && $from.parentOffset >= list.length) {
-    if (list.next === null) tr.delete($from.start(), $from.end()).split($from.start())
-    else tr.split($from.pos).insertText(list.next)
+    if (list.next === null) {
+      tr.delete($from.start(), $from.end()).split($from.start())
+      separateFromList(tr)
+    } else {
+      tr.split($from.pos).insertText(list.next)
+    }
   } else {
     tr.split($from.pos)
     if (list === null && !isBlank(before)) {
       tr.split(tr.selection.from)
       // The text moved starts a block: blanks before it would indent it under the one above.
-      const blanks = /^[ \t]*/.exec(text.slice($from.parentOffset))?.[0].length ?? 0
+      const moved = text.slice($from.parentOffset)
+      const blanks = /^[ \t]*/.exec(moved)?.[0].length ?? 0
       tr.delete(tr.selection.from, tr.selection.from + blanks)
+      if (moved.length === blanks) separateFromList(tr)
     }
   }
   dispatch?.(tr.scrollIntoView())
