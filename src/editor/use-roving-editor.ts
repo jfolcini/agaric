@@ -54,6 +54,7 @@ import { ExternalLink } from '@/editor/extensions/external-link'
 import { withFlankingShortcuts } from '@/editor/extensions/flanking-marks'
 import { HtmlPaste } from '@/editor/extensions/html-paste'
 import { Image } from '@/editor/extensions/image'
+import { KeyEndsFocusReset } from '@/editor/extensions/key-ends-focus-reset'
 import {
   ListMarkerDecoration,
   listMarkerOf,
@@ -626,6 +627,7 @@ export function contentExtensions(o: ContentExtensionOptions) {
     HeadingWithoutDefaultShortcuts.configure({ levels: [1, 2, 3, 4, 5, 6] }),
     HardBreak,
     History,
+    KeyEndsFocusReset,
   ]
   const inline: Extensions = [
     ExternalLink,
