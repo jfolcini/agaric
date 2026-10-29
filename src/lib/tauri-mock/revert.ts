@@ -17,6 +17,7 @@ import { normalizeTagName } from '@/lib/name-tokens'
 import { foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { deleteCohort, nextCohortMarker, restoreCohort } from '@/lib/tauri-mock/cohort'
 import { indexLinks, linkedTargets, relinkRestored } from '@/lib/tauri-mock/link-index'
+import { forwardPropertyKey, revertPropertyKeyOp } from '@/lib/tauri-mock/property-keys'
 import { type MockOpLogEntry, opLog, spacePropertyDefs } from '@/lib/tauri-mock/seed'
 
 type BlockRow = Record<string, unknown>
@@ -591,7 +592,14 @@ export function applyRevertForOp(
     return
   }
 
+  // #5841 S2 — a rename or a merge names its space, not a block.
+  if (revertPropertyKeyOp(target.op_type, payload)) return
+
   const blockId = payload['block_id'] as string
+  // #5841 S2 — a value's undo lands under the key the value lives under now.
+  if (target.op_type === 'set_property' || target.op_type === 'delete_property') {
+    payload['key'] = forwardPropertyKey(target, blockId, payload['key'] as string)
+  }
 
   // Block-row reverts: silent no-op if the block is missing from the map.
   const b = blocks.get(blockId)

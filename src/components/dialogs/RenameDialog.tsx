@@ -58,6 +58,10 @@ interface RenameDialogProps {
   placeholder?: string
   ariaLabel?: string
   className?: string
+  /** A caller's own refusal of a cleaned name, shown like the built-in ones. */
+  validate?: (name: string) => string | null
+  /** The dialog closed; a caller with no trigger puts focus back where it was. */
+  onCloseAutoFocus?: (event: Event) => void
 }
 
 export function RenameDialog({
@@ -70,6 +74,8 @@ export function RenameDialog({
   placeholder,
   ariaLabel,
   className,
+  validate,
+  onCloseAutoFocus,
 }: RenameDialogProps): React.ReactElement {
   const { t } = useTranslation()
   const [name, setName] = useState(currentName)
@@ -85,16 +91,18 @@ export function RenameDialog({
     }
   }, [open, currentName])
 
-  const validationError = validateRenameInput(name)
+  const builtinError = validateRenameInput(name)
+  const callerError = builtinError === null ? (validate?.(sanitizeRenameInput(name)) ?? null) : null
+  const validationError = builtinError ?? callerError
   // Show inline error after the user has interacted with the input or
   // attempted to submit (avoids flagging the empty initial state).
   const showError = touched && validationError !== null
   const errorMessage =
-    validationError === 'empty'
+    builtinError === 'empty'
       ? t('rename.errorEmpty')
-      : validationError === 'tooLong'
+      : builtinError === 'tooLong'
         ? t('rename.errorTooLong', { max: MAX_RENAME_LENGTH })
-        : null
+        : callerError
 
   const handleSave = () => {
     if (validationError !== null) {
@@ -145,7 +153,7 @@ export function RenameDialog({
 
   return (
     <Root open={open} onOpenChange={onOpenChange}>
-      <Content className={className}>
+      <Content className={className} onCloseAutoFocus={onCloseAutoFocus}>
         <Header>
           <Title>{title ?? t('rename.title')}</Title>
           <Description>{description ?? t('rename.deviceName')}</Description>

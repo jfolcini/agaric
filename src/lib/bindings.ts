@@ -485,6 +485,21 @@ export const commands = {
 	 *  vocabulary. Delegates to [`count_property_usage_inner`].
 	 */
 	countPropertyUsage: (spaceId: SpaceId) => typedError<PropertyUsage[], AppError>(__TAURI_INVOKE("count_property_usage", { spaceId })),
+	/**
+	 *  Tauri command: rename a space's property key, on every block of the
+	 *  space that holds it. Delegates to [`rename_property_key_inner`].
+	 */
+	renamePropertyKey: (spaceId: SpaceId, oldKey: string, newKey: string) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("rename_property_key", { spaceId, oldKey, newKey })),
+	/**
+	 *  Tauri command: what merging `from_key` into `into_key` would move and
+	 *  drop. Delegates to [`preview_property_merge_inner`].
+	 */
+	previewPropertyMerge: (spaceId: SpaceId, fromKey: string, intoKey: string) => typedError<PropertyMergeCounts, AppError>(__TAURI_INVOKE("preview_property_merge", { spaceId, fromKey, intoKey })),
+	/**
+	 *  Tauri command: merge a space's property key into another. Delegates to
+	 *  [`merge_property_key_inner`].
+	 */
+	mergePropertyKey: (spaceId: SpaceId, fromKey: string, intoKey: string, acknowledged: PropertyMergeCounts) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("merge_property_key", { spaceId, fromKey, intoKey, acknowledged })),
 	/**  Tauri command: list all sync peers. Delegates to [`list_peer_refs_inner`]. */
 	listPeerRefs: () => typedError<PeerRef[], AppError>(__TAURI_INVOKE("list_peer_refs")),
 	/**  Tauri command: delete (unpair) a sync peer. Delegates to [`delete_peer_ref_inner`]. */
@@ -3386,6 +3401,16 @@ export type PropertyLossValue = {
 	value_date: string | null,
 	value_ref: string | null,
 	value_bool: number | null,
+};
+
+/**
+ *  What a merge of one property key into another changes (#5841): `moved`
+ *  blocks of the space (Trash included) hold the merged key and not the
+ *  target; `dropped` hold both, and lose the merged key's value.
+ */
+export type PropertyMergeCounts = {
+	moved: number,
+	dropped: number,
 };
 
 /**

@@ -33,6 +33,7 @@ import {
   linkTokenRe,
   scanLinkTargets,
 } from '@/lib/tauri-mock/link-scan'
+import { forwardPropertyKey, propertyKeyReversePayload } from '@/lib/tauri-mock/property-keys'
 import { isValidRepeatRuleMock } from '@/lib/tauri-mock/recurrence'
 import {
   applyRevertForOp,
@@ -2319,7 +2320,13 @@ export function reversePayloadFor(target: MockOpLogEntry): Record<string, unknow
     }
     case 'set_property':
     case 'delete_property': {
-      return propertyReversePayload(target.op_type, p)
+      // #5841 S2 — under the key the value lives under now.
+      const key = forwardPropertyKey(target, blockId as string, p['key'] as string)
+      return propertyReversePayload(target.op_type, { ...p, key })
+    }
+    case 'rename_property_key':
+    case 'rewrite_properties': {
+      return propertyKeyReversePayload(target.op_type, p) ?? {}
     }
     // #5057 — the symmetric swap `reverse_rename_attachment` computes. Without
     // it this fell to `default:`, which reads `block_id` — absent on an

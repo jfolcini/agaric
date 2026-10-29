@@ -70,6 +70,17 @@ export function getPayloadRawContent(entry: HistoryEntry): string | null {
     const key = parsed['key']
     return typeof key === 'string' && key.length > 0 ? key : null
   }
+  if (entry.op_type === 'rename_property_key') {
+    const { old_key: oldKey, new_key: newKey } = parsed
+    return typeof oldKey === 'string' && typeof newKey === 'string' ? `${oldKey} → ${newKey}` : null
+  }
+  // A merge writes `from`'s definition, then `into`'s.
+  if (entry.op_type === 'rewrite_properties') {
+    const defs = parsed['defs']
+    if (!Array.isArray(defs)) return null
+    const keys = defs.map((d: unknown) => (d as Record<string, unknown> | null)?.['key'])
+    return keys.every((k) => typeof k === 'string') ? keys.join(' → ') : null
+  }
   return null
 }
 
