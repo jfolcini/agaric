@@ -196,9 +196,30 @@ describe('#2468 — op_refs capture on migrated mutation handlers', () => {
     }
   })
 
+  it('#6156 — a task clear returns the refs of the stamps it clears, and undoing them gives the task and its stamps back', () => {
+    // TODO then DONE leaves both stamps, `created_at` and `completed_at`.
+    for (const state of ['TODO', 'DONE']) dispatch('set_todo_state', { blockId: A, state })
+    const stamps = () =>
+      ['created_at', 'completed_at'].map((key) => dispatch('get_property', { blockId: A, key }))
+    const held = stamps()
+    expect(
+      held.map((row) => row !== null),
+      'sanity: the block holds both stamps',
+    ).toEqual([true, true])
+
+    const del = dispatch('delete_property', { blockId: A, key: 'todo_state' }) as WithOpsResp
+    expect(stamps(), 'sanity: the stamps went with the state').toEqual([null, null])
+    expect(del.op_refs, 'the state’s delete, then the clear of each stamp').toHaveLength(3)
+
+    // Newest first, as the undo store submits an entry.
+    dispatch('undo_ops', { ops: del.op_refs.toReversed() })
+
+    expect(rowOf(A)['todo_state']).toBe('DONE')
+    expect(stamps()).toEqual(held)
+  })
+
   it('#5057 — undoing a reserved-key delete_property is accepted, as on the backend', () => {
-    // The mock records a reserved-key delete with `from_value: null`, so an
-    // undo that judged reversibility by the op's own value would refuse it.
+    // The delete records the `prior` it removes (#6156), which an undo judges it reversible by.
     dispatch('set_property', {
       blockId: A,
       key: 'todo_state',

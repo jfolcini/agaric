@@ -40,6 +40,7 @@ import {
   appSettings,
   blocks,
   type MockOpLogEntry,
+  opLog,
   properties,
   propertyDefs,
   pushOp,
@@ -615,19 +616,21 @@ export const propertiesHandlers = {
       const fromValue = (b[key] as string | null | undefined) ?? null
       // #5898 — a key the block does not hold appends nothing.
       if (fromValue === null) return { block_id: blockId, key, op_refs: [] }
+      const start = opLog.length
       b[key] = null
       // `prior` as `held_property_value` records it, which the undo restores (#6156).
-      const op = pushOp('delete_property', {
+      pushOp('delete_property', {
         block_id: blockId,
         key,
         prior: valueFieldsOf({ [channel]: fromValue }),
       })
       // #5378 — `delete_property_core` clears the task stamps with the state.
       if (key === 'todo_state') writeTaskStampTransitions(blockId, fromValue, null)
+      // Every op appended, as `capture_op_refs` takes them: undone by these refs, the stamps come back too.
       return {
         block_id: blockId,
         key,
-        op_refs: [{ device_id: op.device_id, seq: op.seq }],
+        op_refs: opLog.slice(start).map(({ device_id, seq }) => ({ device_id, seq })),
       }
     }
     // `space` clears the `blocks.space_id` column; its undo restores the space.

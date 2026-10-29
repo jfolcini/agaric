@@ -24,7 +24,6 @@ export const BLOCK_EVENTS = {
   SET_PRIORITY_1: 'set-priority-1',
   SET_PRIORITY_2: 'set-priority-2',
   SET_PRIORITY_3: 'set-priority-3',
-  INSERT_ORDERED_LIST: 'insert-ordered-list',
   INSERT_DIVIDER: 'insert-divider',
   INSERT_CALLOUT: 'insert-callout',
   // #1960 — Turn-into menu: convert the focused block's type. `detail.type` is
