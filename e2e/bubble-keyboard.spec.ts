@@ -47,6 +47,18 @@ async function selectWord(
   word: string,
 ): Promise<void> {
   await page.keyboard.press(edge)
+  // A Ctrl+Home ProseMirror undoes leaves the caret where it was (`key-ends-focus-reset.ts`).
+  await expect
+    .poll(() =>
+      editor.evaluate((el, toStart) => {
+        const { doc, selection } = (el as HTMLElement & { editor: Editor }).editor.state
+        const outside = toStart
+          ? doc.textBetween(0, selection.from)
+          : doc.textBetween(selection.to, doc.content.size)
+        return selection.empty && outside === ''
+      }, edge === 'Control+Home'),
+    )
+    .toBe(true)
   const extend = edge === 'Control+Home' ? 'Shift+ArrowRight' : 'Shift+ArrowLeft'
   for (let i = 0; i < 5; i++) await page.keyboard.press(extend)
   // Chrome holds `selectionchange` back while keys stream in; a Tab before it lands
