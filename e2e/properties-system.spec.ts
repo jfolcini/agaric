@@ -6,7 +6,9 @@ import {
   activePopover,
   activeSheet,
   chooseSelectOption,
+  clearConsoleErrors,
   expect,
+  getConsoleErrors,
   navigateToView,
   openPage,
   openSettingsTab,
@@ -564,5 +566,59 @@ test.describe('Per-space property definitions @editor @spaces @settings', () => 
     panel = await openPropertiesSettings(page)
     await chooseSelectOption(page, DEFINITIONS_IN, 'Work')
     await expect(panel.locator('ul > li', { hasText: 'project' })).toContainText('select')
+  })
+})
+
+// ===========================================================================
+// 7. How many live blocks use each definition (#5841 S0)
+// ===========================================================================
+
+test.describe('Property definitions view usage count @editor @settings', () => {
+  const MTG_1 = '0000000000000000000BLOCK17'
+  const MTG_2 = '0000000000000000000BLOCK18'
+
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  async function openPropertiesSettings(page: Page) {
+    await navigateToView(page, 'Settings')
+    await openSettingsTab(page, 'Properties')
+    return page.getByTestId('settings-panel-properties')
+  }
+
+  test('counts live uses, and a trashed one still blocks the delete', async ({ page }) => {
+    let panel = await openPropertiesSettings(page)
+    await panel.getByLabel('Property key').fill('stage')
+    await panel.getByRole('button', { name: 'Create', exact: true }).click()
+    await expect(panel.getByTestId('property-usage-stage')).toHaveText('0 uses')
+
+    for (const blockId of [MTG_1, MTG_2]) {
+      await ipc(page, 'set_property', { blockId, key: 'stage', value: { value_text: 'draft' } })
+    }
+    await navigateToView(page, 'Journal')
+    panel = await openPropertiesSettings(page)
+    await expect(panel.getByTestId('property-usage-stage')).toHaveText('2 uses')
+
+    await ipc(page, 'delete_block', { blockId: MTG_1 })
+    await navigateToView(page, 'Journal')
+    panel = await openPropertiesSettings(page)
+    await expect(panel.getByTestId('property-usage-stage')).toHaveText('1 use')
+
+    await panel.getByRole('button', { name: 'Delete property stage' }).click()
+    await activeAlertDialog(page).getByRole('button', { name: 'Delete', exact: true }).click()
+    await expect(
+      page.getByText(
+        /^Can't delete 'stage': 2 block\(s\) still use it\. .* Blocks in the Trash count too/,
+      ),
+    ).toBeVisible()
+    // The refusal is a deliberate `logger.error`; take it out of the global console gate.
+    expect(getConsoleErrors(page).some((error) => error.includes('property.errorDelete'))).toBe(
+      true,
+    )
+    clearConsoleErrors(page)
+    await navigateToView(page, 'Journal')
+    panel = await openPropertiesSettings(page)
+    await expect(panel.getByTestId('property-usage-stage')).toHaveText('1 use')
   })
 })

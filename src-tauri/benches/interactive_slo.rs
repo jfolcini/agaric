@@ -76,7 +76,7 @@ use agaric_lib::commands::pages::{
 use agaric_lib::commands::{
     PAGE_LINKS_EDGE_CAP, PropertyFilter, PropertyLoss, ResolvedBlock, SearchBlockRow, SearchFilter,
     batch_resolve_inner, count_agenda_batch_by_source_inner, count_backlinks_batch_inner,
-    create_block_inner, delete_block_inner, export_page_markdown_inner,
+    count_property_usage_inner, create_block_inner, delete_block_inner, export_page_markdown_inner,
     filtered_blocks_query_inner, get_batch_properties_inner, get_block_inner, get_properties_inner,
     list_all_tags_in_space_inner, list_attachments_batch_inner, list_backlinks_grouped_inner,
     list_blocks_inner, list_journal_pages_in_range_inner, list_page_links_inner,
@@ -3098,6 +3098,90 @@ fn bench_preview_space_move(c: &mut Criterion) {
     report_measurement_only(NAME, &acc);
 }
 
+/// `count_property_usage` — the Settings › Properties usage badges (#5841
+/// S0): every key of a 100K-block space's vocabulary in one call. Every 10th
+/// block holds the user key, every 7th a `todo_state`, and every 100th is
+/// trashed, so the shape probe pins the live filter and the column read. No
+/// budget until `bench-slo` has measured it.
+fn bench_count_property_usage(c: &mut Criterion) {
+    const NAME: &str = "count_property_usage @ 100K";
+    const KEY: &str = "slo_usage_key";
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_count_property_usage"));
+    rt.block_on(async {
+        seed_blocks_bulk(&pool, FIXTURE_SIZE).await;
+        assign_all_to_slo_space(&pool).await;
+        sqlx::query(
+            "INSERT INTO property_definitions (space_id, key, value_type, created_at) \
+             VALUES (?, ?, 'text', '2025-01-01T00:00:00Z')",
+        )
+        .bind(SLO_SPACE_ID)
+        .bind(KEY)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // `seed_blocks_bulk` positions are its index + 1.
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) \
+             SELECT id, ?, 'v' FROM blocks WHERE id <> ? AND (position - 1) % 10 = 0",
+        )
+        .bind(KEY)
+        .bind(SLO_SPACE_ID)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE blocks SET todo_state = 'TODO' WHERE id <> ? AND (position - 1) % 7 = 0",
+        )
+        .bind(SLO_SPACE_ID)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id <> ? AND (position - 1) % 100 = 0")
+            .bind(SLO_BASE_TS_MS)
+            .bind(SLO_SPACE_ID)
+            .execute(&pool)
+            .await
+            .unwrap();
+    });
+    let live = |every: usize| {
+        (0..FIXTURE_SIZE)
+            .filter(|i| i % every == 0 && i % 100 != 0)
+            .count() as i64
+    };
+    let count = || count_property_usage_inner(&pool, SLO_SPACE_ID);
+
+    let rows = rt.block_on(count()).unwrap();
+    let of = |key: &str| rows.iter().find(|row| row.key == key).map(|row| row.count);
+    assert_eq!(
+        (of(KEY), of("todo_state")),
+        (Some(live(10)), Some(live(7))),
+        "count_property_usage @ 100K: the live values of the key and the column"
+    );
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    group.bench_function("count_property_usage_100k", |b| {
+        b.to_async(&rt).iter_custom(|iters| {
+            let (count, acc) = (&count, &acc);
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let _ = count().await.unwrap();
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+
+    report_measurement_only(NAME, &acc);
+}
+
 /// `revert_ops_inner` — 50-op batch revert against a single page with
 /// 100K total ops in its history. Aspirational budget: 200 ms.
 ///
@@ -5268,6 +5352,8 @@ criterion_group!(
     // #5691 — the other save-path commands; no budget yet.
     bench_delete_restore_block,
     bench_preview_space_move,
+    // #5841 S0 — the Settings › Properties usage badges; no budget yet.
+    bench_count_property_usage,
     // #2601 — graduated from the problem tier: the bounded-horizon
     // materialization makes the warm-cache read an O(window) index scan that
     // clears its budget with margin at every fixture size.

@@ -721,6 +721,17 @@ const WIRE: Readonly<Record<string, WireShape>> = {
     totalKey: null,
   },
 
+  // ── Per-space usage count (#5841 S0) ──
+  //
+  // A bare `Vec<PropertyUsage>` ordered by key. MUST match the arm in the Rust
+  // twin.
+  count_property_usage: {
+    rows: { kind: 'bare-array' },
+    token: { kind: 'id', idKey: 'key', attrKeys: ['count'] },
+    hasMoreKey: null,
+    totalKey: null,
+  },
+
   // ── What a cross-space move drops (#5841 S0.6) ──
   //
   // A bare `Vec<PropertyLoss>` ordered by key, then one key's values paged by

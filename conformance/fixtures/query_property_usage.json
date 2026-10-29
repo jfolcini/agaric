@@ -1,0 +1,391 @@
+{
+  "description": "#5841 S0 — `count_property_usage` counts, for every key of the harness space's vocabulary (its own definitions and the built-ins), the LIVE blocks of the space holding a value. `stage` is set on three cards of `Home` and on `there`; one card is then trashed, and `Away` moves with `there` to a second space that declares `stage` the same way, so the value moves with it; so `stage` counts 2. `unused` is declared and held by nothing, so it counts 0. The column-backed keys are read off the block row: `priority` from one card. `space` and `is_space` are not listed. A block id that is not a space is refused `not_found`. Re-author `expected` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "one",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": "1",
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "two",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "three",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Away",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "there",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B5",
+        "parent_id": "B5",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B7",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 9,
+      "ops": [
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_priority"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "stage",
+        "value": "draft",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B3",
+        "key": "stage",
+        "value": "draft",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B4",
+        "key": "stage",
+        "value": "draft",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B6",
+        "key": "stage",
+        "value": "draft",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B7",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_second_space",
+      "returns": ["create_space#space_id=B7"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_second_space_declares_stage",
+      "returns": ["stage#value_type=text#options=null#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "away_moves_to_the_second_space",
+      "returns": ["move_blocks_to_space#moved=1"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "usage_per_key",
+      "rows": [
+        "completed_at#count=0",
+        "created_at#count=0",
+        "due_date#count=0",
+        "listStyle#count=0",
+        "priority#count=1",
+        "repeat#count=0",
+        "repeat-count#count=0",
+        "repeat-origin#count=0",
+        "repeat-seq#count=0",
+        "repeat-until#count=0",
+        "scheduled_date#count=0",
+        "stage#count=2",
+        "todo_state#count=0",
+        "unused#count=0"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "not_found",
+      "has_more": null,
+      "name": "a_block_that_is_not_a_space",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "query_property_usage",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "stage",
+        "value": {
+          "value_text": "draft"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "stage",
+        "value": {
+          "value_text": "draft"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "stage",
+        "value": {
+          "value_text": "draft"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "key": "stage",
+        "value": {
+          "value_text": "draft"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "level": "1"
+      },
+      "command": "set_priority"
+    },
+    {
+      "args": {
+        "blockId": "S4"
+      },
+      "command": "delete_block",
+      "comment": "A trashed card keeps its `stage` value, which no longer counts."
+    },
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Work"
+      },
+      "command": "create_space",
+      "comment": "The second space, `C1`.",
+      "name": "a_second_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "stage",
+        "options": null,
+        "spaceId": "C1",
+        "valueType": "text"
+      },
+      "command": "create_property_def",
+      "comment": "`Work` declares `stage` as the harness space does, so the move keeps `there`'s value.",
+      "name": "the_second_space_declares_stage",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S5"],
+        "spaceId": "C1"
+      },
+      "command": "move_blocks_to_space",
+      "comment": "`Away` and `there` leave the harness space, `there`'s `stage` with them.",
+      "name": "away_moves_to_the_second_space",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "spaceId": "$SPACE"
+      },
+      "command": "count_property_usage",
+      "comment": "Key-ordered over the built-ins and the space's own definitions: `stage` 2 (live and in the space), `unused` 0, `priority` 1 off its column.",
+      "name": "usage_per_key"
+    },
+    {
+      "args": {
+        "spaceId": "S1"
+      },
+      "command": "count_property_usage",
+      "comment": "A page that is not a space is refused.",
+      "expect_error": "not_found",
+      "name": "a_block_that_is_not_a_space"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "one",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "two",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "three",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "page",
+        "content": "Away",
+        "id": "S5",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "there",
+        "id": "S6",
+        "parent_id": "S5",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "property_defs": [
+      {
+        "key": "stage",
+        "options": null,
+        "value_type": "text"
+      },
+      {
+        "key": "unused",
+        "options": null,
+        "value_type": "text"
+      }
+    ],
+    "tags": []
+  }
+}

@@ -468,6 +468,11 @@ export const commands = {
 	updatePropertyDefOptions: (spaceId: SpaceId, key: string, options: string) => typedError<PropertyDefinition, AppError>(__TAURI_INVOKE("update_property_def_options", { spaceId, key, options })),
 	/**  Tauri command: delete a space's property definition. Delegates to [`delete_property_def_inner`]. */
 	deletePropertyDef: (spaceId: SpaceId, key: string) => typedError<null, AppError>(__TAURI_INVOKE("delete_property_def", { spaceId, key })),
+	/**
+	 *  Tauri command: how many live blocks of a space use each key of its
+	 *  vocabulary. Delegates to [`count_property_usage_inner`].
+	 */
+	countPropertyUsage: (spaceId: SpaceId) => typedError<PropertyUsage[], AppError>(__TAURI_INVOKE("count_property_usage", { spaceId })),
 	/**  Tauri command: list all sync peers. Delegates to [`list_peer_refs_inner`]. */
 	listPeerRefs: () => typedError<PeerRef[], AppError>(__TAURI_INVOKE("list_peer_refs")),
 	/**  Tauri command: delete (unpair) a sync peer. Delegates to [`delete_peer_ref_inner`]. */
@@ -3424,6 +3429,12 @@ export type PropertyRow = {
 	 *  as INTEGER (0/1, with a CHECK constraint allowing only NULL/0/1).
 	 */
 	value_bool: number | null,
+};
+
+/**  How many live blocks of a space hold a value under one key (#5841). */
+export type PropertyUsage = {
+	key: string,
+	count: number,
 };
 
 /**

@@ -1007,6 +1007,39 @@ export const propertiesHandlers = {
     return undefined
   },
 
+  // `count_property_usage_inner`: per key of the space's vocabulary (its own
+  // definitions and the built-ins but `space` and `is_space`), the LIVE blocks
+  // of the space holding a value, the column-backed keys read off the block
+  // row. Key-ordered.
+  count_property_usage: (args) => {
+    const spaceId = (args as Record<string, unknown>)['spaceId'] as string
+    // The backend's `spaces` registry: a block flagged `is_space`, or a space a
+    // block belongs to (the conformance harness space has no block here).
+    const registered =
+      properties.get(spaceId)?.get('is_space')?.['value_text'] === 'true' ||
+      [...blocks.values()].some((b) => b['space_id'] === spaceId)
+    if (!registered) throw notFoundRejection(`space '${spaceId}'`)
+    const live = [...blocks.values()].filter(
+      (b) =>
+        b['deleted_at'] == null &&
+        ((b['space_id'] as string | null) ?? ownerSpaceOf(b)) === spaceId,
+    )
+    const held = (key: string): number => {
+      if (key in RESERVED_PROPERTY_COLUMN) return live.filter((b) => b[key] != null).length
+      return live.filter((b) => properties.get(b['id'] as string)?.has(key)).length
+    }
+    return [
+      ...new Set([
+        ...BUILTIN_PROPERTY_DEFS.map((def) => def.key).filter(
+          (key) => key !== 'space' && key !== 'is_space',
+        ),
+        ...(propertyDefs.get(spaceId)?.keys() ?? []),
+      ]),
+    ]
+      .toSorted(compareUtf8Bytes)
+      .map((key) => ({ key, count: held(key) }))
+  },
+
   // ---------------------------------------------------------------------------
   // Peer name update
   // ---------------------------------------------------------------------------
@@ -1091,6 +1124,7 @@ export const propertiesHandlers = {
   | 'get_property_def'
   | 'update_property_def_options'
   | 'delete_property_def'
+  | 'count_property_usage'
   | 'list_projected_agenda'
   | 'notify_task'
   | 'get_reminder_settings'

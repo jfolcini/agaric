@@ -1934,6 +1934,86 @@ pub async fn delete_property_def_inner(
     Ok(())
 }
 
+/// Space membership, not a value a user sets: every block of a space holds
+/// `space`, and `is_space` sits on the space's own block, which is in no space.
+const UNCOUNTED_PROPERTY_KEYS: [&str; 2] = ["space", "is_space"];
+
+/// How many live blocks of a space hold a value under one key (#5841).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
+pub struct PropertyUsage {
+    pub key: String,
+    pub count: i64,
+}
+
+/// Count, for every key `space_id` defines and every built-in, the live
+/// blocks of the space holding a value under it, ordered by key. Bounded by
+/// the space's vocabulary, so it is one flat list (invariant 3's exception).
+///
+/// Trashed blocks are left out, though [`delete_property_def_inner`] counts
+/// them: a key showing 0 uses can still be refused. The column-backed keys
+/// are read from their `blocks` columns. `UNCOUNTED_PROPERTY_KEYS` are not
+/// listed.
+///
+/// # Errors
+///
+/// - [`AppError::NotFound`] — `space_id` is not a registered space
+#[instrument(skip(pool), err)]
+pub async fn count_property_usage_inner(
+    pool: &SqlitePool,
+    space_id: &str,
+) -> Result<Vec<PropertyUsage>, AppError> {
+    let mut conn = pool.acquire().await?;
+    let registered = sqlx::query_scalar!(
+        r#"SELECT 1 AS "ok!: i64" FROM spaces WHERE id = ?"#,
+        space_id
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+    if registered.is_none() {
+        return Err(AppError::NotFound(format!("space '{space_id}'")));
+    }
+    let builtin_keys = serde_json::to_string(
+        &agaric_store::op::BUILTIN_PROPERTY_DEFS
+            .iter()
+            .map(|def| def.key)
+            .filter(|key| !UNCOUNTED_PROPERTY_KEYS.contains(key))
+            .collect::<Vec<_>>(),
+    )?;
+    Ok(sqlx::query_as!(
+        PropertyUsage,
+        r#"WITH live AS MATERIALIZED (
+               SELECT id, todo_state, priority, due_date, scheduled_date
+               FROM blocks WHERE space_id = ?1 AND deleted_at IS NULL
+           ),
+           vocab(key) AS (
+               SELECT key FROM property_definitions WHERE space_id = ?1
+               UNION
+               SELECT CAST(je.value AS TEXT) FROM json_each(?2) AS je
+           ),
+           columns AS MATERIALIZED (
+               SELECT COUNT(todo_state) AS todo_state, COUNT(priority) AS priority,
+                      COUNT(due_date) AS due_date, COUNT(scheduled_date) AS scheduled_date
+               FROM live
+           ),
+           used(key, n) AS (
+               SELECT bp.key, COUNT(*) FROM live b JOIN block_properties bp ON bp.block_id = b.id
+               WHERE bp.key IN (SELECT key FROM vocab)
+               GROUP BY bp.key
+               UNION ALL SELECT 'todo_state', todo_state FROM columns
+               UNION ALL SELECT 'priority', priority FROM columns
+               UNION ALL SELECT 'due_date', due_date FROM columns
+               UNION ALL SELECT 'scheduled_date', scheduled_date FROM columns
+           )
+           SELECT v.key AS "key!: String", COALESCE(u.n, 0) AS "count!: i64"
+           FROM vocab v LEFT JOIN used u ON u.key = v.key
+           ORDER BY v.key"#,
+        space_id,
+        builtin_keys,
+    )
+    .fetch_all(&mut *conn)
+    .await?)
+}
+
 /// Batch-fetch properties for multiple blocks in a single query.
 ///
 /// Returns a map of block_id → `Vec<PropertyRow>`. Block IDs with no properties
@@ -2404,6 +2484,20 @@ pub async fn delete_property_def(
         .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: how many live blocks of a space use each key of its
+/// vocabulary. Delegates to [`count_property_usage_inner`].
+#[tauri::command]
+#[specta::specta]
+pub async fn count_property_usage(
+    read_pool: State<'_, ReadPool>,
+    space_id: SpaceId,
+) -> Result<Vec<PropertyUsage>, AppError> {
+    space_id.validate_shape()?;
+    count_property_usage_inner(&read_pool.0, space_id.as_str())
+        .await
+        .map_err(sanitize_internal_error)
+}
+
 /// #4399 — the pin on [`declared_type_admits_shape`], which is a
 /// hand-written mirror of `validate_property_value`'s step-4 `type_matches`
 /// (`agaric-engine/src/block_ops.rs`) and is therefore only as good as
@@ -2527,6 +2621,191 @@ mod declared_type_admits_shape_tests {
              needs a row in this module's MATRIX and a named arm in \
              `declared_type_admits_shape` — otherwise it falls through to the `_ => true` \
              catch-all and its declarations are never probed (#4399/#4382)."
+        );
+    }
+}
+
+#[cfg(test)]
+mod count_property_usage_tests {
+    use super::*;
+    use crate::commands::tests::common::{
+        DEV, TEST_SPACE_B_ID, TEST_SPACE_ID, assign_to_space, ensure_test_space,
+        ensure_test_space_b, test_pool,
+    };
+    use crate::commands::{create_block_inner, delete_block_inner};
+
+    /// A fresh content block in `space`.
+    async fn block_in(pool: &SqlitePool, mat: &Materializer, space: &str) -> String {
+        ensure_test_space(pool).await;
+        ensure_test_space_b(pool).await;
+        let block = create_block_inner(pool, DEV, mat, "content".into(), "card".into(), None, None)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+        assign_to_space(pool, block.id.as_str(), space).await;
+        block.id.as_str().to_owned()
+    }
+
+    async fn hold_text(pool: &SqlitePool, mat: &Materializer, block: &str, key: &str) {
+        set_property_inner(
+            pool,
+            DEV,
+            mat,
+            block.into(),
+            key.into(),
+            Some("v".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+    }
+
+    /// `key`'s count in `space`, failing when the key is not listed.
+    async fn count_of(pool: &SqlitePool, space: &str, key: &str) -> i64 {
+        let rows = count_property_usage_inner(pool, space).await.unwrap();
+        rows.iter()
+            .find(|row| row.key == key)
+            .unwrap_or_else(|| panic!("`{key}` is not listed in {rows:?}"))
+            .count
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn counts_only_the_asked_spaces_values() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        for space in [TEST_SPACE_ID, TEST_SPACE_B_ID] {
+            create_property_def_inner(&pool, space, "stage".into(), "text".into(), None)
+                .await
+                .unwrap();
+        }
+        for space in [TEST_SPACE_ID, TEST_SPACE_ID, TEST_SPACE_B_ID] {
+            let block = block_in(&pool, &mat, space).await;
+            hold_text(&pool, &mat, &block, "stage").await;
+        }
+
+        assert_eq!(
+            count_of(&pool, TEST_SPACE_ID, "stage").await,
+            2,
+            "A holds two"
+        );
+        assert_eq!(
+            count_of(&pool, TEST_SPACE_B_ID, "stage").await,
+            1,
+            "B holds one"
+        );
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_trashed_block_does_not_count() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        create_property_def_inner(&pool, TEST_SPACE_ID, "stage".into(), "text".into(), None)
+            .await
+            .unwrap();
+        let kept = block_in(&pool, &mat, TEST_SPACE_ID).await;
+        let trashed = block_in(&pool, &mat, TEST_SPACE_ID).await;
+        hold_text(&pool, &mat, &kept, "stage").await;
+        hold_text(&pool, &mat, &trashed, "stage").await;
+        delete_block_inner(&pool, DEV, &mat, trashed.as_str().into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        assert_eq!(
+            count_of(&pool, TEST_SPACE_ID, "stage").await,
+            1,
+            "the live one only"
+        );
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn column_backed_keys_count_from_their_columns() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let task = block_in(&pool, &mat, TEST_SPACE_ID).await;
+        // Holds none of the column keys, but is a live block of the space.
+        let _plain = block_in(&pool, &mat, TEST_SPACE_ID).await;
+        let elsewhere = block_in(&pool, &mat, TEST_SPACE_B_ID).await;
+        set_todo_state_inner(&pool, DEV, &mat, task.as_str().into(), Some("TODO".into()))
+            .await
+            .unwrap();
+        set_priority_inner(&pool, DEV, &mat, task.as_str().into(), Some("1".into()))
+            .await
+            .unwrap();
+        set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            task.as_str().into(),
+            Some("2026-01-01".into()),
+        )
+        .await
+        .unwrap();
+        set_todo_state_inner(
+            &pool,
+            DEV,
+            &mat,
+            elsewhere.as_str().into(),
+            Some("TODO".into()),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        for (key, n) in [
+            ("todo_state", 1),
+            ("priority", 1),
+            ("due_date", 1),
+            ("scheduled_date", 0),
+        ] {
+            assert_eq!(count_of(&pool, TEST_SPACE_ID, key).await, n, "`{key}` in A");
+        }
+        mat.shutdown();
+    }
+
+    #[tokio::test]
+    async fn a_defined_key_with_no_values_counts_zero() {
+        let (pool, _dir) = test_pool().await;
+        ensure_test_space(&pool).await;
+        create_property_def_inner(&pool, TEST_SPACE_ID, "unused".into(), "text".into(), None)
+            .await
+            .unwrap();
+
+        assert_eq!(count_of(&pool, TEST_SPACE_ID, "unused").await, 0);
+    }
+
+    #[tokio::test]
+    async fn space_membership_keys_are_not_listed() {
+        let (pool, _dir) = test_pool().await;
+        ensure_test_space(&pool).await;
+
+        let rows = count_property_usage_inner(&pool, TEST_SPACE_ID)
+            .await
+            .unwrap();
+
+        let listed: Vec<&str> = rows.iter().map(|row| row.key.as_str()).collect();
+        assert!(
+            !listed.contains(&"space") && !listed.contains(&"is_space"),
+            "membership keys listed: {listed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_space_is_not_found() {
+        let (pool, _dir) = test_pool().await;
+
+        let result = count_property_usage_inner(&pool, TEST_SPACE_ID).await;
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "a space that is not registered is refused, got {result:?}"
         );
     }
 }

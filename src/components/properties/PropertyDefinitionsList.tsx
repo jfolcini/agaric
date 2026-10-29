@@ -33,10 +33,11 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { unwrap } from '@/lib/app-error'
+import { isValidation, unwrap } from '@/lib/app-error'
 import type { PropertyDefinition } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { formatPropertyName, selectOptionsJson } from '@/lib/property-utils'
 import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error'
@@ -62,6 +63,9 @@ export function PropertyDefinitionsList(): React.ReactElement {
   // #3306 — settled failure vs genuinely-empty vocabulary.
   const [loadError, setLoadError] = useState(false)
   const [searchFilter, setSearchFilter] = useState('')
+  // Live blocks holding a value, per key; null while loading or after a failure, which show no count.
+  const [usage, setUsage] = useState<ReadonlyMap<string, number> | null>(null)
+  const usageSeq = useRef(0)
 
   // Create form state
   const [newKey, setNewKey] = useState('')
@@ -114,6 +118,24 @@ export function PropertyDefinitionsList(): React.ReactElement {
     setLoading(false)
   }, [spaceId, t])
 
+  const loadUsage = useCallback(async () => {
+    const seq = ++usageSeq.current
+    setUsage(null)
+    if (spaceId === null) return
+    try {
+      const rows = unwrap(await commands.countPropertyUsage(spaceId))
+      if (seq === usageSeq.current) setUsage(new Map(rows.map((row) => [row.key, row.count])))
+    } catch (error) {
+      logger.warn('PropertyDefinitionsList', 'count_property_usage failed', { spaceId }, error)
+    }
+  }, [spaceId])
+
+  useEffect(() => {
+    // `loadUsage` logs its own failure; never rejects.
+    // oxlint-disable-next-line react/set-state-in-effect -- kicks off the `count_property_usage` IPC load; `loadUsage` clears the stale counts before that await, which no render-time derivation can replace
+    void loadUsage()
+  }, [loadUsage])
+
   useEffect(() => {
     // `loadDefinitions` reports its own failure (reportIpcError); never rejects.
     // oxlint-disable-next-line react/set-state-in-effect -- kicks off the `list_property_defs` IPC load; `loadDefinitions` sets loading/error state around that await, which no render-time derivation can replace; see #4407
@@ -131,6 +153,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
       setNewType('text')
       setNewOptions('')
       notify.success(t('propertiesView.created'))
+      void loadUsage()
     } catch (error) {
       // See loadDefinitions above — unified error reporting, but this one
       // keeps the backend's REASON (#4399). `create_property_def` refuses to
@@ -145,7 +168,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
       reportIpcErrorWithReason('PropertyDefinitionsList', 'property.errorCreate', error, t, { key })
     }
     setIsCreating(false)
-  }, [spaceId, newKey, newType, newOptionsJson, t])
+  }, [spaceId, newKey, newType, newOptionsJson, t, loadUsage])
 
   const handleDelete = useCallback(
     async (key: string) => {
@@ -155,14 +178,26 @@ export function PropertyDefinitionsList(): React.ReactElement {
         setDefinitions((prev) => prev.filter((d) => d.key !== key))
         setDeleteTarget(null)
         notify.success(t('propertiesView.deleted'))
+        void loadUsage()
       } catch (error) {
-        // The backend refuses a definition a block still uses, and says so.
-        reportIpcErrorWithReason('PropertyDefinitionsList', 'property.errorDelete', error, t, {
-          key,
-        })
+        // The backend refuses a definition a block still uses, with a count that takes in
+        // trashed blocks; the badge's does not, so beside a badge the refusal says why they differ.
+        if (isValidation(error) && usage?.has(key)) {
+          logger.error(
+            'PropertyDefinitionsList',
+            'property.errorDelete (IPC error)',
+            { key },
+            error,
+          )
+          notify.error(t('propertiesView.deleteRefusedInUse', { reason: error.message }))
+        } else {
+          reportIpcErrorWithReason('PropertyDefinitionsList', 'property.errorDelete', error, t, {
+            key,
+          })
+        }
       }
     },
-    [spaceId, t],
+    [spaceId, t, loadUsage, usage],
   )
 
   const handleConfirmDelete = useCallback(() => {
@@ -330,6 +365,11 @@ export function PropertyDefinitionsList(): React.ReactElement {
                     <div className="flex min-w-0 items-center gap-3 [@media(pointer:coarse)]:min-h-11">
                       <span className="font-medium text-sm">{formatPropertyName(def.key)}</span>
                       <Badge tone="secondary">{def.value_type}</Badge>
+                      {usage?.has(def.key) && (
+                        <Badge tone="outline" data-testid={`property-usage-${def.key}`}>
+                          {t('propertiesView.usageCount', { count: usage.get(def.key) })}
+                        </Badge>
+                      )}
                     </div>
                     {hasOptionsCell && (
                       <div className="flex items-center gap-3 max-sm:col-span-2 sm:ml-auto">
