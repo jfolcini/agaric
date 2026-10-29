@@ -120,8 +120,9 @@ export { expect }
 //
 // A surface "overflows" on mobile when its content is wider than the viewport
 // (or, for a dialog/sheet, wider than the modal's own content box), forcing a
-// horizontal scrollbar or bleeding content off-screen. The canonical signal is
-// `scrollWidth > clientWidth` on the scroll root.
+// horizontal scrollbar or bleeding content off-screen. The signal is
+// `scrollWidth > clientWidth` on the scroll root, plus, for the page root, any
+// box that clips sideways content wider than itself (`collectClipped`).
 //
 // Intentional horizontal scroll regions (wide tables, code/mermaid blocks,
 // carousels marked `overflow-x-auto`/`-scroll`) own their overflow, so their
@@ -431,7 +432,9 @@ export async function expectNoHorizontalOverflow(
   } else {
     // Page root: `scrollWidth > clientWidth` on `document.documentElement`
     // is a valid, meaningful overflow signal (the document doesn't clip its
-    // own overflow), so this remains the assertion for the whole-document case.
+    // own overflow), so this is the first assertion for the whole-document case;
+    // the second catches what the app shell and ScrollArea viewports clip before
+    // it can reach the document.
     expect(
       result.scrollWidth,
       `Horizontal overflow on ${label}: scrollWidth=${result.scrollWidth} > clientWidth=${result.clientWidth}.${detail}`,

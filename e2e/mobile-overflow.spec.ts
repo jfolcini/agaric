@@ -509,9 +509,8 @@ for (const profile of PROFILES) {
   })
 }
 
-// #5925 — three surfaces that drew past a 360 px screen without the document
-// ever scrolling, so `expectNoHorizontalOverflow(page)` stayed green: each is
-// measured against the viewport or its own cell instead.
+// #5925 — three surfaces that drew past a 360 px screen, each measured against
+// the viewport or its own cell.
 test.describe('phone at 360 × 780 @mobile @journal @settings', () => {
   test.use({ ...pick(iPhone13), viewport: { width: 360, height: 780 } })
 
