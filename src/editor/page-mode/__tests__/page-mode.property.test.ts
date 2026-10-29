@@ -31,8 +31,9 @@
  * - each block holds the list style its marker shows (`page-lists.ts`): the
  *   one a prefix gave it, taken out of its text, the one Enter carried on to
  *   the block it made, or none once Enter on it empty or Backspace at its
- *   start left the list; and each marker is the one block mode draws for the
- *   backend's styles, numbered over the document's blocks;
+ *   start left the list, or a task marker's commit made it a task (#6167);
+ *   and each marker is the one block mode draws for the backend's styles,
+ *   numbered over the document's blocks;
  * - an id that survives a step stays on the text it was on: a step that only
  *   types keeps every id, Enter adds one new id beside the block it splits, a
  *   join drops only the joined block's, Tab keeps the order and Shift+Tab the
@@ -372,8 +373,11 @@ const B2 = blockId(2)
  * an insertion at its position). The same undo after a peer rewrote the joined
  * block: its first character, the peer's, held the pasted block's id, so the
  * cut text came back under a new one (`restoredIds` in `page-block-ids.ts`).
+ * And a task marker typed in a bullet block, or in the bullet block Enter made:
+ * the task's commit takes the list style off (#6167), and the page brought in
+ * after it shows none.
  */
-const EXAMPLES: Array<[Row[], Array<Omit<Step, 'refuse'>>]> = [
+const EXAMPLES: Array<[Row[], Array<Omit<Step, 'refuse'> & { refuse?: boolean }>]> = [
   [
     [
       [B1, 0, ''],
@@ -470,6 +474,52 @@ const EXAMPLES: Array<[Row[], Array<Omit<Step, 'refuse'>>]> = [
       },
       { action: { kind: 'undo' }, peer: null, failures: null },
       { action: { kind: 'undo' }, peer: null, failures: null },
+    ],
+  ],
+  [
+    [[B1, 0, '']],
+    [
+      {
+        action: { kind: 'listPrefix', block: 0, prefix: ['- ', 'bullet'] },
+        peer: null,
+        failures: null,
+        refuse: true,
+      },
+      {
+        action: { kind: 'taskMarker', block: 0, marker: ['[ ] ', 'TODO'], to: 0 },
+        peer: { kind: 'create', parent: 0, at: 159, text: 'peer ' },
+        failures: null,
+        refuse: true,
+      },
+      {
+        action: { kind: 'tag', block: 0, name: 'newtag', to: 0 },
+        peer: null,
+        failures: null,
+        refuse: true,
+      },
+    ],
+  ],
+  [
+    [[B1, 0, '']],
+    [
+      {
+        action: { kind: 'listPrefix', block: 0, prefix: ['- ', 'bullet'] },
+        peer: null,
+        failures: null,
+        refuse: true,
+      },
+      { action: { kind: 'enter', block: 0, at: 0 }, peer: null, failures: null, refuse: true },
+      {
+        action: { kind: 'taskMarker', block: 0, marker: ['[ ] ', 'TODO'], to: 0 },
+        peer: null,
+        failures: null,
+      },
+      {
+        action: { kind: 'paste', from: 0, count: 1, to: 0, at: 0 },
+        peer: null,
+        failures: null,
+        refuse: true,
+      },
     ],
   ],
 ]
@@ -982,10 +1032,10 @@ function trackLoaded(ed: Editor): Map<string, PMNode | null> {
 /**
  * As the editor does after a save: a block the caret left after typing in it
  * has its task marker, its `key:: value` lines and its tags committed, then
- * the page is brought in; a task cycled goes through the checkbox's command,
- * and a priority, a date or a property through its own. `states` records the
- * state each block was given, `fields` its priority and dates, by
- * `id:field`, and `props` its properties, by `id:key`.
+ * the page is brought in, its list styles with it; a task cycled goes through
+ * the checkbox's command, and a priority, a date or a property through its own.
+ * `states` records the state each block was given, `fields` its priority and
+ * dates, by `id:field`, and `props` its properties, by `id:key`.
  */
 async function commitAndCycle(
   ed: Editor,
@@ -997,6 +1047,7 @@ async function commitAndCycle(
   props: Map<string, string>,
   loaded: Map<string, PMNode | null>,
   mintKept: () => string,
+  lists: PageLists,
 ): Promise<void> {
   const tagged = acted?.tagged
   const left = tagged === undefined ? null : nodeById(ed.state.doc, tagged)
@@ -1021,6 +1072,11 @@ async function commitAndCycle(
     const lines = await commitPageProperties(tagged, unchanged, save, page.api, task.markdown)
     const named = tagsWrittenAsText(lines.markdown ?? '')
     await commitPageTags(tagged, save, page.api, lines.markdown)
+    // A task is a list kind (#6167): the marker's commit took the block's list style off.
+    if (task.refs.length > 0) expect(backendListStyles(page).has(tagged)).toBe(false)
+    // As `bringIn` does, the styles before the patch.
+    const blockIds = page.live().map(([id]) => id)
+    lists.take(dispatch('get_batch_properties', { blockIds }) as Record<string, PropertyRow[]>)
     applyRemote(ed.view, save, page.rows(), mintKept)
     if (acted?.line !== undefined && save.saved.has(tagged)) {
       // A key the block held as a line before it was changed stays text.
@@ -1198,7 +1254,18 @@ describe('page mode against the mock backend', () => {
             save.keep.clear()
             await writeListStyles(save, lists, writes)
 
-            await commitAndCycle(ed, save, page, acted, states, fields, props, loaded, mintKept)
+            await commitAndCycle(
+              ed,
+              save,
+              page,
+              acted,
+              states,
+              fields,
+              props,
+              loaded,
+              mintKept,
+              lists,
+            )
 
             expectBackendHoldsDoc(ed, page.live())
             expectPeersKept(ed, page, marks)
@@ -1222,7 +1289,7 @@ describe('page mode against the mock backend', () => {
         numRuns: EXAMPLES.length + 50,
         examples: EXAMPLES.map(([rows, steps]): [Row[], Step[]] => [
           rows,
-          steps.map((step) => ({ ...step, refuse: false })),
+          steps.map((step) => ({ refuse: false, ...step })),
         ]),
       },
     )
