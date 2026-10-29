@@ -762,6 +762,49 @@ test.describe('Edit as Markdown writes a page line by line (#5691) @editor @page
       ['- new item', added],
     ])
   })
+
+  test('Enter under a nested paragraph makes its sibling, which saves under the same parent', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    const title = 'Nested Enter'
+    const pageId = await ipc<string>(page, 'create_page_in_space', {
+      parentId: null,
+      content: title,
+      spaceId: 'SPACE_PERSONAL',
+    })
+    const [parent] = await seedSearchBlocks(page, [{ content: 'Parent note', parentId: pageId }])
+    const [child] = await seedSearchBlocks(page, [
+      { content: 'Child note', parentId: parent as string },
+    ])
+    await openPage(page, title)
+    const editor = await openSourceMode(page, 'Child note')
+
+    await caretAtEnd(page, editor, 'Child note')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('Sibling note')
+    await expect
+      .poll(async () => (await bufferLines(editor)).slice(0, 5))
+      .toEqual([
+        ['Parent note', parent],
+        ['', null],
+        ['  Child note', child],
+        ['', null],
+        ['  Sibling note', null],
+      ])
+    await editor.press('ControlOrMeta+s')
+    await expect(sourceEditor(page)).toHaveCount(0)
+
+    await reopenPage(page, title)
+    await expect.poll(async () => (await blockIds(page)).length).toBe(3)
+    const [, shown, added] = await blockIds(page)
+    expect(shown).toBe(child)
+    await expect(staticBlock(page, added as string)).toHaveText('Sibling note')
+    const parentOf = async (blockId: string) =>
+      (await ipc<{ parent_id: string | null }>(page, 'get_block', { blockId })).parent_id
+    expect(await parentOf(added as string)).toBe(parent)
+    expect(await parentOf(child as string)).toBe(parent)
+  })
 })
 
 test.describe('Edit as Markdown on a 390 px phone @editor @pages @markdown @mobile', () => {

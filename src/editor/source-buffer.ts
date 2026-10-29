@@ -24,7 +24,13 @@ import type { NodeType, Node as PMNode, Schema } from '@tiptap/pm/model'
 import { Fragment, Slice } from '@tiptap/pm/model'
 import { type Command, Plugin, TextSelection, type Transaction } from '@tiptap/pm/state'
 
-import { fenceAfter, fenceBefore, frontMatterEnd, isBlank } from '@/editor/source-buffer-blocks'
+import {
+  fenceAfter,
+  fenceBefore,
+  frontMatterEnd,
+  isBlank,
+  siblingHead,
+} from '@/editor/source-buffer-blocks'
 import { SourceBufferKeys } from '@/editor/source-buffer-keys'
 import { clampSelectionToTokens, SourceBufferUlids } from '@/editor/source-buffer-ulids'
 import {
@@ -133,9 +139,11 @@ function separateFromList(tr: Transaction): void {
  * holding only its marker loses it, ending the list, as GitHub and Obsidian do
  * (#5160 X6), with a blank line left so what is typed next is a block of its
  * own, and another under the cursor where a list line follows. Any other line
- * with text before the cursor gets a blank line after it, which starts a new
- * block; in the front matter and in a fenced code block, where a line is no
- * block, Enter breaks the line and nothing more.
+ * with text before the cursor starts a sibling of the block it is in, at that
+ * block's depth, as the writer places one (`siblingHead`): after a blank line,
+ * at the block's column, with a list block's style; in the front matter and in
+ * a fenced code block, where a line is no block, Enter breaks the line and
+ * nothing more.
  */
 const splitLine: Command = (state, dispatch) => {
   const tr = state.tr.deleteSelection()
@@ -143,6 +151,7 @@ const splitLine: Command = (state, dispatch) => {
   if (!$from.parent.isTextblock) return false
   const text = $from.parent.textContent
   const before = text.slice(0, $from.parentOffset)
+  const moved = text.slice($from.parentOffset)
   const index = $from.index(0)
   const list = listContinuation(text)
   const texts: string[] = []
@@ -157,16 +166,19 @@ const splitLine: Command = (state, dispatch) => {
     } else {
       tr.split($from.pos).insertText(list.next)
     }
-  } else {
+  } else if (isBlank(before) && !isBlank(moved)) {
+    // The indentation is the block's place, so the text moved keeps it.
+    tr.split($from.pos).insertText(before)
+  } else if (list !== null || isBlank(before)) {
     tr.split($from.pos)
-    if (list === null && !isBlank(before)) {
-      tr.split(tr.selection.from)
-      // The text moved starts a block: blanks before it would indent it under the one above.
-      const moved = text.slice($from.parentOffset)
-      const blanks = /^[ \t]*/.exec(moved)?.[0].length ?? 0
-      tr.delete(tr.selection.from, tr.selection.from + blanks)
-      if (moved.length === blanks) separateFromList(tr)
-    }
+  } else {
+    const sibling = siblingHead(tr.doc, index)
+    tr.split($from.pos)
+    if (sibling.blank) tr.split(tr.selection.from)
+    // The text moved starts the sibling: its own blanks would place it elsewhere.
+    const blanks = /^[ \t]*/.exec(moved)?.[0].length ?? 0
+    tr.delete(tr.selection.from, tr.selection.from + blanks).insertText(sibling.head)
+    if (sibling.blank && moved.length === blanks) separateFromList(tr)
   }
   dispatch?.(tr.scrollIntoView())
   return true

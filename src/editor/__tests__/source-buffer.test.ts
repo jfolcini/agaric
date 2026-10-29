@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { linesContent, readLines, sourceBufferExtensions } from '@/editor/source-buffer'
 import { readBlocks } from '@/editor/source-buffer-blocks'
+import { parseDocument } from '@/editor/source-buffer-document'
 
 const A = '01J0000000000000000000000A'
 const B = '01J0000000000000000000000B'
@@ -55,6 +56,16 @@ function at(ed: Editor, index: number, offset: number): number {
   let pos = 1
   for (let i = 0; i < index; i += 1) pos += ed.state.doc.child(i).nodeSize
   return pos + offset
+}
+
+/** The buffer's blocks as the save reads them: each one's depth, text and the id its line carries. */
+function saved(ed: Editor): Array<[depth: number, content: string, id: string | null]> {
+  const { text, lineIds } = readLines(ed.state.doc)
+  return parseDocument(text, lineIds).blocks.map((block) => [
+    block.depth,
+    block.content,
+    lineIds[block.line - 1] ?? null,
+  ])
 }
 
 function caret(ed: Editor, index: number, offset: number): void {
@@ -232,7 +243,34 @@ describe('Enter', () => {
     ])
   })
 
-  it('at the end of a list item’s further line leaves the same blank line under a paragraph typed there', () => {
+  it('at the end of a task’s further line leaves the same blank line under a paragraph typed there', () => {
+    const ed = build([
+      ['- [ ] one', A],
+      ['  more', null],
+      ['2. two', B],
+    ])
+    caret(ed, 1, 6)
+
+    press(ed, 'Enter')
+    ed.commands.insertContent('x')
+
+    expect(lines(ed)).toEqual([
+      ['- [ ] one', A],
+      ['  more', null],
+      ['', null],
+      ['x', null],
+      ['', null],
+      ['2. two', B],
+    ])
+    const { text, lineIds } = readLines(ed.state.doc)
+    expect(readBlocks(text.split('\n'), lineIds).map((block) => block.text)).toEqual([
+      'one\nmore',
+      'x',
+      'two',
+    ])
+  })
+
+  it('at the end of a numbered item’s further line goes on with the list, and needs no blank line above the next item', () => {
     const ed = build([
       ['1. one', A],
       ['   more', null],
@@ -246,11 +284,211 @@ describe('Enter', () => {
     expect(lines(ed)).toEqual([
       ['1. one', A],
       ['   more', null],
-      ['', null],
-      ['x', null],
-      ['', null],
+      ['2. x', null],
       ['2. two', B],
     ])
+    const { text, lineIds } = readLines(ed.state.doc)
+    expect(readBlocks(text.split('\n'), lineIds).map((block) => block.text)).toEqual([
+      'one\nmore',
+      'x',
+      'two',
+    ])
+  })
+
+  describe('makes a sibling of the block the cursor is in, at its depth, as page mode’s Enter does', () => {
+    it('at the end of a plain child of a plain block', () => {
+      const ed = build([
+        ['parent', A],
+        ['', null],
+        ['  child', B],
+      ])
+      caret(ed, 2, 7)
+
+      press(ed, 'Enter')
+      ed.commands.insertContent('x')
+
+      expect(saved(ed)).toEqual([
+        [0, 'parent', A],
+        [1, 'child', B],
+        [1, 'x', null],
+      ])
+    })
+
+    it('in the middle of its text, the moved text the sibling and the first block keeping its id', () => {
+      const ed = build([
+        ['parent', A],
+        ['', null],
+        ['  foo bar', B],
+      ])
+      caret(ed, 2, 5)
+
+      press(ed, 'Enter')
+
+      expect(saved(ed)).toEqual([
+        [0, 'parent', A],
+        [1, 'foo', B],
+        [1, 'bar', null],
+      ])
+      expect(ed.state.selection.from).toBe(at(ed, 4, 2))
+    })
+
+    it('on a further line of its text', () => {
+      const ed = build([
+        ['parent', A],
+        ['', null],
+        ['  child', B],
+        ['  more', null],
+      ])
+      caret(ed, 3, 6)
+
+      press(ed, 'Enter')
+      ed.commands.insertContent('x')
+
+      expect(saved(ed)).toEqual([
+        [0, 'parent', A],
+        [1, 'child\nmore', B],
+        [1, 'x', null],
+      ])
+    })
+
+    it.each([
+      [
+        'a plain child',
+        [
+          ['parent', A],
+          ['', null],
+          ['  child', B],
+        ],
+        2,
+      ],
+      [
+        'a nested list item',
+        [
+          ['- a', A],
+          ['  - child', B],
+        ],
+        1,
+      ],
+    ] as const)(
+      'at the start of the text of %s, the text moved keeps its depth',
+      (_kind, rows, row) => {
+        const ed = build(rows.map(([line, id]) => [line, id]))
+        caret(ed, row, 2)
+
+        press(ed, 'Enter')
+
+        expect(saved(ed).map(([depth]) => depth)).toEqual([0, 1])
+      },
+    )
+
+    it.each([
+      ['a paragraph', 'foo'],
+      ['a heading', '## foo'],
+      ['a page property line, above every block', 'title:: Foo'],
+    ])('at the top level, for %s, as a bare line after a blank one', (_kind, line) => {
+      const ed = build([[line, A]])
+      caret(ed, 0, line.length)
+
+      press(ed, 'Enter')
+      ed.commands.insertContent('x')
+
+      expect(lines(ed)).toEqual([
+        [line, A],
+        ['', null],
+        ['x', null],
+      ])
+    })
+
+    it('as a `+` item under a list block (D4), from its text’s first line', () => {
+      const ed = build([
+        ['- a', A],
+        ['  + b', B],
+      ])
+      caret(ed, 1, 5)
+
+      press(ed, 'Enter')
+      ed.commands.insertContent('x')
+
+      expect(lines(ed)).toEqual([
+        ['- a', A],
+        ['  + b', B],
+        ['  + x', null],
+      ])
+    })
+
+    it('as a `+` item under a list block (D4), from its text’s further line', () => {
+      const ed = build([
+        ['- a', A],
+        ['  + b', B],
+        ['    more', null],
+      ])
+      caret(ed, 2, 8)
+
+      press(ed, 'Enter')
+      ed.commands.insertContent('x')
+
+      expect(lines(ed)).toEqual([
+        ['- a', A],
+        ['  + b', B],
+        ['    more', null],
+        ['  + x', null],
+      ])
+      expect(saved(ed)).toEqual([
+        [0, 'a', A],
+        [1, 'b\nmore', B],
+        [1, 'x', null],
+      ])
+    })
+
+    it.each([
+      ['- a', '  more', '- x', 'bullet', 0],
+      ['  - a', '    more', '  - x', 'bullet', 1],
+      ['1. a', '   more', '2. x', 'ordered', 0],
+    ] as const)(
+      'with %j’s list style, from its text’s further line',
+      (head, further, made, listStyle, depth) => {
+        const ed = build([
+          ['top', C],
+          ['', null],
+          [head, A],
+          [further, null],
+        ])
+        caret(ed, 3, further.length)
+
+        press(ed, 'Enter')
+        ed.commands.insertContent('x')
+
+        expect(lines(ed).slice(2)).toEqual([
+          [head, A],
+          [further, null],
+          [made, null],
+        ])
+        const { text, lineIds } = readLines(ed.state.doc)
+        const read = parseDocument(text, lineIds).blocks.slice(1)
+        expect(read.map((block) => [block.depth, block.content, block.listStyle])).toEqual([
+          [depth, 'a\nmore', listStyle],
+          [depth, 'x', listStyle],
+        ])
+      },
+    )
+
+    it('with none from a task’s further line, as page mode gives none', () => {
+      const ed = build([
+        ['- [ ] a', A],
+        ['  more', null],
+      ])
+      caret(ed, 1, 6)
+
+      press(ed, 'Enter')
+      ed.commands.insertContent('x')
+
+      expect(lines(ed)).toEqual([
+        ['- [ ] a', A],
+        ['  more', null],
+        ['', null],
+        ['x', null],
+      ])
+    })
   })
 
   it('after a thematic break opens a new block after a blank line', () => {
