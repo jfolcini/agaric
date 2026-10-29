@@ -718,6 +718,31 @@ jobs:
           restore-keys: |
             lychee-${{ runner.os }}-
 
+      - name: Restore prek hook environments
+        # gitleaks and actionlint are remote prek repos built on first use
+        # (Go toolchain download + `go install`), so a cold run hit the network
+        # inside `prek run` and a blip reddened lint. Keyed on prek.toml (revs
+        # and hook deps live there). Only the built environments: the Go
+        # toolchain and build cache beside them dwarf them and are unused once
+        # the hooks are built.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/prek/hooks
+            ~/.cache/prek/repos
+          key: prek-hooks-${{ runner.os }}-${{ hashFiles('prek.toml') }}
+
+      - name: Install prek hook environments (retried)
+        # Network is needed only here, so a bounded retry covers the flake
+        # without re-running every hook. A cache hit makes this a no-op.
+        run: |
+          for attempt in 1 2 3; do
+            prek install-hooks && exit 0
+            echo "::warning::prek install-hooks failed (attempt ${attempt}/3)"
+            sleep $((attempt * 10))
+          done
+          exit 1
+
       - name: Classify dependency changes (advisory gating)
         # A new upstream advisory (RUSTSEC/GHSA) must not red PRs that change
         # no dependency; it stays blocking on a PR that touches one, and on
