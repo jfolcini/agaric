@@ -27,21 +27,22 @@ function makeHost(): HTMLElement {
 // CommandPalette, which fires `searchBlocksPartitioned` IPC on every
 // debounced keystroke. Mock both `searchBlocks` (linkMode) and
 // `searchBlocksPartitioned` (default) to keep tests deterministic.
-vi.mock('@/lib/ipc-helpers', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/ipc-helpers')>()
-  return {
-    ...actual,
-    searchBlocks: vi.fn(),
-    searchBlocksPartitioned: vi.fn(),
-  }
-})
+// The spies are hoisted, not made in the factory: vitest caches an async factory's
+// result only once it resolves, so an import made while another awaits `importOriginal`
+// (the palette's module-level preload races the first) runs the factory again, and a
+// spy made inside it would be a second, unstubbed copy.
+const { mockedSearchBlocks, mockedSearchBlocksPartitioned } = vi.hoisted(() => ({
+  mockedSearchBlocks: vi.fn<typeof import('@/lib/ipc-helpers').searchBlocks>(),
+  mockedSearchBlocksPartitioned:
+    vi.fn<typeof import('@/lib/ipc-helpers').searchBlocksPartitioned>(),
+}))
+vi.mock('@/lib/ipc-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/ipc-helpers')>()),
+  searchBlocks: mockedSearchBlocks,
+  searchBlocksPartitioned: mockedSearchBlocksPartitioned,
+}))
 
-import { searchBlocks, searchBlocksPartitioned } from '@/lib/ipc-helpers'
-
-const mockedSearchBlocksPartitioned = vi.mocked(searchBlocksPartitioned)
-const mockedSearchBlocks = vi.mocked(searchBlocks)
-
-type PartitionedResp = Awaited<ReturnType<typeof searchBlocksPartitioned>>
+type PartitionedResp = Awaited<ReturnType<typeof mockedSearchBlocksPartitioned>>
 
 function emptyPartition(): PartitionedResp['pages'] {
   return { items: [], next_cursor: null, has_more: false, total_count: null }
