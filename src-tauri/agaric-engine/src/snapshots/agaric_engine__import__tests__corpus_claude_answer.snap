@@ -65,7 +65,7 @@ paste:
     properties: []
   - block_anchor: ~
     content: The migration has three phases.
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
@@ -75,37 +75,47 @@ paste:
     properties: []
   - block_anchor: ~
     content: "**Phase 1** — freeze writes"
-    depth: 1
+    depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: announce the window
-    depth: 2
+    depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: snapshot the database
-    depth: 2
+    depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: "**Phase 2** — copy data"
-    depth: 1
+    depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: "**Phase 3** — cut over"
-    depth: 1
+    depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: "| Phase | Owner | Days |\n|-------|-------|------|\n| 1     | Ops   | 1    |\n| 2     | Data  | 3    |"
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: "```sql\nSELECT count(*) FROM blocks;\n```"
-    depth: 1
+    depth: 0
     is_code: true
     properties: []
 source:

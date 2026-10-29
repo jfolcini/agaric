@@ -987,25 +987,25 @@ describe('useBlockTreeKeyboardShortcuts', () => {
         return { day1, day2, opts1, opts2 }
       }
 
-      /** `get_blocks_source` renders each id as one line, recording each request. */
+      /** `get_blocks_source` renders each id as a plain block, recording each request. */
       function stubPerPageSource() {
         const requests: unknown[] = []
         stubInvoke(mockedInvoke, {
           get_blocks_source: (args) => {
             requests.push(args)
-            return (args as { blockIds: string[] }).blockIds.map((id) => `- ${id}\n`).join('')
+            return (args as { blockIds: string[] }).blockIds.map((id) => `${id}\n`).join('\n')
           },
         })
         return requests
       }
 
-      it('Ctrl+C writes both days once, in day order', async () => {
+      it('Ctrl+C writes both days once, in day order, a blank line between them (#6190)', async () => {
         const requests = stubPerPageSource()
         twoDays()
 
         fireEvent.keyDown(document, { key: 'c', ctrlKey: true })
 
-        await waitFor(() => expect(mockWriteText).toHaveBeenCalledWith('- D1\n- D2\n'))
+        await waitFor(() => expect(mockWriteText).toHaveBeenCalledWith('D1\n\nD2\n'))
         expect(mockWriteText).toHaveBeenCalledTimes(1)
         expect(requests).toEqual([
           { blockIds: ['D1'], withChildren: true },
@@ -1020,7 +1020,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
         fireEvent.keyDown(document, { key: 'x', ctrlKey: true })
 
         await waitFor(() => expect(day1.__remove).toHaveBeenCalledWith('D1'))
-        expect(mockWriteText.mock.calls).toEqual([['- D1\n- D2\n']])
+        expect(mockWriteText.mock.calls).toEqual([['D1\n\nD2\n']])
         expect(day1.__remove).toHaveBeenCalledTimes(1)
         expect(day2.__remove.mock.calls).toEqual([['D2']])
         expect(opts1.clearSelected).not.toHaveBeenCalled()

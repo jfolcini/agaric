@@ -1,5 +1,5 @@
 {
-  "description": "#5140 Phase 3b — `paste_blocks` parses clipboard text (or takes HTML-paste blocks) and creates the blocks right after the anchor, in one transaction. Covers only what the tauri mock models: an outline whose bullet carries a continuation line and a nested child; two top-level bullets landing in order at the anchor's slot + 1 + k, ahead of the anchor's later siblings; text that does not open with a bullet, read by the same grammar (#5160 Phase 2a: consecutive lines are one paragraph block, a blank line separates blocks, `*` bullets nest by their content column; a heading owning its section is pinned by the mock's own tests, since `#` is a token separator here); a `blocks` input whose two-line block stays ONE block and whose depth-1 entry nests under it; #5160 D4 splices, a paste into the anchor's text (`splice`): mid-block with the first block's child following the anchor's own and `after` ending the last block, a one-block paste that only edits the anchor, `blocks` into an empty block, a first block joined after text as the text it was pasted as (marker, checkbox and property line kept as text, an HTML task item's `- ` too, escaped after a line break as Source mode escapes a first line, the anchor's own properties untouched), and a last block that is code, after which the text after the cursor is a block of its own; and the refusals. One paste carries page names (#5160 N4): `[[project plan]]` links the seeded `Project Plan` by case, `[[RM]]` links `Roadmap` by its alias, and `[[TWIN]]` ties between `Twin` and `twin` and stays text, and the last paste's `[[über]]` links `Über` (#6052); a created page's fresh ULID would land in the content where the relabel does not reach, and no content carries `#`, which the command-leg row tokens split on, so creation and the tag rules are pinned by the Rust tests and `reference-tokens.vectors.json` instead; a checkbox after the bullet is the block's `todo_state` on both sides (#5160 D6: in text, in HTML-paste blocks, and in the whole alphabet), while a property line, and a marker after text, both sides keep as text. Another paste carries link labels (#5160 D9): `[[Project Plan|the plan]]` keeps its label as `[[ULID|label]]`, `[[project plan|Project Plan]]` drops one equal to the target's title, and Logseq's `[see it]([[Roadmap]])` is the same token; its `page_links` rows pin that a labelled link is an edge. The returns pin every created row in document order. Seed: S1 (Home) > S2 (the anchor), S3, S4 > S5 (purged by an op), S6 > S7, S8 (empty), S9, S10, S11 (Project Plan), S12 (Roadmap, alias `rm` set by an op), S13 (Twin), S14 (twin), S15, S16 (Über). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "description": "#5140 Phase 3b — `paste_blocks` parses clipboard text (or takes HTML-paste blocks) and creates the blocks right after the anchor, in one transaction. Covers only what the tauri mock models: an outline whose bullet carries a continuation line and a nested child; two top-level bullets landing in order at the anchor's slot + 1 + k, ahead of the anchor's later siblings; text that does not open with a bullet, read by the same grammar (#5160 Phase 2a: consecutive lines are one paragraph block, a blank line separates blocks, `*` bullets nest by their content column; a heading owning its section is pinned by the mock's own tests, since `#` is a token separator here); a `blocks` input whose two-line block stays ONE block and whose depth-1 entry nests under it; #5160 D4 splices, a paste into the anchor's text (`splice`): mid-block with the first block's child following the anchor's own and `after` ending the last block, a one-block paste that only edits the anchor, `blocks` into an empty block, a first block joined after text as the text it was pasted as (marker, checkbox and property line kept as text, an HTML task item's `- ` too, escaped after a line break as Source mode escapes a first line, the anchor's own properties untouched), and a last block that is code, after which the text after the cursor is a block of its own; and the refusals. One paste carries page names (#5160 N4): `[[project plan]]` links the seeded `Project Plan` by case, `[[RM]]` links `Roadmap` by its alias, and `[[TWIN]]` ties between `Twin` and `twin` and stays text, and the last paste's `[[über]]` links `Über` (#6052); a created page's fresh ULID would land in the content where the relabel does not reach, and no content carries `#`, which the command-leg row tokens split on, so creation and the tag rules are pinned by the Rust tests and `reference-tokens.vectors.json` instead; a checkbox after the bullet is the block's `todo_state` on both sides (#5160 D6: in text, in HTML-paste blocks, and in the whole alphabet), while a property line, and a marker after text, both sides keep as text. Another paste carries link labels (#5160 D9): `[[Project Plan|the plan]]` keeps its label as `[[ULID|label]]`, `[[project plan|Project Plan]]` drops one equal to the target's title, and Logseq's `[see it]([[Roadmap]])` is the same token; its `page_links` rows pin that a labelled link is an edge. The returns pin every created row in document order. Seed: S1 (Home) > S2 (the anchor), S3, S4 > S5 (purged by an op), S6 > S7, S8 (empty), S9, S10, S11 (Project Plan), S12 (Roadmap, alias `rm` set by an op), S13 (Twin), S14 (twin), S15, S16 (Über), S17 (empty). One paste reads each list kind (#6190, #5691 D2, D4): `- ` and `* ` a bulleted block, `1. ` a numbered one and `+ ` a plain child, each style a `properties` row on both sides, and one into an empty block gives the anchor its first block's style. Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -57,13 +57,13 @@
       },
       {
         "block_type": "content",
-        "content": "splice first",
+        "content": "splice - first",
         "deleted_at": null,
         "due_date": null,
         "id": "B6",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 18,
+        "position": 21,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -89,20 +89,20 @@
         "id": "B8",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 21,
+        "position": 24,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
       },
       {
         "block_type": "content",
-        "content": "Hello 1. [ ] Buy milk\nnote:: soon",
+        "content": "Hello [ ] Buy milk\nnote:: soon",
         "deleted_at": null,
         "due_date": null,
         "id": "B9",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 23,
+        "position": 26,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -115,7 +115,7 @@
         "id": "B10",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 25,
+        "position": 28,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -180,7 +180,7 @@
         "id": "B15",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 28,
+        "position": 31,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -200,10 +200,23 @@
       },
       {
         "block_type": "content",
-        "content": "parent\na continuation line",
+        "content": "first",
         "deleted_at": null,
         "due_date": null,
         "id": "B17",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 33,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "parent\na continuation line",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B18",
         "page_id": "B1",
         "parent_id": "B1",
         "position": 6,
@@ -216,9 +229,9 @@
         "content": "child",
         "deleted_at": null,
         "due_date": null,
-        "id": "B18",
+        "id": "B19",
         "page_id": "B1",
-        "parent_id": "B17",
+        "parent_id": "B18",
         "position": 1,
         "priority": null,
         "scheduled_date": null,
@@ -229,7 +242,7 @@
         "content": "one",
         "deleted_at": null,
         "due_date": null,
-        "id": "B19",
+        "id": "B20",
         "page_id": "B1",
         "parent_id": "B1",
         "position": 4,
@@ -242,7 +255,7 @@
         "content": "two",
         "deleted_at": null,
         "due_date": null,
-        "id": "B20",
+        "id": "B21",
         "page_id": "B1",
         "parent_id": "B1",
         "position": 5,
@@ -255,7 +268,7 @@
         "content": "Intro line one\nline two",
         "deleted_at": null,
         "due_date": null,
-        "id": "B21",
+        "id": "B22",
         "page_id": "B1",
         "parent_id": "B1",
         "position": 8,
@@ -268,7 +281,7 @@
         "content": "first",
         "deleted_at": null,
         "due_date": null,
-        "id": "B22",
+        "id": "B23",
         "page_id": "B1",
         "parent_id": "B1",
         "position": 9,
@@ -281,9 +294,9 @@
         "content": "nested",
         "deleted_at": null,
         "due_date": null,
-        "id": "B23",
+        "id": "B24",
         "page_id": "B1",
-        "parent_id": "B22",
+        "parent_id": "B23",
         "position": 1,
         "priority": null,
         "scheduled_date": null,
@@ -294,7 +307,7 @@
         "content": "After",
         "deleted_at": null,
         "due_date": null,
-        "id": "B24",
+        "id": "B25",
         "page_id": "B1",
         "parent_id": "B1",
         "position": 10,
@@ -307,10 +320,10 @@
         "content": "```js\nconst a = 1\nconst b = 2\n```",
         "deleted_at": null,
         "due_date": null,
-        "id": "B25",
+        "id": "B26",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 17,
+        "position": 20,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -320,9 +333,9 @@
         "content": "under the code",
         "deleted_at": null,
         "due_date": null,
-        "id": "B26",
+        "id": "B27",
         "page_id": "B1",
-        "parent_id": "B25",
+        "parent_id": "B26",
         "position": 1,
         "priority": null,
         "scheduled_date": null,
@@ -333,10 +346,10 @@
         "content": "open task",
         "deleted_at": null,
         "due_date": null,
-        "id": "B27",
+        "id": "B28",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 15,
+        "position": 18,
         "priority": null,
         "scheduled_date": null,
         "todo_state": "TODO"
@@ -346,9 +359,9 @@
         "content": "finished task",
         "deleted_at": null,
         "due_date": null,
-        "id": "B28",
+        "id": "B29",
         "page_id": "B1",
-        "parent_id": "B27",
+        "parent_id": "B28",
         "position": 1,
         "priority": null,
         "scheduled_date": null,
@@ -359,10 +372,10 @@
         "content": "- plain item",
         "deleted_at": null,
         "due_date": null,
-        "id": "B29",
+        "id": "B30",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 16,
+        "position": 19,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -372,10 +385,10 @@
         "content": "wip",
         "deleted_at": null,
         "due_date": null,
-        "id": "B30",
+        "id": "B31",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 12,
+        "position": 15,
         "priority": null,
         "scheduled_date": null,
         "todo_state": "DOING"
@@ -385,10 +398,10 @@
         "content": "dropped",
         "deleted_at": null,
         "due_date": null,
-        "id": "B31",
+        "id": "B32",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 13,
+        "position": 16,
         "priority": null,
         "scheduled_date": null,
         "todo_state": "CANCELLED"
@@ -398,20 +411,85 @@
         "content": "shouted",
         "deleted_at": null,
         "due_date": null,
-        "id": "B32",
+        "id": "B33",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 14,
+        "position": 17,
         "priority": null,
         "scheduled_date": null,
         "todo_state": "DONE"
       },
       {
         "block_type": "content",
+        "content": "a",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B34",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 12,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "b",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B35",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 13,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "c",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B36",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 14,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "d",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B37",
+        "page_id": "B1",
+        "parent_id": "B36",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "second",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B38",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 34,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
         "content": "under first",
         "deleted_at": null,
         "due_date": null,
-        "id": "B33",
+        "id": "B39",
         "page_id": "B1",
         "parent_id": "B6",
         "position": 2,
@@ -424,33 +502,7 @@
         "content": "second",
         "deleted_at": null,
         "due_date": null,
-        "id": "B34",
-        "page_id": "B1",
-        "parent_id": "B1",
-        "position": 19,
-        "priority": null,
-        "scheduled_date": null,
-        "todo_state": null
-      },
-      {
-        "block_type": "content",
-        "content": "Last here",
-        "deleted_at": null,
-        "due_date": null,
-        "id": "B35",
-        "page_id": "B1",
-        "parent_id": "B1",
-        "position": 20,
-        "priority": null,
-        "scheduled_date": null,
-        "todo_state": null
-      },
-      {
-        "block_type": "content",
-        "content": "two",
-        "deleted_at": null,
-        "due_date": null,
-        "id": "B36",
+        "id": "B40",
         "page_id": "B1",
         "parent_id": "B1",
         "position": 22,
@@ -460,36 +512,36 @@
       },
       {
         "block_type": "content",
+        "content": "Last here",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B41",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 23,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "two",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B42",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 25,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
         "content": "Eggsworld",
         "deleted_at": null,
         "due_date": null,
-        "id": "B37",
-        "page_id": "B1",
-        "parent_id": "B1",
-        "position": 24,
-        "priority": null,
-        "scheduled_date": null,
-        "todo_state": null
-      },
-      {
-        "block_type": "content",
-        "content": "```\ncode\n```",
-        "deleted_at": null,
-        "due_date": null,
-        "id": "B38",
-        "page_id": "B1",
-        "parent_id": "B1",
-        "position": 26,
-        "priority": null,
-        "scheduled_date": null,
-        "todo_state": null
-      },
-      {
-        "block_type": "content",
-        "content": "world",
-        "deleted_at": null,
-        "due_date": null,
-        "id": "B39",
+        "id": "B43",
         "page_id": "B1",
         "parent_id": "B1",
         "position": 27,
@@ -499,10 +551,36 @@
       },
       {
         "block_type": "content",
+        "content": "```\ncode\n```",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B44",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 29,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "world",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B45",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 30,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
         "content": "see [[00000000000000000000000S11]] [[00000000000000000000000S12]] [[TWIN]]",
         "deleted_at": null,
         "due_date": null,
-        "id": "B40",
+        "id": "B46",
         "page_id": "B1",
         "parent_id": "B1",
         "position": 3,
@@ -515,7 +593,7 @@
         "content": "[[00000000000000000000000S11|the plan]] [[00000000000000000000000S11]] [[00000000000000000000000S12|see it]]",
         "deleted_at": null,
         "due_date": null,
-        "id": "B41",
+        "id": "B47",
         "page_id": "B1",
         "parent_id": "B1",
         "position": 2,
@@ -528,17 +606,17 @@
         "content": "see [[00000000000000000000000S16]]",
         "deleted_at": null,
         "due_date": null,
-        "id": "B42",
+        "id": "B48",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 29,
+        "position": 32,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
       }
     ],
     "op_log_digest": {
-      "count": 41,
+      "count": 63,
       "ops": [
         {
           "op_type": "delete_block"
@@ -550,7 +628,29 @@
           "op_type": "create_block"
         },
         {
+          "key": "listStyle",
+          "op_type": "set_property"
+        },
+        {
           "op_type": "create_block"
+        },
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
         },
         {
           "op_type": "create_block"
@@ -559,13 +659,15 @@
           "op_type": "create_block"
         },
         {
-          "op_type": "create_block"
+          "key": "listStyle",
+          "op_type": "set_property"
         },
         {
           "op_type": "create_block"
         },
         {
-          "op_type": "create_block"
+          "key": "listStyle",
+          "op_type": "set_property"
         },
         {
           "op_type": "create_block"
@@ -608,6 +710,44 @@
         },
         {
           "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
         },
         {
           "op_type": "edit_block"
@@ -616,7 +756,15 @@
           "op_type": "create_block"
         },
         {
+          "key": "listStyle",
+          "op_type": "set_property"
+        },
+        {
           "op_type": "create_block"
+        },
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
         },
         {
           "op_type": "create_block"
@@ -658,46 +806,155 @@
           "op_type": "create_block"
         },
         {
-          "op_type": "create_block"
+          "key": "listStyle",
+          "op_type": "set_property"
         },
         {
           "op_type": "create_block"
+        },
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
         }
       ]
     },
     "page_links": [
       {
         "kind": "page_link",
-        "source_id": "B40",
+        "source_id": "B46",
         "source_page_id": "B1",
         "target_id": "B11"
       },
       {
         "kind": "page_link",
-        "source_id": "B40",
+        "source_id": "B46",
         "source_page_id": "B1",
         "target_id": "B12"
       },
       {
         "kind": "page_link",
-        "source_id": "B41",
+        "source_id": "B47",
         "source_page_id": "B1",
         "target_id": "B11"
       },
       {
         "kind": "page_link",
-        "source_id": "B41",
+        "source_id": "B47",
         "source_page_id": "B1",
         "target_id": "B12"
       },
       {
         "kind": "page_link",
-        "source_id": "B42",
+        "source_id": "B48",
         "source_page_id": "B1",
         "target_id": "B16"
       }
     ],
-    "properties": []
+    "properties": [
+      {
+        "block_id": "B17",
+        "key": "listStyle",
+        "value": "ordered",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B18",
+        "key": "listStyle",
+        "value": "bullet",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B19",
+        "key": "listStyle",
+        "value": "bullet",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B20",
+        "key": "listStyle",
+        "value": "bullet",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B21",
+        "key": "listStyle",
+        "value": "bullet",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B23",
+        "key": "listStyle",
+        "value": "bullet",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B24",
+        "key": "listStyle",
+        "value": "bullet",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B34",
+        "key": "listStyle",
+        "value": "bullet",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B35",
+        "key": "listStyle",
+        "value": "bullet",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B36",
+        "key": "listStyle",
+        "value": "ordered",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B38",
+        "key": "listStyle",
+        "value": "bullet",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B39",
+        "key": "listStyle",
+        "value": "bullet",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B40",
+        "key": "listStyle",
+        "value": "bullet",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B46",
+        "key": "listStyle",
+        "value": "bullet",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B47",
+        "key": "listStyle",
+        "value": "bullet",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B48",
+        "key": "listStyle",
+        "value": "bullet",
+        "value_type": "Text"
+      }
+    ]
   },
   "expected_ops": [
     {
@@ -705,8 +962,8 @@
       "error": null,
       "name": "paste_an_outline_with_a_continuation_line_and_a_child",
       "returns": [
-        "B17#block_type=content#content=parent\na continuation line#parent_id=B1#position=2",
-        "B18#block_type=content#content=child#parent_id=B17#position=1"
+        "B18#block_type=content#content=parent\na continuation line#parent_id=B1#position=2",
+        "B19#block_type=content#content=child#parent_id=B18#position=1"
       ]
     },
     {
@@ -714,8 +971,8 @@
       "error": null,
       "name": "paste_two_top_level_blocks_in_order_after_the_anchor",
       "returns": [
-        "B19#block_type=content#content=one#parent_id=B1#position=2",
-        "B20#block_type=content#content=two#parent_id=B1#position=3"
+        "B20#block_type=content#content=one#parent_id=B1#position=2",
+        "B21#block_type=content#content=two#parent_id=B1#position=3"
       ]
     },
     {
@@ -723,10 +980,10 @@
       "error": null,
       "name": "paste_a_document_shape_as_paragraphs_and_nested_star_items",
       "returns": [
-        "B21#block_type=content#content=Intro line one\nline two#parent_id=B1#position=6",
-        "B22#block_type=content#content=first#parent_id=B1#position=7",
-        "B23#block_type=content#content=nested#parent_id=B22#position=1",
-        "B24#block_type=content#content=After#parent_id=B1#position=8"
+        "B22#block_type=content#content=Intro line one\nline two#parent_id=B1#position=6",
+        "B23#block_type=content#content=first#parent_id=B1#position=7",
+        "B24#block_type=content#content=nested#parent_id=B23#position=1",
+        "B25#block_type=content#content=After#parent_id=B1#position=8"
       ]
     },
     {
@@ -734,8 +991,8 @@
       "error": null,
       "name": "paste_blocks_input_keeps_a_multi_line_block_whole",
       "returns": [
-        "B25#block_type=content#content=```js\nconst a = 1\nconst b = 2\n```#parent_id=B1#position=10",
-        "B26#block_type=content#content=under the code#parent_id=B25#position=1"
+        "B26#block_type=content#content=```js\nconst a = 1\nconst b = 2\n```#parent_id=B1#position=10",
+        "B27#block_type=content#content=under the code#parent_id=B26#position=1"
       ]
     },
     {
@@ -743,9 +1000,9 @@
       "error": null,
       "name": "paste_html_task_items_read_the_checkbox",
       "returns": [
-        "B27#block_type=content#content=open task#parent_id=B1#position=10",
-        "B28#block_type=content#content=finished task#parent_id=B27#position=1",
-        "B29#block_type=content#content=- plain item#parent_id=B1#position=11"
+        "B28#block_type=content#content=open task#parent_id=B1#position=10",
+        "B29#block_type=content#content=finished task#parent_id=B28#position=1",
+        "B30#block_type=content#content=- plain item#parent_id=B1#position=11"
       ]
     },
     {
@@ -753,9 +1010,29 @@
       "error": null,
       "name": "paste_text_reads_every_checkbox",
       "returns": [
-        "B30#block_type=content#content=wip#parent_id=B1#position=10",
-        "B31#block_type=content#content=dropped#parent_id=B1#position=11",
-        "B32#block_type=content#content=shouted#parent_id=B1#position=12"
+        "B31#block_type=content#content=wip#parent_id=B1#position=10",
+        "B32#block_type=content#content=dropped#parent_id=B1#position=11",
+        "B33#block_type=content#content=shouted#parent_id=B1#position=12"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "paste_reads_each_list_kind",
+      "returns": [
+        "B34#block_type=content#content=a#parent_id=B1#position=10",
+        "B35#block_type=content#content=b#parent_id=B1#position=11",
+        "B36#block_type=content#content=c#parent_id=B1#position=12",
+        "B37#block_type=content#content=d#parent_id=B36#position=1"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "paste_into_an_empty_block_gives_it_the_first_blocks_list_style",
+      "returns": [
+        "B17#block_type=content#content=first#parent_id=B1#position=24",
+        "B38#block_type=content#content=second#parent_id=B1#position=25"
       ]
     },
     {
@@ -763,10 +1040,10 @@
       "error": null,
       "name": "paste_into_a_blocks_text_splices_the_blocks_at_the_cursor",
       "returns": [
-        "B6#block_type=content#content=splice first#parent_id=B1#position=16",
-        "B33#block_type=content#content=under first#parent_id=B6#position=2",
-        "B34#block_type=content#content=second#parent_id=B1#position=17",
-        "B35#block_type=content#content=Last here#parent_id=B1#position=18"
+        "B6#block_type=content#content=splice - first#parent_id=B1#position=19",
+        "B39#block_type=content#content=under first#parent_id=B6#position=2",
+        "B40#block_type=content#content=second#parent_id=B1#position=20",
+        "B41#block_type=content#content=Last here#parent_id=B1#position=21"
       ]
     },
     {
@@ -782,23 +1059,23 @@
       "error": null,
       "name": "paste_blocks_into_an_empty_block_replaces_it",
       "returns": [
-        "B8#block_type=content#content=one#parent_id=B1#position=19",
-        "B36#block_type=content#content=two#parent_id=B1#position=20"
+        "B8#block_type=content#content=one#parent_id=B1#position=22",
+        "B42#block_type=content#content=two#parent_id=B1#position=23"
       ]
     },
     {
       "code": null,
       "error": null,
       "name": "paste_an_html_task_item_after_text_keeps_its_marker",
-      "returns": ["B8#block_type=content#content=one - [ ] open task#parent_id=B1#position=19"]
+      "returns": ["B8#block_type=content#content=one - [ ] open task#parent_id=B1#position=22"]
     },
     {
       "code": null,
       "error": null,
       "name": "paste_after_text_joins_the_first_block_as_the_text_it_was_pasted_as",
       "returns": [
-        "B9#block_type=content#content=Hello 1. [ ] Buy milk\nnote:: soon#parent_id=B1#position=21",
-        "B37#block_type=content#content=Eggsworld#parent_id=B1#position=22"
+        "B9#block_type=content#content=Hello [ ] Buy milk\nnote:: soon#parent_id=B1#position=24",
+        "B43#block_type=content#content=Eggsworld#parent_id=B1#position=25"
       ]
     },
     {
@@ -806,16 +1083,16 @@
       "error": null,
       "name": "paste_ending_in_code_puts_the_text_after_the_cursor_in_a_block_of_its_own",
       "returns": [
-        "B10#block_type=content#content=Hello First#parent_id=B1#position=23",
-        "B38#block_type=content#content=```\ncode\n```#parent_id=B1#position=24",
-        "B39#block_type=content#content=world#parent_id=B1#position=25"
+        "B10#block_type=content#content=Hello First#parent_id=B1#position=26",
+        "B44#block_type=content#content=```\ncode\n```#parent_id=B1#position=27",
+        "B45#block_type=content#content=world#parent_id=B1#position=28"
       ]
     },
     {
       "code": null,
       "error": null,
       "name": "paste_an_html_task_item_on_a_new_line_escapes_its_marker",
-      "returns": ["B15#block_type=content#content=para\n\\- [ ] task#parent_id=B1#position=26"]
+      "returns": ["B15#block_type=content#content=para\n\\- [ ] task#parent_id=B1#position=29"]
     },
     {
       "code": null,
@@ -834,7 +1111,7 @@
       "error": null,
       "name": "paste_resolves_page_names_in_the_anchors_space",
       "returns": [
-        "B40#block_type=content#content=see [[00000000000000000000000S11]] [[00000000000000000000000S12]] [[TWIN]]#parent_id=B1#position=2"
+        "B46#block_type=content#content=see [[00000000000000000000000S11]] [[00000000000000000000000S12]] [[TWIN]]#parent_id=B1#position=2"
       ]
     },
     {
@@ -842,7 +1119,7 @@
       "error": null,
       "name": "paste_stores_a_links_label_unless_it_is_the_title",
       "returns": [
-        "B41#block_type=content#content=[[00000000000000000000000S11|the plan]] [[00000000000000000000000S11]] [[00000000000000000000000S12|see it]]#parent_id=B1#position=2"
+        "B47#block_type=content#content=[[00000000000000000000000S11|the plan]] [[00000000000000000000000S11]] [[00000000000000000000000S12|see it]]#parent_id=B1#position=2"
       ]
     },
     {
@@ -862,7 +1139,7 @@
       "error": null,
       "name": "paste_folds_a_page_names_case_beyond_ascii",
       "returns": [
-        "B42#block_type=content#content=see [[00000000000000000000000S16]]#parent_id=B1#position=29"
+        "B48#block_type=content#content=see [[00000000000000000000000S16]]#parent_id=B1#position=32"
       ]
     }
   ],
@@ -978,6 +1255,36 @@
       "command": "paste_blocks",
       "comment": "#5160 D6 — pasted text reads the whole checkbox alphabet: `[/]` DOING, `[-]` CANCELLED, `[X]` DONE.",
       "name": "paste_text_reads_every_checkbox",
+      "via": "command"
+    },
+    {
+      "args": {
+        "anchorBlockId": "S4",
+        "input": {
+          "kind": "text",
+          "text": "- a\n* b\n1. c\n   + d"
+        }
+      },
+      "command": "paste_blocks",
+      "comment": "#6190, #5691 D2 and D4 — a paste reads the Document dialect Agaric copies: `- ` and `* ` items are bulleted blocks, `1. ` a numbered one, and `+ ` a plain child of the list block above it. The `properties` rows pin each style.",
+      "name": "paste_reads_each_list_kind",
+      "via": "command"
+    },
+    {
+      "args": {
+        "anchorBlockId": "S17",
+        "input": {
+          "kind": "text",
+          "text": "1. first\n- second"
+        },
+        "splice": {
+          "after": "",
+          "before": ""
+        }
+      },
+      "command": "paste_blocks",
+      "comment": "#6190 — pasted into an empty block, the anchor takes the first block's list style, as it takes its task state, and the next block lands after it with its own.",
+      "name": "paste_into_an_empty_block_gives_it_the_first_blocks_list_style",
       "via": "command"
     },
     {
@@ -1323,6 +1630,13 @@
         "id": "S16",
         "parent_id": null,
         "position": 6
+      },
+      {
+        "block_type": "content",
+        "content": "",
+        "id": "S17",
+        "parent_id": "S1",
+        "position": 9
       }
     ],
     "properties": [],

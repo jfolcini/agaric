@@ -17,9 +17,9 @@ const TODAY_PAGE = '00000000000000000000PAGE03'
 const OTHER_TEXT = 'Neighbour day note'
 const PASTED = 'Pasted once'
 
-/** The clipboard for both blocks, in day order. */
+/** Both days' blocks on the clipboard in day order: plain blocks, the Document dialect (#6190). */
 function dayOrder(otherFirst: boolean): string {
-  return otherFirst ? `- ${OTHER_TEXT}\n- ${TODAY_TEXT}\n` : `- ${TODAY_TEXT}\n- ${OTHER_TEXT}\n`
+  return otherFirst ? `${OTHER_TEXT}\n\n${TODAY_TEXT}\n` : `${TODAY_TEXT}\n\n${OTHER_TEXT}\n`
 }
 
 function ipc<T>(page: Page, cmd: string, args: unknown): Promise<T> {

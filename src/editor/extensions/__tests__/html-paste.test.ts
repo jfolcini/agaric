@@ -404,8 +404,8 @@ describe('convertAndInsert — precomputed body plumbing (#3277)', () => {
 })
 
 // #5140 / #5160 D4 — with no usable HTML, text of more than one line (or one
-// bullet line, our copy of a block) is pasted as blocks (`paste_blocks` reads
-// it with the import grammar), not into the editor, where ProseMirror would
+// list line, our copy of a block) is pasted as blocks (`paste_blocks` reads
+// it as the Edit as Markdown buffer is read, #6190), not into the editor, where ProseMirror would
 // escape its markers into literal paragraphs (`\## Plan`, `1\.`). The payload
 // splices it into the block at the selection. A single line stays inline, a
 // lone task line is `TaskPaste`'s.
@@ -449,6 +449,8 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
     ['a numbered list', '1. one\n2. two'],
     ['our own copy of a parent and child', '- parent\n  - child\n'],
     ['our own copy of one block', '- only one\n'],
+    ['our own copy of one numbered block (#6190)', '1. only one\n'],
+    ['a single `*` item, a bullet as `-` is (#6190)', '* one'],
     ['a single bullet with trailing blank lines', '- only one\n\n  \n'],
     ['a task with a child', '- [ ] buy milk\n  - oat'],
     ['an empty block with a child', '-\n  - child'],
@@ -575,8 +577,6 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
   it.each([
     ['a single line', 'just one line'],
     ['a single line with blank lines around it', '\n  one line\n\n'],
-    ['a single `*` item', '* one'],
-    ['a single numbered line', '1. Introduction'],
     ['a single task line (TaskPaste owns it)', '- [ ] buy milk'],
     ['a single task line with trailing blank lines', '- [x] done\n\n'],
     ['a lone dash', '-'],

@@ -9,6 +9,7 @@
  * store.
  */
 
+import { parsePastedText } from '@/editor/source-buffer-document'
 import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64url'
 import type { PasteInput, PasteSplice } from '@/lib/bindings'
 import { INLINE_PROPERTY_RESERVED_KEYS } from '@/lib/inline-property-parse'
@@ -634,12 +635,32 @@ function duplicateRow(
 interface PlannedPaste {
   content: string
   depth: number
-  /** Read from a `1.` item, whose marker the backend keeps as the `ordered` list style. */
-  ordered?: boolean
+  /** The list style a pasted item's marker gives (#6190): `-` and `*` a bullet, `N.` numbered. */
+  listStyle?: 'bullet' | 'ordered'
   /** Read from a checkbox after the marker (`- [ ] `), the block's `todo_state` (#5160 D6). */
   todoState?: TodoState
   /** The line of the text the block starts on, counting from 1 (#5160 X3). */
   line?: number
+}
+
+/**
+ * Clipboard text as `import::parse_pasted_text` reads it (#6190), in the
+ * Document dialect, as the blocks the mock plans. The backend stores a block's
+ * `key:: value` lines as properties, through their definitions; the mock models
+ * none of that and keeps them as text lines, as the backend writes them back
+ * after text (`pasted_as_text`).
+ */
+function plannedFromText(text: string): PlannedPaste[] {
+  return parsePastedText(text).map((block) => {
+    const lines = block.properties.map(([key, value]) => `${key}:: ${value}`)
+    const planned: PlannedPaste = {
+      content: [block.content, ...lines].join('\n'),
+      depth: block.depth,
+    }
+    if (block.listStyle !== null) planned.listStyle = block.listStyle
+    if (block.todoState !== null) planned.todoState = block.todoState
+    return planned
+  })
 }
 
 /** `import::split_task_marker`: a checkbox of the shared alphabet and one space, or alone. */
@@ -742,7 +763,8 @@ function isParagraphText(marker: string, rest: string, inList: boolean): boolean
  * before it; consecutive plain lines are one paragraph block; a checkbox
  * after a bullet's marker is its `todoState` (#5160 D6). Code fences,
  * thematic breaks, list-style markers, property lines, escapes and anchors
- * are not modelled; a `1.` item is only flagged, for `joinSplice`.
+ * are not modelled. A paste reads the Document dialect instead
+ * (`plannedFromText`, #6190).
  *
  * With `byLine`, a buffer whose block ids travel beside its text (#5160 A),
  * fences are modelled, because D5 needs them: a fence's lines are code of the
@@ -768,17 +790,11 @@ export function parseOutline(
       top = open.at(-1)
     }
   }
-  const push = (
-    entry: Omit<OpenBlock, 'block'>,
-    content: string,
-    ordered = false,
-    todoState?: TodoState,
-  ): void => {
+  const push = (entry: Omit<OpenBlock, 'block'>, content: string, todoState?: TodoState): void => {
     const block = {
       content,
       depth: open.length,
       line: lineNumber,
-      ...(ordered && { ordered }),
       ...(todoState && { todoState }),
     }
     out.push(block)
@@ -818,7 +834,7 @@ export function parseOutline(
       const body = trimmed.slice(len).replace(/^[ \t]/, '')
       const task = splitTaskMarker(body)
       opens = task?.text ?? body
-      push(entry, opens, /^\d/.test(bullet[0]), task?.todoState)
+      push(entry, opens, task?.todoState)
     } else if (heading) {
       opens = ''
       const level = heading[1]?.length ?? 1
@@ -900,9 +916,12 @@ const FENCE_LINE_RE = /^\s*(?:`{3}|~{3})/m
  */
 const LINE_MARKER_RE = /^\\*(?:-|\d+\.|\[[ xX/-]\])(?: |$)/
 
+/** The marker `pasted_as_text` writes back for a list style. */
+const LIST_STYLE_MARKER = { bullet: '- ', ordered: '1. ' } as const
+
 /**
  * `PasteSplice::join`: `before` starts the first block, which after text keeps
- * the `1. ` and the checkbox its item was read from (`pasted_as_text`),
+ * the list marker and the checkbox its item was read from (`pasted_as_text`),
  * escaped when it starts a line so no marker reads back, and `after` ends the
  * last block, or follows it as a block of its own when it is code (a fence
  * keeps its closing line).
@@ -912,11 +931,14 @@ function joinSplice(planned: readonly PlannedPaste[], splice: PasteSplice): Plan
   const first = joined[0] as PlannedPaste
   const last = joined.at(-1) as PlannedPaste
   if (splice.before !== '') {
-    const markers = `${first.ordered ? '1. ' : ''}${first.todoState ? `[${TASK_STATE_TO_MARKER[first.todoState]}] ` : ''}`
+    const list = first.listStyle ? LIST_STYLE_MARKER[first.listStyle] : ''
+    const task = first.todoState ? `[${TASK_STATE_TO_MARKER[first.todoState]}] ` : ''
+    const markers = list + task
     first.content = first.content === '' ? markers.trimEnd() : markers + first.content
     if (splice.before.endsWith('\n') && LINE_MARKER_RE.test(first.content)) {
       first.content = `\\${first.content}`
     }
+    delete first.listStyle
     delete first.todoState
   }
   if (splice.after !== '' && FENCE_LINE_RE.test(last.content)) {
@@ -929,10 +951,41 @@ function joinSplice(planned: readonly PlannedPaste[], splice: PasteSplice): Plan
 }
 
 /**
+ * Write block `id`'s pasted list style and task state, each a `set_property`
+ * op, in the order `apply_block_properties` writes them (the backend's task
+ * stamps are outside the conformance digest).
+ */
+function writePastedMarks(
+  id: string,
+  row: Record<string, unknown>,
+  block: PlannedPaste,
+  opRefs: OpRefs,
+): void {
+  if (block.listStyle) {
+    if (!properties.has(id)) properties.set(id, new Map())
+    properties.get(id)?.set(LIST_STYLE_KEY, {
+      block_id: id,
+      key: LIST_STYLE_KEY,
+      value_text: block.listStyle,
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
+    })
+    const styleOp = pushOp('set_property', { block_id: id, key: LIST_STYLE_KEY, from_value: null })
+    opRefs.push({ device_id: styleOp.device_id, seq: styleOp.seq })
+  }
+  if (block.todoState) {
+    row['todo_state'] = block.todoState
+    const stateOp = pushOp('set_property', { block_id: id, key: 'todo_state', from_value: null })
+    opRefs.push({ device_id: stateOp.device_id, seq: stateOp.seq })
+  }
+}
+
+/**
  * Create one pasted content row under `parentId` at the live `slot`, with the
- * `todo_state` its checkbox read (a `set_property` op after the create, as
- * `create_parsed_blocks` writes it; the backend's task stamps are outside the
- * conformance digest).
+ * list style and `todo_state` its markers read, written after the create as
+ * `create_parsed_blocks` writes them.
  */
 function pasteRow(
   block: PlannedPaste,
@@ -951,7 +1004,7 @@ function pasteRow(
     page_id: pageId,
     position: 0,
     deleted_at: null,
-    todo_state: block.todoState ?? null,
+    todo_state: null,
     priority: null,
     due_date: null,
     scheduled_date: null,
@@ -966,10 +1019,7 @@ function pasteRow(
     position: row['position'],
   })
   opRefs.push({ device_id: op.device_id, seq: op.seq })
-  if (block.todoState) {
-    const stateOp = pushOp('set_property', { block_id: id, key: 'todo_state', from_value: null })
-    opRefs.push({ device_id: stateOp.device_id, seq: stateOp.seq })
-  }
+  writePastedMarks(id, row, block, opRefs)
   return row
 }
 
@@ -1506,14 +1556,16 @@ export const blocksHandlers = {
   // `[[Title]]` / `#tag` names resolve in the anchor's space through
   // `resolveInboundNames` (#5160 N4), the created pages and tags reported
   // ahead of the content rows as the backend does; with no space every name
-  // stays text. A checkbox after a bullet, in text or in an HTML-paste block
-  // (`- [ ] text`), is the row's `todo_state` (#5160 D6); after text the first
+  // stays text. Text reads as the backend reads it (`plannedFromText`, #6190):
+  // a list marker is the row's `listStyle` (`-` and `*` a bullet, `N.`
+  // numbered, `+` none), and a checkbox after it, in text or in an HTML-paste
+  // block (`- [ ] text`), its `todo_state` (#5160 D6); after text the first
   // block's marker and checkbox are written back as text, as the backend's
-  // `pasted_as_text` does. The backend also reads property lines and list
-  // markers (keeping a value a definition refuses as text, named in the
-  // reply's `warnings`), stamps a task, and refuses an over-deep or oversized
-  // paste; the mock models none of that, so its `warnings` is always empty
-  // and tests must not rely on it for them.
+  // `pasted_as_text` does. The backend also reads property lines (keeping a
+  // value a definition refuses as text, named in the reply's `warnings`),
+  // stamps a task, and refuses an over-deep or oversized paste; the mock
+  // models none of that, so its `warnings` is always empty and tests must not
+  // rely on it for them.
   paste_blocks: (args) => {
     const a = args as Record<string, unknown>
     const anchorId = a['anchorBlockId'] as string
@@ -1534,7 +1586,7 @@ export const blocksHandlers = {
     const afterText = splice !== null && splice.before !== ''
     const parsed =
       input.kind === 'text'
-        ? parseOutline(input.text)
+        ? plannedFromText(input.text)
         : input.blocks.map((block, at) =>
             at === 0 && afterText
               ? { content: block.content, depth: block.depth }
@@ -1570,17 +1622,10 @@ export const blocksHandlers = {
       })
       anchor['content'] = content
       opRefs.push({ device_id: op.device_id, seq: op.seq })
-      // At the start of the block the anchor takes the first block's state
-      // (`splice_into_anchor`); after text `joinSplice` wrote it back as text.
-      if (first.todoState) {
-        anchor['todo_state'] = first.todoState
-        const stateOp = pushOp('set_property', {
-          block_id: anchorId,
-          key: 'todo_state',
-          from_value: null,
-        })
-        opRefs.push({ device_id: stateOp.device_id, seq: stateOp.seq })
-      }
+      // At the start of the block the anchor takes the first block's list
+      // style and state (`splice_into_anchor`); after text `joinSplice` wrote
+      // them back as text.
+      writePastedMarks(anchorId, anchor, first, opRefs)
       out.push(anchor)
       open.push({ depth: first.depth, id: anchorId })
       start = 1

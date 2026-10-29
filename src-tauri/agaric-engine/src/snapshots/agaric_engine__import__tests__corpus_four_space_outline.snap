@@ -37,27 +37,37 @@ paste:
     content: Projects
     depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: Agaric
     depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: Grammar review
     depth: 2
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: Garden
     depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: Areas
     depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
 source:
   blocks:
     - block_anchor: ~

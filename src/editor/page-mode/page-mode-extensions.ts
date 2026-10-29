@@ -4,8 +4,9 @@
  * page mode's document, ids and keys. Block mode's slash menu and `::` and
  * `{{` pickers come with `commands`, which runs a picked command on the
  * caret's block (#5743, `page-slash-commands.tsx`); the `:` emoji picker and
- * the `{{query` hint come always. Markdown text pasted comes in as blocks
- * (`page-paste.ts`). A task marker,
+ * the `{{query` hint come always. Markdown text pasted comes in as the blocks
+ * block mode's paste makes, list items with their styles (`page-paste.ts`). A
+ * task marker,
  * typed or pasted, stays text until the caret leaves its block, which then
  * takes the task state (`page-tasks.ts`). The stock `- ` and `1. ` rules,
  * which make an in-block list, are off: page mode's own make the block a
@@ -34,7 +35,7 @@ import { PageBlock, PageDocument } from '@/editor/page-mode/page-document'
 import { PageDrag } from '@/editor/page-mode/page-drag'
 import { PageKeys } from '@/editor/page-mode/page-keys'
 import { type PageListSource, pageListKeys } from '@/editor/page-mode/page-lists'
-import { PagePaste } from '@/editor/page-mode/page-paste'
+import { pagePaste } from '@/editor/page-mode/page-paste'
 import { PageRenderedKeys } from '@/editor/page-mode/page-rendered'
 import { type PageTaskSource, pageTasks } from '@/editor/page-mode/page-tasks'
 import type { PickerItem } from '@/editor/SuggestionList'
@@ -85,7 +86,7 @@ export function pageModeExtensions(options: PageModeExtensionOptions): Extension
     EmojiPicker,
     // Ahead of `PageKeys`' Tab: the hint takes Tab only while it shows.
     QueryHint.extend({ priority: 1001 }),
-    PagePaste,
+    pagePaste(options.lists),
     PageBlockIds.configure(options.mintId === undefined ? {} : { mintId: options.mintId }),
     PageKeys.configure({ onNavigate: options.onNavigate }),
     PageBlockKeys,

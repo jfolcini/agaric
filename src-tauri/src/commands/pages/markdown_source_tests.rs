@@ -1,8 +1,6 @@
 //! Source mode (#5140): `render_page_source` writes a page's block tree as one
 //! markdown buffer, and `import::parse_source_outline` must read it back as
-//! exactly that tree, or a save with no edits would not be a no-op. A
-//! clipboard copy (`render_clipboard_source`) must read back as a paste
-//! (`import::parse_pasted_text`) reads it, as the same tree less the anchors.
+//! exactly that tree, or a save with no edits would not be a no-op.
 //!
 //! The render→parse proptests are the oracle. A known source-mode limit, which
 //! their generator excludes: a `\r` in content (line splitting takes it as a
@@ -407,15 +405,6 @@ proptest! {
         check_read_back(&md, &import::parse_source_outline(&md).blocks, &expected, true)?;
     }
 
-    /// Every block selected, so each root carries its subtree.
-    #[test]
-    fn a_clipboard_copy_pastes_back_as_the_tree_it_was_rendered_from(forest in arb_forest()) {
-        let (data, expected) = build_page(&forest);
-        let ids: Vec<String> = expected.iter().map(|(_, _, id, _)| id.clone()).collect();
-        let md = render_clipboard_source(&data, &ids, true);
-        check_read_back(&md, &import::parse_pasted_text(&md), &expected, false)?;
-    }
-
     /// #5160 A — the buffer less its anchors holds one id entry per line, and
     /// read by those ids is the tree it was rendered from, each block under
     /// its own id, for every block the text can carry ([`text_carries`]).
@@ -521,7 +510,7 @@ fn an_open_fence_ends_at_its_blocks_anchor_line() {
 }
 
 /// A copy writes no `^ID` a block reads back without, so a plain subtree has
-/// none.
+/// none. It is written in the Document dialect, which a paste reads (#6190).
 #[test]
 fn a_clipboard_copy_of_a_plain_subtree_has_no_anchor() {
     const A: &str = "01J0000000000000000000000A";
@@ -536,30 +525,48 @@ fn a_clipboard_copy_of_a_plain_subtree_has_no_anchor() {
     ]);
     assert_eq!(
         render_clipboard_source(&data, &[A.into(), C.into()], true),
-        "- parent\n  second line\n  - [x] child\n- sibling\n"
+        "parent\nsecond line\n\n  - [x] child\n\nsibling\n"
     );
 }
 
 /// The blocks that would read back as something else without their `^ID`
 /// keep it: one leaving a fence open, whose anchor line ends the fence before
-/// its child, one ending in ` ^word`, and one ending in a blank line.
+/// its child, and one ending in ` ^` and a block id, which a paste takes as
+/// an anchor. One ending in ` ^word` or in a blank line reads back without one
+/// (#6190).
 #[test]
 fn a_clipboard_copy_keeps_the_anchors_blocks_need_to_read_back() {
     const A: &str = "01J0000000000000000000000A";
     const B: &str = "01J0000000000000000000000B";
     const C: &str = "01J0000000000000000000000C";
     const D: &str = "01J0000000000000000000000D";
+    const E: &str = "01J0000000000000000000000E";
     let data = page_data(vec![
         row(A, PAGE, 1, "````"),
         row(B, A, 1, "B"),
         row(C, PAGE, 2, "ends in ^word"),
         row(D, PAGE, 3, "ends in a blank line\n"),
+        row(E, PAGE, 4, &format!("ends in ^{B}")),
     ]);
-    let ids = [A.into(), C.into(), D.into()];
+    let ids = [A.into(), C.into(), D.into(), E.into()];
+    let copy = render_clipboard_source(&data, &ids, true);
     assert_eq!(
-        render_clipboard_source(&data, &ids, true),
-        format!("- ````\n  ^{A}\n  - B\n- ends in ^word ^{C}\n- ends in a blank line\n   ^{D}\n")
+        copy,
+        format!(
+            "````\n^{A}\n\n  B\n\nends in ^word\n\nends in a blank line\n\\\n\nends in ^{B} ^{E}\n"
+        )
     );
+    let pasted: Vec<String> = import::parse_pasted_text(&copy)
+        .into_iter()
+        .map(|block| block.content)
+        .collect();
+    let written = ["````", "B", "ends in ^word", "ends in a blank line\n"];
+    let expected: Vec<String> = written
+        .into_iter()
+        .map(str::to_string)
+        .chain([format!("ends in ^{B}")])
+        .collect();
+    assert_eq!(pasted, expected, "copy:\n{copy}");
 }
 
 /// `key::` is text, and with the anchor after it would be a property line.
@@ -587,7 +594,7 @@ fn a_planning_line_is_written_as_text_in_the_buffer_and_a_copy() {
         let md = render_page_source(&data);
         assert!(md.starts_with(&format!("- {lines} ^{A}")), "md:\n{md}");
         let copy = render_clipboard_source(&data, &[A.into()], true);
-        assert_eq!(copy, format!("- {lines}\n"));
+        assert_eq!(copy, format!("{content}\n"));
     }
 }
 
@@ -739,7 +746,7 @@ fn a_name_inside_code_stays_raw() {
     let data = data_with_names(&fenced, pages, &[]);
     assert_eq!(
         render_clipboard_source(&data, &[BLOCK.into()], true),
-        format!("- ````\n  [[{PROJECT}]]\n  ````\n"),
+        format!("````\n[[{PROJECT}]]\n````\n"),
         "a copy"
     );
     let inline = format!("`[[{PROJECT}]]`");

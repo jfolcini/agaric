@@ -55,52 +55,56 @@ paste:
     properties: []
   - block_anchor: ~
     content: "---"
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: "status: planning"
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: "---"
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: Plan the trip
-    depth: 1
+    depth: 0
     is_code: false
     properties:
+      - - listStyle
+        - bullet
       - - todo_state
         - TODO
   - block_anchor: ~
-    content: Book flights
-    depth: 2
+    content: "- Book flights"
+    depth: 1
     is_code: false
     properties:
       - - listStyle
         - bullet
   - block_anchor: ~
-    content: Pick dates
-    depth: 2
-    is_code: false
-    properties:
-      - - listStyle
-        - ordered
-  - block_anchor: ~
-    content: Pay deposit
-    depth: 2
-    is_code: false
-    properties:
-      - - listStyle
-        - ordered
-  - block_anchor: ~
-    content: "A block with a [[Page]] link and #tag"
+    content: 1. Pick dates
     depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
+  - block_anchor: ~
+    content: 2. Pay deposit
+    depth: 1
+    is_code: false
+    properties:
+      - - listStyle
+        - bullet
+  - block_anchor: ~
+    content: "A block with a [[Page]] link and #tag"
+    depth: 0
+    is_code: false
+    properties:
+      - - listStyle
+        - bullet
 source:
   blocks:
     - block_anchor: ~

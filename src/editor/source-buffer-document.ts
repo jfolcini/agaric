@@ -2,7 +2,8 @@
  * Edit as Markdown's Document dialect (#5691), as the Rust grammar reads it
  * (`import::parse_document_text` and `parse_document_outline`, the
  * `ParseMode::Document` branches of `Scan` in `agaric-engine/src/import.rs`),
- * and the escapes its writer shares with that reading. It follows the grammar
+ * and as a paste reads it (`import::parse_pasted_text`, #6190), and the
+ * escapes its writer shares with that reading. It follows the grammar
  * and defines none: `conformance/document-lines.vectors.json`, which Rust
  * authors, pins it.
  *
@@ -21,6 +22,8 @@ const TRAILING_WS = new RegExp(`[${WS}]+$`)
 const LEADING_WS_OR_BACKSLASH = new RegExp(`^[${WS}\\\\]+`)
 const ID = '[0-9A-HJKMNP-TV-Z]{26}'
 const ULID = new RegExp(`^${ID}$`)
+/** What `BlockId::from_string` reads: Crockford base32, either case, in 128 bits. */
+const BLOCK_ID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/i
 /** Whether a 26-character `^word` is a block's id. Rust's are ULIDs; the mock's, such as `…BLOCK01`, are not. */
 export type IsId = (word: string) => boolean
 const isUlid: IsId = (word) => ULID.test(word)
@@ -301,23 +304,30 @@ function blockText(normalized: string): string {
   return '\n'.repeat(read.split('\n').length - 1) + normalized.slice(at)
 }
 
-/** The line scan of `Scan` in `ParseMode::Document`, never foreign. */
+/**
+ * The line scan of `Scan` in `ParseMode::Document`, `foreign` for text from
+ * outside, as a paste reads it. Unlike Rust's, it flattens nothing past the
+ * import depth limit.
+ */
 class Scan {
   readonly blocks: DocumentBlock[] = []
   readonly warnings: string[] = []
   private readonly endsInCode: boolean[] = []
   private readonly open: Open[] = []
-  private fence: { run: FenceRun; line: number } | null = null
+  /** The open fence, the column a foreign line must reach to stay in it, and its line. */
+  private fence: { run: FenceRun; column: number; line: number } | null = null
   private blankRun: string[] = []
   private afterBlank = false
   private line = 0
 
   private readonly idLines: ReadonlySet<number> | null
   private readonly isId: IsId
+  private readonly foreign: boolean
 
-  constructor(idLines: ReadonlySet<number> | null, isId: IsId) {
+  constructor(idLines: ReadonlySet<number> | null, isId: IsId, foreign = false) {
     this.idLines = idLines
     this.isId = isId
+    this.foreign = foreign
   }
 
   /** `parse_block_lines`: a blank line is held until the next line, which may take it. */
@@ -338,7 +348,7 @@ class Scan {
   private read(line: string, trimmed: string, number: number): void {
     this.line = number
     const indent = indentColumns(line)
-    this.endFenceBefore(trimmed, number)
+    this.endFenceBefore(trimmed, indent, number)
     const fence = this.fence
     if (fence !== null) {
       this.fence = null
@@ -365,9 +375,16 @@ class Scan {
     }
   }
 
-  /** A fence left open ends before a line carrying an id, with a warning (D5). */
-  private endFenceBefore(trimmed: string, number: number): void {
+  /**
+   * A fence left open ends before a foreign line left of the list item holding
+   * it (CommonMark), or before a line carrying an id, with a warning (D5).
+   */
+  private endFenceBefore(trimmed: string, indent: number, number: number): void {
     if (this.fence === null) return
+    if (this.foreign && indent < this.fence.column) {
+      this.fence = null
+      return
+    }
     const carriesId =
       this.idLines === null
         ? isBulletLine(trimmed) && trailingAnchor(trimmed, this.isId)
@@ -413,7 +430,7 @@ class Scan {
     const run = fenceRun(rest)
     const content = indent + len + 1
     this.pushBlock(rest, plain ? null : style, state, run !== null, indent, content, 'bullet')
-    if (run !== null) this.fence = { run, line: number }
+    if (run !== null) this.fence = { run, column: content, line: number }
   }
 
   /** A paragraph, or a fence or a break, its first line's escape taken off. */
@@ -422,7 +439,7 @@ class Scan {
     const rule = isThematicBreak(trimmed)
     const text = rule ? trimmed : unescapeBareLine(trimmed)
     this.pushBlock(text, null, null, run !== null, indent, indent, rule ? 'verbatim' : 'paragraph')
-    if (run !== null) this.fence = { run, line: number }
+    if (run !== null) this.fence = { run, column: this.itemColumn(), line: number }
   }
 
   private pushBlock(
@@ -474,6 +491,8 @@ class Scan {
    * app writes, or no block is. Returns whether it was one.
    */
   private attachProperty(property: { key: string; value: string }, indent: number): boolean {
+    // Text from outside clears nothing: its `key::` is text.
+    if (this.foreign && trim(property.value) === '') return false
     const owner = this.open.findLast((open) => open.marker <= indent)
     if (owner === undefined || FOLDED_RESERVED_KEYS.has(foldPropertyKey(trim(property.key)))) {
       return false
@@ -534,6 +553,27 @@ export function parseDocument(
   scan.scan(blockText(text.replace(/\r\n?/g, '\n')).split('\n'))
   if (idLines === null) scan.extractAnchors()
   return { blocks: scan.blocks, warnings: scan.warnings }
+}
+
+/**
+ * `text` pasted from outside, read into blocks as `import::parse_pasted_text`
+ * reads it (#6190): as a Document buffer, but with no page properties, a
+ * `key::` with no value kept as text, a fence ended by a line left of the list
+ * item holding it, and a trailing `^word` that is no block id kept in the text,
+ * a space before it. So `- x` and `* x` are bulleted blocks, `1. x` a numbered
+ * one, `+ x` a plain one and `- [ ] x` a task (#5691 D2, D4).
+ */
+export function parsePastedText(text: string): DocumentBlock[] {
+  const scan = new Scan(null, isUlid, true)
+  scan.scan(text.replace(/\r\n?/g, '\n').split('\n'))
+  scan.extractAnchors()
+  for (const block of scan.blocks) {
+    const word = block.anchor
+    if (word === null || BLOCK_ID.test(word)) continue
+    block.content = `${block.content}${block.content === '' ? '' : ' '}^${word}`
+    block.anchor = null
+  }
+  return scan.blocks
 }
 
 /** Where a written line puts what is under it: whether it opens with a list marker, and its text's column. */

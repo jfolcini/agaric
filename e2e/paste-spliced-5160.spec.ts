@@ -83,17 +83,17 @@ test.describe('Pasting text into a block splices blocks (#5160 D4) @editor', () 
 
     await expect.poll(() => contentsOf(page, PAGE_ID)).toContain('## Plan')
     const top = await childrenOf(page, PAGE_ID)
-    expect(top).toHaveLength(before.length + 1)
+    // A paste's heading owns nothing (#6190): the answer's blocks follow the anchor as siblings.
+    expect(top).toHaveLength(before.length + 4)
     expect(top[0]).toEqual(expect.objectContaining({ id: GS1, content: 'Hello Here is a plan:' }))
-    const plan = top[1] as Row
-    expect(plan.content).toBe('## Plan')
-    expect(top[2]?.id).toBe(before[1]?.id)
-    expect(await contentsOf(page, plan.id)).toEqual([
+    expect(top.slice(1, 5).map((r) => r.content)).toEqual([
+      '## Plan',
       'First step',
       'Second step',
       'Good luck!world',
     ])
-    const first = (await childrenOf(page, plan.id))[0] as Row
+    expect(top[5]?.id).toBe(before[1]?.id)
+    const first = top[2] as Row
     expect(await contentsOf(page, first.id)).toEqual(['detail'])
     await expect(page.getByText('Pasted 6 blocks')).toBeVisible()
     // The caret is where a text editor leaves it: in the last pasted block,

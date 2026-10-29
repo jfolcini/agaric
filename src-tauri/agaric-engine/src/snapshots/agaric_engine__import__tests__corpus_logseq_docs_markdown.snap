@@ -63,7 +63,9 @@ paste:
     content: Markdown is the most popular format that Logseq supports. Logseq supports most syntaxes including some extended ones.
     depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: "### **Standard** syntax"
     depth: 0
@@ -74,6 +76,8 @@ paste:
     depth: 1
     is_code: false
     properties:
+      - - listStyle
+        - bullet
       - - card-last-interval
         - "28.3"
       - - card-repeats
@@ -82,12 +86,16 @@ paste:
     content: knowledge base
     depth: 2
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: and so on...
     depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: "### **Extended** syntax"
     depth: 0
@@ -100,13 +108,17 @@ paste:
     depth: 1
     is_code: false
     properties:
+      - - listStyle
+        - bullet
       - - id
         - 60ab4582-5a6e-4f3a-84a2-71ae056455a0
   - block_anchor: ~
     content: "syntax: `[[page name]]`"
     depth: 2
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
 source:
   blocks:
     - block_anchor: ~

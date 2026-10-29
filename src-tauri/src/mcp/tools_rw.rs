@@ -511,11 +511,12 @@ fn tool_desc_append_markdown() -> ToolDescription {
         name: TOOL_APPEND_MARKDOWN.to_string(),
         description: format!(
             "Append a Markdown outline under an existing parent in one call, as one undo, \
-             exactly as a paste in the app lands it: list items nest by indentation, a heading \
-             outside a list owns what follows it, a fenced code block stays one block, a \
-             `- [ ]` checkbox is a task, and `key:: value` lines are properties. A `[[Name]]` \
-             or `#name` that matches no page or tag in the parent's space creates that page or \
-             tag there. A call that would write more than {} operations is refused; split it.",
+             exactly as a paste in the app lands it: list items nest by indentation, a `- ` or \
+             `* ` item is a bulleted block, `1. ` a numbered one and `+ ` a plain one, a blank \
+             line separates paragraphs, a heading and a fenced code block are blocks of their \
+             own, a `- [ ]` checkbox is a task, and `key:: value` lines are properties. A \
+             `[[Name]]` or `#name` that matches no page or tag in the parent's space creates that \
+             page or tag there. A call that would write more than {} operations is refused; split it.",
             agaric_store::pagination::MAX_BATCH_BLOCK_IDS,
         ),
         input_schema: json!({

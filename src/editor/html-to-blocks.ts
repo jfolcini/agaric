@@ -447,8 +447,8 @@ function headingLevel(block: OutlineBlock): number {
 }
 
 /**
- * Nest the blocks under the headings that own them (#5160 D16), as import and
- * text paste read the same document: a heading owns what follows it until a
+ * Nest the blocks under the headings that own them (#5160 D16), as an import
+ * reads the same document: a heading owns what follows it until a
  * heading of its level or higher, and a deeper heading nests inside a
  * shallower one. Headings inside lists are never blocks here, so they own
  * nothing.

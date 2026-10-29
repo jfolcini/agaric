@@ -107,15 +107,17 @@ export interface UseBlockTreeKeyboardShortcutsOptions {
 
 /**
  * Put each page's `roots` and their subtrees on the system clipboard as the
- * backend renders them, one page after another. The backend renders one page
- * per call. The chord runs only with no block focused, so no draft is pending.
- * Resolves `false` when there was nothing to copy.
+ * backend renders them, one page after another, a blank line between them: in
+ * the Document dialect it writes (#6190) lines with none between are one
+ * block. The backend renders one page per call. The chord runs only with no
+ * block focused, so no draft is pending. Resolves `false` when there was
+ * nothing to copy.
  */
 async function copySelection(rootsByPage: string[][]): Promise<boolean> {
   const texts = await Promise.all(
     rootsByPage.map(async (roots) => unwrap(await commands.getBlocksSource(roots, true))),
   )
-  const text = texts.join('')
+  const text = texts.filter((page) => page !== '').join('\n')
   if (text.length === 0) return false
   await writeText(text)
   return true

@@ -78,7 +78,8 @@ describe('page-blocks pasteBlocks (#5140 Phase 3b)', () => {
     expect(blocksById.get(childId)?.parent_id).toBe(parentId)
     expect(blocksById.get(secondId)?.parent_id).toBe(PAGE_GETTING_STARTED)
 
-    expect(returnedRefs).toHaveLength(3)
+    // Each block's create, then its bullet style (#6190).
+    expect(returnedRefs).toHaveLength(6)
     const page = useUndoStore.getState().pages.get(PAGE_GETTING_STARTED)
     expect(page?.undoStack).toHaveLength(1)
     expect(page?.undoStack[0]?.refs).toEqual(returnedRefs)

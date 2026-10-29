@@ -1416,13 +1416,16 @@ fn read_page_properties(normalized: &str, output: &mut ParseOutput) -> String {
     format!("{}{rest}", "\n".repeat(read.matches('\n').count()))
 }
 
-/// Clipboard text as blocks (#5140): read as a source buffer is, flattened past
-/// the import depth limit as an import is, and with a trailing ` ^word` that
-/// is not a block id kept as text. One grammar for every paste (#5160 S3): a
-/// README or an LLM answer gives the blocks its headings, paragraphs, list
-/// items and fences are.
+/// Clipboard text as blocks (#5140): read as a Document buffer is (#6190), so
+/// text copied out of Agaric, which writes that dialect, pastes back as it
+/// was, but flattened past the import depth limit as an import is, with no
+/// page properties, and with a trailing ` ^word` that is not a block id kept
+/// as text. `- x` and `* x` are bulleted blocks, `1. x` a numbered one, `+ x`
+/// a plain one and `- [ ] x` a task (#5691 D2, D4). One grammar for every
+/// paste (#5160 S3): a README or an LLM answer gives the blocks its headings,
+/// paragraphs, list items and fences are.
 pub fn parse_pasted_text(text: &str) -> Vec<ParsedBlock> {
-    let mut blocks = source_outline(text, ParseMode::Source, true, None).blocks;
+    let mut blocks = source_outline(text, ParseMode::Document, true, None).blocks;
     blocks.iter_mut().for_each(restore_text_anchor);
     blocks
 }
@@ -1480,7 +1483,7 @@ pub fn strip_title_heading<'a>(content: &'a str, title: &str) -> &'a str {
 /// The readings of the block grammar. Import normalises a file written by
 /// another tool; Source and Document read back the buffer Edit as Markdown
 /// renders, in its two dialects, and must return exactly the tree it was
-/// rendered from. A paste reads as Source does.
+/// rendered from. A paste reads as Document does.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ParseMode {
     Import,
@@ -6004,7 +6007,10 @@ mod tests_source_outline_5140 {
                 expected,
                 "{md:?}"
             );
-            assert_eq!(parse_pasted_text(&md)[0].properties, expected, "{md:?}");
+            // A paste reads `- a` as a bulleted block (#6190).
+            let bullet = ("listStyle".to_string(), "bullet".to_string());
+            let pasted = [bullet, expected[0].clone()];
+            assert_eq!(parse_pasted_text(&md)[0].properties, pasted, "{md:?}");
         }
         let imported = parse_logseq_markdown("- a\n  key:: \"quoted\"\n");
         assert_eq!(
@@ -6170,15 +6176,18 @@ mod tests_source_outline_5140 {
     #[test]
     fn the_recurrence_lines_are_properties() {
         let md = "- a\n  repeat:: +1w\n  repeat-until:: 2026-12-31\n  repeat-count:: 3\n";
-        let expected = [
+        let rule = [
             ("repeat".to_string(), "+1w".to_string()),
             ("repeat-until".to_string(), "2026-12-31".to_string()),
             ("repeat-count".to_string(), "3".to_string()),
         ];
-        for (parser, blocks) in [
-            ("import", parse_logseq_markdown(md).blocks),
-            ("source", parse_source_outline(md).blocks),
-            ("paste", parse_pasted_text(md)),
+        // A paste reads `- a` as a bulleted block (#6190).
+        let bullet = ("listStyle".to_string(), "bullet".to_string());
+        let pasted: Vec<_> = std::iter::once(bullet).chain(rule.clone()).collect();
+        for (parser, blocks, expected) in [
+            ("import", parse_logseq_markdown(md).blocks, rule.to_vec()),
+            ("source", parse_source_outline(md).blocks, rule.to_vec()),
+            ("paste", parse_pasted_text(md), pasted),
         ] {
             assert_eq!(blocks.len(), 1, "{parser}");
             assert_eq!(blocks[0].content, "a", "{parser}");
@@ -6321,20 +6330,24 @@ mod tests_source_outline_5140 {
                 ("note".to_string(), String::new()),
             ]
         );
-        for (parser, blocks, content) in [
+        // A paste reads `- a` as a bulleted block (#6190), and no line as a clear.
+        let bullet = vec![("listStyle".to_string(), "bullet".to_string())];
+        for (parser, blocks, content, properties) in [
             (
                 "import",
                 parse_logseq_markdown("- a\n  priority::\n  note:: \n").blocks,
                 "a\npriority::\nnote::",
+                Vec::new(),
             ),
             (
                 "paste",
                 parse_pasted_text("- a\n  priority::\n  note:: \n"),
                 "a\npriority::\nnote:: ",
+                bullet,
             ),
         ] {
             assert_eq!(blocks[0].content, content, "{parser}");
-            assert!(blocks[0].properties.is_empty(), "{parser}");
+            assert_eq!(blocks[0].properties, properties, "{parser}");
         }
     }
 
@@ -6445,6 +6458,10 @@ mod tests_pasted_text_5140 {
             .collect()
     }
 
+    fn style(value: &str) -> (String, String) {
+        ("listStyle".to_string(), value.to_string())
+    }
+
     #[test]
     fn text_opening_with_a_bullet_is_an_outline() {
         assert_eq!(
@@ -6458,15 +6475,38 @@ mod tests_pasted_text_5140 {
                 (
                     1,
                     "b".to_string(),
-                    vec![("key".to_string(), "v".to_string())]
+                    vec![style("bullet"), ("key".to_string(), "v".to_string())]
                 ),
             ]
         );
     }
 
-    /// Text that opens with no bullet reads as a source buffer does (#5160
-    /// S3): paragraphs, headings owning what follows, bullets of any marker
-    /// with their checkbox and property lines.
+    /// #6190, #5691 D2 and D4: a paste reads the Document dialect, which Agaric
+    /// copies, so `- x` and `* x` are bulleted blocks, `1. x` a numbered one,
+    /// and `+ x` a plain one, under a list block too; a task has no style.
+    #[test]
+    fn a_pasted_list_item_keeps_its_list_kind() {
+        assert_eq!(
+            shape("- a\n* b\n1. c\n   + d\n2) e\n- [ ] f\n+ g\n"),
+            [
+                (0, "a".to_string(), vec![style("bullet")]),
+                (0, "b".to_string(), vec![style("bullet")]),
+                (0, "c".to_string(), vec![style("ordered")]),
+                (1, "d".to_string(), vec![]),
+                (0, "e".to_string(), vec![style("ordered")]),
+                (
+                    0,
+                    "f".to_string(),
+                    vec![("todo_state".to_string(), "TODO".to_string())]
+                ),
+                (0, "g".to_string(), vec![]),
+            ]
+        );
+    }
+
+    /// Text that opens with no bullet reads as a Document buffer does (#5160
+    /// S3, #6190): paragraphs, headings that own nothing, bullets of any
+    /// marker with their style, checkbox and property lines.
     #[test]
     fn other_text_reads_by_the_same_grammar() {
         assert_eq!(
@@ -6475,18 +6515,14 @@ mod tests_pasted_text_5140 {
                 (0, "Intro\nmore".to_string(), vec![]),
                 (0, "## Plan".to_string(), vec![]),
                 (
-                    1,
+                    0,
                     "done".to_string(),
                     vec![
                         ("todo_state".to_string(), "DONE".to_string()),
                         ("key".to_string(), "v".to_string()),
                     ]
                 ),
-                (
-                    1,
-                    "step".to_string(),
-                    vec![("listStyle".to_string(), "ordered".to_string())]
-                ),
+                (0, "step".to_string(), vec![style("ordered")]),
             ]
         );
     }
@@ -6498,9 +6534,9 @@ mod tests_pasted_text_5140 {
         assert_eq!(
             shape("- a\n\t- b\n\t\t- c\n\t\t  more\n\t\t\t\tdeeper\n"),
             [
-                (0, "a".to_string(), vec![]),
-                (1, "b".to_string(), vec![]),
-                (2, "c\nmore\n\tdeeper".to_string(), vec![]),
+                (0, "a".to_string(), vec![style("bullet")]),
+                (1, "b".to_string(), vec![style("bullet")]),
+                (2, "c\nmore\n\tdeeper".to_string(), vec![style("bullet")]),
             ]
         );
     }
@@ -6633,6 +6669,17 @@ mod tests_block_grammar_5160 {
         ]
     }
 
+    /// The two parsers that read the outline grammar over `md`, each named. A
+    /// paste reads the Document dialect (#6190), where a heading owns nothing
+    /// and the lines after a closing fence or a fence under a list item's text
+    /// do not continue the item; the tests that differ check it beside them.
+    fn import_and_source(md: &str) -> [(&'static str, Vec<ParsedBlock>); 2] {
+        [
+            ("import", parse_logseq_markdown(md).blocks),
+            ("source", parse_source_outline(md).blocks),
+        ]
+    }
+
     fn list_style(block: &ParsedBlock) -> Option<&str> {
         block
             .properties
@@ -6645,13 +6692,15 @@ mod tests_block_grammar_5160 {
     /// ordered list style.
     #[test]
     fn b1_star_plus_and_ordered_markers_start_blocks() {
-        for (md, style) in [
-            ("* a\n* b\n", None),
-            ("+ a\n+ b\n", None),
-            ("1. a\n2. b\n", Some("ordered")),
-            ("1) a\n2) b\n", Some("ordered")),
+        // A paste reads the Document dialect, where `*` marks a bullet (#6190).
+        for (md, style, pasted) in [
+            ("* a\n* b\n", None, Some("bullet")),
+            ("+ a\n+ b\n", None, None),
+            ("1. a\n2. b\n", Some("ordered"), Some("ordered")),
+            ("1) a\n2) b\n", Some("ordered"), Some("ordered")),
         ] {
             for (parser, blocks) in all_three(md) {
+                let style = if parser == "paste" { pasted } else { style };
                 assert_eq!(shape(&blocks), [(0, "a"), (0, "b")], "{parser}: {md:?}");
                 assert_eq!(list_style(&blocks[0]), style, "{parser}: {md:?}");
                 assert_eq!(list_style(&blocks[1]), style, "{parser}: {md:?}");
@@ -6687,13 +6736,11 @@ mod tests_block_grammar_5160 {
     /// every mode (#5160 follow-up, item 18).
     #[test]
     fn a_tab_after_the_double_colon_is_a_property_separator() {
+        let key = ("key".to_string(), "value".to_string());
         for (parser, blocks) in all_three("- a\n  key::\tvalue\n") {
             assert_eq!(shape(&blocks), [(0, "a")], "{parser}");
-            assert_eq!(
-                blocks[0].properties,
-                [("key".to_string(), "value".to_string())],
-                "{parser}"
-            );
+            // A paste reads `- a` as a bulleted block first (#6190).
+            assert_eq!(blocks[0].properties.last(), Some(&key), "{parser}");
         }
     }
 
@@ -6725,7 +6772,9 @@ mod tests_block_grammar_5160 {
     #[test]
     fn b2_readme_shape_reads_as_a_document() {
         let md = "# Title\n\n## A\n\nPara a.\n\n## B\n\nPara b.\n\n- item\n";
-        for (parser, blocks) in all_three(md) {
+        let pasted: Vec<usize> = parse_pasted_text(md).iter().map(|b| b.depth).collect();
+        assert_eq!(pasted, [0; 6], "a paste's heading owns nothing");
+        for (parser, blocks) in import_and_source(md) {
             assert_eq!(
                 shape(&blocks),
                 [
@@ -6745,7 +6794,9 @@ mod tests_block_grammar_5160 {
     #[test]
     fn b2_heading_between_lists() {
         let md = "- one\n- two\n\n## Section\n\n- three\n- four\n";
-        for (parser, blocks) in all_three(md) {
+        let pasted: Vec<usize> = parse_pasted_text(md).iter().map(|b| b.depth).collect();
+        assert_eq!(pasted, [0; 5], "a paste's heading owns nothing");
+        for (parser, blocks) in import_and_source(md) {
             assert_eq!(
                 shape(&blocks),
                 [
@@ -6759,10 +6810,12 @@ mod tests_block_grammar_5160 {
             );
         }
         let md = "# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6\n";
-        for (parser, blocks) in all_three(md) {
+        for (parser, blocks) in import_and_source(md) {
             let depths: Vec<usize> = blocks.iter().map(|b| b.depth).collect();
             assert_eq!(depths, [0, 1, 2, 3, 4, 5], "{parser}");
         }
+        let pasted: Vec<usize> = parse_pasted_text(md).iter().map(|b| b.depth).collect();
+        assert_eq!(pasted, [0; 6], "a paste's heading owns nothing");
     }
 
     /// D16: a heading inside a list item is its own block and owns nothing.
@@ -6836,7 +6889,7 @@ mod tests_block_grammar_5160 {
     /// empty child that way.
     #[test]
     fn a_list_item_interrupts_a_paragraph_only_when_non_empty_and_from_one() {
-        let cases: [(&str, &[(usize, &str)]); 13] = [
+        let cases: [(&str, &[(usize, &str)]); 12] = [
             (
                 "The answer is\n42. That is all.",
                 &[(0, "The answer is\n42. That is all.")],
@@ -6848,7 +6901,6 @@ mod tests_block_grammar_5160 {
             ("- a\n-\n- b", &[(0, "a"), (0, ""), (0, "b")]),
             // A line that would not continue the paragraph starts a list.
             ("Intro\n\n2. b", &[(0, "Intro"), (0, "b")]),
-            ("# H\n2. b", &[(0, "# H"), (1, "b")]),
             // Inside a list item the same rule holds: a line at the item's
             // content column continues its paragraph unless the item starts
             // at 1 (#5160 follow-up, item 12).
@@ -6876,6 +6928,14 @@ mod tests_block_grammar_5160 {
         for (parser, blocks) in all_three("Intro\n1. first") {
             assert_eq!(list_style(&blocks[1]), Some("ordered"), "{parser}");
         }
+        // After a heading, which owns its section but nothing in a paste.
+        for (parser, blocks) in import_and_source("# H\n2. b") {
+            assert_eq!(shape(&blocks), [(0, "# H"), (1, "b")], "{parser}");
+        }
+        assert_eq!(
+            shape(&parse_pasted_text("# H\n2. b")),
+            [(0, "# H"), (0, "b")]
+        );
     }
 
     /// #5160 follow-up, items 9 and 10: an import keeps a fence's lines
@@ -6889,18 +6949,26 @@ mod tests_block_grammar_5160 {
             "```\none\n\n\ttwo\n```\nnext\n",
         ] {
             for (parser, blocks) in all_three(md) {
-                assert_eq!(
-                    shape(&blocks),
-                    [(0, "```\none\n\n\ttwo\n```"), (0, "next")],
-                    "{parser}: {md:?}"
-                );
+                // In a paste a fence is a paragraph's: the line after its
+                // closing fence, with no blank line, continues it (#6190).
+                let after_fence = parser == "paste" && !md.starts_with('-');
+                let want: &[(usize, &str)] = if after_fence {
+                    &[(0, "```\none\n\n\ttwo\n```\nnext")]
+                } else {
+                    &[(0, "```\none\n\n\ttwo\n```"), (0, "next")]
+                };
+                assert_eq!(shape(&blocks), want, "{parser}: {md:?}");
                 assert!(blocks[0].is_code, "{parser}: {md:?}");
             }
         }
-        for (parser, blocks) in all_three("-\t-\n-\tx\n") {
+        for (parser, blocks) in import_and_source("-\t-\n-\tx\n") {
             assert_eq!(shape(&blocks), [(0, ""), (0, "x")], "{parser}");
             assert_eq!(list_style(&blocks[0]), Some("bullet"), "{parser}");
         }
+        // A paste reads one marker (#6190): `-\t-` is a bullet whose text is `-`.
+        let pasted = parse_pasted_text("-\t-\n-\tx\n");
+        assert_eq!(shape(&pasted), [(0, "-"), (0, "x")]);
+        assert_eq!(list_style(&pasted[0]), Some("bullet"));
     }
 
     /// S2: a thematic break and a block quote are blocks of their own.
@@ -6969,7 +7037,18 @@ mod tests_block_grammar_5160 {
                 "{parser}"
             );
             assert!(blocks[0].is_code, "{parser}");
-            assert!(blocks[0].properties.is_empty(), "{parser}");
+            // A paste reads `- ~~~` as a bulleted block (#6190), with no `key`.
+            let keys: Vec<&str> = blocks[0]
+                .properties
+                .iter()
+                .map(|(k, _)| k.as_str())
+                .collect();
+            let want: &[&str] = if parser == "paste" {
+                &["listStyle"]
+            } else {
+                &[]
+            };
+            assert_eq!(keys, want, "{parser}");
         }
     }
 
@@ -6992,7 +7071,8 @@ mod tests_block_grammar_5160 {
     /// item's content column ends a fence early.
     #[test]
     fn an_indented_top_level_fence_holds_a_column_zero_line() {
-        for (parser, blocks) in all_three(" ```\n#hushed\n ```\nafter\n") {
+        let md = " ```\n#hushed\n ```\nafter\n";
+        for (parser, blocks) in import_and_source(md) {
             assert_eq!(
                 shape(&blocks),
                 [(0, "```\n#hushed\n```"), (0, "after")],
@@ -7000,16 +7080,25 @@ mod tests_block_grammar_5160 {
             );
             assert!(blocks[0].is_code, "{parser}");
         }
+        // In a paste a fence is a paragraph's, which `after` continues (#6190).
+        let pasted = parse_pasted_text(md);
+        assert_eq!(shape(&pasted), [(0, "```\n#hushed\n```\nafter")]);
+        assert!(pasted[0].is_code);
     }
 
     /// A fence indented past its bullet's content column is that bullet's.
     #[test]
     fn b5_fence_deeper_than_its_bullet_is_its_content() {
         // Code keeps its indentation past the bullet's content column.
-        for (parser, blocks) in all_three("- a\n    ```\n    code\n    ```\n") {
+        let md = "- a\n    ```\n    code\n    ```\n";
+        for (parser, blocks) in import_and_source(md) {
             assert_eq!(shape(&blocks), [(0, "a\n  ```\n  code\n  ```")], "{parser}");
             assert!(blocks[0].is_code, "{parser}");
         }
+        // In a paste a fence under a list item's text is a block of its own (#6190).
+        let pasted = parse_pasted_text(md);
+        assert_eq!(shape(&pasted), [(0, "a"), (1, "```\ncode\n```")]);
+        assert!(pasted[1].is_code);
     }
 
     /// D5: on import and paste an unterminated fence ends with its list item.
@@ -7445,16 +7534,18 @@ mod tests_task_syntax_5160 {
     #[test]
     fn paste_and_source_keep_the_logseq_syntax_as_text() {
         let md = "- TODO [#A] x\n  SCHEDULED: <2026-10-01 Thu>\n";
-        for (parser, blocks) in [
-            ("source", parse_source_outline(md).blocks),
-            ("paste", parse_pasted_text(md)),
+        // A paste reads `- ` as a bulleted block (#6190).
+        let bullet = vec![("listStyle".to_string(), "bullet".to_string())];
+        for (parser, blocks, properties) in [
+            ("source", parse_source_outline(md).blocks, Vec::new()),
+            ("paste", parse_pasted_text(md), bullet),
         ] {
             assert_eq!(blocks.len(), 1, "{parser}");
             assert_eq!(
                 blocks[0].content, "TODO [#A] x\nSCHEDULED: <2026-10-01 Thu>",
                 "{parser}"
             );
-            assert!(blocks[0].properties.is_empty(), "{parser}");
+            assert_eq!(blocks[0].properties, properties, "{parser}");
         }
         // So is a typed `\SCHEDULED:` line, backslash and all.
         let md = "- a\n  \\SCHEDULED: <2026-10-01 Thu>\n";

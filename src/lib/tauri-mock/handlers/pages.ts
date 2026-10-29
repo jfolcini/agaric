@@ -267,6 +267,22 @@ function renderPageDocument(pid: string): { source: string; ids: string[] } {
 }
 
 /**
+ * `compute_list_ordinals` for an `ordered` block: its place in the run of
+ * numbered siblings it is in, a task or any other sibling ending the run.
+ */
+function listOrdinal(row: Record<string, unknown>): number {
+  let run = 0
+  for (const sibling of liveChildren(row['parent_id'] as string)) {
+    if (sibling['block_type'] !== 'content') continue
+    const numbered =
+      storedListStyle(sibling['id'] as string) === 'ordered' && sibling['todo_state'] == null
+    run = numbered ? run + 1 : 0
+    if (sibling['id'] === row['id']) break
+  }
+  return run
+}
+
+/**
  * A block's `key:: value` lines at `indent`, as `render_block` writes them:
  * `todo` when its checkbox does not carry it, its priority and dates, then its
  * other properties by key, each value as the line reads it back.
@@ -2000,13 +2016,14 @@ export const pagesHandlers = {
   },
 
   // DELIBERATE APPROXIMATION of `get_blocks_source` (#5140 Phase 3b), the
-  // clipboard copy: each root as `- first line`, its further lines indented
-  // under the bullet, and with `withChildren` its live content descendants
-  // two columns deeper per level. No anchors, list markers, task checkboxes,
-  // property lines or humanised names — the Rust tests own that grammar, as
-  // for `get_page_source` above. Like the backend, the page is the first live
-  // content id's, other ids are skipped, and an id under a selected ancestor
-  // travels with that ancestor instead of being a root of its own.
+  // clipboard copy, in the Document dialect a paste reads (#6190), as
+  // `renderPageDocument` writes a page: each root at depth 0 and, with
+  // `withChildren`, its live content descendants under it, each with its list
+  // marker, checkbox and property lines. No anchors and no humanised names —
+  // the Rust tests own when a block needs one. Like the backend, the page is
+  // the first live content id's, other ids are skipped, and an id under a
+  // selected ancestor travels with that ancestor instead of being a root of
+  // its own.
   get_blocks_source: (args) => {
     const a = args as Record<string, unknown>
     const ids = (a['blockIds'] as string[] | undefined) ?? []
@@ -2019,13 +2036,21 @@ export const pagesHandlers = {
     if (!first) return ''
     const pageId = first['page_id']
     const selected = new Set(ids.filter((id) => liveContent(id)?.['page_id'] === pageId))
-    let md = ''
+    const lines: string[] = []
+    const layout = new DocumentLayout()
     const renderBlock = (row: Record<string, unknown>, depth: number): void => {
-      const [head, ...rest] = ((row['content'] as string | null) ?? '').split('\n')
-      md += `${'  '.repeat(depth)}- ${head}\n`
-      for (const line of rest) md += line === '' ? '\n' : `${'  '.repeat(depth + 1)}${line}\n`
+      const id = row['id'] as string
+      const content = (row['content'] as string | null) ?? ''
+      const todo = (row['todo_state'] as string | null) ?? null
+      const style = storedListStyle(id)
+      const listMarker = style === null ? '' : style === 'bullet' ? '- ' : `${listOrdinal(row)}. `
+      const opensRule = lines.length === 0 && content.startsWith('---')
+      const place = layout.place(depth, listMarker, todo, opensRule)
+      if (place.blank) lines.push('')
+      pushDocumentLines(lines, place.indent, place.marker, place.taskMarker, content)
+      pushPropertyLines(lines, place.childIndent, row, place.taskMarker === '' ? todo : null)
       if (!withChildren) return
-      for (const child of liveChildren(row['id'] as string)) {
+      for (const child of liveChildren(id)) {
         if (child['block_type'] === 'content') renderBlock(child, depth + 1)
       }
     }
@@ -2036,7 +2061,7 @@ export const pagesHandlers = {
       }
     }
     findRoots(pageId as string)
-    return md
+    return lines.map((line) => `${line}\n`).join('')
   },
 
   // ---------------------------------------------------------------------------

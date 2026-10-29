@@ -89,71 +89,77 @@ paste:
     properties: []
   - block_anchor: ~
     content: "[![CI](https://github.com/example/fastgrep/actions/workflows/ci.yml/badge.svg)](https://github.com/example/fastgrep/actions)"
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: "A tiny, fast grep clone."
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: "## Install"
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: "```sh\ncargo install fastgrep\n```"
-    depth: 2
+    depth: 0
     is_code: true
     properties: []
   - block_anchor: ~
     content: "## Usage"
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: "Build the index: `fastgrep index .`"
-    depth: 2
+    depth: 0
     is_code: false
     properties:
       - - listStyle
         - ordered
   - block_anchor: ~
     content: "Search: `fastgrep find \"needle\"`"
-    depth: 2
+    depth: 0
     is_code: false
     properties:
       - - listStyle
         - ordered
   - block_anchor: ~
     content: "## Features"
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: Regex support
-    depth: 2
+    depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: "Respects `.gitignore`"
-    depth: 2
+    depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: including nested ignore files
-    depth: 3
+    depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: "## License"
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: MIT
-    depth: 2
+    depth: 0
     is_code: false
     properties: []
 source:

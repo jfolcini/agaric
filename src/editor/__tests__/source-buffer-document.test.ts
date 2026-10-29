@@ -3,7 +3,8 @@
  * which Rust authors from the Document dialect's hard cases
  * (`markdown_document_tests.rs`). Each case's text, read by the ids beside its
  * lines, is the case's tree, each block starting on the line that carries its
- * id; each typed text, no line carrying one, reads as its tree.
+ * id; each typed text, no line carrying one, reads as its tree; and each pasted
+ * text reads as its tree as a paste reads it (#6190).
  */
 
 import { readFileSync } from 'node:fs'
@@ -14,7 +15,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { linesContent, sourceBufferExtensions } from '@/editor/source-buffer'
 import { type BlockReading, blockAt, readBlocks } from '@/editor/source-buffer-blocks'
-import { parseDocument } from '@/editor/source-buffer-document'
+import { type DocumentBlock, parseDocument, parsePastedText } from '@/editor/source-buffer-document'
 
 interface TreeBlock {
   id?: string
@@ -26,6 +27,7 @@ interface TreeBlock {
 interface Vectors {
   cases: Array<{ name: string; tree: TreeBlock[]; text: string; lineIds: Array<string | null> }>
   typed: Array<{ name: string; tree: TreeBlock[]; text: string }>
+  pasted: Array<{ name: string; tree: TreeBlock[]; text: string }>
 }
 
 const VECTORS_PATH = path.resolve(
@@ -53,6 +55,25 @@ function asTree({ depth, text, listStyle, taskState, properties }: BlockReading)
 
 const withoutIds = (tree: TreeBlock[]): TreeBlock[] => tree.map(({ id: _, ...block }) => block)
 
+/** A pasted block as the vectors spell it. */
+function pastedTree({
+  depth,
+  content,
+  listStyle,
+  todoState,
+  properties,
+}: DocumentBlock): TreeBlock {
+  return {
+    depth,
+    content,
+    properties: {
+      ...(listStyle === null ? {} : { listStyle }),
+      ...(todoState === null ? {} : { todo_state: todoState }),
+      ...Object.fromEntries(properties),
+    },
+  }
+}
+
 describe('the Document dialect vectors (#5691)', () => {
   it.each(vectors.cases.map((row) => [row.name, row] as const))(
     '%s: the text read by its line ids is the tree',
@@ -73,6 +94,10 @@ describe('the Document dialect vectors (#5691)', () => {
     const texts = row.text.split('\n')
     const ids = texts.map(() => null)
     expect(readBlocks(texts, ids).map(asTree)).toEqual(row.tree)
+  })
+
+  it.each(vectors.pasted.map((row) => [row.name, row] as const))('%s, pasted', (_name, row) => {
+    expect(parsePastedText(row.text).map(pastedTree)).toEqual(row.tree)
   })
 
   it('reads a quoted property value as JSON, but a lone surrogate escape as written', () => {

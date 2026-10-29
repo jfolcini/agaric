@@ -5759,7 +5759,8 @@ async fn copy_tree(pool: &SqlitePool, mat: &Materializer) -> [BlockId; 6] {
 }
 
 /// The names come from the page's space in the database, as in the page's
-/// source buffer, and a block needing no `^ID` gets none.
+/// source buffer, and a block needing no `^ID` gets none. The copy is written
+/// in the Document dialect a paste reads (#6190): a plain block is bare.
 #[tokio::test]
 async fn get_blocks_source_writes_names_and_raw_block_refs_without_anchors() {
     let (pool, _dir) = test_pool().await;
@@ -5773,7 +5774,7 @@ async fn get_blocks_source_writes_names_and_raw_block_refs_without_anchors() {
 
     assert_eq!(
         md,
-        format!("- see [[Project]] #work (({SOURCE_TARGET}))\n"),
+        format!("see [[Project]] #work (({SOURCE_TARGET}))\n"),
         "in-space names replace their ids, a block ref stays raw, and there is no anchor"
     );
 }
@@ -5787,7 +5788,7 @@ async fn get_blocks_source_writes_each_root_once_in_document_order() {
     let md = copy_source(&pool, &[&c, &a1x, &a, &a1], true).await;
 
     assert_eq!(
-        md, "- a\n  - a1\n    - a1x\n  - a2\n- c\n",
+        md, "a\n\n  a1\n\n    a1x\n\n  a2\n\nc\n",
         "a block under another selected block travels with it, and roots follow the page"
     );
 }
@@ -5802,7 +5803,7 @@ async fn get_blocks_source_without_children_writes_each_root_alone() {
 
     let md = copy_source(&pool, &[&c, &a1, &a], false).await;
 
-    assert_eq!(md, "- a\n- c\n", "no child is written");
+    assert_eq!(md, "a\n\nc\n", "no child is written");
 }
 
 /// The page is the first live content block's: a page id before it, a
@@ -5844,7 +5845,7 @@ async fn get_blocks_source_skips_what_is_not_a_live_content_block_of_that_page()
     .await;
 
     assert_eq!(
-        md, "- a\n",
+        md, "a\n",
         "pages, trashed blocks and another page's blocks are skipped"
     );
 }
@@ -6487,7 +6488,7 @@ async fn copy_and_paste_read_a_title_holding_a_pipe_before_its_label() {
     settle(&mat).await;
 
     let copied = copy_source(&pool, &[&src], false).await;
-    assert_eq!(copied, "- see [[A | B]] and [[A | B|see]]\n");
+    assert_eq!(copied, "see [[A | B]] and [[A | B|see]]\n");
     let rows = paste(&pool, &mat, &anchor, paste_text(&copied)).await;
     assert_eq!(
         rows.iter()
@@ -6870,9 +6871,13 @@ async fn paste_blocks_keeps_a_caret_word_and_a_reserved_property_line_as_text() 
 
     let contents: Vec<Option<&str>> = rows.iter().map(|r| r.content.as_deref()).collect();
     assert_eq!(contents, [Some("press ^C"), Some("a\ntemplate:: x")]);
+    // A paste reads `- a` as a bulleted block (#6190): its style is its one property.
     assert_eq!(
         dup_storage(&pool, &rows[1].id).await,
-        vec!["columns todo=None priority=None scheduled=None due=None"],
+        vec![
+            "columns todo=None priority=None scheduled=None due=None",
+            "listStyle text=Some(\"bullet\") num=None date=None ref=None bool=None",
+        ],
         "the reserved line is not a property"
     );
 }
@@ -6901,8 +6906,9 @@ async fn paste_blocks_op_refs_undo_the_whole_paste_with_what_it_created() {
     settle(&mat).await;
     assert_eq!(
         resp.op_refs.len(),
-        8,
-        "the page and the tag with their space, the task with its state and stamp, the child"
+        9,
+        "the page and the tag with their space, the task with its state and stamp, the child \
+         with its bullet style (#6190)"
     );
 
     undo_ops_inner(&pool, DEV, &mat, resp.op_refs.clone())
@@ -7091,7 +7097,8 @@ async fn append_markdown_lands_an_outline_under_an_empty_page() {
         DEV,
         &mat,
         page.clone(),
-        "# Plan\n\nIntro\n\n## Steps\n\n- one\n  - one a\n    effort:: 1h\n- two\n\n# Next\n",
+        // A heading owns what is indented under it, as a paste reads it (#6190).
+        "# Plan\n\n  Intro\n\n  ## Steps\n\n    - one\n      - one a\n        effort:: 1h\n    - two\n\n# Next\n",
         None,
     )
     .await
@@ -7128,8 +7135,9 @@ async fn append_markdown_lands_an_outline_under_an_empty_page() {
         vec![
             "columns todo=None priority=None scheduled=None due=None".to_owned(),
             "effort text=Some(\"1h\") num=None date=None ref=None bool=None".to_owned(),
+            "listStyle text=Some(\"bullet\") num=None date=None ref=None bool=None".to_owned(),
         ],
-        "the property line is a property of its block"
+        "the property line is a property of its block, beside the style its `- ` gives"
     );
 }
 
@@ -7274,7 +7282,8 @@ async fn append_markdown_refusals_write_nothing() {
 
 /// A document with a heading first: `# Title` owns `Intro` and `## Part`
 /// (which owns `item`), and `# Next` owns the last paragraph.
-const SPLICED_DOC: &str = "# Title\n\nIntro\n\n## Part\n\n- item\n\n# Next\n\nLast para.";
+/// A heading owns what is indented under it, as a paste reads it (#6190).
+const SPLICED_DOC: &str = "# Title\n\n  Intro\n\n  ## Part\n\n    - item\n\n# Next\n\n  Last para.";
 
 /// Paste `text` into `anchor`'s text, `before` and `after` the cursor.
 async fn paste_into(
@@ -7498,21 +7507,23 @@ async fn paste_blocks_splice_mid_text_joins_the_first_block_as_text() {
     for (case, text, cursor, joined) in [
         (
             "mid-line",
-            "1. [ ] Buy milk\n   note:: soon\n\nEggs",
+            "1. Buy milk\n   note:: soon\n\nEggs",
             ("Hello ", "world"),
-            "Hello 1. [ ] Buy milk\nnote:: soon",
+            "Hello 1. Buy milk\nnote:: soon",
         ),
+        // A paste reads one marker (#6190): `- - x` is a bulleted `- x`.
         (
             "at a line start",
             "- - x\n- [x] y",
             ("para\n", "world"),
-            "para\n\\- x",
+            "para\n\\- - x",
         ),
+        // A task has no list style (#5691 D3), so its `1. ` is not written back.
         (
             "at the start of a heading",
             "1. [ ] Buy milk\n\nEggs",
             ("## ", "Plan"),
-            "## 1. [ ] Buy milk",
+            "## [ ] Buy milk",
         ),
     ] {
         let (pool, _dir) = test_pool().await;
@@ -7625,7 +7636,8 @@ async fn paste_blocks_splice_puts_the_text_after_a_fence_in_a_block_of_its_own()
             "nested",
             "- a\n  - ```\n    code\n    ```",
             "world",
-            vec!["Hello a", "next"],
+            // The bulleted first block joins as the text it was pasted as (#6190).
+            vec!["Hello - a", "next"],
             vec![fence, "world"],
         ),
         (
