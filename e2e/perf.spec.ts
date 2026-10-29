@@ -1558,6 +1558,8 @@ test('perf: page mode next to block mode (#5691) @editor @pages @journal @search
   await page.addInitScript(installProbes)
   await page.addInitScript(installKeyLatencyProbe)
   await page.addInitScript(() => Object.assign(window, { __pageModeBlockCap: 100_000 }))
+  // Each size starts in block mode: in page mode the journal's day has no static blocks to wait for.
+  await page.addInitScript(() => localStorage.setItem('agaric-edit-mode', 'blocks'))
   const cdp = await page.context().newCDPSession(page)
   await cdp.send('Performance.enable')
   await cdp.send('Profiler.enable')

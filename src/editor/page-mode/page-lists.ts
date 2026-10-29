@@ -40,6 +40,28 @@ import type { FlatBlock } from '@/lib/tree-utils'
 /** A block in the page's order, and whether it shows a list marker (`docShowsListMarker`). */
 type OutlineItem = Pick<FlatBlock, 'id' | 'depth'> & { marked: boolean }
 
+const itemOf = (node: PMNode): OutlineItem => ({
+  id: blockIdOf(node) ?? '',
+  depth: depthOf(node),
+  marked: docShowsListMarker(node),
+})
+
+/**
+ * Where `doc` differs from `before`: nowhere (-1), inside one block alone (its
+ * index), or past that (null). ProseMirror's diff passes an unchanged block by
+ * identity, so a key typed costs no other block's `itemOf`; and it stops at a
+ * block whose attributes differ, before it from the start and after it from
+ * the end, so both ends fall in one block only when its content alone changed.
+ */
+function differsInside(before: PMNode, doc: PMNode): number | null {
+  if (before.childCount !== doc.childCount) return null
+  const start = doc.content.findDiffStart(before.content)
+  const end = doc.content.findDiffEnd(before.content)
+  if (start === null || end === null) return -1
+  const index = doc.resolve(start).index(0)
+  return index === doc.resolve(end.a).index(0) ? index : null
+}
+
 const sameItems = (a: readonly OutlineItem[], b: readonly OutlineItem[]): boolean =>
   a.length === b.length &&
   a.every(
@@ -53,6 +75,8 @@ export class PageLists {
   private readonly wanted = new Map<string, { style: ListStyle; seq: number }>()
   private seq = 0
   private items: OutlineItem[]
+  /** The document `items` were taken from; none before the first `layout`. */
+  private laidOut: PMNode | null = null
   private markers = new Map<string, string>()
   private readonly listeners = new Map<string, Set<() => void>>()
   private readonly isTask: (id: string) => boolean
@@ -120,16 +144,20 @@ export class PageLists {
 
   /** Take the blocks' order, depths and kinds from `doc`: the ordinals follow them. */
   layout(doc: PMNode): void {
-    const items: OutlineItem[] = []
-    doc.forEach((node) =>
-      items.push({
-        id: blockIdOf(node) ?? '',
-        depth: depthOf(node),
-        marked: docShowsListMarker(node),
-      }),
-    )
-    if (sameItems(items, this.items)) return
-    this.items = items
+    const at = this.laidOut === null ? null : differsInside(this.laidOut, doc)
+    this.laidOut = doc
+    if (at === -1) return
+    if (at === null) {
+      const items: OutlineItem[] = []
+      doc.forEach((node) => items.push(itemOf(node)))
+      if (sameItems(items, this.items)) return
+      this.items = items
+    } else {
+      // Its id and depth are attributes, alike in both: only whether it is marked can change.
+      const item = itemOf(doc.child(at))
+      if (item.marked === this.items[at]?.marked) return
+      this.items = this.items.with(at, item)
+    }
     this.redraw()
   }
 
@@ -198,6 +226,17 @@ function idsIn(state: EditorState): Set<string> {
  * and a change brought in from elsewhere (`REMOTE_PATCH`) clears nothing.
  */
 function leftTheirList(before: PMNode, doc: PMNode, lists: PageLists): string[] {
+  const at = differsInside(before, doc)
+  if (at === -1) return []
+  if (at !== null) {
+    const id = blockIdOf(doc.child(at))
+    const left =
+      id !== null &&
+      lists.styleOf(id) !== 'none' &&
+      !docShowsListMarker(doc.child(at)) &&
+      docShowsListMarker(before.child(at))
+    return left ? [id] : []
+  }
   const left: string[] = []
   let shown: Map<string, boolean> | null = null
   doc.forEach((node) => {
