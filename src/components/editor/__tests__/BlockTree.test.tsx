@@ -325,7 +325,7 @@ vi.mock('@/lib/announcer', () => ({
 // `mockedInvoke`'s many per-test implementations.
 vi.mock('@/lib/list-style', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/list-style')>()
-  return { ...actual, setListStyle: vi.fn().mockResolvedValue(undefined) }
+  return { ...actual, setListStyle: vi.fn().mockResolvedValue([]) }
 })
 
 // #1016 — wrap the real QueryBuilderModal so a test can drive its `onSave`
@@ -4106,6 +4106,32 @@ describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () =>
     await waitFor(() => {
       expect(vi.mocked(setListStyle)).toHaveBeenCalledWith('b1', 'none')
     })
+  })
+
+  // #6156 — the style write joins the conversion's undo entry.
+  it('Turn into a bullet list records its style write in the undo entry', async () => {
+    const styleRef = { device_id: 'dev1', seq: 9 }
+    vi.mocked(setListStyle).mockResolvedValueOnce([styleRef])
+    useUndoStore.setState({ pages: new Map() })
+    pageStore.setState({ blocks: [makeBlock({ id: 'b1', content: 'hello' })], loading: false })
+    useBlockStore.setState({ focusedBlockId: 'b2' })
+    mockActiveBlockId = 'b2'
+
+    renderBlockTree()
+    await waitFor(() => {
+      expect(capturedBlockActions?.onTurnInto).toBeDefined()
+    })
+
+    await act(async () => {
+      await capturedBlockActions?.onTurnInto?.('b1', 'bullet-list')
+    })
+
+    expect(
+      useUndoStore
+        .getState()
+        .pages.get('PAGE_1')
+        ?.undoStack.map((e) => e.refs),
+    ).toEqual([[styleRef]])
   })
 
   // #2662 — Turn into must notify the undo store the same way every other

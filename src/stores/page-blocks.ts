@@ -125,12 +125,17 @@ export function addOwnedBlockListener<K extends keyof DocumentEventMap>(
  * exclusive with bulleted and numbered). Call it once the list style is
  * written, so a refused write clears nothing. Resolves whether it cleared
  * them all; a failure is logged and told.
+ *
+ * The clear joins the undo entry the list style's write recorded just before
+ * (#6156). `set_todo_state_batch` reports no op refs, so it joins as a
+ * ref-less action, which makes that entry the positional fallback: its
+ * Ctrl+Z reverts the burst by op time, the clear with the style.
  */
 export async function clearTaskStates(
   pageStore: StoreApi<PageBlockState>,
   ids: readonly string[],
 ): Promise<boolean> {
-  const { blocksById } = pageStore.getState()
+  const { blocksById, rootParentId } = pageStore.getState()
   const tasks = new Set(ids.filter((id) => (blocksById.get(id)?.todo_state ?? null) !== null))
   if (tasks.size === 0) return true
   try {
@@ -140,6 +145,7 @@ export async function clearTaskStates(
     notify.error(i18n.t('blockTree.setTaskStateFailed'))
     return false
   }
+  if (rootParentId !== null) useUndoStore.getState().onNewAction(rootParentId)
   pageStore.setState((s) => ({
     blocks: s.blocks.map((b) => (tasks.has(b.id) ? { ...b, todo_state: null } : b)),
   }))

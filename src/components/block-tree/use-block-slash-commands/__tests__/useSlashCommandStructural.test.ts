@@ -38,7 +38,7 @@ vi.mock('@/editor/markdown-serializer', () => ({
 // stays real (a pure function).
 vi.mock('@/lib/list-style', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/list-style')>()
-  return { ...actual, setListStyle: vi.fn().mockResolvedValue(undefined) }
+  return { ...actual, setListStyle: vi.fn().mockResolvedValue([]) }
 })
 
 const mockedInvoke = vi.mocked(invoke)
@@ -56,7 +56,7 @@ afterEach(() => {
 beforeEach(() => {
   vi.clearAllMocks()
   // A `…Once` stub a test leaves unconsumed would otherwise answer the next test's call.
-  mockedSetListStyle.mockReset().mockResolvedValue(undefined)
+  mockedSetListStyle.mockReset().mockResolvedValue([])
   // #2468 — `edit_block` (the applyContentEdit backbone) resolves a `WithOps`
   // envelope; give it a wire-faithful default so the undo-ref capture path is
   // exercised instead of tripping on an `undefined` response.

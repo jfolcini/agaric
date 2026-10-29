@@ -5,7 +5,8 @@
  * mirroring `useCheckboxSyntax`'s shape (checkbox syntax is the existing
  * precedent for "a typed markdown-ish prefix commits an immediate property
  * write, not a content edit"). A task is a list kind (#5691 D3): once the style
- * is written, a block that was a task loses its task state.
+ * is written, a block that was a task loses its task state. Both are one undo
+ * step (#6156).
  */
 
 import { useCallback, useRef } from 'react'
@@ -15,6 +16,7 @@ import { setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { clearTaskStates, type PageBlockState } from '@/stores/page-blocks'
+import { useUndoStore } from '@/stores/undo'
 
 export interface UseListStyleSyntaxParams {
   focusedBlockId: string | null
@@ -40,7 +42,11 @@ export function useListStyleSyntax({
       inProgress.current = true
       setListStyle(focusedBlockId, style)
         .then(
-          () => void clearTaskStates(pageStore, [focusedBlockId]),
+          (opRefs) => {
+            const { rootParentId } = pageStore.getState()
+            if (rootParentId !== null) useUndoStore.getState().onNewAction(rootParentId, opRefs)
+            void clearTaskStates(pageStore, [focusedBlockId])
+          },
           (err: unknown) => {
             logger.error(
               'useListStyleSyntax',

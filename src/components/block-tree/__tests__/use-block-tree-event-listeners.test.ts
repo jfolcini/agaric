@@ -36,7 +36,7 @@ import { createPageBlockStore, PageBlockContext } from '@/stores/page-blocks'
 // only (the IPC path itself is covered by `list-style.test.ts`).
 vi.mock('@/lib/list-style', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/list-style')>()
-  return { ...actual, setListStyle: vi.fn().mockResolvedValue(undefined) }
+  return { ...actual, setListStyle: vi.fn().mockResolvedValue([]) }
 })
 
 /**
@@ -450,7 +450,7 @@ describe('useBlockTreeEventListeners', () => {
       const actual = await vi.importActual<typeof import('@/lib/list-style')>('@/lib/list-style')
       vi.mocked(setListStyle).mockImplementation(actual.setListStyle)
       onTestFinished(() => {
-        vi.mocked(setListStyle).mockReset().mockResolvedValue(undefined)
+        vi.mocked(setListStyle).mockReset().mockResolvedValue([])
       })
       const blockId = SEED_IDS.BLOCK_GS_1
       await actual.setListStyle(blockId, 'bullet')

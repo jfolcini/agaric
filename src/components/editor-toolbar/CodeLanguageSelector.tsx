@@ -32,6 +32,7 @@ import {
 } from '@/components/editor-toolbar/InlinePicker'
 import { CODE_LANGUAGES } from '@/components/FormattingToolbar/toolbar-config'
 import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
+import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { listStyleForBlockType, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -78,10 +79,15 @@ export function CodeLanguageSelector({
     toggleCodeBlockSafely(editor, attrs)
     onTurnIntoCode?.()
     if (blockId === undefined) return
-    setListStyle(blockId, listStyleForBlockType('code')).catch((err: unknown) => {
-      logger.error('CodeLanguageSelector', 'setListStyle (turn-into) failed', { blockId }, err)
-      notify.error(t('slash.turnIntoFailed'))
-    })
+    // The code block is committed first: the store's edit takes the block off its list in the
+    // edit's own undo entry, as `/code` does (#6156). A style cleared before that commit is in
+    // no entry, and one Ctrl+Z brings the text back without its bullet.
+    flushActiveDraft()
+      .then(() => setListStyle(blockId, listStyleForBlockType('code')))
+      .catch((err: unknown) => {
+        logger.error('CodeLanguageSelector', 'setListStyle (turn-into) failed', { blockId }, err)
+        notify.error(t('slash.turnIntoFailed'))
+      })
   }
 
   function applyLanguage(lang: string): void {
