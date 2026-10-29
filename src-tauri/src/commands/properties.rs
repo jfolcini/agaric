@@ -1676,6 +1676,38 @@ pub(crate) async fn write_property_def_in_tx(
     Ok(())
 }
 
+/// Refuse an undo or redo restoring `p.def` when it moves the key's values to
+/// another column and [`create_property_def_inner`] would refuse that
+/// declaration over them: re-typed, they would fail to parse and vanish.
+pub(crate) async fn refuse_restoring_def_over_conflicting_values(
+    conn: &mut sqlx::SqliteConnection,
+    p: &SetPropertyDefPayload,
+) -> Result<(), AppError> {
+    use agaric_engine::loro::projection::str_column_for;
+    let Some(def) = &p.def else {
+        return Ok(());
+    };
+    let space_id = p.space_id.as_str();
+    let held = user_property_def(conn, space_id, &p.key).await?;
+    if str_column_for(held.as_ref().map(|row| row.value_type.as_str()))
+        == str_column_for(Some(&def.value_type))
+    {
+        return Ok(());
+    }
+    match conflicting_existing_values(
+        conn,
+        space_id,
+        &p.key,
+        &def.value_type,
+        def.options.as_deref(),
+    )
+    .await?
+    {
+        Some(reason) => Err(AppError::validation(reason)),
+        None => Ok(()),
+    }
+}
+
 /// The editable definitions a new space starts with (#5841): ordinary user
 /// definitions, so the user can change or delete them. Mirrored by
 /// `DEFAULT_PROPERTY_DEFS` in `src/lib/tauri-mock/seed.ts`.
@@ -2944,6 +2976,50 @@ mod count_property_usage_tests {
             Some("text"),
             "the declaration is unchanged"
         );
+    }
+
+    /// #5841: a definition written in an armed tx that is dropped uncommitted
+    /// leaves no trace: not in the doc, the table or the op log.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_dropped_definition_write_leaves_no_trace() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let mut tx = CommandTx::begin_immediate(&pool, "test").await.unwrap();
+        tx.arm_engine_rollback(mat.loro_state());
+        let def = PropertyDefState {
+            value_type: "text".into(),
+            options: None,
+        };
+        write_property_def_in_tx(
+            &mut tx,
+            mat.loro_state(),
+            DEV,
+            TEST_SPACE_ID,
+            "stage",
+            Some(def),
+        )
+        .await
+        .unwrap();
+        drop(tx);
+
+        let in_doc = mat
+            .loro_state()
+            .registry
+            .for_space(&SpaceId::from_trusted(TEST_SPACE_ID), DEV)
+            .unwrap()
+            .engine_mut()
+            .read_property_def("stage")
+            .unwrap();
+        assert_eq!(in_doc, None, "the doc rewound");
+        let rows: i64 = sqlx::query_scalar(
+            "SELECT (SELECT COUNT(*) FROM property_definitions WHERE key = 'stage') \
+                  + (SELECT COUNT(*) FROM op_log WHERE op_type = 'set_property_def')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows, 0, "no row and no op");
+        mat.shutdown();
     }
 
     #[tokio::test]

@@ -980,6 +980,8 @@ export const propertiesHandlers = {
     if (valueType !== 'select') {
       throw validationRejection(`cannot update options on '${valueType}'-type definition '${key}'`)
     }
+    // The same options write nothing, so no op is appended.
+    if (def['options'] === options) return { ...def, builtin: false, op_refs: [] }
     const updated = { ...def, options }
     const op = pushPropertyDefOp(spaceId, key, updated, def)
     spacePropertyDefs(spaceId).set(key, updated)

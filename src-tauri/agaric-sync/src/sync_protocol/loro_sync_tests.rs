@@ -4524,6 +4524,78 @@ async fn live_noop_redelivery_with_leftover_slot_forces_full_projection_2264() {
     );
 }
 
+/// #5841 — the definitions twin of
+/// `live_noop_redelivery_with_leftover_slot_forces_full_projection_2264`: the
+/// healing projection also projects the doc's definitions, which a failed
+/// delivery can leave SQL without.
+#[tokio::test]
+async fn live_noop_redelivery_with_leftover_slot_projects_definitions_5841() {
+    let (pool, _dir) = fresh_pool().await;
+    for sql in [
+        "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?1, 'page', 'A', ?1)",
+        "INSERT INTO spaces (id) VALUES (?1)",
+    ] {
+        sqlx::query(sql)
+            .bind(SPACE_A)
+            .execute(&pool)
+            .await
+            .expect("register space");
+    }
+    let space = SpaceId::from_trusted(SPACE_A);
+    let registry_a = LoroEngineRegistry::new();
+    {
+        let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+        g.engine_mut()
+            .apply_create_block(BLOCK_A, "content", "seed", None, 0)
+            .expect("create");
+    }
+    let registry_b = seed_receiver_via_snapshot(&pool, &registry_a, &space).await;
+
+    {
+        let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+        let def = agaric_store::op::PropertyDefState {
+            value_type: "text".into(),
+            options: None,
+        };
+        g.engine_mut()
+            .apply_set_property_def("stage", Some(&def))
+            .expect("declare");
+    }
+    let b_vv = registry_b.loro_vv(&space).expect("B vv");
+    let msg = prepare_outgoing_for_pool(&pool, &registry_a, &space, "device-A", Some(&b_vv))
+        .await
+        .expect("prepare update")
+        .expect("freshness gate must not refuse");
+    let LoroSyncMessage::Update { ref bytes, .. } = msg else {
+        panic!("expected an Update message");
+    };
+    // Delivery 1 died after the engine import, before its projection.
+    {
+        let mut g = registry_b.for_space(&space, "device-B").expect("for_space");
+        g.engine_mut().import(bytes).expect("engine-only import");
+    }
+    sqlx::query("INSERT INTO loro_sync_inbox (space_id, bytes, created_at) VALUES (?, ?, ?)")
+        .bind(space.as_str())
+        .bind(&bytes[..])
+        .bind(agaric_store::db::now_ms())
+        .execute(&pool)
+        .await
+        .expect("seed leftover slot");
+
+    let outcome = apply_remote(&pool, &registry_b, "device-B", msg.clone())
+        .await
+        .expect("redelivery apply");
+    assert!(
+        matches!(outcome, ApplyOutcome::Imported { .. }),
+        "got {outcome:?}"
+    );
+    assert_eq!(
+        def_row(&pool, "stage").await,
+        Some(("text".into(), None)),
+        "the healing projection brings the definition delivery 1 failed to project"
+    );
+}
+
 /// #2275 — the derived `block_tag_inherited` cache rebuild runs AFTER the
 /// projection tx commits (and after the #535 inbox slot is deleted). A
 /// failure there must NOT turn a committed import into an `Err`: the caller

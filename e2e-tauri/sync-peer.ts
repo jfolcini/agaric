@@ -132,24 +132,6 @@ export async function setPeerAddress(deviceId: string, address: string): Promise
   await waitForToast('Address updated')
 }
 
-const SYNC_BUTTON = '[data-slot="sidebar"] button[aria-label="Sync"]'
-
-/**
- * Write on the peer, then pull it into the app with the sidebar's Sync, which
- * leaves the open view mounted, and wait for the pull. The button is
- * `aria-disabled` while a sync runs.
- */
-export async function pullPeerWrites<T>(peer: SyncPeer, writes: () => Promise<T>): Promise<T> {
-  const written = await writes()
-  await browser.waitUntil(
-    async () => (await $(SYNC_BUTTON).getAttribute('aria-disabled')) === 'false',
-    { timeout: ACTION_TIMEOUT, timeoutMsg: 'the app never finished the sync it was running' },
-  )
-  await $(SYNC_BUTTON).click()
-  await peer.waitPulled()
-  return written
-}
-
 type Command =
   | ({ cmd: 'pair' } & PairingQr)
   | { cmd: 'host_pairing' }

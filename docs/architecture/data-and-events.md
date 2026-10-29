@@ -112,7 +112,7 @@ ULIDs are normalised to uppercase Crockford-Base32 in the preimage (and in every
 | `remove_page_alias` | Takes an alias off a page. |
 | `add_attachment` | Records an attachment binding (file blob managed separately). |
 | `delete_attachment` | Removes the binding. |
-| `set_property_def` | Creates, edits the options of, or deletes a space's property definition; refused for a built-in or a change of type. |
+| `set_property_def` | Creates, edits the options of, or deletes a space's property definition. The command writer refuses a built-in or a change of type; the op's apply does not. |
 
 `block_links`, `page_link_cache`, `block_tag_refs`, `block_tag_inherited` are caches, **never op types** — they are rebuilt deterministically from the underlying op-induced state.
 

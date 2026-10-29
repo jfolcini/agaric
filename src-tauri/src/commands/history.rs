@@ -881,8 +881,9 @@ async fn with_recorded_prior_in_tx(
 /// run the forward `apply_*_attachment_via_loro` writers, which write the
 /// engine entry and the row together (#5608).
 ///
-/// A `SetPropertyDef` reverse runs the forward writer, which re-types the
-/// key's values when the restored definition moves them to another column
+/// A `SetPropertyDef` reverse runs the forward apply, which re-types the
+/// key's values when the restored definition moves them to another column,
+/// and is refused, as `create_property_def` is, when they would not fit it
 /// (#5841).
 ///
 /// `op_created_at` is the SAME timestamp the caller bound as the reverse op's
@@ -993,8 +994,11 @@ pub async fn apply_reverse_in_tx(
                 .await?;
         }
         // #5841: the payload is already swapped by `reverse_set_property_def`,
-        // so `def` is the definition to restore.
+        // so `def` is the definition to restore. Refused, as the create is,
+        // over values it would re-type out of existence.
         OpPayload::SetPropertyDef(p) => {
+            crate::commands::properties::refuse_restoring_def_over_conflicting_values(tx, p)
+                .await?;
             apply_set_property_def_via_loro(tx, state, device_id, p).await?;
         }
         // Note: CreateBlock never appears here because reverse::compute_reverse

@@ -64,9 +64,10 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         &["affected_page_ids"],
     ),
     ("purge_block", "block_id", &["purged_count"], &[]),
-    // #3830 — both `property_definitions` writers answer with the row, so
-    // their shape is `PROPERTY_DEF_ATTRS` read off a response instead of a
-    // SELECT. `created_at` stays off it for the reason the token gives.
+    // #3830 — the `property_definitions` writers answer with the row (a
+    // delete with the row it deleted, #5841), so their shape is
+    // `PROPERTY_DEF_ATTRS` read off a response instead of a SELECT.
+    // `created_at` stays off it for the reason the token gives.
     ("create_property_def", "key", PROPERTY_DEF_ATTRS, &[]),
     (
         "update_property_def_options",
@@ -74,6 +75,7 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         PROPERTY_DEF_ATTRS,
         &[],
     ),
+    ("delete_property_def", "key", PROPERTY_DEF_ATTRS, &[]),
     // #5057 — the undo family all answer `UndoResult`, singly or in a list, so
     // they share one shape: the `OpRef`s it carries are dropped because the two
     // runners' device ids differ, leaving the two op_type fields and `is_redo`.
@@ -242,11 +244,11 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         &["created", "edited", "deleted"],
         &[],
     ),
-    // #5057 — five writers whose table is OUTSIDE the snapshot's five arrays
-    // (`peer_refs`, `app_settings`, `property_definitions`), so what they wrote
-    // is pinned by the read that follows them in the same fixture rather than
-    // by the settled state. Each answers with `()`, so the record is the
-    // refusal declaration plus a head naming which one ran.
+    // #5057 — writers whose table is OUTSIDE the snapshot's five arrays
+    // (`peer_refs`, `app_settings`), so what they wrote is pinned by the read
+    // that follows them in the same fixture rather than by the settled state.
+    // Each answers with `()`, so the record is the refusal declaration plus a
+    // head naming which one ran.
     ("delete_peer_ref", HEADED_ID_KEY, &[], &[]),
     ("update_peer_name", HEADED_ID_KEY, &[], &[]),
     ("set_peer_address", HEADED_ID_KEY, &[], &[]),
@@ -254,7 +256,6 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // #4549 — same shape: one `app_settings` row, observed by the
     // `get_sync_relay_settings` step that follows.
     ("set_sync_relay_settings", HEADED_ID_KEY, &[], &[]),
-    ("delete_property_def", HEADED_ID_KEY, &[], &[]),
     // Its `(block_id, key)` echo is the caller's own args; the row it removed
     // is the snapshot's to pin.
     ("delete_property", HEADED_ID_KEY, &[], &[]),

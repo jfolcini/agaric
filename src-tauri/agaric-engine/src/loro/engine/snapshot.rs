@@ -407,17 +407,14 @@ impl LoroEngine {
             // inherited-tag cache. Identical to the pre-#2036 behaviour. No
             // rank-only hint here — the fallback exists precisely because we
             // could not resolve WHAT changed, so every block gets the full
-            // projection.
-            // A definition delete in a diff that could not be classified is
-            // not seen here; every definition the root still holds is.
-            let mut def_keys = cap.def_keys;
-            def_keys.extend(self.read_property_defs()?.into_iter().map(|(key, _)| key));
+            // projection. The definitions root is a map of plain values, so
+            // its keys are classified even here.
             return Ok(ImportDelta {
                 changed: self.enumerate_live_preorder(),
                 rank_only: Vec::new(),
                 purged,
                 tag_scope: TagScope::Global,
-                def_keys: sorted(def_keys),
+                def_keys: sorted(cap.def_keys),
                 pending,
             });
         }

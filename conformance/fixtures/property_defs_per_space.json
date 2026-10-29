@@ -147,7 +147,7 @@
       "code": null,
       "error": null,
       "name": "the_other_spaces_definition_goes",
-      "returns": ["delete_property_def"]
+      "returns": ["stage#value_type=text#options=null#builtin=false"]
     },
     {
       "code": null,

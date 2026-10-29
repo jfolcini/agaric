@@ -99,6 +99,14 @@
     },
     {
       "code": null,
+      "error": null,
+      "name": "update_select_options_unchanged",
+      "returns": [
+        "priority_level#value_type=select#options=[\"low\",\"high\",\"urgent\"]#builtin=false"
+      ]
+    },
+    {
+      "code": null,
       "error": "validation",
       "name": "update_options_empty_rejects",
       "returns": []
@@ -155,7 +163,9 @@
       "code": null,
       "error": null,
       "name": "delete_an_unused_def",
-      "returns": ["delete_property_def"]
+      "returns": [
+        "priority_level#value_type=select#options=[\"low\",\"high\",\"urgent\"]#builtin=false"
+      ]
     }
   ],
   "expected_queries": [
@@ -277,6 +287,17 @@
       "command": "update_property_def_options",
       "comment": "The happy path: the widened array is read back from inside the tx.",
       "name": "update_select_options",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "priority_level",
+        "options": "[\"low\",\"high\",\"urgent\"]",
+        "spaceId": "$SPACE"
+      },
+      "command": "update_property_def_options",
+      "comment": "#5841 — the options it already has: the row comes back unchanged and no op is appended, which the op log digest pins.",
+      "name": "update_select_options_unchanged",
       "via": "command"
     },
     {

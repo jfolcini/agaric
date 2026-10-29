@@ -32,7 +32,6 @@ import {
   type SyncPeer,
   openPairing,
   openSyncSettings,
-  pullPeerWrites,
   readPairingQr,
   setPeerAddress,
   startSyncPeer,
@@ -45,6 +44,7 @@ const UNDONE_KEY = runScopedMarker('wdio-undo')
 const PAGE = runScopedMarker('wdio-defs-page')
 const HOLDER = runScopedMarker('wdio-defs-holder')
 const DUE_PANEL = '[data-testid="due-panel"]'
+const SYNC_BUTTON = '[data-slot="sidebar"] button[aria-label="Sync"]'
 
 /** The Delete button of `key`'s row in Settings › Properties. */
 const deleteButton = (key: string) => `button[aria-label="Delete property ${key}"]`
@@ -55,6 +55,21 @@ function listedType(key: string): Promise<string | null> {
     const row = document.querySelector(selector)?.closest('[data-slot="list-item"]')
     return row?.querySelector('[data-slot="badge"]')?.textContent ?? null
   }, deleteButton(key))
+}
+
+/**
+ * Write on the peer, then pull it into the app with the sidebar's Sync, which
+ * leaves the open view mounted, and wait for the pull. The button is
+ * `aria-disabled` while a sync runs.
+ */
+async function pullPeerWrites(peer: SyncPeer, writes: () => Promise<void>): Promise<void> {
+  await writes()
+  await browser.waitUntil(
+    async () => (await $(SYNC_BUTTON).getAttribute('aria-disabled')) === 'false',
+    { timeout: ACTION_TIMEOUT, timeoutMsg: 'the app never finished the sync it was running' },
+  )
+  await $(SYNC_BUTTON).click()
+  await peer.waitPulled()
 }
 
 /** Settings › Properties, opened from another view so it lists afresh. */
@@ -195,7 +210,9 @@ describe('Agaric real-backend property definitions sync (#5841) @settings @sync'
     await confirm.click()
     // The toast says the backend deleted it; Undo before the toast times out.
     await waitForToast('Property definition deleted')
-    const undo = $('[data-sonner-toast]').$('button=Undo')
+    const undo = $(
+      '//*[@data-sonner-toast][contains(., "Property definition deleted")]//button[normalize-space()="Undo"]',
+    )
     await undo.waitForClickable({ timeout: ACTION_TIMEOUT })
     await undo.click()
 

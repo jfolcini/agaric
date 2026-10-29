@@ -114,10 +114,12 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     attrs: ['reversed_op_type', 'new_op_type', 'is_redo'],
     lists: [],
   },
-  // #3830 — the two `property_definitions` writers answer with the row, so
-  // their shape is `PROPERTY_DEF_TOKEN`'s attributes read off a response.
+  // #3830 — the `property_definitions` writers answer with the row (a delete
+  // with the row it deleted, #5841), so their shape is `PROPERTY_DEF_TOKEN`'s
+  // attributes read off a response.
   create_property_def: { idKey: 'key', attrs: PROPERTY_DEF_ATTRS, lists: [] },
   update_property_def_options: { idKey: 'key', attrs: PROPERTY_DEF_ATTRS, lists: [] },
+  delete_property_def: { idKey: 'key', attrs: PROPERTY_DEF_ATTRS, lists: [] },
   // #5057 — the draft writers answer with `()`, so their whole record is the
   // refusal declaration plus a head naming which one ran. `flush_all_drafts`
   // adds the one field a caller can see: how many rows it CONSUMED, which
@@ -209,17 +211,16 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     attrs: ['created', 'edited', 'deleted'],
     lists: [],
   },
-  // #5057 — five writers whose table is OUTSIDE the snapshot's five arrays
-  // (`peer_refs`, `app_settings`, `property_definitions`), so what they wrote is
-  // pinned by the read that follows them in the same fixture rather than by the
-  // settled state. Each answers with `()`.
+  // #5057 — writers whose table is OUTSIDE the snapshot's five arrays
+  // (`peer_refs`, `app_settings`), so what they wrote is pinned by the read that
+  // follows them in the same fixture rather than by the settled state. Each
+  // answers with `()`.
   delete_peer_ref: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
   update_peer_name: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
   set_peer_address: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
   set_reminder_settings: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
   // #4549 — one `app_settings` row, observed by `get_sync_relay_settings`.
   set_sync_relay_settings: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
-  delete_property_def: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
   // Its `(block_id, key)` echo is the caller's own args; the snapshot pins the row.
   delete_property: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
   // #5057 — the two attachment writers that need no blob. `attachments` is

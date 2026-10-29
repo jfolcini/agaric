@@ -143,7 +143,7 @@
       "code": null,
       "error": null,
       "name": "delete_def",
-      "returns": ["delete_property_def"]
+      "returns": ["stage#value_type=select#options=[\"draft\",\"done\"]#builtin=false"]
     },
     {
       "code": null,

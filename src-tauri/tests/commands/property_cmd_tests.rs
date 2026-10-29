@@ -9930,6 +9930,184 @@ async fn undoing_a_date_declaration_moves_held_values_back_to_text_5841() {
     );
 }
 
+/// A page of [`TEST_SPACE_ID`] holding `value` as text under `key`, which the
+/// space does not declare.
+async fn page_holding_text(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    key: &str,
+    value: &str,
+) -> String {
+    let page =
+        create_page_in_space_inner(pool, DEV, mat, None, "Plan".into(), TEST_SPACE_ID.into())
+            .await
+            .unwrap();
+    set_property_inner(
+        pool,
+        DEV,
+        mat,
+        page.as_str().into(),
+        key.into(),
+        Some(value.into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    page.as_str().to_owned()
+}
+
+/// `block_id`'s `(value_text, value_num, value_date)` under `key`.
+async fn held_value(
+    pool: &SqlitePool,
+    block_id: &str,
+    key: &str,
+) -> Option<(Option<String>, Option<f64>, Option<String>)> {
+    sqlx::query_as(
+        "SELECT value_text, value_num, value_date FROM block_properties \
+         WHERE block_id = ? AND key = ?",
+    )
+    .bind(block_id)
+    .bind(key)
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+}
+
+/// Undoing a delete restores a declaration, so it is refused, as the create
+/// is, when a value set since would not fit it: re-typed, the value would
+/// fail to parse and vanish.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undoing_a_delete_over_values_the_type_refuses_is_refused_5841() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    create_property_def_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "year".into(),
+        "number".into(),
+        None,
+    )
+    .await
+    .unwrap();
+    let deleted = capture_op_refs(delete_property_def_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "year".into(),
+    ))
+    .await
+    .unwrap();
+    let page = page_holding_text(&pool, &mat, "year", "circa 1920").await;
+
+    let undone = undo_ops_inner(&pool, DEV, &mat, deleted.op_refs).await;
+    assert!(
+        matches!(&undone, Err(AppError::Validation { message, .. })
+            if message.contains("cannot declare property 'year' as 'number'")),
+        "got {undone:?}"
+    );
+    assert_eq!(def_row(&pool, "year").await, None, "still undeclared");
+    assert_eq!(root_def(&mat, "year"), None, "in the doc too");
+    assert_eq!(
+        held_value(&pool, &page, "year").await,
+        Some((Some("circa 1920".into()), None, None)),
+        "the value stays, as text"
+    );
+}
+
+/// Undoing an options edit re-types nothing, so it is not refused over a
+/// value outside the restored options: the value stays, as text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undoing_an_options_edit_over_a_value_outside_them_succeeds_5841() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    create_property_def_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "stage".into(),
+        "select".into(),
+        Some(r#"["a"]"#.into()),
+    )
+    .await
+    .unwrap();
+    let edited = capture_op_refs(update_property_def_options_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "stage".into(),
+        r#"["a","b"]"#.into(),
+    ))
+    .await
+    .unwrap();
+    let page = page_holding_text(&pool, &mat, "stage", "b").await;
+
+    undo_ops_inner(&pool, DEV, &mat, edited.op_refs)
+        .await
+        .unwrap();
+    assert_eq!(
+        def_row(&pool, "stage").await,
+        Some(("select".into(), Some(r#"["a"]"#.into()))),
+        "the edit is undone"
+    );
+    assert_eq!(
+        held_value(&pool, &page, "stage").await,
+        Some((Some("b".into()), None, None)),
+        "the value stays, as text"
+    );
+}
+
+/// The redo of an undone create restores the declaration through the same
+/// arm, and is refused the same way.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn redoing_a_create_over_values_the_type_refuses_is_refused_5841() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let declared = capture_op_refs(create_property_def_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "due2".into(),
+        "date".into(),
+        None,
+    ))
+    .await
+    .unwrap();
+    let undone = undo_ops_inner(&pool, DEV, &mat, declared.op_refs)
+        .await
+        .unwrap();
+    let page = page_holding_text(&pool, &mat, "due2", "someday").await;
+
+    let undo = &undone[0].new_op_ref;
+    let redone = redo_page_op_inner(&pool, DEV, &mat, undo.device_id.clone(), undo.seq).await;
+    assert!(
+        matches!(&redone, Err(AppError::Validation { message, .. })
+            if message.contains("cannot declare property 'due2' as 'date'")),
+        "got {redone:?}"
+    );
+    assert_eq!(def_row(&pool, "due2").await, None, "still undeclared");
+    assert_eq!(
+        held_value(&pool, &page, "due2").await,
+        Some((Some("someday".into()), None, None)),
+        "the value stays, as text"
+    );
+}
+
 /// A new space's doc carries the defaults, so every device that receives the
 /// space receives them.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
