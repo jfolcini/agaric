@@ -2404,7 +2404,7 @@ fn opens_one_line_block(body: &str) -> bool {
 /// lines that follow it, if `followed`: it is empty, which a line holding only
 /// `\` stands for (#5691 D4), opens with whitespace, which would nest it,
 /// reads as a list item or a `key:: value` line, or opens a block of one line
-/// ([`opens_one_line_block`]) that lines follow. It looks past a leading run
+/// (`opens_one_line_block`) that lines follow. It looks past a leading run
 /// of backslashes, as [`needs_list_marker_escape`] does, so the escape is
 /// injective: past one, a heading or a break is escaped, followed or not.
 pub fn needs_bare_line_escape(text: &str, followed: bool) -> bool {
