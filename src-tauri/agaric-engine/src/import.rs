@@ -1325,8 +1325,11 @@ pub fn parse_source_text(
 /// buffer. `-` and `*` mark a bullet block, `N.` and `N)` a numbered one, a
 /// checkbox after any marker a task (`- [ ] x`), which has no list style, and
 /// `+` a block with none, which is how a plain block under a list block is
-/// written. A heading is a paragraph's line and owns nothing. A line holding
-/// only `\` is an empty block, or inside a block an empty line.
+/// written. A heading, a fence and a thematic break start a block of their own
+/// wherever they stand outside a fence, under a paragraph with no blank line
+/// too, as CommonMark reads them (D1 as amended); a heading or a break is a
+/// block of one line, and owns nothing (D7). A line holding only `\` is an
+/// empty block, or inside a block an empty line.
 pub fn parse_document_outline(content: &str) -> ParseOutput {
     source_outline(content, ParseMode::Document, false, None)
 }
@@ -1691,8 +1694,9 @@ enum Kind {
     /// A heading read outside any list item, with its level: it owns the
     /// blocks after it until the next heading of its level or higher (D16).
     Heading(usize),
-    /// A fence, a thematic break, or a heading inside a list item: a block no
-    /// line continues lazily and that owns only what is indented past it.
+    /// A fence, a thematic break, or a heading inside a list item or in a
+    /// Document buffer: a block no line continues lazily and that owns only
+    /// what is indented past it.
     Verbatim,
 }
 
@@ -1819,10 +1823,9 @@ impl<'a> Scan<'a> {
         }
         let item = bullet_marker(trimmed)
             .filter(|&(len, ordered)| self.starts_item(trimmed, indent, len, ordered));
-        let heading = heading_level(trimmed).filter(|_| self.mode != ParseMode::Document);
         if let Some((len, _)) = item {
             self.bullet(trimmed, indent, len, number);
-        } else if let Some(level) = heading {
+        } else if let Some(level) = heading_level(trimmed) {
             self.heading(trimmed, indent, level);
         } else if let Some((key, value)) = self.property_line(trimmed, indent) {
             self.attach_property(key, value, indent);
@@ -2026,10 +2029,12 @@ impl<'a> Scan<'a> {
     /// A heading line is always a block of its own. Outside a list it owns what
     /// follows it until the next heading of its level or higher; inside a list
     /// item it owns nothing, so Agaric's own `- ` output reads back unchanged
-    /// (D16).
+    /// (D16), and in a Document buffer it owns nothing either (#5691 D7).
     fn heading(&mut self, trimmed: &str, indent: usize, level: usize) {
         self.pop_to(indent, Some(level));
-        let kind = if self.open.iter().any(|open| open.kind == Kind::Bullet) {
+        let kind = if self.mode == ParseMode::Document
+            || self.open.iter().any(|open| open.kind == Kind::Bullet)
+        {
             Kind::Verbatim
         } else {
             Kind::Heading(level)
@@ -2040,15 +2045,18 @@ impl<'a> Scan<'a> {
     /// A line that starts a block of its own without a marker: a paragraph, or
     /// a fence or thematic break, nested by its indentation like a bullet. A
     /// fence it opens stays inside the list item holding it, if any: a line
-    /// left of that item's content column ends both. In a Document buffer it is
-    /// always a paragraph, whose first line may carry an escape
+    /// left of that item's content column ends both. In a Document buffer a
+    /// fence is a paragraph's, which the lines after its closing fence
+    /// continue, and any other paragraph's first line may carry an escape
     /// ([`needs_bare_line_escape`]).
     fn text_block(&mut self, trimmed: &str, indent: usize, number: usize) {
         self.pop_to(indent, None);
         let fence = fence_run(trimmed);
-        let (text, kind) = if self.mode == ParseMode::Document {
+        let (text, kind) = if is_thematic_break(trimmed) {
+            (trimmed, Kind::Verbatim)
+        } else if self.mode == ParseMode::Document {
             (unescape_bare_line(trimmed), Kind::Paragraph)
-        } else if fence.is_some() || is_thematic_break(trimmed) {
+        } else if fence.is_some() {
             (trimmed, Kind::Verbatim)
         } else {
             (trimmed, Kind::Paragraph)
@@ -2117,19 +2125,18 @@ impl<'a> Scan<'a> {
     /// Whether a line that starts no block continues the innermost open block:
     /// it is indented to a bullet's content column, or it follows the block's
     /// last line with no blank line between (lazily) and is not a fence or a
-    /// thematic break, which in a Document buffer it may be (#5691 D1). A
+    /// thematic break. In a Document buffer a fence or a break is not
+    /// continued at a bullet's content column either: it starts a block of
+    /// its own wherever it stands, as a heading does (#5691 D1 as amended). A
     /// heading, a fence and a break are never continued.
     fn continues(&self, trimmed: &str, indent: usize) -> bool {
         let Some(top) = self.open.last() else {
             return false;
         };
+        let own_block = fence_run(trimmed).is_some() || is_thematic_break(trimmed);
         match top.kind {
-            Kind::Bullet if indent >= top.content => true,
-            Kind::Bullet | Kind::Paragraph => {
-                !self.after_blank
-                    && (self.mode == ParseMode::Document
-                        || (fence_run(trimmed).is_none() && !is_thematic_break(trimmed)))
-            }
+            Kind::Bullet if indent >= top.content => !own_block || self.mode != ParseMode::Document,
+            Kind::Bullet | Kind::Paragraph => !self.after_blank && !own_block,
             Kind::Heading(_) | Kind::Verbatim => false,
         }
     }
@@ -2362,41 +2369,78 @@ pub fn needs_blank_line_escape(line: &str) -> bool {
         .is_empty()
 }
 
+/// `true` when a Document buffer must backslash-escape `line`, a line inside a
+/// block and outside a fence, so it reads back as that line of the block: it
+/// would read as blank ([`needs_blank_line_escape`]), as a list item or a
+/// property ([`continuation_line_is_ambiguous`]), or as a heading, a fence or
+/// a thematic break, each of which starts a block of its own (#5691 D1 as
+/// amended). Injective as [`continuation_line_is_ambiguous`] is.
+pub fn needs_document_line_escape(line: &str) -> bool {
+    let body = line.trim_start_matches(|c: char| c.is_whitespace() || c == '\\');
+    needs_blank_line_escape(line)
+        || continuation_line_is_ambiguous(line)
+        || fence_run(body).is_some()
+        || opens_one_line_block(body)
+}
+
+/// Whether `body` opens a line a Document buffer reads as a block of one line,
+/// which no later line continues: a heading or a thematic break (#5691 D1 as
+/// amended). A break is told here by its opening run, three or more `-`, `*`
+/// or `_` then whitespace or the end, wider than [`is_thematic_break`], so
+/// that the ` ^ID` a buffer writes after a block's last line does not change
+/// which lines are escaped.
+fn opens_one_line_block(body: &str) -> bool {
+    let rule = body
+        .bytes()
+        .next()
+        .filter(|first| matches!(first, b'-' | b'*' | b'_'))
+        .map_or(0, |first| body.bytes().take_while(|&b| b == first).count());
+    heading_level(body).is_some()
+        || (rule >= 3 && body[rule..].chars().next().is_none_or(char::is_whitespace))
+}
+
 /// `true` when a Document buffer must backslash-escape `text`, the first line
-/// of a block written with no marker, so it reads back as that text: it is
-/// empty, which a line holding only `\` stands for (#5691 D4), opens with
-/// whitespace, which would nest it, or reads as a list item or a `key:: value`
-/// line. It looks past a leading run of backslashes, as
-/// [`needs_list_marker_escape`] does, so the escape is injective.
-pub fn needs_bare_line_escape(text: &str) -> bool {
+/// of a block written with no marker, so it reads back as that text with the
+/// lines that follow it, if `followed`: it is empty, which a line holding only
+/// `\` stands for (#5691 D4), opens with whitespace, which would nest it,
+/// reads as a list item or a `key:: value` line, or opens a block of one line
+/// (`opens_one_line_block`) that lines follow. It looks past a leading run
+/// of backslashes, as [`needs_list_marker_escape`] does, so the escape is
+/// injective: past one, a heading or a break is escaped, followed or not.
+pub fn needs_bare_line_escape(text: &str, followed: bool) -> bool {
     let body = text.trim_start_matches('\\');
     body.is_empty()
         || body.starts_with(char::is_whitespace)
         || is_bullet_line(body)
         || line_is_property_shaped(body)
+        || (opens_one_line_block(body) && (followed || body.len() < text.len()))
 }
 
 /// A Document block's first line, written with no marker, with the escape
 /// [`needs_bare_line_escape`] asks for, if any, removed.
 fn unescape_bare_line(text: &str) -> &str {
     text.strip_prefix('\\')
-        .filter(|rest| needs_bare_line_escape(rest))
+        .filter(|rest| needs_bare_line_escape(rest, true))
         .unwrap_or(text)
 }
 
 /// A continuation line's text with the renderer's escape, if any, removed:
 /// one leading `\` whose payload is [`continuation_line_is_ambiguous`], on
-/// import [`needs_planning_line_escape`], or in a Document buffer
-/// [`needs_blank_line_escape`]. An ordinary line that begins with `\` (a
+/// import also [`needs_planning_line_escape`], or in a Document buffer
+/// [`needs_document_line_escape`]. An ordinary line that begins with `\` (a
 /// LaTeX command, say) is kept verbatim. The renderer anchors the `\` before
 /// the line's own leading whitespace, so an indented ambiguous line reaches
 /// here as `\<ws><token>` and the payload is matched on its trimmed shape.
 fn unescape_continuation(text: &str, mode: ParseMode) -> &str {
     match text.strip_prefix('\\') {
         Some(rest)
-            if continuation_line_is_ambiguous(rest)
-                || (mode == ParseMode::Import && needs_planning_line_escape(rest))
-                || (mode == ParseMode::Document && needs_blank_line_escape(rest)) =>
+            if match mode {
+                ParseMode::Import => {
+                    continuation_line_is_ambiguous(rest) || needs_planning_line_escape(rest)
+                }
+                ParseMode::Source => continuation_line_is_ambiguous(rest),
+                ParseMode::Document => needs_document_line_escape(rest),
+            } =>
         {
             rest
         }

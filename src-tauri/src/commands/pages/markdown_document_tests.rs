@@ -8,7 +8,10 @@
 //! One normalisation: a block with both a task state and a list style is
 //! written as a task, which has no list style (D3), so it reads back without
 //! one ([`as_document`]). The text with ids beside it has the exceptions
-//! [`document_text_carries`] names.
+//! [`document_text_carries`] names. The writer escapes every line that would
+//! start a block of its own (D1 as amended), so the render→read proptests
+//! cannot see the reader start one; [`typed_rows`] read text typed with no
+//! blank line.
 
 use proptest::prelude::*;
 use serde_json::{Value, json};
@@ -53,10 +56,38 @@ fn as_document(mut expected: Vec<Expected>) -> Vec<Expected> {
     expected
 }
 
-/// [`arb_forest`] led by one of the dialect's hard shapes (§ g.4): a plain
-/// block under a list block, which only `+` carries (D4), a first block opening
-/// with `---` and a second one, whose line would close the front matter the
-/// first opened, or an empty plain block, which only `\` carries (D4).
+/// A line a Document buffer reads as a block of its own wherever it stands
+/// (D1 as amended): a heading, a fence or a thematic break, with text after
+/// it or not, now and then after a backslash or shaped like a break but not
+/// one.
+fn arb_own_block_line() -> impl Strategy<Value = String> {
+    const SHAPES: [&str; 13] = [
+        "# ", "## ", "######", "```", "```sh", "~~~", "---", "***", "___", "----", "--- ", "\\## ",
+        "\\---",
+    ];
+    let rest = prop_oneof![2 => Just(String::new()), 1 => arb_prose()];
+    (proptest::sample::select(&SHAPES[..]), rest).prop_map(|(shape, rest)| format!("{shape}{rest}"))
+}
+
+/// [`arb_block`] whose content mixes in [`arb_own_block_line`]s: at its start,
+/// a heading or a break the block's other lines follow, and after its first
+/// line, a line the writer must escape to keep it in the block.
+fn arb_document_block() -> impl Strategy<Value = BlockSpec> {
+    let segment = prop_oneof![
+        4 => arb_line().prop_map(|line| vec![line]),
+        1 => Just(vec![String::new()]),
+        1 => arb_fence(),
+        2 => arb_own_block_line().prop_map(|line| vec![line]),
+    ];
+    let content = prop::collection::vec(segment, 0..4).prop_map(|lines| lines.concat().join("\n"));
+    (arb_block(), content).prop_map(|(block, content)| BlockSpec { content, ..block })
+}
+
+/// A forest of [`arb_document_block`]s led by one of the dialect's hard shapes
+/// (§ g.4): a plain block under a list block, which only `+` carries (D4), a
+/// first block opening with `---` and a second one, whose line would close the
+/// front matter the first opened, or an empty plain block, which only `\`
+/// carries (D4).
 fn arb_document_forest() -> impl Strategy<Value = Vec<BlockSpec>> {
     let lead = (arb_block(), arb_block(), 0..3, "-{3,4}[a-z ]{0,3}").prop_map(
         |(parent, child, shape, rule)| {
@@ -92,7 +123,7 @@ fn arb_document_forest() -> impl Strategy<Value = Vec<BlockSpec>> {
             }
         },
     );
-    (lead, arb_forest()).prop_map(|(mut lead, forest)| {
+    (lead, arb_forest_of(arb_document_block())).prop_map(|(mut lead, forest)| {
         lead.extend(forest);
         lead
     })
@@ -280,9 +311,9 @@ fn document_rows() -> Vec<(&'static str, Vec<BlockSpec>, &'static str)> {
             "line one\nline two\n\\- not a bullet\n\\key:: v\n\n- item\n  \\## not a heading\n",
         ),
         (
-            "5: a fence keeps its blank lines and its markup",
-            vec![plain(0, "intro\n```sh\necho\n\n- x\n```\nafter")],
-            "intro\n```sh\necho\n\n- x\n```\nafter\n",
+            "5: a fence keeps its blank lines and its markup, and the lines after it continue it",
+            vec![plain(0, "```sh\necho\n\n- x\n```\nafter")],
+            "```sh\necho\n\n- x\n```\nafter\n",
         ),
         (
             "6: a table and a quote are one block each",
@@ -397,7 +428,138 @@ fn document_rows() -> Vec<(&'static str, Vec<BlockSpec>, &'static str)> {
             vec![styled(0, "## x", "bullet")],
             "- ## x\n",
         ),
+        (
+            "D1: a paragraph and the heading under it are two blocks",
+            vec![plain(0, "para"), plain(0, "## Heading")],
+            "para\n\n## Heading\n",
+        ),
+        (
+            "D1: a heading is a block of one line, and the text under it the next block",
+            vec![plain(0, "## Heading"), plain(0, "text")],
+            "## Heading\n\ntext\n",
+        ),
+        (
+            "D1: a paragraph and the fence under it are two blocks",
+            vec![plain(0, "intro:"), plain(0, "```sh\nls\n```")],
+            "intro:\n\n```sh\nls\n```\n",
+        ),
+        (
+            "D1: a thematic break between paragraphs is a block of its own",
+            vec![plain(0, "para"), plain(0, "---"), plain(0, "after")],
+            "para\n\n---\n\nafter\n",
+        ),
+        (
+            "D1: a heading line in a paragraph's text is escaped",
+            vec![plain(0, "para\n## x")],
+            "para\n\\## x\n",
+        ),
+        (
+            "D1: a fence line in a paragraph's text is escaped, so no line after it is code",
+            vec![plain(0, "intro:\n```sh\n- x\n```")],
+            "intro:\n\\```sh\n\\- x\n\\```\n",
+        ),
+        (
+            "D1: a thematic break in a paragraph's text is escaped, not read as a setext underline",
+            vec![plain(0, "para\n---\n***")],
+            "para\n\\---\n\\***\n",
+        ),
+        (
+            "D1: a code block's lines are its own, a heading's and a break's too",
+            vec![plain(0, "```\n## x\n---\n```")],
+            "```\n## x\n---\n```\n",
+        ),
+        (
+            "D1: a heading or a break with a line after it, as a hard break makes, is escaped",
+            vec![
+                plain(0, "## Heading\\\nsecond line"),
+                plain(0, "---\nafter"),
+            ],
+            "\\## Heading\\\nsecond line\n\n\\---\nafter\n",
+        ),
+        (
+            "D1: a backslash before a heading or a break opening a bare line is escaped too",
+            vec![plain(0, "\\## x"), plain(0, "\\---")],
+            "\\\\## x\n\n\\\\---\n",
+        ),
+        (
+            "D1: the escape of a heading, fence or break line in a paragraph's text goes before its indent",
+            vec![plain(0, "para\n  ## x\n  ```sh\n  ---")],
+            "para\n\\  ## x\n\\  ```sh\n\\  ---\n",
+        ),
+        (
+            "D1: a backslash before a heading, a fence or a break in a paragraph's text is escaped again",
+            vec![plain(0, "para\n\\## x\n\\```sh\n\\---")],
+            "para\n\\\\## x\n\\\\```sh\n\\\\---\n",
+        ),
+        (
+            "D1: dashes before a multi-byte character, and a hash or dashes after one, are text",
+            vec![plain(0, "para"), plain(0, "---é\n---é\né## x\n😀---")],
+            "para\n\n---é\n---é\né## x\n😀---\n",
+        ),
+        (
+            "D1: a break followed by a Unicode space is still a break, as the reader trims it",
+            vec![plain(0, "para\n---\u{a0}")],
+            "para\n\\---\u{a0}\n",
+        ),
     ]
+}
+
+/// Text typed with no blank line between blocks (D1 as amended): each text and
+/// the tree it reads as. A heading, a fence or a thematic break starts a block
+/// of its own wherever it stands, under a list item's text too, and a list
+/// item still interrupts a paragraph.
+fn typed_rows() -> Vec<(&'static str, &'static str, Vec<BlockSpec>)> {
+    vec![
+        (
+            "a heading typed under a paragraph starts its own block",
+            "para\n## Heading",
+            vec![plain(0, "para"), plain(0, "## Heading")],
+        ),
+        (
+            "the line typed under a heading starts its own block",
+            "## Heading\ntext",
+            vec![plain(0, "## Heading"), plain(0, "text")],
+        ),
+        (
+            "a fence typed under a paragraph starts its own block",
+            "intro:\n```sh\nls\n```",
+            vec![plain(0, "intro:"), plain(0, "```sh\nls\n```")],
+        ),
+        (
+            "a thematic break typed under a paragraph is its own block, not a setext underline",
+            "para\n---\nafter",
+            vec![plain(0, "para"), plain(0, "---"), plain(0, "after")],
+        ),
+        (
+            "under a list item's text, a heading, a fence and a break start blocks of their own",
+            "- a\n## H\n- b\n  ```\n  x\n  ```\n- c\n  ***",
+            vec![
+                styled(0, "a", "bullet"),
+                plain(0, "## H"),
+                styled(0, "b", "bullet"),
+                plain(1, "```\nx\n```"),
+                styled(0, "c", "bullet"),
+                plain(1, "***"),
+            ],
+        ),
+        (
+            "a list item still interrupts a paragraph",
+            "para\n- a",
+            vec![plain(0, "para"), styled(0, "a", "bullet")],
+        ),
+    ]
+}
+
+/// Each typed text reads as its tree.
+#[test]
+fn a_heading_a_fence_or_a_break_typed_under_text_starts_its_own_block() {
+    for (name, typed, forest) in typed_rows() {
+        let (_, expected) = build_page(&forest);
+        let read = import::parse_document_outline(typed);
+        let result = check_no_page_properties(typed, &read)
+            .and_then(|()| check_read_back(typed, &read.blocks, &as_document(expected), false));
+        assert!(result.is_ok(), "{name}: {result:?}");
+    }
 }
 
 /// Each row's tree is written as its text, and that text, read by its line
@@ -418,8 +580,9 @@ fn each_hard_case_is_written_as_its_row_and_read_back() {
 
 /// `conformance/document-lines.vectors.json`: each row as the tree it reads
 /// back as, every block under its id, the text it is written as and the id
-/// each line of the text carries. Rust authors it (`CONFORMANCE_UPDATE=1`)
-/// from the rows above, which assert it; the editor's reader asserts it too.
+/// each line of the text carries, and each typed text with the tree it reads
+/// as. Rust authors it (`CONFORMANCE_UPDATE=1`) from the rows above, which
+/// assert it; the editor's reader asserts it too.
 #[test]
 fn the_document_lines_vectors_are_the_rows() {
     let cases: Vec<Value> = document_rows()
@@ -437,12 +600,26 @@ fn the_document_lines_vectors_are_the_rows() {
             json!({ "name": name, "tree": tree, "text": text, "lineIds": line_ids })
         })
         .collect();
+    let typed: Vec<Value> = typed_rows()
+        .into_iter()
+        .map(|(name, text, forest)| {
+            let tree: Vec<Value> = as_document(build_page(&forest).1)
+                .into_iter()
+                .map(|(depth, content, _, properties)| {
+                    json!({ "depth": depth, "content": content, "properties": properties })
+                })
+                .collect();
+            json!({ "name": name, "tree": tree, "text": text })
+        })
+        .collect();
     let vectors = json!({
         "description": "#5691 — Edit as Markdown's Document dialect, one case per hard case of the \
             line-split format: the tree, each block under its id, the text a page holding it is \
-            written as, and the id each line of that text carries. Authored by \
+            written as, and the id each line of that text carries; and under `typed`, text typed \
+            with no blank line between blocks and the tree it reads as, ids aside. Authored by \
             `markdown_document_tests.rs` with CONFORMANCE_UPDATE=1; never hand-edit.",
         "cases": cases,
+        "typed": typed,
     });
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
