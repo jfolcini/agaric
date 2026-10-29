@@ -49,6 +49,7 @@ describe('MarkdownReveal beside a page-mode list marker', () => {
         ],
       },
       [{ id: A, depth: 0 }],
+      () => false,
     )
     const mounted = mountNodeViews(rows, undefined, lists)
     teardown = () => {

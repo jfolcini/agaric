@@ -315,7 +315,7 @@ describe('the heading chords', () => {
       value_ref: null,
       value_bool: null,
     }
-    const lists = new PageLists({ [A]: [bullet] }, [{ id: A, depth: 0 }])
+    const lists = new PageLists({ [A]: [bullet] }, [{ id: A, depth: 0 }], () => false)
     const source = listSource(lists)
     editor = openPage(rows, idMinter(), undefined, source)
     caret(editor, 0, 0)

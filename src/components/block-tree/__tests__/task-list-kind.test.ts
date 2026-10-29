@@ -53,6 +53,11 @@ const todoOf = (id: string) => pageStore.getState().blocksById.get(id)?.todo_sta
 const names = () => mockedInvoke.mock.calls.map(([name]) => name)
 const calls = (command: string) =>
   mockedInvoke.mock.calls.filter(([name]) => name === command).map(([, args]) => args)
+/** The task-state clears asked for, as `clearTaskStates` asks for them. */
+const taskClears = () =>
+  calls('delete_property').filter(
+    (args) => (args as Record<string, unknown>)['key'] === 'todo_state',
+  )
 
 /** Every command these flows reach, answering as the backend does; a test overrides one. */
 function stub(overrides: TypedInvokeHandlers = {}): void {
@@ -92,13 +97,14 @@ beforeEach(() => {
 })
 
 describe('clearTaskStates', () => {
-  it('clears the blocks that hold a task, in one write, and the store follows', async () => {
+  it('clears the blocks that hold a task, and the store follows', async () => {
     setTodo(pageStore, 'DONE', 'BLOCK_3')
 
     await expect(clearTaskStates(pageStore, ['BLOCK_1', 'BLOCK_2', 'BLOCK_3'])).resolves.toBe(true)
 
-    expect(calls('set_todo_state_batch')).toEqual([
-      { blockIds: ['BLOCK_2', 'BLOCK_3'], state: null },
+    expect(taskClears()).toEqual([
+      { blockId: 'BLOCK_2', key: 'todo_state' },
+      { blockId: 'BLOCK_3', key: 'todo_state' },
     ])
     expect(['BLOCK_1', 'BLOCK_2', 'BLOCK_3'].map(todoOf)).toEqual([null, null, null])
   })
@@ -109,7 +115,7 @@ describe('clearTaskStates', () => {
   })
 
   it('a refused write leaves the task, and says so', async () => {
-    stub({ set_todo_state_batch: () => Promise.reject(new Error('refused')) })
+    stub({ delete_property: () => Promise.reject(new Error('refused')) })
 
     await expect(clearTaskStates(pageStore, ['BLOCK_2'])).resolves.toBe(false)
 
@@ -117,6 +123,20 @@ describe('clearTaskStates', () => {
     expect(vi.mocked(toast.error).mock.calls.map(([message]) => message)).toEqual([
       'Failed to set task state',
     ])
+  })
+
+  it('a write refused part way keeps the clears made before it', async () => {
+    setTodo(pageStore, 'DONE', 'BLOCK_3')
+    stub({
+      delete_property: (args) =>
+        args['blockId'] === 'BLOCK_3'
+          ? Promise.reject(new Error('refused'))
+          : { op_refs: [], block_id: args['blockId'] as string, key: args['key'] as string },
+    })
+
+    await expect(clearTaskStates(pageStore, ['BLOCK_2', 'BLOCK_3'])).resolves.toBe(false)
+
+    expect(['BLOCK_2', 'BLOCK_3'].map(todoOf)).toEqual([null, 'DONE'])
   })
 })
 
@@ -250,9 +270,9 @@ describe('slash commands', () => {
 
     expect(mockedInvoke.mock.calls.map(([name]) => name)).toEqual([
       'set_property',
-      'set_todo_state_batch',
+      'delete_property',
     ])
-    expect(calls('set_todo_state_batch')).toEqual([{ blockIds: ['BLOCK_1'], state: null }])
+    expect(taskClears()).toEqual([{ blockId: 'BLOCK_1', key: 'todo_state' }])
     expect(store.getState().blocksById.get('BLOCK_1')?.todo_state).toBeNull()
   })
 
@@ -266,7 +286,7 @@ describe('slash commands', () => {
       label: 'Numbered list',
     })
 
-    expect(calls('set_todo_state_batch')).toEqual([])
+    expect(taskClears()).toEqual([])
     expect(store.getState().blocksById.get('BLOCK_1')?.todo_state).toBe('TODO')
   })
 
@@ -276,10 +296,10 @@ describe('slash commands', () => {
     const turnInto = structural().prefix.find(([p]) => p === 'turn-')?.[1]
 
     await turnInto?.(ctx, { id: 'turn-h1', label: 'Heading 1' })
-    expect(calls('set_todo_state_batch')).toEqual([])
+    expect(taskClears()).toEqual([])
 
     await turnInto?.(ctx, { id: 'turn-bullet-list', label: 'Bullet list' })
-    expect(calls('set_todo_state_batch')).toEqual([{ blockIds: ['BLOCK_1'], state: null }])
+    expect(taskClears()).toEqual([{ blockId: 'BLOCK_1', key: 'todo_state' }])
     expect(store.getState().blocksById.get('BLOCK_1')?.todo_state).toBeNull()
   })
 })
@@ -313,8 +333,8 @@ describe('typed list kinds', () => {
     typedList('bullet')
 
     await waitFor(() => expect(todoOf('BLOCK_2')).toBeNull())
-    expect(names()).toEqual(['set_property', 'set_todo_state_batch'])
-    expect(calls('set_todo_state_batch')).toEqual([{ blockIds: ['BLOCK_2'], state: null }])
+    expect(names()).toEqual(['set_property', 'delete_property'])
+    expect(taskClears()).toEqual([{ blockId: 'BLOCK_2', key: 'todo_state' }])
   })
 
   it('a refused `1. ` leaves the task', async () => {

@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest'
 import { BLOCK_EVENTS } from '@/lib/block-events'
 
 describe('BLOCK_EVENTS', () => {
-  it('contains all 18 expected event keys', () => {
+  it('contains all expected event keys', () => {
     const expectedKeys = [
       'OPEN_DATE_PICKER',
       'OPEN_DUE_DATE_PICKER',
@@ -23,7 +23,6 @@ describe('BLOCK_EVENTS', () => {
       'SET_PRIORITY_1',
       'SET_PRIORITY_2',
       'SET_PRIORITY_3',
-      'INSERT_ORDERED_LIST',
       'INSERT_DIVIDER',
       'INSERT_CALLOUT',
       'TURN_INTO_BLOCK',

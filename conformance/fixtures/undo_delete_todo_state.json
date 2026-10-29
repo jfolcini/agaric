@@ -1,0 +1,182 @@
+{
+  "description": "#6156 — `delete_property` on the reserved column key `todo_state` records the state it clears as `prior`, so undoing it by the refs it returned gives the task back. This is how picking a list kind clears a task, and why that clear can join the kind change's undo entry by ref. Every op runs its command, as the app's do, so each task write also writes its `created_at` stamp. The undo names both refs the delete returned, newest first: the stamp's clear and the state's. S3's delete is not undone, so a delete that leaves the column set reddens S3, and an undo that restores nothing reddens S2.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Task clear undo",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "undone",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      },
+      {
+        "block_type": "content",
+        "content": "kept clear",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 5,
+      "ops": [
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
+          "op_type": "set_todo_state"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "task_s2",
+      "returns": ["B2#todo_state=TODO"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "task_s3",
+      "returns": ["B3#todo_state=TODO"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "clear_s3",
+      "returns": ["delete_property"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "clear_s2",
+      "returns": ["delete_property"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_clear",
+      "returns": [
+        "undo_ops#reversed_op_type=delete_property#new_op_type=set_property#is_redo=false",
+        "undo_ops#reversed_op_type=delete_property#new_op_type=set_property#is_redo=false"
+      ]
+    }
+  ],
+  "name": "undo_delete_todo_state",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "state": "TODO"
+      },
+      "command": "set_todo_state",
+      "comment": "O1, and O2 its `created_at` stamp.",
+      "name": "task_s2",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "state": "TODO"
+      },
+      "command": "set_todo_state",
+      "comment": "O3, and O4 its `created_at` stamp.",
+      "name": "task_s3",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "todo_state"
+      },
+      "command": "delete_property",
+      "comment": "O5, and O6 the stamp's clear: never undone.",
+      "name": "clear_s3",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "todo_state"
+      },
+      "command": "delete_property",
+      "comment": "O7, and O8 the stamp's clear: the two refs the undo names.",
+      "name": "clear_s2",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O8", "O7"]
+      },
+      "command": "undo_ops",
+      "name": "undo_the_clear",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Task clear undo",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "undone",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "kept clear",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

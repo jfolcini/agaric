@@ -10678,6 +10678,104 @@ async fn undo_restores_the_space_a_peer_placed_a_page_in_5918() {
     a.mat.shutdown();
 }
 
+/// #6156 — a done task made bulleted is two writes, the list style's set and
+/// the task's clear, and the frontend undoes the refs they return as one entry,
+/// newest first. That gives back the task and the stamps cleared with it (their
+/// refs are among those the clear returns) and drops the style; redone in the
+/// order they were made, the refs take the task and its stamps off again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_and_redo_of_a_task_made_bulleted_by_the_refs_of_its_two_writes_6156() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (_page_id, child_ids) = create_page_with_children(&pool, &mat).await;
+    let target = child_ids[0].clone();
+    // TODO, then DONE, leaves both stamps, `created_at` and `completed_at`.
+    for state in ["TODO", "DONE"] {
+        set_todo_state_inner(&pool, DEV, &mat, target.clone().into(), Some(state.into()))
+            .await
+            .unwrap();
+    }
+    settle(&mat).await;
+    let task = value_slots(&pool, &target).await;
+    let keys = |slots: &ValueSlots| slots.1.iter().map(|row| row.0.clone()).collect::<Vec<_>>();
+    assert_eq!(task.0.0.as_deref(), Some("DONE"), "sanity: a done task");
+    assert_eq!(
+        keys(&task),
+        ["completed_at", "created_at"],
+        "sanity: it holds both stamps"
+    );
+
+    let style = capture_op_refs(set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        target.clone().into(),
+        "listStyle".into(),
+        Some("bullet".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    ))
+    .await
+    .unwrap();
+    let clear = capture_op_refs(delete_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        target.clone().into(),
+        "todo_state".into(),
+    ))
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let bulleted = value_slots(&pool, &target).await;
+    assert_eq!(bulleted.0.0, None, "sanity: the clear took the state off");
+    assert_eq!(
+        keys(&bulleted),
+        ["listStyle"],
+        "sanity: the stamps went with the state, and the style stays"
+    );
+    assert_eq!(style.op_refs.len(), 1, "the style's set");
+    assert_eq!(
+        clear.op_refs.len(),
+        3,
+        "the state's delete, then the clear of each stamp"
+    );
+
+    let made: Vec<OpRef> = style.op_refs.into_iter().chain(clear.op_refs).collect();
+    let undone = undo_ops_inner(&pool, DEV, &mat, made.into_iter().rev().collect())
+        .await
+        .expect("#6156: one undo of the two writes' refs must not fail");
+    settle(&mat).await;
+    assert_eq!(undone.len(), 4, "one reverse per op");
+    assert_eq!(
+        value_slots(&pool, &target).await,
+        task,
+        "the task and both stamps are back, and the style is gone"
+    );
+
+    for result in undone.iter().rev() {
+        redo_page_op_inner(
+            &pool,
+            DEV,
+            &mat,
+            result.new_op_ref.device_id.clone(),
+            result.new_op_ref.seq,
+        )
+        .await
+        .expect("#6156: redoing each reverse must not fail");
+    }
+    settle(&mat).await;
+    assert_eq!(
+        value_slots(&pool, &target).await,
+        bulleted,
+        "the redo takes the task and both stamps off, and the style is back"
+    );
+    mat.shutdown();
+}
+
 /// #6014 — a set records the value it overwrites in the slot that value lives
 /// in, so its undo restores every column-backed key and every typed
 /// `block_properties` slot exactly. The values are written to the tables

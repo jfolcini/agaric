@@ -112,6 +112,7 @@ export function mountNodeViews(
   lists: PageLists = new PageLists(
     {},
     rows.map(([id, depth]) => ({ id, depth })),
+    () => false,
   ),
 ) {
   const source = listSource(lists)

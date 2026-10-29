@@ -229,7 +229,7 @@ describe('the controls gate on a long page', () => {
       rowsOf(300),
       idMinter(),
       undefined,
-      listSource(new PageLists({}, [])),
+      listSource(new PageLists({}, [], () => false)),
       new FakeTasks(),
     )
     const store = createPageBlockStore(PAGE)

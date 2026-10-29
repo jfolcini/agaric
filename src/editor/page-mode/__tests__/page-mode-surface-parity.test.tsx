@@ -215,7 +215,7 @@ function pageModeEditor(): Editor {
       placeholder: '',
       pageId: PAGE,
       tasks: new FakeTasks(),
-      lists: listSource(new PageLists({}, [])),
+      lists: listSource(new PageLists({}, [], () => false)),
       commands: {
         searchSlashCommands: () => [],
         onSlashCommand: () => {},
@@ -340,6 +340,7 @@ describe('the block editor’s chords', () => {
       const lists = new PageLists(
         {},
         rows.map(([rowId, depth]) => ({ id: rowId, depth })),
+        () => false,
       )
       const editor = openPage(rows, idMinter(), undefined, listSource(lists), new FakeTasks())
       editors.push(editor)
