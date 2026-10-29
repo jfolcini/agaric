@@ -205,6 +205,35 @@ test.describe('one Ctrl+Z takes back a kind change with the kind it took off @ed
     expect(await kindOf(page, delta)).toEqual(DELTA)
   })
 
+  test('block mode: a bullet made code from the toolbar', async ({ page }) => {
+    const {
+      ids: [alpha, , , delta],
+      reopen,
+    } = await inBlockMode(page, 'Block code undo')
+    await focusBlockById(page, alpha)
+    await page.keyboard.press('End')
+    await page
+      .locator('[data-testid="block-editor"]')
+      .getByRole('button', { name: 'Turn into', exact: true })
+      .click()
+    await page.getByRole('menuitem', { name: 'Code block', exact: true }).click()
+    // A language no built-in row has, so the picker offers it as its custom row.
+    const language = page.getByRole('textbox', { name: 'Code block language' })
+    await language.fill('zzlang')
+    await page.getByTestId('use-custom-language').click()
+    await expect(language).toHaveCount(0)
+    await saveBlock(page, 'Escape')
+    await expect
+      .poll(() => kindOf(page, alpha))
+      .toEqual({ text: '```zzlang\nalpha\n```', listStyle: null, todo: null })
+
+    await pageUndo(page)
+    await reopen()
+
+    await expect.poll(() => kindOf(page, alpha)).toEqual(ALPHA)
+    expect(await kindOf(page, delta)).toEqual(DELTA)
+  })
+
   test('block mode: a bullet made a task', async ({ page }) => {
     const {
       ids: [, beta, , delta],

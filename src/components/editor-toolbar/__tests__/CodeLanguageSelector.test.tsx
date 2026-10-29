@@ -25,14 +25,18 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { makeBlock } from '@/__tests__/fixtures'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { CodeLanguageSelector } from '@/components/editor-toolbar/CodeLanguageSelector'
 import { CODE_LANGUAGES } from '@/components/FormattingToolbar/toolbar-config'
+import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
 import type { PropertyRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { listStyleFromRows, setListStyle } from '@/lib/list-style'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
+import { createPageBlockStore } from '@/stores/page-blocks'
+import { useUndoStore } from '@/stores/undo'
 
 // ── TipTap editor chain mock ──────────────────────────────────────────────
 // The component invokes one of two paths:
@@ -323,6 +327,43 @@ describe('CodeLanguageSelector', () => {
         expect(toast.error).not.toHaveBeenCalled()
       },
     )
+
+    it('commits the code block first, so the clear is in the edit’s undo entry (#6156)', async () => {
+      seedBlocks()
+      vi.mocked(invoke).mockImplementation(async (cmd: string, args?: InvokeArgs) =>
+        dispatch(cmd, args),
+      )
+      await setListStyle(blockId, 'bullet')
+      const pageStore = createPageBlockStore('PAGE_1')
+      pageStore.setState({ blocks: [makeBlock({ id: blockId, content: 'hello' })] })
+      useUndoStore.setState({ pages: new Map() })
+      // The roving editor's registered commit, as `useDebouncedContentCommit` registers it.
+      const unregister = registerActiveDraftFlush(blockId, async () => {
+        await pageStore.getState().edit(blockId, '```rust\nhello\n```')
+      })
+      const user = userEvent.setup()
+      render(
+        <CodeLanguageSelector
+          editor={makeEditor()}
+          blockId={blockId}
+          isCodeBlock={false}
+          currentLanguage=""
+          onClose={vi.fn()}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: 'rust' }))
+
+      await vi.waitFor(() => expect(styleOf()).toBe('none'))
+      unregister()
+      // One entry holding the edit and the clear: a clear before the commit is in none.
+      expect(
+        useUndoStore
+          .getState()
+          .pages.get('PAGE_1')
+          ?.undoStack.map((e) => e.refs?.map((r) => r.seq).length),
+      ).toEqual([2])
+    })
 
     it('toasts when clearing the list style fails', async () => {
       vi.mocked(invoke).mockImplementation(
