@@ -134,6 +134,11 @@ pub struct SyncScheduler {
     /// Interval for periodic resync.
     pub resync_interval: Duration,
 
+    /// How long an outbound dial may take before it is written off:
+    /// [`crate::sync_constants::CONNECT_TIMEOUT`], except in tests that dial a peer
+    /// nobody answers, where a UDP dial to nowhere always burns the whole budget.
+    pub(crate) connect_timeout: Duration,
+
     /// This device's own dialable coordinates, published by the daemon the
     /// moment its QUIC endpoint is bound (#4037).
     ///
@@ -619,6 +624,7 @@ impl SyncScheduler {
             last_change_at: std::sync::Mutex::new(tokio::time::Instant::now()),
             debounce_window: DEFAULT_DEBOUNCE,
             resync_interval: DEFAULT_RESYNC,
+            connect_timeout: crate::sync_constants::CONNECT_TIMEOUT,
             local_endpoint: watch::Sender::new(None),
             scanned_peer: watch::Sender::new(None),
         }
@@ -630,6 +636,15 @@ impl SyncScheduler {
             debounce_window,
             resync_interval,
             ..Self::new()
+        }
+    }
+
+    /// Shorten the dial budget, for tests whose peer never answers.
+    #[cfg(test)]
+    pub(crate) fn with_connect_timeout(self, connect_timeout: Duration) -> Self {
+        Self {
+            connect_timeout,
+            ..self
         }
     }
 
@@ -791,6 +806,20 @@ impl SyncScheduler {
         match backoff.get(peer_id) {
             None => true,
             Some(state) => Instant::now() >= state.next_retry_at,
+        }
+    }
+
+    /// End `peer_id`'s backoff wait now, keeping its failure count and report
+    /// memory: the state a daemon cycle is in once the wait has run out.
+    #[cfg(test)]
+    pub(crate) fn expire_backoff(&self, peer_id: &str) {
+        if let Some(state) = self
+            .backoff
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_mut(peer_id)
+        {
+            state.next_retry_at = Instant::now();
         }
     }
 
