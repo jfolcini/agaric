@@ -753,12 +753,10 @@ describe('useBlockSlashCommands undo notifications', () => {
     expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1', [{ device_id: 'dev1', seq: 3 }])
   })
 
-  // #4552 slice 2 — `numbered-list` no longer routes through
-  // `applyContentEdit`: it calls `setListStyle` (a property write) instead of
-  // editing `blocks.content`, so it does NOT clear the redo stack the way the
-  // content-edit-backed commands above do. This intentionally documents the
-  // NEW contract, replacing the pre-slice-2 assertion that it did.
-  it('numbered-list slash command does NOT call onNewAction (property write, not a content edit)', async () => {
+  // #4552 slice 2 — `numbered-list` calls `setListStyle` (a property write)
+  // instead of editing `blocks.content`. #6156 — that write is the block's
+  // kind change, so it is an undo step of its own: its op refs are recorded.
+  it('numbered-list slash command records its property write for undo', async () => {
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
 
@@ -766,7 +764,7 @@ describe('useBlockSlashCommands undo notifications', () => {
       await result.current.handleSlashCommand({ id: 'numbered-list', label: 'Numbered list' })
     })
 
-    expect(onNewActionSpy).not.toHaveBeenCalled()
+    expect(onNewActionSpy.mock.calls).toEqual([['PAGE_1', [{ device_id: 'dev1', seq: 1 }]]])
   })
 })
 

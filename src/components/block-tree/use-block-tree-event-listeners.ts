@@ -35,6 +35,7 @@ import type { DatePickerMode } from '@/components/block-tree/use-block-date-pick
 import { setBlockPriority } from '@/components/block-tree/use-block-properties'
 import {
   applyContentEdit,
+  notifyUndo,
   readCurrentContent,
 } from '@/components/block-tree/use-block-slash-commands/helpers'
 import type { SlashCommandContext } from '@/components/block-tree/use-block-slash-commands/types'
@@ -218,7 +219,8 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
         )
         if (!written) return
         try {
-          await setListStyle(blockId, listStyleForBlockType('callout'))
+          // In the edit's undo entry (#6156).
+          notifyUndo(rootParentId, await setListStyle(blockId, listStyleForBlockType('callout')))
         } catch (err) {
           logger.error('BlockTree', 'setListStyle (callout) failed', { blockId }, err)
           notify.error(t('slash.calloutFailed'))
@@ -231,7 +233,8 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
     // identical to the slash `/turn-*` family and the context-menu Turn-into.
     // #4552 slice 2 — also writes the `listStyle` property `type` implies
     // (see `useSlashCommandStructural.handleTurnInto`'s matching comment),
-    // then, for a list, clears the task state (#5691 D3).
+    // then, for a list, clears the task state (#5691 D3), both in the edit's
+    // undo entry (#6156).
     const onTurnInto: BlockCommandHandler = (blockId, detail) => {
       const type = (detail as { type?: BlockTypeToken } | undefined)?.type
       if (!type) return
@@ -241,7 +244,7 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
         if (!(await applyContentEdit(ctx, newContent, 'slash.turnIntoFailed'))) return
         const style = listStyleForBlockType(type)
         try {
-          await setListStyle(blockId, style)
+          notifyUndo(rootParentId, await setListStyle(blockId, style))
         } catch (err) {
           logger.error('BlockTree', 'setListStyle (turn-into) failed', { blockId }, err)
           notify.error(t('slash.turnIntoFailed'))

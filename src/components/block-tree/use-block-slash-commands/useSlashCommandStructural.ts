@@ -14,6 +14,7 @@ import { useMemo } from 'react'
 
 import {
   applyContentEdit,
+  notifyUndo,
   readCurrentContent,
 } from '@/components/block-tree/use-block-slash-commands/helpers'
 import type {
@@ -37,7 +38,8 @@ import { clearTaskStates } from '@/stores/page-blocks'
  * {@link handleListStyle} explains, so the style never goes without the change
  * `/code` and `/quote` make in the editor. Page mode clears it its own way.
  * A command whose `edit_block` was refused leaves the style alone: the block
- * is unchanged, and that refusal has already been toasted.
+ * is unchanged, and that refusal has already been toasted. The clear joins the
+ * command's undo entry, which its edit recorded just before (#6156).
  */
 async function clearListStyleFor(ctx: SlashCommandContext, failKey: string): Promise<void> {
   if (ctx.clearListStyle) {
@@ -46,7 +48,7 @@ async function clearListStyleFor(ctx: SlashCommandContext, failKey: string): Pro
   }
   try {
     await flushActiveDraft()
-    await setListStyle(ctx.blockId, 'none')
+    notifyUndo(ctx.rootParentId, await setListStyle(ctx.blockId, 'none'))
   } catch (err) {
     logger.error('useSlashCommandStructural', 'clearing the list style failed', undefined, err)
     notify.error(ctx.t(failKey))
@@ -103,7 +105,7 @@ async function handleToggleBlock(
  * pin the pair.
  *
  * A task is a list kind (#5691 D3): once the style is written, the block
- * loses its task state.
+ * loses its task state, in the same undo entry (#6156).
  */
 async function handleListStyle(
   ctx: SlashCommandContext,
@@ -112,7 +114,7 @@ async function handleListStyle(
 ): Promise<void> {
   try {
     await flushActiveDraft()
-    await setListStyle(ctx.blockId, style)
+    notifyUndo(ctx.rootParentId, await setListStyle(ctx.blockId, style))
   } catch (err) {
     logger.error('useSlashCommandStructural', `setListStyle(${style}) failed`, undefined, err)
     notify.error(ctx.t(failKey))
@@ -130,7 +132,8 @@ async function handleListStyle(
  * `type` (`listStyleForBlockType`): `'ordered'`/`'bullet'` for the two list
  * targets, `'none'` (cleared) for every other target, so converting a styled
  * block AWAY from a list does not leave it flagged as one. A block turned
- * into a list loses its task state (#5691 D3), once the style is written.
+ * into a list loses its task state (#5691 D3), once the style is written. Both
+ * join the edit's undo entry (#6156).
  */
 async function handleTurnInto(ctx: SlashCommandContext, item: PickerItem): Promise<void> {
   const type = turnIdToBlockType(item.id)
@@ -139,7 +142,7 @@ async function handleTurnInto(ctx: SlashCommandContext, item: PickerItem): Promi
   if (!(await applyContentEdit(ctx, newContent, 'slash.turnIntoFailed'))) return
   const style = listStyleForBlockType(type)
   try {
-    await setListStyle(ctx.blockId, style)
+    notifyUndo(ctx.rootParentId, await setListStyle(ctx.blockId, style))
   } catch (err) {
     logger.error('useSlashCommandStructural', 'setListStyle (turn-into) failed', undefined, err)
     notify.error(ctx.t('slash.turnIntoFailed'))

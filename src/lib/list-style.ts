@@ -13,7 +13,7 @@
 
 import { parse } from '@/editor/markdown-serializer'
 import { unwrap } from '@/lib/app-error'
-import type { PropertyRow } from '@/lib/bindings'
+import type { OpRef, PropertyRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import type { BlockTypeToken } from '@/lib/block-type-convert'
 import { parseEmbedToken } from '@/lib/embed-token'
@@ -53,13 +53,12 @@ export function listStyleFromRows(rows: readonly PropertyRow[] | undefined): Lis
 /**
  * Set a block's list style. Writing `'none'` clears the property (delete)
  * rather than storing a sentinel, keeping the "absent = none" invariant.
+ * Resolves the refs of the ops it appended, for the caller's undo entry
+ * (#6156): a kind change and the style it takes off are one undo step.
  */
-export async function setListStyle(blockId: string, style: ListStyle): Promise<void> {
-  if (style === 'none') {
-    unwrap(await commands.deleteProperty(blockId, LIST_STYLE_KEY))
-    return
-  }
-  unwrap(
+export async function setListStyle(blockId: string, style: ListStyle): Promise<OpRef[]> {
+  if (style === 'none') return clearListStyle(blockId)
+  return unwrap(
     await commands.setProperty(blockId, LIST_STYLE_KEY, {
       value_text: style,
       value_num: null,
@@ -67,12 +66,12 @@ export async function setListStyle(blockId: string, style: ListStyle): Promise<v
       value_ref: null,
       value_bool: null,
     }),
-  )
+  ).op_refs
 }
 
 /** Clear a block's list style (equivalent to `setListStyle(id, 'none')`). */
-export async function clearListStyle(blockId: string): Promise<void> {
-  unwrap(await commands.deleteProperty(blockId, LIST_STYLE_KEY))
+export async function clearListStyle(blockId: string): Promise<OpRef[]> {
+  return unwrap(await commands.deleteProperty(blockId, LIST_STYLE_KEY)).op_refs
 }
 
 /**

@@ -343,28 +343,30 @@ export function createReducers({
             return { blocks, blocksById: cloneBlocksByIdWith(state.blocksById, [normalized]) }
           })
         }
-        // #2600 — coalesce a block's debounced mid-typing commits + its final
-        // blur commit into ONE undo entry (key is per-block) so Ctrl+Z reverts
-        // a block edit as a single action despite the finer commit cadence.
-        // Without the key, a `merge: false` entry is not joined by the typing
-        // that follows it either.
-        if (merge) notifyUndoNewAction(rootParentId, resp.op_refs, `edit:${blockId}`)
-        else notifyUndoNewAction(rootParentId, resp.op_refs, undefined, { merge: false })
         // A list block whose text this device stops opening with a paragraph
         // leaves the list (`showsListMarker`), once the text is saved. Sync,
         // undo and restore reach the store through `load()`, so they clear nothing.
         // Caught here: the text is saved, so a failure must not roll it back.
+        // The clear is in the edit's undo entry: one Ctrl+Z brings back both (#6156).
+        let opRefs = resp.op_refs
         try {
           if (
             previousContent !== undefined &&
             contentShowsListMarker(previousContent ?? '') &&
             !contentShowsListMarker(content)
           ) {
-            await clearListStyle(blockId)
+            opRefs = [...opRefs, ...(await clearListStyle(blockId))]
           }
         } catch (err) {
           logger.warn('page-blocks', 'clearing the list style failed', { blockId }, err)
         }
+        // #2600 — coalesce a block's debounced mid-typing commits + its final
+        // blur commit into ONE undo entry (key is per-block) so Ctrl+Z reverts
+        // a block edit as a single action despite the finer commit cadence.
+        // Without the key, a `merge: false` entry is not joined by the typing
+        // that follows it either.
+        if (merge) notifyUndoNewAction(rootParentId, opRefs, `edit:${blockId}`)
+        else notifyUndoNewAction(rootParentId, opRefs, undefined, { merge: false })
         return true
       } catch (err) {
         // Rollback optimistic update — also a single-block touch.

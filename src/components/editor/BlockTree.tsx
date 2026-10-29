@@ -60,6 +60,7 @@ import {
   searchSlashMenu,
   useBlockSlashCommands,
 } from '@/components/block-tree/use-block-slash-commands'
+import { notifyUndo } from '@/components/block-tree/use-block-slash-commands/helpers'
 import { useBlockTreeContextBags } from '@/components/block-tree/use-block-tree-context-bags'
 import { useBlockTreeEventListeners } from '@/components/block-tree/use-block-tree-event-listeners'
 import { useBlockTreeKeyboardShortcuts } from '@/components/block-tree/use-block-tree-keyboard-shortcuts'
@@ -859,9 +860,10 @@ export function BlockTree({
       // it flagged as one. See `useSlashCommandStructural.handleTurnInto`'s
       // matching comment for the full rationale.
       // A block turned into a list loses its task state (#5691 D3), once the style is written.
+      // Both join the edit's undo entry (#6156).
       const style = listStyleForBlockType(blockType)
       try {
-        await setListStyle(blockId, style)
+        notifyUndo(pageStore.getState().rootParentId, await setListStyle(blockId, style))
         if (style !== 'none') await clearTaskStates(pageStore, [blockId])
       } catch (err) {
         logger.error('BlockTree', 'setListStyle (turn-into) failed', { blockId }, err)
