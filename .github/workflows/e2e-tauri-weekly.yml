@@ -28,7 +28,7 @@
 # SPEC SCOPE — why this lane runs `e2e-tauri/*.e2e.ts` and NOT the 100+ specs
 # under `e2e/`.
 # -----------------------------------------------------------------------------
-# `wdio.conf.ts` already globs `./e2e-tauri/**/*.e2e.ts`, so there is no
+# `wdio.conf.ts` already globs `e2e-tauri/**/*.e2e.ts`, so there is no
 # allowlist here to widen: this lane runs EVERY real-backend spec that exists.
 # The set is small because the specs themselves are what is scarce, not the
 # runner configuration — a new `e2e-tauri/<name>.e2e.ts` is picked up with no
@@ -331,7 +331,8 @@ jobs:
 
       - name: Run WebdriverIO real-backend specs (Xvfb)
         # The binaries come from `build`, so tell wdio.conf.ts to skip its
-        # own onPrepare build. `--shard 1/1`, the spec-only leg's, selects
+        # own onPrepare build. wdio.conf.ts deals the spec files round-robin
+        # over the `--shard` total; `--shard 1/1`, the spec-only leg's, selects
         # every spec it is given. xvfb-run gives the WebKitWebView a display and
         # dbus-run-session a session bus (#4444: without one every worker boot
         # stalled a flat 30 s, consistent with the 25 s dbus default timeout),
