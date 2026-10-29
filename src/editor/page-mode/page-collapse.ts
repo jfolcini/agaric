@@ -50,7 +50,7 @@ import { matchesShortcutBinding } from '@/lib/keyboard-config'
 export type Fold = 'collapsed' | 'expanded'
 
 /** The class a hidden block wears (`index.css`). */
-const HIDDEN_CLASS = 'page-block-hidden'
+export const HIDDEN_CLASS = 'page-block-hidden'
 
 const NONE: ReadonlySet<string> = new Set()
 

@@ -56,7 +56,7 @@ import { StaticBlock, type StaticBlockProps } from '@/components/editor/StaticBl
 import { docShowsListMarker } from '@/editor/extensions/list-marker-decoration'
 import { serialize } from '@/editor/markdown-serializer'
 import { isCurrentBlock } from '@/editor/page-mode/page-block-focus'
-import { foldIn, toggleFold } from '@/editor/page-mode/page-collapse'
+import { foldIn, HIDDEN_CLASS, toggleFold } from '@/editor/page-mode/page-collapse'
 import { blockDocJson, PageBlock } from '@/editor/page-mode/page-document'
 import { PageGutter } from '@/editor/page-mode/page-gutter'
 import type { PageLists } from '@/editor/page-mode/page-lists'
@@ -135,11 +135,20 @@ export interface PageTaskSource extends PageTaskActions {
  * comes within a screen of the viewport. The caret's block mounts at once,
  * and so does a block drawn anew (a new depth) whose id has mounted before. A
  * runtime without the observer mounts everything.
+ *
+ * The observer works out each block it watches on every frame the page lays
+ * out, a key typed included, so it watches only the waiting blocks within two
+ * screens of the viewport (`pick`), picked again as the page scrolls or
+ * changes size; a block drawn anew is watched at once, until the next pick.
  */
 class ControlsGate {
   private readonly waiting = new Map<Element, () => void>()
+  /** The waiting blocks the observer watches. */
+  private readonly watched = new Set<Element>()
   private readonly shown = new Set<string>()
   private observer: IntersectionObserver | null = null
+  private root: HTMLElement | null = null
+  private frame = 0
   private readonly editor: Editor
 
   constructor(editor: Editor) {
@@ -156,21 +165,9 @@ class ControlsGate {
       if (id !== null) this.shown.add(id)
       reveal()
     })
-    if (this.observer !== null) {
-      this.observer.observe(dom)
-      return
-    }
-    // Not before the editor is in the page: its scroller is the root.
-    // `EditorContent` builds the node views again once it is.
-    const host = this.editor.options.element
-    if (!(host instanceof HTMLElement) || !host.isConnected) return
-    this.observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) if (entry.isIntersecting) this.reveal(entry.target)
-      },
-      { root: scrollParentY(host), rootMargin: '100% 0px' },
-    )
-    for (const waiting of this.waiting.keys()) this.observer.observe(waiting)
+    if (this.observer === null && !this.start()) return
+    this.observe(dom)
+    this.schedule()
   }
 
   reveal(dom: Node | null): void {
@@ -183,8 +180,96 @@ class ControlsGate {
 
   unwatch(dom: Element): void {
     this.waiting.delete(dom)
+    this.watched.delete(dom)
     this.observer?.unobserve(dom)
   }
+
+  /** The observer, once the editor is in the page: its scroller is the root. */
+  private start(): boolean {
+    // `EditorContent` builds the node views again once it is.
+    const host = this.editor.options.element
+    if (!(host instanceof HTMLElement) || !host.isConnected) return false
+    const root = scrollParentY(host)
+    this.root = root
+    this.observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) if (entry.isIntersecting) this.reveal(entry.target)
+      },
+      { root, rootMargin: '100% 0px' },
+    )
+    for (const waiting of this.waiting.keys()) this.observe(waiting)
+    const scroller = root ?? window
+    scroller.addEventListener('scroll', this.schedule, { passive: true })
+    // The blocks move, or the viewport changes, without a scroll.
+    const resized = new ResizeObserver(this.schedule)
+    resized.observe(this.editor.view.dom)
+    resized.observe(root ?? document.documentElement)
+    this.editor.on('destroy', () => {
+      scroller.removeEventListener('scroll', this.schedule)
+      resized.disconnect()
+      cancelAnimationFrame(this.frame)
+      this.frame = 0
+    })
+    return true
+  }
+
+  private observe(dom: Element): void {
+    if (this.watched.has(dom)) return
+    this.watched.add(dom)
+    this.observer?.observe(dom)
+  }
+
+  private readonly schedule = (): void => {
+    if (this.frame !== 0) return
+    this.frame = requestAnimationFrame(() => {
+      this.frame = 0
+      this.pick()
+    })
+  }
+
+  /** Watch the waiting blocks within two screens of the viewport, and no others. */
+  private pick(): void {
+    const box = this.root?.getBoundingClientRect() ?? { top: 0, bottom: window.innerHeight }
+    const screen = box.bottom - box.top
+    const top = box.top - 2 * screen
+    const bottom = box.bottom + 2 * screen
+    const blocks = this.editor.view.dom.children
+    const near = new Set<Element>()
+    for (let i = firstReaching(blocks, top); i < blocks.length; i += 1) {
+      const block = blocks[i] as Element
+      if (block.classList.contains(HIDDEN_CLASS)) continue
+      if (block.getBoundingClientRect().top > bottom) break
+      if (this.waiting.has(block)) near.add(block)
+    }
+    for (const dom of this.watched) {
+      if (near.has(dom)) continue
+      this.watched.delete(dom)
+      this.observer?.unobserve(dom)
+    }
+    for (const dom of near) this.observe(dom)
+  }
+}
+
+/**
+ * The index of the first of `blocks` shown whose bottom is at or below `y`, or
+ * their count: shown blocks are laid out in order, and a hidden one has no box.
+ */
+function firstReaching(blocks: HTMLCollection, y: number): number {
+  let lo = 0
+  let hi = blocks.length
+  let found = blocks.length
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2)
+    let at = mid
+    while (at < hi && (blocks[at] as Element).classList.contains(HIDDEN_CLASS)) at += 1
+    if (at < hi && (blocks[at] as Element).getBoundingClientRect().bottom < y) {
+      lo = at + 1
+    } else {
+      if (at < hi) found = at
+      hi = mid
+    }
+  }
+  return found
 }
 
 const gates = new WeakMap<Editor, ControlsGate>()
