@@ -6,7 +6,7 @@
  * few behaviours that live in the editor's own wiring.
  */
 
-import { act, render } from '@testing-library/react'
+import { act, render, waitFor } from '@testing-library/react'
 import type { Editor } from '@tiptap/core'
 import { EditorContent } from '@tiptap/react'
 import { createRef } from 'react'
@@ -210,20 +210,20 @@ export function renderPageMode(
 }
 
 /**
- * The editor `PageModeEditor` mounts, once its read of the page lands. Turns,
- * each a task so an answer delivered in a task of its own lands, not a timed
- * wait: a mutant that breaks the mount fails at once, where a retrying wait
- * would hold the setup's long `asyncUtilTimeout`.
+ * Page mode's editor, once page mode has finished opening: mounted after its read of the page
+ * lands, and past the frame in which the opening's caret placement takes focus (TipTap's `focus`
+ * focuses a frame late), so the caller sees the focus the opening took, or that it took none.
  */
 export async function editorIn(container: HTMLElement): Promise<Editor> {
-  for (let turn = 0; turn < 50; turn += 1) {
+  const editor = await waitFor(() => {
     const dom = container.querySelector('[data-testid="page-mode-editor"]') as
       | (HTMLElement & { editor?: Editor })
       | null
-    if (dom?.editor !== undefined) return dom.editor
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0))
-    })
-  }
-  throw new Error('page mode editor not mounted')
+    if (dom?.editor === undefined) throw new Error('page mode editor not mounted')
+    return dom.editor
+  })
+  await act(async () => {
+    await new Promise((resolve) => requestAnimationFrame(resolve))
+  })
+  return editor
 }

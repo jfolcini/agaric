@@ -187,6 +187,8 @@ describe('Edit as Markdown link back to page mode', () => {
     const { pageId } = seedPage(['first'], 'Blocks to Markdown to page')
     const { container } = render(<PageEditor pageId={pageId} title="Blocks to Markdown to page" />)
     await screen.findByTestId('block-tree')
+    // Offered once `get_block` says the page is not a tag's; `?.()` before then does nothing.
+    await waitFor(() => expect(header.onEditSource).toBeDefined())
     await act(async () => header.onEditSource?.())
     await screen.findByTestId('page-source-mode')
     expect(source?.pageModeBlocked).toBe(null)
@@ -202,6 +204,7 @@ describe('Edit as Markdown link back to page mode', () => {
     const { pageId } = seedPage(['first'], 'Markdown over the cap')
     const { container } = render(<PageEditor pageId={pageId} title="Markdown over the cap" />)
     await screen.findByTestId('block-tree')
+    await waitFor(() => expect(header.onEditSource).toBeDefined())
     await act(async () => header.onEditSource?.())
     await screen.findByTestId('page-source-mode')
     // The buffer's save, as `apply_page_source` writes it.
@@ -227,6 +230,7 @@ describe('Edit as Markdown link back to page mode', () => {
     const { pageId } = seedPage(['first'], 'Touch Markdown')
     render(<PageEditor pageId={pageId} title="Touch Markdown" />)
     await screen.findByTestId('block-tree')
+    await waitFor(() => expect(header.onEditSource).toBeDefined())
     await act(async () => header.onEditSource?.())
     await screen.findByTestId('page-source-mode')
 
@@ -239,6 +243,7 @@ describe('Edit as Markdown link back to page mode', () => {
     const { pageId } = seedPage(texts, 'Long Markdown')
     render(<PageEditor pageId={pageId} title="Long Markdown" />)
     await screen.findByTestId('block-tree')
+    await waitFor(() => expect(header.onEditSource).toBeDefined())
     await act(async () => getPageStore(pageId)?.getState().load())
     await act(async () => header.onEditSource?.())
     await screen.findByTestId('page-source-mode')
