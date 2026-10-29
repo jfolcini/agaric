@@ -183,6 +183,11 @@ export class PageLists {
     if (style !== 'none') this.leftByUndo.set(id, { style, depth })
   }
 
+  /** The editor's redo history is gone: what its redos were to give back is not due. */
+  forgetUndone(): void {
+    this.leftByUndo.clear()
+  }
+
   /**
    * The styles an undo or a redo from `before` to `doc`, now at undo depth
    * `undo` and redo depth `redo`, gives back: to each block that left its list
@@ -386,6 +391,7 @@ const PageListKeys = Extension.create<{ source: PageListSource }, { depth: numbe
     const undoing = history && depth < this.storage.depth
     this.storage.depth = depth
     const redo = redoDepth(state)
+    if (!history && redo === 0) source.lists.forgetUndone()
     for (const id of leftTheirList(transaction.before, state.doc, source.lists)) {
       if (undoing) source.lists.leaveByUndo(id, redo)
       else source.lists.leave(id, depth)

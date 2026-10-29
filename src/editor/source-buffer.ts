@@ -171,7 +171,7 @@ const splitLine: Command = (state, dispatch) => {
   } else if (isBlank(before) && !isBlank(moved)) {
     // The indentation is the block's place, so the text moved keeps it.
     tr.split($from.pos).insertText(before)
-    const head = list?.length ?? /^[ \t]*/.exec(text)?.[0].length ?? 0
+    const head = list?.length ?? /^[ \t]*(?:#{1,6}[ \t]+)?/.exec(text)?.[0].length ?? 0
     tr.setSelection(TextSelection.create(tr.doc, tr.selection.from - before.length + head))
   } else if (list !== null || isBlank(before)) {
     tr.split($from.pos)

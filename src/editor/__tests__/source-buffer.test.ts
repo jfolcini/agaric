@@ -399,6 +399,23 @@ describe('Enter', () => {
       ])
     })
 
+    it('at column 0 of a heading, the caret goes after its `#` run, at its text as page mode leaves it', () => {
+      const ed = build([
+        ['a', A],
+        ['', null],
+        ['  ## Title', B],
+      ])
+      caret(ed, 2, 0)
+
+      press(ed, 'Enter')
+      ed.commands.insertContent('x')
+
+      expect(lines(ed).slice(2)).toEqual([
+        ['', null],
+        ['  ## xTitle', B],
+      ])
+    })
+
     it.each([
       ['a top-level heading', '', '## foo bar'],
       ['a child heading', '  ', '### foo bar'],
