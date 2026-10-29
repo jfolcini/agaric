@@ -61,7 +61,12 @@ import {
   readActiveSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
 import { tagsHandlers } from '@/lib/tauri-mock/handlers/tags'
-import { findEmptyPageTitled, resolveInboundNames, resolveTagNames } from '@/lib/tauri-mock/names'
+import {
+  findEmptyPageTitled,
+  resolveInboundNames,
+  resolveRefValue,
+  resolveTagNames,
+} from '@/lib/tauri-mock/names'
 import {
   blockTags,
   blocks,
@@ -928,9 +933,10 @@ function warningAbout(content: string, what: string): string {
 
 /**
  * Which blocks a merge keeps and with what text. A block changed on one side
- * takes that side's text; changed on both, the page's stays and the buffer's
- * is forked as a new block before it. A delete on one side stands unless the
- * other side changed the block or moved it to another parent. DELIBERATE
+ * takes that side's text; changed on both, its text or one property two ways,
+ * the page's stays and the buffer's is forked as a new block before it. A
+ * delete on one side stands unless the other side changed the block, its text
+ * or a property, or moved it to another parent. DELIBERATE
  * APPROXIMATION: two different edits of a multi-line block fork here, where
  * the backend's `merge_lines` first tries to merge them line by line.
  */
@@ -946,11 +952,14 @@ function mergeSourceBlocks(
     const b = base.byKey.get(key)
     const m = mine.byKey.get(key)
     if (m === undefined) {
-      if (b?.content === c.content && !moved(current, key)) continue
+      if (b !== undefined && sameBlock(b, c) && !moved(current, key)) continue
       if (b !== undefined) {
         warnings.push(warningAbout(c.content, 'changed on the page; your delete was not applied'))
       }
       kept.set(key, { content: c.content, anchor: key, fork: null })
+    } else if (clashes(b, c, m)) {
+      warnings.push(warningAbout(c.content, 'was changed here and on the page; both versions kept'))
+      kept.set(key, { content: c.content, anchor: key, fork: m.content })
     } else if (c.content === m.content || m.content === b?.content) {
       kept.set(key, { content: c.content, anchor: key, fork: null })
     } else if (c.content === b?.content) {
@@ -965,7 +974,7 @@ function mergeSourceBlocks(
     const b = base.byKey.get(key)
     if (b === undefined) {
       kept.set(key, { content: m.content, anchor: m.anchor, fork: null })
-    } else if (m.content !== b.content || moved(mine, key)) {
+    } else if (!sameBlock(b, m) || moved(mine, key)) {
       warnings.push(warningAbout(m.content, 'was deleted on the page; saved as a new block'))
       kept.set(key, { content: m.content, anchor: null, fork: null })
     }
@@ -1091,9 +1100,15 @@ function mergeSourceBuffer(
   const emit = (parent: string | null, depth: number): void => {
     for (const key of mergeSourceOrder(outlines, parent, parentOf, warnings)) {
       const block = kept.get(key) as MergedBlock
-      if (block.fork !== null) merged.push({ content: block.fork, depth, anchor: null })
       const marks = outlines.mine.byKey.get(key)?.marks
-      merged.push({ content: block.content, depth, anchor: block.anchor, marks })
+      if (block.fork !== null) merged.push({ content: block.fork, depth, anchor: null, marks })
+      // A forked block stays the page's: the buffer's marks went with the fork.
+      merged.push({
+        content: block.content,
+        depth,
+        anchor: block.anchor,
+        marks: block.fork === null ? marks : undefined,
+      })
       emit(key, depth + 1)
     }
   }
@@ -1145,6 +1160,25 @@ function planMarkWrites(
   return { deleted, set, todoState }
 }
 
+/** A bullet's properties as the save reads them; a Source bullet has none the mock reads. */
+function bulletProperties({ marks }: SourceBullet): Map<string, string> {
+  return marks === undefined ? new Map() : markProperties(marks)
+}
+
+/** `same` (`markdown_source_merge.rs`): one text and one value for every key. */
+function sameBlock(x: SourceBullet, y: SourceBullet): boolean {
+  const [a, b] = [bulletProperties(x), bulletProperties(y)]
+  return x.content === y.content && a.size === b.size && [...a].every(([k, v]) => b.get(k) === v)
+}
+
+/** Whether `c` and `m` changed one property of `b` two ways, which `merge_block` cannot merge. */
+function clashes(b: SourceBullet | undefined, c: SourceBullet, m: SourceBullet): boolean {
+  if (b === undefined) return false
+  const sides = [b, c, m].map(bulletProperties)
+  const keys = new Set(sides.flatMap((side) => [...side.keys()]))
+  return [...keys].some((key) => new Set(sides.map((side) => side.get(key))).size === 3)
+}
+
 /** What a save writes to a block it creates: every property its markers and lines give. */
 function newMarkWrites(marks: Marks): MarkWrites {
   const set = [...markProperties(marks)].filter(([, value]) => value !== '')
@@ -1170,6 +1204,7 @@ function checkLineValue(bullet: SourceBullet, spaceId: string | null, key: strin
   try {
     assertValidSetPropertyValue(spaceId, key, value)
     if (lineColumns(spaceId, key, value)['value_date'] !== undefined) assertValidDateFormat(value)
+    if (propertyDefinition(spaceId, key)?.['value_type'] === 'ref') resolveRefValue(value, spaceId)
   } catch (err) {
     const reason = (err as { message?: unknown }).message
     throw refusedAt(bullet.line, `\`${key}:: ${value}\` cannot be saved: ${String(reason)}`)
@@ -1946,21 +1981,23 @@ export const pagesHandlers = {
   // #5140 Phase 4a — save the page edited as its source buffer: moves and
   // creates first, then edits, then the page's front matter (#5160 S8), then
   // deletes, so a child kept out of a deleted block has moved before the
-  // delete cascades. The text is read by `readByLine`, so the backend's list
-  // markers, task checkboxes and property lines are not modelled
-  // (`properties_*` count the page's own), nor are its op cap and depth limit;
-  // tests must not rely on the mock for them. The names a new or edited bullet
-  // writes resolve in the page's space (`resolveInboundNames`, #5160 N4), the
-  // created pages and tags in `names_created`. Phase 5: with `merge`, a stale
-  // buffer is saved with the page's changes folded in (`mergeSourceBuffer`).
+  // delete cascades. The text is read by `readByLine`; in a Source buffer the
+  // backend's list markers, task checkboxes and property lines are not
+  // modelled (`properties_*` count the page's own), nor in either dialect are
+  // its op cap and depth limit; tests must not rely on the mock for them. The
+  // names a new or edited bullet writes resolve in the page's space
+  // (`resolveInboundNames`, #5160 N4), the created pages and tags in
+  // `names_created`. Phase 5: with `merge`, a stale buffer is saved with the
+  // page's changes folded in (`mergeSourceBuffer`).
   // #5691: a Document buffer is rendered and read as the backend's grammar
   // writes and reads it, and its save writes a block's list marker, checkbox
   // and `key:: value` lines as the backend does: `listStyle`, the task state
   // and each property, by key, a task's hidden list style going with an edit
-  // to it (`planMarkWrites`). Not modelled: a key folded to its definition
-  // (D13), a `key::` line with no value for a key the block does not hold
-  // (kept as text there), a number or boolean its definition refuses, and the
-  // page's own `key:: value` lines after its front matter.
+  // to it (`planMarkWrites`); a merge forks a block whose property both sides
+  // changed. Not modelled: a key folded to its definition (D13), a `key::`
+  // line with no value for a key the block does not hold (kept as text
+  // there), a number or boolean its definition refuses, and the page's own
+  // `key:: value` lines after its front matter.
   apply_page_source: (args) => {
     const a = args as Record<string, unknown>
     const pageId = a['pageId'] as string

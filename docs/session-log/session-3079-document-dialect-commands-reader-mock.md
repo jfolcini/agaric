@@ -42,6 +42,12 @@ This is #5691 G2b. G1 (#6162) and G2a (#6175) built the line-split format's gram
 - **A quoted value with a lone surrogate:** `JSON.parse` keeps it, while serde_json refuses it and Rust keeps the text. TS now does the same.
 - **Grammar check:** a differential fuzz of `parseDocument` against the Rust parse ran on about 260,000 buffers. A backend-authored render comparison covered about 5,300 random blocks. Neither found another divergence.
 
+**A second review of the mock's write path** read it against the Rust apply path line by line and found four more divergences. Each was fixed with a backend-authored fixture step that was red before the fix:
+- On a stale buffer that both sides edited, a marked block's fork lost its marks, and the buffer's marks landed on the page's block.
+- A property changed differently on each side did not fork the block.
+- A delete against a property-only change compared text alone.
+- A ref line that named no page passed the pre-write check, then failed mid-save.
+
 **Known differences**, listed in the mock's handler comment:
 - D13 key folding;
 - an empty `key::` line for a key the block does not hold;
