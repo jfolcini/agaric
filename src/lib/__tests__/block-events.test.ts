@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest'
 import { BLOCK_EVENTS } from '@/lib/block-events'
 
 describe('BLOCK_EVENTS', () => {
-  it('contains all 17 expected event keys', () => {
+  it('contains all 18 expected event keys', () => {
     const expectedKeys = [
       'OPEN_DATE_PICKER',
       'OPEN_DUE_DATE_PICKER',
@@ -27,6 +27,7 @@ describe('BLOCK_EVENTS', () => {
       'INSERT_DIVIDER',
       'INSERT_CALLOUT',
       'TURN_INTO_BLOCK',
+      'RESTORE_LIST_STYLE',
     ]
     expect(Object.keys(BLOCK_EVENTS).toSorted()).toEqual(expectedKeys.toSorted())
   })

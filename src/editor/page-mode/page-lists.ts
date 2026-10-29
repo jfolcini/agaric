@@ -20,9 +20,14 @@
  * A task is a list kind too (#5691 D3): a block holding a task state shows its
  * checkbox and no marker, whatever style it stores, and is numbered and keyed
  * as a plain block (`shownStyleOf`).
+ *
+ * Ctrl+Z here is the editor's history, which gives back text only. A style a
+ * block's leaving its list took off comes back with the undo of that change
+ * (#6156, `leave`, `undone`): no other change brings it back.
  */
 
 import { Extension, InputRule } from '@tiptap/core'
+import { isHistoryTransaction, undoDepth } from '@tiptap/pm/history'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { type EditorState, Plugin } from '@tiptap/pm/state'
 
@@ -79,6 +84,8 @@ export class PageLists {
   private laidOut: PMNode | null = null
   private markers = new Map<string, string>()
   private readonly listeners = new Map<string, Set<() => void>>()
+  /** The style each block last left its list with, and the editor's undo depth just after. */
+  private readonly left = new Map<string, { style: ListStyle; depth: number }>()
   private readonly isTask: (id: string) => boolean
 
   /**
@@ -152,6 +159,11 @@ export class PageLists {
       doc.forEach((node) => items.push(itemOf(node)))
       if (sameItems(items, this.items)) return
       this.items = items
+      // A block gone from the page takes what `leave` held of it.
+      if (this.left.size > 0) {
+        const ids = new Set(items.map((item) => item.id))
+        for (const id of this.left.keys()) if (!ids.has(id)) this.left.delete(id)
+      }
     } else {
       // Its id and depth are attributes, alike in both: only whether it is marked can change.
       const item = itemOf(doc.child(at))
@@ -159,6 +171,36 @@ export class PageLists {
       this.items = this.items.with(at, item)
     }
     this.redraw()
+  }
+
+  /** Block `id` leaves its list in a change that left the editor's undo depth at `depth`. */
+  leave(id: string, depth: number): void {
+    const style = this.styleOf(id)
+    if (style !== 'none') this.left.set(id, { style, depth })
+  }
+
+  /**
+   * The styles an undo to depth `depth` gives back: that undo took back the
+   * change each block left its list in, and the block shows a marker again, with
+   * no style. An undo of any other change stops at another depth. What it was due
+   * to give back is forgotten.
+   */
+  undone(doc: PMNode, depth: number): [string, ListStyle][] {
+    const due = new Map<string, ListStyle>()
+    for (const [id, left] of this.left) {
+      if (left.depth !== depth + 1) continue
+      due.set(id, left.style)
+      this.left.delete(id)
+    }
+    const back: [string, ListStyle][] = []
+    if (due.size === 0) return back
+    doc.forEach((node) => {
+      const id = blockIdOf(node)
+      const style = id === null ? undefined : due.get(id)
+      if (id === null || style === undefined || this.styleOf(id) !== 'none') return
+      if (docShowsListMarker(node)) back.push([id, style])
+    })
+    return back
   }
 
   /** Call `listener` when the marker block `id` shows changes. */
@@ -320,8 +362,15 @@ const PageListKeys = Extension.create<{ source: PageListSource }>({
   onTransaction({ editor, transaction }) {
     if (!transaction.docChanged || transaction.getMeta(REMOTE_PATCH) === true) return
     const { source } = this.options
-    for (const id of leftTheirList(transaction.before, editor.state.doc, source.lists)) {
+    const { state } = editor
+    for (const id of leftTheirList(transaction.before, state.doc, source.lists)) {
+      source.lists.leave(id, undoDepth(state))
       source.setStyle(id, 'none')
+    }
+    // Only an undo or a redo can give a style back: a key typed does no more here.
+    if (!isHistoryTransaction(transaction)) return
+    for (const [id, style] of source.lists.undone(state.doc, undoDepth(state))) {
+      source.setStyle(id, style)
     }
   },
   addProseMirrorPlugins() {

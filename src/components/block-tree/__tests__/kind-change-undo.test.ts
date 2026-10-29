@@ -9,7 +9,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import type { TFunction } from 'i18next'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
 import { makeBlock, makeBlockRow } from '@/__tests__/fixtures'
@@ -19,6 +19,7 @@ import { useSlashCommandStructural } from '@/components/block-tree/use-block-sla
 import { useBlockTreeEventListeners } from '@/components/block-tree/use-block-tree-event-listeners'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useListStyleSyntax } from '@/hooks/useListStyleSyntax'
+import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
 import type { OpRef } from '@/lib/bindings'
 import { LIST_STYLE_KEY, setListStyle } from '@/lib/list-style'
 import { __resetBlockCommandBus, dispatchBlockCommand } from '@/stores/block-command-bus'
@@ -242,5 +243,78 @@ describe('the toolbar’s Turn into and callout', () => {
     dispatchBlockCommand(event, detail)
 
     await waitFor(() => expect(entries()).toEqual([[EDIT, DELETE]]))
+  })
+})
+
+describe('the block editor’s undo of a change that cleared the style (RESTORE_LIST_STYLE)', () => {
+  afterEach(() => {
+    __resetBlockCommandBus()
+    useBlockStore.setState({ focusedBlockId: null })
+  })
+
+  /** A tree whose block `BLOCK_1` the store holds as `content`, and whose editor holds `one`. */
+  function listen(content: string): StoreApi<PageBlockState> {
+    __resetBlockCommandBus()
+    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
+    const pageStore = createPageBlockStore('PAGE_1')
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', content })] })
+    // The editor's pending commit of the text its undo gave back.
+    const unregister = registerActiveDraftFlush('BLOCK_1', async () => {
+      await pageStore.getState().edit('BLOCK_1', 'one')
+    })
+    onTestFinished(unregister)
+    renderHook(() =>
+      useBlockTreeEventListeners({
+        focusedBlockId: 'BLOCK_1',
+        rootParentId: 'PAGE_1',
+        handleDiscard: vi.fn(),
+        handleToggleTodo: vi.fn(),
+        handleTogglePriority: vi.fn(),
+        handleShowProperties: vi.fn(),
+        handleOpenQueryBuilder: vi.fn(),
+        handleOpenEmojiPicker: vi.fn(),
+        rovingEditor: { editor: null, mount: vi.fn() } as unknown as RovingEditorHandle,
+        datePickerCursorPos: { current: undefined },
+        setDatePickerMode: vi.fn(),
+        setDatePickerOpen: vi.fn(),
+        pageStore,
+        t,
+      }),
+    )
+    return pageStore
+  }
+
+  const calls = (name: string) => mockedInvoke.mock.calls.filter(([n]) => n === name)
+
+  it('saves the text the undo gave back, then writes the style, in one entry', async () => {
+    listen('# one')
+
+    dispatchBlockCommand('RESTORE_LIST_STYLE', { style: 'bullet' })
+
+    await waitFor(() => expect(entries()).toEqual([[EDIT, SET]]))
+    expect(calls('set_property').map(([, args]) => args)).toEqual([
+      {
+        blockId: 'BLOCK_1',
+        key: LIST_STYLE_KEY,
+        value: expect.objectContaining({ value_text: 'bullet' }),
+      },
+    ])
+  })
+
+  it('writes nothing while the change is not saved: its save has not cleared the style', async () => {
+    const pageStore = listen('one')
+
+    dispatchBlockCommand('RESTORE_LIST_STYLE', { style: 'bullet' })
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', content: '# one' })] })
+    dispatchBlockCommand('RESTORE_LIST_STYLE', { style: 'ordered' })
+
+    await waitFor(() => expect(entries()).toEqual([[EDIT, SET]]))
+    expect(calls('set_property').map(([, args]) => args)).toEqual([
+      {
+        blockId: 'BLOCK_1',
+        key: LIST_STYLE_KEY,
+        value: expect.objectContaining({ value_text: 'ordered' }),
+      },
+    ])
   })
 })

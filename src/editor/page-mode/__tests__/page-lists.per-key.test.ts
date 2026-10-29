@@ -76,6 +76,28 @@ describe('a key typed', () => {
     expect(derivedOnAKey(1000)).toBe(2)
     expect(derivedOnAKey(2000)).toBe(2)
   })
+
+  it('looks for a style to give back on an undo, never on a key, once a block left its list (#6156)', () => {
+    const rows: Row[] = Array.from({ length: 1000 }, (_, i) => [blockId(i + 1), 0, `item ${i}`])
+    const lists = new PageLists(
+      Object.fromEntries(rows.map(([id]) => [id, styleRows('bullet')])),
+      rows.map(([id, depth]) => ({ id, depth })),
+    )
+    const editor = openPage(rows, idMinter(), undefined, listSource(lists))
+    editors.push(editor)
+    caret(editor, 0, 0)
+    typeText(editor, '# ')
+    const undone = vi.spyOn(lists, 'undone')
+    caret(editor, 500, 2)
+    vi.mocked(docShowsListMarker).mockClear()
+
+    typeText(editor, 'x')
+
+    expect(vi.mocked(docShowsListMarker).mock.calls.length).toBe(2)
+    expect(undone).not.toHaveBeenCalled()
+    editor.commands.undo()
+    expect(undone).toHaveBeenCalledTimes(1)
+  })
 })
 
 type Change =
