@@ -25,6 +25,7 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
+  clickUncovered,
   expectAbsent,
   navigateTo,
   openNewPage,
@@ -50,9 +51,7 @@ async function addAlias(alias: string): Promise<void> {
   const kebab = $('button[aria-label="Page actions"]')
   await kebab.waitForClickable({ timeout: ACTION_TIMEOUT })
   await kebab.click()
-  const addAliasItem = $('[role="menuitem"]*=Add alias')
-  await addAliasItem.waitForClickable({ timeout: ACTION_TIMEOUT })
-  await addAliasItem.click()
+  await clickUncovered($('[role="menuitem"]*=Add alias'), 'Add alias')
   await typeInputVerified('[aria-label="New alias input"]', alias)
   const add = $('button=Add')
   await add.waitForClickable({ timeout: ACTION_TIMEOUT })

@@ -19,6 +19,7 @@
 import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
+  clickUncovered,
   confirmDialog,
   enterBlankSibling,
   expectAbsent,
@@ -210,9 +211,8 @@ describe('Agaric real-backend Trash: page cascade, restore, purge (#5737) @pages
     const kebab = $('button[aria-label="Page actions"]')
     await kebab.waitForClickable({ timeout: ACTION_TIMEOUT })
     await kebab.click()
-    const deleteItem = $('[role="menu"]').$('[role="menuitem"]*=Delete page')
-    await deleteItem.waitForClickable({ timeout: ACTION_TIMEOUT })
-    await deleteItem.click()
+    // The menu's last item reaches the toasts that the cases before left.
+    await clickUncovered($('[role="menu"]').$('[role="menuitem"]*=Delete page'), 'Delete page')
     await confirmDialog('Delete page')
 
     // The tab steps back to the page before it in its history (`before` opened
