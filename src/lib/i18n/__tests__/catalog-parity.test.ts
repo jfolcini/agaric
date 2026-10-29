@@ -16,8 +16,7 @@
  * (`{ Today: 'agenda.today' }`, later passed to `t(dynamicVar)`) cannot be
  * resolved by a static regex scan, and a hard-failing version produced 260+
  * false-positive "orphans" even after two rounds of heuristics (#2946: "a flaky
- * guard is worse than none"). An informational-only version asserted nothing
- * about orphans and cost a second full-tree scan, so it was removed.
+ * guard is worse than none").
  */
 
 import { readdirSync, readFileSync } from 'node:fs'

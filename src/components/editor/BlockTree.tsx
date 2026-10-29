@@ -864,11 +864,13 @@ export function BlockTree({
       const style = listStyleForBlockType(blockType)
       try {
         notifyUndo(pageStore.getState().rootParentId, await setListStyle(blockId, style))
-        if (style !== 'none') await clearTaskStates(pageStore, [blockId])
       } catch (err) {
         logger.error('BlockTree', 'setListStyle (turn-into) failed', { blockId }, err)
         notify.error(t('slash.turnIntoFailed'))
+        await load()
+        return
       }
+      if (style !== 'none') await clearTaskStates(pageStore, [blockId])
       await load()
     },
     [pageStore, load, handleFlush, t],
