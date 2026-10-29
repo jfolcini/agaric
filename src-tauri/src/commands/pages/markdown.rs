@@ -1556,6 +1556,7 @@ fn render_page_markdown(page_id: &str, data: &PageExportData) -> String {
 /// The page as the one markdown buffer source mode edits (#5140): its
 /// properties, aliases and tags as the export's front matter (#5160 S8), then
 /// its block tree. The title and page attachments have their own UIs.
+#[cfg(test)]
 fn render_page_source(data: &PageExportData) -> String {
     Dialect::Source.render(data).0
 }
@@ -2488,19 +2489,18 @@ pub async fn export_page_markdown_inner(
 }
 
 /// The page's source-mode markdown buffer (#5140): its front matter and block
-/// tree as `render_page_source` writes them. The page and tag names it may write are
-/// resolved in the same read snapshot as the content.
+/// tree, every block with its `^ID`, as [`get_page_buffer_inner`] reads it.
+/// The page and tag names it may write are resolved in the same read snapshot
+/// as the content.
 ///
 /// # Errors
 ///
 /// As [`export_page_markdown_inner`].
 #[instrument(skip(pool), err)]
 pub async fn get_page_source_inner(pool: &SqlitePool, page_id: &str) -> Result<String, AppError> {
-    BlockId::from_string(page_id)?;
-    let mut tx = pool.begin().await?;
-    let data = load_page_export_data(&mut tx, page_id, PageRead::Source).await?;
-    tx.commit().await?;
-    Ok(render_page_source(&data))
+    Ok(get_page_buffer_as(pool, page_id, Dialect::Source)
+        .await?
+        .source)
 }
 
 /// The page as the MCP `get_page_markdown` tool returns it (#5375):
@@ -2949,7 +2949,7 @@ fn pasted_as_text(block: &import::ParsedBlock, starts_line: bool) -> String {
     } else {
         markers + &block.content
     };
-    if starts_line && first_line_needs_escape(&text, "", "", RenderMode::Source) {
+    if starts_line && first_line_needs_escape(&text, false, "", "", RenderMode::Source) {
         text.insert(0, '\\');
     }
     for (key, value) in properties {
@@ -3716,8 +3716,10 @@ fn list_marker_for(
 ///
 /// A Document buffer (#5691) writes no outline bullet: the line is the
 /// markers, `"+ "` among them ([`DocumentLayout::place`]), and the text, or the
-/// text alone, and the continuation lines sit at the text's column, a line
-/// that would read as blank escaped too ([`import::needs_blank_line_escape`]).
+/// text alone, and the continuation lines sit at the text's column, each
+/// escaped that would read as anything but that line of the block
+/// ([`import::needs_document_line_escape`]): blank, or a heading, a fence or a
+/// thematic break, which start blocks of their own there.
 ///
 /// Returns which lines are code, as the parser's fence tracking will see them.
 fn push_block_bullet(
@@ -3736,8 +3738,9 @@ fn push_block_bullet(
         RenderMode::Document => import::document_fence_opener,
     };
 
-    let mut lines = resolved.split('\n');
+    let mut lines = resolved.split('\n').peekable();
     let first = lines.next().unwrap_or("");
+    let followed = lines.peek().is_some();
     let line_start = output.len();
     output.push_str(indent);
     if mode != RenderMode::Document {
@@ -3752,7 +3755,7 @@ fn push_block_bullet(
         output.push_str(markers.trim_end());
     } else {
         output.push_str(&markers);
-        if first_line_needs_escape(first, list_marker, task_marker, mode) {
+        if first_line_needs_escape(first, followed, list_marker, task_marker, mode) {
             output.push('\\');
         }
         output.push_str(first);
@@ -3774,10 +3777,11 @@ fn push_block_bullet(
         output.push_str(&cont_indent);
         let needs_escape = if in_fence.is_some() {
             mode != RenderMode::Export && import::needs_anchor_line_escape(line)
+        } else if mode == RenderMode::Document {
+            import::needs_document_line_escape(line)
         } else {
             import::continuation_line_is_ambiguous(line)
                 || (mode == RenderMode::Export && import::needs_planning_line_escape(line))
-                || (mode == RenderMode::Document && import::needs_blank_line_escape(line))
         };
         if needs_escape {
             output.push('\\');
@@ -3824,16 +3828,18 @@ struct CodeLines {
 /// Export → Import keeps a block whose text starts with `TODO`; the buffer and
 /// the clipboard read neither, so they write no such escape. A Document buffer
 /// reads one list marker, so after one it escapes only a checkbox, and a line
-/// with none as [`import::needs_bare_line_escape`] says.
+/// with none, `followed` by the block's other lines or not, as
+/// [`import::needs_bare_line_escape`] says.
 fn first_line_needs_escape(
     first: &str,
+    followed: bool,
     list_marker: &str,
     task_marker: &str,
     mode: RenderMode,
 ) -> bool {
     if mode == RenderMode::Document {
         return if list_marker.is_empty() {
-            import::needs_bare_line_escape(first)
+            import::needs_bare_line_escape(first, followed)
         } else {
             task_marker.is_empty() && import::needs_task_marker_escape(first)
         };

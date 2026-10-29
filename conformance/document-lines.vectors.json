@@ -274,12 +274,12 @@
       ]
     },
     {
-      "lineIds": ["01J00000000000000000000000", null, null, null, null, null, null, null],
-      "name": "5: a fence keeps its blank lines and its markup",
-      "text": "intro\n```sh\necho\n\n- x\n```\nafter\n",
+      "lineIds": ["01J00000000000000000000000", null, null, null, null, null, null],
+      "name": "5: a fence keeps its blank lines and its markup, and the lines after it continue it",
+      "text": "```sh\necho\n\n- x\n```\nafter\n",
       "tree": [
         {
-          "content": "intro\n```sh\necho\n\n- x\n```\nafter",
+          "content": "```sh\necho\n\n- x\n```\nafter",
           "depth": 0,
           "id": "01J00000000000000000000000",
           "properties": {}
@@ -753,7 +753,331 @@
           }
         }
       ]
+    },
+    {
+      "lineIds": ["01J00000000000000000000000", null, "01J00000000000000000000001", null],
+      "name": "D1: a paragraph and the heading under it are two blocks",
+      "text": "para\n\n## Heading\n",
+      "tree": [
+        {
+          "content": "para",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        },
+        {
+          "content": "## Heading",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": ["01J00000000000000000000000", null, "01J00000000000000000000001", null],
+      "name": "D1: a heading is a block of one line, and the text under it the next block",
+      "text": "## Heading\n\ntext\n",
+      "tree": [
+        {
+          "content": "## Heading",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        },
+        {
+          "content": "text",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        "01J00000000000000000000001",
+        null,
+        null,
+        null
+      ],
+      "name": "D1: a paragraph and the fence under it are two blocks",
+      "text": "intro:\n\n```sh\nls\n```\n",
+      "tree": [
+        {
+          "content": "intro:",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        },
+        {
+          "content": "```sh\nls\n```",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        "01J00000000000000000000001",
+        null,
+        "01J00000000000000000000002",
+        null
+      ],
+      "name": "D1: a thematic break between paragraphs is a block of its own",
+      "text": "para\n\n---\n\nafter\n",
+      "tree": [
+        {
+          "content": "para",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        },
+        {
+          "content": "---",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {}
+        },
+        {
+          "content": "after",
+          "depth": 0,
+          "id": "01J00000000000000000000002",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": ["01J00000000000000000000000", null, null],
+      "name": "D1: a heading line in a paragraph's text is escaped",
+      "text": "para\n\\## x\n",
+      "tree": [
+        {
+          "content": "para\n## x",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": ["01J00000000000000000000000", null, null, null, null],
+      "name": "D1: a fence line in a paragraph's text is escaped, so no line after it is code",
+      "text": "intro:\n\\```sh\n\\- x\n\\```\n",
+      "tree": [
+        {
+          "content": "intro:\n```sh\n- x\n```",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": ["01J00000000000000000000000", null, null, null],
+      "name": "D1: a thematic break in a paragraph's text is escaped, not read as a setext underline",
+      "text": "para\n\\---\n\\***\n",
+      "tree": [
+        {
+          "content": "para\n---\n***",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": ["01J00000000000000000000000", null, null, null, null],
+      "name": "D1: a code block's lines are its own, a heading's and a break's too",
+      "text": "```\n## x\n---\n```\n",
+      "tree": [
+        {
+          "content": "```\n## x\n---\n```",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        null,
+        "01J00000000000000000000001",
+        null,
+        null
+      ],
+      "name": "D1: a heading or a break with a line after it, as a hard break makes, is escaped",
+      "text": "\\## Heading\\\nsecond line\n\n\\---\nafter\n",
+      "tree": [
+        {
+          "content": "## Heading\\\nsecond line",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        },
+        {
+          "content": "---\nafter",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": ["01J00000000000000000000000", null, "01J00000000000000000000001", null],
+      "name": "D1: a backslash before a heading or a break opening a bare line is escaped too",
+      "text": "\\\\## x\n\n\\\\---\n",
+      "tree": [
+        {
+          "content": "\\## x",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        },
+        {
+          "content": "\\---",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {}
+        }
+      ]
     }
   ],
-  "description": "#5691 — Edit as Markdown's Document dialect, one case per hard case of the line-split format: the tree, each block under its id, the text a page holding it is written as, and the id each line of that text carries. Authored by `markdown_document_tests.rs` with CONFORMANCE_UPDATE=1; never hand-edit."
+  "description": "#5691 — Edit as Markdown's Document dialect, one case per hard case of the line-split format: the tree, each block under its id, the text a page holding it is written as, and the id each line of that text carries; and under `typed`, text typed with no blank line between blocks and the tree it reads as, ids aside. Authored by `markdown_document_tests.rs` with CONFORMANCE_UPDATE=1; never hand-edit.",
+  "typed": [
+    {
+      "name": "a heading typed under a paragraph starts its own block",
+      "text": "para\n## Heading",
+      "tree": [
+        {
+          "content": "para",
+          "depth": 0,
+          "properties": {}
+        },
+        {
+          "content": "## Heading",
+          "depth": 0,
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "name": "the line typed under a heading starts its own block",
+      "text": "## Heading\ntext",
+      "tree": [
+        {
+          "content": "## Heading",
+          "depth": 0,
+          "properties": {}
+        },
+        {
+          "content": "text",
+          "depth": 0,
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "name": "a fence typed under a paragraph starts its own block",
+      "text": "intro:\n```sh\nls\n```",
+      "tree": [
+        {
+          "content": "intro:",
+          "depth": 0,
+          "properties": {}
+        },
+        {
+          "content": "```sh\nls\n```",
+          "depth": 0,
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "name": "a thematic break typed under a paragraph is its own block, not a setext underline",
+      "text": "para\n---\nafter",
+      "tree": [
+        {
+          "content": "para",
+          "depth": 0,
+          "properties": {}
+        },
+        {
+          "content": "---",
+          "depth": 0,
+          "properties": {}
+        },
+        {
+          "content": "after",
+          "depth": 0,
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "name": "under a list item's text, a heading, a fence and a break start blocks of their own",
+      "text": "- a\n## H\n- b\n  ```\n  x\n  ```\n- c\n  ***",
+      "tree": [
+        {
+          "content": "a",
+          "depth": 0,
+          "properties": {
+            "listStyle": "bullet"
+          }
+        },
+        {
+          "content": "## H",
+          "depth": 0,
+          "properties": {}
+        },
+        {
+          "content": "b",
+          "depth": 0,
+          "properties": {
+            "listStyle": "bullet"
+          }
+        },
+        {
+          "content": "```\nx\n```",
+          "depth": 1,
+          "properties": {}
+        },
+        {
+          "content": "c",
+          "depth": 0,
+          "properties": {
+            "listStyle": "bullet"
+          }
+        },
+        {
+          "content": "***",
+          "depth": 1,
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "name": "a list item still interrupts a paragraph",
+      "text": "para\n- a",
+      "tree": [
+        {
+          "content": "para",
+          "depth": 0,
+          "properties": {}
+        },
+        {
+          "content": "a",
+          "depth": 0,
+          "properties": {
+            "listStyle": "bullet"
+          }
+        }
+      ]
+    }
+  ]
 }
