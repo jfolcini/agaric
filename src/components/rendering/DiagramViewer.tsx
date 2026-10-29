@@ -162,6 +162,7 @@ export function DiagramViewer({
         <div
           ref={setGestureArea}
           {...zoomPan.gestureHandlers}
+          data-overflow-clip="intentional"
           className={cn(
             'relative flex min-h-0 flex-1 touch-none items-center justify-center overflow-hidden select-none',
             zoomed && (dragging ? 'cursor-grabbing' : 'cursor-grab'),

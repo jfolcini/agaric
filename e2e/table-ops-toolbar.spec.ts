@@ -25,7 +25,6 @@ test.describe('Table ops toolbar (#215) @editor', () => {
     // `/table` opens the size grid on 3×3; Enter inserts that.
     await expect(page.getByRole('grid', { name: 'Insert table' })).toBeFocused()
     await page.keyboard.press('Enter')
-    await page.waitForTimeout(400)
 
     // Cursor is now in the first cell → the contextual trigger is visible
     // (the aria-hidden sentinel copy is excluded from the accessible name).
@@ -38,9 +37,7 @@ test.describe('Table ops toolbar (#215) @editor', () => {
 
     await trigger.click()
     await page.getByTestId('table-op-insert-row-below').click()
-    await page.waitForTimeout(300)
 
-    const rowsAfter = await editorTable.locator('tr').count()
-    expect(rowsAfter).toBe(rowsBefore + 1)
+    await expect(editorTable.locator('tr')).toHaveCount(rowsBefore + 1)
   })
 })

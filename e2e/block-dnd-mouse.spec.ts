@@ -129,6 +129,7 @@ test.describe('Block drag-and-drop (mouse) @editor', () => {
     const ownRow = page.locator('[data-testid="sortable-block"]').nth(1)
     await dragBlock(page, handle, ownRow)
 
+    // An absence check: give an erroneous reorder a beat to land.
     await page.waitForTimeout(200)
     expect(await blockIds(page)).toEqual(before)
   })
@@ -213,6 +214,7 @@ test.describe('Drag visual layer (#923 f2) @editor', () => {
     // Overlay torn down, no move emitted, order preserved — the Esc-abort
     // contract.
     await expect(page.locator('[data-testid="sortable-block-overlay"]')).toHaveCount(0)
+    // An absence check: give an erroneous move a beat to fire.
     await page.waitForTimeout(200)
     expect((await getInvokeCalls(page, 'move_block')).length).toBe(0)
     expect(await blockIds(page)).toEqual(before)

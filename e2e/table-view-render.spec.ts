@@ -25,11 +25,24 @@ test.describe('Table view-mode rendering (#215) @editor', () => {
     // `/table` opens the size grid on 3×3; Enter inserts that.
     await expect(page.getByRole('grid', { name: 'Insert table' })).toBeFocused()
     await page.keyboard.press('Enter')
-    await page.waitForTimeout(400)
+    // The caret lands in the first cell.
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const node = window.getSelection()?.anchorNode
+          const el = node instanceof Element ? node : node?.parentElement
+          return (
+            el?.closest('[data-testid="block-editor"] td, [data-testid="block-editor"] th') != null
+          )
+        }),
+      )
+      .toBe(true)
 
-    // Cursor lands in the first cell; type recognizable content.
+    // Type recognizable content.
     await page.keyboard.type('Quarter')
-    await page.waitForTimeout(200)
+    await expect(page.locator('[data-testid="block-editor"] table').first()).toContainText(
+      'Quarter',
+    )
 
     // Commit by focusing the page title: the editor saves on blur
     // (serialize → persist). Pressing Enter inside a table cell does

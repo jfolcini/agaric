@@ -673,3 +673,31 @@ test('contain: layout marked clip still suppresses its abs descendant @mobile', 
 
   await expectNoHorizontalOverflow(page, root, 'contain layout containing block')
 })
+
+// The page root: the app shell clips sideways, so a view wider than its column
+// never widens the document. A box that clips content wider than itself fails.
+const WIDE = '<div style="width:400px;height:20px">wide content</div>'
+
+test('page root: a box that clips content wider than itself fails @mobile', async ({ page }) => {
+  await page.setContent(`<div style="width:200px;overflow-x:hidden">${WIDE}</div>`)
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+    .toBeLessThanOrEqual(page.viewportSize()?.width ?? 0)
+  await expect(expectNoHorizontalOverflow(page, undefined, 'clipped view')).rejects.toThrow(
+    /Horizontal overflow on clipped view: content cut off/,
+  )
+})
+
+const PAGE_ROOT_ALLOWED = {
+  'a scroller the user can scroll sideways': `<div style="width:200px;overflow-x:auto">${WIDE}</div>`,
+  'a text ellipsis': `<div style="width:100px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${'long title '.repeat(10)}</div>`,
+  'a visually hidden label': `<span style="position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap">${'screen reader text '.repeat(5)}</span>`,
+  'a data-overflow-clip marker': `<div data-overflow-clip="intentional" style="width:200px;overflow-x:hidden">${WIDE}</div>`,
+}
+
+for (const [label, html] of Object.entries(PAGE_ROOT_ALLOWED)) {
+  test(`page root: ${label} is not a clipped view @mobile`, async ({ page }) => {
+    await page.setContent(html)
+    await expectNoHorizontalOverflow(page, undefined, label)
+  })
+}

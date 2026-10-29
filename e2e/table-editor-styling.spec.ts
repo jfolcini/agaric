@@ -19,7 +19,6 @@ test.describe('Editor table styling @editor', () => {
     // `/table` opens the size grid on 3×3; Enter inserts that.
     await expect(page.getByRole('grid', { name: 'Insert table' })).toBeFocused()
     await page.keyboard.press('Enter')
-    await page.waitForTimeout(400)
 
     const table = page.locator('[data-testid="block-editor"] table').first()
     await expect(table).toBeVisible()

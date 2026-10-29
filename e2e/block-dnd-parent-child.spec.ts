@@ -108,17 +108,11 @@ test.describe('Block drag-and-drop (parent + child multi-select, #914) @editor',
 
     await page.mouse.move(sx, sy)
     await page.mouse.down()
-    // Distance-activated desktop sensor (8px): step vertically to the target,
-    // pausing periodically so @dnd-kit's collision detection and the overlay
-    // render keep pace under load.
+    // Distance-activated desktop sensor (8px): step vertically to the target.
     const steps = 20
     for (let i = 1; i <= steps; i++) {
       await page.mouse.move(sx, sy + (ty - sy) * (i / steps))
-      if (i % 5 === 0) await page.waitForTimeout(50)
     }
-    // Settle on the final "over" position so the overlay has committed before
-    // we read the badge (mirrors the drag helper's pre-release settle).
-    await page.waitForTimeout(150)
 
     // Mid-drag: the overlay badge reflects the parent's SUBTREE size (parent +
     // 1 child = 2). The child is counted as part of the subtree, NOT as a

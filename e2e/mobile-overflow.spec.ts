@@ -28,13 +28,14 @@
  *   npx playwright test e2e/mobile-overflow.spec.ts --workers=1
  */
 
-import { devices } from '@playwright/test'
+import { devices, type Locator } from '@playwright/test'
 
 import {
   activeRoleDialog,
   activeSheet,
   expect,
   expectNoHorizontalOverflow,
+  expectViewLoaded,
   focusBlock,
   navigateMobile,
   navigateToView,
@@ -70,6 +71,19 @@ function pick(device: (typeof devices)[string]) {
   }
 }
 
+/** A surface measured mid-animation (a sheet sliding in) is not where it rests. */
+async function settled(surface: Locator): Promise<void> {
+  await surface.evaluate((el) =>
+    Promise.all(
+      el
+        .getAnimations({ subtree: true })
+        .filter((a) => a.effect?.getTiming().iterations !== Infinity)
+        // A cancelled animation rejects `finished`; it is not running either way.
+        .map((a) => a.finished.catch(() => null)),
+    ),
+  )
+}
+
 // Top-level views, keyed by the label `navigateToView` takes (the i18n
 // `sidebar.*` label). The drawer lists only `SIDEBAR_VIEWS`. `query`'s label
 // is "Advanced Query"; Status is the Settings › App health tab.
@@ -100,9 +114,7 @@ for (const profile of PROFILES) {
         // itself, so the measurement below runs against the view, not the
         // overlay.
         await navigateToView(page, view)
-        // Let the lazy view chunk resolve and layout settle before measuring.
-        await page.waitForLoadState('networkidle')
-        await page.waitForTimeout(250)
+        await expectViewLoaded(page, view)
 
         await expectNoHorizontalOverflow(page, undefined, `${view} view @ ${profile.name}`)
       })
@@ -239,7 +251,7 @@ for (const profile of PROFILES) {
       const shortcutsSheet = activeSheet(page)
       const surface = (await shortcutsSheet.count()) > 0 ? shortcutsSheet : activeRoleDialog(page)
       await expect(surface).toBeVisible()
-      await page.waitForTimeout(150)
+      await settled(surface)
       await expectNoHorizontalOverflow(page, surface, `Shortcuts dialog @ ${profile.name}`)
     })
 
@@ -278,7 +290,7 @@ for (const profile of PROFILES) {
       await expect(
         dialog.getByRole('button', { name: /have a code from the other device/i }),
       ).toBeVisible()
-      await page.waitForTimeout(150)
+      await settled(dialog)
       await expectNoHorizontalOverflow(page, dialog, `Pairing dialog · host @ ${profile.name}`)
 
       // Then the joiner surface, which hosts the entry-mode toggle — reached
@@ -286,7 +298,7 @@ for (const profile of PROFILES) {
       // also what declares the joiner role (replacing the old chooser).
       await dialog.getByRole('button', { name: /have a code from the other device/i }).click()
       await expect(dialog.getByRole('tab', { name: 'Type passphrase', exact: true })).toBeVisible()
-      await page.waitForTimeout(150)
+      await settled(dialog)
       await expectNoHorizontalOverflow(page, dialog, `Pairing dialog · joiner @ ${profile.name}`)
     })
 
@@ -497,9 +509,8 @@ for (const profile of PROFILES) {
   })
 }
 
-// #5925 — three surfaces that drew past a 360 px screen without the document
-// ever scrolling, so `expectNoHorizontalOverflow(page)` stayed green: each is
-// measured against the viewport or its own cell instead.
+// #5925 — three surfaces that drew past a 360 px screen, each measured against
+// the viewport or its own cell.
 test.describe('phone at 360 × 780 @mobile @journal @settings', () => {
   test.use({ ...pick(iPhone13), viewport: { width: 360, height: 780 } })
 
