@@ -85,6 +85,10 @@ type Change =
   | { kind: 'depth'; block: number; depth: number; asAttribute: boolean }
   | { kind: 'split'; at: number }
   | { kind: 'insert'; block: number; text: string }
+  | { kind: 'id'; block: number }
+  | { kind: 'mark'; from: number; to: number }
+  | { kind: 'join'; block: number }
+  | { kind: 'move'; block: number; to: number }
   | { kind: 'reload' }
   | { kind: 'none' }
 
@@ -103,6 +107,10 @@ const change: fc.Arbitrary<Change> = fc.oneof(
   }),
   fc.record({ kind: fc.constant('split'), at: fc.nat() }),
   fc.record({ kind: fc.constant('insert'), block: fc.nat(), text }),
+  fc.record({ kind: fc.constant('id'), block: fc.nat() }),
+  fc.record({ kind: fc.constant('mark'), from: fc.nat(), to: fc.nat() }),
+  fc.record({ kind: fc.constant('join'), block: fc.nat() }),
+  fc.record({ kind: fc.constant('move'), block: fc.nat(), to: fc.nat() }),
   fc.constant({ kind: 'reload' as const }),
   fc.constant({ kind: 'none' as const }),
 )
@@ -157,6 +165,30 @@ function apply(tr: Transaction, schema: Schema, c: Change, mint: () => string): 
         paragraph(c.text),
       )
       tr.insert(block(c.block), node as PMNode)
+      return
+    }
+    case 'id': {
+      const node = doc.nodeAt(block(c.block)) as PMNode
+      tr.setNodeMarkup(block(c.block), undefined, { ...node.attrs, blockId: mint() })
+      return
+    }
+    case 'mark': {
+      const bold = schema.marks['bold']
+      if (bold === undefined) throw new Error('no bold mark')
+      tr.addMark(Math.min(at(c.from), at(c.to)), Math.max(at(c.from), at(c.to)), bold.create())
+      return
+    }
+    case 'join': {
+      // Block `n` into the one before it, as Backspace at its start does.
+      if (doc.childCount > 1) tr.join(blockStart(doc, 1 + (c.block % (doc.childCount - 1))))
+      return
+    }
+    case 'move': {
+      // The same number of blocks, more than one of them changed.
+      const from = block(c.block)
+      const node = doc.nodeAt(from) as PMNode
+      tr.delete(from, from + node.nodeSize)
+      tr.insert(blockStart(tr.doc, c.to % (tr.doc.childCount + 1)), node)
       return
     }
     case 'reload': {
@@ -214,5 +246,69 @@ describe('layout', () => {
         },
       ),
     )
+  })
+})
+
+/** The full walk `leftTheirList` falls back to: the styled blocks that showed a marker and no longer do. */
+function leftByFullWalk(before: PMNode, doc: PMNode, styled: ReadonlySet<string>): string[] {
+  const shown = new Map<string, boolean>()
+  before.forEach((node) => shown.set(blockIdOf(node) ?? '', docShowsListMarker(node)))
+  const left: string[] = []
+  doc.forEach((node) => {
+    const id = blockIdOf(node)
+    if (id === null || !styled.has(id) || docShowsListMarker(node)) return
+    if (shown.get(id) === true) left.push(id)
+  })
+  return left
+}
+
+describe('a list block leaving its list', () => {
+  it('is found as a full walk of the document finds it, change after random change', () => {
+    let left = 0
+    fc.assert(
+      fc.property(
+        fc.array(row, { minLength: 1, maxLength: 8 }),
+        fc.array(fc.array(change, { minLength: 1, maxLength: 3 }), { maxLength: 12 }),
+        (rows, steps) => {
+          const ids = rows.map((_, i) => blockId(i + 1))
+          const lists = new PageLists(
+            Object.fromEntries(ids.map((id, i) => [id, styleRows(rows[i]?.style ?? 'none')])),
+            ids.map((id, i) => ({ id, depth: rows[i]?.depth ?? 0 })),
+          )
+          const source = listSource(lists)
+          const editor = openPage(
+            rows.map(({ depth, content }, i) => [ids[i] as string, depth, content]),
+            idMinter(),
+            undefined,
+            source,
+          )
+          editors.push(editor)
+          const mint = idMinter('01ADD')
+          for (const step of steps) {
+            const before = editor.state.doc
+            const styled = new Set<string>()
+            before.forEach((node) => {
+              const id = blockIdOf(node)
+              if (id !== null && lists.styleOf(id) !== 'none') styled.add(id)
+            })
+            const tr = editor.state.tr
+            for (const c of step) {
+              try {
+                apply(tr, editor.schema, c, mint)
+              } catch {
+                // A change the document cannot take: the rest of the step goes on.
+              }
+            }
+            source.setStyle.mockClear()
+            editor.view.dispatch(tr)
+            const expected = leftByFullWalk(before, editor.state.doc, styled)
+            left += expected.length
+            expect(source.setStyle.mock.calls).toEqual(expected.map((id) => [id, 'none']))
+          }
+        },
+      ),
+    )
+    // The runs reach the case under test: some block leaves its list.
+    expect(left).toBeGreaterThan(0)
   })
 })
