@@ -525,7 +525,8 @@ describe('PropertyRowEditor select options editing', () => {
     const user = userEvent.setup()
     const onDefUpdated = vi.fn()
     stubInvoke({
-      update_property_def_options: () => makeDef('stage', 'select', '["TODO","DOING","DONE"]'),
+      update_property_def_options: () =>
+        withOps(makeDef('stage', 'select', '["TODO","DOING","DONE"]')),
     })
 
     render(
@@ -562,7 +563,7 @@ describe('PropertyRowEditor select options editing', () => {
   it('can remove an option and save', async () => {
     const user = userEvent.setup()
     stubInvoke({
-      update_property_def_options: () => makeDef('stage', 'select', '["TODO","DONE"]'),
+      update_property_def_options: () => withOps(makeDef('stage', 'select', '["TODO","DONE"]')),
     })
 
     render(
@@ -653,7 +654,8 @@ describe('PropertyRowEditor select options editing', () => {
   it(' sub-fix 5 — moves an option down via the Move Down button', async () => {
     const user = userEvent.setup()
     stubInvoke({
-      update_property_def_options: () => makeDef('stage', 'select', '["DOING","TODO","DONE"]'),
+      update_property_def_options: () =>
+        withOps(makeDef('stage', 'select', '["DOING","TODO","DONE"]')),
     })
 
     render(

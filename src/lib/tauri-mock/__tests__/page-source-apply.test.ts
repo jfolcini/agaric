@@ -809,7 +809,7 @@ describe('tauri-mock apply_page_source front matter (#5160 S8)', () => {
     )
     setSpace(PAGE, SPACE)
     // The space's own definitions (#5841): a space starts with the defaults.
-    seedDefaultPropertyDefs(SPACE, '2026-01-01T00:00:00.000Z')
+    seedDefaultPropertyDefs(SPACE, '2026-01-01T00:00:00.000Z', false)
     pageAliases.set(PAGE, ['Home base'])
     blockTags.set(PAGE, new Set([WORK]))
   })

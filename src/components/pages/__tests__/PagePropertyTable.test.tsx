@@ -144,16 +144,18 @@ function setupMock(props: PropertyRow[] = [], defs: PropertyDefinition[] = []) {
     set_property: () => setPropertyResult,
     delete_property: (args) => deletePropertyResult(args['key'] as string),
     create_property_def: (args) =>
-      makeDef(
-        (args['key'] as string | undefined) ?? 'new',
-        (args['valueType'] as string | undefined) ?? 'text',
+      withOps(
+        makeDef(
+          (args['key'] as string | undefined) ?? 'new',
+          (args['valueType'] as string | undefined) ?? 'text',
+        ),
       ),
     // A def the backend re-sends in full; the stub this replaced spread a
     // `find()` that could be `undefined`, dropping `value_type` / `created_at`.
     update_property_def_options: (args) => {
       const key = args['key'] as string
       const existing = defs.find((def) => def.key === key)
-      return makeDef(key, existing?.value_type ?? 'select', args['options'] as string)
+      return withOps(makeDef(key, existing?.value_type ?? 'select', args['options'] as string))
     },
   })
 }
@@ -629,7 +631,7 @@ describe('PagePropertyTable add property flow', () => {
           (args['valueType'] as string | undefined) ?? 'text',
         )
         defs.push(newDef)
-        return newDef
+        return withOps(newDef)
       },
       set_property: () => setPropertyResult,
     })
@@ -688,7 +690,7 @@ describe('PagePropertyTable add property flow', () => {
       create_property_def: (args) => {
         const newDef = makeDef(args['key'] as string, args['valueType'] as string)
         defs.push(newDef)
-        return newDef
+        return withOps(newDef)
       },
       set_property: () => setPropertyResult,
     })
@@ -1074,9 +1076,11 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
       get_properties: () => [],
       list_property_defs: () => defsPage([]),
       create_property_def: (args) =>
-        makeDef(
-          (args['key'] as string | undefined) ?? 'myprop',
-          (args['valueType'] as string | undefined) ?? 'number',
+        withOps(
+          makeDef(
+            (args['key'] as string | undefined) ?? 'myprop',
+            (args['valueType'] as string | undefined) ?? 'number',
+          ),
         ),
       // #4399 — the wire shape a real `set_property` rejection has (an
       // `AppError` OBJECT, which is what `unwrap` throws), not an `Error`,

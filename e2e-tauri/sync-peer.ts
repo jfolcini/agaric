@@ -132,6 +132,24 @@ export async function setPeerAddress(deviceId: string, address: string): Promise
   await waitForToast('Address updated')
 }
 
+const SYNC_BUTTON = '[data-slot="sidebar"] button[aria-label="Sync"]'
+
+/**
+ * Write on the peer, then pull it into the app with the sidebar's Sync, which
+ * leaves the open view mounted, and wait for the pull. The button is
+ * `aria-disabled` while a sync runs.
+ */
+export async function pullPeerWrites<T>(peer: SyncPeer, writes: () => Promise<T>): Promise<T> {
+  const written = await writes()
+  await browser.waitUntil(
+    async () => (await $(SYNC_BUTTON).getAttribute('aria-disabled')) === 'false',
+    { timeout: ACTION_TIMEOUT, timeoutMsg: 'the app never finished the sync it was running' },
+  )
+  await $(SYNC_BUTTON).click()
+  await peer.waitPulled()
+  return written
+}
+
 type Command =
   | ({ cmd: 'pair' } & PairingQr)
   | { cmd: 'host_pairing' }
@@ -146,6 +164,13 @@ type Command =
   | { cmd: 'move_to_space'; id: string; space_id: string }
   | { cmd: 'edit_block'; id: string; content: string }
   | { cmd: 'set_property'; id: string; key: string; value: string }
+  | {
+      cmd: 'create_property_def'
+      key: string
+      value_type: string
+      options?: string
+      space_id?: string
+    }
   | { cmd: 'set_todo_state'; id: string; state: string }
   | { cmd: 'set_due_date'; id: string; date: string }
   | { cmd: 'add_tag'; id: string; tag_id: string }
@@ -238,6 +263,16 @@ export interface SyncPeer {
   editBlock(id: string, content: string): Promise<void>
   /** Set text property `key` on block `id`. */
   setProperty(id: string, key: string, value: string): Promise<void>
+  /**
+   * Declare property `key` as `valueType` (a select's `options` as a JSON
+   * array) in space `spaceId`, or in the Personal space.
+   */
+  createPropertyDef(
+    key: string,
+    valueType: string,
+    options?: string,
+    spaceId?: string,
+  ): Promise<void>
   /** Set the task state (`TODO`, `DONE`, …) of block `id`. */
   setTodoState(id: string, state: string): Promise<void>
   /** Set the due date (`YYYY-MM-DD`) of block `id`. */
@@ -361,6 +396,18 @@ export async function startSyncPeer(): Promise<SyncPeer> {
     },
     setProperty: async (id, key, value) => {
       await request({ cmd: 'set_property', id, key, value }, 'property_set')
+    },
+    createPropertyDef: async (key, valueType, options, spaceId) => {
+      await request(
+        {
+          cmd: 'create_property_def',
+          key,
+          value_type: valueType,
+          ...(options === undefined ? {} : { options }),
+          ...(spaceId === undefined ? {} : { space_id: spaceId }),
+        },
+        'property_set',
+      )
     },
     setTodoState: async (id, state) => {
       await request({ cmd: 'set_todo_state', id, state }, 'property_set')

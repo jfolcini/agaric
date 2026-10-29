@@ -196,8 +196,8 @@ describe('Agaric real-backend cross-space moves keep what the app holds (#5712) 
 
     await openPage(BETA, MOVER_ONE)
     await openPage(ALPHA, MOVER_TWO)
-    // Definitions are per space and do not sync yet (#5841): the app declares
-    // `related` in both of the peer's spaces.
+    // Definitions are per space (#5841): the app declares `related` in both of
+    // the peer's spaces.
     for (const spaceId of [ids.alpha, ids.beta]) {
       await invoke('create_property_def', {
         spaceId,

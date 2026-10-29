@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { HistoryFilterBar } from '@/components/history/HistoryFilterBar'
+import { t } from '@/lib/i18n'
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
@@ -119,8 +120,8 @@ describe('HistoryFilterBar', () => {
     const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
     const options = select.querySelectorAll('option')
 
-    // __all__ + 15 op types = 16 options
-    expect(options).toHaveLength(16)
+    // __all__ + 16 op types = 17 options
+    expect(options).toHaveLength(17)
     expect(options[0]).toHaveTextContent('All types')
     expect(options[1]).toHaveTextContent('Edit')
     expect(options[2]).toHaveTextContent('Create')
@@ -133,6 +134,8 @@ describe('HistoryFilterBar', () => {
     // #5387 — alias edits are ops, listed in page history.
     expect(values).toContain('add_page_alias')
     expect(values).toContain('remove_page_alias')
+    // #5841 — a definition change is an op, listed in global history.
+    expect(values).toContain('set_property_def')
   })
 
   it('calls onFilterChange(null) when "All types" is selected', async () => {
@@ -238,7 +241,7 @@ describe('HistoryFilterBar', () => {
       // Title.
       expect(content).toHaveTextContent('What do these mean?')
 
-      // Spot-check a handful of descriptions across the 15 op types — these
+      // Spot-check a handful of descriptions across the 16 op types — these
       // are the values supplied by the i18n keys
       // `history.opTypeDescription.<op_type>`.
       expect(content).toHaveTextContent('A new block was created')
@@ -253,10 +256,11 @@ describe('HistoryFilterBar', () => {
       expect(content).toHaveTextContent('An attachment was renamed')
       expect(content).toHaveTextContent('An alias was added to a page')
       expect(content).toHaveTextContent('An alias was removed from a page')
+      expect(content).toHaveTextContent(t('history.opTypeDescription.setPropertyDef'))
 
-      // All 15 op types render as <dt>/<dd> rows inside the legend's <dl>.
+      // All 16 op types render as <dt>/<dd> rows inside the legend's <dl>.
       const rows = content.querySelectorAll('dl > div')
-      expect(rows).toHaveLength(15)
+      expect(rows).toHaveLength(16)
     })
   })
 })

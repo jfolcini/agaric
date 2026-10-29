@@ -2129,10 +2129,11 @@ function hasPriorPropertyValue(op: MockOpLogEntry): boolean {
 
 /**
  * The `op_log.block_id` an op's payload names, as `OpPayload::block_id()`
- * reads it: an alias op names its page as `page_id` (#5387).
+ * reads it: an alias op names its page as `page_id` (#5387), a definition op
+ * its space as `space_id` (#5841).
  */
 export function payloadBlockId(payload: Record<string, unknown>): unknown {
-  return payload['block_id'] ?? payload['page_id']
+  return payload['block_id'] ?? payload['page_id'] ?? payload['space_id']
 }
 
 /**
@@ -2346,6 +2347,10 @@ export function reversePayloadFor(target: MockOpLogEntry): Record<string, unknow
     case 'add_page_alias':
     case 'remove_page_alias': {
       return { page_id: p['page_id'], alias: p['alias'] }
+    }
+    // #5841 — the reverse of a definition op swaps what it set and what it replaced.
+    case 'set_property_def': {
+      return { space_id: p['space_id'], key: p['key'], def: p['prior'], prior: p['def'] }
     }
     default: {
       // The soft-delete lifecycle trio reverses into `delete_block` /

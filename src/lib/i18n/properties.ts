@@ -266,6 +266,8 @@ export const properties: Record<string, string> = {
   'propertiesView.usageCount_one': '{{count}} use',
   'propertiesView.usageCount_other': '{{count}} uses',
   'propertiesView.created': 'Property definition created',
+  'propertiesView.optionsSaved': 'Options saved',
+  'propertiesView.undoFailed': 'Could not undo the change to the property definition',
   'propertiesView.editOptions': 'Edit options',
   'propertiesView.duplicateKey': 'A property with this key already exists',
   'propertiesView.deadlineWarning': 'Deadline warning',

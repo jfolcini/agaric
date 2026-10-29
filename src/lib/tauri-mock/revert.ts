@@ -17,7 +17,7 @@ import { normalizeTagName } from '@/lib/name-tokens'
 import { foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { deleteCohort, nextCohortMarker, restoreCohort } from '@/lib/tauri-mock/cohort'
 import { indexLinks, linkedTargets, relinkRestored } from '@/lib/tauri-mock/link-index'
-import { type MockOpLogEntry, opLog } from '@/lib/tauri-mock/seed'
+import { type MockOpLogEntry, opLog, spacePropertyDefs } from '@/lib/tauri-mock/seed'
 
 type BlockRow = Record<string, unknown>
 type Blocks = Map<string, BlockRow>
@@ -355,6 +355,24 @@ function revertPageAlias(
   pageAliases.set(pageId, [...others, alias])
 }
 
+/**
+ * #5841 — put the definition a `set_property_def` op replaced back: its
+ * `prior`, or no definition when it had none. A row that survives keeps its
+ * `created_at`, as the backend's upsert does.
+ */
+function revertPropertyDef(opType: string, payload: Record<string, unknown>): void {
+  if (opType !== 'set_property_def') return
+  const defs = spacePropertyDefs(payload['space_id'] as string)
+  const key = payload['key'] as string
+  const prior = payload['prior'] as { value_type: string; options: string | null } | null
+  if (prior === null) {
+    defs.delete(key)
+    return
+  }
+  const createdAt = defs.get(key)?.['created_at'] ?? new Date().toISOString()
+  defs.set(key, { key, ...prior, created_at: createdAt })
+}
+
 // ---------------------------------------------------------------------------
 // Soft-delete lifecycle reverts (whole-cohort walks over the `blocks` map)
 // ---------------------------------------------------------------------------
@@ -631,7 +649,8 @@ export function applyRevertForOp(
   if (state.blockTags && revertTagSet(target.op_type, payload, blockId, state.blockTags)) {
     return
   }
-  // An alias op names its page as `page_id`, so every block-keyed arm above
-  // passed it by.
+  // An alias op names its page as `page_id`, a definition op its space as
+  // `space_id`, so every block-keyed arm above passed them by.
   revertPageAlias(target.op_type, payload, blocks, state)
+  revertPropertyDef(target.op_type, payload)
 }

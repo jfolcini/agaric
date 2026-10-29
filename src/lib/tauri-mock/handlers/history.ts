@@ -229,6 +229,8 @@ function matchesOpType(entry: MockOpLogEntry, opTypeFilter: string | null): bool
 function inSpace(entry: MockOpLogEntry, spaceId: string): boolean {
   const blockId = opBlockId(entry)
   if (blockId === null) return true
+  // #5841 — a definition op's block is its space, which belongs to no space.
+  if (entry.op_type === 'set_property_def') return blockId === spaceId
   return ownerSpaceOf(blocks.get(blockId) ?? { id: blockId }) === spaceId
 }
 
