@@ -750,6 +750,7 @@ describe('the list marker', () => {
     const lists = new PageLists(
       styles,
       rows.map(([id, depth]) => ({ id, depth })),
+      () => false,
     )
     const mounted = mountNodeViews(rows, undefined, lists)
     teardown = () => {
@@ -827,10 +828,14 @@ describe('the list marker', () => {
   })
 
   it('a block’s view deleted stops listening to its marker', () => {
-    const lists = new PageLists({ [B]: listStyle('bullet') }, [
-      { id: A, depth: 0 },
-      { id: B, depth: 0 },
-    ])
+    const lists = new PageLists(
+      { [B]: listStyle('bullet') },
+      [
+        { id: A, depth: 0 },
+        { id: B, depth: 0 },
+      ],
+      () => false,
+    )
     const stopped: string[] = []
     const subscribe = lists.subscribe.bind(lists)
     vi.spyOn(lists, 'subscribe').mockImplementation((id, listener) => {

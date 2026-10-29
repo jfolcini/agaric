@@ -26,7 +26,7 @@ import { createContext, createElement, useContext, useEffect, useRef } from 'rea
 import { createStore, type StoreApi, useStore } from 'zustand'
 
 import { isNotFound, unwrap, validationCode } from '@/lib/app-error'
-import { commands } from '@/lib/bindings'
+import { commands, type OpRef } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -120,36 +120,39 @@ export function addOwnedBlockListener<K extends keyof DocumentEventMap>(
 }
 
 /**
- * Clear the task state of those of `ids` that hold one, in one IPC, as making
- * them bulleted or numbered does (#5691 D3: a task is a third list kind,
- * exclusive with bulleted and numbered). Call it once the list style is
- * written, so a refused write clears nothing. Resolves whether it cleared
- * them all; a failure is logged and told.
+ * Clear the task state of those of `ids` that hold one, as making them
+ * bulleted or numbered does (#5691 D3: a task is a third list kind, exclusive
+ * with bulleted and numbered). Call it once the list style is written, so a
+ * refused write clears nothing. Resolves whether it cleared them all; a
+ * failure is logged and told, and the blocks cleared before it stay cleared.
  *
  * The clear joins the undo entry the list style's write recorded just before
- * (#6156). `set_todo_state_batch` reports no op refs, so it joins as a
- * ref-less action, which makes that entry the positional fallback: its
- * Ctrl+Z reverts the burst by op time, the clear with the style.
+ * (#6156), by the op refs `delete_property` returns, so that entry stays
+ * ref-addressed: its Ctrl+Z gives back the task with the style.
  */
 export async function clearTaskStates(
   pageStore: StoreApi<PageBlockState>,
   ids: readonly string[],
 ): Promise<boolean> {
   const { blocksById, rootParentId } = pageStore.getState()
-  const tasks = new Set(ids.filter((id) => (blocksById.get(id)?.todo_state ?? null) !== null))
-  if (tasks.size === 0) return true
+  const tasks = ids.filter((id) => (blocksById.get(id)?.todo_state ?? null) !== null)
+  const cleared = new Set<string>()
+  const refs: OpRef[] = []
   try {
-    unwrap(await commands.setTodoStateBatch([...tasks], null))
+    for (const id of tasks) {
+      refs.push(...unwrap(await commands.deleteProperty(id, 'todo_state')).op_refs)
+      cleared.add(id)
+    }
   } catch (err) {
     logger.error('BlockTree', 'Failed to clear the task states of new list blocks', { ids }, err)
     notify.error(i18n.t('blockTree.setTaskStateFailed'))
-    return false
   }
-  if (rootParentId !== null) useUndoStore.getState().onNewAction(rootParentId)
+  if (cleared.size === 0) return tasks.length === 0
+  if (rootParentId !== null) useUndoStore.getState().onNewAction(rootParentId, refs)
   pageStore.setState((s) => ({
-    blocks: s.blocks.map((b) => (tasks.has(b.id) ? { ...b, todo_state: null } : b)),
+    blocks: s.blocks.map((b) => (cleared.has(b.id) ? { ...b, todo_state: null } : b)),
   }))
-  return true
+  return cleared.size === tasks.length
 }
 
 // ── Store factory ────────────────────────────────────────────────────────

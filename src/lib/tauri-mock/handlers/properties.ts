@@ -610,12 +610,18 @@ export const propertiesHandlers = {
     // `blocks.<col>`), NOT a block_properties row (which never holds a
     // reserved key). The old handler only touched the properties map, so a
     // reserved-key delete was a silent no-op that left the column set.
-    if (RESERVED_PROPERTY_COLUMN[key] !== undefined) {
+    const channel = RESERVED_PROPERTY_COLUMN[key]
+    if (channel !== undefined) {
       const fromValue = (b[key] as string | null | undefined) ?? null
       // #5898 — a key the block does not hold appends nothing.
       if (fromValue === null) return { block_id: blockId, key, op_refs: [] }
       b[key] = null
-      const op = pushOp('delete_property', { block_id: blockId, key, from_value: null })
+      // `prior` as `held_property_value` records it, which the undo restores (#6156).
+      const op = pushOp('delete_property', {
+        block_id: blockId,
+        key,
+        prior: valueFieldsOf({ [channel]: fromValue }),
+      })
       // #5378 — `delete_property_core` clears the task stamps with the state.
       if (key === 'todo_state') writeTaskStampTransitions(blockId, fromValue, null)
       return {

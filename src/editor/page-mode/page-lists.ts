@@ -95,7 +95,7 @@ export class PageLists {
   constructor(
     rows: Record<string, PropertyRow[]>,
     blocks: readonly Pick<FlatBlock, 'id' | 'depth'>[],
-    isTask: (id: string) => boolean = () => false,
+    isTask: (id: string) => boolean,
   ) {
     // Each shows its marker until `layout` reads the document.
     this.items = blocks.map(({ id, depth }) => ({ id, depth, marked: true }))
@@ -177,9 +177,11 @@ export class PageLists {
   /**
    * The styles an undo from `before` to `doc`, now at depth `depth`, gives back:
    * to each block that left its list in the change it took back, so it shows a
-   * marker now where it showed none and stores no style. The depth names that
-   * change, but not alone, as the history renumbers its events once it drops the
-   * oldest. What it was due to give back is forgotten.
+   * marker now where it showed none and stores no style. A block made a task
+   * since gets none: a task shows no marker, and a style written would take its
+   * task state off (#5691 D3). The depth names that change, but not alone, as the
+   * history renumbers its events once it drops the oldest. What it was due to
+   * give back is forgotten.
    */
   undone(before: PMNode, doc: PMNode, depth: number): [string, ListStyle][] {
     const due = new Map<string, ListStyle>()
@@ -198,7 +200,7 @@ export class PageLists {
       const id = blockIdOf(node)
       const style = id === null ? undefined : due.get(id)
       if (id === null || style === undefined || was.has(id) || this.styleOf(id) !== 'none') return
-      if (docShowsListMarker(node)) back.push([id, style])
+      if (docShowsListMarker(node) && !this.isTask(id)) back.push([id, style])
     })
     return back
   }

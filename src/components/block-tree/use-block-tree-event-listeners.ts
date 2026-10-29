@@ -11,7 +11,7 @@
  * - OPEN_SCHEDULED_DATE_PICKER
  * - TOGGLE_TODO_STATE
  * - OPEN_BLOCK_PROPERTIES
- * - INSERT_ORDERED_LIST / INSERT_DIVIDER / INSERT_CALLOUT (#253)
+ * - INSERT_DIVIDER / INSERT_CALLOUT (#253)
  * - RESTORE_LIST_STYLE (#6156)
  *
  * #1250 — these no longer install ~13 `document` CustomEvent listeners per
@@ -193,17 +193,6 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       openVoiceNoteRecorder: () => {},
     })
 
-    // #4552 slice 2 — sets the `listStyle` property instead of prepending a
-    // `1. ` marker (dead in production today: nothing dispatches
-    // `INSERT_ORDERED_LIST` any more, #1960 replaced the standalone toolbar
-    // button with the Turn-into menu — repointed rather than deleted per the
-    // issue's own call-site table, since the registry entry still exists).
-    const onOrderedList: BlockCommandHandler = (blockId) => {
-      void setListStyle(blockId, 'ordered').catch((err: unknown) => {
-        logger.error('BlockTree', 'setListStyle(ordered) failed', { blockId }, err)
-        notify.error(t('slash.numberedListFailed'))
-      })
-    }
     const onDivider: BlockCommandHandler = (blockId) => {
       void applyContentEdit(buildCtx(blockId), '---', 'slash.dividerFailed')
     }
@@ -263,11 +252,13 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
 
     // #6156 — the editor's undo took back a change that left the block's list
     // (`ListStyleUndo`). The text it gave back is saved first, then the style,
-    // so one entry holds both. A change not saved yet took no style off.
+    // so one entry holds both. A change not saved yet took no style off, and a
+    // block made a task since gets none: a task shows no list style.
     const onRestoreListStyle: BlockCommandHandler = (blockId, detail) => {
       const style = (detail as { style?: ListStyle } | undefined)?.style
       const saved = pageStore.getState().blocksById.get(blockId)
       if (!style || !saved || contentShowsListMarker(saved.content ?? '')) return
+      if ((saved.todo_state ?? null) !== null) return
       void (async () => {
         try {
           await flushActiveDraft()
@@ -329,7 +320,6 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       OPEN_BLOCK_PROPERTIES: onShowProperties,
       OPEN_QUERY_BUILDER: onOpenQueryBuilder,
       OPEN_EMOJI_PICKER: onOpenEmojiPicker,
-      INSERT_ORDERED_LIST: onOrderedList,
       INSERT_DIVIDER: onDivider,
       INSERT_CALLOUT: onCallout,
       TURN_INTO_BLOCK: onTurnInto,

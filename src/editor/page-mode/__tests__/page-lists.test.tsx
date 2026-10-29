@@ -60,7 +60,7 @@ import { REMOTE_PATCH } from '@/editor/page-mode/page-document'
 import { pickerOpen } from '@/editor/page-mode/page-keys'
 import { PageLists } from '@/editor/page-mode/page-lists'
 import { blockText } from '@/editor/page-mode/page-slash-commands'
-import type { PropertyRow } from '@/lib/bindings'
+import type { BlockRow, PropertyRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { dispatch } from '@/lib/tauri-mock/handlers'
@@ -108,6 +108,7 @@ describe('PageLists', () => {
         { id: C, depth: 0 },
         { id: D, depth: 0 },
       ],
+      () => false,
     )
 
     expect([A, B, C, D].map((id) => lists.markerOf(id))).toEqual(['1.', '2.', '', '•'])
@@ -120,7 +121,7 @@ describe('PageLists', () => {
   })
 
   it('a read replaces what the last read held', () => {
-    const lists = new PageLists({ [A]: style('bullet') }, flat(A, B))
+    const lists = new PageLists({ [A]: style('bullet') }, flat(A, B), () => false)
 
     lists.take({ [B]: style('ordered') })
 
@@ -129,7 +130,7 @@ describe('PageLists', () => {
   })
 
   it('a style given shows at once and stays once its write settles; a refused one shows the read', () => {
-    const lists = new PageLists({ [A]: style('bullet') }, flat(A, B))
+    const lists = new PageLists({ [A]: style('bullet') }, flat(A, B), () => false)
 
     const first = lists.want(A, 'ordered')
     const second = lists.want(B, 'bullet')
@@ -142,7 +143,7 @@ describe('PageLists', () => {
   })
 
   it('an older write settling leaves the newer style shown; `none` written clears the read', () => {
-    const lists = new PageLists({ [A]: style('bullet') }, flat(A))
+    const lists = new PageLists({ [A]: style('bullet') }, flat(A), () => false)
 
     const older = lists.want(A, 'ordered')
     const newer = lists.want(A, 'none')
@@ -158,7 +159,7 @@ describe('PageLists', () => {
   })
 
   it('tells a block’s listeners when its marker changes, and only then, until they unsubscribe', () => {
-    const lists = new PageLists({ [A]: style('ordered') }, flat(A, B))
+    const lists = new PageLists({ [A]: style('ordered') }, flat(A, B), () => false)
     const onA = vi.fn()
     const onB = vi.fn()
     const offA = lists.subscribe(A, onA)
@@ -182,7 +183,11 @@ describe('PageLists', () => {
   })
 
   it('takes the order and depths from the document, and numbers by them', () => {
-    const lists = new PageLists({ [A]: style('ordered'), [B]: style('ordered') }, flat(A, B))
+    const lists = new PageLists(
+      { [A]: style('ordered'), [B]: style('ordered') },
+      flat(A, B),
+      () => false,
+    )
     const listener = vi.fn()
     lists.subscribe(B, listener)
     const editor = openPage([
@@ -200,7 +205,11 @@ describe('PageLists', () => {
   })
 
   it('follows blocks moved or deleted in the document', () => {
-    const lists = new PageLists({ [A]: style('ordered'), [B]: style('ordered') }, flat(A, B, C))
+    const lists = new PageLists(
+      { [A]: style('ordered'), [B]: style('ordered') },
+      flat(A, B, C),
+      () => false,
+    )
     expect([A, B, C].map((id) => lists.markerOf(id))).toEqual(['1.', '2.', ''])
     const moved = openPage([
       [A, 0, 'one'],
@@ -221,7 +230,7 @@ describe('PageLists', () => {
   })
 
   it('a write settling with no style given for its block takes what it wrote', () => {
-    const lists = new PageLists({}, flat(A))
+    const lists = new PageLists({}, flat(A), () => false)
 
     lists.settle(A, 7, 'bullet')
 
@@ -234,6 +243,7 @@ describe('the list keys and input rules', () => {
     const lists = new PageLists(
       styles,
       rows.map(([id, depth]) => ({ id, depth })),
+      () => false,
     )
     const source = listSource(lists)
     const editor = openPage(rows, idMinter(), undefined, source)
@@ -536,7 +546,7 @@ describe('the list keys and input rules', () => {
   })
 
   it('takes the document’s blocks as the editor opens on them', () => {
-    const lists = new PageLists({ [A]: style('ordered'), [B]: style('ordered') }, [])
+    const lists = new PageLists({ [A]: style('ordered'), [B]: style('ordered') }, [], () => false)
     expect(lists.markerOf(B)).toBe('')
 
     const editor = openPage(
@@ -759,6 +769,7 @@ describe('the marker each block draws', () => {
     const lists = new PageLists(
       styles,
       rows.map(([id, depth]) => ({ id, depth })),
+      () => false,
     )
     const mounted = mountNodeViews(rows, undefined, lists)
     teardown = () => {
@@ -802,20 +813,25 @@ describe('the marker each block draws', () => {
   })
 })
 
+/** `PageModeEditor`'s IPC answered by the mock backend, with every block in view. */
+function onTheMockBackend(): void {
+  vi.stubGlobal('IntersectionObserver', EnteringIntersectionObserver)
+  seedBlocks()
+  useSpaceStore.setState({ currentSpaceId: SCOPE.space_id })
+  vi.mocked(invoke).mockImplementation(async (cmd: string, args?: InvokeArgs) =>
+    dispatch(cmd, args),
+  )
+}
+
+function backendStyle(id: string): string | null {
+  const rows = dispatch('get_properties', { blockId: id }) as PropertyRow[]
+  return rows.find((row) => row.key === 'listStyle')?.value_text ?? null
+}
+
 describe('a style write the backend refuses (PageModeEditor)', () => {
   const mockedInvoke = vi.mocked(invoke)
 
-  beforeEach(() => {
-    vi.stubGlobal('IntersectionObserver', EnteringIntersectionObserver)
-    seedBlocks()
-    useSpaceStore.setState({ currentSpaceId: SCOPE.space_id })
-    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
-  })
-
-  function backendStyle(id: string): string | null {
-    const rows = dispatch('get_properties', { blockId: id }) as PropertyRow[]
-    return rows.find((row) => row.key === 'listStyle')?.value_text ?? null
-  }
+  beforeEach(onTheMockBackend)
 
   it('a typed `1. ` the backend refuses says so, and the block shows the style it kept', async () => {
     const { pageId, ids } = seedPage(['first'])
@@ -840,5 +856,51 @@ describe('a style write the backend refuses (PageModeEditor)', () => {
     expect(container.querySelector('[data-testid="list-marker"]')).toBeNull()
     expect(backendStyle(ids[0] as string)).toBeNull()
     expect(error).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('Ctrl+Z in the editor on a block made a task since it left its list (PageModeEditor)', () => {
+  beforeEach(onTheMockBackend)
+
+  it('keeps the task, and gives back no style the task would hide', async () => {
+    const { pageId, ids } = seedPage(['first'])
+    const id = ids[0] as string
+    dispatch('set_property', {
+      blockId: id,
+      key: 'listStyle',
+      value: {
+        value_text: 'bullet',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    const { container, unmount, store, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    teardown = unmount
+    const backendRow = () => dispatch('get_block', { blockId: id }) as BlockRow
+
+    act(() => {
+      caret(editor, 0, 0)
+      typeText(editor, '# ')
+      editor.view.dispatch(closeHistory(editor.state.tr))
+    })
+    await vi.waitFor(() => expect(backendStyle(id)).toBeNull())
+    act(() => {
+      press(editor, 'Enter', { ctrlKey: true })
+    })
+    await vi.waitFor(() => expect(store.getState().blocksById.get(id)?.todo_state).toBe('TODO'))
+
+    act(() => {
+      editor.commands.undo()
+    })
+    await act(async () => {
+      await handle.current?.flush()
+    })
+
+    expect(backendRow().content).toBe('\\# first')
+    expect(backendRow().todo_state).toBe('TODO')
+    expect(backendStyle(id)).toBeNull()
   })
 })

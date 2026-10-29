@@ -951,6 +951,7 @@ function listSource(rows: readonly Row[]) {
   const lists = new PageLists(
     {},
     rows.map(([id, depth]) => ({ id, depth })),
+    () => false,
   )
   const writes: Array<{ id: string; style: ListStyle; seq: number }> = []
   const source: PageListSource = {

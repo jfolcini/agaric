@@ -1,9 +1,8 @@
 /**
  * An edit that changes a block's kind is one undo step with the list style or
  * task state it takes off (#6156): each path records ONE entry on the page's
- * undo stack holding every write the action made. A task-state clear reports
- * no op refs (`set_todo_state_batch`), so an entry it joins is the positional
- * fallback, which reverts the whole burst by op time.
+ * undo stack holding the op refs of every write the action made, the task
+ * state's clear (`delete_property`) among them.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -52,7 +51,6 @@ function stub(overrides: TypedInvokeHandlers = {}): void {
       block_id: args['blockId'] as string,
       key: args['key'] as string,
     }),
-    set_todo_state_batch: (args) => (args['blockIds'] as string[]).length,
     ...overrides,
   })
 }
@@ -111,7 +109,7 @@ describe('clearTaskStates', () => {
 
     await clearTaskStates(pageStore, ['BLOCK_1'])
 
-    expect(entries()).toEqual([null])
+    expect(entries()).toEqual([[SET, DELETE]])
   })
 
   it('records nothing when no block is a task, or when the write is refused', async () => {
@@ -119,7 +117,7 @@ describe('clearTaskStates', () => {
     pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1' }), makeBlock({ id: 'BLOCK_2' })] })
     setTodo(pageStore, 'TODO', 'BLOCK_2')
     useUndoStore.getState().onNewAction('PAGE_1', [SET])
-    stub({ set_todo_state_batch: () => Promise.reject(new Error('refused')) })
+    stub({ delete_property: () => Promise.reject(new Error('refused')) })
 
     await clearTaskStates(pageStore, ['BLOCK_1'])
     await clearTaskStates(pageStore, ['BLOCK_2'])
@@ -167,7 +165,7 @@ describe('slash commands', () => {
     const task = makeSyntheticCtx()
     setTodo(task.pageStore, 'TODO')
     await structural().exact['bullet-list']?.(task.ctx, { id: 'bullet-list', label: 'Bullet' })
-    expect(entries()).toEqual([null])
+    expect(entries()).toEqual([[SET, DELETE]])
   })
 })
 
@@ -190,7 +188,7 @@ describe('a typed list marker', () => {
     await waitFor(() =>
       expect(pageStore.getState().blocksById.get('BLOCK_2')?.todo_state).toBe(null),
     )
-    expect(entries()).toEqual([null])
+    expect(entries()).toEqual([[SET, DELETE]])
   })
 })
 
@@ -306,6 +304,24 @@ describe('the block editor’s undo of a change that cleared the style (RESTORE_
 
     dispatchBlockCommand('RESTORE_LIST_STYLE', { style: 'bullet' })
     pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', content: '# one' })] })
+    dispatchBlockCommand('RESTORE_LIST_STYLE', { style: 'ordered' })
+
+    await waitFor(() => expect(entries()).toEqual([[EDIT, SET]]))
+    expect(calls('set_property').map(([, args]) => args)).toEqual([
+      {
+        blockId: 'BLOCK_1',
+        key: LIST_STYLE_KEY,
+        value: expect.objectContaining({ value_text: 'ordered' }),
+      },
+    ])
+  })
+
+  it('writes nothing on a block made a task since: a task shows no list style', async () => {
+    const pageStore = listen('# one')
+
+    setTodo(pageStore, 'TODO')
+    dispatchBlockCommand('RESTORE_LIST_STYLE', { style: 'bullet' })
+    setTodo(pageStore, null)
     dispatchBlockCommand('RESTORE_LIST_STYLE', { style: 'ordered' })
 
     await waitFor(() => expect(entries()).toEqual([[EDIT, SET]]))

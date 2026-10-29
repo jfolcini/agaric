@@ -57,6 +57,7 @@ function mount(todo: Record<string, string> = {}) {
   const lists = new PageLists(
     {},
     ROWS.map(([id, depth]) => ({ id, depth })),
+    () => false,
   )
   editor = openPage(ROWS, idMinter(), undefined, listSource(lists))
   const pageStore = createPageBlockStore(PAGE)

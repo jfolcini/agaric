@@ -60,6 +60,7 @@ describe('a key typed', () => {
     const lists = new PageLists(
       Object.fromEntries(rows.map(([id]) => [id, styleRows('bullet')])),
       rows.map(([id, depth]) => ({ id, depth })),
+      () => false,
     )
     const editor = openPage(rows, idMinter(), undefined, listSource(lists))
     editors.push(editor)
@@ -82,6 +83,7 @@ describe('a key typed', () => {
     const lists = new PageLists(
       Object.fromEntries(rows.map(([id]) => [id, styleRows('bullet')])),
       rows.map(([id, depth]) => ({ id, depth })),
+      () => false,
     )
     const editor = openPage(rows, idMinter(), undefined, listSource(lists))
     editors.push(editor)
@@ -248,7 +250,7 @@ describe('layout', () => {
           editors.push(editor)
           const mint = idMinter('01ADD')
           let state: EditorState = editor.state
-          const lists = new PageLists(styles, [])
+          const lists = new PageLists(styles, [], () => false)
           lists.layout(state.doc)
           for (const step of steps) {
             const tr = state.tr
@@ -261,7 +263,7 @@ describe('layout', () => {
             }
             state = state.apply(tr)
             lists.layout(state.doc)
-            const walked = new PageLists(styles, [])
+            const walked = new PageLists(styles, [], () => false)
             walked.layout(state.doc)
             expect(laidOut(lists, state.doc)).toEqual(laidOut(walked, state.doc))
           }
@@ -296,6 +298,7 @@ describe('a list block leaving its list', () => {
           const lists = new PageLists(
             Object.fromEntries(ids.map((id, i) => [id, styleRows(rows[i]?.style ?? 'none')])),
             ids.map((id, i) => ({ id, depth: rows[i]?.depth ?? 0 })),
+            () => false,
           )
           const source = listSource(lists)
           const editor = openPage(

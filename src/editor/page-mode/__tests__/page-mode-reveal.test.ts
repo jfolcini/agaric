@@ -185,10 +185,14 @@ describe('MarkdownReveal in page mode', () => {
   })
 
   it('Backspace after a marker in a list block unmarks the text and keeps the block’s list style', () => {
-    const lists = new PageLists({ [B]: bullet }, [
-      { id: A, depth: 0 },
-      { id: B, depth: 0 },
-    ])
+    const lists = new PageLists(
+      { [B]: bullet },
+      [
+        { id: A, depth: 0 },
+        { id: B, depth: 0 },
+      ],
+      () => false,
+    )
     const ed = page(
       [
         [A, 0, 'first'],
