@@ -71,7 +71,7 @@ The buffer uses the block editor's bindings from the catalog, your rebinds inclu
 
 | Shortcut | Action |
 | --- | --- |
-| `Enter` | Split the line and leave a blank line, so what follows is a new block. On a `-`, `*`, `+`, `1.` or `1)` line, start the next line with the same indent and marker, numbered one up (a task goes on as `- [ ]`); on a line holding only its marker, remove it, ending the list (blank lines either side of the cursor where a list follows). In a fenced code block or the front matter, split the line |
+| `Enter` | Split the line and start a new block, a sibling of the block the cursor is in at the same level: after a blank line at that block's indent, or with its marker, numbered one up, after a bulleted or numbered block's further line. On a `-`, `*`, `+`, `1.` or `1)` line, start the next line with the same indent and marker, numbered one up (a task goes on as `- [ ]`); on a line holding only its marker, remove it, ending the list (blank lines either side of the cursor where a list follows). In a fenced code block or the front matter, split the line |
 | `Shift+Enter` | Split the line, a line break in the same block |
 | `Tab` / `Shift+Tab` | Indent the blocks at the cursor or selection, each with its further lines and children, under the block before them / take them a level out; a block with no sibling before it, or a top-level one, stays where it is. Follows *Tab indents blocks* in Settings → Editor: turned off, Tab moves focus as usual |
 | `Ctrl+Shift+→` / `Ctrl+Shift+←` | Indent / dedent, whatever the Tab setting |

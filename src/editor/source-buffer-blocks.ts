@@ -192,6 +192,34 @@ function runBefore(buffer: Parsed, at: number, depth: number): number {
   return run
 }
 
+/** The list marker `listStyle` is written with, `run` numbering a numbered block. */
+function listMarkerOf(listStyle: DocumentBlock['listStyle'], run: number): string {
+  if (listStyle === null) return ''
+  return listStyle === 'bullet' ? '- ' : `${run}. `
+}
+
+/**
+ * What a new block right after line `index` opens with, a sibling of the block
+ * that line is in, as the writer places it: at that block's column, with its
+ * list style numbered on, or as a `+` item under a list block (D4); and
+ * whether a blank line goes before it. A task's sibling is plain, as page
+ * mode's Enter makes it. `null` above the first block.
+ */
+export function siblingHead(doc: PMNode, index: number): { blank: boolean; head: string } | null {
+  const buffer = readBuffer(doc)
+  const at = indexAt(buffer, index)
+  const block = buffer.blocks[at]
+  if (block === undefined) return null
+  const { depth, listStyle } = block
+  const run = listStyle === 'ordered' ? runBefore(buffer, at + 1, depth) + 1 : 0
+  const layout = new DocumentLayout(
+    ancestors(buffer, at + 1, depth),
+    lineLayout(headOf(buffer, at)).marked,
+  )
+  const place = layout.place(depth, listMarkerOf(listStyle, run), null, false)
+  return { blank: place.blank, head: place.indent + place.marker }
+}
+
 /** A place in a block's lines: `line` lines into block `from`, `fromEnd` characters before that line's end. */
 interface Spot {
   from: number
@@ -240,8 +268,7 @@ function writeBlocks(
     const run = block.listStyle === 'ordered' && block.todoState === null ? prior + 1 : 0
     runs[block.depth] = run
     shallowest = Math.min(shallowest, block.depth)
-    const listMarker =
-      block.listStyle === null ? '' : block.listStyle === 'bullet' ? '- ' : `${run}. `
+    const listMarker = listMarkerOf(block.listStyle, run)
     const opensRule = atTop && lines.length === 0 && block.content.startsWith('---')
     const place = layout.place(block.depth, listMarker, block.todoState, opensRule)
     if (place.blank) lines.push('')
