@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE property_definitions SET key = ?3 WHERE space_id = ?1 AND key = ?2 AND NOT EXISTS (SELECT 1 FROM property_definitions t WHERE t.space_id = ?1 AND t.key = ?3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "b29db6f61d0b4cf987284cb41d43a8743bd137b324ef1284c25aca7ccad5022b"
+}

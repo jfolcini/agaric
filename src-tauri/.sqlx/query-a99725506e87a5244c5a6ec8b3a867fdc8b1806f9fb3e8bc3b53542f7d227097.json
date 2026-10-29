@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT op_type, is_undo as \"is_undo!: i64\", is_replicated as \"is_replicated!: i64\" FROM op_log WHERE device_id = ? AND seq = ?",
+  "query": "SELECT op_type, created_at, is_undo as \"is_undo!: i64\", is_replicated as \"is_replicated!: i64\" FROM op_log WHERE device_id = ? AND seq = ?",
   "describe": {
     "columns": [
       {
@@ -15,8 +15,19 @@
         }
       },
       {
-        "name": "is_undo!: i64",
+        "name": "created_at",
         "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "name": "is_undo!: i64",
+        "ordinal": 2,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -27,7 +38,7 @@
       },
       {
         "name": "is_replicated!: i64",
-        "ordinal": 2,
+        "ordinal": 3,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -43,8 +54,9 @@
     "nullable": [
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "1c8a1363c076cb3111a935aec03bf4460d48e2a5feb404b179af14d083673e0c"
+  "hash": "a99725506e87a5244c5a6ec8b3a867fdc8b1806f9fb3e8bc3b53542f7d227097"
 }

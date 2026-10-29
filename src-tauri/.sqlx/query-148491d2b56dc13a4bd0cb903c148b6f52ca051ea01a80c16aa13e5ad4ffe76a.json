@@ -1,0 +1,28 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) AS \"held!: i64\", COUNT(i.block_id) AS \"dropped!: i64\"\n           FROM block_properties f\n           JOIN blocks b ON b.id = f.block_id\n           LEFT JOIN block_properties i ON i.block_id = f.block_id AND i.key = ?3\n           WHERE f.key = ?2 AND (b.space_id = ?1 OR b.id = ?1)",
+  "describe": {
+    "columns": [
+      {
+        "name": "held!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "dropped!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "148491d2b56dc13a4bd0cb903c148b6f52ca051ea01a80c16aa13e5ad4ffe76a"
+}

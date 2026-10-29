@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT op_type, payload FROM op_log WHERE block_id = ?1 AND op_type IN ('rename_property_key', 'rewrite_properties') AND (created_at > ?2 OR (created_at = ?2 AND (seq > ?3 OR (seq = ?3 AND device_id > ?4)))) ORDER BY created_at, seq, device_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "op_type",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "op_type"
+          }
+        }
+      },
+      {
+        "name": "payload",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "payload"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "37b630f414e766f4a99b7b21ea61eaf9f25e379388142c01c4f014dfde000d58"
+}
