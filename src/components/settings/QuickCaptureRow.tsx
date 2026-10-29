@@ -136,7 +136,7 @@ export function QuickCaptureRow(): React.ReactElement | null {
         controlId="quick-capture-shortcut"
       >
         {editing ? (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Input
               id="quick-capture-shortcut"
               type="text"
@@ -169,7 +169,7 @@ export function QuickCaptureRow(): React.ReactElement | null {
             </Button>
           </div>
         ) : (
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <Kbd size="md" data-testid="quick-capture-shortcut-binding">
               {shortcut}
             </Kbd>

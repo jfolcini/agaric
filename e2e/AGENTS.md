@@ -121,11 +121,11 @@ The `test` from `./helpers` carries an auto fixture, `consoleErrorGate`, that co
 
 ## Horizontal-overflow assertion and the `data-overflow-clip` escape hatch
 
-`expectNoHorizontalOverflow(page, target?, label?)` (`e2e/helpers.ts`) asserts a surface — a dialog/sheet locator, or the document when `target` is omitted — doesn't bleed past its right edge. `mobile-overflow.spec.ts` runs it across the app's views at phone widths; call it directly for a surface that renders differently on mobile.
+`expectNoHorizontalOverflow(page, target?, label?)` (`e2e/helpers.ts`) asserts a surface — a dialog/sheet locator, or the page when `target` is omitted — doesn't bleed past its right edge. On the page it also fails on any box that clips content wider than itself (`overflow-x: hidden|clip`), because the app shell and every `ScrollArea` viewport cut a too-wide view off before it reaches the document; a box the user can scroll, a text ellipsis and a visually hidden box are not flagged. `mobile-overflow.spec.ts` runs it across the app's views at phone widths; call it directly for a surface that renders differently on mobile.
 
 It judges `position: absolute` children against their CSS containing block, not their DOM parent, and skips `fixed`/`sticky` descendants. Each containing-block trigger it recognises has a paired fixture in `horizontal-overflow-helper.spec.ts`; add one when you change the list.
 
-`data-overflow-clip="intentional"` marks a container whose `overflow-x: hidden|clip` is deliberate (fixed-width panel, thumbnail); its descendants are excluded like `overflow-x: auto|scroll` regions. The walk checks computed style, so the attribute alone does nothing. Never put it on `target` itself, and a `position: static` marker doesn't cover an absolutely-positioned descendant.
+`data-overflow-clip="intentional"` marks a container whose `overflow-x: hidden|clip` is deliberate (fixed-width panel, thumbnail, a zoom-and-pan surface): the page check skips the box itself, and the offender walk excludes its descendants like `overflow-x: auto|scroll` regions. The walk checks computed style, so the attribute alone does nothing. Never put it on `target` itself, and a `position: static` marker doesn't cover an absolutely-positioned descendant.
 
 ## Header label selection
 

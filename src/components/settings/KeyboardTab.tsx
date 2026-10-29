@@ -142,7 +142,10 @@ export function KeyboardTab(): React.ReactElement {
             {[...grouped.entries()].map(([category, items]) => (
               <div key={category} className="mb-6">
                 <h2 className="text-xs font-medium text-muted-foreground mb-2">{t(category)}</h2>
-                <div className="space-y-1">
+                {/* The columns sit on one line only when the card has room for
+                    them: its width, not the viewport's, since the sidebar and
+                    the Settings rail take most of a tablet's. */}
+                <div className="@container space-y-1">
                   {items.map((shortcut) => {
                     const isEditing = editingId === shortcut.id
                     const conflictNames = getConflictsForId(shortcut.id)
@@ -150,9 +153,9 @@ export function KeyboardTab(): React.ReactElement {
                     return (
                       <div
                         key={shortcut.id}
-                        className="flex flex-wrap items-center gap-x-2 gap-y-1 py-2 sm:flex-nowrap"
+                        className="flex flex-wrap items-center gap-x-2 gap-y-1 py-2 @lg:flex-nowrap"
                       >
-                        <div className="w-full text-sm sm:w-auto sm:min-w-0 sm:flex-1">
+                        <div className="w-full text-sm @lg:w-auto @lg:min-w-0 @lg:flex-1">
                           {t(shortcut.description)}
                           {shortcut.condition && (
                             <small className="text-xs text-muted-foreground ml-1">
@@ -162,7 +165,7 @@ export function KeyboardTab(): React.ReactElement {
                         </div>
 
                         <div
-                          className="min-w-0 flex-1 sm:w-56 sm:flex-none"
+                          className="min-w-0 flex-1 @lg:w-56 @lg:flex-none"
                           data-testid="kbd-keys-column"
                         >
                           {isEditing ? (
@@ -252,7 +255,7 @@ export function KeyboardTab(): React.ReactElement {
                             get NO edit affordance; their triggers are hardcoded
                             at the consumption site and a saved override would
                             never be honoured. */}
-                        <div className="flex shrink-0 items-center justify-end gap-1 sm:w-36">
+                        <div className="flex shrink-0 items-center justify-end gap-1 @lg:w-36">
                           {shortcut.isCustom && !isEditing && (
                             <Button
                               variant="ghost"

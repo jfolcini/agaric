@@ -37,12 +37,12 @@ export function ToggleRow({
   'data-testid': dataTestid,
 }: ToggleRowProps): React.ReactElement {
   return (
-    // A switch is small enough to stay beside its label on phones too.
+    // A switch is small enough to stay beside its label at any width.
     <SettingRow
       label={label}
       description={description}
       controlId={id}
-      className="flex-row items-center gap-4"
+      className="flex-row items-center gap-4 sm:flex-nowrap"
     >
       <Switch
         id={id}
