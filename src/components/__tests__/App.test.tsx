@@ -8,7 +8,7 @@
  *  - a11y compliance
  *
  * Its time is its test count: each test boots the whole App, and the first
- * test into each lazily loaded view or dialog also loads that chunk.
+ * test into each lazily loaded dialog also loads that chunk.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -44,6 +44,19 @@ import { selectPageStack, useTabsStore } from '@/stores/tabs'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
 import { useInPageFindStore } from '@/stores/useInPageFindStore'
 import { useSearchSheetStore } from '@/stores/useSearchSheetStore'
+// ViewDispatcher preloads every lazy view at idle after mount, so the first test into a
+// view can wait on its chunk behind the others, past its `waitFor` under load. Loading
+// them here moves that cost into the import phase, which has no timeout.
+import '@/components/AdvancedQuery/AdvancedQueryView'
+import '@/components/graph/GraphView'
+import '@/components/history/HistoryView'
+import '@/components/PageBrowser'
+import '@/components/pages/PageEditor'
+import '@/components/pages/SettingsView'
+import '@/components/SearchPanel'
+import '@/components/TagsView'
+import '@/components/templates/TemplatesView'
+import '@/components/TrashView'
 
 // Replace `setWindowTitle` with a vitest spy so we can assert the
 // App-level effect calls it with `"<SpaceName> · Agaric"`.
