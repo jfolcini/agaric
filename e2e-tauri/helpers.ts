@@ -181,6 +181,10 @@ export async function waitForAppReady(): Promise<void> {
  * flag so it cannot re-open mid-session.
  */
 export async function dismissWelcomeModalIfPresent(): Promise<void> {
+  // The modal mounts only while this flag is unset (`isOnboardingDone`), so every
+  // call after a session's first would otherwise wait out the whole timeout.
+  const done = await browser.execute(() => localStorage.getItem('agaric-onboarding-done') !== null)
+  if (done) return
   const modal = $('[data-testid="welcome-modal"]')
   const appeared = await modal.waitForExist({ timeout: 5_000 }).then(
     () => true,
