@@ -553,3 +553,94 @@ fn a_tasks_hidden_list_style_goes_with_an_edit_to_its_property_lines() {
         assert_eq!(styled, [ids[3].clone()], "only the untouched task keeps it");
     });
 }
+
+/// #5691 G2b — the buffer commands' `dialect` as the wire spells it: Source
+/// for none and for `source`, Document for `document`. A page holding a block
+/// of every kind the Document dialect writes, its own Document buffer saved in
+/// the dialect the wire names, appends no op.
+#[test]
+fn a_pages_own_document_saved_in_the_dialect_the_wire_names_appends_no_op() {
+    let wire = |value: serde_json::Value| {
+        serde_json::from_value::<Option<Dialect>>(value)
+            .unwrap()
+            .unwrap_or_default()
+    };
+    assert_eq!(wire(serde_json::json!(null)), Dialect::Source);
+    assert_eq!(wire(serde_json::json!("source")), Dialect::Source);
+    let dialect = wire(serde_json::json!("document"));
+    assert_eq!(dialect, Dialect::Document);
+    Runtime::new().unwrap().block_on(async {
+        let fx = fixture().await;
+        let block = |level: usize, content: &str| BlockSpec {
+            level,
+            content: content.to_string(),
+            todo_state: None,
+            priority: None,
+            scheduled_date: None,
+            due_date: None,
+            list_style: None,
+            properties: BTreeMap::new(),
+        };
+        let forest = [
+            block(0, "## Findings"),
+            block(0, "```sh\necho hi\n```"),
+            block(0, "---"),
+            BlockSpec {
+                list_style: Some("bullet"),
+                ..block(0, "bullet")
+            },
+            block(1, "plain child"),
+            BlockSpec {
+                list_style: Some("ordered"),
+                ..block(0, "numbered")
+            },
+            BlockSpec {
+                todo_state: Some("TODO".into()),
+                ..block(0, "task")
+            },
+            block(0, ""),
+            BlockSpec {
+                priority: Some("2".into()),
+                properties: BTreeMap::from([("note".into(), ("yes".into(), false))]),
+                ..block(0, "properties")
+            },
+        ];
+        let ids = create_forest(&fx, &forest).await;
+        write_metadata(&fx.pool, &ids, &forest).await;
+        let buffer = get_page_buffer_as(&fx.pool, &fx.page, dialect)
+            .await
+            .unwrap();
+        assert_eq!(
+            buffer.text,
+            "## Findings\n\n```sh\necho hi\n```\n\n---\n\n- bullet\n  + plain child\n1. numbered\n\
+             - [ ] task\n\n\\\n\nproperties\n  priority:: 2\n  note:: yes\n"
+        );
+
+        let before = op_counts(&fx.pool).await;
+        let report = apply_page_source_as(
+            &fx.pool,
+            DEV,
+            &fx.materializer,
+            &fx.page,
+            buffer.text.clone(),
+            buffer.source.clone(),
+            SourceSaveFlags {
+                merge: false,
+                line_ids: buffer.line_ids.clone(),
+            },
+            dialect,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            appended(&before, &op_counts(&fx.pool).await),
+            BTreeMap::new()
+        );
+        assert_eq!(
+            (report.created, report.edited, report.moved, report.deleted),
+            (0, 0, 0, 0)
+        );
+        assert_eq!((report.properties_set, report.properties_deleted), (0, 0));
+    });
+}

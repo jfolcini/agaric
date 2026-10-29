@@ -1005,9 +1005,12 @@ enum RenderMode {
 /// marker and a task as `- [ ] x`, which has no list style (D3): a blank line
 /// separates blocks but neighbouring list lines (D1), a plain block under a
 /// list block is a `+` item and a line holding only `\` an empty line (D4).
-/// The MCP tools and Duplicate keep `Source` (D5).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The MCP tools and Duplicate keep `Source` (D5). The buffer commands take it
+/// as `source` or `document`, and read `Source` when given none.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Type)]
+#[serde(rename_all = "lowercase")]
 pub enum Dialect {
+    #[default]
     Source,
     Document,
 }
@@ -7202,15 +7205,17 @@ pub async fn get_page_source(
         .map_err(sanitize_internal_error)
 }
 
-/// Tauri command: a page's source buffer with each block's id beside its text.
-/// Delegates to [`get_page_buffer_inner`].
+/// Tauri command: a page's source buffer with each block's id beside its text,
+/// in `dialect`, `Source` when none (#5691). Delegates to
+/// [`get_page_buffer_as`].
 #[tauri::command]
 #[specta::specta]
 pub async fn get_page_buffer(
     read_pool: State<'_, ReadPool>,
     page_id: PageId,
+    dialect: Option<Dialect>,
 ) -> Result<PageBuffer, AppError> {
-    get_page_buffer_inner(&read_pool.0, page_id.as_str())
+    get_page_buffer_as(&read_pool.0, page_id.as_str(), dialect.unwrap_or_default())
         .await
         .map_err(sanitize_internal_error)
 }

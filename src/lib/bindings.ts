@@ -588,15 +588,16 @@ export const commands = {
 	/**  Tauri command: render a page as its source-mode markdown buffer. Delegates to [`get_page_source_inner`]. */
 	getPageSource: (pageId: PageId) => typedError<string, AppError>(__TAURI_INVOKE("get_page_source", { pageId })),
 	/**
-	 *  Tauri command: a page's source buffer with each block's id beside its text.
-	 *  Delegates to [`get_page_buffer_inner`].
+	 *  Tauri command: a page's source buffer with each block's id beside its text,
+	 *  in `dialect`, `Source` when none (#5691). Delegates to
+	 *  [`get_page_buffer_as`].
 	 */
-	getPageBuffer: (pageId: PageId) => typedError<PageBuffer, AppError>(__TAURI_INVOKE("get_page_buffer", { pageId })),
+	getPageBuffer: (pageId: PageId, dialect: "source" | "document" | null) => typedError<PageBuffer, AppError>(__TAURI_INVOKE("get_page_buffer", { pageId, dialect })),
 	/**
-	 *  Tauri command: save a page edited as its source buffer. Delegates to
-	 *  [`apply_page_source_inner`].
+	 *  Tauri command: save a page edited as its source buffer, in `dialect`,
+	 *  `Source` when none (#5691). Delegates to [`apply_page_source_as`].
 	 */
-	applyPageSource: (pageId: PageId, source: string, baseSource: string, merge: boolean, lineIds: (string | null)[]) => typedError<WithOps<PageSourceReport>, AppError>(__TAURI_INVOKE("apply_page_source", { pageId, source, baseSource, merge, lineIds })),
+	applyPageSource: (pageId: PageId, source: string, baseSource: string, merge: boolean, lineIds: (string | null)[], dialect: "source" | "document" | null) => typedError<WithOps<PageSourceReport>, AppError>(__TAURI_INVOKE("apply_page_source", { pageId, source, baseSource, merge, lineIds, dialect })),
 	/**
 	 *  Tauri command: render blocks as clipboard markdown. Delegates to
 	 *  [`get_blocks_source_inner`].
@@ -2018,6 +2019,18 @@ export type DeleteResponse = {
 	 */
 	affected_page_ids: string[],
 };
+
+/**
+ *  The two grammars Edit as Markdown's buffer is written in (#5691). `Source`
+ *  writes every block as an outline bullet, its list marker after the bullet.
+ *  `Document` writes a plain block as its own paragraph, a list block with its
+ *  marker and a task as `- [ ] x`, which has no list style (D3): a blank line
+ *  separates blocks but neighbouring list lines (D1), a plain block under a
+ *  list block is a `+` item and a line holding only `\` an empty line (D4).
+ *  The MCP tools and Duplicate keep `Source` (D5). The buffer commands take it
+ *  as `source` or `document`, and read `Source` when given none.
+ */
+export type Dialect = "source" | "document";
 
 /**  A contiguous span of text with a diff tag. */
 export type DiffSpan = {

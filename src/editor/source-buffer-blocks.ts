@@ -15,6 +15,7 @@
 import type { NodeType, Node as PMNode } from '@tiptap/pm/model'
 import { type Command, type EditorState, TextSelection, type Transaction } from '@tiptap/pm/state'
 
+import { parseDocument } from '@/editor/source-buffer-document'
 import { type BlockTypeToken, convertBlockContent, detectBlockType } from '@/lib/block-type-convert'
 import { type ListStyle, listStyleForBlockType } from '@/lib/list-style'
 import { PRIORITY_CYCLE } from '@/lib/priority-levels'
@@ -119,14 +120,58 @@ function ownEnd(texts: readonly string[], ids: LineIds, start: number): number {
 }
 
 /**
+ * The two grammars the buffer is written in (#5691): `source`, every block an
+ * outline bullet, and `document`, a plain block its own paragraph
+ * (`source-buffer-document.ts`).
+ */
+export type BufferDialect = 'source' | 'document'
+
+/** Past the last line before `end` that is not blank, but never before `start + 1`. */
+function pastText(texts: readonly string[], start: number, end: number): number {
+  let past = end
+  while (past > start + 1 && isBlank(texts[past - 1] as string)) past -= 1
+  return past
+}
+
+/**
+ * {@link blockAt} in a Document buffer: the last block starting at or above
+ * `index`, as the Rust grammar reads the buffer. Its own lines run to the next
+ * block, its subtree to the next block no deeper than it.
+ */
+function documentBlockAt(
+  texts: readonly string[],
+  ids: LineIds,
+  index: number,
+): SourceBlock | null {
+  const blocks = parseDocument(texts.join('\n'), ids).blocks
+  const at = blocks.findLastIndex((block) => block.line - 1 <= index)
+  const block = blocks[at]
+  if (block === undefined) return null
+  const start = block.line - 1
+  const startOf = (next: { line: number } | undefined) => (next?.line ?? texts.length + 1) - 1
+  const after = blocks.slice(at + 1).find((next) => next.depth <= block.depth)
+  return {
+    line: start,
+    end: pastText(texts, start, startOf(blocks[at + 1])),
+    subtreeEnd: pastText(texts, start, startOf(after)),
+    id: ids[start] ?? null,
+  }
+}
+
+/**
  * The block at line `index`: the block that line starts, or the one whose
  * line starts the run of lines it is in. `null` in the front matter and above
  * the first block. Read from the top, so a list line inside a block's fence
  * is that block's code, not a block of its own.
  */
-export function blockAt(doc: PMNode, index: number): SourceBlock | null {
+export function blockAt(
+  doc: PMNode,
+  index: number,
+  dialect: BufferDialect = 'source',
+): SourceBlock | null {
   const texts = lineTexts(doc)
   const ids = lineIds(doc)
+  if (dialect === 'document') return documentBlockAt(texts, ids, index)
   let start: number | null = null
   let end = 0
   for (let i = frontMatterEnd(texts); i <= Math.min(index, texts.length - 1); i += 1) {
@@ -367,9 +412,23 @@ export interface BlockReading {
 /**
  * Every block below the front matter, in order. A run of lines no block owns
  * and none of which starts one is a paragraph block of its own. A heading's
- * ownership of what follows it is not read: only indentation nests.
+ * ownership of what follows it is not read: only indentation nests. A
+ * Document buffer is read as the Rust grammar reads it ({@link parseDocument}).
  */
-export function readBlocks(texts: readonly string[], ids: LineIds): BlockReading[] {
+export function readBlocks(
+  texts: readonly string[],
+  ids: LineIds,
+  dialect: BufferDialect = 'source',
+): BlockReading[] {
+  if (dialect === 'document') {
+    return parseDocument(texts.join('\n'), ids).blocks.map((block) => ({
+      depth: block.depth,
+      listStyle: block.listStyle ?? 'none',
+      taskState: block.todoState,
+      text: block.content,
+      properties: block.properties,
+    }))
+  }
   const blocks: BlockReading[] = []
   const indents: number[] = []
   let i = frontMatterEnd(texts)

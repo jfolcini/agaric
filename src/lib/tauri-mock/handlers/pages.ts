@@ -9,6 +9,17 @@
  * store.
  */
 
+import {
+  closesFence,
+  documentFenceOpener,
+  needsAnchorLineEscape,
+  needsBareLineEscape,
+  needsBlankLineEscape,
+  needsDocumentLineEscape,
+  needsTaskMarkerEscape,
+  parseDocument,
+  writeSourcePropertyValue,
+} from '@/editor/source-buffer-document'
 import { base64UrlToUtf8 } from '@/lib/base64url'
 import type { PageHeading } from '@/lib/bindings'
 import {
@@ -18,7 +29,7 @@ import {
 } from '@/lib/inline-property-parse'
 import { normalizeTagName } from '@/lib/name-tokens'
 import { compareNocase, compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
-import { TASK_STATE_TO_MARKER } from '@/lib/task-states'
+import { TASK_STATE_TO_MARKER, type TodoState } from '@/lib/task-states'
 import { blocksHandlers, parseOutline } from '@/lib/tauri-mock/handlers/blocks'
 import { propertiesHandlers } from '@/lib/tauri-mock/handlers/properties'
 import {
@@ -141,11 +152,7 @@ function liveChildren(parentId: string): Record<string, unknown>[] {
  * order.
  */
 function renderPageSource(pid: string): { source: string; ids: string[] } {
-  const page = blocks.get(pid)
-  // Like the backend's `load_page_row`: a trashed page is not found, and a
-  // block that is not a page is a validation error.
-  if (!page || page['deleted_at']) throw notFoundRejection(`page '${pid}' not found`)
-  if (page['block_type'] !== 'page') throw validationRejection('not a page')
+  requirePageToRender(pid)
   let source = renderFrontMatter(pageFrontMatter(pid))
   const ids: string[] = []
   const render = (parentId: string, depth: number): void => {
@@ -162,6 +169,184 @@ function renderPageSource(pid: string): { source: string; ids: string[] } {
   }
   render(pid, 0)
   return { source, ids }
+}
+
+/**
+ * Like the backend's `load_page_row`: a trashed page is not found, and a block
+ * that is not a page is a validation error.
+ */
+function requirePageToRender(pid: string): void {
+  const page = blocks.get(pid)
+  if (!page || page['deleted_at']) throw notFoundRejection(`page '${pid}' not found`)
+  if (page['block_type'] !== 'page') throw validationRejection('not a page')
+}
+
+/**
+ * The block property keys a buffer writes no line for: the reserved keys and
+ * the list style (`load_descendant_properties`).
+ */
+const BLOCK_LINE_HIDDEN_KEYS: ReadonlySet<string> = new Set([
+  ...INLINE_PROPERTY_RESERVED_KEYS,
+  'listStyle',
+])
+
+/** `listStyle` as the backend reads it for a marker: `bullet`, `ordered` or none. */
+function storedListStyle(id: string): string | null {
+  const style = properties.get(id)?.get('listStyle')?.['value_text']
+  return style === 'bullet' || style === 'ordered' ? style : null
+}
+
+/**
+ * `push_block_bullet` in a Document buffer: the markers and the first line,
+ * escaped when it would read as something else, then the further lines at the
+ * text's column, each escaped that would read as anything but that line of
+ * the block. Outside a fence an escaped line opens none, so only the first
+ * line can. Returns whether the last line is code (`CodeLines::last`).
+ */
+function pushDocumentLines(
+  lines: string[],
+  indent: string,
+  listMarker: string,
+  taskMarker: string,
+  text: string,
+): boolean {
+  const [first = '', ...rest] = text.split('\n')
+  const markers = listMarker + taskMarker
+  let head = indent + markers
+  if (first === '' && markers !== '') {
+    head = indent + markers.trimEnd()
+  } else {
+    const escape =
+      listMarker === ''
+        ? needsBareLineEscape(first, rest.length > 0)
+        : taskMarker === '' && needsTaskMarkerEscape(first)
+    head += (escape ? '\\' : '') + first
+  }
+  lines.push(head)
+  let fence = documentFenceOpener(head)
+  let last = fence !== null
+  const column = indent + ' '.repeat(listMarker.length)
+  for (const line of rest) {
+    const escape = fence === null ? needsDocumentLineEscape(line) : needsAnchorLineEscape(line)
+    const written = column + (escape ? '\\' : '') + line
+    last = fence !== null
+    if (fence !== null && closesFence(written, fence)) fence = null
+    lines.push(written)
+  }
+  return last
+}
+
+/**
+ * `push_anchored_source_bullet` in a Document buffer: the block with its `^ID`
+ * ending its last line or, when that line is code or would be written as an
+ * escaped blank line, on a line of its own at the text's column.
+ */
+function pushAnchoredDocumentBlock(
+  lines: string[],
+  indent: string,
+  listMarker: string,
+  taskMarker: string,
+  content: string,
+  id: string,
+): void {
+  const lastLine = content.includes('\n') ? content.slice(content.lastIndexOf('\n') + 1) : null
+  if (lastLine === null || !needsBlankLineEscape(lastLine)) {
+    const start = lines.length
+    if (!pushDocumentLines(lines, indent, listMarker, taskMarker, `${content} ^${id}`)) return
+    lines.length = start
+  }
+  pushDocumentLines(lines, indent, listMarker, taskMarker, content)
+  lines.push(`${indent}${' '.repeat(listMarker.length)}^${id}`)
+}
+
+/**
+ * `render_page_document` (#5691, `Dialect::Document.render`): the page's front
+ * matter ({@link renderFrontMatter}), then every live content descendant,
+ * depth-first in sibling order, each with its `^ID`. A plain block is its own
+ * paragraph, a bullet block `- x`, a numbered one `N. x` by its place in its
+ * run, a task `- [ ] x`, which shows no list style (D3); a blank line goes
+ * between blocks but neighbouring marked ones (D1). A plain block under a
+ * marked one, or opening the buffer with `---`, is a `+` item (D4). Its task
+ * state outside the checkbox alphabet, its priority and dates and its other
+ * properties follow as `key:: value` lines at its text's column. Like the
+ * backend, a nested page and what is under it are left out; unlike it, no id
+ * in the text is written as a name. Returns the buffer and the ids it holds,
+ * in order.
+ */
+function renderPageDocument(pid: string): { source: string; ids: string[] } {
+  requirePageToRender(pid)
+  const front = renderFrontMatter(pageFrontMatter(pid))
+  const lines: string[] = []
+  const ids: string[] = []
+  const open: Array<{ column: number; marked: boolean }> = []
+  let previousMarked: boolean | null = null
+  const render = (parentId: string, depth: number): void => {
+    const children = liveChildren(parentId).filter((row) => row['block_type'] === 'content')
+    let run = 0
+    for (const row of children) {
+      const id = row['id'] as string
+      const content = (row['content'] as string | null) ?? ''
+      const todo = (row['todo_state'] as string | null) ?? null
+      const style = storedListStyle(id)
+      run = style === 'ordered' && todo === null ? run + 1 : 0
+      const checkbox = checkboxOf(todo)
+      open.length = depth
+      const { column, marked: underMarker } = open.at(-1) ?? { column: 0, marked: false }
+      let marker = ''
+      if (checkbox !== null) marker = '- '
+      else if (todo === null && style !== null) marker = style === 'bullet' ? '- ' : `${run}. `
+      else if (underMarker || (front === '' && lines.length === 0 && content.startsWith('---'))) {
+        marker = '+ '
+      }
+      const marked = marker !== ''
+      if (previousMarked !== null && !(previousMarked && marked)) lines.push('')
+      previousMarked = marked
+      const child = column + (marked ? marker.length : 2)
+      open.push({ column: child, marked })
+      const taskMarker = checkbox === null ? '' : `[${checkbox}] `
+      pushAnchoredDocumentBlock(lines, ' '.repeat(column), marker, taskMarker, content, id)
+      pushPropertyLines(lines, ' '.repeat(child), row, checkbox === null ? todo : null)
+      ids.push(id)
+      render(id, depth + 1)
+    }
+  }
+  render(pid, 0)
+  return { source: front + lines.map((line) => `${line}\n`).join(''), ids }
+}
+
+/** The checkbox `todo` is written as, `null` outside the alphabet (`task_marker_for`). */
+function checkboxOf(todo: string | null): string | null {
+  return todo !== null && Object.hasOwn(TASK_STATE_TO_MARKER, todo)
+    ? TASK_STATE_TO_MARKER[todo as TodoState]
+    : null
+}
+
+/**
+ * A block's `key:: value` lines at `indent`, as `render_block` writes them:
+ * `todo` when its checkbox does not carry it, its priority and dates, then its
+ * other properties by key, each value as the line reads it back.
+ */
+function pushPropertyLines(
+  lines: string[],
+  indent: string,
+  row: Record<string, unknown>,
+  todo: string | null,
+): void {
+  const reserved = [
+    ['todo_state', todo],
+    ['priority', row['priority']],
+    ['scheduled_date', row['scheduled_date']],
+    ['due_date', row['due_date']],
+  ] as const
+  for (const [key, value] of reserved) {
+    if (typeof value === 'string' && value !== '') lines.push(`${indent}${key}:: ${value}`)
+  }
+  const rows = [...(properties.get(row['id'] as string) ?? [])]
+    .filter(([key]) => !BLOCK_LINE_HIDDEN_KEYS.has(key))
+    .toSorted(([a], [b]) => compareUtf8Bytes(a, b))
+  for (const [key, value] of rows) {
+    lines.push(`${indent}${key}:: ${writeSourcePropertyValue(frontMatterValue(value))}`)
+  }
 }
 
 /** The page's properties, aliases and tags, as its front matter writes them (#5160 S8). */
@@ -542,10 +727,68 @@ function parseTextBuffer(
   }))
 }
 
+/**
+ * `anchor_free_as` for a Document buffer (#5691): `source` less the `^ID` each
+ * block wrote, at the end of its last line or on a line of its own, which
+ * goes, and the id each line carries, the block's on the line it starts on.
+ */
+function anchorFreeDocument(source: string): { text: string; lineIds: Array<string | null> } {
+  const lines = source.split('\n')
+  const lineIds: Array<string | null> = lines.map(() => null)
+  const ownLines = new Set<number>()
+  for (const block of parseDocument(source, null).blocks) {
+    const word = block.anchor
+    if (word === null || !isBlockId(word)) continue
+    const last = block.line - 1 + block.content.split('\n').length - 1
+    const anchor = `^${word}`
+    const line = lines[last]
+    if (lines[last + 1]?.trim() === anchor) ownLines.add(last + 1)
+    else if (line?.endsWith(` ${anchor}`)) lines[last] = line.slice(0, -anchor.length - 1)
+    lineIds[block.line - 1] = ULID_RE.test(word) ? word.toUpperCase() : word
+  }
+  const kept = (_: unknown, i: number) => !ownLines.has(i)
+  return { text: lines.filter(kept).join('\n'), lineIds: lineIds.filter(kept) }
+}
+
+/** {@link parseTextBuffer} for a Document buffer: its blocks as the Rust grammar reads them. */
+function parseDocumentBuffer(
+  text: string,
+  lineIds: ReadonlyArray<string | null>,
+  warnings: string[],
+): SourceBullet[] {
+  const read = parseDocument(text, lineIds)
+  warnings.push(...read.warnings)
+  return read.blocks.map(({ content, depth, line }) => ({ content, depth, anchor: null, line }))
+}
+
+/** How a buffer in one dialect is rendered, freed of its anchors and read by its ids (#5691). */
+interface BufferGrammar {
+  render: (pid: string) => { source: string; ids: string[] }
+  anchorFree: (source: string) => { text: string; lineIds: Array<string | null> }
+  read: (text: string, lineIds: ReadonlyArray<string | null>, warnings: string[]) => SourceBullet[]
+}
+
+const SOURCE_GRAMMAR: BufferGrammar = {
+  render: renderPageSource,
+  anchorFree,
+  read: parseTextBuffer,
+}
+
+const DOCUMENT_GRAMMAR: BufferGrammar = {
+  render: renderPageDocument,
+  anchorFree: anchorFreeDocument,
+  read: parseDocumentBuffer,
+}
+
+/** The grammar of the dialect a buffer command names, Source when none, as the backend reads it. */
+function grammarOf(args: Record<string, unknown>): BufferGrammar {
+  return args['dialect'] === 'document' ? DOCUMENT_GRAMMAR : SOURCE_GRAMMAR
+}
+
 /** A page's own source read as the text {@link anchorFree} makes of it, each block under its id. */
-function readOwnText(source: string): SourceBullet[] {
-  const { text, lineIds } = anchorFree(source)
-  const bullets = parseTextBuffer(text, lineIds, [])
+function readOwnText(source: string, grammar: BufferGrammar): SourceBullet[] {
+  const { text, lineIds } = grammar.anchorFree(source)
+  const bullets = grammar.read(text, lineIds, [])
   for (const bullet of bullets) {
     bullet.anchor = bullet.line === undefined ? null : (lineIds[bullet.line - 1] ?? null)
   }
@@ -565,6 +808,7 @@ function readByLine(
   lineIds: ReadonlyArray<string | null>,
   known: ReadonlySet<string>,
   warnings: string[],
+  grammar: BufferGrammar,
 ): SourceBullet[] {
   const lines = text.replace(/\r\n/g, '\n').split(/[\n\r]/).length
   if (lineIds.length !== lines) {
@@ -572,7 +816,7 @@ function readByLine(
       `line_ids holds ${lineIds.length} entries for the ${lines} lines of the text`,
     )
   }
-  const bullets = parseTextBuffer(text, lineIds, warnings)
+  const bullets = grammar.read(text, lineIds, warnings)
   const first = new Map<string, number>()
   for (const bullet of bullets) {
     const line = bullet.line ?? 0
@@ -845,7 +1089,7 @@ function readSourceEdit(
   pageId: string,
   source: string,
   baseSource: string,
-  flags: { merge: boolean; lineIds: ReadonlyArray<string | null> },
+  flags: { merge: boolean; lineIds: ReadonlyArray<string | null>; grammar: BufferGrammar },
 ): {
   t1: SourceBullet[]
   before: Map<string | null, string>
@@ -853,7 +1097,8 @@ function readSourceEdit(
   front: FrontMatterWrites
   warnings: string[]
 } {
-  const current = renderPageSource(pageId)
+  const { grammar } = flags
+  const current = grammar.render(pageId)
   const stale = current.source !== baseSource
   if (stale && !flags.merge) {
     throw appErrorRejection({
@@ -864,7 +1109,7 @@ function readSourceEdit(
   }
   // The page's own source is read as the text the buffer gives of it.
   const now = readFrontMatter(current.source)
-  const t0 = readOwnText(now.body)
+  const t0 = readOwnText(now.body, grammar)
   if (t0.length !== current.ids.length || t0.some((b, i) => b.anchor !== current.ids[i])) {
     throw validationRejection(`page '${pageId}' does not read back as its own source`)
   }
@@ -880,11 +1125,11 @@ function readSourceEdit(
   )
   // An id of the source the edit started from is the page's too, so the merge
   // reads a block the page deleted since as that block.
-  const loaded = stale ? readOwnText(from.body) : t0
+  const loaded = stale ? readOwnText(from.body, grammar) : t0
   const loadedIds = new Set(loaded.flatMap(({ anchor }) => (anchor === null ? [] : [anchor])))
   const warnings: string[] = []
   const known = new Set([...loadedIds, ...current.ids])
-  const typed = readByLine(edited.body, flags.lineIds, known, warnings)
+  const typed = readByLine(edited.body, flags.lineIds, known, warnings, grammar)
   const t1 = stale ? mergeSourceBuffer(loaded, t0, typed, warnings) : typed
   const anchors = new Set(t1.flatMap(({ anchor }) => (anchor === null ? [] : [anchor])))
   const absent = current.ids.filter((id) => !anchors.has(id))
@@ -1513,10 +1758,13 @@ export const pagesHandlers = {
     renderPageSource((args as Record<string, unknown>)['pageId'] as string).source,
 
   // #5160 A — the same buffer with each block's id beside its text: the mock's
-  // render less its anchors ({@link anchorFree}).
+  // render less its anchors ({@link anchorFree}), in the dialect asked for,
+  // Source when none (#5691).
   get_page_buffer: (args) => {
-    const { source } = renderPageSource((args as Record<string, unknown>)['pageId'] as string)
-    const { text, lineIds } = anchorFree(source)
+    const a = args as Record<string, unknown>
+    const grammar = grammarOf(a)
+    const { source } = grammar.render(a['pageId'] as string)
+    const { text, lineIds } = grammar.anchorFree(source)
     return { source, text, line_ids: lineIds }
   },
 
@@ -1530,12 +1778,17 @@ export const pagesHandlers = {
   // writes resolve in the page's space (`resolveInboundNames`, #5160 N4), the
   // created pages and tags in `names_created`. Phase 5: with `merge`, a stale
   // buffer is saved with the page's changes folded in (`mergeSourceBuffer`).
+  // #5691: a Document buffer is rendered and read as the backend's grammar
+  // writes and reads it, but its saves write what a Source one does: text,
+  // nesting and order, not markers, checkboxes or property lines, nor the
+  // page's `key:: value` lines after its front matter.
   apply_page_source: (args) => {
     const a = args as Record<string, unknown>
     const pageId = a['pageId'] as string
     const edit = readSourceEdit(pageId, a['source'] as string, a['baseSource'] as string, {
       merge: a['merge'] === true,
       lineIds: a['lineIds'] as Array<string | null>,
+      grammar: grammarOf(a),
     })
     const report = { created: 0, edited: 0, moved: 0, deleted: 0 }
     const opRefs: OpRefs = []

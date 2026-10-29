@@ -186,6 +186,7 @@ describe('page-blocks applyPageSource (#5140 Phase 4b)', () => {
           baseSource: '- b\n',
           merge: true,
           lineIds: [null, null],
+          dialect: null,
         },
       ],
     ])
