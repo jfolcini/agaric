@@ -574,7 +574,8 @@ describe('BlockRefPeek', () => {
       })
       expect(within(peek).getByText('Design Notes')).toBeInTheDocument()
       expect(within(peek).getByText(/Then a link to/)).toBeInTheDocument()
-      expect(peek).toHaveAccessibleName('Preview of Design Notes')
+      // Named once placed: until its placement lands the peek is hidden, and so unnamed.
+      await waitFor(() => expect(peek).toHaveAccessibleName('Preview of Design Notes'))
       // A block-reference peek's count and copy action are about a block.
       expect(within(peek).queryByRole('button', { name: 'Copy reference' })).toBeNull()
     })
