@@ -173,14 +173,12 @@ export class PageLists {
 
   /** Block `id` leaves its list in a change that left the editor's undo depth at `depth`. */
   leave(id: string, depth: number): void {
-    const style = this.styleOf(id)
-    if (style !== 'none') this.left.set(id, { style, depth })
+    this.left.set(id, { style: this.styleOf(id), depth })
   }
 
   /** Block `id` leaves its list in an undo that left the editor's redo depth at `depth`. */
   leaveByUndo(id: string, depth: number): void {
-    const style = this.styleOf(id)
-    if (style !== 'none') this.leftByUndo.set(id, { style, depth })
+    this.leftByUndo.set(id, { style: this.styleOf(id), depth })
   }
 
   /** The editor's redo history is gone: what its redos were to give back is not due. */

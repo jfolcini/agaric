@@ -4,20 +4,27 @@
  * draws, and, through `PageModeEditor`, a style write the backend refuses.
  *
  * Equivalent mutants, accepted:
- * - `sameItems` made always false or blind to `id` or `depth`, its `?.`
- *   dropped, and `layout`'s return on it or the plugin's `doc !== previous.doc`
- *   dropped: each only spares a redraw, and a redraw over the same blocks
- *   changes no marker and tells no listener. `b[i]` is read only past the
- *   length check.
- * - `'none'` kept as a read style (`take`, `settle`) or as a marker
- *   (`redraw`): `styleOf` and `markerOf` read it as no style.
- * - A stray entry in `layout`'s new list: with no id and no style it breaks
- *   no run of numbered siblings.
+ * - `sameItems` made always false, its `?.` dropped, and `layout`'s return on
+ *   it or on a block whose marker did not change, or the plugin's `doc !==
+ *   previous.doc`, dropped: each only spares a redraw, and a redraw over the
+ *   same blocks changes no marker and tells no listener. `b[i]` is read only
+ *   past the length check, and `this.items[at]` only once `items` holds the
+ *   blocks of the document `differsInside` compared.
+ * - `differsInside`'s `start === null` or `end === null` alone: with the child
+ *   counts alike, the two are null together.
+ * - `leftTheirList` building the old document's markers again for each block,
+ *   or `undone` noting them for a block not due: the same answers, built once
+ *   or for fewer blocks to spare the work.
+ * - `'none'` kept as a read style (`take`, `settle`): `styleOf` reads it as no
+ *   style.
  * - An empty listener set kept once its last listener unsubscribes: nothing
  *   reads it.
- * - `id === null` (`idsIn`, Enter, Backspace, the input rule), and `made !==
- *   undefined` → `true`: every page block has an id, a split makes exactly one
- *   new one, and `styleOf(null)` is `'none'`.
+ * - `id === null` (`idsIn`, `leftTheirList`, `undone`, Enter, Backspace, the
+ *   input rule), and `made !== undefined` → `true`: every page block has an id,
+ *   a split makes exactly one new one, and `styleOf(null)` is `'none'`.
+ * - `depth <= this.storage.depth` for an undo: an undo or a redo never leaves
+ *   the undo depth where it was. The storage's starting depth: the undo depth
+ *   is never below 0, so a start of 0 or of none compares alike.
  * - The extension's name: nothing looks it up.
  * - `$` dropped from either rule's pattern: TipTap applies a rule only where
  *   its match ends at the text typed.
@@ -236,6 +243,38 @@ describe('PageLists', () => {
 
     expect(lists.markerOf(A)).toBe('•')
   })
+
+  it('a block that shows no marker breaks a numbered run, and its listeners hear nothing', () => {
+    const lists = new PageLists(
+      { [A]: style('ordered'), [B]: style('ordered'), [C]: style('ordered') },
+      flat(A),
+      () => false,
+    )
+    const onB = vi.fn()
+    lists.subscribe(B, onB)
+    const editor = openPage([
+      [A, 0, 'one'],
+      [B, 0, '# two'],
+      [C, 0, 'three'],
+    ])
+    teardown = () => editor.destroy()
+
+    lists.layout(editor.state.doc)
+
+    expect([A, B, C].map((id) => lists.markerOf(id))).toEqual(['1.', '', '1.'])
+    expect(onB).not.toHaveBeenCalled()
+  })
+
+  it('blocks that all stop showing a marker at once show none', () => {
+    const lists = new PageLists({ [A]: style('bullet') }, flat(A), () => false)
+    expect(lists.markerOf(A)).toBe('•')
+    const editor = openPage([[A, 0, '# Title']])
+    teardown = () => editor.destroy()
+
+    lists.layout(editor.state.doc)
+
+    expect(lists.markerOf(A)).toBe('')
+  })
 })
 
 describe('the list keys and input rules', () => {
@@ -365,6 +404,26 @@ describe('the list keys and input rules', () => {
     expect(rowsOf(editor.state.doc).map(([, , md]) => md)).toEqual(['# one', '# two'])
     expect(styles(editor, lists)).toEqual(['bullet', 'none'])
     expect(setStyle.mock.calls).toEqual([[B, 'none']])
+  })
+
+  it('a change to more than one block finds the list block among them that left its list', () => {
+    const { editor, lists, setStyle } = open(
+      [
+        [A, 0, 'one'],
+        [B, 0, 'two'],
+      ],
+      { [A]: style('bullet'), [B]: style('bullet') },
+    )
+
+    editor.view.dispatch(
+      editor.state.tr
+        .setNodeMarkup(posIn(editor, 0, 0) - 1, editor.schema.nodes['heading'], { level: 1 })
+        .insertText('!', posIn(editor, 1, 3)),
+    )
+
+    expect(rowsOf(editor.state.doc).map(([, , md]) => md)).toEqual(['# one', 'two!'])
+    expect(styles(editor, lists)).toEqual(['none', 'bullet'])
+    expect(setStyle.mock.calls).toEqual([[A, 'none']])
   })
 
   it('Enter continues the list into the block it makes; on an empty list block it leaves the list', () => {
@@ -682,7 +741,7 @@ describe('the list keys and input rules', () => {
     })
 
     it('a block deleted after it left its list, and brought back, gets the style with the undo of that change', () => {
-      const { editor, lists } = open(
+      const { editor, lists, setStyle } = open(
         [
           [A, 0, 'one'],
           [B, 0, 'two'],
@@ -703,6 +762,50 @@ describe('the list keys and input rules', () => {
       expect(texts(editor)).toEqual(['\\# one', 'two'])
 
       expect(styles(editor, lists)).toEqual(['bullet', 'none'])
+      // Nothing for the plain block, which left no list.
+      expect(setStyle.mock.calls).toEqual([
+        [A, 'none'],
+        [A, 'bullet'],
+      ])
+    })
+
+    it('an undo gives back no style over one the block was given since', () => {
+      const { editor, lists, setStyle } = open([[A, 0, 'one']], { [A]: style('bullet') })
+      caret(editor, 0, 0)
+      typeText(editor, '# ')
+      pause(editor)
+      // A read of the page finds the heading given a style elsewhere.
+      lists.take({ [A]: style('ordered') })
+
+      editor.commands.undo()
+
+      expect(texts(editor)).toEqual(['\\# one'])
+      expect(lists.styleOf(A)).toBe('ordered')
+      expect(setStyle.mock.calls).toEqual([[A, 'none']])
+    })
+
+    it('a style given back and taken off again comes back with no later undo', () => {
+      const { editor, lists } = open([[A, 0, 'one']], { [A]: style('bullet') })
+      caret(editor, 0, 0)
+      typeText(editor, '# ')
+      pause(editor)
+      editor.commands.undo()
+      expect(lists.styleOf(A)).toBe('bullet')
+      caret(editor, 0, 0)
+      expect(press(editor, 'Backspace')).toBe(true)
+      expect(lists.styleOf(A)).toBe('none')
+
+      // A heading again, at the undo depth the first change left, and undone.
+      editor.view.dispatch(
+        editor.state.tr.setNodeMarkup(posIn(editor, 0, 0) - 1, editor.schema.nodes['heading'], {
+          level: 1,
+        }),
+      )
+      pause(editor)
+      editor.commands.undo()
+
+      expect(texts(editor)).toEqual(['\\# one'])
+      expect(lists.styleOf(A)).toBe('none')
     })
 
     it('a list picked on a heading, undone, and the heading’s own change undone after it, leave no style the block never had', () => {
@@ -743,6 +846,29 @@ describe('the list keys and input rules', () => {
         expect(texts(editor)).toEqual(['one'])
         expect(lists.styleOf(A)).toBe('bullet')
       }
+    })
+
+    it('a change kept out of the history, as the slash picker’s trigger is, keeps the redo that gives the style back', () => {
+      const { editor, lists } = open([[A, 0, 'one']])
+      caret(editor, 0, 0)
+      typeText(editor, '# ')
+      pause(editor)
+      // As `/bullet-list` makes the heading a bullet paragraph: its text, then a read of the page's styles.
+      blockText(editor, A).write('one')
+      lists.take({ [A]: style('bullet') })
+      pause(editor)
+      editor.commands.undo()
+      expect(lists.styleOf(A)).toBe('none')
+
+      // `openSlashPicker` puts its trigger in and takes it out outside the history.
+      const at = posIn(editor, 0, 0)
+      editor.view.dispatch(editor.state.tr.insertText('/turn ', at).setMeta('addToHistory', false))
+      editor.view.dispatch(editor.state.tr.delete(at, at + 6).setMeta('addToHistory', false))
+      expect(texts(editor)).toEqual(['# one'])
+      editor.commands.redo()
+
+      expect(texts(editor)).toEqual(['one'])
+      expect(lists.styleOf(A)).toBe('bullet')
     })
 
     it('a new change after the undo drops its redo: a later redo of another change gives no style', () => {

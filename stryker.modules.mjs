@@ -320,7 +320,12 @@ export const MODULES = {
   'page-lists': {
     setup: true,
     src: 'src/editor/page-mode/page-lists.ts',
-    tests: ['src/editor/page-mode/__tests__/page-lists.test.tsx'],
+    tests: [
+      'src/editor/page-mode/__tests__/page-lists.test.tsx',
+      // Never wired in, so the scoped run reported what they kill as survivors (as #3142).
+      'src/editor/page-mode/__tests__/page-lists.per-key.test.ts',
+      'src/editor/page-mode/__tests__/page-lists.tasks.test.tsx',
+    ],
   },
   'page-rendered': {
     setup: true,
