@@ -179,9 +179,8 @@ function makeFlatPage(n: number): BlockRow[] {
   )
 }
 
-// The middle scale (5,000) was dropped: every assertion below is a per-row count
-// that reads the same at any n, and the asymptotic test already used only the
-// endpoints, so a third size added mount cost without a regression it alone could catch.
+// Two sizes: every assertion below is a per-row count that reads the same at any n,
+// so a size between them adds mount cost without a regression it alone could catch.
 const SCALES = [1_000, 10_000] as const
 
 interface ScaleMeasurement {
@@ -484,10 +483,7 @@ describe('BlockTree scale envelope (#2467 Measure)', () => {
    * this codebase can cause. It stays in the printed table as a cost datum.
    */
   it('bounds asymptotic work with load-invariant field-read counts', () => {
-    // The ratio endpoints.
-    const WORK_SCALES = [SCALES[0], SCALES.at(-1) as number] as const
-
-    const work = WORK_SCALES.map((n) => {
+    const work = SCALES.map((n) => {
       // 1. buildFlatTree over counting rows.
       const build = countFieldReads(makeFlatPage(n))
       const instrumentedFlat = buildFlatTree(build.rows, null)

@@ -1,6 +1,7 @@
 /**
  * The selection bubble's buttons from the keyboard (#6159), in block mode and in
- * page mode: a keyboard selection, Tab into the bubble, then Space or Enter on Bold.
+ * page mode: a keyboard selection, Tab into the bubble, the arrows across it, then Space
+ * or Enter on Bold.
  * The stored Markdown is read back after leaving the page and coming back.
  */
 
@@ -73,13 +74,18 @@ async function selectWord(
     .toBe(word)
 }
 
-/** Tab from the selection to Bold and press it with `key`. */
+/** Tab from the selection to Bold, arrow to Italic and back, and press Bold with `key`. */
 async function pressBold(page: Page, key: 'Enter' | ' '): Promise<void> {
   const bubble = page.getByTestId('selection-bubble-menu')
+  const bold = bubble.getByRole('button', { name: 'Bold' })
   await expect(bubble).toBeVisible()
   // One tab stop (WAI-ARIA toolbar): the bubble itself is not one.
   await page.keyboard.press('Tab')
-  await expect(bubble.getByRole('button', { name: 'Bold' })).toBeFocused()
+  await expect(bold).toBeFocused()
+  await page.keyboard.press('ArrowRight')
+  await expect(bubble.getByRole('button', { name: 'Italic' })).toBeFocused()
+  await page.keyboard.press('ArrowLeft')
+  await expect(bold).toBeFocused()
   await page.keyboard.press(key)
 }
 

@@ -147,6 +147,16 @@ describe('slash commands', () => {
     expect(entries()).toEqual([[EDIT, DELETE]])
   })
 
+  it('/bullet-list on a heading: the edit and the style it writes are one entry', async () => {
+    const { ctx } = makeSyntheticCtx({
+      blocks: [{ id: 'BLOCK_1', content: '# hello', parent_id: 'PAGE_1' }],
+    })
+
+    await structural().exact['bullet-list']?.(ctx, { id: 'bullet-list', label: 'Bullet' })
+
+    expect(entries()).toEqual([[EDIT, SET]])
+  })
+
   it('/bullet-list records its style write; on a task, the task clear joins it', async () => {
     const plain = makeSyntheticCtx()
     await structural().exact['bullet-list']?.(plain.ctx, { id: 'bullet-list', label: 'Bullet' })

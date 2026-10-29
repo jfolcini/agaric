@@ -1072,7 +1072,9 @@ async function commitAndCycle(
     const lines = await commitPageProperties(tagged, unchanged, save, page.api, task.markdown)
     const named = tagsWrittenAsText(lines.markdown ?? '')
     await commitPageTags(tagged, save, page.api, lines.markdown)
-    // A task is a list kind (#6167): the marker's commit took the block's list style off.
+    // A task is a list kind (#6167): a marker committed on a block that was not already a
+    // task takes its list style off. `noStore` has no `blocksById`, so every block reads
+    // as one that was not.
     if (task.refs.length > 0) expect(backendListStyles(page).has(tagged)).toBe(false)
     // As `bringIn` does, the styles before the patch.
     const blockIds = page.live().map(([id]) => id)

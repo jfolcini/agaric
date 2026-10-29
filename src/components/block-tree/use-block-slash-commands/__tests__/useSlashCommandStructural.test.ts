@@ -296,6 +296,32 @@ describe('useSlashCommandStructural — list, divider (#4552 slice 2)', () => {
     )
   })
 
+  // A heading shows no bullet or number, so a list style stored on it is one nobody
+  // sees: the command makes it a list paragraph, as Turn into does. Read back from
+  // the mock backend.
+  it.each([
+    ['bullet-list', 'bullet'],
+    ['numbered-list', 'ordered'],
+  ] as const)('%s on a heading makes it a paragraph styled %s', async (id, style) => {
+    seedBlocks()
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+    const actual = await vi.importActual<typeof import('@/lib/list-style')>('@/lib/list-style')
+    mockedSetListStyle.mockImplementation(actual.setListStyle)
+    const blockId = SEED_IDS.BLOCK_GS_1
+    dispatch('edit_block', { blockId, toText: '# Title' })
+
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx } = makeSyntheticCtx({
+      blockId,
+      blocks: [{ id: blockId, content: '# Title', parent_id: 'PAGE_1' }],
+    })
+    await result.current.exact[id]?.(ctx, { id, label: id })
+
+    expect((dispatch('get_block', { blockId }) as { content: string }).content).toBe('Title')
+    expect(listStyleFromRows(dispatch('get_properties', { blockId }) as PropertyRow[])).toBe(style)
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+
   it('numbered-list reports the failure toast when setListStyle rejects', async () => {
     mockedSetListStyle.mockRejectedValueOnce(new Error('boom'))
     const { result } = renderHook(() => useSlashCommandStructural())

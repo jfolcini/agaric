@@ -24,7 +24,12 @@ import type {
 import type { PickerItem } from '@/editor/SuggestionList'
 import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
 import { flushActiveDraft } from '@/lib/active-draft-flush'
-import { convertBlockContent, turnIdToBlockType } from '@/lib/block-type-convert'
+import {
+  type BlockTypeToken,
+  convertBlockContent,
+  detectBlockType,
+  turnIdToBlockType,
+} from '@/lib/block-type-convert'
 import { EMBED_TOKEN_PREFIX } from '@/lib/embed-token'
 import { listStyleForBlockType, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
@@ -112,6 +117,12 @@ async function handleListStyle(
   style: 'ordered' | 'bullet',
   failKey: string,
 ): Promise<void> {
+  // A heading, quote, callout or code block shows no bullet or number, so a style
+  // written on it would be hidden: making it a list is a kind change, which Turn into makes.
+  if (detectBlockType(readCurrentContent(ctx)) !== 'paragraph') {
+    await turnInto(ctx, style === 'ordered' ? 'numbered-list' : 'bullet-list')
+    return
+  }
   try {
     await flushActiveDraft()
     notifyUndo(ctx.rootParentId, await setListStyle(ctx.blockId, style))
@@ -137,7 +148,10 @@ async function handleListStyle(
  */
 async function handleTurnInto(ctx: SlashCommandContext, item: PickerItem): Promise<void> {
   const type = turnIdToBlockType(item.id)
-  if (!type) return
+  if (type) await turnInto(ctx, type)
+}
+
+async function turnInto(ctx: SlashCommandContext, type: BlockTypeToken): Promise<void> {
   const newContent = convertBlockContent(readCurrentContent(ctx), type)
   if (!(await applyContentEdit(ctx, newContent, 'slash.turnIntoFailed'))) return
   const style = listStyleForBlockType(type)
