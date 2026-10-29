@@ -6,7 +6,7 @@
  * that number was chosen without any browser-measured mount cost backing
  * it — see `docs/architecture/editor-and-content.md` § "Mount envelope
  * (#2467)". This file is the bench fixture that Measure phase calls for: at
- * 1,000 / 5,000 / 10,000 blocks on a single (flat) page, it records four
+ * 1,000 / 10,000 blocks on a single (flat) page, it records four
  * numbers production actually pays on a large page:
  *
  *  1. `buildFlatTree` time — turning the store's flat `BlockRow[]` into the
@@ -179,7 +179,10 @@ function makeFlatPage(n: number): BlockRow[] {
   )
 }
 
-const SCALES = [1_000, 5_000, 10_000] as const
+// The middle scale (5,000) was dropped: every assertion below is a per-row count
+// that reads the same at any n, and the asymptotic test already used only the
+// endpoints, so a third size added mount cost without a regression it alone could catch.
+const SCALES = [1_000, 10_000] as const
 
 interface ScaleMeasurement {
   n: number
@@ -260,7 +263,7 @@ function countFieldReads<T extends object>(
 }
 
 describe('BlockTree scale envelope (#2467 Measure)', () => {
-  it('measures buildFlatTree / splice / mount / re-render at 1K, 5K, and 10K blocks/page', () => {
+  it('measures buildFlatTree / splice / mount / re-render at 1K and 10K blocks/page', () => {
     const measurements: ScaleMeasurement[] = []
 
     for (const n of SCALES) {
@@ -367,7 +370,7 @@ describe('BlockTree scale envelope (#2467 Measure)', () => {
       expect(m.rerenderRenders).toBeLessThanOrEqual(m.n + 1)
 
       // Mount performs NO synchronous layout reads at any scale (measured 0 at
-      // 1K/5K/10K). This is the other regression the mount budget was proxying
+      // 1K/10K). This is the other regression the mount budget was proxying
       // for: a per-row `getBoundingClientRect` is O(n) forced reflows in a real
       // browser and would barely register in happy-dom's wall clock, so the
       // count catches what the timer could not.
@@ -481,8 +484,7 @@ describe('BlockTree scale envelope (#2467 Measure)', () => {
    * this codebase can cause. It stays in the printed table as a cost datum.
    */
   it('bounds asymptotic work with load-invariant field-read counts', () => {
-    // Only the ratio endpoints — the middle scale adds cost without adding
-    // signal, and the printed measurement above already covers 5K.
+    // The ratio endpoints.
     const WORK_SCALES = [SCALES[0], SCALES.at(-1) as number] as const
 
     const work = WORK_SCALES.map((n) => {
