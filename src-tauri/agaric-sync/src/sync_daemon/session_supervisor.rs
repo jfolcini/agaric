@@ -1876,7 +1876,8 @@ async fn connect_to_peer(
     // Bounded, because iroh's own dial budget is ~30 s and this runs while holding the
     // per-peer lock and a slot in the round's `JoinSet`.
     //
-    // The value is `sync_constants::CONNECT_TIMEOUT`'s and its **scope is re-derived,
+    // The value is `sync_constants::CONNECT_TIMEOUT`'s (carried on the scheduler so a
+    // test whose peer never answers can shorten it) and its **scope is re-derived,
     // not inherited**. It used to bound one `connect_async_tls_with_config` — TCP
     // connect plus TLS handshake plus WebSocket upgrade against *one* address — with
     // `try_connect_each_address` paying it again per candidate, so N dead addresses cost
@@ -1890,7 +1891,7 @@ async fn connect_to_peer(
     let dial = ctx
         .endpoint
         .connect(dial_addr(ctx, peer, endpoint_id), SYNC_ALPN);
-    let dial = tokio::time::timeout(CONNECT_TIMEOUT, dial);
+    let dial = tokio::time::timeout(ctx.scheduler.connect_timeout, dial);
     let Some(dialed) = unless_cancelled(Some(ctx.cancel), dial).await else {
         report_user_cancel(ctx, peer_id, "the peer had not answered the dial");
         return None;
@@ -1900,7 +1901,7 @@ async fn connect_to_peer(
             tracing::warn!(
                 peer_id,
                 candidates = peer.addresses.len(),
-                timeout_s = CONNECT_TIMEOUT.as_secs(),
+                timeout_ms = ctx.scheduler.connect_timeout.as_millis(),
                 "peer did not answer the dial within the connect budget"
             );
             // #4299: a timeout here is ambiguous by construction — a sleeping

@@ -146,6 +146,19 @@ fn discovered_service_peer(device_id: &str, harness: &ServiceHarness) -> mdns::D
     }
 }
 
+/// Publish an endpoint on `scheduler`, as a running daemon does once it binds.
+///
+/// `start_pairing_armed` waits up to its bind budget (5 s) for one before rendering
+/// the QR. These tests run no daemon and never read the QR, so without this each
+/// call would burn the whole budget.
+fn publish_daemon_endpoint(scheduler: &SyncScheduler, device_id: &str) {
+    scheduler.publish_local_endpoint(crate::sync_scheduler::LocalEndpointAdvert {
+        device_id: device_id.to_string(),
+        endpoint_id: mdns::test_endpoint_id(device_id).to_string(),
+        addrs: vec![std::net::SocketAddr::from(([127, 0, 0, 1], 1))],
+    });
+}
+
 /// A peer announcing a well-formed key that nobody is listening on, at a
 /// loopback port nothing is bound to.
 ///
@@ -767,7 +780,7 @@ async fn try_sync_with_peer_respects_backoff_gate() {
 async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
-    let scheduler = Arc::new(SyncScheduler::new());
+    let scheduler = Arc::new(SyncScheduler::new().with_connect_timeout(UNANSWERED_DIAL_BUDGET));
     let sink = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn SyncEventSink> = sink.clone();
     let cancel = AtomicBool::new(false);
@@ -861,11 +874,10 @@ async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
 /// one drives `try_sync_with_peer` end to end against a peer that does not
 /// answer, and asserts on what the user is told.
 ///
-/// The daemon reaches the suppressed state by failing twice; a test cannot,
-/// because the first failure arms the backoff gate and the second dial costs
-/// another connect budget. So the "already reported once" state is *seeded*
-/// (`record_failure` + `remember_reported_failure`, then the gate is waited
-/// out, exactly as the daemon waits it out) and the observed text of a real
+/// The daemon reaches the suppressed state by failing twice. Here the "already
+/// reported once" state is *seeded* instead (`record_failure` +
+/// `remember_reported_failure`, then the gate is expired, the state the daemon
+/// is in once it has waited the gate out), and the observed text of a real
 /// failure is what gets seeded — arm A produces it, arm B feeds it back.
 /// Nothing here hardcodes the message.
 ///
@@ -902,7 +914,7 @@ async fn the_repeat_report_suppression_is_wired_into_try_sync_with_peer_4120() {
     ) -> (Vec<SyncEvent>, u32) {
         let (pool, _dir) = test_pool().await;
         let materializer = Materializer::new(pool.clone());
-        let scheduler = Arc::new(SyncScheduler::new());
+        let scheduler = Arc::new(SyncScheduler::new().with_connect_timeout(UNANSWERED_DIAL_BUDGET));
         let sink = Arc::new(RecordingEventSink::new());
         let event_sink: Arc<dyn SyncEventSink> = sink.clone();
         let cancel = AtomicBool::new(false);
@@ -912,17 +924,13 @@ async fn the_repeat_report_suppression_is_wired_into_try_sync_with_peer_4120() {
         // the booking has to come first — which is also the real ordering.
         scheduler.record_failure(PEER);
         scheduler.remember_reported_failure(PEER, already_reported, reported_while_serving);
-        // …and that booking arms the backoff gate (~2 s for the first
-        // failure). Waiting it out is what makes this a *second cycle* rather
-        // than an early return at step 1.
-        let waited_from = std::time::Instant::now();
-        while !scheduler.may_retry(PEER) {
-            assert!(
-                waited_from.elapsed() < std::time::Duration::from_secs(30),
-                "the first failure's backoff must expire in seconds, not minutes"
-            );
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
+        // …and that booking arms the backoff gate. Expiring it is what makes
+        // this a *second cycle* rather than an early return at step 1.
+        assert!(
+            !scheduler.may_retry(PEER),
+            "the booking arms the backoff gate"
+        );
+        scheduler.expire_backoff(PEER);
 
         let peer = unreachable_peer(PEER);
         let mut peer_ref = make_peer_ref(PEER);
@@ -993,8 +1001,7 @@ async fn the_repeat_report_suppression_is_wired_into_try_sync_with_peer_4120() {
     // the call site passes a `peer_id` the scheduler's memory is not keyed on,
     // or a `peer_refs` slice this peer is not in.
     //
-    // Arms B, C and D each wait out a real connect timeout against a peer that never
-    // answers and share nothing but the text A produced, so they dial together.
+    // Arms B, C and D share nothing but the text A produced, so they dial together.
     let (
         (fresh_events, fresh_failures),
         (dark_repeat_events, dark_repeat_failures),
@@ -1068,7 +1075,7 @@ async fn the_repeat_report_suppression_is_wired_into_try_sync_with_peer_4120() {
 /// routes through the same repeat-report gate as every other initiator failure.
 ///
 /// The refusal fires at step 4 of `try_sync_with_peer` — before the dial — so
-/// two real cycles cost nothing but the backoff wait between them. That is what
+/// two real cycles cost nothing but the backoff gate between them. That is what
 /// makes this the wiring pin the helper-level tests cannot be: it goes red if
 /// the call site books the failure and emits its own event again (the pre-#4203
 /// shape), if it passes a `peer_id` the scheduler's memory is not keyed on, or
@@ -1084,7 +1091,7 @@ async fn the_pinned_identity_refusal_is_wired_into_try_sync_with_peer_4203() {
     const REFUSAL: &str = "peer identity does not match the one paired with this device";
 
     /// Two consecutive refusal cycles against the same peer, with the backoff
-    /// the first one arms waited out in between.
+    /// the first one arms expired in between.
     async fn two_cycles(streamed_at: [Option<i64>; 2]) -> (Vec<SyncEvent>, u32) {
         let (pool, _dir) = test_pool().await;
         let materializer = Materializer::new(pool.clone());
@@ -1116,17 +1123,14 @@ async fn the_pinned_identity_refusal_is_wired_into_try_sync_with_peer_4203() {
             peer_ref.streamed_at = *streamed;
             let refs = vec![peer_ref];
             if cycle > 0 {
-                // The first refusal booked a failure, which arms the ~2 s
-                // backoff gate at step 1. Waiting it out is what makes the
-                // second call a second *cycle* rather than an early return.
-                let waited_from = std::time::Instant::now();
-                while !scheduler.may_retry(PEER) {
-                    assert!(
-                        waited_from.elapsed() < std::time::Duration::from_secs(30),
-                        "the first failure's backoff must expire in seconds"
-                    );
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                }
+                // The first refusal booked a failure, which arms the backoff
+                // gate at step 1. Expiring it is what makes the second call a
+                // second *cycle* rather than an early return.
+                assert!(
+                    !scheduler.may_retry(PEER),
+                    "the refusal arms the backoff gate"
+                );
+                scheduler.expire_backoff(PEER);
             }
             let ctx = SyncSessionContext {
                 pool: &pool,
@@ -2676,6 +2680,7 @@ async fn pairing_proof_from_two_device_command_flow_is_admitted_3463() {
     let scheduler = Arc::new(SyncScheduler::new());
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
+    publish_daemon_endpoint(&scheduler, "LOCAL_DEV");
     let host_passphrase = crate::pairing::start_pairing_armed(
         &pool,
         &std::sync::Mutex::new(None),
@@ -3388,37 +3393,22 @@ async fn seed_unreachable_peer(pool: &sqlx::SqlitePool, peer_id: &str, exclude_f
         .unwrap();
 }
 
-/// How long a branch test waits for an unreachable peer's failure to be recorded.
+/// The dial budget for a test whose peer never answers.
 ///
-/// Sized from the bound the dial is actually charged to, not guessed: `try_sync_with_peer`
-/// wraps `Endpoint::connect` in `sync_constants::CONNECT_TIMEOUT` (10 s), and a key with
-/// nothing listening on it burns the whole budget before failing. 15 s is that plus 50 %
-/// for a loaded runner. The previous 3.2 s was sized against a TCP connection refused,
-/// which returned in milliseconds — the same number against a different wait.
+/// QUIC runs over UDP, where a dial to a key with nothing listening gets no
+/// response at all, so it fails only by timing out: each such dial takes exactly
+/// this long. Production's `sync_constants::CONNECT_TIMEOUT` (10 s) is what the
+/// tests below used to burn per dial.
+const UNANSWERED_DIAL_BUDGET: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// How long a branch test waits for an unreachable peer's failure to be recorded:
+/// [`UNANSWERED_DIAL_BUDGET`] plus the daemon's debounce, with room for a loaded
+/// runner. A pass returns as soon as the failure is booked.
 const BRANCH_DISPATCH_DEADLINE: std::time::Duration = std::time::Duration::from_secs(15);
 
-/// How long the daemon gets to shut down after a round that dialled an unreachable peer.
-///
-/// Was 800 ms, and that number was right for the transport it was written against: a TCP
-/// connect to a closed port returns `ECONNREFUSED` in microseconds, so a round against a
-/// dead peer ended immediately and the shutdown branch of the `select!` was reached at
-/// once. QUIC runs over UDP, where a closed port produces **no response at all**, so the
-/// dial has nothing to fail fast on and burns its whole `CONNECT_TIMEOUT`. Branch B
-/// awaits its `JoinSet` inline (a `KNOWN:` in `daemon_loop`, #490 M3), so shutdown is not
-/// observed until that round finishes.
-///
-/// This is a real change in shutdown latency for a dead peer — 0 ms to up to 10 s — and
-/// it is inherent to UDP rather than to anything this port chose. Sized from
-/// `CONNECT_TIMEOUT` plus 50 % for a loaded runner, the same way
-/// [`BRANCH_DISPATCH_DEADLINE`] is.
-///
-/// #4031 — READ THIS BEFORE DEBUGGING A TIMEOUT HERE. The 50 % is 5 s of slack over a
-/// 10 s worst case, and #4027 added another test riding it. When one of these expires,
-/// the message says "shutdown hung"; the far likelier cause is that a contended runner
-/// ate the slack while the seeded peer's dial burned the full `CONNECT_TIMEOUT`
-/// (`session_supervisor.rs`). Nothing here is worsened per-test and the margin is
-/// recorded rather than widened — but "the daemon deadlocked on shutdown" is the wrong
-/// first hypothesis, and confirming it costs an afternoon.
+/// How long the daemon gets to shut down after a round that dialled an unreachable
+/// peer. Branch B awaits its `JoinSet` inline (a `KNOWN:` in `daemon_loop`, #490 M3),
+/// so shutdown is not observed until that round's dials have timed out.
 const BRANCH_SHUTDOWN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// Branch B: A local-change notification triggers the debounced-change path in
@@ -3437,10 +3427,13 @@ const BRANCH_SHUTDOWN_DEADLINE: std::time::Duration = std::time::Duration::from_
 async fn daemon_branch_b_local_change_triggers_sync_attempt() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    let scheduler = Arc::new(SyncScheduler::with_intervals(
-        std::time::Duration::from_millis(100),
-        std::time::Duration::from_secs(60),
-    ));
+    let scheduler = Arc::new(
+        SyncScheduler::with_intervals(
+            std::time::Duration::from_millis(100),
+            std::time::Duration::from_secs(60),
+        )
+        .with_connect_timeout(UNANSWERED_DIAL_BUDGET),
+    );
     let sink = Arc::new(RecordingEventSink::new());
     let sink_dyn: Arc<dyn SyncEventSink> = sink.clone();
     let cancel = Arc::new(AtomicBool::new(false));
@@ -3525,10 +3518,13 @@ async fn daemon_branch_b_local_change_triggers_sync_attempt() {
 async fn daemon_branch_b_dispatches_all_peers_in_round_l61() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    let scheduler = Arc::new(SyncScheduler::with_intervals(
-        std::time::Duration::from_millis(100),
-        std::time::Duration::from_secs(60),
-    ));
+    let scheduler = Arc::new(
+        SyncScheduler::with_intervals(
+            std::time::Duration::from_millis(100),
+            std::time::Duration::from_secs(60),
+        )
+        .with_connect_timeout(UNANSWERED_DIAL_BUDGET),
+    );
     let sink = Arc::new(RecordingEventSink::new());
     let sink_dyn: Arc<dyn SyncEventSink> = sink.clone();
     let cancel = Arc::new(AtomicBool::new(false));
@@ -3611,7 +3607,7 @@ async fn daemon_branch_b_dispatches_all_peers_in_round_l61() {
 async fn daemon_branch_c_resync_timer_attempts_overdue_peer() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    let scheduler = Arc::new(SyncScheduler::new());
+    let scheduler = Arc::new(SyncScheduler::new().with_connect_timeout(UNANSWERED_DIAL_BUDGET));
     let sink = Arc::new(RecordingEventSink::new());
     let sink_dyn: Arc<dyn SyncEventSink> = sink.clone();
     let cancel = Arc::new(AtomicBool::new(false));
@@ -4023,10 +4019,13 @@ async fn daemon_branch_b_dials_discovered_unpaired_peer_while_pairing_pending_35
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     // Short debounce so Branch B's round starts ~100 ms after the notify.
-    let scheduler = Arc::new(SyncScheduler::with_intervals(
-        std::time::Duration::from_millis(100),
-        std::time::Duration::from_secs(60),
-    ));
+    let scheduler = Arc::new(
+        SyncScheduler::with_intervals(
+            std::time::Duration::from_millis(100),
+            std::time::Duration::from_secs(60),
+        )
+        .with_connect_timeout(UNANSWERED_DIAL_BUDGET),
+    );
     let sink = Arc::new(RecordingEventSink::new());
     let sink_dyn: Arc<dyn SyncEventSink> = sink.clone();
     let cancel = Arc::new(AtomicBool::new(false));
@@ -4108,10 +4107,13 @@ async fn daemon_branch_b_dials_the_scanned_host_with_an_empty_discovered_map_403
 
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    let scheduler = Arc::new(SyncScheduler::with_intervals(
-        std::time::Duration::from_millis(100),
-        std::time::Duration::from_secs(60),
-    ));
+    let scheduler = Arc::new(
+        SyncScheduler::with_intervals(
+            std::time::Duration::from_millis(100),
+            std::time::Duration::from_secs(60),
+        )
+        .with_connect_timeout(UNANSWERED_DIAL_BUDGET),
+    );
     let sink = Arc::new(RecordingEventSink::new());
     let sink_dyn: Arc<dyn SyncEventSink> = sink.clone();
     let cancel = Arc::new(AtomicBool::new(false));
@@ -10953,6 +10955,7 @@ async fn drive_two_device_pairing_windowed_3507(
     let host_sink = Arc::new(RecordingEventSink::new());
     let host_slot = std::sync::Mutex::new(None);
 
+    publish_daemon_endpoint(&host_sched, HOST_DEV_3507);
     let host_passphrase =
         crate::pairing::start_pairing_armed(&host_pool, &host_slot, &host_sched, HOST_DEV_3507)
             .await
@@ -11581,6 +11584,7 @@ async fn a_host_that_dials_the_first_pair_closes_its_pairing_window() {
     let (host_pool, _host_dir) = test_pool().await;
     let host_mat = Materializer::new(host_pool.clone());
     let host_sched = Arc::new(SyncScheduler::new());
+    publish_daemon_endpoint(&host_sched, DIALLING_HOST);
     let host_passphrase = crate::pairing::start_pairing_armed(
         &host_pool,
         &std::sync::Mutex::new(None),
