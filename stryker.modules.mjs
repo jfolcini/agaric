@@ -80,7 +80,10 @@ export const MODULES = {
   },
   'filters-model': {
     src: 'src/lib/filters/model.ts',
-    tests: ['src/lib/filters/__tests__/model.test.ts'],
+    tests: [
+      'src/lib/filters/__tests__/model.test.ts',
+      'src/lib/filters/__tests__/model.mutants.test.ts',
+    ],
   },
   'date-utils': {
     src: 'src/lib/date-utils.ts',
@@ -296,6 +299,7 @@ export const MODULES = {
     src: 'src/editor/page-mode/page-tasks.ts',
     tests: [
       'src/editor/page-mode/__tests__/page-tasks.test.tsx',
+      'src/editor/page-mode/__tests__/page-tasks.gate.test.tsx',
       'src/editor/page-mode/__tests__/page-gutter.test.tsx',
     ],
   },
