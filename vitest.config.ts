@@ -5,9 +5,64 @@ import { configDefaults, defineConfig } from 'vitest/config'
 // Paths resolve from `import.meta.dirname`, not `__dirname`: Vite 8's native config
 // loader warns on the CommonJS global, and CI keeps warnings on its console.
 
+// `e2e-tauri/**/*.test.ts` is NOT the WebdriverIO suite — `wdio.conf.ts`
+// runs `./e2e-tauri/**/*.e2e.ts` and never sees a `.test.ts`. It is the
+// unit tests for the pure helpers `wdio.conf.ts` exports (#4428), which
+// have to live outside `src/**`: `wdio.conf.ts` type-checks only under
+// `tsconfig.wdio.json` (it needs `@wdio/globals/types`), so importing it
+// from `src/**` would drag it into `tsconfig.app.json` where those
+// ambient types do not exist. Without this entry those tests would be a
+// file nothing runs, which is the same as no test at all. `coverage.include`
+// below stays `src/**` on purpose: this code is CI-harness code and must
+// not move the app's coverage gates in either direction.
+const TEST_FILES = ['src/**/*.{test,spec}.{ts,tsx}', 'e2e-tauri/**/*.test.ts']
+
+const VM_INCOMPATIBLE = [
+  // JSZip `generateAsync({ type: 'blob' })`: "blob is not supported by this platform".
+  'src/lib/__tests__/export-graph.test.ts',
+  'src/lib/__tests__/bug-report-zip.test.ts',
+  'src/components/dialogs/__tests__/BugReportDialog.test.tsx',
+  // Assert `toBeInstanceOf(Error)` / `expect.any(Error)` on a throwing `vi.doMock` factory.
+  'src/editor/__tests__/emoji-data.test.ts',
+  'src/editor/__tests__/emoji-picker.test.ts',
+  // Its async `vi.mock('@/lib/ipc-helpers')` factory can run twice, the second time for
+  // the lazily imported palette, which then calls an unstubbed copy: vitest caches an
+  // async factory's result only once it resolves. Flaky in any pool, often under vm.
+  'src/components/mobile/__tests__/SearchSheet.test.tsx',
+  // App boot effects log after the last test; a vm worker has closed that file's rpc by
+  // then, so under CI's `--silent=passed-only` the run fails with "Closing rpc while
+  // "onUserConsoleLog" was pending".
+  'src/__tests__/viewTransition.test.tsx',
+]
+
 export default defineConfig({
   test: {
     environment: 'happy-dom',
+    // `vmForks` gives each test file its own module graph and happy-dom window in a
+    // fresh `vm` context inside a reused worker, where `forks` spawned a process
+    // per file and re-imported node_modules every time.
+    // A file that fails only under `vmForks` goes in `VM_INCOMPATIBLE` with its reason.
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'vm',
+          pool: 'vmForks',
+          include: TEST_FILES,
+          exclude: [...configDefaults.exclude, ...VM_INCOMPATIBLE],
+        },
+      },
+      { extends: true, test: { name: 'forks', pool: 'forks', include: VM_INCOMPATIBLE } },
+    ],
+    // A vm worker keeps every file's context alive until it is recycled at this
+    // heap size. The default (total memory / workers) can sit above V8's own heap
+    // limit, and then workers abort out of memory instead.
+    // Root-level only: vitest ignores it inside `projects`.
+    vmMemoryLimit: '1GB',
+    // Pre-bundled because the vm loader resolves one of mermaid's own relative
+    // imports wrongly ("Cannot find module .../khroma/dist/channels/utils/index.js"),
+    // which fails every file that loads the real mermaid, even through `React.lazy`.
+    deps: { optimizer: { client: { enabled: true, include: ['mermaid'] } } },
     setupFiles: ['./src/test-setup.ts'],
     // A change to one of these reruns every test (`vitest related`, `--changed`
     // and watch all honour the list). vitest already adds `setupFiles`, but its
@@ -98,17 +153,6 @@ export default defineConfig({
         statements: 93,
       },
     },
-    // `e2e-tauri/**/*.test.ts` is NOT the WebdriverIO suite — `wdio.conf.ts`
-    // runs `./e2e-tauri/**/*.e2e.ts` and never sees a `.test.ts`. It is the
-    // unit tests for the pure helpers `wdio.conf.ts` exports (#4428), which
-    // have to live outside `src/**`: `wdio.conf.ts` type-checks only under
-    // `tsconfig.wdio.json` (it needs `@wdio/globals/types`), so importing it
-    // from `src/**` would drag it into `tsconfig.app.json` where those
-    // ambient types do not exist. Without this entry those tests would be a
-    // file nothing runs, which is the same as no test at all. `coverage.include`
-    // above stays `src/**` on purpose: this code is CI-harness code and must
-    // not move the app's coverage gates in either direction.
-    include: ['src/**/*.{test,spec}.{ts,tsx}', 'e2e-tauri/**/*.test.ts'],
   },
   resolve: {
     alias: {

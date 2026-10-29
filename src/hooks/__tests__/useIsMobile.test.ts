@@ -94,7 +94,13 @@ describe('useIsMobile', () => {
   it('derives the initial value from window.innerWidth without matchMedia', () => {
     // Initializer must not depend on matchMedia: even if matchMedia is absent,
     // the first render reflects the current viewport width.
-    delete (window as { matchMedia?: typeof window.matchMedia }).matchMedia
+    // Shadowed, not deleted: under `vmForks` matchMedia lives on happy-dom's Window
+    // prototype, so `delete` would leave it callable and skip the guard.
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      writable: true,
+      value: undefined,
+    })
     Object.defineProperty(window, 'innerWidth', {
       writable: true,
       configurable: true,
@@ -109,7 +115,11 @@ describe('useIsMobile', () => {
     // A non-browser/worker-like context: window exists but matchMedia does not.
     // The effect must early-return instead of throwing, and the initial value
     // still reflects the viewport width.
-    delete (window as { matchMedia?: typeof window.matchMedia }).matchMedia
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      writable: true,
+      value: undefined,
+    })
     Object.defineProperty(window, 'innerWidth', {
       writable: true,
       configurable: true,
