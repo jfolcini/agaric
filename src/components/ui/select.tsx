@@ -39,7 +39,7 @@ const SelectTrigger = ({
     data-slot="select-trigger"
     className={cn(
       SHARED_INPUT_CLASSES,
-      'border-input data-[placeholder]:text-muted-foreground [&>span]:line-clamp-1 flex w-full items-center justify-between gap-2 rounded-md border bg-transparent py-2 shadow-xs whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-2',
+      'border-input data-[placeholder]:text-muted-foreground [&>span]:truncate [&>span]:text-start flex w-full max-w-full items-center justify-between gap-2 rounded-md border bg-transparent py-2 shadow-xs whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50',
       size === 'sm'
         ? 'h-7 px-2 text-xs [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:text-base'
         : 'h-9 px-3 text-sm [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:text-base',

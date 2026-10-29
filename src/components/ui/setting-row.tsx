@@ -38,11 +38,14 @@ export function SettingRow({
     <div
       data-slot="setting-row"
       className={cn(
-        'flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4',
+        // From `sm` the control sits beside the label and wraps below it when the
+        // row is too narrow for both: `sm` is a viewport width, but a row's room
+        // is its card's, which the sidebar and the Settings rail shrink.
+        'flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-4 sm:gap-y-2',
         className,
       )}
     >
-      <div className="min-w-0 flex-1 space-y-1">
+      <div className="min-w-0 flex-1 space-y-1 sm:basis-48">
         {controlId ? (
           <Label htmlFor={controlId} muted={false} className="block">
             {label}
@@ -59,7 +62,7 @@ export function SettingRow({
           </p>
         ) : null}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="max-w-full shrink-0">{children}</div>
     </div>
   )
 }

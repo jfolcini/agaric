@@ -645,3 +645,40 @@ test.describe('phone at 360 × 780 @mobile @journal @settings', () => {
     expect(marker.bottom, 'marker bottom').toBeLessThanOrEqual(box.bottom)
   })
 })
+
+// A desktop-width window with the sidebar open leaves Settings a narrow column
+// (rail + panel); a row that cannot shrink or wrap is cut off by the scroll
+// area, where the user cannot reach it.
+const SETTINGS_TABS = [
+  'General',
+  'Appearance',
+  'Editor',
+  'Keyboard',
+  'Tasks & reminders',
+  'Spaces',
+  'Properties',
+  'Agent access',
+  'Sync & devices',
+  'Data',
+  'About',
+  'App health',
+] as const
+
+for (const width of [768, 820, 1024]) {
+  test.describe(`Settings tabs at ${width} × 1000 @settings`, () => {
+    test.use({ viewport: { width, height: 1000 } })
+
+    for (const tab of SETTINGS_TABS) {
+      test(`${tab} has no horizontal overflow`, async ({ page }) => {
+        await waitForBoot(page)
+        await navigateToView(page, 'Settings')
+        await openSettingsTab(page, tab)
+        await expect(page.getByRole('tab', { name: tab, exact: true })).toHaveAttribute(
+          'aria-selected',
+          'true',
+        )
+        await expectNoHorizontalOverflow(page, undefined, `Settings · ${tab} @ ${width}px`)
+      })
+    }
+  })
+}
