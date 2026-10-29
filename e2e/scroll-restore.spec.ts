@@ -55,11 +55,12 @@ test('coming back to a long page restores the row the user left @pages', async (
 
   const pane = await page.locator('#main-content').boundingBox()
   await page.mouse.move((pane?.x ?? 0) + 300, (pane?.y ?? 0) + 300)
-  for (let i = 0; i < 30; i++) {
+  for (let i = 1; i <= 30; i++) {
     await page.mouse.wheel(0, 200)
-    await page.waitForTimeout(50)
+    await expect
+      .poll(() => page.locator('#main-content').evaluate((el) => el.scrollTop))
+      .toBe(i * 200)
   }
-  await expect.poll(() => page.locator('#main-content').evaluate((el) => el.scrollTop)).toBe(6000)
   const left = await topRow(page)
   expect(left?.text).toMatch(/^row \d+/)
 

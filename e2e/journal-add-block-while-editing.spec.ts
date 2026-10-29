@@ -70,6 +70,7 @@ test('adds a block when the button is clicked while an empty block is being edit
   expect(box.y + box.height).toBeLessThan(1024)
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
   await page.mouse.down()
+  // A real click's press: the blur it causes reshapes the rows before the release.
   await page.waitForTimeout(80)
   await page.mouse.up()
 

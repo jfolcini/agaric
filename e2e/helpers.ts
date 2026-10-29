@@ -327,6 +327,48 @@ export async function expectNoHorizontalOverflow(
     return { scrollWidth, clientWidth, limit, offenders }
   }
 
+  // The app shell and every vertical `ScrollArea` clip sideways
+  // (`overflow-x: hidden`), so a view wider than its column never reaches the
+  // document: it is cut off where the user cannot scroll to it. Any box that
+  // clips content wider than itself is that defect. Not a defect: a box the
+  // user can scroll (`auto` / `scroll`, the deliberate tables and code
+  // blocks), a text ellipsis, a visually hidden box (`sr-only` clips itself to
+  // nothing), and a `data-overflow-clip` marker.
+  const collectClipped = (tol: number): string[] => {
+    const describe = (el: Element) => {
+      const testid = el.getAttribute('data-testid') ?? el.getAttribute('data-slot')
+      const cls = typeof el.className === 'string' ? el.className.slice(0, 80) : ''
+      return `<${el.tagName.toLowerCase()}${testid ? ` [${testid}]` : ''} class="${cls}">`
+    }
+    const clipped: string[] = []
+    for (const node of Array.from(document.body.querySelectorAll<HTMLElement>('*'))) {
+      if (node.scrollWidth <= node.clientWidth + tol) continue
+      const style = getComputedStyle(node)
+      if (style.overflowX !== 'hidden' && style.overflowX !== 'clip') continue
+      if (style.textOverflow === 'ellipsis') continue
+      if (style.clipPath !== 'none' || style.clip !== 'auto') continue
+      if (node.dataset['overflowClip'] === 'intentional') continue
+      // Name the outermost descendant that reaches furthest past the box.
+      let culprit: Element | null = null
+      let culpritRight = node.getBoundingClientRect().right + tol
+      for (const d of Array.from(node.querySelectorAll('*'))) {
+        const dr = d.getBoundingClientRect()
+        if (dr.width > 0 && dr.height > 0 && dr.right > culpritRight) {
+          culprit = d
+          culpritRight = dr.right
+        }
+      }
+      const text = (culprit?.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 40)
+      const widest = culprit
+        ? `; widest: ${describe(culprit)} right=${Math.round(culpritRight)} "${text}"`
+        : ''
+      clipped.push(
+        `${describe(node)} clips ${node.scrollWidth}px of content to ${node.clientWidth}px${widest}`,
+      )
+    }
+    return clipped
+  }
+
   const result = target
     ? await target.evaluate(collectFromElement, TOLERANCE)
     : await page.evaluate((tol) => {
@@ -394,6 +436,10 @@ export async function expectNoHorizontalOverflow(
       result.scrollWidth,
       `Horizontal overflow on ${label}: scrollWidth=${result.scrollWidth} > clientWidth=${result.clientWidth}.${detail}`,
     ).toBeLessThanOrEqual(result.clientWidth + TOLERANCE)
+    expect(
+      await page.evaluate(collectClipped, TOLERANCE),
+      `Horizontal overflow on ${label}: content cut off by a box that cannot scroll sideways`,
+    ).toEqual([])
   }
 }
 
@@ -642,6 +688,37 @@ export async function navigateToView(page: Page, view: string) {
     .locator('[data-slot="sidebar"]')
     .getByRole('button', { name: view, exact: true })
     .click()
+}
+
+/**
+ * The level-1 heading each top-level view shows once it has switched, keyed by
+ * its `navigateToView` label (Status is a Settings tab, so its heading is
+ * Settings'; the Journal's is the day).
+ */
+export const VIEW_HEADING = {
+  Journal: /, \d{4}$/,
+  Pages: 'Pages',
+  Search: 'Search',
+  Tags: 'Tags',
+  Settings: 'Settings',
+  Graph: 'Graph',
+  Templates: 'Templates',
+  'Advanced Query': 'Advanced Query',
+  Status: 'Settings',
+  History: 'History',
+  Trash: 'Trash',
+} as const satisfies Record<string, string | RegExp>
+
+export type TopLevelView = keyof typeof VIEW_HEADING
+
+/**
+ * The view is the one asked for and has finished loading: its heading shows,
+ * and no loading skeleton (`aria-busy`, the app's one loading contract) is left,
+ * neither the lazy-chunk fallback nor a view's own data skeleton.
+ */
+export async function expectViewLoaded(page: Page, view: TopLevelView): Promise<void> {
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(VIEW_HEADING[view])
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0)
 }
 
 /**
@@ -1186,8 +1263,7 @@ interface PointerDragOptions {
  *
  * Sequence: move to source center → pointerdown → step vertically to the
  * target row → (optional) step horizontally for the indent/dedent offset →
- * settle → pointerup. Small inter-step pauses let @dnd-kit's collision
- * detection observe each new position.
+ * a rendered frame → pointerup.
  */
 async function performPointerDrag(
   page: Page,
@@ -1213,7 +1289,6 @@ async function performPointerDrag(
   for (let i = 1; i <= steps; i++) {
     const y = sy + (ty - sy) * (i / steps)
     await page.mouse.move(sx, y)
-    if (i % 5 === 0) await page.waitForTimeout(50)
   }
 
   // Phase 2 — horizontal offset for indent/dedent projection (skipped at 0).
@@ -1221,13 +1296,22 @@ async function performPointerDrag(
     for (let i = 1; i <= steps; i++) {
       const x = sx + offsetX * (i / steps)
       await page.mouse.move(x, ty)
-      if (i % 5 === 0) await page.waitForTimeout(50)
     }
   }
 
-  // Settle so @dnd-kit processes the final "over" state before release.
-  await page.waitForTimeout(150)
+  await renderedFrame(page)
   await page.mouse.up()
+}
+
+/**
+ * Resolve once the page has rendered two frames: a drag's last move has
+ * committed and @dnd-kit's "over" state, set from an effect of that commit,
+ * has committed too, so a release drops where the pointer is.
+ */
+async function renderedFrame(page: Page): Promise<void> {
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  )
 }
 
 /**
@@ -1251,8 +1335,8 @@ export async function dragBlock(page: Page, source: Locator, target: Locator): P
 // device. Coordinates are viewport CSS pixels. Needs a `hasTouch` context.
 // ---------------------------------------------------------------------------
 
-// The 400 ms hold (`LONG_PRESS_DELAY`) + headroom: a touch drag or a menu press
-// must out-wait it before moving or lifting. Do not lower without checking it.
+// The 400 ms hold (`LONG_PRESS_DELAY`) + headroom: a menu press must out-wait
+// it before lifting. Do not lower without checking it.
 const TOUCH_HOLD_MS = 550
 
 interface TouchPipeline {
@@ -1291,7 +1375,7 @@ async function centerOf(locator: Locator, what: string): Promise<{ x: number; y:
 }
 
 /**
- * TOUCH drag — hold `source` past the 400 ms delay, then move onto `target`.
+ * TOUCH drag — hold `source` until the row lifts, then move onto `target`.
  * `source` is any point on the block row (the row is the activator), e.g. its
  * `block-static` text. Vertical-only: no horizontal drift, so the projected
  * depth stays put.
@@ -1301,14 +1385,17 @@ export async function dragBlockTouch(page: Page, source: Locator, target: Locato
   const to = await centerOf(target, 'dragBlockTouch target')
   await withTouch(page, async (touch) => {
     await touch.start(from.x, from.y)
-    await page.waitForTimeout(TOUCH_HOLD_MS)
+    // The row lifts once the sensor's hold has elapsed: the block tree shows
+    // its drag overlay, other lists get dnd-kit's pressed handle.
+    const lifted = page
+      .getByTestId('sortable-block-overlay')
+      .or(page.locator('[aria-roledescription][aria-pressed="true"]'))
+    await expect(lifted.first()).toBeAttached()
     const steps = 20
     for (let i = 1; i <= steps; i++) {
       await touch.move(from.x, from.y + (to.y - from.y) * (i / steps))
-      if (i % 5 === 0) await page.waitForTimeout(50)
     }
-    // Settle so @dnd-kit processes the final "over" state before release.
-    await page.waitForTimeout(150)
+    await renderedFrame(page)
     await touch.end()
   })
 }
@@ -1327,6 +1414,7 @@ export async function touchLongPress(
   const point = await centerOf(page.locator(selector).first(), `touchLongPress ${selector}`)
   await withTouch(page, async (touch) => {
     await touch.start(point.x, point.y)
+    // The hold is the gesture: the row's timers need it to pass in real time.
     await page.waitForTimeout(holdMs)
     await touch.end()
   })

@@ -116,6 +116,7 @@ test('opening and scrolling a 300-row page fetches its rows once (#5443) @pages'
   await blocks.nth(5).hover({ position: { x: 4, y: 4 } })
   for (let i = 0; i < 12; i++) {
     await page.mouse.wheel(0, 1200)
+    // A user's wheel cadence is the input under test: the row fetches it causes.
     await page.waitForTimeout(50)
   }
   await expect(page.getByText(`row ${ROWS - 1} lorem`)).toBeInViewport()

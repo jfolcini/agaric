@@ -258,6 +258,7 @@ test.describe('Block rows on touch (iPhone viewport) @editor @mobile', () => {
 
     await touchLongPress(page, '[data-testid="block-editor"] [contenteditable="true"]')
 
+    // An absence check: give an erroneous menu a beat to open.
     await page.waitForTimeout(300)
     await expect(page.getByRole('menu', { name: 'Block actions' })).toHaveCount(0)
     await expect(editor).toBeVisible()

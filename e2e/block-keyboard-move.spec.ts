@@ -155,6 +155,7 @@ test.describe('Keyboard block movement @editor', () => {
     await clearInvokeCalls(page)
     await page.keyboard.press('Control+Shift+ArrowDown')
 
+    // Give the handler a beat; assert nothing was sent.
     await page.waitForTimeout(200)
     expect(await getInvokeCalls(page, 'move_block')).toHaveLength(0)
   })
