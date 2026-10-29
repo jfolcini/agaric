@@ -25,6 +25,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import {
   copyFileSync,
   existsSync,
+  globSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -940,6 +941,16 @@ function installShutdownGuard(): void {
   }
 }
 
+// `--shard i/n` runs the i-th contiguous slice of `specs`. In name order the
+// slow neighbours (`sync-*`, `reminder-*`) shared one slice, which made it the
+// lane's long pole; dealt round-robin, slice i is every n-th file instead. The
+// order only decides which shard runs a file: the slices still cover the list.
+const shardTotal = Number(/--shard[= ]\d+\/(\d+)/.exec(process.argv.join(' '))?.[1] ?? 1)
+const specFiles = globSync('e2e-tauri/**/*.e2e.ts', { cwd: rootDir }).toSorted()
+const dealtSpecs = Array.from({ length: shardTotal }, (_unused, shard) =>
+  specFiles.filter((_file, i) => i % shardTotal === shard),
+).flat()
+
 export const config: WebdriverIO.Config = {
   runner: 'local',
 
@@ -952,7 +963,7 @@ export const config: WebdriverIO.Config = {
   hostname: '127.0.0.1',
   port: 4444,
 
-  specs: ['./e2e-tauri/**/*.e2e.ts'],
+  specs: dealtSpecs,
   maxInstances: 1,
 
   capabilities: [
