@@ -30,7 +30,7 @@ import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
 import { act } from '@testing-library/react'
 import type { Editor } from '@tiptap/core'
-import { closeHistory } from '@tiptap/pm/history'
+import { closeHistory, undoDepth } from '@tiptap/pm/history'
 import { AllSelection, NodeSelection } from '@tiptap/pm/state'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -671,28 +671,79 @@ describe('the list keys and input rules', () => {
       expect(lists.styleOf(A)).toBe('bullet')
     })
 
-    it('a block that leaves the page takes with it the style held for it', () => {
-      const editor = openPage([
-        [A, 0, 'one'],
-        [B, 0, 'two'],
-      ])
-      const lone = openPage([[B, 0, 'two']])
-      teardown = () => {
-        editor.destroy()
-        lone.destroy()
-      }
-      const held = (gone: boolean) => {
-        const lists = new PageLists({ [A]: style('bullet') }, flat(A, B))
-        lists.layout(editor.state.doc)
-        lists.leave(A, 1)
-        lists.settle(A, lists.want(A, 'none'), 'none')
-        if (gone) lists.layout(lone.state.doc)
-        lists.layout(editor.state.doc)
-        return lists.undone(editor.state.doc, 0)
-      }
+    it('a block deleted after it left its list, and brought back, gets the style with the undo of that change', () => {
+      const { editor, lists } = open(
+        [
+          [A, 0, 'one'],
+          [B, 0, 'two'],
+        ],
+        { [A]: style('bullet') },
+      )
+      caret(editor, 0, 0)
+      typeText(editor, '# ')
+      pause(editor)
+      editor.view.dispatch(editor.state.tr.delete(0, editor.state.doc.child(0).nodeSize))
+      pause(editor)
+      expect(texts(editor)).toEqual(['two'])
 
-      expect(held(false)).toEqual([[A, 'bullet']])
-      expect(held(true)).toEqual([])
+      editor.commands.undo()
+      expect(texts(editor)).toEqual(['# one', 'two'])
+      expect(styles(editor, lists)).toEqual(['none', 'none'])
+      editor.commands.undo()
+      expect(texts(editor)).toEqual(['\\# one', 'two'])
+
+      expect(styles(editor, lists)).toEqual(['bullet', 'none'])
+    })
+
+    it('a list picked on a heading, undone, and the heading’s own change undone after it, leave no style the block never had', () => {
+      const { editor, lists } = open([[A, 0, 'one']])
+      caret(editor, 0, 0)
+      typeText(editor, '# ')
+      pause(editor)
+      // As `/bullet-list` makes the heading a bullet paragraph: its text, then a read of the page's styles.
+      blockText(editor, A).write('one')
+      lists.take({ [A]: style('bullet') })
+      pause(editor)
+      expect(texts(editor)).toEqual(['one'])
+
+      editor.commands.undo()
+      expect(texts(editor)).toEqual(['# one'])
+      expect(lists.styleOf(A)).toBe('none')
+      editor.commands.undo()
+      expect(texts(editor)).toEqual(['\\# one'])
+
+      expect(lists.styleOf(A)).toBe('none')
+    })
+
+    it('after the history dropped events, an undo that leaves a block alone gives it no style', () => {
+      const { editor, lists } = open(
+        [
+          [A, 0, 'one'],
+          [B, 0, 'two'],
+        ],
+        { [A]: style('bullet') },
+      )
+      const typeInB = (times: number) => {
+        for (let i = 0; i < times; i += 1) {
+          caret(editor, 1, 0)
+          typeText(editor, 'x')
+          pause(editor)
+        }
+      }
+      typeInB(108)
+      caret(editor, 0, 0)
+      typeText(editor, '# ')
+      pause(editor)
+      toParagraph(editor, 0)
+      pause(editor)
+      // The history keeps 100 events and cuts back to them past 120, so the event `# ` left the
+      // list in is numbered lower than the depth held for it.
+      typeInB(20)
+
+      while (undoDepth(editor.state) > 100) editor.commands.undo()
+
+      expect(texts(editor)[0]).toBe('one')
+      expect(lists.styleOf(A)).toBe('none')
     })
   })
 })

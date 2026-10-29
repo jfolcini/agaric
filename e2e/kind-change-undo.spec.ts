@@ -349,6 +349,41 @@ test.describe('one Ctrl+Z takes back a kind change with the kind it took off @ed
     expect(await kindOf(page, delta)).toEqual(DELTA)
   })
 
+  test('page mode: Ctrl+Z all the way after a plain block was made a heading, then a bullet, leaves it plain', async ({
+    page,
+  }) => {
+    const {
+      ids: [, , , delta],
+      command,
+      reopen,
+    } = await inPageMode(page, 'Page list over heading undo')
+    await command(3, 'h2', 'h2')
+    await expect
+      .poll(() => kindOf(page, delta))
+      .toEqual({ text: '## delta typed', listStyle: null, todo: null })
+    // The two commands are two steps of the editor's history, not one.
+    await page.clock.fastForward(1000)
+    await command(3, 'bullet', 'bullet-list')
+    await expect
+      .poll(() => kindOf(page, delta))
+      .toEqual({ text: 'delta typed', listStyle: 'bullet', todo: null })
+    // Once the page draws the bullet, the editor knows the block's style.
+    await expect(
+      page.locator(`${EDITOR} [data-page-block-id="${delta}"] > [data-testid="list-marker"]`),
+    ).toHaveText('•')
+
+    // More presses than the editor's history holds, so it ends with nothing left to undo.
+    for (let i = 0; i < 30; i += 1) await page.keyboard.press('Control+z')
+    await expect
+      .poll(() => kindOf(page, delta))
+      .toEqual({ text: 'delta', listStyle: null, todo: null })
+    await reopen()
+
+    await expect
+      .poll(() => kindOf(page, delta))
+      .toEqual({ text: 'delta', listStyle: null, todo: null })
+  })
+
   test('block mode: Ctrl+Z in the editor after /code brings the bullet back', async ({ page }) => {
     const {
       ids: [alpha, , , delta],

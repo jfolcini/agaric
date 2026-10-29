@@ -159,11 +159,6 @@ export class PageLists {
       doc.forEach((node) => items.push(itemOf(node)))
       if (sameItems(items, this.items)) return
       this.items = items
-      // A block gone from the page takes what `leave` held of it.
-      if (this.left.size > 0) {
-        const ids = new Set(items.map((item) => item.id))
-        for (const id of this.left.keys()) if (!ids.has(id)) this.left.delete(id)
-      }
     } else {
       // Its id and depth are attributes, alike in both: only whether it is marked can change.
       const item = itemOf(doc.child(at))
@@ -180,24 +175,29 @@ export class PageLists {
   }
 
   /**
-   * The styles an undo to depth `depth` gives back: that undo took back the
-   * change each block left its list in, and the block shows a marker again, with
-   * no style. An undo of any other change stops at another depth. What it was due
-   * to give back is forgotten.
+   * The styles an undo from `before` to `doc`, now at depth `depth`, gives back:
+   * to each block that left its list in the change it took back, so it shows a
+   * marker now where it showed none and stores no style. The depth names that
+   * change, but not alone, as the history renumbers its events once it drops the
+   * oldest. What it was due to give back is forgotten.
    */
-  undone(doc: PMNode, depth: number): [string, ListStyle][] {
+  undone(before: PMNode, doc: PMNode, depth: number): [string, ListStyle][] {
     const due = new Map<string, ListStyle>()
     for (const [id, left] of this.left) {
       if (left.depth !== depth + 1) continue
       due.set(id, left.style)
       this.left.delete(id)
     }
+    const was = new Set<string>()
+    before.forEach((node) => {
+      const id = blockIdOf(node)
+      if (id !== null && due.has(id) && docShowsListMarker(node)) was.add(id)
+    })
     const back: [string, ListStyle][] = []
-    if (due.size === 0) return back
     doc.forEach((node) => {
       const id = blockIdOf(node)
       const style = id === null ? undefined : due.get(id)
-      if (id === null || style === undefined || this.styleOf(id) !== 'none') return
+      if (id === null || style === undefined || was.has(id) || this.styleOf(id) !== 'none') return
       if (docShowsListMarker(node)) back.push([id, style])
     })
     return back
@@ -298,7 +298,7 @@ function leftTheirList(before: PMNode, doc: PMNode, lists: PageLists): string[] 
 }
 
 // Configured only through `pageListKeys`, so `source` is always set.
-const PageListKeys = Extension.create<{ source: PageListSource }>({
+const PageListKeys = Extension.create<{ source: PageListSource }, { depth: number }>({
   name: 'pageListKeys',
   // Ahead of page mode's own Enter and Backspace (`PageKeys`).
   priority: 1001,
@@ -359,17 +359,23 @@ const PageListKeys = Extension.create<{ source: PageListSource }>({
       })
     return [rule(/^\s*[-+*]\s([^[\n])$/, 'bullet'), rule(/^\d+\.\s(.)$/, 'ordered')]
   },
+  addStorage: () => ({ depth: 0 }),
   onTransaction({ editor, transaction }) {
     if (!transaction.docChanged || transaction.getMeta(REMOTE_PATCH) === true) return
     const { source } = this.options
     const { state } = editor
+    const depth = undoDepth(state)
+    const history = isHistoryTransaction(transaction)
+    // An undo that leaves a list took back a change that gave the list: no style was taken off.
+    const undoing = history && depth < this.storage.depth
+    this.storage.depth = depth
     for (const id of leftTheirList(transaction.before, state.doc, source.lists)) {
-      source.lists.leave(id, undoDepth(state))
+      if (!undoing) source.lists.leave(id, depth)
       source.setStyle(id, 'none')
     }
     // Only an undo or a redo can give a style back: a key typed does no more here.
-    if (!isHistoryTransaction(transaction)) return
-    for (const [id, style] of source.lists.undone(state.doc, undoDepth(state))) {
+    if (!history) return
+    for (const [id, style] of source.lists.undone(transaction.before, state.doc, depth)) {
       source.setStyle(id, style)
     }
   },
