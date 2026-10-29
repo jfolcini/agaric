@@ -481,6 +481,26 @@ fn document_rows() -> Vec<(&'static str, Vec<BlockSpec>, &'static str)> {
             vec![plain(0, "\\## x"), plain(0, "\\---")],
             "\\\\## x\n\n\\\\---\n",
         ),
+        (
+            "D1: the escape of a heading, fence or break line in a paragraph's text goes before its indent",
+            vec![plain(0, "para\n  ## x\n  ```sh\n  ---")],
+            "para\n\\  ## x\n\\  ```sh\n\\  ---\n",
+        ),
+        (
+            "D1: a backslash before a heading, a fence or a break in a paragraph's text is escaped again",
+            vec![plain(0, "para\n\\## x\n\\```sh\n\\---")],
+            "para\n\\\\## x\n\\\\```sh\n\\\\---\n",
+        ),
+        (
+            "D1: dashes before a multi-byte character, and a hash or dashes after one, are text",
+            vec![plain(0, "para"), plain(0, "---é\n---é\né## x\n😀---")],
+            "para\n\n---é\n---é\né## x\n😀---\n",
+        ),
+        (
+            "D1: a break followed by a Unicode space is still a break, as the reader trims it",
+            vec![plain(0, "para\n---\u{a0}")],
+            "para\n\\---\u{a0}\n",
+        ),
     ]
 }
 

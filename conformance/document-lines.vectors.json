@@ -946,6 +946,72 @@
           "properties": {}
         }
       ]
+    },
+    {
+      "lineIds": ["01J00000000000000000000000", null, null, null, null],
+      "name": "D1: the escape of a heading, fence or break line in a paragraph's text goes before its indent",
+      "text": "para\n\\  ## x\n\\  ```sh\n\\  ---\n",
+      "tree": [
+        {
+          "content": "para\n  ## x\n  ```sh\n  ---",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": ["01J00000000000000000000000", null, null, null, null],
+      "name": "D1: a backslash before a heading, a fence or a break in a paragraph's text is escaped again",
+      "text": "para\n\\\\## x\n\\\\```sh\n\\\\---\n",
+      "tree": [
+        {
+          "content": "para\n\\## x\n\\```sh\n\\---",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        "01J00000000000000000000001",
+        null,
+        null,
+        null,
+        null
+      ],
+      "name": "D1: dashes before a multi-byte character, and a hash or dashes after one, are text",
+      "text": "para\n\n---é\n---é\né## x\n😀---\n",
+      "tree": [
+        {
+          "content": "para",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        },
+        {
+          "content": "---é\n---é\né## x\n😀---",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "lineIds": ["01J00000000000000000000000", null, null],
+      "name": "D1: a break followed by a Unicode space is still a break, as the reader trims it",
+      "text": "para\n\\--- \n",
+      "tree": [
+        {
+          "content": "para\n--- ",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        }
+      ]
     }
   ],
   "description": "#5691 — Edit as Markdown's Document dialect, one case per hard case of the line-split format: the tree, each block under its id, the text a page holding it is written as, and the id each line of that text carries; and under `typed`, text typed with no blank line between blocks and the tree it reads as, ids aside. Authored by `markdown_document_tests.rs` with CONFORMANCE_UPDATE=1; never hand-edit.",
