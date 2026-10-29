@@ -226,7 +226,7 @@ export function PageSourceEditor({
         // No `flushActiveDraft()` (#2969): entering source mode cleared focus, so
         // no block is left to flush. The kebab's blur committed it, and a commit
         // landing after this read makes the save stale: the conflict dialog.
-        const buffer = unwrap(await commands.getPageBuffer(pageId))
+        const buffer = unwrap(await commands.getPageBuffer(pageId, null))
         if (cancelled) return
         // A draft keeps its own base, so a save of it still catches whatever
         // changed on the page since the draft was written.
@@ -288,7 +288,7 @@ export function PageSourceEditor({
 
   const showConflict = async (): Promise<void> => {
     try {
-      setConflict(unwrap(await commands.getPageBuffer(pageId)))
+      setConflict(unwrap(await commands.getPageBuffer(pageId, null)))
     } catch (err) {
       logger.warn('PageSourceEditor', 'Failed to reload page source', { pageId }, err)
       setSaveError(t('pageSource.loadFailed'))

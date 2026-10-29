@@ -330,6 +330,7 @@ describe('PageSourceEditor saving', () => {
         baseSource: base.source,
         merge: false,
         lineIds: base.line_ids,
+        dialect: null,
       },
     ])
     expect(pageBuffer(PAGE_GETTING_STARTED)).toEqual({ ...base, text, source: expect.any(String) })
@@ -800,7 +801,12 @@ describe('PageSourceEditor when the page changed elsewhere', () => {
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce()
     })
-    const save = { pageId: PAGE_GETTING_STARTED, source: edited.text, lineIds: edited.lineIds }
+    const save = {
+      pageId: PAGE_GETTING_STARTED,
+      source: edited.text,
+      lineIds: edited.lineIds,
+      dialect: null,
+    }
     expect(applyCalls()).toEqual([
       { ...save, baseSource: base.source, merge: false },
       { ...save, baseSource: current.source, merge: false },

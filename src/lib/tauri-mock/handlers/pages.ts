@@ -9,6 +9,18 @@
  * store.
  */
 
+import {
+  closesFence,
+  type DocumentBlock,
+  documentFenceOpener,
+  needsAnchorLineEscape,
+  needsBareLineEscape,
+  needsBlankLineEscape,
+  needsDocumentLineEscape,
+  needsTaskMarkerEscape,
+  parseDocument,
+  writeSourcePropertyValue,
+} from '@/editor/source-buffer-document'
 import { base64UrlToUtf8 } from '@/lib/base64url'
 import type { PageHeading } from '@/lib/bindings'
 import {
@@ -18,7 +30,7 @@ import {
 } from '@/lib/inline-property-parse'
 import { normalizeTagName } from '@/lib/name-tokens'
 import { compareNocase, compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
-import { TASK_STATE_TO_MARKER } from '@/lib/task-states'
+import { TASK_STATE_TO_MARKER, type TodoState } from '@/lib/task-states'
 import { blocksHandlers, parseOutline } from '@/lib/tauri-mock/handlers/blocks'
 import { propertiesHandlers } from '@/lib/tauri-mock/handlers/properties'
 import {
@@ -42,18 +54,25 @@ import {
   ownerSpaceOf,
   type PageSortRow,
   pagesLastEditedAt,
+  propertyDefinition,
   sortDiscriminator,
   titleSortKey,
   validationRejection,
   readActiveSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
 import { tagsHandlers } from '@/lib/tauri-mock/handlers/tags'
-import { findEmptyPageTitled, resolveInboundNames, resolveTagNames } from '@/lib/tauri-mock/names'
+import {
+  findEmptyPageTitled,
+  resolveInboundNames,
+  resolveRefValue,
+  resolveTagNames,
+} from '@/lib/tauri-mock/names'
 import {
   blockTags,
   blocks,
   fakeId,
   makeBlock,
+  opLog,
   pageAliases,
   pageOpens,
   properties,
@@ -141,11 +160,7 @@ function liveChildren(parentId: string): Record<string, unknown>[] {
  * order.
  */
 function renderPageSource(pid: string): { source: string; ids: string[] } {
-  const page = blocks.get(pid)
-  // Like the backend's `load_page_row`: a trashed page is not found, and a
-  // block that is not a page is a validation error.
-  if (!page || page['deleted_at']) throw notFoundRejection(`page '${pid}' not found`)
-  if (page['block_type'] !== 'page') throw validationRejection('not a page')
+  requirePageToRender(pid)
   let source = renderFrontMatter(pageFrontMatter(pid))
   const ids: string[] = []
   const render = (parentId: string, depth: number): void => {
@@ -162,6 +177,184 @@ function renderPageSource(pid: string): { source: string; ids: string[] } {
   }
   render(pid, 0)
   return { source, ids }
+}
+
+/**
+ * Like the backend's `load_page_row`: a trashed page is not found, and a block
+ * that is not a page is a validation error.
+ */
+function requirePageToRender(pid: string): void {
+  const page = blocks.get(pid)
+  if (!page || page['deleted_at']) throw notFoundRejection(`page '${pid}' not found`)
+  if (page['block_type'] !== 'page') throw validationRejection('not a page')
+}
+
+/**
+ * The block property keys a buffer writes no line for: the reserved keys and
+ * the list style (`load_descendant_properties`).
+ */
+const BLOCK_LINE_HIDDEN_KEYS: ReadonlySet<string> = new Set([
+  ...INLINE_PROPERTY_RESERVED_KEYS,
+  'listStyle',
+])
+
+/** `listStyle` as the backend reads it for a marker: `bullet`, `ordered` or none. */
+function storedListStyle(id: string): string | null {
+  const style = properties.get(id)?.get('listStyle')?.['value_text']
+  return style === 'bullet' || style === 'ordered' ? style : null
+}
+
+/**
+ * `push_block_bullet` in a Document buffer: the markers and the first line,
+ * escaped when it would read as something else, then the further lines at the
+ * text's column, each escaped that would read as anything but that line of
+ * the block. Outside a fence an escaped line opens none, so only the first
+ * line can. Returns whether the last line is code (`CodeLines::last`).
+ */
+function pushDocumentLines(
+  lines: string[],
+  indent: string,
+  listMarker: string,
+  taskMarker: string,
+  text: string,
+): boolean {
+  const [first = '', ...rest] = text.split('\n')
+  const markers = listMarker + taskMarker
+  let head = indent + markers
+  if (first === '' && markers !== '') {
+    head = indent + markers.trimEnd()
+  } else {
+    const escape =
+      listMarker === ''
+        ? needsBareLineEscape(first, rest.length > 0)
+        : taskMarker === '' && needsTaskMarkerEscape(first)
+    head += (escape ? '\\' : '') + first
+  }
+  lines.push(head)
+  let fence = documentFenceOpener(head)
+  let last = fence !== null
+  const column = indent + ' '.repeat(listMarker.length)
+  for (const line of rest) {
+    const escape = fence === null ? needsDocumentLineEscape(line) : needsAnchorLineEscape(line)
+    const written = column + (escape ? '\\' : '') + line
+    last = fence !== null
+    if (fence !== null && closesFence(written, fence)) fence = null
+    lines.push(written)
+  }
+  return last
+}
+
+/**
+ * `push_anchored_source_bullet` in a Document buffer: the block with its `^ID`
+ * ending its last line or, when that line is code or would be written as an
+ * escaped blank line, on a line of its own at the text's column.
+ */
+function pushAnchoredDocumentBlock(
+  lines: string[],
+  indent: string,
+  listMarker: string,
+  taskMarker: string,
+  content: string,
+  id: string,
+): void {
+  const lastLine = content.includes('\n') ? content.slice(content.lastIndexOf('\n') + 1) : null
+  if (lastLine === null || !needsBlankLineEscape(lastLine)) {
+    const start = lines.length
+    if (!pushDocumentLines(lines, indent, listMarker, taskMarker, `${content} ^${id}`)) return
+    lines.length = start
+  }
+  pushDocumentLines(lines, indent, listMarker, taskMarker, content)
+  lines.push(`${indent}${' '.repeat(listMarker.length)}^${id}`)
+}
+
+/**
+ * `render_page_document` (#5691, `Dialect::Document.render`): the page's front
+ * matter ({@link renderFrontMatter}), then every live content descendant,
+ * depth-first in sibling order, each with its `^ID`. A plain block is its own
+ * paragraph, a bullet block `- x`, a numbered one `N. x` by its place in its
+ * run, a task `- [ ] x`, which shows no list style (D3); a blank line goes
+ * between blocks but neighbouring marked ones (D1). A plain block under a
+ * marked one, or opening the buffer with `---`, is a `+` item (D4). Its task
+ * state outside the checkbox alphabet, its priority and dates and its other
+ * properties follow as `key:: value` lines at its text's column. Like the
+ * backend, a nested page and what is under it are left out; unlike it, no id
+ * in the text is written as a name. Returns the buffer and the ids it holds,
+ * in order.
+ */
+function renderPageDocument(pid: string): { source: string; ids: string[] } {
+  requirePageToRender(pid)
+  const front = renderFrontMatter(pageFrontMatter(pid))
+  const lines: string[] = []
+  const ids: string[] = []
+  const open: Array<{ column: number; marked: boolean }> = []
+  let previousMarked: boolean | null = null
+  const render = (parentId: string, depth: number): void => {
+    const children = liveChildren(parentId).filter((row) => row['block_type'] === 'content')
+    let run = 0
+    for (const row of children) {
+      const id = row['id'] as string
+      const content = (row['content'] as string | null) ?? ''
+      const todo = (row['todo_state'] as string | null) ?? null
+      const style = storedListStyle(id)
+      run = style === 'ordered' && todo === null ? run + 1 : 0
+      const checkbox = checkboxOf(todo)
+      open.length = depth
+      const { column, marked: underMarker } = open.at(-1) ?? { column: 0, marked: false }
+      let marker = ''
+      if (checkbox !== null) marker = '- '
+      else if (todo === null && style !== null) marker = style === 'bullet' ? '- ' : `${run}. `
+      else if (underMarker || (front === '' && lines.length === 0 && content.startsWith('---'))) {
+        marker = '+ '
+      }
+      const marked = marker !== ''
+      if (previousMarked !== null && !(previousMarked && marked)) lines.push('')
+      previousMarked = marked
+      const child = column + (marked ? marker.length : 2)
+      open.push({ column: child, marked })
+      const taskMarker = checkbox === null ? '' : `[${checkbox}] `
+      pushAnchoredDocumentBlock(lines, ' '.repeat(column), marker, taskMarker, content, id)
+      pushPropertyLines(lines, ' '.repeat(child), row, checkbox === null ? todo : null)
+      ids.push(id)
+      render(id, depth + 1)
+    }
+  }
+  render(pid, 0)
+  return { source: front + lines.map((line) => `${line}\n`).join(''), ids }
+}
+
+/** The checkbox `todo` is written as, `null` outside the alphabet (`task_marker_for`). */
+function checkboxOf(todo: string | null): string | null {
+  return todo !== null && Object.hasOwn(TASK_STATE_TO_MARKER, todo)
+    ? TASK_STATE_TO_MARKER[todo as TodoState]
+    : null
+}
+
+/**
+ * A block's `key:: value` lines at `indent`, as `render_block` writes them:
+ * `todo` when its checkbox does not carry it, its priority and dates, then its
+ * other properties by key, each value as the line reads it back.
+ */
+function pushPropertyLines(
+  lines: string[],
+  indent: string,
+  row: Record<string, unknown>,
+  todo: string | null,
+): void {
+  const reserved = [
+    ['todo_state', todo],
+    ['priority', row['priority']],
+    ['scheduled_date', row['scheduled_date']],
+    ['due_date', row['due_date']],
+  ] as const
+  for (const [key, value] of reserved) {
+    if (typeof value === 'string' && value !== '') lines.push(`${indent}${key}:: ${value}`)
+  }
+  const rows = [...(properties.get(row['id'] as string) ?? [])]
+    .filter(([key]) => !BLOCK_LINE_HIDDEN_KEYS.has(key))
+    .toSorted(([a], [b]) => compareUtf8Bytes(a, b))
+  for (const [key, value] of rows) {
+    lines.push(`${indent}${key}:: ${writeSourcePropertyValue(frontMatterValue(value))}`)
+  }
 }
 
 /** The page's properties, aliases and tags, as its front matter writes them (#5160 S8). */
@@ -465,6 +658,21 @@ interface SourceBullet {
   anchor: string | null
   /** The buffer line the bullet starts on, which a refusal names (#5160 X3). */
   line?: number | undefined
+  /** A Document line's marker, checkbox and property lines; a Source line has none (#5691). */
+  marks?: Marks | undefined
+  /** What the save writes to the block beside its text, planned by {@link planMarkWrites}. */
+  writes?: MarkWrites | undefined
+}
+
+type Marks = Pick<DocumentBlock, 'listStyle' | 'todoState' | 'properties'>
+
+/** What a save writes to a block beside its text (`PropertyChanges`, `write_properties`). */
+interface MarkWrites {
+  deleted: string[]
+  /** By key for a block the page holds, in line order for one the save creates. */
+  set: Array<[key: string, value: string]>
+  /** The task state, written last: `null` clears it. */
+  todoState: { to: string | null } | null
 }
 
 /** The ` ^word` a source block ends with, when it is id-sized. */
@@ -542,10 +750,74 @@ function parseTextBuffer(
   }))
 }
 
+/**
+ * `anchor_free_as` for a Document buffer (#5691): `source` less the `^ID` each
+ * block wrote, at the end of its last line or on a line of its own, which
+ * goes, and the id each line carries, the block's on the line it starts on.
+ */
+function anchorFreeDocument(source: string): { text: string; lineIds: Array<string | null> } {
+  const lines = source.split('\n')
+  const lineIds: Array<string | null> = lines.map(() => null)
+  const ownLines = new Set<number>()
+  for (const block of parseDocument(source, null, isBlockId).blocks) {
+    const word = block.anchor
+    if (word === null || !isBlockId(word)) continue
+    const last = block.line - 1 + block.content.split('\n').length - 1
+    const anchor = `^${word}`
+    const line = lines[last]
+    if (lines[last + 1]?.trim() === anchor) ownLines.add(last + 1)
+    else if (line?.endsWith(` ${anchor}`)) lines[last] = line.slice(0, -anchor.length - 1)
+    lineIds[block.line - 1] = ULID_RE.test(word) ? word.toUpperCase() : word
+  }
+  const kept = (_: unknown, i: number) => !ownLines.has(i)
+  return { text: lines.filter(kept).join('\n'), lineIds: lineIds.filter(kept) }
+}
+
+/** {@link parseTextBuffer} for a Document buffer: its blocks as the Rust grammar reads them. */
+function parseDocumentBuffer(
+  text: string,
+  lineIds: ReadonlyArray<string | null>,
+  warnings: string[],
+): SourceBullet[] {
+  const read = parseDocument(text, lineIds)
+  warnings.push(...read.warnings)
+  return read.blocks.map(({ content, depth, line, listStyle, todoState, properties: lines }) => ({
+    content,
+    depth,
+    anchor: null,
+    line,
+    marks: { listStyle, todoState, properties: lines },
+  }))
+}
+
+/** How a buffer in one dialect is rendered, freed of its anchors and read by its ids (#5691). */
+interface BufferGrammar {
+  render: (pid: string) => { source: string; ids: string[] }
+  anchorFree: (source: string) => { text: string; lineIds: Array<string | null> }
+  read: (text: string, lineIds: ReadonlyArray<string | null>, warnings: string[]) => SourceBullet[]
+}
+
+const SOURCE_GRAMMAR: BufferGrammar = {
+  render: renderPageSource,
+  anchorFree,
+  read: parseTextBuffer,
+}
+
+const DOCUMENT_GRAMMAR: BufferGrammar = {
+  render: renderPageDocument,
+  anchorFree: anchorFreeDocument,
+  read: parseDocumentBuffer,
+}
+
+/** The grammar of the dialect a buffer command names, Source when none, as the backend reads it. */
+function grammarOf(args: Record<string, unknown>): BufferGrammar {
+  return args['dialect'] === 'document' ? DOCUMENT_GRAMMAR : SOURCE_GRAMMAR
+}
+
 /** A page's own source read as the text {@link anchorFree} makes of it, each block under its id. */
-function readOwnText(source: string): SourceBullet[] {
-  const { text, lineIds } = anchorFree(source)
-  const bullets = parseTextBuffer(text, lineIds, [])
+function readOwnText(source: string, grammar: BufferGrammar): SourceBullet[] {
+  const { text, lineIds } = grammar.anchorFree(source)
+  const bullets = grammar.read(text, lineIds, [])
   for (const bullet of bullets) {
     bullet.anchor = bullet.line === undefined ? null : (lineIds[bullet.line - 1] ?? null)
   }
@@ -565,6 +837,7 @@ function readByLine(
   lineIds: ReadonlyArray<string | null>,
   known: ReadonlySet<string>,
   warnings: string[],
+  grammar: BufferGrammar,
 ): SourceBullet[] {
   const lines = text.replace(/\r\n/g, '\n').split(/[\n\r]/).length
   if (lineIds.length !== lines) {
@@ -572,7 +845,7 @@ function readByLine(
       `line_ids holds ${lineIds.length} entries for the ${lines} lines of the text`,
     )
   }
-  const bullets = parseTextBuffer(text, lineIds, warnings)
+  const bullets = grammar.read(text, lineIds, warnings)
   const first = new Map<string, number>()
   for (const bullet of bullets) {
     const line = bullet.line ?? 0
@@ -660,9 +933,10 @@ function warningAbout(content: string, what: string): string {
 
 /**
  * Which blocks a merge keeps and with what text. A block changed on one side
- * takes that side's text; changed on both, the page's stays and the buffer's
- * is forked as a new block before it. A delete on one side stands unless the
- * other side changed the block or moved it to another parent. DELIBERATE
+ * takes that side's text; changed on both, its text or one property two ways,
+ * the page's stays and the buffer's is forked as a new block before it. A
+ * delete on one side stands unless the other side changed the block, its text
+ * or a property, or moved it to another parent. DELIBERATE
  * APPROXIMATION: two different edits of a multi-line block fork here, where
  * the backend's `merge_lines` first tries to merge them line by line.
  */
@@ -678,11 +952,14 @@ function mergeSourceBlocks(
     const b = base.byKey.get(key)
     const m = mine.byKey.get(key)
     if (m === undefined) {
-      if (b?.content === c.content && !moved(current, key)) continue
+      if (b !== undefined && sameBlock(b, c) && !moved(current, key)) continue
       if (b !== undefined) {
         warnings.push(warningAbout(c.content, 'changed on the page; your delete was not applied'))
       }
       kept.set(key, { content: c.content, anchor: key, fork: null })
+    } else if (clashes(b, c, m)) {
+      warnings.push(warningAbout(c.content, 'was changed here and on the page; both versions kept'))
+      kept.set(key, { content: c.content, anchor: key, fork: m.content })
     } else if (c.content === m.content || m.content === b?.content) {
       kept.set(key, { content: c.content, anchor: key, fork: null })
     } else if (c.content === b?.content) {
@@ -697,7 +974,7 @@ function mergeSourceBlocks(
     const b = base.byKey.get(key)
     if (b === undefined) {
       kept.set(key, { content: m.content, anchor: m.anchor, fork: null })
-    } else if (m.content !== b.content || moved(mine, key)) {
+    } else if (!sameBlock(b, m) || moved(mine, key)) {
       warnings.push(warningAbout(m.content, 'was deleted on the page; saved as a new block'))
       kept.set(key, { content: m.content, anchor: null, fork: null })
     }
@@ -823,8 +1100,15 @@ function mergeSourceBuffer(
   const emit = (parent: string | null, depth: number): void => {
     for (const key of mergeSourceOrder(outlines, parent, parentOf, warnings)) {
       const block = kept.get(key) as MergedBlock
-      if (block.fork !== null) merged.push({ content: block.fork, depth, anchor: null })
-      merged.push({ content: block.content, depth, anchor: block.anchor })
+      const marks = outlines.mine.byKey.get(key)?.marks
+      if (block.fork !== null) merged.push({ content: block.fork, depth, anchor: null, marks })
+      // A forked block stays the page's: the buffer's marks went with the fork.
+      merged.push({
+        content: block.content,
+        depth,
+        anchor: block.anchor,
+        marks: block.fork === null ? marks : undefined,
+      })
       emit(key, depth + 1)
     }
   }
@@ -832,12 +1116,174 @@ function mergeSourceBuffer(
   return merged
 }
 
+/** `marks` as the save reads a block's properties: the style and state its markers give, then its lines, the last for a key winning. */
+function markProperties({ listStyle, todoState, properties: lines }: Marks): Map<string, string> {
+  const markers: Array<[string, string]> = []
+  if (listStyle !== null) markers.push(['listStyle', listStyle])
+  if (todoState !== null) markers.push(['todo_state', todoState])
+  return new Map([...markers, ...lines])
+}
+
+/**
+ * What a save writes to a block the page holds beside its text
+ * (`PropertyChanges::between`): the keys the buffer dropped, the values it
+ * changed by key, and the task state, written last. A value the page has
+ * already (`now`) is not written again, so a merge keeps what the page changed
+ * since `from`, the source the edit started from. A task's hidden list style
+ * goes with any edit to the block, unless the buffer restyles it.
+ */
+function planMarkWrites(
+  marks: { from: Marks; to: Marks; now: Marks },
+  hidesListStyle: boolean,
+  textEdited: boolean,
+): MarkWrites {
+  const [was, wants, holds] = [marks.from, marks.to, marks.now].map(markProperties) as [
+    Map<string, string>,
+    Map<string, string>,
+    Map<string, string>,
+  ]
+  for (const [key, value] of wants) if (value === '') wants.delete(key)
+  const byKey = ([a]: [string, unknown], [b]: [string, unknown]) => compareUtf8Bytes(a, b)
+  const changed = [...wants]
+    .filter(([key, value]) => was.get(key) !== value && holds.get(key) !== value)
+    .toSorted(byKey)
+  const dropped = [...was.keys()]
+    .filter((key) => !wants.has(key) && holds.has(key))
+    .toSorted(compareUtf8Bytes)
+  const set = changed.filter(([key]) => key !== 'todo_state')
+  const deleted = dropped.filter((key) => key !== 'todo_state')
+  const state = changed.find(([key]) => key === 'todo_state')
+  const todoState = state ? { to: state[1] } : dropped.includes('todo_state') ? { to: null } : null
+  const restyled = set.some(([key]) => key === 'listStyle')
+  const any = set.length > 0 || deleted.length > 0 || todoState !== null
+  if ((textEdited || any) && !restyled && hidesListStyle) deleted.push('listStyle')
+  return { deleted, set, todoState }
+}
+
+/** A bullet's properties as the save reads them; a Source bullet has none the mock reads. */
+function bulletProperties({ marks }: SourceBullet): Map<string, string> {
+  return marks === undefined ? new Map() : markProperties(marks)
+}
+
+/** `same` (`markdown_source_merge.rs`): one text and one value for every key. */
+function sameBlock(x: SourceBullet, y: SourceBullet): boolean {
+  const [a, b] = [bulletProperties(x), bulletProperties(y)]
+  return x.content === y.content && a.size === b.size && [...a].every(([k, v]) => b.get(k) === v)
+}
+
+/** Whether `c` and `m` changed one property of `b` two ways, which `merge_block` cannot merge. */
+function clashes(b: SourceBullet | undefined, c: SourceBullet, m: SourceBullet): boolean {
+  if (b === undefined) return false
+  const sides = [b, c, m].map(bulletProperties)
+  const keys = new Set(sides.flatMap((side) => [...side.keys()]))
+  return [...keys].some((key) => new Set(sides.map((side) => side.get(key))).size === 3)
+}
+
+/** What a save writes to a block it creates: every property its markers and lines give. */
+function newMarkWrites(marks: Marks): MarkWrites {
+  const set = [...markProperties(marks)].filter(([, value]) => value !== '')
+  return { deleted: [], set, todoState: null }
+}
+
+/** The typed value columns `key:: value` is written to (`typed_property_args_for_registry_value`). */
+function lineColumns(spaceId: string | null, key: string, value: string): Record<string, unknown> {
+  const type = propertyDefinition(spaceId, key)?.['value_type']
+  const word = value.trim()
+  if (type === 'number' && /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(word)) {
+    return { value_num: Number(word) }
+  }
+  if (type === 'boolean' && /^(?:true|false)$/i.test(word)) {
+    return { value_bool: word.toLowerCase() === 'true' }
+  }
+  if (type === 'date') return { value_date: value }
+  return { value_text: value }
+}
+
+/** Refuse a `key:: value` line `set_property` would, as the save refuses it: naming the line. */
+function checkLineValue(bullet: SourceBullet, spaceId: string | null, key: string, value: string) {
+  try {
+    assertValidSetPropertyValue(spaceId, key, value)
+    if (lineColumns(spaceId, key, value)['value_date'] !== undefined) assertValidDateFormat(value)
+    if (propertyDefinition(spaceId, key)?.['value_type'] === 'ref') resolveRefValue(value, spaceId)
+  } catch (err) {
+    const reason = (err as { message?: unknown }).message
+    throw refusedAt(bullet.line, `\`${key}:: ${value}\` cannot be saved: ${String(reason)}`)
+  }
+}
+
+/**
+ * Plan the writes beside the text of every bullet of a Document buffer,
+ * refusing a value `set_property` would before anything is written. A bullet
+ * whose block the page holds is compared with that block as the buffer
+ * started from it (`from`) and as the page has it now.
+ */
+function planBufferMarks(
+  t1: SourceBullet[],
+  held: {
+    from: ReadonlyMap<string, Marks>
+    now: ReadonlyMap<string, Marks>
+    before: ReadonlyMap<string | null, string>
+  },
+  spaceId: string | null,
+): void {
+  for (const bullet of t1) {
+    const { anchor, marks } = bullet
+    if (marks === undefined) continue
+    const now = anchor === null ? undefined : held.now.get(anchor)
+    if (anchor === null || now === undefined) {
+      bullet.writes = newMarkWrites(marks)
+    } else {
+      const from = held.from.get(anchor) ?? now
+      const edited = bullet.content !== held.before.get(anchor)
+      const hidden = properties.get(anchor)?.has('listStyle') === true && now.listStyle === null
+      bullet.writes = planMarkWrites({ from, to: marks, now }, hidden, edited)
+    }
+    for (const [key, value] of bullet.writes.set) checkLineValue(bullet, spaceId, key, value)
+    const state = bullet.writes.todoState?.to
+    if (state) checkLineValue(bullet, spaceId, 'todo_state', state)
+  }
+}
+
+/**
+ * The column-backed keys, written by their own commands as the editor writes
+ * them, whose ops an undo reverts.
+ */
+const COLUMN_WRITERS: ReadonlyMap<string, (blockId: string, value: string | null) => unknown> =
+  new Map([
+    ['todo_state', (blockId, state) => propertiesHandlers.set_todo_state({ blockId, state })],
+    ['priority', (blockId, level) => propertiesHandlers.set_priority({ blockId, level })],
+    ['due_date', (blockId, date) => propertiesHandlers.set_due_date({ blockId, date })],
+    ['scheduled_date', (blockId, date) => propertiesHandlers.set_scheduled_date({ blockId, date })],
+  ])
+
+/**
+ * `writes` applied to block `id`: the keys taken off, those set, then the task
+ * state (`write_properties`). Returns the refs of every op it appended, the
+ * stamps a task state writes included.
+ */
+function writeMarks(id: string, writes: MarkWrites): OpRefs {
+  const spaceId = definitionSpaceOf(id)
+  const start = opLog.length
+  for (const key of writes.deleted) propertiesHandlers.delete_property({ blockId: id, key })
+  for (const [key, value] of writes.set) {
+    const column = COLUMN_WRITERS.get(key)
+    if (column === undefined) {
+      propertiesHandlers.set_property({ blockId: id, key, value: lineColumns(spaceId, key, value) })
+    } else {
+      column(id, value)
+    }
+  }
+  if (writes.todoState !== null) COLUMN_WRITERS.get('todo_state')?.(id, writes.todoState.to)
+  return opLog.slice(start).map(({ device_id, seq }) => ({ device_id, seq }))
+}
+
 /**
  * Every refusal `apply_page_source` makes, checked before anything is written:
  * a stale base unless `merge` folds the page's changes into the buffer, a page
  * that does not read back as its own source, `lineIds` that are not one per
  * line, front matter it cannot read or a value in it `set_property` refuses
- * (#5160 S8), and a delete that would take a nested page with it. Returns the
+ * (#5160 S8), a property line of a Document buffer `set_property` refuses,
+ * and a delete that would take a nested page with it. Returns the
  * buffer's bullets, the page's text per id as it reads back, the rendered ids
  * the buffer left out, what the front matter writes and the warnings.
  */
@@ -845,7 +1291,7 @@ function readSourceEdit(
   pageId: string,
   source: string,
   baseSource: string,
-  flags: { merge: boolean; lineIds: ReadonlyArray<string | null> },
+  flags: { merge: boolean; lineIds: ReadonlyArray<string | null>; grammar: BufferGrammar },
 ): {
   t1: SourceBullet[]
   before: Map<string | null, string>
@@ -853,7 +1299,8 @@ function readSourceEdit(
   front: FrontMatterWrites
   warnings: string[]
 } {
-  const current = renderPageSource(pageId)
+  const { grammar } = flags
+  const current = grammar.render(pageId)
   const stale = current.source !== baseSource
   if (stale && !flags.merge) {
     throw appErrorRejection({
@@ -864,7 +1311,7 @@ function readSourceEdit(
   }
   // The page's own source is read as the text the buffer gives of it.
   const now = readFrontMatter(current.source)
-  const t0 = readOwnText(now.body)
+  const t0 = readOwnText(now.body, grammar)
   if (t0.length !== current.ids.length || t0.some((b, i) => b.anchor !== current.ids[i])) {
     throw validationRejection(`page '${pageId}' does not read back as its own source`)
   }
@@ -880,12 +1327,19 @@ function readSourceEdit(
   )
   // An id of the source the edit started from is the page's too, so the merge
   // reads a block the page deleted since as that block.
-  const loaded = stale ? readOwnText(from.body) : t0
+  const loaded = stale ? readOwnText(from.body, grammar) : t0
   const loadedIds = new Set(loaded.flatMap(({ anchor }) => (anchor === null ? [] : [anchor])))
   const warnings: string[] = []
   const known = new Set([...loadedIds, ...current.ids])
-  const typed = readByLine(edited.body, flags.lineIds, known, warnings)
+  const typed = readByLine(edited.body, flags.lineIds, known, warnings, grammar)
   const t1 = stale ? mergeSourceBuffer(loaded, t0, typed, warnings) : typed
+  const marksOf = (bullets: SourceBullet[]) =>
+    new Map(bullets.flatMap((b) => (b.anchor === null || !b.marks ? [] : [[b.anchor, b.marks]])))
+  planBufferMarks(
+    t1,
+    { from: marksOf(loaded), now: marksOf(t0), before },
+    definitionSpaceOf(pageId),
+  )
   const anchors = new Set(t1.flatMap(({ anchor }) => (anchor === null ? [] : [anchor])))
   const absent = current.ids.filter((id) => !anchors.has(id))
   const absentSet = new Set(absent)
@@ -945,6 +1399,7 @@ function placeSourceBullets(
           })
           id = row.id
           opRefs.push(...row.op_refs)
+          if (bullet.writes) opRefs.push(...writeMarks(row.id, bullet.writes))
           report.created += 1
         } else {
           const moved = blocksHandlers.move_block({
@@ -1513,29 +1968,43 @@ export const pagesHandlers = {
     renderPageSource((args as Record<string, unknown>)['pageId'] as string).source,
 
   // #5160 A — the same buffer with each block's id beside its text: the mock's
-  // render less its anchors ({@link anchorFree}).
+  // render less its anchors ({@link anchorFree}), in the dialect asked for,
+  // Source when none (#5691).
   get_page_buffer: (args) => {
-    const { source } = renderPageSource((args as Record<string, unknown>)['pageId'] as string)
-    const { text, lineIds } = anchorFree(source)
+    const a = args as Record<string, unknown>
+    const grammar = grammarOf(a)
+    const { source } = grammar.render(a['pageId'] as string)
+    const { text, lineIds } = grammar.anchorFree(source)
     return { source, text, line_ids: lineIds }
   },
 
   // #5140 Phase 4a — save the page edited as its source buffer: moves and
   // creates first, then edits, then the page's front matter (#5160 S8), then
   // deletes, so a child kept out of a deleted block has moved before the
-  // delete cascades. The text is read by `readByLine`, so the backend's list
-  // markers, task checkboxes and property lines are not modelled
-  // (`properties_*` count the page's own), nor are its op cap and depth limit;
-  // tests must not rely on the mock for them. The names a new or edited bullet
-  // writes resolve in the page's space (`resolveInboundNames`, #5160 N4), the
-  // created pages and tags in `names_created`. Phase 5: with `merge`, a stale
-  // buffer is saved with the page's changes folded in (`mergeSourceBuffer`).
+  // delete cascades. The text is read by `readByLine`; in a Source buffer the
+  // backend's list markers, task checkboxes and property lines are not
+  // modelled (`properties_*` count the page's own), nor in either dialect are
+  // its op cap and depth limit; tests must not rely on the mock for them. The
+  // names a new or edited bullet writes resolve in the page's space
+  // (`resolveInboundNames`, #5160 N4), the created pages and tags in
+  // `names_created`. Phase 5: with `merge`, a stale buffer is saved with the
+  // page's changes folded in (`mergeSourceBuffer`).
+  // #5691: a Document buffer is rendered and read as the backend's grammar
+  // writes and reads it, and its save writes a block's list marker, checkbox
+  // and `key:: value` lines as the backend does: `listStyle`, the task state
+  // and each property, by key, a task's hidden list style going with an edit
+  // to it (`planMarkWrites`); a merge forks a block whose property both sides
+  // changed. Not modelled: a key folded to its definition (D13), a `key::`
+  // line with no value for a key the block does not hold (kept as text
+  // there), a number or boolean its definition refuses, and the page's own
+  // `key:: value` lines after its front matter.
   apply_page_source: (args) => {
     const a = args as Record<string, unknown>
     const pageId = a['pageId'] as string
     const edit = readSourceEdit(pageId, a['source'] as string, a['baseSource'] as string, {
       merge: a['merge'] === true,
       lineIds: a['lineIds'] as Array<string | null>,
+      grammar: grammarOf(a),
     })
     const report = { created: 0, edited: 0, moved: 0, deleted: 0 }
     const opRefs: OpRefs = []
@@ -1558,11 +2027,18 @@ export const pagesHandlers = {
       edit.warnings.push(...names.warnings)
     }
     opRefs.push(...placeSourceBullets(pageId, edit.t1, report))
-    for (const { anchor, content } of edit.t1) {
-      if (anchor === null || content === edit.before.get(anchor)) continue
-      if (content === blocks.get(anchor)?.['content']) continue
-      opRefs.push(...blocksHandlers.edit_block({ blockId: anchor, toText: content }).op_refs)
-      report.edited += 1
+    const marks = { set: 0, deleted: 0 }
+    for (const { anchor, content, writes } of edit.t1) {
+      if (anchor === null) continue
+      if (content !== edit.before.get(anchor) && content !== blocks.get(anchor)?.['content']) {
+        opRefs.push(...blocksHandlers.edit_block({ blockId: anchor, toText: content }).op_refs)
+        report.edited += 1
+      }
+      if (writes === undefined) continue
+      opRefs.push(...writeMarks(anchor, writes))
+      const state = writes.todoState?.to
+      marks.set += writes.set.length + (state ? 1 : 0)
+      marks.deleted += writes.deleted.length + (state === null ? 1 : 0)
     }
     const written = writeFrontMatter(pageId, edit.front, spaceId, {
       opRefs,
@@ -1579,7 +2055,8 @@ export const pagesHandlers = {
     return {
       op_refs: opRefs,
       ...report,
-      ...written,
+      properties_set: written.properties_set + marks.set,
+      properties_deleted: written.properties_deleted + marks.deleted,
       names_created: namesCreated,
       warnings: edit.warnings,
     }

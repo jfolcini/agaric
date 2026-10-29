@@ -1073,8 +1073,8 @@ async fn delete_dropped(
     Ok(deletes)
 }
 
-/// Tauri command: save a page edited as its source buffer. Delegates to
-/// [`apply_page_source_inner`].
+/// Tauri command: save a page edited as its source buffer, in `dialect`,
+/// `Source` when none (#5691). Delegates to [`apply_page_source_as`].
 #[tauri::command]
 #[specta::specta]
 pub async fn apply_page_source(
@@ -1084,8 +1084,9 @@ pub async fn apply_page_source(
     base_source: String,
     merge: bool,
     line_ids: Vec<Option<String>>,
+    dialect: Option<Dialect>,
 ) -> Result<WithOps<PageSourceReport>, AppError> {
-    capture_op_refs(apply_page_source_inner(
+    capture_op_refs(Box::pin(apply_page_source_as(
         ctx.pool(),
         ctx.device_id(),
         ctx.materializer(),
@@ -1093,7 +1094,8 @@ pub async fn apply_page_source(
         source,
         base_source,
         SourceSaveFlags { merge, line_ids },
-    ))
+        dialect.unwrap_or_default(),
+    )))
     .await
     .map_err(sanitize_internal_error)
 }

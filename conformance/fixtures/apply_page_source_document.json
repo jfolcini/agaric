@@ -1,0 +1,1312 @@
+{
+  "description": "#5691 G2b — `get_page_buffer` and `apply_page_source` with `dialect: \"document\"`: a plain block is its own paragraph, a list block carries its marker, a task is `- [ ] x`, a plain block under a list block is a `+` item, an empty block a `\\` line, a block's property lines sit at its text's column, and a heading, a fence and a break are blocks of their own. The page's own Document buffer, read by the ids beside its lines, saves as nothing, and one changed line edits its block. A save writes what the lines say beside the text: a restyled marker, a ticked or removed checkbox (a task's hidden list style going with the edit), a property line changed, emptied or added, and the marker and property lines of a line that creates a block; a value its definition refuses, or a ref line naming no page, refuses the whole save. A stale buffer merged with the page's changes keeps both versions of a block both sides changed, its text or one property, the buffer's a new block with its marker and property lines; a block one side deleted and the other changed comes back. Seed: S1 (Home) > S2 (a heading), S3 (a fence), S4 (a break), S5 (a bullet) > S6 (a plain child), S7 (numbered), S8 (a task hiding a bullet style), S9 (empty), S10 (a priority and a property), S11 (a bullet), and the definitions `count` (a number), `flag` (a boolean), `deadline` (a date) and `owner` (a ref). The query reads the Document buffer the steps left. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "## Findings",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "```sh\necho hi\n```",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "---",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "bullet item edited",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "plain child",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B5",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "numbered item",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "task item",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 7,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 8,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "with property",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B10",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 10,
+        "priority": "2",
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "plain bullet from the page",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B11",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 12,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "new task",
+        "deleted_at": null,
+        "due_date": "2026-03-01",
+        "id": "B12",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 13,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      },
+      {
+        "block_type": "content",
+        "content": "new numbered",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B13",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 14,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "plain bullet from here",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B14",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 11,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "with property",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B15",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 9,
+        "priority": "2",
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "numbered item",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B16",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 39,
+      "ops": [
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
+        },
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
+        },
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
+        },
+        {
+          "key": "note",
+          "op_type": "set_property"
+        },
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_priority"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "key": "note",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_priority"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
+          "key": "count",
+          "op_type": "set_property"
+        },
+        {
+          "key": "mood",
+          "op_type": "set_property"
+        },
+        {
+          "key": "mood",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_priority"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "key": "count",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
+        },
+        {
+          "key": "flag",
+          "op_type": "set_property"
+        },
+        {
+          "key": "deadline",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
+        },
+        {
+          "key": "mood",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "set_priority"
+        },
+        {
+          "key": "count",
+          "op_type": "set_property"
+        },
+        {
+          "key": "mood",
+          "op_type": "set_property"
+        },
+        {
+          "key": "mood",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B5",
+        "key": "listStyle",
+        "value": "bullet",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B7",
+        "key": "listStyle",
+        "value": "ordered",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B8",
+        "key": "mood",
+        "value": "busy",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B10",
+        "key": "count",
+        "value": 4.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B10",
+        "key": "mood",
+        "value": "sad",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B11",
+        "key": "listStyle",
+        "value": "ordered",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B12",
+        "key": "count",
+        "value": 3.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B13",
+        "key": "deadline",
+        "value": "2026-07-01",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B13",
+        "key": "flag",
+        "value": true,
+        "value_type": "Bool"
+      },
+      {
+        "block_id": "B13",
+        "key": "listStyle",
+        "value": "ordered",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B14",
+        "key": "listStyle",
+        "value": "bullet",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B15",
+        "key": "count",
+        "value": 4.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B15",
+        "key": "mood",
+        "value": "glad",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B16",
+        "key": "listStyle",
+        "value": "bullet",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "own_document_appends_nothing",
+      "returns": ["apply_page_source#created=0#edited=0#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_changed_document_line_edits_its_block",
+      "returns": ["apply_page_source#created=0#edited=1#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_changed_marker_restyles_its_block",
+      "returns": ["apply_page_source#created=0#edited=0#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_ticked_checkbox_sets_the_task_state",
+      "returns": ["apply_page_source#created=0#edited=0#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "edited_property_lines_set_their_properties",
+      "returns": ["apply_page_source#created=0#edited=0#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "an_emptied_property_line_deletes_and_a_new_line_sets",
+      "returns": ["apply_page_source#created=0#edited=0#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_stale_buffer_writes_its_own_property_and_keeps_the_pages",
+      "returns": ["apply_page_source#created=0#edited=0#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_refused_property_value_refuses_the_whole_save",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_ref_line_naming_no_page_refuses_the_whole_save",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_checkbox_taken_off_clears_the_task_state",
+      "returns": ["apply_page_source#created=0#edited=0#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "new_lines_with_markers_create_blocks_carrying_them",
+      "returns": ["apply_page_source#created=2#edited=0#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_stale_buffer_both_editing_a_text_forks_it_with_its_marker",
+      "returns": ["apply_page_source#created=1#edited=0#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_stale_buffer_both_changing_a_property_forks_the_block",
+      "returns": ["apply_page_source#created=1#edited=0#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_stale_delete_and_restyle_keep_what_the_other_side_changed",
+      "returns": ["apply_page_source#created=1#edited=0#deleted=0"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "the_document_buffer_the_steps_left",
+      "rows": [
+        "B2#text=%23%23 Findings",
+        "line#text=",
+        "B3#text=```sh",
+        "line#text=echo hi",
+        "line#text=```",
+        "line#text=",
+        "B4#text=---",
+        "line#text=",
+        "B5#text=- bullet item edited",
+        "B6#text=  + plain child",
+        "B16#text=- numbered item",
+        "line#text=",
+        "B8#text=task item",
+        "line#text=  mood:: busy",
+        "line#text=",
+        "B9#text=\\",
+        "line#text=",
+        "B15#text=with property",
+        "line#text=  priority:: 2",
+        "line#text=  count:: 4",
+        "line#text=  mood:: glad",
+        "line#text=",
+        "B10#text=with property",
+        "line#text=  priority:: 2",
+        "line#text=  count:: 4",
+        "line#text=  mood:: sad",
+        "line#text=",
+        "B14#text=- plain bullet from here",
+        "B11#text=1. plain bullet from the page",
+        "B12#text=- [ ] new task",
+        "line#text=  due_date:: 2026-03-01",
+        "line#text=  count:: 3",
+        "B13#text=1. new numbered",
+        "line#text=   deadline:: 2026-07-01",
+        "line#text=   flag:: true",
+        "line#text="
+      ],
+      "total_count": null
+    }
+  ],
+  "name": "apply_page_source_document",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S8",
+        "state": "TODO"
+      },
+      "command": "set_todo_state"
+    },
+    {
+      "args": {
+        "blockId": "S10",
+        "level": "2"
+      },
+      "command": "set_priority"
+    },
+    {
+      "args": {
+        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [ ] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  note:: yes\n\n- plain bullet ^00000000000000000000000S11\n",
+        "dialect": "document",
+        "lineIds": [
+          "000000000000000000000000S2",
+          null,
+          "000000000000000000000000S3",
+          null,
+          null,
+          null,
+          "000000000000000000000000S4",
+          null,
+          "000000000000000000000000S5",
+          "000000000000000000000000S6",
+          "000000000000000000000000S7",
+          "000000000000000000000000S8",
+          null,
+          "000000000000000000000000S9",
+          null,
+          "00000000000000000000000S10",
+          null,
+          null,
+          null,
+          "00000000000000000000000S11",
+          null
+        ],
+        "merge": false,
+        "pageId": "S1",
+        "source": "## Findings\n\n```sh\necho hi\n```\n\n---\n\n- bullet item\n  + plain child\n1. numbered item\n- [ ] task item\n\n\\\n\nwith property\n  priority:: 2\n  note:: yes\n\n- plain bullet\n"
+      },
+      "command": "apply_page_source",
+      "comment": "The page's own Document buffer, anchors removed, each block's id beside the line it starts on: nothing differs, so nothing is written.",
+      "name": "own_document_appends_nothing",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [ ] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  note:: yes\n\n- plain bullet ^00000000000000000000000S11\n",
+        "dialect": "document",
+        "lineIds": [
+          "000000000000000000000000S2",
+          null,
+          "000000000000000000000000S3",
+          null,
+          null,
+          null,
+          "000000000000000000000000S4",
+          null,
+          "000000000000000000000000S5",
+          "000000000000000000000000S6",
+          "000000000000000000000000S7",
+          "000000000000000000000000S8",
+          null,
+          "000000000000000000000000S9",
+          null,
+          "00000000000000000000000S10",
+          null,
+          null,
+          null,
+          "00000000000000000000000S11",
+          null
+        ],
+        "merge": false,
+        "pageId": "S1",
+        "source": "## Findings\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n- [ ] task item\n\n\\\n\nwith property\n  priority:: 2\n  note:: yes\n\n- plain bullet\n"
+      },
+      "command": "apply_page_source",
+      "comment": "The bullet's line changed and still carries its id: one edit, its marker kept.",
+      "name": "a_changed_document_line_edits_its_block",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [ ] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  note:: yes\n\n- plain bullet ^00000000000000000000000S11\n",
+        "dialect": "document",
+        "lineIds": [
+          "000000000000000000000000S2",
+          null,
+          "000000000000000000000000S3",
+          null,
+          null,
+          null,
+          "000000000000000000000000S4",
+          null,
+          "000000000000000000000000S5",
+          "000000000000000000000000S6",
+          "000000000000000000000000S7",
+          "000000000000000000000000S8",
+          null,
+          "000000000000000000000000S9",
+          null,
+          "00000000000000000000000S10",
+          null,
+          null,
+          null,
+          "00000000000000000000000S11",
+          null
+        ],
+        "merge": false,
+        "pageId": "S1",
+        "source": "## Findings\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n- [ ] task item\n\n\\\n\nwith property\n  priority:: 2\n  note:: yes\n\n1. plain bullet\n"
+      },
+      "command": "apply_page_source",
+      "comment": "A bullet's `-` typed over as `1.`: the block is numbered, its text untouched, so its list style is the one write.",
+      "name": "a_changed_marker_restyles_its_block",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [ ] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  note:: yes\n\n1. plain bullet ^00000000000000000000000S11\n",
+        "dialect": "document",
+        "lineIds": [
+          "000000000000000000000000S2",
+          null,
+          "000000000000000000000000S3",
+          null,
+          null,
+          null,
+          "000000000000000000000000S4",
+          null,
+          "000000000000000000000000S5",
+          "000000000000000000000000S6",
+          "000000000000000000000000S7",
+          "000000000000000000000000S8",
+          null,
+          "000000000000000000000000S9",
+          null,
+          "00000000000000000000000S10",
+          null,
+          null,
+          null,
+          "00000000000000000000000S11",
+          null
+        ],
+        "merge": false,
+        "pageId": "S1",
+        "source": "## Findings\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n- [x] task item\n\n\\\n\nwith property\n  priority:: 2\n  note:: yes\n\n1. plain bullet\n"
+      },
+      "command": "apply_page_source",
+      "comment": "A task's `[ ]` ticked to `[x]`: its state is the write, and the list style the buffer hides on the task goes with the edit, as the block was changed.",
+      "name": "a_ticked_checkbox_sets_the_task_state",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [x] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  note:: yes\n\n1. plain bullet ^00000000000000000000000S11\n",
+        "dialect": "document",
+        "lineIds": [
+          "000000000000000000000000S2",
+          null,
+          "000000000000000000000000S3",
+          null,
+          null,
+          null,
+          "000000000000000000000000S4",
+          null,
+          "000000000000000000000000S5",
+          "000000000000000000000000S6",
+          "000000000000000000000000S7",
+          "000000000000000000000000S8",
+          null,
+          "000000000000000000000000S9",
+          null,
+          "00000000000000000000000S10",
+          null,
+          null,
+          null,
+          "00000000000000000000000S11",
+          null
+        ],
+        "merge": false,
+        "pageId": "S1",
+        "source": "## Findings\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n- [x] task item\n\n\\\n\nwith property\n  priority:: 3\n  note:: no\n\n1. plain bullet\n"
+      },
+      "command": "apply_page_source",
+      "comment": "A block's `note::` and `priority::` lines given other values: each is set, a custom key as a property, the reserved key on its column.",
+      "name": "edited_property_lines_set_their_properties",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [x] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 3\n  note:: no\n\n1. plain bullet ^00000000000000000000000S11\n",
+        "dialect": "document",
+        "lineIds": [
+          "000000000000000000000000S2",
+          null,
+          "000000000000000000000000S3",
+          null,
+          null,
+          null,
+          "000000000000000000000000S4",
+          null,
+          "000000000000000000000000S5",
+          "000000000000000000000000S6",
+          "000000000000000000000000S7",
+          "000000000000000000000000S8",
+          null,
+          "000000000000000000000000S9",
+          null,
+          "00000000000000000000000S10",
+          null,
+          null,
+          null,
+          null,
+          null,
+          "00000000000000000000000S11",
+          null
+        ],
+        "merge": false,
+        "pageId": "S1",
+        "source": "## Findings\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n- [x] task item\n\n\\\n\nwith property\n  priority:: 3\n  note::\n  mood:: calm\n  count:: 4\n\n1. plain bullet\n"
+      },
+      "command": "apply_page_source",
+      "comment": "The `note::` line emptied deletes the property; a `mood::` line typed under it sets a new one, and a `count::` line a number, which the `count` definition types.",
+      "name": "an_emptied_property_line_deletes_and_a_new_line_sets",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S10",
+        "key": "mood",
+        "value": {
+          "value_text": "happy"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [x] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 3\n  count:: 4\n  mood:: calm\n\n1. plain bullet ^00000000000000000000000S11\n",
+        "dialect": "document",
+        "lineIds": [
+          "000000000000000000000000S2",
+          null,
+          "000000000000000000000000S3",
+          null,
+          null,
+          null,
+          "000000000000000000000000S4",
+          null,
+          "000000000000000000000000S5",
+          "000000000000000000000000S6",
+          "000000000000000000000000S7",
+          "000000000000000000000000S8",
+          null,
+          "000000000000000000000000S9",
+          null,
+          "00000000000000000000000S10",
+          null,
+          null,
+          null,
+          null,
+          "00000000000000000000000S11",
+          null
+        ],
+        "merge": true,
+        "pageId": "S1",
+        "source": "## Findings\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n- [x] task item\n\n\\\n\nwith property\n  priority:: 2\n  count:: 4\n  mood:: calm\n\n1. plain bullet\n"
+      },
+      "command": "apply_page_source",
+      "comment": "The page set `mood` after the buffer was read; the buffer, stale, changes `priority` and leaves `mood` as it read it. Merged, the save writes the priority and keeps the page's mood.",
+      "name": "a_stale_buffer_writes_its_own_property_and_keeps_the_pages",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [x] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet ^00000000000000000000000S11\n",
+        "dialect": "document",
+        "lineIds": [
+          "000000000000000000000000S2",
+          null,
+          "000000000000000000000000S3",
+          null,
+          null,
+          null,
+          "000000000000000000000000S4",
+          null,
+          "000000000000000000000000S5",
+          "000000000000000000000000S6",
+          "000000000000000000000000S7",
+          "000000000000000000000000S8",
+          null,
+          "000000000000000000000000S9",
+          null,
+          "00000000000000000000000S10",
+          null,
+          null,
+          null,
+          null,
+          "00000000000000000000000S11",
+          null
+        ],
+        "merge": false,
+        "pageId": "S1",
+        "source": "## Findings edited\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n- [x] task item\n\n\\\n\nwith property\n  priority:: 9\n  count:: 4\n  mood:: happy\n\n1. plain bullet\n"
+      },
+      "command": "apply_page_source",
+      "comment": "`9` is not an option of `priority`, so the save is refused as the property drawer refuses it, and the heading's edit beside it is not written either.",
+      "expect_error": "validation",
+      "name": "a_refused_property_value_refuses_the_whole_save",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [x] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet ^00000000000000000000000S11\n",
+        "dialect": "document",
+        "lineIds": [
+          "000000000000000000000000S2",
+          null,
+          "000000000000000000000000S3",
+          null,
+          null,
+          null,
+          "000000000000000000000000S4",
+          null,
+          "000000000000000000000000S5",
+          "000000000000000000000000S6",
+          "000000000000000000000000S7",
+          "000000000000000000000000S8",
+          null,
+          "000000000000000000000000S9",
+          null,
+          "00000000000000000000000S10",
+          null,
+          null,
+          null,
+          null,
+          null,
+          "00000000000000000000000S11",
+          null
+        ],
+        "merge": false,
+        "pageId": "S1",
+        "source": "## Findings edited\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n- [x] task item\n\n\\\n\nwith property\n  priority:: 2\n  owner:: Nowhere\n  count:: 4\n  mood:: happy\n\n1. plain bullet\n"
+      },
+      "command": "apply_page_source",
+      "comment": "No page is titled `Nowhere`, so the `owner` ref line names no block and refuses the save, the heading's edit beside it with it.",
+      "expect_error": "validation",
+      "name": "a_ref_line_naming_no_page_refuses_the_whole_save",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [x] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet ^00000000000000000000000S11\n",
+        "dialect": "document",
+        "lineIds": [
+          "000000000000000000000000S2",
+          null,
+          "000000000000000000000000S3",
+          null,
+          null,
+          null,
+          "000000000000000000000000S4",
+          null,
+          "000000000000000000000000S5",
+          "000000000000000000000000S6",
+          "000000000000000000000000S7",
+          null,
+          "000000000000000000000000S8",
+          null,
+          "000000000000000000000000S9",
+          null,
+          "00000000000000000000000S10",
+          null,
+          null,
+          null,
+          null,
+          "00000000000000000000000S11",
+          null
+        ],
+        "merge": false,
+        "pageId": "S1",
+        "source": "## Findings\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n\ntask item\n\n\\\n\nwith property\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet\n"
+      },
+      "command": "apply_page_source",
+      "comment": "A task typed over as a plain line: its state is cleared. Unmarked after a marked block it needs a blank line, or it would continue that block.",
+      "name": "a_checkbox_taken_off_clears_the_task_state",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n\ntask item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet ^00000000000000000000000S11\n",
+        "dialect": "document",
+        "lineIds": [
+          "000000000000000000000000S2",
+          null,
+          "000000000000000000000000S3",
+          null,
+          null,
+          null,
+          "000000000000000000000000S4",
+          null,
+          "000000000000000000000000S5",
+          "000000000000000000000000S6",
+          "000000000000000000000000S7",
+          null,
+          "000000000000000000000000S8",
+          null,
+          "000000000000000000000000S9",
+          null,
+          "00000000000000000000000S10",
+          null,
+          null,
+          null,
+          null,
+          "00000000000000000000000S11",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "merge": false,
+        "pageId": "S1",
+        "source": "## Findings\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n\ntask item\n\n\\\n\nwith property\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet\n- [ ] new task\n  due_date:: 2026-03-01\n  count:: 3\n2. new numbered\n   flag:: true\n   deadline:: 2026-07-01\n"
+      },
+      "command": "apply_page_source",
+      "comment": "Two lines typed under the last block, a task with a due date and a number and a numbered item with a flag and a date, no id on either: each is created with its marker and its property lines, typed by their definitions.",
+      "name": "new_lines_with_markers_create_blocks_carrying_them",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S11",
+        "toText": "plain bullet from the page"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n\ntask item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet ^00000000000000000000000S11\n",
+        "dialect": "document",
+        "lineIds": [
+          "000000000000000000000000S2",
+          null,
+          "000000000000000000000000S3",
+          null,
+          null,
+          null,
+          "000000000000000000000000S4",
+          null,
+          "000000000000000000000000S5",
+          "000000000000000000000000S6",
+          "000000000000000000000000S7",
+          null,
+          "000000000000000000000000S8",
+          null,
+          "000000000000000000000000S9",
+          null,
+          "00000000000000000000000S10",
+          null,
+          null,
+          null,
+          null,
+          "00000000000000000000000S11",
+          null
+        ],
+        "merge": true,
+        "pageId": "S1",
+        "source": "## Findings\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n\ntask item\n\n\\\n\nwith property\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n- plain bullet from here\n"
+      },
+      "command": "apply_page_source",
+      "comment": "The page edited the numbered block's text after the buffer was read, and the buffer edited it otherwise and made it a bullet: both versions are kept, the buffer's a new bullet before the page's, which stays numbered.",
+      "name": "a_stale_buffer_both_editing_a_text_forks_it_with_its_marker",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S10",
+        "key": "mood",
+        "value": {
+          "value_text": "sad"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n\ntask item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet ^00000000000000000000000S11\n",
+        "dialect": "document",
+        "lineIds": [
+          "000000000000000000000000S2",
+          null,
+          "000000000000000000000000S3",
+          null,
+          null,
+          null,
+          "000000000000000000000000S4",
+          null,
+          "000000000000000000000000S5",
+          "000000000000000000000000S6",
+          "000000000000000000000000S7",
+          null,
+          "000000000000000000000000S8",
+          null,
+          "000000000000000000000000S9",
+          null,
+          "00000000000000000000000S10",
+          null,
+          null,
+          null,
+          null,
+          "00000000000000000000000S11",
+          null
+        ],
+        "merge": true,
+        "pageId": "S1",
+        "source": "## Findings\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n\ntask item\n\n\\\n\nwith property\n  priority:: 2\n  count:: 4\n  mood:: glad\n\n1. plain bullet\n"
+      },
+      "command": "apply_page_source",
+      "comment": "The page set `mood` after the buffer was read, and the buffer set it otherwise: both versions are kept, the buffer's a new block with its property lines before the page's.",
+      "name": "a_stale_buffer_both_changing_a_property_forks_the_block",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S8",
+        "key": "mood",
+        "value": {
+          "value_text": "busy"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S7"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n\ntask item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet ^00000000000000000000000S11\n",
+        "dialect": "document",
+        "lineIds": [
+          "000000000000000000000000S2",
+          null,
+          "000000000000000000000000S3",
+          null,
+          null,
+          null,
+          "000000000000000000000000S4",
+          null,
+          "000000000000000000000000S5",
+          "000000000000000000000000S6",
+          "000000000000000000000000S7",
+          null,
+          "000000000000000000000000S9",
+          null,
+          "00000000000000000000000S10",
+          null,
+          null,
+          null,
+          null,
+          "00000000000000000000000S11",
+          null
+        ],
+        "merge": true,
+        "pageId": "S1",
+        "source": "## Findings\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n- numbered item\n\n\\\n\nwith property\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet\n"
+      },
+      "command": "apply_page_source",
+      "comment": "The buffer deleted the task block, whose property the page set since, and restyled the numbered block, which the page deleted since: the page's block stays and the buffer's comes back as a new bullet, as each side changed what the other dropped.",
+      "name": "a_stale_delete_and_restyle_keep_what_the_other_side_changed",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "dialect": "document",
+        "pageId": "S1"
+      },
+      "command": "get_page_buffer",
+      "comment": "Each line of the Document text with the id it carries, the edit in it.",
+      "name": "the_document_buffer_the_steps_left"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "## Findings",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "```sh\necho hi\n```",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "---",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "bullet item",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": "plain child",
+        "id": "S6",
+        "parent_id": "S5",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "numbered item",
+        "id": "S7",
+        "parent_id": "S1",
+        "position": 5
+      },
+      {
+        "block_type": "content",
+        "content": "task item",
+        "id": "S8",
+        "parent_id": "S1",
+        "position": 6
+      },
+      {
+        "block_type": "content",
+        "content": "",
+        "id": "S9",
+        "parent_id": "S1",
+        "position": 7
+      },
+      {
+        "block_type": "content",
+        "content": "with property",
+        "id": "S10",
+        "parent_id": "S1",
+        "position": 8
+      },
+      {
+        "block_type": "content",
+        "content": "plain bullet",
+        "id": "S11",
+        "parent_id": "S1",
+        "position": 9
+      }
+    ],
+    "properties": [
+      {
+        "block_id": "S5",
+        "key": "listStyle",
+        "value": {
+          "value_text": "bullet"
+        }
+      },
+      {
+        "block_id": "S7",
+        "key": "listStyle",
+        "value": {
+          "value_text": "ordered"
+        }
+      },
+      {
+        "block_id": "S8",
+        "key": "listStyle",
+        "value": {
+          "value_text": "bullet"
+        }
+      },
+      {
+        "block_id": "S10",
+        "key": "note",
+        "value": {
+          "value_text": "yes"
+        }
+      },
+      {
+        "block_id": "S11",
+        "key": "listStyle",
+        "value": {
+          "value_text": "bullet"
+        }
+      }
+    ],
+    "property_defs": [
+      {
+        "key": "count",
+        "value_type": "number"
+      },
+      {
+        "key": "flag",
+        "value_type": "boolean"
+      },
+      {
+        "key": "deadline",
+        "value_type": "date"
+      },
+      {
+        "key": "owner",
+        "value_type": "ref"
+      }
+    ],
+    "tags": []
+  }
+}

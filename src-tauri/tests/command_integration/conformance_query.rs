@@ -114,6 +114,7 @@ use super::common::*;
 use super::conformance::{read_created_block_ids_in_op_order, resolve_op_arg_id, seed_label_to_id};
 use super::conformance_snapshot::token_key;
 use agaric_core::ulid::{BlockId, PageId};
+use agaric_lib::commands::pages::{Dialect, get_page_buffer_as};
 use agaric_store::backlink::{BacklinkFilter, BacklinkSort, LinkKind};
 use agaric_store::query::{AdvancedQueryRequest, compile_and_run};
 use agaric_store::tag_query::TagExpr;
@@ -1733,9 +1734,12 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
         // it: it is `get_page_source`'s render, which the mock approximates
         // (only the backend writes an anchor after a code block on its own
         // line), and which the `get_page_source` arm below pins as a document.
+        // `dialect` is optional, as on the wire (#5691).
         "get_page_buffer" => {
             let page_id: PageId = arg_req(args, "pageId");
-            let buffer = get_page_buffer_inner(pool, page_id.as_str()).await?;
+            let buffer =
+                get_page_buffer_as(pool, page_id.as_str(), arg_or::<Dialect>(args, "dialect"))
+                    .await?;
             let lines: Vec<&str> = buffer.text.split('\n').collect();
             assert_eq!(
                 lines.len(),
