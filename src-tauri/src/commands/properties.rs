@@ -1934,6 +1934,10 @@ pub async fn delete_property_def_inner(
     Ok(())
 }
 
+/// Space membership, not a value a user sets: every block of a space holds
+/// `space`, and `is_space` sits on the space's own block, which is in no space.
+const UNCOUNTED_PROPERTY_KEYS: [&str; 2] = ["space", "is_space"];
+
 /// How many live blocks of a space hold a value under one key (#5841).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
 pub struct PropertyUsage {
@@ -1947,8 +1951,8 @@ pub struct PropertyUsage {
 ///
 /// Trashed blocks are left out, though [`delete_property_def_inner`] counts
 /// them: a key showing 0 uses can still be refused. The column-backed keys
-/// are read from their `blocks` columns, `space` included, which every block
-/// of the space carries.
+/// are read from their `blocks` columns. `UNCOUNTED_PROPERTY_KEYS` are not
+/// listed.
 ///
 /// # Errors
 ///
@@ -1972,6 +1976,7 @@ pub async fn count_property_usage_inner(
         &agaric_store::op::BUILTIN_PROPERTY_DEFS
             .iter()
             .map(|def| def.key)
+            .filter(|key| !UNCOUNTED_PROPERTY_KEYS.contains(key))
             .collect::<Vec<_>>(),
     )?;
     Ok(sqlx::query_as!(
@@ -1987,8 +1992,7 @@ pub async fn count_property_usage_inner(
            ),
            columns AS MATERIALIZED (
                SELECT COUNT(todo_state) AS todo_state, COUNT(priority) AS priority,
-                      COUNT(due_date) AS due_date, COUNT(scheduled_date) AS scheduled_date,
-                      COUNT(*) AS space
+                      COUNT(due_date) AS due_date, COUNT(scheduled_date) AS scheduled_date
                FROM live
            ),
            used(key, n) AS (
@@ -1999,7 +2003,6 @@ pub async fn count_property_usage_inner(
                UNION ALL SELECT 'priority', priority FROM columns
                UNION ALL SELECT 'due_date', due_date FROM columns
                UNION ALL SELECT 'scheduled_date', scheduled_date FROM columns
-               UNION ALL SELECT 'space', space FROM columns
            )
            SELECT v.key AS "key!: String", COALESCE(u.n, 0) AS "count!: i64"
            FROM vocab v LEFT JOIN used u ON u.key = v.key
@@ -2727,7 +2730,7 @@ mod count_property_usage_tests {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
         let task = block_in(&pool, &mat, TEST_SPACE_ID).await;
-        // Holds none of the column keys, but is a block of the space.
+        // Holds none of the column keys, but is a live block of the space.
         let _plain = block_in(&pool, &mat, TEST_SPACE_ID).await;
         let elsewhere = block_in(&pool, &mat, TEST_SPACE_B_ID).await;
         set_todo_state_inner(&pool, DEV, &mat, task.as_str().into(), Some("TODO".into()))
@@ -2761,7 +2764,6 @@ mod count_property_usage_tests {
             ("priority", 1),
             ("due_date", 1),
             ("scheduled_date", 0),
-            ("space", 2),
         ] {
             assert_eq!(count_of(&pool, TEST_SPACE_ID, key).await, n, "`{key}` in A");
         }
@@ -2777,6 +2779,22 @@ mod count_property_usage_tests {
             .unwrap();
 
         assert_eq!(count_of(&pool, TEST_SPACE_ID, "unused").await, 0);
+    }
+
+    #[tokio::test]
+    async fn space_membership_keys_are_not_listed() {
+        let (pool, _dir) = test_pool().await;
+        ensure_test_space(&pool).await;
+
+        let rows = count_property_usage_inner(&pool, TEST_SPACE_ID)
+            .await
+            .unwrap();
+
+        let listed: Vec<&str> = rows.iter().map(|row| row.key.as_str()).collect();
+        assert!(
+            !listed.contains(&"space") && !listed.contains(&"is_space"),
+            "membership keys listed: {listed:?}"
+        );
     }
 
     #[tokio::test]

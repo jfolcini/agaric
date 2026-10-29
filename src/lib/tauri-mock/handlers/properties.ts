@@ -1008,8 +1008,9 @@ export const propertiesHandlers = {
   },
 
   // `count_property_usage_inner`: per key of the space's vocabulary (its own
-  // definitions and the built-ins), the LIVE blocks of the space holding a
-  // value, the column-backed keys read off the block row. Key-ordered.
+  // definitions and the built-ins but `space` and `is_space`), the LIVE blocks
+  // of the space holding a value, the column-backed keys read off the block
+  // row. Key-ordered.
   count_property_usage: (args) => {
     const spaceId = (args as Record<string, unknown>)['spaceId'] as string
     // The backend's `spaces` registry: a block flagged `is_space`, or a space a
@@ -1024,13 +1025,14 @@ export const propertiesHandlers = {
         ((b['space_id'] as string | null) ?? ownerSpaceOf(b)) === spaceId,
     )
     const held = (key: string): number => {
-      if (key === 'space') return live.length
       if (key in RESERVED_PROPERTY_COLUMN) return live.filter((b) => b[key] != null).length
       return live.filter((b) => properties.get(b['id'] as string)?.has(key)).length
     }
     return [
       ...new Set([
-        ...BUILTIN_PROPERTY_DEFS.map((def) => def.key),
+        ...BUILTIN_PROPERTY_DEFS.map((def) => def.key).filter(
+          (key) => key !== 'space' && key !== 'is_space',
+        ),
         ...(propertyDefs.get(spaceId)?.keys() ?? []),
       ]),
     ]

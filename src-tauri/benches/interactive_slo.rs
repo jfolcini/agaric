@@ -3155,9 +3155,9 @@ fn bench_count_property_usage(c: &mut Criterion) {
     let rows = rt.block_on(count()).unwrap();
     let of = |key: &str| rows.iter().find(|row| row.key == key).map(|row| row.count);
     assert_eq!(
-        (of(KEY), of("todo_state"), of("space")),
-        (Some(live(10)), Some(live(7)), Some(live(1))),
-        "count_property_usage @ 100K: the live values of the key, the column and the space"
+        (of(KEY), of("todo_state")),
+        (Some(live(10)), Some(live(7))),
+        "count_property_usage @ 100K: the live values of the key and the column"
     );
 
     let mut group = c.benchmark_group("interactive_slo");

@@ -606,7 +606,7 @@ test.describe('Property definitions view usage count @editor @settings', () => {
     await panel.getByRole('button', { name: 'Delete property stage' }).click()
     await activeAlertDialog(page).getByRole('button', { name: 'Delete', exact: true }).click()
     await expect(
-      page.getByText(/^Can't delete stage: .*including blocks in the Trash/),
+      page.getByText(/^Can't delete stage: .*blocks in the Trash count too/),
     ).toBeVisible()
     await navigateToView(page, 'Journal')
     panel = await openPropertiesSettings(page)

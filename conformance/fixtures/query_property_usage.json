@@ -1,5 +1,5 @@
 {
-  "description": "#5841 S0 — `count_property_usage` counts, for every key of the harness space's vocabulary (its own definitions and the built-ins), the LIVE blocks of the space holding a value. `stage` is set on three cards of `Home` and on `there`; one card is then trashed, and `Away` moves with `there` to a second space that declares `stage` the same way, so the value moves with it; so `stage` counts 2. `unused` is declared and held by nothing, so it counts 0. The column-backed keys are read off the block row: `priority` from one card. `space` counts every live block of the space. The runner's post-op space stamp puts the new `Work` space block itself in the harness space, so it is one of the four `space` counts and the one `is_space`. A block id that is not a space is refused `not_found`. Re-author `expected` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "description": "#5841 S0 — `count_property_usage` counts, for every key of the harness space's vocabulary (its own definitions and the built-ins), the LIVE blocks of the space holding a value. `stage` is set on three cards of `Home` and on `there`; one card is then trashed, and `Away` moves with `there` to a second space that declares `stage` the same way, so the value moves with it; so `stage` counts 2. `unused` is declared and held by nothing, so it counts 0. The column-backed keys are read off the block row: `priority` from one card. `space` and `is_space` are not listed. A block id that is not a space is refused `not_found`. Re-author `expected` / `expected_queries` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -197,7 +197,6 @@
         "completed_at#count=0",
         "created_at#count=0",
         "due_date#count=0",
-        "is_space#count=1",
         "listStyle#count=0",
         "priority#count=1",
         "repeat#count=0",
@@ -206,7 +205,6 @@
         "repeat-seq#count=0",
         "repeat-until#count=0",
         "scheduled_date#count=0",
-        "space#count=4",
         "stage#count=2",
         "todo_state#count=0",
         "unused#count=0"
