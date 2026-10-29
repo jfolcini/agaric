@@ -1,4 +1,4 @@
-//! Boot driver for [`agaric_engine::repair`] (#4728, #4715, #5074, #5387, #5670, #5608).
+//! Boot driver for [`agaric_engine::repair`] (#4728, #4715, #5074, #5387, #5670, #5608, #5841).
 //!
 //! Runs once per boot, after `bootstrap_spaces` and the empty-block sweep,
 //! and never fails boot. Each repair gets a `CommandTx` of its own with the
@@ -10,9 +10,9 @@
 //!
 //! The one-shot #5670 engine hydration follows them, with the same
 //! contract: see `hydrate_engine_missing_blocks_once`. The #5608 attachment
-//! backfill runs after it: the backfill creates an engine for a space that
-//! had none, and the hydration, which skips a space with no engine, would
-//! then seed that space whole.
+//! and #5841 definition backfills run after it: each creates an engine for a
+//! space that had none, and the hydration, which skips a space with no engine,
+//! would then seed that space whole.
 //!
 //! The one-shot #5074 agenda rewrite follows the repairs, whatever they
 //! found: `DESIRED_AGENDA_SQL` changed under rows already in `agenda_cache`
@@ -43,17 +43,19 @@ use agaric_engine::repair::engine_missing_blocks::hydrate_engine_missing_blocks;
 use agaric_engine::repair::journal_duplicates::repair_journal_duplicates;
 use agaric_engine::repair::orphans::repair_orphans;
 use agaric_engine::repair::page_aliases::repair_page_aliases;
+use agaric_engine::repair::property_definitions::repair_property_definitions;
 use agaric_store::op_log::OpRecord;
 
 /// The repairs. The op-emitting ones run first, in [`Repair::OPS`] order,
-/// which is only the order the issues were filed in; `Attachments` runs after
-/// the #5670 hydration (see the module docs).
+/// which is only the order the issues were filed in; `Attachments` and
+/// `PropertyDefinitions` run after the #5670 hydration (see the module docs).
 #[derive(Debug, Clone, Copy)]
 enum Repair {
     Orphans,
     JournalDuplicates,
     CompletedAt,
     PageAliases,
+    PropertyDefinitions,
     Attachments,
 }
 
@@ -71,6 +73,7 @@ impl Repair {
             Self::JournalDuplicates => "repair_journal_duplicates",
             Self::CompletedAt => "repair_completed_at",
             Self::PageAliases => "repair_page_aliases",
+            Self::PropertyDefinitions => "repair_property_definitions",
             Self::Attachments => "hydrate_attachments_into_engine",
         }
     }
@@ -98,6 +101,7 @@ pub async fn repair_unreachable_content_at_boot(
     }
 
     run_or_log(pool, device_id, materializer, Repair::Attachments).await;
+    run_or_log(pool, device_id, materializer, Repair::PropertyDefinitions).await;
 
     // Whatever the repairs found — a vault whose repairs find nothing is
     // exactly the one whose junk agenda rows would otherwise never clear.
@@ -165,10 +169,13 @@ async fn run(
             )
         }
         Repair::PageAliases => {
-            let r = repair_page_aliases(&mut tx, state, device_id).await?;
-            let summary = format!("backfilled = {}", r.ops.len());
-            (r.ops, summary)
+            backfilled(repair_page_aliases(&mut tx, state, device_id).await?.ops)
         }
+        Repair::PropertyDefinitions => backfilled(
+            repair_property_definitions(&mut tx, state, device_id)
+                .await?
+                .ops,
+        ),
         Repair::Attachments => {
             let r = hydrate_attachments_into_engine(&mut tx, state, device_id).await?;
             (Vec::new(), format!("hydrated = {}", r.hydrated))
@@ -203,6 +210,12 @@ async fn run(
 
     tracing::info!(repair = repair.label(), %summary, "content repair complete");
     Ok(())
+}
+
+/// A backfill's ops and the summary its log line carries.
+fn backfilled(ops: Vec<RepairOp>) -> (Vec<RepairOp>, String) {
+    let summary = format!("backfilled = {}", ops.len());
+    (ops, summary)
 }
 
 /// `app_settings` key retiring [`hydrate_engine_missing_blocks_once`].
@@ -453,10 +466,14 @@ mod tests {
             .unwrap()
     }
 
+    /// The content repairs' ops. The #5841 definition backfill's are left out:
+    /// each boot here starts from an empty engine registry, so it backfills the
+    /// seeded defaults anew, which a persisted engine does not (its own tests
+    /// pin that).
     async fn housekeeping_ops(pool: &SqlitePool) -> i64 {
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM op_log WHERE origin = 'housekeeping' \
-             AND is_undo = 0 AND is_replicated = 0",
+             AND is_undo = 0 AND is_replicated = 0 AND op_type <> 'set_property_def'",
         )
         .fetch_one(pool)
         .await
@@ -637,7 +654,12 @@ mod tests {
     #[tokio::test]
     async fn boot_rewrites_the_agenda_cache_once_with_no_repair_candidate() {
         let (pool, _tmp) = test_pool().await;
-        bootstrap_spaces_for_test(&pool, DEV).await.unwrap();
+        // One materializer from bootstrap through the repairs, as at boot: the
+        // engines then hold the definitions bootstrap seeded (#5841).
+        let mat = Materializer::new(pool.clone());
+        crate::spaces::bootstrap_spaces(&pool, DEV, &mat)
+            .await
+            .unwrap();
         let page = insert_page(&pool, "Tasks").await;
         // Already on the right side of the #5074 invariant — DONE and
         // stamped — so neither direction of `repair_completed_at` has a
@@ -656,7 +678,6 @@ mod tests {
         insert_lifecycle_agenda_row(&pool, &done).await;
         let ops_before = op_log_rows(&pool).await;
 
-        let mat = Materializer::new(pool.clone());
         repair_unreachable_content_at_boot(&pool, &pool, DEV, &mat).await;
         mat.flush_background().await.unwrap();
         mat.shutdown();

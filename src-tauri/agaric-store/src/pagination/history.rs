@@ -277,8 +277,10 @@ pub async fn list_page_history(
 /// case. The space filter is a correlated `EXISTS` per walked row; an `IN`
 /// list materialised every block id of the space on every call. The
 /// `?N IS NULL` switches on the two filters stay: neither has an index to
-/// lose. `idx_op_log_created` holds `created_at` alone, so rows that share a
-/// millisecond still sort in a temp B-tree, one tie group at a time
+/// lose. A definition op belongs to the space its `block_id` names, whose
+/// block is in no space (#5841). `idx_op_log_created` holds `created_at`
+/// alone, so rows that share a millisecond still sort in a temp B-tree, one
+/// tie group at a time
 /// (`LAST 2 TERMS OF ORDER BY`). `pagination::tests::global_history_keyset_5424`
 /// pins both plans, and keeps the pre-#5424 query as the oracle for the rows.
 async fn list_global_history(
@@ -311,6 +313,7 @@ async fn global_history_first_page(
          WHERE (?1 IS NULL OR ol.op_type = ?1) \
            AND (?2 IS NULL OR ( \
                 EXISTS (SELECT 1 FROM blocks sb WHERE sb.id = ol.block_id AND sb.space_id = ?2) \
+                OR (ol.op_type = 'set_property_def' AND ol.block_id = ?2) \
                 OR ( \
                     ol.op_type IN ('delete_attachment', 'rename_attachment') \
                     AND ( \
@@ -357,6 +360,7 @@ async fn global_history_after(
            AND (?1 IS NULL OR ol.op_type = ?1) \
            AND (?2 IS NULL OR ( \
                 EXISTS (SELECT 1 FROM blocks sb WHERE sb.id = ol.block_id AND sb.space_id = ?2) \
+                OR (ol.op_type = 'set_property_def' AND ol.block_id = ?2) \
                 OR ( \
                     ol.op_type IN ('delete_attachment', 'rename_attachment') \
                     AND ( \

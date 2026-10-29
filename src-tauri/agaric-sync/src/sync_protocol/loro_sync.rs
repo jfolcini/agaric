@@ -984,6 +984,54 @@ pub enum InboundDeliveryKind {
     RecoveryReplay,
 }
 
+/// The definitions pass (#5841), before Pass A so Pass A types the changed
+/// blocks by the definitions this import brought. Projects each of
+/// `def_keys` from the doc's `property_definitions` root and, for a key whose
+/// definition moved its values to another column, re-types every value of the
+/// space under it. Returns the blocks it re-typed.
+async fn project_pass_defs(
+    tx: &mut sqlx::SqliteConnection,
+    registry: &LoroEngineRegistry,
+    device_id: &str,
+    space_id: &SpaceId,
+    def_keys: &[String],
+) -> Result<Vec<agaric_core::ulid::BlockId>, AppError> {
+    use agaric_engine::loro::projection::{
+        project_property_def_to_sql, reproject_key_values, str_column_for,
+    };
+    if def_keys.is_empty() {
+        return Ok(Vec::new());
+    }
+    let declared = agaric_engine::block_ops::load_value_types(&mut *tx, space_id.as_str()).await?;
+    let changes = {
+        let mut guard = registry.for_space(space_id, device_id)?;
+        let engine = guard.engine_mut();
+        let mut changes = Vec::with_capacity(def_keys.len());
+        for key in def_keys {
+            let def = engine.read_property_def(key)?;
+            let value_type = def.as_ref().map(|def| def.value_type.clone());
+            let retyped = str_column_for(declared.get(key).map(String::as_str))
+                != str_column_for(value_type.as_deref());
+            let holders = if retyped {
+                engine.read_property_holders(key)?
+            } else {
+                Vec::new()
+            };
+            changes.push((key, def, holders));
+        }
+        changes
+    };
+    let mut retyped = Vec::new();
+    for (key, def, holders) in &changes {
+        project_property_def_to_sql(&mut *tx, space_id.as_str(), key, def.as_ref()).await?;
+        let value_type = def.as_ref().map(|def| def.value_type.as_str());
+        retyped.extend(
+            reproject_key_values(&mut *tx, space_id.as_str(), key, value_type, holders).await?,
+        );
+    }
+    Ok(retyped)
+}
+
 /// Pass A — core columns + properties.  This upserts EVERY changed
 /// block (including the tag blocks themselves), so all `blocks` rows
 /// referenced by `block_tags.tag_id` (FK to `blocks(id)`) exist before
@@ -1685,12 +1733,14 @@ type HealingDelta = (
     Vec<agaric_core::ulid::BlockId>,
     Vec<agaric_core::ulid::BlockId>,
     agaric_engine::loro::engine::TagScope,
+    Vec<String>,
 );
 
 /// Untrusted no-op: SQL may be behind the engine (the crash window #535 exists
-/// to heal). Reproject the whole live tree + globally rebuild tag inheritance —
-/// the pre-#2036 recovery behaviour. The full set is returned as
-/// `changed_blocks` so the caller's FTS / derived-cache fan-out heals as well.
+/// to heal). Reproject the whole live tree and every definition the doc holds,
+/// and globally rebuild tag inheritance — the pre-#2036 recovery behaviour.
+/// The full set is returned as `changed_blocks` so the caller's FTS /
+/// derived-cache fan-out heals as well.
 /// (Purged-rows gap: see [`import_and_project`]'s docs — pre-existing #2128
 /// limitation, additive fallback only.)
 ///
@@ -1704,14 +1754,16 @@ fn healing_fallback_delta(
     device_id: &str,
     space_id: &SpaceId,
 ) -> Result<HealingDelta, AppError> {
-    let full = {
+    let (full, defs) = {
         let mut guard = registry.for_space(space_id, device_id)?;
-        guard.engine_mut().live_blocks_preorder()
+        let engine = guard.engine_mut();
+        (engine.live_blocks_preorder(), engine.read_property_defs()?)
     };
     Ok((
         full,
         Vec::new(),
         agaric_engine::loro::engine::TagScope::Global,
+        defs.into_iter().map(|(key, _)| key).collect(),
     ))
 }
 
@@ -2138,6 +2190,7 @@ pub(crate) async fn import_and_project(
         rank_only: rank_only_blocks,
         purged: purged_blocks,
         tag_scope,
+        def_keys,
         // #3194: changes loro parked in `pending_changes` for missing deps. They
         // are NOT in the op-log and were NOT projected, yet the import returned
         // `Ok`. Logged here for diagnosis; the delete condition itself is
@@ -2168,10 +2221,11 @@ pub(crate) async fn import_and_project(
     // preserving the double-replay safety of the tx-coupled path below.
     let noop_diff = changed_blocks.is_empty()
         && purged_blocks.is_empty()
+        && def_keys.is_empty()
         && matches!(&tag_scope, agaric_engine::loro::engine::TagScope::Subtrees(roots) if roots.is_empty());
     // `changed_blocks` is `mut` for the #4083 ancestor backfill below, which may
     // prepend engine ancestors SQL has no row for.
-    let (mut changed_blocks, rank_only_blocks, tag_scope) = if noop_diff {
+    let (mut changed_blocks, rank_only_blocks, tag_scope, def_keys) = if noop_diff {
         let trusted = noop_import_is_trusted(pool, space_id, inbox_ids, delivery).await?;
         if trusted {
             // #3213: `clearable_ids`, not `inbox_ids`. Since the live path also
@@ -2191,7 +2245,7 @@ pub(crate) async fn import_and_project(
         }
         healing_fallback_delta(registry, device_id, space_id)?
     } else {
-        (changed_blocks, rank_only_blocks, tag_scope)
+        (changed_blocks, rank_only_blocks, tag_scope, def_keys)
     };
 
     // Phase 2 — project each changed block to SQL in a single tx.
@@ -2234,6 +2288,8 @@ pub(crate) async fn import_and_project(
 
     project_space_block_first(space_id, &mut changed_blocks, &mut block_states);
 
+    let retyped = project_pass_defs(&mut tx, registry, device_id, space_id, &def_keys).await?;
+
     project_pass_a(&mut tx, space_id, &changed_blocks, &block_states).await?;
 
     project_pass_b(&mut tx, &changed_blocks, &block_states).await?;
@@ -2250,6 +2306,10 @@ pub(crate) async fn import_and_project(
 
     refresh_tag_inheritance(pool, tag_scope).await;
 
+    // The blocks whose values a definition re-typed owe the cache fan-out
+    // their caller runs over the changed set.
+    let projected: std::collections::HashSet<_> = changed_blocks.iter().cloned().collect();
+    changed_blocks.extend(retyped.into_iter().filter(|b| !projected.contains(b)));
     Ok(changed_blocks)
 }
 

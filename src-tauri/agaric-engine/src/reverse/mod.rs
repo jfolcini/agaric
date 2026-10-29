@@ -50,5 +50,6 @@ pub async fn compute_reverse(
         }),
         OpType::AddPageAlias => alias_ops::reverse_add_page_alias(&record),
         OpType::RemovePageAlias => alias_ops::reverse_remove_page_alias(&record),
+        OpType::SetPropertyDef => property_ops::reverse_set_property_def(&record),
     }
 }

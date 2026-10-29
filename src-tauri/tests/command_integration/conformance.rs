@@ -283,6 +283,41 @@ async fn insert_seed_block(pool: &SqlitePool, b: &Value) {
     }
 }
 
+/// Seed one definition of the harness space into its row and its engine root
+/// (#5841), the state a `create_property_def` leaves, without its op.
+async fn seed_property_def(
+    pool: &SqlitePool,
+    state: &agaric_engine::loro::shared::LoroState,
+    d: &Value,
+) {
+    let key = d["key"].as_str().expect("seed def key");
+    let def = agaric_store::op::PropertyDefState {
+        value_type: d["value_type"]
+            .as_str()
+            .expect("seed def value_type")
+            .to_owned(),
+        options: d["options"].as_str().map(str::to_owned),
+    };
+    let mut conn = pool.acquire().await.expect("seed def connection");
+    agaric_engine::loro::projection::project_property_def_to_sql(
+        &mut conn,
+        TEST_SPACE_ID,
+        key,
+        Some(&def),
+    )
+    .await
+    .expect("seed def row");
+    let space = agaric_store::space::SpaceId::from_trusted(TEST_SPACE_ID);
+    let mut guard = state
+        .registry
+        .for_space(&space, DEV)
+        .expect("seed def engine");
+    guard
+        .engine_mut()
+        .apply_set_property_def(key, Some(&def))
+        .expect("seed def root");
+}
+
 /// Seed one block into the per-space Loro ENGINE tree (#891), mirroring the
 /// raw-SQL `insert_seed_block` so the engine and SQL stay in lockstep BEFORE any
 /// op runs. Production never seeds blocks out-of-band (every block is born from
@@ -1288,20 +1323,12 @@ pub async fn replay_fixture(
     // #5841). A fresh vault holds no rows (a space gets its defaults when it
     // is created), so the section is the WHOLE set of the space's user rows,
     // on both stacks. The built-ins are constants on both and never rows.
+    // Like the seed blocks, they go straight into the row and the space's
+    // engine root, not through the op log, which would inflate
+    // `op_log_digest` and the create-order relabel.
     if let Some(defs) = seed["property_defs"].as_array() {
         for d in defs {
-            create_property_def_inner(
-                &pool,
-                TEST_SPACE_ID,
-                d["key"].as_str().expect("seed def key").to_owned(),
-                d["value_type"]
-                    .as_str()
-                    .expect("seed def value_type")
-                    .to_owned(),
-                d["options"].as_str().map(str::to_owned),
-            )
-            .await
-            .expect("seed create_property_def");
+            seed_property_def(&pool, state, d).await;
         }
     }
     // Seed attachment rows (#3830), verbatim: every column is fixture-authored

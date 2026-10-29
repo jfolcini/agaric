@@ -92,6 +92,8 @@ async fn fixture() -> Fixture {
     ] {
         create_property_def_inner(
             &pool,
+            DEV,
+            &mat,
             space,
             key.into(),
             value_type.into(),
@@ -562,7 +564,7 @@ async fn move_beyond_one_undo_is_refused() {
         .await
         .unwrap()
         .into_string();
-    create_property_def_inner(&pool, &a, "onlya".into(), "text".into(), None)
+    create_property_def_inner(&pool, DEV, &mat, &a, "onlya".into(), "text".into(), None)
         .await
         .unwrap();
     let page = create_page_in_space_inner(&pool, DEV, &mat, None, "P".into(), a.clone())

@@ -5306,9 +5306,16 @@ async fn duplicate_block_copies_a_value_its_key_no_longer_offers() {
     )
     .await
     .unwrap();
-    update_property_def_options_inner(&pool, TEST_SPACE_ID, "stage".into(), r#"["draft"]"#.into())
-        .await
-        .unwrap();
+    update_property_def_options_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "stage".into(),
+        r#"["draft"]"#.into(),
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
     set_task_columns(&pool, original.as_str(), None, Some("P0"), None, None).await;
 

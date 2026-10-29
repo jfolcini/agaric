@@ -208,5 +208,18 @@ pub(super) fn all_op_payloads() -> Vec<(&'static str, OpPayload)> {
                 alias: "plans".into(),
             }),
         ),
+        // #5841: a definition op names its space as `space_id`.
+        (
+            "set_property_def",
+            OpPayload::SetPropertyDef(SetPropertyDefPayload {
+                space_id: BlockId::test_id("SP001"),
+                key: "stage".into(),
+                def: Some(PropertyDefState {
+                    value_type: "text".into(),
+                    options: None,
+                }),
+                prior: None,
+            }),
+        ),
     ]
 }

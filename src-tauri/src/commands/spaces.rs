@@ -521,7 +521,13 @@ pub async fn create_space_inner(
         tx.enqueue_background(accent_op);
     }
 
-    crate::commands::seed_default_property_defs_in_tx(&mut tx, new_space_id.as_str()).await?;
+    crate::commands::seed_default_property_defs_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        new_space_id.as_str(),
+    )
+    .await?;
 
     tx.commit_and_dispatch(materializer).await?;
     Ok(new_space_id)
@@ -1490,7 +1496,8 @@ mod tests_p6 {
         );
 
         // Op log rows reflect "no third op": exactly two ops scoped to
-        // the new block id (CreateBlock + SetProperty(is_space)).
+        // the new block id (CreateBlock + SetProperty(is_space)), beside the
+        // space's one SetPropertyDef per default (#5841).
         let ops = sqlx::query_scalar!(
             r#"SELECT COUNT(*) as "n!: i64" FROM op_log WHERE block_id = ?"#,
             id
@@ -1499,8 +1506,10 @@ mod tests_p6 {
         .await
         .unwrap();
         assert_eq!(
-            ops, 2,
-            "exactly two ops (CreateBlock + SetProperty(is_space)) when accent_color is None"
+            ops,
+            2 + i64::try_from(crate::commands::DEFAULT_PROPERTY_DEFS.len()).unwrap(),
+            "exactly two ops (CreateBlock + SetProperty(is_space)) and the defaults' \
+             definitions when accent_color is None"
         );
     }
 
@@ -1628,10 +1637,13 @@ mod tests_p6 {
             .fetch_one(&pool)
             .await
             .unwrap();
+        // One SetPropertyDef per default rides in the same transaction (#5841).
+        let defaults = i64::try_from(crate::commands::DEFAULT_PROPERTY_DEFS.len()).unwrap();
         assert_eq!(
             after - before,
-            3,
-            "exactly three ops must be appended (CreateBlock + 2× SetProperty)"
+            3 + defaults,
+            "exactly three ops (CreateBlock + 2× SetProperty) and the defaults' definitions \
+             must be appended"
         );
 
         let per_block = sqlx::query_scalar!(
@@ -1642,8 +1654,9 @@ mod tests_p6 {
         .await
         .unwrap();
         assert_eq!(
-            per_block, 3,
-            "all three ops must reference the new space id (got {per_block})"
+            per_block,
+            3 + defaults,
+            "every op must reference the new space id (got {per_block})"
         );
     }
 }

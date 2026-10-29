@@ -700,6 +700,10 @@ pub async fn apply_op_tx_with_mode(
         OpType::AddPageAlias | OpType::RemovePageAlias => {
             apply_page_alias_op(conn, state, record, op_type, replay).await?;
         }
+        OpType::SetPropertyDef => {
+            let p: SetPropertyDefPayload = serde_json::from_str(&record.payload)?;
+            apply_set_property_def_via_loro(conn, state, &record.device_id, &p).await?;
+        }
     }
     // Maintain `pages_cache.{inbound_link_count,child_block_count}`.
     // Runs after every per-op projection inside the same transaction, so

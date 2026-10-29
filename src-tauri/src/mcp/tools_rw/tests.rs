@@ -571,6 +571,8 @@ async fn set_property_accepts_value_bool_697() {
     // Boolean-typed definition so the value lands in value_bool.
     crate::commands::create_property_def_inner(
         &pool,
+        DEV,
+        &mat,
         &space,
         "archived".into(),
         "boolean".into(),
@@ -2213,6 +2215,8 @@ async fn move_page_to_space_refuses_a_lossy_move_until_acknowledged() {
     let space_b = mk_space(&pool, " space B").await;
     crate::commands::create_property_def_inner(
         &pool,
+        DEV,
+        &mat,
         &space_b,
         "stage".into(),
         "number".into(),

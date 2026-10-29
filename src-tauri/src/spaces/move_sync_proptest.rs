@@ -160,11 +160,13 @@ async fn built_vaults(template: &std::path::Path) -> Vaults {
         .await
         .unwrap()
         .id;
-    // Definitions are per space (#5841) and do not sync yet: each device
-    // declares `related` in every space the note can move to.
+    // Definitions are per space (#5841): each device declares `related` in
+    // every space the note can move to before the devices first meet.
     for space in &spaces {
         create_property_def_inner(
             &pool_a,
+            "device-A",
+            &mat_a,
             space.as_str(),
             "related".into(),
             "ref".into(),
@@ -198,6 +200,8 @@ async fn built_vaults(template: &std::path::Path) -> Vaults {
     for space in &spaces {
         create_property_def_inner(
             &pool_b,
+            "device-B",
+            &mat_b,
             space.as_str(),
             "related".into(),
             "ref".into(),

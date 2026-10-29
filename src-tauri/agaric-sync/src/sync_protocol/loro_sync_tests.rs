@@ -6285,3 +6285,191 @@ async fn apply_remote_backfills_interleaved_ancestor_gap_4083() {
         violations.len()
     );
 }
+
+// -----------------------------------------------------------------
+// Inbound property definitions (#5841).
+// -----------------------------------------------------------------
+
+/// Push everything `a` holds of [`SPACE_A`] that B's engine lacks, as one
+/// `Update`, through B's `apply_remote`.
+async fn push_space_a(pool: &SqlitePool, a: &LoroEngineRegistry, b: &LoroEngineRegistry) {
+    let space = SpaceId::from_trusted(SPACE_A);
+    let from_vv = b
+        .for_space(&space, "device-B")
+        .expect("for_space B")
+        .engine_mut()
+        .version_vector();
+    let bytes = a
+        .for_space(&space, "device-A")
+        .expect("for_space A")
+        .engine_mut()
+        .export_update_since(&from_vv)
+        .expect("export update");
+    let outcome = apply_remote(
+        pool,
+        b,
+        "device-B",
+        LoroSyncMessage::Update {
+            protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+            space_id: space,
+            from_vv,
+            bytes,
+        },
+    )
+    .await
+    .expect("apply_remote");
+    assert!(
+        matches!(outcome, ApplyOutcome::Imported { .. }),
+        "the update imports, got {outcome:?}"
+    );
+}
+
+/// `(block_id, value_text, value_date)` of every row under `key`.
+async fn rows_under(pool: &SqlitePool, key: &str) -> Vec<(String, Option<String>, Option<String>)> {
+    sqlx::query_as(
+        "SELECT block_id, value_text, value_date FROM block_properties \
+         WHERE key = ? ORDER BY block_id",
+    )
+    .bind(key)
+    .fetch_all(pool)
+    .await
+    .expect("rows under key")
+}
+
+/// `(value_type, options)` of [`SPACE_A`]'s definition of `key`.
+async fn def_row(pool: &SqlitePool, key: &str) -> Option<(String, Option<String>)> {
+    sqlx::query_as(
+        "SELECT value_type, options FROM property_definitions WHERE space_id = ? AND key = ?",
+    )
+    .bind(SPACE_A)
+    .bind(key)
+    .fetch_optional(pool)
+    .await
+    .expect("definition row")
+}
+
+/// #5841 — B projects the definitions A's doc brings and re-types B's own
+/// values by them: a `date` declaration moves B's values under the key into
+/// `value_date`, its delete moves them back, and neither touches a row under
+/// another key. An options edit leaves the key's column, so it rewrites no
+/// value.
+#[tokio::test]
+async fn apply_remote_projects_definitions_and_retypes_their_values_5841() {
+    use agaric_store::op::PropertyDefState;
+    let (pool, _dir) = fresh_pool().await;
+    // B knows the space, so the blocks its doc brings land in it.
+    for sql in [
+        "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?1, 'page', 'A', ?1)",
+        "INSERT INTO spaces (id) VALUES (?1)",
+    ] {
+        sqlx::query(sql)
+            .bind(SPACE_A)
+            .execute(&pool)
+            .await
+            .expect("register space");
+    }
+    let space = SpaceId::from_trusted(SPACE_A);
+    let (a, b) = (LoroEngineRegistry::new(), LoroEngineRegistry::new());
+    let on_a = |f: &dyn Fn(&mut LoroEngine)| {
+        f(a.for_space(&space, "device-A")
+            .expect("for_space A")
+            .engine_mut());
+    };
+    on_a(&|e| {
+        for block in [BLOCK_A, BLOCK_B] {
+            e.apply_create_block(block, "content", "x", None, 0)
+                .expect("create");
+            e.apply_set_property(block, "due2", Some("2026-11-03"))
+                .expect("due2");
+        }
+        e.apply_set_property(BLOCK_A, "note", Some("kept"))
+            .expect("note");
+        e.apply_set_property(BLOCK_A, "stage", Some("a"))
+            .expect("stage");
+    });
+    push_space_a(&pool, &a, &b).await;
+    assert_eq!(
+        rows_under(&pool, "due2").await,
+        vec![
+            (BLOCK_A.to_owned(), Some("2026-11-03".into()), None),
+            (BLOCK_B.to_owned(), Some("2026-11-03".into()), None),
+        ],
+        "undeclared, the values are text"
+    );
+    // Rows no definition below may touch: one under a key none declares, one
+    // under the key whose options change.
+    for (key, planted) in [("note", "planted"), ("stage", "planted-stage")] {
+        sqlx::query("UPDATE block_properties SET value_text = ? WHERE key = ?")
+            .bind(planted)
+            .bind(key)
+            .execute(&pool)
+            .await
+            .expect("plant");
+    }
+
+    let date = PropertyDefState {
+        value_type: "date".into(),
+        options: None,
+    };
+    let select = |options: &str| PropertyDefState {
+        value_type: "select".into(),
+        options: Some(options.into()),
+    };
+    on_a(&|e| {
+        e.apply_set_property_def("due2", Some(&date))
+            .expect("declare date");
+        e.apply_set_property_def("stage", Some(&select(r#"["a"]"#)))
+            .expect("declare select");
+    });
+    push_space_a(&pool, &a, &b).await;
+    assert_eq!(
+        def_row(&pool, "due2").await,
+        Some(("date".into(), None)),
+        "B holds A's definition"
+    );
+    assert_eq!(
+        rows_under(&pool, "due2").await,
+        vec![
+            (BLOCK_A.to_owned(), None, Some("2026-11-03".into())),
+            (BLOCK_B.to_owned(), None, Some("2026-11-03".into())),
+        ],
+        "a date declaration moves B's values into value_date"
+    );
+    let (note, stage) = (
+        rows_under(&pool, "note").await,
+        rows_under(&pool, "stage").await,
+    );
+    assert_eq!(
+        (note[0].1.as_deref(), stage[0].1.as_deref()),
+        (Some("planted"), Some("planted-stage")),
+        "rows under other keys, and under a key that stays text, are not rewritten"
+    );
+
+    on_a(&|e| {
+        e.apply_set_property_def("stage", Some(&select(r#"["a","b"]"#)))
+            .expect("edit options");
+    });
+    push_space_a(&pool, &a, &b).await;
+    assert_eq!(
+        def_row(&pool, "stage").await,
+        Some(("select".into(), Some(r#"["a","b"]"#.into()))),
+        "the options edit reaches B"
+    );
+    assert_eq!(
+        rows_under(&pool, "stage").await[0].1.as_deref(),
+        Some("planted-stage"),
+        "an options edit rewrites no value"
+    );
+
+    on_a(&|e| e.apply_set_property_def("due2", None).expect("delete"));
+    push_space_a(&pool, &a, &b).await;
+    assert_eq!(def_row(&pool, "due2").await, None, "the delete reaches B");
+    assert_eq!(
+        rows_under(&pool, "due2").await,
+        vec![
+            (BLOCK_A.to_owned(), Some("2026-11-03".into()), None),
+            (BLOCK_B.to_owned(), Some("2026-11-03".into()), None),
+        ],
+        "undeclared again, the values are text again"
+    );
+}

@@ -19,6 +19,7 @@
 //! - `apply_add_page_alias` / `apply_remove_page_alias`
 //! - `apply_add_attachment` / `apply_delete_attachment` /
 //!   `apply_rename_attachment`
+//! - `apply_set_property_def`
 //! - `apply_restore_block` (undelete)
 //! - `apply_purge_block` (hard-delete)
 //! - `apply_delete_property`
@@ -249,6 +250,11 @@ const BLOCK_TAGS_ROOT: &str = "block_tags";
 /// written. See [`aliases`](self::aliases).
 const PAGE_ALIASES_ROOT: &str = "page_aliases";
 
+/// Top-level LoroMap key holding the space's property definitions (#5841):
+/// per declared key one plain map value `{value_type, options}`. See
+/// [`property_defs`](self::property_defs).
+const PROPERTY_DEFINITIONS_ROOT: &str = "property_definitions";
+
 /// Top-level LoroMap key holding attachment metadata (#5608): per block a
 /// mergeable `LoroMap` keyed by attachment id, whose entries are mergeable
 /// field maps. See [`attachments`](self::attachments).
@@ -282,7 +288,8 @@ const SIBLING_ORDER_VERSION: i64 = 1;
 /// (no longer supported); `2` = the [`LoroTree`] block hierarchy (
 /// Phase 3); `3` = adds the `page_aliases` root (#5387); `4` = adds the
 /// `block_attachments` root (#5608); `5` = the doc is unchanged, but its sync
-/// bytes travel raw after a header frame instead of inside the JSON (#5761).
+/// bytes travel raw after a header frame instead of inside the JSON (#5761);
+/// `6` = adds the per-space `property_definitions` root (#5841).
 /// Each bump makes the sync handshake turn away a peer that would carry state
 /// it cannot project, or bytes it cannot read. The v1→v2
 /// forward-migration was retired in #332 once every persisted snapshot had
@@ -297,7 +304,7 @@ const SIBLING_ORDER_VERSION: i64 = 1;
 /// well-formed-but-newer-than-supported Loro blob is rejected up front rather
 /// than trusted and left to fail downstream on the projection path. See
 /// `LoroEngine::stamp_format_version` / `LoroEngine::reject_unknown_format_version`.
-pub const ENGINE_FORMAT_VERSION: u32 = 5;
+pub const ENGINE_FORMAT_VERSION: u32 = 6;
 /// Key under [`ENGINE_META_ROOT`] recording the engine format version a doc was
 /// written under (#1584). Stored as a Loro `I64`. Absent ⇒ a pre-#1584 export
 /// (legacy-unstamped); such docs are *accepted* — see
@@ -581,6 +588,9 @@ mod apply;
 /// Page aliases (#5387): apply, read, and the key an alias is filed under.
 mod aliases;
 pub use aliases::page_alias_key;
+
+/// Property definitions (#5841): apply and read.
+mod property_defs;
 
 /// Attachment metadata (#5608): apply and read.
 mod attachments;

@@ -498,6 +498,8 @@ pub(super) async fn apply_op_via_command(
         "create_property_def" => to_json(
             create_property_def_inner(
                 pool,
+                DEV,
+                mat,
                 &space_id(),
                 req_str("key"),
                 req_str("valueType"),
@@ -508,6 +510,8 @@ pub(super) async fn apply_op_via_command(
         "update_property_def_options" => to_json(
             update_property_def_options_inner(
                 pool,
+                DEV,
+                mat,
                 &space_id(),
                 req_str("key"),
                 req_str("options"),
@@ -631,7 +635,7 @@ pub(super) async fn apply_op_via_command(
             .await,
         ),
         "delete_property_def" => {
-            to_json(delete_property_def_inner(pool, &space_id(), req_str("key")).await)
+            to_json(delete_property_def_inner(pool, DEV, mat, &space_id(), req_str("key")).await)
         }
         // The deleted keys name the changed-property event; the wire returns none.
         "delete_property" => to_json(

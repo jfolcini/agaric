@@ -112,10 +112,13 @@ ULIDs are normalised to uppercase Crockford-Base32 in the preimage (and in every
 | `remove_page_alias` | Takes an alias off a page. |
 | `add_attachment` | Records an attachment binding (file blob managed separately). |
 | `delete_attachment` | Removes the binding. |
+| `set_property_def` | Creates, edits the options of, or deletes a space's property definition; refused for a built-in or a change of type. |
 
 `block_links`, `page_link_cache`, `block_tag_refs`, `block_tag_inherited` are caches, **never op types** — they are rebuilt deterministically from the underlying op-induced state.
 
 **Page aliases are ops (#5387).** `set_page_aliases` keeps its full-list signature: it diffs the list against the page's aliases and appends a `remove_page_alias` per alias that goes, then an `add_page_alias` per alias that comes, in one `CommandTx`, so one Undo reverts the edit and page history lists it; *Edit as Markdown* and import write the same ops. `page_aliases` is the projection of the engine's alias map, unique across pages under `NOCASE`: an alias another page holds is refused on the write path, and when a merge leaves two pages claiming one alias the lower page id (the older page) holds the row on every device, the other page's engine entry staying unprojected and logged. Rows written before #5387 are backfilled at boot as `add_page_alias` ops under the housekeeping origin (`repair::page_aliases`).
+
+**Property definitions are ops (#5841).** `create_property_def`, `update_property_def_options` and `delete_property_def` each append one `set_property_def` carrying the space, the key, the definition it leaves (`def`, absent for a delete) and the one it replaced (`prior`), with the space as its `op_log.block_id`; writing the definition the space already holds appends nothing. `property_definitions` is the projection of the space doc's `property_definitions` root. A definition that moves a key's string values to another `block_properties` column (`date` over text, its delete, an undo of either) re-types the space's values under the key from the engine, on the device that wrote it and on every device that imports it. A new space's defaults are ops in its doc, and rows written before #5841 are backfilled at boot as `set_property_def` ops under the housekeeping origin (`repair::property_definitions`).
 
 **Draft lifecycle.** `block_drafts` is the only mutable scratch table — it stores the in-flight content of focused blocks so a crash mid-edit doesn't lose work. `INSERT OR REPLACE` semantics; entries are reconciled at boot (see Recovery).
 

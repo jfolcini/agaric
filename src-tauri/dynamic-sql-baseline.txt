@@ -56,7 +56,7 @@
 3 src-tauri/src/commands/history.rs
 1 src-tauri/src/commands/pages/listing.rs
 2 src-tauri/src/commands/pages/metadata.rs
-3 src-tauri/src/commands/properties.rs
+1 src-tauri/src/commands/properties.rs
 2 src-tauri/src/commands/queries.rs
 3 src-tauri/src/db/pool.rs
 54 src-tauri/src/db/recovery.rs

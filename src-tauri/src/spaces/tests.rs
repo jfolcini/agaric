@@ -485,7 +485,8 @@ async fn bootstrap_gives_personal_and_work_the_default_property_defs_5841() {
 async fn bootstrap_restoring_a_seeded_space_does_not_re_add_a_deleted_default_5841() {
     let (pool, _dir) = test_pool().await;
     bootstrap_spaces(&pool, DEV).await.unwrap();
-    crate::commands::delete_property_def_inner(&pool, SPACE_WORK_ULID, "effort".into())
+    let mat = crate::materializer::Materializer::new(pool.clone());
+    crate::commands::delete_property_def_inner(&pool, DEV, &mat, SPACE_WORK_ULID, "effort".into())
         .await
         .unwrap();
     sqlx::query("UPDATE blocks SET deleted_at = 1 WHERE id = ?")
@@ -1848,11 +1849,13 @@ async fn move_fixture() -> MoveFixture {
     add_tag_inner(&pool_a, "device-A", &mat_a, note.clone(), tag.clone())
         .await
         .unwrap();
-    // Definitions are per space (#5841) and do not sync yet: each device
-    // declares `related` in both spaces the note lives in.
+    // Definitions are per space (#5841): each device declares `related` in
+    // both spaces the note lives in before the devices first meet.
     for space in [&old, &new] {
         create_property_def_inner(
             &pool_a,
+            "device-A",
+            &mat_a,
             space.as_str(),
             "related".into(),
             "ref".into(),
@@ -1898,6 +1901,8 @@ async fn move_fixture() -> MoveFixture {
     for space in [&old, &new] {
         create_property_def_inner(
             &pool_b,
+            "device-B",
+            &mat_b,
             space.as_str(),
             "related".into(),
             "ref".into(),
@@ -2289,10 +2294,21 @@ async fn a_lossy_move_reaches_b_without_the_dropped_values(old_space_first: bool
         preview_space_move_inner, set_property_inner,
     };
     let fx = move_fixture().await;
-    for pool in [&fx.pool_a, &fx.pool_b] {
-        create_property_def_inner(pool, fx.old.as_str(), "onlyold".into(), "text".into(), None)
-            .await
-            .unwrap();
+    for (pool, device, mat) in [
+        (&fx.pool_a, "device-A", &fx.mat_a),
+        (&fx.pool_b, "device-B", &fx.mat_b),
+    ] {
+        create_property_def_inner(
+            pool,
+            device,
+            mat,
+            fx.old.as_str(),
+            "onlyold".into(),
+            "text".into(),
+            None,
+        )
+        .await
+        .unwrap();
     }
     for block in [&fx.page, &fx.first] {
         set_property_inner(

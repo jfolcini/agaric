@@ -14,6 +14,7 @@
 //! - `pages_cache`: `maintain_pages_cache_counts_after_op` +
 //!   `recompute_pages_cache_counts_for_pages` and their helpers.
 //! - `attachments`: the three per-op `apply_*_attachment_tx` writers.
+//! - `property_defs`: the `SetPropertyDef` apply and its value re-typing.
 //!
 //! What STAYS app-side (reaches these through re-export shims at the old
 //! `crate::materializer::handlers::…` paths): the `Materializer` coordinator /
@@ -33,7 +34,7 @@ use agaric_store::op::{
     AddAttachmentPayload, AddPageAliasPayload, AddTagPayload, CreateBlockPayload,
     DeleteAttachmentPayload, DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload,
     MoveBlockPayload, OpType, PurgeBlockPayload, RemovePageAliasPayload, RemoveTagPayload,
-    RenameAttachmentPayload, RestoreBlockPayload, SetPropertyPayload,
+    RenameAttachmentPayload, RestoreBlockPayload, SetPropertyDefPayload, SetPropertyPayload,
 };
 use agaric_store::op_log::OpRecord;
 use agaric_store::tag_inheritance;
@@ -42,6 +43,7 @@ pub mod attachments;
 pub mod kernel;
 pub mod loro_apply;
 pub mod pages_cache;
+pub mod property_defs;
 pub mod sql_only;
 // #1057 SQL-only fallback observability counter — moved down with the
 // `apply_*_via_loro` handlers that record into it (engine-clean: a
@@ -61,4 +63,5 @@ use attachments::*;
 use kernel::*;
 use loro_apply::*;
 use pages_cache::*;
+use property_defs::*;
 use sql_only::*;

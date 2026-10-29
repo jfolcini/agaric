@@ -146,24 +146,49 @@ pub async fn mark_block_as_space(pool: &SqlitePool, space_id: &str) {
 }
 
 /// Give [`TEST_SPACE_ID`] the default property definitions, as
-/// `create_space` gives a new space (#5841).
+/// `create_space` gives a new space (#5841). Definitions are ops, applied
+/// through a materializer of the helper's own.
 pub async fn ensure_test_space_with_defs(pool: &SqlitePool) {
-    let mut conn = pool.acquire().await.unwrap();
-    crate::commands::seed_default_property_defs_in_tx(&mut conn, TEST_SPACE_ID)
+    let mat = Materializer::new(pool.clone());
+    let mut tx = crate::db::CommandTx::begin_immediate(pool, "ensure_test_space_with_defs")
         .await
         .unwrap();
+    tx.arm_engine_rollback(mat.loro_state());
+    crate::commands::seed_default_property_defs_in_tx(
+        &mut tx,
+        mat.loro_state(),
+        DEV,
+        TEST_SPACE_ID,
+    )
+    .await
+    .unwrap();
+    tx.commit_and_dispatch(&mat).await.unwrap();
+    mat.shutdown();
 }
 
 /// `create_property_def_inner` in [`TEST_SPACE_ID`]. Definitions are per
 /// space (#5841), so they type the values of that space's blocks only
-/// (`assign_all_to_test_space`).
+/// (`assign_all_to_test_space`). The definition is an op, applied through a
+/// materializer of the helper's own.
 pub async fn create_test_property_def(
     pool: &SqlitePool,
     key: String,
     value_type: String,
     options: Option<String>,
 ) -> Result<crate::commands::PropertyDefinition, agaric_core::error::AppError> {
-    crate::commands::create_property_def_inner(pool, TEST_SPACE_ID, key, value_type, options).await
+    let mat = Materializer::new(pool.clone());
+    let created = crate::commands::create_property_def_inner(
+        pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        key,
+        value_type,
+        options,
+    )
+    .await;
+    mat.shutdown();
+    created
 }
 
 /// Assign a block to [`TEST_SPACE_ID`] by stamping the denormalized

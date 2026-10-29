@@ -358,6 +358,7 @@ impl LoroEngine {
                 rank_only: Vec::new(),
                 purged: Vec::new(),
                 tag_scope: TagScope::Subtrees(Vec::new()),
+                def_keys: Vec::new(),
                 pending,
             });
         }
@@ -386,6 +387,7 @@ impl LoroEngine {
                 rank_only,
                 purged: Vec::new(),
                 tag_scope,
+                def_keys: sorted(cap.def_keys),
                 pending,
             });
         }
@@ -406,11 +408,16 @@ impl LoroEngine {
             // rank-only hint here — the fallback exists precisely because we
             // could not resolve WHAT changed, so every block gets the full
             // projection.
+            // A definition delete in a diff that could not be classified is
+            // not seen here; every definition the root still holds is.
+            let mut def_keys = cap.def_keys;
+            def_keys.extend(self.read_property_defs()?.into_iter().map(|(key, _)| key));
             return Ok(ImportDelta {
                 changed: self.enumerate_live_preorder(),
                 rank_only: Vec::new(),
                 purged,
                 tag_scope: TagScope::Global,
+                def_keys: sorted(def_keys),
                 pending,
             });
         }
@@ -425,6 +432,7 @@ impl LoroEngine {
             rank_only,
             purged,
             tag_scope,
+            def_keys: sorted(cap.def_keys),
             pending,
         })
     }
@@ -855,6 +863,9 @@ pub struct ImportDelta {
     pub purged: Vec<agaric_core::ulid::BlockId>,
     /// How to refresh the derived inherited-tag cache.
     pub tag_scope: TagScope,
+    /// Keys whose definition this import created, changed or deleted in the
+    /// `property_definitions` root (#5841), sorted.
+    pub def_keys: Vec<String>,
     /// #3194 — changes loro could NOT apply and parked in `pending_changes`
     /// because their dependencies are missing, as `(peer, start, end)` counter
     /// ranges (`ImportStatus::pending`, `loro-internal-1.13.6/src/encoding.rs:228-231`).
@@ -895,6 +906,8 @@ struct DiffCapture {
     block_id_keys: std::collections::HashSet<String>,
     /// Subset of `block_id_keys` whose `block_tags` changed (drives tag scope).
     tag_changed: std::collections::HashSet<String>,
+    /// Keys the `property_definitions` root's diff touched (#5841).
+    def_keys: std::collections::HashSet<String>,
     /// Structurally created/moved nodes (drive tag-inheritance subtree roots).
     struct_roots: std::collections::HashSet<TreeID>,
     /// Parents whose child sibling-group ranks shifted (create/move/delete),
@@ -994,6 +1007,9 @@ fn classify_import_diff(cd: &loro::event::ContainerDiff, cap: &mut DiffCapture) 
         BLOCK_PROPERTIES_ROOT | PAGE_ALIASES_ROOT | BLOCK_ATTACHMENTS_ROOT => {
             collect_block_id_keys(cd, &mut cap.block_id_keys, &mut cap.fallback);
         }
+        PROPERTY_DEFINITIONS_ROOT => {
+            collect_block_id_keys(cd, &mut cap.def_keys, &mut cap.fallback);
+        }
         BLOCK_TAGS_ROOT => {
             let mut ids = std::collections::HashSet::new();
             collect_block_id_keys(cd, &mut ids, &mut cap.fallback);
@@ -1005,6 +1021,13 @@ fn classify_import_diff(cd: &loro::event::ContainerDiff, cap: &mut DiffCapture) 
         // LEGACY_BLOCKS_ROOT (rejected upstream) or any unknown root.
         _ => cap.fallback = true,
     }
+}
+
+/// `keys` in order, so the caller projects them deterministically.
+fn sorted(keys: std::collections::HashSet<String>) -> Vec<String> {
+    let mut keys: Vec<String> = keys.into_iter().collect();
+    keys.sort_unstable();
+    keys
 }
 
 /// Record that `parent`'s sibling group was disturbed at `index`, keeping the
@@ -1332,6 +1355,27 @@ mod incremental_detection_tests {
             Some(vec![]),
             "content edit does not touch tag inheritance"
         );
+    }
+
+    /// #5841: a definition change is classified, not a fallback: it names its
+    /// key and reprojects no block.
+    #[test]
+    fn definition_change_names_its_key_and_changes_no_block() {
+        let (mut a, mut b) = seed();
+        let def = agaric_store::op::PropertyDefState {
+            value_type: "date".into(),
+            options: None,
+        };
+        a.apply_set_property_def("due2", Some(&def)).unwrap();
+        let d = push_delta(&a, &mut b);
+        assert_eq!(d.def_keys, vec!["due2"], "the key the import declared");
+        assert!(ids(&d.changed).is_empty(), "no block reprojects");
+        assert_eq!(
+            d.tag_scope,
+            TagScope::Subtrees(vec![]),
+            "no whole-tree fallback"
+        );
+        assert_eq!(b.read_property_def("due2").unwrap(), Some(def));
     }
 
     #[test]
