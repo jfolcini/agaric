@@ -25,10 +25,6 @@ const VM_INCOMPATIBLE = [
   // Assert `toBeInstanceOf(Error)` / `expect.any(Error)` on a throwing `vi.doMock` factory.
   'src/editor/__tests__/emoji-data.test.ts',
   'src/editor/__tests__/emoji-picker.test.ts',
-  // Its async `vi.mock('@/lib/ipc-helpers')` factory can run twice, the second time for
-  // the lazily imported palette, which then calls an unstubbed copy: vitest caches an
-  // async factory's result only once it resolves. Flaky in any pool, often under vm.
-  'src/components/mobile/__tests__/SearchSheet.test.tsx',
   // App boot effects log after the last test; a vm worker has closed that file's rpc by
   // then, so under CI's `--silent=passed-only` the run fails with "Closing rpc while
   // "onUserConsoleLog" was pending".
