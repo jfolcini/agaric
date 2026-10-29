@@ -119,7 +119,9 @@ async function handleListStyle(
 ): Promise<void> {
   // A heading, quote, callout or code block shows no bullet or number, so a style
   // written on it would be hidden: making it a list is a kind change, which Turn into makes.
-  if (detectBlockType(readCurrentContent(ctx)) !== 'paragraph') {
+  // Not a list kind: `+ ` opens a paragraph to the editor, and Turn into would strip it.
+  const kind = detectBlockType(readCurrentContent(ctx))
+  if (kind !== 'paragraph' && listStyleForBlockType(kind) === 'none') {
     await turnInto(ctx, style === 'ordered' ? 'numbered-list' : 'bullet-list')
     return
   }

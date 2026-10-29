@@ -322,6 +322,28 @@ describe('useSlashCommandStructural — list, divider (#4552 slice 2)', () => {
     expect(toast.error).not.toHaveBeenCalled()
   })
 
+  // The editor parses `+ ` as text, not a bullet, so it is the user's to keep.
+  it('bullet-list keeps the text of a paragraph opening with `+ `', async () => {
+    seedBlocks()
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+    const actual = await vi.importActual<typeof import('@/lib/list-style')>('@/lib/list-style')
+    mockedSetListStyle.mockImplementation(actual.setListStyle)
+    const blockId = SEED_IDS.BLOCK_GS_1
+    dispatch('edit_block', { blockId, toText: '+ 1 for this' })
+
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx } = makeSyntheticCtx({
+      blockId,
+      blocks: [{ id: blockId, content: '+ 1 for this', parent_id: 'PAGE_1' }],
+    })
+    await result.current.exact['bullet-list']?.(ctx, { id: 'bullet-list', label: 'Bullet' })
+
+    expect((dispatch('get_block', { blockId }) as { content: string }).content).toBe('+ 1 for this')
+    expect(listStyleFromRows(dispatch('get_properties', { blockId }) as PropertyRow[])).toBe(
+      'bullet',
+    )
+  })
+
   it('numbered-list reports the failure toast when setListStyle rejects', async () => {
     mockedSetListStyle.mockRejectedValueOnce(new Error('boom'))
     const { result } = renderHook(() => useSlashCommandStructural())
