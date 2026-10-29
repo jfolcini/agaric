@@ -203,9 +203,15 @@ function listMarkerOf(listStyle: DocumentBlock['listStyle'], run: number): strin
  * that line is in, as the writer places it: at that block's column, with its
  * list style numbered on, or as a `+` item under a list block (D4); and
  * whether a blank line goes before it. A task's sibling is plain, as page
- * mode's Enter makes it. Above the first block, a bare line after a blank one.
+ * mode's Enter makes it. Text split off a heading (`splitsText`) stays a
+ * heading of its level, as page mode's Enter keeps it; past its end the
+ * sibling is a paragraph. Above the first block, a bare line after a blank one.
  */
-export function siblingHead(doc: PMNode, index: number): { blank: boolean; head: string } {
+export function siblingHead(
+  doc: PMNode,
+  index: number,
+  splitsText: boolean,
+): { blank: boolean; head: string } {
   const buffer = readBuffer(doc)
   const at = indexAt(buffer, index)
   const block = buffer.blocks[at]
@@ -217,7 +223,8 @@ export function siblingHead(doc: PMNode, index: number): { blank: boolean; head:
     lineLayout(headOf(buffer, at)).marked,
   )
   const place = layout.place(depth, listMarkerOf(listStyle, run), null, false)
-  return { blank: place.blank, head: place.indent + place.marker }
+  const heading = splitsText ? (/^#{1,6}[ \t]/.exec(block.content)?.[0] ?? '') : ''
+  return { blank: place.blank, head: place.indent + place.marker + heading }
 }
 
 /** A place in a block's lines: `line` lines into block `from`, `fromEnd` characters before that line's end. */
@@ -306,7 +313,10 @@ function rewrite(
   )
   const { lines, ids, heads } = writeBlocks(buffer, from, blocks, layout, replaceFrom === 0)
   const nextMarked = to < spans.length ? lineLayout(headOf(buffer, to)).marked : null
-  if (nextMarked !== null && !(layout.previousMarked === true && nextMarked)) lines.push('')
+  const previousMarked = layout.previousMarked
+  if (nextMarked !== null && previousMarked !== null && !(previousMarked && nextMarked)) {
+    lines.push('')
+  }
 
   const spots = [state.selection.anchor, state.selection.head].map((pos) =>
     spotOf(buffer, state.doc, pos),
@@ -546,7 +556,8 @@ function numberedRunEnd(buffer: Parsed, from: number, depth: number): number {
 }
 
 /**
- * Delete `block` and its children, as the block editor's Delete does. The
+ * Delete `block` and its children, as the block editor's Delete does, the
+ * blank lines between the blocks either side by the writer's rule. The
  * numbered blocks after it are written again from where it stood: a `2.` left
  * first under its parent would read as a further line of the parent's text.
  */
@@ -554,21 +565,16 @@ export function deleteBlock(block: SourceBlock): Command {
   return (state, dispatch) => {
     const buffer = readBuffer(state.doc)
     const at = indexOf(buffer, block)
-    if (at >= 0) {
-      const end = buffer.subtreeEnds[at] as number
-      const to = numberedRunEnd(buffer, end, (buffer.blocks[at] as DocumentBlock).depth)
-      if (to > end) {
-        const run = Array.from({ length: to - end }, (_, i) => written(buffer, end + i))
-        dispatch?.(rewrite(state, buffer, [at, to], run))
-        return true
-      }
+    if (at < 0) return true
+    const [start, stop] = lineRange(state.doc, block.line, block.subtreeEnd)
+    if (start === 0 && stop === state.doc.content.size) {
+      dispatch?.(state.tr.replaceWith(start, stop, lineNode(state, '')).scrollIntoView())
+      return true
     }
-    const [start, end] = lineRange(state.doc, block.line, block.subtreeEnd)
-    const tr = state.tr
-    if (start === 0 && end === state.doc.content.size)
-      tr.replaceWith(start, end, lineNode(state, ''))
-    else tr.delete(start, end)
-    dispatch?.(tr.scrollIntoView())
+    const end = buffer.subtreeEnds[at] as number
+    const to = numberedRunEnd(buffer, end, (buffer.blocks[at] as DocumentBlock).depth)
+    const run = Array.from({ length: to - end }, (_, i) => written(buffer, end + i))
+    dispatch?.(rewrite(state, buffer, [at, to], run))
     return true
   }
 }

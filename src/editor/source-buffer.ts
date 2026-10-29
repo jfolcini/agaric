@@ -141,7 +141,9 @@ function separateFromList(tr: Transaction): void {
  * own, and another under the cursor where a list line follows. Any other line
  * with text before the cursor starts a sibling of the block it is in, at that
  * block's depth, as the writer places one (`siblingHead`): after a blank line,
- * at the block's column, with a list block's style; in the front matter and in
+ * at the block's column, with a list block's style or a heading's level; with
+ * none before the cursor, the line moves down with the caret at its text, as
+ * page mode's Enter at a block's start leaves it; in the front matter and in
  * a fenced code block, where a line is no block, Enter breaks the line and
  * nothing more.
  */
@@ -169,14 +171,16 @@ const splitLine: Command = (state, dispatch) => {
   } else if (isBlank(before) && !isBlank(moved)) {
     // The indentation is the block's place, so the text moved keeps it.
     tr.split($from.pos).insertText(before)
+    const head = list?.length ?? /^[ \t]*(?:#{1,6}[ \t]+)?/.exec(text)?.[0].length ?? 0
+    tr.setSelection(TextSelection.create(tr.doc, tr.selection.from - before.length + head))
   } else if (list !== null || isBlank(before)) {
     tr.split($from.pos)
   } else {
-    const sibling = siblingHead(tr.doc, index)
-    tr.split($from.pos)
-    if (sibling.blank) tr.split(tr.selection.from)
     // The text moved starts the sibling: its own blanks would place it elsewhere.
     const blanks = /^[ \t]*/.exec(moved)?.[0].length ?? 0
+    const sibling = siblingHead(tr.doc, index, moved.length > blanks)
+    tr.split($from.pos)
+    if (sibling.blank) tr.split(tr.selection.from)
     tr.delete(tr.selection.from, tr.selection.from + blanks).insertText(sibling.head)
     if (sibling.blank && moved.length === blanks) separateFromList(tr)
   }

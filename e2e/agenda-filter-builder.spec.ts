@@ -213,3 +213,24 @@ test.describe('Agenda date preset and property filter (#5735) @journal @search',
     await expectListed(page, DEFAULT_LIST)
   })
 })
+
+test.describe('The property filter’s key select (#6183) @journal @search', () => {
+  for (const width of [1280, 768]) {
+    test(`keeps its chevron inside the box at ${width} px`, async ({ page }) => {
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      await waitForBoot(page)
+      // Below the desktop layout the mode tabs fold into a menu; the view stays.
+      await page.getByRole('tab', { name: 'Agenda view' }).click()
+      await page.setViewportSize({ width, height: 800 })
+      const popover = await openAddFilter(page)
+      await popover.getByRole('button', { name: 'Property', exact: true }).click()
+      const trigger = popover.getByRole('combobox', { name: 'Property key', exact: true })
+      await expect(trigger).toBeVisible()
+
+      const box = await trigger.boundingBox()
+      const chevron = await trigger.locator('svg').boundingBox()
+      if (box === null || chevron === null) throw new Error('the key select is not laid out')
+      expect(chevron.y + chevron.height).toBeLessThanOrEqual(box.y + box.height)
+    })
+  }
+})

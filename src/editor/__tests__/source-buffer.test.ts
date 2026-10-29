@@ -351,33 +351,33 @@ describe('Enter', () => {
       ])
     })
 
+    const PLAIN_CHILD: Line[] = [
+      ['a', A],
+      ['', null],
+      ['  child', B],
+    ]
+    const NESTED_ITEM: Line[] = [
+      ['- a', A],
+      ['  - child', B],
+    ]
     it.each([
-      [
-        'a plain child',
-        [
-          ['parent', A],
-          ['', null],
-          ['  child', B],
-        ],
-        2,
-      ],
-      [
-        'a nested list item',
-        [
-          ['- a', A],
-          ['  - child', B],
-        ],
-        1,
-      ],
+      ['the indent’s end in a plain child', PLAIN_CHILD, 2],
+      ['the indent’s end in a nested list item', NESTED_ITEM, 2],
+      ['column 0 of a plain child', PLAIN_CHILD, 0],
+      ['column 0 of a nested list item', NESTED_ITEM, 0],
     ] as const)(
-      'at the start of the text of %s, the text moved keeps its depth',
-      (_kind, rows, row) => {
+      'at %s, the text moved keeps its depth, the caret at its text as page mode leaves it',
+      (_kind, rows, column) => {
         const ed = build(rows.map(([line, id]) => [line, id]))
-        caret(ed, row, 2)
+        caret(ed, rows.length - 1, column)
 
         press(ed, 'Enter')
+        ed.commands.insertContent('x')
 
-        expect(saved(ed).map(([depth]) => depth)).toEqual([0, 1])
+        expect(saved(ed).map(([depth, content]) => [depth, content])).toEqual([
+          [0, 'a'],
+          [1, 'xchild'],
+        ])
       },
     )
 
@@ -398,6 +398,47 @@ describe('Enter', () => {
         ['x', null],
       ])
     })
+
+    it('at column 0 of a heading, the caret goes after its `#` run, at its text as page mode leaves it', () => {
+      const ed = build([
+        ['a', A],
+        ['', null],
+        ['  ## Title', B],
+      ])
+      caret(ed, 2, 0)
+
+      press(ed, 'Enter')
+      ed.commands.insertContent('x')
+
+      expect(lines(ed).slice(2)).toEqual([
+        ['', null],
+        ['  ## xTitle', B],
+      ])
+    })
+
+    it.each([
+      ['a top-level heading', '', '## foo bar'],
+      ['a child heading', '  ', '### foo bar'],
+    ])(
+      'in the middle of %s’s text, the text moved a heading of its level, as page mode’s Enter keeps it',
+      (_kind, indent, heading) => {
+        const ed = build([
+          ['a', A],
+          ['', null],
+          [indent + heading, B],
+        ])
+        caret(ed, 2, indent.length + heading.indexOf(' bar'))
+
+        press(ed, 'Enter')
+
+        const level = heading.replace(/ .*/, '')
+        expect(lines(ed).slice(2)).toEqual([
+          [`${indent}${level} foo`, B],
+          ['', null],
+          [`${indent}${level} bar`, null],
+        ])
+      },
+    )
 
     it('as a `+` item under a list block (D4), from its text’s first line', () => {
       const ed = build([

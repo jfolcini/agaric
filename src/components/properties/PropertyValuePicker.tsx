@@ -60,7 +60,7 @@ export function PropertyValuePicker({
         value={propertyKey || '__none__'}
         onValueChange={(val) => setPropertyKey(val === '__none__' ? '' : val)}
       >
-        <SelectTrigger id="prop-filter-key" size="sm" className="block w-full">
+        <SelectTrigger id="prop-filter-key" size="sm">
           <SelectValue placeholder={t('agendaFilter.selectProperty')} />
         </SelectTrigger>
         <SelectContent>
