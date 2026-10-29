@@ -13,9 +13,15 @@
 //!      re-types every value (#5841)
 //!   6. `import_property_def_change`   — a peer imports that declaration over
 //!      its own N values and re-types them (#5841)
+//!   7. `rename_property_key`          — rename a key N values hold: the whole
+//!      command, which holds the writer lock (#5841)
+//!   8. `merge_property_key`           — merge a key N values hold into one half
+//!      of them also hold: the whole command (#5841)
+//!   9. `import_rename_property_key`   — a peer imports a rename of the key its
+//!      own N values hold (#5841)
 //!
-//! Benches 5 and 6 print, once and untimed, the op log payload and the Loro
-//! update a declaration costs.
+//! Benches 5 to 9 print, once and untimed, the op log payload and the Loro
+//! update their op costs.
 
 use std::time::{Duration, Instant};
 
@@ -24,7 +30,8 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 use agaric_engine::loro::engine::LoroEngine;
 use agaric_engine::loro::registry::LoroEngineRegistry;
 use agaric_lib::commands::{
-    create_property_def_inner, delete_property_def_inner, list_property_defs_inner,
+    PropertyMergeCounts, capture_op_refs, create_property_def_inner, delete_property_def_inner,
+    list_property_defs_inner, merge_property_key_inner, rename_property_key_inner, undo_ops_inner,
     update_property_def_options_inner,
 };
 use agaric_lib::db::init_pool;
@@ -531,7 +538,8 @@ fn bench_create_property_def_over_held_values(c: &mut Criterion) {
     group.finish();
 }
 
-/// B imports the peer's declaration of [`RETYPE_KEY`] as a date.
+/// B imports the peer's update of the space: a declaration of [`RETYPE_KEY`]
+/// as a date, or its rename.
 async fn import_declaration(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
@@ -631,6 +639,318 @@ fn bench_import_property_def_change(c: &mut Criterion) {
 }
 
 // ===========================================================================
+// 7 / 8 / 9. Renaming and merging a key (#5841)
+// ===========================================================================
+
+/// The key [`RETYPE_KEY`] is renamed or merged into.
+const TARGET_KEY: &str = "area";
+
+async fn declare_text(pool: &SqlitePool, materializer: &Materializer, key: &str) {
+    create_property_def_inner(
+        pool,
+        BENCH_DEVICE,
+        materializer,
+        RETYPE_SPACE,
+        key.into(),
+        "text".into(),
+        None,
+    )
+    .await
+    .unwrap();
+}
+
+async fn rename(pool: &SqlitePool, materializer: &Materializer, from: &str, to: &str) {
+    rename_property_key_inner(
+        pool,
+        BENCH_DEVICE,
+        materializer,
+        RETYPE_SPACE,
+        from.into(),
+        to.into(),
+    )
+    .await
+    .unwrap();
+}
+
+async fn rows_under(pool: &SqlitePool, key: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM block_properties WHERE key = ?")
+        .bind(key)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// The newest `op_type` op's payload length, and the Loro update the space's
+/// doc grew by since `vv`.
+async fn print_op_cost(pool: &SqlitePool, registry: &LoroEngineRegistry, op_type: &str, vv: &[u8]) {
+    let payload: i64 = sqlx::query_scalar(
+        "SELECT length(payload) FROM op_log WHERE op_type = ? ORDER BY seq DESC LIMIT 1",
+    )
+    .bind(op_type)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let update = registry
+        .for_space(&SpaceId::from_trusted(RETYPE_SPACE), BENCH_DEVICE)
+        .unwrap()
+        .engine_mut()
+        .export_update_since(vv)
+        .unwrap()
+        .len();
+    println!(
+        "property_def_bench: {op_type} op log payload = {payload} bytes, Loro update = {update} bytes"
+    );
+}
+
+fn doc_vv(registry: &LoroEngineRegistry) -> Vec<u8> {
+    registry
+        .for_space(&SpaceId::from_trusted(RETYPE_SPACE), BENCH_DEVICE)
+        .unwrap()
+        .engine_mut()
+        .version_vector()
+}
+
+fn bench_rename_property_key(c: &mut Criterion) {
+    let mut group = c.benchmark_group("rename_property_key");
+    group.sample_size(10);
+    for n in RETYPE_SIZES {
+        let rt = Runtime::new().unwrap();
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, &format!("rename_{n}")));
+        rt.block_on(seed_holders(&pool, n, "value_text"));
+        let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+        let registry = &materializer.loro_state().registry;
+        registry.install_engine(
+            SpaceId::from_trusted(RETYPE_SPACE),
+            holders_engine(BENCH_DEVICE, n),
+        );
+        rt.block_on(declare_text(&pool, &materializer, RETYPE_KEY));
+
+        // Shape probe: the rename moves all `n` rows, and the rename back
+        // returns them.
+        rt.block_on(async {
+            let vv = doc_vv(registry);
+            rename(&pool, &materializer, RETYPE_KEY, TARGET_KEY).await;
+            assert_eq!(
+                rows_under(&pool, TARGET_KEY).await,
+                n as i64,
+                "every row moved"
+            );
+            print_op_cost(&pool, registry, "rename_property_key", &vv).await;
+            rename(&pool, &materializer, TARGET_KEY, RETYPE_KEY).await;
+            assert_eq!(rows_under(&pool, RETYPE_KEY).await, n as i64, "and back");
+            materializer.flush_background().await.unwrap();
+        });
+
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
+            b.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    let start = Instant::now();
+                    rt.block_on(rename(&pool, &materializer, RETYPE_KEY, TARGET_KEY));
+                    total += start.elapsed();
+                    rt.block_on(async {
+                        rename(&pool, &materializer, TARGET_KEY, RETYPE_KEY).await;
+                        materializer.flush_background().await.unwrap();
+                    });
+                }
+                total
+            });
+        });
+        materializer.shutdown();
+    }
+    group.finish();
+}
+
+/// Every even holder also holds [`TARGET_KEY`], in its row and in `engine`.
+async fn hold_target_on_even_holders(pool: &SqlitePool, engine: &mut LoroEngine, n: usize) {
+    for i in (0..n).step_by(2) {
+        engine
+            .apply_set_property(&holder_id(i), TARGET_KEY, Some("kept"))
+            .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) \
+         SELECT block_id, ?, 'kept' FROM block_properties \
+         WHERE key = ? AND CAST(substr(block_id, 6, 7) AS INTEGER) % 2 = 0",
+    )
+    .bind(TARGET_KEY)
+    .bind(RETYPE_KEY)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Merge [`RETYPE_KEY`] into [`TARGET_KEY`]; the merge's op refs.
+async fn merge(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    n: usize,
+) -> Vec<agaric_store::op::OpRef> {
+    let acknowledged = PropertyMergeCounts {
+        moved: (n / 2) as i64,
+        dropped: n.div_ceil(2) as i64,
+    };
+    capture_op_refs(merge_property_key_inner(
+        pool,
+        BENCH_DEVICE,
+        materializer,
+        RETYPE_SPACE,
+        RETYPE_KEY.into(),
+        TARGET_KEY.into(),
+        acknowledged,
+    ))
+    .await
+    .unwrap()
+    .op_refs
+}
+
+async fn undo(pool: &SqlitePool, materializer: &Materializer, ops: Vec<agaric_store::op::OpRef>) {
+    undo_ops_inner(pool, BENCH_DEVICE, materializer, ops)
+        .await
+        .unwrap();
+    materializer.flush_background().await.unwrap();
+}
+
+fn bench_merge_property_key(c: &mut Criterion) {
+    let mut group = c.benchmark_group("merge_property_key");
+    group.sample_size(10);
+    for n in RETYPE_SIZES {
+        let rt = Runtime::new().unwrap();
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, &format!("merge_{n}")));
+        rt.block_on(seed_holders(&pool, n, "value_text"));
+        let mut engine = holders_engine(BENCH_DEVICE, n);
+        rt.block_on(hold_target_on_even_holders(&pool, &mut engine, n));
+        let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+        let registry = &materializer.loro_state().registry;
+        registry.install_engine(SpaceId::from_trusted(RETYPE_SPACE), engine);
+        rt.block_on(async {
+            declare_text(&pool, &materializer, RETYPE_KEY).await;
+            declare_text(&pool, &materializer, TARGET_KEY).await;
+        });
+
+        // Shape probe: every row ends under the target, half of them moved,
+        // and the undo puts the merged key's rows back.
+        rt.block_on(async {
+            let vv = doc_vv(registry);
+            let ops = merge(&pool, &materializer, n).await;
+            assert_eq!(
+                rows_under(&pool, TARGET_KEY).await,
+                n as i64,
+                "one row a block"
+            );
+            assert_eq!(rows_under(&pool, RETYPE_KEY).await, 0, "none left behind");
+            print_op_cost(&pool, registry, "rewrite_properties", &vv).await;
+            undo(&pool, &materializer, ops).await;
+            assert_eq!(rows_under(&pool, RETYPE_KEY).await, n as i64, "undone");
+        });
+
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
+            b.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    let start = Instant::now();
+                    let ops = rt.block_on(merge(&pool, &materializer, n));
+                    total += start.elapsed();
+                    rt.block_on(undo(&pool, &materializer, ops));
+                }
+                total
+            });
+        });
+        materializer.shutdown();
+    }
+    group.finish();
+}
+
+/// Put B back as it was before the rename, untimed: its rows and definition
+/// under [`RETYPE_KEY`], and its doc without the rename.
+async fn unrename(pool: &SqlitePool, registry: &LoroEngineRegistry, b: &LoroEngine) {
+    for sql in [
+        "UPDATE block_properties SET key = ?2 WHERE key = ?1",
+        "UPDATE property_definitions SET key = ?2 WHERE key = ?1",
+    ] {
+        sqlx::query(sql)
+            .bind(TARGET_KEY)
+            .bind(RETYPE_KEY)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    registry.install_engine(
+        SpaceId::from_trusted(RETYPE_SPACE),
+        b.fork_staging().unwrap(),
+    );
+}
+
+fn bench_import_rename_property_key(c: &mut Criterion) {
+    let mut group = c.benchmark_group("import_rename_property_key");
+    group.sample_size(10);
+    for n in RETYPE_SIZES {
+        let rt = Runtime::new().unwrap();
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, &format!("rename_import_{n}")));
+        rt.block_on(async {
+            seed_holders(&pool, n, "value_text").await;
+            sqlx::query(
+                "INSERT INTO property_definitions (space_id, key, value_type, created_at) \
+                 VALUES (?, ?, 'text', '2026-01-01T00:00:00.000Z')",
+            )
+            .bind(RETYPE_SPACE)
+            .bind(RETYPE_KEY)
+            .execute(&pool)
+            .await
+            .unwrap();
+        });
+        let text = PropertyDefState {
+            value_type: "text".into(),
+            options: None,
+        };
+        let mut peer = holders_engine(PEER_DEVICE, n);
+        peer.apply_set_property_def(RETYPE_KEY, Some(&text))
+            .unwrap();
+        let mut b = LoroEngine::with_peer_id(BENCH_DEVICE).unwrap();
+        b.import(&peer.export_snapshot().unwrap()).unwrap();
+        let from_vv = b.version_vector();
+        peer.apply_rename_property_key(RETYPE_KEY, TARGET_KEY)
+            .unwrap();
+        let update = peer.export_update_since(&from_vv).unwrap();
+        println!(
+            "property_def_bench: the rename's Loro update = {} bytes",
+            update.len()
+        );
+        let registry = LoroEngineRegistry::new();
+
+        // Shape probe: the import moves every row of B's.
+        rt.block_on(async {
+            unrename(&pool, &registry, &b).await;
+            import_declaration(&pool, &registry, &from_vv, &update).await;
+            assert_eq!(
+                rows_under(&pool, TARGET_KEY).await,
+                n as i64,
+                "B's rows moved"
+            );
+            assert_eq!(rows_under(&pool, RETYPE_KEY).await, 0, "none left behind");
+            unrename(&pool, &registry, &b).await;
+        });
+
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |bencher, _| {
+            bencher.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    let start = Instant::now();
+                    rt.block_on(import_declaration(&pool, &registry, &from_vv, &update));
+                    total += start.elapsed();
+                    rt.block_on(unrename(&pool, &registry, &b));
+                }
+                total
+            });
+        });
+    }
+    group.finish();
+}
+
+// ===========================================================================
 // Harness
 // ===========================================================================
 
@@ -642,4 +962,7 @@ criterion_group!(
     bench_delete_property_def,
     bench_create_property_def_over_held_values,
     bench_import_property_def_change,
+    bench_rename_property_key,
+    bench_merge_property_key,
+    bench_import_rename_property_key,
 );

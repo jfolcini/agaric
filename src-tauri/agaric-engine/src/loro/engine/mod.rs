@@ -345,11 +345,8 @@ pub enum PropertyValue {
 }
 
 impl From<&agaric_store::op::SetPropertyPayload> for PropertyValue {
-    /// Coerce a `SetProperty` payload's typed value fields into the engine's
-    /// native [`PropertyValue`] by precedence (text→num→date→ref→bool); no
-    /// field set ⇒ an explicit [`PropertyValue::Null`] clear. text/date/ref all
-    /// map to [`PropertyValue::Str`] (disambiguated at the SQL projection by
-    /// `property_definitions.value_type`).
+    /// The value a `SetProperty` payload sets, mapped as its
+    /// `PropertyValueFields` are.
     ///
     /// Single source of truth for the payload→engine value mapping shared by
     /// `merge::engine_apply` and the materializer `apply_set_property_via_loro`
@@ -358,15 +355,26 @@ impl From<&agaric_store::op::SetPropertyPayload> for PropertyValue {
     /// (e.g. `engine_apply`'s #2026 divergence warn) inspect the payload
     /// themselves; this mapping just applies the precedence coercion.
     fn from(p: &agaric_store::op::SetPropertyPayload) -> Self {
-        if let Some(v) = &p.value_text {
-            PropertyValue::Str(v.clone())
-        } else if let Some(v) = p.value_num {
-            PropertyValue::Num(v)
-        } else if let Some(v) = &p.value_date {
-            PropertyValue::Str(v.clone())
-        } else if let Some(v) = &p.value_ref {
-            PropertyValue::Str(v.as_str().to_owned())
-        } else if let Some(b) = p.value_bool {
+        Self::from(&p.value())
+    }
+}
+
+impl From<&agaric_store::op::PropertyValueFields> for PropertyValue {
+    /// Coerce typed value fields into the engine's native [`PropertyValue`] by
+    /// precedence (text→num→date→ref→bool); no field set ⇒ an explicit
+    /// [`PropertyValue::Null`] clear. text/date/ref all map to
+    /// [`PropertyValue::Str`] (disambiguated at the SQL projection by
+    /// `property_definitions.value_type`).
+    fn from(v: &agaric_store::op::PropertyValueFields) -> Self {
+        if let Some(text) = &v.value_text {
+            PropertyValue::Str(text.clone())
+        } else if let Some(num) = v.value_num {
+            PropertyValue::Num(num)
+        } else if let Some(date) = &v.value_date {
+            PropertyValue::Str(date.clone())
+        } else if let Some(r) = &v.value_ref {
+            PropertyValue::Str(r.as_str().to_owned())
+        } else if let Some(b) = v.value_bool {
             PropertyValue::Bool(b)
         } else {
             PropertyValue::Null

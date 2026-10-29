@@ -1427,6 +1427,11 @@ pub fn invalidations_for_op(
         // `page_aliases` feeds no cache: every reader queries it directly.
         OpType::AddPageAlias | OpType::RemovePageAlias => {}
         OpType::SetPropertyDef => push_property_def_invalidations(record, &mut tasks),
+        // #5841: `agenda_cache.source` names the key a date came from, and
+        // these ops move dates between keys.
+        OpType::RenamePropertyKey | OpType::RewriteProperties => {
+            tasks.push(MaterializeTask::RebuildAgendaCache);
+        }
     }
     Ok(tasks)
 }
@@ -3067,6 +3072,29 @@ mod tests {
         assert!(def("null", text).is_empty(), "a text delete moves no date");
     }
 
+    /// #5841: a rename or a merge moves dates between keys, and the agenda
+    /// names the key each came from.
+    #[test]
+    fn invalidations_for_op_rename_and_merge_rebuild_the_agenda() {
+        for (op_type, payload) in [
+            (
+                "rename_property_key",
+                r#"{"space_id":"SP1","old_key":"project","new_key":"area"}"#,
+            ),
+            (
+                "rewrite_properties",
+                r#"{"space_id":"SP1","reason":"merge","defs":[],"values":[]}"#,
+            ),
+        ] {
+            let r = make_record(op_type, payload, Some("SP1"));
+            assert_eq!(
+                labels(&invalidations_for_op(&r, None, None).unwrap()),
+                vec!["RebuildAgendaCache"],
+                "{op_type}"
+            );
+        }
+    }
+
     /// #2037: an ordinary (non-date, non-agenda-key) `set_property` enqueues
     /// NEITHER agenda rebuild — the property cannot feed either agenda cache.
     #[test]
@@ -3638,6 +3666,8 @@ mod tests {
             OpType::AddPageAlias,
             OpType::RemovePageAlias,
             OpType::SetPropertyDef,
+            OpType::RenamePropertyKey,
+            OpType::RewriteProperties,
         ];
         for probe in &all {
             // Round-trip guard: the dispatch parses the stored string back
@@ -3710,6 +3740,12 @@ mod tests {
                 OpType::SetPropertyDef => {
                     r#"{"space_id":"B1","key":"due2","def":{"value_type":"date","options":null},"prior":null}"#
                 }
+                OpType::RenamePropertyKey => {
+                    r#"{"space_id":"B1","old_key":"project","new_key":"area"}"#
+                }
+                OpType::RewriteProperties => {
+                    r#"{"space_id":"B1","reason":"merge","defs":[],"values":[]}"#
+                }
             }
         }
 
@@ -3730,6 +3766,8 @@ mod tests {
             OpType::AddPageAlias,
             OpType::RemovePageAlias,
             OpType::SetPropertyDef,
+            OpType::RenamePropertyKey,
+            OpType::RewriteProperties,
         ];
         let probe = MaterializeTask::SetBlockPageId {
             block_id: Arc::from("probe"),

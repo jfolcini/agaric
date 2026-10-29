@@ -191,6 +191,9 @@ macro_rules! agaric_commands {
             $crate::commands::properties::update_property_def_options,
             $crate::commands::properties::delete_property_def,
             $crate::commands::properties::count_property_usage,
+            $crate::commands::property_keys::rename_property_key,
+            $crate::commands::property_keys::preview_property_merge,
+            $crate::commands::property_keys::merge_property_key,
             // Sync
             $crate::commands::sync_cmds::list_peer_refs,
             $crate::commands::sync_cmds::delete_peer_ref,

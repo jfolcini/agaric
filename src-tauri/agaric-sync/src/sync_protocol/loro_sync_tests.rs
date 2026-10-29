@@ -6545,3 +6545,116 @@ async fn apply_remote_projects_definitions_and_retypes_their_values_5841() {
         "undeclared again, the values are text again"
     );
 }
+
+/// #5841 — a rename and a merge need no projection of their own on the
+/// receiver: the definitions pass moves the definitions, and Pass A rewrites
+/// each changed block's properties typed by them. A renames a `date` key and
+/// merges it into another; B's rows follow, in `value_date`, and none stays
+/// under the old keys.
+#[tokio::test]
+async fn apply_remote_follows_a_rename_and_a_merge_5841() {
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{
+        PropertyDefState, PropertyDefWrite, PropertyValueFields, PropertyValueWrite,
+        RewritePropertiesPayload, RewriteReason,
+    };
+    let (pool, _dir) = fresh_pool().await;
+    for sql in [
+        "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?1, 'page', 'A', ?1)",
+        "INSERT INTO spaces (id) VALUES (?1)",
+    ] {
+        sqlx::query(sql)
+            .bind(SPACE_A)
+            .execute(&pool)
+            .await
+            .expect("register space");
+    }
+    let space = SpaceId::from_trusted(SPACE_A);
+    let (a, b) = (LoroEngineRegistry::new(), LoroEngineRegistry::new());
+    let on_a = |f: &dyn Fn(&mut LoroEngine)| {
+        f(a.for_space(&space, "device-A")
+            .expect("for_space A")
+            .engine_mut());
+    };
+    let date = PropertyDefState {
+        value_type: "date".into(),
+        options: None,
+    };
+    on_a(&|e| {
+        e.apply_set_property_def("due2", Some(&date))
+            .expect("declare due2");
+        e.apply_set_property_def("deadline", Some(&date))
+            .expect("declare deadline");
+        for block in [BLOCK_A, BLOCK_B] {
+            e.apply_create_block(block, "content", "x", None, 0)
+                .expect("create");
+            e.apply_set_property(block, "due2", Some("2026-11-03"))
+                .expect("due2");
+        }
+        e.apply_set_property(BLOCK_B, "deadline", Some("2026-12-01"))
+            .expect("deadline");
+    });
+    push_space_a(&pool, &a, &b).await;
+
+    on_a(&|e| e.apply_rename_property_key("due2", "when").expect("rename"));
+    push_space_a(&pool, &a, &b).await;
+    assert_eq!(def_row(&pool, "when").await, Some(("date".into(), None)));
+    assert_eq!(def_row(&pool, "due2").await, None, "the definition moved");
+    assert_eq!(
+        rows_under(&pool, "when").await,
+        vec![
+            (BLOCK_A.to_owned(), None, Some("2026-11-03".into())),
+            (BLOCK_B.to_owned(), None, Some("2026-11-03".into())),
+        ],
+        "the values moved, typed as dates"
+    );
+    assert!(
+        rows_under(&pool, "due2").await.is_empty(),
+        "none stayed behind"
+    );
+
+    let held = |date: &str| PropertyValueFields {
+        value_text: Some(date.into()),
+        ..Default::default()
+    };
+    let write =
+        |block: &str, key: &str, value: Option<&str>, prior: Option<&str>| PropertyValueWrite {
+            block_id: BlockId::from_trusted(block),
+            key: key.into(),
+            value: value.map(held),
+            prior: prior.map(held),
+        };
+    let merge = RewritePropertiesPayload {
+        space_id: BlockId::from_trusted(SPACE_A),
+        reason: RewriteReason::Merge,
+        defs: vec![
+            PropertyDefWrite {
+                key: "when".into(),
+                def: None,
+                prior: Some(date.clone()),
+            },
+            PropertyDefWrite {
+                key: "deadline".into(),
+                def: Some(date.clone()),
+                prior: Some(date.clone()),
+            },
+        ],
+        values: vec![
+            write(BLOCK_A, "when", None, Some("2026-11-03")),
+            write(BLOCK_A, "deadline", Some("2026-11-03"), None),
+            write(BLOCK_B, "when", None, Some("2026-11-03")),
+        ],
+    };
+    on_a(&|e| e.apply_rewrite_properties(&merge).expect("merge"));
+    push_space_a(&pool, &a, &b).await;
+    assert_eq!(def_row(&pool, "when").await, None, "the merged key is gone");
+    assert!(rows_under(&pool, "when").await.is_empty());
+    assert_eq!(
+        rows_under(&pool, "deadline").await,
+        vec![
+            (BLOCK_A.to_owned(), None, Some("2026-11-03".into())),
+            (BLOCK_B.to_owned(), None, Some("2026-12-01".into())),
+        ],
+        "the moved value is a date, and the block holding both keeps its own"
+    );
+}

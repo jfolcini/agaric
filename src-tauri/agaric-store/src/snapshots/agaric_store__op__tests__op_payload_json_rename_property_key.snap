@@ -1,0 +1,8 @@
+---
+source: src/op.rs
+expression: json
+---
+new_key: area
+old_key: project
+op_type: rename_property_key
+space_id: 01ARZ3NDEKTSV4RRFFQ69G5FAV

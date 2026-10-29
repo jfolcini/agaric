@@ -1,13 +1,13 @@
 //! Reverse functions for property ops (set, delete) and property definition
-//! ops.
+//! ops, and the key an undo of a set or delete writes under.
 
 use agaric_core::error::AppError;
 use agaric_store::op::{
-    DeletePropertyPayload, OpPayload, PropertyValueFields, SetPropertyDefPayload,
-    SetPropertyPayload,
+    DeletePropertyPayload, OpPayload, PropertyDefWrite, PropertyValueFields, PropertyValueWrite,
+    RenamePropertyKeyPayload, RewritePropertiesPayload, SetPropertyDefPayload, SetPropertyPayload,
 };
 use agaric_store::op_log::OpRecord;
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 
 /// A definition op records the definition it replaced, so its reverse is
 /// the swap (#5841).
@@ -18,6 +18,141 @@ pub fn reverse_set_property_def(record: &OpRecord) -> Result<OpPayload, AppError
         prior: payload.def,
         ..payload
     }))
+}
+
+/// A rename's reverse renames back (#5841).
+pub fn reverse_rename_property_key(record: &OpRecord) -> Result<OpPayload, AppError> {
+    let payload: RenamePropertyKeyPayload = serde_json::from_str(&record.payload)?;
+    Ok(OpPayload::RenamePropertyKey(RenamePropertyKeyPayload {
+        old_key: payload.new_key,
+        new_key: payload.old_key,
+        ..payload
+    }))
+}
+
+/// A rewrite records what each write replaced, so its reverse swaps every
+/// write's new and prior state (#5841).
+pub fn reverse_rewrite_properties(record: &OpRecord) -> Result<OpPayload, AppError> {
+    let payload: RewritePropertiesPayload = serde_json::from_str(&record.payload)?;
+    Ok(OpPayload::RewriteProperties(RewritePropertiesPayload {
+        defs: payload
+            .defs
+            .into_iter()
+            .map(|w| PropertyDefWrite {
+                def: w.prior,
+                prior: w.def,
+                ..w
+            })
+            .collect(),
+        values: payload
+            .values
+            .into_iter()
+            .map(|w| PropertyValueWrite {
+                value: w.prior,
+                prior: w.value,
+                ..w
+            })
+            .collect(),
+        ..payload
+    }))
+}
+
+/// The key `block_id`'s value of `key` lives under now (#5841): `key` followed
+/// through each rename and merge of the block's space after the op at `after`
+/// (`created_at`, `seq`, `device_id`), in log order. A peer's rename or merge
+/// counts as this device's own does.
+///
+/// A rename moves `old_key` to `new_key`. A rewrite moves the block's value
+/// out of `key` when it removes it there and writes the block a value under
+/// another key: a merge's moved value, or the undo of one. A merge moves a
+/// value in only where the block held none, so a value moved into `key` is
+/// another key's, and its moving out again (the merge's undo) leaves `key`
+/// where it is. A value the merge dropped stays under its key, and so does one
+/// an undo brought back.
+pub async fn forward_property_key(
+    conn: &mut SqliteConnection,
+    block_id: &str,
+    key: &str,
+    after: (i64, i64, &str),
+) -> Result<String, AppError> {
+    let (created_at, seq, device_id) = after;
+    // A space's own block names no space: its renames are its own.
+    let space = sqlx::query_scalar!(
+        r#"SELECT COALESCE(space_id, id) AS "space!: String" FROM blocks WHERE id = ?"#,
+        block_id
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some(space) = space else {
+        return Ok(key.to_owned());
+    };
+    let rows = sqlx::query!(
+        "SELECT op_type, payload FROM op_log \
+         WHERE block_id = ?1 \
+           AND op_type IN ('rename_property_key', 'rewrite_properties') \
+           AND (created_at > ?2 \
+                OR (created_at = ?2 AND (seq > ?3 OR (seq = ?3 AND device_id > ?4)))) \
+         ORDER BY created_at, seq, device_id",
+        space,
+        created_at,
+        seq,
+        device_id,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut key = key.to_owned();
+    let mut moved_in = false;
+    for row in rows {
+        if row.op_type == "rename_property_key" {
+            let p: RenamePropertyKeyPayload = serde_json::from_str(&row.payload)?;
+            if key == p.old_key {
+                key = p.new_key;
+            }
+            continue;
+        }
+        let p: RewritePropertiesPayload = serde_json::from_str(&row.payload)?;
+        match value_move(&p.values, block_id, &key) {
+            Some(ValueMove::Out(to)) => {
+                if !moved_in {
+                    key = to.to_owned();
+                }
+                moved_in = false;
+            }
+            Some(ValueMove::In) => moved_in = true,
+            None => {}
+        }
+    }
+    Ok(key)
+}
+
+/// How a rewrite moved `block_id`'s value of a key.
+enum ValueMove<'a> {
+    /// Out of the key, to this one.
+    Out(&'a str),
+    /// Another key's value, into the key.
+    In,
+}
+
+/// A move is two writes of one block: the value removed under one key and
+/// written under another. A rewrite writes a key once per block.
+fn value_move<'a>(
+    writes: &'a [PropertyValueWrite],
+    block_id: &str,
+    key: &str,
+) -> Option<ValueMove<'a>> {
+    let (here, elsewhere): (Vec<_>, Vec<_>) = writes
+        .iter()
+        .filter(|w| w.block_id.as_str() == block_id)
+        .partition(|w| w.key == key);
+    let here = here.first()?;
+    let other = elsewhere
+        .into_iter()
+        .find(|w| w.value.is_some() != here.value.is_some())?;
+    Some(if here.value.is_none() {
+        ValueMove::Out(&other.key)
+    } else {
+        ValueMove::In
+    })
 }
 
 pub async fn reverse_set_property(

@@ -5968,7 +5968,8 @@ mod global_history_keyset_5424 {
                 OR (ol.created_at = ?3 AND ol.seq = ?4 AND ol.device_id < ?6))) \
            AND (?7 IS NULL OR ( \
                 ol.block_id IN (SELECT id FROM blocks WHERE space_id = ?7) \
-                OR (ol.op_type = 'set_property_def' AND ol.block_id = ?7) \
+                OR (ol.op_type IN ('set_property_def', 'rename_property_key', 'rewrite_properties') \
+                    AND ol.block_id = ?7) \
                 OR ( \
                     ol.op_type IN ('delete_attachment', 'rename_attachment') \
                     AND ( \
@@ -6298,6 +6299,40 @@ mod global_history_keyset_5424 {
         assert_eq!(seqs, vec![3, 1], "space A's definition ops, not space B's");
     }
 
+    /// #5841: a rename or a merge names its space as `block_id` too, so the
+    /// space filter lists them as it lists a definition op.
+    #[tokio::test]
+    async fn global_history_space_filter_lists_the_spaces_rename_and_merge_ops() {
+        let (pool, _dir) = test_pool().await;
+        insert_space_block(&pool, SPACE_A_ID, "A").await;
+        insert_space_block(&pool, SPACE_B_ID, "B").await;
+        for (seq, op_type, space) in [
+            (1, "rename_property_key", SPACE_A_ID),
+            (2, "rewrite_properties", SPACE_B_ID),
+            (3, "rewrite_properties", SPACE_A_ID),
+        ] {
+            insert_op(&pool, "dev-a", seq, op_type, Some(space), None, 1_000 + seq).await;
+        }
+        let mut cursor = None;
+        let mut seqs = Vec::new();
+        loop {
+            let page = PageRequest::new(cursor, Some(1)).unwrap();
+            let listed = list_page_history(&pool, "__all__", None, Some(SPACE_A_ID), &page)
+                .await
+                .unwrap();
+            seqs.extend(listed.items.iter().map(|e| e.seq));
+            if !listed.has_more {
+                break;
+            }
+            cursor = listed.next_cursor;
+        }
+        assert_eq!(
+            seqs,
+            vec![3, 1],
+            "space A's rename and merge, not space B's"
+        );
+    }
+
     #[tokio::test]
     async fn global_history_rejects_cursor_without_integer_created_at_5424() {
         let (pool, _dir) = test_pool().await;
@@ -6333,7 +6368,8 @@ mod global_history_keyset_5424 {
      WHERE (?1 IS NULL OR ol.op_type = ?1) \
        AND (?2 IS NULL OR ( \
             EXISTS (SELECT 1 FROM blocks sb WHERE sb.id = ol.block_id AND sb.space_id = ?2) \
-            OR (ol.op_type = 'set_property_def' AND ol.block_id = ?2) \
+            OR (ol.op_type IN ('set_property_def', 'rename_property_key', 'rewrite_properties') \
+                AND ol.block_id = ?2) \
             OR ( \
                 ol.op_type IN ('delete_attachment', 'rename_attachment') \
                 AND ( \
@@ -6363,7 +6399,8 @@ mod global_history_keyset_5424 {
        AND (?1 IS NULL OR ol.op_type = ?1) \
        AND (?2 IS NULL OR ( \
             EXISTS (SELECT 1 FROM blocks sb WHERE sb.id = ol.block_id AND sb.space_id = ?2) \
-            OR (ol.op_type = 'set_property_def' AND ol.block_id = ?2) \
+            OR (ol.op_type IN ('set_property_def', 'rename_property_key', 'rewrite_properties') \
+                AND ol.block_id = ?2) \
             OR ( \
                 ol.op_type IN ('delete_attachment', 'rename_attachment') \
                 AND ( \

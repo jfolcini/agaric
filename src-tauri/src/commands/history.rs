@@ -13,8 +13,12 @@ use agaric_engine::apply::loro_apply::{
     apply_delete_attachment_via_loro, apply_remove_page_alias_via_loro,
     apply_rename_attachment_via_loro,
 };
-use agaric_engine::apply::property_defs::apply_set_property_def_via_loro;
-use agaric_store::op::{OpPayload, OpRef, UndoResult};
+use agaric_engine::apply::property_defs::{
+    apply_rename_property_key_via_loro, apply_rewrite_properties_via_loro,
+    apply_set_property_def_via_loro,
+};
+use agaric_engine::reverse::forward_property_key;
+use agaric_store::op::{OpPayload, OpRef, SetPropertyDefPayload, UndoResult};
 use agaric_store::op_log;
 use agaric_store::pagination;
 use agaric_store::pagination::HistoryEntry;
@@ -814,18 +818,30 @@ impl ReverseCohortFanout {
 /// as the forward writers do (#6014, #6046). Undoing it, a redo or the undo of
 /// a redo, then restores what was live when it ran, a value or a placement a
 /// peer set in between included, not what this device's op log last saw.
+///
+/// A set or delete of a property is written under the key its value lives
+/// under now, followed through the renames and merges of its space since the
+/// op `reversed` (its `created_at` and ref) ran (#5841), before the prior is
+/// read: under the op's own key it would bring back a key the space renamed.
 async fn with_recorded_prior_in_tx(
     tx: &mut CommandTx,
     reverse: &OpPayload,
+    reversed: (i64, &OpRef),
 ) -> Result<OpPayload, AppError> {
+    let (created_at, op_ref) = reversed;
+    let after = (created_at, op_ref.seq, op_ref.device_id.as_str());
     let mut reverse = reverse.clone();
     match &mut reverse {
         OpPayload::SetProperty(p) => {
+            p.key = forward_property_key(tx, p.block_id.as_str(), &p.key, after).await?;
             p.prior = Some(
                 agaric_engine::block_ops::held_property_value(tx, p.block_id.as_str(), &p.key)
                     .await?
                     .unwrap_or_default(),
             );
+        }
+        OpPayload::DeleteProperty(p) => {
+            p.key = forward_property_key(tx, p.block_id.as_str(), &p.key, after).await?;
         }
         OpPayload::MoveBlock(p) => {
             p.prior = super::blocks::live_placement(tx, p.block_id.as_str()).await?;
@@ -845,7 +861,7 @@ async fn with_recorded_prior_in_tx(
 /// Only handles the subset of op types that can result from `compute_reverse`:
 /// `DeleteBlock`, `RestoreBlock`, `EditBlock`, `MoveBlock`, `AddTag`,
 /// `RemoveTag`, `AddPageAlias`, `RemovePageAlias`, `SetProperty`,
-/// `DeleteProperty`, `DeleteAttachment`.
+/// `DeleteProperty`, the attachment ops and the definition ops.
 ///
 /// #2325/#2250 — INTENTIONAL EXCEPTION to the single-entry-point apply collapse.
 /// Undo/redo applies the *reverse* effect via bespoke reverse SQL (it is NOT an
@@ -884,7 +900,10 @@ async fn with_recorded_prior_in_tx(
 /// A `SetPropertyDef` reverse runs the forward apply, which re-types the
 /// key's values when the restored definition moves them to another column,
 /// and is refused, as `create_property_def` is, when they would not fit it
-/// (#5841).
+/// (#5841). A `RenamePropertyKey` reverse renames back, refused as the rename
+/// is onto a key the space declares or uses; a `RewriteProperties` reverse
+/// restores each write's prior, its definitions refused as a `SetPropertyDef`
+/// reverse's are.
 ///
 /// `op_created_at` is the SAME timestamp the caller bound as the reverse op's
 /// `op_log.created_at` (mint it via `reverse_op_timestamp`). The DeleteBlock
@@ -1000,6 +1019,15 @@ pub async fn apply_reverse_in_tx(
             crate::commands::properties::refuse_restoring_def_over_conflicting_values(tx, p)
                 .await?;
             apply_set_property_def_via_loro(tx, state, device_id, p).await?;
+        }
+        // #5841: refused, as the rename is, when the space has declared or
+        // used the key it would rename back to since.
+        OpPayload::RenamePropertyKey(p) => {
+            super::property_keys::refuse_taken_key(tx, p.space_id.as_str(), &p.new_key).await?;
+            apply_rename_property_key_via_loro(tx, state, device_id, p).await?;
+        }
+        OpPayload::RewriteProperties(p) => {
+            apply_reverse_rewrite_properties(tx, state, device_id, p).await?;
         }
         // Note: CreateBlock never appears here because reverse::compute_reverse
         // maps CreateBlock → DeleteBlock, and RestoreBlock → DeleteBlock.
@@ -1336,6 +1364,27 @@ async fn apply_reverse_add_page_alias(
     }
     agaric_engine::apply::loro_apply::apply_add_page_alias_via_loro(tx, state, device_id, p, false)
         .await
+}
+
+/// `RewriteProperties` arm of [`apply_reverse_in_tx`] (#5841): the payload is
+/// already swapped by `reverse_rewrite_properties`, and each definition it
+/// restores is refused as a `SetPropertyDef` undo's is.
+async fn apply_reverse_rewrite_properties(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    p: &agaric_store::op::RewritePropertiesPayload,
+) -> Result<(), AppError> {
+    for write in &p.defs {
+        let def = SetPropertyDefPayload {
+            space_id: p.space_id.clone(),
+            key: write.key.clone(),
+            def: write.def.clone(),
+            prior: write.prior.clone(),
+        };
+        crate::commands::properties::refuse_restoring_def_over_conflicting_values(tx, &def).await?;
+    }
+    apply_rewrite_properties_via_loro(tx, state, device_id, p).await
 }
 
 /// `SetProperty` arm of [`apply_reverse_in_tx`].
@@ -1927,7 +1976,8 @@ async fn apply_reverses_in_order(
             }
             return Err(e);
         }
-        let reverse_payload = &with_recorded_prior_in_tx(tx, reverse_payload).await?;
+        let reverse_payload =
+            &with_recorded_prior_in_tx(tx, reverse_payload, (*created_at, op_ref)).await?;
 
         let new_op_type = reverse_payload.op_type_str().to_owned();
 
@@ -2335,7 +2385,9 @@ pub async fn undo_page_op_inner(
         device_id: target.device_id,
         seq: target.seq,
     };
-    let reverse_payload = with_recorded_prior_in_tx(&mut tx, &reverse_payload).await?;
+    let reverse_payload =
+        with_recorded_prior_in_tx(&mut tx, &reverse_payload, (target.created_at, &target_ref))
+            .await?;
     let op_ts = reverse_op_timestamp(&reverse_payload);
     let op_record = op_log::append_local_undo_op_in_tx(
         &mut tx,
@@ -2618,12 +2670,13 @@ pub async fn redo_page_op_inner(
     use agaric_engine::reverse;
 
     // Fetch the undo op's op_type (surfaced to the frontend as
-    // `reversed_op_type` for descriptive toasts), its `is_undo` flag, and its
-    // `is_replicated` flag in a SINGLE query — all three come from the same
+    // `reversed_op_type` for descriptive toasts), its `created_at` (where the
+    // redo's key walk starts), its `is_undo` flag, and its
+    // `is_replicated` flag in a SINGLE query — they all come from the same
     // `(device_id, seq)` row, so there is no need for a second round-trip
     // (perf-redo-double-query-same-row).
     let undo_row = sqlx::query!(
-        r#"SELECT op_type, is_undo as "is_undo!: i64", is_replicated as "is_replicated!: i64" FROM op_log WHERE device_id = ? AND seq = ?"#,
+        r#"SELECT op_type, created_at, is_undo as "is_undo!: i64", is_replicated as "is_replicated!: i64" FROM op_log WHERE device_id = ? AND seq = ?"#,
         undo_device_id,
         undo_seq,
     )
@@ -2631,6 +2684,7 @@ pub async fn redo_page_op_inner(
     .await?
     .ok_or_else(|| AppError::NotFound(format!("op_log ({undo_device_id}, {undo_seq})")))?;
     let undo_op_type = undo_row.op_type;
+    let undo_created_at = undo_row.created_at;
 
     // #659: redo means "reverse an undo op" — verify the target's recorded
     // provenance before reversing anything. Without this check a buggy IPC
@@ -2684,7 +2738,8 @@ pub async fn redo_page_op_inner(
         device_id: undo_device_id,
         seq: undo_seq,
     };
-    let reverse_payload = with_recorded_prior_in_tx(&mut tx, &reverse_payload).await?;
+    let reverse_payload =
+        with_recorded_prior_in_tx(&mut tx, &reverse_payload, (undo_created_at, &undo_ref)).await?;
     let op_ts = reverse_op_timestamp(&reverse_payload);
     let op_record = op_log::append_local_redo_op_in_tx(
         &mut tx,

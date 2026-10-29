@@ -57,6 +57,9 @@ pub mod notifier;
 pub mod observability;
 pub mod pages;
 pub mod properties;
+#[cfg(test)]
+mod property_key_proptest;
+pub mod property_keys;
 pub mod queries;
 pub mod reconciliation;
 pub mod recovery;
@@ -166,6 +169,10 @@ pub use properties::{
     set_property_inner, set_scheduled_date, set_scheduled_date_inner, set_todo_state,
     set_todo_state_batch, set_todo_state_batch_inner, set_todo_state_inner,
     update_property_def_options, update_property_def_options_inner,
+};
+pub use property_keys::{
+    PropertyMergeCounts, merge_property_key, merge_property_key_inner, preview_property_merge,
+    preview_property_merge_inner, rename_property_key, rename_property_key_inner,
 };
 pub use queries::{
     DateFilter, DateOp, MatchOffset, NamedDateRange, PropertyFilter, SearchBlockRow, SearchFilter,

@@ -1218,7 +1218,7 @@ pub async fn get_property_inner<'e>(
 
 /// Refuse a definition write to a built-in key (#5841): those are code
 /// constants, the same in every vault.
-fn refuse_builtin_definition_write(key: &str) -> Result<(), AppError> {
+pub(crate) fn refuse_builtin_definition_write(key: &str) -> Result<(), AppError> {
     if agaric_store::op::is_builtin_property_key(key) {
         return Err(AppError::validation_coded(
             ValidationCode::BuiltinPropertyLocked,
@@ -1246,7 +1246,7 @@ fn builtin_definition(def: &agaric_store::op::BuiltinPropertyDef) -> PropertyDef
 /// [`create_property_def_in_tx`] (writes inside a caller's transaction).
 /// Extracted so the two cannot drift — a key/type/options payload either
 /// writer accepts must be one the other accepts too.
-fn validate_property_def_shape(
+pub(crate) fn validate_property_def_shape(
     key: &str,
     value_type: &str,
     options: Option<&str>,
@@ -1560,7 +1560,7 @@ pub async fn create_property_def_inner(
 }
 
 /// `space_id`'s own row for `key`, never a built-in.
-async fn user_property_def(
+pub(crate) async fn user_property_def(
     conn: &mut sqlx::SqliteConnection,
     space_id: &str,
     key: &str,
