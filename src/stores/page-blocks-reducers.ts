@@ -1206,7 +1206,7 @@ export function createReducers({
       const spaceId = useSpaceStore.getState().currentSpaceId
       const resp = await retryOnPoolBusy(() =>
         commands
-          .applyPageSource(rootParentId, source, baseSource, merge, lineIds, null)
+          .applyPageSource(rootParentId, source, baseSource, merge, lineIds, 'document')
           .then(unwrap),
       )
       notifyUndoNewAction(rootParentId, resp.op_refs)

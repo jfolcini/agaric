@@ -1,15 +1,16 @@
 /**
- * The *Edit as Markdown* buffer's outline keys (#5160 phase 5): the keyboard
- * catalog's indent, dedent, task-cycle, move and heading bindings acting on lines. A
- * real TipTap editor with the buffer's extensions; keys go through
- * ProseMirror's `handleKeyDown`, so a key the buffer takes is one the
- * browser does not see.
+ * The *Edit as Markdown* buffer's outline keys (#5160 phase 5, #5691): the
+ * keyboard catalog's indent, dedent, task-cycle, move and heading bindings
+ * acting on the blocks of a Document buffer. A real TipTap editor with the
+ * buffer's extensions; keys go through ProseMirror's `handleKeyDown`, so a key
+ * the buffer takes is one the browser does not see.
  */
 
 import { Editor } from '@tiptap/core'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { linesContent, readLines, sourceBufferExtensions } from '@/editor/source-buffer'
+import { readBlocks } from '@/editor/source-buffer-blocks'
 import { setCustomShortcut } from '@/lib/keyboard-config'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
 
@@ -19,6 +20,8 @@ const B = '01J0000000000000000000000B'
 const B1 = '01J000000000000000000000B1'
 const B2 = '01J000000000000000000000B2'
 const C = '01J0000000000000000000000C'
+const N = '01J0000000000000000000000N'
+const P = '01J0000000000000000000000P'
 
 type Line = [text: string, id: string | null]
 
@@ -51,6 +54,12 @@ function lines(ed: Editor): Line[] {
   return text.split('\n').map((line, i) => [line, lineIds[i] ?? null])
 }
 
+/** The buffer's blocks as the save reads them: each one's depth and text. */
+function tree(ed: Editor): Array<[depth: number, text: string]> {
+  const { text, lineIds } = readLines(ed.state.doc)
+  return readBlocks(text.split('\n'), lineIds).map((block) => [block.depth, block.text])
+}
+
 /** The position `offset` characters into line `index` (from 0). */
 function at(ed: Editor, index: number, offset: number): number {
   let pos = 1
@@ -74,7 +83,7 @@ function press(ed: Editor, key: string, init: KeyboardEventInit = {}): boolean {
 const CHORD = { ctrlKey: true, shiftKey: true }
 
 describe('indent and dedent', () => {
-  it('Tab indents the line at the cursor two spaces wherever the cursor is, and its id stays', () => {
+  it('Tab indents the block at the cursor under its sibling wherever the cursor is, and its id stays', () => {
     const ed = build([
       ['- a', A],
       ['- b', B],
@@ -90,7 +99,7 @@ describe('indent and dedent', () => {
     expect(ed.state.selection.from).toBe(at(ed, 1, 4))
   })
 
-  it('the catalog’s indent chord indents every line a selection touches, not one it ends at the start of', () => {
+  it('the catalog’s indent chord indents every block a selection touches, not one it ends at the start of', () => {
     const ed = build([
       ['- a', A],
       ['- b', B],
@@ -109,34 +118,40 @@ describe('indent and dedent', () => {
     ])
   })
 
-  it('Shift+Tab, like the dedent chord, removes up to two leading spaces or a tab from each line', () => {
+  it('Shift+Tab, like the dedent chord, takes every block a selection touches a level out', () => {
     const ed = build([
-      ['    - a', A],
-      [' - b', B],
-      ['\t- c', C],
-      ['- d', null],
+      ['- p', P],
+      ['  - a', A],
+      ['    - a1', A1],
+      ['  - b', B],
     ])
-    ed.commands.setTextSelection({ from: at(ed, 0, 0), to: at(ed, 2, 3) })
+    ed.commands.setTextSelection({ from: at(ed, 1, 0), to: at(ed, 3, 3) })
 
     expect(press(ed, 'Tab', { shiftKey: true })).toBe(true)
     expect(lines(ed)).toEqual([
-      ['  - a', A],
+      ['- p', P],
+      ['- a', A],
+      ['  - a1', A1],
       ['- b', B],
-      ['- c', C],
-      ['- d', null],
     ])
 
-    caret(ed, 0, 0)
+    caret(ed, 1, 0)
     press(ed, 'ArrowLeft', CHORD)
-    expect(lines(ed)[0]).toEqual(['- a', A])
+    expect(lines(ed)[1]).toEqual(['- a', A])
   })
 
   it('Shift+Tab as WebKitGTK reports it (key Unidentified, code Tab) dedents too', () => {
-    const ed = build([['  - a', A]])
-    caret(ed, 0, 0)
+    const ed = build([
+      ['- p', P],
+      ['  - a', A],
+    ])
+    caret(ed, 1, 2)
 
     expect(press(ed, 'Unidentified', { code: 'Tab', keyCode: 9, shiftKey: true })).toBe(true)
-    expect(lines(ed)).toEqual([['- a', A]])
+    expect(lines(ed)).toEqual([
+      ['- p', P],
+      ['- a', A],
+    ])
   })
 
   it('Tab on a block takes its further lines and its children with it, ids where they were', () => {
@@ -198,16 +213,112 @@ describe('indent and dedent', () => {
     expect(lines(ed)).toEqual(rows)
   })
 
+  it('Tab leaves a block with no sibling before it where it is', () => {
+    const rows: Line[] = [
+      ['- a', A],
+      ['  - a1', A1],
+    ]
+    const ed = build(rows)
+    caret(ed, 1, 3)
+
+    expect(press(ed, 'Tab')).toBe(true)
+
+    expect(lines(ed)).toEqual(rows)
+  })
+
   it('with Tab indents blocks off, Tab is left to the browser and the chord still indents', () => {
     writePreference(PREFERENCES.tabIndentsBlocks, false)
-    const ed = build([['- a', A]])
-    caret(ed, 0, 0)
+    const ed = build([
+      ['- a', A],
+      ['- b', B],
+    ])
+    caret(ed, 1, 0)
 
     expect(press(ed, 'Tab')).toBe(false)
-    expect(lines(ed)).toEqual([['- a', A]])
+    expect(lines(ed)[1]).toEqual(['- b', B])
 
     press(ed, 'ArrowRight', CHORD)
-    expect(lines(ed)).toEqual([['  - a', A]])
+    expect(lines(ed)[1]).toEqual(['  - b', B])
+  })
+
+  it('Tab nests a paragraph under the list item above as a + item, so it stays a block (D4)', () => {
+    const ed = build([
+      ['- a', A],
+      ['', null],
+      ['b', B],
+    ])
+    caret(ed, 2, 1)
+
+    press(ed, 'Tab')
+
+    expect(lines(ed)).toEqual([
+      ['- a', A],
+      ['  + b', B],
+    ])
+    expect(tree(ed)).toEqual([
+      [0, 'a'],
+      [1, 'b'],
+    ])
+  })
+
+  it('Tab nests a block under a numbered item at that item’s text column', () => {
+    const ed = build([
+      ['1. a', A],
+      ['2. b', B],
+    ])
+    caret(ed, 1, 4)
+
+    press(ed, 'Tab')
+
+    expect(lines(ed)).toEqual([
+      ['1. a', A],
+      ['   1. b', B],
+    ])
+    expect(tree(ed)).toEqual([
+      [0, 'a'],
+      [1, 'b'],
+    ])
+  })
+
+  it('Shift+Tab takes the siblings after a block under it, as the lines then read, written at its column', () => {
+    const ed = build([
+      ['p', P],
+      ['', null],
+      ['  - a', A],
+      ['', null],
+      ['  n', N],
+    ])
+    caret(ed, 2, 4)
+
+    press(ed, 'Tab', { shiftKey: true })
+
+    expect(lines(ed)).toEqual([
+      ['p', P],
+      ['', null],
+      ['- a', A],
+      ['  + n', N],
+    ])
+    expect(tree(ed)).toEqual([
+      [0, 'p'],
+      [0, 'a'],
+      [1, 'n'],
+    ])
+  })
+
+  it('Shift+Tab takes a + item out from under its list item as a paragraph', () => {
+    const ed = build([
+      ['- a', A],
+      ['  + b', B],
+    ])
+    caret(ed, 1, 4)
+
+    press(ed, 'Tab', { shiftKey: true })
+
+    expect(lines(ed)).toEqual([
+      ['- a', A],
+      ['', null],
+      ['b', B],
+    ])
   })
 })
 
@@ -225,20 +336,21 @@ describe('cycling a task', () => {
       seen.push(lines(ed)[1] as Line)
     }
 
+    // A task has no list style (D3), so the block comes back plain, a `+` item under its list item.
     expect(seen).toEqual([
       ['  - [ ] foo', B],
       ['  - [/] foo', B],
       ['  - [x] foo', B],
       ['  - [-] foo', B],
-      ['  - foo', B],
+      ['  + foo', B],
     ])
     expect(lines(ed)[0]).toEqual(['- parent', A])
   })
 
   it('on a block’s further line, cycles that block’s checkbox', () => {
     const ed = build([
-      ['- a', A],
-      ['  more of a', null],
+      ['a', A],
+      ['more of a', null],
     ])
     caret(ed, 1, 4)
 
@@ -248,21 +360,39 @@ describe('cycling a task', () => {
       ['- [ ] a', A],
       ['  more of a', null],
     ])
+    expect(ed.state.selection.from).toBe(at(ed, 1, 6))
   })
 
-  it('reads an ordered marker and an upper-case X, and leaves a line that is no list item as it is', () => {
+  it('reads an ordered marker and an upper-case X, and makes a paragraph a task', () => {
     const ed = build([
       ['1. [X] done', A],
+      ['', null],
       ['plain text', B],
     ])
     caret(ed, 0, 0)
     press(ed, 'Enter', { ctrlKey: true })
-    caret(ed, 1, 3)
+    caret(ed, 2, 3)
     press(ed, 'Enter', { ctrlKey: true })
 
     expect(lines(ed)).toEqual([
-      ['1. [-] done', A],
-      ['plain text', B],
+      ['- [-] done', A],
+      ['- [ ] plain text', B],
+    ])
+  })
+
+  it('leaves a task cycled off a paragraph, a blank line before it after a list line', () => {
+    const ed = build([
+      ['- a', A],
+      ['- [-] b', B],
+    ])
+    caret(ed, 1, 7)
+
+    press(ed, 'Enter', { ctrlKey: true })
+
+    expect(lines(ed)).toEqual([
+      ['- a', A],
+      ['', null],
+      ['b', B],
     ])
   })
 })
@@ -270,26 +400,27 @@ describe('cycling a task', () => {
 describe('the heading chords', () => {
   it('turn the block at the caret into each heading, keeping its id, as Turn into does', () => {
     const ed = build([
-      ['- a', A],
-      ['- b', B],
+      ['a', A],
+      ['', null],
+      ['b', B],
     ])
     const seen: Line[] = []
     for (const level of [1, 2, 3, 4, 5, 6]) {
-      caret(ed, 1, 1)
+      caret(ed, 2, 1)
       expect(press(ed, String(level), { ctrlKey: true, altKey: true })).toBe(true)
-      seen.push(lines(ed)[1] as Line)
+      seen.push(lines(ed)[2] as Line)
     }
-    expect(seen).toEqual([1, 2, 3, 4, 5, 6].map((level) => [`- ${'#'.repeat(level)} b`, B]))
-    expect(lines(ed)[0]).toEqual(['- a', A])
+    expect(seen).toEqual([1, 2, 3, 4, 5, 6].map((level) => [`${'#'.repeat(level)} b`, B]))
+    expect(lines(ed)[0]).toEqual(['a', A])
   })
 
   it('take a numbered block out of its list, as a heading does', () => {
-    const ed = build([['- 1. a', A]])
-    caret(ed, 0, 5)
+    const ed = build([['1. a', A]])
+    caret(ed, 0, 3)
 
     press(ed, '1', { ctrlKey: true, altKey: true })
 
-    expect(lines(ed)).toEqual([['- # a', A]])
+    expect(lines(ed)).toEqual([['# a', A]])
   })
 })
 
@@ -382,20 +513,42 @@ describe('moving lines', () => {
     expect(lines(ed)).toEqual(OUTLINE)
   })
 
-  it('keeps the blank lines between two siblings between them', () => {
+  it('gives a paragraph moved past a list item the blank lines that keep both blocks (D1)', () => {
     const ed = build([
       ['- a', A],
-      ['', null],
       ['- b', B],
+      ['', null],
+      ['c', C],
     ])
-    caret(ed, 2, 0)
+    caret(ed, 3, 0)
 
     press(ed, 'ArrowUp', CHORD)
 
     expect(lines(ed)).toEqual([
-      ['- b', B],
-      ['', null],
       ['- a', A],
+      ['', null],
+      ['c', C],
+      ['', null],
+      ['- b', B],
+    ])
+  })
+
+  it('moves a paragraph with its further lines, which sit at its own column', () => {
+    const ed = build([
+      ['line one', A],
+      ['line two', null],
+      ['', null],
+      ['b', B],
+    ])
+    caret(ed, 3, 0)
+
+    press(ed, 'ArrowUp', CHORD)
+
+    expect(lines(ed)).toEqual([
+      ['b', B],
+      ['', null],
+      ['line one', A],
+      ['line two', null],
     ])
   })
 

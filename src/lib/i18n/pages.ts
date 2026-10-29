@@ -161,7 +161,7 @@ export const pages: Record<string, string> = {
   'pageSource.editorLabel': 'Markdown source',
   'pageSource.blockMenuTip': 'Actions for the block at the cursor',
   'pageSource.hint':
-    "Each line keeps its block while you edit it, and a line you cut and paste moves its block. Removing a bullet deletes its block, a new bullet creates one, and joining two lines deletes the second line's block. Escape leaves the editor, asking first when you changed it.",
+    'A blank line separates blocks; list items need none. Enter starts a new block and Shift+Enter a new line in the same one. Each block keeps its id while you edit it, and a block you cut and paste moves. Deleting its lines deletes a block, and joining two blocks deletes the second. Escape leaves the editor, asking first when you changed it.',
   'pageSource.draftRestored': 'Restored your unsaved edits.',
   'pageSource.ulidHint': 'Points to {{title}}',
   'pageSource.ulidHintDeleted': 'Points to {{title}}, deleted or missing',

@@ -6,8 +6,8 @@
 // both read `agenda_cache`, which the materializer rebuilds in the background.
 // The mock keeps no such cache, so only this lane shows a due date that saved
 // but never reached the agenda. The second test changes the task's checkbox in
-// Edit as Markdown (`apply_page_source`, which the mock does not model for
-// task lines) and asserts the block's task state and its Due panel group agree.
+// Edit as Markdown (`apply_page_source`) and asserts the block's task state and
+// its Due panel group agree.
 //
 // The task lives on a page of its own, not on today's journal page: the
 // journal's Due panel leaves out the day's own blocks (`excludePageId`).

@@ -69,7 +69,7 @@ describe('Agaric real-backend Duplicate of a repeating task (#5160 P4) @editor @
     await setPageSourceLines([
       ...base
         .filter((line) => line.text !== '')
-        .map(({ text, id }) => ({ id, text: text.replace(`- ${TASK}`, `- [ ] ${TASK}`) })),
+        .map(({ text, id }) => ({ id, text: text.includes(TASK) ? `- [ ] ${text}` : text })),
       ...RULE.split('\n').map((text) => ({ text, id: null })),
     ])
     await saveSource(source)

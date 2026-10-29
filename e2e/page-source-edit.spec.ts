@@ -11,9 +11,11 @@ import {
   activeSuggestionPopup,
   expect,
   focusBlockById,
+  ipc,
   openPage,
   openPageMobile,
   reopenPage,
+  seedSearchBlocks,
   test,
   waitForBoot,
 } from './helpers'
@@ -25,11 +27,14 @@ import {
  * `apply_page_source`; Merge saves a stale buffer with the page's changes
  * folded in, and Reload swaps it for the page as it is now; unsaved text
  * left by leaving the page is a localStorage draft the buffer restores on
- * reopening. Every edit is typed, cut or pasted with the keyboard, or dragged
- * with the mouse, and every assertion reads the block tree the save reloaded
- * from the mock. The Rust tests own the grammar; the real-backend twins are
- * `e2e-tauri/page-source-edit.e2e.ts`, `e2e-tauri/page-source-merge.e2e.ts`
- * and `e2e-tauri/page-source-paste.e2e.ts`.
+ * reopening. The buffer is the Document dialect (#5691): a plain block is its
+ * own paragraph, a blank line between blocks, so a paragraph is moved with the
+ * blank line after it. Every edit is typed, cut or pasted with the keyboard,
+ * or dragged with the mouse, and every assertion reads the block tree the save
+ * reloaded from the mock. The Rust tests own the grammar; the real-backend
+ * twins are `e2e-tauri/page-source-edit.e2e.ts`,
+ * `e2e-tauri/page-source-merge.e2e.ts`, `e2e-tauri/page-source-paste.e2e.ts`
+ * and `e2e-tauri/page-source-document.e2e.ts`.
  */
 
 const PAGE = 'Getting Started'
@@ -39,7 +44,7 @@ const GS3 = '0000000000000000000BLOCK03'
 const GS4 = '0000000000000000000BLOCK04'
 const GS5 = '0000000000000000000BLOCK05'
 const WELCOME = 'Welcome to Agaric!'
-const HELLO_LINE = '- Hello, Agaric! This is your personal knowledge base.'
+const HELLO_LINE = 'Hello, Agaric! This is your personal knowledge base.'
 const CREATE = 'Create new blocks'
 const SEARCH = 'Use the search panel'
 const NOTES = 'Quick Notes'
@@ -90,6 +95,11 @@ function bufferLines(editor: Locator): Promise<Array<[string, string | null]>> {
     )
 }
 
+/** The ids the buffer's lines carry, in order. */
+async function bufferIds(editor: Locator): Promise<string[]> {
+  return (await bufferLines(editor)).flatMap(([, id]) => (id === null ? [] : [id]))
+}
+
 /** Select the whole text of the line holding `text`, as a triple click does. */
 async function selectLine(editor: Locator, text: string): Promise<void> {
   await sourceLine(editor, text).click({ clickCount: 3 })
@@ -126,10 +136,16 @@ async function caretAtEnd(page: Page, editor: Locator, text: string): Promise<vo
   await moveSelection(page, 'ArrowRight')
 }
 
-/** Cut the line holding `text`, its line break with it, and paste it at the start of the line holding `before`. */
-async function moveLine(page: Page, editor: Locator, text: string, before: string): Promise<void> {
+/** Select the paragraph holding `text` with the blank line after it, which a move takes along. */
+async function selectParagraph(page: Page, editor: Locator, text: string): Promise<void> {
   await selectLine(editor, text)
   await moveSelection(page, 'Shift+ArrowRight')
+  await moveSelection(page, 'Shift+ArrowRight')
+}
+
+/** Cut the paragraph holding `text`, and paste it at the start of the line holding `before`. */
+async function moveLine(page: Page, editor: Locator, text: string, before: string): Promise<void> {
+  await selectParagraph(page, editor, text)
   await page.keyboard.press('ControlOrMeta+x')
   await selectLine(editor, before)
   await moveSelection(page, 'ArrowLeft')
@@ -244,12 +260,17 @@ test.describe('Edit as Markdown (#5140 Phase 4b) @editor @pages @markdown @mobil
     expect(lines.slice(0, FRONT_MATTER.length)).toEqual(FRONT_MATTER)
     expect(lines.slice(FRONT_MATTER.length).map(([, id]) => id)).toEqual([
       GS1,
+      null,
       GS2,
+      null,
       GS3,
+      null,
       GS4,
+      null,
       GS5,
       null,
     ])
+    expect(lines[FRONT_MATTER.length]?.[0]).toBe(`${WELCOME} This is your personal knowledge base.`)
   })
 
   test('Save writes an edited line and a line moved by cut and paste, and the tree shows them', async ({
@@ -268,7 +289,7 @@ test.describe('Edit as Markdown (#5140 Phase 4b) @editor @pages @markdown @mobil
     await expect(staticBlock(page, GS1)).toContainText('Hello, Agaric!')
   })
 
-  test('an edited line, a bullet added with Enter and a moved line persist as those blocks', async ({
+  test('an edited line, a paragraph added with Enter and a moved paragraph persist as those blocks', async ({
     page,
   }) => {
     const editor = await openSourceMode(page)
@@ -277,12 +298,14 @@ test.describe('Edit as Markdown (#5140 Phase 4b) @editor @pages @markdown @mobil
     await page.keyboard.type(' Edited.')
     await page.keyboard.press('Enter')
     await page.keyboard.type('Added with Enter')
-    await moveLine(page, editor, SEARCH, 'Use the sidebar')
+    await moveLine(page, editor, CREATE, 'Use the sidebar')
     const first = FRONT_MATTER.length
-    expect((await bufferLines(editor)).slice(first, first + 3)).toEqual([
-      ['- Welcome to Agaric! This is your personal knowledge base. Edited.', GS1],
-      ['- Added with Enter', null],
-      ['- **Use the search panel** to find anything across all your pages.', GS5],
+    expect((await bufferLines(editor)).slice(first, first + 5)).toEqual([
+      ['Welcome to Agaric! This is your personal knowledge base. Edited.', GS1],
+      ['', null],
+      ['Added with Enter', null],
+      ['', null],
+      ['Create new blocks by pressing Enter at the end of any block.', GS3],
     ])
     await editor.press('ControlOrMeta+s')
     await expect(sourceEditor(page)).toHaveCount(0)
@@ -290,11 +313,11 @@ test.describe('Edit as Markdown (#5140 Phase 4b) @editor @pages @markdown @mobil
     await reopenPage(page, PAGE)
     await expect.poll(async () => (await blockIds(page)).length).toBe(6)
     const ids = await blockIds(page)
-    expect([ids[0], ids[2], ids[3], ids[4], ids[5]]).toEqual([GS1, GS5, GS2, GS3, GS4])
+    expect([ids[0], ids[2], ids[3], ids[4], ids[5]]).toEqual([GS1, GS3, GS2, GS4, GS5])
     await expect(staticBlock(page, GS1)).toContainText('knowledge base. Edited.')
     await expect(staticBlock(page, ids[1] as string)).toHaveText('Added with Enter')
     const reopened = await openSourceMode(page)
-    expect((await bufferLines(reopened))[first + 1]).toEqual(['- Added with Enter', ids[1]])
+    expect((await bufferLines(reopened))[first + 2]).toEqual(['Added with Enter', ids[1]])
   })
 
   test('a page changed since opening asks first, and Overwrite keeps the buffer', async ({
@@ -350,8 +373,10 @@ test.describe('Edit as Markdown (#5140 Phase 4b) @editor @pages @markdown @mobil
 
     await backTo(page, PAGE)
     const editor = await openSourceMode(page)
+    // On the blank line above the first paragraph, so the line pasted is a paragraph of its own.
     await selectLine(editor, WELCOME)
     await moveSelection(page, 'ArrowLeft')
+    await moveSelection(page, 'ArrowUp')
     await page.keyboard.press('ControlOrMeta+v')
     await saveButton(page).click()
 
@@ -367,10 +392,9 @@ test.describe('Edit as Markdown (#5140 Phase 4b) @editor @pages @markdown @mobil
     await expect.poll(() => blockIds(page)).toEqual([QN1, QN2])
   })
 
-  test('a line dragged to where another starts moves its block', async ({ page }) => {
+  test('a paragraph dragged to where another starts moves its block', async ({ page }) => {
     const editor = await openSourceMode(page)
-    await selectLine(editor, CREATE)
-    await moveSelection(page, 'Shift+ArrowRight')
+    await selectParagraph(page, editor, CREATE)
     const from = await sourceLine(editor, CREATE).boundingBox()
     const to = await sourceLine(editor, WELCOME).boundingBox()
     if (from === null || to === null) throw new Error('a buffer line has no box')
@@ -380,8 +404,9 @@ test.describe('Edit as Markdown (#5140 Phase 4b) @editor @pages @markdown @mobil
     await page.mouse.move(to.x + 1, to.y + to.height / 2, { steps: 10 })
     await page.mouse.up()
     const first = FRONT_MATTER.length
-    expect((await bufferLines(editor)).slice(first, first + 2).map(([, id]) => id)).toEqual([
+    expect((await bufferLines(editor)).slice(first, first + 3).map(([, id]) => id)).toEqual([
       GS3,
+      null,
       GS1,
     ])
     await saveButton(page).click()
@@ -535,16 +560,18 @@ test.describe('Edit as Markdown (#5140 Phase 4b) @editor @pages @markdown @mobil
     expect(await bufferLines(await openSourceMode(page))).toEqual(base)
   })
 
-  test('Tab indents a line, which saves as a child of the block above it', async ({ page }) => {
+  test('Tab indents a paragraph, which saves as a child of the block above it', async ({
+    page,
+  }) => {
     const editor = await openSourceMode(page)
-    const second = FRONT_MATTER.length + 1
+    const second = FRONT_MATTER.length + 2
     await caretAtEnd(page, editor, 'Use the sidebar')
 
     await page.keyboard.press('Tab')
 
     await expect(editor).toBeFocused()
     const indented = await bufferLines(editor)
-    expect(indented[second]?.[0]).toMatch(/^ {2}- Use the sidebar/)
+    expect(indented[second]?.[0]).toMatch(/^ {2}Use the sidebar/)
     expect(indented[second]?.[1]).toBe(GS2)
     await editor.press('ControlOrMeta+s')
     await expect(sourceEditor(page)).toHaveCount(0)
@@ -560,9 +587,7 @@ test.describe('Edit as Markdown (#5140 Phase 4b) @editor @pages @markdown @mobil
 
     await page.keyboard.press('ControlOrMeta+Shift+ArrowUp')
 
-    const first = FRONT_MATTER.length
-    const moved = (await bufferLines(editor)).slice(first, first + 3)
-    expect(moved.map(([, id]) => id)).toEqual([GS1, GS3, GS2])
+    expect(await bufferIds(editor)).toEqual([GS1, GS3, GS2, GS4, GS5])
     await editor.press('ControlOrMeta+s')
     await expect(sourceEditor(page)).toHaveCount(0)
     await reopenPage(page, PAGE)
@@ -580,7 +605,7 @@ test.describe('Edit as Markdown (#5140 Phase 4b) @editor @pages @markdown @mobil
 
     await expect(activeSuggestionPopup(page)).toHaveCount(0)
     await expect(sourceLine(editor, WELCOME)).toHaveText(
-      '- Welcome to Agaric! This is your personal knowledge base. [[Quick Notes]]',
+      'Welcome to Agaric! This is your personal knowledge base. [[Quick Notes]]',
     )
     await editor.press('ControlOrMeta+s')
     await expect(sourceEditor(page)).toHaveCount(0)
@@ -599,7 +624,7 @@ test.describe('Edit as Markdown (#5140 Phase 4b) @editor @pages @markdown @mobil
     const changes = page.getByRole('region', { name: 'Changes', exact: true })
     await expect(editor).toBeHidden()
     await expect(changes.locator('[data-change="removed"]')).toHaveText([
-      '−Removed: - Welcome to Agaric! This is your personal knowledge base.',
+      '−Removed: Welcome to Agaric! This is your personal knowledge base.',
     ])
     await expect(changes.locator('mark')).toHaveText(['See [[Quick Notes]] now.'])
 
@@ -627,7 +652,7 @@ test.describe('Edit as Markdown (#5140 Phase 4b) @editor @pages @markdown @mobil
     await activePopover(page).getByRole('menuitemradio', { name: 'Heading 1' }).click()
 
     await expect(sourceLine(editor, WELCOME)).toHaveText(
-      '- # Welcome to Agaric! This is your personal knowledge base.',
+      '# Welcome to Agaric! This is your personal knowledge base.',
     )
     await editor.press('ControlOrMeta+s')
     await expect(sourceEditor(page)).toHaveCount(0)
@@ -643,7 +668,7 @@ test.describe('Edit as Markdown (#5140 Phase 4b) @editor @pages @markdown @mobil
     await page.keyboard.press('Control+Alt+2')
 
     await expect(sourceLine(editor, WELCOME)).toHaveText(
-      '- ## Welcome to Agaric! This is your personal knowledge base.',
+      '## Welcome to Agaric! This is your personal knowledge base.',
     )
     await editor.press('ControlOrMeta+s')
     await expect(sourceEditor(page)).toHaveCount(0)
@@ -664,16 +689,78 @@ test.describe('Edit as Markdown (#5140 Phase 4b) @editor @pages @markdown @mobil
 
     await expect(menu).toHaveCount(0)
     await expect(editor).toBeFocused()
-    const first = FRONT_MATTER.length
-    expect((await bufferLines(editor)).slice(first, first + 3).map(([, id]) => id)).toEqual([
-      GS1,
-      GS3,
-      GS2,
-    ])
+    expect(await bufferIds(editor)).toEqual([GS1, GS3, GS2, GS4, GS5])
     await editor.press('ControlOrMeta+s')
     await expect(sourceEditor(page)).toHaveCount(0)
     await reopenPage(page, PAGE)
     await expect.poll(() => blockIds(page)).toEqual([GS1, GS3, GS2, GS4, GS5])
+  })
+})
+
+test.describe('Edit as Markdown writes a page line by line (#5691) @editor @pages @markdown', () => {
+  test('each kind of block shows as its line, and a `- item` typed saves as a bullet block', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    const title = 'Line by line'
+    const pageId = await ipc<string>(page, 'create_page_in_space', {
+      parentId: null,
+      content: title,
+      spaceId: 'SPACE_PERSONAL',
+    })
+    const [heading, bullet, numbered, task, plain] = await seedSearchBlocks(page, [
+      { content: '## Plan', parentId: pageId },
+      { content: 'buy milk', parentId: pageId, props: { listStyle: 'bullet' } },
+      { content: 'first step', parentId: pageId, props: { listStyle: 'ordered' } },
+      { content: 'call the bank', parentId: pageId, todo: 'TODO' },
+      { content: 'Just a note.', parentId: pageId },
+    ])
+    await openPage(page, title)
+    const editor = await openSourceMode(page, 'Just a note.')
+
+    expect(await bufferLines(editor)).toEqual([
+      ['## Plan', heading],
+      ['', null],
+      ['- buy milk', bullet],
+      ['1. first step', numbered],
+      ['- [ ] call the bank', task],
+      ['', null],
+      ['Just a note.', plain],
+      ['', null],
+    ])
+    await caretAtEnd(page, editor, 'buy milk')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('new item')
+    expect((await bufferLines(editor)).slice(2, 4)).toEqual([
+      ['- buy milk', bullet],
+      ['- new item', null],
+    ])
+    await editor.press('ControlOrMeta+s')
+    await expect(sourceEditor(page)).toHaveCount(0)
+
+    await reopenPage(page, title)
+    await expect.poll(async () => (await blockIds(page)).length).toBe(6)
+    const ids = await blockIds(page)
+    expect([ids[0], ids[1], ids[3], ids[4], ids[5]]).toEqual([
+      heading,
+      bullet,
+      numbered,
+      task,
+      plain,
+    ])
+    const added = ids[2] as string
+    await expect(staticBlock(page, added)).toHaveText(/new item$/)
+    await expect(staticBlock(page, added).getByTestId('list-marker')).toBeVisible()
+    const rows = await ipc<Array<{ key: string; value_text: string | null }>>(
+      page,
+      'get_properties',
+      { blockId: added },
+    )
+    expect(rows.find((row) => row.key === 'listStyle')?.value_text).toBe('bullet')
+    expect((await bufferLines(await openSourceMode(page, 'new item'))).slice(2, 4)).toEqual([
+      ['- buy milk', bullet],
+      ['- new item', added],
+    ])
   })
 })
 

@@ -1491,11 +1491,11 @@ export function pruneImageCollapse(): void {
 
 type PageSourceDraft =
   /**
-   * The text and the id each of its lines carries (#5160 phase 5), and the
-   * buffer the edit started from.
+   * The text, in the Document dialect (#5691), and the id each of its lines
+   * carries (#5160 phase 5), and the buffer the edit started from.
    */
-  | { base: PageBuffer; text: string; lineIds: Array<string | null> }
-  /** A draft an earlier version wrote: its ids are `^ID` anchors in its text. */
+  | { dialect: 'document'; base: PageBuffer; text: string; lineIds: Array<string | null> }
+  /** A draft an earlier version wrote, which this one shows only to copy from. */
   | { base: string; text: string; lineIds: null }
 
 function isLineIds(value: unknown): value is Array<string | null> {
@@ -1520,12 +1520,36 @@ function parsePageSourceDraft(raw: string): PageSourceDraft {
   if (typeof parsed === 'object' && parsed !== null && 'base' in parsed && 'text' in parsed) {
     const { base, text } = parsed
     const lineIds = 'lineIds' in parsed ? parsed.lineIds : null
+    const document = 'dialect' in parsed && parsed.dialect === 'document'
     if (typeof text === 'string') {
       if (lineIds === null && typeof base === 'string') return { base, text, lineIds }
-      if (isLineIds(lineIds) && isPageBuffer(base)) return { base, text, lineIds }
+      if (document && isLineIds(lineIds) && isPageBuffer(base)) {
+        return { dialect: 'document', base, text, lineIds }
+      }
     }
   }
   throw new Error('invalid page source draft')
+}
+
+/**
+ * A draft with line ids but no dialect was written in the Source dialect
+ * (#5160 phase 5), whose plain line is a bullet's text: read as a Document
+ * buffer, a save of it would restyle its blocks (#5691). It becomes a draft
+ * of an earlier version, its text shown to copy from.
+ */
+function migratePageSourceDraft(raw: string): string {
+  const parsed: unknown = JSON.parse(raw)
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    'dialect' in parsed ||
+    !('base' in parsed && isPageBuffer(parsed.base)) ||
+    !('text' in parsed && typeof parsed.text === 'string') ||
+    !('lineIds' in parsed && isLineIds(parsed.lineIds))
+  ) {
+    return raw
+  }
+  return JSON.stringify({ base: parsed.base.source, text: parsed.text, lineIds: null })
 }
 
 /**
@@ -1538,10 +1562,11 @@ function parsePageSourceDraft(raw: string): PageSourceDraft {
 const PAGE_SOURCE_DRAFT_PREFERENCE: PreferenceDefinition<PageSourceDraft | null> = {
   key: 'agaric-page-source-draft',
   scope: 'page',
-  version: 2,
+  version: 3,
   defaultValue: null,
   parse: parsePageSourceDraft,
   serialize: jsonSerialize<PageSourceDraft | null>,
+  migrate: migratePageSourceDraft,
 }
 
 /** How a page is edited: one block at a time, or the whole page as one document (#5691). */

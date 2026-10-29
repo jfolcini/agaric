@@ -8,13 +8,12 @@
  */
 
 import { type Editor, Extension, getTextContentFromNodes } from '@tiptap/core'
-import type { Node as PMNode } from '@tiptap/pm/model'
 import { type EditorState, PluginKey } from '@tiptap/pm/state'
 
 import { completedTag } from '@/editor/extensions/at-tag-picker'
 import { parseTypedLink, pickedLinkLabel } from '@/editor/extensions/block-link-picker'
 import { createPickerPlugin } from '@/editor/extensions/picker-plugin'
-import { closesFence, FENCE_OPENER } from '@/editor/source-buffer-blocks'
+import { fenceBefore } from '@/editor/source-buffer-blocks'
 import { insideUlidToken } from '@/editor/source-buffer-ulids'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { t } from '@/lib/i18n'
@@ -68,24 +67,6 @@ export function pageLinkText(item: PickerItem, typed: string): string {
   const name = item.isAlias ? (item.aliasText ?? item.label) : (item.title ?? item.label)
   const label = pickedLinkLabel(item, typed)
   return label === undefined ? `[[${name}]]` : `[[${name}|${label}]]`
-}
-
-/**
- * Whether line `index` of `doc` is in a fenced code block: one a line above
- * it opened and no line closed since. A fence left open ends before the next
- * line carrying an id, as the save reads it (D5).
- */
-function inFencedCode(doc: PMNode, index: number): boolean {
-  let fence: string | null = null
-  for (let i = 0; i <= index; i += 1) {
-    const line = doc.child(i)
-    if (line.attrs['blockId'] != null) fence = null
-    if (i === index) break
-    const text = line.textContent
-    if (fence === null) fence = FENCE_OPENER.exec(text)?.[1] ?? null
-    else if (closesFence(text, fence)) fence = null
-  }
-  return fence !== null
 }
 
 /** Replace the picker's `range` with `text`, closing the picker in the same step: the text written would match it again. */
@@ -155,7 +136,7 @@ export const SourceBufferPickers = Extension.create<SourceBufferPickersOptions>(
         // Where typing a space would make `#query` a tag (the block editor's
         // rule), and not in a fenced code block.
         allow: ({ state, range }) =>
-          !inFencedCode(state.doc, state.doc.resolve(range.from).index(0)) &&
+          fenceBefore(state.doc, state.doc.resolve(range.from).index(0)) === null &&
           completedTag(`${getTextContentFromNodes(state.doc.resolve(range.to))} `)?.typed ===
             state.doc.textBetween(range.from, range.to),
         editor,

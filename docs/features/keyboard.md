@@ -67,16 +67,16 @@ Settings → Keyboard. Each row shows the action, then its current keys, then an
 
 ## Edit as Markdown
 
-The buffer uses the block editor's bindings from the catalog, your rebinds included, on lines instead of blocks. No key changes which block a line keeps.
+The buffer uses the block editor's bindings from the catalog, your rebinds included, on the blocks its lines hold. No key changes which block a line keeps.
 
 | Shortcut | Action |
 | --- | --- |
-| `Enter` | Split the line. On a `-`, `*`, `+`, `1.` or `1)` line, start the next line with the same indent and marker, numbered one up (a task goes on as `- [ ]`); on a line holding only its marker, remove it, ending the list |
-| `Shift+Enter` | Split the line without continuing the list |
-| `Tab` / `Shift+Tab` | Indent the blocks at the cursor or selection, each with its further lines and children, two spaces / remove up to two leading spaces or a tab from them; a top-level block stays where it is. Follows *Tab indents blocks* in Settings → Editor: turned off, Tab moves focus as usual |
+| `Enter` | Split the line and leave a blank line, so what follows is a new block. On a `-`, `*`, `+`, `1.` or `1)` line, start the next line with the same indent and marker, numbered one up (a task goes on as `- [ ]`); on a line holding only its marker, remove it, ending the list (blank lines either side of the cursor where a list follows). In a fenced code block or the front matter, split the line |
+| `Shift+Enter` | Split the line, a line break in the same block |
+| `Tab` / `Shift+Tab` | Indent the blocks at the cursor or selection, each with its further lines and children, under the block before them / take them a level out; a block with no sibling before it, or a top-level one, stays where it is. Follows *Tab indents blocks* in Settings → Editor: turned off, Tab moves focus as usual |
 | `Ctrl+Shift+→` / `Ctrl+Shift+←` | Indent / dedent, whatever the Tab setting |
-| `Ctrl+Shift+↑` / `Ctrl+Shift+↓` | Move the line, with the lines indented under it, past the sibling above / below it; a selection moves the siblings it touches together. Nothing at the top or bottom, and nothing moves into or out of the front matter |
-| `Ctrl+Enter` / `Ctrl+L` | Step the task of the block at the cursor: none, `[ ]`, `[/]`, `[x]`, `[-]`, none again |
+| `Ctrl+Shift+↑` / `Ctrl+Shift+↓` | Move the block at the cursor, with its children, past the sibling above / below it; a selection moves the siblings it touches together. Nothing at the top or bottom, and nothing moves into or out of the front matter |
+| `Ctrl+Enter` / `Ctrl+L` | Step the task of the block at the cursor: none, `- [ ]`, `- [/]`, `- [x]`, `- [-]`, none again |
 | `Ctrl+Alt+1` … `Ctrl+Alt+6` | Turn the block at the cursor into that heading, as the toolbar's *Turn into* does |
 | `Ctrl+S` | Save |
 | `Ctrl+E` / `Ctrl+Shift+M` | Go to page mode as the *Page* link does, saving a changed buffer first; nothing on touch or on a page over page mode's block cap |

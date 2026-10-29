@@ -314,7 +314,7 @@ describe('Agaric real-backend repeating tasks (#5366, #5734, #5735, #5736) @jour
     await setPageSourceLines([
       ...base
         .filter((line) => line.text !== '')
-        .map(({ text, id }) => ({ id, text: text.replace(`- ${TASK}`, `- [ ] ${TASK}`) })),
+        .map(({ text, id }) => ({ id, text: text.includes(TASK) ? `- [ ] ${text}` : text })),
       ...[`  due_date:: ${today}`, '  repeat:: +1w', ''].map((text) => ({ text, id: null })),
     ])
     await clickPageSourceButton('Save')

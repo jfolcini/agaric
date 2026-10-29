@@ -1,54 +1,51 @@
 /**
- * The *Edit as Markdown* buffer's blocks (#5160 phase 5): the block at the
- * cursor, which the buffer's toolbar and block menu act on, and the edits they
- * make to its lines. Each edit writes what the export writes, so the save
- * reads it back as the block editor would have written it: the text through
- * the block editor's own `convertBlockContent`, the list style as the
- * export's `- 1.` / `- -` marker, and the priority and dates as its
- * `priority::`, `due_date::` and `scheduled_date::` lines.
- *
- * A block starts on a list line, or on a line carrying an id. Its own lines
- * are the lines after it indented deeper that start no block: its text's
- * further lines and its property lines. Its subtree adds its children.
+ * The *Edit as Markdown* buffer's blocks (#5160 phase 5, #5691): the block at
+ * the cursor, which the buffer's toolbar, block menu and outline keys act on,
+ * and the edits they make to its lines. The buffer is in the Document dialect
+ * and is read as the Rust grammar reads it (`parseDocument`). A block an edit
+ * changes is written again as the backend writes it (`DocumentLayout`,
+ * `pushDocumentLines`): its list marker or task checkbox, its text with the
+ * escapes it needs, its property lines as typed and its children at its text's
+ * column, a blank line between it and a neighbour unless both are list lines.
+ * So the save reads it back as the block editor would have written it: the
+ * text through the block editor's own `convertBlockContent`, the list style
+ * as its marker, and the priority and dates as `priority::`, `due_date::` and
+ * `scheduled_date::` lines.
  */
 
 import type { NodeType, Node as PMNode } from '@tiptap/pm/model'
 import { type Command, type EditorState, TextSelection, type Transaction } from '@tiptap/pm/state'
 
-import { parseDocument } from '@/editor/source-buffer-document'
-import type { Dialect } from '@/lib/bindings'
+import {
+  closesFence,
+  type DocumentBlock,
+  DocumentLayout,
+  documentFenceOpener,
+  type FenceRun,
+  lineLayout,
+  parseDocument,
+  pushDocumentLines,
+} from '@/editor/source-buffer-document'
 import { type BlockTypeToken, convertBlockContent, detectBlockType } from '@/lib/block-type-convert'
+import { foldPropertyKey } from '@/lib/inline-property-parse'
 import { type ListStyle, listStyleForBlockType } from '@/lib/list-style'
 import { PRIORITY_CYCLE } from '@/lib/priority-levels'
-import { type TodoState, taskStateFromMarker } from '@/lib/task-states'
+import { nextTaskState, type TodoState } from '@/lib/task-states'
 
 /** The positions where `doc`'s lines start, before each one's first character. */
-export function lineStarts(doc: PMNode): number[] {
+function lineStarts(doc: PMNode): number[] {
   const starts: number[] = []
   doc.forEach((_, offset) => starts.push(offset + 1))
   return starts
 }
 
 export const isBlank = (text: string): boolean => text.trim() === ''
-export const depthOf = (text: string): number => /^[ \t]*/.exec(text)?.[0].length ?? 0
 
 /** The line after the front matter (`---` … `---` at the top), 0 when there is none. */
 export function frontMatterEnd(texts: readonly string[]): number {
   if (texts[0]?.trimEnd() !== '---') return 0
   const close = texts.findIndex((text, i) => i > 0 && text.trimEnd() === '---')
   return close < 0 ? 0 : close + 1
-}
-
-/** The end of line `start`'s subtree: past the lines after it indented deeper, and the blank lines between them. */
-export function subtreeEnd(texts: readonly string[], start: number, level: number): number {
-  let end = start + 1
-  for (let i = start + 1; i < texts.length; i += 1) {
-    const text = texts[i] as string
-    if (isBlank(text)) continue
-    if (depthOf(text) <= level) break
-    end = i + 1
-  }
-  return end
 }
 
 export interface SourceBlock {
@@ -60,31 +57,6 @@ export interface SourceBlock {
   subtreeEnd: number
   /** The id its line carries; null for a block the save will create. */
   id: string | null
-}
-
-/** A line's fence opener: three or more backticks or tildes where its text starts, past its list markers and checkbox. */
-export const FENCE_OPENER =
-  /^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)*(?:\[[ xX/-]\][ \t]+)?(`{3,}(?!.*`)|~{3,})/
-
-export function closesFence(text: string, run: string): boolean {
-  const trimmed = text.trim()
-  return trimmed.length >= run.length && trimmed === run.charAt(0).repeat(trimmed.length)
-}
-
-// A block's line: its indentation, its list marker, then the export's list
-// style marker (`- 1.`, `- -`) and task checkbox when it has them.
-const BLOCK_LINE =
-  /^([ \t]*)((?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$))((?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$))?(\[[ xX/-]\](?:[ \t]+|$))?/
-const LIST_MARKER = /^(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/
-const CHECKBOX = /^\[[ xX/-]\](?:[ \t]|$)/
-const HEADING = /^#{1,6}(?:[ \t]|$)/
-/** `key:: value`, as the grammar reads a property line (`split_property_line`). */
-const PROPERTY_LINE = /^[ \t]*([A-Za-z0-9_-]{1,64})[ \t]*::(?:[ \t]+(.*?))?[ \t]*$/
-
-type LineIds = ReadonlyArray<string | null>
-
-function startsBlock(texts: readonly string[], ids: LineIds, i: number): boolean {
-  return ids[i] != null || BLOCK_LINE.test(texts[i] as string)
 }
 
 function lineTexts(doc: PMNode): string[] {
@@ -99,27 +71,6 @@ function lineIds(doc: PMNode): Array<string | null> {
   return ids
 }
 
-/** Past `start`'s own lines: deeper lines starting no block, a fence's lines all its own. */
-function ownEnd(texts: readonly string[], ids: LineIds, start: number): number {
-  const level = depthOf(texts[start] as string)
-  let fence = FENCE_OPENER.exec(texts[start] as string)?.[1] ?? null
-  let end = start + 1
-  for (let i = start + 1; i < texts.length; i += 1) {
-    const text = texts[i] as string
-    if (isBlank(text)) continue
-    if (depthOf(text) <= level || ids[i] != null) break
-    if (fence !== null) {
-      if (closesFence(text, fence)) fence = null
-    } else if (startsBlock(texts, ids, i)) {
-      break
-    } else {
-      fence = FENCE_OPENER.exec(text)?.[1] ?? null
-    }
-    end = i + 1
-  }
-  return end
-}
-
 /** Past the last line before `end` that is not blank, but never before `start + 1`. */
 function pastText(texts: readonly string[], start: number, end: number): number {
   let past = end
@@ -127,59 +78,60 @@ function pastText(texts: readonly string[], start: number, end: number): number 
   return past
 }
 
-/**
- * {@link blockAt} in a Document buffer: the last block starting at or above
- * `index`, as the Rust grammar reads the buffer. Its own lines run to the next
- * block, its subtree to the next block no deeper than it.
- */
-function documentBlockAt(
-  texts: readonly string[],
-  ids: LineIds,
-  index: number,
-): SourceBlock | null {
-  const blocks = parseDocument(texts.join('\n'), ids).blocks
-  const at = blocks.findLastIndex((block) => block.line - 1 <= index)
-  const block = blocks[at]
-  if (block === undefined) return null
-  const start = block.line - 1
-  const startOf = (next: { line: number } | undefined) => (next?.line ?? texts.length + 1) - 1
-  const after = blocks.slice(at + 1).find((next) => next.depth <= block.depth)
-  return {
-    line: start,
-    end: pastText(texts, start, startOf(blocks[at + 1])),
-    subtreeEnd: pastText(texts, start, startOf(after)),
-    id: ids[start] ?? null,
-  }
+/** The buffer read once: its lines, the grammar's blocks, and where each block's lines are. */
+interface Parsed {
+  texts: string[]
+  ids: Array<string | null>
+  blocks: DocumentBlock[]
+  spans: SourceBlock[]
+  /** Past each block's subtree, as an index into `blocks`. */
+  subtreeEnds: number[]
+}
+
+function readBuffer(doc: PMNode): Parsed {
+  const texts = lineTexts(doc)
+  const ids = lineIds(doc)
+  const { blocks } = parseDocument(texts.join('\n'), ids)
+  const depth = (i: number): number => (blocks[i] as DocumentBlock).depth
+  const subtreeEnds = blocks.map(() => blocks.length)
+  const open: number[] = []
+  blocks.forEach((block, i) => {
+    while (open.length > 0 && depth(open.at(-1) as number) >= block.depth) {
+      subtreeEnds[open.pop() as number] = i
+    }
+    open.push(i)
+  })
+  const startOf = (i: number): number => (blocks[i]?.line ?? texts.length + 1) - 1
+  const spans = blocks.map((block, i) => {
+    const start = block.line - 1
+    return {
+      line: start,
+      end: pastText(texts, start, startOf(i + 1)),
+      subtreeEnd: pastText(texts, start, startOf(subtreeEnds[i] as number)),
+      id: ids[start] ?? null,
+    }
+  })
+  return { texts, ids, blocks, spans, subtreeEnds }
+}
+
+/** The index of the block at line `index`: the last starting at or above it; -1 above the first. */
+function indexAt(buffer: Parsed, index: number): number {
+  return buffer.spans.findLastIndex((span) => span.line <= index)
+}
+
+/** The index of the block `block` names, by the line it starts on. */
+function indexOf(buffer: Parsed, block: SourceBlock): number {
+  return buffer.spans.findIndex((span) => span.line === block.line)
 }
 
 /**
  * The block at line `index`: the block that line starts, or the one whose
- * line starts the run of lines it is in. `null` in the front matter and above
- * the first block. Read from the top, so a list line inside a block's fence
- * is that block's code, not a block of its own.
+ * line starts the run of lines it is in, as the grammar reads the buffer.
+ * `null` in the front matter and above the first block.
  */
-export function blockAt(
-  doc: PMNode,
-  index: number,
-  dialect: Dialect = 'source',
-): SourceBlock | null {
-  const texts = lineTexts(doc)
-  const ids = lineIds(doc)
-  if (dialect === 'document') return documentBlockAt(texts, ids, index)
-  let start: number | null = null
-  let end = 0
-  for (let i = frontMatterEnd(texts); i <= Math.min(index, texts.length - 1); i += 1) {
-    if (i < end || !startsBlock(texts, ids, i)) continue
-    start = i
-    end = ownEnd(texts, ids, i)
-  }
-  if (start === null) return null
-  return {
-    line: start,
-    end,
-    subtreeEnd: subtreeEnd(texts, start, depthOf(texts[start] as string)),
-    id: ids[start] ?? null,
-  }
+export function blockAt(doc: PMNode, index: number): SourceBlock | null {
+  const buffer = readBuffer(doc)
+  return buffer.spans[indexAt(buffer, index)] ?? null
 }
 
 /** The block the selection's head is in. */
@@ -187,119 +139,204 @@ export function blockAtCursor(state: EditorState): SourceBlock | null {
   return blockAt(state.doc, state.selection.$head.index(0))
 }
 
-interface BlockLine {
-  indent: string
-  /** The list marker and the blanks after it; '' on a line that is no list item. */
-  marker: string
-  style: string
-  box: string
-  /** What follows, the export's escape taken off. */
-  text: string
+/** A block of the buffer as it is written again. */
+interface Written {
+  /** The block it was read as, by index: its id and the cursor go with it. */
+  from: number
+  depth: number
+  content: string
+  listStyle: DocumentBlock['listStyle']
+  todoState: TodoState | null
+  /** Its property lines as typed. */
+  properties: string[]
 }
 
-function firstLineNeedsEscape(text: string, style: string, box: string): boolean {
-  return (style === '' && LIST_MARKER.test(text)) || (box === '' && CHECKBOX.test(text))
-}
-
-function readBlockLine(text: string): BlockLine {
-  const match = BLOCK_LINE.exec(text)
-  if (match === null) {
-    const indent = /^[ \t]*/.exec(text)?.[0] ?? ''
-    return { indent, marker: '', style: '', box: '', text: text.slice(indent.length) }
+function written(buffer: Parsed, i: number): Written {
+  const block = buffer.blocks[i] as DocumentBlock
+  return {
+    from: i,
+    depth: block.depth,
+    content: block.content,
+    listStyle: block.listStyle,
+    todoState: block.todoState,
+    properties: block.propertyLines.map((line) => buffer.texts[line - 1] as string),
   }
-  const [prefix, indent = '', marker = '', style = '', box = ''] = match
-  const rest = text.slice(prefix.length)
-  const escaped = rest.startsWith('\\') && firstLineNeedsEscape(rest.slice(1), style, box)
-  return { indent, marker, style, box, text: escaped ? rest.slice(1) : rest }
 }
 
-function listStyleOf({ marker, style }: BlockLine): ListStyle {
-  if (style !== '') return /^\d/.test(style) ? 'ordered' : 'bullet'
-  return /^\d/.test(marker) ? 'ordered' : 'none'
+function headOf(buffer: Parsed, i: number): string {
+  return buffer.texts[(buffer.spans[i] as SourceBlock).line] as string
 }
 
-const STYLE_MARKER: Record<ListStyle, string> = { none: '', bullet: '- ', ordered: '1. ' }
-
-const withGap = (part: string): string => (part === '' || /[ \t]$/.test(part) ? part : `${part} `)
-
-/** The block's line with `text` after its markers, in `style`: as it was when that is its style. */
-function writeBlockLine(head: BlockLine, style: ListStyle, text: string): string {
-  const kept = listStyleOf(head) === style && head.marker !== ''
-  const markers = kept ? withGap(head.marker) + withGap(head.style) : `- ${STYLE_MARKER[style]}`
-  const styleText = kept ? head.style : STYLE_MARKER[style]
-  const prefix = head.indent + markers + withGap(head.box)
-  if (text === '') return prefix.trimEnd()
-  return prefix + (firstLineNeedsEscape(text, styleText, head.box) ? '\\' : '') + text
-}
-
-/** A further line of a block's text that would read as a marker, a heading or a property (`continuation_line_is_ambiguous`). */
-function ambiguous(line: string): boolean {
-  const body = line.replace(/^[\s\\]+/, '')
-  return LIST_MARKER.test(body) || HEADING.test(body) || PROPERTY_LINE.test(body)
-}
-
-/** The width of `head`'s text column, where its further lines and property lines start. */
-function contentIndent(head: BlockLine): string {
-  return ' '.repeat(head.indent.length + Math.max(withGap(head.marker).length, 2))
-}
-
-function dropIndent(text: string, width: number): string {
-  let cut = 0
-  while (cut < width && (text[cut] === ' ' || text[cut] === '\t')) cut += 1
-  return text.slice(cut)
-}
-
-interface BlockParts {
-  head: BlockLine
-  /** The block's text, a line each, as the block holds it. */
-  text: string[]
-  /** Its property lines, by line index. */
-  properties: number[]
-}
-
-function readBlock(texts: readonly string[], block: SourceBlock): BlockParts {
-  const head = readBlockLine(texts[block.line] as string)
-  const width = contentIndent(head).length
-  const text = [head.text]
-  const properties: number[] = []
-  let fence = FENCE_OPENER.exec(head.text)?.[1] ?? null
-  for (let i = block.line + 1; i < block.end; i += 1) {
-    const raw = texts[i] as string
-    if (fence === null && PROPERTY_LINE.test(raw)) {
-      properties.push(i)
-      continue
-    }
-    const line = dropIndent(raw, width)
-    if (fence !== null) {
-      if (closesFence(line, fence)) fence = null
-      text.push(line)
-    } else {
-      const unescaped = line.startsWith('\\') && ambiguous(line.slice(1)) ? line.slice(1) : line
-      fence = FENCE_OPENER.exec(unescaped)?.[1] ?? null
-      text.push(unescaped)
-    }
+/** The columns and markers of the blocks a block at `depth` written in place of block `at` is under. */
+function ancestors(buffer: Parsed, at: number, depth: number) {
+  const open: Array<{ column: number; marked: boolean }> = []
+  let want = depth - 1
+  for (let i = at - 1; i >= 0 && want >= 0; i -= 1) {
+    if ((buffer.blocks[i] as DocumentBlock).depth !== want) continue
+    const layout = lineLayout(headOf(buffer, i))
+    open[want] = { column: layout.childColumn, marked: layout.marked }
+    want -= 1
   }
-  return { head, text, properties }
+  return open
 }
 
-/** `text`'s lines as the block's lines: the first after its markers, the rest under them, escaped outside a fence. */
-function writeBlock(texts: readonly string[], parts: BlockParts, style: ListStyle, text: string[]) {
-  const [first = '', ...rest] = text
-  const out = [writeBlockLine(parts.head, style, first)]
-  const indent = contentIndent(readBlockLine(out[0] as string))
-  let fence = FENCE_OPENER.exec(first)?.[1] ?? null
-  for (const line of rest) {
-    if (line === '') {
-      out.push('')
-    } else if (fence !== null) {
-      if (closesFence(line, fence)) fence = null
-      out.push(indent + line)
-    } else {
-      fence = FENCE_OPENER.exec(line)?.[1] ?? null
-      out.push(indent + (ambiguous(line) ? `\\${line}` : line))
-    }
+/** How many numbered blocks with no task run just before block `at` among the blocks at `depth`. */
+function runBefore(buffer: Parsed, at: number, depth: number): number {
+  let run = 0
+  for (let i = at - 1; i >= 0; i -= 1) {
+    const block = buffer.blocks[i] as DocumentBlock
+    if (block.depth > depth) continue
+    if (block.depth < depth || block.listStyle !== 'ordered' || block.todoState !== null) break
+    run += 1
   }
-  return [...out, ...parts.properties.map((i) => texts[i] as string)]
+  return run
+}
+
+/** A place in a block's lines: `line` lines into block `from`, `fromEnd` characters before that line's end. */
+interface Spot {
+  from: number
+  line: number
+  fromEnd: number
+}
+
+function spotOf(buffer: Parsed, doc: PMNode, pos: number): Spot | null {
+  const $pos = doc.resolve(pos)
+  const index = $pos.index(0)
+  const from = indexAt(buffer, index)
+  const span = buffer.spans[from]
+  if (span === undefined) return null
+  const text = buffer.texts[index] as string
+  return { from, line: index - span.line, fromEnd: text.length - $pos.parentOffset }
+}
+
+/** Blocks written as lines: each block's first line and how many lines it has, by the block it was read as. */
+interface Lines {
+  lines: string[]
+  ids: Array<string | null>
+  heads: Map<number, { line: number; count: number }>
+}
+
+/**
+ * `blocks` written as a Document buffer writes them in place of block `from`
+ * and those after it, with `layout` standing where the block before them
+ * left it: list markers numbered on from the run before them, and a `+` item
+ * where a first block at the buffer's top (`atTop`) opens with `---`.
+ */
+function writeBlocks(
+  buffer: Parsed,
+  from: number,
+  blocks: Written[],
+  layout: DocumentLayout,
+  atTop: boolean,
+): Lines {
+  const out: Lines = { lines: [], ids: [], heads: new Map() }
+  const { lines, ids } = out
+  const runs: number[] = []
+  let shallowest = Number.POSITIVE_INFINITY
+  for (const block of blocks) {
+    if (runs.length > block.depth + 1) runs.length = block.depth + 1
+    const prior =
+      runs[block.depth] ?? (shallowest > block.depth ? runBefore(buffer, from, block.depth) : 0)
+    const run = block.listStyle === 'ordered' && block.todoState === null ? prior + 1 : 0
+    runs[block.depth] = run
+    shallowest = Math.min(shallowest, block.depth)
+    const listMarker =
+      block.listStyle === null ? '' : block.listStyle === 'bullet' ? '- ' : `${run}. `
+    const opensRule = atTop && lines.length === 0 && block.content.startsWith('---')
+    const place = layout.place(block.depth, listMarker, block.todoState, opensRule)
+    if (place.blank) lines.push('')
+    const head = lines.length
+    pushDocumentLines(lines, place.indent, place.marker, place.taskMarker, block.content)
+    for (const property of block.properties) lines.push(place.childIndent + property.trimStart())
+    out.heads.set(block.from, { line: head, count: lines.length - head })
+    while (ids.length < lines.length) ids.push(null)
+    ids[head] = buffer.ids[(buffer.spans[block.from] as SourceBlock).line] ?? null
+  }
+  return out
+}
+
+/**
+ * Blocks `from` to `to - 1` written again as `blocks`, each naming the block
+ * it was read as, in one step, the blank lines either side by the writer's
+ * rule. The lines after the buffer's last block stay. With `caret` the cursor
+ * goes to the end of that block's first line; else the selection stays on the
+ * line of its block it was on, as far from that line's end.
+ */
+function rewrite(
+  state: EditorState,
+  buffer: Parsed,
+  [from, to]: [number, number],
+  blocks: Written[],
+  caret?: number,
+): Transaction {
+  const { spans } = buffer
+  const before = spans[from - 1]
+  const replaceFrom = before === undefined ? (spans[from] as SourceBlock).line : before.end
+  const replaceTo = spans[to]?.line ?? (spans[to - 1] as SourceBlock).end
+  const layout = new DocumentLayout(
+    ancestors(buffer, from, blocks[0]?.depth ?? 0),
+    before === undefined ? null : lineLayout(headOf(buffer, from - 1)).marked,
+  )
+  const { lines, ids, heads } = writeBlocks(buffer, from, blocks, layout, replaceFrom === 0)
+  const nextMarked = to < spans.length ? lineLayout(headOf(buffer, to)).marked : null
+  if (nextMarked !== null && !(layout.previousMarked === true && nextMarked)) lines.push('')
+
+  const spots = [state.selection.anchor, state.selection.head].map((pos) =>
+    spotOf(buffer, state.doc, pos),
+  )
+  const [start, end] = lineRange(state.doc, replaceFrom, replaceTo)
+  const tr = state.tr.replaceWith(
+    start,
+    end,
+    lines.map((text, i) => lineNode(state, text, ids[i] ?? null)),
+  )
+  const at = (line: number, offset: number): number => {
+    const node = tr.doc.child(replaceFrom + line)
+    return (
+      tr.doc.resolve(0).posAtIndex(replaceFrom + line) +
+      1 +
+      Math.max(0, Math.min(offset, node.content.size))
+    )
+  }
+  const placed = (spot: Spot | null): number | null => {
+    const head = spot === null ? undefined : heads.get(spot.from)
+    if (spot === null || head === undefined) return null
+    const line = head.line + Math.min(spot.line, head.count - 1)
+    return at(line, (lines[line] as string).length - spot.fromEnd)
+  }
+  const [anchor, cursor] =
+    caret === undefined
+      ? spots.map(placed)
+      : [heads.get(caret)].map((head) => (head === undefined ? null : at(head.line, Infinity)))
+  if (anchor != null) tr.setSelection(TextSelection.create(tr.doc, anchor, cursor ?? anchor))
+  return tr.scrollIntoView()
+}
+
+/**
+ * Write the block at index `at` again with `change` made to it, and its
+ * children with it, at the column its marker puts them, `+` items under a
+ * list block (D4). With `caret`, the cursor goes to the end of its first line.
+ */
+function rewriteAt(
+  state: EditorState,
+  buffer: Parsed,
+  at: number,
+  change: (block: Written) => Written,
+  caret: boolean,
+): Transaction {
+  const end = buffer.subtreeEnds[at] as number
+  const blocks = [change(written(buffer, at))]
+  for (let i = at + 1; i < end; i += 1) blocks.push(written(buffer, i))
+  return rewrite(state, buffer, [at, end], blocks, caret ? at : undefined)
+}
+
+function rewriteBlock(block: SourceBlock, change: (block: Written) => Written): Command {
+  return (state, dispatch) => {
+    const buffer = readBuffer(state.doc)
+    const at = indexOf(buffer, block)
+    if (at >= 0) dispatch?.(rewriteAt(state, buffer, at, change, true))
+    return true
+  }
 }
 
 function lineType(state: EditorState): NodeType {
@@ -318,77 +355,73 @@ function lineRange(doc: PMNode, from: number, to: number): [number, number] {
 }
 
 /**
- * Lines `from` to `to - 1` replaced by `texts`, the first keeping the id the
- * first of them carries: the block keeps its id while its text changes.
+ * Turn `block` into `type`, as the block editor's Turn into does: its text
+ * and its list style. A list kind takes a task's checkbox off, as a task has
+ * no list style (D3).
  */
-function replaceLines(state: EditorState, from: number, to: number, texts: string[]): Transaction {
-  const id = (state.doc.child(from).attrs['blockId'] as string | null | undefined) ?? null
-  const nodes = texts.map((text, i) => lineNode(state, text, i === 0 ? id : null))
-  const [start, end] = lineRange(state.doc, from, to)
-  const tr = state.tr.replaceWith(start, end, nodes)
-  const lineEnd = tr.doc.resolve(start + 1).end()
-  return tr.setSelection(TextSelection.create(tr.doc, lineEnd))
-}
-
-function rewriteBlock(
-  block: SourceBlock,
-  text: (parts: BlockParts) => string[],
-  style?: ListStyle,
-): Command {
-  return (state, dispatch) => {
-    const texts = lineTexts(state.doc)
-    const parts = readBlock(texts, block)
-    const lines = writeBlock(texts, parts, style ?? listStyleOf(parts.head), text(parts))
-    dispatch?.(replaceLines(state, block.line, block.end, lines).scrollIntoView())
-    return true
-  }
-}
-
-/** Turn `block` into `type`, as the block editor's Turn into does: its text and its list style. */
 export function turnInto(block: SourceBlock, type: BlockTypeToken, calloutType?: string): Command {
-  return rewriteBlock(
-    block,
-    (parts) => convertBlockContent(parts.text.join('\n'), type, calloutType).split('\n'),
-    listStyleForBlockType(type),
-  )
+  const style = listStyleForBlockType(type)
+  const listStyle = style === 'none' ? null : style
+  return rewriteBlock(block, (read) => ({
+    ...read,
+    content: convertBlockContent(read.content, type, calloutType),
+    listStyle,
+    todoState: listStyle === null ? read.todoState : null,
+  }))
 }
 
 /** Replace `block`'s text with `text`, as a divider or a query from the builder does. */
 export function setBlockText(block: SourceBlock, text: string): Command {
-  return rewriteBlock(block, () => text.split('\n'))
+  return rewriteBlock(block, (read) => ({ ...read, content: text }))
+}
+
+/**
+ * Step the block at line `index` to the block editor's next task state
+ * (`nextTaskState`), written as its checkbox: `foo`, `- [ ] foo`, `- [/] foo`,
+ * `- [x] foo`, `- [-] foo`, and `foo` again: a task is written `- [ ]` whatever
+ * its list style, and reads back with none (D3).
+ */
+export function cycleTaskAt(index: number): Command {
+  return (state, dispatch) => {
+    const buffer = readBuffer(state.doc)
+    const at = indexAt(buffer, index)
+    if (at < 0) return true
+    const change = (read: Written): Written => ({
+      ...read,
+      todoState: nextTaskState(read.todoState),
+    })
+    dispatch?.(rewriteAt(state, buffer, at, change, false))
+    return true
+  }
+}
+
+function readingOf(doc: PMNode, block: SourceBlock): DocumentBlock | null {
+  const buffer = readBuffer(doc)
+  return buffer.blocks[indexOf(buffer, block)] ?? null
 }
 
 /** The type Turn into shows as `block`'s own. */
 export function blockTypeOf(doc: PMNode, block: SourceBlock): BlockTypeToken {
-  const parts = readBlock(lineTexts(doc), block)
-  const style = listStyleOf(parts.head)
-  if (style === 'ordered') return 'numbered-list'
-  if (style === 'bullet') return 'bullet-list'
-  return detectBlockType(parts.text.join('\n'))
+  const read = readingOf(doc, block)
+  if (read?.listStyle === 'ordered') return 'numbered-list'
+  if (read?.listStyle === 'bullet') return 'bullet-list'
+  return detectBlockType(read?.content ?? '')
 }
 
 /** `block`'s task state, its checkbox's. */
 export function blockTaskState(doc: PMNode, block: SourceBlock): TodoState | null {
-  const box = readBlockLine(doc.child(block.line).textContent).box
-  return box === '' ? null : taskStateFromMarker(box.charAt(1))
+  return readingOf(doc, block)?.todoState ?? null
 }
 
-/** `key` as the grammar matches it: case and `-`/`_` aside. */
-const foldKey = (key: string): string => key.toLowerCase().replaceAll('-', '_')
-
-function propertyLine(texts: readonly string[], block: SourceBlock, key: string): number | null {
-  const found = readBlock(texts, block).properties.find(
-    (i) => foldKey(PROPERTY_LINE.exec(texts[i] as string)?.[1] ?? '') === foldKey(key),
-  )
-  return found ?? null
+/** Which of `read`'s property lines is its last `key::` line, as the grammar matches the key; -1 for none. */
+function propertyIndex(read: DocumentBlock, key: string): number {
+  return read.properties.findLastIndex(([typed]) => foldPropertyKey(typed) === foldPropertyKey(key))
 }
 
 /** The value of `block`'s `key::` line, or null. */
 export function blockProperty(doc: PMNode, block: SourceBlock, key: string): string | null {
-  const texts = lineTexts(doc)
-  const line = propertyLine(texts, block, key)
-  if (line === null) return null
-  const value = PROPERTY_LINE.exec(texts[line] as string)?.[2]?.trim() ?? ''
+  const read = readingOf(doc, block)
+  const value = read === null ? '' : (read.properties[propertyIndex(read, key)]?.[1] ?? '')
   return value === '' ? null : value
 }
 
@@ -403,56 +436,18 @@ export interface BlockReading {
   properties: Array<[key: string, value: string]>
 }
 
-/**
- * Every block below the front matter, in order. A run of lines no block owns
- * and none of which starts one is a paragraph block of its own. A heading's
- * ownership of what follows it is not read: only indentation nests. A
- * Document buffer is read as the Rust grammar reads it ({@link parseDocument}).
- */
+/** Every block below the front matter, in order, as the Rust grammar reads the buffer ({@link parseDocument}). */
 export function readBlocks(
   texts: readonly string[],
-  ids: LineIds,
-  dialect: Dialect = 'source',
+  ids: ReadonlyArray<string | null>,
 ): BlockReading[] {
-  if (dialect === 'document') {
-    return parseDocument(texts.join('\n'), ids).blocks.map((block) => ({
-      depth: block.depth,
-      listStyle: block.listStyle ?? 'none',
-      taskState: block.todoState,
-      text: block.content,
-      properties: block.properties,
-    }))
-  }
-  const blocks: BlockReading[] = []
-  const indents: number[] = []
-  let i = frontMatterEnd(texts)
-  while (i < texts.length) {
-    if (isBlank(texts[i] as string)) {
-      i += 1
-      continue
-    }
-    let end = i + 1
-    if (startsBlock(texts, ids, i)) end = ownEnd(texts, ids, i)
-    else
-      while (end < texts.length && !isBlank(texts[end] as string) && !startsBlock(texts, ids, end))
-        end += 1
-    const parts = readBlock(texts, { line: i, end, subtreeEnd: end, id: null })
-    const indent = depthOf(texts[i] as string)
-    while ((indents.at(-1) ?? -1) >= indent) indents.pop()
-    blocks.push({
-      depth: indents.length,
-      listStyle: listStyleOf(parts.head),
-      taskState: parts.head.box === '' ? null : taskStateFromMarker(parts.head.box.charAt(1)),
-      text: parts.text.join('\n'),
-      properties: parts.properties.map((line) => {
-        const match = PROPERTY_LINE.exec(texts[line] as string)
-        return [match?.[1] ?? '', match?.[2]?.trim() ?? '']
-      }),
-    })
-    indents.push(indent)
-    i = end
-  }
-  return blocks
+  return parseDocument(texts.join('\n'), ids).blocks.map((block) => ({
+    depth: block.depth,
+    listStyle: block.listStyle ?? 'none',
+    taskState: block.todoState,
+    text: block.content,
+    properties: block.properties,
+  }))
 }
 
 /** The front matter's `key: value` lines; the lines under a `key: |` (or any) line continue its value. */
@@ -471,28 +466,32 @@ export function frontMatterProperties(
 }
 
 /**
- * Write `block`'s `key:: value` line, under its text, or take it out for
- * `null`: the export's line for the block's priority and dates.
+ * Write `block`'s `key:: value` line, under its text at its text's column, or
+ * take it out for `null`: the export's line for the block's priority and dates.
  */
 export function setBlockProperty(block: SourceBlock, key: string, value: string | null): Command {
   return (state, dispatch) => {
-    const texts = lineTexts(state.doc)
-    const line = propertyLine(texts, block, key)
+    const buffer = readBuffer(state.doc)
+    const at = indexOf(buffer, block)
+    const read = buffer.blocks[at]
+    const span = buffer.spans[at]
+    if (read === undefined || span === undefined) return true
+    const found = propertyIndex(read, key)
     const tr = state.tr
-    if (line !== null) {
+    if (found >= 0) {
+      const line = (read.propertyLines[found] as number) - 1
       const [start, end] = lineRange(state.doc, line, line + 1)
       if (value === null) {
         tr.delete(start, end)
       } else {
-        const text = texts[line] as string
-        const indent = depthOf(text)
-        const typed = PROPERTY_LINE.exec(text)?.[1] ?? key
+        const indent = /^[ \t]*/.exec(buffer.texts[line] as string)?.[0].length ?? 0
+        const typed = read.properties[found]?.[0] ?? key
         tr.insertText(`${typed}:: ${value}`, start + 1 + indent, end - 1)
       }
     } else if (value !== null) {
-      const head = readBlockLine(texts[block.line] as string)
-      const [, after] = lineRange(state.doc, block.end - 1, block.end)
-      tr.insert(after, lineNode(state, `${contentIndent(head)}${key}:: ${value}`))
+      const column = lineLayout(headOf(buffer, at)).childColumn
+      const [, after] = lineRange(state.doc, span.end - 1, span.end)
+      tr.insert(after, lineNode(state, `${' '.repeat(column)}${key}:: ${value}`))
     }
     if (tr.docChanged) dispatch?.(tr.scrollIntoView())
     return true
@@ -509,9 +508,34 @@ export function cyclePriority(block: SourceBlock): Command {
   }
 }
 
-/** Delete `block` and its children, as the block editor's Delete does. */
+/** Past the numbered blocks at `depth` in a row from block `from`, each with its children, as an index into the blocks. */
+function numberedRunEnd(buffer: Parsed, from: number, depth: number): number {
+  let to = from
+  for (;;) {
+    const next = buffer.blocks[to]
+    if (next?.depth !== depth || next.listStyle !== 'ordered' || next.todoState !== null) return to
+    to = buffer.subtreeEnds[to] as number
+  }
+}
+
+/**
+ * Delete `block` and its children, as the block editor's Delete does. The
+ * numbered blocks after it are written again from where it stood: a `2.` left
+ * first under its parent would read as a further line of the parent's text.
+ */
 export function deleteBlock(block: SourceBlock): Command {
   return (state, dispatch) => {
+    const buffer = readBuffer(state.doc)
+    const at = indexOf(buffer, block)
+    if (at >= 0) {
+      const end = buffer.subtreeEnds[at] as number
+      const to = numberedRunEnd(buffer, end, (buffer.blocks[at] as DocumentBlock).depth)
+      if (to > end) {
+        const run = Array.from({ length: to - end }, (_, i) => written(buffer, end + i))
+        dispatch?.(rewrite(state, buffer, [at, to], run))
+        return true
+      }
+    }
     const [start, end] = lineRange(state.doc, block.line, block.subtreeEnd)
     const tr = state.tr
     if (start === 0 && end === state.doc.content.size)
@@ -522,10 +546,21 @@ export function deleteBlock(block: SourceBlock): Command {
   }
 }
 
-/** A copy of `block` and its children after them, new blocks all, as the block editor's Duplicate makes. */
+/**
+ * A copy of `block` and its children after them, new blocks all, as the block
+ * editor's Duplicate makes, a blank line before it unless it and the last
+ * block of what it copies are both list lines (D1).
+ */
 export function duplicateBlock(block: SourceBlock): Command {
   return (state, dispatch) => {
-    const texts = lineTexts(state.doc).slice(block.line, block.subtreeEnd)
+    const buffer = readBuffer(state.doc)
+    const at = indexOf(buffer, block)
+    if (at < 0) return true
+    const last = (buffer.subtreeEnds[at] as number) - 1
+    const texts = buffer.texts.slice(block.line, block.subtreeEnd)
+    if (!(lineLayout(headOf(buffer, at)).marked && lineLayout(headOf(buffer, last)).marked)) {
+      texts.unshift('')
+    }
     const [, after] = lineRange(state.doc, block.subtreeEnd - 1, block.subtreeEnd)
     const tr = state.tr.insert(
       after,
@@ -534,6 +569,138 @@ export function duplicateBlock(block: SourceBlock): Command {
     dispatch?.(tr.scrollIntoView())
     return true
   }
+}
+
+/**
+ * The blocks lines `first` to `last` touch, each with its further lines and
+ * children, as indexes into the buffer's blocks: `[from, to)`. `null` where
+ * they touch none, as in the front matter.
+ */
+function touched(buffer: Parsed, first: number, last: number): [number, number] | null {
+  const from = Math.max(indexAt(buffer, first), 0)
+  const until = indexAt(buffer, last) + 1
+  if (until <= from) return null
+  let to = until
+  for (let i = from; i < until; i += 1) to = Math.max(to, buffer.subtreeEnds[i] as number)
+  return [from, to]
+}
+
+/** The block before block `at` that has its parent, or -1. */
+function siblingBefore(buffer: Parsed, at: number): number {
+  const depth = (buffer.blocks[at] as DocumentBlock).depth
+  for (let i = at - 1; i >= 0; i -= 1) {
+    const before = (buffer.blocks[i] as DocumentBlock).depth
+    if (before === depth) return i
+    if (before < depth) return -1
+  }
+  return -1
+}
+
+/**
+ * Indent the blocks lines `first` to `last` touch, each with its further lines
+ * and children, a level, under the sibling before the first of them, as the
+ * block editor's Indent does; with no sibling before it, nothing moves.
+ */
+export function indentRange(first: number, last: number): Command {
+  return (state, dispatch) => {
+    const buffer = readBuffer(state.doc)
+    const range = touched(buffer, first, last)
+    if (range === null || siblingBefore(buffer, range[0]) < 0) return true
+    const blocks: Written[] = []
+    for (let i = range[0]; i < range[1]; i += 1) {
+      const block = written(buffer, i)
+      blocks.push({ ...block, depth: block.depth + 1 })
+    }
+    dispatch?.(rewrite(state, buffer, range, blocks))
+    return true
+  }
+}
+
+/**
+ * Dedent the blocks lines `first` to `last` touch a level, as the block
+ * menu's Dedent: a top-level block has nowhere to go, and the blocks selected
+ * with it stay where they are too. The blocks after them under the same
+ * parent go under them, as the text then reads, and are written again there.
+ */
+export function dedentRange(first: number, last: number): Command {
+  return (state, dispatch) => {
+    const buffer = readBuffer(state.doc)
+    const range = touched(buffer, first, last)
+    if (range === null) return true
+    const blocks: Written[] = []
+    let shallowest = Number.POSITIVE_INFINITY
+    for (let i = range[0]; i < range[1]; i += 1) {
+      const block = written(buffer, i)
+      if (block.depth === 0) return true
+      shallowest = Math.min(shallowest, block.depth)
+      blocks.push({ ...block, depth: block.depth - 1 })
+    }
+    let to = range[1]
+    while (to < buffer.blocks.length && (buffer.blocks[to] as DocumentBlock).depth >= shallowest) {
+      blocks.push(written(buffer, to))
+      to += 1
+    }
+    dispatch?.(rewrite(state, buffer, [range[0], to], blocks))
+    return true
+  }
+}
+
+/**
+ * The blocks lines `first` to `last` start in, with the children of the last,
+ * moved past their sibling before them (`-1`) or after them (`1`), in one
+ * step: each keeps its id, and a selection in them goes with them. Nothing
+ * moves when there is no such sibling, when one of them is shallower than the
+ * first, or in the front matter, which no move enters or leaves.
+ */
+export function moveRange(first: number, last: number, direction: -1 | 1): Command {
+  return (state, dispatch) => {
+    const buffer = readBuffer(state.doc)
+    const from = indexAt(buffer, first)
+    const until = indexAt(buffer, last)
+    if (from < 0) return true
+    const depthOf = (i: number): number | undefined => buffer.blocks[i]?.depth
+    const depth = depthOf(from) as number
+    let end = from + 1
+    for (; end < buffer.blocks.length; end += 1) {
+      const next = depthOf(end) as number
+      if (next < depth && end <= until) return true
+      if (next < depth || (next === depth && end > until)) break
+    }
+    const run = (a: number, b: number): Written[] =>
+      Array.from({ length: b - a }, (_, i) => written(buffer, a + i))
+    if (direction < 0) {
+      const before = siblingBefore(buffer, from)
+      if (before >= 0) {
+        dispatch?.(rewrite(state, buffer, [before, end], [...run(from, end), ...run(before, from)]))
+      }
+    } else if (depthOf(end) === depth) {
+      const after = buffer.subtreeEnds[end] as number
+      dispatch?.(rewrite(state, buffer, [from, after], [...run(end, after), ...run(from, end)]))
+    }
+    return true
+  }
+}
+
+/** The fence open after `text`, a line read with `fence` open before it. */
+export function fenceAfter(fence: FenceRun | null, text: string): FenceRun | null {
+  if (fence === null) return documentFenceOpener(text)
+  return closesFence(text, fence) ? null : fence
+}
+
+/**
+ * The fence open where line `index` of `doc` starts, read from the top as the
+ * grammar reads fences: one a line opens, closed by a run at least as long,
+ * and ended before a line carrying an id (D5).
+ */
+export function fenceBefore(doc: PMNode, index: number): FenceRun | null {
+  let fence: FenceRun | null = null
+  for (let i = 0; i <= index && i < doc.childCount; i += 1) {
+    const line = doc.child(i)
+    if (line.attrs['blockId'] != null) fence = null
+    if (i === index) break
+    fence = fenceAfter(fence, line.textContent)
+  }
+  return fence
 }
 
 /**

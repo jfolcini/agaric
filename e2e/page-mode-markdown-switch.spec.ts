@@ -1,9 +1,9 @@
 /**
  * The switch between page mode and Edit as Markdown (#5691), as GitLab's "Switch to plain text
  * editing" and back: page mode's footer opens the buffer, and the buffer's Page link (or Ctrl+E)
- * saves what changed and opens page mode on it, from block mode too. Plain text only: the mock's
- * `apply_page_source` approximates list markers, checkboxes and property lines, which the Rust
- * tests and `e2e-tauri/` own.
+ * saves what changed and opens page mode on it, from block mode too. Plain text only: the
+ * Document buffer's list markers, checkboxes and property lines are pinned by the conformance
+ * fixture `apply_page_source_document.json` and by `e2e-tauri/page-source-document.e2e.ts`.
  */
 
 import type { Locator, Page } from '@playwright/test'

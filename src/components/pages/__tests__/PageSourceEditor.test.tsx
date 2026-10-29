@@ -62,8 +62,8 @@ const BUFFER: PageBuffer = {
   line_ids: [A, B, null],
 }
 const draftKey = (pageId = PAGE_ID): string => `agaric-page-source-draft:${pageId}`
-const WELCOME = '- Welcome to Agaric!'
-const HELLO = '- Hello, Agaric!'
+const WELCOME = 'Welcome to Agaric!'
+const HELLO = 'Hello, Agaric!'
 
 function report(
   overrides: Partial<CommandReturns['apply_page_source']> = {},
@@ -102,7 +102,7 @@ function routeToMockBackend(): PageBuffer {
 }
 
 function pageBuffer(pageId: string): PageBuffer {
-  return dispatch('get_page_buffer', { pageId }) as PageBuffer
+  return dispatch('get_page_buffer', { pageId, dialect: 'document' }) as PageBuffer
 }
 
 function renderEditor(pageId = PAGE_ID) {
@@ -251,7 +251,7 @@ describe('PageSourceEditor loading', () => {
     const box = await loadedEditor()
 
     expect(bufferOf(box)).toEqual({ text: buffer.text, lineIds: buffer.line_ids })
-    expect(box).toHaveTextContent(WELCOME.slice(2))
+    expect(box).toHaveTextContent(WELCOME)
     expect(box.textContent).not.toContain('^')
     expect(
       [...box.querySelectorAll('[data-block-id]')].map((line) =>
@@ -330,7 +330,7 @@ describe('PageSourceEditor saving', () => {
         baseSource: base.source,
         merge: false,
         lineIds: base.line_ids,
-        dialect: null,
+        dialect: 'document',
       },
     ])
     expect(pageBuffer(PAGE_GETTING_STARTED)).toEqual({ ...base, text, source: expect.any(String) })
@@ -351,7 +351,7 @@ describe('PageSourceEditor saving', () => {
     const { start } = lineOf(ed, WELCOME)
 
     act(() => {
-      ed.commands.setTextSelection({ from: start, to: start + '- Welcome'.length })
+      ed.commands.setTextSelection({ from: start, to: start + 'Welcome'.length })
       box.dispatchEvent(
         new ClipboardEvent('cut', {
           clipboardData: new DataTransfer(),
@@ -361,7 +361,7 @@ describe('PageSourceEditor saving', () => {
       )
     })
     act(() => {
-      ed.view.dispatch(ed.state.tr.insertText('- Hello, welcome', start))
+      ed.view.dispatch(ed.state.tr.insertText('Hello, welcome', start))
     })
     await user.click(saveButton())
 
@@ -376,7 +376,7 @@ describe('PageSourceEditor saving', () => {
     })
   })
 
-  it('Enter at the end of a bullet starts the next one, which saves as a new block after it', async () => {
+  it('Enter at the end of a paragraph starts a block after a blank line, which saves as a new block after it', async () => {
     const base = routeToMockBackend()
     const { BLOCK_GS_1, BLOCK_GS_2, PAGE_GETTING_STARTED } = SEED_IDS
     const user = userEvent.setup()
@@ -390,11 +390,13 @@ describe('PageSourceEditor saving', () => {
     expect(
       bufferOf(box)
         .text.split('\n')
-        .slice(at, at + 3),
+        .slice(at, at + 5),
     ).toEqual([
-      expect.stringMatching(/^- Welcome/),
-      '- Added by Enter',
-      expect.stringMatching(/^- Use the sidebar/),
+      expect.stringMatching(/^Welcome/),
+      '',
+      'Added by Enter',
+      '',
+      expect.stringMatching(/^Use the sidebar/),
     ])
     await user.keyboard('{Control>}s{/Control}')
 
@@ -402,9 +404,9 @@ describe('PageSourceEditor saving', () => {
       expect(onClose).toHaveBeenCalledOnce()
     })
     const saved = pageBuffer(PAGE_GETTING_STARTED)
-    expect(saved.text.split('\n')[at + 1]).toBe('- Added by Enter')
-    const added = saved.line_ids[at + 1] as string
-    expect([saved.line_ids[at], saved.line_ids[at + 2]]).toEqual([BLOCK_GS_1, BLOCK_GS_2])
+    expect(saved.text.split('\n')[at + 2]).toBe('Added by Enter')
+    const added = saved.line_ids[at + 2] as string
+    expect([saved.line_ids[at], saved.line_ids[at + 4]]).toEqual([BLOCK_GS_1, BLOCK_GS_2])
     expect(base.line_ids).not.toContain(added)
     expect(dispatch('get_block', { blockId: added })).toMatchObject({ content: 'Added by Enter' })
   })
@@ -785,7 +787,7 @@ describe('PageSourceEditor when the page changed elsewhere', () => {
   it('opens the conflict dialog listing what changed since the buffer was loaded, without ids', async () => {
     const { dialog, onClose } = await saveOverAChange()
 
-    const row = within(dialog).getByText(`- ${ELSEWHERE}`)
+    const row = within(dialog).getByText(ELSEWHERE)
     expect(row.closest('li')).toHaveTextContent(t('pageSource.changeChanged'))
     expect(within(dialog).getAllByRole('listitem')).toHaveLength(1)
     expect(within(dialog).getByRole('list')).not.toHaveTextContent('^')
@@ -805,7 +807,7 @@ describe('PageSourceEditor when the page changed elsewhere', () => {
       pageId: PAGE_GETTING_STARTED,
       source: edited.text,
       lineIds: edited.lineIds,
-      dialect: null,
+      dialect: 'document',
     }
     expect(applyCalls()).toEqual([
       { ...save, baseSource: base.source, merge: false },
@@ -835,9 +837,9 @@ describe('PageSourceEditor when the page changed elsewhere', () => {
   })
 
   it("Merge keeps both versions of a block changed on both sides, the buffer's first, and warns", async () => {
-    const mine = '- Mine: new blocks by pressing Enter'
+    const mine = 'Mine: new blocks by pressing Enter'
     const { current, dialog, onClose, user } = await saveOverAChange((box) =>
-      edit(box, '- Create new blocks by pressing Enter', mine),
+      edit(box, 'Create new blocks by pressing Enter', mine),
     )
 
     await user.click(within(dialog).getByRole('button', { name: t('pageSource.merge') }))
@@ -846,7 +848,7 @@ describe('PageSourceEditor when the page changed elsewhere', () => {
       expect(onClose).toHaveBeenCalledOnce()
     })
     expect(pageBuffer(SEED_IDS.PAGE_GETTING_STARTED).text).toBe(
-      current.text.replace(`- ${ELSEWHERE}`, `${mine} at the end of any block.\n- ${ELSEWHERE}`),
+      current.text.replace(ELSEWHERE, `${mine} at the end of any block.\n\n${ELSEWHERE}`),
     )
     expect(vi.mocked(toast.warning)).toHaveBeenCalledOnce()
   })
@@ -920,6 +922,7 @@ describe('PageSourceEditor draft', () => {
     await typingPause(() => user.keyboard('x'))
     expect(localStorage.getItem(draftKey())).toBe(
       JSON.stringify({
+        dialect: 'document',
         base: BUFFER,
         text: '- first\n- secondx\n',
         lineIds: [A, B, null],
@@ -939,7 +942,12 @@ describe('PageSourceEditor draft', () => {
     unmount()
 
     expect(localStorage.getItem(draftKey())).toBe(
-      JSON.stringify({ base: BUFFER, text: '- first\n- second x\n', lineIds: [A, B, null] }),
+      JSON.stringify({
+        dialect: 'document',
+        base: BUFFER,
+        text: '- first\n- second x\n',
+        lineIds: [A, B, null],
+      }),
     )
   })
 
@@ -959,6 +967,7 @@ describe('PageSourceEditor draft', () => {
     const base = routeToMockBackend()
     const { PAGE_GETTING_STARTED } = SEED_IDS
     const draft = {
+      dialect: 'document',
       base,
       text: base.text.replace(WELCOME, HELLO),
       lineIds: base.line_ids,
@@ -994,8 +1003,9 @@ describe('PageSourceEditor draft', () => {
     const before = editorOf(await loadedEditor())
     const cut = new DataTransfer()
     act(() => {
+      // The line and the blank line after it, which keeps its paragraph a block of its own.
       const line = lineOf(before, 'Create new blocks')
-      before.commands.setTextSelection({ from: line.start, to: line.start + line.text.length + 2 })
+      before.commands.setTextSelection({ from: line.start, to: line.start + line.text.length + 4 })
       before.view.dom.dispatchEvent(
         new ClipboardEvent('cut', { clipboardData: cut, bubbles: true, cancelable: true }),
       )
@@ -1029,8 +1039,9 @@ describe('PageSourceEditor draft', () => {
   it('a restored draft the page has changed since saves nothing and opens the conflict dialog', async () => {
     const now = routeToMockBackend()
     const { BLOCK_GS_1, PAGE_GETTING_STARTED } = SEED_IDS
-    const before = '- Welcome, before an edit elsewhere!'
+    const before = 'Welcome, before an edit elsewhere!'
     const draft = {
+      dialect: 'document',
       base: {
         ...now,
         source: now.source.replace(WELCOME, before),
@@ -1057,7 +1068,12 @@ describe('PageSourceEditor draft', () => {
   })
 
   it('Cancel on a restored draft asks, and Discard drops the draft and closes without saving', async () => {
-    const draft = { base: BUFFER, text: '- first\n- second x\n', lineIds: [A, B, null] }
+    const draft = {
+      dialect: 'document',
+      base: BUFFER,
+      text: '- first\n- second x\n',
+      lineIds: [A, B, null],
+    }
     localStorage.setItem(draftKey(), JSON.stringify(draft))
     const user = userEvent.setup()
     const { onClose } = renderEditor()
@@ -1074,12 +1090,19 @@ describe('PageSourceEditor draft', () => {
 
   it.each([
     ['not JSON', '{not json'],
-    ['missing its text', JSON.stringify({ base: BUFFER, lineIds: [A] })],
+    ['missing its text', JSON.stringify({ dialect: 'document', base: BUFFER, lineIds: [A] })],
     [
       'with a base that is no buffer',
-      JSON.stringify({ base: BUFFER.source, text: 'x', lineIds: [A] }),
+      JSON.stringify({ dialect: 'document', base: BUFFER.source, text: 'x', lineIds: [A] }),
     ],
-    ['with line ids that are not ids', JSON.stringify({ base: BUFFER, text: 'x', lineIds: [1] })],
+    [
+      'with line ids that are not ids',
+      JSON.stringify({ dialect: 'document', base: BUFFER, text: 'x', lineIds: [1] }),
+    ],
+    [
+      'of a dialect it does not know',
+      JSON.stringify({ dialect: 'source', base: BUFFER, text: 'x', lineIds: [A] }),
+    ],
   ])('ignores a draft that is %s and shows the page', async (_, stored) => {
     localStorage.setItem(draftKey(), stored)
     renderEditor()
@@ -1117,6 +1140,20 @@ describe('PageSourceEditor with a draft from before the line ids (#5160 D-f)', (
       expect(vi.mocked(toast.success)).toHaveBeenCalledWith(t('pageSource.legacyDraftCopied'))
     })
     expect(vi.mocked(pluginWriteText)).toHaveBeenCalledWith(OLD.text)
+  })
+
+  it('a draft the Source dialect wrote, its ids beside its lines, is shown read-only too, its blocks never restyled (#5691)', async () => {
+    const source = { base: BUFFER, text: 'first, edited earlier\nsecond\n', lineIds: [A, B, null] }
+    localStorage.setItem(draftKey(), JSON.stringify(source))
+    renderEditor()
+    const box = await loadedEditor()
+
+    expect(bufferOf(box)).toEqual({ text: BUFFER.text, lineIds: BUFFER.line_ids })
+    expect(screen.queryByText(t('pageSource.draftRestored'))).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: t('pageSource.legacyDraft') })).toHaveValue(
+      source.text,
+    )
+    expect(localStorage.getItem(draftKey())).toBe(JSON.stringify(source))
   })
 
   it('a failed Copy says so and logs', async () => {
@@ -1255,7 +1292,12 @@ describe('PageSourceEditor Edit, Preview and Changes', () => {
   })
 
   it('a restored draft counts its hunks and shows them in Changes before anything is typed', async () => {
-    const draft = { base: BUFFER, text: '- first\n- second edited\n', lineIds: BUFFER.line_ids }
+    const draft = {
+      dialect: 'document',
+      base: BUFFER,
+      text: '- first\n- second edited\n',
+      lineIds: BUFFER.line_ids,
+    }
     localStorage.setItem(draftKey(), JSON.stringify(draft))
     renderEditor()
     await loadedEditor()
@@ -1546,7 +1588,7 @@ describe('PageSourceEditor save report', () => {
     const later = 'Edited after the save'
     await act(() => store.getState().edit(SEED_IDS.BLOCK_GS_2, later))
     const afterEdit = pageBuffer(SEED_IDS.PAGE_GETTING_STARTED)
-    expect(afterEdit.text).toContain(`- ${later}\n`)
+    expect(afterEdit.text).toContain(`${later}\n`)
 
     await act(async () => {
       saveReport().options.action?.onClick()
@@ -1576,13 +1618,13 @@ describe('PageSourceEditor save report', () => {
     const base = routeToMockBackend()
     const { BLOCK_QN_1, BLOCK_QN_2, PAGE_GETTING_STARTED, PAGE_QUICK_NOTES } = SEED_IDS
     const notes = pageBuffer(PAGE_QUICK_NOTES)
-    const pasted = notes.text.split('\n').slice(0, 2)
-    expect(notes.line_ids.slice(0, 2)).toEqual([BLOCK_QN_1, BLOCK_QN_2])
+    const pasted = notes.text.split('\n').slice(0, 3)
+    expect(notes.line_ids.slice(0, 3)).toEqual([BLOCK_QN_1, null, BLOCK_QN_2])
     const copying = renderEditor(PAGE_QUICK_NOTES)
     const notesEditor = editorOf(await loadedEditor())
     const copied = new DataTransfer()
     act(() => {
-      const last = lineOf(notesEditor, pasted[1] as string)
+      const last = lineOf(notesEditor, pasted[2] as string)
       notesEditor.commands.setTextSelection({ from: 1, to: last.start + last.text.length })
       notesEditor.view.dom.dispatchEvent(
         new ClipboardEvent('copy', { clipboardData: copied, bubbles: true, cancelable: true }),
@@ -1595,6 +1637,8 @@ describe('PageSourceEditor save report', () => {
     const { onClose } = renderEditor(PAGE_GETTING_STARTED)
     const box = await loadedEditor()
     caretAtEnd(box)
+    // A blank line first: pasted right under the last paragraph, the lines would continue it.
+    await user.keyboard('{Enter}')
     act(() => {
       box.dispatchEvent(
         new ClipboardEvent('paste', { clipboardData: copied, bubbles: true, cancelable: true }),
@@ -1608,8 +1652,8 @@ describe('PageSourceEditor save report', () => {
     expect((await applied()).warnings).toEqual([])
     expect(vi.mocked(toast.warning)).not.toHaveBeenCalled()
     const saved = pageBuffer(PAGE_GETTING_STARTED)
-    expect(saved.text).toBe(`${base.text}${pasted.join('\n')}\n`)
-    const added = saved.line_ids.slice(base.line_ids.length - 1, -1)
+    expect(saved.text).toBe(`${base.text}\n${pasted.join('\n')}\n`)
+    const added = saved.line_ids.slice(base.line_ids.length).filter((id) => id !== null)
     expect(added).toHaveLength(2)
     for (const id of added) {
       expect(id).toEqual(expect.any(String))
@@ -1731,10 +1775,11 @@ describe('PageSourceEditor outline keys (#5160 phase 5)', () => {
     const { onClose } = renderEditor()
     const box = await loadedEditor()
     await waitFor(() => expect(box).toHaveFocus())
+    caretAtEnd(box, '- second')
 
     await user.keyboard('{Tab}')
 
-    expect(bufferOf(box)).toEqual({ text: '  - first\n- second\n', lineIds: BUFFER.line_ids })
+    expect(bufferOf(box)).toEqual({ text: '- first\n  - second\n', lineIds: BUFFER.line_ids })
     expect(box).toHaveFocus()
     await user.keyboard('{Escape}')
     const confirm = await screen.findByRole('alertdialog', { name: t('pageSource.discardTitle') })
@@ -1772,12 +1817,14 @@ describe('PageSourceEditor outline keys (#5160 phase 5)', () => {
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce()
     })
+    // Each paragraph is its line and the blank line after it.
     const at = base.line_ids.indexOf(BLOCK_GS_1)
     const swapped = <T,>(list: T[]): T[] => [
       ...list.slice(0, at),
+      list[at + 2] as T,
       list[at + 1] as T,
       list[at] as T,
-      ...list.slice(at + 2),
+      ...list.slice(at + 3),
     ]
     const saved = pageBuffer(PAGE_GETTING_STARTED)
     expect(saved.line_ids).toEqual(swapped(base.line_ids))
@@ -1785,8 +1832,6 @@ describe('PageSourceEditor outline keys (#5160 phase 5)', () => {
     expect(saved.text.split('\n')).toEqual(swapped(base.text.split('\n')))
   })
 
-  // The mock's save models no task checkbox (`parseSourceBuffer`), so the
-  // re-read buffer, which both sides write back as `[/]`, is the check.
   it('Ctrl+Enter steps the line’s task state instead of saving, and the save keeps it on the block', async () => {
     const base = routeToMockBackend()
     const { BLOCK_GS_1, PAGE_GETTING_STARTED } = SEED_IDS
@@ -1865,7 +1910,7 @@ describe('PageSourceEditor pickers (#5160 phase 5)', () => {
       'Create new blocks',
     )
 
-    expect(line).toBe('- Create new blocks by pressing Enter at the end of any block. #work')
+    expect(line).toBe('Create new blocks by pressing Enter at the end of any block. #work')
     expect(dispatch('get_block', { blockId: SEED_IDS.BLOCK_GS_3 })).toMatchObject({
       content: `Create new blocks by pressing Enter at the end of any block. #[${SEED_IDS.TAG_WORK}]`,
     })
@@ -1878,7 +1923,7 @@ describe('PageSourceEditor pickers (#5160 phase 5)', () => {
     const line = await pickAndSave(typed, option, 'Create new blocks')
 
     const ref = `((${SEED_IDS.BLOCK_MTG_1}))`
-    expect(line).toBe(`- Create new blocks by pressing Enter at the end of any block. ${ref}`)
+    expect(line).toBe(`Create new blocks by pressing Enter at the end of any block. ${ref}`)
     expect(dispatch('get_block', { blockId: SEED_IDS.BLOCK_GS_3 })).toMatchObject({
       content: `Create new blocks by pressing Enter at the end of any block. ${ref}`,
     })

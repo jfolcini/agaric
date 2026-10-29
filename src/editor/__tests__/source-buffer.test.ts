@@ -10,6 +10,7 @@ import { Editor } from '@tiptap/core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { linesContent, readLines, sourceBufferExtensions } from '@/editor/source-buffer'
+import { readBlocks } from '@/editor/source-buffer-blocks'
 
 const A = '01J0000000000000000000000A'
 const B = '01J0000000000000000000000B'
@@ -98,24 +99,28 @@ describe('the buffer document', () => {
 })
 
 describe('Enter', () => {
-  it('in the middle of a line keeps the id on the first half and gives the new line none', () => {
+  it('in the middle of a line keeps the id on the first half, and a blank line makes the rest a block', () => {
     const ed = build([
       ['foo bar', A],
+      ['', null],
       ['next', B],
     ])
-    caret(ed, 0, 3)
+    caret(ed, 0, 4)
 
     press(ed, 'Enter')
 
     expect(lines(ed)).toEqual([
-      ['foo', A],
-      [' bar', null],
+      ['foo ', A],
+      ['', null],
+      ['bar', null],
+      ['', null],
       ['next', B],
     ])
+    expect(ed.state.selection.from).toBe(at(ed, 2, 0))
   })
 
-  it('at the end of a line keeps the id there and opens a line with none', () => {
-    const ed = build([['foo', A]])
+  it('before a space, takes the space off the text it moves, which would indent it under the block above', () => {
+    const ed = build([['foo bar', A]])
     caret(ed, 0, 3)
 
     press(ed, 'Enter')
@@ -123,6 +128,22 @@ describe('Enter', () => {
     expect(lines(ed)).toEqual([
       ['foo', A],
       ['', null],
+      ['bar', null],
+    ])
+    expect(ed.state.selection.from).toBe(at(ed, 2, 0))
+  })
+
+  it('at the end of a line keeps the id there and opens a new block after a blank line (D1)', () => {
+    const ed = build([['foo', A]])
+    caret(ed, 0, 3)
+
+    press(ed, 'Enter')
+    ed.commands.insertContent('bar')
+
+    expect(lines(ed)).toEqual([
+      ['foo', A],
+      ['', null],
+      ['bar', null],
     ])
   })
 
@@ -147,7 +168,8 @@ describe('Enter', () => {
     ['  - child', '  - '],
     ['- [x] done', '- [ ] '],
     ['- [ ] todo', '- [ ] '],
-    ['- 1. ordered', '- 2. '],
+    // A Document line opens with one marker: the number after it is the bullet's text.
+    ['- 1. text', '- '],
   ])('on %j continues the list with %j', (line, next) => {
     const ed = build([[line, A]])
     caret(ed, 0, line.length)
@@ -162,7 +184,7 @@ describe('Enter', () => {
   })
 
   it.each(['- ', '-', '1. ', '- [ ] ', '  * '])(
-    'on %j, a line holding only its marker, removes the marker and ends the list',
+    'on %j, a line holding only its marker, removes the marker and ends the list, a blank line after it',
     (line) => {
       const ed = build([
         ['- item', A],
@@ -171,34 +193,136 @@ describe('Enter', () => {
       caret(ed, 1, line.length)
 
       press(ed, 'Enter')
+      ed.commands.insertContent('x')
 
       expect(lines(ed)).toEqual([
         ['- item', A],
         ['', null],
+        ['x', null],
       ])
     },
   )
 
-  it('after a thematic break opens a plain line', () => {
-    const ed = build([['* * *', A]])
-    caret(ed, 0, 5)
+  it('ending a numbered list in its middle leaves a blank line under the cursor too, so the items after it stay blocks of their own', () => {
+    const ed = build([
+      ['1. one', A],
+      ['2. two', B],
+      ['3. three', C],
+    ])
+    caret(ed, 0, 6)
+
+    press(ed, 'Enter')
+    press(ed, 'Enter')
+    ed.commands.insertContent('x')
+
+    expect(lines(ed)).toEqual([
+      ['1. one', A],
+      ['', null],
+      ['x', null],
+      ['', null],
+      ['2. two', B],
+      ['3. three', C],
+    ])
+    const { text, lineIds } = readLines(ed.state.doc)
+    expect(readBlocks(text.split('\n'), lineIds).map((block) => block.text)).toEqual([
+      'one',
+      'x',
+      'two',
+      'three',
+    ])
+  })
+
+  it('at the end of a list item’s further line leaves the same blank line under a paragraph typed there', () => {
+    const ed = build([
+      ['1. one', A],
+      ['   more', null],
+      ['2. two', B],
+    ])
+    caret(ed, 1, 7)
+
+    press(ed, 'Enter')
+    ed.commands.insertContent('x')
+
+    expect(lines(ed)).toEqual([
+      ['1. one', A],
+      ['   more', null],
+      ['', null],
+      ['x', null],
+      ['', null],
+      ['2. two', B],
+    ])
+  })
+
+  it('after a thematic break opens a new block after a blank line', () => {
+    const ed = build([['***', A]])
+    caret(ed, 0, 3)
 
     press(ed, 'Enter')
 
     expect(lines(ed)).toEqual([
-      ['* * *', A],
+      ['***', A],
+      ['', null],
       ['', null],
     ])
   })
 
-  it('with Shift splits a list line without continuing the list', () => {
-    const ed = build([['- foo', A]])
+  it('in a fenced code block breaks the line, list markers and all, and after its closing fence opens a block', () => {
+    const ed = build([
+      ['```sh', A],
+      ['- x', null],
+      ['```', null],
+    ])
+    caret(ed, 1, 3)
+
+    press(ed, 'Enter')
+    caret(ed, 3, 3)
+    press(ed, 'Enter')
+
+    expect(lines(ed)).toEqual([
+      ['```sh', A],
+      ['- x', null],
+      ['', null],
+      ['```', null],
+      ['', null],
+      ['', null],
+    ])
+  })
+
+  it('in the front matter breaks the line', () => {
+    const ed = build([
+      ['---', null],
+      ['aliases: [a]', null],
+      ['---', null],
+    ])
+    caret(ed, 1, 12)
+
+    press(ed, 'Enter')
+
+    expect(lines(ed)).toEqual([
+      ['---', null],
+      ['aliases: [a]', null],
+      ['', null],
+      ['---', null],
+    ])
+  })
+
+  it('with Shift breaks the line in the same block, without a blank line or the list’s marker', () => {
+    const ed = build([
+      ['- foo', A],
+      ['', null],
+      ['bar', B],
+    ])
     caret(ed, 0, 5)
+    press(ed, 'Enter', { shiftKey: true })
+    caret(ed, 3, 3)
 
     press(ed, 'Enter', { shiftKey: true })
 
     expect(lines(ed)).toEqual([
       ['- foo', A],
+      ['', null],
+      ['', null],
+      ['bar', B],
       ['', null],
     ])
   })

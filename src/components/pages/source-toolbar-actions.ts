@@ -18,15 +18,17 @@ import type { BlockMenuActionId } from '@/components/editor/block-context-menu/t
 import { breakLine } from '@/editor/source-buffer'
 import {
   cyclePriority,
+  cycleTaskAt,
+  dedentRange,
   deleteBlock,
-  depthOf,
   duplicateBlock,
+  indentRange,
   insertTagTrigger,
   insertTrigger,
+  moveRange,
   type SourceBlock,
   turnInto,
 } from '@/editor/source-buffer-blocks'
-import { cycleTaskAt, dedentRange, indentRange, moveRange } from '@/editor/source-buffer-keys'
 
 /** A dialog a toolbar action opens, which writes what is picked in it. */
 export type SourceDialog = 'date' | 'due' | 'schedule' | 'emoji' | 'query'
@@ -148,18 +150,12 @@ export function sourceBlockActions(
   run: (command: Command) => void,
   block: SourceBlock,
 ): BlockActions {
-  const last = block.subtreeEnd - 1
   return {
     onToggleTodo: () => run(cycleTaskAt(block.line)),
     onTogglePriority: () => run(cyclePriority(block)),
     onTurnInto: (_id, type, calloutType) => run(turnInto(block, type, calloutType)),
-    onIndent: () => run(indentRange(block.line, last)),
-    onDedent: () =>
-      run(
-        (state, dispatch) =>
-          depthOf(state.doc.child(block.line).textContent) === 0 ||
-          dedentRange(block.line, last)(state, dispatch),
-      ),
+    onIndent: () => run(indentRange(block.line, block.line)),
+    onDedent: () => run(dedentRange(block.line, block.line)),
     onMoveUp: () => run(moveRange(block.line, block.line, -1)),
     onMoveDown: () => run(moveRange(block.line, block.line, 1)),
     onDuplicate: () => run(duplicateBlock(block)),
