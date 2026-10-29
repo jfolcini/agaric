@@ -1563,7 +1563,7 @@ pub async fn reproject_block_properties_from_engine(
 
 /// The `block_properties` column a `Str` value lands in under a definition of
 /// `value_type` (`None`: the key is undeclared), as
-/// [`reproject_property_row_from_engine`] routes it. A definition change moves
+/// `reproject_property_row_from_engine` routes it. A definition change moves
 /// the key's values only when this changes (#5841).
 pub fn str_column_for(value_type: Option<&str>) -> &'static str {
     match value_type {
