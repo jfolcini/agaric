@@ -83,7 +83,7 @@ export const SYNC_NETWORK_BLOCKED_EVENT = 'sync:network_blocked'
  *
  * Exported so the catalog entry has a *statically visible* reference: the
  * translation happens through a value read off the payload, which no static
- * scan (nor the `catalog-parity` orphan sweep) can follow back to a key.
+ * scan can follow back to a key.
  */
 export const OS_NETWORK_BLOCKED_REASON_KEY = 'pairing.osNetworkBlocked'
 

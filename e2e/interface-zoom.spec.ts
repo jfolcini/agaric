@@ -114,6 +114,34 @@ const VIEWS = [
   'Trash',
 ] as const
 
+/**
+ * The level-1 heading each view shows once it has switched (Status is a
+ * Settings tab, so its heading is Settings'; the Journal's is the day).
+ */
+const VIEW_HEADING: Record<(typeof VIEWS)[number], string | RegExp> = {
+  Journal: /, \d{4}$/,
+  Pages: 'Pages',
+  Search: 'Search',
+  Tags: 'Tags',
+  Settings: 'Settings',
+  Graph: 'Graph',
+  Templates: 'Templates',
+  'Advanced Query': 'Advanced Query',
+  Status: 'Settings',
+  History: 'History',
+  Trash: 'Trash',
+}
+
+/**
+ * The view is the one asked for and has finished loading: its heading shows,
+ * and no loading skeleton (`aria-busy`, the app's one loading contract) is left,
+ * neither the lazy-chunk fallback nor a view's own data skeleton.
+ */
+async function expectViewLoaded(page: Page, view: (typeof VIEWS)[number]): Promise<void> {
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(VIEW_HEADING[view])
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0)
+}
+
 test('at the largest zoom the default window scrolls no view sideways @settings', async ({
   page,
 }) => {
@@ -140,8 +168,7 @@ test('at the largest zoom the default window scrolls no view sideways @settings'
   await expect(page.getByTestId('mobile-sidebar-trigger')).toBeVisible()
   for (const view of VIEWS) {
     await navigateToView(page, view)
-    await page.waitForLoadState('networkidle')
-    await page.waitForTimeout(250)
+    await expectViewLoaded(page, view)
     await expectNoHorizontalOverflow(page, undefined, `${view} view at ${max * 100}% zoom`)
   }
 })

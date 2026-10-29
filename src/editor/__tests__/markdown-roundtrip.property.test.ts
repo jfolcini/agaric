@@ -737,23 +737,19 @@ describe('#4053 hasGreedyAdjacency excludes nested adjacency, not just top-level
  */
 
 /**
- * Runs per property — 15 000 executions in total. Chosen by measurement on this
- * machine, not by feel; test time for this FILE, everything else held fixed:
- *
- *   without these properties  0.10s
- *   2 000 runs                0.61s
- *   5 000 runs                1.27s   ← chosen
- *  10 000 runs                2.41s
- *  20 000 runs                4.56s   (the 60 000-execution sweep from the PR)
- *
- * Growth is linear, so the knob is purely "how much of the original sweep do we
- * pay for on every CI run". 5 000 buys a quarter of it for ~1.2s against a
- * 160s full frontend suite (<1%), i.e. it does not dominate; the 20 000 that
- * reproduces the full sweep is a visible tax on every push. Re-run the higher
- * rows when touching the parse/serialize pair — `SWEEP_RUNS` (see `NUM_RUNS`)
- * raises this knob and that one together.
+ * Runs per nesting property. Sized by mutation, not by feel: with the
+ * parse/serialize pair broken one way at a time (CRLF split, tab columns, the
+ * marker-escape width at indent 3 for `-` and for `1.`, the straddling-tab
+ * dedent, the item-continuation indent, blank lines inside an indented item),
+ * the dedicated property for each mutant failed within 550 runs in every one
+ * of six random-seed trials; the slowest were the two marker-escape widths in
+ * the marker-like-paragraph property. 1 000 keeps about twice that headroom.
+ * The one rarer mutant (the two-space-led paragraph after a list in
+ * `needsWhitespaceDefuse`) is also pinned deterministically by the #4049
+ * fixpoint repro in `markdown-serializer.test.ts`. Cost is linear in the count;
+ * `SWEEP_RUNS` (see `NUM_RUNS`) raises it for the by-hand sweep.
  */
-const NESTING_NUM_RUNS = Number(process.env['SWEEP_RUNS'] ?? 5000)
+const NESTING_NUM_RUNS = Number(process.env['SWEEP_RUNS'] ?? 1000)
 
 // -- P1: deep, heterogeneous list structures ---------------------------------
 

@@ -9,20 +9,15 @@
  * resolves against the SAME merged `en.translation` resource the app uses
  * at runtime (imported from `@/lib/i18n`, not re-implemented here).
  *
- * Two tests:
- *  - "no missing keys" — hard, must-pass. Every literal key found in the
- *    scan must exist in the catalog (accounting for i18next plural
- *    suffixes). This is the reliable regression guard #2946 asks for.
- *  - "no orphan keys" — soft/informational. The inverse (catalog keys never
- *    referenced) is measurably noisy in this codebase: dynamic keys built
- *    from template literals (`t(\`callout.${type}\`)`) and lookup tables
- *    (`{ Today: 'agenda.today' }`, later passed to `t(dynamicVar)`) can't be
- *    resolved by a static regex scan. A hard-failing version of this check
- *    was prototyped and produced 260+ false-positive "orphans" even after
- *    two rounds of heuristics — see the comment on `KNOWN_DYNAMIC_PREFIXES`
- *    below. Per #2946's own guidance ("a flaky guard is worse than none"),
- *    this is kept informational: it reports candidates via console.info but
- *    never fails the suite.
+ * "no missing keys" is the hard, must-pass guard: every literal key found in
+ * the scan must exist in the catalog (accounting for i18next plural
+ * suffixes). The inverse (catalog keys never referenced) is not checked: dynamic
+ * keys built from template literals (`t(\`callout.${type}\`)`) and lookup tables
+ * (`{ Today: 'agenda.today' }`, later passed to `t(dynamicVar)`) cannot be
+ * resolved by a static regex scan, and a hard-failing version produced 260+
+ * false-positive "orphans" even after two rounds of heuristics (#2946: "a flaky
+ * guard is worse than none"). An informational-only version asserted nothing
+ * about orphans and cost a second full-tree scan, so it was removed.
  */
 
 import { readdirSync, readFileSync } from 'node:fs'
@@ -517,90 +512,5 @@ describe('i18n catalog — plural forms, direct literal checks (#3882)', () => {
   it('pageBrowser.loadedMorePages', () => {
     expect(i18n.t('pageBrowser.loadedMorePages', { count: 1 })).toBe('Loaded 1 more page')
     expect(i18n.t('pageBrowser.loadedMorePages', { count: 4 })).toBe('Loaded 4 more pages')
-  })
-})
-
-// ── Orphan keys (informational, non-failing) ────────────────────────────
-
-/**
- * Prefixes for key families that are always constructed dynamically
- * (template literals or lookup tables), so the static scan above never
- * records a literal usage for their individual members even though they
- * are genuinely referenced at runtime. Compiled by hand from the call
- * sites that build keys this way (e.g. `t(\`callout.${type}\`)` in
- * editor-toolbar/CalloutTypeSelector.tsx). Not exhaustive — this list only
- * feeds the informational report below, never a failing assertion.
- */
-const KNOWN_DYNAMIC_PREFIXES = [
-  'advancedQuery.aggregate.op.',
-  'advancedQuery.aggregate.target.',
-  'advancedQuery.sort.column.',
-  'advancedQuery.group.',
-  'callout.',
-  'pageBrowser.filter.blockType.',
-  'pageBrowser.filter.lastEdited.',
-  'filter.dimension.',
-  'queryBuilder.readable.op.',
-  'queryBuilder.mode.',
-  'queryBuilder.type.',
-  'graph.filter.statusValue.',
-  'graph.filter.priorityValue.',
-  'graph.filter.',
-  'history.opTypeDescription.',
-  'pairing.ordinal.',
-  'contextMenu.turnIntoType.',
-]
-
-function baseKey(key: string): string {
-  const suffix = PLURAL_SUFFIXES.find((s) => key.endsWith(s))
-  return suffix ? key.slice(0, -suffix.length) : key
-}
-
-describe('i18n catalog parity — orphan keys (informational)', () => {
-  it('reports catalog keys with no detected literal or table-value reference', () => {
-    const catalog = i18n.getResourceBundle('en', 'translation') as Record<string, string>
-    const usages = scanLiteralKeyUsages()
-    const usedBaseKeys = new Set([...usages.keys()].map(baseKey))
-
-    // Second, broader signal: a lookup table like
-    // `{ Today: 'agenda.today' }` (AgendaResults.tsx) references a key as a
-    // plain string literal without going through a `t(...)` call at that
-    // site — the key travels through a variable to a later `t(dynamicVar)`
-    // call. Treat ANY quoted string literal in the codebase that exactly
-    // matches a catalog key as a usage signal too, to cut down noise.
-    const anyStringLiteral = new Set<string>()
-    const STRING_LITERAL_RE = /(['"])((?:\\.|(?!\1).)*)\1/g
-    for (const file of collectSourceFiles(SRC_ROOT, [])) {
-      if (isCatalogSourceFile(file)) continue
-      const text = stripComments(readFileSync(file, 'utf8'))
-      for (const m of text.matchAll(STRING_LITERAL_RE)) {
-        if (m[2] !== undefined) anyStringLiteral.add(m[2])
-      }
-    }
-
-    const orphans = Object.keys(catalog).filter((key) => {
-      const b = baseKey(key)
-      if (usedBaseKeys.has(b)) return false
-      if (anyStringLiteral.has(key) || anyStringLiteral.has(b)) return false
-      if (KNOWN_DYNAMIC_PREFIXES.some((prefix) => key.startsWith(prefix))) return false
-      return true
-    })
-
-    if (orphans.length > 0) {
-      console.info(
-        `[catalog-parity] ${orphans.length} catalog key(s) have no detected reference ` +
-          `(informational only — static scanning of dynamically-constructed keys is unreliable, ` +
-          `see the file header comment). Sample:\n${orphans
-            .slice(0, 25)
-            .map((k) => `  - "${k}"`)
-            .join('\n')}`,
-      )
-    }
-
-    // Sanity only: the scan itself must have run and the catalog must be
-    // non-empty. This test intentionally never fails on the orphan count —
-    // a flaky "no orphans" guard was measured to be worse than no guard at
-    // all in this codebase (260+ false positives after two heuristics).
-    expect(Object.keys(catalog).length).toBeGreaterThan(0)
   })
 })
