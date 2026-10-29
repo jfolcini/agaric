@@ -5312,6 +5312,8 @@ async fn every_builtin_definition_refuses_create_update_and_delete_5841() {
     use agaric_core::error::ValidationCode;
 
     let (pool, _dir) = test_pool().await;
+
+    let mat = Materializer::new(pool.clone());
     for def in agaric_store::op::BUILTIN_PROPERTY_DEFS {
         let key = def.key;
         let created =
@@ -5322,15 +5324,21 @@ async fn every_builtin_definition_refuses_create_update_and_delete_5841() {
             Some(ValidationCode::BuiltinPropertyLocked),
             "creating '{key}' is refused"
         );
-        let updated =
-            update_property_def_options_inner(&pool, TEST_SPACE_ID, key.into(), r#"["x"]"#.into())
-                .await;
+        let updated = update_property_def_options_inner(
+            &pool,
+            DEV,
+            &mat,
+            TEST_SPACE_ID,
+            key.into(),
+            r#"["x"]"#.into(),
+        )
+        .await;
         assert_eq!(
             updated.err().and_then(|e| e.validation_code()),
             Some(ValidationCode::BuiltinPropertyLocked),
             "editing the options of '{key}' is refused"
         );
-        let deleted = delete_property_def_inner(&pool, TEST_SPACE_ID, key.into()).await;
+        let deleted = delete_property_def_inner(&pool, DEV, &mat, TEST_SPACE_ID, key.into()).await;
         assert_eq!(
             deleted.err().and_then(|e| e.validation_code()),
             Some(ValidationCode::BuiltinPropertyLocked),
@@ -5367,6 +5375,7 @@ async fn every_builtin_definition_refuses_create_update_and_delete_5841() {
 async fn update_property_def_options_sanitizes_database_errors() {
     // Trigger a Database error by closing the pool before calling.
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
     // Seed a valid select-type def so the query reaches the UPDATE stage,
     // not the early NotFound branch.
     create_test_property_def(
@@ -5382,6 +5391,8 @@ async fn update_property_def_options_sanitizes_database_errors() {
 
     let raw = update_property_def_options_inner(
         &pool,
+        DEV,
+        &mat,
         TEST_SPACE_ID,
         "moods".into(),
         r#"["a","b"]"#.into(),
@@ -5412,13 +5423,14 @@ async fn update_property_def_options_sanitizes_database_errors() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_property_def_sanitizes_database_errors() {
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
     create_test_property_def(&pool, "temp".into(), "text".into(), None)
         .await
         .unwrap();
 
     pool.close().await;
 
-    let raw = delete_property_def_inner(&pool, TEST_SPACE_ID, "temp".into()).await;
+    let raw = delete_property_def_inner(&pool, DEV, &mat, TEST_SPACE_ID, "temp".into()).await;
     let sanitized = raw.map_err(sanitize_internal_error);
 
     match sanitized {
@@ -5447,6 +5459,7 @@ async fn update_property_def_options_preserves_user_facing_errors_through_saniti
     // unchanged — otherwise the frontend loses the actionable message
     // ("options must be a JSON array of strings" / "must not be empty").
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
     create_test_property_def(
         &pool,
         "flavour".into(),
@@ -5458,6 +5471,8 @@ async fn update_property_def_options_preserves_user_facing_errors_through_saniti
 
     let raw = update_property_def_options_inner(
         &pool,
+        DEV,
+        &mat,
         TEST_SPACE_ID,
         "flavour".into(),
         "not-json".into(),
@@ -5486,6 +5501,7 @@ async fn update_property_def_options_reads_back_committed_row() {
     // pre-update snapshot). The returned options must reflect exactly what was
     // persisted, and the persisted row must match.
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
     create_test_property_def(
         &pool,
         "flavour".into(),
@@ -5497,6 +5513,8 @@ async fn update_property_def_options_reads_back_committed_row() {
 
     let updated = update_property_def_options_inner(
         &pool,
+        DEV,
+        &mat,
         TEST_SPACE_ID,
         "flavour".into(),
         r#"["sweet","sour"]"#.into(),
@@ -5523,8 +5541,11 @@ async fn update_property_def_options_missing_key_returns_not_found() {
     // #383: a missing definition must surface NotFound (the existence check
     // now runs inside the tx; this exercises the early-return rollback path).
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
     let result = update_property_def_options_inner(
         &pool,
+        DEV,
+        &mat,
         TEST_SPACE_ID,
         "no-such-key".into(),
         r#"["a"]"#.into(),
@@ -5540,15 +5561,17 @@ async fn update_property_def_options_missing_key_returns_not_found() {
 async fn delete_property_def_preserves_user_facing_errors_through_sanitize() {
     // NotFound / Validation are user-facing — sanitize must not rewrite them.
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
-    let raw = delete_property_def_inner(&pool, TEST_SPACE_ID, "nonexistent-key".into()).await;
+    let raw =
+        delete_property_def_inner(&pool, DEV, &mat, TEST_SPACE_ID, "nonexistent-key".into()).await;
     let sanitized = raw.map_err(sanitize_internal_error);
     assert!(
         matches!(sanitized, Err(AppError::NotFound(_))),
         "NotFound must pass through sanitization unchanged, got: {sanitized:?}"
     );
 
-    let raw = delete_property_def_inner(&pool, TEST_SPACE_ID, "todo_state".into()).await;
+    let raw = delete_property_def_inner(&pool, DEV, &mat, TEST_SPACE_ID, "todo_state".into()).await;
     let sanitized = raw.map_err(sanitize_internal_error);
     assert!(
         matches!(sanitized, Err(AppError::Validation { .. })),
@@ -5577,12 +5600,13 @@ async fn m26_delete_property_def_happy_path_removes_row_when_no_dependents() {
     // No `block_properties` rows reference the key → the delete should
     // succeed and the `property_definitions` row should be gone.
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
     create_test_property_def(&pool, "scratch".into(), "text".into(), None)
         .await
         .unwrap();
 
-    delete_property_def_inner(&pool, TEST_SPACE_ID, "scratch".into())
+    delete_property_def_inner(&pool, DEV, &mat, TEST_SPACE_ID, "scratch".into())
         .await
         .expect("delete must succeed when no block_properties reference the key");
 
@@ -5642,7 +5666,8 @@ async fn m26_delete_property_def_rejects_when_block_properties_reference_key() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    let result = delete_property_def_inner(&pool, TEST_SPACE_ID, "importance".into()).await;
+    let result =
+        delete_property_def_inner(&pool, DEV, &mat, TEST_SPACE_ID, "importance".into()).await;
     assert!(
         matches!(result, Err(AppError::Validation { .. })),
         "delete must return Validation when block_properties reference the key, got: {result:?}"
@@ -5719,7 +5744,8 @@ async fn m26_delete_property_def_rejection_message_includes_key_and_count() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    let result = delete_property_def_inner(&pool, TEST_SPACE_ID, "importance".into()).await;
+    let result =
+        delete_property_def_inner(&pool, DEV, &mat, TEST_SPACE_ID, "importance".into()).await;
     match result {
         Err(AppError::Validation { message: msg, .. }) => {
             // Shown verbatim in the Settings toast, so it is user-facing copy.
@@ -9419,6 +9445,8 @@ async fn set_property_checks_a_value_against_its_own_spaces_definition_5841() {
     let in_b = block_in_space(&pool, &mat, TEST_SPACE_B_ID, None).await;
     create_property_def_inner(
         &pool,
+        DEV,
+        &mat,
         TEST_SPACE_ID,
         "stage".into(),
         "select".into(),
@@ -9467,15 +9495,29 @@ async fn create_property_def_probes_only_its_own_spaces_values_5841() {
     let mat = Materializer::new(pool.clone());
     block_in_space(&pool, &mat, TEST_SPACE_B_ID, Some(("year", "circa 1920"))).await;
 
-    let declared =
-        create_property_def_inner(&pool, TEST_SPACE_ID, "year".into(), "number".into(), None)
-            .await
-            .expect("space A's blocks hold no `year`");
+    let declared = create_property_def_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "year".into(),
+        "number".into(),
+        None,
+    )
+    .await
+    .expect("space A's blocks hold no `year`");
     assert_eq!(declared.value_type, "number");
 
-    let refused =
-        create_property_def_inner(&pool, TEST_SPACE_B_ID, "year".into(), "number".into(), None)
-            .await;
+    let refused = create_property_def_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_B_ID,
+        "year".into(),
+        "number".into(),
+        None,
+    )
+    .await;
     assert!(
         matches!(refused, Err(AppError::Validation { message: ref msg, .. })
             if msg.contains("cannot declare property 'year' as 'number'")
@@ -9499,20 +9541,20 @@ async fn delete_property_def_counts_only_its_own_spaces_values_5841() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     for space in [TEST_SPACE_ID, TEST_SPACE_B_ID] {
-        create_property_def_inner(&pool, space, "stage".into(), "text".into(), None)
+        create_property_def_inner(&pool, DEV, &mat, space, "stage".into(), "text".into(), None)
             .await
             .unwrap();
     }
     block_in_space(&pool, &mat, TEST_SPACE_ID, Some(("stage", "draft"))).await;
 
-    let refused = delete_property_def_inner(&pool, TEST_SPACE_ID, "stage".into()).await;
+    let refused = delete_property_def_inner(&pool, DEV, &mat, TEST_SPACE_ID, "stage".into()).await;
     assert!(
         matches!(refused, Err(AppError::Validation { message: ref msg, .. })
             if msg == "Can't delete 'stage': 1 block(s) still use it. Remove the property from \
                        them first."),
         "space A's own value keeps its definition, got {refused:?}"
     );
-    delete_property_def_inner(&pool, TEST_SPACE_B_ID, "stage".into())
+    delete_property_def_inner(&pool, DEV, &mat, TEST_SPACE_B_ID, "stage".into())
         .await
         .expect("no block of space B holds `stage`");
     assert!(
@@ -9537,8 +9579,11 @@ async fn delete_property_def_counts_only_its_own_spaces_values_5841() {
 #[tokio::test]
 async fn a_space_without_the_key_reads_and_writes_none_of_another_spaces_row_5841() {
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
     create_property_def_inner(
         &pool,
+        DEV,
+        &mat,
         TEST_SPACE_ID,
         "stage".into(),
         "select".into(),
@@ -9564,6 +9609,8 @@ async fn a_space_without_the_key_reads_and_writes_none_of_another_spaces_row_584
     );
     let updated = update_property_def_options_inner(
         &pool,
+        DEV,
+        &mat,
         TEST_SPACE_B_ID,
         "stage".into(),
         r#"["draft","final"]"#.into(),
@@ -9573,7 +9620,8 @@ async fn a_space_without_the_key_reads_and_writes_none_of_another_spaces_row_584
         matches!(updated, Err(AppError::NotFound(_))),
         "got {updated:?}"
     );
-    let deleted = delete_property_def_inner(&pool, TEST_SPACE_B_ID, "stage".into()).await;
+    let deleted =
+        delete_property_def_inner(&pool, DEV, &mat, TEST_SPACE_B_ID, "stage".into()).await;
     assert!(
         matches!(deleted, Err(AppError::NotFound(_))),
         "got {deleted:?}"
@@ -9583,4 +9631,507 @@ async fn a_space_without_the_key_reads_and_writes_none_of_another_spaces_row_584
         .unwrap()
         .expect("A's row is untouched");
     assert_eq!(a.options.as_deref(), Some(r#"["draft"]"#));
+}
+
+// ======================================================================
+// Property definitions are ops (#5841 S1)
+// ======================================================================
+
+/// Every `set_property_def` op, oldest first: `(op_log.block_id, payload)`.
+async fn definition_ops(pool: &SqlitePool) -> Vec<(Option<String>, serde_json::Value)> {
+    let rows: Vec<(Option<String>, String)> = sqlx::query_as(
+        "SELECT block_id, payload FROM op_log WHERE op_type = 'set_property_def' ORDER BY seq",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    rows.into_iter()
+        .map(|(block_id, payload)| (block_id, serde_json::from_str(&payload).unwrap()))
+        .collect()
+}
+
+/// [`TEST_SPACE_ID`]'s doc's definition of `key`.
+fn root_def(mat: &Materializer, key: &str) -> Option<agaric_store::op::PropertyDefState> {
+    mat.loro_state()
+        .registry
+        .for_space(&SpaceId::from_trusted(TEST_SPACE_ID), DEV)
+        .unwrap()
+        .engine_mut()
+        .read_property_def(key)
+        .unwrap()
+}
+
+/// [`TEST_SPACE_ID`]'s `(value_type, options)` row for `key`.
+async fn def_row(pool: &SqlitePool, key: &str) -> Option<(String, Option<String>)> {
+    sqlx::query_as(
+        "SELECT value_type, options FROM property_definitions WHERE space_id = ? AND key = ?",
+    )
+    .bind(TEST_SPACE_ID)
+    .bind(key)
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+}
+
+fn select_def(options: &str) -> agaric_store::op::PropertyDefState {
+    agaric_store::op::PropertyDefState {
+        value_type: "select".into(),
+        options: Some(options.into()),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_edit_and_delete_of_a_definition_append_one_op_each_5841() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (one, two) = (r#"["a"]"#, r#"["a","b"]"#);
+    let created = capture_op_refs(create_property_def_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "stage".into(),
+        "select".into(),
+        Some(one.into()),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(created.op_refs.len(), 1, "a create is one op");
+    assert_eq!(
+        root_def(&mat, "stage"),
+        Some(select_def(one)),
+        "the doc holds it"
+    );
+
+    let edited = capture_op_refs(update_property_def_options_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "stage".into(),
+        two.into(),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(edited.op_refs.len(), 1, "an options edit is one op");
+    assert_eq!(
+        root_def(&mat, "stage"),
+        Some(select_def(two)),
+        "the doc follows the edit"
+    );
+
+    let deleted = capture_op_refs(delete_property_def_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "stage".into(),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(deleted.op_refs.len(), 1, "a delete is one op");
+    assert_eq!(
+        deleted.inner.options.as_deref(),
+        Some(two),
+        "the delete answers with the definition it deleted"
+    );
+    assert_eq!(root_def(&mat, "stage"), None, "the doc drops it");
+    assert_eq!(def_row(&pool, "stage").await, None, "and so does SQL");
+
+    let def = |options: &str| serde_json::json!({ "value_type": "select", "options": options });
+    let op = |def: serde_json::Value, prior: serde_json::Value| {
+        (
+            Some(TEST_SPACE_ID.to_owned()),
+            serde_json::json!({ "space_id": TEST_SPACE_ID, "key": "stage", "def": def, "prior": prior }),
+        )
+    };
+    assert_eq!(
+        definition_ops(&pool).await,
+        vec![
+            op(def(one), serde_json::Value::Null),
+            op(def(two), def(one)),
+            op(serde_json::Value::Null, def(two)),
+        ],
+        "each op names the space as its block and carries the definition it replaced"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn writing_the_definition_the_space_holds_appends_nothing_5841() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let create = || {
+        capture_op_refs(create_property_def_inner(
+            &pool,
+            DEV,
+            &mat,
+            TEST_SPACE_ID,
+            "stage".into(),
+            "select".into(),
+            Some(r#"["a"]"#.into()),
+        ))
+    };
+    create().await.unwrap();
+    let again = create().await.unwrap();
+    assert!(
+        again.op_refs.is_empty(),
+        "a create of a declared key appends nothing"
+    );
+    let same = capture_op_refs(update_property_def_options_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "stage".into(),
+        r#"["a"]"#.into(),
+    ))
+    .await
+    .unwrap();
+    assert!(
+        same.op_refs.is_empty(),
+        "an options edit to the same options appends nothing"
+    );
+    assert_eq!(definition_ops(&pool).await.len(), 1, "one op in all");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_restores_a_deleted_definition_and_redo_deletes_it_again_5841() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    create_property_def_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "stage".into(),
+        "select".into(),
+        Some(r#"["a"]"#.into()),
+    )
+    .await
+    .unwrap();
+    let edited = capture_op_refs(update_property_def_options_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "stage".into(),
+        r#"["a","b"]"#.into(),
+    ))
+    .await
+    .unwrap();
+    let deleted = capture_op_refs(delete_property_def_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "stage".into(),
+    ))
+    .await
+    .unwrap();
+
+    let delete_ref = deleted.op_refs[0].clone();
+    let undone = undo_ops_inner(&pool, DEV, &mat, [deleted.op_refs, edited.op_refs].concat())
+        .await
+        .unwrap();
+    assert_eq!(
+        def_row(&pool, "stage").await,
+        Some(("select".into(), Some(r#"["a"]"#.into()))),
+        "one undo of the delete and the edit restores the created definition"
+    );
+    assert_eq!(
+        root_def(&mat, "stage"),
+        Some(select_def(r#"["a"]"#)),
+        "in the doc too"
+    );
+
+    let undo_of_delete = &undone
+        .iter()
+        .find(|result| result.reversed_op == delete_ref)
+        .expect("the delete was undone")
+        .new_op_ref;
+    redo_page_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        undo_of_delete.device_id.clone(),
+        undo_of_delete.seq,
+    )
+    .await
+    .unwrap();
+    assert_eq!(def_row(&pool, "stage").await, None, "redo deletes it again");
+    assert_eq!(root_def(&mat, "stage"), None, "in the doc too");
+}
+
+/// Undoing a `date` declaration after a block took a value under the key
+/// re-types the value: it leaves `value_date` for `value_text`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undoing_a_date_declaration_moves_held_values_back_to_text_5841() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let declared = capture_op_refs(create_property_def_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "due2".into(),
+        "date".into(),
+        None,
+    ))
+    .await
+    .unwrap();
+    let page =
+        create_page_in_space_inner(&pool, DEV, &mat, None, "Plan".into(), TEST_SPACE_ID.into())
+            .await
+            .unwrap();
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.as_str().into(),
+        "due2".into(),
+        None,
+        None,
+        Some("2026-11-03".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let held = || async {
+        sqlx::query_as::<_, (Option<String>, Option<String>)>(
+            "SELECT value_text, value_date FROM block_properties WHERE block_id = ? AND key = 'due2'",
+        )
+        .bind(page.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    assert_eq!(
+        held().await,
+        (None, Some("2026-11-03".into())),
+        "declared, a date"
+    );
+
+    undo_ops_inner(&pool, DEV, &mat, declared.op_refs)
+        .await
+        .unwrap();
+    assert_eq!(
+        def_row(&pool, "due2").await,
+        None,
+        "the declaration is gone"
+    );
+    assert_eq!(
+        held().await,
+        (Some("2026-11-03".into()), None),
+        "undeclared, the value is text again"
+    );
+}
+
+/// A page of [`TEST_SPACE_ID`] holding `value` as text under `key`, which the
+/// space does not declare.
+async fn page_holding_text(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    key: &str,
+    value: &str,
+) -> String {
+    let page =
+        create_page_in_space_inner(pool, DEV, mat, None, "Plan".into(), TEST_SPACE_ID.into())
+            .await
+            .unwrap();
+    set_property_inner(
+        pool,
+        DEV,
+        mat,
+        page.as_str().into(),
+        key.into(),
+        Some(value.into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    page.as_str().to_owned()
+}
+
+/// `block_id`'s `(value_text, value_num, value_date)` under `key`.
+async fn held_value(
+    pool: &SqlitePool,
+    block_id: &str,
+    key: &str,
+) -> Option<(Option<String>, Option<f64>, Option<String>)> {
+    sqlx::query_as(
+        "SELECT value_text, value_num, value_date FROM block_properties \
+         WHERE block_id = ? AND key = ?",
+    )
+    .bind(block_id)
+    .bind(key)
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+}
+
+/// Undoing a delete restores a declaration, so it is refused, as the create
+/// is, when a value set since would not fit it: re-typed, the value would
+/// fail to parse and vanish.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undoing_a_delete_over_values_the_type_refuses_is_refused_5841() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    create_property_def_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "year".into(),
+        "number".into(),
+        None,
+    )
+    .await
+    .unwrap();
+    let deleted = capture_op_refs(delete_property_def_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "year".into(),
+    ))
+    .await
+    .unwrap();
+    let page = page_holding_text(&pool, &mat, "year", "circa 1920").await;
+
+    let undone = undo_ops_inner(&pool, DEV, &mat, deleted.op_refs).await;
+    assert!(
+        matches!(&undone, Err(AppError::Validation { message, .. })
+            if message.contains("cannot declare property 'year' as 'number'")),
+        "got {undone:?}"
+    );
+    assert_eq!(def_row(&pool, "year").await, None, "still undeclared");
+    assert_eq!(root_def(&mat, "year"), None, "in the doc too");
+    assert_eq!(
+        held_value(&pool, &page, "year").await,
+        Some((Some("circa 1920".into()), None, None)),
+        "the value stays, as text"
+    );
+}
+
+/// Undoing an options edit re-types nothing, so it is not refused over a
+/// value outside the restored options: the value stays, as text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undoing_an_options_edit_over_a_value_outside_them_succeeds_5841() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    create_property_def_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "stage".into(),
+        "select".into(),
+        Some(r#"["a"]"#.into()),
+    )
+    .await
+    .unwrap();
+    let edited = capture_op_refs(update_property_def_options_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "stage".into(),
+        r#"["a","b"]"#.into(),
+    ))
+    .await
+    .unwrap();
+    let page = page_holding_text(&pool, &mat, "stage", "b").await;
+
+    undo_ops_inner(&pool, DEV, &mat, edited.op_refs)
+        .await
+        .unwrap();
+    assert_eq!(
+        def_row(&pool, "stage").await,
+        Some(("select".into(), Some(r#"["a"]"#.into()))),
+        "the edit is undone"
+    );
+    assert_eq!(
+        held_value(&pool, &page, "stage").await,
+        Some((Some("b".into()), None, None)),
+        "the value stays, as text"
+    );
+}
+
+/// The redo of an undone create restores the declaration through the same
+/// arm, and is refused the same way.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn redoing_a_create_over_values_the_type_refuses_is_refused_5841() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let declared = capture_op_refs(create_property_def_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "due2".into(),
+        "date".into(),
+        None,
+    ))
+    .await
+    .unwrap();
+    let undone = undo_ops_inner(&pool, DEV, &mat, declared.op_refs)
+        .await
+        .unwrap();
+    let page = page_holding_text(&pool, &mat, "due2", "someday").await;
+
+    let undo = &undone[0].new_op_ref;
+    let redone = redo_page_op_inner(&pool, DEV, &mat, undo.device_id.clone(), undo.seq).await;
+    assert!(
+        matches!(&redone, Err(AppError::Validation { message, .. })
+            if message.contains("cannot declare property 'due2' as 'date'")),
+        "got {redone:?}"
+    );
+    assert_eq!(def_row(&pool, "due2").await, None, "still undeclared");
+    assert_eq!(
+        held_value(&pool, &page, "due2").await,
+        Some((Some("someday".into()), None, None)),
+        "the value stays, as text"
+    );
+}
+
+/// A new space's doc carries the defaults, so every device that receives the
+/// space receives them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_new_spaces_doc_holds_the_default_definitions_5841() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let space = create_space_inner(&pool, DEV, &mat, "Alpha".into(), None)
+        .await
+        .unwrap();
+    let held: Vec<String> = mat
+        .loro_state()
+        .registry
+        .for_space(&SpaceId::from_trusted(space.as_str()), DEV)
+        .unwrap()
+        .engine_mut()
+        .read_property_defs()
+        .unwrap()
+        .into_iter()
+        .map(|(key, _)| key)
+        .collect();
+    let mut defaults: Vec<String> = DEFAULT_PROPERTY_DEFS
+        .iter()
+        .map(|(key, _, _)| (*key).to_owned())
+        .collect();
+    defaults.sort();
+    assert_eq!(held, defaults, "the doc holds every default");
 }

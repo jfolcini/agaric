@@ -43,6 +43,7 @@ import {
   properties,
   propertyDefs,
   pushOp,
+  pushPropertyDefOp,
   spacePropertyDefs,
   todayDate,
 } from '@/lib/tauri-mock/seed'
@@ -920,16 +921,18 @@ export const propertiesHandlers = {
     // INSERT OR IGNORE (`create_property_def_inner`): the space's existing
     // declaration wins untouched, so re-asserting a key under a different
     // value_type answers with the FIRST one rather than overwriting it.
+    // Nothing is written, so no op is appended (#5841).
     const existing = propertyDefinition(spaceId, key)
-    if (existing) return existing
+    if (existing) return { ...existing, op_refs: [] }
     const def = {
       key,
       value_type: valueType,
       options,
       created_at: new Date().toISOString(),
     }
+    const op = pushPropertyDefOp(spaceId, key, def, null)
     spacePropertyDefs(spaceId).set(key, def)
-    return { ...def, builtin: false }
+    return { ...def, builtin: false, op_refs: [op] }
   },
 
   list_property_defs: (args) => {
@@ -977,9 +980,12 @@ export const propertiesHandlers = {
     if (valueType !== 'select') {
       throw validationRejection(`cannot update options on '${valueType}'-type definition '${key}'`)
     }
+    // The same options write nothing, so no op is appended.
+    if (def['options'] === options) return { ...def, builtin: false, op_refs: [] }
     const updated = { ...def, options }
+    const op = pushPropertyDefOp(spaceId, key, updated, def)
     spacePropertyDefs(spaceId).set(key, updated)
-    return { ...updated, builtin: false }
+    return { ...updated, builtin: false, op_refs: [op] }
   },
 
   delete_property_def: (args) => {
@@ -1002,9 +1008,11 @@ export const propertiesHandlers = {
       )
     }
     const defs = propertyDefs.get(spaceId)
-    if (!defs?.has(key)) throw notFoundRejection(`property definition '${key}'`)
+    const def = defs?.get(key)
+    if (!defs || !def) throw notFoundRejection(`property definition '${key}'`)
+    const op = pushPropertyDefOp(spaceId, key, null, def)
     defs.delete(key)
-    return undefined
+    return { ...def, builtin: false, op_refs: [op] }
   },
 
   // `count_property_usage_inner`: per key of the space's vocabulary (its own

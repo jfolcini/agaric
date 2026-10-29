@@ -137,6 +137,16 @@ describe('getPayloadRawContent', () => {
     expect(getPayloadRawContent(makeEntry(payload, 'remove_page_alias'))).toBe('#plans')
   })
 
+  it('returns the key of a set_property_def payload', () => {
+    const payload = JSON.stringify({ space_id: 'SP1', key: 'effort', def: null, prior: null })
+    expect(getPayloadRawContent(makeEntry(payload, 'set_property_def'))).toBe('effort')
+  })
+
+  it('returns null for a set_property_def payload without a key', () => {
+    const payload = JSON.stringify({ space_id: 'SP1', def: null, prior: null })
+    expect(getPayloadRawContent(makeEntry(payload, 'set_property_def'))).toBeNull()
+  })
+
   it('returns null for an alias payload whose alias is an empty string', () => {
     const entry = makeEntry(JSON.stringify({ page_id: 'PG1', alias: '' }), 'add_page_alias')
     expect(getPayloadRawContent(entry)).toBeNull()

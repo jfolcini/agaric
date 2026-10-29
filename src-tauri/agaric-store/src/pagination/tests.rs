@@ -5968,6 +5968,7 @@ mod global_history_keyset_5424 {
                 OR (ol.created_at = ?3 AND ol.seq = ?4 AND ol.device_id < ?6))) \
            AND (?7 IS NULL OR ( \
                 ol.block_id IN (SELECT id FROM blocks WHERE space_id = ?7) \
+                OR (ol.op_type = 'set_property_def' AND ol.block_id = ?7) \
                 OR ( \
                     ol.op_type IN ('delete_attachment', 'rename_attachment') \
                     AND ( \
@@ -6243,6 +6244,60 @@ mod global_history_keyset_5424 {
         );
     }
 
+    /// #5841: a definition op's `block_id` is its space, whose block is in no
+    /// space, so the space filter lists it by that id.
+    #[tokio::test]
+    async fn global_history_space_filter_lists_the_spaces_definition_ops() {
+        let (pool, _dir) = test_pool().await;
+        insert_space_block(&pool, SPACE_A_ID, "A").await;
+        insert_space_block(&pool, SPACE_B_ID, "B").await;
+        insert_op(
+            &pool,
+            "dev-a",
+            1,
+            "set_property_def",
+            Some(SPACE_A_ID),
+            None,
+            1_000,
+        )
+        .await;
+        insert_op(
+            &pool,
+            "dev-a",
+            2,
+            "set_property_def",
+            Some(SPACE_B_ID),
+            None,
+            1_001,
+        )
+        .await;
+        insert_op(
+            &pool,
+            "dev-a",
+            3,
+            "set_property_def",
+            Some(SPACE_A_ID),
+            None,
+            1_002,
+        )
+        .await;
+        // One row a page, so the second row comes from the cursor statement.
+        let mut cursor = None;
+        let mut seqs = Vec::new();
+        loop {
+            let page = PageRequest::new(cursor, Some(1)).unwrap();
+            let listed = list_page_history(&pool, "__all__", None, Some(SPACE_A_ID), &page)
+                .await
+                .unwrap();
+            seqs.extend(listed.items.iter().map(|e| e.seq));
+            if !listed.has_more {
+                break;
+            }
+            cursor = listed.next_cursor;
+        }
+        assert_eq!(seqs, vec![3, 1], "space A's definition ops, not space B's");
+    }
+
     #[tokio::test]
     async fn global_history_rejects_cursor_without_integer_created_at_5424() {
         let (pool, _dir) = test_pool().await;
@@ -6278,6 +6333,7 @@ mod global_history_keyset_5424 {
      WHERE (?1 IS NULL OR ol.op_type = ?1) \
        AND (?2 IS NULL OR ( \
             EXISTS (SELECT 1 FROM blocks sb WHERE sb.id = ol.block_id AND sb.space_id = ?2) \
+            OR (ol.op_type = 'set_property_def' AND ol.block_id = ?2) \
             OR ( \
                 ol.op_type IN ('delete_attachment', 'rename_attachment') \
                 AND ( \
@@ -6307,6 +6363,7 @@ mod global_history_keyset_5424 {
        AND (?1 IS NULL OR ol.op_type = ?1) \
        AND (?2 IS NULL OR ( \
             EXISTS (SELECT 1 FROM blocks sb WHERE sb.id = ol.block_id AND sb.space_id = ?2) \
+            OR (ol.op_type = 'set_property_def' AND ol.block_id = ?2) \
             OR ( \
                 ol.op_type IN ('delete_attachment', 'rename_attachment') \
                 AND ( \

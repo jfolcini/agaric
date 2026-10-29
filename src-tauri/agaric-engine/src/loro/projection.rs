@@ -1335,8 +1335,8 @@ async fn reproject_property_row_from_engine(
         // (warn so a missing definition is observable).
         PropertyValue::Str(s) => {
             let value_type: &str = declared_value_type_or_text(value_types, key, block_id);
-            match value_type {
-                "number" => {
+            match str_column_for(Some(value_type)) {
+                "value_num" => {
                     value_num = s.parse::<f64>().ok();
                     // #383: a `number`-typed property whose Str payload
                     // fails to parse routes to no column and is dropped
@@ -1355,9 +1355,9 @@ async fn reproject_property_row_from_engine(
                         );
                     }
                 }
-                "boolean" => value_bool = Some(i64::from(s == "true")),
-                "date" => value_date = Some(s.as_str()),
-                "ref" => value_ref = Some(s.as_str()),
+                "value_bool" => value_bool = Some(i64::from(s == "true")),
+                "value_date" => value_date = Some(s.as_str()),
+                "value_ref" => value_ref = Some(s.as_str()),
                 // "select" | "text" | "url" | anything unrecognised → text column.
                 _ => value_text = Some(s.as_str()),
             }
@@ -1559,6 +1559,104 @@ pub async fn reproject_block_properties_from_engine(
     }
     reproject_reserved_columns_from_engine(conn, block_id_str, props).await?;
     Ok(())
+}
+
+/// The `block_properties` column a `Str` value lands in under a definition of
+/// `value_type` (`None`: the key is undeclared), as
+/// `reproject_property_row_from_engine` routes it. A definition change moves
+/// the key's values only when this changes (#5841).
+pub fn str_column_for(value_type: Option<&str>) -> &'static str {
+    match value_type {
+        Some("number") => "value_num",
+        Some("boolean") => "value_bool",
+        Some("date") => "value_date",
+        Some("ref") => "value_ref",
+        _ => "value_text",
+    }
+}
+
+/// Project `space_id`'s definition of `key` (#5841): upsert `def`, or delete
+/// the row on `None`. An existing row keeps its `created_at`.
+pub async fn project_property_def_to_sql(
+    conn: &mut SqliteConnection,
+    space_id: &str,
+    key: &str,
+    def: Option<&agaric_store::op::PropertyDefState>,
+) -> Result<(), AppError> {
+    let Some(def) = def else {
+        sqlx::query!(
+            "DELETE FROM property_definitions WHERE space_id = ? AND key = ?",
+            space_id,
+            key,
+        )
+        .execute(&mut *conn)
+        .await?;
+        return Ok(());
+    };
+    let now = agaric_core::time::now_rfc3339();
+    sqlx::query!(
+        "INSERT INTO property_definitions (space_id, key, value_type, options, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5) \
+         ON CONFLICT (space_id, key) DO UPDATE \
+         SET value_type = excluded.value_type, options = excluded.options",
+        space_id,
+        key,
+        def.value_type,
+        def.options,
+        now,
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// Re-type `space_id`'s values under `key` after its definition moved them to
+/// another column (#5841): each of `holders`, the engine's values under the
+/// key, whose block row is in the space gets its row rewritten under
+/// `value_type` (`None`: the key is no longer declared). Returns the blocks it
+/// rewrote. A holder with no row in the space is left to its own projection.
+pub async fn reproject_key_values(
+    conn: &mut SqliteConnection,
+    space_id: &str,
+    key: &str,
+    value_type: Option<&str>,
+    holders: &[(String, crate::loro::engine::PropertyValue)],
+) -> Result<Vec<agaric_core::ulid::BlockId>, AppError> {
+    if holders.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids_json = serde_json::to_string(&holders.iter().map(|(id, _)| id).collect::<Vec<_>>())?;
+    let in_space: std::collections::HashSet<String> = sqlx::query_scalar!(
+        r#"SELECT b.id AS "id!: String" FROM blocks b
+           WHERE b.id IN (SELECT value FROM json_each(?1))
+             AND (+b.space_id = ?2 OR +b.id = ?2)"#,
+        ids_json,
+        space_id,
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .collect();
+    // The key's own type, so an undeclared key routes to text without the
+    // missing-definition warning once per value.
+    let value_types = std::collections::HashMap::from([(
+        key.to_owned(),
+        value_type.unwrap_or("text").to_owned(),
+    )]);
+    let mut rewritten = Vec::new();
+    for (id, value) in holders.iter().filter(|(id, _)| in_space.contains(id)) {
+        sqlx::query!(
+            "DELETE FROM block_properties WHERE block_id = ? AND key = ?",
+            id,
+            key,
+        )
+        .execute(&mut *conn)
+        .await?;
+        let block_id = agaric_core::ulid::BlockId::from_trusted(id);
+        reproject_property_row_from_engine(conn, &block_id, key, value, &value_types).await?;
+        rewritten.push(block_id);
+    }
+    Ok(rewritten)
 }
 
 /// Re-project a block's full tag set from the engine into the SQL

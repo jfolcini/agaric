@@ -364,6 +364,19 @@ struct PropertyOpHint {
     value_date: Option<String>,
 }
 
+/// #5841: minimal payload view for `set_property_def` dispatch narrowing.
+#[derive(serde::Deserialize)]
+struct PropertyDefOpHint {
+    def: Option<DefTypeHint>,
+    prior: Option<DefTypeHint>,
+}
+
+/// The one field of a definition [`PropertyDefOpHint`] reads.
+#[derive(serde::Deserialize)]
+struct DefTypeHint {
+    value_type: String,
+}
+
 /// #421: inbound-sync FTS-reindex strategy threshold. When an inbound sync
 /// message changes at most this many blocks, FTS is reindexed per-block via
 /// `UpdateFtsBlock` (targeted, O(changed)); above it, a single chunked full
@@ -1413,8 +1426,25 @@ pub fn invalidations_for_op(
         OpType::AddAttachment | OpType::DeleteAttachment | OpType::RenameAttachment => {}
         // `page_aliases` feeds no cache: every reader queries it directly.
         OpType::AddPageAlias | OpType::RemovePageAlias => {}
+        OpType::SetPropertyDef => push_property_def_invalidations(record, &mut tasks),
     }
     Ok(tasks)
+}
+
+/// `SetPropertyDef` invalidations (#5841). `agenda_cache` reads `value_date`,
+/// which a definition moves values into or out of only when it, or the one it
+/// replaced, is a `date`; a payload this cannot read rebuilds it anyway.
+fn push_property_def_invalidations(record: &OpRecord, tasks: &mut Vec<MaterializeTask>) {
+    let dated = match serde_json::from_str::<PropertyDefOpHint>(&record.payload) {
+        Ok(hint) => [hint.def, hint.prior]
+            .iter()
+            .flatten()
+            .any(|def| def.value_type == "date"),
+        Err(_) => true,
+    };
+    if dated {
+        tasks.push(MaterializeTask::RebuildAgendaCache);
+    }
 }
 
 /// `CreateBlock` invalidations, pushed onto `tasks` in enqueue order.
@@ -3011,6 +3041,32 @@ mod tests {
         );
     }
 
+    /// #5841: a definition rebuilds the agenda only when it, or the one it
+    /// replaced, is a `date`: only then do the key's values enter or leave
+    /// `value_date`.
+    #[test]
+    fn invalidations_for_op_set_property_def_rebuilds_agenda_only_around_a_date() {
+        let def = |def: &str, prior: &str| {
+            let payload = format!(r#"{{"space_id":"SP1","key":"k","def":{def},"prior":{prior}}}"#);
+            let r = make_record("set_property_def", &payload, Some("SP1"));
+            labels(&invalidations_for_op(&r, None, None).unwrap())
+        };
+        let date = r#"{"value_type":"date","options":null}"#;
+        let text = r#"{"value_type":"text","options":null}"#;
+        assert_eq!(
+            def(date, "null"),
+            vec!["RebuildAgendaCache"],
+            "a date create"
+        );
+        assert_eq!(
+            def("null", date),
+            vec!["RebuildAgendaCache"],
+            "a date delete"
+        );
+        assert!(def(text, "null").is_empty(), "a text create moves no date");
+        assert!(def("null", text).is_empty(), "a text delete moves no date");
+    }
+
     /// #2037: an ordinary (non-date, non-agenda-key) `set_property` enqueues
     /// NEITHER agenda rebuild — the property cannot feed either agenda cache.
     #[test]
@@ -3581,6 +3637,7 @@ mod tests {
             OpType::RenameAttachment,
             OpType::AddPageAlias,
             OpType::RemovePageAlias,
+            OpType::SetPropertyDef,
         ];
         for probe in &all {
             // Round-trip guard: the dispatch parses the stored string back
@@ -3650,6 +3707,9 @@ mod tests {
                 OpType::AddPageAlias | OpType::RemovePageAlias => {
                     r#"{"page_id":"B1","alias":"plans"}"#
                 }
+                OpType::SetPropertyDef => {
+                    r#"{"space_id":"B1","key":"due2","def":{"value_type":"date","options":null},"prior":null}"#
+                }
             }
         }
 
@@ -3669,6 +3729,7 @@ mod tests {
             OpType::RenameAttachment,
             OpType::AddPageAlias,
             OpType::RemovePageAlias,
+            OpType::SetPropertyDef,
         ];
         let probe = MaterializeTask::SetBlockPageId {
             block_id: Arc::from("probe"),

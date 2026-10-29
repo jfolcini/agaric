@@ -17,6 +17,7 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { ListViewState } from '@/components/common/ListViewState'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { CopyDefinitionToSpace } from '@/components/properties/CopyDefinitionToSpace'
+import { notifyDefinitionWrite } from '@/components/properties/notify-definition-write'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -136,6 +137,12 @@ export function PropertyDefinitionsList(): React.ReactElement {
     void loadUsage()
   }, [loadUsage])
 
+  // What an Undo changed, read again: both loads report their own failure.
+  const reload = useCallback(() => {
+    void loadDefinitions()
+    void loadUsage()
+  }, [loadDefinitions, loadUsage])
+
   useEffect(() => {
     // `loadDefinitions` reports its own failure (reportIpcError); never rejects.
     // oxlint-disable-next-line react/set-state-in-effect -- kicks off the `list_property_defs` IPC load; `loadDefinitions` sets loading/error state around that await, which no render-time derivation can replace; see #4407
@@ -152,7 +159,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
       setNewKey('')
       setNewType('text')
       setNewOptions('')
-      notify.success(t('propertiesView.created'))
+      notifyDefinitionWrite(t('propertiesView.created'), def.op_refs, reload)
       void loadUsage()
     } catch (error) {
       // See loadDefinitions above — unified error reporting, but this one
@@ -168,16 +175,16 @@ export function PropertyDefinitionsList(): React.ReactElement {
       reportIpcErrorWithReason('PropertyDefinitionsList', 'property.errorCreate', error, t, { key })
     }
     setIsCreating(false)
-  }, [spaceId, newKey, newType, newOptionsJson, t, loadUsage])
+  }, [spaceId, newKey, newType, newOptionsJson, t, loadUsage, reload])
 
   const handleDelete = useCallback(
     async (key: string) => {
       if (spaceId === null) return
       try {
-        unwrap(await commands.deletePropertyDef(spaceId, key))
+        const { op_refs } = unwrap(await commands.deletePropertyDef(spaceId, key))
         setDefinitions((prev) => prev.filter((d) => d.key !== key))
         setDeleteTarget(null)
-        notify.success(t('propertiesView.deleted'))
+        notifyDefinitionWrite(t('propertiesView.deleted'), op_refs, reload)
         void loadUsage()
       } catch (error) {
         // The backend refuses a definition a block still uses, with a count that takes in
@@ -197,7 +204,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
         }
       }
     },
-    [spaceId, t, loadUsage, usage],
+    [spaceId, t, loadUsage, usage, reload],
   )
 
   const handleConfirmDelete = useCallback(() => {
@@ -216,12 +223,13 @@ export function PropertyDefinitionsList(): React.ReactElement {
         )
         setDefinitions((prev) => prev.map((d) => (d.key === key ? updated : d)))
         setEditingOptionsKey(null)
+        notifyDefinitionWrite(t('propertiesView.optionsSaved'), updated.op_refs, reload)
       } catch (err) {
         // See loadDefinitions above — unified error reporting.
         reportIpcError('PropertyDefinitionsList', 'property.errorUpdate', err, t, { key })
       }
     },
-    [spaceId, editOptionsValue, t],
+    [spaceId, editOptionsValue, t, reload],
   )
 
   // Hidden from the list only: the duplicate-key check still sees it.

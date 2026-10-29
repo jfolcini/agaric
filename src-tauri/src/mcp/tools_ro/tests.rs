@@ -1515,10 +1515,12 @@ async fn list_property_defs_requires_a_well_formed_space_id_5841() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_property_defs_lists_only_the_given_spaces_rows_5841() {
     use crate::commands::tests::common::TEST_SPACE_B_ID;
-    let (tools, _mat, _dir) = mk_tools().await;
+    let (tools, mat, _dir) = mk_tools().await;
     crate::commands::tests::common::ensure_test_space_with_defs(&tools.pool).await;
     crate::commands::create_property_def_inner(
         &tools.pool,
+        DEV,
+        &mat,
         TEST_SPACE_B_ID,
         "estimate".into(),
         "number".into(),

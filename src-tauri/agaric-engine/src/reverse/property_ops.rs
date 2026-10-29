@@ -1,9 +1,24 @@
-//! Reverse functions for property ops (set, delete).
+//! Reverse functions for property ops (set, delete) and property definition
+//! ops.
 
 use agaric_core::error::AppError;
-use agaric_store::op::{DeletePropertyPayload, OpPayload, PropertyValueFields, SetPropertyPayload};
+use agaric_store::op::{
+    DeletePropertyPayload, OpPayload, PropertyValueFields, SetPropertyDefPayload,
+    SetPropertyPayload,
+};
 use agaric_store::op_log::OpRecord;
 use sqlx::SqlitePool;
+
+/// A definition op records the definition it replaced, so its reverse is
+/// the swap (#5841).
+pub fn reverse_set_property_def(record: &OpRecord) -> Result<OpPayload, AppError> {
+    let payload: SetPropertyDefPayload = serde_json::from_str(&record.payload)?;
+    Ok(OpPayload::SetPropertyDef(SetPropertyDefPayload {
+        def: payload.prior,
+        prior: payload.def,
+        ..payload
+    }))
+}
 
 pub async fn reverse_set_property(
     pool: &SqlitePool,

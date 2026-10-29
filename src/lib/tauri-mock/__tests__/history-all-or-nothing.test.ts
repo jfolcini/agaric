@@ -162,6 +162,7 @@ describe('tauri-mock history handlers are all-or-nothing (#6051)', () => {
       })
       dispatch('add_tag', { blockId: CHILD, tagId: TAG })
       dispatch('set_page_aliases', { pageId: PAGE, aliases: ['al'] })
+      dispatch('create_property_def', { spaceId: SPACE, key: 'lvl', valueType: 'text' })
       dispatch('delete_block', { blockId: OTHER_CHILD })
     })
     const before = snapshotAll()

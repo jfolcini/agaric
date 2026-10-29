@@ -1000,7 +1000,6 @@ async fn reproject_space_from_engine(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     space_id_str: &str,
     bytes: &[u8],
-    value_types: &std::collections::HashMap<String, String>,
 ) -> Result<Option<(usize, usize)>, agaric_core::error::AppError> {
     // Build a throwaway engine and load this space's persisted snapshot. A
     // decode failure is non-fatal: skip this space (its local content still
@@ -1015,6 +1014,12 @@ async fn reproject_space_from_engine(
         );
         return Ok(None);
     }
+    if !project_engine_property_defs(tx, space_id_str, &engine).await? {
+        return Ok(None);
+    }
+    // The space's definitions, the doc's just projected, type its string values
+    // (#5841), as on the live inbound-sync path; loaded once per space.
+    let value_types = agaric_engine::block_ops::load_value_types(tx, space_id_str).await?;
 
     let space_id = agaric_store::space::SpaceId::from_trusted(space_id_str);
     // Full live tree, parent-before-child (soft-deleted nodes are included,
@@ -1038,12 +1043,44 @@ async fn reproject_space_from_engine(
         space_id_str,
         &block_ids,
         &states,
-        value_types,
+        &value_types,
         &mut skipped,
     )
     .await?;
     let space_skipped = skipped.iter().filter(|&&s| s).count();
     Ok(Some((n, space_skipped)))
+}
+
+/// [`reproject_space_from_engine`]'s definitions pass (#5841): upsert every
+/// definition the doc holds. A row the doc lacks is kept: the boot backfill
+/// gives it its op. `false` when the doc's definitions do not read, which skips
+/// the space as an undecodable snapshot does.
+async fn project_engine_property_defs(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    space_id_str: &str,
+    engine: &agaric_engine::loro::engine::LoroEngine,
+) -> Result<bool, agaric_core::error::AppError> {
+    let defs = match engine.read_property_defs() {
+        Ok(defs) => defs,
+        Err(e) => {
+            tracing::error!(
+                space_id = %space_id_str,
+                error = %e,
+                "recovery (#5841): the space's property definitions do not read; skipping it"
+            );
+            return Ok(false);
+        }
+    };
+    for (key, def) in &defs {
+        agaric_engine::loro::projection::project_property_def_to_sql(
+            tx,
+            space_id_str,
+            key,
+            Some(def),
+        )
+        .await?;
+    }
+    Ok(true)
 }
 
 /// [`reproject_blocks_from_engine`]'s post-commit rebuild of the
@@ -1175,11 +1212,8 @@ pub(crate) async fn reproject_blocks_from_engine(
     let mut skipped_blocks_total = 0usize;
 
     for (space_id_str, bytes) in &snapshots {
-        // A space's definitions type its doc's string values (#5841), as on
-        // the live inbound-sync path; loaded once per space, not per block.
-        let value_types = agaric_engine::block_ops::load_value_types(&mut tx, space_id_str).await?;
         let Some((n, space_skipped)) =
-            reproject_space_from_engine(&mut tx, space_id_str, bytes, &value_types).await?
+            reproject_space_from_engine(&mut tx, space_id_str, bytes).await?
         else {
             skipped_spaces += 1;
             continue;
@@ -7071,6 +7105,78 @@ mod tests {
         assert_eq!(
             rows, expected,
             "the page's rows are the engine's aliases; the legacy row stays"
+        );
+    }
+
+    /// #5841: disaster recovery projects each doc's definitions before its
+    /// blocks, so a definition SQL lost comes back and types the doc's values,
+    /// while a row the doc lacks stays for the boot backfill.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recovery_restores_definitions_from_the_engine_and_types_values_by_them_5841() {
+        const SPACE: &str = "01HZ00000000000000000000S1";
+        const BLOCK: &str = "01HZ0000000000000000000B01";
+        let (pool, _dir) = test_pool().await;
+        let mut engine = agaric_engine::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
+        engine
+            .apply_create_block(BLOCK, "content", "x", None, 0)
+            .unwrap();
+        engine
+            .apply_set_property(BLOCK, "due2", Some("2026-11-03"))
+            .unwrap();
+        let date = agaric_store::op::PropertyDefState {
+            value_type: "date".into(),
+            options: None,
+        };
+        engine.apply_set_property_def("due2", Some(&date)).unwrap();
+        sqlx::query(
+            "INSERT INTO loro_doc_state (space_id, snapshot, updated_at, op_count) \
+             VALUES (?, ?, 0, 3)",
+        )
+        .bind(SPACE)
+        .bind(engine.export_snapshot().unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO property_definitions (space_id, key, value_type, created_at) \
+             VALUES (?, 'legacy', 'text', '2026-01-01T00:00:00.000Z')",
+        )
+        .bind(SPACE)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert!(
+            reproject_blocks_from_engine(&pool).await.unwrap(),
+            "reprojection fired"
+        );
+
+        let defs: Vec<(String, String)> = sqlx::query_as(
+            "SELECT key, value_type FROM property_definitions WHERE space_id = ? ORDER BY key",
+        )
+        .bind(SPACE)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            defs,
+            vec![
+                ("due2".to_owned(), "date".to_owned()),
+                ("legacy".to_owned(), "text".to_owned())
+            ],
+            "the doc's definition is back and the row the doc lacks stays"
+        );
+        let value: (Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT value_text, value_date FROM block_properties WHERE block_id = ? AND key = 'due2'",
+        )
+        .bind(BLOCK)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            value,
+            (None, Some("2026-11-03".to_owned())),
+            "the value is typed by the restored definition"
         );
     }
 

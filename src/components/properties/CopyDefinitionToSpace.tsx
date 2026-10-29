@@ -11,6 +11,7 @@ import type React from 'react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { notifyDefinitionWrite } from '@/components/properties/notify-definition-write'
 import { IconButton } from '@/components/ui/icon-button'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { Popover, PopoverTrigger } from '@/components/ui/popover'
@@ -48,7 +49,10 @@ export function CopyDefinitionToSpace({
         await commands.createPropertyDef(space.id, key, definition.value_type, definition.options),
       )
       if (held.value_type === definition.value_type && held.options === definition.options) {
-        notify.success(t('propertiesView.copiedToSpace', { key, space: space.name }))
+        notifyDefinitionWrite(
+          t('propertiesView.copiedToSpace', { key, space: space.name }),
+          held.op_refs,
+        )
       } else {
         notify.warning(
           t('propertiesView.copyKeptExisting', { key, space: space.name, type: held.value_type }),

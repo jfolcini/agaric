@@ -13188,6 +13188,123 @@ async fn page_alias_added_on_a_reaches_b_on_an_ordinary_sync_5387() {
     b.flush_and_shutdown().await;
 }
 
+/// #5841 (acceptance): a definition declared on A reaches B on an ordinary
+/// sync session over a real socket — `Complete`, no snapshot fallback — and
+/// re-types the value B already holds under the key: B's text row of a key A
+/// declares `date` moves to `value_date`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn property_def_declared_on_a_retypes_bs_values_on_an_ordinary_sync_5841() {
+    use crate::sync_protocol::SyncState;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{
+        CreateBlockPayload, OpPayload, PropertyDefState, SetPropertyDefPayload, SetPropertyPayload,
+    };
+
+    const SPACE: &str = "01HZ5841SPACEXXXXXXXXXXXXX";
+    const PAGE: &str = "01HZ5841PAGEXXXXXXXXXXXXXX";
+    const BLOCK: &str = "01HZ5841BLKXXXXXXXXXXXXXXX";
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE);
+    let devices = make_n_devices_2141(&["DEV5841AA", "DEV5841BB"]).await;
+    let (a, b) = (&devices[0], &devices[1]);
+    // Both devices know the space, so the blocks its doc brings land in it.
+    for dev in [a, b] {
+        for sql in [
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?1, 'page', 'S', ?1)",
+            "INSERT INTO spaces (id) VALUES (?1)",
+        ] {
+            sqlx::query(sql)
+                .bind(SPACE)
+                .execute(&dev.pool)
+                .await
+                .unwrap();
+        }
+    }
+    let on_a =
+        |payload, ts| apply_local_op_602(&a.pool, &a.mat, &a.state, &a.id, &space, payload, ts);
+    for (id, block_type, parent) in [(PAGE, "page", None), (BLOCK, "content", Some(PAGE))] {
+        on_a(
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::from_trusted(id),
+                block_type: block_type.into(),
+                parent_id: parent.map(BlockId::from_trusted),
+                position: None,
+                index: Some(0),
+                content: "Planning".into(),
+            }),
+            1_736_942_400_000,
+        )
+        .await;
+    }
+    on_a(
+        OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::from_trusted(BLOCK),
+            key: "due2".into(),
+            value_text: Some("2026-11-03".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+            value_bool: None,
+            prior: None,
+        }),
+        1_736_942_400_100,
+    )
+    .await;
+    assert_eq!(
+        run_session_2141(b, a).await,
+        SyncState::Complete,
+        "B pulls the block"
+    );
+    let due2 = |pool| async move {
+        sqlx::query_as::<_, (Option<String>, Option<String>)>(
+            "SELECT value_text, value_date FROM block_properties WHERE block_id = ? AND key = 'due2'",
+        )
+        .bind(BLOCK)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    };
+    assert_eq!(
+        due2(&b.pool).await,
+        (Some("2026-11-03".to_owned()), None),
+        "undeclared, B holds the value as text"
+    );
+
+    on_a(
+        OpPayload::SetPropertyDef(SetPropertyDefPayload {
+            space_id: BlockId::from_trusted(SPACE),
+            key: "due2".into(),
+            def: Some(PropertyDefState {
+                value_type: "date".into(),
+                options: None,
+            }),
+            prior: None,
+        }),
+        1_736_942_400_200,
+    )
+    .await;
+    assert_eq!(
+        run_session_2141(b, a).await,
+        SyncState::Complete,
+        "an ordinary session, no snapshot fallback"
+    );
+    let declared: Option<String> = sqlx::query_scalar(
+        "SELECT value_type FROM property_definitions WHERE space_id = ? AND key = 'due2'",
+    )
+    .bind(SPACE)
+    .fetch_optional(&b.pool)
+    .await
+    .unwrap();
+    assert_eq!(declared.as_deref(), Some("date"), "B holds A's definition");
+    assert_eq!(
+        due2(&b.pool).await,
+        (None, Some("2026-11-03".to_owned())),
+        "B's value moved to value_date"
+    );
+
+    a.flush_and_shutdown().await;
+    b.flush_and_shutdown().await;
+}
+
 /// Every `page_aliases` row, sorted.
 async fn all_page_aliases_5387(pool: &SqlitePool) -> Vec<(String, String)> {
     sqlx::query_as("SELECT page_id, alias FROM page_aliases ORDER BY page_id, alias")

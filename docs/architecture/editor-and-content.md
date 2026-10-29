@@ -119,6 +119,7 @@ Reverse-op table (canonical):
 | `remove_page_alias` | `add_page_alias`; refused while another page holds the alias |
 | `add_attachment` | `delete_attachment` |
 | `delete_attachment` | conditional: `add_attachment` with captured metadata if available; otherwise non-reversible |
+| `set_property_def` | `set_property_def` with `def` and `prior` swapped |
 
 Each op records what it overwrites, read from the materialised state in its transaction, because the op log cannot always supply it: a value a peer set or deleted, a block a peer created or moved, and a peer's edit arrive through the engine with no local op behind them (#5918, #6014, #6046). A `set_property` or `delete_property` records the value as `prior` (all five slots empty when a set found the key absent); a `move_block` records the block's parent and slot as `prior`; an `edit_block` points `prev_edit` at the newest op whose text is the block's live content, and records that text as `prior_text` only when no op holds it, as after a Loro merge. A reverse `set_property` or `move_block` that an undo or redo appends records its `prior` the same way (`with_recorded_prior_in_tx` in `commands/history.rs`), so undoing it restores what was live when it ran. A reverse falls back to the op log only for an op that records nothing, such as one written before the field existed. A group of moves that recorded their placement is reverted newest-first; the ascending `(parent, slot)` order is kept for moves rebuilt from the op log.
 

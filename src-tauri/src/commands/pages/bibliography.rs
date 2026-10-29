@@ -147,10 +147,11 @@ fn citation_display_name(entry: &BibEntry) -> String {
 /// is no reason to refuse to import a bibliography.
 async fn declare_bib_property_defs(
     tx: &mut CommandTx,
-    space_id: &str,
+    ctx: &BibImportCtx<'_>,
     decls: &mut HashMap<String, (String, Option<String>)>,
     warnings: &mut Vec<String>,
 ) -> Result<(), AppError> {
+    let space_id = ctx.space_id;
     // Probe only the keys that are still undeclared — a declared key is
     // decided already. The probe and the INSERT share the caller's BEGIN
     // IMMEDIATE: a pre-flight on a separate connection would be a real
@@ -221,7 +222,16 @@ async fn declare_bib_property_defs(
             ));
             continue;
         }
-        create_property_def_in_tx(tx, space_id, key, value_type, None).await?;
+        create_property_def_in_tx(
+            tx,
+            ctx.materializer.loro_state(),
+            ctx.device_id,
+            space_id,
+            key,
+            value_type,
+            None,
+        )
+        .await?;
         decls.insert((*key).to_string(), ((*value_type).to_string(), None));
     }
 
@@ -650,10 +660,15 @@ async fn import_bib_entries(
     let mut used_titles = fetch_taken_page_titles(&mut tx, space_id, entries).await?;
     let mut decls = fetch_bib_property_declarations(&mut tx, space_id).await?;
 
+    let ctx = BibImportCtx {
+        device_id,
+        space_id,
+        materializer,
+    };
     // #4382 — declare the import's typed property definitions, but only for
     // keys the space has no shape for yet. In the same transaction as the
     // read above, so the check and the write cannot be split.
-    declare_bib_property_defs(&mut tx, space_id, &mut decls, &mut warnings).await?;
+    declare_bib_property_defs(&mut tx, &ctx, &mut decls, &mut warnings).await?;
 
     // KNOWN WINDOW (#4395 review note 5), recorded rather than fixed here.
     // `decls` is read once, in this first chunk, and a SKIPPED key stays
@@ -675,11 +690,6 @@ async fn import_bib_entries(
     // declaration would then be refused for exactly the keys that can be
     // missing from `decls`. Tracked in #4399, not separately.
 
-    let ctx = BibImportCtx {
-        device_id,
-        space_id,
-        materializer,
-    };
     let mut pages_created: u64 = 0;
     let mut entries_skipped: u64 = 0;
     let mut properties_set: u64 = 0;

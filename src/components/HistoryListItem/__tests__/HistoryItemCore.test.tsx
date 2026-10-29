@@ -145,6 +145,22 @@ describe('HistoryItemCore', () => {
     expect(screen.queryByTestId('tag-ref-chip')).not.toBeInTheDocument()
   })
 
+  it('renders a set_property_def row as its key, in plain text and the property tone', () => {
+    // `_` is a legal key character and also markdown emphasis.
+    renderCore(
+      <HistoryItemCore
+        entry={makeEntry(1, 'set_property_def', {
+          space_id: 'SP1',
+          key: '_draft_',
+          def: { value_type: 'text', options: null },
+          prior: null,
+        })}
+      />,
+    )
+    expect(screen.getByText('_draft_')).toBeInTheDocument()
+    expect(screen.getByTestId('history-type-badge')).toHaveClass('bg-op-tag')
+  })
+
   it('hides the diff-toggle button when onToggleDiff is not supplied', () => {
     renderCore(<HistoryItemCore entry={makeEntry(1, 'edit_block', { to_text: 'hi' })} />)
     expect(screen.queryByRole('button')).not.toBeInTheDocument()

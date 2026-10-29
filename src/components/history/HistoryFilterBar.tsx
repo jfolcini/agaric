@@ -44,6 +44,7 @@ const OP_TYPES = [
   { value: 'remove_page_alias', labelKey: 'history.opTypeRemovePageAlias' },
   { value: 'set_property', labelKey: 'history.opTypeSetProperty' },
   { value: 'delete_property', labelKey: 'history.opTypeDeleteProperty' },
+  { value: 'set_property_def', labelKey: 'history.opTypeSetPropertyDef' },
   { value: 'add_attachment', labelKey: 'history.opTypeAddAttachment' },
   { value: 'delete_attachment', labelKey: 'history.opTypeRemoveAttachment' },
   // #4277 — `rename_attachment` was missing here because the op could never

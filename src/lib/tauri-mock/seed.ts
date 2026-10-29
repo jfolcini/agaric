@@ -234,7 +234,14 @@ export function allOrNothing<A extends unknown[], R>(
   handler: (...args: A) => R,
 ): (...args: A) => R {
   return (...args) => {
-    const saved = structuredClone({ blocks, properties, blockTags, attachments, pageAliases })
+    const saved = structuredClone({
+      blocks,
+      properties,
+      blockTags,
+      attachments,
+      pageAliases,
+      propertyDefs,
+    })
     const opCount = opLog.length
     const seq = opSeqCounter
     try {
@@ -245,6 +252,7 @@ export function allOrNothing<A extends unknown[], R>(
       refill(blockTags, saved.blockTags)
       refill(attachments, saved.attachments)
       refill(pageAliases, saved.pageAliases)
+      refill(propertyDefs, saved.propertyDefs)
       opLog.length = opCount
       opSeqCounter = seq
       throw err
@@ -386,17 +394,48 @@ const DEFAULT_PROPERTY_DEFS: ReadonlyArray<[string, string, readonly string[] | 
   ['location', 'text', null],
 ]
 
-/** Give `spaceId`, a space just made, the {@link DEFAULT_PROPERTY_DEFS}. */
-export function seedDefaultPropertyDefs(spaceId: string, createdAt: string): void {
+/** The `{ value_type, options }` a `set_property_def` op carries for a definition row. */
+function defState(row: Record<string, unknown> | null): Record<string, unknown> | null {
+  return row && { value_type: row['value_type'], options: row['options'] ?? null }
+}
+
+/**
+ * Append the `set_property_def` op (#5841) moving `spaceId`'s `key` from
+ * `prior` to `def` (null: absent), stamped `createdAt`; answers its ref.
+ */
+export function pushPropertyDefOp(
+  spaceId: string,
+  key: string,
+  def: Record<string, unknown> | null,
+  prior: Record<string, unknown> | null,
+  createdAt = new Date().toISOString(),
+): { device_id: string; seq: number } {
+  const payload = { space_id: spaceId, key, def: defState(def), prior: defState(prior) }
+  const op = pushOpAt('set_property_def', payload, createdAt)
+  return { device_id: op.device_id, seq: op.seq }
+}
+
+/**
+ * Give `spaceId`, a space just made, the {@link DEFAULT_PROPERTY_DEFS}, one
+ * `set_property_def` op each as `create_space` appends them. The fixture's own
+ * spaces pass `recordOps = false`: their op log starts empty.
+ */
+export function seedDefaultPropertyDefs(
+  spaceId: string,
+  createdAt: string,
+  recordOps = true,
+): void {
   const defs = spacePropertyDefs(spaceId)
   for (const [key, valueType, options] of DEFAULT_PROPERTY_DEFS) {
     if (defs.has(key)) continue
-    defs.set(key, {
+    const def = {
       key,
       value_type: valueType,
       options: options && JSON.stringify(options),
       created_at: createdAt,
-    })
+    }
+    if (recordOps) pushPropertyDefOp(spaceId, key, def, null, createdAt)
+    defs.set(key, def)
   }
 }
 
@@ -737,7 +776,7 @@ export function seedBlocks(): void {
   blockTags.set(SEED_IDS.BLOCK_DAILY_3, new Set([SEED_IDS.TAG_PERSONAL]))
 
   // -- Seed the Personal space's property definitions --
-  seedDefaultPropertyDefs('SPACE_PERSONAL', '2026-01-01T00:00:00.000Z')
+  seedDefaultPropertyDefs('SPACE_PERSONAL', '2026-01-01T00:00:00.000Z', false)
   const personalDefs = spacePropertyDefs('SPACE_PERSONAL')
   personalDefs.set('context', {
     key: 'context',
@@ -896,7 +935,7 @@ function seedWorkSpace(): void {
   }
   if (!enabled) return
   blocks.set('SPACE_WORK', makeBlock('SPACE_WORK', 'page', 'Work', null, 1))
-  seedDefaultPropertyDefs('SPACE_WORK', '2026-01-01T00:00:00.000Z')
+  seedDefaultPropertyDefs('SPACE_WORK', '2026-01-01T00:00:00.000Z', false)
   properties.set(
     'SPACE_WORK',
     new Map([

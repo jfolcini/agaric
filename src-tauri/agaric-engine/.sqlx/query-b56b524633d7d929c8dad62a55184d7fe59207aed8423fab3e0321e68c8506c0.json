@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO property_definitions (space_id, key, value_type, options, created_at) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (space_id, key) DO UPDATE SET value_type = excluded.value_type, options = excluded.options",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "b56b524633d7d929c8dad62a55184d7fe59207aed8423fab3e0321e68c8506c0"
+}

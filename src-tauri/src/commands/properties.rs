@@ -7,11 +7,13 @@ use sqlx::SqlitePool;
 use tauri::State;
 use tracing::instrument;
 
-use crate::db::{CommandTx, ReadPool, WriteCtx, WritePool};
+use crate::db::{CommandTx, ReadPool, WriteCtx};
 use crate::materializer::Materializer;
 use agaric_core::error::{AppError, ValidationCode};
 use agaric_core::ulid::{ActiveBlockId, BlockId};
+use agaric_engine::loro::shared::LoroState;
 use agaric_store::backlink;
+use agaric_store::op::{PropertyDefState, SetPropertyDefPayload};
 use agaric_store::pagination;
 use agaric_store::pagination::ActiveBlockRow;
 use agaric_store::space::SpaceId;
@@ -1471,14 +1473,14 @@ async fn conflicting_existing_values(
     )))
 }
 
-/// Create a property definition in `space_id` (#5841). Uses INSERT OR IGNORE
-/// for idempotency — if the space already declares the key, this is a no-op
+/// Create a property definition in `space_id` (#5841), as one `SetPropertyDef`
+/// op. Idempotent: if the space already declares the key, nothing is written
 /// and the existing row is returned unchanged. A built-in key is refused with
 /// [`ValidationCode::BuiltinPropertyLocked`].
 ///
 /// # Refuses to declare a type over values that contradict it (#4399)
 ///
-/// Before inserting, this probes the space's `block_properties` for the key
+/// Before writing, this probes the space's `block_properties` for the key
 /// and rejects with [`AppError::Validation`] when any value already stored
 /// under it would be rejected by the requested `value_type` — see
 /// `conflicting_existing_values` for the trap that guards against, and
@@ -1493,7 +1495,7 @@ async fn conflicting_existing_values(
 ///
 /// # Atomicity
 ///
-/// The probe, the INSERT and the readback share one `BEGIN IMMEDIATE`.
+/// The probe, the op and the readback share one `BEGIN IMMEDIATE`.
 /// Split across statements this would be a genuine TOCTOU: a concurrent
 /// `set_property` can create the very `block_properties` rows the probe
 /// looked for and did not find, and the declaration that lands on top of
@@ -1502,9 +1504,11 @@ async fn conflicting_existing_values(
 /// (`renameMayDeclareKey`, `src/lib/property-save-utils.ts`) cannot be the
 /// guarantee — it reads the read pool while the write goes to the write
 /// pool, and it only sees the 1000 most-used keys.
-#[instrument(skip(pool, options), err)]
+#[instrument(skip(pool, device_id, materializer, options), err)]
 pub async fn create_property_def_inner(
     pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
     space_id: &str,
     key: String,
     value_type: String,
@@ -1512,8 +1516,8 @@ pub async fn create_property_def_inner(
 ) -> Result<PropertyDefinition, AppError> {
     validate_property_def_shape(&key, &value_type, options.as_deref())?;
 
-    // allow-raw-tx: writes property_definitions (schema metadata), no op_log (#110)
-    let mut tx = crate::db::begin_immediate_logged(pool, "create_property_def").await?;
+    let mut tx = CommandTx::begin_immediate(pool, "create_property_def").await?;
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // Idempotency first, and before the probe. An existing row wins (the
     // INSERT OR IGNORE contract ~20 call sites depend on), and nothing is
@@ -1531,7 +1535,19 @@ pub async fn create_property_def_inner(
         return Err(AppError::validation(reason));
     }
 
-    create_property_def_in_tx(&mut tx, space_id, &key, &value_type, options.as_deref()).await?;
+    let def = PropertyDefState {
+        value_type,
+        options,
+    };
+    write_property_def_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        space_id,
+        &key,
+        Some(def),
+    )
+    .await?;
 
     // Fetch back inside the same transaction — the row this call created,
     // never one a racing writer slipped in afterwards.
@@ -1539,7 +1555,7 @@ pub async fn create_property_def_inner(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("property definition '{key}'")))?;
 
-    tx.commit().await?;
+    tx.commit_and_dispatch(materializer).await?;
     Ok(row)
 }
 
@@ -1562,10 +1578,11 @@ async fn user_property_def(
 
 /// In-transaction twin of [`create_property_def_inner`] (#4382).
 ///
-/// Same validation and the same idempotent `INSERT OR IGNORE`, but written
-/// through a caller-owned connection instead of the pool, and without the
-/// post-insert readback (callers that need the winning row already read
-/// `property_definitions` in the same transaction).
+/// Same validation and the same idempotency — a key the space already
+/// declares is left as it is — but written through a caller-owned
+/// transaction instead of the pool, and without the post-write readback
+/// (callers that need the winning row already read `property_definitions` in
+/// the same transaction).
 ///
 /// This exists so a caller can make "is this key safe to declare?" and the
 /// declaration itself **one atomic decision**. Declaring a key constrains
@@ -1586,28 +1603,109 @@ async fn user_property_def(
 /// strictly coarser "any values at all?" — but it would put the decision
 /// in the wrong place.
 pub async fn create_property_def_in_tx(
-    conn: &mut sqlx::SqliteConnection,
+    tx: &mut CommandTx,
+    state: &LoroState,
+    device_id: &str,
     space_id: &str,
     key: &str,
     value_type: &str,
     options: Option<&str>,
 ) -> Result<(), AppError> {
     validate_property_def_shape(key, value_type, options)?;
+    if user_property_def(tx, space_id, key).await?.is_some() {
+        return Ok(());
+    }
+    let def = PropertyDefState {
+        value_type: value_type.to_owned(),
+        options: options.map(str::to_owned),
+    };
+    write_property_def_in_tx(tx, state, device_id, space_id, key, Some(def)).await
+}
 
-    let now = agaric_core::time::now_rfc3339();
-    sqlx::query!(
-        "INSERT OR IGNORE INTO property_definitions (space_id, key, value_type, options, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        space_id,
-        key,
-        value_type,
-        options,
-        now,
-    )
-    .execute(conn)
-    .await?;
-
+/// The one writer of a space's definitions (#5841): appends the
+/// `SetPropertyDef` taking `space_id`'s definition of `key` from what it holds
+/// to `def` (`None` deletes it), applies it and enqueues its dispatch. Writing
+/// the definition the space already holds appends nothing.
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] coded [`ValidationCode::BuiltinPropertyLocked`]
+///   for a built-in key.
+/// - [`AppError::Validation`] for a malformed definition, or one that changes
+///   the type the space declares the key with.
+pub(crate) async fn write_property_def_in_tx(
+    tx: &mut CommandTx,
+    state: &LoroState,
+    device_id: &str,
+    space_id: &str,
+    key: &str,
+    def: Option<PropertyDefState>,
+) -> Result<(), AppError> {
+    refuse_builtin_definition_write(key)?;
+    if let Some(def) = &def {
+        validate_property_def_shape(key, &def.value_type, def.options.as_deref())?;
+    }
+    let prior = user_property_def(tx, space_id, key)
+        .await?
+        .map(|row| PropertyDefState {
+            value_type: row.value_type,
+            options: row.options,
+        });
+    if let (Some(def), Some(prior)) = (&def, &prior)
+        && def.value_type != prior.value_type
+    {
+        return Err(AppError::validation(format!(
+            "property '{key}' is declared as '{}' and cannot change to '{}'",
+            prior.value_type, def.value_type
+        )));
+    }
+    if def == prior {
+        return Ok(());
+    }
+    let payload = OpPayload::SetPropertyDef(SetPropertyDefPayload {
+        space_id: BlockId::from_trusted(space_id),
+        key: key.to_owned(),
+        def,
+        prior,
+    });
+    let record =
+        agaric_store::op_log::append_local_op_in_tx(tx, device_id, payload, crate::db::now_ms())
+            .await?;
+    crate::materializer::apply_op_projected(tx, &record, state, false).await?;
+    tx.enqueue_background(record);
     Ok(())
+}
+
+/// Refuse an undo or redo restoring `p.def` when it moves the key's values to
+/// another column and [`create_property_def_inner`] would refuse that
+/// declaration over them: re-typed, they would fail to parse and vanish.
+pub(crate) async fn refuse_restoring_def_over_conflicting_values(
+    conn: &mut sqlx::SqliteConnection,
+    p: &SetPropertyDefPayload,
+) -> Result<(), AppError> {
+    use agaric_engine::loro::projection::str_column_for;
+    let Some(def) = &p.def else {
+        return Ok(());
+    };
+    let space_id = p.space_id.as_str();
+    let held = user_property_def(conn, space_id, &p.key).await?;
+    if str_column_for(held.as_ref().map(|row| row.value_type.as_str()))
+        == str_column_for(Some(&def.value_type))
+    {
+        return Ok(());
+    }
+    match conflicting_existing_values(
+        conn,
+        space_id,
+        &p.key,
+        &def.value_type,
+        def.options.as_deref(),
+    )
+    .await?
+    {
+        Some(reason) => Err(AppError::validation(reason)),
+        None => Ok(()),
+    }
 }
 
 /// The editable definitions a new space starts with (#5841): ordinary user
@@ -1629,13 +1727,17 @@ pub const DEFAULT_PROPERTY_DEFS: [(&str, &str, Option<&str>); 5] = [
     ("location", "text", None),
 ];
 
-/// Give `space_id`, a space just created, the [`DEFAULT_PROPERTY_DEFS`].
+/// Give `space_id`, a space just created, the [`DEFAULT_PROPERTY_DEFS`]: one
+/// `SetPropertyDef` each, so the space's doc carries them to every device that
+/// receives the space.
 pub async fn seed_default_property_defs_in_tx(
-    conn: &mut sqlx::SqliteConnection,
+    tx: &mut CommandTx,
+    state: &LoroState,
+    device_id: &str,
     space_id: &str,
 ) -> Result<(), AppError> {
     for (key, value_type, options) in DEFAULT_PROPERTY_DEFS {
-        create_property_def_in_tx(&mut *conn, space_id, key, value_type, options).await?;
+        create_property_def_in_tx(tx, state, device_id, space_id, key, value_type, options).await?;
     }
     Ok(())
 }
@@ -1769,9 +1871,11 @@ pub async fn get_property_def_inner(
 /// would also break the legitimate retire-an-option flow the paragraph
 /// above describes, which has no equivalent on the create path — there
 /// is no such thing as retiring a declaration you have not made yet.
-#[instrument(skip(pool, options), err)]
+#[instrument(skip(pool, device_id, materializer, options), err)]
 pub async fn update_property_def_options_inner(
     pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
     space_id: &str,
     key: String,
     options: String,
@@ -1785,12 +1889,12 @@ pub async fn update_property_def_options_inner(
     }
 
     // #383: open a BEGIN IMMEDIATE tx so the existence/type check, the orphan
-    // count, and the UPDATE are TOCTOU-safe — a concurrent
+    // count, and the op are TOCTOU-safe — a concurrent
     // `delete_property_def`/`set_property` cannot race in between the read and
     // the write. Mirrors the sibling `delete_property_def_inner`. Dropping the
     // tx without commit (early returns below) rolls it back automatically.
-    // allow-raw-tx: updates property_definitions (schema metadata), no op_log (#110)
-    let mut tx = crate::db::begin_immediate_logged(pool, "update_property_def_options").await?;
+    let mut tx = CommandTx::begin_immediate(pool, "update_property_def_options").await?;
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // Fetch existing to verify it's select-type
     let existing = user_property_def(&mut tx, space_id, &key)
@@ -1822,7 +1926,7 @@ pub async fn update_property_def_options_inner(
         options,
         space_id,
     )
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
 
     if orphan_count > 0 {
@@ -1836,21 +1940,19 @@ pub async fn update_property_def_options_inner(
         );
     }
 
-    let result =
-        sqlx::query("UPDATE property_definitions SET options = ? WHERE space_id = ? AND key = ?")
-            .bind(&options)
-            .bind(space_id)
-            .bind(&key)
-            .execute(&mut *tx)
-            .await?;
-
-    // #383: guard against a silent no-op write. The existence check above ran
-    // inside the same tx, so a 0-row UPDATE here means the row vanished under
-    // an impossible concurrency window (or a schema mismatch) — surface it
-    // rather than returning a row that was never persisted.
-    if result.rows_affected() == 0 {
-        return Err(AppError::NotFound(format!("property definition '{key}'")));
-    }
+    let def = PropertyDefState {
+        value_type: existing.value_type,
+        options: Some(options),
+    };
+    write_property_def_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        space_id,
+        &key,
+        Some(def),
+    )
+    .await?;
 
     // #383: read the post-update row back INSIDE the tx instead of
     // reconstructing the return value from the pre-update snapshot, so the
@@ -1859,12 +1961,13 @@ pub async fn update_property_def_options_inner(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("property definition '{key}'")))?;
 
-    tx.commit().await?;
+    tx.commit_and_dispatch(materializer).await?;
 
     Ok(updated)
 }
 
-/// Delete `space_id`'s definition of `key`.
+/// Delete `space_id`'s definition of `key`, as one `SetPropertyDef` op.
+/// Returns the definition it deleted.
 ///
 /// Returns error if the space doesn't declare the key, it is a built-in, or
 /// a block of the space still holds a value under it.
@@ -1885,24 +1988,26 @@ pub async fn update_property_def_options_inner(
 /// and surface the count plus a suggested clean-up path so the user
 /// knows exactly which key to clear before retrying.
 ///
-/// The EXISTS / COUNT check and the DELETE both run inside a single
+/// The EXISTS / COUNT check and the op both run inside a single
 /// `BEGIN IMMEDIATE` transaction so a concurrent `set_property` cannot
-/// race in between the count and the DELETE and create a fresh
+/// race in between the count and the delete and create a fresh
 /// `block_properties` row that the caller never saw in the rejection
 /// message.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool, device_id, materializer), err)]
 pub async fn delete_property_def_inner(
     pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
     space_id: &str,
     key: String,
-) -> Result<(), AppError> {
+) -> Result<PropertyDefinition, AppError> {
     refuse_builtin_definition_write(&key)?;
 
     // Open a BEGIN IMMEDIATE tx so the dependent-row check and
-    // the DELETE are TOCTOU-safe. Dropping the tx without commit (early
+    // the delete are TOCTOU-safe. Dropping the tx without commit (early
     // returns below) rolls it back automatically.
-    // allow-raw-tx: deletes from property_definitions (schema metadata), no op_log (#110)
-    let mut tx = crate::db::begin_immediate_logged(pool, "delete_property_def").await?;
+    let mut tx = CommandTx::begin_immediate(pool, "delete_property_def").await?;
+    tx.arm_engine_rollback(materializer.loro_state());
 
     let dependent_count: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM block_properties bp JOIN blocks b ON b.id = bp.block_id \
@@ -1910,7 +2015,7 @@ pub async fn delete_property_def_inner(
         key,
         space_id,
     )
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
 
     if dependent_count > 0 {
@@ -1920,18 +2025,22 @@ pub async fn delete_property_def_inner(
         )));
     }
 
-    let result = sqlx::query("DELETE FROM property_definitions WHERE space_id = ? AND key = ?")
-        .bind(space_id)
-        .bind(&key)
-        .execute(&mut *tx)
-        .await?;
+    let deleted = user_property_def(&mut tx, space_id, &key)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("property definition '{key}'")))?;
 
-    if result.rows_affected() == 0 {
-        return Err(AppError::NotFound(format!("property definition '{key}'")));
-    }
+    write_property_def_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        space_id,
+        &key,
+        None,
+    )
+    .await?;
 
-    tx.commit().await?;
-    Ok(())
+    tx.commit_and_dispatch(materializer).await?;
+    Ok(deleted)
 }
 
 /// Space membership, not a value a user sets: every block of a space holds
@@ -2408,20 +2517,30 @@ pub async fn get_batch_properties(
         .map_err(sanitize_internal_error)
 }
 
-/// Tauri command: create a property definition in a space. Delegates to [`create_property_def_inner`].
+/// Tauri command: create a property definition in a space. Delegates to
+/// [`create_property_def_inner`]; the response carries the op refs it
+/// appended, none when the space already declared the key.
 #[tauri::command]
 #[specta::specta]
 pub async fn create_property_def(
-    write_pool: State<'_, WritePool>,
+    ctx: State<'_, WriteCtx>,
     space_id: SpaceId,
     key: String,
     value_type: String,
     options: Option<String>,
-) -> Result<PropertyDefinition, AppError> {
+) -> Result<WithOps<PropertyDefinition>, AppError> {
     space_id.validate_shape()?;
-    create_property_def_inner(&write_pool.0, space_id.as_str(), key, value_type, options)
-        .await
-        .map_err(sanitize_internal_error)
+    capture_op_refs(create_property_def_inner(
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
+        space_id.as_str(),
+        key,
+        value_type,
+        options,
+    ))
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: list a space's property definitions, paginated.
@@ -2455,33 +2574,50 @@ pub async fn get_property_def(
         .map_err(sanitize_internal_error)
 }
 
-/// Tauri command: update options for a space's select-type definition. Delegates to [`update_property_def_options_inner`].
+/// Tauri command: update options for a space's select-type definition.
+/// Delegates to [`update_property_def_options_inner`]; the response carries
+/// the op refs it appended, none when the options are unchanged.
 #[tauri::command]
 #[specta::specta]
 pub async fn update_property_def_options(
-    write_pool: State<'_, WritePool>,
+    ctx: State<'_, WriteCtx>,
     space_id: SpaceId,
     key: String,
     options: String,
-) -> Result<PropertyDefinition, AppError> {
+) -> Result<WithOps<PropertyDefinition>, AppError> {
     space_id.validate_shape()?;
-    update_property_def_options_inner(&write_pool.0, space_id.as_str(), key, options)
-        .await
-        .map_err(sanitize_internal_error)
+    capture_op_refs(update_property_def_options_inner(
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
+        space_id.as_str(),
+        key,
+        options,
+    ))
+    .await
+    .map_err(sanitize_internal_error)
 }
 
-/// Tauri command: delete a space's property definition. Delegates to [`delete_property_def_inner`].
+/// Tauri command: delete a space's property definition. Delegates to
+/// [`delete_property_def_inner`]; the response is the deleted definition and
+/// the op ref of its delete.
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_property_def(
-    write_pool: State<'_, WritePool>,
+    ctx: State<'_, WriteCtx>,
     space_id: SpaceId,
     key: String,
-) -> Result<(), AppError> {
+) -> Result<WithOps<PropertyDefinition>, AppError> {
     space_id.validate_shape()?;
-    delete_property_def_inner(&write_pool.0, space_id.as_str(), key)
-        .await
-        .map_err(sanitize_internal_error)
+    capture_op_refs(delete_property_def_inner(
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
+        space_id.as_str(),
+        key,
+    ))
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: how many live blocks of a space use each key of its
@@ -2679,7 +2815,7 @@ mod count_property_usage_tests {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
         for space in [TEST_SPACE_ID, TEST_SPACE_B_ID] {
-            create_property_def_inner(&pool, space, "stage".into(), "text".into(), None)
+            create_property_def_inner(&pool, DEV, &mat, space, "stage".into(), "text".into(), None)
                 .await
                 .unwrap();
         }
@@ -2705,9 +2841,17 @@ mod count_property_usage_tests {
     async fn a_trashed_block_does_not_count() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
-        create_property_def_inner(&pool, TEST_SPACE_ID, "stage".into(), "text".into(), None)
-            .await
-            .unwrap();
+        create_property_def_inner(
+            &pool,
+            DEV,
+            &mat,
+            TEST_SPACE_ID,
+            "stage".into(),
+            "text".into(),
+            None,
+        )
+        .await
+        .unwrap();
         let kept = block_in(&pool, &mat, TEST_SPACE_ID).await;
         let trashed = block_in(&pool, &mat, TEST_SPACE_ID).await;
         hold_text(&pool, &mat, &kept, "stage").await;
@@ -2770,13 +2914,130 @@ mod count_property_usage_tests {
         mat.shutdown();
     }
 
+    /// #5841: the one definition writer refuses a built-in, and a change of
+    /// the type the space declares a key with, whatever path reaches it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_definition_writer_refuses_a_builtin_and_a_type_change() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        create_property_def_inner(
+            &pool,
+            DEV,
+            &mat,
+            TEST_SPACE_ID,
+            "stage".into(),
+            "text".into(),
+            None,
+        )
+        .await
+        .unwrap();
+        let write = |key: &'static str, def: Option<PropertyDefState>| {
+            let (pool, mat) = (&pool, &mat);
+            async move {
+                let mut tx = CommandTx::begin_immediate(pool, "test").await.unwrap();
+                tx.arm_engine_rollback(mat.loro_state());
+                write_property_def_in_tx(&mut tx, mat.loro_state(), DEV, TEST_SPACE_ID, key, def)
+                    .await
+            }
+        };
+        let date = || {
+            Some(PropertyDefState {
+                value_type: "date".into(),
+                options: None,
+            })
+        };
+        let retyped = write("stage", date()).await;
+        assert!(
+            matches!(&retyped, Err(AppError::Validation { .. }))
+                && retyped
+                    .as_ref()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("cannot change"),
+            "a type change is refused, got {retyped:?}"
+        );
+        for def in [date(), None] {
+            let builtin = write("todo_state", def).await;
+            assert_eq!(
+                builtin.err().and_then(|e| e.validation_code()),
+                Some(ValidationCode::BuiltinPropertyLocked),
+                "a built-in is refused"
+            );
+        }
+        let declared: Option<String> = sqlx::query_scalar(
+            "SELECT value_type FROM property_definitions WHERE space_id = ? AND key = 'stage'",
+        )
+        .bind(TEST_SPACE_ID)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            declared.as_deref(),
+            Some("text"),
+            "the declaration is unchanged"
+        );
+    }
+
+    /// #5841: a definition written in an armed tx that is dropped uncommitted
+    /// leaves no trace: not in the doc, the table or the op log.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_dropped_definition_write_leaves_no_trace() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let mut tx = CommandTx::begin_immediate(&pool, "test").await.unwrap();
+        tx.arm_engine_rollback(mat.loro_state());
+        let def = PropertyDefState {
+            value_type: "text".into(),
+            options: None,
+        };
+        write_property_def_in_tx(
+            &mut tx,
+            mat.loro_state(),
+            DEV,
+            TEST_SPACE_ID,
+            "stage",
+            Some(def),
+        )
+        .await
+        .unwrap();
+        drop(tx);
+
+        let in_doc = mat
+            .loro_state()
+            .registry
+            .for_space(&SpaceId::from_trusted(TEST_SPACE_ID), DEV)
+            .unwrap()
+            .engine_mut()
+            .read_property_def("stage")
+            .unwrap();
+        assert_eq!(in_doc, None, "the doc rewound");
+        let rows: i64 = sqlx::query_scalar(
+            "SELECT (SELECT COUNT(*) FROM property_definitions WHERE key = 'stage') \
+                  + (SELECT COUNT(*) FROM op_log WHERE op_type = 'set_property_def')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows, 0, "no row and no op");
+        mat.shutdown();
+    }
+
     #[tokio::test]
     async fn a_defined_key_with_no_values_counts_zero() {
         let (pool, _dir) = test_pool().await;
         ensure_test_space(&pool).await;
-        create_property_def_inner(&pool, TEST_SPACE_ID, "unused".into(), "text".into(), None)
-            .await
-            .unwrap();
+        let mat = Materializer::new(pool.clone());
+        create_property_def_inner(
+            &pool,
+            DEV,
+            &mat,
+            TEST_SPACE_ID,
+            "unused".into(),
+            "text".into(),
+            None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(count_of(&pool, TEST_SPACE_ID, "unused").await, 0);
     }

@@ -170,8 +170,15 @@ async fn ensure_seeded_space_blocks(
     device_id: &str,
     records: &mut Vec<OpRecord>,
 ) -> Result<(i32, i32, i32), AppError> {
-    let personal_created =
-        ensure_seeded_space_block(tx, device_id, SPACE_PERSONAL_ULID, "Personal", records).await?;
+    let personal_created = ensure_seeded_space_block(
+        tx,
+        state,
+        device_id,
+        SPACE_PERSONAL_ULID,
+        "Personal",
+        records,
+    )
+    .await?;
     let personal_is_space_set =
         ensure_is_space_property(tx, state, device_id, SPACE_PERSONAL_ULID, records).await?;
     let personal_accent_set = ensure_accent_color_property(
@@ -185,7 +192,7 @@ async fn ensure_seeded_space_blocks(
     .await?;
 
     let work_created =
-        ensure_seeded_space_block(tx, device_id, SPACE_WORK_ULID, "Work", records).await?;
+        ensure_seeded_space_block(tx, state, device_id, SPACE_WORK_ULID, "Work", records).await?;
     let work_is_space_set =
         ensure_is_space_property(tx, state, device_id, SPACE_WORK_ULID, records).await?;
     let work_accent_set = ensure_accent_color_property(
@@ -211,6 +218,7 @@ async fn ensure_seeded_space_blocks(
 /// values that contradict it.
 async fn ensure_seeded_space_block(
     tx: &mut CommandTx,
+    state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
     space_id: &str,
     name: &str,
@@ -225,7 +233,7 @@ async fn ensure_seeded_space_block(
     .is_some();
     let created = ensure_space_block(tx, device_id, space_id, name, records).await?;
     if !existed {
-        crate::commands::seed_default_property_defs_in_tx(tx, space_id).await?;
+        crate::commands::seed_default_property_defs_in_tx(tx, state, device_id, space_id).await?;
     }
     Ok(created)
 }

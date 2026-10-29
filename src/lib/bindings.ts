@@ -442,8 +442,12 @@ export const commands = {
 	 *  (#1425). Delegates to [`list_property_values_inner`].
 	 */
 	listPropertyValues: (key: string) => typedError<string[], AppError>(__TAURI_INVOKE("list_property_values", { key })),
-	/**  Tauri command: create a property definition in a space. Delegates to [`create_property_def_inner`]. */
-	createPropertyDef: (spaceId: SpaceId, key: string, valueType: string, options: string | null) => typedError<PropertyDefinition, AppError>(__TAURI_INVOKE("create_property_def", { spaceId, key, valueType, options })),
+	/**
+	 *  Tauri command: create a property definition in a space. Delegates to
+	 *  [`create_property_def_inner`]; the response carries the op refs it
+	 *  appended, none when the space already declared the key.
+	 */
+	createPropertyDef: (spaceId: SpaceId, key: string, valueType: string, options: string | null) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("create_property_def", { spaceId, key, valueType, options })),
 	/**
 	 *  Tauri command: fetch a single property definition of a space by key.
 	 *  Delegates to [`get_property_def_inner`].
@@ -464,10 +468,18 @@ export const commands = {
 	 *  Delegates to [`list_property_defs_inner`].
 	 */
 	listPropertyDefs: (spaceId: SpaceId, cursor: string | null, limit: number | null) => typedError<PageResponse<PropertyDefinition>, AppError>(__TAURI_INVOKE("list_property_defs", { spaceId, cursor, limit })),
-	/**  Tauri command: update options for a space's select-type definition. Delegates to [`update_property_def_options_inner`]. */
-	updatePropertyDefOptions: (spaceId: SpaceId, key: string, options: string) => typedError<PropertyDefinition, AppError>(__TAURI_INVOKE("update_property_def_options", { spaceId, key, options })),
-	/**  Tauri command: delete a space's property definition. Delegates to [`delete_property_def_inner`]. */
-	deletePropertyDef: (spaceId: SpaceId, key: string) => typedError<null, AppError>(__TAURI_INVOKE("delete_property_def", { spaceId, key })),
+	/**
+	 *  Tauri command: update options for a space's select-type definition.
+	 *  Delegates to [`update_property_def_options_inner`]; the response carries
+	 *  the op refs it appended, none when the options are unchanged.
+	 */
+	updatePropertyDefOptions: (spaceId: SpaceId, key: string, options: string) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("update_property_def_options", { spaceId, key, options })),
+	/**
+	 *  Tauri command: delete a space's property definition. Delegates to
+	 *  [`delete_property_def_inner`]; the response is the deleted definition and
+	 *  the op ref of its delete.
+	 */
+	deletePropertyDef: (spaceId: SpaceId, key: string) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("delete_property_def", { spaceId, key })),
 	/**
 	 *  Tauri command: how many live blocks of a space use each key of its
 	 *  vocabulary. Delegates to [`count_property_usage_inner`].

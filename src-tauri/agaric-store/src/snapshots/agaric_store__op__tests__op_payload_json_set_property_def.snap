@@ -1,0 +1,13 @@
+---
+source: src/op.rs
+expression: json
+---
+def:
+  options: "[\"draft\",\"done\"]"
+  value_type: select
+key: stage
+op_type: set_property_def
+prior:
+  options: "[\"draft\"]"
+  value_type: select
+space_id: 01ARZ3NDEKTSV4RRFFQ69G5FAV

@@ -1142,16 +1142,23 @@ async fn list_property_defs_lists_builtins_with_the_seeded_rows_5841() {
 #[tokio::test]
 async fn update_property_def_options_changes_options() {
     let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
     let opts1 = r#"["a","b"]"#;
     create_test_property_def(&pool, "mood".into(), "select".into(), Some(opts1.into()))
         .await
         .unwrap();
 
     let opts2 = r#"["x","y","z"]"#;
-    let updated =
-        update_property_def_options_inner(&pool, TEST_SPACE_ID, "mood".into(), opts2.into())
-            .await
-            .unwrap();
+    let updated = update_property_def_options_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "mood".into(),
+        opts2.into(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(updated.options.as_deref(), Some(opts2));
     assert_eq!(updated.key, "mood");
@@ -1161,11 +1168,12 @@ async fn update_property_def_options_changes_options() {
 #[tokio::test]
 async fn delete_property_def_removes_row() {
     let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
     create_test_property_def(&pool, "temp".into(), "text".into(), None)
         .await
         .unwrap();
 
-    delete_property_def_inner(&pool, TEST_SPACE_ID, "temp".into())
+    delete_property_def_inner(&pool, DEV, &mat, TEST_SPACE_ID, "temp".into())
         .await
         .unwrap();
 
@@ -1251,8 +1259,11 @@ async fn create_property_def_text_with_options_returns_validation() {
 #[tokio::test]
 async fn update_property_def_options_nonexistent_key_returns_not_found() {
     let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
     let result = update_property_def_options_inner(
         &pool,
+        DEV,
+        &mat,
         TEST_SPACE_ID,
         "nonexistent".into(),
         r#"["a"]"#.into(),
@@ -1267,13 +1278,20 @@ async fn update_property_def_options_nonexistent_key_returns_not_found() {
 #[tokio::test]
 async fn update_property_def_options_non_select_returns_validation() {
     let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
     create_test_property_def(&pool, "mytext".into(), "text".into(), None)
         .await
         .unwrap();
 
-    let result =
-        update_property_def_options_inner(&pool, TEST_SPACE_ID, "mytext".into(), r#"["a"]"#.into())
-            .await;
+    let result = update_property_def_options_inner(
+        &pool,
+        DEV,
+        &mat,
+        TEST_SPACE_ID,
+        "mytext".into(),
+        r#"["a"]"#.into(),
+    )
+    .await;
     assert!(
         matches!(result, Err(AppError::Validation { .. })),
         "update options on text-type must return Validation error"
@@ -1283,7 +1301,8 @@ async fn update_property_def_options_non_select_returns_validation() {
 #[tokio::test]
 async fn delete_property_def_nonexistent_returns_not_found() {
     let (pool, _dir) = test_pool().await;
-    let result = delete_property_def_inner(&pool, TEST_SPACE_ID, "ghost".into()).await;
+    let mat = test_materializer(&pool);
+    let result = delete_property_def_inner(&pool, DEV, &mat, TEST_SPACE_ID, "ghost".into()).await;
     assert!(
         matches!(result, Err(AppError::NotFound(_))),
         "delete nonexistent key must return NotFound"

@@ -19,6 +19,7 @@ export const history: Record<string, string> = {
   'history.opTypeRemovePageAlias': 'Remove alias',
   'history.opTypeSetProperty': 'Set property',
   'history.opTypeDeleteProperty': 'Delete property',
+  'history.opTypeSetPropertyDef': 'Property definition',
   'history.opTypeAddAttachment': 'Add attachment',
   'history.opTypeRemoveAttachment': 'Remove attachment',
   'history.opTypeRenameAttachment': 'Rename attachment',
@@ -34,6 +35,8 @@ export const history: Record<string, string> = {
   'history.opTypeDescription.removePageAlias': 'An alias was removed from a page',
   'history.opTypeDescription.setProperty': 'A property was set on a block',
   'history.opTypeDescription.deleteProperty': 'A property was removed from a block',
+  'history.opTypeDescription.setPropertyDef':
+    "A space's property definition was created, changed or deleted",
   'history.opTypeDescription.addAttachment': 'An attachment was added to a block',
   'history.opTypeDescription.deleteAttachment': 'An attachment was removed from a block',
   'history.opTypeDescription.renameAttachment': 'An attachment was renamed',

@@ -1,0 +1,199 @@
+{
+  "description": "#5841 S1 — property definitions are ops. `create_property_def`, `update_property_def_options` and `delete_property_def` each append one `set_property_def` carrying the definition it leaves and the one it replaced; `undo_ops` swaps the two. The delete is undone first, which brings back the edited options, then the edit, which brings back the created ones. Read back through `list_property_defs` and `get_property_def`. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "name": "property_def_undo",
+  "ops": [
+    {
+      "args": {
+        "key": "stage",
+        "options": "[\"draft\"]",
+        "spaceId": "$SPACE",
+        "valueType": "select"
+      },
+      "command": "create_property_def",
+      "comment": "O1 — a `set_property_def` with no prior.",
+      "name": "create_select_def",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "stage",
+        "options": "[\"draft\",\"done\"]",
+        "spaceId": "$SPACE"
+      },
+      "command": "update_property_def_options",
+      "comment": "O2 — the options edit, its prior the created options.",
+      "name": "edit_options",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "stage",
+        "spaceId": "$SPACE"
+      },
+      "command": "delete_property_def",
+      "comment": "O3 — the delete, its prior the edited options.",
+      "name": "delete_def",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O3"]
+      },
+      "command": "undo_ops",
+      "comment": "Undo the delete: the edited definition is back.",
+      "name": "undo_the_delete",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O2"]
+      },
+      "command": "undo_ops",
+      "comment": "Undo the edit: the created options are back.",
+      "name": "undo_the_edit",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "spaceId": "$SPACE"
+      },
+      "command": "list_property_defs",
+      "comment": "`stage` as created, `[\"draft\"]`, beside the built-ins.",
+      "name": "registry_after_undo"
+    },
+    {
+      "args": {
+        "key": "stage",
+        "spaceId": "$SPACE"
+      },
+      "command": "get_property_def",
+      "comment": "The point lookup on the restored definition.",
+      "name": "stage_after_undo"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  },
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 5,
+      "ops": [
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "create_select_def",
+      "returns": ["stage#value_type=select#options=[\"draft\"]#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "edit_options",
+      "returns": ["stage#value_type=select#options=[\"draft\",\"done\"]#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "delete_def",
+      "returns": ["stage#value_type=select#options=[\"draft\",\"done\"]#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_delete",
+      "returns": [
+        "undo_ops#reversed_op_type=set_property_def#new_op_type=set_property_def#is_redo=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_edit",
+      "returns": [
+        "undo_ops#reversed_op_type=set_property_def#new_op_type=set_property_def#is_redo=false"
+      ]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "registry_after_undo",
+      "rows": [
+        "completed_at#value_type=date#options=null#builtin=true",
+        "created_at#value_type=date#options=null#builtin=true",
+        "due_date#value_type=date#options=null#builtin=true",
+        "is_space#value_type=select#options=[\"true\"]#builtin=true",
+        "listStyle#value_type=select#options=[\"bullet\",\"ordered\"]#builtin=true",
+        "priority#value_type=select#options=[\"1\",\"2\",\"3\"]#builtin=true",
+        "repeat#value_type=text#options=null#builtin=true",
+        "repeat-count#value_type=number#options=null#builtin=true",
+        "repeat-origin#value_type=text#options=null#builtin=true",
+        "repeat-seq#value_type=number#options=null#builtin=true",
+        "repeat-until#value_type=date#options=null#builtin=true",
+        "scheduled_date#value_type=date#options=null#builtin=true",
+        "space#value_type=ref#options=null#builtin=true",
+        "stage#value_type=select#options=[\"draft\"]#builtin=false",
+        "todo_state#value_type=select#options=[\"TODO\",\"DOING\",\"DONE\",\"CANCELLED\"]#builtin=true"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "stage_after_undo",
+      "rows": ["stage#value_type=select#options=[\"draft\"]#builtin=false"],
+      "total_count": null
+    }
+  ]
+}

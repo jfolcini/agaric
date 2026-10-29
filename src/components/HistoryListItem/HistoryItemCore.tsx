@@ -48,9 +48,10 @@ import { useResolveStore } from '@/stores/resolve'
 // ---------------------------------------------------------------------------
 
 /**
- * True for the three attachment op types (#4277/#4335) and the two alias op
- * types (#5387). Their `getPayloadRawContent` value is a filename, a filename
- * transition or an alias, not editor content, so it is rendered as plain text
+ * True for the three attachment op types (#4277/#4335), the two alias op
+ * types (#5387) and the definition op (#5841). Their `getPayloadRawContent`
+ * value is a filename, a filename transition, an alias or a property key, not
+ * editor content, so it is rendered as plain text
  * (like a property payload's `formatPropertyName(key)`), not run through
  * `renderRichContent` — a filename such as `#budget.png` or `[[notes]].pdf`
  * would otherwise render as a clickable tag/link chip instead of literal text
@@ -62,7 +63,8 @@ function isPlainTextOpType(opType: string): boolean {
     opType === 'delete_attachment' ||
     opType === 'rename_attachment' ||
     opType === 'add_page_alias' ||
-    opType === 'remove_page_alias'
+    opType === 'remove_page_alias' ||
+    opType === 'set_property_def'
   )
 }
 
@@ -87,7 +89,8 @@ function opBadgeClasses(opType: string): string {
     opType.startsWith('tag') ||
     opType.startsWith('property') ||
     opType === 'set_property' ||
-    opType === 'delete_property'
+    opType === 'delete_property' ||
+    opType === 'set_property_def'
   ) {
     return 'bg-op-tag text-op-tag-foreground'
   }

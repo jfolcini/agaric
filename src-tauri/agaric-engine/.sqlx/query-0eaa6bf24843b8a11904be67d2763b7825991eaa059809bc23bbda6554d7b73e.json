@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM property_definitions WHERE space_id = ? AND key = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "0eaa6bf24843b8a11904be67d2763b7825991eaa059809bc23bbda6554d7b73e"
+}

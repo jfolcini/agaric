@@ -9,6 +9,11 @@ use crate::db::{CommandTx, ReadPool, WriteCtx};
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
+use agaric_engine::apply::loro_apply::{
+    apply_delete_attachment_via_loro, apply_remove_page_alias_via_loro,
+    apply_rename_attachment_via_loro,
+};
+use agaric_engine::apply::property_defs::apply_set_property_def_via_loro;
 use agaric_store::op::{OpPayload, OpRef, UndoResult};
 use agaric_store::op_log;
 use agaric_store::pagination;
@@ -876,6 +881,11 @@ async fn with_recorded_prior_in_tx(
 /// run the forward `apply_*_attachment_via_loro` writers, which write the
 /// engine entry and the row together (#5608).
 ///
+/// A `SetPropertyDef` reverse runs the forward apply, which re-types the
+/// key's values when the restored definition moves them to another column,
+/// and is refused, as `create_property_def` is, when they would not fit it
+/// (#5841).
+///
 /// `op_created_at` is the SAME timestamp the caller bound as the reverse op's
 /// `op_log.created_at` (mint it via `reverse_op_timestamp`). The DeleteBlock
 /// arm stamps it into `blocks.deleted_at`, preserving the forward-path cohort
@@ -960,10 +970,7 @@ pub async fn apply_reverse_in_tx(
         }
         OpPayload::RemovePageAlias(p) => {
             crate::commands::pages::aliases::require_live_page(tx, p.page_id.as_str()).await?;
-            agaric_engine::apply::loro_apply::apply_remove_page_alias_via_loro(
-                tx, state, device_id, p, false,
-            )
-            .await?;
+            apply_remove_page_alias_via_loro(tx, state, device_id, p, false).await?;
         }
         OpPayload::SetProperty(p) => {
             apply_reverse_set_property(tx, state, device_id, p).await?;
@@ -975,27 +982,24 @@ pub async fn apply_reverse_in_tx(
         // hard-deletes the row (C7, #345) and leaves the bytes to the orphan
         // GC (#1993), as the forward delete does.
         OpPayload::DeleteAttachment(p) => {
-            agaric_engine::apply::loro_apply::apply_delete_attachment_via_loro(
-                tx,
-                state,
-                device_id,
-                p,
-                op_created_at,
-                false,
-            )
-            .await?;
+            apply_delete_attachment_via_loro(tx, state, device_id, p, op_created_at, false).await?;
         }
         // The payload is already swapped by `reverse_rename_attachment`, so
         // `new_filename` is the name to restore.
         OpPayload::RenameAttachment(p) => {
-            agaric_engine::apply::loro_apply::apply_rename_attachment_via_loro(
-                tx, state, device_id, p, false,
-            )
-            .await?;
+            apply_rename_attachment_via_loro(tx, state, device_id, p, false).await?;
         }
         OpPayload::AddAttachment(p) => {
             apply_reverse_add_attachment(tx, state, device_id, p, op_created_at, app_data_dir)
                 .await?;
+        }
+        // #5841: the payload is already swapped by `reverse_set_property_def`,
+        // so `def` is the definition to restore. Refused, as the create is,
+        // over values it would re-type out of existence.
+        OpPayload::SetPropertyDef(p) => {
+            crate::commands::properties::refuse_restoring_def_over_conflicting_values(tx, p)
+                .await?;
+            apply_set_property_def_via_loro(tx, state, device_id, p).await?;
         }
         // Note: CreateBlock never appears here because reverse::compute_reverse
         // maps CreateBlock → DeleteBlock, and RestoreBlock → DeleteBlock.

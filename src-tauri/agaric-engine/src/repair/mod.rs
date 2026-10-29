@@ -1,5 +1,5 @@
 //! Boot-time repairs of damage a since-closed write-side defect left behind
-//! (#4728, #4715, #5074, #5387, #5670, #5608).
+//! (#4728, #4715, #5074, #5387, #5670, #5608, #5841).
 //!
 //! The populations it repairs:
 //!
@@ -19,6 +19,9 @@
 //! * [`page_aliases`](crate::repair::page_aliases) — `page_aliases` rows
 //!   written before aliases were ops (#5387), which no other device and no
 //!   engine reprojection can see. Each gets its `AddPageAlias`.
+//! * [`property_definitions`](crate::repair::property_definitions) —
+//!   `property_definitions` rows written before definitions were ops (#5841).
+//!   Each gets its `SetPropertyDef`.
 //! * [`engine_missing_blocks`](crate::repair::engine_missing_blocks) — live
 //!   blocks their space's Loro engine lost to a purge after a pre-#5418 boot
 //!   replay (#5670). Each is hydrated back from its rows.
@@ -79,6 +82,7 @@ pub mod engine_missing_blocks;
 pub mod journal_duplicates;
 pub mod orphans;
 pub mod page_aliases;
+pub mod property_definitions;
 
 /// Title of the per-space page that re-homed content lands under. Looked up
 /// by title within the space on every run, so one page per space accumulates

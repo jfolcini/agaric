@@ -11,12 +11,13 @@
  */
 
 import { invoke, type InvokeArgs } from '@tauri-apps/api/core'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { withOps } from '@/__tests__/fixtures'
 import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { PropertyDefinitionsList } from '@/components/properties/PropertyDefinitionsList'
 import type { AppError, PageResponse, PropertyDefinition } from '@/lib/bindings'
@@ -192,7 +193,7 @@ describe('PropertyDefinitionsList', () => {
       expect(screen.getByText('No property definitions yet')).toBeInTheDocument()
     })
 
-    stubInvoke({ create_property_def: () => makePropDef('my-prop', 'text') })
+    stubInvoke({ create_property_def: () => withOps(makePropDef('my-prop', 'text')) })
 
     const keyInput = screen.getByPlaceholderText('Property key')
     await user.type(keyInput, 'my-prop')
@@ -224,7 +225,9 @@ describe('PropertyDefinitionsList', () => {
       expect(screen.getByText('No property definitions yet')).toBeInTheDocument()
     })
 
-    stubInvoke({ create_property_def: () => makePropDef('size', 'select', '["small","large"]') })
+    stubInvoke({
+      create_property_def: () => withOps(makePropDef('size', 'select', '["small","large"]')),
+    })
 
     await user.type(screen.getByPlaceholderText('Property key'), 'size')
     await user.selectOptions(screen.getByRole('combobox', { name: 'Type' }), 'select')
@@ -300,7 +303,7 @@ describe('PropertyDefinitionsList', () => {
 
     expect(await screen.findByText('To Delete')).toBeInTheDocument()
 
-    stubInvoke({ delete_property_def: () => null })
+    stubInvoke({ delete_property_def: () => withOps(makePropDef('to-delete', 'text')) })
 
     const deleteBtn = screen.getByRole('button', { name: /Delete property to-delete/i })
     await user.click(deleteBtn)
@@ -897,6 +900,7 @@ describe('PropertyDefinitionsList', () => {
       await waitFor(() => {
         expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
           t('propertiesView.copiedToSpace', { key: 'project', space: WORK.name }),
+          expect.anything(),
         )
       })
       expect(mockedInvoke).toHaveBeenCalledWith('create_property_def', {
@@ -1146,6 +1150,125 @@ describe('PropertyDefinitionsList', () => {
         expect(usageBadge('status')).toHaveTextContent('1 use')
       })
       expect(usageBadge('context')).not.toBeInTheDocument()
+    })
+  })
+})
+
+// #5841 S1 — every definition write is an op, so each one's toast offers Undo.
+describe('Undo after a definition write', () => {
+  /** Press Undo on the success toast that said `message`. */
+  function pressToastUndo(message: string): void {
+    const call = vi.mocked(toast.success).mock.calls.find(([shown]) => shown === message)
+    const action = (call?.[1] as { action?: { label: string; onClick: () => void } } | undefined)
+      ?.action
+    expect(action?.label).toBe(t('action.undo'))
+    action?.onClick()
+  }
+
+  /** The mock backend, with a second space to copy into. */
+  function seedMock(): void {
+    seedBlocks()
+    useSpaceStore.setState({ currentSpaceId: PERSONAL.id, availableSpaces: [PERSONAL, WORK] })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+  }
+
+  it('brings a deleted definition back', async () => {
+    const user = userEvent.setup()
+    seedMock()
+    render(<PropertyDefinitionsList />)
+    await user.click(await screen.findByRole('button', { name: 'Delete property reviewer' }))
+    await user.click(await screen.findByRole('button', { name: /^Delete$/i }))
+    await waitFor(() => {
+      expect(screen.queryByText('Reviewer')).not.toBeInTheDocument()
+    })
+
+    pressToastUndo(t('propertiesView.deleted'))
+
+    expect(await screen.findByText('Reviewer')).toBeInTheDocument()
+    expect(spacePropertyDefs(PERSONAL.id).has('reviewer')).toBe(true)
+  })
+
+  it('withdraws a created definition', async () => {
+    const user = userEvent.setup()
+    seedMock()
+    render(<PropertyDefinitionsList />)
+    await user.type(await screen.findByPlaceholderText('Property key'), 'estimate')
+    await user.click(screen.getByRole('button', { name: /Create/i }))
+    expect(await screen.findByText('Estimate')).toBeInTheDocument()
+
+    pressToastUndo(t('propertiesView.created'))
+
+    await waitFor(() => {
+      expect(screen.queryByText('Estimate')).not.toBeInTheDocument()
+    })
+    expect(spacePropertyDefs(PERSONAL.id).has('estimate')).toBe(false)
+  })
+
+  it('puts the old options back after an options edit', async () => {
+    const user = userEvent.setup()
+    seedMock()
+    const before = spacePropertyDefs(PERSONAL.id).get('project')?.['options']
+    render(<PropertyDefinitionsList />)
+    await screen.findByText('Project')
+    const row = screen.getByText('Project').closest('li') as HTMLElement
+    await user.click(within(row).getByRole('button', { name: /Edit options/i }))
+    fireEvent.change(screen.getByLabelText('Options JSON'), { target: { value: '["solo"]' } })
+    await user.click(screen.getByRole('button', { name: /Save/i }))
+    await waitFor(() => {
+      expect(spacePropertyDefs(PERSONAL.id).get('project')?.['options']).toBe('["solo"]')
+    })
+
+    pressToastUndo(t('propertiesView.optionsSaved'))
+
+    await waitFor(() => {
+      expect(spacePropertyDefs(PERSONAL.id).get('project')?.['options']).toBe(before)
+    })
+  })
+
+  it('withdraws a copy from the other space', async () => {
+    const user = userEvent.setup()
+    seedMock()
+    render(<PropertyDefinitionsList />)
+    await screen.findByText('Project')
+    await user.click(
+      screen.getByRole('button', {
+        name: t('propertiesView.copyToSpaceLabel', { key: 'project' }),
+      }),
+    )
+    await user.click(await screen.findByRole('button', { name: WORK.name }))
+    await waitFor(() => {
+      expect(spacePropertyDefs(WORK.id).has('project')).toBe(true)
+    })
+
+    pressToastUndo(t('propertiesView.copiedToSpace', { key: 'project', space: WORK.name }))
+
+    await waitFor(() => {
+      expect(spacePropertyDefs(WORK.id).has('project')).toBe(false)
+    })
+  })
+
+  it('reports an Undo the backend refuses', async () => {
+    const user = userEvent.setup()
+    stubInvoke({
+      list_property_defs: () => pageOf([makePropDef('to-delete', 'text')]),
+      delete_property_def: () =>
+        withOps({
+          ...makePropDef('to-delete', 'text'),
+          op_refs: [{ device_id: 'D', seq: 1 }],
+        }),
+      undo_ops: () => Promise.reject(new Error('already reversed')),
+    })
+    render(<PropertyDefinitionsList />)
+    await user.click(await screen.findByRole('button', { name: /Delete property to-delete/i }))
+    await user.click(await screen.findByRole('button', { name: /^Delete$/i }))
+    await waitFor(() => {
+      expect(vi.mocked(toast.success)).toHaveBeenCalled()
+    })
+
+    pressToastUndo(t('propertiesView.deleted'))
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('propertiesView.undoFailed'))
     })
   })
 })

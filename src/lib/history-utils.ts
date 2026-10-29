@@ -32,7 +32,8 @@ export function parsePayloadObject(payload: string): Record<string, unknown> | n
  * checked independently and a missing/empty one is simply omitted rather
  * than rendered as `undefined`/`""`.
  *
- * The two alias ops (#5387) render their `alias`.
+ * The two alias ops (#5387) render their `alias`, a definition op (#5841)
+ * its `key`.
  *
  * Returns null when the payload is invalid JSON or has no text/filename
  * field to show.
@@ -64,6 +65,10 @@ export function getPayloadRawContent(entry: HistoryEntry): string | null {
   if (entry.op_type === 'add_page_alias' || entry.op_type === 'remove_page_alias') {
     const alias = parsed['alias']
     return typeof alias === 'string' && alias.length > 0 ? alias : null
+  }
+  if (entry.op_type === 'set_property_def') {
+    const key = parsed['key']
+    return typeof key === 'string' && key.length > 0 ? key : null
   }
   return null
 }

@@ -103,7 +103,7 @@ pub fn engine_apply(
 }
 
 /// Dispatch on op_type. Covers every op type: the block, property, tag,
-/// page-alias and attachment-metadata ops.
+/// page-alias, attachment-metadata and property-definition ops.
 fn dispatch_engine_op(
     engine: &mut crate::loro::engine::LoroEngine,
     op_id: &str,
@@ -123,24 +123,7 @@ fn dispatch_engine_op(
         agaric_store::op::OpPayload::DeleteBlock(p) => {
             engine.apply_delete_block(p.block_id.as_str(), op_created_at)
         }
-        agaric_store::op::OpPayload::MoveBlock(p) => {
-            let parent = p
-                .new_parent_id
-                .as_ref()
-                .map(agaric_core::ulid::BlockId::as_str);
-            // #400/#603 routing — MUST mirror
-            // `materializer::handlers::apply_move_block_via_loro` exactly:
-            // route on `new_index` when present (new-scheme op), else the
-            // legacy sparse `new_position`.
-            match p.new_index {
-                Some(index) => engine.apply_move_block_to(
-                    p.block_id.as_str(),
-                    parent,
-                    usize::try_from(index.max(0)).unwrap_or(usize::MAX),
-                ),
-                None => engine.apply_move_block(p.block_id.as_str(), parent, p.new_position),
-            }
-        }
+        agaric_store::op::OpPayload::MoveBlock(p) => apply_move_op(engine, p),
         agaric_store::op::OpPayload::SetProperty(p) => {
             apply_set_property_op(engine, op_id, op.op_type_str(), p)
         }
@@ -162,6 +145,9 @@ fn dispatch_engine_op(
         }
         agaric_store::op::OpPayload::RemovePageAlias(p) => {
             engine.apply_remove_page_alias(p.page_id.as_str(), &p.alias)
+        }
+        agaric_store::op::OpPayload::SetPropertyDef(p) => {
+            engine.apply_set_property_def(&p.key, p.def.as_ref())
         }
         agaric_store::op::OpPayload::AddAttachment(p) => engine.apply_add_attachment(
             p.block_id.as_str(),
@@ -186,6 +172,28 @@ fn dispatch_engine_op(
                 None => Ok(()),
             }
         }
+    }
+}
+
+/// #400/#603 routing — MUST mirror
+/// `materializer::handlers::apply_move_block_via_loro` exactly: route on
+/// `new_index` when present (new-scheme op), else the legacy sparse
+/// `new_position`.
+fn apply_move_op(
+    engine: &mut crate::loro::engine::LoroEngine,
+    p: &agaric_store::op::MoveBlockPayload,
+) -> Result<(), agaric_core::error::AppError> {
+    let parent = p
+        .new_parent_id
+        .as_ref()
+        .map(agaric_core::ulid::BlockId::as_str);
+    match p.new_index {
+        Some(index) => engine.apply_move_block_to(
+            p.block_id.as_str(),
+            parent,
+            usize::try_from(index.max(0)).unwrap_or(usize::MAX),
+        ),
+        None => engine.apply_move_block(p.block_id.as_str(), parent, p.new_position),
     }
 }
 

@@ -11,7 +11,7 @@
 //! `confirm_pairing_inner` with the fields of the QR the app showed (what a
 //! phone's camera hands the joiner), `create_block_inner`,
 //! `create_block_inner_with_space`, `create_blocks_batch_inner`,
-//! `create_space_inner`, `edit_block_inner`,
+//! `create_space_inner`, `create_property_def_inner`, `edit_block_inner`,
 //! `set_property_inner`, `set_todo_state_inner`, `set_due_date_inner`,
 //! `add_tag_inner`, `move_block_inner`, `move_blocks_to_space_inner`,
 //! `add_attachment_with_bytes_inner`, `get_active_block_inner`,
@@ -39,10 +39,10 @@ use agaric_core::ulid::BlockId;
 use agaric_lib::commands::{
     CreateBlockSpec, add_attachment_with_bytes_inner, add_tag_inner, confirm_pairing_inner,
     create_block_inner, create_block_inner_with_space, create_blocks_batch_inner,
-    create_space_inner, edit_block_inner, get_active_block_inner, get_property_inner,
-    list_attachments_inner, list_peer_refs_inner, move_block_inner, move_blocks_to_space_inner,
-    read_attachment_inner, set_due_date_inner, set_property_inner, set_todo_state_inner,
-    start_pairing_armed_inner,
+    create_property_def_inner, create_space_inner, edit_block_inner, get_active_block_inner,
+    get_property_inner, list_attachments_inner, list_peer_refs_inner, move_block_inner,
+    move_blocks_to_space_inner, read_attachment_inner, set_due_date_inner, set_property_inner,
+    set_todo_state_inner, start_pairing_armed_inner,
 };
 use agaric_lib::db::{DbPools, init_pools, now_ms};
 use agaric_lib::materializer::Materializer;
@@ -125,6 +125,8 @@ enum Command {
         id: String,
         content: String,
     },
+    /// Declare a property, as [`PropertyDefArgs`] spells it.
+    CreatePropertyDef(PropertyDefArgs),
     /// Set text property `key` on block `id`.
     SetProperty {
         id: String,
@@ -180,6 +182,18 @@ enum Command {
     WaitPulled,
     /// The device ids this vault holds a pairing with.
     ListPeers,
+}
+
+/// Property `key` as `value_type` in space `space_id`, or in the Personal
+/// space; `options` is a select's JSON array of options.
+#[derive(Debug, PartialEq, Deserialize)]
+struct PropertyDefArgs {
+    key: String,
+    value_type: String,
+    #[serde(default)]
+    options: Option<String>,
+    #[serde(default)]
+    space_id: Option<String>,
 }
 
 /// One stdout line.
@@ -371,6 +385,7 @@ impl Peer {
             Command::CreateSpace { name } => self.create_space(name).await,
             Command::MoveToSpace { id, space_id } => self.move_to_space(id, space_id).await,
             Command::EditBlock { id, content } => self.edit_block(id, content).await,
+            Command::CreatePropertyDef(args) => self.create_property_def(args).await,
             Command::SetProperty { id, key, value } => self.set_property(id, key, value).await,
             Command::SetTodoState { id, state } => self.set_todo_state(id, state).await,
             Command::SetDueDate { id, date } => self.set_due_date(id, date).await,
@@ -650,6 +665,24 @@ impl Peer {
         .await?;
         self.last_write_ms = now_ms();
         Ok(Reply::Edited)
+    }
+
+    async fn create_property_def(&mut self, args: PropertyDefArgs) -> Result<Reply, AppError> {
+        let space = args
+            .space_id
+            .unwrap_or_else(|| SPACE_PERSONAL_ULID.to_owned());
+        create_property_def_inner(
+            &self.pools.write,
+            &self.device_id,
+            &self.materializer,
+            &space,
+            args.key,
+            args.value_type,
+            args.options,
+        )
+        .await?;
+        self.last_write_ms = now_ms();
+        Ok(Reply::PropertySet)
     }
 
     async fn set_property(
@@ -1060,6 +1093,32 @@ mod tests {
                 space_id: "S2".into(),
             }),
             "sync-peer.ts sends a move to another space as the page id and the space"
+        );
+    }
+
+    #[test]
+    fn create_property_def_takes_a_key_and_type_and_defaults_the_rest() {
+        assert_eq!(
+            parse_command(r#"{"cmd":"create_property_def","key":"due2","value_type":"date"}"#),
+            Ok(Command::CreatePropertyDef(PropertyDefArgs {
+                key: "due2".into(),
+                value_type: "date".into(),
+                options: None,
+                space_id: None,
+            })),
+            "sync-peer.ts sends a definition as its key and type, in Personal"
+        );
+        assert_eq!(
+            parse_command(
+                r#"{"cmd":"create_property_def","key":"stage","value_type":"select","options":"[\"a\"]","space_id":"S1"}"#
+            ),
+            Ok(Command::CreatePropertyDef(PropertyDefArgs {
+                key: "stage".into(),
+                value_type: "select".into(),
+                options: Some(r#"["a"]"#.into()),
+                space_id: Some("S1".into()),
+            })),
+            "…and a select's options and another space when it names them"
         );
     }
 

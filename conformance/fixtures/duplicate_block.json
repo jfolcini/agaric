@@ -200,8 +200,11 @@
       }
     ],
     "op_log_digest": {
-      "count": 21,
+      "count": 22,
       "ops": [
+        {
+          "op_type": "set_property_def"
+        },
         {
           "key": "reviewer",
           "op_type": "set_property"

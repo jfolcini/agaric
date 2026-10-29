@@ -54,6 +54,7 @@ pub enum OpType {
     RenameAttachment,
     AddPageAlias,
     RemovePageAlias,
+    SetPropertyDef,
 }
 
 impl OpType {
@@ -91,6 +92,7 @@ impl OpType {
             OpType::RenameAttachment => "rename_attachment",
             OpType::AddPageAlias => "add_page_alias",
             OpType::RemovePageAlias => "remove_page_alias",
+            OpType::SetPropertyDef => "set_property_def",
         }
     }
 }
@@ -139,6 +141,7 @@ impl FromStr for OpType {
             "rename_attachment" => Ok(OpType::RenameAttachment),
             "add_page_alias" => Ok(OpType::AddPageAlias),
             "remove_page_alias" => Ok(OpType::RemovePageAlias),
+            "set_property_def" => Ok(OpType::SetPropertyDef),
             other => Err(format!("unknown op type: {other}")),
         }
     }
@@ -281,6 +284,28 @@ pub struct AddPageAliasPayload {
 pub struct RemovePageAliasPayload {
     pub page_id: BlockId,
     pub alias: String,
+}
+
+/// A user property definition as a space holds it: its type and, for a
+/// select, its options as the JSON array text `property_definitions.options`
+/// stores.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PropertyDefState {
+    pub value_type: String,
+    pub options: Option<String>,
+}
+
+/// Payload for the `set_property_def` op — creates, edits or deletes
+/// `space_id`'s definition of `key` (#5841).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetPropertyDefPayload {
+    pub space_id: BlockId,
+    pub key: String,
+    /// The definition the op leaves; `None` deletes it.
+    pub def: Option<PropertyDefState>,
+    /// The definition the op replaced, which its undo restores; `None` when
+    /// the space did not declare the key.
+    pub prior: Option<PropertyDefState>,
 }
 
 /// Payload for the `set_property` op — upserts a typed key-value property on a block (exactly one value field must be set).
@@ -491,6 +516,7 @@ pub enum OpPayload {
     RenameAttachment(RenameAttachmentPayload),
     AddPageAlias(AddPageAliasPayload),
     RemovePageAlias(RemovePageAliasPayload),
+    SetPropertyDef(SetPropertyDefPayload),
 }
 
 impl OpPayload {
@@ -512,6 +538,7 @@ impl OpPayload {
             OpPayload::RenameAttachment(_) => OpType::RenameAttachment,
             OpPayload::AddPageAlias(_) => OpType::AddPageAlias,
             OpPayload::RemovePageAlias(_) => OpType::RemovePageAlias,
+            OpPayload::SetPropertyDef(_) => OpType::SetPropertyDef,
         }
     }
 
@@ -525,7 +552,8 @@ impl OpPayload {
 
     /// Returns the `block_id` from the inner payload, if present.
     ///
-    /// The alias variants answer their `page_id`. `DeleteAttachment` and
+    /// The alias variants answer their `page_id`, and `SetPropertyDef` its
+    /// `space_id`. `DeleteAttachment` and
     /// `RenameAttachment` identify the target by `attachment_id` only, so this
     /// method returns `None` for them.
     pub fn block_id(&self) -> Option<&str> {
@@ -545,6 +573,7 @@ impl OpPayload {
             OpPayload::RenameAttachment(_) => None,
             OpPayload::AddPageAlias(p) => Some(p.page_id.as_str()),
             OpPayload::RemovePageAlias(p) => Some(p.page_id.as_str()),
+            OpPayload::SetPropertyDef(p) => Some(p.space_id.as_str()),
         }
     }
 
@@ -574,7 +603,8 @@ impl OpPayload {
             | OpPayload::SetProperty(_)
             | OpPayload::DeleteProperty(_)
             | OpPayload::AddPageAlias(_)
-            | OpPayload::RemovePageAlias(_) => None,
+            | OpPayload::RemovePageAlias(_)
+            | OpPayload::SetPropertyDef(_) => None,
         }
     }
 
@@ -840,6 +870,7 @@ mod tests {
             OpType::RenameAttachment,
             OpType::AddPageAlias,
             OpType::RemovePageAlias,
+            OpType::SetPropertyDef,
         ]
     }
 
@@ -927,6 +958,18 @@ mod tests {
             OpPayload::RemovePageAlias(RemovePageAliasPayload {
                 page_id: BlockId::from_string(TEST_BID).unwrap(),
                 alias: "Plans".into(),
+            }),
+            OpPayload::SetPropertyDef(SetPropertyDefPayload {
+                space_id: BlockId::from_string(TEST_BID).unwrap(),
+                key: "stage".into(),
+                def: Some(PropertyDefState {
+                    value_type: "select".into(),
+                    options: Some(r#"["draft","done"]"#.into()),
+                }),
+                prior: Some(PropertyDefState {
+                    value_type: "select".into(),
+                    options: Some(r#"["draft"]"#.into()),
+                }),
             }),
         ]
     }
@@ -2407,6 +2450,7 @@ mod proptest_tests {
             Just(OpType::RenameAttachment),
             Just(OpType::AddPageAlias),
             Just(OpType::RemovePageAlias),
+            Just(OpType::SetPropertyDef),
         ]
     }
 

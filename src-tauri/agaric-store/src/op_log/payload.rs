@@ -34,6 +34,7 @@ pub fn serialize_inner_payload(op_payload: &OpPayload) -> Result<String, AppErro
         OpPayload::RenameAttachment(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
         OpPayload::AddPageAlias(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
         OpPayload::RemovePageAlias(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
+        OpPayload::SetPropertyDef(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
     }
 }
 
@@ -92,8 +93,8 @@ fn extract_str_field_from_payload(payload_json: &str, field: &'static str) -> Op
 ///
 /// The indexed `block_id` is what [`OpPayload::block_id`](crate::op::OpPayload::block_id)
 /// answers for a local append, so an alias op, which names its page as `page_id`
-/// (#5387), is indexed under that page: a peer's row then lists in the page's
-/// history as a local one does.
+/// (#5387), is indexed under that page, and a definition op under its
+/// `space_id` (#5841): a peer's row then lists as a local one does.
 // #2621 (wave S3b-ii): `pub` (was `pub(crate)`) because the app-crate
 // remote-ingest path `crate::dag::insert_remote_op` calls it across the crate
 // boundary to populate the indexed columns in a single parse.
@@ -102,7 +103,9 @@ pub fn extract_indexed_ids_from_payload(payload_json: &str) -> (Option<String>, 
         Ok(value) => {
             let get = |field: &str| value.get(field).and_then(|v| v.as_str()).map(str::to_owned);
             (
-                get("block_id").or_else(|| get("page_id")),
+                get("block_id")
+                    .or_else(|| get("page_id"))
+                    .or_else(|| get("space_id")),
                 get("attachment_id"),
             )
         }
@@ -127,14 +130,16 @@ pub fn extract_indexed_ids_from_payload(payload_json: &str) -> (Option<String>, 
 /// only has the payload as a JSON string rather than a typed [`OpPayload`].
 ///
 /// Returns `None` if the payload has neither a `block_id` field nor the
-/// `page_id` an alias op carries in its place (the `delete_attachment` op
-/// targets an attachment_id only) or if the JSON cannot be parsed.
+/// `page_id` an alias op or the `space_id` a definition op carries in its
+/// place (the `delete_attachment` op targets an attachment_id only) or if the
+/// JSON cannot be parsed.
 ///
 /// Test-only since #2071 (see [`extract_indexed_ids_from_payload`]).
 #[cfg(test)]
 pub(crate) fn extract_block_id_from_payload(payload_json: &str) -> Option<String> {
     extract_str_field_from_payload(payload_json, "block_id")
         .or_else(|| extract_str_field_from_payload(payload_json, "page_id"))
+        .or_else(|| extract_str_field_from_payload(payload_json, "space_id"))
 }
 
 /// Extract the `attachment_id` from a serialized payload JSON string.

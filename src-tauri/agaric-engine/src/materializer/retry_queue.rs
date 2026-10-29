@@ -1314,6 +1314,8 @@ impl WriteSlot {
             //   `block_id`-scoped predicate entirely.
             // * `AddPageAlias` / `RemovePageAlias`: no slot family models an
             //   alias yet, so a retried one re-applies.
+            // * `SetPropertyDef`: keyed by space, not by block, and no slot
+            //   family models a definition, so a retried one re-applies.
             OpType::CreateBlock
             | OpType::EditBlock
             | OpType::DeleteBlock
@@ -1323,7 +1325,8 @@ impl WriteSlot {
             | OpType::DeleteAttachment
             | OpType::RenameAttachment
             | OpType::AddPageAlias
-            | OpType::RemovePageAlias => None,
+            | OpType::RemovePageAlias
+            | OpType::SetPropertyDef => None,
         }
     }
 }
