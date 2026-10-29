@@ -11,6 +11,7 @@
 
 import {
   closesFence,
+  type DocumentBlock,
   documentFenceOpener,
   needsAnchorLineEscape,
   needsBareLineEscape,
@@ -53,6 +54,7 @@ import {
   ownerSpaceOf,
   type PageSortRow,
   pagesLastEditedAt,
+  propertyDefinition,
   sortDiscriminator,
   titleSortKey,
   validationRejection,
@@ -65,6 +67,7 @@ import {
   blocks,
   fakeId,
   makeBlock,
+  opLog,
   pageAliases,
   pageOpens,
   properties,
@@ -650,6 +653,21 @@ interface SourceBullet {
   anchor: string | null
   /** The buffer line the bullet starts on, which a refusal names (#5160 X3). */
   line?: number | undefined
+  /** A Document line's marker, checkbox and property lines; a Source line has none (#5691). */
+  marks?: Marks | undefined
+  /** What the save writes to the block beside its text, planned by {@link planMarkWrites}. */
+  writes?: MarkWrites | undefined
+}
+
+type Marks = Pick<DocumentBlock, 'listStyle' | 'todoState' | 'properties'>
+
+/** What a save writes to a block beside its text (`PropertyChanges`, `write_properties`). */
+interface MarkWrites {
+  deleted: string[]
+  /** By key for a block the page holds, in line order for one the save creates. */
+  set: Array<[key: string, value: string]>
+  /** The task state, written last: `null` clears it. */
+  todoState: { to: string | null } | null
 }
 
 /** The ` ^word` a source block ends with, when it is id-sized. */
@@ -736,7 +754,7 @@ function anchorFreeDocument(source: string): { text: string; lineIds: Array<stri
   const lines = source.split('\n')
   const lineIds: Array<string | null> = lines.map(() => null)
   const ownLines = new Set<number>()
-  for (const block of parseDocument(source, null).blocks) {
+  for (const block of parseDocument(source, null, isBlockId).blocks) {
     const word = block.anchor
     if (word === null || !isBlockId(word)) continue
     const last = block.line - 1 + block.content.split('\n').length - 1
@@ -758,7 +776,13 @@ function parseDocumentBuffer(
 ): SourceBullet[] {
   const read = parseDocument(text, lineIds)
   warnings.push(...read.warnings)
-  return read.blocks.map(({ content, depth, line }) => ({ content, depth, anchor: null, line }))
+  return read.blocks.map(({ content, depth, line, listStyle, todoState, properties: lines }) => ({
+    content,
+    depth,
+    anchor: null,
+    line,
+    marks: { listStyle, todoState, properties: lines },
+  }))
 }
 
 /** How a buffer in one dialect is rendered, freed of its anchors and read by its ids (#5691). */
@@ -1068,7 +1092,8 @@ function mergeSourceBuffer(
     for (const key of mergeSourceOrder(outlines, parent, parentOf, warnings)) {
       const block = kept.get(key) as MergedBlock
       if (block.fork !== null) merged.push({ content: block.fork, depth, anchor: null })
-      merged.push({ content: block.content, depth, anchor: block.anchor })
+      const marks = outlines.mine.byKey.get(key)?.marks
+      merged.push({ content: block.content, depth, anchor: block.anchor, marks })
       emit(key, depth + 1)
     }
   }
@@ -1076,12 +1101,154 @@ function mergeSourceBuffer(
   return merged
 }
 
+/** `marks` as the save reads a block's properties: the style and state its markers give, then its lines, the last for a key winning. */
+function markProperties({ listStyle, todoState, properties: lines }: Marks): Map<string, string> {
+  const markers: Array<[string, string]> = []
+  if (listStyle !== null) markers.push(['listStyle', listStyle])
+  if (todoState !== null) markers.push(['todo_state', todoState])
+  return new Map([...markers, ...lines])
+}
+
+/**
+ * What a save writes to a block the page holds beside its text
+ * (`PropertyChanges::between`): the keys the buffer dropped, the values it
+ * changed by key, and the task state, written last. A value the page has
+ * already (`now`) is not written again, so a merge keeps what the page changed
+ * since `from`, the source the edit started from. A task's hidden list style
+ * goes with any edit to the block, unless the buffer restyles it.
+ */
+function planMarkWrites(
+  marks: { from: Marks; to: Marks; now: Marks },
+  hidesListStyle: boolean,
+  textEdited: boolean,
+): MarkWrites {
+  const [was, wants, holds] = [marks.from, marks.to, marks.now].map(markProperties) as [
+    Map<string, string>,
+    Map<string, string>,
+    Map<string, string>,
+  ]
+  for (const [key, value] of wants) if (value === '') wants.delete(key)
+  const byKey = ([a]: [string, unknown], [b]: [string, unknown]) => compareUtf8Bytes(a, b)
+  const changed = [...wants]
+    .filter(([key, value]) => was.get(key) !== value && holds.get(key) !== value)
+    .toSorted(byKey)
+  const dropped = [...was.keys()]
+    .filter((key) => !wants.has(key) && holds.has(key))
+    .toSorted(compareUtf8Bytes)
+  const set = changed.filter(([key]) => key !== 'todo_state')
+  const deleted = dropped.filter((key) => key !== 'todo_state')
+  const state = changed.find(([key]) => key === 'todo_state')
+  const todoState = state ? { to: state[1] } : dropped.includes('todo_state') ? { to: null } : null
+  const restyled = set.some(([key]) => key === 'listStyle')
+  const any = set.length > 0 || deleted.length > 0 || todoState !== null
+  if ((textEdited || any) && !restyled && hidesListStyle) deleted.push('listStyle')
+  return { deleted, set, todoState }
+}
+
+/** What a save writes to a block it creates: every property its markers and lines give. */
+function newMarkWrites(marks: Marks): MarkWrites {
+  const set = [...markProperties(marks)].filter(([, value]) => value !== '')
+  return { deleted: [], set, todoState: null }
+}
+
+/** The typed value columns `key:: value` is written to (`typed_property_args_for_registry_value`). */
+function lineColumns(spaceId: string | null, key: string, value: string): Record<string, unknown> {
+  const type = propertyDefinition(spaceId, key)?.['value_type']
+  const word = value.trim()
+  if (type === 'number' && /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(word)) {
+    return { value_num: Number(word) }
+  }
+  if (type === 'boolean' && /^(?:true|false)$/i.test(word)) {
+    return { value_bool: word.toLowerCase() === 'true' }
+  }
+  if (type === 'date') return { value_date: value }
+  return { value_text: value }
+}
+
+/** Refuse a `key:: value` line `set_property` would, as the save refuses it: naming the line. */
+function checkLineValue(bullet: SourceBullet, spaceId: string | null, key: string, value: string) {
+  try {
+    assertValidSetPropertyValue(spaceId, key, value)
+    if (lineColumns(spaceId, key, value)['value_date'] !== undefined) assertValidDateFormat(value)
+  } catch (err) {
+    const reason = (err as { message?: unknown }).message
+    throw refusedAt(bullet.line, `\`${key}:: ${value}\` cannot be saved: ${String(reason)}`)
+  }
+}
+
+/**
+ * Plan the writes beside the text of every bullet of a Document buffer,
+ * refusing a value `set_property` would before anything is written. A bullet
+ * whose block the page holds is compared with that block as the buffer
+ * started from it (`from`) and as the page has it now.
+ */
+function planBufferMarks(
+  t1: SourceBullet[],
+  held: {
+    from: ReadonlyMap<string, Marks>
+    now: ReadonlyMap<string, Marks>
+    before: ReadonlyMap<string | null, string>
+  },
+  spaceId: string | null,
+): void {
+  for (const bullet of t1) {
+    const { anchor, marks } = bullet
+    if (marks === undefined) continue
+    const now = anchor === null ? undefined : held.now.get(anchor)
+    if (anchor === null || now === undefined) {
+      bullet.writes = newMarkWrites(marks)
+    } else {
+      const from = held.from.get(anchor) ?? now
+      const edited = bullet.content !== held.before.get(anchor)
+      const hidden = properties.get(anchor)?.has('listStyle') === true && now.listStyle === null
+      bullet.writes = planMarkWrites({ from, to: marks, now }, hidden, edited)
+    }
+    for (const [key, value] of bullet.writes.set) checkLineValue(bullet, spaceId, key, value)
+    const state = bullet.writes.todoState?.to
+    if (state) checkLineValue(bullet, spaceId, 'todo_state', state)
+  }
+}
+
+/**
+ * The column-backed keys, written by their own commands as the editor writes
+ * them, whose ops an undo reverts.
+ */
+const COLUMN_WRITERS: ReadonlyMap<string, (blockId: string, value: string | null) => unknown> =
+  new Map([
+    ['todo_state', (blockId, state) => propertiesHandlers.set_todo_state({ blockId, state })],
+    ['priority', (blockId, level) => propertiesHandlers.set_priority({ blockId, level })],
+    ['due_date', (blockId, date) => propertiesHandlers.set_due_date({ blockId, date })],
+    ['scheduled_date', (blockId, date) => propertiesHandlers.set_scheduled_date({ blockId, date })],
+  ])
+
+/**
+ * `writes` applied to block `id`: the keys taken off, those set, then the task
+ * state (`write_properties`). Returns the refs of every op it appended, the
+ * stamps a task state writes included.
+ */
+function writeMarks(id: string, writes: MarkWrites): OpRefs {
+  const spaceId = definitionSpaceOf(id)
+  const start = opLog.length
+  for (const key of writes.deleted) propertiesHandlers.delete_property({ blockId: id, key })
+  for (const [key, value] of writes.set) {
+    const column = COLUMN_WRITERS.get(key)
+    if (column === undefined) {
+      propertiesHandlers.set_property({ blockId: id, key, value: lineColumns(spaceId, key, value) })
+    } else {
+      column(id, value)
+    }
+  }
+  if (writes.todoState !== null) COLUMN_WRITERS.get('todo_state')?.(id, writes.todoState.to)
+  return opLog.slice(start).map(({ device_id, seq }) => ({ device_id, seq }))
+}
+
 /**
  * Every refusal `apply_page_source` makes, checked before anything is written:
  * a stale base unless `merge` folds the page's changes into the buffer, a page
  * that does not read back as its own source, `lineIds` that are not one per
  * line, front matter it cannot read or a value in it `set_property` refuses
- * (#5160 S8), and a delete that would take a nested page with it. Returns the
+ * (#5160 S8), a property line of a Document buffer `set_property` refuses,
+ * and a delete that would take a nested page with it. Returns the
  * buffer's bullets, the page's text per id as it reads back, the rendered ids
  * the buffer left out, what the front matter writes and the warnings.
  */
@@ -1131,6 +1298,13 @@ function readSourceEdit(
   const known = new Set([...loadedIds, ...current.ids])
   const typed = readByLine(edited.body, flags.lineIds, known, warnings, grammar)
   const t1 = stale ? mergeSourceBuffer(loaded, t0, typed, warnings) : typed
+  const marksOf = (bullets: SourceBullet[]) =>
+    new Map(bullets.flatMap((b) => (b.anchor === null || !b.marks ? [] : [[b.anchor, b.marks]])))
+  planBufferMarks(
+    t1,
+    { from: marksOf(loaded), now: marksOf(t0), before },
+    definitionSpaceOf(pageId),
+  )
   const anchors = new Set(t1.flatMap(({ anchor }) => (anchor === null ? [] : [anchor])))
   const absent = current.ids.filter((id) => !anchors.has(id))
   const absentSet = new Set(absent)
@@ -1190,6 +1364,7 @@ function placeSourceBullets(
           })
           id = row.id
           opRefs.push(...row.op_refs)
+          if (bullet.writes) opRefs.push(...writeMarks(row.id, bullet.writes))
           report.created += 1
         } else {
           const moved = blocksHandlers.move_block({
@@ -1779,9 +1954,13 @@ export const pagesHandlers = {
   // created pages and tags in `names_created`. Phase 5: with `merge`, a stale
   // buffer is saved with the page's changes folded in (`mergeSourceBuffer`).
   // #5691: a Document buffer is rendered and read as the backend's grammar
-  // writes and reads it, but its saves write what a Source one does: text,
-  // nesting and order, not markers, checkboxes or property lines, nor the
-  // page's `key:: value` lines after its front matter.
+  // writes and reads it, and its save writes a block's list marker, checkbox
+  // and `key:: value` lines as the backend does: `listStyle`, the task state
+  // and each property, by key, a task's hidden list style going with an edit
+  // to it (`planMarkWrites`). Not modelled: a key folded to its definition
+  // (D13), a `key::` line with no value for a key the block does not hold
+  // (kept as text there), a number or boolean its definition refuses, and the
+  // page's own `key:: value` lines after its front matter.
   apply_page_source: (args) => {
     const a = args as Record<string, unknown>
     const pageId = a['pageId'] as string
@@ -1811,11 +1990,18 @@ export const pagesHandlers = {
       edit.warnings.push(...names.warnings)
     }
     opRefs.push(...placeSourceBullets(pageId, edit.t1, report))
-    for (const { anchor, content } of edit.t1) {
-      if (anchor === null || content === edit.before.get(anchor)) continue
-      if (content === blocks.get(anchor)?.['content']) continue
-      opRefs.push(...blocksHandlers.edit_block({ blockId: anchor, toText: content }).op_refs)
-      report.edited += 1
+    const marks = { set: 0, deleted: 0 }
+    for (const { anchor, content, writes } of edit.t1) {
+      if (anchor === null) continue
+      if (content !== edit.before.get(anchor) && content !== blocks.get(anchor)?.['content']) {
+        opRefs.push(...blocksHandlers.edit_block({ blockId: anchor, toText: content }).op_refs)
+        report.edited += 1
+      }
+      if (writes === undefined) continue
+      opRefs.push(...writeMarks(anchor, writes))
+      const state = writes.todoState?.to
+      marks.set += writes.set.length + (state ? 1 : 0)
+      marks.deleted += writes.deleted.length + (state === null ? 1 : 0)
     }
     const written = writeFrontMatter(pageId, edit.front, spaceId, {
       opRefs,
@@ -1832,7 +2018,8 @@ export const pagesHandlers = {
     return {
       op_refs: opRefs,
       ...report,
-      ...written,
+      properties_set: written.properties_set + marks.set,
+      properties_deleted: written.properties_deleted + marks.deleted,
       names_created: namesCreated,
       warnings: edit.warnings,
     }

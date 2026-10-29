@@ -20,10 +20,19 @@ const LEADING_WS = new RegExp(`^[${WS}]+`)
 const TRAILING_WS = new RegExp(`[${WS}]+$`)
 const LEADING_WS_OR_BACKSLASH = new RegExp(`^[${WS}\\\\]+`)
 const ID = '[0-9A-HJKMNP-TV-Z]{26}'
+const ULID = new RegExp(`^${ID}$`)
+/** Whether a 26-character `^word` is a block's id. Rust's are ULIDs; the mock's, such as `…BLOCK01`, are not. */
+export type IsId = (word: string) => boolean
+const isUlid: IsId = (word) => ULID.test(word)
+/** Any 26 capitals and digits: which of them is an id is `IsId`'s to say. */
+const WORD = '([0-9A-Z]{26})'
 /** `ANCHOR_LINE_RE`: a block's `^ID` alone on its line. */
-const ANCHOR_LINE = new RegExp(`^\\^${ID}$`)
+const ANCHOR_LINE = new RegExp(`^\\^${WORD}$`)
 /** `TRAILING_ANCHOR_RE`: the ` ^ID` a buffer writes at the end of a line. */
-const TRAILING_ANCHOR = new RegExp(`[${WS}]\\^${ID}[${WS}]*$`)
+const TRAILING_ANCHOR = new RegExp(`[${WS}]\\^${WORD}[${WS}]*$`)
+const anchorLine = (text: string, isId: IsId): boolean => isId(ANCHOR_LINE.exec(text)?.[1] ?? '')
+const trailingAnchor = (text: string, isId: IsId): boolean =>
+  isId(TRAILING_ANCHOR.exec(text)?.[1] ?? '')
 /** `OBSIDIAN_BLOCK_ANCHOR_RE`: the `^word` a block's text ends with. */
 const BLOCK_ANCHOR = new RegExp(`(?:^|[${WS}])\\^([A-Za-z0-9-]+)[${WS}]*$`)
 
@@ -168,7 +177,7 @@ function splitBlockTaskMarker(text: string): { state: TodoState | null; rest: st
 /** `needs_anchor_line_escape`: a code line that would read as one ending its fence. */
 export function needsAnchorLineEscape(line: string): boolean {
   const body = bodyOf(line)
-  return ANCHOR_LINE.test(body) || (isBulletLine(body) && TRAILING_ANCHOR.test(body))
+  return anchorLine(body, isUlid) || (isBulletLine(body) && trailingAnchor(body, isUlid))
 }
 
 /** `bullet_text`: a bullet's text past its marker and the one blank after it. */
@@ -185,13 +194,16 @@ export function documentFenceOpener(line: string): FenceRun | null {
   return fenceRun(splitBlockTaskMarker(bulletText(trimmed, marker.len)).rest)
 }
 
+/** A surrogate half with no partner, which `JSON.parse` keeps and `serde_json` refuses. */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+
 /** `read_source_property_value`: a double-quoted value is a JSON string, anything else trimmed. */
 function readSourcePropertyValue(raw: string): string {
   const value = trim(raw)
   if (value.startsWith('"')) {
     try {
       const unquoted: unknown = JSON.parse(value)
-      if (typeof unquoted === 'string') return unquoted
+      if (typeof unquoted === 'string' && !LONE_SURROGATE.test(unquoted)) return unquoted
     } catch {
       // Not a JSON string: the value is the text as written.
     }
@@ -299,9 +311,11 @@ class Scan {
   private line = 0
 
   private readonly idLines: ReadonlySet<number> | null
+  private readonly isId: IsId
 
-  constructor(idLines: ReadonlySet<number> | null) {
+  constructor(idLines: ReadonlySet<number> | null, isId: IsId) {
     this.idLines = idLines
+    this.isId = isId
   }
 
   /** `parse_block_lines`: a blank line is held until the next line, which may take it. */
@@ -326,7 +340,7 @@ class Scan {
     const fence = this.fence
     if (fence !== null) {
       this.fence = null
-      if (this.idLines === null && ANCHOR_LINE.test(trimmed)) {
+      if (this.idLines === null && anchorLine(trimmed, this.isId)) {
         this.append(line, false)
       } else {
         this.append(line, true)
@@ -354,7 +368,7 @@ class Scan {
     if (this.fence === null) return
     const carriesId =
       this.idLines === null
-        ? isBulletLine(trimmed) && TRAILING_ANCHOR.test(trimmed)
+        ? isBulletLine(trimmed) && trailingAnchor(trimmed, this.isId)
         : this.idLines.has(number)
     if (!carriesId) return
     const { run, line } = this.fence
@@ -503,14 +517,16 @@ function unescapeCodeLine(text: string): string {
  * break start a block wherever they stand (D1 as amended), and a heading or a
  * break is a block of one line that owns nothing (D7); a line holding only
  * `\` is an empty block, or inside a block an empty line (D4). The front
- * matter and the page's `key:: value` lines after it are no block's.
+ * matter and the page's `key:: value` lines after it are no block's. With no
+ * ids beside the lines, `isId` tells which `^word` is one.
  */
 export function parseDocument(
   text: string,
   lineIds: ReadonlyArray<string | null | undefined> | null,
+  isId: IsId = isUlid,
 ): DocumentReading {
   const idLines = lineIds && new Set(lineIds.flatMap((id, i) => (id == null ? [] : [i + 1])))
-  const scan = new Scan(idLines)
+  const scan = new Scan(idLines, isId)
   scan.scan(blockText(text.replace(/\r\n?/g, '\n')).split('\n'))
   if (idLines === null) scan.extractAnchors()
   return { blocks: scan.blocks, warnings: scan.warnings }

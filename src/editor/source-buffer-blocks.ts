@@ -16,6 +16,7 @@ import type { NodeType, Node as PMNode } from '@tiptap/pm/model'
 import { type Command, type EditorState, TextSelection, type Transaction } from '@tiptap/pm/state'
 
 import { parseDocument } from '@/editor/source-buffer-document'
+import type { Dialect } from '@/lib/bindings'
 import { type BlockTypeToken, convertBlockContent, detectBlockType } from '@/lib/block-type-convert'
 import { type ListStyle, listStyleForBlockType } from '@/lib/list-style'
 import { PRIORITY_CYCLE } from '@/lib/priority-levels'
@@ -119,13 +120,6 @@ function ownEnd(texts: readonly string[], ids: LineIds, start: number): number {
   return end
 }
 
-/**
- * The two grammars the buffer is written in (#5691): `source`, every block an
- * outline bullet, and `document`, a plain block its own paragraph
- * (`source-buffer-document.ts`).
- */
-export type BufferDialect = 'source' | 'document'
-
 /** Past the last line before `end` that is not blank, but never before `start + 1`. */
 function pastText(texts: readonly string[], start: number, end: number): number {
   let past = end
@@ -167,7 +161,7 @@ function documentBlockAt(
 export function blockAt(
   doc: PMNode,
   index: number,
-  dialect: BufferDialect = 'source',
+  dialect: Dialect = 'source',
 ): SourceBlock | null {
   const texts = lineTexts(doc)
   const ids = lineIds(doc)
@@ -418,7 +412,7 @@ export interface BlockReading {
 export function readBlocks(
   texts: readonly string[],
   ids: LineIds,
-  dialect: BufferDialect = 'source',
+  dialect: Dialect = 'source',
 ): BlockReading[] {
   if (dialect === 'document') {
     return parseDocument(texts.join('\n'), ids).blocks.map((block) => ({

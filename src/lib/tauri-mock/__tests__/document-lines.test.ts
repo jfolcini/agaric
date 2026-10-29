@@ -4,8 +4,8 @@
  * Rust authors (`markdown_document_tests.rs`). A page holding each case's tree
  * gives the case's text, each line beside its id, and that buffer saved as it
  * is appends nothing. Each case's text and each typed text, saved to an empty
- * page, creates its tree's blocks; the mock writes their text and nesting, not
- * their markers or property lines.
+ * page, creates its tree's blocks, with the markers and property lines the
+ * tree gives them.
  */
 
 import { readFileSync } from 'node:fs'
@@ -98,18 +98,30 @@ function save(text: string, lineIds: Array<string | null>, baseSource: string): 
   }) as PageSourceReport
 }
 
-/** The page's blocks, depth-first in sibling order, as depth and text. */
-function stored(parentId = PAGE, depth = 0): Array<{ depth: number; content: string }> {
-  const out: Array<{ depth: number; content: string }> = []
+/** The properties a block holds as the vectors spell them: the columns and the rows, less the stamps. */
+function propertiesOf(row: Record<string, unknown>): Record<string, string> {
+  const held: Record<string, string> = {}
+  for (const [key, prop] of properties.get(row['id'] as string) ?? []) {
+    if (key !== 'created_at' && key !== 'completed_at') held[key] = prop['value_text'] as string
+  }
+  for (const key of COLUMNS) if (row[key] != null) held[key] = row[key] as string
+  return held
+}
+
+/** The page's blocks, depth-first in sibling order, as the vectors spell them. */
+function stored(parentId = PAGE, depth = 0): Array<Omit<TreeBlock, 'id'>> {
+  const out: Array<Omit<TreeBlock, 'id'>> = []
   const children = [...blocks.values()]
     .filter((row) => row['parent_id'] === parentId && !row['deleted_at'])
     .toSorted((a, b) => (a['position'] as number) - (b['position'] as number))
   for (const row of children) {
-    out.push({ depth, content: row['content'] as string })
+    out.push({ depth, content: row['content'] as string, properties: propertiesOf(row) })
     out.push(...stored(row['id'] as string, depth + 1))
   }
   return out
 }
+
+const STATES: ReadonlySet<string> = new Set(['TODO', 'DOING', 'DONE', 'CANCELLED'])
 
 describe('the mock in the Document dialect (#5691)', () => {
   beforeEach(() => {
@@ -139,11 +151,20 @@ describe('the mock in the Document dialect (#5691)', () => {
     (_name, row) => {
       const empty = buffer('document')
       const lineIds = row.text.split('\n').map(() => null)
+      const refused = row.tree.find(
+        ({ properties: { todo_state } }) => todo_state !== undefined && !STATES.has(todo_state),
+      )
+      if (refused !== undefined) {
+        // The tree holds a state no checkbox spells, which a save refuses as the backend does.
+        expect(() => save(row.text, lineIds, empty.source)).toThrow(/todo_state:: WAITING/)
+        expect(stored()).toEqual([])
+        return
+      }
 
       const report = save(row.text, lineIds, empty.source)
 
       expect(report.created).toBe(row.tree.length)
-      expect(stored()).toEqual(row.tree.map(({ depth, content }) => ({ depth, content })))
+      expect(stored()).toEqual(row.tree.map(({ id: _, ...block }) => block))
     },
   )
 
@@ -166,6 +187,47 @@ describe('the mock in the Document dialect (#5691)', () => {
     ])
 
     expect(buffer('document').text).toBe('- [ ] a\n1. b\n\nd\n  todo_state:: WAITING\n')
+  })
+
+  it('reads back a block that leaves a fence open under the mock ids, which are not ULIDs', () => {
+    // `BLOCK` spells letters Crockford leaves out, as every id the mock mints or seeds does.
+    store([
+      { id: id('BLOCK01'), depth: 0, content: '```sh\ncode', properties: {} },
+      { id: id('BLOCK02'), depth: 0, content: 'after', properties: {} },
+    ])
+
+    const own = buffer('document')
+
+    expect(own.line_ids.filter((carried) => carried !== null)).toEqual([
+      id('BLOCK01'),
+      id('BLOCK02'),
+    ])
+    const report = save(own.text, own.line_ids, own.source)
+    expect([report.created, report.edited, report.moved, report.deleted]).toEqual([0, 0, 0, 0])
+  })
+
+  it('writes a ticked checkbox and a new priority as ops its undo reverts', () => {
+    store([
+      {
+        id: id('A'),
+        depth: 0,
+        content: 'task',
+        properties: { listStyle: 'bullet', todo_state: 'TODO', priority: '2' },
+      },
+    ])
+    const own = buffer('document')
+    const edited = own.text.replace('[ ]', '[x]').replace('priority:: 2', 'priority:: 3')
+
+    const { op_refs: ops } = save(edited, own.line_ids, own.source) as PageSourceReport & {
+      op_refs: Array<{ device_id: string; seq: number }>
+    }
+
+    expect(blocks.get(id('A'))).toMatchObject({ todo_state: 'DONE', priority: '3' })
+    expect(properties.get(id('A'))?.has('completed_at')).toBe(true)
+    dispatch('revert_ops', { ops })
+    expect(blocks.get(id('A'))).toMatchObject({ todo_state: 'TODO', priority: '2' })
+    expect(properties.get(id('A'))?.has('completed_at')).toBe(false)
+    expect(properties.get(id('A'))?.get('listStyle')?.['value_text']).toBe('bullet')
   })
 
   it('gives the Source buffer when no dialect is named', () => {

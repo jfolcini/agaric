@@ -75,6 +75,13 @@ describe('the Document dialect vectors (#5691)', () => {
     expect(readBlocks(texts, ids, 'document').map(asTree)).toEqual(row.tree)
   })
 
+  it('reads a quoted property value as JSON, but a lone surrogate escape as written', () => {
+    const read = (value: string) => parseDocument(`a\n  k:: ${value}`, null).blocks[0]?.properties
+    expect(read('"\\ud83d\\ude00"')).toEqual([['k', '\u{1F600}']])
+    expect(read('"\\ud83d"')).toEqual([['k', '"\\ud83d"']])
+    expect(read('"\\ude00"')).toEqual([['k', '"\\ude00"']])
+  })
+
   it('reads a Source buffer as before unless asked for the Document dialect', () => {
     const texts = ['- - a', '- b']
     expect(readBlocks(texts, [null, null]).map((block) => block.listStyle)).toEqual([
