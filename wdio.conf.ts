@@ -1111,7 +1111,7 @@ export const config: WebdriverIO.Config = {
     const dbFile = path.join(vault, 'notes.db')
     await browser.waitUntil(() => existsSync(dbFile), {
       timeout: 120_000,
-      interval: 500,
+      interval: 100,
       timeoutMsg:
         `[sandbox] the app never created ${dbFile}. It did NOT honour AGARIC_DATA_DIR, so it ` +
         'is running against some other vault — possibly the real one. Aborting the run rather ' +
