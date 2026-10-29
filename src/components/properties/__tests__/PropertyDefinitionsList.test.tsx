@@ -1080,9 +1080,11 @@ describe('PropertyDefinitionsList', () => {
       await user.click(screen.getByRole('button', { name: 'Delete property stage' }))
       await user.click(await screen.findByRole('button', { name: /^Delete$/i }))
 
+      // The backend's own count stays, followed by why it differs from the badge.
       await waitFor(() => {
         expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
-          t('propertiesView.deleteRefusedInUse', { key: 'stage' }),
+          "Can't delete 'stage': 1 block(s) still use it. Remove the property from them first. " +
+            'Blocks in the Trash count too, until you permanently delete them.',
         )
       })
       expect(screen.getByText('Stage')).toBeInTheDocument()

@@ -262,7 +262,7 @@ export const properties: Record<string, string> = {
     "A property still in use in this space can't be deleted. Remove it from every block that uses it first.",
   'propertiesView.deleted': 'Property definition deleted',
   'propertiesView.deleteRefusedInUse':
-    "Can't delete {{key}}: blocks in this space still use it, and blocks in the Trash count too. Remove the property from them, or permanently delete them from the Trash, first.",
+    '{{reason}} Blocks in the Trash count too, until you permanently delete them.',
   'propertiesView.usageCount_one': '{{count}} use',
   'propertiesView.usageCount_other': '{{count}} uses',
   'propertiesView.created': 'Property definition created',

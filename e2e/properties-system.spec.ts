@@ -6,7 +6,9 @@ import {
   activePopover,
   activeSheet,
   chooseSelectOption,
+  clearConsoleErrors,
   expect,
+  getConsoleErrors,
   navigateToView,
   openPage,
   openSettingsTab,
@@ -606,8 +608,15 @@ test.describe('Property definitions view usage count @editor @settings', () => {
     await panel.getByRole('button', { name: 'Delete property stage' }).click()
     await activeAlertDialog(page).getByRole('button', { name: 'Delete', exact: true }).click()
     await expect(
-      page.getByText(/^Can't delete stage: .*blocks in the Trash count too/),
+      page.getByText(
+        /^Can't delete 'stage': 2 block\(s\) still use it\. .* Blocks in the Trash count too/,
+      ),
     ).toBeVisible()
+    // The refusal is a deliberate `logger.error`; take it out of the global console gate.
+    expect(getConsoleErrors(page).some((error) => error.includes('property.errorDelete'))).toBe(
+      true,
+    )
+    clearConsoleErrors(page)
     await navigateToView(page, 'Journal')
     panel = await openPropertiesSettings(page)
     await expect(panel.getByTestId('property-usage-stage')).toHaveText('1 use')

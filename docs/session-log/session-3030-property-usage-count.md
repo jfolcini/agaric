@@ -9,7 +9,8 @@ Set out to build S0 of #5841, the per-space usage count. It is read-only and nee
   - column-backed keys (`todo_state`, `priority`, `due_date`, `scheduled_date`) counted from their `blocks` columns, because `block_properties` rejects them.
   An unknown space returns `NotFound`.
 - **Settings › Properties** shows an outline badge, "N uses", on each definition. There is no badge while the counts load or after a failed load, which only warns. Counts are fetched again after a create, a delete, or a space switch.
-- **A refused delete** beside a count now says that blocks in this space still use the key, and that blocks in the Trash count too. It names the per-item purge as the way out. This is the maintainer's answer 6. The refusal itself is the existing one.
+- **A refused delete** beside a count keeps the backend's refusal, with its block count, and adds that blocks in the Trash count too until they are permanently deleted. This is the maintainer's answer 6. The refusal itself is the existing one.
+  - The first version replaced the backend's text with its own copy. The reviewer bot noted that this lost the count, and CI showed it: `properties-table-and-refusals` reads that count from the toast.
 
 **Decisions and traps:**
 - **`space` and `is_space` are not counted.** `space` would just be the space's block count. `is_space` sits on the space's own block, which carries no `space_id`, so it reads 0 everywhere. Both are locked built-ins that a user never sets as values.

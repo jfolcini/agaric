@@ -180,11 +180,16 @@ export function PropertyDefinitionsList(): React.ReactElement {
         notify.success(t('propertiesView.deleted'))
         void loadUsage()
       } catch (error) {
-        // The backend refuses a definition a block still uses, and says so. Its count takes in
-        // trashed blocks and the shown one does not, so beside a count the copy says why.
+        // The backend refuses a definition a block still uses, with a count that takes in
+        // trashed blocks; the badge's does not, so beside a badge the refusal says why they differ.
         if (isValidation(error) && usage?.has(key)) {
-          logger.warn('PropertyDefinitionsList', 'delete_property_def refused', { key }, error)
-          notify.error(t('propertiesView.deleteRefusedInUse', { key }))
+          logger.error(
+            'PropertyDefinitionsList',
+            'property.errorDelete (IPC error)',
+            { key },
+            error,
+          )
+          notify.error(t('propertiesView.deleteRefusedInUse', { reason: error.message }))
         } else {
           reportIpcErrorWithReason('PropertyDefinitionsList', 'property.errorDelete', error, t, {
             key,
