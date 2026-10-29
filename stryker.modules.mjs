@@ -80,7 +80,10 @@ export const MODULES = {
   },
   'filters-model': {
     src: 'src/lib/filters/model.ts',
-    tests: ['src/lib/filters/__tests__/model.test.ts'],
+    tests: [
+      'src/lib/filters/__tests__/model.test.ts',
+      'src/lib/filters/__tests__/model.mutants.test.ts',
+    ],
   },
   'date-utils': {
     src: 'src/lib/date-utils.ts',
@@ -296,6 +299,7 @@ export const MODULES = {
     src: 'src/editor/page-mode/page-tasks.ts',
     tests: [
       'src/editor/page-mode/__tests__/page-tasks.test.tsx',
+      'src/editor/page-mode/__tests__/page-tasks.gate.test.tsx',
       'src/editor/page-mode/__tests__/page-gutter.test.tsx',
     ],
   },
@@ -320,7 +324,12 @@ export const MODULES = {
   'page-lists': {
     setup: true,
     src: 'src/editor/page-mode/page-lists.ts',
-    tests: ['src/editor/page-mode/__tests__/page-lists.test.tsx'],
+    tests: [
+      'src/editor/page-mode/__tests__/page-lists.test.tsx',
+      // Never wired in, so the scoped run reported what they kill as survivors (as #3142).
+      'src/editor/page-mode/__tests__/page-lists.per-key.test.ts',
+      'src/editor/page-mode/__tests__/page-lists.tasks.test.tsx',
+    ],
   },
   'page-rendered': {
     setup: true,
