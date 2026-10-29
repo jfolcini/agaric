@@ -203,13 +203,13 @@ function listMarkerOf(listStyle: DocumentBlock['listStyle'], run: number): strin
  * that line is in, as the writer places it: at that block's column, with its
  * list style numbered on, or as a `+` item under a list block (D4); and
  * whether a blank line goes before it. A task's sibling is plain, as page
- * mode's Enter makes it. `null` above the first block.
+ * mode's Enter makes it. Above the first block, a bare line after a blank one.
  */
-export function siblingHead(doc: PMNode, index: number): { blank: boolean; head: string } | null {
+export function siblingHead(doc: PMNode, index: number): { blank: boolean; head: string } {
   const buffer = readBuffer(doc)
   const at = indexAt(buffer, index)
   const block = buffer.blocks[at]
-  if (block === undefined) return null
+  if (block === undefined) return { blank: true, head: '' }
   const { depth, listStyle } = block
   const run = listStyle === 'ordered' ? runBefore(buffer, at + 1, depth) + 1 : 0
   const layout = new DocumentLayout(

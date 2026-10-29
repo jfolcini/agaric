@@ -352,6 +352,36 @@ describe('Enter', () => {
     })
 
     it.each([
+      [
+        'a plain child',
+        [
+          ['parent', A],
+          ['', null],
+          ['  child', B],
+        ],
+        2,
+      ],
+      [
+        'a nested list item',
+        [
+          ['- a', A],
+          ['  - child', B],
+        ],
+        1,
+      ],
+    ] as const)(
+      'at the start of the text of %s, the text moved keeps its depth',
+      (_kind, rows, row) => {
+        const ed = build(rows.map(([line, id]) => [line, id]))
+        caret(ed, row, 2)
+
+        press(ed, 'Enter')
+
+        expect(saved(ed).map(([depth]) => depth)).toEqual([0, 1])
+      },
+    )
+
+    it.each([
       ['a paragraph', 'foo'],
       ['a heading', '## foo'],
       ['a page property line, above every block', 'title:: Foo'],
@@ -411,12 +441,12 @@ describe('Enter', () => {
     })
 
     it.each([
-      ['- a', '  more', '- x', 'bullet'],
-      ['  - a', '    more', '  - x', 'bullet'],
-      ['1. a', '   more', '2. x', 'ordered'],
+      ['- a', '  more', '- x', 'bullet', 0],
+      ['  - a', '    more', '  - x', 'bullet', 1],
+      ['1. a', '   more', '2. x', 'ordered', 0],
     ] as const)(
       'with %j’s list style, from its text’s further line',
-      (head, further, made, listStyle) => {
+      (head, further, made, listStyle, depth) => {
         const ed = build([
           ['top', C],
           ['', null],
@@ -436,8 +466,8 @@ describe('Enter', () => {
         const { text, lineIds } = readLines(ed.state.doc)
         const read = parseDocument(text, lineIds).blocks.slice(1)
         expect(read.map((block) => [block.depth, block.content, block.listStyle])).toEqual([
-          [read[0]?.depth, 'a\nmore', listStyle],
-          [read[0]?.depth, 'x', listStyle],
+          [depth, 'a\nmore', listStyle],
+          [depth, 'x', listStyle],
         ])
       },
     )

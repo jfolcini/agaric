@@ -151,6 +151,7 @@ const splitLine: Command = (state, dispatch) => {
   if (!$from.parent.isTextblock) return false
   const text = $from.parent.textContent
   const before = text.slice(0, $from.parentOffset)
+  const moved = text.slice($from.parentOffset)
   const index = $from.index(0)
   const list = listContinuation(text)
   const texts: string[] = []
@@ -165,14 +166,16 @@ const splitLine: Command = (state, dispatch) => {
     } else {
       tr.split($from.pos).insertText(list.next)
     }
+  } else if (isBlank(before) && !isBlank(moved)) {
+    // The indentation is the block's place, so the text moved keeps it.
+    tr.split($from.pos).insertText(before)
   } else if (list !== null || isBlank(before)) {
     tr.split($from.pos)
   } else {
-    const sibling = siblingHead(tr.doc, index) ?? { blank: true, head: '' }
+    const sibling = siblingHead(tr.doc, index)
     tr.split($from.pos)
     if (sibling.blank) tr.split(tr.selection.from)
     // The text moved starts the sibling: its own blanks would place it elsewhere.
-    const moved = text.slice($from.parentOffset)
     const blanks = /^[ \t]*/.exec(moved)?.[0].length ?? 0
     tr.delete(tr.selection.from, tr.selection.from + blanks).insertText(sibling.head)
     if (sibling.blank && moved.length === blanks) separateFromList(tr)

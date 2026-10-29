@@ -762,6 +762,7 @@ test.describe('Edit as Markdown writes a page line by line (#5691) @editor @page
       ['- new item', added],
     ])
   })
+
   test('Enter under a nested paragraph makes its sibling, which saves under the same parent', async ({
     page,
   }) => {
