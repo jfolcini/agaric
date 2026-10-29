@@ -145,7 +145,6 @@ import { useNavigationStore } from '@/stores/navigation'
 import { clearTaskStates, usePageBlockStoreApi } from '@/stores/page-blocks'
 import { notifyUndoNewAction } from '@/stores/page-blocks-reducers'
 import { useSpaceStore } from '@/stores/space'
-import { useUndoStore } from '@/stores/undo'
 
 const BlockDatePicker = lazy(() =>
   import('@/components/block-tree/BlockDatePicker').then((m) => ({ default: m.BlockDatePicker })),
@@ -846,7 +845,7 @@ function PageModeDocument({
         void afterSave(id, async () => {
           try {
             // In the undo entry of the save just before, which made the kind change, if one did (#6156).
-            useUndoStore.getState().onNewAction(pageId, await setListStyle(id, style))
+            notifyUndoNewAction(pageId, await setListStyle(id, style))
             written = style
             // A task is a list kind (#5691 D3): a typed `- ` or `1. ` takes the task state off.
             if (style !== 'none') await clearTaskStates(pageStore, [id])

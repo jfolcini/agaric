@@ -16,7 +16,7 @@ import { setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { clearTaskStates, type PageBlockState } from '@/stores/page-blocks'
-import { useUndoStore } from '@/stores/undo'
+import { notifyUndoNewAction } from '@/stores/page-blocks-reducers'
 
 export interface UseListStyleSyntaxParams {
   focusedBlockId: string | null
@@ -43,8 +43,7 @@ export function useListStyleSyntax({
       setListStyle(focusedBlockId, style)
         .then(
           (opRefs) => {
-            const { rootParentId } = pageStore.getState()
-            if (rootParentId !== null) useUndoStore.getState().onNewAction(rootParentId, opRefs)
+            notifyUndoNewAction(pageStore.getState().rootParentId, opRefs)
             void clearTaskStates(pageStore, [focusedBlockId])
           },
           (err: unknown) => {

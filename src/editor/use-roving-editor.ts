@@ -62,6 +62,7 @@ import {
   type ListMarkerState,
 } from '@/editor/extensions/list-marker-decoration'
 import { ListStyleInputRule } from '@/editor/extensions/list-style-input-rule'
+import { ListStyleUndo } from '@/editor/extensions/list-style-undo'
 import { MarkdownReveal } from '@/editor/extensions/markdown-reveal'
 import { MathBlock, MathInline } from '@/editor/extensions/math'
 import { MermaidCodeBlockView } from '@/editor/extensions/MermaidCodeBlockView'
@@ -981,6 +982,8 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       // #3000 — paints the focused block's list marker (bullet / computed
       // ordinal) as a widget decoration, fed via `updateListMarker`.
       ListMarkerDecoration,
+      // #6156 — Ctrl+Z here of a change that took the block's list style off gives it back.
+      ListStyleUndo,
       ...content.blocks,
       // #1439 — convert pasted clipboard HTML to Agaric markdown. MUST precede
       // ExternalLink and TaskPaste in the handlePaste chain: it only claims the

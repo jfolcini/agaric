@@ -12,6 +12,7 @@
  * - TOGGLE_TODO_STATE
  * - OPEN_BLOCK_PROPERTIES
  * - INSERT_ORDERED_LIST / INSERT_DIVIDER / INSERT_CALLOUT (#253)
+ * - RESTORE_LIST_STYLE (#6156)
  *
  * #1250 — these no longer install ~13 `document` CustomEvent listeners per
  * mounted BlockTree. Instead each tree registers its handler set ONCE with the
@@ -40,12 +41,18 @@ import {
 } from '@/components/block-tree/use-block-slash-commands/helpers'
 import type { SlashCommandContext } from '@/components/block-tree/use-block-slash-commands/types'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import { flushActiveDraft } from '@/lib/active-draft-flush'
 import {
   type BlockTypeToken,
   convertBlockContent,
   stripBlockMarker,
 } from '@/lib/block-type-convert'
-import { listStyleForBlockType, setListStyle } from '@/lib/list-style'
+import {
+  contentShowsListMarker,
+  type ListStyle,
+  listStyleForBlockType,
+  setListStyle,
+} from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { type BlockCommandHandler, registerBlockCommandTarget } from '@/stores/block-command-bus'
@@ -254,6 +261,24 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       })()
     }
 
+    // #6156 — the editor's undo took back a change that left the block's list
+    // (`ListStyleUndo`). The text it gave back is saved first, then the style,
+    // so one entry holds both. A change not saved yet took no style off.
+    const onRestoreListStyle: BlockCommandHandler = (blockId, detail) => {
+      const style = (detail as { style?: ListStyle } | undefined)?.style
+      const saved = pageStore.getState().blocksById.get(blockId)
+      if (!style || !saved || contentShowsListMarker(saved.content ?? '')) return
+      void (async () => {
+        try {
+          await flushActiveDraft()
+          notifyUndo(rootParentId, await setListStyle(blockId, style))
+        } catch (err) {
+          logger.error('BlockTree', 'setListStyle (in-editor undo) failed', { blockId }, err)
+          notify.error(t('blockTree.setListStyleFailed'))
+        }
+      })()
+    }
+
     // #1439 / #5140 / #5160 D4 — a paste the editor routed to the block path:
     // converted clipboard HTML or pasted markdown text (`detail.input`), with
     // where it goes in the block's text (`detail.splice`). `pasteIntoBlock`
@@ -308,6 +333,7 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       INSERT_DIVIDER: onDivider,
       INSERT_CALLOUT: onCallout,
       TURN_INTO_BLOCK: onTurnInto,
+      RESTORE_LIST_STYLE: onRestoreListStyle,
     })
   }, [
     rootParentId,

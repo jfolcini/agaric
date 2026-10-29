@@ -8,6 +8,7 @@ import {
   focusBlockById,
   ipc,
   saveBlock,
+  selectEditorRange,
   test,
   waitForBoot,
 } from './helpers'
@@ -18,6 +19,8 @@ import {
  * a task made bulleted, brings back the text, the bullet and the task state it
  * had, and leaves the edit made before. In block mode and in page mode, each
  * checked after navigating away and back, against what the backend holds.
+ * Ctrl+Z inside the editor, the editor's own history, brings the bullet back
+ * too when it takes back the change that took it off.
  */
 
 const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
@@ -323,6 +326,112 @@ test.describe('one Ctrl+Z takes back a kind change with the kind it took off @ed
     await reopen()
 
     await expect.poll(() => kindOf(page, gamma)).toEqual(GAMMA)
+    expect(await kindOf(page, delta)).toEqual(DELTA)
+  })
+
+  test('page mode: Ctrl+Z in the editor after /h2 brings the bullet back', async ({ page }) => {
+    const {
+      ids: [alpha, , , delta],
+      command,
+      reopen,
+    } = await inPageMode(page, 'Page heading editor undo')
+    await command(0, 'h2', 'h2')
+    await expect
+      .poll(() => kindOf(page, alpha))
+      .toEqual({ text: '## alpha', listStyle: null, todo: null })
+
+    await expect(page.locator(EDITOR)).toBeFocused()
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => kindOf(page, alpha)).toEqual(ALPHA)
+    await reopen()
+
+    await expect.poll(() => kindOf(page, alpha)).toEqual(ALPHA)
+    expect(await kindOf(page, delta)).toEqual(DELTA)
+  })
+
+  test('page mode: Ctrl+Z all the way after a plain block was made a heading, then a bullet, leaves it plain', async ({
+    page,
+  }) => {
+    const {
+      ids: [, , , delta],
+      command,
+      reopen,
+    } = await inPageMode(page, 'Page list over heading undo')
+    await command(3, 'h2', 'h2')
+    await expect
+      .poll(() => kindOf(page, delta))
+      .toEqual({ text: '## delta typed', listStyle: null, todo: null })
+    // The two commands are two steps of the editor's history, not one.
+    await page.clock.fastForward(1000)
+    await command(3, 'bullet', 'bullet-list')
+    await expect
+      .poll(() => kindOf(page, delta))
+      .toEqual({ text: 'delta typed', listStyle: 'bullet', todo: null })
+    // Once the page draws the bullet, the editor knows the block's style.
+    await expect(
+      page.locator(`${EDITOR} [data-page-block-id="${delta}"] > [data-testid="list-marker"]`),
+    ).toHaveText('•')
+
+    // More presses than the editor's history holds, so it ends with nothing left to undo.
+    for (let i = 0; i < 30; i += 1) await page.keyboard.press('Control+z')
+    await expect
+      .poll(() => kindOf(page, delta))
+      .toEqual({ text: 'delta', listStyle: null, todo: null })
+    await reopen()
+
+    await expect
+      .poll(() => kindOf(page, delta))
+      .toEqual({ text: 'delta', listStyle: null, todo: null })
+  })
+
+  test('block mode: Ctrl+Z in the editor after /code brings the bullet back', async ({ page }) => {
+    const {
+      ids: [alpha, , , delta],
+      reopen,
+    } = await inBlockMode(page, 'Block code editor undo')
+    await focusBlockById(page, alpha)
+    await page.keyboard.press('End')
+    await runSlashCommand(page, 'code', 'CODE — Insert code block')
+    // The space typed before the `/` stays in the code.
+    await expect
+      .poll(() => kindOf(page, alpha))
+      .toEqual({ text: '```\nalpha \n```', listStyle: null, todo: null })
+
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => kindOf(page, alpha)).toEqual(ALPHA)
+    await saveBlock(page, 'Escape')
+    await reopen()
+
+    await expect.poll(() => kindOf(page, alpha)).toEqual(ALPHA)
+    expect(await kindOf(page, delta)).toEqual(DELTA)
+  })
+
+  test('block mode: Ctrl+Z in the editor after a typed `# ` brings the bullet back', async ({
+    page,
+  }) => {
+    const {
+      ids: [alpha, , , delta],
+      reopen,
+    } = await inBlockMode(page, 'Block typed heading editor undo')
+    await focusBlockById(page, alpha)
+    await selectEditorRange(page, 0, 0)
+    await page.keyboard.type('# ')
+    // Its save takes the bullet off.
+    await expect
+      .poll(() => kindOf(page, alpha))
+      .toEqual({ text: '# alpha', listStyle: null, todo: null })
+
+    // The undo takes back the heading first, and the `#` typed stays as text.
+    await page.keyboard.press('Control+z')
+    await expect
+      .poll(() => kindOf(page, alpha))
+      .toEqual({ text: '\\# alpha', listStyle: 'bullet', todo: null })
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => kindOf(page, alpha)).toEqual(ALPHA)
+    await saveBlock(page, 'Escape')
+    await reopen()
+
+    await expect.poll(() => kindOf(page, alpha)).toEqual(ALPHA)
     expect(await kindOf(page, delta)).toEqual(DELTA)
   })
 })

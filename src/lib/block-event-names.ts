@@ -34,6 +34,9 @@ export const BLOCK_EVENTS = {
   // clipboard HTML (`kind: 'blocks'`) or a pasted outline (`kind: 'text'`).
   // The focused BlockTree materializes it via `pasteBlocks(focusedBlockId, input)`.
   PASTE_BLOCKS: 'paste-blocks',
+  // #6156 — the editor's undo took back a change that cleared the focused
+  // block's list style: `detail.style` is the style to write back.
+  RESTORE_LIST_STYLE: 'restore-list-style',
 } as const
 
 /**

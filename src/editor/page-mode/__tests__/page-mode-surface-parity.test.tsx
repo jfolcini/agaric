@@ -68,6 +68,8 @@ const NOT_IN_PAGE_MODE: Record<string, string> = {
   listStyleInputRule: 'writes through the block store; page mode has its own `- ` and `1. ` keys',
   listMarkerDecoration:
     'draws the focused block’s marker; page mode’s node view draws every block’s',
+  listStyleUndo:
+    'asks the focused block’s tree to write back the list style an undo took back; page mode’s list keys do it per block',
   priorityShortcuts: 'dispatches to the focused block’s tree; page mode binds the keys itself',
 }
 
