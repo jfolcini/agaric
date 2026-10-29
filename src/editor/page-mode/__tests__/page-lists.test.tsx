@@ -725,6 +725,26 @@ describe('the list keys and input rules', () => {
       expect(lists.styleOf(A)).toBe('none')
     })
 
+    it('a list picked on a heading and undone comes back with the redo, each time', () => {
+      const { editor, lists } = open([[A, 0, 'one']])
+      caret(editor, 0, 0)
+      typeText(editor, '# ')
+      pause(editor)
+      // As `/bullet-list` makes the heading a bullet paragraph: its text, then a read of the page's styles.
+      blockText(editor, A).write('one')
+      lists.take({ [A]: style('bullet') })
+      pause(editor)
+
+      for (let round = 0; round < 2; round += 1) {
+        editor.commands.undo()
+        expect(texts(editor)).toEqual(['# one'])
+        expect(lists.styleOf(A)).toBe('none')
+        editor.commands.redo()
+        expect(texts(editor)).toEqual(['one'])
+        expect(lists.styleOf(A)).toBe('bullet')
+      }
+    })
+
     it('after the history dropped events, an undo that leaves a block alone gives it no style', () => {
       const { editor, lists } = open(
         [

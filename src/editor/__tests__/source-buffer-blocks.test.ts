@@ -457,7 +457,33 @@ describe('Delete and Duplicate', () => {
 
     run(ed, deleteBlock(block(ed, 4)))
 
-    expect(lines(ed)).toEqual([...PAGE.slice(0, 4), ...PAGE.slice(10)])
+    expect(lines(ed)).toEqual([...PAGE.slice(0, 4), ...PAGE.slice(11)])
+  })
+
+  it('Delete leaves the blank lines the writer would write between the blocks either side', () => {
+    const ed = build([
+      ['a', A],
+      ['', null],
+      ['b', B],
+      ['', null],
+      ['c', C],
+      ['', null],
+      ['- d', null],
+      ['- e', null],
+      ['- f', null],
+    ])
+
+    run(ed, deleteBlock(block(ed, 2)))
+    run(ed, deleteBlock(block(ed, 5)))
+
+    expect(lines(ed)).toEqual([
+      ['a', A],
+      ['', null],
+      ['c', C],
+      ['', null],
+      ['- d', null],
+      ['- f', null],
+    ])
   })
 
   it('Delete of a parent’s first numbered child numbers the next one from 1, which a `2.` under the parent’s text would be a line of', () => {

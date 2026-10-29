@@ -23,11 +23,12 @@
  *
  * Ctrl+Z here is the editor's history, which gives back text only. A style a
  * block's leaving its list took off comes back with the undo of that change
- * (#6156, `leave`, `undone`): no other change brings it back.
+ * (#6156, `leave`, `undone`), and one an undo took off with the redo of that
+ * undo (`leaveByUndo`): no other change brings it back.
  */
 
 import { Extension, InputRule } from '@tiptap/core'
-import { isHistoryTransaction, undoDepth } from '@tiptap/pm/history'
+import { isHistoryTransaction, redoDepth, undoDepth } from '@tiptap/pm/history'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { type EditorState, Plugin } from '@tiptap/pm/state'
 
@@ -86,6 +87,8 @@ export class PageLists {
   private readonly listeners = new Map<string, Set<() => void>>()
   /** The style each block last left its list with, and the editor's undo depth just after. */
   private readonly left = new Map<string, { style: ListStyle; depth: number }>()
+  /** The style each block last left its list with in an undo, and the editor's redo depth just after. */
+  private readonly leftByUndo = new Map<string, { style: ListStyle; depth: number }>()
   private readonly isTask: (id: string) => boolean
 
   /**
@@ -174,22 +177,33 @@ export class PageLists {
     if (style !== 'none') this.left.set(id, { style, depth })
   }
 
+  /** Block `id` leaves its list in an undo that left the editor's redo depth at `depth`. */
+  leaveByUndo(id: string, depth: number): void {
+    const style = this.styleOf(id)
+    if (style !== 'none') this.leftByUndo.set(id, { style, depth })
+  }
+
   /**
-   * The styles an undo from `before` to `doc`, now at depth `depth`, gives back:
-   * to each block that left its list in the change it took back, so it shows a
-   * marker now where it showed none and stores no style. A block made a task
-   * since gets none: a task shows no marker, and a style written would take its
-   * task state off (#5691 D3). The depth names that change, but not alone, as the
-   * history renumbers its events once it drops the oldest. What it was due to
-   * give back is forgotten.
+   * The styles an undo or a redo from `before` to `doc`, now at undo depth
+   * `undo` and redo depth `redo`, gives back: to each block that left its list
+   * in the change an undo took back, or in the undo a redo took back, so it
+   * shows a marker now where it showed none and stores no style. A block made a
+   * task since gets none: a task shows no marker, and a style written would take
+   * its task state off (#5691 D3). The depth names that change, but not alone,
+   * as the history renumbers its events once it drops the oldest. What it was
+   * due to give back is forgotten.
    */
-  undone(before: PMNode, doc: PMNode, depth: number): [string, ListStyle][] {
+  undone(before: PMNode, doc: PMNode, undo: number, redo: number): [string, ListStyle][] {
     const due = new Map<string, ListStyle>()
-    for (const [id, left] of this.left) {
-      if (left.depth !== depth + 1) continue
-      due.set(id, left.style)
-      this.left.delete(id)
+    const take = (held: Map<string, { style: ListStyle; depth: number }>, depth: number) => {
+      for (const [id, left] of held) {
+        if (left.depth !== depth + 1) continue
+        due.set(id, left.style)
+        held.delete(id)
+      }
     }
+    take(this.left, undo)
+    take(this.leftByUndo, redo)
     const was = new Set<string>()
     before.forEach((node) => {
       const id = blockIdOf(node)
@@ -368,16 +382,18 @@ const PageListKeys = Extension.create<{ source: PageListSource }, { depth: numbe
     const { state } = editor
     const depth = undoDepth(state)
     const history = isHistoryTransaction(transaction)
-    // An undo that leaves a list took back a change that gave the list: no style was taken off.
+    // An undo that leaves a list took back a change that gave the list: its redo gives it again.
     const undoing = history && depth < this.storage.depth
     this.storage.depth = depth
+    const redo = redoDepth(state)
     for (const id of leftTheirList(transaction.before, state.doc, source.lists)) {
-      if (!undoing) source.lists.leave(id, depth)
+      if (undoing) source.lists.leaveByUndo(id, redo)
+      else source.lists.leave(id, depth)
       source.setStyle(id, 'none')
     }
     // Only an undo or a redo can give a style back: a key typed does no more here.
     if (!history) return
-    for (const [id, style] of source.lists.undone(transaction.before, state.doc, depth)) {
+    for (const [id, style] of source.lists.undone(transaction.before, state.doc, depth, redo)) {
       source.setStyle(id, style)
     }
   },
