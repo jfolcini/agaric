@@ -718,6 +718,27 @@ jobs:
           restore-keys: |
             lychee-${{ runner.os }}-
 
+      - name: Classify dependency changes (advisory gating)
+        # A new upstream advisory (RUSTSEC/GHSA) must not red PRs that change
+        # no dependency; it stays blocking on a PR that touches one, and on
+        # every non-PR run (push to main, schedule, release). Fail-closed:
+        # a non-PR event or an unresolvable diff counts as "changed".
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          changed=true
+          if [ "$EVENT_NAME" = "pull_request" ] \
+            && files=$(git diff --name-only "$PR_BASE_SHA...$PR_HEAD_SHA"); then
+            if ! grep -qE '(^|/)(Cargo\.(toml|lock)|package(-lock)?\.json|deny\.toml|audit\.toml|\.nsprc)$' <<<"$files"; then
+              changed=false
+            fi
+          fi
+          echo "Dependency manifests changed: $changed"
+          echo "DEPS_CHANGED=$changed" >> "$GITHUB_ENV"
+
       - name: Compute prek SKIP (per changed category)
         # ci/path-conditional-jobs: the per-category list lives in
         # `prek_skip_list` in scripts/verify-ci-equivalent.sh — the pre-push
@@ -740,6 +761,10 @@ jobs:
           flag() { if [ "$1" = "true" ]; then echo 1; else echo 0; fi; }
           skip_csv="no-commit-to-branch,$(bash scripts/verify-ci-equivalent.sh --print-skip \
             "$(flag "$DOCS")" "$(flag "$FRONTEND")" "$(flag "$BACKEND")" "$(flag "$CI")")"
+          # The `cargo-deny` hook runs all four checks; with no dependency change
+          # the advisories part must not block, so the hook yields to the two
+          # "Cargo deny" steps below (same checks, advisories advisory-only).
+          if [ "$DEPS_CHANGED" != "true" ]; then skip_csv="$skip_csv,cargo-deny"; fi
           printf 'Computed prek SKIP: %s\n' "$skip_csv"
           printf 'SKIP=%s\n' "$skip_csv" >> "$GITHUB_ENV"
 
@@ -846,6 +871,9 @@ jobs:
         # `npm audit signatures` above is a different, provenance
         # check and does not cover advisories.
         if: needs.detect-changes.outputs.frontend == 'true'
+        # Advisory-only when no dependency manifest changed (see "Classify
+        # dependency changes"): the step still runs and shows its findings.
+        continue-on-error: ${{ env.DEPS_CHANGED != 'true' }}
         run: prek run --all-files --hook-stage pre-push npm-audit
 
       - name: Run knip (dead-code / unused-dependency analysis)
@@ -949,8 +977,24 @@ jobs:
         # (exit 1, unchanged). Still blocking either way (fail closed) —
         # only the diagnosis changes. See the script's own header and
         # `--self-test` for the full rationale.
+        # Advisory-only when no dependency manifest changed (see "Classify
+        # dependency changes"): the step still runs and shows its findings.
+        continue-on-error: ${{ env.DEPS_CHANGED != 'true' }}
         working-directory: src-tauri
         run: bash ../scripts/cargo-audit-guard.sh .
+
+      - name: Cargo deny licenses, bans, sources (blocking)
+        # Stands in for the skipped `cargo-deny` hook when no dependency
+        # manifest changed; these three never depend on upstream advisories.
+        if: needs.detect-changes.outputs.backend == 'true' && env.DEPS_CHANGED != 'true'
+        working-directory: src-tauri
+        run: cargo deny check licenses bans sources
+
+      - name: Cargo deny advisories (advisory-only, no dependency change)
+        if: needs.detect-changes.outputs.backend == 'true' && env.DEPS_CHANGED != 'true'
+        continue-on-error: true
+        working-directory: src-tauri
+        run: cargo deny check advisories
 
       - name: sqlx offline cache check
         # ci/path-conditional-jobs: sqlx `prepare --check` compiles the crate
