@@ -8,7 +8,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { opLog, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
+import { opLog, properties, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 
 const SPACE = 'SPACE_PERSONAL'
 
@@ -211,6 +211,20 @@ function textOf(blockId: string, key: string): string | null | undefined {
   return row === undefined ? undefined : (row['value_text'] as string | null)
 }
 
+/** An engine Null under `key`: a clear, which SQL holds no row for. */
+function setNull(blockId: string, key: string): void {
+  if (!properties.has(blockId)) properties.set(blockId, new Map())
+  properties.get(blockId)?.set(key, {
+    block_id: blockId,
+    key,
+    value_text: null,
+    value_num: null,
+    value_date: null,
+    value_ref: null,
+    value_bool: null,
+  })
+}
+
 function declare(key: string, valueType = 'text', options: string | null = null): void {
   call('create_property_def', { spaceId: SPACE, key, valueType, options })
 }
@@ -285,6 +299,41 @@ describe('rename_property_key', () => {
     declare('client')
     expect(rejectionOf(() => call('undo_ops', { ops: op_refs })).kind).toBe('validation')
     expect(textOf(X, 'customer')).toBe('alpha')
+  })
+
+  it('refuses to undo onto an old key a block used again since', () => {
+    declare('client')
+    setText(X, 'client', 'alpha')
+    const { op_refs } = rename('client', 'customer')
+    setText(Y, 'client', 'again')
+    expect(rejectionOf(() => call('undo_ops', { ops: op_refs })).kind).toBe('validation')
+    expect(textOf(X, 'customer')).toBe('alpha')
+  })
+
+  it("counts, refuses, moves and follows the space's own block", () => {
+    declare('client')
+    declare('area')
+    setText(SPACE, 'client', 'a')
+    const setSpace = setText(SPACE, 'client', 'b')
+    setText(SPACE, 'spot', 'x')
+    expect(rejectionOf(() => rename('client', 'spot')).kind).toBe('validation')
+    rename('client', 'customer')
+    expect(textOf(SPACE, 'customer')).toBe('b')
+    expect(
+      call('preview_property_merge', { spaceId: SPACE, fromKey: 'customer', intoKey: 'area' }),
+    ).toEqual({ moved: 1, dropped: 0 })
+    call('undo_ops', { ops: setSpace })
+    expect(textOf(SPACE, 'customer')).toBe('a')
+    expect(textOf(SPACE, 'client')).toBeUndefined()
+  })
+
+  it('moves a value onto an engine Null under the new key', () => {
+    declare('client')
+    setText(X, 'client', 'alpha')
+    setNull(X, 'customer')
+    rename('client', 'customer')
+    expect(textOf(X, 'customer')).toBe('alpha')
+    expect(textOf(X, 'client')).toBeUndefined()
   })
 
   it('undo of a value written before the rename follows the key', () => {
@@ -431,6 +480,53 @@ describe('merge_property_key', () => {
     call('undo_ops', { ops: setX })
     expect(textOf(X, 'phase')).toBe('a')
     expect(textOf(X, 'stage')).toBeUndefined()
+  })
+
+  it("removes the merged key's engine Null without moving it, and moves onto the target's", () => {
+    declare('stage')
+    declare('phase')
+    setNull(X, 'stage')
+    setText(Y, 'stage', 'a')
+    setNull(Y, 'phase')
+    expect(preview()).toEqual({ moved: 1, dropped: 0 })
+    merge({ moved: 1, dropped: 0 })
+    const fields = {
+      value_text: 'a',
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
+    }
+    expect(lastOp().payload['values']).toEqual([
+      { block_id: X, key: 'stage', value: null, prior: null },
+      { block_id: Y, key: 'stage', value: null, prior: fields },
+      { block_id: Y, key: 'phase', value: fields, prior: null },
+    ])
+    expect(properties.get(X)?.has('stage')).toBe(false)
+    expect(properties.get(X)?.has('phase')).toBe(false)
+    expect(textOf(Y, 'phase')).toBe('a')
+  })
+
+  it('undo skips a block purged since the merge', () => {
+    seedMerge()
+    const { op_refs } = merge({ moved: 2, dropped: 1 })
+    call('purge_block', { blockId: TRASHED })
+    call('undo_ops', { ops: op_refs })
+    expect(properties.has(TRASHED)).toBe(false)
+    expect(textOf(X, 'stage')).toBe('a')
+  })
+
+  // `undoing_a_delete_and_a_merge_into_its_key_restores_both_values_5841`.
+  it('undoing a delete and a merge into its key restores both values', () => {
+    declare('stage')
+    declare('phase')
+    setText(X, 'stage', 's')
+    setText(X, 'phase', 'p')
+    const deleted = call<{ op_refs: Ref[] }>('delete_property', { blockId: X, key: 'phase' })
+    const merged = merge({ moved: 1, dropped: 0 })
+    call('undo_ops', { ops: [...deleted.op_refs, ...merged.op_refs] })
+    expect(textOf(X, 'phase')).toBe('p')
+    expect(textOf(X, 'stage')).toBe('s')
   })
 })
 

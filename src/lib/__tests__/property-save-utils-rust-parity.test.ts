@@ -5,7 +5,8 @@
  * `BUILTIN_PROPERTY_DEFS` in `../property-save-utils` is a hand-maintained
  * TS mirror of the Rust source of truth, `BUILTIN_PROPERTY_DEFS` in
  * `src-tauri/agaric-store/src/op.rs`; `NON_DELETABLE_PROPERTIES` is its key
- * set. A definition added to one side without the other would go unnoticed
+ * set. `INTERNAL_PROPERTY_KEYS` (`../block-utils`) mirrors the op.rs const of
+ * that name, which the backend refuses to rename or merge. A definition added to one side without the other would go unnoticed
  * until a user hit a write the backend rejects, or the mock served a
  * definition the backend does not have.
  *
@@ -22,6 +23,7 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
+import { INTERNAL_PROPERTY_KEYS } from '../block-utils'
 import {
   BUILTIN_PROPERTY_DEFS,
   type BuiltinPropertyDef,
@@ -98,5 +100,12 @@ describe('BUILTIN_PROPERTY_DEFS cross-language parity (#2702, #5841)', () => {
     expect([...NON_DELETABLE_PROPERTIES].toSorted()).toEqual(
       rustDefs.map((def) => def.key).toSorted(),
     )
+  })
+})
+
+describe('INTERNAL_PROPERTY_KEYS cross-language parity (#5841)', () => {
+  it('matches the Rust `INTERNAL_PROPERTY_KEYS`', () => {
+    const rust = parseStrArrayConst(readFileSync(OP_RS_PATH, 'utf8'), 'INTERNAL_PROPERTY_KEYS')
+    expect([...INTERNAL_PROPERTY_KEYS].toSorted()).toEqual(rust.toSorted())
   })
 })

@@ -394,6 +394,7 @@
       },
       "command": "get_property_def",
       "comment": "The old key is no longer declared.",
+      "expect_empty": true,
       "name": "project_is_gone"
     }
   ],

@@ -98,7 +98,20 @@ function spaceOf(b: Row): string | null {
   return (blocks.get(owner)?.['space_id'] as string | null | undefined) ?? null
 }
 
-/** The blocks of `spaceId`, Trash included, that hold `key`, by id. */
+const VALUE_SLOTS = ['value_text', 'value_num', 'value_date', 'value_ref', 'value_bool']
+
+/** A row with no value: the mock's engine Null, a clear SQL holds no row for. */
+function isNullRow(row: Row): boolean {
+  return VALUE_SLOTS.every((slot) => row[slot] == null)
+}
+
+/** The block holds a value under `key`; an engine Null counts as none. */
+function holdsValue(held: Map<string, Row> | undefined, key: string): boolean {
+  const row = held?.get(key)
+  return row !== undefined && !isNullRow(row)
+}
+
+/** The blocks of `spaceId`, Trash included, whose doc holds `key`, by id. */
 function holders(spaceId: string, key: string): string[] {
   return [...properties.entries()]
     .filter(([blockId, held]) => {
@@ -109,6 +122,11 @@ function holders(spaceId: string, key: string): string[] {
     .toSorted(compareUtf8Bytes)
 }
 
+/** The {@link holders} SQL shows: a block's engine Null is no row there. */
+function rowHolders(spaceId: string, key: string): string[] {
+  return holders(spaceId, key).filter((blockId) => holdsValue(properties.get(blockId), key))
+}
+
 /** `refuse_taken_key`: `key` is free to become a user property of `spaceId`. */
 export function refuseTakenKey(spaceId: string, key: string): void {
   refusePropertyKeyShape(key)
@@ -116,7 +134,7 @@ export function refuseTakenKey(spaceId: string, key: string): void {
   if (spacePropertyDefs(spaceId).has(key)) {
     throw validation(`property '${key}' is already defined in this space`)
   }
-  const used = holders(spaceId, key).length
+  const used = rowHolders(spaceId, key).length
   if (used > 0) {
     throw validation(`property '${key}' is already used by ${used} block(s) in this space`)
   }
@@ -151,7 +169,7 @@ function rowOf(key: string, fields: ValueFields): Row {
 
 /**
  * The engine's rename apply: every block of the space holding `oldKey` and
- * not `newKey` moves its value, and the definition moves when `newKey` has
+ * no value under `newKey` (an engine Null counts as none) moves its value, and the definition moves when `newKey` has
  * none. Where `newKey` is already present nothing moves, so a replayed
  * rename never overwrites a later write.
  */
@@ -159,7 +177,7 @@ function moveKey(spaceId: string, oldKey: string, newKey: string): void {
   for (const blockId of holders(spaceId, oldKey)) {
     const held = properties.get(blockId)
     const row = held?.get(oldKey)
-    if (!held || !row || held.has(newKey)) continue
+    if (!held || !row || holdsValue(held, newKey)) continue
     held.set(newKey, { ...row, key: newKey })
     held.delete(oldKey)
   }
@@ -210,8 +228,8 @@ function refuseMerge(spaceId: string, fromKey: string, intoKey: string): [Row, R
 }
 
 function mergeCounts(spaceId: string, fromKey: string, intoKey: string): PropertyMergeCounts {
-  const from = holders(spaceId, fromKey)
-  const dropped = from.filter((blockId) => properties.get(blockId)?.has(intoKey)).length
+  const from = rowHolders(spaceId, fromKey)
+  const dropped = from.filter((blockId) => holdsValue(properties.get(blockId), intoKey)).length
   return { moved: from.length - dropped, dropped }
 }
 
@@ -254,9 +272,13 @@ export function mergePropertyKey(
   const values: ValueWrite[] = []
   for (const blockId of holders(spaceId, fromKey)) {
     const held = properties.get(blockId)
-    const value = fieldsOf(held?.get(fromKey) ?? {})
+    const row = held?.get(fromKey) ?? {}
+    // An engine Null is removed and moves nowhere.
+    const value = isNullRow(row) ? null : fieldsOf(row)
     values.push({ block_id: blockId, key: fromKey, value: null, prior: value })
-    if (!held?.has(intoKey)) values.push({ block_id: blockId, key: intoKey, value, prior: null })
+    if (value !== null && !holdsValue(held, intoKey)) {
+      values.push({ block_id: blockId, key: intoKey, value, prior: null })
+    }
   }
   const intoState = defState(into)
   const payload: RewritePayload = {
@@ -281,7 +303,10 @@ export function mergePropertyKey(
   }
 }
 
-/** The engine's rewrite apply: each definition, then each value, set or removed. */
+/**
+ * The engine's rewrite apply: each definition, then each value, set or
+ * removed. A value of a block purged since the op was written is dropped.
+ */
 function applyRewrite(p: RewritePayload): void {
   const defs = spacePropertyDefs(p.space_id)
   for (const write of p.defs) {
@@ -293,6 +318,7 @@ function applyRewrite(p: RewritePayload): void {
     defs.set(write.key, { key: write.key, ...write.def, created_at: createdAt })
   }
   for (const write of p.values) {
+    if (!blocks.has(write.block_id)) continue
     if (write.value === null) {
       properties.get(write.block_id)?.delete(write.key)
       continue
@@ -347,42 +373,49 @@ export function revertPropertyKeyOp(opType: string, p: Record<string, unknown>):
   return true
 }
 
-/** A rewrite moved `blockId`'s `key` when it removed it and wrote the same value under another key. */
-function rewriteTarget(p: RewritePayload, blockId: string, key: string): string {
-  const removed = p.values.find(
-    (v) => v.block_id === blockId && v.key === key && v.value === null && v.prior !== null,
-  )
-  if (!removed) return key
-  const same = JSON.stringify(removed.prior)
-  const written = p.values.find(
-    (v) =>
-      v.block_id === blockId &&
-      v.key !== key &&
-      v.value !== null &&
-      JSON.stringify(v.value) === same,
-  )
-  return written?.key ?? key
+/**
+ * `value_move`: how a rewrite moved `blockId`'s value of `key` — out of it to
+ * another key (`{ out }`) when it removed the value there and wrote the block
+ * a value elsewhere, `'in'` when it wrote there and removed another key, or
+ * null.
+ */
+function valueMove(p: RewritePayload, blockId: string, key: string): { out: string } | 'in' | null {
+  const mine = p.values.filter((v) => v.block_id === blockId)
+  const here = mine.find((v) => v.key === key)
+  if (!here) return null
+  const other = mine.find((v) => v.key !== key && (v.value === null) !== (here.value === null))
+  if (!other) return null
+  return here.value === null ? { out: other.key } : 'in'
 }
 
 /**
  * `forward_property_key`: the key `blockId`'s value of `key` lives under now,
  * followed through every rename and merge of the block's space after
- * `target`, reverses included.
+ * `target`, reverses included. A value moved into the key is another key's,
+ * so its moving out again (the merge's undo) leaves the key where it is.
  */
 export function forwardPropertyKey(target: MockOpLogEntry, blockId: string, key: string): string {
   const b = blocks.get(blockId)
-  const spaceId = b ? spaceOf(b) : null
-  if (spaceId === null) return key
+  if (!b) return key
+  // `COALESCE(space_id, id)`: a space's own block names no space.
+  const spaceId = spaceOf(b) ?? blockId
   const start = opLog.findIndex((o) => o.device_id === target.device_id && o.seq === target.seq)
   let current = key
+  let movedIn = false
   for (const op of opLog.slice(start + 1)) {
     if (op.op_type !== 'rename_property_key' && op.op_type !== 'rewrite_properties') continue
     const p = JSON.parse(op.payload) as Record<string, unknown>
     if (p['space_id'] !== spaceId) continue
     if (op.op_type === 'rename_property_key') {
       if (p['old_key'] === current) current = p['new_key'] as string
-    } else {
-      current = rewriteTarget(p as unknown as RewritePayload, blockId, current)
+      continue
+    }
+    const move = valueMove(p as unknown as RewritePayload, blockId, current)
+    if (move === 'in') {
+      movedIn = true
+    } else if (move !== null) {
+      if (!movedIn) current = move.out
+      movedIn = false
     }
   }
   return current
