@@ -1,13 +1,14 @@
 // ---------------------------------------------------------------------------
 // Real-backend property lines in Edit as Markdown (#5365).
 //
-// The source buffer writes each block property as a `key:: value` line under
-// its bullet, and Save reads it back through `apply_page_source`: a new or
-// edited line sets the property, a line with no value deletes it (#5160 P7),
-// and a value the backend refuses (a `repeat::` rule the recurrence engine
+// The source buffer writes each block property as a `key:: value` line at its
+// block's text column, and Save reads it back through `apply_page_source`: a
+// new or edited line sets the property, a line with no value deletes it (#5160
+// P7), and a value the backend refuses (a `repeat::` rule the recurrence engine
 // cannot read) refuses the whole save, naming the line, and writes nothing.
-// The mock's `apply_page_source` models none of these lines
-// (`src/lib/tauri-mock/handlers/pages.ts`), so only this lane runs them.
+// The mock saves a Document buffer's property lines too
+// (`apply_page_source_document.json`); this lane is the backend's own reading
+// of them and its refusal.
 //
 // Two tests in one vault, on the one page the first creates.
 //

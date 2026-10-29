@@ -95,7 +95,7 @@ describe('Agaric real-backend /repeat remove (#5160) @editor @journal', () => {
     await setPageSourceLines([
       ...base
         .filter((line) => line.text !== '')
-        .map(({ text, id }) => ({ id, text: text.replace(`- ${task}`, `- [ ] ${task}`) })),
+        .map(({ text, id }) => ({ id, text: text.includes(task) ? `- [ ] ${text}` : text })),
       ...rule.split('\n').map((text) => ({ text, id: null })),
     ])
     await clickPageSourceButton('Save')

@@ -17,7 +17,7 @@ interface Seeded {
   refId: string
 }
 
-/** A host page holding a heading linking the target page, and a block referring to a block on it. */
+/** A host page holding a heading linking the target page, and a block referring to a block on it, its ref property naming the page. */
 async function seed(page: Page): Promise<Seeded> {
   return page.evaluate(
     async ({ host, target, refTitle }) => {
@@ -41,10 +41,18 @@ async function seed(page: Page): Promise<Seeded> {
         spaceId,
       })) as string
       const refId = (created.blocks[0] as { id: string }).id
-      await invoke('create_blocks_batch', {
-        specs: [`# Plan for [[${targetId}]]`, `See ((${refId})) today\nowner:: ${targetId}`].map(
-          (content) => ({ blockType: 'content', content, parentId: hostId, position: null }),
-        ),
+      const hosted = (await invoke('create_blocks_batch', {
+        specs: [`# Plan for [[${targetId}]]`, `See ((${refId})) today`].map((content) => ({
+          blockType: 'content',
+          content,
+          parentId: hostId,
+          position: null,
+        })),
+      })) as { blocks: Array<{ id: string }> }
+      await invoke('set_property', {
+        blockId: (hosted.blocks[1] as { id: string }).id,
+        key: 'owner',
+        value: { value_ref: targetId },
       })
       return { targetId, refId }
     },
@@ -126,7 +134,7 @@ test('a block ref in Edit as Markdown hints its title, goes whole, comes back wh
   const { refId, targetId } = await seed(page)
   await openHost(page)
   const editor = await openSourceMode(page)
-  const line = editor.locator('[data-source-line]', { hasText: /^- See / })
+  const line = editor.locator('[data-source-line]', { hasText: /^See / })
   const ref = editor.locator('.source-ulid-token', { hasText: refId })
   const owner = editor.locator('.source-ulid-token', { hasText: new RegExp(`^${targetId}$`) })
 
@@ -137,7 +145,7 @@ test('a block ref in Edit as Markdown hints its title, goes whole, comes back wh
   await expect.poll(() => hintOf(ref)).toContain(REF_TITLE)
   await owner.hover()
   await expect.poll(() => hintOf(owner)).toContain(TARGET)
-  await expect(line).toHaveText(`- See ((${refId})) today`)
+  await expect(line).toHaveText(`See ((${refId})) today`)
 
   // The cursor touching the token: the hint shows, and assistive tech hears the title.
   await page.mouse.move(0, 0)
@@ -150,12 +158,12 @@ test('a block ref in Edit as Markdown hints its title, goes whole, comes back wh
 
   // Backspace beside it removes it whole; one undo brings it back.
   await page.keyboard.press('Backspace')
-  await expect(line).toHaveText('- See  today')
+  await expect(line).toHaveText('See  today')
   await page.keyboard.press('ControlOrMeta+z')
-  await expect(line).toHaveText(`- See ((${refId})) today`)
+  await expect(line).toHaveText(`See ((${refId})) today`)
 
   // Typing inside it is refused.
   await caretAt(page, `((${refId}))`, 6)
   await page.keyboard.type('x')
-  await expect(line).toHaveText(`- See ((${refId})) today`)
+  await expect(line).toHaveText(`See ((${refId})) today`)
 })

@@ -1,38 +1,30 @@
 /**
  * The *Edit as Markdown* buffer's outline keys (#5160 phase 5): the keyboard
  * catalog's indent, dedent, task-cycle, move and heading bindings by id, user overrides
- * included, acting on lines of markdown as the block editor acts on blocks.
- * Tab and Shift+Tab indent and dedent too while *Tab indents blocks* is on
- * (Settings → Editor), the opt-out that gives Tab back to focus navigation;
- * Escape leaves the buffer either way.
+ * included, acting on the blocks the selection touches as the block editor acts on
+ * blocks (`source-buffer-blocks`). Tab and Shift+Tab indent and dedent too while
+ * *Tab indents blocks* is on (Settings → Editor), the opt-out that gives Tab back to
+ * focus navigation; Escape leaves the buffer either way.
  *
- * No key changes which line carries which id. Indent, dedent and the cycle
- * edit text past a line's start, which stays where it was, and a move puts the
- * same line nodes back in a new order: a replaced line's start is gone, so it
- * keeps the id it carries (`lineIdsAfter`).
+ * No key changes which block carries which id: each block a key writes again keeps
+ * the id its first line carries.
  */
 
 import { Extension } from '@tiptap/core'
-import { type Command, type EditorState, Plugin, TextSelection } from '@tiptap/pm/state'
+import { type Command, type EditorState, Plugin } from '@tiptap/pm/state'
 
 import {
-  blockAt,
   blockAtCursor,
-  depthOf,
-  frontMatterEnd,
-  isBlank,
-  lineStarts,
-  subtreeEnd,
+  cycleTaskAt,
+  dedentRange,
+  indentRange,
+  moveRange,
   turnInto,
 } from '@/editor/source-buffer-blocks'
 import type { BlockTypeToken } from '@/lib/block-type-convert'
 import { isTabIndentEnabled } from '@/lib/editor-preferences'
 import { headingChordLevel, matchesShortcutBinding } from '@/lib/keyboard-config'
 import { isTabKey } from '@/lib/keyboard-config/keys'
-import { nextTaskState, TASK_STATE_TO_MARKER, taskStateFromMarker } from '@/lib/task-states'
-
-/** A child is indented two spaces under its parent (the export's indent). */
-const INDENT = '  '
 
 /**
  * The first and last line the selection touches. A selection that ends where
@@ -46,197 +38,21 @@ function touchedLines({ doc, selection }: EditorState): [number, number] {
   return [first, last]
 }
 
-/** Indent lines `first` to `last` two spaces. */
-export function indentRange(first: number, last: number): Command {
-  return (state, dispatch) => {
-    const starts = lineStarts(state.doc)
-    const tr = state.tr
-    for (let i = last; i >= first; i -= 1) tr.insertText(INDENT, starts[i])
-    dispatch?.(tr.scrollIntoView())
-    return true
-  }
+/** `range` run over the lines the selection touches. */
+function onTouched(range: (first: number, last: number) => Command): Command {
+  return (state, dispatch) => range(...touchedLines(state))(state, dispatch)
 }
 
-/**
- * The lines the selection touches, widened to each block they are in with its
- * further lines and children, and whether one of those blocks is top-level. A
- * line in no block, as the front matter's, stands for itself.
- */
-function touchedBlocks(state: EditorState): { first: number; last: number; topLevel: boolean } {
-  const [from, to] = touchedLines(state)
-  let first = from
-  let end = to + 1
-  let topLevel = false
-  for (let i = from; i <= to; i += 1) {
-    const block = blockAt(state.doc, i)
-    if (block === null) continue
-    first = Math.min(first, block.line)
-    end = Math.max(end, block.subtreeEnd)
-    topLevel ||= depthOf(state.doc.child(block.line).textContent) === 0
-  }
-  return { first, last: end - 1, topLevel }
-}
-
-const indentBlocks: Command = (state, dispatch) => {
-  const { first, last } = touchedBlocks(state)
-  return indentRange(first, last)(state, dispatch)
-}
-
-/** Up to two leading spaces, or a tab. */
-const LEADING_INDENT = /^(?:\t| {1,2})/
-
-/** Take up to two leading spaces, or a tab, off lines `first` to `last`. */
-export function dedentRange(first: number, last: number): Command {
-  return (state, dispatch) => {
-    const starts = lineStarts(state.doc)
-    const tr = state.tr
-    for (let i = last; i >= first; i -= 1) {
-      const width = LEADING_INDENT.exec(state.doc.child(i).textContent)?.[0].length ?? 0
-      const start = starts[i] as number
-      if (width > 0) tr.delete(start, start + width)
-    }
-    if (tr.docChanged) dispatch?.(tr.scrollIntoView())
-    return true
-  }
-}
-
-/**
- * As the block menu's Dedent: a top-level block has nowhere to go, and the
- * blocks selected with it stay where they are too.
- */
-const dedentBlocks: Command = (state, dispatch) => {
-  const { first, last, topLevel } = touchedBlocks(state)
-  return topLevel || dedentRange(first, last)(state, dispatch)
-}
-
-// A list line: its indentation and list markers (`- 1.` is a bullet holding an
-// ordered list style), then the task checkbox it holds, if any.
-const TASK_LINE = /^([ \t]*(?:(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$))+)(\[([ xX/-])\](?:[ \t]|$))?/
-
-/**
- * Step list line `index` to the block editor's next task state
- * (`nextTaskState`), written as the checkbox after its marker: `- foo`,
- * `- [ ] foo`, `- [/] foo`, `- [x] foo`, `- [-] foo`, and `- foo` again.
- */
-export function cycleTaskAt(index: number): Command {
-  return (state, dispatch) => {
-    const match = TASK_LINE.exec(state.doc.child(index).textContent)
-    if (match === null) return true
-    const [, prefix = '', box, marker] = match
-    const at = (lineStarts(state.doc)[index] as number) + prefix.length
-    const next = nextTaskState(marker === undefined ? null : taskStateFromMarker(marker))
-    const tr = state.tr
-    if (next === null) tr.delete(at, at + (box?.length ?? 0))
-    else if (box !== undefined) tr.insertText(TASK_STATE_TO_MARKER[next], at + 1, at + 2)
-    else tr.insertText(`${/[ \t]$/.test(prefix) ? '' : ' '}[${TASK_STATE_TO_MARKER[next]}] `, at)
-    dispatch?.(tr.scrollIntoView())
-    return true
-  }
-}
+const indentBlocks = onTouched(indentRange)
+const dedentBlocks = onTouched(dedentRange)
 
 /** Cycle the task of the block the caret is in, as the toolbar's button does. */
-const cycleTask: Command = (state, dispatch) => {
-  const block = blockAtCursor(state)
-  return block === null || cycleTaskAt(block.line)(state, dispatch)
-}
+const cycleTask: Command = (state, dispatch) =>
+  cycleTaskAt(state.selection.$head.index(0))(state, dispatch)
 
-interface LineMove {
-  /** The lines `[from, to)` the move rewrites. */
-  from: number
-  to: number
-  /** Those lines' indexes in their new order. */
-  order: number[]
-  /** Where the moved lines' first line was, and where it goes. */
-  movedFrom: number
-  movedTo: number
-}
-
-const span = (from: number, to: number): number[] =>
-  Array.from({ length: to - from }, (_, i) => from + i)
-
-/**
- * Lines `first` to `last` with the subtree of the last, moved past the sibling
- * subtree before them (`-1`) or after them (`1`): the nearest line at their
- * indentation with no shallower line between. The blank lines between the two
- * stay between them. `null` when there is no such sibling, when the lines are
- * not siblings (one is shallower than the first), when the first is blank,
- * and in the front matter, which no move enters or leaves.
- */
-function lineMove(
-  texts: readonly string[],
-  first: number,
-  last: number,
-  direction: -1 | 1,
-): LineMove | null {
-  const top = frontMatterEnd(texts)
-  const firstText = texts[first] as string
-  if (first < top || isBlank(firstText)) return null
-  const level = depthOf(firstText)
-  let end = first + 1
-  for (let i = first + 1; i < texts.length; i += 1) {
-    const text = texts[i] as string
-    if (isBlank(text)) continue
-    const depth = depthOf(text)
-    if (depth < level && i <= last) return null
-    if (depth < level || (depth === level && i > last)) break
-    end = i + 1
-  }
-  if (direction < 0) {
-    let prev = first - 1
-    const inside = (i: number): boolean =>
-      isBlank(texts[i] as string) || depthOf(texts[i] as string) > level
-    while (prev >= top && inside(prev)) prev -= 1
-    if (prev < top || depthOf(texts[prev] as string) < level) return null
-    let prevEnd = first
-    while (isBlank(texts[prevEnd - 1] as string)) prevEnd -= 1
-    return {
-      from: prev,
-      to: end,
-      order: [...span(first, end), ...span(prevEnd, first), ...span(prev, prevEnd)],
-      movedFrom: first,
-      movedTo: prev,
-    }
-  }
-  let next = end
-  while (next < texts.length && isBlank(texts[next] as string)) next += 1
-  if (next >= texts.length || depthOf(texts[next] as string) !== level) return null
-  const nextEnd = subtreeEnd(texts, next, level)
-  return {
-    from: first,
-    to: nextEnd,
-    order: [...span(next, nextEnd), ...span(end, next), ...span(first, end)],
-    movedFrom: first,
-    movedTo: first + (nextEnd - end),
-  }
-}
-
-/**
- * Move lines `first` to `last`, with their subtrees, past their sibling, in
- * one step: the same line nodes, ids and all, replace the lines they were, and
- * a selection in the lines that move goes with them.
- */
-export function moveRange(first: number, last: number, direction: -1 | 1): Command {
-  return (state, dispatch) => {
-    const { doc, selection } = state
-    const texts: string[] = []
-    doc.forEach((line) => texts.push(line.textContent))
-    const move = lineMove(texts, first, last, direction)
-    if (move === null) return true
-    const starts = lineStarts(doc)
-    const before = (index: number): number => (starts[index] ?? doc.content.size + 1) - 1
-    const lines = move.order.map((i) => doc.child(i))
-    const tr = state.tr.replaceWith(before(move.from), before(move.to), lines)
-    const offset = tr.doc.resolve(0).posAtIndex(move.movedTo) - before(move.movedFrom)
-    const moved = (pos: number) => tr.doc.resolve(Math.min(pos + offset, tr.doc.content.size))
-    tr.setSelection(TextSelection.between(moved(selection.anchor), moved(selection.head)))
-    dispatch?.(tr.scrollIntoView())
-    return true
-  }
-}
-
-/** Move the lines the selection touches past their sibling. */
+/** Move the blocks the selection touches past their sibling. */
 function moveLines(direction: -1 | 1): Command {
-  return (state, dispatch) => moveRange(...touchedLines(state), direction)(state, dispatch)
+  return onTouched((first, last) => moveRange(first, last, direction))
 }
 
 /** Turn the block the caret is in into a heading of `level`, as Turn into's row does. */

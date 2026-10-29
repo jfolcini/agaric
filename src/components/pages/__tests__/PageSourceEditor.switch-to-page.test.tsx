@@ -29,12 +29,12 @@ vi.mock('@/components/pages/PageSourceToolbar', () => ({ PageSourceToolbar: () =
 
 const mockedInvoke = vi.mocked(invoke)
 const PAGE = SEED_IDS.PAGE_GETTING_STARTED
-const WELCOME = '- Welcome to Agaric!'
-const HELLO = '- Hello, Agaric!'
+const WELCOME = 'Welcome to Agaric!'
+const HELLO = 'Hello, Agaric!'
 const BLOCKED = 'Too many blocks for page mode.'
 
 function pageBuffer(): PageBuffer {
-  return dispatch('get_page_buffer', { pageId: PAGE }) as PageBuffer
+  return dispatch('get_page_buffer', { pageId: PAGE, dialect: 'document' }) as PageBuffer
 }
 
 /** Every IPC goes to the real tauri-mock; returns the seeded page's buffer. */

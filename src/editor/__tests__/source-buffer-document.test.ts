@@ -60,7 +60,7 @@ describe('the Document dialect vectors (#5691)', () => {
       const texts = row.text.split('\n')
       expect(texts).toHaveLength(row.lineIds.length)
 
-      expect(readBlocks(texts, row.lineIds, 'document').map(asTree)).toEqual(withoutIds(row.tree))
+      expect(readBlocks(texts, row.lineIds).map(asTree)).toEqual(withoutIds(row.tree))
       const read = parseDocument(row.text, row.lineIds)
       expect(read.blocks.map((block) => row.lineIds[block.line - 1])).toEqual(
         row.tree.map((block) => block.id),
@@ -72,7 +72,7 @@ describe('the Document dialect vectors (#5691)', () => {
   it.each(vectors.typed.map((row) => [row.name, row] as const))('%s, typed', (_name, row) => {
     const texts = row.text.split('\n')
     const ids = texts.map(() => null)
-    expect(readBlocks(texts, ids, 'document').map(asTree)).toEqual(row.tree)
+    expect(readBlocks(texts, ids).map(asTree)).toEqual(row.tree)
   })
 
   it('reads a quoted property value as JSON, but a lone surrogate escape as written', () => {
@@ -80,18 +80,6 @@ describe('the Document dialect vectors (#5691)', () => {
     expect(read('"\\ud83d\\ude00"')).toEqual([['k', '\u{1F600}']])
     expect(read('"\\ud83d"')).toEqual([['k', '"\\ud83d"']])
     expect(read('"\\ude00"')).toEqual([['k', '"\\ude00"']])
-  })
-
-  it('reads a Source buffer as before unless asked for the Document dialect', () => {
-    const texts = ['- - a', '- b']
-    expect(readBlocks(texts, [null, null]).map((block) => block.listStyle)).toEqual([
-      'bullet',
-      'none',
-    ])
-    expect(readBlocks(texts, [null, null], 'document').map((block) => block.text)).toEqual([
-      '- a',
-      'b',
-    ])
   })
 })
 
@@ -127,12 +115,10 @@ describe('the block at a line of a Document buffer', () => {
     })
     const { doc } = editor.state
 
-    expect(blockAt(doc, 0, 'document')).toEqual({ line: 0, end: 1, subtreeEnd: 1, id: A })
-    expect(blockAt(doc, 1, 'document')).toEqual({ line: 1, end: 2, subtreeEnd: 5, id: null })
-    expect(blockAt(doc, 2, 'document')?.line).toBe(1)
-    expect(blockAt(doc, 4, 'document')).toEqual({ line: 3, end: 5, subtreeEnd: 5, id: B })
-    expect(blockAt(doc, 6, 'document')).toEqual({ line: 6, end: 7, subtreeEnd: 7, id: C })
-    // Source, the default, reads no block starting on an unmarked line without an id.
-    expect(blockAt(doc, 1)?.line).toBe(0)
+    expect(blockAt(doc, 0)).toEqual({ line: 0, end: 1, subtreeEnd: 1, id: A })
+    expect(blockAt(doc, 1)).toEqual({ line: 1, end: 2, subtreeEnd: 5, id: null })
+    expect(blockAt(doc, 2)?.line).toBe(1)
+    expect(blockAt(doc, 4)).toEqual({ line: 3, end: 5, subtreeEnd: 5, id: B })
+    expect(blockAt(doc, 6)).toEqual({ line: 6, end: 7, subtreeEnd: 7, id: C })
   })
 })

@@ -2204,7 +2204,7 @@ test.describe('page mode after Edit as Markdown (#5691) @editor @pages @markdown
     await page.keyboard.press('Enter')
     await page.keyboard.type('third')
 
-    await openSource(page, '- third')
+    await openSource(page, 'third')
     await page.getByRole('button', { name: 'Cancel', exact: true }).click()
 
     await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(3)
@@ -2246,7 +2246,7 @@ test.describe('page mode after Edit as Markdown (#5691) @editor @pages @markdown
     await expect.poll(async () => (await cursor(page)).index).toBe(1)
     await caret(page, 2, 2)
 
-    await openSource(page, '- third')
+    await openSource(page, 'third')
     await page.getByRole('button', { name: 'Cancel', exact: true }).click()
 
     await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(3)

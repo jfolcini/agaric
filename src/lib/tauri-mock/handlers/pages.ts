@@ -10,15 +10,11 @@
  */
 
 import {
-  closesFence,
   type DocumentBlock,
-  documentFenceOpener,
-  needsAnchorLineEscape,
-  needsBareLineEscape,
+  DocumentLayout,
   needsBlankLineEscape,
-  needsDocumentLineEscape,
-  needsTaskMarkerEscape,
   parseDocument,
+  pushDocumentLines,
   writeSourcePropertyValue,
 } from '@/editor/source-buffer-document'
 import { base64UrlToUtf8 } from '@/lib/base64url'
@@ -30,7 +26,7 @@ import {
 } from '@/lib/inline-property-parse'
 import { normalizeTagName } from '@/lib/name-tokens'
 import { compareNocase, compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
-import { TASK_STATE_TO_MARKER, type TodoState } from '@/lib/task-states'
+import { TASK_STATE_TO_MARKER } from '@/lib/task-states'
 import { blocksHandlers, parseOutline } from '@/lib/tauri-mock/handlers/blocks'
 import { propertiesHandlers } from '@/lib/tauri-mock/handlers/properties'
 import {
@@ -205,46 +201,6 @@ function storedListStyle(id: string): string | null {
 }
 
 /**
- * `push_block_bullet` in a Document buffer: the markers and the first line,
- * escaped when it would read as something else, then the further lines at the
- * text's column, each escaped that would read as anything but that line of
- * the block. Outside a fence an escaped line opens none, so only the first
- * line can. Returns whether the last line is code (`CodeLines::last`).
- */
-function pushDocumentLines(
-  lines: string[],
-  indent: string,
-  listMarker: string,
-  taskMarker: string,
-  text: string,
-): boolean {
-  const [first = '', ...rest] = text.split('\n')
-  const markers = listMarker + taskMarker
-  let head = indent + markers
-  if (first === '' && markers !== '') {
-    head = indent + markers.trimEnd()
-  } else {
-    const escape =
-      listMarker === ''
-        ? needsBareLineEscape(first, rest.length > 0)
-        : taskMarker === '' && needsTaskMarkerEscape(first)
-    head += (escape ? '\\' : '') + first
-  }
-  lines.push(head)
-  let fence = documentFenceOpener(head)
-  let last = fence !== null
-  const column = indent + ' '.repeat(listMarker.length)
-  for (const line of rest) {
-    const escape = fence === null ? needsDocumentLineEscape(line) : needsAnchorLineEscape(line)
-    const written = column + (escape ? '\\' : '') + line
-    last = fence !== null
-    if (fence !== null && closesFence(written, fence)) fence = null
-    lines.push(written)
-  }
-  return last
-}
-
-/**
  * `push_anchored_source_bullet` in a Document buffer: the block with its `^ID`
  * ending its last line or, when that line is code or would be written as an
  * escaped blank line, on a line of its own at the text's column.
@@ -286,8 +242,7 @@ function renderPageDocument(pid: string): { source: string; ids: string[] } {
   const front = renderFrontMatter(pageFrontMatter(pid))
   const lines: string[] = []
   const ids: string[] = []
-  const open: Array<{ column: number; marked: boolean }> = []
-  let previousMarked: boolean | null = null
+  const layout = new DocumentLayout()
   const render = (parentId: string, depth: number): void => {
     const children = liveChildren(parentId).filter((row) => row['block_type'] === 'content')
     let run = 0
@@ -297,36 +252,18 @@ function renderPageDocument(pid: string): { source: string; ids: string[] } {
       const todo = (row['todo_state'] as string | null) ?? null
       const style = storedListStyle(id)
       run = style === 'ordered' && todo === null ? run + 1 : 0
-      const checkbox = checkboxOf(todo)
-      open.length = depth
-      const { column, marked: underMarker } = open.at(-1) ?? { column: 0, marked: false }
-      let marker = ''
-      if (checkbox !== null) marker = '- '
-      else if (todo === null && style !== null) marker = style === 'bullet' ? '- ' : `${run}. `
-      else if (underMarker || (front === '' && lines.length === 0 && content.startsWith('---'))) {
-        marker = '+ '
-      }
-      const marked = marker !== ''
-      if (previousMarked !== null && !(previousMarked && marked)) lines.push('')
-      previousMarked = marked
-      const child = column + (marked ? marker.length : 2)
-      open.push({ column: child, marked })
-      const taskMarker = checkbox === null ? '' : `[${checkbox}] `
-      pushAnchoredDocumentBlock(lines, ' '.repeat(column), marker, taskMarker, content, id)
-      pushPropertyLines(lines, ' '.repeat(child), row, checkbox === null ? todo : null)
+      const listMarker = style === null ? '' : style === 'bullet' ? '- ' : `${run}. `
+      const opensRule = front === '' && lines.length === 0 && content.startsWith('---')
+      const place = layout.place(depth, listMarker, todo, opensRule)
+      if (place.blank) lines.push('')
+      pushAnchoredDocumentBlock(lines, place.indent, place.marker, place.taskMarker, content, id)
+      pushPropertyLines(lines, place.childIndent, row, place.taskMarker === '' ? todo : null)
       ids.push(id)
       render(id, depth + 1)
     }
   }
   render(pid, 0)
   return { source: front + lines.map((line) => `${line}\n`).join(''), ids }
-}
-
-/** The checkbox `todo` is written as, `null` outside the alphabet (`task_marker_for`). */
-function checkboxOf(todo: string | null): string | null {
-  return todo !== null && Object.hasOwn(TASK_STATE_TO_MARKER, todo)
-    ? TASK_STATE_TO_MARKER[todo as TodoState]
-    : null
 }
 
 /**

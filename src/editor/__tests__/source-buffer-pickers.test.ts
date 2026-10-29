@@ -107,6 +107,15 @@ describe('where the pickers open', () => {
     expect(typeAtEnd(ed, 0, ' #wor')).toBe('#wor')
   })
 
+  it('# opens after a line that opens no fence in the Document dialect: one list marker is read, then text', () => {
+    const ed = build([
+      ['- - ```', A],
+      ['after', null],
+    ])
+
+    expect(typeAtEnd(ed, 1, ' #wor')).toBe('#wor')
+  })
+
   it('[[ and (( open after any text and close once their brackets close; #[[ is a tag, not a link', () => {
     const ed = build([['- a', A]])
 

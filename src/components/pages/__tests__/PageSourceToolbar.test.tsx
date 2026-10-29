@@ -1,10 +1,10 @@
 /**
  * PageSourceToolbar — the block editor's toolbar and block menu on *Edit as
- * Markdown* (#5160 phase 5). Every IPC goes to the REAL tauri-mock: each
- * action is pressed on the toolbar, the buffer's lines are read, and a save
- * is read back from the mock. The mock models no task checkbox, list marker
- * or property line in a save (the Rust tests own that grammar), so for those
- * the re-read buffer line is what a test checks.
+ * Markdown* (#5160 phase 5), on a Document buffer (#5691). Every IPC goes to
+ * the REAL tauri-mock: each action is pressed on the toolbar, the buffer's
+ * lines are read, and a save is read back from the mock, which writes a
+ * Document buffer's list markers, checkboxes and property lines as the
+ * backend does.
  *
  * Its time is its test count: each test mounts the real buffer and toolbar,
  * and every press renders the toolbar's tooltip-wrapped buttons again.
@@ -50,8 +50,8 @@ const mockedInvoke = vi.mocked(invoke)
 
 const { PAGE_GETTING_STARTED: PAGE, BLOCK_GS_1: GS1, BLOCK_GS_2: GS2, BLOCK_GS_3: GS3 } = SEED_IDS
 const WELCOME_TEXT = 'Welcome to Agaric! This is your personal knowledge base.'
-const WELCOME = `- ${WELCOME_TEXT}`
-const CREATE = '- Create new blocks by pressing Enter at the end of any block.'
+const WELCOME = WELCOME_TEXT
+const CREATE = 'Create new blocks by pressing Enter at the end of any block.'
 
 type Line = [text: string, id: string | null]
 
@@ -72,7 +72,7 @@ afterEach(() => {
 })
 
 function pageBuffer(): PageBuffer {
-  return dispatch('get_page_buffer', { pageId: PAGE }) as PageBuffer
+  return dispatch('get_page_buffer', { pageId: PAGE, dialect: 'document' }) as PageBuffer
 }
 
 function renderEditor() {
@@ -215,10 +215,7 @@ describe('toolbar actions at the cursor', () => {
       ),
     )
 
-    expect(lineOf(ed, 'Agaric!')).toEqual([
-      `- **Welcome** to Agaric! ${WELCOME_TEXT.slice(19)}`,
-      GS1,
-    ])
+    expect(lineOf(ed, 'Agaric!')).toEqual([`**Welcome** to Agaric! ${WELCOME_TEXT.slice(19)}`, GS1])
   })
 
   it('Internal link closes [[ ]] around the selection, which the save links by title', async () => {
@@ -228,7 +225,7 @@ describe('toolbar actions at the cursor', () => {
 
     await userEvent.setup().click(button(t('toolbar.internalLink')))
     expect(lineOf(ed, 'Welcome')).toEqual([
-      '- Welcome to [[Agaric]]! This is your personal knowledge base.',
+      'Welcome to [[Agaric]]! This is your personal knowledge base.',
       GS1,
     ])
 
@@ -255,12 +252,12 @@ describe('toolbar actions at the cursor', () => {
     caretAfter(ed, 'Create')
     await user.click(button(t('toolbar.insertBlockRef')))
     expect(lineOf(ed, 'by pressing')[0]).toBe(
-      '- Create(( new blocks by pressing Enter at the end of any block.',
+      'Create(( new blocks by pressing Enter at the end of any block.',
     )
     expect(picked(ed)).toBe('((')
   })
 
-  it('New line breaks the line at the cursor without a marker, a new block of no id', async () => {
+  it('New line breaks the line at the cursor, a line break in the same block', async () => {
     renderEditor()
     const ed = await loadedEditor()
     caretAfter(ed, 'Welcome to Agaric!')
@@ -268,9 +265,10 @@ describe('toolbar actions at the cursor', () => {
     await userEvent.setup().click(button(t('toolbar.newLine')))
 
     const at = lines(ed).findIndex(([, id]) => id === GS1)
-    expect(lines(ed).slice(at, at + 2)).toEqual([
-      ['- Welcome to Agaric!', GS1],
+    expect(lines(ed).slice(at, at + 3)).toEqual([
+      ['Welcome to Agaric!', GS1],
       [' This is your personal knowledge base.', null],
+      ['', null],
     ])
   })
 
@@ -343,7 +341,7 @@ describe('toolbar actions at the cursor', () => {
     await user.click(button(t('toolbar.emoji')))
     await user.click(await screen.findByRole('button', { name: 'party popper' }))
 
-    expect(lineOf(ed, 'Agaric')[0]).toBe(`- Welcome🎉 to Agaric! ${WELCOME_TEXT.slice(19)}`)
+    expect(lineOf(ed, 'Agaric')[0]).toBe(`Welcome🎉 to Agaric! ${WELCOME_TEXT.slice(19)}`)
   })
 
   it('Insert query replaces the block’s text with the query built, as the block editor writes it', async () => {
@@ -356,7 +354,7 @@ describe('toolbar actions at the cursor', () => {
     await user.type(await screen.findByLabelText(t('queryBuilder.tagPrefix')), 'work')
     await user.click(screen.getByRole('button', { name: t('queryBuilder.insertButton') }))
 
-    expect(lineOf(ed, '{{query')).toEqual(['- {{query type:tag expr:work}}', GS3])
+    expect(lineOf(ed, '{{query')).toEqual(['{{query type:tag expr:work}}', GS3])
     await saveAndClose(onClose)
     expect(store.getState().blocksById.get(GS3)?.content).toBe('{{query type:tag expr:work}}')
   })
@@ -375,7 +373,7 @@ describe('toolbar actions at the cursor', () => {
       ),
     )
 
-    expect(lineOf(ed, 'Welcome')).toEqual([`- # ${WELCOME_TEXT}`, GS1])
+    expect(lineOf(ed, 'Welcome')).toEqual([`# ${WELCOME_TEXT}`, GS1])
     await saveAndClose(onClose)
     expect(store.getState().blocksById.get(GS1)?.content).toBe(
       convertBlockContent(WELCOME_TEXT, 'h1'),
@@ -427,7 +425,7 @@ describe('the block menu', () => {
     await user.click(within(menu).getByRole('menuitem', { name: menuRow(t('contextMenu.moveUp')) }))
 
     const ids = lines(ed).map(([, id]) => id)
-    expect(ids.indexOf(GS3)).toBe(ids.indexOf(GS2) - 2)
+    expect(ids.indexOf(GS3)).toBe(ids.indexOf(GS2) - 3)
     expect(lines(ed)[ids.indexOf(GS3) + 1]).toEqual([
       '   by pressing Enter at the end of any block.',
       null,
@@ -457,13 +455,13 @@ describe('the block menu', () => {
 
     const at = lines(ed).findIndex(([, id]) => id === GS3)
     expect(lines(ed).slice(at, at + 2)).toEqual([
-      ['  - Create new blocks', GS3],
+      ['  Create new blocks', GS3],
       ['     by pressing Enter at the end of any block.', null],
     ])
     await saveAndClose(onClose)
     const saved = store.getState().blocksById.get(GS3)
     expect(saved?.parent_id).toBe(GS2)
-    expect(saved?.content).toBe('Create new blocks\n by pressing Enter at the end of any block.')
+    expect(saved?.content).toBe('Create new blocks\n   by pressing Enter at the end of any block.')
   })
 
   it('Dedent leaves a top-level block and the lines under it where they are', async () => {
@@ -500,8 +498,9 @@ describe('the block menu', () => {
       within(menu).getByRole('menuitem', { name: menuRow(t('contextMenu.duplicate')) }),
     )
     const at = lines(ed).findIndex(([, id]) => id === GS3)
-    expect(lines(ed).slice(at, at + 2)).toEqual([
+    expect(lines(ed).slice(at, at + 3)).toEqual([
       [CREATE, GS3],
+      ['', null],
       [CREATE, null],
     ])
 
@@ -513,7 +512,7 @@ describe('the block menu', () => {
     await saveAndClose(onClose)
     const blocks = store.getState().blocks.filter((b) => b.parent_id === PAGE)
     expect(blocks.map((b) => b.id)).not.toContain(GS1)
-    expect(blocks.filter((b) => b.content === CREATE.slice(2))).toHaveLength(2)
+    expect(blocks.filter((b) => b.content === CREATE)).toHaveLength(2)
   })
 
   it('Turn into, TODO and priority rows rewrite the block at the cursor', async () => {
@@ -539,9 +538,10 @@ describe('the block menu', () => {
     )
 
     const at = lines(ed).findIndex(([, id]) => id === GS3)
+    // A list kind takes the task's checkbox off (D3); the priority line moves to the text's column.
     expect(lines(ed).slice(at, at + 2)).toEqual([
-      ['- 1. [ ] Create new blocks by pressing Enter at the end of any block.', GS3],
-      ['  priority:: 1', null],
+      ['1. Create new blocks by pressing Enter at the end of any block.', GS3],
+      ['   priority:: 1', null],
     ])
   })
 
@@ -561,7 +561,7 @@ describe('the block menu', () => {
     await user.click(within(menu).getByRole('menuitem', { name: t('callout.warning') }))
 
     expect(lineOf(ed, 'Create')).toEqual([
-      '- > [!WARNING] Create new blocks by pressing Enter at the end of any block.',
+      '> [!WARNING] Create new blocks by pressing Enter at the end of any block.',
       GS3,
     ])
   })
@@ -590,7 +590,7 @@ describe('the block menu', () => {
 
     await user.keyboard('{Escape}')
     caretAfter(ed, 'knowledge base.')
-    await user.keyboard('{Enter}')
+    await user.keyboard('{Enter}x')
     menu = await openMenu()
     expect(rows(menu).some((row) => row.startsWith(t('contextMenu.copyBlockRef')))).toBe(false)
   })

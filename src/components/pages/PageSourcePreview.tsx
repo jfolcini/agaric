@@ -1,16 +1,14 @@
 /**
  * PageSourcePreview — the *Edit as Markdown* buffer as the page shows its
- * blocks (#5160): each block the buffer's toolbar reads (`readBlocks`) at its
- * depth, with its task checkbox, its text through the static block renderer
- * and its property lines as chips; the front matter's lines as the page's
- * property chips. A `[[Name]]` or `#name` (`scanNameTokens`) shows as the chip
- * of the page or tag the save would link: one the resolve cache holds by that
- * title, or else one the save would create.
+ * blocks (#5160): each block as the save's grammar reads the Document buffer
+ * (`readBlocks`, #5691) at its depth, with its task checkbox, its text through
+ * the static block renderer and its property lines as chips; the front
+ * matter's lines as the page's property chips. A `[[Name]]` or `#name`
+ * (`scanNameTokens`) shows as the chip of the page or tag the save would link:
+ * one the resolve cache holds by that title, or else one the save would create.
  *
- * The save reads the buffer with the backend's grammar, so where the two
- * readers differ (a heading typed without a bullet owning what follows it,
- * aliases, the property values a definition refuses) the saved page can
- * differ from this.
+ * What the save resolves beyond the text (aliases, the property values a
+ * definition refuses) can make the saved page differ from this.
  */
 
 import type React from 'react'

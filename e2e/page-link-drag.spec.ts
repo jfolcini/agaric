@@ -114,13 +114,13 @@ test.describe('A page dragged into the editor becomes a link (#5691) @editor @pa
     await page.getByRole('menuitem', { name: 'Edit as Markdown', exact: true }).click()
     const buffer = page.getByRole('textbox', { name: 'Markdown source', exact: true })
     const line = buffer.locator(`[data-source-line][data-block-id="${BLOCK_GS_1}"]`)
-    await expect(line).toHaveText(`- ${GS_1_TEXT}`)
+    await expect(line).toHaveText(GS_1_TEXT)
 
     const at = await leftEdgeOf(line, 'This')
     await dragTo(page, bookmark(page, 'Projects'), at.x, at.y)
 
     await expect(line).toHaveText(
-      `- Welcome to Agaric! [[${PROJECTS}]]This is your personal knowledge base.`,
+      `Welcome to Agaric! [[${PROJECTS}]]This is your personal knowledge base.`,
     )
   })
 

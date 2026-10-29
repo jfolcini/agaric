@@ -12,7 +12,7 @@
  */
 
 import { FOLDED_RESERVED_KEYS, foldPropertyKey } from '@/lib/inline-property-parse'
-import { type TodoState, taskStateFromMarker } from '@/lib/task-states'
+import { TASK_STATE_TO_MARKER, type TodoState, taskStateFromMarker } from '@/lib/task-states'
 
 const WS = '\\t\\n\\v\\f\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000'
 const WS_CHAR = new RegExp(`^[${WS}]`)
@@ -251,6 +251,8 @@ export interface DocumentBlock {
   todoState: TodoState | null
   /** Its `key:: value` lines in order, the value read; an empty one clears the key. */
   properties: Array<[key: string, value: string]>
+  /** The buffer line each of `properties` is on, counted from 1. */
+  propertyLines: number[]
   /** The `^ID` its text ended with, read only from a buffer with no ids beside it. */
   anchor: string | null
 }
@@ -440,6 +442,7 @@ class Scan {
       listStyle,
       todoState,
       properties: [],
+      propertyLines: [],
       anchor: null,
     })
     this.endsInCode.push(isCode)
@@ -477,6 +480,7 @@ class Scan {
     }
     const block = this.blocks[owner.index] as DocumentBlock
     block.properties.push([trim(property.key), readSourcePropertyValue(property.value)])
+    block.propertyLines.push(this.line)
     return true
   }
 
@@ -530,4 +534,139 @@ export function parseDocument(
   scan.scan(blockText(text.replace(/\r\n?/g, '\n')).split('\n'))
   if (idLines === null) scan.extractAnchors()
   return { blocks: scan.blocks, warnings: scan.warnings }
+}
+
+/** Where a written line puts what is under it: whether it opens with a list marker, and its text's column. */
+interface LineLayout {
+  marked: boolean
+  /** The column its property lines and children are written at. */
+  childColumn: number
+}
+
+/** `line`'s layout as the scan reads it: past a list marker, else two columns past its indent. */
+export function lineLayout(line: string): LineLayout {
+  const marker = bulletMarker(trimStart(line))
+  return {
+    marked: marker !== null,
+    childColumn: indentColumns(line) + (marker === null ? 2 : marker.len + 1),
+  }
+}
+
+/** The checkbox `todoState` is written as, `null` outside the alphabet (`task_marker_for`). */
+function checkboxOf(todoState: string | null): string | null {
+  return todoState !== null && Object.hasOwn(TASK_STATE_TO_MARKER, todoState)
+    ? TASK_STATE_TO_MARKER[todoState as TodoState]
+    : null
+}
+
+/** Where {@link DocumentLayout.place} puts a block, and what it opens with. */
+interface DocumentPlace {
+  /** Whether a blank line goes before it. */
+  blank: boolean
+  indent: string
+  /** `- `, `N. `, `+ ` or nothing. */
+  marker: string
+  /** `[x] ` and the like, or nothing. */
+  taskMarker: string
+  /** The indent of its property lines and children. */
+  childIndent: string
+}
+
+/**
+ * `DocumentLayout` (`markdown.rs`): where a Document buffer's walk stands, for
+ * each open depth the column its block's children are written at and whether
+ * that block is written with a marker, and whether the block before was.
+ */
+export class DocumentLayout {
+  private readonly open: Array<{ column: number; marked: boolean }>
+  private previous: boolean | null
+
+  constructor(
+    open: Array<{ column: number; marked: boolean }> = [],
+    previous: boolean | null = null,
+  ) {
+    this.open = open
+    this.previous = previous
+  }
+
+  /** Whether the block placed last opens with a marker; null before any. */
+  get previousMarked(): boolean | null {
+    return this.previous
+  }
+
+  /**
+   * `place`: a block at `depth`, its `listMarker` (`- `, `N. ` or nothing) and
+   * its task state. A blank line goes before it unless it and the block before
+   * both open with a marker (D1). A state in the checkbox alphabet makes it a
+   * task, `- [ ] `, whatever its list marker (D3), and another state leaves it
+   * none. A plain block is bare, but a `+` item under a block written with a
+   * marker, whose indented lines continue it (D4), and where `opensRule`, a
+   * first block opening the buffer with `---`, which would open front matter.
+   */
+  place(
+    depth: number,
+    listMarker: string,
+    todoState: string | null,
+    opensRule: boolean,
+  ): DocumentPlace {
+    if (this.open.length > depth) this.open.length = depth
+    const { column, marked: underMarker } = this.open.at(-1) ?? { column: 0, marked: false }
+    const checkbox = checkboxOf(todoState)
+    let marker = ''
+    if (checkbox !== null) marker = '- '
+    else if (todoState === null && listMarker !== '') marker = listMarker
+    else if (underMarker || opensRule) marker = '+ '
+    const marked = marker !== ''
+    const blank = this.previous !== null && !(this.previous && marked)
+    this.previous = marked
+    const child = column + (marked ? marker.length : 2)
+    this.open.push({ column: child, marked })
+    return {
+      blank,
+      indent: ' '.repeat(column),
+      marker,
+      taskMarker: checkbox === null ? '' : `[${checkbox}] `,
+      childIndent: ' '.repeat(child),
+    }
+  }
+}
+
+/**
+ * `push_block_bullet` in a Document buffer: the markers and the first line,
+ * escaped when it would read as something else, then the further lines at the
+ * text's column, each escaped that would read as anything but that line of
+ * the block. Outside a fence an escaped line opens none, so only the first
+ * line can. Returns whether the last line is code (`CodeLines::last`).
+ */
+export function pushDocumentLines(
+  lines: string[],
+  indent: string,
+  listMarker: string,
+  taskMarker: string,
+  text: string,
+): boolean {
+  const [first = '', ...rest] = text.split('\n')
+  const markers = listMarker + taskMarker
+  let head = indent + markers
+  if (first === '' && markers !== '') {
+    head = indent + markers.trimEnd()
+  } else {
+    const escape =
+      listMarker === ''
+        ? needsBareLineEscape(first, rest.length > 0)
+        : taskMarker === '' && needsTaskMarkerEscape(first)
+    head += (escape ? '\\' : '') + first
+  }
+  lines.push(head)
+  let fence = documentFenceOpener(head)
+  let last = fence !== null
+  const column = indent + ' '.repeat(listMarker.length)
+  for (const line of rest) {
+    const escape = fence === null ? needsDocumentLineEscape(line) : needsAnchorLineEscape(line)
+    const written = column + (escape ? '\\' : '') + line
+    last = fence !== null
+    if (fence !== null && closesFence(written, fence)) fence = null
+    lines.push(written)
+  }
+  return last
 }

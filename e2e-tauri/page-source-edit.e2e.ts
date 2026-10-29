@@ -64,7 +64,8 @@ describe('Agaric real-backend source mode (#5140 Phase 4b) @editor @pages @markd
 
     const source = await openPageSource([FIRST, SECOND, THIRD])
 
-    // Each block is the line carrying its id and the lines under it.
+    // Each block is the line carrying its id and the lines under it; a blank
+    // line separates two paragraphs, which would otherwise read as one.
     const blocks: SourceLine[][] = []
     for (const line of await pageSourceLines()) {
       if (line.id !== null) blocks.push([line])
@@ -77,6 +78,7 @@ describe('Agaric real-backend source mode (#5140 Phase 4b) @editor @pages @markd
     }
     await setPageSourceLines([
       ...blockWith(THIRD),
+      { text: '', id: null },
       ...blockWith(FIRST).map(({ text, id }) => ({ id, text: text.replace(FIRST, EDITED) })),
       { text: '', id: null },
     ])

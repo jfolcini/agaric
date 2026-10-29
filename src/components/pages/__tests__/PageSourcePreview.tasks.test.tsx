@@ -21,7 +21,7 @@ describe('PageSourcePreview with a numbered task', () => {
   it('draws the task’s checkbox and no number; the run after it starts at 1.', async () => {
     const { container } = render(
       <PageSourcePreview
-        lines={{ text: '- 1. one\n- 1. [ ] two\n- 1. three', lineIds: [null, null, null] }}
+        lines={{ text: '1. one\n1. [ ] two\n1. three', lineIds: [null, null, null] }}
       />,
     )
 

@@ -91,8 +91,34 @@ describe('PageSourcePreview', () => {
     expect(screen.getByTestId('block-link-chip')).toHaveTextContent('Über')
   })
 
+  it('reads the buffer as the save does: a heading owns nothing, the line under it is a block, an indented paragraph a child', () => {
+    render(
+      <PageSourcePreview
+        lines={{
+          text: '## Heading\ntext under it\n\nparagraph\n\n  child',
+          lineIds: [null, null, null, null, null, null],
+        }}
+      />,
+    )
+
+    const blocks = screen.getAllByTestId('page-source-preview-block')
+    expect(blocks.map((block) => block.textContent)).toEqual([
+      'Heading',
+      'text under it',
+      'paragraph',
+      'child',
+    ])
+    expect(within(blocks[0] as HTMLElement).getByRole('heading')).toHaveTextContent('Heading')
+    expect(blocks.map((block) => block.style.marginInlineStart)).toEqual([
+      '0rem',
+      '0rem',
+      '0rem',
+      '1.5rem',
+    ])
+  })
+
   it('draws a list marker only on a list block, not on a heading written as one', () => {
-    render(<PageSourcePreview lines={{ text: '- - # Title\n- - item', lineIds: [null, null] }} />)
+    render(<PageSourcePreview lines={{ text: '- # Title\n- item', lineIds: [null, null] }} />)
 
     const [heading, item] = screen.getAllByTestId('page-source-preview-block')
     expect(within(heading as HTMLElement).getByRole('heading')).toHaveTextContent('Title')
@@ -103,7 +129,7 @@ describe('PageSourcePreview', () => {
   it('numbers a list past a heading that carries a numbered style as a fresh run', () => {
     render(
       <PageSourcePreview
-        lines={{ text: '- 1. one\n- 1. # Title\n- 1. two', lineIds: [null, null, null] }}
+        lines={{ text: '1. one\n1. # Title\n1. two', lineIds: [null, null, null] }}
       />,
     )
 

@@ -1,8 +1,8 @@
 /**
- * The *Edit as Markdown* buffer's blocks (#5160 phase 5): the block at the
- * cursor and the edits the toolbar and the block menu make to its lines. A
- * real TipTap editor with the buffer's extensions, so the id rule runs on
- * every edit as it does in the buffer.
+ * The *Edit as Markdown* buffer's blocks (#5160 phase 5, #5691): the block at
+ * the cursor and the edits the toolbar and the block menu make to its lines,
+ * in the Document dialect. A real TipTap editor with the buffer's extensions,
+ * so the id rule runs on every edit as it does in the buffer.
  */
 
 import { Editor } from '@tiptap/core'
@@ -14,6 +14,7 @@ import {
   blockAt,
   blockAtCursor,
   blockProperty,
+  blockTaskState,
   blockTypeOf,
   cyclePriority,
   deleteBlock,
@@ -80,37 +81,42 @@ const PAGE: Line[] = [
   ['---', null],
   ['aliases: [x]', null],
   ['---', null],
-  ['- a', A],
-  ['  more of a', null],
+  ['', null],
+  ['a', A],
+  ['more of a', null],
   ['  priority:: 2', null],
+  ['', null],
   ['  - b', B],
   ['    more of b', null],
-  ['- c', C],
+  ['', null],
+  ['c', C],
 ]
 
 describe('the block at the cursor', () => {
   it('is the block a line starts, or the one whose line starts the run it is in', () => {
     const ed = build(PAGE)
 
-    expect(blockAt(ed.state.doc, 3)).toEqual({ line: 3, end: 6, subtreeEnd: 8, id: A })
-    expect(blockAt(ed.state.doc, 4)).toEqual({ line: 3, end: 6, subtreeEnd: 8, id: A })
-    expect(blockAt(ed.state.doc, 5)?.line).toBe(3)
-    expect(blockAt(ed.state.doc, 7)).toEqual({ line: 6, end: 8, subtreeEnd: 8, id: B })
-    expect(blockAt(ed.state.doc, 8)).toEqual({ line: 8, end: 9, subtreeEnd: 9, id: C })
+    expect(blockAt(ed.state.doc, 4)).toEqual({ line: 4, end: 7, subtreeEnd: 10, id: A })
+    expect(blockAt(ed.state.doc, 5)).toEqual({ line: 4, end: 7, subtreeEnd: 10, id: A })
+    expect(blockAt(ed.state.doc, 6)?.line).toBe(4)
+    expect(blockAt(ed.state.doc, 9)).toEqual({ line: 8, end: 10, subtreeEnd: 10, id: B })
+    expect(blockAt(ed.state.doc, 11)).toEqual({ line: 11, end: 12, subtreeEnd: 12, id: C })
   })
 
-  it('is a new list line with no id yet, and none in the front matter', () => {
-    const ed = build([...PAGE, ['  - new', null]])
+  it('is a new line with no id yet, and none in the front matter', () => {
+    const ed = build([...PAGE, ['', null], ['  - new', null]])
 
-    expect(blockAt(ed.state.doc, 9)).toEqual({ line: 9, end: 10, subtreeEnd: 10, id: null })
+    expect(blockAt(ed.state.doc, 13)).toEqual({ line: 13, end: 14, subtreeEnd: 14, id: null })
     expect(blockAt(ed.state.doc, 1)).toBeNull()
+    expect(blockAt(ed.state.doc, 3)).toBeNull()
   })
 
   it('counts a fence’s lines as its block’s own, a marker inside it starting nothing', () => {
     const ed = build([
-      ['- ```', A],
-      ['  - not a bullet', null],
-      ['  ```', null],
+      ['```', A],
+      ['- not a bullet', null],
+      ['```', null],
+      ['', null],
       ['- b', B],
     ])
     const a = { line: 0, end: 3, subtreeEnd: 3, id: A }
@@ -120,7 +126,7 @@ describe('the block at the cursor', () => {
     expect(blockAt(ed.state.doc, 2)).toEqual(a)
   })
 
-  it('in a fence under a block’s text, is that block, so its priority goes under the fence', () => {
+  it('in a fence typed under a block’s text, is the fence, a block of its own (D1), so its priority goes under it', () => {
     const ed = build([
       ['- a', A],
       ['  ```', null],
@@ -137,16 +143,37 @@ describe('the block at the cursor', () => {
       ['  ```', null],
       ['  - x', null],
       ['  ```', null],
-      ['  priority:: 1', null],
+      ['    priority:: 1', null],
       ['- b', B],
     ])
+    expect(blockProperty(ed.state.doc, block(ed, 1), 'priority')).toBe('1')
   })
 
   it('follows the selection’s head', () => {
     const ed = build(PAGE)
-    ed.commands.setTextSelection(at(ed, 7, 2))
+    ed.commands.setTextSelection(at(ed, 9, 2))
 
     expect(blockAtCursor(ed.state)?.id).toBe(B)
+  })
+
+  it('reads a line as its marker says: `-` a bullet, `1.` numbered, `+` plain, `- [ ]` a task', () => {
+    const ed = build([
+      ['- a', A],
+      ['1. b', B],
+      ['  + c', C],
+      ['- [x] d', null],
+    ])
+
+    expect([0, 1, 2, 3].map((line) => blockTypeOf(ed.state.doc, block(ed, line)))).toEqual([
+      'bullet-list',
+      'numbered-list',
+      'paragraph',
+      'paragraph',
+    ])
+    expect([0, 3].map((line) => blockTaskState(ed.state.doc, block(ed, line)))).toEqual([
+      null,
+      'DONE',
+    ])
   })
 })
 
@@ -155,7 +182,7 @@ describe('Turn into', () => {
     const ed = build([
       ['- [ ] a', A],
       ['  priority:: 1', null],
-      ['  - b', B],
+      ['  + b', B],
     ])
 
     run(ed, turnInto(block(ed, 0), 'h2'))
@@ -163,106 +190,179 @@ describe('Turn into', () => {
     expect(lines(ed)).toEqual([
       ['- [ ] ## a', A],
       ['  priority:: 1', null],
-      ['  - b', B],
+      ['  + b', B],
     ])
     expect(blockTypeOf(ed.state.doc, block(ed, 0))).toBe('h2')
   })
 
-  it('writes the list style as the export’s marker, and a paragraph drops it', () => {
-    const ed = build([['- # a', A]])
+  it('writes the list style as its marker, and a paragraph drops it', () => {
+    const ed = build([['# a', A]])
 
     run(ed, turnInto(block(ed, 0), 'numbered-list'))
-    expect(lines(ed)).toEqual([['- 1. a', A]])
+    expect(lines(ed)).toEqual([['1. a', A]])
     expect(blockTypeOf(ed.state.doc, block(ed, 0))).toBe('numbered-list')
 
     run(ed, turnInto(block(ed, 0), 'bullet-list'))
-    expect(lines(ed)).toEqual([['- - a', A]])
+    expect(lines(ed)).toEqual([['- a', A]])
 
     run(ed, turnInto(block(ed, 0), 'paragraph'))
+    expect(lines(ed)).toEqual([['a', A]])
+  })
+
+  it('numbers a block turned numbered on from the run before it', () => {
+    const ed = build([
+      ['1. a', A],
+      ['- b', B],
+    ])
+
+    run(ed, turnInto(block(ed, 1), 'numbered-list'))
+
+    expect(lines(ed)).toEqual([
+      ['1. a', A],
+      ['2. b', B],
+    ])
+  })
+
+  it('takes a task’s checkbox off for a list kind, a task having no list style (D3)', () => {
+    const ed = build([['- [ ] a', A]])
+
+    run(ed, turnInto(block(ed, 0), 'bullet-list'))
+
     expect(lines(ed)).toEqual([['- a', A]])
+    expect(blockTaskState(ed.state.doc, block(ed, 0))).toBeNull()
   })
 
   it('quotes every line of the block’s text, and a code block fences it', () => {
     const ed = build([
-      ['- a', A],
-      ['  more', null],
-      ['- c', C],
+      ['a', A],
+      ['more', null],
+      ['', null],
+      ['c', C],
     ])
 
     run(ed, turnInto(block(ed, 0), 'quote'))
     expect(lines(ed)).toEqual([
-      ['- > a', A],
-      ['  > more', null],
-      ['- c', C],
+      ['> a', A],
+      ['> more', null],
+      ['', null],
+      ['c', C],
     ])
 
     run(ed, turnInto(block(ed, 0), 'code'))
     expect(lines(ed)).toEqual([
-      ['- ```', A],
-      ['  a', null],
-      ['  more', null],
-      ['  ```', null],
-      ['- c', C],
+      ['```', A],
+      ['a', null],
+      ['more', null],
+      ['```', null],
+      ['', null],
+      ['c', C],
     ])
   })
 
   it('writes the callout variant the block menu picked', () => {
-    const ed = build([['- a', A]])
+    const ed = build([['a', A]])
 
     run(ed, turnInto(block(ed, 0), 'callout', 'note'))
 
-    expect(lines(ed)).toEqual([['- > [!NOTE] a', A]])
+    expect(lines(ed)).toEqual([['> [!NOTE] a', A]])
   })
 
   it('escapes a first line out of a fence that would read as a list marker', () => {
     const ed = build([
-      ['- ```', A],
-      ['  - x', null],
-      ['  ```', null],
+      ['```', A],
+      ['- x', null],
+      ['```', null],
     ])
 
     run(ed, turnInto(block(ed, 0), 'paragraph'))
-    expect(lines(ed)).toEqual([['- \\- x', A]])
+    expect(lines(ed)).toEqual([['\\- x', A]])
   })
 
-  it('escapes a further line out of a quote that would read as a child bullet', () => {
+  it('escapes a further line out of a quote that would read as a list item', () => {
     const ed = build([
-      ['- > a', A],
-      ['  > - x', null],
+      ['> a', A],
+      ['> - x', null],
     ])
 
     run(ed, turnInto(block(ed, 0), 'paragraph'))
 
     expect(lines(ed)).toEqual([
-      ['- a', A],
-      ['  \\- x', null],
+      ['a', A],
+      ['\\- x', null],
     ])
   })
 
   it('takes a further line’s escape off inside a fence, where nothing is escaped', () => {
     const ed = build([
-      ['- a', A],
-      ['  \\- x', null],
+      ['a', A],
+      ['\\- x', null],
     ])
 
     run(ed, turnInto(block(ed, 0), 'code'))
 
     expect(lines(ed)).toEqual([
-      ['- ```', A],
-      ['  a', null],
-      ['  - x', null],
-      ['  ```', null],
+      ['```', A],
+      ['a', null],
+      ['- x', null],
+      ['```', null],
+    ])
+  })
+
+  it('writes a list block’s children again at the column its marker puts them, plain ones as + items (D4)', () => {
+    const ed = build([
+      ['p', A],
+      ['', null],
+      ['  child', B],
+      ['', null],
+      ['  - item', C],
+    ])
+
+    run(ed, turnInto(block(ed, 0), 'numbered-list'))
+
+    expect(lines(ed)).toEqual([
+      ['1. p', A],
+      ['   + child', B],
+      ['   - item', C],
+    ])
+    expect(readBlocks(...readBack(ed)).map((read) => [read.depth, read.text])).toEqual([
+      [0, 'p'],
+      [1, 'child'],
+      [1, 'item'],
+    ])
+  })
+
+  it('gives a list item turned into a paragraph the blank lines that keep it a block of its own (D1)', () => {
+    const ed = build([
+      ['- a', A],
+      ['- b', B],
+      ['- c', C],
+    ])
+
+    run(ed, turnInto(block(ed, 1), 'paragraph'))
+
+    expect(lines(ed)).toEqual([
+      ['- a', A],
+      ['', null],
+      ['b', B],
+      ['', null],
+      ['- c', C],
     ])
   })
 
   it('puts the cursor at the end of the block’s line', () => {
-    const ed = build([['- a', A]])
+    const ed = build([['a', A]])
 
     run(ed, turnInto(block(ed, 0), 'h1'))
 
-    expect(ed.state.selection.head).toBe(at(ed, 0, '- # a'.length))
+    expect(ed.state.selection.head).toBe(at(ed, 0, '# a'.length))
   })
 })
+
+/** The buffer's texts and ids, as `readBlocks` takes them. */
+function readBack(ed: Editor): [string[], Array<string | null>] {
+  const { text, lineIds } = readLines(ed.state.doc)
+  return [text.split('\n'), lineIds]
+}
 
 describe('the block’s text', () => {
   it('is replaced, its markers and property lines kept: a divider, a query', () => {
@@ -279,31 +379,50 @@ describe('the block’s text', () => {
       ['  due_date:: 2026-10-01', null],
     ])
   })
+
+  it('a divider opening the buffer is a + item, which no front matter opens', () => {
+    const ed = build([
+      ['a', A],
+      ['', null],
+      ['b', B],
+    ])
+
+    run(ed, setBlockText(block(ed, 0), '---'))
+
+    expect(lines(ed)).toEqual([
+      ['+ ---', A],
+      ['', null],
+      ['b', B],
+    ])
+    expect(readBlocks(...readBack(ed)).map((read) => read.text)).toEqual(['---', 'b'])
+  })
 })
 
 describe('property lines', () => {
   it('a new one goes under the block’s text and before its children, at its text’s column', () => {
     const ed = build([
-      ['  - 1. a', A],
-      ['    more', null],
-      ['    - b', B],
+      ['1. a', A],
+      ['   more', null],
+      ['   - b', B],
     ])
 
     run(ed, setBlockProperty(block(ed, 0), 'due_date', '2026-10-01'))
 
     expect(lines(ed)).toEqual([
-      ['  - 1. a', A],
-      ['    more', null],
-      ['    due_date:: 2026-10-01', null],
-      ['    - b', B],
+      ['1. a', A],
+      ['   more', null],
+      ['   due_date:: 2026-10-01', null],
+      ['   - b', B],
     ])
+    expect(blockProperty(ed.state.doc, block(ed, 0), 'due_date')).toBe('2026-10-01')
   })
 
   it('one the block has takes the value, by its key as the grammar matches it, and null removes it', () => {
     const ed = build([
-      ['- a', A],
+      ['a', A],
       ['  Due-Date:: 2026-01-01', null],
-      ['- c', C],
+      ['', null],
+      ['c', C],
     ])
 
     run(ed, setBlockProperty(block(ed, 0), 'due_date', '2026-10-01'))
@@ -312,13 +431,14 @@ describe('property lines', () => {
 
     run(ed, setBlockProperty(block(ed, 0), 'due_date', null))
     expect(lines(ed)).toEqual([
-      ['- a', A],
-      ['- c', C],
+      ['a', A],
+      ['', null],
+      ['c', C],
     ])
   })
 
   it('the priority steps through the block editor’s cycle: none, 1, 2, 3, none', () => {
-    const ed = build([['- a', A]])
+    const ed = build([['a', A]])
     const seen: Array<string | null> = []
 
     for (let i = 0; i < 4; i += 1) {
@@ -327,7 +447,7 @@ describe('property lines', () => {
     }
 
     expect(seen).toEqual(['1', '2', '3', null])
-    expect(lines(ed)).toEqual([['- a', A]])
+    expect(lines(ed)).toEqual([['a', A]])
   })
 })
 
@@ -335,9 +455,9 @@ describe('Delete and Duplicate', () => {
   it('Delete takes the block’s lines and its children’s', () => {
     const ed = build(PAGE)
 
-    run(ed, deleteBlock(block(ed, 3)))
+    run(ed, deleteBlock(block(ed, 4)))
 
-    expect(lines(ed)).toEqual([...PAGE.slice(0, 3), ['- c', C]])
+    expect(lines(ed)).toEqual([...PAGE.slice(0, 4), ...PAGE.slice(10)])
   })
 
   it('Delete of the only block leaves one empty line', () => {
@@ -351,14 +471,27 @@ describe('Delete and Duplicate', () => {
   it('Duplicate copies the block and its children after them, as new blocks', () => {
     const ed = build(PAGE)
 
-    run(ed, duplicateBlock(block(ed, 6)))
+    run(ed, duplicateBlock(block(ed, 8)))
 
-    expect(lines(ed).slice(6)).toEqual([
+    expect(lines(ed).slice(8)).toEqual([
       ['  - b', B],
       ['    more of b', null],
       ['  - b', null],
       ['    more of b', null],
-      ['- c', C],
+      ['', null],
+      ['c', C],
+    ])
+  })
+
+  it('Duplicate puts a blank line before a paragraph’s copy, so it is a block of its own (D1)', () => {
+    const ed = build([['a', A]])
+
+    run(ed, duplicateBlock(block(ed, 0)))
+
+    expect(lines(ed)).toEqual([
+      ['a', A],
+      ['', null],
+      ['a', null],
     ])
   })
 })
@@ -422,14 +555,16 @@ describe('readBlocks', () => {
       '- [x] Done **well**',
       '  further line',
       '  priority:: 1',
-      '  - - child',
-      '    - 1. grandchild',
-      '- \\- not a marker',
+      '  - child',
+      '    1. grandchild',
+      '',
+      '\\- not a marker',
+      '',
       'a bare paragraph',
       'that runs on',
       '',
     ]
-    const ids = [null, null, null, null, A, null, null, B, null, C, null, null, null]
+    const ids = [null, null, null, null, A, null, null, B, null, null, C, null, null, null, null]
 
     expect(readBlocks(texts, ids)).toEqual([
       {

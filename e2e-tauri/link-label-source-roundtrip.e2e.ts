@@ -4,7 +4,7 @@
 // and Edit as Markdown writes `[[Page|label]]` and reads an edited label back.
 //
 // Only the real backend renders the source buffer with names and resolves them
-// on save (`render_page_source` / `apply_page_source` in
+// on save (`get_page_buffer` / `apply_page_source` in
 // commands/pages/markdown.rs); the mock's buffer keeps raw ids. The Playwright
 // twin for the typing half is `e2e/link-labels.spec.ts`.
 //

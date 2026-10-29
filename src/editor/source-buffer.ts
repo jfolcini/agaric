@@ -24,6 +24,7 @@ import type { NodeType, Node as PMNode, Schema } from '@tiptap/pm/model'
 import { Fragment, Slice } from '@tiptap/pm/model'
 import { type Command, Plugin, TextSelection, type Transaction } from '@tiptap/pm/state'
 
+import { fenceAfter, fenceBefore, frontMatterEnd, isBlank } from '@/editor/source-buffer-blocks'
 import { SourceBufferKeys } from '@/editor/source-buffer-keys'
 import { clampSelectionToTokens, SourceBufferUlids } from '@/editor/source-buffer-ulids'
 import {
@@ -93,10 +94,9 @@ export function readLines(doc: PMNode): SourceLines {
   return { text: lines.join('\n'), lineIds }
 }
 
-const THEMATIC_BREAK = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/
-// Indentation, then one or more list markers (`- 1.` is a bullet holding an
-// ordered list style), then a task checkbox, each followed by blanks or the end.
-const LIST_PREFIX = /^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$))+(?:\[[ xX/-]\](?:[ \t]+|$))?/
+// Indentation, a list marker, then a task checkbox, each followed by blanks or
+// the end: the one marker a Document line opens with (#5691).
+const LIST_PREFIX = /^[ \t]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)(?:\[[ xX/-]\](?:[ \t]+|$))?/
 
 /**
  * The list prefix `line` starts with: its length, and the prefix Enter starts
@@ -104,33 +104,51 @@ const LIST_PREFIX = /^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$))+(?:\[[ xX/-]\]
  * the list. `null` for a line that is no list item.
  */
 function listContinuation(line: string): { length: number; next: string | null } | null {
-  if (THEMATIC_BREAK.test(line)) return null
   const prefix = LIST_PREFIX.exec(line)?.[0]
   if (prefix === undefined) return null
   if (line.slice(prefix.length).trim() === '') return { length: prefix.length, next: null }
   const next = prefix
-    .replace(/\d+(?=[.)])/g, (n) => String(Number(n) + 1))
+    .replace(/\d+(?=[.)])/, (n) => String(Number(n) + 1))
     .replace(/\[[^\]]\]/, '[ ]')
   return { length: prefix.length, next }
 }
 
 /**
- * Enter: split the line at the cursor. With `continueList`, a list line goes on
- * with its marker on the new line, and a line holding only its marker loses it,
- * ending the list, as GitHub and Obsidian do (#5160 X6).
+ * Enter: split the line at the cursor, as page mode's Enter makes a new block
+ * (#5691 D1). A list line goes on with its marker on the new line, and a line
+ * holding only its marker loses it, ending the list, as GitHub and Obsidian do
+ * (#5160 X6), with a blank line left so what is typed next is a block of its
+ * own. Any other line with text before the cursor gets a blank line after it,
+ * which starts a new block; in the front matter and in a fenced code block,
+ * where a line is no block, Enter breaks the line and nothing more.
  */
-function splitLine(continueList: boolean): Command {
-  return (state, dispatch) => {
-    const tr = state.tr.deleteSelection()
-    const { $from } = tr.selection
-    if (!$from.parent.isTextblock) return false
-    const list = continueList ? listContinuation($from.parent.textContent) : null
-    if (list === null || $from.parentOffset < list.length) tr.split($from.pos)
-    else if (list.next === null) tr.delete($from.start(), $from.end())
+const splitLine: Command = (state, dispatch) => {
+  const tr = state.tr.deleteSelection()
+  const { $from } = tr.selection
+  if (!$from.parent.isTextblock) return false
+  const text = $from.parent.textContent
+  const before = text.slice(0, $from.parentOffset)
+  const index = $from.index(0)
+  const list = listContinuation(text)
+  const texts: string[] = []
+  tr.doc.forEach((line) => texts.push(line.textContent))
+  const inCode = fenceAfter(fenceBefore(tr.doc, index), before) !== null
+  if (inCode || index < frontMatterEnd(texts)) {
+    tr.split($from.pos)
+  } else if (list !== null && $from.parentOffset >= list.length) {
+    if (list.next === null) tr.delete($from.start(), $from.end()).split($from.start())
     else tr.split($from.pos).insertText(list.next)
-    dispatch?.(tr.scrollIntoView())
-    return true
+  } else {
+    tr.split($from.pos)
+    if (list === null && !isBlank(before)) {
+      tr.split(tr.selection.from)
+      // The text moved starts a block: blanks before it would indent it under the one above.
+      const blanks = /^[ \t]*/.exec(text.slice($from.parentOffset))?.[0].length ?? 0
+      tr.delete(tr.selection.from, tr.selection.from + blanks)
+    }
   }
+  dispatch?.(tr.scrollIntoView())
+  return true
 }
 
 function lineType(schema: Schema): NodeType {
@@ -191,8 +209,14 @@ function dragAway(tr: Transaction): void {
   })
 }
 
-/** `Shift+Enter`: break the line at the cursor without a list marker (#5160 D3). */
-export const breakLine: Command = splitLine(false)
+/** `Shift+Enter`: break the line at the cursor, a line break in the same block (#5160 D3, #5691 D1). */
+export const breakLine: Command = (state, dispatch) => {
+  const tr = state.tr.deleteSelection()
+  const { $from } = tr.selection
+  if (!$from.parent.isTextblock) return false
+  dispatch?.(tr.split($from.pos).scrollIntoView())
+  return true
+}
 
 interface SourceBufferOptions {
   /** The page's line ids as the buffer loaded them: the only ids a paste or a drop brings in. */
@@ -208,7 +232,7 @@ const SourceBufferBehaviour = Extension.create<SourceBufferOptions>({
   },
   addKeyboardShortcuts() {
     return {
-      Enter: ({ editor }) => splitLine(true)(editor.state, editor.view.dispatch),
+      Enter: ({ editor }) => splitLine(editor.state, editor.view.dispatch),
       'Shift-Enter': ({ editor }) => breakLine(editor.state, editor.view.dispatch),
     }
   },

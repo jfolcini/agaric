@@ -4,10 +4,12 @@
 // The source buffer's own clipboard handlers carry each line's block id: a cut
 // line pasted back is a move, a copy is a new block (D15), and lines pasted
 // from another page's buffer are new blocks too, their ids dropped on paste,
-// so the save warns of no foreign id. Each save here goes through the real
-// `apply_page_source`, and every assertion reads the re-opened page. The
-// vitest twins are in `src/editor/__tests__/source-buffer.test.ts` and
-// `PageSourceEditor.test.tsx`, against the mock.
+// so the save warns of no foreign id. A paragraph is cut or copied with the
+// blank line after it, which keeps it a block of its own where it lands. Each
+// save here goes through the real `apply_page_source`, and every assertion
+// reads the re-opened page. The vitest twins are in
+// `src/editor/__tests__/source-buffer.test.ts` and `PageSourceEditor.test.tsx`,
+// against the mock.
 //
 // Globals (`$`, `$$`, `browser`, `expect`) come from @wdio/globals — see
 // helpers.ts.
@@ -109,13 +111,14 @@ describe('Agaric real-backend source-mode cut, copy and paste (#5160 phase 5-5b)
     // The sidebar click blurs and commits the last block.
     await reopenPage('Untitled', THIRD)
 
-    // FIRST gets a child, written as the line under it.
+    // FIRST gets a child, written as a paragraph indented under it.
     const setup = await openPageSource([FIRST, SECOND, THIRD])
     const base = await pageSourceLines()
     const first = lineWith(base, FIRST)
     await setPageSourceLines([
       ...base.slice(0, first + 1),
-      { text: `  - ${CHILD}`, id: null },
+      { text: '', id: null },
+      { text: `  ${CHILD}`, id: null },
       ...base.slice(first + 1),
     ])
     await saveSource(setup)
@@ -125,14 +128,13 @@ describe('Agaric real-backend source-mode cut, copy and paste (#5160 phase 5-5b)
     secondId = await idOf(SECOND)
     thirdId = await idOf(THIRD)
 
-    // FIRST's line and its child's, line breaks and all, pasted where THIRD starts.
+    // FIRST's lines and its child's, to where SECOND starts, pasted where THIRD starts.
     const source = await openPageSource([FIRST, CHILD, SECOND, THIRD])
     const before = await pageSourceLines()
-    const cutFrom = lineWith(before, FIRST)
     const cut = await pageSourceClipboard(
       'cut',
-      { line: cutFrom, offset: 0 },
-      { line: cutFrom + 2, offset: 0 },
+      { line: lineWith(before, FIRST), offset: 0 },
+      { line: lineWith(before, SECOND), offset: 0 },
     )
     const third = { line: lineWith(await pageSourceLines(), THIRD), offset: 0 }
     await pageSourceClipboard('paste', third, third, cut)
@@ -154,9 +156,9 @@ describe('Agaric real-backend source-mode cut, copy and paste (#5160 phase 5-5b)
     const copied = await pageSourceClipboard(
       'copy',
       { line: second, offset: 0 },
-      { line: second + 1, offset: 0 },
+      { line: second + 2, offset: 0 },
     )
-    const next = { line: second + 1, offset: 0 }
+    const next = { line: second + 2, offset: 0 }
     await pageSourceClipboard('paste', next, next, copied)
     await saveSource(source)
 
@@ -190,14 +192,13 @@ describe('Agaric real-backend source-mode cut, copy and paste (#5160 phase 5-5b)
     const otherIds = await rowIds()
     expect(otherIds).toHaveLength(3)
 
-    // Its first two lines, line breaks and all; the buffer closes unchanged.
+    // Its first two paragraphs, to where the third starts; the buffer closes unchanged.
     const otherSource = await openPageSource([OTHER_ONE, OTHER_TWO, OTHER_THREE])
     const otherLines = await pageSourceLines()
-    const one = lineWith(otherLines, OTHER_ONE)
     const copied = await pageSourceClipboard(
       'copy',
-      { line: one, offset: 0 },
-      { line: one + 2, offset: 0 },
+      { line: lineWith(otherLines, OTHER_ONE), offset: 0 },
+      { line: lineWith(otherLines, OTHER_THREE), offset: 0 },
     )
     expect(copied['text/html']).toContain(otherIds[0])
     await clickPageSourceButton('Cancel')

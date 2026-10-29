@@ -116,7 +116,7 @@ interface Typed {
 /** A buffer back at the page leaves no draft. */
 function storeDraft(pageId: string, { base, page, lines }: Typed): void {
   if (sameLines(lines, page)) removePreference(PREFERENCES.pageSourceDraft, pageId)
-  else writePreference(PREFERENCES.pageSourceDraft, { base, ...lines }, pageId)
+  else writePreference(PREFERENCES.pageSourceDraft, { dialect: 'document', base, ...lines }, pageId)
 }
 
 /** The line, counted from 0, a refused save names (`line N: …`, #5160 X3), or null. */
@@ -197,7 +197,7 @@ export function PageSourceEditor({
   const [typedLines, setTypedLines] = useState<SourceLines | null>(null)
   // The text the diff is of once typing pauses; before that, the text the buffer opened with.
   const [diffedText, setDiffedText] = useState<string | null>(null)
-  // A draft an earlier version stored, its ids as `^ID` anchors in its text (#5160 D-f).
+  // A draft an earlier version stored, which this one cannot open (#5160 D-f, #5691).
   const [legacyDraft, setLegacyDraft] = useState<string | null>(null)
   const [loadFailed, setLoadFailed] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -226,7 +226,7 @@ export function PageSourceEditor({
         // No `flushActiveDraft()` (#2969): entering source mode cleared focus, so
         // no block is left to flush. The kebab's blur committed it, and a commit
         // landing after this read makes the save stale: the conflict dialog.
-        const buffer = unwrap(await commands.getPageBuffer(pageId, null))
+        const buffer = unwrap(await commands.getPageBuffer(pageId, 'document'))
         if (cancelled) return
         // A draft keeps its own base, so a save of it still catches whatever
         // changed on the page since the draft was written.
@@ -288,7 +288,7 @@ export function PageSourceEditor({
 
   const showConflict = async (): Promise<void> => {
     try {
-      setConflict(unwrap(await commands.getPageBuffer(pageId, null)))
+      setConflict(unwrap(await commands.getPageBuffer(pageId, 'document')))
     } catch (err) {
       logger.warn('PageSourceEditor', 'Failed to reload page source', { pageId }, err)
       setSaveError(t('pageSource.loadFailed'))
