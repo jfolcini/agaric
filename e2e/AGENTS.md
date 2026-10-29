@@ -125,7 +125,7 @@ The `test` from `./helpers` carries an auto fixture, `consoleErrorGate`, that co
 
 It judges `position: absolute` children against their CSS containing block, not their DOM parent, and skips `fixed`/`sticky` descendants. Each containing-block trigger it recognises has a paired fixture in `horizontal-overflow-helper.spec.ts`; add one when you change the list.
 
-`data-overflow-clip="intentional"` marks a container whose `overflow-x: hidden|clip` is deliberate (fixed-width panel, thumbnail, a zoom-and-pan surface): the page check skips the box itself, and its descendants are excluded like `overflow-x: auto|scroll` regions. The walk checks computed style, so the attribute alone does nothing. Never put it on `target` itself, and a `position: static` marker doesn't cover an absolutely-positioned descendant.
+`data-overflow-clip="intentional"` marks a container whose `overflow-x: hidden|clip` is deliberate (fixed-width panel, thumbnail, a zoom-and-pan surface): the page check skips the box itself, and the offender walk excludes its descendants like `overflow-x: auto|scroll` regions. The walk checks computed style, so the attribute alone does nothing. Never put it on `target` itself, and a `position: static` marker doesn't cover an absolutely-positioned descendant.
 
 ## Header label selection
 

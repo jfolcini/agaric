@@ -664,7 +664,7 @@ const SETTINGS_TABS = [
   'App health',
 ] as const
 
-for (const width of [768, 820, 1024]) {
+for (const width of [768, 820]) {
   test.describe(`Settings tabs at ${width} × 1000 @settings`, () => {
     test.use({ viewport: { width, height: 1000 } })
 

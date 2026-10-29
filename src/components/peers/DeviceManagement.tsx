@@ -388,7 +388,7 @@ export function DeviceManagement(): React.ReactElement {
 
               {/* The copy icon is small enough to stay beside the ID on phones too. */}
               <SettingRow
-                className="flex-row items-center gap-4"
+                className="flex-row items-center gap-4 sm:flex-nowrap"
                 label={
                   <span data-testid="local-device-id-label">{t('device.localDeviceIdLabel')}</span>
                 }
