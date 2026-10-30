@@ -124,6 +124,8 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   // the target's definition after the union.
   rename_property_key: { idKey: 'key', attrs: PROPERTY_DEF_ATTRS, lists: [] },
   merge_property_key: { idKey: 'key', attrs: PROPERTY_DEF_ATTRS, lists: [] },
+  // #5841 S3 — the definition after its type changed.
+  change_property_type: { idKey: 'key', attrs: PROPERTY_DEF_ATTRS, lists: [] },
   // #5057 — the draft writers answer with `()`, so their whole record is the
   // refusal declaration plus a head naming which one ran. `flush_all_drafts`
   // adds the one field a caller can see: how many rows it CONSUMED, which

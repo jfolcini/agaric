@@ -139,6 +139,11 @@ describe('HistoryFilterBar', () => {
     // #5841 S2 — a key rename and a merge are ops, listed in global history.
     expect(values).toContain('rename_property_key')
     expect(values).toContain('rewrite_properties')
+    // #5841 S3 — a rewrite is a merge or a type change, so its label names neither.
+    const rewrite = Array.from(options).find(
+      (o) => o.getAttribute('value') === 'rewrite_properties',
+    )
+    expect(rewrite).toHaveTextContent('Properties rewritten')
   })
 
   it('calls onFilterChange(null) when "All types" is selected', async () => {
@@ -262,6 +267,9 @@ describe('HistoryFilterBar', () => {
       expect(content).toHaveTextContent(t('history.opTypeDescription.setPropertyDef'))
       expect(content).toHaveTextContent(t('history.opTypeDescription.renamePropertyKey'))
       expect(content).toHaveTextContent(t('history.opTypeDescription.rewriteProperties'))
+      expect(content).toHaveTextContent(
+        "One of a space's properties was merged into another, or changed type",
+      )
 
       // All 18 op types render as <dt>/<dd> rows inside the legend's <dl>.
       const rows = content.querySelectorAll('dl > div')

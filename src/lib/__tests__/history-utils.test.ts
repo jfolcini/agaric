@@ -161,6 +161,34 @@ describe('getPayloadRawContent', () => {
     expect(getPayloadRawContent(makeEntry(payload, 'rewrite_properties'))).toBe('stage → phase')
   })
 
+  it('returns key: from → to for a type change', () => {
+    const payload = JSON.stringify({
+      space_id: 'SP1',
+      reason: 'change_type',
+      defs: [
+        {
+          key: 'effort',
+          def: { value_type: 'number', options: null },
+          prior: { value_type: 'text', options: null },
+        },
+      ],
+      values: [],
+    })
+    expect(getPayloadRawContent(makeEntry(payload, 'rewrite_properties'))).toBe(
+      'effort: text → number',
+    )
+  })
+
+  it('returns null for a type change without both types', () => {
+    const payload = JSON.stringify({
+      space_id: 'SP1',
+      reason: 'change_type',
+      defs: [{ key: 'effort', def: { value_type: 'number', options: null }, prior: null }],
+      values: [],
+    })
+    expect(getPayloadRawContent(makeEntry(payload, 'rewrite_properties'))).toBeNull()
+  })
+
   it('returns null for a set_property_def payload without a key', () => {
     const payload = JSON.stringify({ space_id: 'SP1', def: null, prior: null })
     expect(getPayloadRawContent(makeEntry(payload, 'set_property_def'))).toBeNull()

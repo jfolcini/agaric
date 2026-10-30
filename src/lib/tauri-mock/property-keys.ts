@@ -27,32 +27,32 @@ type Row = Record<string, unknown>
 /** `PropertyValueFields` (`agaric-store/src/op.rs`). */
 type ValueFields = Row
 /** `PropertyDefState`: what a definition write sets or replaces. */
-interface DefState {
+export interface DefState {
   value_type: string
   options: string | null
 }
 
-interface DefWrite {
+export interface DefWrite {
   key: string
   def: DefState | null
   prior: DefState | null
 }
 
-interface ValueWrite {
+export interface ValueWrite {
   block_id: string
   key: string
   value: ValueFields | null
   prior: ValueFields | null
 }
 
-interface RewritePayload {
+export interface RewritePayload {
   space_id: string
   reason: string
   defs: DefWrite[]
   values: ValueWrite[]
 }
 
-function rejection(err: AppError): Error & AppError {
+export function rejection(err: AppError): Error & AppError {
   return Object.assign(new Error(err.message), err)
 }
 
@@ -84,14 +84,70 @@ export function refusePropertyKeyShape(key: string): void {
   }
 }
 
-/** App bookkeeping (`INTERNAL_PROPERTY_KEYS`) is never renamed or merged, from or onto. */
-function refuseInternalKey(key: string): void {
+/**
+ * App bookkeeping (`INTERNAL_PROPERTY_KEYS`) is never renamed, merged (from or
+ * onto) or retyped.
+ */
+export function refuseInternalKey(key: string): void {
   if (INTERNAL_PROPERTY_KEYS.has(key)) {
-    throw validation(`property '${key}' is used by the app and cannot be renamed or merged`)
+    throw validation(`property '${key}' is the app's own and cannot be changed`)
   }
 }
 
-function spaceOf(b: Row): string | null {
+/** The `value_type` vocabulary `validate_property_def_shape` matches on. */
+const PROPERTY_DEF_VALUE_TYPES = new Set([
+  'text',
+  'number',
+  'date',
+  'select',
+  'ref',
+  'boolean',
+  'url',
+])
+
+/** `serde_json::from_str::<Vec<String>>`: anything but an array of strings is refused. */
+export function parsePropertyDefOptions(options: string): string[] {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(options)
+  } catch {
+    parsed = undefined
+  }
+  if (!Array.isArray(parsed) || parsed.some((o) => typeof o !== 'string')) {
+    throw validation('options must be a JSON array of strings')
+  }
+  return parsed as string[]
+}
+
+/**
+ * Mock twin of `validate_property_def_shape` (`commands/properties.rs`). The
+ * mock used to accept every key, every value_type and every options blob, so a
+ * conformance op could not tell a refusal from a write (#3830).
+ */
+export function validatePropertyDefShape(
+  key: string,
+  valueType: string,
+  options: string | null,
+): void {
+  refusePropertyKeyShape(key)
+  if (!PROPERTY_DEF_VALUE_TYPES.has(valueType)) {
+    throw validation(
+      `invalid value_type '${valueType}': must be text, number, date, select, ref, boolean, or url`,
+    )
+  }
+  if (valueType === 'select') {
+    if (options === null) {
+      throw validation('select-type definitions require an options array')
+    }
+    if (parsePropertyDefOptions(options).length === 0) {
+      throw validation('select-type options must not be empty')
+    }
+  } else if (options !== null) {
+    throw validation(`options are only allowed for select-type definitions, not '${valueType}'`)
+  }
+}
+
+export function spaceOf(b: Row): string | null {
   const own = b['space_id'] as string | null | undefined
   if (own != null) return own
   const owner = (b['page_id'] as string | null | undefined) ?? (b['id'] as string)
@@ -123,7 +179,7 @@ function holders(spaceId: string, key: string): string[] {
 }
 
 /** The {@link holders} SQL shows: a block's engine Null is no row there. */
-function rowHolders(spaceId: string, key: string): string[] {
+export function rowHolders(spaceId: string, key: string): string[] {
   return holders(spaceId, key).filter((blockId) => holdsValue(properties.get(blockId), key))
 }
 
@@ -140,13 +196,13 @@ export function refuseTakenKey(spaceId: string, key: string): void {
   }
 }
 
-function userDef(spaceId: string, key: string): Row {
+export function userDef(spaceId: string, key: string): Row {
   const def = spacePropertyDefs(spaceId).get(key)
   if (!def) throw rejection({ kind: 'not_found', message: `property definition '${key}'` })
   return def
 }
 
-function defState(row: Row): DefState {
+export function defState(row: Row): DefState {
   return { value_type: row['value_type'] as string, options: (row['options'] as string) ?? null }
 }
 
@@ -162,7 +218,8 @@ function fieldsOf(row: Row): ValueFields {
   }
 }
 
-function rowOf(key: string, fields: ValueFields): Row {
+/** A `block_properties` row of `fields`: a bool slot is 1 or 0 there. */
+export function rowOf(key: string, fields: ValueFields): Row {
   const bool = fields['value_bool'] as boolean | null | undefined
   return { ...fields, key, value_bool: bool == null ? null : bool ? 1 : 0 }
 }
@@ -303,13 +360,52 @@ export function mergePropertyKey(
   }
 }
 
+/** `PropertyValue` as the engine holds it: a string (text, date or ref), a number or a boolean. */
+export type HeldValue = string | number | boolean
+
+/** The value `fields` holds as the engine holds it, or null for none (an engine Null). */
+export function heldValueOf(fields: Row): HeldValue | null {
+  const str = fields['value_text'] ?? fields['value_date'] ?? fields['value_ref']
+  if (str != null) return str as string
+  if (fields['value_num'] != null) return fields['value_num'] as number
+  return fields['value_bool'] == null ? null : Boolean(fields['value_bool'])
+}
+
+/** `str_column_for`: the slot a string under `valueType` projects into. */
+function strColumnFor(valueType: unknown): string {
+  const typed: Record<string, string> = {
+    number: 'value_num',
+    boolean: 'value_bool',
+    date: 'value_date',
+    ref: 'value_ref',
+  }
+  return (typeof valueType === 'string' && typed[valueType]) || 'value_text'
+}
+
 /**
- * The engine's rewrite apply: each definition, then each value, set or
- * removed. A value of a block purged since the op was written is dropped.
+ * `value_fields_under`: `value` in the slot a write under `valueType` uses. A
+ * string's slot is the type's; under no type, or text, it is `value_text`, the
+ * engine's own kind of it, as a rewrite's payload records it.
  */
-function applyRewrite(p: RewritePayload): void {
-  const defs = spacePropertyDefs(p.space_id)
-  for (const write of p.defs) {
+export function fieldsUnder(value: HeldValue, valueType: unknown): ValueFields {
+  const fields: ValueFields = Object.fromEntries(VALUE_SLOTS.map((slot) => [slot, null]))
+  const slot =
+    typeof value === 'string'
+      ? strColumnFor(valueType)
+      : typeof value === 'number'
+        ? 'value_num'
+        : 'value_bool'
+  fields[slot] = value
+  return fields
+}
+
+function declaredType(spaceId: string, key: string): unknown {
+  return spacePropertyDefs(spaceId).get(key)?.['value_type']
+}
+
+function applyDefWrites(spaceId: string, writes: DefWrite[]): void {
+  const defs = spacePropertyDefs(spaceId)
+  for (const write of writes) {
     if (write.def === null) {
       defs.delete(write.key)
       continue
@@ -317,15 +413,47 @@ function applyRewrite(p: RewritePayload): void {
     const createdAt = defs.get(write.key)?.['created_at'] ?? new Date().toISOString()
     defs.set(write.key, { key: write.key, ...write.def, created_at: createdAt })
   }
-  for (const write of p.values) {
-    if (!blocks.has(write.block_id)) continue
-    if (write.value === null) {
-      properties.get(write.block_id)?.delete(write.key)
-      continue
-    }
-    if (!properties.has(write.block_id)) properties.set(write.block_id, new Map())
-    properties.get(write.block_id)?.set(write.key, rowOf(write.key, write.value))
+}
+
+/** One value write, in the slot its key's type uses. */
+function applyValueWrite(spaceId: string, write: ValueWrite): void {
+  const value = write.value === null ? null : heldValueOf(write.value)
+  if (value === null) {
+    properties.get(write.block_id)?.delete(write.key)
+    return
   }
+  if (!properties.has(write.block_id)) properties.set(write.block_id, new Map())
+  const fields = fieldsUnder(value, declaredType(spaceId, write.key))
+  properties.get(write.block_id)?.set(write.key, rowOf(write.key, fields))
+}
+
+/** A retyped key's other strings move to the slot its new type uses; numbers and booleans stay. */
+function reprojectKey(spaceId: string, key: string): void {
+  const valueType = declaredType(spaceId, key)
+  for (const blockId of holders(spaceId, key)) {
+    const held = properties.get(blockId)
+    const value = heldValueOf(held?.get(key) ?? {})
+    if (typeof value === 'string') held?.set(key, rowOf(key, fieldsUnder(value, valueType)))
+  }
+}
+
+/**
+ * The engine's rewrite apply: each definition, then each value, set or
+ * removed, in the slot its key's type uses; then the other values of a key
+ * whose type's slot changed move with it. A value of a block purged since the
+ * op was written is dropped.
+ */
+export function applyRewrite(p: RewritePayload): void {
+  const retyped = p.defs
+    .filter(
+      (w) => strColumnFor(declaredType(p.space_id, w.key)) !== strColumnFor(w.def?.value_type),
+    )
+    .map((w) => w.key)
+  applyDefWrites(p.space_id, p.defs)
+  for (const write of p.values) {
+    if (blocks.has(write.block_id)) applyValueWrite(p.space_id, write)
+  }
+  for (const key of retyped) reprojectKey(p.space_id, key)
 }
 
 /** `reverse_rewrite_properties`: every write swaps what it set and what it replaced. */

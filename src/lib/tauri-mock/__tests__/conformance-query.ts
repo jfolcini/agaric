@@ -460,6 +460,13 @@ const PROPERTY_MERGE_COUNTS_TOKEN = {
   attrKeys: ['moved', 'dropped'],
 } as const
 
+/** `preview_property_type_change`'s `PropertyTypeChangeCounts` (#5841 S3): no id, so a fixed head. */
+const PROPERTY_TYPE_CHANGE_COUNTS_TOKEN = {
+  kind: 'headed',
+  head: 'property_type_change_counts',
+  attrKeys: ['converted', 'removed'],
+} as const
+
 /** `resolve_page_by_alias`'s `(page_id, title)` hit (#3830). */
 const PAGE_ALIAS_HIT_TOKEN = { kind: 'tuple', names: ['page_id', 'title'] } as const
 /** `list_page_aliases_by_prefix`'s `(page_id, alias, title)` rows (#3830). */
@@ -758,6 +765,26 @@ const WIRE: Readonly<Record<string, WireShape>> = {
     token: PROPERTY_MERGE_COUNTS_TOKEN,
     hasMoreKey: null,
     totalKey: null,
+  },
+  // ── What changing a property's type converts and removes (#5841 S3) ──
+  //
+  // MUST match the `preview_property_type_change` and
+  // `list_property_type_change_values` arms in the Rust twin.
+  preview_property_type_change: {
+    rows: { kind: 'bare-row' },
+    token: PROPERTY_TYPE_CHANGE_COUNTS_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  list_property_type_change_values: {
+    rows: PAGED,
+    token: {
+      kind: 'id',
+      idKey: 'block_id',
+      attrKeys: ['page_id', 'deleted', 'value', 'converted'],
+    },
+    hasMoreKey: 'has_more',
+    totalKey: 'total_count',
   },
   list_property_loss_values: {
     rows: PAGED,
