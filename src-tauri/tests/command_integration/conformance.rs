@@ -1447,6 +1447,38 @@ pub async fn replay_fixture(
             .expect("seed peer_refs");
         }
     }
+    // Seed MCP agent rows (#5667), verbatim: a seeded id is what lets
+    // `revoke_mcp_agent` name the same row on both stacks, since a created
+    // agent's id is minted per stack. `space_ids` is stored as the JSON array
+    // `insert_agent` writes. The TS twin's `loadSeed` copies the same row
+    // into the mock's `mcpAgents` map.
+    if let Some(rows) = seed["mcp_agents"].as_array() {
+        for a in rows {
+            sqlx::query(
+                "INSERT INTO mcp_agents \
+                 (id, name, mode, space_ids, token, created_at_ms, last_used_ms) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(a["id"].as_str().expect("seed mcp_agents id"))
+            .bind(a["name"].as_str().expect("seed mcp_agents name"))
+            .bind(a["mode"].as_str().expect("seed mcp_agents mode"))
+            .bind(
+                a["space_ids"]
+                    .as_array()
+                    .map(|_| a["space_ids"].to_string()),
+            )
+            .bind(a["token"].as_str().expect("seed mcp_agents token"))
+            .bind(
+                a["created_at_ms"]
+                    .as_i64()
+                    .expect("seed mcp_agents created_at_ms"),
+            )
+            .bind(a["last_used_ms"].as_i64())
+            .execute(&pool)
+            .await
+            .expect("seed mcp_agents");
+        }
+    }
     // Seed page-alias rows (#3830), verbatim: `page_id` expands through
     // `seed_label_to_id` like `seed.attachments.block_id`, and `alias` is
     // stored exactly as authored — the column is `COLLATE NOCASE`, so the

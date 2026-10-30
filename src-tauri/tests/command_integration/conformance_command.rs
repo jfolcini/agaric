@@ -337,6 +337,18 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // #5371 — answers `()`; `page_opens` is outside the snapshot, so a
     // `last-opened` query step observes it.
     ("record_page_open", HEADED_ID_KEY, &[], &[]),
+    // #5667 — `mcp_agents` is outside the snapshot, so the `list_mcp_agents`
+    // step observes both writers. A created agent's `id`, `token` and
+    // `created_at_ms` are minted per stack, so the return names what the
+    // caller chose; each granted space is a `space_ids-><id>` token, which
+    // relabels where the space a fixture created would not inside a JSON list.
+    (
+        "create_mcp_agent",
+        HEADED_ID_KEY,
+        &["name", "mode", "last_used_ms"],
+        &["space_ids"],
+    ),
+    ("revoke_mcp_agent", HEADED_ID_KEY, &[], &[]),
     // #5071 — the two imports, whose blocks the snapshot pins. `warnings` stay
     // off: they are prose that may carry `#`. The TS twin has no entry, because
     // the fixture driving them is backend-only on the mock (`DRIFT_SKIP`): the
@@ -1056,6 +1068,37 @@ pub(super) async fn apply_op_via_command(
             .await,
         ),
         "duplicate_block" => to_json(duplicate_block_inner(pool, DEV, mat, block_id()).await),
+        // The name and mode are the caller's own; `spaceIds` is a list of
+        // labels, each read as the wire reads a `SpaceId`. An absent or null
+        // list grants every space.
+        "create_mcp_agent" => to_json(
+            agaric_lib::commands::mcp_agents::create_mcp_agent_inner(
+                pool,
+                req_str("name"),
+                serde_json::from_value(
+                    arg("mode").cloned().unwrap_or_else(|| {
+                        panic!("conformance op '{command}' is missing arg 'mode'")
+                    }),
+                )
+                .unwrap_or_else(|e| panic!("conformance op '{command}': mode: {e}")),
+                arg("spaceIds").filter(|v| !v.is_null()).map(|_| {
+                    label_ids("spaceIds")
+                        .into_iter()
+                        .map(|id| {
+                            serde_json::from_value::<SpaceId>(json!(id.as_str())).unwrap_or_else(
+                                |e| panic!("conformance op '{command}': spaceIds: {e}"),
+                            )
+                        })
+                        .collect()
+                }),
+            )
+            .await,
+        ),
+        // An agent id is the fixture's own seeded literal, as the seed loader
+        // inserts it, so it takes no expansion.
+        "revoke_mcp_agent" => to_json(
+            agaric_lib::commands::mcp_agents::revoke_mcp_agent_inner(pool, req_str("id")).await,
+        ),
         // `input` and `splice` are the caller's own text or blocks, so they
         // take no label expansion; only the anchor is a label. `splice` came
         // after the first fixture's steps, so it is `None` when absent.
@@ -1595,7 +1638,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 61;
+    const MUTATING_ARM_COUNT: usize = 63;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {
