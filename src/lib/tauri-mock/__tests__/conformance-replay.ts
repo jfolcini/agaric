@@ -342,6 +342,32 @@ export function expandContentLabels(text: string, createdIds: readonly string[])
   })
 }
 
+/**
+ * Resolve an `attachmentId` op arg. `An` is the attachment the n-th
+ * `add_attachment` op added, 1-based, because each stack mints its own id; any
+ * other label (`ATT1`) is a seeded id and passes through. Fails CLOSED past the
+ * last add. Rust twin: `resolve_attachment_label` in `conformance.rs`.
+ */
+function resolveAttachmentLabel(label: string): string {
+  const m = /^A(\d{1,6})$/.exec(label)
+  if (!m) return label
+  const added: string[] = []
+  for (const entry of opLog) {
+    if (entry.op_type !== 'add_attachment') continue
+    const id = (JSON.parse(entry.payload) as Record<string, unknown>)['attachment_id'] as string
+    if (!added.includes(id)) added.push(id)
+  }
+  const n = Number(m[1])
+  const id = n >= 1 ? added[n - 1] : undefined
+  if (id == null) {
+    throw new Error(
+      `conformance op arg '${label}' names the ${n}th added attachment, but only ` +
+        `${added.length} have been added at this point in the op list`,
+    )
+  }
+  return id
+}
+
 /** Every op this fixture has appended, in `seq` order — what an `On` label
  *  resolves against. Local rows only, mirroring `read_op_refs_in_op_order`;
  *  the mock has no replicated rows, so the filter is the device id alone. */
@@ -451,6 +477,9 @@ export function expandOpArgs(
         typeof label === 'string' ? resolveOpArgId(label, createdIds) : label,
       )
     }
+  }
+  if (typeof out['attachmentId'] === 'string') {
+    out['attachmentId'] = resolveAttachmentLabel(out['attachmentId'])
   }
   // #5057 — an `OpRef` arg is an `On` label, never a literal.
   if (typeof out['opRef'] === 'string') out['opRef'] = resolveOpRefLabel(out['opRef'])

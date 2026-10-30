@@ -40,7 +40,8 @@
 
 use super::common::*;
 use super::conformance::{
-    expand_content_labels, label_created_ids, resolve_op_arg_id, resolve_op_ref_label,
+    expand_content_labels, label_created_ids, resolve_attachment_label, resolve_op_arg_id,
+    resolve_op_ref_label,
 };
 use super::conformance_query::{
     PROJECTING_STEP, PROPERTY_DEF_ATTRS, SPACE_TOKEN, relabel_token, row_token,
@@ -847,15 +848,19 @@ pub(super) async fn apply_op_via_command(
                 .await,
             )
         }
-        // An attachment id is the fixture's own short label (`ATT1`), inserted
-        // verbatim by the seed loader, so it takes no expansion.
+        // A seeded attachment id is the fixture's own short label (`ATT1`),
+        // and `An` the n-th op-added one.
         "delete_attachment" => to_json(
             delete_attachment_inner(
                 pool,
                 DEV,
                 mat,
                 app_data_dir,
-                AttachmentId::from(req_str("attachmentId").as_str()),
+                AttachmentId::from(
+                    resolve_attachment_label(pool, &req_str("attachmentId"))
+                        .await
+                        .as_str(),
+                ),
             )
             .await,
         ),
@@ -864,7 +869,11 @@ pub(super) async fn apply_op_via_command(
                 pool,
                 DEV,
                 mat,
-                AttachmentId::from(req_str("attachmentId").as_str()),
+                AttachmentId::from(
+                    resolve_attachment_label(pool, &req_str("attachmentId"))
+                        .await
+                        .as_str(),
+                ),
                 req_str("newFilename"),
             )
             .await,

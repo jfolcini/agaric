@@ -44,14 +44,16 @@
 //! ## Known blind spots
 //!
 //! Whatever the generator cannot emit, this lane cannot compare. Today that is
-//! the attachment ops (no mock handler and no fixture vocabulary), a
-//! `DeleteProperty(space)`, a `todo_state` (so `list_unfinished_tasks` answers
-//! nothing), and the columns the snapshot omits: the timestamps and
-//! `blocks.space_id`. The texts carry `[[…]]`, `((…))` and `#[…]` tokens
-//! ([`weave_tokens`], #6054) naming the seed page, the seed tag or an earlier
-//! block, live, trashed, purged, in no space or, in an edit, in another space,
-//! so `page_links` and the backlink, tag-ref and inherited-tag reads compare,
-//! the links the backend declines included. The write gate refuses a text that
+//! a `DeleteProperty(space)`, a `todo_state` (so `list_unfinished_tasks`
+//! answers nothing), and the columns the snapshot omits: the timestamps and
+//! `blocks.space_id`. An attachment the chain adds compares by its
+//! `add_attachment_with_bytes` return and by whether each `delete_attachment`
+//! finds it, never by its row or its bytes on disk, which each stack mints
+//! (see [`chain_to_fixture`]). The texts carry `[[…]]`, `((…))` and `#[…]`
+//! tokens ([`weave_tokens`], #6054) naming the seed page, the seed tag or an
+//! earlier block, live, trashed, purged, in no space or, in an edit, in
+//! another space, so `page_links` and the backlink, tag-ref and inherited-tag
+//! reads compare, the links the backend declines included. The write gate refuses a text that
 //! names a block of another space unless its page already holds the token
 //! (#5272), so a seed-tag move first puts a block naming the tag on the seed
 //! page ([`Invalid::SpaceMove`]); a later edit may then name the tag from its
@@ -138,8 +140,10 @@ const MAX_INVALID: usize = 3;
 /// every run prints the full tally, which is what makes a narrowing visible
 /// whether or not it crosses this list.
 const EXPECTED_COMMANDS: &[&str] = &[
+    "add_attachment_with_bytes",
     "add_tag",
     "create_block",
+    "delete_attachment",
     "delete_block",
     "edit_block",
     "move_block",
@@ -175,10 +179,11 @@ fn seed() -> Value {
 /// resolve — each mints its own ULID per create and reconciles through the
 /// canonical `Bn` relabel (see `resolve_op_arg_id`).
 ///
-/// `AddAttachment` / `DeleteAttachment` are dropped: attachment apply writes
-/// the `attachments` table and touches the filesystem; there is no mock
-/// handler and no snapshot column, so a rendered op would be uncomparable, not
-/// covered.
+/// `AddAttachment` renders as `add_attachment_with_bytes` and
+/// `DeleteAttachment` as `delete_attachment` of `An`, the n-th add's
+/// attachment. After the chain every `An` is deleted once more, so whether
+/// each row still stood is recorded and no op-added row, whose id, path, hash
+/// and clock each stack mints, is left for the attachment read.
 ///
 /// The generator aims `SetProperty(space)` at a content block only, which
 /// holds no space, so both stacks refuse it. Its first space id renders it as
@@ -207,6 +212,8 @@ fn chain_to_fixture(
     let mut elsewhere: Vec<String> = Vec::new();
     // The space a generated `SetProperty(space)` moves its block into.
     let mut last_space: Option<String> = None;
+    // The `An` label of each attachment the chain added.
+    let mut attachment_of: BTreeMap<String, String> = BTreeMap::new();
     // No `#[…]` names the seed tag before it moves: the backend keeps an
     // inline tag ref to a tag that left the source's space until the next
     // delete, restore or purge rebuilds them all, which the mock does not
@@ -358,12 +365,30 @@ fn chain_to_fixture(
                 "blockId": label(&label_of, t.block_id.as_str()),
                 "tagId": SEED_TAG,
             }}),
+            OpPayload::AddAttachment(a) => {
+                let n = attachment_of.len() + 1;
+                attachment_of.insert(a.attachment_id.as_str().to_owned(), format!("A{n}"));
+                json!({ "command": "add_attachment_with_bytes", "args": {
+                    "blockId": label(&label_of, a.block_id.as_str()),
+                    "filename": a.filename,
+                    "mimeType": a.mime_type,
+                    "bytes": [1],
+                }})
+            }
+            OpPayload::DeleteAttachment(d) => json!({ "command": "delete_attachment", "args": {
+                "attachmentId": attachment_of[d.attachment_id.as_str()],
+            }}),
             _ => continue,
         };
         ops.push(op);
     }
     for (_, kind) in splices {
         ops.extend(render_invalid(kind, &mut creates));
+    }
+    for n in 1..=attachment_of.len() {
+        ops.push(
+            json!({ "command": "delete_attachment", "args": { "attachmentId": format!("A{n}") } }),
+        );
     }
     for (n, op) in ops.iter_mut().enumerate() {
         op["via"] = json!("command");
@@ -684,6 +709,11 @@ const LIMIT_CAPS: &[(&str, i64)] = &[
 /// (`list_projected_agenda`) is not among them: no fixture can pin it.
 fn read_steps(created: usize, dates: &[String], term: &str) -> Vec<Value> {
     let scope = harness_scope();
+    let all_blocks: Vec<String> = [SEED_PAGE, SEED_TAG, MOVED_PAGE]
+        .into_iter()
+        .map(str::to_owned)
+        .chain((1..=created).map(|n| format!("C{n}")))
+        .collect();
     let mut steps = vec![
         json!({ "name": "pages", "command": "list_pages_with_metadata", "args": {
             "filter": { "sort": "alphabetical", "spaceId": "$SPACE" }, "limit": 50,
@@ -730,6 +760,9 @@ fn read_steps(created: usize, dates: &[String], term: &str) -> Vec<Value> {
             "args": { "limit": 100, "scope": scope },
         }),
         json!({ "name": "trash_count", "command": "count_trash", "args": { "scope": scope } }),
+        json!({ "name": "attachments", "command": "list_attachments_batch",
+            "args": { "blockIds": all_blocks },
+        }),
         json!({ "name": "subtree", "command": "load_page_subtree", "unordered": POSITION_TIE_ORDER,
             "args": { "rootBlockId": SEED_PAGE, "scope": scope },
         }),

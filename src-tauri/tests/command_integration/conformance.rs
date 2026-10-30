@@ -688,6 +688,44 @@ pub(super) async fn read_created_block_ids_in_op_order(pool: &SqlitePool) -> Vec
     rows.into_iter().filter_map(|r| r.0).collect()
 }
 
+/// Resolve an `attachmentId` fixture arg. `An` is the attachment the n-th
+/// `add_attachment` op added, 1-based, because each stack mints its own id;
+/// any other label (`ATT1`) is a seeded id and passes through. Fails closed
+/// past the last add. TS twin: `resolveAttachmentLabel` in
+/// `conformance-replay.ts`.
+pub(super) async fn resolve_attachment_label(pool: &SqlitePool, label: &str) -> String {
+    let Some(n) = label
+        .strip_prefix('A')
+        .filter(|rest| {
+            !rest.is_empty() && rest.len() <= 6 && rest.bytes().all(|b| b.is_ascii_digit())
+        })
+        .and_then(|rest| rest.parse::<usize>().ok())
+    else {
+        return label.to_owned();
+    };
+    let mut added: Vec<String> = Vec::new();
+    for (id,) in sqlx::query_as::<_, (String,)>(
+        "SELECT json_extract(payload, '$.attachment_id') FROM op_log \
+         WHERE device_id = ? AND op_type = 'add_attachment' ORDER BY seq",
+    )
+    .bind(DEV)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+    {
+        if !added.contains(&id) {
+            added.push(id);
+        }
+    }
+    added.get(n.wrapping_sub(1)).cloned().unwrap_or_else(|| {
+        panic!(
+            "conformance op arg '{label}' names the {n}th added attachment, but only {} have \
+             been added at this point in the op list",
+            added.len()
+        )
+    })
+}
+
 /// Every op this fixture has appended, in `seq` order — what an `On` op-arg
 /// label resolves against. Local rows only: a replicated audit row is never a
 /// legitimate undo target, so it must not shift the numbering either.
