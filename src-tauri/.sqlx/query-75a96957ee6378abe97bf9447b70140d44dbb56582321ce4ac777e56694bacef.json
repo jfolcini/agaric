@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) AS \"n!: i64\" FROM block_properties bp\n           JOIN blocks b ON b.id = bp.block_id\n           WHERE bp.key = ?1 AND bp.value_text = ?2 AND (b.space_id = ?3 OR b.id = ?3)",
+  "describe": {
+    "columns": [
+      {
+        "name": "n!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "75a96957ee6378abe97bf9447b70140d44dbb56582321ce4ac777e56694bacef"
+}

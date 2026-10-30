@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import { coerce } from '@/lib/tauri-mock/coerce'
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { opLog, properties, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
+import { blocks, makeBlock, opLog, properties, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 
 const SPACE = 'SPACE_PERSONAL'
 
@@ -179,6 +179,7 @@ const TRASHED = SEED_IDS.BLOCK_GS_4
 interface Rejection {
   kind: string
   code?: string
+  message: string
 }
 
 function rejectionOf(fn: () => unknown): Rejection {
@@ -887,5 +888,193 @@ describe('change_property_type', () => {
     [7, 'date', null],
   ] as const)('coerces %j to %s as %j', (value, to, expected) => {
     expect(coerce(value, to)).toBe(expected)
+  })
+})
+
+// #5841 S4 — renaming a select option.
+
+describe('rename_property_option', () => {
+  function optionsOf(key: string): unknown {
+    const options = listedDef(key)?.['options']
+    return typeof options === 'string' ? JSON.parse(options) : options
+  }
+
+  function renameOption(oldOption: string, newOption: string, key = 'stage'): WithOpsDef {
+    return call<WithOpsDef>('rename_property_option', { spaceId: SPACE, key, oldOption, newOption })
+  }
+
+  /** `stage` lists draft, review and done; X and the trashed block hold review, Y draft. */
+  function seedStage(): void {
+    declare('stage', 'select', '["draft","review","done"]')
+    setText(X, 'stage', 'review')
+    setText(Y, 'stage', 'draft')
+    setText(TRASHED, 'stage', 'review')
+    call('delete_block', { blockId: TRASHED })
+  }
+
+  it("renames the option in place and every value of the space's blocks, Trash included", () => {
+    seedStage()
+    const before = opLog.length
+    const resp = renameOption('review', 'in_review')
+    expect(opLog.length).toBe(before + 1)
+    const op = lastOp()
+    expect(op.op_type).toBe('rename_property_option')
+    expect(op.payload).toEqual({
+      space_id: SPACE,
+      key: 'stage',
+      old_option: 'review',
+      new_option: 'in_review',
+    })
+    expect(resp.op_refs).toEqual([op.ref])
+    expect(resp).toMatchObject({ key: 'stage', value_type: 'select', builtin: false })
+    expect(optionsOf('stage')).toEqual(['draft', 'in_review', 'done'])
+    expect(textOf(X, 'stage')).toBe('in_review')
+    expect(textOf(TRASHED, 'stage')).toBe('in_review')
+    expect(textOf(Y, 'stage')).toBe('draft')
+  })
+
+  it("leaves another space's blocks holding the same key and value", () => {
+    seedStage()
+    const other = 'OTHER_SPACE_BLOCK'
+    blocks.set(other, { ...makeBlock(other, 'content', 'x', null, 1), space_id: 'SPACE_OTHER' })
+    properties.set(other, new Map([['stage', { key: 'stage', value_text: 'review' }]]))
+    renameOption('review', 'in_review')
+    expect(textOf(other, 'stage')).toBe('review')
+  })
+
+  it('refuses in the order the backend does', () => {
+    seedStage()
+    declare('note')
+    setText(Z, 'stage', 'done')
+    call('update_property_def_options', {
+      spaceId: SPACE,
+      key: 'stage',
+      options: '["draft","review"]',
+    })
+    const before = opLog.length
+    const refused = (key: string, from: string, to: string) =>
+      rejectionOf(() => renameOption(from, to, key))
+    expect(refused('priority', '1', '9')).toMatchObject({
+      code: 'BuiltinPropertyLocked',
+      message: "property 'priority' is built in and cannot be changed",
+    })
+    expect(refused('todo_state', 'DONE', 'FINISHED').code).toBe('BuiltinPropertyLocked')
+    expect(refused('template', 'a', 'b')).toMatchObject({
+      kind: 'validation',
+      message: "property 'template' is the app's own and cannot be changed",
+    })
+    expect(refused('stage', 'review', '  ').message).toBe('an option cannot be empty')
+    expect(refused('stage', 'review', 'review').message).toBe(
+      "'review' cannot be renamed to itself",
+    )
+    expect(refused('nothing', 'a', 'b')).toMatchObject({
+      kind: 'not_found',
+      message: "property definition 'nothing'",
+    })
+    expect(refused('note', 'a', 'b').message).toBe(
+      "'note' is a text property; only a select has options",
+    )
+    expect(refused('stage', 'gone', 'b').message).toBe("'gone' is not an option of 'stage'")
+    expect(refused('stage', 'review', 'draft').message).toBe(
+      "'draft' is already an option of 'stage'",
+    )
+    expect(refused('stage', 'review', 'done').message).toBe(
+      "'done' is already held by 1 block(s) of this space, the Trash included",
+    )
+    expect(opLog.length).toBe(before)
+    expect(optionsOf('stage')).toEqual(['draft', 'review'])
+    expect(textOf(X, 'stage')).toBe('review')
+  })
+
+  it('undo renames back, keeping the order, and redo renames again', () => {
+    seedStage()
+    const { op_refs } = renameOption('review', 'in_review')
+    const [undone] = call<Array<{ new_op_ref: Ref }>>('undo_ops', { ops: op_refs })
+    expect(lastOp()).toMatchObject({
+      op_type: 'rename_property_option',
+      payload: { key: 'stage', old_option: 'in_review', new_option: 'review' },
+    })
+    expect(optionsOf('stage')).toEqual(['draft', 'review', 'done'])
+    expect(textOf(X, 'stage')).toBe('review')
+    expect(textOf(TRASHED, 'stage')).toBe('review')
+    call('redo_page_op', {
+      undoDeviceId: undone?.new_op_ref.device_id,
+      undoSeq: undone?.new_op_ref.seq,
+    })
+    expect(optionsOf('stage')).toEqual(['draft', 'in_review', 'done'])
+    expect(textOf(X, 'stage')).toBe('in_review')
+  })
+
+  it('undo renames back a value written as the new name since, and leaves a later edit', () => {
+    seedStage()
+    const { op_refs } = renameOption('review', 'in_review')
+    setText(Z, 'stage', 'in_review')
+    setText(X, 'stage', 'done')
+    call('undo_ops', { ops: op_refs })
+    expect(textOf(Z, 'stage')).toBe('review')
+    expect(textOf(X, 'stage')).toBe('done')
+  })
+
+  it('undo after a later key rename renames back under the new key', () => {
+    seedStage()
+    const { op_refs } = renameOption('review', 'in_review')
+    rename('stage', 'phase')
+    call('undo_ops', { ops: op_refs })
+    expect(optionsOf('phase')).toEqual(['draft', 'review', 'done'])
+    expect(textOf(X, 'phase')).toBe('review')
+    expect(textOf(TRASHED, 'phase')).toBe('review')
+  })
+
+  it('refuses the undo once the definition is gone or the old name is an option again', () => {
+    seedStage()
+    const renamed = renameOption('review', 'in_review')
+    call('update_property_def_options', {
+      spaceId: SPACE,
+      key: 'stage',
+      options: '["draft","in_review","done","review"]',
+    })
+    expect(rejectionOf(() => call('undo_ops', { ops: renamed.op_refs })).message).toBe(
+      "'review' is already an option of 'stage'",
+    )
+    expect(textOf(X, 'stage')).toBe('in_review')
+
+    declare('lane', 'select', '["a","b"]')
+    const laneRenamed = renameOption('a', 'c', 'lane')
+    call('delete_property_def', { spaceId: SPACE, key: 'lane' })
+    expect(rejectionOf(() => call('undo_ops', { ops: laneRenamed.op_refs })).kind).toBe('not_found')
+  })
+
+  it("an earlier value's undo lands on the new name, one way only", () => {
+    declare('stage', 'select', '["draft","review","done","in_review"]')
+    setText(X, 'stage', 'review')
+    const xToDone = setText(X, 'stage', 'done')
+    // Y held `in_review` before the rename made it the name of `review`.
+    setText(Y, 'stage', 'in_review')
+    const yToDraft = setText(Y, 'stage', 'draft')
+    call('update_property_def_options', {
+      spaceId: SPACE,
+      key: 'stage',
+      options: '["draft","review","done"]',
+    })
+    renameOption('review', 'in_review')
+    rename('stage', 'phase')
+    call('undo_ops', { ops: xToDone })
+    expect(textOf(X, 'phase')).toBe('in_review')
+    call('undo_ops', { ops: yToDraft })
+    expect(textOf(Y, 'phase')).toBe('in_review')
+  })
+
+  it('global history scoped to a space lists the rename', () => {
+    seedStage()
+    renameOption('review', 'in_review')
+    const history = (space: string): string[] =>
+      call<{ items: Array<{ op_type: string }> }>('list_page_history', {
+        pageId: '__all__',
+        opTypeFilter: 'rename_property_option',
+        scope: { kind: 'active', space_id: space },
+        limit: 50,
+      }).items.map((row) => row.op_type)
+    expect(history(SPACE)).toEqual(['rename_property_option'])
+    expect(history('SPACE_WORK')).toEqual([])
   })
 })

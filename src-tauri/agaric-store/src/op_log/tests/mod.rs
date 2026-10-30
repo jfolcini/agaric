@@ -247,5 +247,14 @@ pub(super) fn all_op_payloads() -> Vec<(&'static str, OpPayload)> {
                 values: Vec::new(),
             }),
         ),
+        (
+            "rename_property_option",
+            OpPayload::RenamePropertyOption(RenamePropertyOptionPayload {
+                space_id: BlockId::test_id("SP001"),
+                key: "stage".into(),
+                old_option: "review".into(),
+                new_option: "in_review".into(),
+            }),
+        ),
     ]
 }

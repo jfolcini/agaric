@@ -1,5 +1,6 @@
 //! Property definitions in the engine (#5841): `SetPropertyDef`,
-//! `RenamePropertyKey`, `RewriteProperties` and the reads the SQL
+//! `RenamePropertyKey`, `RenamePropertyOption`, `RewriteProperties` and the
+//! reads the SQL
 //! `property_definitions` projection is rebuilt from.
 //!
 //! Under [`PROPERTY_DEFINITIONS_ROOT`] each key the space declares holds one
@@ -56,6 +57,20 @@ fn def_from_loro(key: &str, value: &LoroValue) -> Result<PropertyDefState, AppEr
         value_type,
         options,
     })
+}
+
+/// `options` (a JSON array of strings) with `old` replaced by `new` in place,
+/// compact as `JSON.stringify` writes it; `None` when they do not list `old`,
+/// already list `new`, or do not parse, so a replay or a peer's concurrent edit
+/// leaves the definition as it is.
+fn renamed_options(options: Option<&str>, old: &str, new: &str) -> Option<String> {
+    let mut list: Vec<String> = serde_json::from_str(options?).ok()?;
+    if list.iter().any(|o| o == new) {
+        return None;
+    }
+    let slot = list.iter_mut().find(|o| *o == old)?;
+    new.clone_into(slot);
+    serde_json::to_string(&list).ok()
 }
 
 impl LoroEngine {
@@ -167,6 +182,60 @@ impl LoroEngine {
                 }
             });
         err.map_or(Ok(movable), Err)
+    }
+
+    /// Mirrors `RenamePropertyOption`: every block whose `key` holds the
+    /// string `old` gets `new`, and the definition's options swap `old` for
+    /// `new` in place when they hold `old` and not `new`. One commit; nothing
+    /// to change records no op. Returns the definition the root holds after.
+    pub fn apply_rename_property_option(
+        &mut self,
+        key: &str,
+        old: &str,
+        new: &str,
+    ) -> Result<Option<PropertyDefState>, AppError> {
+        let rename_err =
+            |e: loro::LoroError| AppError::validation(format!("loro: rename option {key}: {e}"));
+        for block_props in self.blocks_holding_str(key, old)? {
+            block_props
+                .insert(key, LoroValue::from(new))
+                .map_err(rename_err)?;
+        }
+        let mut def = self.read_property_def(key)?;
+        if let Some(def) = def.as_mut()
+            && let Some(options) = renamed_options(def.options.as_deref(), old, new)
+        {
+            def.options = Some(options);
+            self.put_property_def(key, Some(def))?;
+        }
+        self.doc.commit();
+        Ok(def)
+    }
+
+    /// The per-block maps whose `key` holds the string `value`, collected
+    /// before any is changed.
+    fn blocks_holding_str(&self, key: &str, value: &str) -> Result<Vec<LoroMap>, AppError> {
+        let mut holding = Vec::new();
+        let mut err = None;
+        self.doc
+            .get_map(BLOCK_PROPERTIES_ROOT)
+            .for_each(|block_id, voc| {
+                if err.is_some() {
+                    return;
+                }
+                let Some(block_props) = voc.into_container().ok().and_then(|c| c.into_map().ok())
+                else {
+                    err = Some(AppError::validation(format!(
+                        "loro: rename option block {block_id} props is not a LoroMap"
+                    )));
+                    return;
+                };
+                let held = block_props.get(key).and_then(|voc| voc.into_value().ok());
+                if matches!(held, Some(LoroValue::String(s)) if s.as_str() == value) {
+                    holding.push(block_props);
+                }
+            });
+        err.map_or(Ok(holding), Err)
     }
 
     /// Mirrors `RewriteProperties`: each definition write, then each value
@@ -582,5 +651,97 @@ mod tests {
             ],
             "only the blocks holding the key, with their values"
         );
+    }
+
+    /// An engine whose `stage` is a select of `draft, review, done`; `B1`
+    /// and `B3` hold `review`, `B2` holds `draft`.
+    fn holding_stage() -> LoroEngine {
+        let mut e = LoroEngine::with_peer_id("dev-a").expect("peer");
+        e.apply_set_property_def(
+            "stage",
+            Some(&def("select", Some(r#"["draft","review","done"]"#))),
+        )
+        .expect("declare");
+        for (id, value) in [("B1", "review"), ("B2", "draft"), ("B3", "review")] {
+            e.apply_create_block(id, "content", id, None, 0)
+                .expect("create block");
+            e.apply_set_property(id, "stage", Some(value)).expect("set");
+        }
+        e
+    }
+
+    #[test]
+    fn an_option_rename_changes_only_the_keys_string_values_and_the_options_in_place() {
+        let mut e = holding_stage();
+        e.apply_create_block("B4", "content", "B4", None, 0)
+            .expect("create block");
+        e.put_property("B4", "stage", &PropertyValue::Num(7.0))
+            .expect("a number under the key");
+        e.apply_set_property("B2", "other", Some("review"))
+            .expect("the old name under another key");
+        let after = e
+            .apply_rename_property_option("stage", "review", "in_review")
+            .expect("rename");
+        assert_eq!(
+            values_of(&e, "stage"),
+            vec![
+                text("B1", "in_review"),
+                text("B2", "draft"),
+                text("B3", "in_review"),
+                ("B4".to_owned(), PropertyValue::Num(7.0)),
+            ],
+            "only the key's string values equal to the old name are renamed"
+        );
+        assert_eq!(
+            values_of(&e, "other"),
+            vec![text("B2", "review")],
+            "another key holding the old name is untouched"
+        );
+        let renamed = def("select", Some(r#"["draft","in_review","done"]"#));
+        assert_eq!(
+            after,
+            Some(renamed.clone()),
+            "the definition after is returned"
+        );
+        assert_eq!(
+            e.read_property_def("stage").unwrap(),
+            Some(renamed),
+            "the option is replaced in place, the order kept"
+        );
+    }
+
+    #[test]
+    fn a_second_option_rename_apply_records_no_op() {
+        let mut e = holding_stage();
+        e.apply_rename_property_option("stage", "review", "in_review")
+            .expect("rename");
+        let before = e.doc.oplog_frontiers();
+        e.apply_rename_property_option("stage", "review", "in_review")
+            .expect("re-apply");
+        assert_eq!(e.doc.oplog_frontiers(), before, "nothing left to rename");
+    }
+
+    /// The options are rewritten only when they list the old name and not
+    /// the new one: a peer's concurrent edit can leave either.
+    #[test]
+    fn an_option_rename_leaves_options_without_old_or_with_new_alone() {
+        for options in [r#"["draft","done"]"#, r#"["review","in_review"]"#] {
+            let mut e = holding_stage();
+            e.apply_set_property_def("stage", Some(&def("select", Some(options))))
+                .expect("redeclare");
+            let after = e
+                .apply_rename_property_option("stage", "review", "in_review")
+                .expect("rename");
+            assert_eq!(
+                after,
+                Some(def("select", Some(options))),
+                "{options} stays as it was"
+            );
+            assert_eq!(
+                values_of(&e, "stage")[0],
+                text("B1", "in_review"),
+                "the values are renamed all the same"
+            );
+        }
     }
 }

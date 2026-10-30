@@ -175,6 +175,21 @@ describe('HistoryItemCore', () => {
     expect(screen.getByTestId('history-type-badge')).toHaveClass('bg-op-tag')
   })
 
+  it('renders a rename_property_option row as key: old → new, in plain text and the property tone', () => {
+    renderCore(
+      <HistoryItemCore
+        entry={makeEntry(1, 'rename_property_option', {
+          space_id: 'SP1',
+          key: '_stage_',
+          old_option: 'review',
+          new_option: 'in_review',
+        })}
+      />,
+    )
+    expect(screen.getByText('_stage_: review → in_review')).toBeInTheDocument()
+    expect(screen.getByTestId('history-type-badge')).toHaveClass('bg-op-tag')
+  })
+
   it('renders a rewrite_properties row as from → into, in plain text and the property tone', () => {
     const def = { value_type: 'text', options: null }
     renderCore(

@@ -1,0 +1,582 @@
+{
+  "description": "#5841 S4 — `rename_property_option` renames the harness space's `stage` option `review` to `in_review` in place, keeping the options' order, and every value of the space equal to it, the trashed card's included, in one `rename_property_option` op. `draft` (another option) and `done` (held by `four`, no longer an option) are untouched. Refused, in this order: a built-in key (`BuiltinPropertyLocked`), a key the app writes itself, a blank new name, a rename onto itself, an undeclared key (not_found), a non-select key, an old name that is not an option, a new name that is already an option, and one a block holds; a refusal appends nothing. `undo_ops` renames back, which the second rename relies on: it finds `review` an option again. Once `review` is an option again, undoing the second rename is refused. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "one",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "two",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "three",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "four",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 10,
+      "ops": [
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "rename_property_option"
+        },
+        {
+          "op_type": "rename_property_option"
+        },
+        {
+          "op_type": "rename_property_option"
+        },
+        {
+          "op_type": "set_property_def"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "stage",
+        "value": "in_review",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B3",
+        "key": "stage",
+        "value": "draft",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B4",
+        "key": "stage",
+        "value": "in_review",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B5",
+        "key": "stage",
+        "value": "done",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "drop_done",
+      "returns": ["stage#value_type=select#options=[\"draft\",\"review\"]#builtin=false"]
+    },
+    {
+      "code": "BuiltinPropertyLocked",
+      "error": "validation",
+      "name": "a_builtin_is_refused",
+      "returns": []
+    },
+    {
+      "code": "BuiltinPropertyLocked",
+      "error": "validation",
+      "name": "todo_state_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "an_internal_key_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_blank_name_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_rename_onto_itself_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "an_undeclared_key_is_not_found",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_text_key_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_name_that_is_not_an_option_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "onto_an_option_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "onto_a_held_value_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "rename_review_to_in_review",
+      "returns": ["stage#value_type=select#options=[\"draft\",\"in_review\"]#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_rename",
+      "returns": [
+        "undo_ops#reversed_op_type=rename_property_option#new_op_type=rename_property_option#is_redo=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "rename_again",
+      "returns": ["stage#value_type=select#options=[\"draft\",\"in_review\"]#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "review_is_an_option_again",
+      "returns": [
+        "stage#value_type=select#options=[\"draft\",\"in_review\",\"review\"]#builtin=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "undo_onto_an_option_is_refused",
+      "returns": []
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "registry_after_rename",
+      "rows": [
+        "completed_at#value_type=date#options=null#builtin=true",
+        "created_at#value_type=date#options=null#builtin=true",
+        "due_date#value_type=date#options=null#builtin=true",
+        "is_space#value_type=select#options=[\"true\"]#builtin=true",
+        "listStyle#value_type=select#options=[\"bullet\",\"ordered\"]#builtin=true",
+        "priority#value_type=select#options=[\"1\",\"2\",\"3\"]#builtin=true",
+        "prose#value_type=text#options=null#builtin=false",
+        "repeat#value_type=text#options=null#builtin=true",
+        "repeat-count#value_type=number#options=null#builtin=true",
+        "repeat-origin#value_type=text#options=null#builtin=true",
+        "repeat-seq#value_type=number#options=null#builtin=true",
+        "repeat-until#value_type=date#options=null#builtin=true",
+        "scheduled_date#value_type=date#options=null#builtin=true",
+        "space#value_type=ref#options=null#builtin=true",
+        "stage#value_type=select#options=[\"draft\",\"in_review\",\"review\"]#builtin=false",
+        "todo_state#value_type=select#options=[\"TODO\",\"DOING\",\"DONE\",\"CANCELLED\"]#builtin=true"
+      ],
+      "total_count": null
+    }
+  ],
+  "name": "property_option_rename",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "stage",
+        "value": {
+          "value_text": "review"
+        }
+      },
+      "command": "set_property",
+      "comment": "O1"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "stage",
+        "value": {
+          "value_text": "draft"
+        }
+      },
+      "command": "set_property",
+      "comment": "O2"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "stage",
+        "value": {
+          "value_text": "review"
+        }
+      },
+      "command": "set_property",
+      "comment": "O3"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "key": "stage",
+        "value": {
+          "value_text": "done"
+        }
+      },
+      "command": "set_property",
+      "comment": "O4"
+    },
+    {
+      "args": {
+        "key": "stage",
+        "options": "[\"draft\",\"review\"]",
+        "spaceId": "$SPACE"
+      },
+      "command": "update_property_def_options",
+      "comment": "O5 — `four` keeps `done`, no longer an option.",
+      "name": "drop_done",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S4"
+      },
+      "command": "delete_block",
+      "comment": "O6 — a trashed card keeps its `stage` value, which the rename renames too."
+    },
+    {
+      "args": {
+        "key": "priority",
+        "newOption": "  ",
+        "oldOption": "1",
+        "spaceId": "$SPACE"
+      },
+      "command": "rename_property_option",
+      "comment": "A built-in is the app's; refused before the blank name is looked at.",
+      "expect_code": "BuiltinPropertyLocked",
+      "expect_error": "validation",
+      "name": "a_builtin_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "todo_state",
+        "newOption": "FINISHED",
+        "oldOption": "DONE",
+        "spaceId": "$SPACE"
+      },
+      "command": "rename_property_option",
+      "comment": "`todo_state` is built in too.",
+      "expect_code": "BuiltinPropertyLocked",
+      "expect_error": "validation",
+      "name": "todo_state_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "template",
+        "newOption": "a",
+        "oldOption": "a",
+        "spaceId": "$SPACE"
+      },
+      "command": "rename_property_option",
+      "comment": "`template` is a key the app writes for itself; refused before the rename onto itself.",
+      "expect_error": "validation",
+      "name": "an_internal_key_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "nothing",
+        "newOption": " \n",
+        "oldOption": "a",
+        "spaceId": "$SPACE"
+      },
+      "command": "rename_property_option",
+      "comment": "A blank name, refused before the key is looked up.",
+      "expect_error": "validation",
+      "name": "a_blank_name_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "nothing",
+        "newOption": "a",
+        "oldOption": "a",
+        "spaceId": "$SPACE"
+      },
+      "command": "rename_property_option",
+      "comment": "A rename onto itself, refused before the key is looked up.",
+      "expect_error": "validation",
+      "name": "a_rename_onto_itself_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "nothing",
+        "newOption": "b",
+        "oldOption": "a",
+        "spaceId": "$SPACE"
+      },
+      "command": "rename_property_option",
+      "comment": "The space does not declare `nothing`.",
+      "expect_error": "not_found",
+      "name": "an_undeclared_key_is_not_found",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "prose",
+        "newOption": "draft",
+        "oldOption": "zzz",
+        "spaceId": "$SPACE"
+      },
+      "command": "rename_property_option",
+      "comment": "Only a select has options; refused before the options are read.",
+      "expect_error": "validation",
+      "name": "a_text_key_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "stage",
+        "newOption": "draft",
+        "oldOption": "zzz",
+        "spaceId": "$SPACE"
+      },
+      "command": "rename_property_option",
+      "comment": "`zzz` is not an option; refused before the new name is checked.",
+      "expect_error": "validation",
+      "name": "a_name_that_is_not_an_option_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "stage",
+        "newOption": "draft",
+        "oldOption": "review",
+        "spaceId": "$SPACE"
+      },
+      "command": "rename_property_option",
+      "comment": "`draft` is already an option.",
+      "expect_error": "validation",
+      "name": "onto_an_option_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "stage",
+        "newOption": "done",
+        "oldOption": "review",
+        "spaceId": "$SPACE"
+      },
+      "command": "rename_property_option",
+      "comment": "`four` holds `done`.",
+      "expect_error": "validation",
+      "name": "onto_a_held_value_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "stage",
+        "newOption": "in_review",
+        "oldOption": "review",
+        "spaceId": "$SPACE"
+      },
+      "command": "rename_property_option",
+      "comment": "O7 — the definition after the rename.",
+      "name": "rename_review_to_in_review",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O7"]
+      },
+      "command": "undo_ops",
+      "comment": "O8 — renames `in_review` back to `review`, values and option.",
+      "name": "undo_the_rename",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "stage",
+        "newOption": "in_review",
+        "oldOption": "review",
+        "spaceId": "$SPACE"
+      },
+      "command": "rename_property_option",
+      "comment": "O9 — `review` is an option and held again, so the rename finds it.",
+      "name": "rename_again",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "stage",
+        "options": "[\"draft\",\"in_review\",\"review\"]",
+        "spaceId": "$SPACE"
+      },
+      "command": "update_property_def_options",
+      "comment": "O10 — `review` is an option again.",
+      "name": "review_is_an_option_again",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O9"]
+      },
+      "command": "undo_ops",
+      "comment": "Renaming back would merge two options.",
+      "expect_error": "validation",
+      "name": "undo_onto_an_option_is_refused",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "spaceId": "$SPACE"
+      },
+      "command": "list_property_defs",
+      "comment": "`stage` with `in_review` in place of `review`, then `review` added; `prose` beside the built-ins.",
+      "name": "registry_after_rename"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "one",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "two",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "three",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "four",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 4
+      }
+    ],
+    "properties": [],
+    "property_defs": [
+      {
+        "key": "stage",
+        "options": "[\"draft\",\"review\",\"done\"]",
+        "value_type": "select"
+      },
+      {
+        "key": "prose",
+        "options": null,
+        "value_type": "text"
+      }
+    ],
+    "tags": []
+  }
+}

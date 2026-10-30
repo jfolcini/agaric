@@ -6965,3 +6965,123 @@ async fn a_concurrent_stray_string_under_a_new_date_is_hidden_5841() {
     )
     .await;
 }
+
+/// [`two_devices`] holding `stagex = review` on `BLOCK_A`, `stagex` declared
+/// a select of `draft, review` on A and imported by B, then renamed on A from
+/// `review` to `in_review`.
+async fn an_option_renamed_on_a() -> TwoDevices {
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{PropertyDefState, RenamePropertyOptionPayload, SetPropertyDefPayload};
+    let devices = two_devices("stagex", "review").await;
+    let select = SetPropertyDefPayload {
+        space_id: BlockId::from_trusted(SPACE_A),
+        key: "stagex".into(),
+        def: Some(PropertyDefState {
+            value_type: "select".into(),
+            options: Some(r#"["draft","review"]"#.into()),
+        }),
+        prior: None,
+    };
+    let mut conn = devices.pools[0].0.acquire().await.expect("acquire A");
+    agaric_engine::apply::property_defs::apply_set_property_def_via_loro(
+        &mut conn,
+        &devices.states[0],
+        DEVICES[0],
+        &select,
+    )
+    .await
+    .expect("A declares a select");
+    let [(_, _), (pool_b, _)] = &devices.pools;
+    let [a, b] = [&devices.states[0].registry, &devices.states[1].registry];
+    push_space(pool_b, (a, DEVICES[0]), (b, DEVICES[1])).await;
+    let rename = RenamePropertyOptionPayload {
+        space_id: BlockId::from_trusted(SPACE_A),
+        key: "stagex".into(),
+        old_option: "review".into(),
+        new_option: "in_review".into(),
+    };
+    agaric_engine::apply::property_defs::apply_rename_property_option_via_loro(
+        &mut conn,
+        &devices.states[0],
+        DEVICES[0],
+        &rename,
+    )
+    .await
+    .expect("A renames the option");
+    drop(conn);
+    devices
+}
+
+/// #5841 S4 — B imports A's option rename: its value and its options are
+/// renamed, as on A.
+#[tokio::test]
+async fn apply_remote_follows_an_option_rename_5841() {
+    let devices = an_option_renamed_on_a().await;
+    let [(_, _), (pool_b, _)] = &devices.pools;
+    let [a, b] = [&devices.states[0].registry, &devices.states[1].registry];
+    assert_eq!(
+        typed_row(pool_b, BLOCK_A, "stagex").await,
+        Some((Some("review".into()), None, None, None)),
+        "B holds the old name first"
+    );
+    push_space(pool_b, (a, DEVICES[0]), (b, DEVICES[1])).await;
+    assert_eq!(
+        typed_row(pool_b, BLOCK_A, "stagex").await,
+        Some((Some("in_review".into()), None, None, None)),
+        "B's value is renamed"
+    );
+    assert_eq!(
+        def_row(pool_b, "stagex").await,
+        Some(("select".into(), Some(r#"["draft","in_review"]"#.into()))),
+        "B's options are renamed in place"
+    );
+}
+
+/// #5841 S4 — B writes the old name on another block while A renames it:
+/// after both imports both devices keep B's write as the old name, visible,
+/// and list the new name.
+#[tokio::test]
+async fn a_concurrent_write_of_a_renamed_option_stays_on_both_devices_5841() {
+    let devices = an_option_renamed_on_a().await;
+    let on_b = agaric_store::op::SetPropertyPayload::with_value(
+        agaric_core::ulid::BlockId::from_trusted(BLOCK_B),
+        "stagex".into(),
+        agaric_store::op::PropertyValueFields {
+            value_text: Some("review".into()),
+            ..Default::default()
+        },
+    );
+    let mut conn = devices.pools[1].0.acquire().await.expect("acquire B");
+    agaric_engine::apply::loro_apply::apply_set_property_via_loro(
+        &mut conn,
+        &devices.states[1],
+        DEVICES[1],
+        &on_b,
+        None,
+    )
+    .await
+    .expect("B writes the old name");
+    drop(conn);
+
+    let [(pool_a, _), (pool_b, _)] = &devices.pools;
+    let [a, b] = [&devices.states[0].registry, &devices.states[1].registry];
+    push_space(pool_b, (a, DEVICES[0]), (b, DEVICES[1])).await;
+    push_space(pool_a, (b, DEVICES[1]), (a, DEVICES[0])).await;
+    for (device, pool) in DEVICES.iter().zip([pool_a, pool_b]) {
+        assert_eq!(
+            typed_row(pool, BLOCK_A, "stagex").await,
+            Some((Some("in_review".into()), None, None, None)),
+            "{device}: the renamed value"
+        );
+        assert_eq!(
+            typed_row(pool, BLOCK_B, "stagex").await,
+            Some((Some("review".into()), None, None, None)),
+            "{device}: the concurrent write keeps the old name"
+        );
+        assert_eq!(
+            def_row(pool, "stagex").await,
+            Some(("select".into(), Some(r#"["draft","in_review"]"#.into()))),
+            "{device}: the options hold the new name"
+        );
+    }
+}

@@ -558,7 +558,10 @@ function revertDeleteAttachment(payload: Record<string, unknown>, state: RevertS
  * names its space (#5841 S2).
  */
 const BLOCKLESS_REVERTS: Partial<
-  Record<string, (payload: Record<string, unknown>, state: RevertState) => void>
+  Record<
+    string,
+    (payload: Record<string, unknown>, state: RevertState, target: MockOpLogEntry) => void
+  >
 > = {
   rename_attachment: (payload, state) => {
     const row = state.attachments?.get(payload['attachment_id'] as string)
@@ -570,19 +573,29 @@ const BLOCKLESS_REVERTS: Partial<
     state.attachments?.delete(payload['attachment_id'] as string)
   },
   delete_attachment: revertDeleteAttachment,
-  rename_property_key: (payload) => {
-    revertPropertyKeyOp('rename_property_key', payload)
+  rename_property_key: (payload, _state, target) => {
+    revertPropertyKeyOp(target, payload)
   },
-  rewrite_properties: (payload) => {
-    revertPropertyKeyOp('rewrite_properties', payload)
+  rename_property_option: (payload, _state, target) => {
+    revertPropertyKeyOp(target, payload)
+  },
+  rewrite_properties: (payload, _state, target) => {
+    revertPropertyKeyOp(target, payload)
   },
 }
 
-/** #5841 S2 — a value's undo lands under the key the value lives under now. */
+/**
+ * #5841 S2 — a value's undo lands under the key the value lives under now, and
+ * (S4) as its option is named now.
+ */
 function forwardValueKey(target: MockOpLogEntry, payload: Record<string, unknown>): void {
   if (target.op_type !== 'set_property' && target.op_type !== 'delete_property') return
   const blockId = payload['block_id'] as string
-  payload['key'] = forwardPropertyKey(target, blockId, payload['key'] as string)
+  const from = payload['from_value'] as Record<string, unknown> | null | undefined
+  const fromText = (from?.['value_text'] as string | null | undefined) ?? null
+  const { key, valueText } = forwardPropertyKey(target, blockId, payload['key'] as string, fromText)
+  payload['key'] = key
+  if (from != null) payload['from_value'] = { ...from, value_text: valueText }
 }
 
 /**
@@ -604,7 +617,7 @@ export function applyRevertForOp(
 
   const revertBlockless = BLOCKLESS_REVERTS[target.op_type]
   if (revertBlockless) {
-    revertBlockless(payload, state)
+    revertBlockless(payload, state, target)
     return
   }
 

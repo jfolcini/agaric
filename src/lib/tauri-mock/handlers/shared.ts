@@ -2263,13 +2263,32 @@ function propertyReversePayload(
  * other op. A definition op swaps what it set and what it replaced.
  */
 function definitionOpReversePayload(
-  opType: string,
+  target: MockOpLogEntry,
   p: Record<string, unknown>,
 ): Record<string, unknown> | null {
-  if (opType === 'set_property_def') {
+  if (target.op_type === 'set_property_def') {
     return { space_id: p['space_id'], key: p['key'], def: p['prior'], prior: p['def'] }
   }
-  return propertyKeyReversePayload(opType, p)
+  return propertyKeyReversePayload(target.op_type, p, target)
+}
+
+/**
+ * #5841 — a property op's payload under the key its value lives under now
+ * (S2), with a recorded prior's text as its option is named now (S4).
+ */
+function forwardedPropertyPayload(
+  target: MockOpLogEntry,
+  p: Record<string, unknown>,
+): Record<string, unknown> {
+  const prior = p['prior'] as Record<string, unknown> | null | undefined
+  const priorText = (prior?.['value_text'] as string | null | undefined) ?? null
+  const { key, valueText } = forwardPropertyKey(
+    target,
+    p['block_id'] as string,
+    p['key'] as string,
+    priorText,
+  )
+  return prior == null ? { ...p, key } : { ...p, key, prior: { ...prior, value_text: valueText } }
 }
 
 /**
@@ -2295,7 +2314,7 @@ function definitionOpReversePayload(
  */
 export function reversePayloadFor(target: MockOpLogEntry): Record<string, unknown> {
   const p = JSON.parse(target.payload) as Record<string, unknown>
-  const definitionReverse = definitionOpReversePayload(target.op_type, p)
+  const definitionReverse = definitionOpReversePayload(target, p)
   if (definitionReverse !== null) return definitionReverse
   const blockId = p['block_id']
   switch (target.op_type) {
@@ -2327,9 +2346,7 @@ export function reversePayloadFor(target: MockOpLogEntry): Record<string, unknow
     }
     case 'set_property':
     case 'delete_property': {
-      // #5841 S2 — under the key the value lives under now.
-      const key = forwardPropertyKey(target, blockId as string, p['key'] as string)
-      return propertyReversePayload(target.op_type, { ...p, key })
+      return propertyReversePayload(target.op_type, forwardedPropertyPayload(target, p))
     }
     // #5057 — the symmetric swap `reverse_rename_attachment` computes. Without
     // it this fell to `default:`, which reads `block_id` — absent on an

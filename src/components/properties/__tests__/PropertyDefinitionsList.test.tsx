@@ -11,7 +11,7 @@
  */
 
 import { invoke, type InvokeArgs } from '@tauri-apps/api/core'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -490,30 +490,31 @@ describe('PropertyDefinitionsList', () => {
     render(<PropertyDefinitionsList />)
 
     expect(await screen.findByText('Status')).toBeInTheDocument()
-
-    // Open the edit options popover
-    const editBtn = screen.getByRole('button', { name: /Edit options/i })
-    await user.click(editBtn)
+    await user.click(screen.getByRole('button', { name: /Edit options/i }))
 
     stubInvoke({
-      update_property_def_options: () => Promise.reject(new Error('Invalid JSON')),
+      update_property_def_options: () => Promise.reject(new Error('backend down')),
     })
 
-    const optionsInput = screen.getByLabelText('Options JSON')
-    // Client-side parse validation now disables Save on invalid
-    // input, so the toast-on-server-error path requires a payload that
-    // parses locally but is rejected by the backend mock.
-    fireEvent.change(optionsInput, { target: { value: '["a"]' } })
+    await user.click(
+      await screen.findByRole('button', {
+        name: t('pageProperty.removeOptionLabel', { option: 'closed' }),
+      }),
+    )
+    await user.click(screen.getByRole('button', { name: t('pageProperty.saveOptionsButton') }))
 
-    const saveBtn = screen.getByRole('button', { name: /Save/i })
-    await user.click(saveBtn)
-
-    // See loading test above.
     await waitFor(() => {
-      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
-        expect.stringContaining('Failed to update options'),
-      )
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('property.errorUpdate'))
     })
+    // A failed save keeps the editor open on the draft.
+    expect(
+      screen.queryByRole('button', {
+        name: t('pageProperty.removeOptionLabel', { option: 'closed' }),
+      }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('dialog', { name: t('pageProperty.editOptionsLabel', { key: 'status' }) }),
+    ).toBeInTheDocument()
   })
 
   it('has no a11y violations', async () => {
@@ -677,23 +678,6 @@ describe('PropertyDefinitionsList', () => {
     expect(className).not.toMatch(/group-hover:opacity-100/)
   })
 
-  // Options JSON placeholder resolves via t()
-  it('options JSON input placeholder resolves via t()', async () => {
-    const user = userEvent.setup()
-    stubDefs(pageOf([makePropDef('status', 'select', '["open","closed"]')]))
-
-    render(<PropertyDefinitionsList />)
-
-    expect(await screen.findByText('Status')).toBeInTheDocument()
-
-    const editBtn = screen.getByRole('button', { name: /Edit options/i })
-    await user.click(editBtn)
-
-    expect(
-      await screen.findByPlaceholderText(t('propertiesView.optionsJsonPlaceholder')),
-    ).toBeInTheDocument()
-  })
-
   // Explain WHY the todo_state cycle is fixed via a HelpCircle
   // tooltip on the todo_state row only.
   describe('todo_state cycle help', () => {
@@ -726,80 +710,9 @@ describe('PropertyDefinitionsList', () => {
     })
   })
 
-  // Inline JSON validation in the options editor. The Save button
-  // is disabled and an inline error is rendered when the input does not
-  // parse as JSON. Empty input is treated as valid (clears options).
-  describe('inline options JSON validation', () => {
-    it('empty input shows no error and Save is enabled', async () => {
-      const user = userEvent.setup()
-      stubDefs(pageOf([makePropDef('status', 'select', '["open","closed"]')]))
-
-      render(<PropertyDefinitionsList />)
-
-      expect(await screen.findByText('Status')).toBeInTheDocument()
-
-      const editBtn = screen.getByRole('button', { name: /Edit options/i })
-      await user.click(editBtn)
-
-      const optionsInput = screen.getByLabelText(t('propertiesView.optionsJsonLabel'))
-      fireEvent.change(optionsInput, { target: { value: '' } })
-
-      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-      expect(optionsInput).not.toHaveAttribute('aria-invalid', 'true')
-
-      const saveBtn = screen.getByRole('button', { name: /^Save$/i })
-      expect(saveBtn).toBeEnabled()
-    })
-
-    it('valid JSON shows no error and Save is enabled', async () => {
-      const user = userEvent.setup()
-      stubDefs(pageOf([makePropDef('status', 'select', '["open","closed"]')]))
-
-      render(<PropertyDefinitionsList />)
-
-      expect(await screen.findByText('Status')).toBeInTheDocument()
-
-      const editBtn = screen.getByRole('button', { name: /Edit options/i })
-      await user.click(editBtn)
-
-      const optionsInput = screen.getByLabelText(t('propertiesView.optionsJsonLabel'))
-      fireEvent.change(optionsInput, { target: { value: '["a"]' } })
-
-      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-      expect(optionsInput).not.toHaveAttribute('aria-invalid', 'true')
-
-      const saveBtn = screen.getByRole('button', { name: /^Save$/i })
-      expect(saveBtn).toBeEnabled()
-    })
-
-    it('invalid JSON shows inline error and disables Save', async () => {
-      const user = userEvent.setup()
-      stubDefs(pageOf([makePropDef('status', 'select', '["open","closed"]')]))
-
-      render(<PropertyDefinitionsList />)
-
-      expect(await screen.findByText('Status')).toBeInTheDocument()
-
-      const editBtn = screen.getByRole('button', { name: /Edit options/i })
-      await user.click(editBtn)
-
-      const optionsInput = screen.getByLabelText(t('propertiesView.optionsJsonLabel'))
-      fireEvent.change(optionsInput, { target: { value: '[unclosed' } })
-
-      const error = await screen.findByRole('alert')
-      expect(error).toHaveTextContent(/Invalid JSON:/)
-      expect(error).toHaveAttribute('id', 'property-options-json-error')
-      expect(optionsInput).toHaveAttribute('aria-invalid', 'true')
-      expect(optionsInput).toHaveAttribute('aria-describedby', 'property-options-json-error')
-
-      const saveBtn = screen.getByRole('button', { name: /^Save$/i })
-      expect(saveBtn).toBeDisabled()
-    })
-  })
-
   // ── PopoverContent labelled for screen-reader users ─────
   describe('Edit options popover aria-label', () => {
-    it('labels the open popover with propertiesView.editOptionsPopoverLabel', async () => {
+    it('labels the open popover with the key it edits', async () => {
       const user = userEvent.setup()
       stubDefs(pageOf([makePropDef('status', 'select', '["open","closed"]')]))
 
@@ -810,7 +723,9 @@ describe('PropertyDefinitionsList', () => {
       await user.click(screen.getByRole('button', { name: /Edit options/i }))
 
       expect(
-        screen.getByRole('dialog', { name: t('propertiesView.editOptionsPopoverLabel') }),
+        await screen.findByRole('dialog', {
+          name: t('pageProperty.editOptionsLabel', { key: 'status' }),
+        }),
       ).toBeInTheDocument()
     })
 
@@ -823,7 +738,9 @@ describe('PropertyDefinitionsList', () => {
       expect(await screen.findByText('Status')).toBeInTheDocument()
       await user.click(screen.getByRole('button', { name: /Edit options/i }))
       // Wait for the portalled PopoverContent so axe runs against a settled DOM.
-      await screen.findByRole('dialog', { name: t('propertiesView.editOptionsPopoverLabel') })
+      await screen.findByRole('dialog', {
+        name: t('pageProperty.editOptionsLabel', { key: 'status' }),
+      })
 
       const results = await axe(container)
       expect(results).toHaveNoViolations()
@@ -1212,10 +1129,14 @@ describe('Undo after a definition write', () => {
     await screen.findByText('Project')
     const row = screen.getByText('Project').closest('li') as HTMLElement
     await user.click(within(row).getByRole('button', { name: /Edit options/i }))
-    fireEvent.change(screen.getByLabelText('Options JSON'), { target: { value: '["solo"]' } })
-    await user.click(screen.getByRole('button', { name: /Save/i }))
+    await user.click(
+      await screen.findByRole('button', {
+        name: t('pageProperty.removeOptionLabel', { option: 'gamma' }),
+      }),
+    )
+    await user.click(screen.getByRole('button', { name: t('pageProperty.saveOptionsButton') }))
     await waitFor(() => {
-      expect(spacePropertyDefs(PERSONAL.id).get('project')?.['options']).toBe('["solo"]')
+      expect(spacePropertyDefs(PERSONAL.id).get('project')?.['options']).toBe('["alpha","beta"]')
     })
 
     pressToastUndo(t('propertiesView.optionsSaved'))
