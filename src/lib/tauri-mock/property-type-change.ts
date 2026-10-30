@@ -1,9 +1,9 @@
 /**
  * Tauri mock — changing a property key's type (#5841 S3). Mirrors
  * `src-tauri/src/commands/property_types.rs` (the preview, the value list and
- * the change, with their refusals), `agaric-engine/src/loro/coerce.rs` (what
- * a value becomes under a type) and the undo of an earlier value into a key
- * retyped since (`fit_reverse_to_declared_type`, `commands/history.rs`).
+ * the change, with their refusals) and the undo of an earlier value into a key
+ * retyped since (`fit_reverse_to_declared_type`, `commands/history.rs`); what
+ * a value becomes under a type is `coerce.ts`.
  *
  * The commands read the space's `block_properties` rows, Trash included, as
  * the backend does. `revert.ts` imports this module, so like `property-keys.ts`
@@ -13,12 +13,12 @@
 import type { PropertyTypeChangeCounts } from '@/lib/bindings'
 import { BUILTIN_PROPERTY_DEFS } from '@/lib/property-save-utils'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
+import { coerce, type HeldValue, heldText } from '@/lib/tauri-mock/coerce'
 import {
   applyRewrite,
   type DefState,
   defState,
   fieldsUnder,
-  type HeldValue,
   heldValueOf,
   refuseBuiltinKey,
   refuseInternalKey,
@@ -32,42 +32,6 @@ import {
 import { blocks, properties, pushOp, spacePropertyDefs } from '@/lib/tauri-mock/seed'
 
 type Row = Record<string, unknown>
-
-/** Rust's `f64` grammar: a sign, digits with an optional point, an optional exponent. */
-const RUST_F64 = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/
-/** `canonical_ulid`: Crockford base32, any case, no overflow. */
-const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/i
-
-/** What a string becomes under each type that does not take any string, or null. */
-const STRING_COERCIONS: Readonly<Record<string, (s: string) => HeldValue | null>> = {
-  number: (s) => {
-    const trimmed = s.trim()
-    const n = Number(trimmed)
-    return RUST_F64.test(trimmed) && Number.isFinite(n) ? n : null
-  },
-  date: (s) => (isIsoDate(s) ? s : null),
-  boolean: (s) => (s === 'true' ? true : s === 'false' ? false : null),
-  ref: (s) => (ULID.test(s) ? s.toUpperCase() : null),
-}
-
-/** The types whose values are strings the engine takes as they are. */
-function takesAnyString(to: string): boolean {
-  return !Object.hasOwn(STRING_COERCIONS, to)
-}
-
-/**
- * `coerce`: the value `value` becomes under a definition of `to`, or null when
- * it does not fit. Select membership is the caller's.
- */
-export function coerce(value: HeldValue, to: string): HeldValue | null {
-  if (typeof value === 'string') {
-    const coerceString = STRING_COERCIONS[to]
-    return coerceString ? coerceString(value) : value
-  }
-  if (typeof value === 'number' && to === 'number') return Number.isFinite(value) ? value : null
-  if (typeof value === 'boolean' && to === 'boolean') return value
-  return takesAnyString(to) ? String(value) : null
-}
 
 /** `coerce`, then a select's options: what `value` becomes under `to`, or null. */
 function convert(value: HeldValue, to: DefState): HeldValue | null {
@@ -150,8 +114,8 @@ export function propertyTypeChangeValues(
         page_title: pageId === null ? null : (blocks.get(pageId)?.['content'] ?? null),
         content: b['content'] ?? null,
         deleted: b['deleted_at'] != null,
-        value: String(h.value),
-        converted: h.converted === null ? null : String(h.converted),
+        value: heldText(h.value),
+        converted: h.converted === null ? null : heldText(h.converted),
       }
     })
 }
@@ -200,17 +164,12 @@ export function changePropertyType(
   }
 }
 
-/** `property_declaration`: the built-in, else the space's definition. */
-function declarationOf(spaceId: string | null, key: string): DefState | null {
+/** The type `property_declaration` declares: the built-in's, else the space's definition's. */
+function declaredTypeOf(spaceId: string | null, key: string): string | null {
   const builtin = BUILTIN_PROPERTY_DEFS.find((def) => def.key === key)
-  if (builtin) {
-    return {
-      value_type: builtin.value_type,
-      options: builtin.options && JSON.stringify(builtin.options),
-    }
-  }
+  if (builtin) return builtin.value_type
   const def = spaceId === null ? undefined : spacePropertyDefs(spaceId).get(key)
-  return def ? defState(def) : null
+  return def ? defState(def).value_type : null
 }
 
 /** The slot `validate_declared_type` takes under each type; text and select take a ref too. */
@@ -224,14 +183,15 @@ const DECLARED_SLOTS: Readonly<Record<string, readonly string[]>> = {
   url: ['value_text'],
 }
 
-/** `check_property_value` over a write's slots: its type, its date and its option. */
-function fitsDeclaration(fields: Row, decl: DefState): boolean {
-  const slots = DECLARED_SLOTS[decl.value_type]
+/**
+ * `check_property_value` over a write's slots and a declaration without
+ * options: its type and its date. An undo that puts back a select value an
+ * options edit has left out since keeps working.
+ */
+function fitsDeclaredType(fields: Row, valueType: string): boolean {
+  const slots = DECLARED_SLOTS[valueType]
   if (slots && !slots.some((slot) => fields[slot] != null)) return false
-  if (fields['value_date'] != null && !isIsoDate(fields['value_date'] as string)) return false
-  const text = fields['value_text']
-  if (decl.value_type !== 'select' || decl.options === null || text == null) return true
-  return (JSON.parse(decl.options) as string[]).includes(text as string)
+  return fields['value_date'] == null || isIsoDate(fields['value_date'] as string)
 }
 
 /**
@@ -241,17 +201,18 @@ function fitsDeclaration(fields: Row, decl: DefState): boolean {
  */
 export function fitToDeclaredType(blockId: string, key: string, fields: Row): Row {
   const b = blocks.get(blockId)
-  const decl = declarationOf(b ? spaceOf(b) : null, key)
-  if (decl === null || fitsDeclaration(fields, decl)) return fields
+  // `COALESCE(space_id, id)`: a space's own block is in its space.
+  const valueType = declaredTypeOf(b ? (spaceOf(b) ?? blockId) : null, key)
+  if (valueType === null || fitsDeclaredType(fields, valueType)) return fields
   const value = heldValueOf(fields)
-  const converted = value === null ? null : convert(value, decl)
+  const converted = value === null ? null : coerce(value, valueType)
   if (converted === null) {
     throw rejection({
       kind: 'validation',
       message:
-        `undoing this would put '${String(value)}' under '${key}', now a ${decl.value_type} ` +
-        'property; change its type back first',
+        `undoing this would put '${value === null ? '' : heldText(value)}' under '${key}', ` +
+        `now a ${valueType} property; change its type back first`,
     })
   }
-  return fieldsUnder(converted, decl.value_type)
+  return fieldsUnder(converted, valueType)
 }

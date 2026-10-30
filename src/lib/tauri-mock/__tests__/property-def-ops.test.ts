@@ -7,8 +7,8 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import { coerce } from '@/lib/tauri-mock/coerce'
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { coerce } from '@/lib/tauri-mock/property-type-change'
 import { opLog, properties, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 
 const SPACE = 'SPACE_PERSONAL'
@@ -780,6 +780,71 @@ describe('change_property_type', () => {
     expect(rowOf(Y)).toMatchObject(num(1))
   })
 
+  it("undo of an earlier value fits the slot only, never the select's options", () => {
+    declare('stagey', 'select', '["a","c"]')
+    setText(X, 'stagey', 'c')
+    const second = setText(X, 'stagey', 'a')
+    call('update_property_def_options', { spaceId: SPACE, key: 'stagey', options: '["a"]' })
+    call('undo_ops', { ops: second })
+    expect(rowOf(X, 'stagey')).toMatchObject(text('c'))
+  })
+
+  it("undo of an earlier value on the space's own block converts it too", () => {
+    declare('effortx')
+    setText(SPACE, 'effortx', '6')
+    const second = setText(SPACE, 'effortx', '5')
+    change('number', { converted: 1, removed: 0 })
+    call('undo_ops', { ops: second })
+    expect(rowOf(SPACE)).toMatchObject(num(6))
+  })
+
+  it("undoing a change re-projects the strings written since under the old type's slot", () => {
+    declare('effortx', 'number')
+    call('set_property', { blockId: X, key: 'effortx', value: num(3) })
+    const { op_refs } = change('text', { converted: 1, removed: 0 })
+    setText(Y, 'effortx', '5')
+    setText(Z, 'effortx', 'abc')
+    call('undo_ops', { ops: op_refs })
+    expect(rowOf(X)).toMatchObject(num(3))
+    expect(rowOf(Y)).toMatchObject(num(5))
+    expect(rowOf(Z)).toBeUndefined()
+  })
+
+  it('checks the limit before refusing the key', () => {
+    const err = rejectionOf(() =>
+      call('list_property_type_change_values', {
+        spaceId: SPACE,
+        key: 'due_date',
+        valueType: 'text',
+        options: null,
+        kind: 'removed',
+        cursor: null,
+        limit: 0,
+      }),
+    )
+    expect(err).toMatchObject({ kind: 'validation' })
+    expect(err.code).toBeUndefined()
+  })
+
+  it("lists a number as Rust's Display writes it", () => {
+    declare('scorex', 'number')
+    call('set_property', { blockId: X, key: 'scorex', value: num(-0) })
+    call('set_property', { blockId: Y, key: 'scorex', value: num(1e21) })
+    const page = call<{ items: ValueRow[] }>('list_property_type_change_values', {
+      spaceId: SPACE,
+      key: 'scorex',
+      valueType: 'text',
+      options: null,
+      kind: 'converted',
+      cursor: null,
+      limit: 50,
+    })
+    expect(page.items.map((r) => [r.value, r.converted])).toEqual([
+      ['-0', '-0'],
+      ['1000000000000000000000', '1000000000000000000000'],
+    ])
+  })
+
   // The cells of `coerce.rs`'s table the fixtures do not reach.
   it.each([
     [' 4 ', 'number', 4],
@@ -789,11 +854,33 @@ describe('change_property_type', () => {
     ['NaN', 'number', null],
     ['1e400', 'number', null],
     ['0x10', 'number', null],
+    ['+3', 'number', 3],
+    ['1.', 'number', 1],
+    ['.5', 'number', 0.5],
+    ['1e-400', 'number', 0],
+    ['', 'number', null],
+    ['.', 'number', null],
+    ['e5', 'number', null],
+    ['1_000', 'number', null],
+    ['INF', 'number', null],
+    ['-Infinity', 'number', null],
+    ['nan', 'number', null],
+    // Rust's `str::trim` strips Unicode White_Space: U+0085 is, U+FEFF is not.
+    ['\u00854\u0085', 'number', 4],
+    ['﻿4', 'number', null],
+    ['0024-02-29', 'date', '0024-02-29'],
+    ['0025-02-29', 'date', null],
+    ['true ', 'boolean', null],
     ['TRUE', 'boolean', null],
     ['01arz3ndektsv4rrffq69g5fav', 'ref', '01ARZ3NDEKTSV4RRFFQ69G5FAV'],
     ['81ARZ3NDEKTSV4RRFFQ69G5FAV', 'ref', null],
     ['2026-1-05', 'date', null],
     [42, 'text', '42'],
+    [-0, 'text', '-0'],
+    [1e21, 'text', '1000000000000000000000'],
+    [1e-7, 'text', '0.0000001'],
+    [0.1 + 0.2, 'text', '0.30000000000000004'],
+    [-2.5e-3, 'select', '-0.0025'],
     [true, 'url', 'true'],
     [true, 'number', null],
     [1, 'boolean', null],

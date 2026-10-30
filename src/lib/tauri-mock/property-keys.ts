@@ -14,6 +14,7 @@ import type { AppError, PropertyMergeCounts } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
+import { coerce, type HeldValue } from '@/lib/tauri-mock/coerce'
 import {
   blocks,
   type MockOpLogEntry,
@@ -360,9 +361,6 @@ export function mergePropertyKey(
   }
 }
 
-/** `PropertyValue` as the engine holds it: a string (text, date or ref), a number or a boolean. */
-export type HeldValue = string | number | boolean
-
 /** The value `fields` holds as the engine holds it, or null for none (an engine Null). */
 export function heldValueOf(fields: Row): HeldValue | null {
   const str = fields['value_text'] ?? fields['value_date'] ?? fields['value_ref']
@@ -427,13 +425,23 @@ function applyValueWrite(spaceId: string, write: ValueWrite): void {
   properties.get(write.block_id)?.set(write.key, rowOf(write.key, fields))
 }
 
-/** A retyped key's other strings move to the slot its new type uses; numbers and booleans stay. */
+/**
+ * A retyped key's other strings are projected under its new type, as
+ * `reproject_property_row_from_engine` does through `coerce`: moved to its
+ * slot, or, when the type does not take them, dropped; numbers and booleans
+ * stay. KNOWN GAP: the mock has no engine to keep a dropped string, so a
+ * change back does not show it again as the backend's does.
+ */
 function reprojectKey(spaceId: string, key: string): void {
   const valueType = declaredType(spaceId, key)
+  const projectedType = typeof valueType === 'string' ? valueType : 'text'
   for (const blockId of holders(spaceId, key)) {
     const held = properties.get(blockId)
     const value = heldValueOf(held?.get(key) ?? {})
-    if (typeof value === 'string') held?.set(key, rowOf(key, fieldsUnder(value, valueType)))
+    if (typeof value !== 'string') continue
+    const fit = coerce(value, projectedType)
+    if (fit === null) held?.delete(key)
+    else held?.set(key, rowOf(key, fieldsUnder(fit, valueType)))
   }
 }
 
