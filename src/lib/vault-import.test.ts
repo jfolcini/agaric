@@ -147,6 +147,13 @@ describe('indexVaultFiles / resolveVaultRef', () => {
     expect(resolveVaultRef('img.png', '', index)).toEqual([a, b])
   })
 
+  it('#6032 — ships only the first two files of a basename tie', () => {
+    const files = ['a', 'b', 'c'].map((dir, i) =>
+      folderFile([new Uint8Array([i])], 'img.png', `MyVault/${dir}/img.png`),
+    )
+    expect(resolveVaultRef('img.png', '', indexVaultFiles(files))).toEqual(files.slice(0, 2))
+  })
+
   it('keeps the FIRST file on an exact vault-relative-path collision too (byPath dedup, not just byBase)', () => {
     // Two different top-level vault picks that normalize to the same vault-relative path.
     const first = folderFile(['# a'], 'x.png', 'Vault1/notes/x.png')
@@ -187,8 +194,8 @@ describe('indexVaultFiles / resolveVaultRef', () => {
     expect(resolveVaultRef('../img.png', 'notes/sub', index)).toEqual([inNotes])
     expect(resolveVaultRef('./../other/pic.png', 'notes', index)).toEqual([pic])
     // Climbing above the root fails both path steps rather than stopping at
-    // the root, so the basename's three files ship.
-    expect(resolveVaultRef('../../img.png', 'notes', index)).toEqual([root, inNotes, inSub])
+    // the root, so the basename's tie ships.
+    expect(resolveVaultRef('../../img.png', 'notes', index)).toEqual([root, inNotes])
   })
 })
 

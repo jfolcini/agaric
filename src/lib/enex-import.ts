@@ -71,8 +71,8 @@ import { scanNameTokens } from '@/lib/name-tokens'
 export interface EnexAttachment {
   /**
    * Vault-relative path used both as the markdown embed target and the
-   * shipped `VaultFile.path`, so the backend matches them (relative-path
-   * equality, then basename — see `match_vault_file`).
+   * shipped `VaultFile.path`, so the backend matches them (see
+   * `match_vault_file`).
    */
   path: string
   /** Raw decoded resource bytes (the exact bytes Evernote MD5-hashes). */

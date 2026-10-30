@@ -731,8 +731,8 @@ pub enum ImportProgressUpdate {
 /// `path` is the file's path RELATIVE to the vault root (the browser
 /// `webkitRelativePath` minus the top folder, or whatever the FE chooses), using
 /// `/` separators — e.g. `assets/diagram.png` or `images/screenshots/a.png`.
-/// It is matched against an in-content ref first by relative-path equality, then
-/// by basename (see `match_vault_file`).
+/// It is matched against an in-content ref read from the note's folder, then
+/// from the vault root, then by basename (see `match_vault_file`).
 ///
 /// This is an IPC **input**, so it needs `Deserialize` (unlike the
 /// backend→frontend [`ImportProgressUpdate`], which is `Serialize`-only).

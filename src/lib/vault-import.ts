@@ -49,8 +49,7 @@ export function importErrorReason(err: unknown): string {
  * matches against (#1925). Strips the leading top-folder segment of a
  * `webkitRelativePath` (the browser always prefixes the chosen folder name,
  * e.g. `MyVault/assets/a.png` → `assets/a.png`), backslashes → `/`, and a
- * leading `./`, plus the top-folder strip the FE owns (the BE expects
- * vault-root-relative `path`s).
+ * leading `./`; the BE expects vault-root-relative `path`s.
  */
 export function vaultRelativePath(webkitRelativePath: string | undefined): string {
   // jsdom (and a plain `.md` pick) may leave `webkitRelativePath` empty or
@@ -114,8 +113,8 @@ export function resolveVaultPath(dir: string, path: string): string | null {
 /**
  * The files one scanned attachment ref may name, in the backend
  * `match_vault_file` order: the path read from the note's folder `noteDir`,
- * else the vault-root path, else every file of its basename. The backend
- * takes the first of a basename tie and warns, so all of them ship.
+ * else the vault-root path, else the first two files of its basename. The
+ * backend takes the first of a basename tie and warns, so a tie ships.
  */
 export function resolveVaultRef(reference: string, noteDir: string, index: VaultIndex): File[] {
   const want = reference.replace(/\\/g, '/')
@@ -124,7 +123,9 @@ export function resolveVaultRef(reference: string, noteDir: string, index: Vault
     const file = path === null ? undefined : index.byPath.get(path)
     if (file) return [file]
   }
-  return index.byBase.get(basename(want)) ?? []
+  // Two are enough for the backend's warning; every same-named file of a large
+  // export could pass the import's attachment budget.
+  return (index.byBase.get(basename(want)) ?? []).slice(0, 2)
 }
 
 /**
