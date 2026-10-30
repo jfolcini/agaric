@@ -123,7 +123,7 @@ fn citation_display_name(entry: &BibEntry) -> String {
 ///     itself rejected for a non-reserved key. Only deleting the property
 ///     from every affected block, discarding the values, exits.
 ///
-/// The guard covers the seven `text` keys too, but for a *different*
+/// The guard covers the `text` keys too, but for a *different*
 /// reason, and the warning must not claim this one for them (#4395 review
 /// note 2): declaring a key `text` does **not** reject later text edits —
 /// a `text` declaration with a `value_text` payload passes step 4 cleanly,

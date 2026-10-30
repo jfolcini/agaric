@@ -923,7 +923,7 @@ async fn import_bibliography_leaves_in_use_key_undeclared_4382() {
         result.warnings
     );
 
-    // 6. Only the in-use key is skipped. The other seven, unused, are
+    // 6. Only the in-use key is skipped. The others, unused, are
     //    declared exactly as before — a fix that skipped everything would
     //    otherwise pass this test.
     assert_eq!(
