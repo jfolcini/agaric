@@ -2021,7 +2021,7 @@ describe('DataTab', () => {
       })
     })
 
-    it('warns that a linked, not embedded, file was not imported', async () => {
+    it('ships the bytes of a linked, not embedded, file and warns of nothing', async () => {
       mockImportMarkdown.mockResolvedValue(okResult('File Note'))
       const pdfId = 'e'.repeat(32)
       const note = joplinItem(`File Note\n\nSee [report.pdf](:/${pdfId}).`, {
@@ -2044,10 +2044,17 @@ describe('DataTab', () => {
       render(<DataTab />)
       await importJex(jex, 'files.jex')
 
-      await waitFor(() => {
-        expect(screen.getByTestId('import-warnings-heading')).toHaveTextContent('1 warning')
-      })
-      expect(screen.getByText(t('data.importJexFileLinks', { count: 1 }))).toBeInTheDocument()
+      await waitFor(() => expect(mockImportMarkdown).toHaveBeenCalledTimes(1))
+      const [content0, , , , vaultFiles0] = mockImportMarkdown.mock.calls[0] as [
+        string,
+        string,
+        string,
+        unknown,
+        Array<{ path: string; bytes: number[] }>,
+      ]
+      expect(content0).toContain('See [report.pdf](report.pdf).')
+      expect(vaultFiles0).toEqual([{ path: 'report.pdf', bytes: [37, 80, 68, 70] }])
+      expect(screen.queryByTestId('import-warnings-heading')).not.toBeInTheDocument()
     })
 
     it('fires a single error toast (no double) when the archive has no notes', async () => {

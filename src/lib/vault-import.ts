@@ -16,7 +16,7 @@
 import { isAppError } from '@/lib/app-error'
 import type { VaultFile } from '@/lib/bindings'
 import { type EnexNote, enexNoteToMarkdown, sanitizeNoteTitleToFilename } from '@/lib/enex-import'
-import { scanAttachmentRefs } from '@/lib/import-attachments'
+import { NOTE_EXTENSIONS, scanAttachmentRefs } from '@/lib/import-attachments'
 import { type JexNote, jexNoteToMarkdown } from '@/lib/jex-import'
 import { isNotionExport, notionToMarkdown, stripNotionIds } from '@/lib/notion-import'
 import { orgToMarkdown } from '@/lib/org-import'
@@ -248,14 +248,7 @@ function linkedNotePaths(content: string, notesByName: Map<string, string[]>): s
   return [...paths]
 }
 
-/**
- * The extensions a pick imports as pages, also the plain picker's `accept`
- * list: Markdown and text files are read as Markdown, an Org file through
- * {@link orgToMarkdown}.
- */
-export const NOTE_EXTENSIONS = ['.md', '.markdown', '.mdx', '.txt', '.org'] as const
-
-/** A file a note may embed and the import can attach: an image or a PDF. */
+/** A file a note may embed or link, never counted as skipped: an image or a PDF. */
 const ATTACHMENT_RE = /\.(?:png|jpe?g|gif|webp|svg|bmp|ico|avif|pdf)$/i
 
 /** The extension of `name` among {@link NOTE_EXTENSIONS}, or null. */
@@ -272,7 +265,7 @@ export function isNotionPick(files: readonly File[]): boolean {
 
 /**
  * The files of a pick that imported as nothing: neither a note, nor a file a
- * note may embed, nor one a note did embed (`attached`, vault-relative paths),
+ * note may embed or link, nor one a note did (`attached`, vault-relative paths),
  * nor hidden (`.obsidian/`, `.DS_Store`). A Notion export's database tables
  * are counted apart, as `databases`, since each row of one is also a page of
  * the export; Notion writes each as `X.csv` and again as `X_all.csv`.

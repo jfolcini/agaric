@@ -31,6 +31,12 @@ vi.mock('@/lib/open-url', () => ({
   openUrl: (...args: unknown[]) => mockOpenUrl(...args),
 }))
 
+const mockOpenAttachmentLink = vi.fn().mockResolvedValue(undefined)
+
+vi.mock('@/lib/attachment-utils', () => ({
+  openAttachmentLink: (...args: unknown[]) => mockOpenAttachmentLink(...args),
+}))
+
 vi.mock('@/lib/logger', () => ({
   logger: {
     warn: vi.fn(),
@@ -451,6 +457,48 @@ describe('ExternalLink Ctrl/Cmd+Click scheme guard (#2209)', () => {
     const handled = simulateClick(editor, 'https://example.com', {})
     expect(handled).toBe(false)
     expect(mockOpenUrl).not.toHaveBeenCalled()
+  })
+
+  it('downloads the attachment an `attachment:<id>` link names on Ctrl+Click (#6032)', () => {
+    editor = createEditor()
+    mockOpenAttachmentLink.mockClear()
+    const handled = simulateClick(editor, 'attachment:01ATT0000000000000000AT01')
+    expect(handled).toBe(true)
+    expect(mockOpenAttachmentLink).toHaveBeenCalledWith('01ATT0000000000000000AT01')
+    expect(mockOpenUrl).not.toHaveBeenCalled()
+  })
+})
+
+describe('ExternalLink attachment hrefs (#6032)', () => {
+  let editor: Editor
+
+  afterEach(() => {
+    editor?.destroy()
+  })
+
+  /** The rendered href of a one-link paragraph whose link is `href`. */
+  function renderedHref(href: string): string | null | undefined {
+    editor = createEditor()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text: 'paper', marks: [{ type: 'link', attrs: { href } }] }],
+        },
+      ],
+    })
+    return editor.view.dom.querySelector('a')?.getAttribute('href')
+  }
+
+  it('keeps the href of a link to an attachment id', () => {
+    expect(renderedHref('attachment:01ATT0000000000000000AT01')).toBe(
+      'attachment:01ATT0000000000000000AT01',
+    )
+  })
+
+  it('blanks an `attachment:` href naming no id, as any unknown scheme', () => {
+    expect(renderedHref('attachment:../etc')).toBe('')
   })
 })
 

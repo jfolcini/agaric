@@ -11,6 +11,8 @@
  *   FormattingToolbar can open the link edit popover.
  * - Paste-to-link: pasting a bare URL with empty selection inserts a linked
  *   text node instead of plain text (F-40).
+ * - A link to an attachment, `[label](attachment:<id>)`, keeps its href, which
+ *   TipTap's scheme allow-list would blank, and Ctrl/Cmd+Click downloads it.
  *
  * Rendered as `<a>` tags with external link styling.
  * Serialized as `[text](url)` in our Markdown subset.
@@ -20,6 +22,8 @@ import Link from '@tiptap/extension-link'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 
 import { unwrap } from '@/lib/app-error'
+import { parseAttachmentRef } from '@/lib/attachment-ref'
+import { openAttachmentLink } from '@/lib/attachment-utils'
 import { commands } from '@/lib/bindings'
 import { tipTapShortcutMap } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
@@ -80,6 +84,12 @@ export const ExternalLink = Link.extend({
             ) as HTMLAnchorElement | null
             const href = anchor?.getAttribute('href')
             if (!href) return false
+            const attachmentId = parseAttachmentRef(href)
+            if (attachmentId !== null) {
+              event.preventDefault()
+              void openAttachmentLink(attachmentId)
+              return true
+            }
             // #2209 — re-check the scheme denylist before handing the href to the
             // OS shell. Input-time validation (`validate` / the link editor) is
             // bypassed by markdown import / peer sync, so a stored
@@ -137,6 +147,7 @@ export const ExternalLink = Link.extend({
   // A typed or pasted `[text](url)` becomes a link, as the stored form reads (#5160 N11).
   markdownLinks: true,
   validate: (url: string) => isValidHttpUrl(url),
+  isAllowedUri: (url, ctx) => parseAttachmentRef(url) !== null || ctx.defaultValidate(url),
   HTMLAttributes: {
     class: 'external-link',
     'data-testid': 'external-link',

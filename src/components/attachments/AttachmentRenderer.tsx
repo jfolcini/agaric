@@ -13,7 +13,7 @@ import { renderRichContent } from '@/components/RichContentRenderer'
 import { useBatchPropertyRows } from '@/hooks/useBatchPropertyRows'
 import { useEnteredViewport } from '@/hooks/useEnteredViewport'
 import { unwrap } from '@/lib/app-error'
-import { formatSize } from '@/lib/attachment-utils'
+import { bytesToBlob, formatSize, triggerDownload } from '@/lib/attachment-utils'
 import { commands } from '@/lib/bindings'
 import { readAttachment } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
@@ -42,18 +42,6 @@ interface Attachment {
 }
 
 /**
- * Wrap raw attachment bytes in a typed `Blob`.
- *
- * `readAttachment` returns `Uint8Array<ArrayBufferLike>` (the buffer generic
- * TypeScript 5.7+ tracks). `BlobPart` requires `Uint8Array<ArrayBuffer>`, so
- * we re-wrap into a fresh ArrayBuffer-backed view. The copy is negligible
- * relative to the IPC round-trip that produced the bytes.
- */
-function bytesToBlob(bytes: Uint8Array, mimeType: string): Blob {
-  return new Blob([new Uint8Array(bytes)], { type: mimeType })
-}
-
-/**
  * Upper bound on the decoded text we hand to `renderRichContent` for an inline
  * markdown/text preview (#1451). A very large note shouldn't parse + mount an
  * unbounded React tree on every block render; past this we truncate and tell
@@ -76,23 +64,6 @@ function isMarkdownAttachment(att: Attachment): boolean {
   }
   const name = att.filename.toLowerCase()
   return name.endsWith('.md') || name.endsWith('.markdown') || name.endsWith('.txt')
-}
-
-/** Trigger a browser download of `bytes` as `filename` via a transient anchor. */
-function triggerDownload(bytes: Uint8Array, mimeType: string, filename: string): void {
-  const url = URL.createObjectURL(bytesToBlob(bytes, mimeType))
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = filename
-  document.body.append(anchor)
-  anchor.click()
-  anchor.remove()
-  // #2275 — defer the revoke to a later tick. On WebKitGTK (Linux Tauri) and
-  // WKWebView (macOS Tauri) the download can start asynchronously after
-  // `click()`, so revoking the object URL on the next synchronous line races
-  // the fetch and can abort the download. A 0ms timeout lets the browser pick
-  // up the URL before it is freed — the standard blob-download pattern.
-  setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 export interface LightboxImage {
