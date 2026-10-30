@@ -2041,9 +2041,10 @@ struct PageModePage {
 }
 
 /// The 100K vault plus a page of `n` blocks, all in [`SLO_SPACE_ID`]. Each
-/// block links its own background block, the most ids `resolveLinks` can send
-/// for the page; every [`PAGE_MODE_PROPERTY_EVERY`]th block holds a property,
-/// every [`PAGE_MODE_TASK_EVERY`]th is a `TODO`, and every
+/// block links its own background block, so `resolveLinks` sends `n` ids (a
+/// page whose blocks hold several links each sends more). Every
+/// [`PAGE_MODE_PROPERTY_EVERY`]th block holds a property, every
+/// [`PAGE_MODE_TASK_EVERY`]th is a `TODO`, and every
 /// [`PAGE_MODE_ATTACHMENT_EVERY`]th has an attachment.
 async fn seed_page_mode_page(pool: &SqlitePool, n: usize) -> PageModePage {
     let background = seed_blocks_bulk(pool, FIXTURE_SIZE).await;

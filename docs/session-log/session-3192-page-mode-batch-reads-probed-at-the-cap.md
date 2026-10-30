@@ -8,4 +8,6 @@
 
 **Trap for raising the cap.** Every batch read rejects more than `MAX_BATCH_BLOCK_IDS` (1000) ids, and `readPageFit` and `fetchAndCacheLinks` send a page's ids in one call. So page mode cannot open a page past 1000 blocks until those callers chunk; the 2000-block probes time the reads as two calls of 1000, as a chunking caller would. `load_page_subtree` has its own cap of 10,000.
 
+**Bug found under today's cap.** `fetchAndCacheLinks` sends every uncached link target on the page at once, so a page whose blocks link more than 1000 distinct targets gets a `Validation` refusal from `batch_resolve`, logs a warning and resolves none of those chips. Block mode shares the call. Fixed in a separate PR.
+
 **Suites:** clippy `--all-targets -D warnings` and fmt locally. The seeders and timings run only in CI's `bench-smoke` and `bench-slo` lanes, dispatched on this branch; this PR merges on their result.
