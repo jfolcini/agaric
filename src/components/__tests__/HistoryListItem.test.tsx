@@ -625,6 +625,10 @@ describe('HistoryListItem', () => {
       ['remove_tag', Tag],
       ['set_property', Settings],
       ['delete_property', Settings],
+      ['set_property_def', Settings],
+      ['rename_property_key', Settings],
+      ['rename_property_option', Settings],
+      ['rewrite_properties', Settings],
       ['add_attachment', Paperclip],
       ['delete_attachment', Paperclip],
       // #4277 — rename_attachment reaches the History list for the first

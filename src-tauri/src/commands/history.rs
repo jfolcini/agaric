@@ -869,7 +869,7 @@ async fn fit_reverse_to_declared_type(
     conn: &mut sqlx::SqliteConnection,
     p: &mut agaric_store::op::SetPropertyPayload,
 ) -> Result<(), AppError> {
-    use agaric_engine::block_ops::{PropertyDeclaration, check_property_value};
+    use agaric_engine::block_ops::check_property_value;
     use agaric_engine::loro::coerce::{coerce, value_fields_under};
     let block_id = p.block_id.as_str();
     // The Trash's blocks too, as a type change converts theirs.
@@ -884,10 +884,6 @@ async fn fit_reverse_to_declared_type(
     let Some(declared) = declared else {
         return Ok(());
     };
-    let shape = PropertyDeclaration {
-        value_type: declared.value_type,
-        options: None,
-    };
     let held = p.value();
     let args = (
         held.value_text.clone(),
@@ -896,20 +892,20 @@ async fn fit_reverse_to_declared_type(
         held.value_ref.as_ref().map(|r| r.as_str().to_owned()),
         held.value_bool,
     );
-    if check_property_value(&p.key, &args, Some(&shape)).is_ok() {
+    if check_property_value(&p.key, &args, Some(&declared)).is_ok() {
         return Ok(());
     }
     let value = agaric_engine::loro::engine::PropertyValue::from(&held);
-    let fit = coerce(&value, &shape.value_type).ok_or_else(|| {
+    let fit = coerce(&value, &declared.value_type).ok_or_else(|| {
         AppError::validation(format!(
             "undoing this would put '{}' under '{}', now a {} property; change its type back \
              first",
             value.as_legacy_string().unwrap_or_default(),
             p.key,
-            shape.value_type
+            declared.value_type
         ))
     })?;
-    let fields = value_fields_under(&fit, &shape.value_type);
+    let fields = value_fields_under(&fit, &declared.value_type);
     p.value_text = fields.value_text;
     p.value_num = fields.value_num;
     p.value_date = fields.value_date;

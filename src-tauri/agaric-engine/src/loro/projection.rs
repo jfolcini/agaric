@@ -1755,18 +1755,24 @@ pub async fn project_property_value_writes(
     .await?
     .into_iter()
     .collect();
-    for write in writes
+    let writes: Vec<_> = writes
         .iter()
         .filter(|w| in_space.contains(w.block_id.as_str()))
-    {
-        let block_id = write.block_id.as_str();
-        sqlx::query!(
-            "DELETE FROM block_properties WHERE block_id = ? AND key = ?",
-            block_id,
-            write.key,
-        )
-        .execute(&mut *conn)
-        .await?;
+        .collect();
+    let rows_json = serde_json::to_string(
+        &writes
+            .iter()
+            .map(|w| (w.block_id.as_str(), w.key.as_str()))
+            .collect::<Vec<_>>(),
+    )?;
+    sqlx::query!(
+        "DELETE FROM block_properties WHERE (block_id, key) IN \
+           (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?))",
+        rows_json,
+    )
+    .execute(&mut *conn)
+    .await?;
+    for write in writes {
         if let Some(value) = &write.value {
             let value = crate::loro::engine::PropertyValue::from(value);
             reproject_property_row_from_engine(

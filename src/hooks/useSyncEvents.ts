@@ -130,9 +130,16 @@ export interface BlocksChangedPayload {
  * snapshot-catch-up path, or an MCP write whose block had no resolvable page
  * ancestor) reload EVERY mounted store plus a full preload — when in doubt we
  * fall back rather than risk a missed update.
+ *
+ * `reanchorUndo: false` keeps each page's undo and redo: for a local write
+ * whose op belongs to no page (a space's option rename), which shifts no
+ * page's op-log positions.
  */
-export function reloadChangedPageStores(changedPageIds?: string[]): void {
-  const reanchorUndo = useUndoStore.getState().reanchorAfterRemoteOps
+export function reloadChangedPageStores(
+  changedPageIds?: string[],
+  { reanchorUndo = true }: { reanchorUndo?: boolean } = {},
+): void {
+  const reanchor = useUndoStore.getState().reanchorAfterRemoteOps
   const targeted =
     Array.isArray(changedPageIds) && changedPageIds.length > 0 ? new Set(changedPageIds) : null
 
@@ -154,7 +161,7 @@ export function reloadChangedPageStores(changedPageIds?: string[]): void {
     // that `undoDepth` addresses; without this reset the next Ctrl+Z would
     // reverse the wrong op. Keyed by the same pageId the block reload uses,
     // and fired ONCE per page however many provider stores it has.
-    reanchorUndo(pageId)
+    if (reanchorUndo) reanchor(pageId)
     // The store's `load` logs its own failure; never rejects.
     for (const pageStore of pageStores) void pageStore.getState().load()
   })

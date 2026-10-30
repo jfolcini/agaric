@@ -190,13 +190,14 @@ export function usePropertyRowEditor({
 
   // #5841 — a rename reaches every block of the space, so the open page's
   // values are read again, and the definition after the rename or its undo.
+  // Its op is the space's, so no page's undo or redo moves.
   const renameOption = useCallback(
     async (from: string, to: string) => {
       if (!def || currentSpaceId === null) return false
       const spaceId = currentSpaceId
       const { key } = def
       const changed = (): void => {
-        reloadChangedPageStores()
+        reloadChangedPageStores(undefined, { reanchorUndo: false })
         commands
           .getPropertyDef(spaceId, key)
           .then(unwrap)
