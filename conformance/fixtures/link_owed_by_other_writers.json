@@ -1,0 +1,299 @@
+{
+  "comment": "A token to a target in the trash is owed, not linked, whichever writer puts it there: batch create, paste, draft flush and duplicate each write one to S3 after it was trashed, and none of them gets an edge while S3 stays there.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "anchor",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "target",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "drafted [[000000000000000000000000S3]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "copied [[000000000000000000000000S3]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "batch [[000000000000000000000000S3]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 7,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "pasted [[000000000000000000000000S3]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "copied [[000000000000000000000000S3]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 6,
+      "ops": [
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "create_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "trash_target",
+      "returns": ["B3#deleted_at=DELETED#descendants_affected=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "batch",
+      "returns": [
+        "B6#block_type=content#content=batch [[000000000000000000000000S3]]#parent_id=B1#position=5"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "paste",
+      "returns": [
+        "B7#block_type=content#content=pasted [[000000000000000000000000S3]]#parent_id=B1#position=2"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "draft",
+      "returns": ["save_draft"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "flush",
+      "returns": ["flush_draft"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "edit_original",
+      "returns": ["B5#content=copied [[000000000000000000000000S3]]"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "duplicate",
+      "returns": [
+        "B8#block_type=content#content=copied [[000000000000000000000000S3]]#parent_id=B1#position=6"
+      ]
+    }
+  ],
+  "name": "link_owed_by_other_writers",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "delete_block",
+      "name": "trash_target",
+      "via": "command"
+    },
+    {
+      "args": {
+        "specs": [
+          {
+            "blockType": "content",
+            "content": "batch [[000000000000000000000000S3]]",
+            "parentId": "S1"
+          }
+        ]
+      },
+      "command": "create_blocks_batch",
+      "name": "batch",
+      "via": "command"
+    },
+    {
+      "args": {
+        "anchorBlockId": "S2",
+        "input": {
+          "kind": "text",
+          "text": "pasted [[000000000000000000000000S3]]"
+        }
+      },
+      "command": "paste_blocks",
+      "name": "paste",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "content": "drafted [[S3]]"
+      },
+      "command": "save_draft",
+      "name": "draft",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S4"
+      },
+      "command": "flush_draft",
+      "name": "flush",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "toText": "copied [[S3]]"
+      },
+      "command": "edit_block",
+      "name": "edit_original",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S5"
+      },
+      "command": "duplicate_block",
+      "name": "duplicate",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "anchor",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "target",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "draft me",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "copy me",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 4
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

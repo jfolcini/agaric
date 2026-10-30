@@ -50,19 +50,20 @@
 //! `add_attachment_with_bytes` return and by whether each `delete_attachment`
 //! finds it, never by its row or its bytes on disk, which each stack mints
 //! (see [`chain_to_fixture`]). The texts carry `[[…]]`, `((…))` and `#[…]`
-//! tokens ([`weave_tokens`], #6054) naming the seed page, the seed tag or an
-//! earlier block, live, trashed, purged, in no space or, in an edit, in
-//! another space, so `page_links` and the backlink, tag-ref and inherited-tag
-//! reads compare, the links the backend declines included. The write gate refuses a text that
+//! tokens ([`weave_tokens`], #6054) naming the seed page, the seed tag,
+//! [`MOVED_PAGE`] or an earlier block, live, trashed, purged, in no space or,
+//! in an edit, in another space, so `page_links`, `list_page_links` and the
+//! backlink, tag-ref and inherited-tag reads compare, the links the backend
+//! declines included. The write gate refuses a text that
 //! names a block of another space unless its page already holds the token
 //! (#5272), so a seed-tag move first puts a block naming the tag on the seed
 //! page ([`Invalid::SpaceMove`]); a later edit may then name the tag from its
 //! new space. No `#[…]` names the seed tag before it moves (see
 //! [`chain_to_fixture`]). The space moves are the seed tag's and
 //! [`MOVED_PAGE`]'s, each into a new space ([`Invalid::SpaceMove`]), and the
-//! generator's `SetProperty(space)`, which names a content block. No text
-//! names [`MOVED_PAGE`] and the chain writes no page title, so
-//! `list_page_links` and `list_unlinked_references` still answer nothing. The
+//! generator's `SetProperty(space)`, which names a content block. The chain
+//! writes no page title, so `list_unlinked_references` still answers nothing,
+//! and the only page-to-page edges are the seed page's to [`MOVED_PAGE`]. The
 //! reads are the fixed [`read_steps`] of the harness space, so a read outside
 //! them, a read of a space the chain made, and the wall-clock
 //! `list_projected_agenda`, go uncompared. Of the refusals, it reaches the
@@ -116,9 +117,9 @@ const SEED_PAGE: &str = "S1";
 const SEED_TAG: &str = "S2";
 
 /// The seeded page an [`Invalid::SpaceMove`] can move out of the harness
-/// space. No text names it: a link between two pages of the space makes
-/// `list_page_links` answer, and the mock's roll-up there is a later item of
-/// #6054.
+/// space, and the only page a woven token can link from the seed page's tree,
+/// so `list_page_links` answers. Once it has moved, no create names it: the
+/// write gate refuses a token to another space (#5272).
 const MOVED_PAGE: &str = "S3";
 
 /// The most refused commands one chain splices in: enough to interleave them
@@ -265,9 +266,12 @@ fn chain_to_fixture(
                 }
                 Invalid::SpaceMove(mover, _) => {
                     last_space = Some(format!("C{creates}"));
-                    if matches!(mover, Mover::SeedTag) {
-                        elsewhere.push(SEED_TAG.to_owned());
-                        no_tag_ref.clear();
+                    match mover {
+                        Mover::SeedTag => {
+                            elsewhere.push(SEED_TAG.to_owned());
+                            no_tag_ref.clear();
+                        }
+                        Mover::Page => elsewhere.push(MOVED_PAGE.to_owned()),
                     }
                 }
                 _ => {}
@@ -425,10 +429,10 @@ fn weaves_strategy() -> impl Strategy<Value = Vec<Weave>> {
 }
 
 /// `text` with the tokens of `weave` appended, written with labels
-/// (`expand_content_labels` resolves them on both stacks). A target is the seed
-/// page, the seed tag or one of the `creates` blocks made so far, whatever
-/// became of it: one the chain deleted or purged, a space block, which is in no
-/// space, or a block of another space. Those are the skip, decline and refusal
+/// (`expand_content_labels` resolves them on both stacks). A target is a seed
+/// block or one of the `creates` blocks made so far, whatever became of it: one
+/// the chain deleted, purged or moved, a space block, which is in no space, or
+/// a block of another space. Those are the skip, decline and refusal
 /// paths of the link derivations. A label in `skip` is never a target, and one
 /// in `no_tag_ref` never that of a `#[…]`.
 ///
@@ -442,8 +446,9 @@ fn weave_tokens(
     skip: &[String],
     no_tag_ref: &[String],
 ) -> String {
-    let targets: Vec<String> = [SEED_PAGE.to_owned(), SEED_TAG.to_owned()]
+    let targets: Vec<String> = [SEED_PAGE, SEED_TAG, MOVED_PAGE]
         .into_iter()
+        .map(str::to_owned)
         .chain((1..=creates).map(|n| format!("C{n}")))
         .filter(|label| !skip.contains(label))
         .collect();

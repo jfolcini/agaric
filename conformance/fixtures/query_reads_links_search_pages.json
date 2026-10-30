@@ -127,7 +127,7 @@
       "error": null,
       "has_more": false,
       "name": "page_links_in_space",
-      "rows": ["B2->B1"],
+      "rows": ["B2->B1#ref_count=1"],
       "total_count": 1
     },
     {

@@ -26,16 +26,15 @@ import {
   datePredicateMatches,
   fbqResolvePrefixTagIds,
   inSpaceScope,
+  linkEdges,
   linkKind,
   linksTo,
-  ownerSpaceOf,
   pageRequestLimit,
   propertyCompareMatches,
   propertyEqMatches,
   propertyLikeMatches,
   refInclusiveTags,
   resolveRangeBound,
-  scanLinkTargets,
   readActiveSpaceScope,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
@@ -605,9 +604,11 @@ export const linksHandlers = {
   // Word-level diff for history display
   // ---------------------------------------------------------------------------
 
+  // `page_link_cache` read live: every `block_links` edge of a live source,
+  // rolled up to `COALESCE(page_id, parent_id, id)` and counted per page pair,
+  // kept when both ends are live pages of the scope's space and differ;
+  // strongest edges first, then by both ids.
   list_page_links: (args) => {
-    // Scan all non-deleted blocks for [[ULID]] page link tokens and
-    // return page-to-page edges (source = parent page, target = linked page).
     const a = (args as Record<string, unknown> | null | undefined) ?? {}
     // When `tagIds` is non-empty, restrict edges to
     // those whose target page carries at least one of the listed tags.
@@ -617,56 +618,41 @@ export const linksHandlers = {
     // model — see seed.ts).
     const rawTagIds = a['tagIds'] as string[] | null | undefined
     const tagFilter = rawTagIds && rawTagIds.length > 0 ? new Set(rawTagIds) : null
-    // Honour `scope: SpaceScope` (mirrors `list_page_links_inner`).
-    // Both endpoints of an edge must live in the active space. Matches the
-    // backend's `b1.space = ?` AND `b2.space = ?` join predicate.
     const spaceId = readActiveSpaceScope('list_page_links', a)
-    const pageSpace = (pid: string): string | null => ownerSpaceOf({ id: pid })
-    const linkSet = new Set<string>()
-    const pageLinks: Array<{ source_id: string; target_id: string; ref_count: number }> = []
-    for (const b of blocks.values()) {
-      if (b['deleted_at']) continue
-      const parentId = b['parent_id'] as string | null
-      if (!parentId) continue
-      // Only consider blocks whose parent is a page
-      const parentBlock = blocks.get(parentId)
-      if (!parentBlock || parentBlock['block_type'] !== 'page') continue
-      // Active-scope filter on source page.
-      if (pageSpace(parentId) !== spaceId) continue
-      const content = (b['content'] as string) ?? ''
-      for (const targetPageId of scanLinkTargets(content)) {
-        // `plc.source_page_id != plc.target_page_id`: a page's link to itself
-        // is no edge of the graph.
-        if (!linksTo(b, targetPageId) || targetPageId === parentId) continue
-        // Ensure target is an existing non-deleted page
-        const targetBlock = blocks.get(targetPageId)
-        if (!targetBlock || targetBlock['block_type'] !== 'page' || targetBlock['deleted_at'])
-          continue
-        // Active-scope filter on target page (mirrors the
-        // backend's `b2.space = ?` predicate).
-        if (pageSpace(targetPageId) !== spaceId) continue
-        // Apply target-side tag filter.
-        if (tagFilter) {
-          const targetTags = blockTags.get(targetPageId)
-          let hit = false
-          if (targetTags) {
-            for (const tid of tagFilter) {
-              if (targetTags.has(tid)) {
-                hit = true
-                break
-              }
-            }
-          }
-          if (!hit) continue
-        }
-        // Deduplicate edges
-        const key = `${parentId}→${targetPageId}`
-        if (!linkSet.has(key)) {
-          linkSet.add(key)
-          pageLinks.push({ source_id: parentId, target_id: targetPageId, ref_count: 1 })
-        }
-      }
+    const livePageInScope = (id: string): boolean => {
+      const page = blocks.get(id)
+      return page?.['block_type'] === 'page' && !page['deleted_at'] && page['space_id'] === spaceId
     }
+    const counts = new Map<string, { source_id: string; target_id: string; ref_count: number }>()
+    // One `block_links` row per `(source_id, target_id)`, however often the
+    // content spells the token.
+    const seen = new Set<string>()
+    for (const edge of linkEdges()) {
+      const pair = `${edge.sourceId}→${edge.targetId}`
+      if (seen.has(pair)) continue
+      seen.add(pair)
+      const source = blocks.get(edge.sourceId) as Record<string, unknown>
+      if (source['deleted_at']) continue
+      const sourcePage =
+        (source['page_id'] as string | null) ??
+        (source['parent_id'] as string | null) ??
+        edge.sourceId
+      if (sourcePage === edge.targetId) continue
+      if (!livePageInScope(sourcePage) || !livePageInScope(edge.targetId)) continue
+      if (tagFilter && ![...tagFilter].some((tid) => blockTags.get(edge.targetId)?.has(tid))) {
+        continue
+      }
+      const key = `${sourcePage}→${edge.targetId}`
+      const row = counts.get(key)
+      if (row) row.ref_count += 1
+      else counts.set(key, { source_id: sourcePage, target_id: edge.targetId, ref_count: 1 })
+    }
+    const pageLinks = [...counts.values()].toSorted(
+      (x, y) =>
+        y.ref_count - x.ref_count ||
+        compareUtf8Bytes(x.source_id, y.source_id) ||
+        compareUtf8Bytes(x.target_id, y.target_id),
+    )
     // #2298 count-then-cap — the real backend ships a `PageLinksResponse`
     // envelope. The mock world never caps, so `total` is always the full
     // edge count and `truncated` is always false.

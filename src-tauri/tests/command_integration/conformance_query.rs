@@ -1124,9 +1124,9 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             )
             .await?;
             let v = serde_json::to_value(&resp).expect("serialize PageLinksResponse");
-            // An edge is a PAIR, so its stable token is `source->target`; the
-            // envelope's `truncated` / `total` map onto the same two scalars
-            // every other command reports.
+            // An edge is a PAIR, so its stable token is `source->target`, with
+            // its weight; the envelope's `truncated` / `total` map onto the
+            // same two scalars every other command reports.
             let rows = v
                 .get("edges")
                 .and_then(Value::as_array)
@@ -1135,9 +1135,10 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                         .iter()
                         .map(|e| {
                             format!(
-                                "{}->{}",
+                                "{}->{}#ref_count={}",
                                 e.get("source_id").and_then(Value::as_str).unwrap_or("?"),
                                 e.get("target_id").and_then(Value::as_str).unwrap_or("?"),
+                                e.get("ref_count").and_then(Value::as_i64).unwrap_or(-1),
                             )
                         })
                         .collect()

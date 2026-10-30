@@ -595,6 +595,7 @@ function duplicateRow(
     scheduled_date: null,
   }
   blocks.set(id, row)
+  indexLinks(row, new Map())
   insertAtSlotAndRenumber(parentId, id, slot)
   const record = (op: { device_id: string; seq: number }): void => {
     opRefs.push({ device_id: op.device_id, seq: op.seq })
@@ -1014,6 +1015,7 @@ function pasteRow(
     scheduled_date: null,
   }
   blocks.set(id, row)
+  indexLinks(row, new Map())
   insertAtSlotAndRenumber(parentId, id, slot)
   const op = pushOp('create_block', {
     block_id: id,
@@ -1442,6 +1444,7 @@ export const blocksHandlers = {
         scheduled_date: null,
       }
       blocks.set(id, row)
+      indexLinks(row, new Map())
       // #400 / #5057 — a spec's `position` is the 1-BASED wire rank, so it
       // converts to the 0-based slot this helper takes; absent, the spec
       // appends. The batch used to assign `siblings.length` directly and never

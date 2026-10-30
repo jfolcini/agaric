@@ -309,7 +309,7 @@ type TokenSpec =
       readonly attrKeys?: readonly string[]
       readonly listKeys?: readonly string[]
     }
-  /** The `list_page_links` edge pair — an edge's stable name is both ends. */
+  /** The `list_page_links` edge pair — an edge's stable name is both ends — and its weight. */
   | { readonly kind: 'pair' }
   /** A `PropertyRow`: `key#<ValueType>=<value>`. */
   | { readonly kind: 'property' }
@@ -1346,7 +1346,7 @@ function rowToken(raw: unknown, spec: TokenSpec): string {
     case 'pair': {
       const src = (row['source_id'] as string | undefined) ?? '?'
       const tgt = (row['target_id'] as string | undefined) ?? '?'
-      return `${src}->${tgt}`
+      return `${src}->${tgt}#ref_count=${(row['ref_count'] as number | undefined) ?? -1}`
     }
     case 'property': {
       return propertyToken(row)
