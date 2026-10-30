@@ -358,6 +358,14 @@ function propertiesChanged<T>(
   return response
 }
 
+/** `fetch_live_block_in_tx`: the block a write may touch, or the backend's refusal. */
+function liveBlock(blockId: string): Record<string, unknown> {
+  const b = blocks.get(blockId)
+  if (!b) throw notFoundRejection(`block '${blockId}' not found`)
+  if (b['deleted_at'] != null) throw validationRejection(`block '${blockId}' has been soft-deleted`)
+  return b
+}
+
 /** The `value_type` vocabulary `validate_property_def_shape` matches on. */
 const PROPERTY_DEF_VALUE_TYPES = new Set([
   'text',
@@ -749,9 +757,9 @@ export const propertiesHandlers = {
   set_todo_state: (args) => {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
-    const b = blocks.get(blockId)
-    if (!b) throw notFoundRejection(`block '${blockId}' not found`)
+    const b = liveBlock(blockId)
     const state = (a['state'] as string | null) ?? null
+    assertValidReservedPropertyValue('todo_state', 'value_text', state)
     const start = opLog.length
     writeTodoState(blockId, state, (fromState) => {
       b['todo_state'] = state
@@ -859,8 +867,7 @@ export const propertiesHandlers = {
       'value_text',
       (a['level'] as string | null) ?? null,
     )
-    const b = blocks.get(a['blockId'] as string)
-    if (!b) throw notFoundRejection(`block '${a['blockId'] as string}' not found`)
+    const b = liveBlock(a['blockId'] as string)
     const fromLevel = (b['priority'] as string | null) ?? null
     b['priority'] = (a['level'] as string | null) ?? null
     pushOp('set_priority', {
@@ -873,10 +880,11 @@ export const propertiesHandlers = {
 
   set_due_date: (args) => {
     const a = args as Record<string, unknown>
-    const b = blocks.get(a['blockId'] as string)
-    if (!b) throw notFoundRejection(`block '${a['blockId'] as string}' not found`)
+    const date = (a['date'] as string | null) ?? null
+    if (date !== null) assertValidDateFormat(date)
+    const b = liveBlock(a['blockId'] as string)
     const fromDate = (b['due_date'] as string | null) ?? null
-    b['due_date'] = (a['date'] as string | null) ?? null
+    b['due_date'] = date
     pushOp('set_due_date', {
       block_id: a['blockId'],
       date: b['due_date'],
@@ -887,10 +895,11 @@ export const propertiesHandlers = {
 
   set_scheduled_date: (args) => {
     const a = args as Record<string, unknown>
-    const b = blocks.get(a['blockId'] as string)
-    if (!b) throw notFoundRejection(`block '${a['blockId'] as string}' not found`)
+    const date = (a['date'] as string | null) ?? null
+    if (date !== null) assertValidDateFormat(date)
+    const b = liveBlock(a['blockId'] as string)
     const fromDate = (b['scheduled_date'] as string | null) ?? null
-    b['scheduled_date'] = (a['date'] as string | null) ?? null
+    b['scheduled_date'] = date
     pushOp('set_scheduled_date', {
       block_id: a['blockId'],
       date: b['scheduled_date'],

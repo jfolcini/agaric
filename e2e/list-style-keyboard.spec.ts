@@ -70,8 +70,8 @@ async function listStyleWrites(page: Page): Promise<Array<Record<string, unknown
 
 /**
  * Enter at the end of row `index` (a styled block whose style the frontend
- * already knows): the new row below carries the same style, and — because
- * the harness has no property-changed event — is asserted after a reopen.
+ * already knows): the new row below carries the same style. Callers assert it
+ * after a reopen, which also proves the style persisted.
  */
 async function continueListFrom(page: Page, index: number, writesSoFar: number): Promise<void> {
   await focusBlock(page, index)

@@ -17,10 +17,11 @@
 //! An op whose wrapper emits Tauri events once its `_inner` commits also
 //! records them, in emission order, under `events` (#6054):
 //! `["block:properties-changed#block_id=B2#changed_keys=[\"todo_state\"]"]`.
-//! The harness takes them from the function the wrapper builds them with
-//! (`property_changed_events`), so the mock is held to what the app emits and
-//! mock-lane views refresh as the app's do. An op that emits nothing records
-//! no `events` key.
+//! The harness builds them with the function the wrapper builds them with
+//! (`property_changed_events`), from the ids and keys each arm restates, so the
+//! mock is held to the payloads the app emits. The wrapper itself does not run
+//! here: one that stops emitting, or names other ids, is not caught. An op that
+//! emits nothing records no `events` key.
 //!
 //! `returns` and `events` reuse the query leg's row-token grammar
 //! ([`row_token`] / [`relabel_token`]), so id relabelling, the `deleted_at` →

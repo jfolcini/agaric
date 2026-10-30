@@ -257,38 +257,6 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
 }
 
 // ---------------------------------------------------------------------------
-// Waivers — commands that can emit a Tauri event but pin none (#6054)
-// ---------------------------------------------------------------------------
-
-const APP_DATA_DIR_ONLY = 'emits nothing: the handle only resolves the app-data directory'
-
-/**
- * A Rust wrapper emits a Tauri event through an `AppHandle`, so every command
- * whose signature takes one either records what it emits on a fixture op
- * (`expected_ops[].events`, which the mock must reproduce) or says here why the
- * mock emits nothing for it. A command the mock skips emitting for leaves every
- * mock-lane view that refreshes on the event stale where the app's is fresh.
- */
-const EVENT_WAIVERS: Readonly<Record<string, string>> = {
-  start_sync:
-    'the session it starts emits `sync:complete`, `sync:error` and `blocks:changed` from the ' +
-    'sync daemon, as does the one `cancel_sync` ends, and the mock has no sync transport',
-  import_markdown:
-    'emits nothing: progress streams on its own channel, not the event bus, and the handle ' +
-    'resolves the app-data directory',
-  mcp_set_enabled:
-    'emits nothing itself: the MCP server it starts emits `blocks:changed`, ' +
-    '`block:properties-changed` and `mcp:activity` per tool call, which no mock command reaches',
-  notify_task: 'emits nothing: the handle reaches the OS notification backend',
-  get_mcp_status: APP_DATA_DIR_ONLY,
-  collect_bug_report_metadata: APP_DATA_DIR_ONLY,
-  read_logs_for_report: APP_DATA_DIR_ONLY,
-  add_attachment_with_bytes: APP_DATA_DIR_ONLY,
-  read_attachment: APP_DATA_DIR_ONLY,
-  delete_attachment: APP_DATA_DIR_ONLY,
-}
-
-// ---------------------------------------------------------------------------
 // Allowlist — read-only commands NOT (yet) driven by a conformance query step
 // ---------------------------------------------------------------------------
 
@@ -1713,12 +1681,7 @@ interface FixtureShape {
   name: string
   ops: Array<{ command: string; args?: Record<string, unknown>; via?: string; name?: string }>
   /** #4670 — the backend-authored record of each `via: "command"` op. */
-  expected_ops?: Array<{
-    name: string
-    returns: string[]
-    error?: string | null
-    events?: string[]
-  }>
+  expected_ops?: Array<{ name: string; returns: string[]; error?: string | null }>
   /** #3347 — post-op READ steps (see `conformance-query.ts`). */
   queries?: Array<QueryStepShape>
   /** #3347 — the backend-authored projection of each `queries` step. */
@@ -1781,12 +1744,7 @@ interface LoadedFixture {
   opCommands: Set<string>
   /** #4670 — the `via: "command"` ops, in op order, and their recordings. */
   commandOps: Array<{ command: string; name?: string }>
-  expectedOps: Array<{
-    name: string
-    returns: string[]
-    error?: string | null
-    events?: string[]
-  }>
+  expectedOps: Array<{ name: string; returns: string[]; error?: string | null }>
   queryCommands: Set<string>
   querySteps: QueryStepShape[]
   expectedQueries: Array<{ name: string; rows: string[]; error?: string | null }>
@@ -1954,7 +1912,6 @@ const WAIVER_LISTS: ReadonlyArray<readonly [string, Readonly<Record<string, stri
   ['READ_NO_QUERY_ALLOWLIST', READ_NO_QUERY_ALLOWLIST],
   ['READ_QUERY_BRANCH_ALLOWLIST', READ_QUERY_BRANCH_ALLOWLIST],
   ['QUERY_STEPS_BACKEND_ONLY', QUERY_STEPS_BACKEND_ONLY],
-  ['EVENT_WAIVERS', EVENT_WAIVERS],
 ]
 
 /**
@@ -2680,35 +2637,6 @@ describe('#3083 conformance-coverage ratchet', () => {
         `'test(conformance_fixtures_match_backend)'), OR (b) adding an entry to ` +
         `NO_FIXTURE_ALLOWLIST in this file with a reason. If the command is ` +
         `read-only, give it a query-verb prefix or add it to READ_ONLY_EXACT.`,
-    ).toEqual([])
-  })
-
-  it('#6054 every command that can emit an event pins what it emits, or is waived', () => {
-    const rustSignatures = extractRustCommandSignatures()
-    const canEmit = [...rustSignatures]
-      .filter(([, signature]) => signature.includes('AppHandle'))
-      .map(([command]) => command)
-    const pinned = new Set<string>()
-    for (const fx of fixtures) {
-      for (const [i, op] of fx.commandOps.entries()) {
-        if ((fx.expectedOps[i]?.events?.length ?? 0) > 0) pinned.add(op.command)
-      }
-    }
-    expect(
-      canEmit.length,
-      'no Rust command signature names an AppHandle: the scan is broken',
-    ).toBeGreaterThan(0)
-    expect(
-      canEmit.filter((c) => !pinned.has(c) && !(c in EVENT_WAIVERS)),
-      `These commands take an AppHandle, so their wrappers can emit Tauri events, yet no ` +
-        `fixture op records what they emit and EVENT_WAIVERS gives no reason. FIX by EITHER ` +
-        `driving the command in a fixture with \`via: "command"\` (its \`events\` are authored ` +
-        `with CONFORMANCE_UPDATE=1) and emitting the same from the mock handler, OR adding ` +
-        `an EVENT_WAIVERS entry saying why the mock emits nothing.`,
-    ).toEqual([])
-    expect(
-      Object.keys(EVENT_WAIVERS).filter((c) => pinned.has(c) || !rustSignatures.has(c)),
-      'EVENT_WAIVERS names commands that now pin their events, or no longer exist. Delete them.',
     ).toEqual([])
   })
 

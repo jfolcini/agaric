@@ -323,10 +323,9 @@ export const commands = {
 	 *  FE used to drive in `useBlockMultiSelect.handleBatchSetTodo` into
 	 *  one round-trip / one op_log seq range / one writer-lock window.
 	 * 
-	 *  Emits one `EVENT_PROPERTY_CHANGED` per successfully-updated block
-	 *  so existing per-block listeners (e.g. agenda recompute, property
-	 *  drawer) keep firing without protocol changes. Failed-emit
-	 *  Breadcrumbs follow the established log-on-error pattern.
+	 *  Emits one `EVENT_PROPERTY_CHANGED` per block it was handed, skipped
+	 *  or not ([`property_changed_events`]), so the per-block listeners
+	 *  (e.g. agenda recompute, property drawer) get the single-row signal.
 	 * 
 	 *  #6156: the reply carries the refs of every op the batch appended, the
 	 *  stamps' among them, so the frontend undoes it by those refs.

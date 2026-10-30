@@ -1,5 +1,5 @@
 {
-  "description": "#6054 C: a property write's wrapper emits one `block:properties-changed` per block the caller named once its `_inner` commits, and the mock emits the same, so a mock-lane view refetches where the app's does. The three single-column setters each name their own column; `delete_property` names the keys it removed, so `repeat` takes its bound with it; a batch names every block it was handed, the one it skipped included; a refused write emits nothing.",
+  "description": "#6054 C: a property write's wrapper emits one `block:properties-changed` per block the caller named once its `_inner` commits, and the mock emits the same, so a mock-lane view refetches where the app's does. The three single-column setters each name their own column; `delete_property` names the keys it removed, so `repeat` takes its bound with it; a batch names every block it was handed, the one it skipped included; a write refused for its value or for a deleted block emits nothing.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -147,6 +147,48 @@
       "error": "validation",
       "name": "a_refused_write_emits_nothing",
       "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "set_todo_state_refuses_an_unknown_state",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "set_due_date_refuses_a_word",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "set_scheduled_date_refuses_an_impossible_day",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "set_priority_refuses_a_deleted_block",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "set_todo_state_refuses_a_deleted_block",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "set_due_date_refuses_a_deleted_block",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "set_scheduled_date_refuses_a_deleted_block",
+      "returns": []
     }
   ],
   "name": "property_change_events",
@@ -221,6 +263,83 @@
       "comment": "No such priority level.",
       "expect_error": "validation",
       "name": "a_refused_write_emits_nothing",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "state": "NOPE"
+      },
+      "command": "set_todo_state",
+      "comment": "No such task state.",
+      "expect_error": "validation",
+      "name": "set_todo_state_refuses_an_unknown_state",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "date": "tomorrow"
+      },
+      "command": "set_due_date",
+      "comment": "Not YYYY-MM-DD.",
+      "expect_error": "validation",
+      "name": "set_due_date_refuses_a_word",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "date": "2026-13-45"
+      },
+      "command": "set_scheduled_date",
+      "comment": "YYYY-MM-DD in shape, but no such day.",
+      "expect_error": "validation",
+      "name": "set_scheduled_date_refuses_an_impossible_day",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "level": "2"
+      },
+      "command": "set_priority",
+      "comment": "S4 is a tombstone.",
+      "expect_error": "validation",
+      "name": "set_priority_refuses_a_deleted_block",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "state": "DONE"
+      },
+      "command": "set_todo_state",
+      "comment": "S4 is a tombstone.",
+      "expect_error": "validation",
+      "name": "set_todo_state_refuses_a_deleted_block",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "date": "2026-11-03"
+      },
+      "command": "set_due_date",
+      "comment": "S4 is a tombstone.",
+      "expect_error": "validation",
+      "name": "set_due_date_refuses_a_deleted_block",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "date": "2026-11-03"
+      },
+      "command": "set_scheduled_date",
+      "comment": "S4 is a tombstone.",
+      "expect_error": "validation",
+      "name": "set_scheduled_date_refuses_a_deleted_block",
       "via": "command"
     }
   ],
