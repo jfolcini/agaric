@@ -1536,14 +1536,19 @@ export async function typeSlashCommand(page: Page, command: string) {
 
 /**
  * Select a character range inside the currently-focused TipTap editor
- * by directly manipulating the DOM Selection API, then dispatch a
- * `selectionchange` event so ProseMirror picks up the new range.
+ * through ProseMirror's own state, mapping the offsets to positions via the
+ * DOM.
  *
  * Prefer this over `Arrow` / `Shift+Arrow` keypress loops. The browser
  * moves a key-driven caret natively, and ProseMirror only takes it in on
  * the next `selectionchange`, which fires a moment later (and may be
  * coalesced), so an action dispatched straight after the last press still
  * sees the earlier selection.
+ *
+ * Not a bare DOM selection either: ProseMirror can decline to read one, and
+ * its next transaction then draws its own selection back over it. It ignores
+ * a caret in a widget (the list marker is the first text node), and just after
+ * a focus it takes a caret at the document's start for Chrome's focus reset.
  *
  * `from` / `to` are character offsets into the block's text content,
  * counted from the start. Walks the visible text nodes in document
@@ -1575,13 +1580,17 @@ export async function selectEditorRange(page: Page, from: number, to: number): P
       }
       const [startNode, startOff] = locate(fromOff)
       const [endNode, endOff] = locate(toOff)
-      const range = document.createRange()
-      range.setStart(startNode, startOff)
-      range.setEnd(endNode, endOff)
-      const selection = window.getSelection()
-      selection?.removeAllRanges()
-      selection?.addRange(range)
-      document.dispatchEvent(new Event('selectionchange'))
+      const { editor } = root as Element & {
+        editor: {
+          view: { posAtDOM: (node: Node, offset: number, bias: number) => number }
+          commands: { setTextSelection: (range: { from: number; to: number }) => boolean }
+        }
+      }
+      // Bias 1, as ProseMirror reads a DOM selection.
+      editor.commands.setTextSelection({
+        from: editor.view.posAtDOM(startNode, startOff, 1),
+        to: editor.view.posAtDOM(endNode, endOff, 1),
+      })
     },
     { from, to },
   )
