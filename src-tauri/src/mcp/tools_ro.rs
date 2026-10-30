@@ -21,7 +21,7 @@
 //! | `get_agenda` | [`agenda_range_inner`] | Dated blocks in the range plus projected repeats, one row each. `space_id` required. |
 //! | `journal_for_date` | [`journal_for_date_inner`] | Idempotent date → page lookup with a **bounded create carve-out (#2719)**: for `date` within today ± [`JOURNAL_CREATE_WINDOW_MONTHS`] months, creates the missing page on first call (single `CreateBlock`+`SetProperty` op pair, origin `agent:<name>`); outside that window the tool never creates — it returns an existing page as a pure read or `AppError::NotFound`. See [`ReadOnlyTools`] and `handle_journal_for_date` below. |
 //! | `list_spaces` | [`list_spaces_registry_inner`] | #633 — space discovery for agents. Returns `{ id, name, is_default }` per live space from the canonical `spaces` registry (#804). |
-//! | `get_page_markdown` | [`get_page_for_agent_paged_inner`], or [`get_page_source_inner`] with `editable` | #5375 — the page as Markdown, ids written as names and every block with its `^ID`, a [`RESPONSE_BYTES_CAP`] stretch at a time from a block cursor (#5402). `editable` (#5399) returns instead the whole source buffer `edit_page_markdown` takes back, never cut: a block left out of it is deleted. `space_id` required; a page in another space is rejected. |
+//! | `get_page_markdown` | [`get_page_for_agent_paged_inner`], or [`get_page_buffer_as`] in [`Dialect::Document`] with `editable` | #5375 — the page as Markdown in the dialect `append_markdown` reads, ids written as names and every block with its `^ID`, a [`RESPONSE_BYTES_CAP`] stretch at a time from a block cursor (#5402). `editable` (#5399) returns instead the whole buffer Edit as Markdown edits, which `edit_page_markdown` takes back, never cut: a block left out of it is deleted. `space_id` required; a page in another space is rejected. |
 //! | `page_history` | [`list_page_history_inner`] | Ops on a page's blocks, newest first: device, origin, op type, time, clipped before/after. Cursor paginated. `space_id` required. |
 //! | `block_history` | [`get_block_history_inner`] | The same rows for one block. |
 //! | `get_journal` | [`get_journal_page_by_date_inner`] + [`get_page_for_agent_inner`] | #5396 — a day as `get_page_markdown` renders it; `date` is `today` (default), `yesterday` or `YYYY-MM-DD` on the device's clock. Never creates: a missing day is an empty `markdown`. |
@@ -87,7 +87,9 @@ use super::registry::{
     TOOL_PAGE_HISTORY, TOOL_QUERY, TOOL_RESOLVE, TOOL_SEARCH, ToolDescription, ToolRegistry,
 };
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
-use crate::commands::pages::markdown::{NameMatch, match_page_names, match_tag_names};
+use crate::commands::pages::markdown::{
+    Dialect, NameMatch, get_page_buffer_as, match_page_names, match_tag_names,
+};
 use crate::commands::pages::metadata::{
     ListPagesWithMetadataFilter, PageSort, PageWithMetadataRow, list_pages_with_metadata_inner,
 };
@@ -95,10 +97,10 @@ use crate::commands::{
     PropertyRow, agenda_range_inner, batch_resolve_inner, get_active_block_inner,
     get_batch_properties_inner, get_block_history_inner, get_journal_page_by_date_inner,
     get_page_aliases_inner, get_page_for_agent_inner, get_page_for_agent_paged_inner,
-    get_page_inner, get_page_source_inner, get_properties_inner, journal_for_date_inner,
-    list_backlinks_grouped_inner, list_journal_days_inner, list_page_history_inner,
-    list_property_defs_inner, list_spaces_registry_inner, list_tags_for_block_inner,
-    list_tags_inner, list_trash_inner, search_blocks_inner,
+    get_page_inner, get_properties_inner, journal_for_date_inner, list_backlinks_grouped_inner,
+    list_journal_days_inner, list_page_history_inner, list_property_defs_inner,
+    list_spaces_registry_inner, list_tags_for_block_inner, list_tags_inner, list_trash_inner,
+    search_blocks_inner,
 };
 use crate::db::validate_block_in_space;
 use crate::materializer::Materializer;
@@ -1123,16 +1125,19 @@ fn tool_desc_get_page_markdown() -> ToolDescription {
         description: format!(
             "Read a page as Markdown, returned as {{ page_id, markdown, truncated, next_cursor }}: \
              a `# Title` line, YAML front matter with the page's aliases, tags and properties, \
-             then the block outline with each block's `key:: value` properties under it. Links, \
-             tags and ref-typed values are written as names, for reading; a name can be \
+             then the blocks as append_markdown reads them, each with its `key:: value` \
+             properties under it: a plain block is a paragraph, or a `+ ` item under a list \
+             block, a bulleted block a `- ` item, a numbered one `1. `, a task `- [ ]`, children \
+             indented under their parent's text, and a blank line between blocks but list items. \
+             Links, tags and ref-typed values are written as names, for reading; a name can be \
              ambiguous, so write links by ULID (`[[ULID]]`, `#[ULID]`). Each block ends with \
              `^ULID`, the block_id update_block_content takes. Past {RESPONSE_BYTES_CAP} bytes \
              the Markdown stops at a block with `truncated: true`; pass `next_cursor` as \
              `cursor` for the rest, which carries on from that block. With `editable: true`, \
-             `markdown` is instead the page's whole source, never truncated, the text the \
-             read-write server's edit_page_markdown takes back: no title line, a name only \
-             where it reads back as the same link, ref-typed values as ULIDs, and each block's \
-             `^ULID`."
+             `markdown` is instead the page's whole Markdown as the app's Edit as Markdown \
+             edits it, never truncated, the text the read-write server's edit_page_markdown \
+             takes back: no title line, a name only where it reads back as the same link, \
+             ref-typed values as ULIDs, and each block's `^ULID`."
         ),
         input_schema: json!({
             "type": "object",
@@ -1148,7 +1153,7 @@ fn tool_desc_get_page_markdown() -> ToolDescription {
                     "type": "string",
                     "description": "The `next_cursor` of a truncated read, to continue it.",
                 },
-                "editable": { "type": "boolean", "description": "Return the source edit_page_markdown takes instead. Defaults to false." },
+                "editable": { "type": "boolean", "description": "Return the Markdown edit_page_markdown takes instead. Defaults to false." },
             },
         }),
     }
@@ -1510,10 +1515,11 @@ async fn handle_get_page_markdown(pool: &SqlitePool, args: Value) -> Result<Valu
     let page_id = normalize_ulid_arg(&args.page_id);
     let space_id = SpaceId::from_string(args.space_id)?;
     validate_block_in_space(pool, &page_id, space_id.as_str()).await?;
-    // The source `edit_page_markdown` takes back is never cut: a block left out
-    // of it is deleted.
+    // The Markdown `edit_page_markdown` takes back is never cut: a block left
+    // out of it is deleted.
     let (markdown, next_cursor) = if args.editable {
-        (get_page_source_inner(pool, &page_id).await?, None)
+        let buffer = get_page_buffer_as(pool, &page_id, Dialect::Document).await?;
+        (buffer.source, None)
     } else {
         get_page_for_agent_paged_inner(pool, &page_id, args.cursor.as_deref(), RESPONSE_BYTES_CAP)
             .await?

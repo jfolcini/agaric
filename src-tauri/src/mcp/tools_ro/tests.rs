@@ -3582,7 +3582,7 @@ async fn get_page_markdown_happy_path_5375() {
     assert_eq!(
         result["markdown"],
         format!(
-            "# Plan\n\n---\naliases: [Plan B]\n---\n\n- see [[Other]] ^{}\n",
+            "# Plan\n\n---\naliases: [Plan B]\n---\n\nsee [[Other]] ^{}\n",
             child.id.as_str()
         )
     );
@@ -3945,7 +3945,7 @@ async fn get_journal_reads_a_day_and_never_creates_one_5396() {
     let markdown = get_page_for_agent_inner(&tools.pool, page.as_str())
         .await
         .unwrap();
-    assert!(markdown.contains("- note 0 ^"), "got {markdown:?}");
+    assert!(markdown.contains("\nnote 0 ^"), "got {markdown:?}");
 
     for (date, today) in [(None, "2026-03-01"), (Some("yesterday"), "2026-03-02")] {
         let mut args = json!({ "space_id": space.to_lowercase() });
@@ -5130,6 +5130,135 @@ async fn get_page_markdown_stops_at_the_byte_cap_and_continues_5402() {
         .await
         .expect_err("a cursor naming no block of the page is refused");
     assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+}
+
+/// A page titled `P`: `intro`, bulleted `x` with the plain `y` under it, the
+/// numbered `one` and `two`, and `outro`. Returns the page id and the blocks'
+/// ids in that order.
+async fn mk_list_page(tools: &ReadOnlyTools, mat: &Materializer) -> (String, Vec<String>) {
+    let page = create_block_inner(&tools.pool, DEV, mat, "page".into(), "P".into(), None, None)
+        .await
+        .unwrap()
+        .id;
+    let mut ids: Vec<String> = Vec::new();
+    for (content, parent, style) in [
+        ("intro", None, None),
+        ("x", None, Some("bullet")),
+        ("y", Some(1), None),
+        ("one", None, Some("ordered")),
+        ("two", None, Some("ordered")),
+        ("outro", None, None),
+    ] {
+        let parent = parent.map_or(page.clone(), |at: usize| BlockId::from_trusted(&ids[at]));
+        let block = create_block_inner(
+            &tools.pool,
+            DEV,
+            mat,
+            "content".into(),
+            content.into(),
+            Some(parent),
+            None,
+        )
+        .await
+        .unwrap()
+        .id;
+        if let Some(style) = style {
+            crate::commands::set_property_inner(
+                &tools.pool,
+                DEV,
+                mat,
+                block.as_str().into(),
+                "listStyle".into(),
+                Some(style.into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        }
+        ids.push(block.into_string());
+    }
+    settle(mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
+    (page.into_string(), ids)
+}
+
+/// A bulleted block reads as a `- ` item and the plain block under it as a
+/// `+ ` item, each with its `^ID`, as append_markdown reads them (#6190).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_page_markdown_writes_list_blocks_as_append_markdown_reads_them_6190() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let (page, ids) = mk_list_page(&tools, &mat).await;
+
+    let result = tools
+        .call_tool(
+            "get_page_markdown",
+            json!({"page_id": page, "space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
+        .await
+        .unwrap();
+
+    let [intro, x, y, one, two, outro] = &ids[..] else {
+        panic!("six blocks");
+    };
+    assert_eq!(
+        result["markdown"],
+        format!(
+            "# P\n\nintro ^{intro}\n\n- x ^{x}\n  + y ^{y}\n1. one ^{one}\n2. two ^{two}\n\n\
+             outro ^{outro}\n"
+        ),
+        "each block as append_markdown reads it, with its `^ID`"
+    );
+}
+
+/// Paging cuts the one uncut render at block starts, so a stretch that starts
+/// mid-list, at a `+ ` item or after a blank line, keeps what the layout wrote
+/// there: read in turn, the stretches are the uncut page.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_page_markdown_stretches_cut_mid_list_are_the_uncut_page_6190() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let (page, ids) = mk_list_page(&tools, &mat).await;
+    let whole = get_page_for_agent_inner(&tools.pool, &page).await.unwrap();
+
+    let mut stretches = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        // One block a stretch: a stretch is never short of one block.
+        let (markdown, next) =
+            get_page_for_agent_paged_inner(&tools.pool, &page, cursor.as_deref(), 1)
+                .await
+                .unwrap();
+        stretches.push(markdown);
+        match next {
+            Some(next) => cursor = Some(next),
+            None => break,
+        }
+    }
+
+    assert_eq!(
+        stretches.len(),
+        ids.len(),
+        "one stretch a block: {stretches:#?}"
+    );
+    assert_eq!(
+        stretches.concat(),
+        whole,
+        "read in turn, the stretches are the page"
+    );
+    assert_eq!(
+        stretches[2],
+        format!("  + y ^{}\n", ids[2]),
+        "the plain child starts a stretch at its column, still a `+ ` item"
+    );
+    assert_eq!(
+        stretches[5],
+        format!("\noutro ^{}\n", ids[5]),
+        "a stretch keeps the blank line the layout wrote before its block"
+    );
 }
 
 // -------------------------------------------------------------------

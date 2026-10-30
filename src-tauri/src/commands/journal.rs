@@ -295,7 +295,7 @@ async fn find_journal_template_in_tx(
 /// Copy the space's journal template under the day page `page_id` (#5395),
 /// in the caller's transaction, so the day and its template land or roll back
 /// together and one undo reverts both. No template, one in the trash, or one
-/// the copy refuses (a value that does not read back from the source grammar,
+/// the copy refuses (a value that does not read back from the buffer grammar,
 /// a copy over the undo-op cap) leaves the day empty with a warning: the day
 /// is what Quick Capture and `journal_for_date` need, and a template that
 /// blocked it would block every day until it was fixed. The copy refuses
@@ -1625,6 +1625,80 @@ mod tests {
         mat.shutdown();
     }
 
+    /// A bulleted template block is copied bulleted, and the plain block
+    /// under it, a `+ ` item in the buffer the copy goes through, plain under
+    /// the bulleted copy (#6190).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_template_copy_keeps_a_bulleted_block_and_its_plain_child() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let space = mk_space(&pool, "Personal").await;
+        let template = create_page_in_space_inner(
+            &pool,
+            DEV,
+            &mat,
+            None,
+            "Daily template".into(),
+            space.clone(),
+        )
+        .await
+        .expect("template page")
+        .into_string();
+        flag(&pool, &mat, &template, "template").await;
+        flag(&pool, &mat, &template, "journal-template").await;
+        let bulleted = child(&pool, &mat, &template, "bulleted").await;
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            ActiveBlockId::from(bulleted.clone()),
+            "listStyle".into(),
+            Some("bullet".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("bulleted");
+        child(&pool, &mat, &bulleted, "plain").await;
+
+        let day = NaiveDate::parse_from_str(DAY, "%Y-%m-%d").unwrap();
+        let page = journal_for_date_inner(&pool, DEV, &mat, day, &space)
+            .await
+            .unwrap()
+            .id
+            .into_string();
+        mat.flush_background().await.unwrap();
+
+        let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
+            "SELECT b.content, p.content, s.value_text FROM blocks b \
+             JOIN blocks p ON p.id = b.parent_id \
+             LEFT JOIN block_properties s ON s.block_id = b.id AND s.key = 'listStyle' \
+             WHERE b.page_id = ? AND b.id != b.page_id AND b.deleted_at IS NULL \
+             ORDER BY b.content",
+        )
+        .bind(&page)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            [
+                (
+                    "bulleted".to_owned(),
+                    DAY.to_owned(),
+                    Some("bullet".to_owned())
+                ),
+                ("plain".to_owned(), "bulleted".to_owned(), None),
+            ],
+            "(content, parent's content, list style) of each copy"
+        );
+
+        mat.shutdown();
+    }
+
     /// The day exists, empty, and Quick Capture lands on today's: a template
     /// the copy refuses never blocks a day.
     async fn assert_refused_template_gives_empty_days(
@@ -1656,7 +1730,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_template_the_copy_refuses_creates_an_empty_day() {
-        // A carriage return does not read back from the source grammar, so
+        // A carriage return does not read back from the buffer grammar, so
         // the copy refuses; the refusal comes before its first insert, so the
         // day commits without it.
         let (pool, _dir) = test_pool().await;

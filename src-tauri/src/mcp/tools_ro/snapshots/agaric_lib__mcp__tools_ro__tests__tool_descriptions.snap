@@ -292,7 +292,7 @@ expression: wire
     properties: {}
     type: object
   name: list_spaces
-- description: "Read a page as Markdown, returned as { page_id, markdown, truncated, next_cursor }: a `# Title` line, YAML front matter with the page's aliases, tags and properties, then the block outline with each block's `key:: value` properties under it. Links, tags and ref-typed values are written as names, for reading; a name can be ambiguous, so write links by ULID (`[[ULID]]`, `#[ULID]`). Each block ends with `^ULID`, the block_id update_block_content takes. Past 65536 bytes the Markdown stops at a block with `truncated: true`; pass `next_cursor` as `cursor` for the rest, which carries on from that block. With `editable: true`, `markdown` is instead the page's whole source, never truncated, the text the read-write server's edit_page_markdown takes back: no title line, a name only where it reads back as the same link, ref-typed values as ULIDs, and each block's `^ULID`."
+- description: "Read a page as Markdown, returned as { page_id, markdown, truncated, next_cursor }: a `# Title` line, YAML front matter with the page's aliases, tags and properties, then the blocks as append_markdown reads them, each with its `key:: value` properties under it: a plain block is a paragraph, or a `+ ` item under a list block, a bulleted block a `- ` item, a numbered one `1. `, a task `- [ ]`, children indented under their parent's text, and a blank line between blocks but list items. Links, tags and ref-typed values are written as names, for reading; a name can be ambiguous, so write links by ULID (`[[ULID]]`, `#[ULID]`). Each block ends with `^ULID`, the block_id update_block_content takes. Past 65536 bytes the Markdown stops at a block with `truncated: true`; pass `next_cursor` as `cursor` for the rest, which carries on from that block. With `editable: true`, `markdown` is instead the page's whole Markdown as the app's Edit as Markdown edits it, never truncated, the text the read-write server's edit_page_markdown takes back: no title line, a name only where it reads back as the same link, ref-typed values as ULIDs, and each block's `^ULID`."
   inputSchema:
     additionalProperties: false
     properties:
@@ -300,7 +300,7 @@ expression: wire
         description: "The `next_cursor` of a truncated read, to continue it."
         type: string
       editable:
-        description: Return the source edit_page_markdown takes instead. Defaults to false.
+        description: Return the Markdown edit_page_markdown takes instead. Defaults to false.
         type: boolean
       page_id:
         description: ULID of the page block.

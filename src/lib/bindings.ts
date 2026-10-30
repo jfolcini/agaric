@@ -2070,16 +2070,15 @@ export type DeleteResponse = {
 };
 
 /**
- *  The two grammars Edit as Markdown's buffer is written in (#5691). `Source`
- *  writes every block as an outline bullet, its list marker after the bullet.
- *  `Document` writes a plain block as its own paragraph, a list block with its
- *  marker and a task as `- [ ] x`, which has no list style (D3): a blank line
- *  separates blocks but neighbouring list lines (D1), a plain block under a
- *  list block is a `+` item and a line holding only `\` an empty line (D4).
- *  The MCP page tools (`get_page_markdown`, `edit_page_markdown`) and Duplicate
- *  keep `Source` (D5); `append_markdown` and `capture` read `Document`, as a
- *  paste does. The buffer commands take it as `source` or `document`, and read
- *  `Source` when given none.
+ *  The two grammars a page's buffer is written in (#5691). `Document` writes a
+ *  plain block as its own paragraph, a list block with its marker and a task
+ *  as `- [ ] x`, which has no list style (D3): a blank line separates blocks
+ *  but neighbouring list lines (D1), a plain block under a list block is a `+`
+ *  item and a line holding only `\` an empty line (D4). Edit as Markdown,
+ *  Duplicate, journal templates and the MCP page tools write and read it, as a
+ *  paste reads it (#6190). `Source` writes every block as an outline bullet,
+ *  its list marker after the bullet; nothing in the app asks for it, and the
+ *  buffer commands read it only when given no dialect.
  */
 export type Dialect = "source" | "document";
 

@@ -5141,10 +5141,75 @@ async fn duplicate_block_carries_each_task_state() {
     }
 }
 
-/// Everything the source buffer writes lands where the original keeps it:
-/// the task columns in `blocks`, the list style, the recurrence rule (#5160
-/// P4) and the custom properties in `block_properties`, each declared type in
-/// its own column.
+/// A bulleted block's copy is bulleted and its plain child, a `+ ` item in the
+/// buffer the copy goes through, is plain under it; the child copied alone is
+/// plain beside it, under the bulleted original (#6190).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_block_keeps_a_bulleted_block_bulleted_and_its_plain_child_plain() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dup").await;
+    let bulleted = dup_child(&pool, &mat, &page, "bulleted").await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        bulleted.as_str().into(),
+        "listStyle".into(),
+        Some("bullet".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let plain = dup_child(&pool, &mat, &bulleted, "plain").await;
+    settle(&mat).await;
+    let no_columns = "columns todo=None priority=None scheduled=None due=None".to_owned();
+    let bullet =
+        r#"listStyle text=Some("bullet") num=None date=None ref=None bool=None"#.to_owned();
+
+    let rows = duplicate(&pool, &mat, &bulleted).await;
+
+    assert_eq!(rows.len(), 2, "the block and its child: {rows:?}");
+    assert_eq!(
+        dup_storage(&pool, &rows[0].id).await,
+        [no_columns.clone(), bullet],
+        "the copy is bulleted"
+    );
+    assert_eq!(
+        rows[1].parent_id.as_ref(),
+        Some(&rows[0].id),
+        "the child's copy is under the copy"
+    );
+    assert_eq!(
+        dup_storage(&pool, &rows[1].id).await,
+        std::slice::from_ref(&no_columns),
+        "its child is plain"
+    );
+
+    let rows = duplicate(&pool, &mat, &plain).await;
+
+    assert_eq!(rows.len(), 1, "the child alone: {rows:?}");
+    assert_eq!(
+        rows[0].parent_id.as_ref(),
+        Some(&bulleted),
+        "the copy is beside the child, under the bulleted original"
+    );
+    assert_eq!(
+        dup_storage(&pool, &rows[0].id).await,
+        [no_columns],
+        "the child copied alone is plain"
+    );
+}
+
+/// Everything the buffer writes lands where the original keeps it: the task
+/// columns in `blocks`, the recurrence rule (#5160 P4) and the custom
+/// properties in `block_properties`, each declared type in its own column. A
+/// task has no list style in the buffer (#5691 D3), so the copy of a task that
+/// also holds one is a task without it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn duplicate_block_carries_task_columns_list_style_and_typed_properties() {
     let (pool, _dir) = test_pool().await;
@@ -5224,10 +5289,12 @@ async fn duplicate_block_carries_task_columns_list_style_and_typed_properties() 
 
         let rows = duplicate(&pool, &mat, &original).await;
 
+        let mut task = expected;
+        task.retain(|row| !row.starts_with("listStyle "));
         assert_eq!(
             dup_storage(&pool, &rows[0].id).await,
-            expected,
-            "a {style} copy carries every column and property in the original's storage"
+            task,
+            "a {style} task's copy carries every column and property but its list style"
         );
     }
 }

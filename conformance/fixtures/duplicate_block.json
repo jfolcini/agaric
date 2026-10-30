@@ -1,5 +1,5 @@
 {
-  "description": "#5140 Phase 3a — `duplicate_block` copies a content block and its content subtree as ROWS, right after the original. A fenced block stays ONE block whether or not its fence is closed (the markdown round-trip it replaced split on every newline), the open-fence block's child travels with it while the page nested in the same subtree does not, and the copy carries the ref-typed property with its target, the task columns, the list style and the recurrence rule (#5160 P4), not an occurrence's `repeat-seq`. The returns pin every created row, root first then its descendants in pre-order, with the root one slot after the original. Seed: S1 (Home) > S2 (closed fence), S3 (open fence) > [S4 (child), S5 (nested page) > S6], S7 (carries a ref to S9), S8 (DONE task), S9 (ref target) > S11 (purged by an op), S10 (trashed by an op). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "description": "#5140 Phase 3a — `duplicate_block` copies a content block and its content subtree as ROWS, right after the original. A fenced block stays ONE block whether or not its fence is closed (the markdown round-trip it replaced split on every newline), the open-fence block's child travels with it while the page nested in the same subtree does not, and the copy carries the ref-typed property with its target, the task columns and the recurrence rule (#5160 P4), not an occurrence's `repeat-seq`. The subtree goes through a Document buffer (#6190), where a task has no list style (#5691 D3), so S8's copy is a task without the `ordered` style S8 holds beside its state. The returns pin every created row, root first then its descendants in pre-order, with the root one slot after the original. Seed: S1 (Home) > S2 (closed fence), S3 (open fence) > [S4 (child), S5 (nested page) > S6], S7 (carries a ref to S9), S8 (DONE task), S9 (ref target) > S11 (purged by an op), S10 (trashed by an op), S12 (bulleted) > S13 (plain). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -135,10 +135,36 @@
       },
       {
         "block_type": "content",
-        "content": "```js\nfirst line\nsecond line\n```",
+        "content": "a bulleted block",
         "deleted_at": null,
         "due_date": null,
         "id": "B12",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 11,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "plain under the bullet",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B13",
+        "page_id": "B1",
+        "parent_id": "B12",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "```js\nfirst line\nsecond line\n```",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B14",
         "page_id": "B1",
         "parent_id": "B1",
         "position": 2,
@@ -151,7 +177,7 @@
         "content": "```sh\necho",
         "deleted_at": null,
         "due_date": null,
-        "id": "B13",
+        "id": "B15",
         "page_id": "B1",
         "parent_id": "B1",
         "position": 4,
@@ -164,9 +190,9 @@
         "content": "inside the open fence",
         "deleted_at": null,
         "due_date": null,
-        "id": "B14",
+        "id": "B16",
         "page_id": "B1",
-        "parent_id": "B13",
+        "parent_id": "B15",
         "position": 1,
         "priority": null,
         "scheduled_date": null,
@@ -177,7 +203,7 @@
         "content": "points at the reviewer",
         "deleted_at": null,
         "due_date": null,
-        "id": "B15",
+        "id": "B17",
         "page_id": "B1",
         "parent_id": "B1",
         "position": 6,
@@ -190,17 +216,43 @@
         "content": "finished work",
         "deleted_at": null,
         "due_date": "2026-03-01",
-        "id": "B16",
+        "id": "B18",
         "page_id": "B1",
         "parent_id": "B1",
         "position": 8,
         "priority": "2",
         "scheduled_date": null,
         "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "a bulleted block",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B19",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 12,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "plain under the bullet",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B20",
+        "page_id": "B1",
+        "parent_id": "B19",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
       }
     ],
     "op_log_digest": {
-      "count": 22,
+      "count": 25,
       "ops": [
         {
           "op_type": "set_property_def"
@@ -228,6 +280,10 @@
         },
         {
           "key": "repeat-seq",
+          "op_type": "set_property"
+        },
+        {
+          "key": "listStyle",
           "op_type": "set_property"
         },
         {
@@ -259,10 +315,6 @@
           "op_type": "create_block"
         },
         {
-          "key": "listStyle",
-          "op_type": "set_property"
-        },
-        {
           "op_type": "set_todo_state"
         },
         {
@@ -274,6 +326,16 @@
         {
           "key": "repeat",
           "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
         }
       ]
     },
@@ -304,21 +366,27 @@
         "value_type": "Num"
       },
       {
-        "block_id": "B15",
+        "block_id": "B12",
+        "key": "listStyle",
+        "value": "bullet",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B17",
         "key": "reviewer",
         "value": "B9",
         "value_type": "Ref"
       },
       {
-        "block_id": "B16",
-        "key": "listStyle",
-        "value": "ordered",
+        "block_id": "B18",
+        "key": "repeat",
+        "value": "+1w",
         "value_type": "Text"
       },
       {
-        "block_id": "B16",
-        "key": "repeat",
-        "value": "+1w",
+        "block_id": "B19",
+        "key": "listStyle",
+        "value": "bullet",
         "value_type": "Text"
       }
     ]
@@ -335,7 +403,7 @@
       "error": null,
       "name": "duplicate_a_closed_fence",
       "returns": [
-        "B12#block_type=content#content=```js\nfirst line\nsecond line\n```#parent_id=B1#position=2"
+        "B14#block_type=content#content=```js\nfirst line\nsecond line\n```#parent_id=B1#position=2"
       ]
     },
     {
@@ -343,21 +411,30 @@
       "error": null,
       "name": "duplicate_an_open_fence_with_its_child",
       "returns": [
-        "B13#block_type=content#content=```sh\necho#parent_id=B1#position=4",
-        "B14#block_type=content#content=inside the open fence#parent_id=B13#position=1"
+        "B15#block_type=content#content=```sh\necho#parent_id=B1#position=4",
+        "B16#block_type=content#content=inside the open fence#parent_id=B15#position=1"
       ]
     },
     {
       "code": null,
       "error": null,
       "name": "duplicate_keeps_a_ref_property",
-      "returns": ["B15#block_type=content#content=points at the reviewer#parent_id=B1#position=6"]
+      "returns": ["B17#block_type=content#content=points at the reviewer#parent_id=B1#position=6"]
     },
     {
       "code": null,
       "error": null,
-      "name": "duplicate_keeps_task_columns_and_list_style",
-      "returns": ["B16#block_type=content#content=finished work#parent_id=B1#position=8"]
+      "name": "duplicate_keeps_task_columns",
+      "returns": ["B18#block_type=content#content=finished work#parent_id=B1#position=8"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "duplicate_keeps_a_bulleted_block_and_its_plain_child",
+      "returns": [
+        "B19#block_type=content#content=a bulleted block#parent_id=B1#position=12",
+        "B20#block_type=content#content=plain under the bullet#parent_id=B19#position=1"
+      ]
     },
     {
       "code": null,
@@ -457,6 +534,17 @@
     },
     {
       "args": {
+        "blockId": "S12",
+        "key": "listStyle",
+        "value": {
+          "value_text": "bullet"
+        }
+      },
+      "command": "set_property",
+      "comment": "S12 is a bulleted block that is no task, so its copy keeps the style."
+    },
+    {
+      "args": {
         "blockId": "S10"
       },
       "command": "delete_block"
@@ -505,8 +593,17 @@
         "blockId": "S8"
       },
       "command": "duplicate_block",
-      "comment": "The copy keeps todo_state, priority and due_date (the snapshot's block columns), and listStyle and the repeat rule but not repeat-seq (its properties); the digest pins the order they are written in.",
-      "name": "duplicate_keeps_task_columns_and_list_style",
+      "comment": "The copy keeps todo_state, priority and due_date (the snapshot's block columns) and the repeat rule, but not repeat-seq, nor listStyle, which a task does not carry (its properties); the digest pins the order they are written in.",
+      "name": "duplicate_keeps_task_columns",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S12"
+      },
+      "command": "duplicate_block",
+      "comment": "The copy is bulleted and its child, S13's copy, plain under it: a `+ ` item in the Document buffer the copy goes through (#6190); the snapshot's properties pin both.",
+      "name": "duplicate_keeps_a_bulleted_block_and_its_plain_child",
       "via": "command"
     },
     {
@@ -617,6 +714,20 @@
         "content": "purged",
         "id": "S11",
         "parent_id": "S9",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "a bulleted block",
+        "id": "S12",
+        "parent_id": "S1",
+        "position": 7
+      },
+      {
+        "block_type": "content",
+        "content": "plain under the bullet",
+        "id": "S13",
+        "parent_id": "S12",
         "position": 1
       }
     ],
