@@ -147,6 +147,18 @@ describe('getPayloadRawContent', () => {
     expect(getPayloadRawContent(makeEntry(payload, 'rename_property_key'))).toBe('project → area')
   })
 
+  it('returns key: old → new for a rename_property_option payload', () => {
+    const payload = JSON.stringify({
+      space_id: 'SP1',
+      key: 'stage',
+      old_option: 'review',
+      new_option: 'in_review',
+    })
+    expect(getPayloadRawContent(makeEntry(payload, 'rename_property_option'))).toBe(
+      'stage: review → in_review',
+    )
+  })
+
   it('returns the merged keys, from → into, for a rewrite_properties payload', () => {
     const def = { value_type: 'select', options: '["a"]' }
     const payload = JSON.stringify({

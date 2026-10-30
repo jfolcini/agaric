@@ -398,6 +398,7 @@ fn assemble_reverses(
             OpType::SetPropertyDef => property_ops::reverse_set_property_def(record),
             OpType::RenamePropertyKey => property_ops::reverse_rename_property_key(record),
             OpType::RewriteProperties => property_ops::reverse_rewrite_properties(record),
+            OpType::RenamePropertyOption => property_ops::reverse_rename_property_option(record),
         };
         match reverse {
             Ok(payload) => result.push(Ok(payload)),

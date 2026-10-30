@@ -110,8 +110,9 @@ pub async fn apply_op_tag_inheritance(
         //  - AddAttachment / DeleteAttachment: attachments don't inherit tags
         //  - PurgeBlock: cascade DELETE in materializer handles block_tag_inherited rows
         //  - AddPageAlias / RemovePageAlias: aliases are not tags
-        //  - SetPropertyDef / RenamePropertyKey / RewriteProperties: they
-        //    rewrite properties and definitions, never tags
+        //  - SetPropertyDef / RenamePropertyKey / RewriteProperties /
+        //    RenamePropertyOption: they rewrite properties and definitions,
+        //    never tags
         OpPayload::EditBlock(_)
         | OpPayload::SetProperty(_)
         | OpPayload::DeleteProperty(_)
@@ -123,6 +124,7 @@ pub async fn apply_op_tag_inheritance(
         | OpPayload::RemovePageAlias(_)
         | OpPayload::SetPropertyDef(_)
         | OpPayload::RenamePropertyKey(_)
-        | OpPayload::RewriteProperties(_) => Ok(()),
+        | OpPayload::RewriteProperties(_)
+        | OpPayload::RenamePropertyOption(_) => Ok(()),
     }
 }

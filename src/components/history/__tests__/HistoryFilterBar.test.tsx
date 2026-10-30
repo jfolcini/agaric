@@ -120,8 +120,8 @@ describe('HistoryFilterBar', () => {
     const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
     const options = select.querySelectorAll('option')
 
-    // __all__ + 18 op types = 19 options
-    expect(options).toHaveLength(19)
+    // __all__ + 19 op types = 20 options
+    expect(options).toHaveLength(20)
     expect(options[0]).toHaveTextContent('All types')
     expect(options[1]).toHaveTextContent('Edit')
     expect(options[2]).toHaveTextContent('Create')
@@ -139,6 +139,8 @@ describe('HistoryFilterBar', () => {
     // #5841 S2 — a key rename and a merge are ops, listed in global history.
     expect(values).toContain('rename_property_key')
     expect(values).toContain('rewrite_properties')
+    // #5841 S4 — an option rename is an op, listed in global history.
+    expect(values).toContain('rename_property_option')
     // #5841 S3 — a rewrite is a merge or a type change, so its label names neither.
     const rewrite = Array.from(options).find(
       (o) => o.getAttribute('value') === 'rewrite_properties',
@@ -266,14 +268,15 @@ describe('HistoryFilterBar', () => {
       expect(content).toHaveTextContent('An alias was removed from a page')
       expect(content).toHaveTextContent(t('history.opTypeDescription.setPropertyDef'))
       expect(content).toHaveTextContent(t('history.opTypeDescription.renamePropertyKey'))
+      expect(content).toHaveTextContent(t('history.opTypeDescription.renamePropertyOption'))
       expect(content).toHaveTextContent(t('history.opTypeDescription.rewriteProperties'))
       expect(content).toHaveTextContent(
         "One of a space's properties was merged into another, or changed type",
       )
 
-      // All 18 op types render as <dt>/<dd> rows inside the legend's <dl>.
+      // All 19 op types render as <dt>/<dd> rows inside the legend's <dl>.
       const rows = content.querySelectorAll('dl > div')
-      expect(rows).toHaveLength(18)
+      expect(rows).toHaveLength(19)
     })
   })
 })

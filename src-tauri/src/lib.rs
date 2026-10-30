@@ -194,6 +194,7 @@ macro_rules! agaric_commands {
             $crate::commands::property_keys::rename_property_key,
             $crate::commands::property_keys::preview_property_merge,
             $crate::commands::property_keys::merge_property_key,
+            $crate::commands::property_options::rename_property_option,
             $crate::commands::property_types::preview_property_type_change,
             $crate::commands::property_types::list_property_type_change_values,
             $crate::commands::property_types::change_property_type,

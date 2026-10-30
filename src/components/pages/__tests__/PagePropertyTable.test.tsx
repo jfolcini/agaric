@@ -2088,3 +2088,104 @@ describe('PagePropertyTable removing a ref draft against the real tauri-mock (#5
     })
   })
 })
+
+// #5841 S4 — a select option renamed from the page's own options editor
+// renames it across the space, and the table reads the page and the
+// definition again, after the rename and after its Undo.
+describe('PagePropertyTable renames a select option (#5841 S4)', () => {
+  const PAGE_ID = SEED_IDS.PAGE_QUICK_NOTES
+  const MTG_1 = SEED_IDS.BLOCK_MTG_1
+  const valueLabel = t('pageProperty.valueLabel', { key: 'project' })
+
+  beforeEach(() => {
+    seedBlocks()
+    properties.set(PAGE_ID, new Map([['project', makeProp('project', { value_text: 'alpha' })]]))
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+  })
+
+  function offered(): string[] {
+    return Array.from(
+      screen.getByLabelText(valueLabel).querySelectorAll('option'),
+      (o) => o.textContent ?? '',
+    )
+  }
+
+  async function renameFromTable(from: string, to: string): Promise<void> {
+    const user = userEvent.setup()
+    await user.click(
+      await screen.findByRole('button', {
+        name: t('pageProperty.editOptionsLabel', { key: 'project' }),
+      }),
+    )
+    await user.click(
+      await screen.findByRole('button', { name: t('properties.renameOption', { option: from }) }),
+    )
+    const input = screen.getByRole('textbox', {
+      name: t('properties.renameOptionInput', { option: from }),
+    })
+    await user.clear(input)
+    await user.type(input, to)
+    await user.click(screen.getByRole('button', { name: t('properties.saveOptionName') }))
+  }
+
+  it("shows the new name on the page's value and in the definition's options", async () => {
+    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    await waitFor(() => {
+      expect(screen.getByLabelText(valueLabel)).toHaveValue('alpha')
+    })
+
+    await renameFromTable('alpha', 'apollo')
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(valueLabel)).toHaveValue('apollo')
+    })
+    expect(offered()).toEqual([t('pageProperty.emptyOption'), 'apollo', 'beta', 'gamma'])
+    expect(properties.get(PAGE_ID)?.get('project')?.['value_text']).toBe('apollo')
+    expect(properties.get(MTG_1)?.get('project')?.['value_text']).toBe('apollo')
+  })
+
+  it("the toast's Undo puts the old name back on the page and in the options", async () => {
+    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    await renameFromTable('alpha', 'apollo')
+    await waitFor(() => {
+      expect(screen.getByLabelText(valueLabel)).toHaveValue('apollo')
+    })
+
+    const message = t('propertiesView.optionRenamed', {
+      key: 'project',
+      from: 'alpha',
+      to: 'apollo',
+    })
+    const call = vi.mocked(toast.success).mock.calls.find(([shown]) => shown === message)
+    const action = (call?.[1] as { action?: { label: string; onClick: () => void } } | undefined)
+      ?.action
+    expect(action?.label).toBe(t('action.undo'))
+    act(() => action?.onClick())
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(valueLabel)).toHaveValue('alpha')
+    })
+    await waitFor(() => {
+      expect(offered()).toEqual([t('pageProperty.emptyOption'), 'alpha', 'beta', 'gamma'])
+    })
+    expect(properties.get(MTG_1)?.get('project')?.['value_text']).toBe('alpha')
+  })
+
+  it("a refused rename shows the backend's reason and changes nothing", async () => {
+    const refusal: AppError = {
+      kind: 'validation',
+      message: "'apollo' is already held by 1 block(s) of this space, the Trash included",
+    }
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) =>
+      cmd === 'rename_property_option' ? Promise.reject(refusal) : dispatch(cmd, args),
+    )
+    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    await renameFromTable('alpha', 'apollo')
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(refusal.message)
+    })
+    expect(screen.getByLabelText(valueLabel)).toHaveValue('alpha')
+    expect(properties.get(PAGE_ID)?.get('project')?.['value_text']).toBe('alpha')
+  })
+})

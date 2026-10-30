@@ -44,6 +44,7 @@ import {
   previewPropertyMerge,
   refuseBuiltinKey,
   renamePropertyKey,
+  renamePropertyOption,
   validatePropertyDefShape,
 } from '@/lib/tauri-mock/property-keys'
 import {
@@ -1019,6 +1020,17 @@ export const propertiesHandlers = {
     return renamePropertyKey(a['spaceId'] as string, a['oldKey'] as string, a['newKey'] as string)
   },
 
+  // #5841 S4 — `commands/property_options.rs`; the logic is in `property-keys.ts`.
+  rename_property_option: (args) => {
+    const a = args as Record<string, unknown>
+    return renamePropertyOption(
+      a['spaceId'] as string,
+      a['key'] as string,
+      a['oldOption'] as string,
+      a['newOption'] as string,
+    )
+  },
+
   preview_property_merge: (args) => {
     const a = args as Record<string, unknown>
     return previewPropertyMerge(
@@ -1193,6 +1205,7 @@ export const propertiesHandlers = {
   | 'delete_property_def'
   | 'count_property_usage'
   | 'rename_property_key'
+  | 'rename_property_option'
   | 'preview_property_merge'
   | 'merge_property_key'
   | 'preview_property_type_change'

@@ -1,8 +1,9 @@
 /**
- * Tauri mock — renaming and merging a property key (#5841 S2). Mirrors
- * `src-tauri/src/commands/property_keys.rs` (the commands and their
- * refusals), `reverse/property_ops.rs` (their reverses and
- * `forward_property_key`) and the engine's rename / rewrite apply.
+ * Tauri mock — renaming and merging a property key (#5841 S2) and renaming a
+ * select option (S4). Mirrors `src-tauri/src/commands/property_keys.rs` and
+ * `property_options.rs` (the commands and their refusals),
+ * `reverse/property_ops.rs` (their reverses and `forward_property_key`) and
+ * the engine's rename / rewrite apply.
  *
  * A space's blocks are its pages and their blocks, Trash included, and the
  * space block itself. `revert.ts` imports this module and `handlers/shared.ts`
@@ -267,6 +268,92 @@ export function renamePropertyKey(spaceId: string, oldKey: string, newKey: strin
   }
 }
 
+/**
+ * `refuse_unrenamable_option`: `oldOption` of `spaceId`'s select `key` can take
+ * the name `newOption`. Also the guard on the rename's undo.
+ */
+function refuseUnrenamableOption(
+  spaceId: string,
+  key: string,
+  oldOption: string,
+  newOption: string,
+): void {
+  const def = userDef(spaceId, key)
+  const valueType = def['value_type'] as string
+  if (valueType !== 'select') {
+    throw validation(`'${key}' is a ${valueType} property; only a select has options`)
+  }
+  const options = parsePropertyDefOptions((def['options'] as string | null) ?? '')
+  if (!options.includes(oldOption)) {
+    throw validation(`'${oldOption}' is not an option of '${key}'`)
+  }
+  if (options.includes(newOption)) {
+    throw validation(`'${newOption}' is already an option of '${key}'`)
+  }
+  const held = holders(spaceId, key).filter(
+    (blockId) => properties.get(blockId)?.get(key)?.['value_text'] === newOption,
+  ).length
+  if (held > 0) {
+    throw validation(
+      `'${newOption}' is already held by ${held} block(s) of this space, the Trash included`,
+    )
+  }
+}
+
+/**
+ * The engine's option rename: every value of `key` in the space equal to
+ * `oldOption` becomes `newOption`, and the definition's options swap the name
+ * in place when they hold the old one and not the new.
+ */
+function renameOptionInPlace(
+  spaceId: string,
+  key: string,
+  oldOption: string,
+  newOption: string,
+): void {
+  for (const blockId of holders(spaceId, key)) {
+    const held = properties.get(blockId)
+    const row = held?.get(key)
+    if (row?.['value_text'] === oldOption) held?.set(key, { ...row, value_text: newOption })
+  }
+  const defs = spacePropertyDefs(spaceId)
+  const def = defs.get(key)
+  const options = def?.['options']
+  if (!def || typeof options !== 'string') return
+  const list = JSON.parse(options) as string[]
+  if (!list.includes(oldOption) || list.includes(newOption)) return
+  defs.set(key, {
+    ...def,
+    options: JSON.stringify(list.map((o) => (o === oldOption ? newOption : o))),
+  })
+}
+
+/** `rename_property_option_inner`: the definition after the rename, and the op. */
+export function renamePropertyOption(
+  spaceId: string,
+  key: string,
+  oldOption: string,
+  newOption: string,
+): Row {
+  refuseBuiltinKey(key)
+  refuseInternalKey(key)
+  if (newOption.trim().length === 0) throw validation('an option cannot be empty')
+  if (oldOption === newOption) throw validation(`'${oldOption}' cannot be renamed to itself`)
+  refuseUnrenamableOption(spaceId, key, oldOption, newOption)
+  const op = pushOp('rename_property_option', {
+    space_id: spaceId,
+    key,
+    old_option: oldOption,
+    new_option: newOption,
+  })
+  renameOptionInPlace(spaceId, key, oldOption, newOption)
+  return {
+    ...userDef(spaceId, key),
+    builtin: false,
+    op_refs: [{ device_id: op.device_id, seq: op.seq }],
+  }
+}
+
 /** The refusals a merge preview and a merge share; answers both definitions. */
 function refuseMerge(spaceId: string, fromKey: string, intoKey: string): [Row, Row] {
   if (fromKey === intoKey) throw validation('a property cannot be merged into itself')
@@ -479,30 +566,79 @@ function swapRewrite(p: RewritePayload): RewritePayload {
   }
 }
 
-/** The forward payload of a rename's or a rewrite's reverse, or null for any other op. */
+/**
+ * `forward_definition_key`: the key `spaceId`'s definition `key` is declared
+ * under now, followed through the space's key renames after `target` as
+ * {@link forwardPropertyKey} follows them. A merge deletes the definition it
+ * moves away, so it is not followed.
+ */
+function forwardDefinitionKey(target: MockOpLogEntry, spaceId: string, key: string): string {
+  let current = key
+  for (const op of opsAfter(target)) {
+    if (op.op_type !== 'rename_property_key') continue
+    const p = JSON.parse(op.payload) as Record<string, unknown>
+    if (p['space_id'] !== spaceId) continue
+    if (p['old_key'] === current) current = p['new_key'] as string
+    else if (p['new_key'] === current) current = p['old_key'] as string
+  }
+  return current
+}
+
+function opsAfter(target: MockOpLogEntry): MockOpLogEntry[] {
+  const start = opLog.findIndex((o) => o.device_id === target.device_id && o.seq === target.seq)
+  return opLog.slice(start + 1)
+}
+
+/**
+ * The forward payload of a rename's or a rewrite's reverse, or null for any
+ * other op. An option rename's reverse names the key the definition is under
+ * now, when `target` is given.
+ */
 export function propertyKeyReversePayload(
   opType: string,
   p: Record<string, unknown>,
+  target?: MockOpLogEntry,
 ): Record<string, unknown> | null {
   if (opType === 'rename_property_key') {
     return { space_id: p['space_id'], old_key: p['new_key'], new_key: p['old_key'] }
+  }
+  if (opType === 'rename_property_option') {
+    const spaceId = p['space_id'] as string
+    const key = p['key'] as string
+    return {
+      space_id: spaceId,
+      key: target === undefined ? key : forwardDefinitionKey(target, spaceId, key),
+      old_option: p['new_option'],
+      new_option: p['old_option'],
+    }
   }
   if (opType === 'rewrite_properties') return { ...swapRewrite(p as unknown as RewritePayload) }
   return null
 }
 
 /**
- * Apply the reverse of a rename or a rewrite; false for any other op. The
- * reverse of a rename is refused when the old key has been declared or used
- * since, as `apply_reverse_in_tx` refuses it.
+ * Apply the reverse of `target`, a rename, an option rename or a rewrite;
+ * false for any other op. The reverse of a rename is refused when the old key
+ * has been declared or used since, and an option rename's when the definition
+ * or its options have changed since, as `apply_reverse_in_tx` refuses them.
  */
-export function revertPropertyKeyOp(opType: string, p: Record<string, unknown>): boolean {
-  const reverse = propertyKeyReversePayload(opType, p)
+export function revertPropertyKeyOp(target: MockOpLogEntry, p: Record<string, unknown>): boolean {
+  const opType = target.op_type
+  const reverse = propertyKeyReversePayload(opType, p, target)
   if (reverse === null) return false
   if (opType === 'rename_property_key') {
     const spaceId = reverse['space_id'] as string
     refuseTakenKey(spaceId, reverse['new_key'] as string)
     moveKey(spaceId, reverse['old_key'] as string, reverse['new_key'] as string)
+  } else if (opType === 'rename_property_option') {
+    const args = [
+      reverse['space_id'],
+      reverse['key'],
+      reverse['old_option'],
+      reverse['new_option'],
+    ] as [string, string, string, string]
+    refuseUnrenamableOption(...args)
+    renameOptionInPlace(...args)
   } else {
     applyRewrite(reverse as unknown as RewritePayload)
   }
@@ -524,24 +660,50 @@ function valueMove(p: RewritePayload, blockId: string, key: string): { out: stri
   return here.value === null ? { out: other.key } : 'in'
 }
 
+/** Where {@link forwardPropertyKey} found a value: its key, and its text. */
+export interface ForwardedValue {
+  key: string
+  valueText: string | null
+}
+
 /**
  * `forward_property_key`: the key `blockId`'s value of `key` lives under now,
  * followed through every rename and merge of the block's space after
  * `target`, reverses included. A value moved into the key is another key's,
- * so its moving out again (the merge's undo) leaves the key where it is.
+ * so its moving out again (the merge's undo) leaves the key where it is. A
+ * text equal to a renamed option takes the option's new name; the mapping is
+ * one way, since a value equal to the new name before the rename was another
+ * value (the rename refuses a held new name).
  */
-export function forwardPropertyKey(target: MockOpLogEntry, blockId: string, key: string): string {
+export function forwardPropertyKey(
+  target: MockOpLogEntry,
+  blockId: string,
+  key: string,
+  valueText: string | null = null,
+): ForwardedValue {
   const b = blocks.get(blockId)
-  if (!b) return key
+  if (!b) return { key, valueText }
   // `COALESCE(space_id, id)`: a space's own block names no space.
   const spaceId = spaceOf(b) ?? blockId
-  const start = opLog.findIndex((o) => o.device_id === target.device_id && o.seq === target.seq)
   let current = key
+  let text = valueText
   let movedIn = false
-  for (const op of opLog.slice(start + 1)) {
-    if (op.op_type !== 'rename_property_key' && op.op_type !== 'rewrite_properties') continue
+  for (const op of opsAfter(target)) {
+    if (
+      op.op_type !== 'rename_property_key' &&
+      op.op_type !== 'rewrite_properties' &&
+      op.op_type !== 'rename_property_option'
+    ) {
+      continue
+    }
     const p = JSON.parse(op.payload) as Record<string, unknown>
     if (p['space_id'] !== spaceId) continue
+    if (op.op_type === 'rename_property_option') {
+      if (p['key'] === current && text !== null && text === p['old_option']) {
+        text = p['new_option'] as string
+      }
+      continue
+    }
     if (op.op_type === 'rename_property_key') {
       // A rename is its own inverse on its two names: a walk on the new name,
       // whose value was gone before the rename, takes the name it vacated.
@@ -557,5 +719,5 @@ export function forwardPropertyKey(target: MockOpLogEntry, blockId: string, key:
       movedIn = false
     }
   }
-  return current
+  return { key: current, valueText: text }
 }

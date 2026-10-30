@@ -1,0 +1,326 @@
+{
+  "description": "#5841 S4 — undoing a set writes the value under the name its option has now. `one` holds `stage = review`, then `done` (O2); `two` holds `in_review` while it is an option, then `draft` (O4); `in_review` is dropped from the options (O5), `review` renamed to `in_review` (O6), and `stage` to `phase` (O7). Undoing O2 brings `review` back as `in_review`, under `phase`. Undoing O4 brings `in_review` back as it was: the rename maps its old name only, and `two`'s value is an older one. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "one",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "two",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 9,
+      "ops": [
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "rename_property_option"
+        },
+        {
+          "op_type": "rename_property_key"
+        },
+        {
+          "key": "phase",
+          "op_type": "set_property"
+        },
+        {
+          "key": "phase",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "phase",
+        "value": "in_review",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B3",
+        "key": "phase",
+        "value": "in_review",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"stage\"]"],
+      "name": "set_review",
+      "returns": ["B2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"stage\"]"],
+      "name": "set_done_over_review",
+      "returns": ["B2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "events": ["block:properties-changed#block_id=B3#changed_keys=[\"stage\"]"],
+      "name": "set_in_review",
+      "returns": ["B3"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "events": ["block:properties-changed#block_id=B3#changed_keys=[\"stage\"]"],
+      "name": "set_draft_over_in_review",
+      "returns": ["B3"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "drop_in_review",
+      "returns": ["stage#value_type=select#options=[\"draft\",\"review\",\"done\"]#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "rename_review_to_in_review",
+      "returns": [
+        "stage#value_type=select#options=[\"draft\",\"in_review\",\"done\"]#builtin=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "rename_stage_to_phase",
+      "returns": [
+        "phase#value_type=select#options=[\"draft\",\"in_review\",\"done\"]#builtin=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_set_over_review",
+      "returns": ["undo_ops#reversed_op_type=set_property#new_op_type=set_property#is_redo=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_set_over_in_review",
+      "returns": ["undo_ops#reversed_op_type=set_property#new_op_type=set_property#is_redo=false"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "phase_is_declared",
+      "rows": ["phase#value_type=select#options=[\"draft\",\"in_review\",\"done\"]#builtin=false"],
+      "total_count": null
+    }
+  ],
+  "name": "property_option_rename_undo_maps_value",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "stage",
+        "value": {
+          "value_text": "review"
+        }
+      },
+      "command": "set_property",
+      "comment": "O1",
+      "name": "set_review",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "stage",
+        "value": {
+          "value_text": "done"
+        }
+      },
+      "command": "set_property",
+      "comment": "O2 — its prior is `review`.",
+      "name": "set_done_over_review",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "stage",
+        "value": {
+          "value_text": "in_review"
+        }
+      },
+      "command": "set_property",
+      "comment": "O3",
+      "name": "set_in_review",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "stage",
+        "value": {
+          "value_text": "draft"
+        }
+      },
+      "command": "set_property",
+      "comment": "O4 — its prior is `in_review`, from before the rename.",
+      "name": "set_draft_over_in_review",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "stage",
+        "options": "[\"draft\",\"review\",\"done\"]",
+        "spaceId": "$SPACE"
+      },
+      "command": "update_property_def_options",
+      "comment": "O5 — no block holds `in_review` now.",
+      "name": "drop_in_review",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "stage",
+        "newOption": "in_review",
+        "oldOption": "review",
+        "spaceId": "$SPACE"
+      },
+      "command": "rename_property_option",
+      "comment": "O6",
+      "name": "rename_review_to_in_review",
+      "via": "command"
+    },
+    {
+      "args": {
+        "newKey": "phase",
+        "oldKey": "stage",
+        "spaceId": "$SPACE"
+      },
+      "command": "rename_property_key",
+      "comment": "O7",
+      "name": "rename_stage_to_phase",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O2"]
+      },
+      "command": "undo_ops",
+      "comment": "`one` holds `phase = in_review`.",
+      "name": "undo_the_set_over_review",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O4"]
+      },
+      "command": "undo_ops",
+      "comment": "`two` holds `phase = in_review`, not `review`.",
+      "name": "undo_the_set_over_in_review",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "key": "phase",
+        "spaceId": "$SPACE"
+      },
+      "command": "get_property_def",
+      "comment": "The renamed option under the renamed key.",
+      "name": "phase_is_declared"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "one",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "two",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "property_defs": [
+      {
+        "key": "stage",
+        "options": "[\"draft\",\"review\",\"done\",\"in_review\"]",
+        "value_type": "select"
+      }
+    ],
+    "tags": []
+  }
+}

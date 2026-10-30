@@ -37,6 +37,7 @@ pub fn serialize_inner_payload(op_payload: &OpPayload) -> Result<String, AppErro
         OpPayload::SetPropertyDef(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
         OpPayload::RenamePropertyKey(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
         OpPayload::RewriteProperties(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
+        OpPayload::RenamePropertyOption(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
     }
 }
 

@@ -22,8 +22,10 @@
 //!  10. `change_property_type`         — change the type of a key N values hold:
 //!      the whole command, to text (every value kept and re-projected, none
 //!      written) and to number (every value removed, each written) (#5841)
+//!  11. `rename_property_option`       — rename a select option N values hold:
+//!      the whole command, which holds the writer lock (#5841)
 //!
-//! Benches 5 to 10 print, once and untimed, the op log payload and the Loro
+//! Benches 5 to 11 print, once and untimed, the op log payload and the Loro
 //! update their op costs.
 
 use std::time::{Duration, Instant};
@@ -35,8 +37,8 @@ use agaric_engine::loro::registry::LoroEngineRegistry;
 use agaric_lib::commands::{
     PropertyMergeCounts, PropertyTypeChangeCounts, PropertyTypeTarget, capture_op_refs,
     change_property_type_inner, create_property_def_inner, delete_property_def_inner,
-    list_property_defs_inner, merge_property_key_inner, rename_property_key_inner, undo_ops_inner,
-    update_property_def_options_inner,
+    list_property_defs_inner, merge_property_key_inner, rename_property_key_inner,
+    rename_property_option_inner, undo_ops_inner, update_property_def_options_inner,
 };
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
@@ -1061,6 +1063,106 @@ fn bench_change_property_type(c: &mut Criterion) {
 // Harness
 // ===========================================================================
 
+/// The option [`bench_rename_property_option`] renames [`RETYPE_VALUE`] to.
+const RENAMED_OPTION: &str = "renamed";
+
+async fn rename_option(pool: &SqlitePool, materializer: &Materializer, from: &str, to: &str) {
+    rename_property_option_inner(
+        pool,
+        BENCH_DEVICE,
+        materializer,
+        RETYPE_SPACE,
+        RETYPE_KEY.into(),
+        from.into(),
+        to.into(),
+    )
+    .await
+    .unwrap();
+}
+
+async fn rows_holding(pool: &SqlitePool, value: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM block_properties WHERE key = ? AND value_text = ?")
+        .bind(RETYPE_KEY)
+        .bind(value)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+fn bench_rename_property_option(c: &mut Criterion) {
+    let mut group = c.benchmark_group("rename_property_option");
+    group.sample_size(10);
+    for n in RETYPE_SIZES {
+        let rt = Runtime::new().unwrap();
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, &format!("rename_option_{n}")));
+        rt.block_on(seed_holders(&pool, n, "value_text"));
+        let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+        let registry = &materializer.loro_state().registry;
+        registry.install_engine(
+            SpaceId::from_trusted(RETYPE_SPACE),
+            holders_engine(BENCH_DEVICE, n),
+        );
+        rt.block_on(async {
+            let options = format!(r#"["{RETYPE_VALUE}","other"]"#);
+            create_property_def_inner(
+                &pool,
+                BENCH_DEVICE,
+                &materializer,
+                RETYPE_SPACE,
+                RETYPE_KEY.into(),
+                "select".into(),
+                Some(options),
+            )
+            .await
+            .unwrap();
+        });
+
+        // Shape probe: the rename renames all `n` values, and the rename back
+        // returns them.
+        rt.block_on(async {
+            let vv = doc_vv(registry);
+            rename_option(&pool, &materializer, RETYPE_VALUE, RENAMED_OPTION).await;
+            assert_eq!(
+                rows_holding(&pool, RENAMED_OPTION).await,
+                n as i64,
+                "every value renamed"
+            );
+            print_op_cost(&pool, registry, "rename_property_option", &vv).await;
+            rename_option(&pool, &materializer, RENAMED_OPTION, RETYPE_VALUE).await;
+            assert_eq!(
+                rows_holding(&pool, RETYPE_VALUE).await,
+                n as i64,
+                "and back"
+            );
+            materializer.flush_background().await.unwrap();
+        });
+
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
+            b.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    let start = Instant::now();
+                    rt.block_on(rename_option(
+                        &pool,
+                        &materializer,
+                        RETYPE_VALUE,
+                        RENAMED_OPTION,
+                    ));
+                    total += start.elapsed();
+                    rt.block_on(async {
+                        rename_option(&pool, &materializer, RENAMED_OPTION, RETYPE_VALUE).await;
+                        materializer.flush_background().await.unwrap();
+                    });
+                }
+                total
+            });
+        });
+        materializer.shutdown();
+    }
+    group.finish();
+}
+
 criterion_group!(
     property_def_benches,
     bench_create_property_def,
@@ -1073,4 +1175,5 @@ criterion_group!(
     bench_merge_property_key,
     bench_import_rename_property_key,
     bench_change_property_type,
+    bench_rename_property_option,
 );

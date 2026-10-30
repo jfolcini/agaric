@@ -1700,6 +1700,31 @@ pub async fn project_rename_property_key_to_sql(
     Ok(())
 }
 
+/// Project a `RenamePropertyOption` (#5841): every row of `space_id` under
+/// `key` holding `old` gets `new`. A select's string value always lands in
+/// `value_text`, so this is the engine's rule.
+pub async fn project_rename_property_option_to_sql(
+    conn: &mut SqliteConnection,
+    space_id: &str,
+    key: &str,
+    old: &str,
+    new: &str,
+) -> Result<(), AppError> {
+    sqlx::query!(
+        "UPDATE block_properties SET value_text = ?4 \
+         WHERE key = ?2 AND value_text = ?3 \
+           AND EXISTS (SELECT 1 FROM blocks b WHERE b.id = block_properties.block_id \
+                       AND (b.space_id = ?1 OR b.id = ?1))",
+        space_id,
+        key,
+        old,
+        new,
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 /// Project a `RewriteProperties`'s value writes (#5841): each write's row is
 /// replaced by its value, typed by `value_types` (the space's definitions
 /// after the op's own), or removed. A write to a block with no row in the

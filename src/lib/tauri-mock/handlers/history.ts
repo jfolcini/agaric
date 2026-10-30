@@ -220,6 +220,7 @@ function matchesOpType(entry: MockOpLogEntry, opTypeFilter: string | null): bool
 const SPACE_KEYED_OP_TYPES: ReadonlySet<string> = new Set([
   'set_property_def',
   'rename_property_key',
+  'rename_property_option',
   'rewrite_properties',
 ])
 
