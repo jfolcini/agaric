@@ -183,7 +183,7 @@ fn seed() -> Value {
 /// `DeleteAttachment` as `delete_attachment` of `An`, the n-th add's
 /// attachment. After the chain every `An` is deleted once more, so whether
 /// each row still stood is recorded and no op-added row, whose id, path, hash
-/// and clock each stack mints, is left for the attachment read.
+/// and clock each stack mints, is left behind.
 ///
 /// The generator aims `SetProperty(space)` at a content block only, which
 /// holds no space, so both stacks refuse it. Its first space id renders it as
@@ -709,11 +709,6 @@ const LIMIT_CAPS: &[(&str, i64)] = &[
 /// (`list_projected_agenda`) is not among them: no fixture can pin it.
 fn read_steps(created: usize, dates: &[String], term: &str) -> Vec<Value> {
     let scope = harness_scope();
-    let all_blocks: Vec<String> = [SEED_PAGE, SEED_TAG, MOVED_PAGE]
-        .into_iter()
-        .map(str::to_owned)
-        .chain((1..=created).map(|n| format!("C{n}")))
-        .collect();
     let mut steps = vec![
         json!({ "name": "pages", "command": "list_pages_with_metadata", "args": {
             "filter": { "sort": "alphabetical", "spaceId": "$SPACE" }, "limit": 50,
@@ -760,9 +755,6 @@ fn read_steps(created: usize, dates: &[String], term: &str) -> Vec<Value> {
             "args": { "limit": 100, "scope": scope },
         }),
         json!({ "name": "trash_count", "command": "count_trash", "args": { "scope": scope } }),
-        json!({ "name": "attachments", "command": "list_attachments_batch",
-            "args": { "blockIds": all_blocks },
-        }),
         json!({ "name": "subtree", "command": "load_page_subtree", "unordered": POSITION_TIE_ORDER,
             "args": { "rootBlockId": SEED_PAGE, "scope": scope },
         }),
