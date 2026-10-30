@@ -9,7 +9,8 @@
  * there. A row's move and typed text are read back after leaving the page and
  * coming back. Typing at the foot of the screen keeps the cursor above the
  * pinned toolbar, and a tap in a link shows page mode's link bubble alone,
- * inside the screen.
+ * inside the screen. The lane left of the text is narrower than a desktop's,
+ * its chevron and checkbox still 44 px to a finger.
  */
 
 import { devices, type Page } from '@playwright/test'
@@ -276,6 +277,59 @@ test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () =>
       await menu.getByRole('menuitem', { name: 'Move Up' }).tap()
       await expect(pageText(page)).toHaveText(['second', 'first'])
     })
+  })
+
+  test('the lane left of the text is narrow, its chevron and checkbox 44 px to a finger', async ({
+    page,
+  }) => {
+    const [task] = await seedPage(page, 'Touch lane', ['task'])
+    await ipc(page, 'create_block', {
+      blockType: 'content',
+      content: 'under it',
+      parentId: task,
+      index: null,
+      scope: SCOPE,
+    })
+    await ipc(page, 'set_todo_state', { blockId: task, state: 'TODO' })
+    await openInPageMode(page, 'Touch lane', 2)
+    // The caret in the task shows its chevron.
+    await tapInto(page, task)
+
+    const lane = await page.evaluate(
+      ({ selector, id }) => {
+        const editor = document.querySelector(selector) as HTMLElement
+        const block = editor.querySelector(`[data-page-block-id="${id}"]`) as HTMLElement
+        const center = (el: Element | null) => {
+          const at = (el as HTMLElement).getBoundingClientRect()
+          return { x: at.left + at.width / 2, y: at.top + at.height / 2 }
+        }
+        const hit = (x: number, y: number) => {
+          const el = document.elementFromPoint(x, y)
+          if (el?.closest('[data-testid="collapse-toggle"]')) return 'chevron'
+          if (el?.closest('[data-testid="task-marker"]')) return 'checkbox'
+          return el?.closest('.page-block-content') ? 'text' : 'other'
+        }
+        const text = block.querySelector(':scope > .page-block-content') as HTMLElement
+        const textLeft = text.getBoundingClientRect().left
+        const chevron = center(block.querySelector('[data-testid="collapse-toggle"]'))
+        const checkbox = center(block.querySelector('[data-testid="task-marker"]'))
+        return {
+          offset: textLeft - editor.getBoundingClientRect().left,
+          hits: [
+            hit(chevron.x - 21, chevron.y),
+            hit(chevron.x, chevron.y - 21),
+            hit(chevron.x, chevron.y + 21),
+            hit(checkbox.x - 21, checkbox.y),
+            hit(checkbox.x + 21, checkbox.y),
+            hit(textLeft + 1, checkbox.y),
+          ],
+        }
+      },
+      { selector: EDITOR, id: task },
+    )
+    // A phone's `pl-14` (`index.css`), not the `pl-20` the controls' boxes took side by side.
+    expect(lane.offset).toBeLessThan(60)
+    expect(lane.hits).toEqual(['chevron', 'chevron', 'chevron', 'checkbox', 'checkbox', 'text'])
   })
 
   test('a tap in a link shows its bubble alone, inside the screen', async ({ page }) => {
