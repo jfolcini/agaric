@@ -114,9 +114,8 @@ fn citation_display_name(entry: &BibEntry) -> String {
 /// would declare `year` as `number` for them, and:
 ///
 ///  1. every later text write to the key, on any block, is rejected;
-///  2. on inbound sync those rows are dropped row-absent — the Loro `Str`
-///     is routed by `value_type`, `parse::<f64>()` fails, and there is a
-///     deliberate no-fallback-to-`value_text` rule;
+///  2. every such value is one the type does not take, kept as text out of
+///     `value_num` (#6206), so no number reader sees it;
 ///  3. the declaration cannot be removed while any `block_properties` row
 ///     references the key (`delete_property_def_inner`'s `COUNT(*)`), and
 ///     the remedy its error names — `set_property(value = None)` — is
@@ -131,10 +130,8 @@ fn citation_display_name(entry: &BibEntry) -> String {
 /// reject is every later `value_num` / `value_date` / `value_bool` write
 /// (step 4's `type_matches` for `"text"` admits only `value_text` and
 /// `value_ref`) — and those rows are reachable, precisely because an
-/// undeclared key accepts all five slots. Link 2 does not apply to them
-/// (`PropertyValue::Num` / `Bool` route straight to their column with no
-/// `property_definitions` lookup, so they survive sync), but link 3 does:
-/// the narrowing is one-way while any value under the key exists. Milder
+/// undeclared key accepts all five slots. Link 3 applies to them too: the
+/// narrowing is one-way while any value under the key exists. Milder
 /// than `year`, still not this import's decision to make.
 ///
 /// So: **the space's existing shape for a key wins, declared or not.** An

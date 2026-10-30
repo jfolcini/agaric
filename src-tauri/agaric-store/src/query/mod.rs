@@ -275,11 +275,7 @@ pub enum AggregateTarget {
     Property {
         // #4553 Phase 1 — `agg_target_expr` folds `COALESCE(value_num,
         // <numeric-coerced value_text>)` read off the single `(block_id, key)`
-        // row: migration `0062`'s exactly-one-value-column CHECK puts a
-        // `number`-declared property in `value_num` with a NULL `value_text`,
-        // while a legacy/undeclared text-stored numeric still folds through the
-        // coerced `value_text` fallback. Until that fix, the doc line below
-        // said `value_text` alone — accurate when written, stale afterwards.
+        // row, `value_text` only for an undeclared or text-like key (#6206).
         //
         // Deliberately a `//` comment and not part of the `///` below:
         // tauri-specta copies doc comments verbatim into

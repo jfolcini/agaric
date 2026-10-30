@@ -1598,9 +1598,9 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 next_cursor: None,
             }
         }
-        // ── What a type change converts and removes (#5841 S3) ──
+        // ── What a type change converts and leaves unfit (#5841 S3) ──
         //
-        // One headed row, `property_type_change_counts#converted=<n>#removed=<n>`;
+        // One headed row, `property_type_change_counts#converted=<n>#unfit=<n>`;
         // then one kind's values, paged by block id, each with its page,
         // whether it is trashed, and the value before and after.
         "preview_property_type_change" => {
@@ -1613,9 +1613,9 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             let v = serde_json::to_value(counts).expect("serialize PropertyTypeChangeCounts");
             RawResult {
                 rows: vec![format!(
-                    "property_type_change_counts#converted={}#removed={}",
+                    "property_type_change_counts#converted={}#unfit={}",
                     attr_value("converted", v.get("converted")),
-                    attr_value("removed", v.get("removed")),
+                    attr_value("unfit", v.get("unfit")),
                 )],
                 has_more: None,
                 total_count: None,

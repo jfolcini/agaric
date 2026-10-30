@@ -1,5 +1,5 @@
 {
-  "description": "#5841 S3 — what each type change keeps. `flagx` to boolean keeps \"true\" as true and removes \"yes\"; `whenx` to date keeps \"2026-01-05\" and removes the impossible \"2026-02-30\"; `stagex` to a select with options `a` keeps \"a\" and removes \"b\"; `scorex` from number to text writes 2.5 as \"2.5\". Each value write holds the engine's own slot. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "description": "#5841 S3 — what each type change converts. `flagx` to boolean converts \"true\" to true and leaves \"yes\", which does not fit; `whenx` to date converts \"2026-01-05\" and leaves the impossible \"2026-02-30\"; `stagex` to a select with options `a` converts \"a\" and leaves \"b\"; `scorex` from number to text writes 2.5 as \"2.5\". Each value write holds the engine's own slot. A value that does not fit is not written and is kept as text (#6206), which `get_properties` on `Y` re-reads. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -113,6 +113,24 @@
         "key": "whenx",
         "value": "2026-01-05",
         "value_type": "Date"
+      },
+      {
+        "block_id": "B3",
+        "key": "flagx",
+        "value": "yes",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B3",
+        "key": "stagex",
+        "value": "b",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B3",
+        "key": "whenx",
+        "value": "2026-02-30",
+        "value_type": "Text"
       }
     ]
   },
@@ -149,6 +167,14 @@
       "has_more": null,
       "name": "stagex_after_the_change",
       "rows": ["stagex#value_type=select#options=[\"a\"]#builtin=false"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "y_keeps_the_values_that_do_not_fit_as_text",
+      "rows": ["flagx#Text=yes", "stagex#Text=b", "whenx#Text=2026-02-30"],
       "total_count": null
     }
   ],
@@ -228,7 +254,7 @@
       "args": {
         "acknowledged": {
           "converted": 1,
-          "removed": 1
+          "unfit": 1
         },
         "key": "flagx",
         "spaceId": "$SPACE",
@@ -243,7 +269,7 @@
       "args": {
         "acknowledged": {
           "converted": 1,
-          "removed": 1
+          "unfit": 1
         },
         "key": "whenx",
         "spaceId": "$SPACE",
@@ -258,7 +284,7 @@
       "args": {
         "acknowledged": {
           "converted": 1,
-          "removed": 1
+          "unfit": 1
         },
         "key": "stagex",
         "options": "[\"a\"]",
@@ -274,7 +300,7 @@
       "args": {
         "acknowledged": {
           "converted": 1,
-          "removed": 0
+          "unfit": 0
         },
         "key": "scorex",
         "spaceId": "$SPACE",
@@ -295,6 +321,15 @@
       "command": "get_property_def",
       "comment": "A select with its options.",
       "name": "stagex_after_the_change"
+    },
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "get_properties",
+      "comment": "#6206 — `Y`'s three values fit none of their new types, and each is kept as text.",
+      "name": "y_keeps_the_values_that_do_not_fit_as_text",
+      "unordered": "`get_properties_inner` has no ORDER BY, so the backend answers in `block_properties` primary-key order (`block_id, key`) while the mock answers in property-insertion order. The command promises neither, so the sequence is not comparable; the ROWS still are."
     }
   ],
   "seed": {

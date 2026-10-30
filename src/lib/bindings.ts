@@ -514,12 +514,12 @@ export const commands = {
 	renamePropertyOption: (spaceId: SpaceId, key: string, oldOption: string, newOption: string) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("rename_property_option", { spaceId, key, oldOption, newOption })),
 	/**
 	 *  Tauri command: what changing a space's property to another type would
-	 *  convert and remove. Delegates to [`preview_property_type_change_inner`].
+	 *  convert and leave unfit. Delegates to [`preview_property_type_change_inner`].
 	 */
 	previewPropertyTypeChange: (spaceId: SpaceId, key: string, valueType: string, options: string | null) => typedError<PropertyTypeChangeCounts, AppError>(__TAURI_INVOKE("preview_property_type_change", { spaceId, key, valueType, options })),
 	/**
 	 *  Tauri command: one page of the values a type change would convert or
-	 *  remove. Delegates to [`list_property_type_change_values_inner`].
+	 *  leave unfit. Delegates to [`list_property_type_change_values_inner`].
 	 */
 	listPropertyTypeChangeValues: (spaceId: SpaceId, key: string, valueType: string, options: string | null, kind: PropertyTypeChangeKind, cursor: string | null, limit: number | null) => typedError<PageResponse<PropertyTypeChangeValue>, AppError>(__TAURI_INVOKE("list_property_type_change_values", { spaceId, key, valueType, options, kind, cursor, limit })),
 	/**
@@ -3497,21 +3497,22 @@ export type PropertyRow = {
 /**
  *  What changing a key's type does to a space's values, the Trash's included:
  *  `converted` ones are kept in the new type's form (one already in it among
- *  them), `removed` ones the new type does not take, and they go.
+ *  them), `unfit` ones the new type does not take, and they stay as they are,
+ *  not fitting it (#6206).
  */
 export type PropertyTypeChangeCounts = {
 	converted: number,
-	removed: number,
+	unfit: number,
 };
 
 /**
  *  Which of a type change's values [`list_property_type_change_values_inner`]
  *  lists.
  */
-export type PropertyTypeChangeKind = "converted" | "removed";
+export type PropertyTypeChangeKind = "converted" | "unfit";
 
 /**
- *  One value a type change converts or removes: the block holding it, its
+ *  One value a type change converts or leaves unfit: the block holding it, its
  *  page, and the value as text, before and after.
  */
 export type PropertyTypeChangeValue = {
@@ -3523,7 +3524,7 @@ export type PropertyTypeChangeValue = {
 	deleted: boolean,
 	/**  The value the block holds, as text. */
 	value: string,
-	/**  The value under the new type, as text; `None` when it is removed. */
+	/**  The value under the new type, as text; `None` when it does not fit. */
 	converted: string | null,
 };
 

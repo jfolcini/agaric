@@ -1,12 +1,11 @@
 //! Change a property's type (#5841): one `RewriteProperties` op, in the space
 //! whose definition it is, converting each value the space's blocks hold
-//! under the key, the Trash's included, and removing the ones the new type
-//! does not take, after the user has seen which.
+//! under the key, the Trash's included, and keeping the ones the new type
+//! does not take as they are, after the user has seen which (#6206).
 //!
-//! Preview, list and write read the values from the `block_properties` rows,
-//! so they count what the user can see. A value only the space's doc holds is
-//! left there, and its projection follows the new type: shown if it fits,
-//! hidden otherwise.
+//! Preview, list and write read the values from the `block_properties` rows.
+//! A value only the space's doc holds (a ref whose block is gone) is left
+//! there, and its projection follows the new type.
 
 use std::collections::HashMap;
 
@@ -38,11 +37,12 @@ use super::{PropertyDefinition, WithOps, capture_op_refs, sanitize_internal_erro
 
 /// What changing a key's type does to a space's values, the Trash's included:
 /// `converted` ones are kept in the new type's form (one already in it among
-/// them), `removed` ones the new type does not take, and they go.
+/// them), `unfit` ones the new type does not take, and they stay as they are,
+/// not fitting it (#6206).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct PropertyTypeChangeCounts {
     pub converted: i64,
-    pub removed: i64,
+    pub unfit: i64,
 }
 
 /// Which of a type change's values [`list_property_type_change_values_inner`]
@@ -51,10 +51,10 @@ pub struct PropertyTypeChangeCounts {
 #[serde(rename_all = "snake_case")]
 pub enum PropertyTypeChangeKind {
     Converted,
-    Removed,
+    Unfit,
 }
 
-/// One value a type change converts or removes: the block holding it, its
+/// One value a type change converts or leaves unfit: the block holding it, its
 /// page, and the value as text, before and after.
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct PropertyTypeChangeValue {
@@ -66,7 +66,7 @@ pub struct PropertyTypeChangeValue {
     pub deleted: bool,
     /// The value the block holds, as text.
     pub value: String,
-    /// The value under the new type, as text; `None` when it is removed.
+    /// The value under the new type, as text; `None` when it does not fit.
     pub converted: Option<String>,
 }
 
@@ -80,7 +80,7 @@ pub struct PropertyTypeTarget {
 }
 
 /// A held value: the block, the value, and what it becomes under the new type
-/// (`None`: removed).
+/// (`None`: it does not fit).
 type Conversion = (String, PropertyValue, Option<PropertyValue>);
 
 /// `value` under a definition of `value_type` with `options` (a select's,
@@ -181,12 +181,12 @@ fn counts_of(conversions: &[Conversion]) -> PropertyTypeChangeCounts {
     let count = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
     PropertyTypeChangeCounts {
         converted: count(converted),
-        removed: count(conversions.len() - converted),
+        unfit: count(conversions.len() - converted),
     }
 }
 
 /// What changing `space_id`'s property to `target`'s type would convert and
-/// remove (#5841), which [`change_property_type_inner`] takes as its
+/// leave unfit (#5841), which [`change_property_type_inner`] takes as its
 /// acknowledgement. Refused as the change is.
 #[instrument(skip(pool), err)]
 pub async fn preview_property_type_change_inner(
@@ -247,7 +247,7 @@ async fn with_holders(
 }
 
 /// The values of `kind` changing `space_id`'s property to `target`'s type
-/// would convert or remove, with the block and page holding each,
+/// would convert or leave unfit, with the block and page holding each,
 /// cursor-paginated by block id.
 ///
 /// # Errors
@@ -289,18 +289,20 @@ pub async fn list_property_type_change_values_inner(
 }
 
 /// The value writes of a type change: one per held value the change converts
-/// to another engine form, or removes, recording the value it replaces. A
-/// value whose form stays is not written; the apply moves it to the new
-/// type's column.
+/// to another engine form, recording the value it replaces. A value whose
+/// form stays, or that does not fit the new type, is not written; the apply
+/// moves it to the column the new type gives it (#6206).
 fn type_change_writes(key: &str, conversions: Vec<Conversion>) -> Vec<PropertyValueWrite> {
     conversions
         .into_iter()
-        .filter(|(_, value, converted)| converted.as_ref() != Some(value))
-        .map(|(block_id, value, converted)| PropertyValueWrite {
-            block_id: BlockId::from_trusted(&block_id),
-            key: key.to_owned(),
-            value: converted.as_ref().and_then(value_fields),
-            prior: value_fields(&value),
+        .filter_map(|(block_id, value, converted)| {
+            let converted = converted.filter(|c| *c != value)?;
+            Some(PropertyValueWrite {
+                block_id: BlockId::from_trusted(&block_id),
+                key: key.to_owned(),
+                value: value_fields(&converted),
+                prior: value_fields(&value),
+            })
         })
         .collect()
 }
@@ -308,9 +310,9 @@ fn type_change_writes(key: &str, conversions: Vec<Conversion>) -> Vec<PropertyVa
 /// Change `space_id`'s property `target.key` to `target.value_type` (#5841),
 /// in one `RewriteProperties` op: the definition, and every value the
 /// space's blocks hold under the key, the Trash's included, converted to the
-/// new type or, when it does not take it, removed (recorded, so an undo
-/// brings it back). A select keeps only values among its options. Returns the
-/// definition after the change.
+/// new type, or, when it does not take it, kept as it is (#6206). A select
+/// takes only values among its options. Returns the definition after the
+/// change.
 ///
 /// `acknowledged` is what [`preview_property_type_change_inner`] answered;
 /// the change counts again in its transaction and refuses when the answer
@@ -344,8 +346,9 @@ pub async fn change_property_type_inner(
         return Err(AppError::validation_coded(
             ValidationCode::UnacknowledgedPropertyLoss,
             format!(
-                "changing '{key}' to {} now converts {} and removes {} value(s); preview it again",
-                to.value_type, counts.converted, counts.removed
+                "changing '{key}' to {} now converts {} value(s) and leaves {} that do not fit; \
+                 preview it again",
+                to.value_type, counts.converted, counts.unfit
             ),
         ));
     }
@@ -368,7 +371,7 @@ pub async fn change_property_type_inner(
 }
 
 /// Tauri command: what changing a space's property to another type would
-/// convert and remove. Delegates to [`preview_property_type_change_inner`].
+/// convert and leave unfit. Delegates to [`preview_property_type_change_inner`].
 #[tauri::command]
 #[specta::specta]
 pub async fn preview_property_type_change(
@@ -390,7 +393,7 @@ pub async fn preview_property_type_change(
 }
 
 /// Tauri command: one page of the values a type change would convert or
-/// remove. Delegates to [`list_property_type_change_values_inner`].
+/// leave unfit. Delegates to [`list_property_type_change_values_inner`].
 #[tauri::command]
 #[specta::specta]
 #[expect(

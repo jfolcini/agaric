@@ -757,11 +757,12 @@ async fn merge_refuses_a_stale_acknowledgement_and_a_type_mismatch_5841() {
     assert_eq!(props(&pool, &x).await, vec![kv("stage", "a")]);
 }
 
-/// The merge reads the doc, not SQL: a value SQL cannot show (text under a
-/// number key) moves with the rest and stays hidden, rather than staying
-/// under a key no longer declared, where a reprojection would show it.
+/// The merge reads the doc, not SQL: a value SQL does not hold moves with the
+/// rest, rather than staying under a key no longer declared. Text under a
+/// number key lands as text under the target, which does not take it either
+/// (#6206).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn merge_moves_a_value_only_the_doc_holds_5841() {
+async fn merge_moves_a_value_only_the_doc_holds_and_keeps_it_as_text_6206() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     space(&pool).await;
@@ -775,11 +776,7 @@ async fn merge_moves_a_value_only_the_doc_holds_5841() {
         .engine_mut()
         .apply_set_property(&x, "hours", Some("about two"))
         .unwrap();
-    assert_eq!(
-        props(&pool, &x).await,
-        vec![],
-        "SQL drops what the type can't hold"
-    );
+    assert_eq!(props(&pool, &x).await, vec![], "only the doc holds it");
 
     merge(&pool, &mat, "hours", "effort2", 0, 0).await.unwrap();
     assert!(
@@ -787,7 +784,11 @@ async fn merge_moves_a_value_only_the_doc_holds_5841() {
         "nothing left under the old key"
     );
     assert_eq!(doc_holders(&mat, "effort2"), vec![x.clone()], "it moved");
-    assert_eq!(props(&pool, &x).await, vec![], "and stays hidden");
+    assert_eq!(
+        props(&pool, &x).await,
+        vec![kv("effort2", "about two")],
+        "and is kept as text"
+    );
 }
 
 /// `block`'s `(key, value_ref)` rows, by key.

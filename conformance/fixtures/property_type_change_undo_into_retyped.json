@@ -1,5 +1,5 @@
 {
-  "description": "#5841 S3 — undoing a set made before its key changed type. `X` set `effortx` to \"6\" then \"5\", and `Y` to \"abc\" then \"7\", before `effortx` became a number. Undoing `X`'s second set restores 6 as a number, under the same key; undoing `Y`'s would put \"abc\" under a number key, and is refused. Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "description": "#5841 S3 — undoing a set made before its key changed type. `X` set `effortx` to \"6\" then \"5\", and `Y` to \"abc\" then \"7\", before `effortx` became a number. Undoing `X`'s second set restores 6 as a number, under the same key; undoing `Y`'s puts \"abc\" back under the number key as text, a value that does not fit it (#6206). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -44,7 +44,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 6,
+      "count": 7,
       "ops": [
         {
           "key": "effortx",
@@ -68,6 +68,10 @@
         {
           "key": "effortx",
           "op_type": "set_property"
+        },
+        {
+          "key": "effortx",
+          "op_type": "set_property"
         }
       ]
     },
@@ -82,8 +86,8 @@
       {
         "block_id": "B3",
         "key": "effortx",
-        "value": 7.0,
-        "value_type": "Num"
+        "value": "abc",
+        "value_type": "Text"
       }
     ]
   },
@@ -102,9 +106,9 @@
     },
     {
       "code": null,
-      "error": "validation",
-      "name": "undo_an_older_set_that_does_not_fit",
-      "returns": []
+      "error": null,
+      "name": "undo_an_older_set_that_does_not_fit_restores_it_as_text",
+      "returns": ["undo_ops#reversed_op_type=set_property#new_op_type=set_property#is_redo=false"]
     }
   ],
   "name": "property_type_change_undo_into_retyped",
@@ -153,7 +157,7 @@
       "args": {
         "acknowledged": {
           "converted": 2,
-          "removed": 0
+          "unfit": 0
         },
         "key": "effortx",
         "spaceId": "$SPACE",
@@ -178,9 +182,8 @@
         "ops": ["O4"]
       },
       "command": "undo_ops",
-      "comment": "\"abc\" is not a number: change the type back first.",
-      "expect_error": "validation",
-      "name": "undo_an_older_set_that_does_not_fit",
+      "comment": "O7 — \"abc\" is not a number: it is back as text.",
+      "name": "undo_an_older_set_that_does_not_fit_restores_it_as_text",
       "via": "command"
     }
   ],
