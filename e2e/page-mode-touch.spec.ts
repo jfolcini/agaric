@@ -3,7 +3,8 @@
  * opens and leaves it, the header keeping one row, as does *Page* under Edit as
  * Markdown's buffer, and the
  * toolbar's *Block actions* opens the block menu on the block the cursor was
- * tapped into, as no grip, right click or menu key can there. A row's move and
+ * tapped into, as no grip, right click or menu key can there, once a tap has
+ * put the cursor in the page. A row's move and
  * typed text are read back after leaving the page and coming back. Typing at
  * the foot of the screen keeps the cursor above the pinned toolbar, and a tap
  * in a link shows page mode's link bubble alone, inside the screen.
@@ -79,6 +80,9 @@ async function reopen(page: Page, title: string): Promise<void> {
 
 const pageText = (page: Page) => page.locator(`${EDITOR} .page-block-content`)
 
+const blockActions = (page: Page) =>
+  page.getByTestId('formatting-toolbar').getByRole('button', { name: 'Block actions' })
+
 test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () => {
   test.use({
     viewport: iPhone13.viewport,
@@ -116,10 +120,7 @@ test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () =>
     await openInPageModeFromMarkdown(page, 'Touch reorder', 3)
 
     await tapInto(page, ids[1])
-    await page
-      .getByTestId('formatting-toolbar')
-      .getByRole('button', { name: 'Block actions' })
-      .tap()
+    await blockActions(page).tap()
     const menu = page.getByRole('menu', { name: 'Block actions' })
     await menu.getByRole('menuitem', { name: 'Move & arrange' }).tap()
     await menu.getByRole('menuitem', { name: 'Move Down' }).tap()
@@ -133,6 +134,8 @@ test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () =>
   test('text typed after a tap is saved', async ({ page }) => {
     const ids = await seedPage(page, 'Touch typing', ['alpha', 'omega'])
     await openInPageMode(page, 'Touch typing', 2)
+    // Before a tap the cursor's block may be out of sight, where the block menu would act.
+    await expect(blockActions(page)).toBeDisabled()
 
     const box = await blockText(page, ids[0]).boundingBox()
     expect(box).not.toBeNull()
@@ -142,6 +145,7 @@ test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () =>
     await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 20)))
     await page.keyboard.type(' beta')
     await expect(blockText(page, ids[0])).toHaveText('alpha beta')
+    await expect(blockActions(page)).toBeEnabled()
 
     await reopen(page, 'Touch typing')
     await expect(pageText(page)).toHaveText(['alpha beta', 'omega'])

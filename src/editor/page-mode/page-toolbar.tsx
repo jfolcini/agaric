@@ -143,6 +143,11 @@ export function PageToolbar({
       ),
     [editor, actions, pageStore],
   )
+  // Without the focus the caret may sit in a block scrolled out of sight: the menu would act on it.
+  const focused = useEditorState({
+    editor,
+    selector: ({ editor: ed }) => ed !== null && !ed.isDestroyed && ed.isFocused,
+  })
   const caretId = useEditorState({
     editor,
     selector: ({ editor: ed }) => (ed === null || ed.isDestroyed ? null : caretBlockId(ed.state)),
@@ -170,7 +175,11 @@ export function PageToolbar({
       className="sticky top-0 z-10 bg-background"
       blockMenu={
         isTouch
-          ? { open: blockMenuOpen, onOpen: (anchor) => openBlockMenu(editor, anchor) }
+          ? {
+              open: blockMenuOpen,
+              disabled: !focused,
+              onOpen: (anchor) => openBlockMenu(editor, anchor),
+            }
           : undefined
       }
     />
