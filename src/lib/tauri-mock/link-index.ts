@@ -6,9 +6,10 @@
  * whose target the INSERT could not link when their source was indexed, and
  * `keptLinkKinds`, the kinds the content no longer spells.
  *
- * `create_block`, `edit_block`, the restores and their undo keep it. A block
- * another writer fills owes nothing, so its tokens link while their target
- * exists, as they did before the mock tracked what is owed.
+ * `create_block`, `edit_block`, batch create, paste, duplicate, a draft flush,
+ * the restores and their undo keep it. A block another writer fills, an
+ * import for one, owes nothing, so its tokens link while their target exists,
+ * as they did before the mock tracked what is owed.
  *
  * A block's space lives here too, because which tokens link depends on it.
  * Its own module so `handlers/shared.ts` and `revert.ts` can both import it:

@@ -18,6 +18,8 @@ import {
   type Handler,
   MOCK_LOCAL_DEVICE,
   type TypedHandlers,
+  indexLinks,
+  linkedTargets,
 } from '@/lib/tauri-mock/handlers/shared'
 import { type MockDraftRow, blockDrafts, blocks, opLog, pushOp } from '@/lib/tauri-mock/seed'
 
@@ -77,7 +79,9 @@ function flushOne(draft: MockDraftRow): void {
   const block = liveTarget(draft.block_id)
   if (!block || isSuperseded(draft)) return
   const fromText = (block['content'] as string | null | undefined) ?? null
+  const linked = linkedTargets(block)
   block['content'] = draft.content
+  indexLinks(block, linked)
   pushOp('edit_block', {
     block_id: draft.block_id,
     to_text: draft.content,
