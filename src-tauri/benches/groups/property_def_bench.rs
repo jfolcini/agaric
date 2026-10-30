@@ -19,8 +19,11 @@
 //!      of them also hold: the whole command (#5841)
 //!   9. `import_rename_property_key`   — a peer imports a rename of the key its
 //!      own N values hold (#5841)
+//!  10. `change_property_type`         — change the type of a key N values hold:
+//!      the whole command, to text (every value kept and re-projected, none
+//!      written) and to number (every value removed, each written) (#5841)
 //!
-//! Benches 5 to 9 print, once and untimed, the op log payload and the Loro
+//! Benches 5 to 10 print, once and untimed, the op log payload and the Loro
 //! update their op costs.
 
 use std::time::{Duration, Instant};
@@ -30,7 +33,8 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 use agaric_engine::loro::engine::LoroEngine;
 use agaric_engine::loro::registry::LoroEngineRegistry;
 use agaric_lib::commands::{
-    PropertyMergeCounts, capture_op_refs, create_property_def_inner, delete_property_def_inner,
+    PropertyMergeCounts, PropertyTypeChangeCounts, PropertyTypeTarget, capture_op_refs,
+    change_property_type_inner, create_property_def_inner, delete_property_def_inner,
     list_property_defs_inner, merge_property_key_inner, rename_property_key_inner, undo_ops_inner,
     update_property_def_options_inner,
 };
@@ -951,6 +955,109 @@ fn bench_import_rename_property_key(c: &mut Criterion) {
 }
 
 // ===========================================================================
+// 10. Changing a key's type (#5841)
+// ===========================================================================
+
+/// Change [`RETYPE_KEY`]'s type to `to`; the change's op refs.
+async fn change_type(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    to: &str,
+    acknowledged: PropertyTypeChangeCounts,
+) -> Vec<agaric_store::op::OpRef> {
+    let target = PropertyTypeTarget {
+        key: RETYPE_KEY.into(),
+        value_type: to.into(),
+        options: None,
+    };
+    capture_op_refs(change_property_type_inner(
+        pool,
+        BENCH_DEVICE,
+        materializer,
+        RETYPE_SPACE,
+        target,
+        acknowledged,
+    ))
+    .await
+    .unwrap()
+    .op_refs
+}
+
+fn bench_change_property_type(c: &mut Criterion) {
+    let mut group = c.benchmark_group("change_property_type");
+    group.sample_size(10);
+    for n in RETYPE_SIZES {
+        let rt = Runtime::new().unwrap();
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, &format!("change_type_{n}")));
+        rt.block_on(seed_holders(&pool, n, "value_date"));
+        let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+        let registry = &materializer.loro_state().registry;
+        registry.install_engine(
+            SpaceId::from_trusted(RETYPE_SPACE),
+            holders_engine(BENCH_DEVICE, n),
+        );
+        rt.block_on(declare_date(&pool, &materializer));
+        let all = n as i64;
+        // Text keeps every date and writes none, so the apply re-projects all
+        // `n` rows; a number takes none, so every value is written removed.
+        for (to, kept, acknowledged) in [
+            (
+                "text",
+                "value_text",
+                PropertyTypeChangeCounts {
+                    converted: all,
+                    removed: 0,
+                },
+            ),
+            (
+                "number",
+                "value_num",
+                PropertyTypeChangeCounts {
+                    converted: 0,
+                    removed: all,
+                },
+            ),
+        ] {
+            // Shape probe: the change leaves what it counted, and the undo
+            // puts the dates back.
+            rt.block_on(async {
+                let vv = doc_vv(registry);
+                let ops = change_type(&pool, &materializer, to, acknowledged).await;
+                assert_eq!(
+                    values_in(&pool, kept).await,
+                    acknowledged.converted,
+                    "{to}: the values it keeps"
+                );
+                assert_eq!(
+                    rows_under(&pool, RETYPE_KEY).await,
+                    acknowledged.converted,
+                    "{to}: no other row"
+                );
+                print_op_cost(&pool, registry, "rewrite_properties", &vv).await;
+                undo(&pool, &materializer, ops).await;
+                assert_eq!(values_in(&pool, "value_date").await, all, "{to}: undone");
+            });
+
+            group.bench_with_input(BenchmarkId::new(to, n), &n, |b, _| {
+                b.iter_custom(|iters| {
+                    let mut total = Duration::ZERO;
+                    for _ in 0..iters {
+                        let start = Instant::now();
+                        let ops = rt.block_on(change_type(&pool, &materializer, to, acknowledged));
+                        total += start.elapsed();
+                        rt.block_on(undo(&pool, &materializer, ops));
+                    }
+                    total
+                });
+            });
+        }
+        materializer.shutdown();
+    }
+    group.finish();
+}
+
+// ===========================================================================
 // Harness
 // ===========================================================================
 
@@ -965,4 +1072,5 @@ criterion_group!(
     bench_rename_property_key,
     bench_merge_property_key,
     bench_import_rename_property_key,
+    bench_change_property_type,
 );

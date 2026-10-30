@@ -1,0 +1,466 @@
+{
+  "description": "#5841 S3 — `preview_property_type_change` counts what changing a key's type would convert and remove in the harness space, the Trash's blocks included, and `list_property_type_change_values` pages each kind by block id, with the block's page, whether it is trashed, and the value before and after. `effortx` (text): `X` \"3\", `Y` \"abc\", `Z` \"042\", the trashed `W` \"7\", `V` \"xyz\". Refused as the change is. Re-author `expected` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "X",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Y",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Z",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "W",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "V",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 6,
+      "ops": [
+        {
+          "key": "effortx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "effortx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "effortx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "effortx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "effortx",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "effortx",
+        "value": "3",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B3",
+        "key": "effortx",
+        "value": "abc",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B4",
+        "key": "effortx",
+        "value": "042",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B5",
+        "key": "effortx",
+        "value": "7",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B6",
+        "key": "effortx",
+        "value": "xyz",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "to_number",
+      "rows": ["property_type_change_counts#converted=3#removed=2"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "to_a_select",
+      "rows": ["property_type_change_counts#converted=2#removed=3"],
+      "total_count": null
+    },
+    {
+      "cursor": "v1:{id}",
+      "error": null,
+      "has_more": true,
+      "name": "converted_page_one",
+      "rows": [
+        "B2#page_id=B1#deleted=false#value=3#converted=3",
+        "B4#page_id=B1#deleted=false#value=042#converted=42"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "converted_page_two",
+      "rows": ["B5#page_id=B1#deleted=true#value=7#converted=7"],
+      "total_count": null
+    },
+    {
+      "cursor": "v1:{id}",
+      "error": null,
+      "has_more": true,
+      "name": "removed_page_one",
+      "rows": ["B3#page_id=B1#deleted=false#value=abc#converted=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "removed_page_two",
+      "rows": ["B6#page_id=B1#deleted=false#value=xyz#converted=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "a_zero_limit_is_refused",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "the_same_type_is_refused",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "a_builtin_key_is_refused",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "not_found",
+      "has_more": null,
+      "name": "an_undeclared_key_is_not_found",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "query_property_type_change_preview",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "effortx",
+        "value": {
+          "value_text": "3"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "effortx",
+        "value": {
+          "value_text": "abc"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "effortx",
+        "value": {
+          "value_text": "042"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "key": "effortx",
+        "value": {
+          "value_text": "7"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "key": "effortx",
+        "value": {
+          "value_text": "xyz"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S5"
+      },
+      "command": "delete_block",
+      "comment": "A trashed card's value counts: the change rewrites it too."
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "key": "effortx",
+        "spaceId": "$SPACE",
+        "valueType": "number"
+      },
+      "command": "preview_property_type_change",
+      "comment": "`X`, `Z` and the trashed `W` convert; `Y` and `V` go.",
+      "name": "to_number"
+    },
+    {
+      "args": {
+        "key": "effortx",
+        "options": "[\"3\",\"abc\"]",
+        "spaceId": "$SPACE",
+        "valueType": "select"
+      },
+      "command": "preview_property_type_change",
+      "comment": "Only `3` and `abc` are options.",
+      "name": "to_a_select"
+    },
+    {
+      "args": {
+        "key": "effortx",
+        "kind": "converted",
+        "limit": 2,
+        "spaceId": "$SPACE",
+        "valueType": "number"
+      },
+      "command": "list_property_type_change_values",
+      "comment": "Two values a page, by block id: `X` and `Z`, \"042\" as 42.",
+      "name": "converted_page_one"
+    },
+    {
+      "args": {
+        "key": "effortx",
+        "kind": "converted",
+        "limit": 2,
+        "spaceId": "$SPACE",
+        "valueType": "number"
+      },
+      "command": "list_property_type_change_values",
+      "comment": "The trashed `W`, through the first page's cursor.",
+      "cursor_from": "converted_page_one",
+      "name": "converted_page_two"
+    },
+    {
+      "args": {
+        "key": "effortx",
+        "kind": "removed",
+        "limit": 1,
+        "spaceId": "$SPACE",
+        "valueType": "number"
+      },
+      "command": "list_property_type_change_values",
+      "comment": "One value a page: `Y`.",
+      "name": "removed_page_one"
+    },
+    {
+      "args": {
+        "key": "effortx",
+        "kind": "removed",
+        "limit": 1,
+        "spaceId": "$SPACE",
+        "valueType": "number"
+      },
+      "command": "list_property_type_change_values",
+      "comment": "`V`, through the first page's cursor.",
+      "cursor_from": "removed_page_one",
+      "name": "removed_page_two"
+    },
+    {
+      "args": {
+        "key": "effortx",
+        "kind": "removed",
+        "limit": 0,
+        "spaceId": "$SPACE",
+        "valueType": "number"
+      },
+      "command": "list_property_type_change_values",
+      "comment": "The limit is validated, not clamped.",
+      "expect_error": "validation",
+      "name": "a_zero_limit_is_refused"
+    },
+    {
+      "args": {
+        "key": "effortx",
+        "spaceId": "$SPACE",
+        "valueType": "text"
+      },
+      "command": "preview_property_type_change",
+      "comment": "Already text.",
+      "expect_error": "validation",
+      "name": "the_same_type_is_refused"
+    },
+    {
+      "args": {
+        "key": "due_date",
+        "spaceId": "$SPACE",
+        "valueType": "text"
+      },
+      "command": "preview_property_type_change",
+      "comment": "Built in.",
+      "expect_error": "validation",
+      "name": "a_builtin_key_is_refused"
+    },
+    {
+      "args": {
+        "key": "nothing",
+        "spaceId": "$SPACE",
+        "valueType": "number"
+      },
+      "command": "preview_property_type_change",
+      "comment": "Not found.",
+      "expect_error": "not_found",
+      "name": "an_undeclared_key_is_not_found"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "X",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "Y",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "Z",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "W",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": "V",
+        "id": "S6",
+        "parent_id": "S1",
+        "position": 5
+      }
+    ],
+    "properties": [],
+    "property_defs": [
+      {
+        "key": "effortx",
+        "options": null,
+        "value_type": "text"
+      }
+    ],
+    "tags": []
+  }
+}

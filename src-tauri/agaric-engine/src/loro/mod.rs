@@ -17,6 +17,9 @@
 
 pub mod engine;
 
+// What a property value becomes under another type (#5841).
+pub mod coerce;
+
 // Persisted peer-id epoch (#792): a vault that went through a snapshot
 // RESET before #4699 carries epoch >= 1, and its engines keep minting
 // under that PeerID so they never fork the (peer, counter) space against
