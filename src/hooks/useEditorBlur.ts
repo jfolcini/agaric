@@ -5,16 +5,11 @@
  *   1. No active block -> bail
  *   2. Stale blur (editor moved to a different block) -> bail
  *   3. Early-persist for newly created (empty) blocks
- *   4. Portal / transient-UI guard (relatedTarget in a portal or in the
- *      editor wrapper + visible-element scan)
+ *   4. Portal / transient-UI guard (`focusStaysInEditor`, which page mode's
+ *      touch toolbar shares)
  *   5. Unmount -> save-or-split -> discard draft -> clear focus. A blur by a
  *      mouse press saves at once but unmounts and clears focus only once that
  *      press ends (#5807).
- *
- * B-56: Step 4b now scopes the portal scan to elements OUTSIDE the editor
- * wrapper (`e.currentTarget`). Elements inside the wrapper (e.g. the
- * formatting toolbar) are part of the editor lifecycle and must not prevent
- * save on external blur.
  *
  * Extracted from EditableBlock for testability and reuse.
  */
@@ -25,7 +20,7 @@ import { flushSync } from 'react-dom'
 import type { StoreApi } from 'zustand'
 
 import { computeLeaveDelta, shouldSplitOnBlur } from '@/editor/content-delta'
-import { EDITOR_PORTAL_SELECTOR } from '@/editor/editor-portal'
+import { focusStaysInEditor } from '@/editor/editor-portal'
 import type { DocNode } from '@/editor/types'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { logger } from '@/lib/logger'
@@ -170,43 +165,13 @@ export function useEditorBlur(params: {
         }
       }
 
-      // Step 4a: Don't unmount if focus moved to a portal-tagged overlay
-      // (suggestion popup, formatting toolbar, date picker, …). All such
-      // Transient UI elements opt in via `data-editor-portal`.
-      const related = e.relatedTarget as HTMLElement | null
-      if (related?.closest(EDITOR_PORTAL_SELECTOR)) {
-        logger.debug('EditorBlur', 'blur prevented — focus moved to portal', { blockId })
+      // Step 4: Don't unmount while focus stays with the editor: in a
+      // portal-tagged overlay (suggestion popup, formatting toolbar, date
+      // picker, …), in the wrapper (an image's collapse toggle, the toolbar),
+      // or while such an overlay shows.
+      if (focusStaysInEditor(e.currentTarget as HTMLElement, e.relatedTarget as Element | null)) {
+        logger.debug('EditorBlur', 'blur prevented — focus stays with the editor', { blockId })
         return
-      }
-      // Nor if focus stayed in the editor: from a control in it (an image's
-      // collapse toggle, the toolbar) back to the text, or the other way.
-      const wrapper = e.currentTarget as HTMLElement
-      if (wrapper.contains(related)) return
-
-      // Step 4b: Also check if a portal-tagged overlay is currently visible
-      // in the DOM OUTSIDE the editor wrapper. Elements inside the wrapper
-      // (e.g. formatting toolbar) are managed by the editor lifecycle and
-      // must not prevent save on external blur (B-56). Radix leaves wrapper
-      // elements mounted when closed (with visibility:hidden or opacity:0),
-      // so we use checkVisibility() which detects display:none,
-      // visibility:hidden, and opacity:0. Falls back to offsetParent for
-      // older browsers.
-      {
-        const hasVisiblePopup = Array.from(
-          document.querySelectorAll<HTMLElement>(EDITOR_PORTAL_SELECTOR),
-        ).some((el) => {
-          if (wrapper.contains(el)) return false
-          if (typeof el.checkVisibility === 'function') {
-            return el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
-          }
-          return el.offsetParent !== null
-        })
-        if (hasVisiblePopup) {
-          logger.debug('EditorBlur', 'blur prevented — visible portal outside wrapper', {
-            blockId,
-          })
-          return
-        }
       }
 
       // Step 5: Unmount -> save or split -> discard draft -> clear focus.

@@ -377,19 +377,6 @@ describe('PageBlockMenu: the touch toolbar’s button', () => {
     expect(editor.view.hasFocus()).toBe(true)
   })
 
-  it('waits for the document to have the focus: without it the caret’s block may be out of sight', async () => {
-    touch = true
-    const { editor } = await open([
-      [0, 'first'],
-      [0, 'second'],
-    ])
-    expect(blockMenuButton()).toBeDisabled()
-
-    act(() => editor.view.focus())
-
-    await waitFor(() => expect(blockMenuButton()).toBeEnabled())
-  })
-
   it('opens the menu for a selection across blocks, whose Delete takes every selected block', async () => {
     touch = true
     const view = await open([

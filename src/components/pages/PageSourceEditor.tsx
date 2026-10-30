@@ -171,8 +171,8 @@ function PageModeLink({
 export interface PageSourceEditorProps {
   pageId: string
   onClose: () => void
-  /** Page mode in place of the buffer, its link shown; none where page mode is not offered. */
-  onSwitchToPage?: (() => void) | undefined
+  /** Page mode in place of the buffer, from its link. */
+  onSwitchToPage: () => void
   /** Why page mode cannot show the page, the link disabled saying so. */
   pageModeBlocked?: string | null | undefined
 }
@@ -215,7 +215,7 @@ export function PageSourceEditor({
   // refused or cancelled one leaves nothing for the next.
   const exitTo = useRef<'close' | 'page'>('close')
   const exit = (): void => {
-    if (exitTo.current === 'page' && onSwitchToPage !== undefined) onSwitchToPage()
+    if (exitTo.current === 'page') onSwitchToPage()
     else onClose()
   }
 
@@ -389,7 +389,7 @@ export function PageSourceEditor({
       handleSave()
       return true
     }
-    if (onSwitchToPage !== undefined && matchesShortcutBinding(e, 'togglePageMode')) {
+    if (matchesShortcutBinding(e, 'togglePageMode')) {
       // The header's switch, back as page mode opens, would toggle it off again on the same key.
       e.stopPropagation()
       handleSwitchToPage()
@@ -569,9 +569,7 @@ export function PageSourceEditor({
         </p>
       )}
       <div className="flex justify-end gap-2">
-        {onSwitchToPage !== undefined && (
-          <PageModeLink blocked={pageModeBlocked} disabled={saving} onClick={handleSwitchToPage} />
-        )}
+        <PageModeLink blocked={pageModeBlocked} disabled={saving} onClick={handleSwitchToPage} />
         {/* On touch, Save and Cancel are on the buffer's toolbar pinned above the keyboard (X9). */}
         {(!isTouch || mode !== 'edit') && (
           <>

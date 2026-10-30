@@ -17,10 +17,11 @@
  * Discard is left off: page mode saves as it goes, with no edit to throw away.
  * The task button's tooltip says what it does here: Ctrl+Enter cycles the task.
  *
- * On touch the bar ends with the block-menu button (`BlockMenuButton`), which
- * opens the block menu as a click on the grip does, on the caret's block, or
- * on the selection when it spans blocks: a phone has no pointer to bring the
- * grip, no right click and no menu key, and a hold in the text selects it.
+ * On touch the bar shows only while the text is edited (`PageModeEditor`), and
+ * ends with the block-menu button (`BlockMenuButton`), which opens the block
+ * menu as a click on the grip does, on the caret's block, or on the selection
+ * when it spans blocks: a phone has no pointer to bring the grip, no right
+ * click and no menu key, and a hold in the text selects it.
  */
 
 import type { Editor } from '@tiptap/react'
@@ -143,11 +144,6 @@ export function PageToolbar({
       ),
     [editor, actions, pageStore],
   )
-  // Without the focus the caret may sit in a block scrolled out of sight: the menu would act on it.
-  const focused = useEditorState({
-    editor,
-    selector: ({ editor: ed }) => ed !== null && !ed.isDestroyed && ed.isFocused,
-  })
   const caretId = useEditorState({
     editor,
     selector: ({ editor: ed }) => (ed === null || ed.isDestroyed ? null : caretBlockId(ed.state)),
@@ -175,11 +171,7 @@ export function PageToolbar({
       className="sticky top-0 z-10 bg-background"
       blockMenu={
         isTouch
-          ? {
-              open: blockMenuOpen,
-              disabled: !focused,
-              onOpen: (anchor) => openBlockMenu(editor, anchor),
-            }
+          ? { open: blockMenuOpen, onOpen: (anchor) => openBlockMenu(editor, anchor) }
           : undefined
       }
     />

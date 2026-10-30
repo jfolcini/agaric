@@ -84,6 +84,7 @@ import { processFileAttachments } from '@/components/editor/EditableBlock'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { getActiveEditor, setActiveEditor } from '@/editor/active-editor'
+import { focusStaysInEditor } from '@/editor/editor-portal'
 import { PageAttachments } from '@/editor/page-mode/page-attachments'
 import { commitPageTyped } from '@/editor/page-mode/page-commit'
 import { changedBlocks, pageDocContent, REMOTE_PATCH } from '@/editor/page-mode/page-document'
@@ -124,6 +125,7 @@ import { blockIdOf } from '@/editor/token-ids'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { CONTENT_COMMIT_DEBOUNCE_MS } from '@/hooks/useDebouncedContentCommit'
 import { DRAFT_MAX_LATENCY_MS } from '@/hooks/useDraftAutosave'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { delegatedLinkClickProps, useOpenLinkInNewTab } from '@/hooks/useOpenInBackgroundTab'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
@@ -386,6 +388,10 @@ function PageModeDocument({
   const onTagClick = useTagClickHandler()
   const editorRef = useRef<Editor | null>(null)
   const frameRef = useRef<HTMLDivElement>(null)
+  // On touch the toolbar pins to the screen's foot, over the quick-capture button: as block
+  // mode's, it shows only while the text is edited, by block mode's rule for leaving it.
+  const isTouch = useIsTouch()
+  const [editing, setEditing] = useState(false)
   const flushRef = useRef<() => Promise<boolean>>(() => Promise.resolve(true))
   const [properties] = useState(() => new PageProperties(openedWith))
   const [lists] = useState(
@@ -1029,8 +1035,19 @@ function PageModeDocument({
     <>
       {/* The document's frame, as GitLab's editor draws one: the toolbar, the text, and a footer
           under it with a hint and the switch to Edit as Markdown. */}
-      <div ref={frameRef} className="rounded-md border border-border">
-        {editor !== null && (
+      <div
+        ref={frameRef}
+        className="rounded-md border border-border"
+        onBlur={
+          isTouch
+            ? (e) => {
+                if (!focusStaysInEditor(e.currentTarget, e.relatedTarget as Element | null))
+                  setEditing(false)
+              }
+            : undefined
+        }
+      >
+        {editor !== null && (!isTouch || editing) && (
           <PageToolbar
             editor={editor}
             actions={actions}
@@ -1046,6 +1063,7 @@ function PageModeDocument({
             editor={editor}
             tabIndex={-1}
             className="relative rounded-md focus-ring-visible"
+            onFocus={isTouch ? () => setEditing(true) : undefined}
             {...{ [SURFACE]: '' }}
             {...linkClick}
           />

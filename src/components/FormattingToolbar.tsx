@@ -73,9 +73,7 @@ interface FormattingToolbarProps {
   /** Added to the bar's classes (page mode's sticky bar). */
   className?: string | undefined
   /** The block-menu button, last on the bar: where nothing else opens the menu (page mode on touch). */
-  blockMenu?:
-    | { open: boolean; disabled: boolean; onOpen: (anchor: HTMLElement) => void }
-    | undefined
+  blockMenu?: { open: boolean; onOpen: (anchor: HTMLElement) => void } | undefined
 }
 
 function getHeadingLevel(editor: Editor): number {
@@ -215,7 +213,7 @@ export function FormattingToolbar({
         return (
           <BlockMenuButton
             mode={mode}
-            disabled={blockMenu.disabled}
+            disabled={false}
             open={blockMenu.open}
             onOpen={(anchor) => {
               blockMenu.onOpen(anchor)

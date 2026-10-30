@@ -56,8 +56,8 @@ function routeWithReplies(replies: unknown[]): void {
   })
 }
 
-function renderEditor(props: { switchable?: boolean; blocked?: string | null } = {}) {
-  const { switchable = true, blocked = null } = props
+function renderEditor(props: { blocked?: string | null } = {}) {
+  const { blocked = null } = props
   const onClose = vi.fn()
   const onSwitchToPage = vi.fn()
   const store = createPageBlockStore(PAGE)
@@ -66,7 +66,7 @@ function renderEditor(props: { switchable?: boolean; blocked?: string | null } =
       <PageSourceEditor
         pageId={PAGE}
         onClose={onClose}
-        onSwitchToPage={switchable ? onSwitchToPage : undefined}
+        onSwitchToPage={onSwitchToPage}
         pageModeBlocked={blocked}
       />
     </PageBlockContext.Provider>,
@@ -142,13 +142,6 @@ afterEach(() => {
 })
 
 describe('PageSourceEditor link to page mode', () => {
-  it('is absent where page mode is not offered', async () => {
-    renderEditor({ switchable: false })
-    await loadedEditor()
-
-    expect(screen.queryByRole('button', { name: t('pageMode.page') })).not.toBeInTheDocument()
-  })
-
   it('is beside Cancel and Save, its tooltip naming it and its shortcut, with no a11y violations', async () => {
     const user = userEvent.setup()
     const { container } = renderEditor()

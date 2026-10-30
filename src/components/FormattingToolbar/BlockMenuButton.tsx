@@ -7,6 +7,7 @@
 
 import { GripVertical } from 'lucide-react'
 import type React from 'react'
+import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { type RenderMode, Tip } from '@/components/FormattingToolbar/shared'
@@ -32,14 +33,18 @@ interface BlockMenuButtonProps {
 
 export function BlockMenuButton({ mode, disabled, open, onOpen }: BlockMenuButtonProps) {
   const { t } = useTranslation()
+  // A finger's click comes on its lift, onto whatever the press put under it: the menu's sheet.
+  const byFinger = useRef(false)
   const press: Pick<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onPointerDown' | 'onClick'> = {
     onPointerDown: (e) => {
       if (e.button !== 0) return
       e.preventDefault()
-      onOpen(e.currentTarget)
+      byFinger.current = e.pointerType === 'touch'
+      if (!byFinger.current) onOpen(e.currentTarget)
     },
     onClick: (e) => {
-      if (e.detail === 0) onOpen(e.currentTarget)
+      if (e.detail === 0 || byFinger.current) onOpen(e.currentTarget)
+      byFinger.current = false
     },
   }
   const common = {

@@ -3,7 +3,6 @@ import {
   Download,
   ExternalLink,
   FileCode,
-  FileText,
   FolderOutput,
   LayoutTemplate,
   Link,
@@ -11,17 +10,17 @@ import {
   MoreVertical,
   Network,
   Redo2,
-  Rows3,
   Settings2,
   Smile,
   Tag,
   Trash2,
   Undo2,
 } from 'lucide-react'
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { shortcutHint } from '@/components/editor/block-context-menu/hints'
+import { EditModeItem } from '@/components/pages/EditModeItem'
 import { Button } from '@/components/ui/button'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { MenuSheet } from '@/components/ui/menu-sheet'
@@ -31,7 +30,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import type { EditMode } from '@/lib/preferences'
-import { cn } from '@/lib/utils'
 
 /** A space shown in the "Move to space" sub-menu. */
 export interface MoveTargetSpace {
@@ -44,49 +42,6 @@ const MENU_ITEM_CLASS =
 
 const SHORTCUT_HINT_CLASS =
   'ml-auto shrink-0 whitespace-nowrap text-xs text-muted-foreground tabular-nums [@media(pointer:coarse)]:hidden'
-
-interface EditModeItemProps extends React.ComponentProps<'button'> {
-  mode: EditMode | undefined
-  blocked: string | null | undefined
-  onModeChange: (mode: EditMode) => void
-}
-
-/** The row naming the mode the page is not in; a blocked page's row says why and does nothing. */
-function EditModeItem({ mode, blocked, onModeChange, ...props }: EditModeItemProps) {
-  const { t } = useTranslation()
-  const labelId = useId()
-  const reasonId = useId()
-  const to: EditMode = mode === 'page' ? 'blocks' : 'page'
-  const Icon = to === 'page' ? FileText : Rows3
-  return (
-    <button
-      type="button"
-      className={cn(
-        MENU_ITEM_CLASS,
-        'aria-disabled:cursor-not-allowed aria-disabled:text-muted-foreground',
-      )}
-      aria-labelledby={labelId}
-      aria-disabled={blocked ? true : undefined}
-      aria-describedby={blocked ? reasonId : undefined}
-      onClick={() => {
-        if (!blocked) onModeChange(to)
-      }}
-      {...props}
-    >
-      <Icon className="h-3.5 w-3.5 shrink-0" />
-      <span className="flex flex-col">
-        <span id={labelId}>
-          {t(to === 'page' ? 'pageMode.editAsPage' : 'pageMode.editAsBlocks')}
-        </span>
-        {blocked && (
-          <span id={reasonId} className="text-xs">
-            {blocked}
-          </span>
-        )}
-      </span>
-    </button>
-  )
-}
 
 export interface PageHeaderMenuProps {
   canRedo: boolean
@@ -427,6 +382,7 @@ export function PageHeaderMenu({
       </button>
       {onEditModeChange != null && (
         <EditModeItem
+          className={MENU_ITEM_CLASS}
           mode={editMode}
           blocked={editModeBlocked}
           onModeChange={onEditModeChange}

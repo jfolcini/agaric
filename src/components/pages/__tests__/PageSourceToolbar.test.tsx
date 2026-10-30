@@ -80,7 +80,7 @@ function renderEditor() {
   const store = createPageBlockStore(PAGE)
   const utils = render(
     <PageBlockContext.Provider value={store}>
-      <PageSourceEditor pageId={PAGE} onClose={onClose} />
+      <PageSourceEditor pageId={PAGE} onClose={onClose} onSwitchToPage={vi.fn()} />
     </PageBlockContext.Provider>,
   )
   return { ...utils, onClose, store }

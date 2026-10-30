@@ -1409,6 +1409,20 @@ export async function dragBlockTouch(page: Page, source: Locator, target: Locato
 }
 
 /**
+ * Tap `target` as a finger does, lifting once the screen has drawn what the
+ * press changed: `tap` lifts at once, before a control that acts on the press
+ * has put anything under the finger for the lift's click to land on.
+ */
+export async function fingerTap(page: Page, target: Locator): Promise<void> {
+  const point = await centerOf(target, 'fingerTap target')
+  await withTouch(page, async (touch) => {
+    await touch.start(point.x, point.y)
+    await renderedFrame(page)
+    await touch.end()
+  })
+}
+
+/**
  * Hold the center of `selector` past the 400 ms delay and lift WITHOUT moving,
  * so the row's hold opens the BlockContextMenu on release (a touch inside the
  * mounted editor opens nothing: the native selection owns it). The press point
