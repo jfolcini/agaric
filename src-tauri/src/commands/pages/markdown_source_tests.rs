@@ -1,10 +1,8 @@
-//! Source mode (#5140): `render_page_source` writes a page's block tree as one
-//! markdown buffer, and `import::parse_source_outline` must read it back as
-//! exactly that tree, or a save with no edits would not be a no-op.
-//!
-//! The render→parse proptests are the oracle. A known source-mode limit, which
-//! their generator excludes: a `\r` in content (line splitting takes it as a
-//! line ending).
+//! The page's buffer (#5140): the fixtures and the generator the render→read
+//! proptests run over ([`document`] holds them), and the buffer's names, the
+//! clipboard copy and the stored-content vectors. A known limit, which the
+//! generator excludes: a `\r` in content (line splitting takes it as a line
+//! ending).
 
 use std::collections::BTreeMap;
 
@@ -205,7 +203,7 @@ fn arb_todo_state() -> impl Strategy<Value = Option<String>> {
 
 /// A custom property value: text; text a `key:: value` line cannot carry as
 /// it is, with line breaks, surrounding whitespace, quotes and backslashes
-/// (#5160 X5); or a ref, which source mode writes as the raw id even though it
+/// (#5160 X5); or a ref, which the buffer writes as the raw id even though it
 /// has a title.
 fn arb_property_value() -> impl Strategy<Value = (String, bool)> {
     prop_oneof![
@@ -397,104 +395,7 @@ fn check_read_back(
     Ok(())
 }
 
-proptest! {
-    #[test]
-    fn a_source_buffer_reads_back_as_the_tree_it_was_rendered_from(forest in arb_forest()) {
-        let (data, expected) = build_page(&forest);
-        let md = render_page_source(&data);
-        check_read_back(&md, &import::parse_source_outline(&md).blocks, &expected, true)?;
-    }
-
-    /// #5160 A — the buffer less its anchors holds one id entry per line, and
-    /// read by those ids is the tree it was rendered from, each block under
-    /// its own id, for every block the text can carry ([`text_carries`]).
-    #[test]
-    fn a_buffer_read_by_its_line_ids_is_the_tree_it_was_rendered_from(
-        forest in arb_forest_of(arb_block().prop_filter("the text carries it", text_carries))
-    ) {
-        let (data, expected) = build_page(&forest);
-        let (text, line_ids) = anchor_free(&render_page_source(&data));
-        prop_assert_eq!(text.split('\n').count(), line_ids.len(), "text:\n{}", text);
-        let id_lines = (1..=line_ids.len()).filter(|&line| line_ids[line - 1].is_some()).collect();
-        let mut blocks = import::parse_source_text(&text, &id_lines).blocks;
-        for block in &mut blocks {
-            let line = block.line.expect("a buffer's block has a line");
-            block.block_anchor.clone_from(&line_ids[line - 1]);
-        }
-        check_read_back(&text, &blocks, &expected, true)?;
-    }
-}
-
-/// Whether the text [`anchor_free`] makes of a page carries `spec` exactly.
-/// Two blocks only its anchor keeps apart: one whose content ends in a blank
-/// line, which is the blank line between blocks once the anchor after it is
-/// gone, and one that leaves a fence open before its property lines, which
-/// only its anchor line ended.
-fn text_carries(spec: &BlockSpec) -> bool {
-    let ends_blank = spec
-        .content
-        .rsplit_once('\n')
-        .is_some_and(|(_, last)| last.trim().is_empty());
-    let list_marker = match spec.list_style {
-        Some("bullet") => "- ",
-        Some(_) => "1. ",
-        None => "",
-    };
-    let checkbox = spec.todo_state.as_deref().and_then(import::task_marker_for);
-    let task_marker = checkbox.map(|c| format!("[{c}] ")).unwrap_or_default();
-    let open = push_block_bullet(
-        &mut String::new(),
-        "",
-        list_marker,
-        &task_marker,
-        &spec.content,
-        RenderMode::Source,
-    )
-    .open;
-    let property_lines = (spec.todo_state.is_some() && checkbox.is_none())
-        || spec.priority.is_some()
-        || spec.scheduled_date.is_some()
-        || spec.due_date.is_some()
-        || !spec.properties.is_empty();
-    !(ends_blank || (open && property_lines))
-}
-
 // ── fixtures ────────────────────────────────────────────────────────────────
-
-/// One small page in source mode: list styles, tasks, properties, a code
-/// block, nesting and a raw block ref.
-#[test]
-fn source_buffer_snapshot() {
-    const LIST: &str = "01J0000000000000000000000A";
-    const MILK: &str = "01J0000000000000000000000B";
-    const EGGS: &str = "01J0000000000000000000000C";
-    const CODE: &str = "01J0000000000000000000000D";
-    const SEE: &str = "01J0000000000000000000000E";
-    let mut eggs = row(EGGS, LIST, 2, "eggs");
-    eggs.todo_state = Some("TODO".into());
-    let mut see = row(SEE, PAGE, 3, &format!("See (({CODE})) first"));
-    see.todo_state = Some("DONE".into());
-    see.priority = Some("1".into());
-    let mut data = page_data(vec![
-        row(LIST, PAGE, 1, "Groceries"),
-        row(MILK, LIST, 1, "milk"),
-        eggs,
-        row(CODE, PAGE, 2, "```sh\necho hi\n```"),
-        see,
-    ]);
-    data.list_styles = [(LIST, "bullet"), (MILK, "ordered"), (EGGS, "ordered")]
-        .into_iter()
-        .map(|(id, style)| (id.to_string(), style.to_string()))
-        .collect();
-    data.descendant_properties
-        .insert(CODE.to_string(), vec![text_property("lang", "sh")]);
-    // An export writes this as a line under `milk`; the buffer has none.
-    data.attachments_by_block.insert(
-        MILK.to_string(),
-        vec![("01J0000000000000000000ATT1".into(), "receipt.pdf".into())],
-    );
-    insta::assert_snapshot!(render_page_source(&data));
-}
 
 /// A block that leaves its fence open gets its anchor on a line of its own,
 /// which ends the fence before the child.
@@ -504,8 +405,8 @@ fn an_open_fence_ends_at_its_blocks_anchor_line() {
     const B: &str = "01J0000000000000000000000B";
     let data = page_data(vec![row(A, PAGE, 1, "````"), row(B, A, 1, "B")]);
     assert_eq!(
-        render_page_source(&data),
-        format!("- ````\n  ^{A}\n  - B ^{B}\n")
+        render_page_document(&data).0,
+        format!("````\n^{A}\n\n  B ^{B}\n")
     );
 }
 
@@ -573,8 +474,8 @@ fn a_clipboard_copy_keeps_the_anchors_blocks_need_to_read_back() {
 #[test]
 fn a_last_line_the_anchor_makes_property_shaped_reads_back_as_text() {
     const A: &str = "01J0000000000000000000000A";
-    let md = render_page_source(&page_data(vec![row(A, PAGE, 1, "a\nkey::")]));
-    let block = &import::parse_source_outline(&md).blocks[0];
+    let md = render_page_document(&page_data(vec![row(A, PAGE, 1, "a\nkey::")])).0;
+    let block = &import::parse_document_outline(&md).blocks[0];
     assert_eq!(block.content, "a\nkey::", "md:\n{md}");
     assert_eq!(block.block_anchor.as_deref(), Some(A), "md:\n{md}");
     assert!(block.properties.is_empty(), "md:\n{md}");
@@ -590,9 +491,8 @@ fn a_planning_line_is_written_as_text_in_the_buffer_and_a_copy() {
         "a\n\\DEADLINE: <2026-10-01 Thu>",
     ] {
         let data = page_data(vec![row(A, PAGE, 1, content)]);
-        let lines = content.replace('\n', "\n  ");
-        let md = render_page_source(&data);
-        assert!(md.starts_with(&format!("- {lines} ^{A}")), "md:\n{md}");
+        let md = render_page_document(&data).0;
+        assert_eq!(md, format!("{content} ^{A}\n"));
         let copy = render_clipboard_source(&data, &[A.into()], true);
         assert_eq!(copy, format!("{content}\n"));
     }
@@ -608,10 +508,10 @@ const DEEP_WORK: &str = "01J000000000000000000TAGT2";
 const WORK_LOSER: &str = "01J000000000000000000TAGT3";
 const BLOCK: &str = "01J0000000000000000000000A";
 
-/// `content` as a one-block page in source mode, with every ref above named
-/// and `names` as what the importer would resolve against.
+/// `content` as a one-block page's buffer, with every ref above named and
+/// `names` as what the importer would resolve against.
 fn source_with_names(content: &str, pages: &[(&str, &[&str])], tags: &[(&str, &str)]) -> String {
-    render_page_source(&data_with_names(content, pages, tags))
+    render_page_document(&data_with_names(content, pages, tags)).0
 }
 
 /// A one-block page holding `content`, with every ref above named and `names`
@@ -669,7 +569,7 @@ fn a_name_that_reads_back_to_its_id_is_written() {
     );
     assert_eq!(
         md,
-        format!("- see [[Project]] #work #[[deep work]] ^{BLOCK}\n")
+        format!("see [[Project]] #work #[[deep work]] ^{BLOCK}\n")
     );
 }
 
@@ -677,7 +577,7 @@ fn a_name_that_reads_back_to_its_id_is_written() {
 fn a_title_two_pages_share_stays_raw() {
     let content = format!("see [[{PROJECT}]]");
     let md = source_with_names(&content, &[("Project", &[PROJECT, OTHER_PROJECT])], &[]);
-    assert_eq!(md, format!("- {content} ^{BLOCK}\n"));
+    assert_eq!(md, format!("{content} ^{BLOCK}\n"));
 }
 
 /// The linked page is in another space, and this space has its own page of
@@ -686,7 +586,7 @@ fn a_title_two_pages_share_stays_raw() {
 fn a_title_from_another_space_stays_raw() {
     let content = format!("see [[{ELSEWHERE}]]");
     let md = source_with_names(&content, &[("Elsewhere", &[IN_SPACE_ELSEWHERE])], &[]);
-    assert_eq!(md, format!("- {content} ^{BLOCK}\n"));
+    assert_eq!(md, format!("{content} ^{BLOCK}\n"));
 }
 
 /// `[[C# Notes]]` reads back as that page when it is in the space (#5160 D10),
@@ -698,12 +598,12 @@ fn a_title_with_a_hash_is_written_only_when_that_page_reads_back() {
     let pages: &[(&str, &[&str])] = &[("Project", &[PROJECT]), ("C# Notes", &[C_SHARP])];
     assert_eq!(
         source_with_names(&content, pages, &[]),
-        format!("- [[Project]] and [[C# Notes]] ^{BLOCK}\n")
+        format!("[[Project]] and [[C# Notes]] ^{BLOCK}\n")
     );
     let only_c: &[(&str, &[&str])] = &[("Project", &[PROJECT]), ("C", &[OTHER_PROJECT])];
     assert_eq!(
         source_with_names(&content, only_c, &[]),
-        format!("- {content} ^{BLOCK}\n")
+        format!("{content} ^{BLOCK}\n")
     );
 }
 
@@ -715,12 +615,12 @@ fn a_labelled_link_is_written_only_when_no_longer_title_claims_it() {
     let content = format!("see [[{PROJECT}|Plan]]");
     assert_eq!(
         source_with_names(&content, &[("Project", &[PROJECT])], &[]),
-        format!("- see [[Project|Plan]] ^{BLOCK}\n")
+        format!("see [[Project|Plan]] ^{BLOCK}\n")
     );
     let longer: &[(&str, &[&str])] = &[("Project", &[PROJECT]), ("Project|Plan", &[OTHER_PROJECT])];
     assert_eq!(
         source_with_names(&content, longer, &[]),
-        format!("- {content} ^{BLOCK}\n")
+        format!("{content} ^{BLOCK}\n")
     );
 }
 
@@ -730,7 +630,7 @@ fn a_labelled_link_is_written_only_when_no_longer_title_claims_it() {
 fn a_tag_that_is_not_the_winner_for_its_name_stays_raw() {
     let content = format!("#[{WORK_LOSER}]");
     let md = source_with_names(&content, &[], &[("work", WORK)]);
-    assert_eq!(md, format!("- {content} ^{BLOCK}\n"));
+    assert_eq!(md, format!("{content} ^{BLOCK}\n"));
 }
 
 #[test]
@@ -741,7 +641,7 @@ fn a_name_inside_code_stays_raw() {
     let fenced = format!("````\n[[{PROJECT}]]\n````");
     assert_eq!(
         source_with_names(&fenced, pages, &[]),
-        format!("- ````\n  [[{PROJECT}]]\n  ````\n  ^{BLOCK}\n")
+        format!("````\n[[{PROJECT}]]\n````\n^{BLOCK}\n")
     );
     let data = data_with_names(&fenced, pages, &[]);
     assert_eq!(
@@ -752,7 +652,7 @@ fn a_name_inside_code_stays_raw() {
     let inline = format!("`[[{PROJECT}]]`");
     assert_eq!(
         source_with_names(&inline, pages, &[]),
-        format!("- {inline} ^{BLOCK}\n")
+        format!("{inline} ^{BLOCK}\n")
     );
 }
 
@@ -760,7 +660,7 @@ fn a_name_inside_code_stays_raw() {
 
 /// `conformance/block-content.vectors.json`: stored block content and the
 /// meaning Rust and the block editor must agree on. This side reads each
-/// content through source mode as one block with that content and no
+/// content through the buffer as one block with that content and no
 /// properties; `block-content-conformance.test.ts` runs the editor's save
 /// flush over the same rows.
 #[derive(serde::Deserialize)]
@@ -798,8 +698,8 @@ fn block_content_vectors() -> BlockContentVectors {
 #[test]
 fn a_stored_block_vector_reads_back_as_one_block() {
     for vector in block_content_vectors().blocks {
-        let md = render_page_source(&page_data(vec![row(BLOCK, PAGE, 1, &vector.content)]));
-        let parsed = import::parse_source_outline(&md).blocks;
+        let md = render_page_document(&page_data(vec![row(BLOCK, PAGE, 1, &vector.content)])).0;
+        let parsed = import::parse_document_outline(&md).blocks;
         assert_eq!(parsed.len(), 1, "{:?}, md:\n{md}", vector.name);
         assert_eq!(
             parsed[0].content, vector.content,
@@ -825,12 +725,12 @@ fn a_stored_block_vector_reads_back_as_one_block() {
 /// when the row has none, in the buffer and in an import alike (#5160 D6), and
 /// `task_marker_for` writes the canonical ones.
 #[test]
-fn the_checkbox_alphabet_vector_is_read_by_source_and_import() {
+fn the_checkbox_alphabet_vector_is_read_by_the_buffer_and_import() {
     for vector in block_content_vectors().task_markers {
         let marker = vector.marker;
         let md = format!("- [{marker}] task");
         for (parser, parsed) in [
-            ("source", import::parse_source_outline(&md).blocks),
+            ("buffer", import::parse_document_outline(&md).blocks),
             ("import", import::parse_logseq_markdown(&md).blocks),
         ] {
             assert_eq!(parsed.len(), 1, "{parser}: {md:?}");

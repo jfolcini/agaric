@@ -127,15 +127,15 @@ expression: wire
       - space_id
     type: object
   name: delete_block
-- description: "Append a Markdown outline under an existing parent in one call, as one undo, exactly as a paste in the app lands it: list items nest by indentation, a `- ` or `* ` item is a bulleted block, `1. ` a numbered one and `+ ` a plain one, a blank line separates paragraphs, a heading and a fenced code block are blocks of their own, a `- [ ]` checkbox is a task, and `key:: value` lines are properties. A `[[Name]]` or `#name` that matches no page or tag in the parent's space creates that page or tag there. A call that would write more than 1000 operations is refused; split it."
+- description: "Append Markdown under an existing parent in one call, as one undo, exactly as a paste in the app lands it: list items nest by indentation, a `- ` or `* ` item is a bulleted block, `1. ` a numbered one and `+ ` a plain one, a blank line separates paragraphs, a heading and a fenced code block are blocks of their own, a `- [ ]` checkbox is a task, and `key:: value` lines are properties. A `[[Name]]` or `#name` that matches no page or tag in the parent's space creates that page or tag there. A call that would write more than 1000 operations is refused; split it."
   inputSchema:
     additionalProperties: false
     properties:
       markdown:
-        description: The Markdown outline to append.
+        description: The Markdown to append.
         type: string
       parent_id:
-        description: "ULID of the parent block or page the outline lands under, or the page's title or alias."
+        description: "ULID of the parent block or page the Markdown lands under, or the page's title or alias."
         type: string
       position:
         description: Optional 1-based sibling position of the first top-level block. Defaults to append (end).
@@ -234,12 +234,12 @@ expression: wire
       - space_id
     type: object
   name: undo
-- description: "Capture a thought into a day's journal in one call, as one undo: the Markdown outline lands at the end of the day's page, read as append_markdown reads it, and a missing day is created with the space's journal template first."
+- description: "Capture a thought into a day's journal in one call, as one undo: the Markdown lands at the end of the day's page, read as append_markdown reads it, and a missing day is created with the space's journal template first."
   inputSchema:
     additionalProperties: false
     properties:
       content:
-        description: The Markdown outline to capture.
+        description: The Markdown to capture.
         type: string
       date:
         description: "`today` (the default), `yesterday`, or YYYY-MM-DD, on this device's clock."

@@ -2,8 +2,8 @@
 // Real-backend markdown import of a README shape (#5160 Phase 2a).
 //
 // The block grammar is the backend's (`parse_block_lines` in
-// agaric-engine/src/import.rs); the mock's `parseOutline` is a declared
-// approximation and the mock's import emits every block flat, so only this
+// agaric-engine/src/import.rs); the mock's import reads with its Document
+// reader, a declared approximation, and emits every block flat, so only this
 // lane can prove what the real importer does with a document that is not a
 // `- ` outline: the leading `# Title` equal to the file name is the title and
 // not a block (S6), a heading owns what follows it (D16), a paragraph is a

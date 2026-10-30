@@ -245,18 +245,22 @@
     },
     {
       "args": {
-        "baseSource": "- alpha ^000000000000000000000000S2\n- bravo ^000000000000000000000000S3\n- charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n",
+        "baseSource": "alpha ^000000000000000000000000S2\n\nbravo ^000000000000000000000000S3\n\ncharlie ^000000000000000000000000S4\n\ndelta ^000000000000000000000000S5\n\necho ^000000000000000000000000S6\n",
         "lineIds": [
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S3",
+          null,
           "000000000000000000000000S4",
+          null,
           "000000000000000000000000S5",
+          null,
           "000000000000000000000000S6",
           null
         ],
         "merge": false,
         "pageId": "S1",
-        "source": "- alpha\n- bravo edited here\n- charlie\n- delta\n- echo\n"
+        "source": "alpha\n\nbravo edited here\n\ncharlie\n\ndelta\n\necho\n"
       },
       "command": "apply_page_source",
       "comment": "Bravo edited in the buffer against the stale base: without `merge` the save is refused as it always was.",
@@ -267,18 +271,22 @@
     },
     {
       "args": {
-        "baseSource": "- alpha ^000000000000000000000000S2\n- bravo ^000000000000000000000000S3\n- charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n",
+        "baseSource": "alpha ^000000000000000000000000S2\n\nbravo ^000000000000000000000000S3\n\ncharlie ^000000000000000000000000S4\n\ndelta ^000000000000000000000000S5\n\necho ^000000000000000000000000S6\n",
         "lineIds": [
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S3",
+          null,
           "000000000000000000000000S4",
+          null,
           "000000000000000000000000S5",
+          null,
           "000000000000000000000000S6",
           null
         ],
         "merge": true,
         "pageId": "S1",
-        "source": "- alpha\n- bravo edited here\n- charlie\n- delta\n- echo\n"
+        "source": "alpha\n\nbravo edited here\n\ncharlie\n\ndelta\n\necho\n"
       },
       "command": "apply_page_source",
       "comment": "The same buffer merged: alpha's edit on the page is folded in, bravo's edit is the one write, nothing else differs.",
@@ -287,18 +295,22 @@
     },
     {
       "args": {
-        "baseSource": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n",
+        "baseSource": "alpha edited on the page ^000000000000000000000000S2\n\nbravo edited here ^000000000000000000000000S3\n\ncharlie ^000000000000000000000000S4\n\ndelta ^000000000000000000000000S5\n\necho ^000000000000000000000000S6\n",
         "lineIds": [
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S3",
+          null,
           "000000000000000000000000S4",
+          null,
           "000000000000000000000000S5",
+          null,
           "000000000000000000000000S6",
           null
         ],
         "merge": true,
         "pageId": "S1",
-        "source": "- alpha edited on the page\n- bravo edited here\n- charlie edited on a fresh base\n- delta\n- echo\n"
+        "source": "alpha edited on the page\n\nbravo edited here\n\ncharlie edited on a fresh base\n\ndelta\n\necho\n"
       },
       "command": "apply_page_source",
       "comment": "The base is the page's source now, so `merge` changes nothing: one edit, as a plain save.",
@@ -314,18 +326,22 @@
     },
     {
       "args": {
-        "baseSource": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n",
+        "baseSource": "alpha edited on the page ^000000000000000000000000S2\n\nbravo edited here ^000000000000000000000000S3\n\ncharlie edited on a fresh base ^000000000000000000000000S4\n\ndelta ^000000000000000000000000S5\n\necho ^000000000000000000000000S6\n",
         "lineIds": [
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S3",
+          null,
           "000000000000000000000000S4",
+          null,
           "000000000000000000000000S5",
+          null,
           "000000000000000000000000S6",
           null
         ],
         "merge": true,
         "pageId": "S1",
-        "source": "- alpha edited on the page\n- bravo edited here\n- charlie edited on a fresh base\n- delta edited here\n- echo\n"
+        "source": "alpha edited on the page\n\nbravo edited here\n\ncharlie edited on a fresh base\n\ndelta edited here\n\necho\n"
       },
       "command": "apply_page_source",
       "comment": "Delta edited in the buffer against the base that still holds it: its block is gone, so the buffer's version is created where delta stood, between charlie and echo. Its id is minted per stack, so later steps merge from bases older than it and never spell it.",
@@ -343,18 +359,22 @@
     },
     {
       "args": {
-        "baseSource": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n",
+        "baseSource": "alpha edited on the page ^000000000000000000000000S2\n\nbravo edited here ^000000000000000000000000S3\n\ncharlie edited on a fresh base ^000000000000000000000000S4\n\ndelta ^000000000000000000000000S5\n\necho ^000000000000000000000000S6\n",
         "lineIds": [
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S3",
+          null,
           "000000000000000000000000S4",
+          null,
           "000000000000000000000000S5",
+          null,
           "000000000000000000000000S6",
           null
         ],
         "merge": true,
         "pageId": "S1",
-        "source": "- alpha edited on the page\n- bravo edited here\n- charlie edited on a fresh base\n- delta\n- echo edited here\n"
+        "source": "alpha edited on the page\n\nbravo edited here\n\ncharlie edited on a fresh base\n\ndelta\n\necho edited here\n"
       },
       "command": "apply_page_source",
       "comment": "The buffer, still on the older base, edits echo where it was: the page's order stands and the edit lands on the moved block. Delta, unchanged in the buffer, stays deleted; the block created two steps ago, which the base never held, is kept.",
@@ -371,17 +391,20 @@
     },
     {
       "args": {
-        "baseSource": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n",
+        "baseSource": "alpha edited on the page ^000000000000000000000000S2\n\nbravo edited here ^000000000000000000000000S3\n\ncharlie edited on a fresh base ^000000000000000000000000S4\n\ndelta ^000000000000000000000000S5\n\necho ^000000000000000000000000S6\n",
         "lineIds": [
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S4",
+          null,
           "000000000000000000000000S5",
+          null,
           "000000000000000000000000S6",
           null
         ],
         "merge": true,
         "pageId": "S1",
-        "source": "- alpha edited on the page\n- charlie edited on a fresh base\n- delta\n- echo\n"
+        "source": "alpha edited on the page\n\ncharlie edited on a fresh base\n\ndelta\n\necho\n"
       },
       "command": "apply_page_source",
       "comment": "Bravo dropped from the buffer after the page edited it: the delete gives way to the edit, the block stays, and nothing is written.",
@@ -390,18 +413,22 @@
     },
     {
       "args": {
-        "baseSource": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n",
+        "baseSource": "alpha edited on the page ^000000000000000000000000S2\n\nbravo edited here ^000000000000000000000000S3\n\ncharlie edited on a fresh base ^000000000000000000000000S4\n\ndelta ^000000000000000000000000S5\n\necho ^000000000000000000000000S6\n",
         "lineIds": [
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S3",
+          null,
           "000000000000000000000000S4",
+          null,
           "000000000000000000000000S5",
+          null,
           "000000000000000000000000S6",
           null
         ],
         "merge": true,
         "pageId": "S1",
-        "source": "- alpha edited on the page\n- bravo edited again here\n- charlie edited on a fresh base\n- delta\n- echo\n"
+        "source": "alpha edited on the page\n\nbravo edited again here\n\ncharlie edited on a fresh base\n\ndelta\n\necho\n"
       },
       "command": "apply_page_source",
       "comment": "Bravo edited differently on each side: the page's version keeps the block, the buffer's is created directly before it. Its id is minted per stack, so later steps merge from bases older than it and never spell it.",
@@ -419,17 +446,20 @@
     },
     {
       "args": {
-        "baseSource": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n",
+        "baseSource": "alpha edited on the page ^000000000000000000000000S2\n\nbravo edited here ^000000000000000000000000S3\n\ncharlie edited on a fresh base ^000000000000000000000000S4\n\ndelta ^000000000000000000000000S5\n\necho ^000000000000000000000000S6\n",
         "lineIds": [
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S3",
+          null,
           "000000000000000000000000S5",
+          null,
           "000000000000000000000000S6",
           null
         ],
         "merge": true,
         "pageId": "S1",
-        "source": "- alpha edited on the page\n- bravo edited here\n- delta\n- echo\n"
+        "source": "alpha edited on the page\n\nbravo edited here\n\ndelta\n\necho\n"
       },
       "command": "apply_page_source",
       "comment": "Charlie dropped from the buffer after the page moved it to another parent: the move counts as a change, so the delete gives way as it does to an edit, the block stays under alpha, and nothing is written.",
@@ -445,18 +475,22 @@
     },
     {
       "args": {
-        "baseSource": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n",
+        "baseSource": "alpha edited on the page ^000000000000000000000000S2\n\nbravo edited here ^000000000000000000000000S3\n\ncharlie edited on a fresh base ^000000000000000000000000S4\n\ndelta ^000000000000000000000000S5\n\necho ^000000000000000000000000S6\n",
         "lineIds": [
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S3",
+          null,
           "000000000000000000000000S4",
+          null,
           "000000000000000000000000S6",
+          null,
           "000000000000000000000000S5",
           null
         ],
         "merge": true,
         "pageId": "S1",
-        "source": "- alpha edited on the page\n- bravo edited here\n- charlie edited on a fresh base\n  - echo\n- delta\n"
+        "source": "alpha edited on the page\n\nbravo edited here\n\ncharlie edited on a fresh base\n\n  echo\n\ndelta\n"
       },
       "command": "apply_page_source",
       "comment": "Echo moved under charlie in the buffer, its text unchanged, after the page deleted it: the move counts as a change, so the buffer's echo is created under charlie, which stays under alpha, where the page put it.",
@@ -474,19 +508,23 @@
     },
     {
       "args": {
-        "baseSource": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n",
+        "baseSource": "alpha edited on the page ^000000000000000000000000S2\n\nbravo edited here ^000000000000000000000000S3\n\ncharlie edited on a fresh base ^000000000000000000000000S4\n\ndelta ^000000000000000000000000S5\n\necho ^000000000000000000000000S6\n",
         "lineIds": [
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S3",
+          null,
           "000000000000000000000000S4",
           null,
+          null,
           "000000000000000000000000S5",
+          null,
           "000000000000000000000000S6",
           null
         ],
         "merge": true,
         "pageId": "S1",
-        "source": "- alpha edited on the page\n- bravo edited here\n- charlie edited on a fresh base\n  more\n- delta\n- echo\n"
+        "source": "alpha edited on the page\n\nbravo edited here\n\ncharlie edited on a fresh base\nmore\n\ndelta\n\necho\n"
       },
       "command": "apply_page_source",
       "comment": "A line typed under charlie's line, on the older base, carries no id, so it continues charlie: the merge reads charlie as edited here and moved on the page, and the edit lands where the page put it, with no move and no block created. Its base never held a minted id, so it can follow the creates.",

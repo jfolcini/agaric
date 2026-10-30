@@ -2735,7 +2735,7 @@ async fn export_page_markdown_inner_with_malformed_id_returns_ulid_error() {
 }
 
 // ======================================================================
-// get_page_source — the page's source-mode buffer (#5140)
+// get_page_buffer — the page's buffer (#5140, #5691)
 // ======================================================================
 
 const SOURCE_PAGE: &str = "01J5140SRCPAGE000000000001";
@@ -2778,7 +2778,7 @@ async fn seed_source_page(pool: &SqlitePool, content: &str) {
 /// The names come from the page's space in the database: with no names
 /// loaded, both would stay raw ids.
 #[tokio::test]
-async fn get_page_source_writes_in_space_names() {
+async fn get_page_buffer_writes_in_space_names() {
     let (pool, _dir) = test_pool().await;
     seed_source_page(
         &pool,
@@ -2786,63 +2786,37 @@ async fn get_page_source_writes_in_space_names() {
     )
     .await;
 
-    let md = get_page_source_inner(&pool, SOURCE_PAGE).await.unwrap();
+    let md = get_page_buffer_inner(&pool, SOURCE_PAGE)
+        .await
+        .unwrap()
+        .source;
 
     assert_eq!(
         md,
         format!(
-            "- see [[Project]] #work (({SOURCE_TARGET})) ^{SOURCE_BLOCK}\n- target ^{SOURCE_TARGET}\n"
+            "see [[Project]] #work (({SOURCE_TARGET})) ^{SOURCE_BLOCK}\n\ntarget ^{SOURCE_TARGET}\n"
         ),
         "in-space page and tag names must replace their ids; a block ref stays raw"
     );
 }
 
 #[tokio::test]
-async fn get_page_source_keeps_a_title_two_in_space_pages_share_raw() {
+async fn get_page_buffer_keeps_a_title_two_in_space_pages_share_raw() {
     let (pool, _dir) = test_pool().await;
     let content = format!("see [[{SOURCE_PROJECT}]]");
     seed_source_page(&pool, &content).await;
     insert_block(&pool, SOURCE_PROJECT_TWIN, "page", "Project", None, Some(3)).await;
     assign_to_space(&pool, SOURCE_PROJECT_TWIN, TEST_SPACE_ID).await;
 
-    let md = get_page_source_inner(&pool, SOURCE_PAGE).await.unwrap();
+    let md = get_page_buffer_inner(&pool, SOURCE_PAGE)
+        .await
+        .unwrap()
+        .source;
 
     assert_eq!(
         md,
-        format!("- {content} ^{SOURCE_BLOCK}\n- target ^{SOURCE_TARGET}\n"),
+        format!("{content} ^{SOURCE_BLOCK}\n\ntarget ^{SOURCE_TARGET}\n"),
         "an ambiguous title would read back to neither page, so the id must stay raw"
-    );
-}
-
-#[tokio::test]
-async fn get_page_source_of_a_content_block_returns_validation() {
-    let (pool, _dir) = test_pool().await;
-    seed_source_page(&pool, "text").await;
-
-    let result = get_page_source_inner(&pool, SOURCE_BLOCK).await;
-
-    assert!(
-        matches!(result, Err(AppError::Validation { .. })),
-        "a non-page block id must return AppError::Validation, got: {result:?}"
-    );
-}
-
-#[tokio::test]
-async fn get_page_source_of_a_soft_deleted_page_returns_not_found() {
-    let (pool, _dir) = test_pool().await;
-    seed_source_page(&pool, "text").await;
-    sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
-        .bind(FIXED_TS)
-        .bind(SOURCE_PAGE)
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let result = get_page_source_inner(&pool, SOURCE_PAGE).await;
-
-    assert!(
-        matches!(result, Err(AppError::NotFound(_))),
-        "a soft-deleted page must return AppError::NotFound, got: {result:?}"
     );
 }
 
@@ -2850,8 +2824,12 @@ async fn get_page_source_of_a_soft_deleted_page_returns_not_found() {
 // apply_page_source — the page saved from its source buffer (#5140)
 // ======================================================================
 
+/// The page's buffer with each block's `^ID` in its text.
 pub(super) async fn page_source(pool: &SqlitePool, page: &BlockId) -> String {
-    get_page_source_inner(pool, page.as_str()).await.unwrap()
+    get_page_buffer_inner(pool, page.as_str())
+        .await
+        .unwrap()
+        .source
 }
 
 /// Save `source` over `page`, edited from `base`. `source` is written as the
@@ -3208,8 +3186,8 @@ async fn apply_page_source_reads_a_ref_value_as_an_id_or_a_title() {
     let linked = dup_child(&pool, &mat, &page, "linked").await;
     settle(&mat).await;
     let base = page_source(&pool, &page).await;
-    let plain_line = format!("- plain ^{plain}\n");
-    let linked_line = format!("- linked ^{linked}\n");
+    let plain_line = format!("plain ^{plain}\n");
+    let linked_line = format!("linked ^{linked}\n");
     let before = last_seq(&pool).await;
 
     let tied = with(
@@ -3266,7 +3244,7 @@ async fn apply_page_source_checks_only_typed_values_against_their_options() {
     set_task_columns(&pool, kept.as_str(), None, Some("P0"), None, None).await;
     let base = page_source(&pool, &page).await;
     let before = dup_counts(&pool).await;
-    let line = format!("- other ^{other}\n");
+    let line = format!("other ^{other}\n");
 
     let typed = with(&base, &line, &format!("{line}  priority:: P0\n"));
     let refused = save_source(&pool, &mat, &page, &typed, &base).await;
@@ -3276,7 +3254,7 @@ async fn apply_page_source_checks_only_typed_values_against_their_options() {
     );
     assert_eq!(dup_counts(&pool).await, before, "nothing is written");
 
-    let edited = with(&base, &line, &format!("- other, edited ^{other}\n"));
+    let edited = with(&base, &line, &format!("other, edited ^{other}\n"));
     let report = save_source(&pool, &mat, &page, &edited, &base)
         .await
         .unwrap();
@@ -3479,11 +3457,11 @@ async fn apply_page_source_clears_columns_and_list_markers() {
     let source = with(
         &with(
             &with(&base, "  priority:: 2\n  scheduled_date:: 2026-02-01\n", ""),
+            "plain ^",
             "- plain ^",
-            "- - plain ^",
         ),
-        "- 1. numbered ^",
-        "- numbered ^",
+        "1. numbered ^",
+        "numbered ^",
     );
 
     let report = save_source(&pool, &mat, &page, &source, &base)
@@ -3525,8 +3503,8 @@ async fn apply_page_source_creates_an_unanchored_bullet_in_place() {
     let base = page_source(&pool, &page).await;
     let source = with(
         &base,
-        &format!("- b ^{b}"),
-        &format!("- [ ] fresh\n  owner:: ann\n- b ^{b}"),
+        &format!("b ^{b}"),
+        &format!("- [ ] fresh\n  owner:: ann\n\nb ^{b}"),
     );
 
     let report = save_source(&pool, &mat, &page, &source, &base)
@@ -3564,8 +3542,8 @@ async fn apply_page_source_keeps_a_typed_anchor_as_text() {
     settle(&mat).await;
     let (source, mut lines) = buffer_lines(&pool, &page).await;
     let typed = format!("y ^{a}");
-    lines.insert(1, plain("- x ^2"));
-    lines.insert(2, plain(&format!("- {typed}")));
+    lines.insert(1, plain("+ x ^2"));
+    lines.insert(2, plain(&format!("+ {typed}")));
 
     let report = save_by_line(&pool, &mat, &page, &lines, &source, false)
         .await
@@ -3608,7 +3586,10 @@ async fn apply_page_source_keeps_a_reserved_property_line_as_text() {
     assert!(report.warnings.is_empty(), "{:?}", report.warnings);
     assert_eq!(
         dup_children(&pool, &page).await,
-        vec![(a.clone().into_string(), "weekly\nrepeat-seq:: 2".to_owned())],
+        vec![(
+            a.clone().into_string(),
+            "weekly\n  repeat-seq:: 2".to_owned()
+        )],
         "the line is the block's text"
     );
     assert_eq!(
@@ -3634,7 +3615,7 @@ async fn apply_page_source_moves_a_block_under_a_bullet_it_creates() {
         &pool,
         &mat,
         &page,
-        &format!("- new\n  - a ^{a}\n- b ^{b}\n"),
+        &format!("new\n\n  a ^{a}\n\nb ^{b}\n"),
         &base,
     )
     .await
@@ -3665,11 +3646,11 @@ async fn apply_page_source_deleting_a_parent_keeps_its_outdented_child() {
     let base = page_source(&pool, &page).await;
     assert_eq!(
         base,
-        format!("- parent ^{parent}\n  - child ^{child}\n  - gone with it ^{gone}\n"),
+        format!("parent ^{parent}\n\n  child ^{child}\n\n  gone with it ^{gone}\n"),
         "seed"
     );
 
-    let report = save_source(&pool, &mat, &page, &format!("- child ^{child}\n"), &base)
+    let report = save_source(&pool, &mat, &page, &format!("child ^{child}\n"), &base)
         .await
         .unwrap();
 
@@ -3730,7 +3711,7 @@ async fn apply_page_source_saves_a_line_whose_block_was_deleted_as_a_new_block()
     let b = dup_child(&pool, &mat, &page, "b").await;
     settle(&mat).await;
     let (_, mut lines) = buffer_lines(&pool, &page).await;
-    lines[1].0 = "- b, kept".to_owned();
+    lines[2].0 = "b, kept".to_owned();
     delete_block_inner(&pool, DEV, &mat, b.clone())
         .await
         .unwrap();
@@ -3749,7 +3730,7 @@ async fn apply_page_source_saves_a_line_whose_block_was_deleted_as_a_new_block()
     assert_eq!(counts(&report), [1, 0, 0, 0, 0, 0], "one block created");
     assert_eq!(
         report.warnings,
-        ["line 2: not a block of this page; saved as a new block"],
+        ["line 3: not a block of this page; saved as a new block"],
         "the line is named"
     );
     let children = dup_children(&pool, &page).await;
@@ -3793,13 +3774,13 @@ async fn apply_page_source_keeps_a_nested_page_in_place() {
     let c = dup_child(&pool, &mat, &page, "c").await;
     settle(&mat).await;
     let seed = page_source(&pool, &page).await;
-    assert_eq!(seed, format!("- a ^{a}\n- b ^{b}\n- c ^{c}\n"), "seed");
+    assert_eq!(seed, format!("a ^{a}\n\nb ^{b}\n\nc ^{c}\n"), "seed");
     let before = last_seq(&pool).await;
 
     for (what, source, expected, order) in [
         (
             "a new first bullet",
-            format!("- new\n{seed}"),
+            format!("new\n\n{seed}"),
             [1, 0, 0, 0, 0, 0],
             ["new", "a", "Nested", "b", "c"].as_slice(),
         ),
@@ -3811,7 +3792,7 @@ async fn apply_page_source_keeps_a_nested_page_in_place() {
         ),
         (
             "a and b swapped",
-            format!("- b ^{b}\n- a ^{a}\n- c ^{c}\n"),
+            format!("b ^{b}\n\na ^{a}\n\nc ^{c}\n"),
             [0, 0, 1, 0, 0, 0],
             &["b", "a", "Nested", "c"],
         ),
@@ -3868,7 +3849,7 @@ async fn apply_page_source_refuses_to_delete_a_block_holding_a_nested_page() {
         &pool,
         &mat,
         &page,
-        &format!("- added\n- keep, edited ^{keep}\n"),
+        &format!("added\n\nkeep, edited ^{keep}\n"),
         &base,
     )
     .await;
@@ -3902,12 +3883,12 @@ async fn apply_page_source_refusals_write_nothing() {
     let deep: String = (0..=MAX_BLOCK_DEPTH)
         .map(|depth| {
             format!(
-                "{}- d{depth}\n",
+                "{}+ d{depth}\n",
                 "  ".repeat(usize::try_from(depth).unwrap())
             )
         })
         .collect();
-    let many: String = (0..1001).map(|i| format!("- n{i}\n")).collect();
+    let many: String = (0..1001).map(|i| format!("+ n{i}\n")).collect();
     let before = last_seq(&pool).await;
 
     let deepest = 2 + usize::try_from(MAX_BLOCK_DEPTH).unwrap();
@@ -3992,8 +3973,8 @@ async fn apply_page_source_resolves_only_the_names_a_block_newly_writes() {
             "issue #42 open",
             "issue #42 closed",
         ),
-        "- typed ^",
-        "- typed [[Brand New]] #fresh ^",
+        "typed ^",
+        "typed [[Brand New]] #fresh ^",
     );
 
     let report = save_source(&pool, &mat, &page, &source, &base)
@@ -4073,7 +4054,7 @@ async fn apply_page_source_leaves_an_ambiguous_title_as_text_with_a_warning() {
     settle(&mat).await;
     let base = page_source(&pool, &page).await;
 
-    let report = save_source(&pool, &mat, &page, "- see [[Twin]]\n", &base)
+    let report = save_source(&pool, &mat, &page, "see [[Twin]]\n", &base)
         .await
         .unwrap();
 
@@ -4108,7 +4089,7 @@ async fn apply_page_source_refused_at_the_last_block_rolls_everything_back() {
         &pool,
         &mat,
         &page,
-        &format!("- a, edited ^{a}\n- c ^{c}\n- [ ] new\n- b ^{b}\n  todo_state:: BOGUS\n"),
+        &format!("+ a, edited ^{a}\n+ c ^{c}\n- [ ] new\n+ b ^{b}\n  todo_state:: BOGUS\n"),
         &base,
     )
     .await;
@@ -4164,7 +4145,7 @@ async fn apply_page_source_op_refs_undo_the_whole_save() {
     settle(&mat).await;
     let base = page_source(&pool, &page).await;
     let (text, line_ids) = anchor_free(&format!(
-        "- c ^{c}\n- a, edited ^{a}\n- [x] task ^{task}\n- e [[Fresh Page]]\n  owner:: ann\n"
+        "+ c ^{c}\n+ a, edited ^{a}\n- [x] task ^{task}\n+ e [[Fresh Page]]\n  owner:: ann\n"
     ));
 
     let resp = capture_op_refs(apply_page_source_inner(
@@ -4216,7 +4197,7 @@ async fn apply_page_source_merge_lands_disjoint_edits() {
         .await
         .unwrap();
     settle(&mat).await;
-    let source = with(&base, "- b ^", "- b, edited here ^");
+    let source = with(&base, "b ^", "b, edited here ^");
     assert!(is_refresh(
         &save_source(&pool, &mat, &page, &source, &base).await
     ));
@@ -4264,7 +4245,7 @@ async fn apply_page_source_merge_keeps_both_versions_of_a_conflict() {
         &pool,
         &mat,
         &page,
-        &with(&base, "- a ^", "- a, edited here ^"),
+        &with(&base, "a ^", "a, edited here ^"),
         &base,
     )
     .await
@@ -4310,7 +4291,7 @@ async fn apply_page_source_merge_keeps_an_edit_over_the_other_sides_delete() {
         .await
         .unwrap();
     settle(&mat).await;
-    let source = with(&base, "- a ^", "- a, edited here ^").replace(&format!("- b ^{b}\n"), "");
+    let source = with(&base, "a ^", "a, edited here ^").replace(&format!("b ^{b}\n\n"), "");
 
     let report = merge_source(&pool, &mat, &page, &source, &base)
         .await
@@ -4356,8 +4337,8 @@ async fn apply_page_source_merge_op_refs_undo_the_whole_save() {
     settle(&mat).await;
     let elsewhere = page_source(&pool, &page).await;
     let (text, line_ids) = anchor_free(&format!(
-        "{}- new\n",
-        with(&base, "- a ^", "- a, edited here ^")
+        "{}\nnew\n",
+        with(&base, "a ^", "a, edited here ^")
     ));
 
     let resp = capture_op_refs(apply_page_source_inner(
@@ -4407,7 +4388,7 @@ async fn apply_page_source_merge_on_a_fresh_base_is_a_plain_save() {
         &pool,
         &mat,
         &page,
-        &with(&base, "- a ^", "- a, edited ^"),
+        &with(&base, "a ^", "a, edited ^"),
         &base,
     )
     .await
@@ -4501,24 +4482,30 @@ async fn get_page_buffer_is_the_source_less_its_anchors_with_ids_beside_it() {
 
     assert_eq!(
         buffer.source,
-        page_source(&pool, &page).await,
-        "source is get_page_source's"
-    );
-    assert_eq!(
-        buffer.source,
         format!(
-            "- two\n  lines ^note ^{a}\n  - child ^{b}\n- ```sh\n  echo hi\n  ```\n  ^{c}\n  lang:: sh\n"
+            "two\nlines ^note ^{a}\n\n  child ^{b}\n\n```sh\necho hi\n```\n^{c}\n  lang:: sh\n"
         ),
         "seed: one anchor at a line's end, one on a line of its own"
     );
     assert_eq!(
         buffer.text,
-        "- two\n  lines ^note\n  - child\n- ```sh\n  echo hi\n  ```\n  lang:: sh\n"
+        "two\nlines ^note\n\n  child\n\n```sh\necho hi\n```\n  lang:: sh\n"
     );
     let id = |block: &BlockId| Some(block.as_str().to_owned());
     assert_eq!(
         buffer.line_ids,
-        [id(&a), None, id(&b), id(&c), None, None, None, None]
+        [
+            id(&a),
+            None,
+            None,
+            id(&b),
+            None,
+            id(&c),
+            None,
+            None,
+            None,
+            None
+        ]
     );
 }
 
@@ -4556,10 +4543,10 @@ async fn apply_page_source_by_line_ids_of_its_own_text_writes_nothing() {
     for written in [
         "- [x] a task",
         "todo_state:: WAITING",
-        "- - bullet item",
-        "- 1. numbered item",
+        "- bullet item",
+        "1. numbered item",
         "\\- not a bullet",
-        "- \\[ ] not a task",
+        "[ ] not a task",
         "see [[Project]] #work ^",
         "twin [[01J5140PR0JECT000000000001]] ^",
         "issue #42 ^",
@@ -4599,7 +4586,7 @@ async fn apply_page_source_by_line_ids_edits_a_block() {
     let b = dup_child(&pool, &mat, &page, "untouched").await;
     settle(&mat).await;
     let (source, mut lines) = buffer_lines(&pool, &page).await;
-    lines.insert(1, plain("  world"));
+    lines.insert(1, plain("world"));
     let before = last_seq(&pool).await;
 
     let report = save_by_line(&pool, &mat, &page, &lines, &source, false)
@@ -4630,7 +4617,9 @@ async fn apply_page_source_by_line_ids_moves_a_line_with_its_id() {
     settle(&mat).await;
     let (source, mut lines) = buffer_lines(&pool, &page).await;
     let cut = lines.remove(0);
-    lines.insert(1, (format!("  {}", cut.0), cut.1));
+    lines.remove(0);
+    lines.insert(1, plain(""));
+    lines.insert(2, (format!("  {}", cut.0), cut.1));
     let before = last_seq(&pool).await;
 
     let report = save_by_line(&pool, &mat, &page, &lines, &source, false)
@@ -4670,7 +4659,7 @@ async fn apply_page_source_by_line_ids_saves_a_copied_line_as_a_new_block() {
     let (source, mut lines) = buffer_lines(&pool, &page).await;
     let mut copy = lines[0].clone();
     copy.0.push_str(" again");
-    lines.insert(2, copy);
+    lines.insert(4, copy);
     let before = last_seq(&pool).await;
 
     let report = save_by_line(&pool, &mat, &page, &lines, &source, false)
@@ -4681,7 +4670,7 @@ async fn apply_page_source_by_line_ids_saves_a_copied_line_as_a_new_block() {
     assert_eq!(ops_after(&pool, before).await, vec!["create_block"]);
     assert_eq!(
         report.warnings,
-        ["line 3: a copy of the block on line 1; saved as a new block"]
+        ["line 5: a copy of the block on line 1; saved as a new block"]
     );
     let children = dup_children(&pool, &page).await;
     assert_eq!(children.len(), 3, "{children:?}");
@@ -4708,9 +4697,9 @@ async fn apply_page_source_by_line_ids_saves_a_foreign_id_as_a_new_block() {
     let (source, mut lines) = buffer_lines(&pool, &page).await;
     lines.insert(
         1,
-        ("- foreign".to_owned(), Some(foreign.as_str().to_owned())),
+        ("+ foreign".to_owned(), Some(foreign.as_str().to_owned())),
     );
-    lines.insert(2, ("- unknown".to_owned(), Some("not an id".to_owned())));
+    lines.insert(2, ("+ unknown".to_owned(), Some("not an id".to_owned())));
     let before = last_seq(&pool).await;
 
     let report = save_by_line(&pool, &mat, &page, &lines, &source, false)
@@ -4803,7 +4792,7 @@ async fn apply_page_source_by_line_ids_ends_an_open_fence_at_the_next_id() {
     let b = dup_child(&pool, &mat, &page, "b").await;
     settle(&mat).await;
     let (source, mut lines) = buffer_lines(&pool, &page).await;
-    lines[0].0 = "- ```".to_owned();
+    lines[0].0 = "```".to_owned();
     lines.insert(1, plain("- not a block"));
 
     let report = save_by_line(&pool, &mat, &page, &lines, &source, false)
@@ -4817,7 +4806,7 @@ async fn apply_page_source_by_line_ids_ends_an_open_fence_at_the_next_id() {
     );
     assert_eq!(
         report.warnings,
-        ["the ``` code fence opened on line 1 is not closed; it ends before the block on line 3"]
+        ["the ``` code fence opened on line 1 is not closed; it ends before the block on line 4"]
     );
     assert_eq!(
         dup_children(&pool, &page).await,
@@ -4843,7 +4832,7 @@ async fn apply_page_source_by_line_ids_is_stale_checked_and_merges() {
         .await
         .unwrap();
     settle(&mat).await;
-    lines[0].0 = "- a, in the buffer".to_owned();
+    lines[0].0 = "a, in the buffer".to_owned();
     let before = last_seq(&pool).await;
 
     let stale = save_by_line(&pool, &mat, &page, &lines, &source, false).await;
@@ -5450,7 +5439,7 @@ async fn duplicate_block_keeps_raw_refs_raw() {
     let target = dup_child(&pool, &mat, &page, "target").await;
     let content = format!("see [[{project}]] #[{SOURCE_WORK}] (({target}))");
     let original = dup_child(&pool, &mat, &page, &content).await;
-    let named = get_page_source_inner(&pool, page.as_str()).await.unwrap();
+    let named = page_source(&pool, &page).await;
     assert!(
         named.contains("see [[Project]] #work"),
         "seed: the page's own source buffer writes the names, got {named:?}"
@@ -6259,7 +6248,7 @@ async fn apply_page_source_round_trips_a_links_label() {
     let base = page_source(&pool, &page).await;
     assert_eq!(
         base,
-        format!("- see [[Project|the plan]] ^{block}\n"),
+        format!("see [[Project|the plan]] ^{block}\n"),
         "the render writes the title with the label"
     );
 
@@ -6600,10 +6589,7 @@ async fn apply_page_source_round_trips_a_link_to_a_title_holding_a_pipe() {
     settle(&mat).await;
 
     let base = page_source(&pool, &page).await;
-    assert_eq!(
-        base,
-        format!("- see [[A | B]] and [[A | B|see]] ^{block}\n")
-    );
+    assert_eq!(base, format!("see [[A | B]] and [[A | B|see]] ^{block}\n"));
     let report = save_source(
         &pool,
         &mat,
@@ -6681,7 +6667,7 @@ async fn apply_page_source_keeps_an_inline_query_page_ref() {
 /// #5160 D10 — a link to `Project` labelled `Plan` is written raw while a page
 /// is titled `Project|Plan`, which `[[Project|Plan]]` would name instead.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn get_page_source_writes_a_label_raw_when_title_and_label_name_a_page() {
+async fn get_page_buffer_writes_a_label_raw_when_title_and_label_name_a_page() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let page = dup_page(&pool, &mat, "Names").await;
@@ -6692,7 +6678,7 @@ async fn get_page_source_writes_a_label_raw_when_title_and_label_name_a_page() {
 
     assert_eq!(
         page_source(&pool, &page).await,
-        format!("- see [[{project}|Plan]] ^{block}\n")
+        format!("see [[{project}|Plan]] ^{block}\n")
     );
 }
 

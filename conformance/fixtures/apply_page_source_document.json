@@ -1,5 +1,5 @@
 {
-  "description": "#5691 G2b — `get_page_buffer` and `apply_page_source` with `dialect: \"document\"`: a plain block is its own paragraph, a list block carries its marker, a task is `- [ ] x`, a plain block under a list block is a `+` item, an empty block a `\\` line, a block's property lines sit at its text's column, and a heading, a fence and a break are blocks of their own. The page's own Document buffer, read by the ids beside its lines, saves as nothing, and one changed line edits its block. A save writes what the lines say beside the text: a restyled marker, a ticked or removed checkbox (a task's hidden list style going with the edit), a property line changed, emptied or added, and the marker and property lines of a line that creates a block; a value its definition refuses, or a ref line naming no page, refuses the whole save. A stale buffer merged with the page's changes keeps both versions of a block both sides changed, its text or one property, the buffer's a new block with its marker and property lines; a block one side deleted and the other changed comes back. Seed: S1 (Home) > S2 (a heading), S3 (a fence), S4 (a break), S5 (a bullet) > S6 (a plain child), S7 (numbered), S8 (a task hiding a bullet style), S9 (empty), S10 (a priority and a property), S11 (a bullet), and the definitions `count` (a number), `flag` (a boolean), `deadline` (a date) and `owner` (a ref). The query reads the Document buffer the steps left. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "description": "#5691 G2b — `get_page_buffer` and `apply_page_source` in the Document dialect: a plain block is its own paragraph, a list block carries its marker, a task is `- [ ] x`, a plain block under a list block is a `+` item, an empty block a `\\` line, a block's property lines sit at its text's column, and a heading, a fence and a break are blocks of their own. The page's own Document buffer, read by the ids beside its lines, saves as nothing, and one changed line edits its block. A save writes what the lines say beside the text: a restyled marker, a ticked or removed checkbox (a task's hidden list style going with the edit), a property line changed, emptied or added, and the marker and property lines of a line that creates a block; a value its definition refuses, or a ref line naming no page, refuses the whole save. A stale buffer merged with the page's changes keeps both versions of a block both sides changed, its text or one property, the buffer's a new block with its marker and property lines; a block one side deleted and the other changed comes back. Seed: S1 (Home) > S2 (a heading), S3 (a fence), S4 (a break), S5 (a bullet) > S6 (a plain child), S7 (numbered), S8 (a task hiding a bullet style), S9 (empty), S10 (a priority and a property), S11 (a bullet), and the definitions `count` (a number), `flag` (a boolean), `deadline` (a date) and `owner` (a ref). The query reads the Document buffer the steps left. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -594,7 +594,6 @@
     {
       "args": {
         "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [ ] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  note:: yes\n\n- plain bullet ^00000000000000000000000S11\n",
-        "dialect": "document",
         "lineIds": [
           "000000000000000000000000S2",
           null,
@@ -630,7 +629,6 @@
     {
       "args": {
         "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [ ] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  note:: yes\n\n- plain bullet ^00000000000000000000000S11\n",
-        "dialect": "document",
         "lineIds": [
           "000000000000000000000000S2",
           null,
@@ -666,7 +664,6 @@
     {
       "args": {
         "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [ ] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  note:: yes\n\n- plain bullet ^00000000000000000000000S11\n",
-        "dialect": "document",
         "lineIds": [
           "000000000000000000000000S2",
           null,
@@ -702,7 +699,6 @@
     {
       "args": {
         "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [ ] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  note:: yes\n\n1. plain bullet ^00000000000000000000000S11\n",
-        "dialect": "document",
         "lineIds": [
           "000000000000000000000000S2",
           null,
@@ -738,7 +734,6 @@
     {
       "args": {
         "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [x] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  note:: yes\n\n1. plain bullet ^00000000000000000000000S11\n",
-        "dialect": "document",
         "lineIds": [
           "000000000000000000000000S2",
           null,
@@ -774,7 +769,6 @@
     {
       "args": {
         "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [x] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 3\n  note:: no\n\n1. plain bullet ^00000000000000000000000S11\n",
-        "dialect": "document",
         "lineIds": [
           "000000000000000000000000S2",
           null,
@@ -822,7 +816,6 @@
     {
       "args": {
         "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [x] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 3\n  count:: 4\n  mood:: calm\n\n1. plain bullet ^00000000000000000000000S11\n",
-        "dialect": "document",
         "lineIds": [
           "000000000000000000000000S2",
           null,
@@ -859,7 +852,6 @@
     {
       "args": {
         "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [x] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet ^00000000000000000000000S11\n",
-        "dialect": "document",
         "lineIds": [
           "000000000000000000000000S2",
           null,
@@ -897,7 +889,6 @@
     {
       "args": {
         "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [x] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet ^00000000000000000000000S11\n",
-        "dialect": "document",
         "lineIds": [
           "000000000000000000000000S2",
           null,
@@ -936,7 +927,6 @@
     {
       "args": {
         "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [x] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet ^00000000000000000000000S11\n",
-        "dialect": "document",
         "lineIds": [
           "000000000000000000000000S2",
           null,
@@ -974,7 +964,6 @@
     {
       "args": {
         "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n\ntask item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet ^00000000000000000000000S11\n",
-        "dialect": "document",
         "lineIds": [
           "000000000000000000000000S2",
           null,
@@ -1025,7 +1014,6 @@
     {
       "args": {
         "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n\ntask item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet ^00000000000000000000000S11\n",
-        "dialect": "document",
         "lineIds": [
           "000000000000000000000000S2",
           null,
@@ -1073,7 +1061,6 @@
     {
       "args": {
         "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n\ntask item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet ^00000000000000000000000S11\n",
-        "dialect": "document",
         "lineIds": [
           "000000000000000000000000S2",
           null,
@@ -1127,7 +1114,6 @@
     {
       "args": {
         "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n\ntask item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet ^00000000000000000000000S11\n",
-        "dialect": "document",
         "lineIds": [
           "000000000000000000000000S2",
           null,
@@ -1164,7 +1150,6 @@
   "queries": [
     {
       "args": {
-        "dialect": "document",
         "pageId": "S1"
       },
       "command": "get_page_buffer",

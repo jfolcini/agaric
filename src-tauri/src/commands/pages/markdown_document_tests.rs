@@ -1,6 +1,6 @@
 //! The Document dialect of Edit as Markdown's buffer (#5691 G1): a plain block
 //! is its own paragraph, a list block carries its marker, a task is `- [ ] x`.
-//! `Dialect::Document` renders a page and `import::parse_document_outline` and
+//! `render_page_document` renders a page and `import::parse_document_outline` and
 //! `import::parse_document_text` must read it back as that tree, or a save with
 //! no edits would not be a no-op. A clipboard copy (`render_clipboard_source`)
 //! is written in the dialect too, and must read back as a paste
@@ -215,7 +215,7 @@ proptest! {
     #[test]
     fn a_document_reads_back_as_the_tree_it_was_rendered_from(forest in arb_document_forest()) {
         let (data, expected) = build_page(&forest);
-        let (md, _) = Dialect::Document.render(&data);
+        let (md, _) = render_page_document(&data);
         let parsed = import::parse_document_outline(&md);
         check_no_page_properties(&md, &parsed)?;
         check_read_back(&md, &parsed.blocks, &as_document(expected), true)?;
@@ -229,7 +229,7 @@ proptest! {
             .prop_filter("the text carries it", |forest| forest.iter().all(document_text_carries))
     ) {
         let (data, expected) = build_page(&forest);
-        let (text, line_ids) = anchor_free_as(&Dialect::Document.render(&data).0, Dialect::Document);
+        let (text, line_ids) = anchor_free(&render_page_document(&data).0);
         prop_assert_eq!(text.split('\n').count(), line_ids.len(), "text:\n{}", text);
         let parsed = read_by_ids(&text, &line_ids);
         check_no_page_properties(&text, &parsed)?;
@@ -252,10 +252,10 @@ proptest! {
     #[test]
     fn a_document_renders_its_own_reading_as_the_same_text(forest in arb_document_forest()) {
         let (data, _) = build_page(&forest);
-        let (md, _) = Dialect::Document.render(&data);
+        let (md, _) = render_page_document(&data);
         let read: Vec<BlockSpec> =
             import::parse_document_outline(&md).blocks.iter().map(spec_of).collect();
-        let (again, _) = Dialect::Document.render(&build_page(&read).0);
+        let (again, _) = render_page_document(&build_page(&read).0);
         prop_assert_eq!(again, md);
     }
 }
@@ -651,8 +651,7 @@ fn a_heading_a_fence_or_a_break_typed_under_text_starts_its_own_block() {
 fn each_hard_case_is_written_as_its_row_and_read_back() {
     for (name, forest, written) in document_rows() {
         let (data, expected) = build_page(&forest);
-        let (text, line_ids) =
-            anchor_free_as(&Dialect::Document.render(&data).0, Dialect::Document);
+        let (text, line_ids) = anchor_free(&render_page_document(&data).0);
         assert_eq!(text, written, "{name}");
         let read = read_by_ids(&text, &line_ids);
         let result = check_no_page_properties(&text, &read)
@@ -673,7 +672,7 @@ fn the_document_lines_vectors_are_the_rows() {
         .map(|(name, forest, _)| {
             let (data, expected) = build_page(&forest);
             let (text, line_ids) =
-                anchor_free_as(&Dialect::Document.render(&data).0, Dialect::Document);
+                anchor_free(&render_page_document(&data).0);
             let tree: Vec<Value> = as_document(expected)
                 .into_iter()
                 .map(|(depth, content, id, properties)| {
@@ -727,245 +726,4 @@ fn the_document_lines_vectors_are_the_rows() {
         written, vectors,
         "the vectors drifted from the rows: re-author with CONFORMANCE_UPDATE=1"
     );
-}
-
-/// Duplicate through a Document buffer against the Source buffer it replaced
-/// (#6190), on a real pool. Part B deletes this with `Dialect::Source`.
-mod duplicate {
-    use super::*;
-    use crate::commands::tests::common::{
-        DEV, TEST_SPACE_ID, create_test_property_def, ensure_test_space, mark_block_as_space,
-        settle, test_pool,
-    };
-    use crate::commands::{
-        create_block_inner, create_page_in_space_inner, set_due_date_inner, set_priority_inner,
-        set_property_inner, set_scheduled_date_inner, set_todo_state_inner,
-    };
-
-    async fn child(
-        pool: &SqlitePool,
-        mat: &Materializer,
-        parent: &BlockId,
-        content: &str,
-    ) -> BlockId {
-        create_block_inner(
-            pool,
-            DEV,
-            mat,
-            "content".into(),
-            content.into(),
-            Some(parent.clone()),
-            None,
-        )
-        .await
-        .unwrap()
-        .id
-    }
-
-    async fn set(
-        pool: &SqlitePool,
-        mat: &Materializer,
-        block: &BlockId,
-        key: &str,
-        text: Option<&str>,
-        reference: Option<&BlockId>,
-    ) {
-        set_property_inner(
-            pool,
-            DEV,
-            mat,
-            block.as_str().into(),
-            key.into(),
-            text.map(Into::into),
-            None,
-            None,
-            reference.map(|id| id.as_str().to_owned()),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    }
-
-    /// A copied row as the copy stores it, ids aside: the index of its parent
-    /// among the rows, its content, its task columns, its property rows, and
-    /// which task stamps it carries, whose dates are the clock's.
-    type Shape = (Option<usize>, Option<String>, Vec<String>);
-
-    /// A property row: its key, then its text, number, ref and date values.
-    type PropertyRow = (
-        String,
-        Option<String>,
-        Option<f64>,
-        Option<String>,
-        Option<String>,
-    );
-
-    async fn shapes(pool: &SqlitePool, rows: &[BlockRow]) -> Vec<Shape> {
-        let mut out = Vec::new();
-        for row in rows {
-            let parent = rows
-                .iter()
-                .position(|r| Some(&r.id) == row.parent_id.as_ref());
-            let (todo, priority, scheduled, due): (
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-            ) = sqlx::query_as(
-                "SELECT todo_state, priority, scheduled_date, due_date FROM blocks WHERE id = ?",
-            )
-            .bind(row.id.as_str())
-            .fetch_one(pool)
-            .await
-            .unwrap();
-            let mut storage = vec![format!(
-                "todo={todo:?} priority={priority:?} scheduled={scheduled:?} due={due:?}"
-            )];
-            let props: Vec<PropertyRow> = sqlx::query_as(
-                "SELECT key, value_text, value_num, value_ref, \
-                            CASE WHEN key IN ('created_at', 'completed_at') THEN NULL \
-                                 ELSE value_date END \
-                     FROM block_properties WHERE block_id = ? ORDER BY key",
-            )
-            .bind(row.id.as_str())
-            .fetch_all(pool)
-            .await
-            .unwrap();
-            for (key, text, num, reference, date) in props {
-                storage.push(format!(
-                    "{key} text={text:?} num={num:?} ref={reference:?} date={date:?}"
-                ));
-            }
-            out.push((parent, row.content.clone(), storage));
-        }
-        out
-    }
-
-    /// What a Source copy reads as through a Document buffer: a task has no
-    /// list style (D3).
-    fn as_document(mut shapes: Vec<Shape>) -> Vec<Shape> {
-        for (_, _, storage) in &mut shapes {
-            if !storage[0].starts_with("todo=None") {
-                storage.retain(|row| !row.starts_with("listStyle "));
-            }
-        }
-        shapes
-    }
-
-    /// The copy keeps each block's content, nesting, list style, task state,
-    /// stamps, task columns and properties as the Source buffer kept them: a
-    /// plain block, a bulleted one with a plain child, a numbered run, an empty
-    /// block, a task in each state and one outside the checkbox set, a heading,
-    /// a code block, a two-line paragraph, refs and typed properties. The one
-    /// difference is D3's: a block holding a task state and a list style is
-    /// copied as a task without the style.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_document_duplicate_copies_what_a_source_duplicate_copied() {
-        let (pool, _dir) = test_pool().await;
-        let mat = Materializer::new(pool.clone());
-        ensure_test_space(&pool).await;
-        mark_block_as_space(&pool, TEST_SPACE_ID).await;
-        let page =
-            create_page_in_space_inner(&pool, DEV, &mat, None, "Dup".into(), TEST_SPACE_ID.into())
-                .await
-                .unwrap();
-        create_test_property_def(&pool, "reviewer".into(), "ref".into(), None)
-            .await
-            .unwrap();
-        let target = child(&pool, &mat, &page, "the reviewer").await;
-        let root = child(&pool, &mat, &page, "root").await;
-        child(&pool, &mat, &root, "plain").await;
-        let bulleted = child(&pool, &mat, &root, "bulleted").await;
-        set(&pool, &mat, &bulleted, "listStyle", Some("bullet"), None).await;
-        child(&pool, &mat, &bulleted, "plain under a bullet").await;
-        for content in ["first", "second"] {
-            let numbered = child(&pool, &mat, &root, content).await;
-            set(&pool, &mat, &numbered, "listStyle", Some("ordered"), None).await;
-        }
-        child(&pool, &mat, &root, "").await;
-        for state in ["TODO", "DONE", "DOING", "CANCELLED"] {
-            let task = child(&pool, &mat, &root, &state.to_lowercase()).await;
-            set_todo_state_inner(&pool, DEV, &mat, task.as_str().into(), Some(state.into()))
-                .await
-                .unwrap();
-        }
-        // A state from before the task states were fixed (#5841), which no
-        // command writes now.
-        let waiting = child(&pool, &mat, &root, "waiting").await;
-        sqlx::query("UPDATE blocks SET todo_state = 'WAITING' WHERE id = ?")
-            .bind(waiting.as_str())
-            .execute(&pool)
-            .await
-            .unwrap();
-        let legacy = child(&pool, &mat, &root, "a bulleted task").await;
-        set_todo_state_inner(
-            &pool,
-            DEV,
-            &mat,
-            legacy.as_str().into(),
-            Some("TODO".into()),
-        )
-        .await
-        .unwrap();
-        set(&pool, &mat, &legacy, "listStyle", Some("bullet"), None).await;
-        child(&pool, &mat, &root, "## heading").await;
-        child(&pool, &mat, &root, "```sh\necho hi\n```").await;
-        child(&pool, &mat, &root, "line one\nline two").await;
-        let refs = child(
-            &pool,
-            &mat,
-            &root,
-            &format!("see [[{page}]] and (({target}))"),
-        )
-        .await;
-        set(&pool, &mat, &refs, "reviewer", None, Some(&target)).await;
-        set(&pool, &mat, &refs, "note", Some("free text"), None).await;
-        let id = || refs.as_str().into();
-        set_priority_inner(&pool, DEV, &mat, id(), Some("2".into()))
-            .await
-            .unwrap();
-        set_scheduled_date_inner(&pool, DEV, &mat, id(), Some("2026-02-01".into()))
-            .await
-            .unwrap();
-        set_due_date_inner(&pool, DEV, &mat, id(), Some("2026-03-01".into()))
-            .await
-            .unwrap();
-        settle(&mat).await;
-
-        let document = duplicate_block_as(&pool, DEV, &mat, root.clone(), Dialect::Document)
-            .await
-            .unwrap();
-        settle(&mat).await;
-        let source = duplicate_block_as(&pool, DEV, &mat, root.clone(), Dialect::Source)
-            .await
-            .unwrap();
-        settle(&mat).await;
-
-        let document = shapes(&pool, &document).await;
-        assert_eq!(
-            document.len(),
-            17,
-            "the root and its 16 blocks: {document:#?}"
-        );
-        assert_eq!(
-            document,
-            as_document(shapes(&pool, &source).await),
-            "the Document copy is the Source copy, but for D3"
-        );
-        let task = document
-            .iter()
-            .find(|(_, content, _)| content.as_deref() == Some("a bulleted task"))
-            .expect("the bulleted task is copied");
-        assert_eq!(
-            task.2[..2],
-            [
-                r#"todo=Some("TODO") priority=None scheduled=None due=None"#.to_owned(),
-                "created_at text=None num=None ref=None date=None".to_owned(),
-            ],
-            "a bulleted task is copied as a task, stamped, without its list style (D3)"
-        );
-        assert_eq!(task.2.len(), 2, "and nothing more: {task:?}");
-        mat.shutdown();
-    }
 }

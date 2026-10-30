@@ -48,7 +48,6 @@ use super::conformance_query::{
 };
 use agaric_core::ulid::{ActiveBlockId, AttachmentId, BlockId};
 use agaric_engine::import::ImportAnchor;
-use agaric_lib::commands::pages::{Dialect, apply_page_source_as};
 use agaric_lib::commands::properties::property_changed_events;
 use agaric_store::op::OpRef;
 use agaric_store::space::{SpaceId, SpaceScope};
@@ -1154,9 +1153,9 @@ pub(super) async fn apply_op_via_command(
         ),
         // The text and the base are the caller's own, ids spelled as the seed
         // labels' expanded ids, in `lineIds` and in the base's anchors; only
-        // the page is a label. `dialect` is optional, as on the wire.
+        // the page is a label.
         "apply_page_source" => to_json(
-            Box::pin(apply_page_source_as(
+            Box::pin(apply_page_source_inner(
                 pool,
                 DEV,
                 mat,
@@ -1176,11 +1175,6 @@ pub(super) async fn apply_op_via_command(
                     )
                     .unwrap_or_else(|e| panic!("conformance op '{command}': lineIds: {e}")),
                 },
-                serde_json::from_value::<Option<Dialect>>(
-                    arg("dialect").cloned().unwrap_or(Value::Null),
-                )
-                .unwrap_or_else(|e| panic!("conformance op '{command}': dialect: {e}"))
-                .unwrap_or_default(),
             ))
             .await,
         ),

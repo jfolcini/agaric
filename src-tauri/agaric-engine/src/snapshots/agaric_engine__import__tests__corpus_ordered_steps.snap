@@ -1,7 +1,47 @@
 ---
 source: agaric-engine/src/import.rs
-expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_markdown(&text)), \"source\":\n    output_shape(parse_source_outline(&text)), \"paste\":\n    blocks_shape(parse_pasted_text(&text)),\n})"
+expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_markdown(&text)), \"document\":\n    output_shape(parse_document_outline(&text)), \"paste\":\n    blocks_shape(parse_pasted_text(&text)),\n})"
 ---
+document:
+  blocks:
+    - block_anchor: ~
+      content: Preheat the oven to 200 °C.
+      depth: 0
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: Mix the dry ingredients.
+      depth: 0
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: Flour
+      depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: Sugar
+      depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: Bake for 25 minutes.
+      depth: 0
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings: []
 import:
   blocks:
     - block_anchor: ~
@@ -78,43 +118,3 @@ paste:
     properties:
       - - listStyle
         - ordered
-source:
-  blocks:
-    - block_anchor: ~
-      content: Preheat the oven to 200 °C.
-      depth: 0
-      is_code: false
-      properties:
-        - - listStyle
-          - ordered
-    - block_anchor: ~
-      content: Mix the dry ingredients.
-      depth: 0
-      is_code: false
-      properties:
-        - - listStyle
-          - ordered
-    - block_anchor: ~
-      content: Flour
-      depth: 1
-      is_code: false
-      properties:
-        - - listStyle
-          - ordered
-    - block_anchor: ~
-      content: Sugar
-      depth: 1
-      is_code: false
-      properties:
-        - - listStyle
-          - ordered
-    - block_anchor: ~
-      content: Bake for 25 minutes.
-      depth: 0
-      is_code: false
-      properties:
-        - - listStyle
-          - ordered
-  frontmatter: []
-  frontmatter_list_items: {}
-  warnings: []

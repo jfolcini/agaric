@@ -639,19 +639,16 @@ export const commands = {
 	resolvePageByAlias: (alias: string, scope: SpaceScope) => typedError<[string, string | null] | null, AppError>(__TAURI_INVOKE("resolve_page_by_alias", { alias, scope })),
 	/**  Tauri command: export a page as Markdown. Delegates to [`export_page_markdown_inner`]. */
 	exportPageMarkdown: (pageId: PageId) => typedError<string, AppError>(__TAURI_INVOKE("export_page_markdown", { pageId })),
-	/**  Tauri command: render a page as its source-mode markdown buffer. Delegates to [`get_page_source_inner`]. */
-	getPageSource: (pageId: PageId) => typedError<string, AppError>(__TAURI_INVOKE("get_page_source", { pageId })),
 	/**
-	 *  Tauri command: a page's source buffer with each block's id beside its text,
-	 *  in `dialect`, `Source` when none (#5691). Delegates to
-	 *  [`get_page_buffer_as`].
+	 *  Tauri command: a page's buffer with each block's id beside its text.
+	 *  Delegates to [`get_page_buffer_inner`].
 	 */
-	getPageBuffer: (pageId: PageId, dialect: "source" | "document" | null) => typedError<PageBuffer, AppError>(__TAURI_INVOKE("get_page_buffer", { pageId, dialect })),
+	getPageBuffer: (pageId: PageId) => typedError<PageBuffer, AppError>(__TAURI_INVOKE("get_page_buffer", { pageId })),
 	/**
-	 *  Tauri command: save a page edited as its source buffer, in `dialect`,
-	 *  `Source` when none (#5691). Delegates to [`apply_page_source_as`].
+	 *  Tauri command: save a page edited as its buffer. Delegates to
+	 *  [`apply_page_source_inner`].
 	 */
-	applyPageSource: (pageId: PageId, source: string, baseSource: string, merge: boolean, lineIds: (string | null)[], dialect: "source" | "document" | null) => typedError<WithOps<PageSourceReport>, AppError>(__TAURI_INVOKE("apply_page_source", { pageId, source, baseSource, merge, lineIds, dialect })),
+	applyPageSource: (pageId: PageId, source: string, baseSource: string, merge: boolean, lineIds: (string | null)[]) => typedError<WithOps<PageSourceReport>, AppError>(__TAURI_INVOKE("apply_page_source", { pageId, source, baseSource, merge, lineIds })),
 	/**
 	 *  Tauri command: render blocks as clipboard markdown. Delegates to
 	 *  [`get_blocks_source_inner`].
@@ -2073,19 +2070,6 @@ export type DeleteResponse = {
 	 */
 	affected_page_ids: string[],
 };
-
-/**
- *  The two grammars a page's buffer is written in (#5691). `Document` writes a
- *  plain block as its own paragraph, a list block with its marker and a task
- *  as `- [ ] x`, which has no list style (D3): a blank line separates blocks
- *  but neighbouring list lines (D1), a plain block under a list block is a `+`
- *  item and a line holding only `\` an empty line (D4). Edit as Markdown,
- *  Duplicate, journal templates and the MCP page tools write and read it, as a
- *  paste reads it (#6190). `Source` writes every block as an outline bullet,
- *  its list marker after the bullet; nothing in the app asks for it, and the
- *  buffer commands read it only when given no dialect.
- */
-export type Dialect = "source" | "document";
 
 /**  A contiguous span of text with a diff tag. */
 export type DiffSpan = {

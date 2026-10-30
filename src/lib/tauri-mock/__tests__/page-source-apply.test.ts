@@ -1,13 +1,13 @@
 /**
  * #5140 Phase 4a — mock `apply_page_source`, the save of a page edited as its
- * source buffer, over the mock's own `get_page_source` render. Both are
- * approximations of the backend grammar (bullets, indentation and continuation
- * lines; no markers or properties; names are `names.test.ts`), so what is
- * pinned here is the diff the mock applies: edits, creates, moves and deletes
- * by the id beside each line (#5160 A), and the refusals; Phase 5 adds the
- * merge of a stale buffer. Everything is read back through the mock's read
- * commands. Backend parity is pinned by the `apply_page_source*.json`
- * conformance fixtures.
+ * buffer, over the mock's own `get_page_buffer` render, in the Document
+ * dialect (#5691): plain blocks as paragraphs, a blank line between them,
+ * children indented under their parent's text (markers and property lines are
+ * `document-lines.test.ts`, names `names.test.ts`). What is pinned here is the
+ * diff the mock applies: edits, creates, moves and deletes by the id beside
+ * each line (#5160 A), and the refusals; Phase 5 adds the merge of a stale
+ * buffer. Everything is read back through the mock's read commands. Backend
+ * parity is pinned by the `apply_page_source*.json` conformance fixtures.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -71,20 +71,20 @@ function put(
 }
 
 function source(pageId = PAGE): string {
-  return dispatch('get_page_source', { pageId }) as string
+  return (dispatch('get_page_buffer', { pageId }) as { source: string }).source
 }
 
 /**
- * `buffer`, written as the page's source writes it, each block's ` ^ID` ending
+ * `buffer`, written as the page's buffer writes it, each block's ` ^ID` ending
  * its last line, as the editor holds it: the text less those anchors, each id
- * beside the line its block starts on.
+ * beside the line its block starts on, the first after a blank line.
  */
 function byLine(buffer: string): { source: string; lineIds: Array<string | null> } {
   const lines = buffer.split('\n')
   const lineIds: Array<string | null> = lines.map(() => null)
   let start = 0
   lines.forEach((line, i) => {
-    if (/^\s*- /.test(line)) start = i
+    if (i === 0 || lines[i - 1] === '') start = i
     const anchor = / \^([0-9A-Z]{26})$/.exec(line)
     if (anchor === null) return
     lines[i] = line.slice(0, anchor.index)
@@ -143,15 +143,21 @@ function isLive(blockId: string): boolean {
 const COUNTS_NONE = { created: 0, edited: 0, moved: 0, deleted: 0 }
 
 const INITIAL = [
-  `- alpha ^${A}`,
-  `- bravo ^${B}`,
-  `  - bravo child ^${B1}`,
-  `    - grandchild ^${B11}`,
-  `- charlie ^${C}`,
-  `- delta ^${D}`,
-  `- multi`,
+  `alpha ^${A}`,
   ``,
-  `    indented line ^${M}`,
+  `bravo ^${B}`,
+  ``,
+  `  bravo child ^${B1}`,
+  ``,
+  `    grandchild ^${B11}`,
+  ``,
+  `charlie ^${C}`,
+  ``,
+  `delta ^${D}`,
+  ``,
+  `multi`,
+  `\\`,
+  `  indented line ^${M}`,
   ``,
 ].join('\n')
 
@@ -179,7 +185,7 @@ describe('tauri-mock apply_page_source', () => {
     put(ELSEWHERE, 'content', 'on another page', OTHER_PAGE, 1, OTHER_PAGE)
   })
 
-  it('renders content blocks only, continuation lines indented under their bullet', () => {
+  it("renders content blocks only, a paragraph's lines at its column", () => {
     expect(source()).toBe(INITIAL)
   })
 
@@ -199,7 +205,7 @@ describe('tauri-mock apply_page_source', () => {
   })
 
   it('edits a block whose text changed, and only that block', () => {
-    const report = apply(INITIAL.replace('- bravo ^', '- bravo, edited ^'))
+    const report = apply(INITIAL.replace('bravo ^', 'bravo, edited ^'))
 
     expect(report).toMatchObject({ ...COUNTS_NONE, edited: 1 })
     expect(opLog.map((op) => op.op_type)).toEqual(['edit_block'])
@@ -214,9 +220,7 @@ describe('tauri-mock apply_page_source', () => {
   })
 
   it('creates an unanchored bullet where it stands, with its nested child under it', () => {
-    const report = apply(
-      INITIAL.replace(`- bravo ^${B}`, `- new one\n  - its child\n- bravo ^${B}`),
-    )
+    const report = apply(INITIAL.replace(`bravo ^${B}`, `new one\n\n  its child\n\nbravo ^${B}`))
 
     expect(report).toMatchObject({ ...COUNTS_NONE, created: 2 })
     expect(tree(PAGE).slice(0, 3)).toEqual([
@@ -226,8 +230,8 @@ describe('tauri-mock apply_page_source', () => {
     ])
   })
 
-  it('keeps text typed above the first bullet as a block of its own', () => {
-    const report = apply(`typed on top\n${INITIAL}`)
+  it('keeps text typed above the first block as a block of its own', () => {
+    const report = apply(`typed on top\n\n${INITIAL}`)
 
     expect(report).toMatchObject({ ...COUNTS_NONE, created: 1 })
     expect(children(PAGE).map((r) => r.content)).toEqual([
@@ -242,10 +246,7 @@ describe('tauri-mock apply_page_source', () => {
 
   it('reorders with one move, keeping the longest run already in order', () => {
     const report = apply(
-      INITIAL.replace(`- delta ^${D}\n`, '').replace(
-        `- alpha ^${A}`,
-        `- delta ^${D}\n- alpha ^${A}`,
-      ),
+      INITIAL.replace(`delta ^${D}\n\n`, '').replace(`alpha ^${A}`, `delta ^${D}\n\nalpha ^${A}`),
     )
 
     expect(report).toMatchObject({ ...COUNTS_NONE, moved: 1 })
@@ -261,12 +262,9 @@ describe('tauri-mock apply_page_source', () => {
     expect(children(C).map((r) => r.id)).toEqual([NESTED_PAGE])
   })
 
-  it('reparents a block under the bullet it is indented beneath', () => {
+  it('reparents a block under the block it is indented beneath', () => {
     const report = apply(
-      INITIAL.replace(`- delta ^${D}\n`, '').replace(
-        `- alpha ^${A}`,
-        `- alpha ^${A}\n  - delta ^${D}`,
-      ),
+      INITIAL.replace(`delta ^${D}\n\n`, '').replace(`alpha ^${A}`, `alpha ^${A}\n\n  delta ^${D}`),
     )
 
     expect(report).toMatchObject({ ...COUNTS_NONE, moved: 1 })
@@ -276,7 +274,7 @@ describe('tauri-mock apply_page_source', () => {
 
   it('deletes a block left out of the buffer with its subtree, in one op', () => {
     const report = apply(
-      INITIAL.replace(`- bravo ^${B}\n  - bravo child ^${B1}\n    - grandchild ^${B11}\n`, ''),
+      INITIAL.replace(`bravo ^${B}\n\n  bravo child ^${B1}\n\n    grandchild ^${B11}\n\n`, ''),
     )
 
     expect(report).toMatchObject({ ...COUNTS_NONE, deleted: 3 })
@@ -288,8 +286,8 @@ describe('tauri-mock apply_page_source', () => {
   it('moves a kept child out before deleting its parent', () => {
     const report = apply(
       INITIAL.replace(
-        `- bravo ^${B}\n  - bravo child ^${B1}\n    - grandchild ^${B11}`,
-        `- bravo child ^${B1}\n  - grandchild ^${B11}`,
+        `bravo ^${B}\n\n  bravo child ^${B1}\n\n    grandchild ^${B11}`,
+        `bravo child ^${B1}\n\n  grandchild ^${B11}`,
       ),
     )
 
@@ -303,8 +301,8 @@ describe('tauri-mock apply_page_source', () => {
   })
 
   it('refuses a stale base as RequiresRefresh, writing nothing', () => {
-    const stale = INITIAL.replace('- alpha ^', '- alpha, as it was ^')
-    const buffer = INITIAL.replace('- alpha ^', '- alpha, edited ^')
+    const stale = INITIAL.replace('alpha ^', 'alpha, as it was ^')
+    const buffer = INITIAL.replace('alpha ^', 'alpha, edited ^')
 
     expect(refusal({ source: buffer, baseSource: stale })).toEqual({
       kind: 'validation',
@@ -315,15 +313,15 @@ describe('tauri-mock apply_page_source', () => {
   })
 
   it('refuses a page whose source does not read back as its blocks', () => {
-    // A continuation line that is itself a bullet: the mock writes no escape.
-    put(D, 'content', 'delta\n- not a bullet', PAGE, 4, PAGE)
+    // A carriage return, which the text cannot carry: it reads as a line end.
+    put(D, 'content', 'delta\r- not a bullet', PAGE, 4, PAGE)
 
     expect(refusal({ source: source() })).toEqual({ kind: 'validation', code: null })
     expect(opLog).toHaveLength(0)
   })
 
   it('refuses to delete a block a nested page sits under', () => {
-    expect(refusal({ source: INITIAL.replace(`- charlie ^${C}\n`, '') })).toEqual({
+    expect(refusal({ source: INITIAL.replace(`charlie ^${C}\n\n`, '') })).toEqual({
       kind: 'validation',
       code: null,
     })
@@ -383,7 +381,7 @@ describe('tauri-mock apply_page_source with merge (#5140 Phase 5)', () => {
   })
 
   it('saves the buffer on a fresh base as a plain save does', () => {
-    const buffer = `- delta ^${D}\n${INITIAL.replace(`- delta ^${D}\n`, '').replace('- bravo ^', '- bravo, edited ^')}- new\n`
+    const buffer = `delta ^${D}\n\n${INITIAL.replace(`delta ^${D}\n\n`, '').replace('bravo ^', 'bravo, edited ^')}\nnew\n`
 
     const report = merge(buffer, source())
 
@@ -409,7 +407,7 @@ describe('tauri-mock apply_page_source with merge (#5140 Phase 5)', () => {
   it('writes an edit made in the buffer and keeps a different block the page edited', () => {
     editThere(B, 'bravo, edited there')
 
-    const report = merge(INITIAL.replace('- delta ^', '- delta, edited here ^'))
+    const report = merge(INITIAL.replace('delta ^', 'delta, edited here ^'))
 
     expect(report).toMatchObject({ ...COUNTS_NONE, edited: 1, warnings: [] })
     expect(contents(PAGE)).toEqual([
@@ -424,7 +422,7 @@ describe('tauri-mock apply_page_source with merge (#5140 Phase 5)', () => {
   it("keeps both versions of a block both sides changed, the buffer's as a new block right before the page's", () => {
     editThere(B, 'bravo, edited there')
 
-    const report = merge(INITIAL.replace('- bravo ^', '- bravo, edited here ^'))
+    const report = merge(INITIAL.replace('bravo ^', 'bravo, edited here ^'))
 
     expect(report).toMatchObject({ ...COUNTS_NONE, created: 1 })
     expect(report.warnings).toEqual([
@@ -443,7 +441,7 @@ describe('tauri-mock apply_page_source with merge (#5140 Phase 5)', () => {
   it('deletes what the buffer removed, except a block the page changed, which stays with a warning', () => {
     editThere(D, 'delta, edited there')
 
-    const report = merge(INITIAL.replace(`- alpha ^${A}\n`, '').replace(`- delta ^${D}\n`, ''))
+    const report = merge(INITIAL.replace(`alpha ^${A}\n\n`, '').replace(`delta ^${D}\n\n`, ''))
 
     expect(report).toMatchObject({ ...COUNTS_NONE, deleted: 1 })
     expect(report.warnings).toEqual([
@@ -457,7 +455,7 @@ describe('tauri-mock apply_page_source with merge (#5140 Phase 5)', () => {
     deleteThere(A)
     deleteThere(D)
 
-    const report = merge(INITIAL.replace('- delta ^', '- delta, edited here ^'))
+    const report = merge(INITIAL.replace('delta ^', 'delta, edited here ^'))
 
     expect(report).toMatchObject({ ...COUNTS_NONE, created: 1 })
     expect(report.warnings).toEqual([
@@ -470,7 +468,7 @@ describe('tauri-mock apply_page_source with merge (#5140 Phase 5)', () => {
   it("keeps the page's order when only the page reordered", () => {
     moveThere(D, PAGE, 0)
 
-    const report = merge(INITIAL.replace('- bravo ^', '- bravo, edited here ^'))
+    const report = merge(INITIAL.replace('bravo ^', 'bravo, edited here ^'))
 
     expect(report).toMatchObject({ ...COUNTS_NONE, edited: 1, warnings: [] })
     expect(contents(PAGE)).toEqual(['delta', 'alpha', 'bravo, edited here', 'charlie', MULTI])
@@ -479,7 +477,7 @@ describe('tauri-mock apply_page_source with merge (#5140 Phase 5)', () => {
   it("keeps the buffer's order when only the buffer reordered", () => {
     editThere(A, 'alpha, edited there')
 
-    const report = merge(`- delta ^${D}\n${INITIAL.replace(`- delta ^${D}\n`, '')}`)
+    const report = merge(`delta ^${D}\n\n${INITIAL.replace(`delta ^${D}\n\n`, '')}`)
 
     expect(report).toMatchObject({ ...COUNTS_NONE, moved: 1, warnings: [] })
     expect(contents(PAGE)).toEqual(['delta', 'alpha, edited there', 'bravo', 'charlie', MULTI])
@@ -487,9 +485,9 @@ describe('tauri-mock apply_page_source with merge (#5140 Phase 5)', () => {
 
   it("keeps the buffer's order, with a warning, when both sides reordered the same children differently", () => {
     moveThere(D, PAGE, 0)
-    const multi = INITIAL.slice(INITIAL.indexOf('- multi'))
+    const multi = INITIAL.slice(INITIAL.indexOf('multi\n'))
 
-    const report = merge(`${multi}${INITIAL.replace(multi, '')}`)
+    const report = merge(`${multi}\n${INITIAL.replace(multi, '')}`)
 
     expect(report.warnings).toEqual([
       "the page's blocks were reordered here and on the page; your order kept",
@@ -500,7 +498,7 @@ describe('tauri-mock apply_page_source with merge (#5140 Phase 5)', () => {
   it("keeps the page's parent, with a warning, for a block each side moved under a different parent", () => {
     moveThere(D, A, 0)
 
-    const report = merge(INITIAL.replace(`- delta ^${D}`, `  - delta ^${D}`))
+    const report = merge(INITIAL.replace(`delta ^${D}`, `  delta ^${D}`))
 
     expect(report.warnings).toEqual([
       "'delta' was moved here and on the page; the page's place kept",
@@ -513,10 +511,7 @@ describe('tauri-mock apply_page_source with merge (#5140 Phase 5)', () => {
     moveThere(A, D, 0)
 
     const report = merge(
-      INITIAL.replace(`- delta ^${D}\n`, '').replace(
-        `- alpha ^${A}`,
-        `- alpha ^${A}\n  - delta ^${D}`,
-      ),
+      INITIAL.replace(`delta ^${D}\n\n`, '').replace(`alpha ^${A}`, `alpha ^${A}\n\n  delta ^${D}`),
     )
 
     expect(report.warnings).toEqual([
@@ -533,7 +528,7 @@ describe('tauri-mock apply_page_source with merge (#5140 Phase 5)', () => {
   it('moves a block the buffer added under one the page deleted up to where that block was', () => {
     deleteThere(D)
 
-    const report = merge(INITIAL.replace(`- delta ^${D}\n`, `- delta ^${D}\n  - under delta\n`))
+    const report = merge(INITIAL.replace(`delta ^${D}\n`, `delta ^${D}\n\n  under delta\n`))
 
     expect(report).toMatchObject({ ...COUNTS_NONE, created: 1, warnings: [] })
     expect(isLive(D)).toBe(false)
@@ -549,7 +544,7 @@ describe('tauri-mock apply_page_source with merge (#5140 Phase 5)', () => {
       scope: SCOPE,
     })
 
-    const report = merge(INITIAL.replace(`- bravo ^${B}`, `- added here\n- bravo ^${B}`))
+    const report = merge(INITIAL.replace(`bravo ^${B}`, `added here\n\nbravo ^${B}`))
 
     expect(report).toMatchObject({ ...COUNTS_NONE, created: 1, warnings: [] })
     expect(contents(PAGE)).toEqual([
@@ -620,11 +615,11 @@ describe('tauri-mock get_page_buffer and apply_page_source by line ids (#5160 A)
   it('gives the source, the source less its anchors, and the id each line carries', () => {
     const { source: anchored, text, line_ids } = buffer()
 
-    expect(anchored).toBe(source())
-    expect(text).toBe(
-      '- alpha\n- bravo\n  - bravo child\n- charlie\n- multi\n\n    indented line\n',
+    expect(anchored).toBe(
+      `alpha ^${A}\n\nbravo ^${B}\n\n  bravo child ^${B1}\n\ncharlie ^${C}\n\nmulti\n\\\n  indented line ^${M}\n`,
     )
-    expect(line_ids).toEqual([A, B, B1, C, M, null, null, null])
+    expect(text).toBe('alpha\n\nbravo\n\n  bravo child\n\ncharlie\n\nmulti\n\\\n  indented line\n')
+    expect(line_ids).toEqual([A, null, B, null, B1, null, C, null, M, null, null, null])
   })
 
   it('appends nothing for the page’s own text', () => {
@@ -636,7 +631,7 @@ describe('tauri-mock get_page_buffer and apply_page_source by line ids (#5160 A)
 
   it('edits the block whose line changed, no anchor needed', () => {
     const edited = lines()
-    edited[1] = ['- bravo, edited ^note', B]
+    edited[2] = ['bravo, edited ^note', B]
 
     const report = applyByLine(edited)
 
@@ -651,8 +646,8 @@ describe('tauri-mock get_page_buffer and apply_page_source by line ids (#5160 A)
 
   it('moves a line cut and pasted in the buffer, keeping its id', () => {
     const edited = lines()
-    const [cut] = edited.splice(0, 1) as [Line]
-    edited.splice(3, 0, [`  ${cut[0]}`, cut[1]])
+    const [cut] = edited.splice(0, 2) as [Line]
+    edited.splice(5, 0, ['', null], [`  ${cut[0]}`, cut[1]])
 
     const report = applyByLine(edited)
 
@@ -662,14 +657,14 @@ describe('tauri-mock get_page_buffer and apply_page_source by line ids (#5160 A)
 
   it('saves a copied line as a new block, the first line keeping the id, with a warning', () => {
     const edited = lines()
-    edited.splice(4, 0, ['- alpha again', A])
+    edited.splice(8, 0, ['alpha again', A], ['', null])
 
     const report = applyByLine(edited)
 
     expect(report).toMatchObject({
       ...COUNTS_NONE,
       created: 1,
-      warnings: ['line 5: a copy of the block on line 1; saved as a new block'],
+      warnings: ['line 9: a copy of the block on line 1; saved as a new block'],
     })
     expect(children(PAGE).map((r) => [r.id === A, r.content])).toEqual([
       [true, 'alpha'],
@@ -682,14 +677,14 @@ describe('tauri-mock get_page_buffer and apply_page_source by line ids (#5160 A)
 
   it('saves a line carrying another page’s id as a new block, with a warning', () => {
     const edited = lines()
-    edited.splice(1, 0, ['- borrowed', ELSEWHERE])
+    edited.splice(2, 0, ['borrowed', ELSEWHERE], ['', null])
 
     const report = applyByLine(edited)
 
     expect(report).toMatchObject({
       ...COUNTS_NONE,
       created: 1,
-      warnings: ['line 2: not a block of this page; saved as a new block'],
+      warnings: ['line 3: not a block of this page; saved as a new block'],
     })
     expect(children(PAGE)[1]?.content).toBe('borrowed')
     expect(children(PAGE)[1]?.id).not.toBe(ELSEWHERE)
@@ -716,7 +711,7 @@ describe('tauri-mock get_page_buffer and apply_page_source by line ids (#5160 A)
 
   it('ends a fence left open at the next line carrying an id, with a warning', () => {
     const edited = lines()
-    edited[0] = ['- ```', A]
+    edited[0] = ['```', A]
     edited.splice(1, 0, ['- not a block', null])
 
     const report = applyByLine(edited)
@@ -725,7 +720,7 @@ describe('tauri-mock get_page_buffer and apply_page_source by line ids (#5160 A)
       ...COUNTS_NONE,
       edited: 1,
       warnings: [
-        'the ``` code fence opened on line 1 is not closed; it ends before the block on line 3',
+        'the ``` code fence opened on line 1 is not closed; it ends before the block on line 4',
       ],
     })
     expect(children(PAGE).map((r) => r.content)).toEqual([
@@ -739,7 +734,7 @@ describe('tauri-mock get_page_buffer and apply_page_source by line ids (#5160 A)
   it('refuses a stale text, and folds the page’s change in with merge', () => {
     const base = source()
     const edited = lines()
-    edited[0] = ['- alpha, in the buffer', A]
+    edited[0] = ['alpha, in the buffer', A]
     dispatch('edit_block', { blockId: C, toText: 'charlie, on the page' })
     opLog.length = 0
 
@@ -762,7 +757,7 @@ describe('tauri-mock get_page_buffer and apply_page_source by line ids (#5160 A)
 describe('tauri-mock apply_page_source front matter (#5160 S8)', () => {
   const WORK = id('WORK')
   const HEAD = '---\naliases: [Home base]\ntags: [work]\nstage: open\n---\n\n'
-  const BODY = `- alpha ^${A}\n`
+  const BODY = `alpha ^${A}\n`
 
   const textRow = (key: string, value: string): Record<string, unknown> => ({
     key,
@@ -905,7 +900,7 @@ describe('tauri-mock apply_page_source front matter (#5160 S8)', () => {
     it('keeps the front matter in the text, its lines carrying no id', () => {
       const { text, line_ids } = buffer()
 
-      expect(text).toBe(`${HEAD}- alpha\n`)
+      expect(text).toBe(`${HEAD}alpha\n`)
       expect(line_ids).toEqual([null, null, null, null, null, null, A, null])
     })
 
@@ -919,7 +914,7 @@ describe('tauri-mock apply_page_source front matter (#5160 S8)', () => {
     it('writes a front matter property and a block edited in one save', () => {
       const edited = lines()
       edited[3] = ['stage: done', null]
-      edited[6] = ['- alpha, edited', A]
+      edited[6] = ['alpha, edited', A]
 
       const report = applyByLine(edited)
 
@@ -930,12 +925,12 @@ describe('tauri-mock apply_page_source front matter (#5160 S8)', () => {
 
     it('names the buffer line of a copy below the front matter, and of a refusal in it', () => {
       const own = lines()
-      const copied = [...own.slice(0, 7), own[6] as Line, ...own.slice(7)]
+      const copied = [...own.slice(0, 7), ['', null] as Line, own[6] as Line, ...own.slice(7)]
       const unreadable = [...own.slice(0, 4), ['not a pair', null] as Line, ...own.slice(4)]
 
       expect(() => applyByLine(unreadable)).toThrow(/^line 5: `not a pair` is not/)
       expect(applyByLine(copied).warnings).toEqual([
-        'line 8: a copy of the block on line 7; saved as a new block',
+        'line 9: a copy of the block on line 7; saved as a new block',
       ])
     })
   })

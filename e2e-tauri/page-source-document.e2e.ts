@@ -9,8 +9,8 @@
 // changed (an extra blank line only): the backend reads back the tree it
 // wrote, so the save appends no op and leaves no Undo, and the page re-read is
 // the same. Then one restyle, `-` to `1.`, saves as a numbered block. Every
-// save goes through the commands' Tauri wrappers with `dialect: document`;
-// the mock-backed twin is `e2e/page-source-edit.spec.ts`.
+// save goes through the commands' Tauri wrappers; the mock-backed twin is
+// `e2e/page-source-edit.spec.ts`.
 //
 // Globals (`$`, `$$`, `browser`, `expect`) come from @wdio/globals — see
 // helpers.ts.

@@ -1,7 +1,76 @@
 ---
 source: agaric-engine/src/import.rs
-expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_markdown(&text)), \"source\":\n    output_shape(parse_source_outline(&text)), \"paste\":\n    blocks_shape(parse_pasted_text(&text)),\n})"
+expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_markdown(&text)), \"document\":\n    output_shape(parse_document_outline(&text)), \"paste\":\n    blocks_shape(parse_pasted_text(&text)),\n})"
 ---
+document:
+  blocks:
+    - block_anchor: ~
+      content: Markdown is the most popular format that Logseq supports. Logseq supports most syntaxes including some extended ones.
+      depth: 0
+      is_code: false
+      properties:
+        - - listStyle
+          - bullet
+    - block_anchor: ~
+      content: "### **Standard** syntax"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "what's logseq? #card"
+      depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - bullet
+        - - card-last-interval
+          - "28.3"
+        - - card-repeats
+          - "4"
+    - block_anchor: ~
+      content: knowledge base
+      depth: 2
+      is_code: false
+      properties:
+        - - listStyle
+          - bullet
+    - block_anchor: ~
+      content: and so on...
+      depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - bullet
+    - block_anchor: ~
+      content: "### **Extended** syntax"
+      depth: 0
+      is_code: false
+      properties:
+        - - id
+          - 60a78b6b-a0ff-49fe-822f-87216fbf79ff
+    - block_anchor: ~
+      content: "[[term/page reference]]"
+      depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - bullet
+        - - id
+          - 60ab4582-5a6e-4f3a-84a2-71ae056455a0
+    - block_anchor: ~
+      content: "syntax: `[[page name]]`"
+      depth: 2
+      is_code: false
+      properties:
+        - - listStyle
+          - bullet
+  frontmatter:
+    - - description
+      - "Markdown is a popular markup language with many flavors. Our implementation is parsed by https://github.com/logseq/mldoc."
+  frontmatter_lines:
+    description: 1
+  frontmatter_list_items: {}
+  warnings: []
 import:
   blocks:
     - block_anchor: ~
@@ -119,60 +188,3 @@ paste:
     properties:
       - - listStyle
         - bullet
-source:
-  blocks:
-    - block_anchor: ~
-      content: Markdown is the most popular format that Logseq supports. Logseq supports most syntaxes including some extended ones.
-      depth: 0
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: "### **Standard** syntax"
-      depth: 0
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: "what's logseq? #card"
-      depth: 1
-      is_code: false
-      properties:
-        - - card-last-interval
-          - "28.3"
-        - - card-repeats
-          - "4"
-    - block_anchor: ~
-      content: knowledge base
-      depth: 2
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: and so on...
-      depth: 1
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: "### **Extended** syntax"
-      depth: 0
-      is_code: false
-      properties:
-        - - id
-          - 60a78b6b-a0ff-49fe-822f-87216fbf79ff
-    - block_anchor: ~
-      content: "[[term/page reference]]"
-      depth: 1
-      is_code: false
-      properties:
-        - - id
-          - 60ab4582-5a6e-4f3a-84a2-71ae056455a0
-    - block_anchor: ~
-      content: "syntax: `[[page name]]`"
-      depth: 2
-      is_code: false
-      properties: []
-  frontmatter:
-    - - description
-      - "Markdown is a popular markup language with many flavors. Our implementation is parsed by https://github.com/logseq/mldoc."
-  frontmatter_lines:
-    description: 1
-  frontmatter_list_items: {}
-  warnings: []

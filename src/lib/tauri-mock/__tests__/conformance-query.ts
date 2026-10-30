@@ -937,8 +937,8 @@ const WIRE: Readonly<Record<string, WireShape>> = {
   // ── The page buffer by line ids (#5160 A) ──
   //
   // One row per line of the text, the id its line carries beside it. `source`
-  // stays off the token: it is `get_page_source`'s render, which the mock
-  // approximates.
+  // stays off the token: the mock approximates the anchored render, writing no
+  // id in the text as a name.
   get_page_buffer: {
     rows: { kind: 'buffer-lines' },
     token: { kind: 'tuple', names: ['id', 'text'] },

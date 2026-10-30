@@ -26,9 +26,8 @@ import {
 } from '@/lib/inline-property-parse'
 import { normalizeTagName } from '@/lib/name-tokens'
 import { compareNocase, compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
-import { TASK_STATE_TO_MARKER } from '@/lib/task-states'
 import { withoutEvents } from '@/lib/tauri-mock/events'
-import { blocksHandlers, parseOutline } from '@/lib/tauri-mock/handlers/blocks'
+import { blocksHandlers } from '@/lib/tauri-mock/handlers/blocks'
 import { propertiesHandlers } from '@/lib/tauri-mock/handlers/properties'
 import {
   type TypedHandlers,
@@ -149,36 +148,6 @@ function liveChildren(parentId: string): Record<string, unknown>[] {
 }
 
 /**
- * DELIBERATE APPROXIMATION of `render_page_source` (#5140): the page's front
- * matter ({@link renderFrontMatter}), then every live content descendant,
- * depth-first in sibling order, as `- content ^ID` with its further lines
- * indented under the bullet. Like the backend, a nested page and what is under
- * it are left out. No list markers, task checkboxes or property lines — the
- * Rust tests own that grammar, and a faithful port is the second
- * implementation #5140 deletes. Returns the buffer and the ids it holds, in
- * order.
- */
-function renderPageSource(pid: string): { source: string; ids: string[] } {
-  requirePageToRender(pid)
-  let source = renderFrontMatter(pageFrontMatter(pid))
-  const ids: string[] = []
-  const render = (parentId: string, depth: number): void => {
-    for (const child of liveChildren(parentId)) {
-      if (child['block_type'] !== 'content') continue
-      const id = child['id'] as string
-      const [head, ...rest] = ((child['content'] as string | null) ?? '').split('\n')
-      source += `${'  '.repeat(depth)}- ${head}`
-      for (const line of rest) source += line === '' ? '\n' : `\n${'  '.repeat(depth + 1)}${line}`
-      source += ` ^${id}\n`
-      ids.push(id)
-      render(id, depth + 1)
-    }
-  }
-  render(pid, 0)
-  return { source, ids }
-}
-
-/**
  * Like the backend's `load_page_row`: a trashed page is not found, and a block
  * that is not a page is a validation error.
  */
@@ -227,7 +196,7 @@ function pushAnchoredDocumentBlock(
 }
 
 /**
- * `render_page_document` (#5691, `Dialect::Document.render`): the page's front
+ * `render_page_document` (#5691): the page's front
  * matter ({@link renderFrontMatter}), then every live content descendant,
  * depth-first in sibling order, each with its `^ID`. A plain block is its own
  * paragraph, a bullet block `- x`, a numbered one `N. x` by its place in its
@@ -616,7 +585,7 @@ interface SourceBullet {
   anchor: string | null
   /** The buffer line the bullet starts on, which a refusal names (#5160 X3). */
   line?: number | undefined
-  /** A Document line's marker, checkbox and property lines; a Source line has none (#5691). */
+  /** Its line's marker, checkbox and property lines (#5691); none on a block a merge forked. */
   marks?: Marks | undefined
   /** What the save writes to the block beside its text, planned by {@link planMarkWrites}. */
   writes?: MarkWrites | undefined
@@ -633,9 +602,6 @@ interface MarkWrites {
   todoState: { to: string | null } | null
 }
 
-/** The ` ^word` a source block ends with, when it is id-sized. */
-const SOURCE_ANCHOR_RE = /(?:^|\s)\^([0-9A-Za-z]{26})\s*$/
-
 /** What `BlockId::from_string` reads: Crockford base32, either case, in 128 bits. */
 const ULID_RE = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/i
 
@@ -649,71 +615,12 @@ function isBlockId(word: string): boolean {
 }
 
 /**
- * A source buffer's blocks ({@link parseOutline}), each trailing ` ^id` split
- * off, a ULID read uppercase as the backend reads it. The save models no task
- * checkboxes, so one `parseOutline` read goes back into the text it was read
- * from.
- */
-function parseSourceBuffer(source: string): SourceBullet[] {
-  return parseOutline(source).map(({ content: text, depth, todoState, line }) => {
-    const content = todoState
-      ? `[${TASK_STATE_TO_MARKER[todoState]}]${text === '' ? '' : ` ${text}`}`
-      : text
-    const match = SOURCE_ANCHOR_RE.exec(content)
-    const word = match?.[1]
-    if (!match || word === undefined || !isBlockId(word))
-      return { content, depth, anchor: null, line }
-    const anchor = ULID_RE.test(word) ? word.toUpperCase() : word
-    return { content: content.slice(0, match.index), depth, anchor, line }
-  })
-}
-
-/**
- * The text `get_page_buffer` gives (#5160 A): `source` less the ` ^ID` each
- * block's last line ends in, and the id each line carries, the block's on the
- * line it starts on. The front matter's lines are kept as written, carrying
- * none (#5160 S8). The mock's render writes no anchor on a line of its own, so
- * there is none to drop.
+ * The text `get_page_buffer` gives (#5160 A, `anchor_free`): `source` less the
+ * `^ID` each block wrote, at the end of its last line or on a line of its own,
+ * which goes, and the id each line carries, the block's on the line it starts
+ * on. The front matter's lines are kept as written, carrying none (#5160 S8).
  */
 function anchorFree(source: string): { text: string; lineIds: Array<string | null> } {
-  const lines = source.split('\n')
-  const lineIds: Array<string | null> = lines.map(() => null)
-  for (const bullet of parseSourceBuffer(readFrontMatter(source).body)) {
-    if (bullet.anchor === null || bullet.line === undefined) continue
-    const last = bullet.line - 1 + bullet.content.split('\n').length - 1
-    const line = lines[last] ?? ''
-    const suffix = ` ^${bullet.anchor}`
-    if (line.toUpperCase().endsWith(suffix.toUpperCase())) {
-      lines[last] = line.slice(0, -suffix.length)
-    }
-    lineIds[bullet.line - 1] = bullet.anchor
-  }
-  return { text: lines.join('\n'), lineIds }
-}
-
-/** `text` read with its ids beside it on `lineIds`, no id assigned yet. */
-function parseTextBuffer(
-  text: string,
-  lineIds: ReadonlyArray<string | null>,
-  warnings: string[],
-): SourceBullet[] {
-  const idLines = new Set(lineIds.flatMap((carried, i) => (carried === null ? [] : [i + 1])))
-  return parseOutline(text, { idLines, warnings }).map(({ content, depth, todoState, line }) => ({
-    content: todoState
-      ? `[${TASK_STATE_TO_MARKER[todoState]}]${content === '' ? '' : ` ${content}`}`
-      : content,
-    depth,
-    anchor: null,
-    line,
-  }))
-}
-
-/**
- * `anchor_free_as` for a Document buffer (#5691): `source` less the `^ID` each
- * block wrote, at the end of its last line or on a line of its own, which
- * goes, and the id each line carries, the block's on the line it starts on.
- */
-function anchorFreeDocument(source: string): { text: string; lineIds: Array<string | null> } {
   const lines = source.split('\n')
   const lineIds: Array<string | null> = lines.map(() => null)
   const ownLines = new Set<number>()
@@ -731,7 +638,7 @@ function anchorFreeDocument(source: string): { text: string; lineIds: Array<stri
   return { text: lines.filter(kept).join('\n'), lineIds: lineIds.filter(kept) }
 }
 
-/** {@link parseTextBuffer} for a Document buffer: its blocks as the Rust grammar reads them. */
+/** `text` read with its ids beside it on `lineIds`, no id yet: its blocks as the Rust grammar reads them. */
 function parseDocumentBuffer(
   text: string,
   lineIds: ReadonlyArray<string | null>,
@@ -748,34 +655,10 @@ function parseDocumentBuffer(
   }))
 }
 
-/** How a buffer in one dialect is rendered, freed of its anchors and read by its ids (#5691). */
-interface BufferGrammar {
-  render: (pid: string) => { source: string; ids: string[] }
-  anchorFree: (source: string) => { text: string; lineIds: Array<string | null> }
-  read: (text: string, lineIds: ReadonlyArray<string | null>, warnings: string[]) => SourceBullet[]
-}
-
-const SOURCE_GRAMMAR: BufferGrammar = {
-  render: renderPageSource,
-  anchorFree,
-  read: parseTextBuffer,
-}
-
-const DOCUMENT_GRAMMAR: BufferGrammar = {
-  render: renderPageDocument,
-  anchorFree: anchorFreeDocument,
-  read: parseDocumentBuffer,
-}
-
-/** The grammar of the dialect a buffer command names, Source when none, as the backend reads it. */
-function grammarOf(args: Record<string, unknown>): BufferGrammar {
-  return args['dialect'] === 'document' ? DOCUMENT_GRAMMAR : SOURCE_GRAMMAR
-}
-
 /** A page's own source read as the text {@link anchorFree} makes of it, each block under its id. */
-function readOwnText(source: string, grammar: BufferGrammar): SourceBullet[] {
-  const { text, lineIds } = grammar.anchorFree(source)
-  const bullets = grammar.read(text, lineIds, [])
+function readOwnText(source: string): SourceBullet[] {
+  const { text, lineIds } = anchorFree(source)
+  const bullets = parseDocumentBuffer(text, lineIds, [])
   for (const bullet of bullets) {
     bullet.anchor = bullet.line === undefined ? null : (lineIds[bullet.line - 1] ?? null)
   }
@@ -795,7 +678,6 @@ function readByLine(
   lineIds: ReadonlyArray<string | null>,
   known: ReadonlySet<string>,
   warnings: string[],
-  grammar: BufferGrammar,
 ): SourceBullet[] {
   const lines = text.replace(/\r\n/g, '\n').split(/[\n\r]/).length
   if (lineIds.length !== lines) {
@@ -803,7 +685,7 @@ function readByLine(
       `line_ids holds ${lineIds.length} entries for the ${lines} lines of the text`,
     )
   }
-  const bullets = grammar.read(text, lineIds, warnings)
+  const bullets = parseDocumentBuffer(text, lineIds, warnings)
   const first = new Map<string, number>()
   for (const bullet of bullets) {
     const line = bullet.line ?? 0
@@ -1118,7 +1000,7 @@ function planMarkWrites(
   return { deleted, set, todoState }
 }
 
-/** A bullet's properties as the save reads them; a Source bullet has none the mock reads. */
+/** A bullet's properties as the save reads them; a block a merge forked has none. */
 function bulletProperties({ marks }: SourceBullet): Map<string, string> {
   return marks === undefined ? new Map() : markProperties(marks)
 }
@@ -1255,7 +1137,7 @@ function readSourceEdit(
   pageId: string,
   source: string,
   baseSource: string,
-  flags: { merge: boolean; lineIds: ReadonlyArray<string | null>; grammar: BufferGrammar },
+  flags: { merge: boolean; lineIds: ReadonlyArray<string | null> },
 ): {
   t1: SourceBullet[]
   before: Map<string | null, string>
@@ -1263,8 +1145,7 @@ function readSourceEdit(
   front: FrontMatterWrites
   warnings: string[]
 } {
-  const { grammar } = flags
-  const current = grammar.render(pageId)
+  const current = renderPageDocument(pageId)
   const stale = current.source !== baseSource
   if (stale && !flags.merge) {
     throw appErrorRejection({
@@ -1275,7 +1156,7 @@ function readSourceEdit(
   }
   // The page's own source is read as the text the buffer gives of it.
   const now = readFrontMatter(current.source)
-  const t0 = readOwnText(now.body, grammar)
+  const t0 = readOwnText(now.body)
   if (t0.length !== current.ids.length || t0.some((b, i) => b.anchor !== current.ids[i])) {
     throw validationRejection(`page '${pageId}' does not read back as its own source`)
   }
@@ -1291,11 +1172,11 @@ function readSourceEdit(
   )
   // An id of the source the edit started from is the page's too, so the merge
   // reads a block the page deleted since as that block.
-  const loaded = stale ? readOwnText(from.body, grammar) : t0
+  const loaded = stale ? readOwnText(from.body) : t0
   const loadedIds = new Set(loaded.flatMap(({ anchor }) => (anchor === null ? [] : [anchor])))
   const warnings: string[] = []
   const known = new Set([...loadedIds, ...current.ids])
-  const typed = readByLine(edited.body, flags.lineIds, known, warnings, grammar)
+  const typed = readByLine(edited.body, flags.lineIds, known, warnings)
   const t1 = stale ? mergeSourceBuffer(loaded, t0, typed, warnings) : typed
   const marksOf = (bullets: SourceBullet[]) =>
     new Map(bullets.flatMap((b) => (b.anchor === null || !b.marks ? [] : [[b.anchor, b.marks]])))
@@ -1928,32 +1809,24 @@ export const pagesHandlers = {
     return md
   },
 
-  get_page_source: (args) =>
-    renderPageSource((args as Record<string, unknown>)['pageId'] as string).source,
-
-  // #5160 A — the same buffer with each block's id beside its text: the mock's
-  // render less its anchors ({@link anchorFree}), in the dialect asked for,
-  // Source when none (#5691).
+  // #5160 A — the page's buffer with each block's id beside its text: the
+  // mock's Document render less its anchors ({@link anchorFree}, #5691).
   get_page_buffer: (args) => {
-    const a = args as Record<string, unknown>
-    const grammar = grammarOf(a)
-    const { source } = grammar.render(a['pageId'] as string)
-    const { text, lineIds } = grammar.anchorFree(source)
+    const { source } = renderPageDocument((args as Record<string, unknown>)['pageId'] as string)
+    const { text, lineIds } = anchorFree(source)
     return { source, text, line_ids: lineIds }
   },
 
   // #5140 Phase 4a — save the page edited as its source buffer: moves and
   // creates first, then edits, then the page's front matter (#5160 S8), then
   // deletes, so a child kept out of a deleted block has moved before the
-  // delete cascades. The text is read by `readByLine`; in a Source buffer the
-  // backend's list markers, task checkboxes and property lines are not
-  // modelled (`properties_*` count the page's own), nor in either dialect are
-  // its op cap and depth limit; tests must not rely on the mock for them. The
-  // names a new or edited bullet writes resolve in the page's space
+  // delete cascades. The text is read by `readByLine`; the backend's op cap
+  // and depth limit are not modelled, and tests must not rely on the mock for
+  // them. The names a new or edited bullet writes resolve in the page's space
   // (`resolveInboundNames`, #5160 N4), the created pages and tags in
   // `names_created`. Phase 5: with `merge`, a stale buffer is saved with the
   // page's changes folded in (`mergeSourceBuffer`).
-  // #5691: a Document buffer is rendered and read as the backend's grammar
+  // #5691: the buffer is rendered and read as the backend's Document grammar
   // writes and reads it, and its save writes a block's list marker, checkbox
   // and `key:: value` lines as the backend does: `listStyle`, the task state
   // and each property, by key, a task's hidden list style going with an edit
@@ -1968,7 +1841,6 @@ export const pagesHandlers = {
     const edit = readSourceEdit(pageId, a['source'] as string, a['baseSource'] as string, {
       merge: a['merge'] === true,
       lineIds: a['lineIds'] as Array<string | null>,
-      grammar: grammarOf(a),
     })
     const report = { created: 0, edited: 0, moved: 0, deleted: 0 }
     const opRefs: OpRefs = []
@@ -2093,9 +1965,12 @@ export const pagesHandlers = {
   //     `/`), falling back to "Imported Page". A leading `# heading` equal to
   //     that title is the title, not a block (#5160 S6); any other heading is
   //     ordinary content.
-  //   - Blocks: the mock's block grammar (`parseOutline` in blocks.ts): one
-  //     block per list item of any marker, heading and paragraph, a checkbox
-  //     after the marker as the block's `todo_state` (#5160 D6).
+  //   - Blocks: the Document reader (`parseDocument`, as Edit as Markdown
+  //     reads a buffer): one block per list item of any marker, heading and
+  //     paragraph, a checkbox after the marker as the block's `todo_state`
+  //     (#5160 D6). Front matter and the `key:: value` lines before the first
+  //     block are the page's, and a `key:: value` line under a block is its
+  //     property, neither a block, as on import.
   //   - Names: `[[Page]]` and `#tag` resolve in the target space through
   //     `resolveInboundNames` (#5160 N4), and a file whose title names an
   //     empty page of the space fills that page (D12).
@@ -2198,7 +2073,7 @@ export const pagesHandlers = {
     // Pre-compute the content blocks so we know `blocks_total` before emitting
     // `started` (the real backend reports the parser's count up front so the UI
     // can render a determinate bar from the very first event).
-    const parsed = parseOutline(lines.join('\n'))
+    const parsed = parseDocument(lines.join('\n'), null).blocks
     const parsedLines = parsed.map((block) => block.content)
     const blocksTotal = parsedLines.length
 
@@ -2352,7 +2227,6 @@ export const pagesHandlers = {
   | 'resolve_page_by_alias'
   | 'list_page_aliases_by_prefix'
   | 'export_page_markdown'
-  | 'get_page_source'
   | 'get_page_buffer'
   | 'apply_page_source'
   | 'get_blocks_source'
