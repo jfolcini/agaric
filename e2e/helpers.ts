@@ -1547,8 +1547,8 @@ export async function typeSlashCommand(page: Page, command: string) {
  *
  * Not a bare DOM selection either: ProseMirror can decline to read one, and
  * its next transaction then draws its own selection back over it. It ignores
- * a caret in a widget, and for 200 ms after a focus it takes a caret at the
- * document's start for Chrome's focus reset and restores its own.
+ * a caret in a widget (the list marker is the first text node), and just after
+ * a focus it takes a caret at the document's start for Chrome's focus reset.
  *
  * `from` / `to` are character offsets into the block's text content,
  * counted from the start. Walks the visible text nodes in document
