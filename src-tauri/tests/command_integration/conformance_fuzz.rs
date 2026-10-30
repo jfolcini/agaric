@@ -210,7 +210,7 @@ fn chain_to_fixture(
     // No `#[…]` names the seed tag before it moves: the backend keeps an
     // inline tag ref to a tag that left the source's space until the next
     // delete, restore or purge rebuilds them all, which the mock does not
-    // model.
+    // model (#6209).
     let mut no_tag_ref: Vec<String> = Vec::new();
     if invalid
         .iter()
