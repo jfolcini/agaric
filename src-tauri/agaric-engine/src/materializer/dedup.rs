@@ -68,12 +68,11 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
             // before the flush barrier fires.
             MaterializeTask::RebuildPagesCacheCounts => pages_cache_counts_tail = Some(task),
             // #5275: same dependency shape for `tags_cache.usage_count`, which
-            // UNIONs `block_tag_refs`. A `space` op's dispatch enqueues
-            // RebuildTagsCache ahead of the RebuildBlockTagRefsCache the same
-            // caller enqueues next (boot's orphan-tag placement), so under
-            // keep-first the count would be recomputed before the refs it
-            // UNIONs exist, and the later duplicate that would have fixed it
-            // is the one dedup drops.
+            // UNIONs `block_tag_refs`. Many arms enqueue RebuildTagsCache
+            // alone (a tag create, the inbound fan-out); when a later set in
+            // the same drain brings RebuildBlockTagRefsCache, keep-first would
+            // recompute the count before the refs it UNIONs, and the later
+            // duplicate that would have fixed it is the one dedup drops.
             MaterializeTask::RebuildTagsCache => tags_cache_tail = Some(task),
             _ => {
                 if seen_d.insert(mem::discriminant(&task)) {

@@ -20,7 +20,7 @@
 //!
 //! #4781: `sync:complete` is forwarded before the placement commits, so the
 //! frontend's reload on it still sees the unplaced block. Once the placement
-//! and the tag-ref rebuilds it enqueues have drained, the sink emits
+//! and the tag-ref rebuilds its `space` op dispatches have drained, the sink emits
 //! `blocks:changed` with no page ids — the full-reload form — the same signal
 //! an MCP write uses for an out-of-band local write.
 //!
@@ -483,10 +483,9 @@ mod tests {
         let task = sink.last_task.lock().unwrap().take().expect("spawned");
         task.await.unwrap();
 
-        // The two tag-ref rebuilds, the `RebuildPagesCacheCounts` and
-        // `RebuildPageLinkCache` the placement's `space` op dispatches (#5275,
-        // #5426; its `RebuildTagsCache` collapses into the pair's), and the
-        // drain barrier itself.
+        // The four rebuilds the placement's `space` op dispatches (#5275,
+        // #5426, #6209: the two tag-ref rebuilds, `RebuildPagesCacheCounts`
+        // and `RebuildPageLinkCache`), and the drain barrier itself.
         assert_eq!(view.drained.lock().unwrap().clone(), vec![before + 5]);
         // ...and those rebuilds are what made the tag resolvable.
         let refs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_tag_refs WHERE tag_id = ?")

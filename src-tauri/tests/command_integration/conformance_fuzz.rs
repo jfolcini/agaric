@@ -58,8 +58,7 @@
 //! names a block of another space unless its page already holds the token
 //! (#5272), so a seed-tag move first puts a block naming the tag on the seed
 //! page ([`Invalid::SpaceMove`]); a later edit may then name the tag from its
-//! new space. No `#[…]` names the seed tag before it moves (see
-//! [`chain_to_fixture`]). The space moves are the seed tag's and
+//! new space. The space moves are the seed tag's and
 //! [`MOVED_PAGE`]'s, each into a new space ([`Invalid::SpaceMove`]), and the
 //! generator's `SetProperty(space)`, which names a content block. The chain
 //! writes no page title, so `list_unlinked_references` still answers nothing,
@@ -215,25 +214,13 @@ fn chain_to_fixture(
     let mut last_space: Option<String> = None;
     // The `An` label of each attachment the chain added.
     let mut attachment_of: BTreeMap<String, String> = BTreeMap::new();
-    // No `#[…]` names the seed tag before it moves: the backend keeps an
-    // inline tag ref to a tag that left the source's space until the next
-    // delete, restore or purge rebuilds them all, which the mock does not
-    // model (#6209).
-    let mut no_tag_ref: Vec<String> = Vec::new();
-    if invalid
-        .iter()
-        .any(|(_, kind)| matches!(kind, Invalid::SpaceMove(Mover::SeedTag, _)))
-    {
-        no_tag_ref.push(SEED_TAG.to_owned());
-    }
     let mut weaves = weaves.iter();
-    let mut weave = |text: &str, creates: usize, skip: &[String], no_tag_ref: &[String]| {
+    let mut weave = |text: &str, creates: usize, skip: &[String]| {
         weave_tokens(
             text,
             weaves.next().map_or(&[][..], Vec::as_slice),
             creates,
             skip,
-            no_tag_ref,
         )
     };
     let mut ops: Vec<Value> = Vec::new();
@@ -267,10 +254,7 @@ fn chain_to_fixture(
                 Invalid::SpaceMove(mover, _) => {
                     last_space = Some(format!("C{creates}"));
                     match mover {
-                        Mover::SeedTag => {
-                            elsewhere.push(SEED_TAG.to_owned());
-                            no_tag_ref.clear();
-                        }
+                        Mover::SeedTag => elsewhere.push(SEED_TAG.to_owned()),
                         Mover::Page => elsewhere.push(MOVED_PAGE.to_owned()),
                     }
                 }
@@ -279,7 +263,7 @@ fn chain_to_fixture(
         }
         let op = match payload {
             OpPayload::CreateBlock(c) => {
-                let content = weave(&c.content, creates, &elsewhere, &no_tag_ref);
+                let content = weave(&c.content, creates, &elsewhere);
                 creates += 1;
                 let parent = c
                     .parent_id
@@ -300,7 +284,7 @@ fn chain_to_fixture(
             }
             OpPayload::EditBlock(e) => json!({ "command": "edit_block", "args": {
                 "blockId": label(&label_of, e.block_id.as_str()),
-                "toText": weave(&e.to_text, creates, &[], &no_tag_ref),
+                "toText": weave(&e.to_text, creates, &[]),
             }}),
             OpPayload::MoveBlock(m) => {
                 let new_parent = m
@@ -433,8 +417,7 @@ fn weaves_strategy() -> impl Strategy<Value = Vec<Weave>> {
 /// block or one of the `creates` blocks made so far, whatever became of it: one
 /// the chain deleted, purged or moved, a space block, which is in no space, or
 /// a block of another space. Those are the skip, decline and refusal
-/// paths of the link derivations. A label in `skip` is never a target, and one
-/// in `no_tag_ref` never that of a `#[…]`.
+/// paths of the link derivations. A label in `skip` is never a target.
 ///
 /// The generator's own content alphabet has no brackets, so these are the only
 /// tokens a generated text holds; the shared `content_strategy` stays as it is
@@ -444,7 +427,6 @@ fn weave_tokens(
     weave: &[(TokenKind, Index)],
     creates: usize,
     skip: &[String],
-    no_tag_ref: &[String],
 ) -> String {
     let targets: Vec<String> = [SEED_PAGE, SEED_TAG, MOVED_PAGE]
         .into_iter()
@@ -455,9 +437,6 @@ fn weave_tokens(
     let mut out = text.to_owned();
     for (kind, pick) in weave {
         let target = pick.get(&targets);
-        if matches!(kind, TokenKind::TagRef) && no_tag_ref.contains(target) {
-            continue;
-        }
         out.push_str(&match kind {
             TokenKind::Link => format!(" [[{target}]]"),
             TokenKind::Ref => format!(" (({target}))"),

@@ -714,58 +714,23 @@ async fn dispatch_background_or_warn_logs_seq_and_device_id_on_serde_error() {
 #[test]
 fn full_cache_rebuild_tasks_has_nine_entries_in_canonical_order() {
     let tasks = &super::super::dispatch::FULL_CACHE_REBUILD_TASKS;
-    // Extended the array with `RebuildBlockTagRefsCache` (7th);
-    // SQL-review §H-2 added `RebuildPageLinkCache` (8th); #2042 added
-    // `RebuildPagesCacheCounts` (at index 2, right after `RebuildPagesCache`).
+    // #6216: `RebuildBlockTagRefsCache` leads, so `RebuildTagsCache` counts
+    // the refs it re-derives however the set splits across drains.
+    let labels: Vec<String> = tasks.iter().map(|t| format!("{t:?}")).collect();
     assert_eq!(
-        tasks.len(),
-        9,
-        "FULL_CACHE_REBUILD_TASKS must contain exactly the 9 block-referencing caches"
-    );
-    assert!(
-        matches!(tasks[0], MaterializeTask::RebuildTagsCache),
-        "tasks[0] must be RebuildTagsCache, got {:?}",
-        tasks[0]
-    );
-    assert!(
-        matches!(tasks[1], MaterializeTask::RebuildPagesCache),
-        "tasks[1] must be RebuildPagesCache, got {:?}",
-        tasks[1]
-    );
-    assert!(
-        matches!(tasks[2], MaterializeTask::RebuildPagesCacheCounts),
-        "tasks[2] must be RebuildPagesCacheCounts (#2042), got {:?}",
-        tasks[2]
-    );
-    assert!(
-        matches!(tasks[3], MaterializeTask::RebuildAgendaCache),
-        "tasks[3] must be RebuildAgendaCache, got {:?}",
-        tasks[3]
-    );
-    assert!(
-        matches!(tasks[4], MaterializeTask::RebuildProjectedAgendaCache),
-        "tasks[4] must be RebuildProjectedAgendaCache, got {:?}",
-        tasks[4]
-    );
-    assert!(
-        matches!(tasks[5], MaterializeTask::RebuildTagInheritanceCache),
-        "tasks[5] must be RebuildTagInheritanceCache, got {:?}",
-        tasks[5]
-    );
-    assert!(
-        matches!(tasks[6], MaterializeTask::RebuildPageIds),
-        "tasks[6] must be RebuildPageIds, got {:?}",
-        tasks[6]
-    );
-    assert!(
-        matches!(tasks[7], MaterializeTask::RebuildBlockTagRefsCache),
-        "tasks[7] must be RebuildBlockTagRefsCache, got {:?}",
-        tasks[7]
-    );
-    assert!(
-        matches!(tasks[8], MaterializeTask::RebuildPageLinkCache),
-        "tasks[8] must be RebuildPageLinkCache, got {:?}",
-        tasks[8]
+        labels,
+        [
+            "RebuildBlockTagRefsCache",
+            "RebuildTagsCache",
+            "RebuildPagesCache",
+            "RebuildPagesCacheCounts",
+            "RebuildAgendaCache",
+            "RebuildProjectedAgendaCache",
+            "RebuildTagInheritanceCache",
+            "RebuildPageIds",
+            "RebuildPageLinkCache",
+        ],
+        "FULL_CACHE_REBUILD_TASKS must hold the 9 block-referencing caches in this order"
     );
 }
 
