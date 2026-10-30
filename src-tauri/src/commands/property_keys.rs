@@ -2,7 +2,7 @@
 //! `RenamePropertyKey` or `RewriteProperties` op each, in the space whose
 //! definitions they are.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use sqlx::{SqliteConnection, SqlitePool};
@@ -22,7 +22,8 @@ use agaric_store::op::{
 use agaric_store::space::SpaceId;
 
 use super::properties::{
-    refuse_builtin_definition_write, user_property_def, validate_property_def_shape,
+    append_and_apply, refuse_builtin_definition_write, user_property_def,
+    validate_property_def_shape,
 };
 use super::{PropertyDefinition, WithOps, capture_op_refs, sanitize_internal_error};
 
@@ -94,21 +95,6 @@ async fn declared_def(
             options: row.options,
         })
         .ok_or_else(|| AppError::NotFound(format!("property definition '{key}'")))
-}
-
-/// Append `payload`, apply it and queue its dispatch, in `tx`.
-async fn append_and_apply(
-    tx: &mut CommandTx,
-    state: &LoroState,
-    device_id: &str,
-    payload: OpPayload,
-) -> Result<(), AppError> {
-    let record =
-        agaric_store::op_log::append_local_op_in_tx(tx, device_id, payload, crate::db::now_ms())
-            .await?;
-    crate::materializer::apply_op_projected(tx, &record, state, false).await?;
-    tx.enqueue_background(record);
-    Ok(())
 }
 
 /// Rename `space_id`'s property `old_key` to `new_key` (#5841): the
@@ -211,6 +197,25 @@ async fn property_merge_counts(
     })
 }
 
+/// The blocks of `space_id`, the Trash's included, holding a value of `key`
+/// SQL shows: the target values [`property_merge_counts`] counts.
+async fn visible_holders(
+    conn: &mut SqliteConnection,
+    space_id: &str,
+    key: &str,
+) -> Result<HashSet<String>, AppError> {
+    let ids = sqlx::query_scalar!(
+        r#"SELECT bp.block_id AS "block_id!: String" FROM block_properties bp
+           JOIN blocks b ON b.id = bp.block_id
+           WHERE bp.key = ?1 AND (b.space_id = ?2 OR b.id = ?2)"#,
+        key,
+        space_id,
+    )
+    .fetch_all(conn)
+    .await?;
+    Ok(ids.into_iter().collect())
+}
+
 /// What merging `from_key` into `into_key` would move and drop in `space_id`
 /// (#5841), which [`merge_property_key_inner`] takes as its acknowledgement.
 /// Refused as the merge is.
@@ -241,14 +246,16 @@ fn value_fields(value: &PropertyValue) -> Option<PropertyValueFields> {
 
 /// The value writes of merging `from_key` into `into_key`, read from the
 /// space's doc (a value SQL cannot show moves too, and stays hidden), in block
-/// order. Every `from_key` value is removed; one whose block holds no
-/// `into_key` value is written there as well.
+/// order. Every `from_key` value is removed; one whose block is not in
+/// `into_shown` (the blocks whose `into_key` value SQL shows, as the preview
+/// counts them) is written there as well, over any value only the doc holds,
+/// which the write records so an undo puts it back.
 fn merge_value_writes(
     state: &LoroState,
     device_id: &str,
     space_id: &str,
-    from_key: &str,
-    into_key: &str,
+    (from_key, into_key): (&str, &str),
+    into_shown: &HashSet<String>,
 ) -> Result<Vec<PropertyValueWrite>, AppError> {
     let (mut from, into) = {
         let mut guard = state
@@ -260,15 +267,15 @@ fn merge_value_writes(
             engine.read_property_holders(into_key)?,
         )
     };
-    let into_held: HashSet<String> = into
+    let mut into_hidden: HashMap<String, PropertyValueFields> = into
         .into_iter()
-        .filter(|(_, value)| !matches!(value, PropertyValue::Null))
-        .map(|(block_id, _)| block_id)
+        .filter_map(|(block_id, value)| Some((block_id, value_fields(&value)?)))
         .collect();
     from.sort_by(|a, b| a.0.cmp(&b.0));
     let mut writes = Vec::with_capacity(from.len() * 2);
     for (block_id, value) in from {
-        let moves = !into_held.contains(&block_id);
+        let moves = !into_shown.contains(&block_id);
+        let prior = into_hidden.remove(&block_id);
         let block_id = BlockId::from_trusted(&block_id);
         let value = value_fields(&value);
         writes.push(PropertyValueWrite {
@@ -282,7 +289,7 @@ fn merge_value_writes(
                 block_id,
                 key: into_key.to_owned(),
                 value,
-                prior: None,
+                prior,
             });
         }
     }
@@ -377,11 +384,13 @@ pub async fn merge_property_key_inner(
             ),
         ));
     }
+    let into_shown = visible_holders(&mut tx, space_id, &into_key).await?;
     let state = materializer.loro_state();
+    let keys = (from_key.as_str(), into_key.as_str());
     let payload = OpPayload::RewriteProperties(RewritePropertiesPayload {
         space_id: BlockId::from_trusted(space_id),
         reason: RewriteReason::Merge,
-        values: merge_value_writes(state, device_id, space_id, &from_key, &into_key)?,
+        values: merge_value_writes(state, device_id, space_id, keys, &into_shown)?,
         defs: merge_def_writes(&from_key, from, &into_key, into)?,
     });
     append_and_apply(&mut tx, state, device_id, payload).await?;

@@ -1668,6 +1668,16 @@ pub(crate) async fn write_property_def_in_tx(
         def,
         prior,
     });
+    append_and_apply(tx, state, device_id, payload).await
+}
+
+/// Append `payload`, apply it and queue its dispatch, in `tx`.
+pub(super) async fn append_and_apply(
+    tx: &mut CommandTx,
+    state: &LoroState,
+    device_id: &str,
+    payload: OpPayload,
+) -> Result<(), AppError> {
     let record =
         agaric_store::op_log::append_local_op_in_tx(tx, device_id, payload, crate::db::now_ms())
             .await?;

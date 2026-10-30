@@ -183,11 +183,11 @@ describe('MergePropertyDefinition', () => {
   })
 
   it('has no a11y violations with the preview shown', async () => {
-    const { container } = render(<PropertyDefinitionsList />)
+    render(<PropertyDefinitionsList />)
     const dialog = await pickReviewer()
     expect(await within(dialog).findByText(moves(2))).toBeInTheDocument()
     await waitFor(async () => {
-      expect(await axe(container)).toHaveNoViolations()
+      expect(await axe(dialog)).toHaveNoViolations()
     })
   })
 })

@@ -407,7 +407,10 @@ export function forwardPropertyKey(target: MockOpLogEntry, blockId: string, key:
     const p = JSON.parse(op.payload) as Record<string, unknown>
     if (p['space_id'] !== spaceId) continue
     if (op.op_type === 'rename_property_key') {
+      // A rename is its own inverse on its two names: a walk on the new name,
+      // whose value was gone before the rename, takes the name it vacated.
       if (p['old_key'] === current) current = p['new_key'] as string
+      else if (p['new_key'] === current) current = p['old_key'] as string
       continue
     }
     const move = valueMove(p as unknown as RewritePayload, blockId, current)

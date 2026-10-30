@@ -12,6 +12,25 @@ export function parsePayloadObject(payload: string): Record<string, unknown> | n
   }
 }
 
+/** The label of a definition op, a rename and a merge (#5841), by op type. */
+const PROPERTY_KEY_OP_LABELS: Partial<
+  Record<string, (payload: Record<string, unknown>) => string | null>
+> = {
+  set_property_def: (payload) => {
+    const key = payload['key']
+    return typeof key === 'string' && key.length > 0 ? key : null
+  },
+  rename_property_key: ({ old_key: oldKey, new_key: newKey }) =>
+    typeof oldKey === 'string' && typeof newKey === 'string' ? `${oldKey} → ${newKey}` : null,
+  // A merge writes `from`'s definition, then `into`'s.
+  rewrite_properties: (payload) => {
+    const defs = payload['defs']
+    if (!Array.isArray(defs)) return null
+    const keys = defs.map((d: unknown) => (d as Record<string, unknown> | null)?.['key'])
+    return keys.every((k) => typeof k === 'string') ? keys.join(' → ') : null
+  },
+}
+
 /**
  * Extract the raw `to_text` or `content` string from an op-log payload
  * WITHOUT truncation. Truncation is handled by CSS `line-clamp` in the UI.
@@ -66,21 +85,8 @@ export function getPayloadRawContent(entry: HistoryEntry): string | null {
     const alias = parsed['alias']
     return typeof alias === 'string' && alias.length > 0 ? alias : null
   }
-  if (entry.op_type === 'set_property_def') {
-    const key = parsed['key']
-    return typeof key === 'string' && key.length > 0 ? key : null
-  }
-  if (entry.op_type === 'rename_property_key') {
-    const { old_key: oldKey, new_key: newKey } = parsed
-    return typeof oldKey === 'string' && typeof newKey === 'string' ? `${oldKey} → ${newKey}` : null
-  }
-  // A merge writes `from`'s definition, then `into`'s.
-  if (entry.op_type === 'rewrite_properties') {
-    const defs = parsed['defs']
-    if (!Array.isArray(defs)) return null
-    const keys = defs.map((d: unknown) => (d as Record<string, unknown> | null)?.['key'])
-    return keys.every((k) => typeof k === 'string') ? keys.join(' → ') : null
-  }
+  const propertyKeyLabel = PROPERTY_KEY_OP_LABELS[entry.op_type]
+  if (propertyKeyLabel) return propertyKeyLabel(parsed)
   return null
 }
 

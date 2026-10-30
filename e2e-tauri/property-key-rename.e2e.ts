@@ -55,9 +55,16 @@ describe('Agaric real-backend property key rename (#5841) @settings @editor', ()
     const rename = $(`${PANEL} button[aria-label="Rename property project"]`)
     await rename.waitForClickable({ timeout: ACTION_TIMEOUT })
     await rename.click()
-    // The dialog opens on the current key; empty it before typing the new one.
-    await $(NEW_KEY).waitForDisplayed({ timeout: ACTION_TIMEOUT })
-    await $(NEW_KEY).click()
+    // The dialog opens focused on the current key; empty it before typing the
+    // new one. Wait for the focus rather than click: the dialog still animates.
+    await browser.waitUntil(
+      () =>
+        browser.execute(
+          (sel: string) => document.activeElement === document.querySelector(sel),
+          NEW_KEY,
+        ),
+      { timeout: ACTION_TIMEOUT, timeoutMsg: 'the rename input never took focus' },
+    )
     await browser.keys(['Control', 'a'])
     await browser.keys(['Delete'])
     await typeInputVerified(NEW_KEY, 'area')

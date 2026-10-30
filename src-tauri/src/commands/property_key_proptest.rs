@@ -1,13 +1,17 @@
 //! #5841: renames and merges interleaved with sets and deletes.
 //!
-//! A script over three pages and the keys `k0`, `k1`, `k2` (declared text)
-//! sets, deletes, renames a key onto a fresh name and merges one key into
-//! another, each step only when a small model says it is valid. After every
-//! step SQL equals the model, and the space's doc equals SQL. Then either:
+//! A script over three pages and the names in [`NAMES`] (`k0`, `k1`, `k2`
+//! declared text) sets and deletes any name, declared or not, renames a
+//! declared key onto any name the space does not use (one an earlier op may
+//! have used), and merges one declared key into another. After every step
+//! SQL equals the model, and the space's doc equals SQL. Then either:
 //!
 //! - P1: undoing every op, newest first, brings SQL back to the seed;
 //! - P2: undoing one earlier set or delete writes its prior under the key the
-//!   model followed the value to, and changes nothing else.
+//!   write's cell lives under now, and changes nothing else.
+//!
+//! The model keeps a cell per value slot a write touched, and moves cells as
+//! each rename and merge happens: it never reads the op log.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -29,16 +33,70 @@ use agaric_engine::loro::engine::PropertyValue;
 use agaric_store::op::OpRef;
 use agaric_store::space::SpaceId;
 
-const CASES: u32 = 32;
+const CASES: u32 = 64;
 const PAGES: usize = 3;
+const NAMES: [&str; 5] = ["k0", "k1", "k2", "n0", "n1"];
 
 /// `(page index, key)` → text value.
 type Values = BTreeMap<(usize, String), String>;
+
+/// Where a write's value slot is: a rename moves it with its key, and a merge
+/// moves it with the value. A cell another key's value moved onto is
+/// `shadowed`: the moved value is not its own, so it stays when that value
+/// moves on.
+#[derive(Debug, Clone)]
+struct Cell {
+    page: usize,
+    key: String,
+    shadowed: bool,
+}
 
 #[derive(Debug, Clone)]
 struct Model {
     defs: BTreeSet<String>,
     values: Values,
+    cells: Vec<Cell>,
+}
+
+impl Model {
+    fn seed() -> Self {
+        let values = seed_values();
+        let cells = values
+            .keys()
+            .map(|(page, key)| Cell {
+                page: *page,
+                key: key.clone(),
+                shadowed: false,
+            })
+            .collect();
+        Model {
+            defs: ["k0", "k1", "k2"].into_iter().map(str::to_owned).collect(),
+            values,
+            cells,
+        }
+    }
+
+    /// The cell a write of `key` on `page` lands in: the slot's own, or a new
+    /// one.
+    fn cell_for(&mut self, page: usize, key: &str) -> usize {
+        if let Some(i) = self
+            .cells
+            .iter()
+            .position(|c| c.page == page && c.key == key && !c.shadowed)
+        {
+            return i;
+        }
+        self.cells.push(Cell {
+            page,
+            key: key.to_owned(),
+            shadowed: false,
+        });
+        self.cells.len() - 1
+    }
+
+    fn used(&self, key: &str) -> bool {
+        self.defs.contains(key) || self.values.keys().any(|(_, k)| k == key)
+    }
 }
 
 /// A step as drawn; the model turns it into an op or skips it.
@@ -53,37 +111,28 @@ struct Draw {
 /// What a step did, for the undo that follows the script.
 #[derive(Debug, Clone)]
 enum Step {
-    /// A set or delete of `key` on `page`, which held `prior`.
+    /// A set or delete of `key` on `page`, which held `prior`, in `cell`.
     Write {
         op: OpRef,
         page: usize,
         key: String,
+        cell: usize,
         prior: Option<String>,
     },
-    Rename {
-        op: OpRef,
-        old: String,
-        new: String,
-    },
-    /// A merge, with the pages whose `from` value moved to `into`.
-    Merge {
-        op: OpRef,
-        from: String,
-        into: String,
-        moved: BTreeSet<usize>,
-    },
+    /// A rename or a merge, as `change` says.
+    Key { op: OpRef, change: String },
 }
 
 impl Step {
     fn op(&self) -> &OpRef {
         match self {
-            Step::Write { op, .. } | Step::Rename { op, .. } | Step::Merge { op, .. } => op,
+            Step::Write { op, .. } | Step::Key { op, .. } => op,
         }
     }
 }
 
 fn draw() -> impl Strategy<Value = Draw> {
-    (0..4u8, 0..PAGES, 0..8usize, 0..8usize).prop_map(|(kind, page, key, other)| Draw {
+    (0..4u8, 0..PAGES, 0..16usize, 0..16usize).prop_map(|(kind, page, key, other)| Draw {
         kind,
         page,
         key,
@@ -159,10 +208,7 @@ async fn new_case() -> Case {
                 .unwrap();
         pages.push(page.as_str().to_owned());
     }
-    let model = Model {
-        defs: ["k0", "k1", "k2"].into_iter().map(str::to_owned).collect(),
-        values: seed_values(),
-    };
+    let model = Model::seed();
     let case = Case {
         pool,
         mat,
@@ -218,9 +264,12 @@ fn doc_state(case: &Case) -> (Values, BTreeSet<String>) {
     for (page, id) in case.pages.iter().enumerate() {
         for (key, value) in engine.read_all_properties_typed(id).unwrap() {
             match value {
-                PropertyValue::Str(text) => values.insert((page, key), text),
+                PropertyValue::Str(text) => {
+                    values.insert((page, key), text);
+                }
+                PropertyValue::Null => {}
                 other => panic!("{key} on {page}: a text value, got {other:?}"),
-            };
+            }
         }
     }
     let defs = engine
@@ -250,9 +299,25 @@ fn nth_def(model: &Model, n: usize) -> Option<String> {
     (!defs.is_empty()).then(|| defs[n % defs.len()].clone())
 }
 
+/// A set of any name on the page, or a delete of one the page holds.
 async fn write_step(case: &mut Case, d: &Draw) -> Option<Step> {
-    let key = nth_def(&case.model, d.key)?;
+    let key = if d.kind == 0 {
+        NAMES[d.key % NAMES.len()].to_owned()
+    } else {
+        let held: Vec<&String> = case
+            .model
+            .values
+            .keys()
+            .filter(|(page, _)| *page == d.page)
+            .map(|(_, key)| key)
+            .collect();
+        if held.is_empty() {
+            return None;
+        }
+        held[d.key % held.len()].clone()
+    };
     let prior = case.model.values.get(&(d.page, key.clone())).cloned();
+    let cell = case.model.cell_for(d.page, &key);
     let op = if d.kind == 0 {
         let value = format!("v{}", case.next_value);
         case.next_value += 1;
@@ -260,7 +325,6 @@ async fn write_step(case: &mut Case, d: &Draw) -> Option<Step> {
         case.model.values.insert((d.page, key.clone()), value);
         op
     } else {
-        prior.as_ref()?;
         let deleted = capture_op_refs(delete_property_inner(
             &case.pool,
             DEV,
@@ -277,14 +341,22 @@ async fn write_step(case: &mut Case, d: &Draw) -> Option<Step> {
         op,
         page: d.page,
         key,
+        cell,
         prior,
     })
 }
 
+/// A rename onto a name the space neither declares nor holds a value under.
 async fn rename_step(case: &mut Case, d: &Draw) -> Option<Step> {
     let old = nth_def(&case.model, d.key)?;
-    let new = format!("r{}", case.next_value);
-    case.next_value += 1;
+    let free: Vec<&str> = NAMES
+        .into_iter()
+        .filter(|name| !case.model.used(name))
+        .collect();
+    if free.is_empty() {
+        return None;
+    }
+    let new = free[d.other % free.len()].to_owned();
     let renamed = capture_op_refs(rename_property_key_inner(
         &case.pool,
         DEV,
@@ -303,10 +375,18 @@ async fn rename_step(case: &mut Case, d: &Draw) -> Option<Step> {
             model.values.insert((page, new.clone()), value);
         }
     }
-    Some(Step::Rename {
+    // The new name holds no value, so its cells are emptied ones; a rename is
+    // its own inverse on the two names, so they take the old one.
+    for cell in &mut model.cells {
+        if cell.key == old {
+            cell.key.clone_from(&new);
+        } else if cell.key == new {
+            cell.key.clone_from(&old);
+        }
+    }
+    Some(Step::Key {
         op: renamed.op_refs[0].clone(),
-        old,
-        new,
+        change: format!("rename {old} to {new}"),
     })
 }
 
@@ -351,11 +431,20 @@ async fn merge_step(case: &mut Case, d: &Draw) -> Option<Step> {
             model.values.insert((page, into.clone()), value);
         }
     }
-    Some(Step::Merge {
+    for &page in &moved {
+        for cell in model.cells.iter_mut().filter(|c| c.page == page) {
+            if cell.key == into {
+                cell.shadowed = true;
+            } else if cell.key == from && cell.shadowed {
+                cell.shadowed = false;
+            } else if cell.key == from {
+                cell.key.clone_from(&into);
+            }
+        }
+    }
+    Some(Step::Key {
         op: merged.op_refs[0].clone(),
-        from,
-        into,
-        moved,
+        change: format!("merge {from} into {into}"),
     })
 }
 
@@ -368,7 +457,11 @@ async fn run_script(case: &mut Case, draws: &[Draw]) -> Vec<Step> {
             _ => merge_step(case, d).await,
         };
         if let Some(step) = step {
-            assert_in_step(case, &format!("step {i}: {step:?}")).await;
+            let label = match &step {
+                Step::Key { change, .. } => change.clone(),
+                write @ Step::Write { .. } => format!("{write:?}"),
+            };
+            assert_in_step(case, &format!("step {i}: {label}")).await;
             steps.push(step);
         }
     }
@@ -383,43 +476,12 @@ async fn undo_all(case: &mut Case, steps: &[Step]) {
             .await
             .unwrap_or_else(|e| panic!("undo {step:?}: {e}"));
     }
-    case.model = Model {
-        defs: ["k0", "k1", "k2"].into_iter().map(str::to_owned).collect(),
-        values: seed_values(),
-    };
+    case.model = Model::seed();
     assert_in_step(case, "after undoing everything").await;
 }
 
-/// The key the model moved `page`'s value of `key` to after step `index`: a
-/// rename moves the key; a merge moves the page's value out of `from`, unless
-/// a merge moved it into that key from another, and moves another key's value
-/// into `into`.
-fn forwarded(steps: &[Step], index: usize, page: usize, key: &str) -> String {
-    let mut key = key.to_owned();
-    let mut moved_in = false;
-    for step in &steps[index + 1..] {
-        match step {
-            Step::Rename { old, new, .. } if *old == key => key.clone_from(new),
-            Step::Merge {
-                from, into, moved, ..
-            } if moved.contains(&page) => {
-                if *from == key {
-                    if !moved_in {
-                        key.clone_from(into);
-                    }
-                    moved_in = false;
-                } else if *into == key {
-                    moved_in = true;
-                }
-            }
-            _ => {}
-        }
-    }
-    key
-}
-
-/// P2: undoing one earlier set or delete writes its prior under the key the
-/// value lives under now, and changes nothing else.
+/// P2: undoing one earlier set or delete writes its prior under the key its
+/// cell lives under now, and changes nothing else.
 async fn undo_one(case: &mut Case, steps: &[Step], pick: usize) {
     let writes: Vec<usize> = (0..steps.len())
         .filter(|&i| matches!(steps[i], Step::Write { .. }))
@@ -431,25 +493,28 @@ async fn undo_one(case: &mut Case, steps: &[Step], pick: usize) {
     let Step::Write {
         op,
         page,
-        key,
+        key: written,
+        cell,
         prior,
-        ..
     } = &steps[index]
     else {
         unreachable!("filtered to writes");
     };
-    let key = forwarded(steps, index, *page, key);
+    let key = case.model.cells[*cell].key.clone();
     undo_ops_inner(&case.pool, DEV, &case.mat, vec![op.clone()])
         .await
         .unwrap_or_else(|e| panic!("undo step {index}: {e}"));
     match prior {
-        Some(value) => case.model.values.insert((*page, key), value.clone()),
-        None => case.model.values.remove(&(*page, key)),
+        Some(value) => case
+            .model
+            .values
+            .insert((*page, key.clone()), value.clone()),
+        None => case.model.values.remove(&(*page, key.clone())),
     };
     let sql = sql_values(case).await;
     assert_eq!(
         sql, case.model.values,
-        "undo of step {index} on page {page}"
+        "undo of step {index} ({written} on page {page}), under {key} now"
     );
     assert_eq!(doc_state(case).0, sql, "the doc equals SQL after the undo");
 }
@@ -462,7 +527,7 @@ fn renames_and_merges_interleaved_with_writes_undo_cleanly_5841() {
         ..ProptestConfig::default()
     });
     let strategy = (
-        prop::collection::vec(draw(), 1..=8),
+        prop::collection::vec(draw(), 1..=10),
         any::<bool>(),
         any::<usize>(),
     );

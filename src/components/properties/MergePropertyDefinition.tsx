@@ -59,7 +59,6 @@ export function MergePropertyDefinition({
   // Asked again: the counts changed after the user saw them.
   const [askedAgain, setAskedAgain] = useState(false)
   const [merging, setMerging] = useState(false)
-  const inProgress = useRef(false)
   // A preview answered after another pick must not show its counts.
   const previewSeq = useRef(0)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -103,8 +102,7 @@ export function MergePropertyDefinition({
   }
 
   const merge = async (): Promise<void> => {
-    if (into === null || counts === null || inProgress.current) return
-    inProgress.current = true
+    if (into === null || counts === null || merging) return
     setMerging(true)
     try {
       const merged = unwrap(await commands.mergePropertyKey(spaceId, key, into, counts))
@@ -132,7 +130,6 @@ export function MergePropertyDefinition({
         )
       }
     } finally {
-      inProgress.current = false
       setMerging(false)
     }
   }

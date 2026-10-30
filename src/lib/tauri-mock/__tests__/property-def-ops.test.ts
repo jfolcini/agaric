@@ -361,6 +361,19 @@ describe('rename_property_key', () => {
     expect(textOf(X, 'client')).toBe('a')
     expect(textOf(X, 'customer')).toBeUndefined()
   })
+
+  it('undoing a delete of a name a rename reused keeps both values', () => {
+    declare('client')
+    setText(X, 'client', 'mine')
+    setText(X, 'area', 'old')
+    call('delete_property', { blockId: X, key: 'area' })
+    const deleted = [lastOp().ref]
+    const { op_refs } = rename('client', 'area')
+    call('undo_ops', { ops: op_refs })
+    call('undo_ops', { ops: deleted })
+    expect(textOf(X, 'area')).toBe('old')
+    expect(textOf(X, 'client')).toBe('mine')
+  })
 })
 
 describe('merge_property_key', () => {

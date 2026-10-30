@@ -272,6 +272,31 @@ async fn rename_refuses_a_locked_internal_taken_or_undeclared_key_5841() {
     assert_eq!(props(&pool, &holder).await, vec![kv("loose", "x")]);
 }
 
+/// A key only a block in the Trash holds is taken: restoring the block would
+/// bring it back beside the renamed values.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rename_refuses_a_key_only_a_trashed_block_holds_5841() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    space(&pool).await;
+    declare(&pool, &mat, "project", "text", None).await;
+    let trashed = page(&pool, &mat, "Gone").await;
+    set_text(&pool, &mat, &trashed, "area", "x").await;
+    delete_block_inner(&pool, DEV, &mat, BlockId::from_trusted(&trashed))
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let before = op_count(&pool).await;
+
+    let refused = rename(&pool, &mat, "project", "area").await;
+    assert!(
+        matches!(refused, Err(AppError::Validation { code: None, .. })),
+        "got {refused:?}"
+    );
+    assert_eq!(op_count(&pool).await, before);
+    assert_eq!(def_row(&pool, "project").await, Some(("text".into(), None)));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undo_renames_back_and_redo_renames_again_5841() {
     let (pool, _dir) = test_pool().await;
@@ -450,6 +475,85 @@ async fn undoing_a_set_and_the_rename_together_lands_on_the_old_key_5841() {
     assert_eq!(props(&pool, &one).await, vec![kv("project", "a")]);
     assert_eq!(def_row(&pool, "area").await, None);
     assert_eq!(doc_holders(&mat, "project"), vec![one]);
+}
+
+/// Delete `key` on `block`; the op's ref.
+async fn delete_key(pool: &SqlitePool, mat: &Materializer, block: &str, key: &str) -> OpRef {
+    capture_op_refs(delete_property_inner(
+        pool,
+        DEV,
+        mat,
+        block.into(),
+        key.into(),
+    ))
+    .await
+    .unwrap()
+    .op_refs[0]
+        .clone()
+}
+
+/// A rename onto a name a deleted value once had leaves that value's undo
+/// behind on the name the rename vacated: undoing the rename, then Ctrl+Z on
+/// the delete, puts each value back under its own key.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undoing_a_delete_of_a_name_a_rename_reused_keeps_both_values_5841() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    space(&pool).await;
+    declare(&pool, &mat, "project", "text", None).await;
+    let p = page(&pool, &mat, "P").await;
+    set_text(&pool, &mat, &p, "project", "mine").await;
+    set_text(&pool, &mat, &p, "area", "old").await;
+    delete_key(&pool, &mat, &p, "area").await;
+    let renamed = rename(&pool, &mat, "project", "area").await.unwrap();
+    undo_ops_inner(&pool, DEV, &mat, renamed.op_refs)
+        .await
+        .unwrap();
+
+    let undone = undo_page_op_inner(&pool, DEV, &mat, p.clone(), 0)
+        .await
+        .unwrap();
+    assert_eq!(undone.reversed_op_type, "delete_property");
+    assert_eq!(
+        props(&pool, &p).await,
+        vec![kv("area", "old"), kv("project", "mine")]
+    );
+    assert_eq!(doc_holders(&mat, "area"), vec![p.clone()]);
+    assert_eq!(doc_holders(&mat, "project"), vec![p]);
+}
+
+/// Undoing everything newest first through a rename onto a reused name: the
+/// undo of the delete lands on the reused name, not on the key the rename
+/// moved there.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undoing_newest_first_through_a_rename_onto_a_reused_name_5841() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    space(&pool).await;
+    declare(&pool, &mat, "k1", "text", None).await;
+    let p = page(&pool, &mat, "P").await;
+    let set_k1 = set_text(&pool, &mat, &p, "k1", "s1").await;
+    let first = rename(&pool, &mat, "k1", "n2").await.unwrap();
+    let set_n1 = set_text(&pool, &mat, &p, "n1", "v1").await;
+    let delete_n1 = delete_key(&pool, &mat, &p, "n1").await;
+    let reuse = rename(&pool, &mat, "n2", "n1").await.unwrap();
+    assert_eq!(props(&pool, &p).await, vec![kv("n1", "s1")]);
+
+    let undo = |ops: Vec<OpRef>| undo_ops_inner(&pool, DEV, &mat, ops);
+    undo(reuse.op_refs).await.unwrap();
+    assert_eq!(props(&pool, &p).await, vec![kv("n2", "s1")]);
+    undo(vec![delete_n1]).await.unwrap();
+    assert_eq!(
+        props(&pool, &p).await,
+        vec![kv("n1", "v1"), kv("n2", "s1")],
+        "the deleted value is back under its own key, beside the renamed one"
+    );
+    undo(vec![set_n1]).await.unwrap();
+    assert_eq!(props(&pool, &p).await, vec![kv("n2", "s1")]);
+    undo(first.op_refs).await.unwrap();
+    assert_eq!(props(&pool, &p).await, vec![kv("k1", "s1")]);
+    undo(vec![set_k1]).await.unwrap();
+    assert_eq!(props(&pool, &p).await, vec![]);
 }
 
 // ======================================================================
@@ -634,6 +738,7 @@ async fn merge_refuses_a_stale_acknowledgement_and_a_type_mismatch_5841() {
             Some(ValidationCode::BuiltinPropertyLocked),
         ),
         ("template", "phase", None),
+        ("stage", "template", None),
     ] {
         match merge(&pool, &mat, from, into, 1, 1).await {
             Err(AppError::Validation { code: got, .. }) => assert_eq!(got, code, "{from}->{into}"),
@@ -683,6 +788,110 @@ async fn merge_moves_a_value_only_the_doc_holds_5841() {
     );
     assert_eq!(doc_holders(&mat, "effort2"), vec![x.clone()], "it moved");
     assert_eq!(props(&pool, &x).await, vec![], "and stays hidden");
+}
+
+/// `block`'s `(key, value_ref)` rows, by key.
+async fn ref_props(pool: &SqlitePool, block: &str) -> Vec<(String, Option<String>)> {
+    sqlx::query_as(
+        "SELECT key, value_ref FROM block_properties \
+         WHERE block_id = ? AND key <> 'is_space' ORDER BY key",
+    )
+    .bind(block)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// `block`'s value of `key` in [`TEST_SPACE_ID`]'s doc.
+fn doc_value(mat: &Materializer, block: &str, key: &str) -> Option<String> {
+    mat.loro_state()
+        .registry
+        .for_space(&SpaceId::from_trusted(TEST_SPACE_ID), DEV)
+        .unwrap()
+        .engine_mut()
+        .read_property_holders(key)
+        .unwrap()
+        .into_iter()
+        .find(|(id, _)| id == block)
+        .map(|(_, value)| format!("{value:?}"))
+}
+
+/// A target value only the doc holds (a ref whose target was purged) does not
+/// stop a value the preview counts as moved from moving; the merge records it,
+/// so the undo puts it back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn merge_moves_a_value_over_a_target_value_only_the_doc_holds_5841() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    space(&pool).await;
+    declare(&pool, &mat, "rel", "ref", None).await;
+    declare(&pool, &mat, "see", "ref", None).await;
+    let (x, live, gone) = (
+        page(&pool, &mat, "X").await,
+        page(&pool, &mat, "Live").await,
+        page(&pool, &mat, "Gone").await,
+    );
+    for (key, target) in [("rel", &live), ("see", &gone)] {
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            x.as_str().into(),
+            key.into(),
+            None,
+            None,
+            None,
+            Some(target.clone()),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    delete_block_inner(&pool, DEV, &mat, BlockId::from_trusted(&gone))
+        .await
+        .unwrap();
+    purge_block_inner(&pool, DEV, &mat, BlockId::from_trusted(&gone))
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        ref_props(&pool, &x).await,
+        vec![("rel".to_owned(), Some(live.clone()))]
+    );
+    let hidden = doc_value(&mat, &x, "see");
+    assert!(hidden.is_some(), "the doc still holds `see`");
+    let preview = preview_property_merge_inner(&pool, TEST_SPACE_ID, "rel".into(), "see".into())
+        .await
+        .unwrap();
+    assert_eq!(
+        preview,
+        PropertyMergeCounts {
+            moved: 1,
+            dropped: 0
+        }
+    );
+
+    let merged = merge(&pool, &mat, "rel", "see", 1, 0).await.unwrap();
+    assert_eq!(
+        ref_props(&pool, &x).await,
+        vec![("see".to_owned(), Some(live.clone()))],
+        "moved, as the preview said"
+    );
+    assert_eq!(doc_value(&mat, &x, "rel"), None);
+
+    undo_ops_inner(&pool, DEV, &mat, merged.op_refs)
+        .await
+        .unwrap();
+    assert_eq!(
+        ref_props(&pool, &x).await,
+        vec![("rel".to_owned(), Some(live))]
+    );
+    assert_eq!(
+        doc_value(&mat, &x, "see"),
+        hidden,
+        "the hidden value is back"
+    );
 }
 
 /// The agenda names the key a date came from, so a rename rebuilds it.

@@ -149,10 +149,10 @@ describe('RenamePropertyDefinition', () => {
   })
 
   it('has no a11y violations with the dialog open', async () => {
-    const { container } = render(<PropertyDefinitionsList />)
-    await openRename('context')
+    render(<PropertyDefinitionsList />)
+    const dialog = await openRename('context')
     await waitFor(async () => {
-      expect(await axe(container)).toHaveNoViolations()
+      expect(await axe(dialog)).toHaveNoViolations()
     })
   })
 })

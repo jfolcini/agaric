@@ -62,9 +62,12 @@ pub fn reverse_rewrite_properties(record: &OpRecord) -> Result<OpPayload, AppErr
 /// (`created_at`, `seq`, `device_id`), in log order. A peer's rename or merge
 /// counts as this device's own does.
 ///
-/// A rename moves `old_key` to `new_key`. A rewrite moves the block's value
-/// out of `key` when it removes it there and writes the block a value under
-/// another key: a merge's moved value, or the undo of one. A merge moves a
+/// A rename moves `old_key` to `new_key`, and `new_key` to `old_key`: a
+/// rename's target holds no value, so a walk on it is of a value already gone,
+/// and must not land on the value the rename moves there (a rename is its own
+/// inverse on its two names). A rewrite moves the block's value out of `key`
+/// when it removes it there and writes the block a value under another key: a
+/// merge's moved value, or the undo of one. A merge moves a
 /// value in only where the block held none, so a value moved into `key` is
 /// another key's, and its moving out again (the merge's undo) leaves `key`
 /// where it is. A value the merge dropped stays under its key, and so does one
@@ -107,6 +110,8 @@ pub async fn forward_property_key(
             let p: RenamePropertyKeyPayload = serde_json::from_str(&row.payload)?;
             if key == p.old_key {
                 key = p.new_key;
+            } else if key == p.new_key {
+                key = p.old_key;
             }
             continue;
         }
