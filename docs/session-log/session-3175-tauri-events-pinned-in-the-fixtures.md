@@ -1,4 +1,4 @@
-# Session 3150 — Tauri events pinned in the conformance fixtures
+# Session 3175 — Tauri events pinned in the conformance fixtures
 
 Section C of #6054: the mock emits the events the backend emits for the commands the frontend calls, and the fixtures pin them.
 
