@@ -260,7 +260,7 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
       setSourcePageId(pageId)
     })
   }, [pageId, setFocused, afterFlush])
-  const pageModeOffered = pageMode.available && isTagPage === false && !sourceMode
+  const pageModeOffered = isTagPage === false && !sourceMode
   // Back to the kebab source mode was opened from, rather than `body`. The
   // header remounts first: a save may have changed the page's properties,
   // aliases and tags, which it reads once per mount (#5160 S8).
@@ -408,7 +408,7 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
         <PageSourceEditor
           pageId={pageId}
           onClose={handleCloseSource}
-          onSwitchToPage={pageMode.available ? handleSwitchToPage : undefined}
+          onSwitchToPage={handleSwitchToPage}
           pageModeBlocked={pageMode.blocked}
         />
       ) : pageMode.wanted && isTagPage !== true ? (

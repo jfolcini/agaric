@@ -1,8 +1,7 @@
 /**
  * PageModeEditor — the page edited as one document (#5691), in place of the
- * block tree, the way source mode replaces it (`PageEditor`). Desktop only,
- * and only for a page within its cap (`page-mode-fit.ts`): ProseMirror renders
- * the whole document.
+ * block tree, the way source mode replaces it (`PageEditor`), for a page within
+ * its cap (`page-mode-fit.ts`): ProseMirror renders the whole document.
  *
  * It saves continuously through the block commands (`page-save.ts`): after
  * typing stops (`CONTENT_COMMIT_DEBOUNCE_MS`), and in typing that does not stop
@@ -44,7 +43,8 @@
  * The grip, on the block under the pointer, drags that block with the blocks
  * under it, an edit of the document the save writes as block mode's moves,
  * and a block's chevron collapses it in block mode's own layout of the page
- * (`page-gutter.ts`).
+ * (`page-gutter.ts`). Touch, with no pointer to bring the grip, opens the
+ * block menu from the toolbar, whose rows move and collapse blocks.
  *
  * Chips go where block mode's go (`useBlockNavigateToLink`, a block of this
  * page by moving the cursor to it), and each save's ops reach `UndoStore`
@@ -84,6 +84,7 @@ import { processFileAttachments } from '@/components/editor/EditableBlock'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { getActiveEditor, setActiveEditor } from '@/editor/active-editor'
+import { focusStaysInEditor } from '@/editor/editor-portal'
 import { PageAttachments } from '@/editor/page-mode/page-attachments'
 import { commitPageTyped } from '@/editor/page-mode/page-commit'
 import { changedBlocks, pageDocContent, REMOTE_PATCH } from '@/editor/page-mode/page-document'
@@ -124,6 +125,7 @@ import { blockIdOf } from '@/editor/token-ids'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { CONTENT_COMMIT_DEBOUNCE_MS } from '@/hooks/useDebouncedContentCommit'
 import { DRAFT_MAX_LATENCY_MS } from '@/hooks/useDraftAutosave'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { delegatedLinkClickProps, useOpenLinkInNewTab } from '@/hooks/useOpenInBackgroundTab'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
@@ -346,6 +348,15 @@ function caretOf(editor: Editor): BlockCaret | null {
     : { blockId: blockIdOf($head.node(1)) as string, pos: $head.pos - $head.start(1) }
 }
 
+/**
+ * How far up from the window's foot the toolbar pinned on touch reaches, over the keyboard too
+ * (`ToolbarFrame`); none without one. ProseMirror scrolls the cursor into the window, under it.
+ */
+function pinnedToolbarCover(frame: HTMLElement | null): number {
+  const bar = frame?.querySelector(':scope > [data-pinned]')
+  return bar ? Math.max(0, window.innerHeight - bar.getBoundingClientRect().top) : 0
+}
+
 interface PageModeDocumentProps {
   pageId: string
   blocks: readonly FlatBlock[]
@@ -376,6 +387,11 @@ function PageModeDocument({
   const pageStore = usePageBlockStoreApi()
   const onTagClick = useTagClickHandler()
   const editorRef = useRef<Editor | null>(null)
+  const frameRef = useRef<HTMLDivElement>(null)
+  // On touch the toolbar pins to the screen's foot, over the quick-capture button: as block
+  // mode's, it shows only while the text is edited, by block mode's rule for leaving it.
+  const isTouch = useIsTouch()
+  const [editing, setEditing] = useState(false)
   const flushRef = useRef<() => Promise<boolean>>(() => Promise.resolve(true))
   const [properties] = useState(() => new PageProperties(openedWith))
   const [lists] = useState(
@@ -430,6 +446,7 @@ function PageModeDocument({
   const { handleToggleTodo, handleTogglePriority } = useBlockProperties(clearLists)
   const [drawerBlockId, setDrawerBlockId] = useState<string | null>(null)
   const [historyBlockId, setHistoryBlockId] = useState<string | null>(null)
+  const [blockMenuOpen, setBlockMenuOpen] = useState(false)
   // Block mode's chip navigation: another page opens; a block of this page takes the cursor.
   const noRovingEditor = useRef<RovingEditorHandle | null>(null)
   const handleFlushRef = useRef(() => {
@@ -514,6 +531,23 @@ function PageModeDocument({
         'aria-label': t('pageMode.editorLabel'),
         'data-testid': 'page-mode-editor',
         class: 'page-mode-editor',
+      },
+      // The cursor scrolls into view above the toolbar pinned on touch, not under it.
+      scrollThreshold: {
+        top: 0,
+        right: 0,
+        left: 0,
+        get bottom() {
+          return pinnedToolbarCover(frameRef.current)
+        },
+      },
+      scrollMargin: {
+        top: 5,
+        right: 5,
+        left: 5,
+        get bottom() {
+          return 5 + pinnedToolbarCover(frameRef.current)
+        },
       },
     },
   }))
@@ -1001,9 +1035,26 @@ function PageModeDocument({
     <>
       {/* The document's frame, as GitLab's editor draws one: the toolbar, the text, and a footer
           under it with a hint and the switch to Edit as Markdown. */}
-      <div className="rounded-md border border-border">
-        {editor !== null && (
-          <PageToolbar editor={editor} actions={actions} lists={lists} pageStore={pageStore} />
+      <div
+        ref={frameRef}
+        className="rounded-md border border-border"
+        onBlur={
+          isTouch
+            ? (e) => {
+                if (!focusStaysInEditor(e.currentTarget, e.relatedTarget as Element | null))
+                  setEditing(false)
+              }
+            : undefined
+        }
+      >
+        {editor !== null && (!isTouch || editing) && (
+          <PageToolbar
+            editor={editor}
+            actions={actions}
+            lists={lists}
+            pageStore={pageStore}
+            blockMenuOpen={blockMenuOpen}
+          />
         )}
         <BlockResolversProvider value={resolvers}>
           {/* Where Escape leaves the focus: ringed, and Tab from it goes back into the text.
@@ -1012,6 +1063,7 @@ function PageModeDocument({
             editor={editor}
             tabIndex={-1}
             className="relative rounded-md focus-ring-visible"
+            onFocus={isTouch ? () => setEditing(true) : undefined}
             {...{ [SURFACE]: '' }}
             {...linkClick}
           />
@@ -1027,7 +1079,7 @@ function PageModeDocument({
         </div>
       </div>
       {/* Block mode's own: the marks and the link on a selection, and Ctrl+K. */}
-      {editor !== null && <SelectionBubbleMenu editor={editor} />}
+      {editor !== null && <SelectionBubbleMenu editor={editor} caretInLinkOnTouch={false} />}
       {/* The caret's link, table, code block or selected image (#5691). */}
       {editor !== null && <PageBubbleMenus editor={editor} />}
       <PageBlockMenu
@@ -1036,6 +1088,7 @@ function PageModeDocument({
         pageStore={pageStore}
         actions={actions}
         onOpenLinkInNewTab={openLinkInNewTab}
+        onOpenChange={setBlockMenuOpen}
       />
       {datePickerOpen && (
         <Suspense fallback={null}>

@@ -47,6 +47,11 @@ interface SelectionBubbleMenuProps {
   editor: Editor
   /** Block ID used to associate the bubble toolbar with its editor via aria-controls. */
   blockId?: string
+  /**
+   * On touch, show over a caret resting in a link, for its link button (#3276). Page mode passes
+   * false: its own link bubble (`PageBubbleMenus`) has that button.
+   */
+  caretInLinkOnTouch?: boolean
 }
 
 /** Resolve the link mark range around the cursor, or undefined if not inside a link. */
@@ -103,6 +108,7 @@ Tip.displayName = 'Tip'
 export function SelectionBubbleMenu({
   editor,
   blockId,
+  caretInLinkOnTouch = true,
 }: SelectionBubbleMenuProps): React.ReactElement {
   // #4469 — LOAD-BEARING: opt this component out of React Compiler
   // memoisation. Until #4465 the `useRovingTabindex()` result was read via
@@ -367,7 +373,9 @@ export function SelectionBubbleMenu({
           // #3056/#3061 — `editor` can be transiently null during the same
           // mount/teardown race guarded elsewhere in this file; treat that
           // as "not in a link" rather than throwing inside `shouldShow`.
-          return editorState.selection.empty && (editor?.isActive('link') ?? false)
+          return (
+            caretInLinkOnTouch && editorState.selection.empty && (editor?.isActive('link') ?? false)
+          )
         }
         // #924 — show over a non-empty selection, EXCEPT a NodeSelection (a
         // selected block-link/block-ref chip or image atom), where the mark

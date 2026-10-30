@@ -326,7 +326,7 @@ export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
     },
   },
   {
-    // The Blocks | Page switch on screen acts on it: a page's header, the journal's day.
+    // The page on screen acts on it (`useEditModeShortcut`): a page, the journal's day.
     id: 'toggle-page-mode',
     labelKey: 'palette.cmdTogglePageMode',
     category: 'action',

@@ -3,9 +3,9 @@
  * without Discard, sticky, and its block commands reach page mode's own
  * actions through the bus: Turn into on every block the selection touches,
  * the task button setting or clearing TODO, the rest on the caret's block.
- * Turn into shows the caret block's list style. Nothing here calls IPC: the
- * actions do, and their refusals are tested where they live (`page-lists`,
- * `PageBlockMenu`).
+ * Turn into shows the caret block's list style. On touch it ends with the
+ * block-menu button. Nothing here calls IPC: the actions do, and their
+ * refusals are tested where they live (`page-lists`, `PageBlockMenu`).
  */
 
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
@@ -34,6 +34,9 @@ import { __resetBlockCommandBus } from '@/stores/block-command-bus'
 import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore } from '@/stores/page-blocks'
 
+let touch = false
+vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: () => touch }))
+
 const A = blockId(1)
 const B = blockId(2)
 const C = blockId(3)
@@ -46,6 +49,7 @@ const ROWS: Row[] = [
 let editor: Editor | null = null
 
 afterEach(() => {
+  touch = false
   setActiveEditor(null)
   __resetBlockCommandBus()
   useBlockStore.setState({ focusedBlockId: null })
@@ -53,7 +57,7 @@ afterEach(() => {
   editor = null
 })
 
-function mount(todo: Record<string, string> = {}) {
+function mount(todo: Record<string, string> = {}, blockMenuOpen = false) {
   const lists = new PageLists(
     {},
     ROWS.map(([id, depth]) => ({ id, depth })),
@@ -83,6 +87,7 @@ function mount(todo: Record<string, string> = {}) {
       actions={actions}
       lists={lists}
       pageStore={pageStore}
+      blockMenuOpen={blockMenuOpen}
     />,
   )
   return { ...view, actions: actions.current, lists, editor }
@@ -183,6 +188,20 @@ describe('PageToolbar', () => {
     expect(actions.cyclePriority).toHaveBeenCalledWith(C)
     expect(actions.openPropertyDrawer).toHaveBeenCalledWith(C)
     expect(actions.openDatePicker).toHaveBeenCalledWith(C, 'due')
+  })
+
+  it('has the block-menu button on touch only, showing whether the menu is open, with no axe violations', async () => {
+    const desktop = mount()
+    expect(screen.queryByRole('button', { name: t('contextMenu.blockActions') })).toBeNull()
+    desktop.unmount()
+    editor?.destroy()
+
+    touch = true
+    const { container } = mount({}, true)
+    const blockMenu = button(t('contextMenu.blockActions'))
+    expect(blockMenu).toHaveAttribute('aria-haspopup', 'menu')
+    expect(blockMenu).toHaveAttribute('aria-expanded', 'true')
+    expect(await axe(container)).toHaveNoViolations()
   })
 
   it('leaves the commands to block mode while another editor is in use', () => {

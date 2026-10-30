@@ -110,7 +110,7 @@ function renderEditor(pageId = PAGE_ID) {
   const store = createPageBlockStore(pageId)
   const utils = render(
     <PageBlockContext.Provider value={store}>
-      <PageSourceEditor pageId={pageId} onClose={onClose} />
+      <PageSourceEditor pageId={pageId} onClose={onClose} onSwitchToPage={vi.fn()} />
     </PageBlockContext.Provider>,
   )
   return { ...utils, onClose, store }
@@ -1424,7 +1424,7 @@ describe('PageSourceEditor Cancel and Escape', () => {
           <button ref={kebab} type="button">
             Page actions
           </button>
-          {open && <PageSourceEditor pageId={PAGE_ID} onClose={close} />}
+          {open && <PageSourceEditor pageId={PAGE_ID} onClose={close} onSwitchToPage={vi.fn()} />}
         </PageBlockContext.Provider>
       )
     }

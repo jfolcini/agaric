@@ -1,7 +1,7 @@
 /**
  * DayPageEditor (#5691): the daily view's day page opens in page mode where a
- * page view would (the setting or the switch, a desktop pointer, within the
- * cap), else in block mode with its Add block button; Ctrl+E switches it; and
+ * page view would (the setting or the switch, within the cap), on touch too,
+ * else in block mode with its Add block button; Ctrl+E switches it; and
  * a link into the day lands in either mode.
  */
 
@@ -166,7 +166,7 @@ describe('DayPageEditor', () => {
     )
   })
 
-  it('on touch, offers no switch and keeps the day in block mode', () => {
+  it('on touch too, offers the switch and opens the day in page mode', () => {
     writePreference(PREFERENCES.editMode, 'page')
     const matchMedia = vi.spyOn(window, 'matchMedia').mockImplementation(
       (query: string) =>
@@ -181,9 +181,9 @@ describe('DayPageEditor', () => {
     try {
       renderDay()
 
-      expect(screen.getByTestId('block-tree')).toBeInTheDocument()
-      expect(screen.queryByTestId('page-mode')).not.toBeInTheDocument()
-      expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument()
+      expect(screen.getByTestId('page-mode')).toHaveAttribute('data-page-id', DAY)
+      expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
+      expect(radio(t('pageMode.page'))).toHaveAttribute('aria-checked', 'true')
     } finally {
       matchMedia.mockRestore()
       touchPoints.mockRestore()

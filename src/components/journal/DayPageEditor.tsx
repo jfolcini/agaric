@@ -1,8 +1,8 @@
 /**
  * DayPageEditor — the daily view's day page, inside its `PageBlockStoreProvider`
  * (#5691). It opens in page mode where a page view would (`usePageMode`: the
- * *Edit pages as* setting or the Blocks | Page switch, a desktop pointer, a page
- * within the cap), the switch ending the day's row of actions; otherwise in
+ * *Edit pages as* setting or the Blocks | Page switch, a page within the cap),
+ * the switch ending the day's row of actions; otherwise in
  * block mode's tree with its Add block button. The week and stream views mount
  * a tree per day and stay in block mode.
  */
@@ -13,7 +13,7 @@ import { AddBlockButton } from '@/components/editor/AddBlockButton'
 import { BlockTree } from '@/components/editor/BlockTree'
 import { EditModeSwitch } from '@/components/pages/EditModeSwitch'
 import { PageModeSlot } from '@/editor/page-mode/PageModeSlot'
-import { usePageMode } from '@/editor/page-mode/use-page-mode'
+import { useEditModeShortcut, usePageMode } from '@/editor/page-mode/use-page-mode'
 import { useScrollToFocus } from '@/hooks/useScrollToFocus'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { useBlockStore } from '@/stores/blocks'
@@ -34,6 +34,7 @@ export function DayPageEditor({
   onAddBlock,
 }: DayPageEditorProps): React.ReactElement {
   const pageMode = usePageMode(pageId)
+  useEditModeShortcut(pageMode.mode, pageMode.changeMode)
 
   // A link into the day (search, a backlink, a breadcrumb): block mode focuses
   // its block once it has scrolled to it; page mode puts its cursor there itself.
@@ -50,20 +51,16 @@ export function DayPageEditor({
 
   return (
     <div className="journal-day-page">
-      {(actions != null || pageMode.available) && (
-        <div className="flex items-center gap-2 mb-2">
-          {actions}
-          {pageMode.available && (
-            <div className="ml-auto">
-              <EditModeSwitch
-                mode={pageMode.mode}
-                onChange={pageMode.changeMode}
-                blocked={pageMode.blocked}
-              />
-            </div>
-          )}
+      <div className="flex flex-wrap items-center gap-2 mb-2">
+        {actions}
+        <div className="ml-auto">
+          <EditModeSwitch
+            mode={pageMode.mode}
+            onChange={pageMode.changeMode}
+            blocked={pageMode.blocked}
+          />
         </div>
-      )}
+      </div>
       {pageMode.wanted ? (
         <PageModeSlot
           pageId={pageId}

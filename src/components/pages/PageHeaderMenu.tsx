@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { shortcutHint } from '@/components/editor/block-context-menu/hints'
+import { EditModeItem } from '@/components/pages/EditModeItem'
 import { Button } from '@/components/ui/button'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { MenuSheet } from '@/components/ui/menu-sheet'
@@ -28,6 +29,7 @@ import { SheetTrigger } from '@/components/ui/sheet'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
+import type { EditMode } from '@/lib/preferences'
 
 /** A space shown in the "Move to space" sub-menu. */
 export interface MoveTargetSpace {
@@ -60,6 +62,11 @@ export interface PageHeaderMenuProps {
   onExport: () => void
   /** Opens source mode; the row is hidden without it. */
   onEditSource?: (() => void) | undefined
+  /** Switches the page's editing mode; the row, which names the other mode, is hidden without it. */
+  editMode?: EditMode | undefined
+  onEditModeChange?: ((mode: EditMode) => void) | undefined
+  /** Why page mode is not offered for this page: the row says so and does nothing. */
+  editModeBlocked?: string | null | undefined
   /** The kebab trigger, so focus can return to it. */
   kebabRef?: React.Ref<HTMLButtonElement> | undefined
   onDeleteRequest: () => void
@@ -98,6 +105,9 @@ export function PageHeaderMenu({
   onToggleJournalTemplate,
   onExport,
   onEditSource,
+  editMode,
+  onEditModeChange,
+  editModeBlocked,
   kebabRef,
   onDeleteRequest,
   onOpenInNewTab,
@@ -144,6 +154,7 @@ export function PageHeaderMenu({
     'toggleTemplate',
     'toggleJournalTemplate',
     'export',
+    ...(onEditModeChange != null ? ['editMode'] : []),
     ...(onEditSource != null ? ['editSource'] : []),
     ...(showMoveEntry ? ['moveTo'] : []),
     'delete',
@@ -369,6 +380,15 @@ export function PageHeaderMenu({
         {t('pageHeader.exportMarkdown')}
         <span className={SHORTCUT_HINT_CLASS}>{shortcutHint('exportPageMarkdown')}</span>
       </button>
+      {onEditModeChange != null && (
+        <EditModeItem
+          className={MENU_ITEM_CLASS}
+          mode={editMode}
+          blocked={editModeBlocked}
+          onModeChange={onEditModeChange}
+          {...menuItemProps('editMode')}
+        />
+      )}
       {onEditSource != null && (
         <button
           type="button"

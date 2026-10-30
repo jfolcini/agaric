@@ -32,6 +32,11 @@ import type React from 'react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import {
+  BLOCK_MENU,
+  BLOCK_MENU_ITEMS,
+  BlockMenuButton,
+} from '@/components/FormattingToolbar/BlockMenuButton'
 import { buildConfigByKey, buildToolbarItems } from '@/components/FormattingToolbar/items'
 import { renderCyclePriority } from '@/components/FormattingToolbar/MetadataGroup'
 import {
@@ -67,6 +72,8 @@ interface FormattingToolbarProps {
   hiddenItems?: ReadonlySet<string> | undefined
   /** Added to the bar's classes (page mode's sticky bar). */
   className?: string | undefined
+  /** The block-menu button, last on the bar: where nothing else opens the menu (page mode on touch). */
+  blockMenu?: { open: boolean; onOpen: (anchor: HTMLElement) => void } | undefined
 }
 
 function getHeadingLevel(editor: Editor): number {
@@ -85,6 +92,7 @@ export function FormattingToolbar({
   tips,
   hiddenItems,
   className,
+  blockMenu,
 }: FormattingToolbarProps): React.ReactElement {
   const { t } = useTranslation()
   const [formatPopoverOpen, setFormatPopoverOpen] = useState(false)
@@ -135,13 +143,13 @@ export function FormattingToolbar({
     [editor],
   )
   const configByKey = useMemo(() => buildConfigByKey(groups), [groups])
-  const items: ToolbarItem[] = useMemo(
-    () =>
-      buildToolbarItems(groups, { includeTableOps: state.isInsideTable }).filter(
-        (item) => hiddenItems?.has(item.key) !== true,
-      ),
-    [groups, state.isInsideTable, hiddenItems],
-  )
+  const hasBlockMenu = blockMenu !== undefined
+  const items: ToolbarItem[] = useMemo(() => {
+    const shown = buildToolbarItems(groups, { includeTableOps: state.isInsideTable }).filter(
+      (item) => hiddenItems?.has(item.key) !== true,
+    )
+    return hasBlockMenu ? [...shown, ...BLOCK_MENU_ITEMS] : shown
+  }, [groups, state.isInsideTable, hiddenItems, hasBlockMenu])
 
   // ── Item renderer dispatch ────────────────────────────────────────────
 
@@ -199,6 +207,20 @@ export function FormattingToolbar({
           currentPriority,
           onAfterOverflowAction: closeOverflow,
         })
+      }
+      case BLOCK_MENU: {
+        if (blockMenu === undefined) return null
+        return (
+          <BlockMenuButton
+            mode={mode}
+            disabled={false}
+            open={blockMenu.open}
+            onOpen={(anchor) => {
+              blockMenu.onOpen(anchor)
+              closeOverflow()
+            }}
+          />
+        )
       }
       default: {
         const cfg = configByKey.get(item.key)

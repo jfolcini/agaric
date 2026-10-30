@@ -26,6 +26,8 @@ import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
 
 vi.mock('@/components/pages/PageSourceToolbar', () => ({ PageSourceToolbar: () => null }))
+let touch = false
+vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: () => touch }))
 
 const mockedInvoke = vi.mocked(invoke)
 const PAGE = SEED_IDS.PAGE_GETTING_STARTED
@@ -54,8 +56,8 @@ function routeWithReplies(replies: unknown[]): void {
   })
 }
 
-function renderEditor(props: { switchable?: boolean; blocked?: string | null } = {}) {
-  const { switchable = true, blocked = null } = props
+function renderEditor(props: { blocked?: string | null } = {}) {
+  const { blocked = null } = props
   const onClose = vi.fn()
   const onSwitchToPage = vi.fn()
   const store = createPageBlockStore(PAGE)
@@ -64,7 +66,7 @@ function renderEditor(props: { switchable?: boolean; blocked?: string | null } =
       <PageSourceEditor
         pageId={PAGE}
         onClose={onClose}
-        onSwitchToPage={switchable ? onSwitchToPage : undefined}
+        onSwitchToPage={onSwitchToPage}
         pageModeBlocked={blocked}
       />
     </PageBlockContext.Provider>,
@@ -122,6 +124,7 @@ async function linkOverAChange() {
 }
 
 beforeEach(() => {
+  touch = false
   vi.clearAllMocks()
   localStorage.clear()
   useUndoStore.setState({ pages: new Map() })
@@ -139,13 +142,6 @@ afterEach(() => {
 })
 
 describe('PageSourceEditor link to page mode', () => {
-  it('is absent where page mode is not offered', async () => {
-    renderEditor({ switchable: false })
-    await loadedEditor()
-
-    expect(screen.queryByRole('button', { name: t('pageMode.page') })).not.toBeInTheDocument()
-  })
-
   it('is beside Cancel and Save, its tooltip naming it and its shortcut, with no a11y violations', async () => {
     const user = userEvent.setup()
     const { container } = renderEditor()
@@ -185,6 +181,18 @@ describe('PageSourceEditor link to page mode', () => {
     expect(onSwitchToPage).toHaveBeenCalledOnce()
     expect(onClose).not.toHaveBeenCalled()
     expect(applyCount()).toBe(0)
+  })
+
+  it('on touch, is under the buffer too, whose Cancel and Save are on its toolbar', async () => {
+    touch = true
+    const user = userEvent.setup()
+    const { onSwitchToPage } = renderEditor()
+    await loadedEditor()
+    expect(screen.queryByRole('button', { name: t('action.cancel') })).not.toBeInTheDocument()
+
+    await user.click(pageLink())
+
+    expect(onSwitchToPage).toHaveBeenCalledOnce()
   })
 
   it('Ctrl+E in the buffer switches, as the tooltip says', async () => {

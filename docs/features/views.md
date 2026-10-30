@@ -121,7 +121,7 @@ Tabbed configuration view. On desktop the tabs sit in a vertical rail, bucketed 
 - **Workspace**
   - **General** — language, week start, journal date format, launch-at-login (desktop).
   - **Appearance** — theme (the palette's *Toggle theme* cycles auto / dark / light), font size, animations, tooltip delay. Font size scales note text and its row controls (checkboxes, gutter icons, chip and inline icons), not the app chrome: the sidebar, headers, toolbars and settings stay fixed.
-  - **Editor** — *Edit pages as* blocks or one page (desktop; see [editor.md](editor.md#page-mode)), the `:` emoji picker, *Tab indents blocks*, external images (the setting governs blocks as they render; while a block is being edited, the editor loads its external images whatever the setting), link previews on hover.
+  - **Editor** — *Edit pages as* blocks or one page (see [editor.md](editor.md#page-mode)), the `:` emoji picker, *Tab indents blocks*, external images (the setting governs blocks as they render; while a block is being edited, the editor loads its external images whatever the setting), link previews on hover.
   - **Keyboard** — the system-wide Quick Capture hotkey (desktop), then full shortcut customisation (see [keyboard.md](keyboard.md)).
   - **Tasks & reminders** (id `notifications`) — the deadline warning days for the Agenda's Upcoming list, due-task reminders, the reminder time, the OS permission and a test notification.
   - **Spaces** — the space this device opens in (*Open on launch*: last used or one space), and create, rename, recolour or delete spaces (see [spaces.md](spaces.md)). The SpaceSwitcher's *Manage spaces…* opens it.

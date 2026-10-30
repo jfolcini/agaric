@@ -1528,7 +1528,7 @@ describe('PageEditor page mode (#5691)', () => {
     expect(capturedPageHeaderProps?.onEditModeChange).toBeUndefined()
   })
 
-  it('offers no switch on touch, and a page there stays in block mode', async () => {
+  it('offers the switch on touch too, and a page there opens in page mode', async () => {
     writePreference(PREFERENCES.editMode, 'page')
     const matchMedia = vi.spyOn(window, 'matchMedia').mockImplementation(
       (query: string) =>
@@ -1546,9 +1546,9 @@ describe('PageEditor page mode (#5691)', () => {
       await waitFor(() => {
         expect(capturedPageHeaderProps?.onEditSource).toBeTypeOf('function')
       })
-      expect(capturedPageHeaderProps?.onEditModeChange).toBeUndefined()
-      expect(screen.getByTestId('block-tree')).toBeInTheDocument()
-      expect(screen.queryByTestId('page-mode')).not.toBeInTheDocument()
+      expect(capturedPageHeaderProps?.onEditModeChange).toBeTypeOf('function')
+      expect(await screen.findByTestId('page-mode')).toBeInTheDocument()
+      expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
     } finally {
       matchMedia.mockRestore()
       touchPoints.mockRestore()

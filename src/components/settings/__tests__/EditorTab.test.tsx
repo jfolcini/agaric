@@ -80,7 +80,7 @@ describe('EditorTab', () => {
       expect(screen.getByTestId('edit-mode-select')).toHaveValue('page')
     })
 
-    it('is not offered on touch, where pages stay in block mode', () => {
+    it('is offered on touch too', () => {
       const matchMedia = vi.spyOn(window, 'matchMedia').mockImplementation(
         (query: string) =>
           ({
@@ -93,7 +93,7 @@ describe('EditorTab', () => {
       const touchPoints = vi.spyOn(navigator, 'maxTouchPoints', 'get').mockReturnValue(5)
       try {
         render(<EditorTab />)
-        expect(screen.queryByTestId('edit-mode-select')).not.toBeInTheDocument()
+        expect(screen.getByTestId('edit-mode-select')).toBeInTheDocument()
         expect(screen.getByTestId('emoji-picker-toggle')).toBeInTheDocument()
       } finally {
         matchMedia.mockRestore()

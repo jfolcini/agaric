@@ -24,7 +24,7 @@ import { useEditorState } from '@tiptap/react'
 import { BubbleMenu, type BubbleMenuProps } from '@tiptap/react/menus'
 import { ChevronDown, Copy, ExternalLink, Link2, Table2, Unlink } from 'lucide-react'
 import type React from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CodeLanguageSelector } from '@/components/editor-toolbar/CodeLanguageSelector'
@@ -41,6 +41,7 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { openUrl } from '@/lib/open-url'
 import { isAllowedUrl } from '@/lib/url-validation'
+import { cn } from '@/lib/utils'
 
 type VirtualElement = ReturnType<NonNullable<BubbleMenuProps['getReferencedVirtualElement']>>
 
@@ -135,6 +136,13 @@ function PageLinkBubble({ editor }: { editor: Editor }): React.ReactElement {
         ? ((ctx.editor.getAttributes('link')['href'] as string | undefined) ?? '')
         : null,
   })
+  // A tap moves the caret after the release that shows the bubble, so it is placed while still
+  // empty and runs off a phone's edge: placed again once it holds the link.
+  useLayoutEffect(() => {
+    if (href !== null && !editor.isDestroyed) {
+      editor.view.dispatch(editor.state.tr.setMeta('pageLinkBubble', 'updatePosition'))
+    }
+  }, [editor, href])
 
   const open = (url: string) => {
     // `openUrl` never rejects; false means nothing opened.
@@ -154,7 +162,7 @@ function PageLinkBubble({ editor }: { editor: Editor }): React.ReactElement {
       options={{ placement: 'top', offset: 8 }}
       role="toolbar"
       aria-label={t('pageMode.linkActions')}
-      className={bubbleMenuClass}
+      className={cn(bubbleMenuClass, 'max-w-[calc(100vw-2rem)]')}
       data-testid="page-link-bubble"
     >
       {href !== null && (

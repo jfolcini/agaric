@@ -808,8 +808,13 @@ export async function openPageMobile(page: Page, title: string) {
   // queries a block — e.g. `sortable-block` `.nth(2)` — can race an empty list
   // and time out. Wait for the first content row to render so navigation has
   // truly settled before we return. (`first()` is enough; any seeded page that
-  // this helper navigates to has at least one block.)
-  await expect(page.locator('[data-testid="sortable-block"]').first()).toBeVisible()
+  // this helper navigates to has at least one block, a row in block mode or a
+  // paragraph in page mode.)
+  await expect(
+    page
+      .locator('[data-testid="sortable-block"], [data-testid="page-mode-editor"] [data-page-block]')
+      .first(),
+  ).toBeVisible()
 }
 
 /**
@@ -1398,6 +1403,20 @@ export async function dragBlockTouch(page: Page, source: Locator, target: Locato
     for (let i = 1; i <= steps; i++) {
       await touch.move(from.x, from.y + (to.y - from.y) * (i / steps))
     }
+    await renderedFrame(page)
+    await touch.end()
+  })
+}
+
+/**
+ * Tap `target` as a finger does, lifting once the screen has drawn what the
+ * press changed: `tap` lifts at once, before a control that acts on the press
+ * has put anything under the finger for the lift's click to land on.
+ */
+export async function fingerTap(page: Page, target: Locator): Promise<void> {
+  const point = await centerOf(target, 'fingerTap target')
+  await withTouch(page, async (touch) => {
+    await touch.start(point.x, point.y)
     await renderedFrame(page)
     await touch.end()
   })

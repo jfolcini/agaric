@@ -67,7 +67,7 @@ export function openNewPageDialog(initialTitle = ''): void {
 
 /**
  * Global "switch the page on screen between blocks and page mode" DOM event:
- * the command palette's entry for `togglePageMode`. The Blocks | Page switch
- * on screen (`EditModeSwitch`) listens.
+ * the command palette's entry for `togglePageMode`. The page on screen
+ * (`useEditModeShortcut`) listens.
  */
 export const TOGGLE_PAGE_MODE_EVENT = 'agaric:togglePageMode'

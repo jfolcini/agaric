@@ -1,7 +1,8 @@
 /**
  * PageBlockMenu — block mode's block menu (`BlockContextMenu`) on the block
  * under a right click in page mode, on the grip's block when the grip is
- * clicked (`page-gutter.ts`), on a block whose focused chevron takes the menu
+ * clicked (`page-gutter.ts`), on the caret's block from the touch toolbar's
+ * button (`page-toolbar.tsx`), on a block whose focused chevron takes the menu
  * key or Shift+F10, or else on the caret's block on those keys (#5972). The
  * rows that change structure edit the document
  * (`page-block-actions.ts`) and the save writes them; Collapse is the block's
@@ -13,8 +14,8 @@
  * block menu takes over, in its bulk form, with Copy selection as Markdown and
  * the rows of block mode's batch toolbar that set one task state on all of it.
  * Turn into is the slash menu's (`page-slash-commands.tsx`), run on the menu's
- * block. Left out: Zoom in (page mode has none), and the touch gesture, which
- * keeps the pinned toolbar.
+ * block. Left out: Zoom in (page mode has none), and block mode's touch hold:
+ * a hold in the text selects it.
  */
 
 import type { Editor } from '@tiptap/core'
@@ -70,6 +71,8 @@ export interface PageBlockMenuProps {
   actions: React.RefObject<PageBlockMenuActions>
   /** Absent on a touch phone, which has no tab bar to open a tab on. */
   onOpenLinkInNewTab: ((id: string) => void) | undefined
+  /** Told as the menu opens and closes, for the touch toolbar's button. */
+  onOpenChange?: ((open: boolean) => void) | undefined
 }
 
 /** The menu's block, where it opens, and the blocks it acts on: the selection when the block is in it. */
@@ -122,8 +125,11 @@ export function PageBlockMenu({
   pageStore,
   actions,
   onOpenLinkInNewTab,
+  onOpenChange,
 }: PageBlockMenuProps): React.ReactElement | null {
   const [open, setOpen] = useState<OpenMenu | null>(null)
+  const isOpen = open !== null
+  useEffect(() => onOpenChange?.(isOpen), [isOpen, onOpenChange])
 
   useEffect(() => {
     if (editor === null || editor.isDestroyed) return

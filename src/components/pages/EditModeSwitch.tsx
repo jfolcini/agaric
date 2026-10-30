@@ -4,19 +4,19 @@
  * its shortcut; where page mode cannot show the page yet, Page is
  * `aria-disabled`, not `disabled`, so the tooltip can say why instead, and
  * choosing it does nothing. A press keeps the focus where it was, so the switch
- * finds the caret being typed at, in either mode, still there. Where it shows
- * (a page's header, the journal's day), its shortcut and the palette's command
- * flip it, a blocked Page included, so `onChange` can say why.
+ * finds the caret being typed at, in either mode, still there. It shows in a
+ * page's header (on a phone, the header's *Page actions* menu has the item
+ * instead) and on the journal's day; its shortcut is the page's
+ * (`useEditModeShortcut`).
  */
 
 import type React from 'react'
-import { useEffect, useId } from 'react'
+import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { getShortcutKeys, matchesShortcutBinding } from '@/lib/keyboard-config'
-import { TOGGLE_PAGE_MODE_EVENT } from '@/lib/overlay-events'
+import { getShortcutKeys } from '@/lib/keyboard-config'
 import type { EditMode } from '@/lib/preferences'
 
 export interface EditModeSwitchProps {
@@ -33,20 +33,6 @@ export function EditModeSwitch({
 }: EditModeSwitchProps): React.ReactElement {
   const { t } = useTranslation()
   const reasonId = useId()
-  useEffect(() => {
-    const toggle = (): void => onChange(mode === 'page' ? 'blocks' : 'page')
-    const onKeyDown = (e: KeyboardEvent): void => {
-      if (!matchesShortcutBinding(e, 'togglePageMode')) return
-      e.preventDefault()
-      toggle()
-    }
-    document.addEventListener('keydown', onKeyDown)
-    window.addEventListener(TOGGLE_PAGE_MODE_EVENT, toggle)
-    return () => {
-      document.removeEventListener('keydown', onKeyDown)
-      window.removeEventListener(TOGGLE_PAGE_MODE_EVENT, toggle)
-    }
-  }, [mode, onChange])
   const page = (
     <ToggleGroupItem
       value="page"

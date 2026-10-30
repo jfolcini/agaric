@@ -225,7 +225,7 @@ describe('Edit as Markdown link back to page mode', () => {
     expect(screen.getByTestId('block-tree')).toBeInTheDocument()
   })
 
-  it('is not offered on touch, where page mode is not', async () => {
+  it('is offered on touch too', async () => {
     touch = true
     const { pageId } = seedPage(['first'], 'Touch Markdown')
     render(<PageEditor pageId={pageId} title="Touch Markdown" />)
@@ -234,7 +234,7 @@ describe('Edit as Markdown link back to page mode', () => {
     await act(async () => header.onEditSource?.())
     await screen.findByTestId('page-source-mode')
 
-    expect(source?.onSwitchToPage).toBeUndefined()
+    expect(source?.onSwitchToPage).toBeTypeOf('function')
   })
 
   it('carries why page mode cannot show a page over its cap', async () => {

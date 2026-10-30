@@ -1,8 +1,8 @@
 /**
  * Page mode's block menu (#5972) over the mock backend: a right click on a
- * block, a click on the grip on the block under the pointer, or the menu key at
- * the caret's block opens block mode's menu on it, and each row's effect is
- * read back from the backend after the save.
+ * block, a click on the grip on the block under the pointer, or the menu key or
+ * the touch toolbar's button at the caret's block opens block mode's menu on
+ * it, and each row's effect is read back from the backend after the save.
  */
 
 import type { InvokeArgs } from '@tauri-apps/api/core'
@@ -35,6 +35,8 @@ import { useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
 
 vi.mock('@/lib/clipboard', () => ({ writeText: vi.fn().mockResolvedValue(undefined) }))
+let touch = false
+vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: () => touch }))
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedWriteText = vi.mocked(writeText)
@@ -163,6 +165,7 @@ function selectBlocks(editor: Editor, from: number, to: number): void {
 const passThrough = async (cmd: string, args?: InvokeArgs) => structuredClone(dispatch(cmd, args))
 
 beforeEach(() => {
+  touch = false
   vi.clearAllMocks()
   localStorage.clear()
   vi.stubGlobal('IntersectionObserver', EnteringIntersectionObserver)
@@ -339,6 +342,56 @@ describe('PageBlockMenu: opening', () => {
 
     expect(screen.queryByRole('menu')).toBeNull()
     expect(view.editor.view.hasFocus()).toBe(true)
+  })
+})
+
+describe('PageBlockMenu: the touch toolbar’s button', () => {
+  const blockMenuButton = () => screen.getByRole('button', { name: t('contextMenu.blockActions') })
+
+  async function pressBlockMenu(): Promise<HTMLElement> {
+    await act(async () => {
+      fireEvent.pointerDown(blockMenuButton(), { button: 0 })
+    })
+    return screen.findByRole('menu', { name: t('contextMenu.blockActions') })
+  }
+
+  it('opens the menu on the caret’s block, saying so on the button, and gives the editor the focus back', async () => {
+    touch = true
+    const view = await open([
+      [0, 'first'],
+      [0, 'second'],
+    ])
+    const { editor } = view
+    act(() => {
+      editor.commands.setTextSelection(editor.state.doc.child(0).nodeSize + 3)
+      editor.view.focus()
+    })
+
+    await pressBlockMenu()
+    expect(blockMenuButton()).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(row(t('contextMenu.copyBlockRef')))
+
+    await waitFor(() => expect(mockedWriteText).toHaveBeenCalledWith(`((${view.ids[1]}))`))
+    await waitFor(() => expect(blockMenuButton()).toHaveAttribute('aria-expanded', 'false'))
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(editor.view.hasFocus()).toBe(true)
+  })
+
+  it('opens the menu for a selection across blocks, whose Delete takes every selected block', async () => {
+    touch = true
+    const view = await open([
+      [0, 'a'],
+      [0, 'b'],
+      [0, 'c'],
+    ])
+    selectBlocks(view.editor, 0, 1)
+    act(() => view.editor.view.focus())
+
+    await pressBlockMenu()
+    fireEvent.click(row(t('contextMenu.deleteSelected', { count: 2 })))
+    await settled(view)
+
+    expect(backendTree(view.pageId).map(([id]) => id)).toEqual([view.ids[2]])
   })
 })
 

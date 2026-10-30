@@ -18,8 +18,8 @@
  * `App.tsx`) — no parallel open-state path.
  *
  * Behaviour (Material's extended FAB): it hides while an editing toolbar is
- * pinned to the bottom edge (a block or *Edit as Markdown* being edited on
- * touch, `pinned-toolbar.ts`) and while the user scrolls down, and returns on a
+ * pinned to the bottom edge (a block, page mode's text or *Edit as Markdown*
+ * being edited on touch, `pinned-toolbar.ts`) and while the user scrolls down, and returns on a
  * scroll up, so it never sits on the control under it mid-scroll. That frees it
  * to sit 1rem from the bottom,
  * stacked on the bottom safe-area inset via `var(--safe-area-bottom)` (see
