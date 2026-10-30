@@ -1,10 +1,12 @@
 /**
  * Page mode on a touch phone (#5691) against the mock backend: *Page actions*
  * opens and leaves it, the header keeping one row, as does *Page* under Edit as
- * Markdown's buffer. The toolbar is pinned to the screen's foot only while the
- * text is edited, its menus open included, and the quick-capture button is
- * there otherwise, on a page and on the journal's day. The toolbar's *Block
- * actions*, inline or under *More* on a narrow phone, opens the block menu on
+ * Markdown's buffer, and the journal's day has its own *Page actions* menu for
+ * it, the day's row of actions keeping to one line. The toolbar is pinned to
+ * the screen's foot only while the text is edited, its menus open included,
+ * and the quick-capture button is there otherwise, on a page and on the
+ * journal's day. The toolbar's *Block actions*, inline or under *More* on a
+ * narrow phone, opens the block menu on
  * the block the cursor was tapped into, as no grip, right click or menu key can
  * there. A row's move and typed text are read back after leaving the page and
  * coming back. Typing at the foot of the screen keeps the cursor above the
@@ -252,6 +254,35 @@ test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () =>
     await day.locator('[data-page-block] .page-block-content').first().tap()
     await expect(day).toBeFocused()
     await expectEditing(page)
+  })
+
+  test('the journal’s day keeps its row to one line, its Page actions menu switching the day', async ({
+    page,
+  }) => {
+    const row = page.locator('.journal-day-page > div').first()
+    const day = page.locator(`.journal-day-page ${EDITOR}`)
+    await expect(row.getByRole('button', { name: /^Open .* in editor$/ })).toBeVisible()
+    // Open in page editor, bookmark, delete and Page actions: every top within a few px.
+    const tops = await row
+      .locator('button')
+      .evaluateAll((buttons) => buttons.map((b) => Math.round(b.getBoundingClientRect().top)))
+    expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(4)
+    expect(tops).toHaveLength(4)
+    await expect(page.getByRole('radiogroup', { name: 'Editing mode' })).toHaveCount(0)
+
+    await pageAction(page, 'Edit as page')
+    await expect(page.getByRole('menu', { name: 'Page actions' })).toBeHidden()
+    await expect(day.locator('[data-page-block]').first()).toBeVisible()
+    await expect(page.locator('.journal-day-page [data-testid="block-static"]')).toHaveCount(0)
+
+    await row.getByRole('button', { name: 'Page actions', exact: true }).tap()
+    const menu = page.getByRole('menu', { name: 'Page actions' })
+    await expect(menu.getByRole('menuitem')).toHaveText(['Edit as blocks'])
+    await menu.getByRole('menuitem', { name: 'Edit as blocks' }).tap()
+    await expect(day).toHaveCount(0)
+    await expect(
+      page.locator('.journal-day-page [data-testid="block-static"]').first(),
+    ).toBeVisible()
   })
 
   test.describe('on a narrow phone', () => {

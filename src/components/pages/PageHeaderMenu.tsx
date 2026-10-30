@@ -37,7 +37,7 @@ export interface MoveTargetSpace {
   name: string
 }
 
-const MENU_ITEM_CLASS =
+export const MENU_ITEM_CLASS =
   'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible disabled:pointer-events-none disabled:opacity-50'
 
 const SHORTCUT_HINT_CLASS =
