@@ -355,7 +355,8 @@ async fn assert_inverse_law(
         | OpPayload::RemovePageAlias(_)
         | OpPayload::SetPropertyDef(_)
         | OpPayload::RenamePropertyKey(_)
-        | OpPayload::RewriteProperties(_) => {
+        | OpPayload::RewriteProperties(_)
+        | OpPayload::RenamePropertyOption(_) => {
             return Err(TestCaseError::fail(format!(
                 "harness emitted an op whose reverse should not reach here: {payload:?}"
             )));
@@ -456,9 +457,12 @@ fn is_reversible(op_type: &OpType) -> bool {
         OpType::RenameAttachment => true,
         // Alias ops swap Add <-> Remove.
         OpType::AddPageAlias | OpType::RemovePageAlias => true,
-        // A definition op swaps `def` <-> `prior`, a rename its two keys and
-        // a rewrite each write's new and prior state.
-        OpType::SetPropertyDef | OpType::RenamePropertyKey | OpType::RewriteProperties => true,
+        // A definition op swaps `def` <-> `prior`, a rename its two keys or
+        // options and a rewrite each write's new and prior state.
+        OpType::SetPropertyDef
+        | OpType::RenamePropertyKey
+        | OpType::RewriteProperties
+        | OpType::RenamePropertyOption => true,
         // The ONLY unconditionally non-reversible op.
         OpType::PurgeBlock => false,
     }
@@ -502,6 +506,7 @@ fn every_op_type_is_classified() {
         OpType::SetPropertyDef,
         OpType::RenamePropertyKey,
         OpType::RewriteProperties,
+        OpType::RenamePropertyOption,
     ];
 
     // Exactly one non-reversible variant today: PurgeBlock.

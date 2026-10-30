@@ -12,7 +12,7 @@ export function parsePayloadObject(payload: string): Record<string, unknown> | n
   }
 }
 
-/** The label of a definition op, a rename and a merge (#5841), by op type. */
+/** The label of a definition op, a rename, an option rename and a merge (#5841), by op type. */
 const PROPERTY_KEY_OP_LABELS: Partial<
   Record<string, (payload: Record<string, unknown>) => string | null>
 > = {
@@ -22,6 +22,10 @@ const PROPERTY_KEY_OP_LABELS: Partial<
   },
   rename_property_key: ({ old_key: oldKey, new_key: newKey }) =>
     typeof oldKey === 'string' && typeof newKey === 'string' ? `${oldKey} → ${newKey}` : null,
+  rename_property_option: ({ key, old_option: from, new_option: to }) =>
+    typeof key === 'string' && typeof from === 'string' && typeof to === 'string'
+      ? `${key}: ${from} → ${to}`
+      : null,
   // A merge writes `from`'s definition, then `into`'s; a type change (#5841 S3) one.
   rewrite_properties: (payload) => {
     const defs = payload['defs']

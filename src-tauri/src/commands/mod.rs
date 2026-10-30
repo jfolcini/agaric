@@ -60,6 +60,7 @@ pub mod properties;
 #[cfg(test)]
 mod property_key_proptest;
 pub mod property_keys;
+pub mod property_options;
 pub mod property_types;
 pub mod queries;
 pub mod reconciliation;
@@ -175,6 +176,7 @@ pub use property_keys::{
     PropertyMergeCounts, merge_property_key, merge_property_key_inner, preview_property_merge,
     preview_property_merge_inner, rename_property_key, rename_property_key_inner,
 };
+pub use property_options::{rename_property_option, rename_property_option_inner};
 pub use property_types::{
     PropertyTypeChangeCounts, PropertyTypeChangeKind, PropertyTypeChangeValue, PropertyTypeTarget,
     change_property_type, change_property_type_inner, list_property_type_change_values,

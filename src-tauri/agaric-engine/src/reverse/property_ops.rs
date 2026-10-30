@@ -4,7 +4,8 @@
 use agaric_core::error::AppError;
 use agaric_store::op::{
     DeletePropertyPayload, OpPayload, PropertyDefWrite, PropertyValueFields, PropertyValueWrite,
-    RenamePropertyKeyPayload, RewritePropertiesPayload, SetPropertyDefPayload, SetPropertyPayload,
+    RenamePropertyKeyPayload, RenamePropertyOptionPayload, RewritePropertiesPayload,
+    SetPropertyDefPayload, SetPropertyPayload,
 };
 use agaric_store::op_log::OpRecord;
 use sqlx::{SqliteConnection, SqlitePool};
@@ -28,6 +29,18 @@ pub fn reverse_rename_property_key(record: &OpRecord) -> Result<OpPayload, AppEr
         new_key: payload.old_key,
         ..payload
     }))
+}
+
+/// An option rename's reverse renames back (#5841).
+pub fn reverse_rename_property_option(record: &OpRecord) -> Result<OpPayload, AppError> {
+    let payload: RenamePropertyOptionPayload = serde_json::from_str(&record.payload)?;
+    Ok(OpPayload::RenamePropertyOption(
+        RenamePropertyOptionPayload {
+            old_option: payload.new_option,
+            new_option: payload.old_option,
+            ..payload
+        },
+    ))
 }
 
 /// A rewrite records what each write replaced, so its reverse swaps every
@@ -60,7 +73,8 @@ pub fn reverse_rewrite_properties(record: &OpRecord) -> Result<OpPayload, AppErr
 /// The key `block_id`'s value of `key` lives under now (#5841): `key` followed
 /// through each rename and merge of the block's space after the op at `after`
 /// (`created_at`, `seq`, `device_id`), in log order. A peer's rename or merge
-/// counts as this device's own does.
+/// counts as this device's own does. `value`, a select's string, is followed
+/// through the option renames of the key as walked so far.
 ///
 /// A rename moves `old_key` to `new_key`, and `new_key` to `old_key`: a
 /// rename's target holds no value, so a walk on it is of a value already gone,
@@ -72,13 +86,16 @@ pub fn reverse_rewrite_properties(record: &OpRecord) -> Result<OpPayload, AppErr
 /// another key's, and its moving out again (the merge's undo) leaves `key`
 /// where it is. A value the merge dropped stays under its key, and so does one
 /// an undo brought back.
+///
+/// An option rename maps `old_option` to `new_option` only: no block held
+/// `new_option` before it, so a value equal to it is an older, different one.
 pub async fn forward_property_key(
     conn: &mut SqliteConnection,
     block_id: &str,
     key: &str,
+    value: Option<&mut String>,
     after: (i64, i64, &str),
 ) -> Result<String, AppError> {
-    let (created_at, seq, device_id) = after;
     // A space's own block names no space: its renames are its own.
     let space = sqlx::query_scalar!(
         r#"SELECT COALESCE(space_id, id) AS "space!: String" FROM blocks WHERE id = ?"#,
@@ -89,10 +106,38 @@ pub async fn forward_property_key(
     let Some(space) = space else {
         return Ok(key.to_owned());
     };
+    forward_in_space(conn, &space, Some(block_id), key, value, after).await
+}
+
+/// The key `space_id`'s definition of `key` is declared under now (#5841):
+/// `key` followed through the space's key renames after the op at `after`, as
+/// [`forward_property_key`] follows them. A merge is not followed: it deletes
+/// the definition it merges away.
+pub async fn forward_definition_key(
+    conn: &mut SqliteConnection,
+    space_id: &str,
+    key: &str,
+    after: (i64, i64, &str),
+) -> Result<String, AppError> {
+    forward_in_space(conn, space_id, None, key, None, after).await
+}
+
+/// The walk of [`forward_property_key`] over `space`'s log; a merge moves
+/// only a `block`'s value.
+async fn forward_in_space(
+    conn: &mut SqliteConnection,
+    space: &str,
+    block: Option<&str>,
+    key: &str,
+    mut value: Option<&mut String>,
+    after: (i64, i64, &str),
+) -> Result<String, AppError> {
+    let (created_at, seq, device_id) = after;
     let rows = sqlx::query!(
         "SELECT op_type, payload FROM op_log \
          WHERE block_id = ?1 \
-           AND op_type IN ('rename_property_key', 'rewrite_properties') \
+           AND op_type IN ('rename_property_key', 'rewrite_properties', \
+                           'rename_property_option') \
            AND (created_at > ?2 \
                 OR (created_at = ?2 AND (seq > ?3 OR (seq = ?3 AND device_id > ?4)))) \
          ORDER BY created_at, seq, device_id",
@@ -106,25 +151,38 @@ pub async fn forward_property_key(
     let mut key = key.to_owned();
     let mut moved_in = false;
     for row in rows {
-        if row.op_type == "rename_property_key" {
-            let p: RenamePropertyKeyPayload = serde_json::from_str(&row.payload)?;
-            if key == p.old_key {
-                key = p.new_key;
-            } else if key == p.new_key {
-                key = p.old_key;
-            }
-            continue;
-        }
-        let p: RewritePropertiesPayload = serde_json::from_str(&row.payload)?;
-        match value_move(&p.values, block_id, &key) {
-            Some(ValueMove::Out(to)) => {
-                if !moved_in {
-                    key = to.to_owned();
+        match row.op_type.as_str() {
+            "rename_property_key" => {
+                let p: RenamePropertyKeyPayload = serde_json::from_str(&row.payload)?;
+                if key == p.old_key {
+                    key = p.new_key;
+                } else if key == p.new_key {
+                    key = p.old_key;
                 }
-                moved_in = false;
             }
-            Some(ValueMove::In) => moved_in = true,
-            None => {}
+            "rename_property_option" => {
+                let p: RenamePropertyOptionPayload = serde_json::from_str(&row.payload)?;
+                if let Some(value) = value
+                    .as_deref_mut()
+                    .filter(|v| p.key == key && **v == p.old_option)
+                {
+                    *value = p.new_option;
+                }
+            }
+            _ => {
+                let Some(block) = block else { continue };
+                let p: RewritePropertiesPayload = serde_json::from_str(&row.payload)?;
+                match value_move(&p.values, block, &key) {
+                    Some(ValueMove::Out(to)) => {
+                        if !moved_in {
+                            key = to.to_owned();
+                        }
+                        moved_in = false;
+                    }
+                    Some(ValueMove::In) => moved_in = true,
+                    None => {}
+                }
+            }
         }
     }
     Ok(key)
@@ -702,5 +760,222 @@ mod value_move_tests {
                 "a {what} value stays under its key"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod option_walk_tests {
+    use super::*;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::PropertyDefState;
+    use agaric_store::op_log::append_local_op_at;
+    use agaric_store::test_support::test_pool;
+
+    const SPACE: &str = "01HZ0000000000000000000SP1";
+    const BLOCK: &str = "01HZ0000000000000000000BX1";
+    const DEV: &str = "dev-walk";
+    /// Before every op the walks below read.
+    const AFTER: (i64, i64, &str) = (1, 0, DEV);
+
+    fn key_rename(old_key: &str, new_key: &str) -> OpPayload {
+        OpPayload::RenamePropertyKey(RenamePropertyKeyPayload {
+            space_id: BlockId::from_trusted(SPACE),
+            old_key: old_key.into(),
+            new_key: new_key.into(),
+        })
+    }
+
+    fn option_rename(key: &str, old: &str, new: &str) -> OpPayload {
+        OpPayload::RenamePropertyOption(RenamePropertyOptionPayload {
+            space_id: BlockId::from_trusted(SPACE),
+            key: key.into(),
+            old_option: old.into(),
+            new_option: new.into(),
+        })
+    }
+
+    /// `(key, value)` walked from [`AFTER`] through `ops`, logged in order,
+    /// for [`BLOCK`] of [`SPACE`].
+    async fn walk(ops: Vec<OpPayload>, key: &str, value: &str) -> (String, String) {
+        let (pool, _dir) = test_pool().await;
+        for sql in [
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?1, 'page', 'S', ?1)",
+            "INSERT INTO spaces (id) VALUES (?1)",
+            "INSERT INTO blocks (id, block_type, content, page_id, space_id) \
+             VALUES (?2, 'page', 'X', ?2, ?1)",
+        ] {
+            sqlx::query(sql)
+                .bind(SPACE)
+                .bind(BLOCK)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        for (ts, op) in (1_000..).zip(ops) {
+            append_local_op_at(&pool, DEV, op, ts).await.unwrap();
+        }
+        let mut conn = pool.acquire().await.unwrap();
+        let mut value = value.to_owned();
+        let key = forward_property_key(&mut conn, BLOCK, key, Some(&mut value), AFTER)
+            .await
+            .unwrap();
+        (key, value)
+    }
+
+    fn kv(key: &str, value: &str) -> (String, String) {
+        (key.to_owned(), value.to_owned())
+    }
+
+    #[test]
+    fn an_option_renames_reverse_renames_back_5841() {
+        let record = OpRecord {
+            device_id: DEV.into(),
+            seq: 1,
+            parent_seqs: None,
+            hash: String::new(),
+            op_type: "rename_property_option".into(),
+            payload: serde_json::to_string(&RenamePropertyOptionPayload {
+                space_id: BlockId::from_trusted(SPACE),
+                key: "stage".into(),
+                old_option: "review".into(),
+                new_option: "in_review".into(),
+            })
+            .unwrap(),
+            created_at: 1,
+            block_id: None,
+        };
+        assert_eq!(
+            reverse_rename_property_option(&record).unwrap(),
+            option_rename("stage", "in_review", "review")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_value_follows_an_option_rename_of_its_key_only_5841() {
+        assert_eq!(
+            walk(vec![option_rename("stage", "a", "b")], "stage", "a").await,
+            kv("stage", "b"),
+            "the renamed option"
+        );
+        assert_eq!(
+            walk(vec![option_rename("stage", "a", "b")], "stage", "b").await,
+            kv("stage", "b"),
+            "a value equal to the new name from before is another value"
+        );
+        assert_eq!(
+            walk(vec![option_rename("phase", "a", "b")], "stage", "a").await,
+            kv("stage", "a"),
+            "another key's rename"
+        );
+        assert_eq!(
+            walk(
+                vec![
+                    option_rename("stage", "a", "b"),
+                    option_rename("stage", "b", "a")
+                ],
+                "stage",
+                "a"
+            )
+            .await,
+            kv("stage", "a"),
+            "a rename and its undo"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_value_follows_key_and_option_renames_in_either_order_5841() {
+        assert_eq!(
+            walk(
+                vec![
+                    key_rename("stage", "phase"),
+                    option_rename("phase", "a", "b")
+                ],
+                "stage",
+                "a"
+            )
+            .await,
+            kv("phase", "b")
+        );
+        assert_eq!(
+            walk(
+                vec![
+                    option_rename("stage", "a", "b"),
+                    key_rename("stage", "phase")
+                ],
+                "stage",
+                "a"
+            )
+            .await,
+            kv("phase", "b")
+        );
+        assert_eq!(
+            walk(
+                vec![
+                    key_rename("stage", "phase"),
+                    option_rename("stage", "a", "b")
+                ],
+                "stage",
+                "a"
+            )
+            .await,
+            kv("phase", "a"),
+            "a rename of the key's old name, after it moved, is not the value's"
+        );
+    }
+
+    /// A definition's key follows the space's key renames, and a merge, which
+    /// deletes the definition it merges away, is not followed.
+    #[tokio::test]
+    async fn a_definitions_key_follows_key_renames_and_not_merges_5841() {
+        let (pool, _dir) = test_pool().await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?1, 'page', 'S', ?1)",
+        )
+        .bind(SPACE)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let merge = OpPayload::RewriteProperties(RewritePropertiesPayload {
+            space_id: BlockId::from_trusted(SPACE),
+            reason: agaric_store::op::RewriteReason::Merge,
+            defs: vec![PropertyDefWrite {
+                key: "phase".into(),
+                def: None,
+                prior: Some(PropertyDefState {
+                    value_type: "select".into(),
+                    options: None,
+                }),
+            }],
+            values: vec![
+                PropertyValueWrite {
+                    block_id: BlockId::from_trusted(BLOCK),
+                    key: "phase".into(),
+                    value: None,
+                    prior: Some(PropertyValueFields {
+                        value_text: Some("a".into()),
+                        ..Default::default()
+                    }),
+                },
+                PropertyValueWrite {
+                    block_id: BlockId::from_trusted(BLOCK),
+                    key: "area".into(),
+                    value: Some(PropertyValueFields {
+                        value_text: Some("a".into()),
+                        ..Default::default()
+                    }),
+                    prior: None,
+                },
+            ],
+        });
+        for (ts, op) in (1_000..).zip([key_rename("stage", "phase"), merge]) {
+            append_local_op_at(&pool, DEV, op, ts).await.unwrap();
+        }
+        let mut conn = pool.acquire().await.unwrap();
+        assert_eq!(
+            forward_definition_key(&mut conn, SPACE, "stage", AFTER)
+                .await
+                .unwrap(),
+            "phase"
+        );
     }
 }

@@ -46,6 +46,7 @@ const OP_TYPES = [
   { value: 'delete_property', labelKey: 'history.opTypeDeleteProperty' },
   { value: 'set_property_def', labelKey: 'history.opTypeSetPropertyDef' },
   { value: 'rename_property_key', labelKey: 'history.opTypeRenamePropertyKey' },
+  { value: 'rename_property_option', labelKey: 'history.opTypeRenamePropertyOption' },
   { value: 'rewrite_properties', labelKey: 'history.opTypeRewriteProperties' },
   { value: 'add_attachment', labelKey: 'history.opTypeAddAttachment' },
   { value: 'delete_attachment', labelKey: 'history.opTypeRemoveAttachment' },

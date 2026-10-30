@@ -3,7 +3,7 @@
  *
  * A space selector (definitions are per space, #5841; it starts on the
  * active space), search/filter, create form, list rendering, delete
- * confirmation, edit options for select-type properties, renaming a key,
+ * confirmation, editing and renaming a select's options, renaming a key,
  * merging it into another, changing its type, and copying a definition to
  * another space. A
  * built-in definition shows a lock and offers no action.
@@ -11,7 +11,7 @@
 
 import { HelpCircle, Lock, Plus, Search, Settings2, Trash2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
@@ -19,6 +19,7 @@ import { ListViewState } from '@/components/common/ListViewState'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { ChangePropertyType } from '@/components/properties/ChangePropertyType'
 import { CopyDefinitionToSpace } from '@/components/properties/CopyDefinitionToSpace'
+import { EditSelectOptions } from '@/components/properties/EditSelectOptions'
 import { MergePropertyDefinition } from '@/components/properties/MergePropertyDefinition'
 import { notifyDefinitionWrite } from '@/components/properties/notify-definition-write'
 import { RenamePropertyDefinition } from '@/components/properties/RenamePropertyDefinition'
@@ -28,7 +29,6 @@ import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
 import { ListItem } from '@/components/ui/list-item'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SearchInput } from '@/components/ui/search-input'
 import {
   Select,
@@ -79,23 +79,6 @@ export function PropertyDefinitionsList(): React.ReactElement {
 
   // Delete confirmation state
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
-
-  // Edit options state (for select-type properties)
-  const [editingOptionsKey, setEditingOptionsKey] = useState<string | null>(null)
-  const [editOptionsValue, setEditOptionsValue] = useState('')
-
-  // Derive inline JSON parse error so the user gets immediate
-  // feedback (and Save is disabled) instead of only seeing a toast on
-  // failed save. Empty input is treated as valid (clears options).
-  const jsonError = useMemo<string | null>(() => {
-    if (editOptionsValue.trim() === '') return null
-    try {
-      JSON.parse(editOptionsValue)
-      return null
-    } catch (err) {
-      return err instanceof Error ? err.message : String(err)
-    }
-  }, [editOptionsValue])
 
   const loadDefinitions = useCallback(async () => {
     const seq = ++loadSeq.current
@@ -215,24 +198,6 @@ export function PropertyDefinitionsList(): React.ReactElement {
       void handleDelete(deleteTarget)
     }
   }, [deleteTarget, handleDelete])
-
-  const handleSaveOptions = useCallback(
-    async (key: string) => {
-      if (spaceId === null) return
-      try {
-        const updated = unwrap(
-          await commands.updatePropertyDefOptions(spaceId, key, editOptionsValue),
-        )
-        setDefinitions((prev) => prev.map((d) => (d.key === key ? updated : d)))
-        setEditingOptionsKey(null)
-        notifyDefinitionWrite(t('propertiesView.optionsSaved'), updated.op_refs, reload)
-      } catch (err) {
-        // See loadDefinitions above — unified error reporting.
-        reportIpcError('PropertyDefinitionsList', 'property.errorUpdate', err, t, { key })
-      }
-    },
-    [spaceId, editOptionsValue, t, reload],
-  )
 
   // Hidden from the list only: the duplicate-key check still sees it.
   const visibleDefs = definitions.filter((d) => d.key !== SPACE_MARKER_KEY)
@@ -401,62 +366,12 @@ export function PropertyDefinitionsList(): React.ReactElement {
                             </TooltipContent>
                           </Tooltip>
                         )}
-                        {!def.builtin && (
-                          <Popover
-                            open={editingOptionsKey === def.key}
-                            onOpenChange={(open) => {
-                              if (open) {
-                                setEditingOptionsKey(def.key)
-                                setEditOptionsValue(def.options ?? '')
-                              } else {
-                                setEditingOptionsKey(null)
-                              }
-                            }}
-                          >
-                            <PopoverTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="xs"
-                                className="max-sm:px-0!"
-                                aria-label={t('propertiesView.editOptionsTooltip')}
-                              >
-                                <Settings2 />
-                                {t('propertiesView.editOptions')}
-                              </Button>
-                            </PopoverTrigger>
-                            <PopoverContent
-                              aria-label={t('propertiesView.editOptionsPopoverLabel')}
-                            >
-                              <div className="space-y-2">
-                                <Input
-                                  value={editOptionsValue}
-                                  onChange={(e) => setEditOptionsValue(e.target.value)}
-                                  placeholder={t('propertiesView.optionsJsonPlaceholder')}
-                                  aria-label={t('propertiesView.optionsJsonLabel')}
-                                  aria-invalid={jsonError != null}
-                                  aria-describedby={
-                                    jsonError != null ? 'property-options-json-error' : undefined
-                                  }
-                                />
-                                {jsonError && (
-                                  <p
-                                    id="property-options-json-error"
-                                    className="text-xs text-destructive"
-                                    role="alert"
-                                  >
-                                    {t('propertiesView.invalidJsonHint', { error: jsonError })}
-                                  </p>
-                                )}
-                                <Button
-                                  size="sm"
-                                  disabled={jsonError != null}
-                                  onClick={() => handleSaveOptions(def.key)}
-                                >
-                                  {t('action.save')}
-                                </Button>
-                              </div>
-                            </PopoverContent>
-                          </Popover>
+                        {!def.builtin && spaceId !== null && (
+                          <EditSelectOptions
+                            definition={def}
+                            spaceId={spaceId}
+                            onChanged={reload}
+                          />
                         )}
                       </div>
                     )}

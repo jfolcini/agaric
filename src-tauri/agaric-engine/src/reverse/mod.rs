@@ -12,7 +12,7 @@ pub use batch::{
     is_statically_non_reversible, reject_replicated_targets,
 };
 pub use block_ops::find_prior_text;
-pub use property_ops::forward_property_key;
+pub use property_ops::{forward_definition_key, forward_property_key};
 
 use sqlx::SqlitePool;
 use std::str::FromStr;
@@ -54,5 +54,6 @@ pub async fn compute_reverse(
         OpType::SetPropertyDef => property_ops::reverse_set_property_def(&record),
         OpType::RenamePropertyKey => property_ops::reverse_rename_property_key(&record),
         OpType::RewriteProperties => property_ops::reverse_rewrite_properties(&record),
+        OpType::RenamePropertyOption => property_ops::reverse_rename_property_option(&record),
     }
 }

@@ -508,6 +508,11 @@ export const commands = {
 	 */
 	mergePropertyKey: (spaceId: SpaceId, fromKey: string, intoKey: string, acknowledged: PropertyMergeCounts) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("merge_property_key", { spaceId, fromKey, intoKey, acknowledged })),
 	/**
+	 *  Tauri command: rename an option of a space's select property. Delegates to
+	 *  [`rename_property_option_inner`]; the response carries the op ref.
+	 */
+	renamePropertyOption: (spaceId: SpaceId, key: string, oldOption: string, newOption: string) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("rename_property_option", { spaceId, key, oldOption, newOption })),
+	/**
 	 *  Tauri command: what changing a space's property to another type would
 	 *  convert and remove. Delegates to [`preview_property_type_change_inner`].
 	 */

@@ -1,8 +1,9 @@
 //! The definition ops' apply (#5841): the space's doc, then its
 //! `property_definitions` rows, then the values they move. `SetPropertyDef`
 //! re-types a key's values when the definition moves them to another column;
-//! `RenamePropertyKey` and `RewriteProperties` move values between keys, and
-//! `RewriteProperties` changes a key's type.
+//! `RenamePropertyKey` and `RewriteProperties` move values between keys,
+//! `RenamePropertyOption` renames a select's option and the values holding it,
+//! and `RewriteProperties` changes a key's type.
 
 use super::*;
 use agaric_store::op::PropertyDefWrite;
@@ -72,6 +73,33 @@ pub async fn apply_rename_property_key_via_loro(
         conn, space_id, &p.old_key, &p.new_key,
     )
     .await
+}
+
+/// Apply `RenamePropertyOption` through `p.space_id`'s engine, then project
+/// it to SQL: the definition the engine holds after, then the values.
+pub async fn apply_rename_property_option_via_loro(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
+    p: &RenamePropertyOptionPayload,
+) -> Result<(), AppError> {
+    use crate::loro::projection::{
+        project_property_def_to_sql, project_rename_property_option_to_sql,
+    };
+    let space_id = p.space_id.as_str();
+    let def = {
+        let mut guard = state.registry.for_space_recording(
+            &agaric_store::space::SpaceId::from_trusted(space_id),
+            device_id,
+            &state.revert,
+        )?;
+        guard
+            .engine_mut()
+            .apply_rename_property_option(&p.key, &p.old_option, &p.new_option)?
+    };
+    project_property_def_to_sql(conn, space_id, &p.key, def.as_ref()).await?;
+    project_rename_property_option_to_sql(conn, space_id, &p.key, &p.old_option, &p.new_option)
+        .await
 }
 
 /// The type `write` leaves its key with; `None` when it deletes the definition.
@@ -209,6 +237,125 @@ mod tests {
             row,
             (None, Some("2026-01-05".into())),
             "the unwritten value moved to value_date"
+        );
+    }
+
+    /// #5841 S4 — the rename reaches the space's rows, the Trash's included,
+    /// and no other space's, and the definition row is the engine's.
+    #[tokio::test]
+    async fn an_option_rename_projects_the_spaces_rows_and_the_engines_definition_5841() {
+        const OTHER: &str = "01HZ0000000000000000000SP2";
+        const TRASHED: &str = "01HZ0000000000000000000BX2";
+        const ELSEWHERE: &str = "01HZ0000000000000000000BY1";
+        let (pool, _dir) = agaric_store::test_support::test_pool().await;
+        for space in [SPACE, OTHER] {
+            for sql in [
+                "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?1, 'page', 'S', ?1)",
+                "INSERT INTO spaces (id) VALUES (?1)",
+                "INSERT INTO property_definitions (space_id, key, value_type, options, created_at) \
+                 VALUES (?1, 'stage', 'select', '[\"draft\",\"review\"]', '2026-01-01T00:00:00.000Z')",
+            ] {
+                sqlx::query(sql).bind(space).execute(&pool).await.unwrap();
+            }
+        }
+        for (block, space, deleted_at) in [
+            (BLOCK, SPACE, None),
+            (TRASHED, SPACE, Some(1_i64)),
+            (ELSEWHERE, OTHER, None),
+        ] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, page_id, space_id, deleted_at) \
+                 VALUES (?1, 'page', 'X', ?1, ?2, ?3)",
+            )
+            .bind(block)
+            .bind(space)
+            .bind(deleted_at)
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'stage', 'review')",
+            )
+            .bind(block)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let state = LoroState::new();
+        {
+            let mut guard = state
+                .registry
+                .for_space(&SpaceId::from_trusted(SPACE), DEV)
+                .unwrap();
+            let engine = guard.engine_mut();
+            let options = r#"["draft","review"]"#;
+            engine
+                .apply_set_property_def(
+                    "stage",
+                    Some(&PropertyDefState {
+                        value_type: "select".into(),
+                        options: Some(options.into()),
+                    }),
+                )
+                .unwrap();
+            for block in [BLOCK, TRASHED] {
+                engine
+                    .apply_create_block(block, "page", "X", None, 0)
+                    .unwrap();
+                engine
+                    .apply_set_property(block, "stage", Some("review"))
+                    .unwrap();
+            }
+        }
+        let rename = RenamePropertyOptionPayload {
+            space_id: BlockId::from_trusted(SPACE),
+            key: "stage".into(),
+            old_option: "review".into(),
+            new_option: "in_review".into(),
+        };
+
+        let mut conn = pool.acquire().await.unwrap();
+        apply_rename_property_option_via_loro(&mut conn, &state, DEV, &rename)
+            .await
+            .unwrap();
+
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT block_id, value_text FROM block_properties WHERE key = 'stage' ORDER BY block_id",
+        )
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                (BLOCK.to_owned(), "in_review".to_owned()),
+                (TRASHED.to_owned(), "in_review".to_owned()),
+                (ELSEWHERE.to_owned(), "review".to_owned()),
+            ],
+            "the space's rows, the Trash's included, and no other space's"
+        );
+        let options: Vec<(String, String)> = sqlx::query_as(
+            "SELECT space_id, options FROM property_definitions WHERE key = 'stage' ORDER BY space_id",
+        )
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap();
+        let engine_options = state
+            .registry
+            .for_space(&SpaceId::from_trusted(SPACE), DEV)
+            .unwrap()
+            .engine_mut()
+            .read_property_def("stage")
+            .unwrap()
+            .and_then(|def| def.options);
+        assert_eq!(engine_options.as_deref(), Some(r#"["draft","in_review"]"#));
+        assert_eq!(
+            options,
+            vec![
+                (SPACE.to_owned(), engine_options.unwrap()),
+                (OTHER.to_owned(), r#"["draft","review"]"#.to_owned()),
+            ],
+            "the space's definition row is the engine's; the other space's stays"
         );
     }
 }

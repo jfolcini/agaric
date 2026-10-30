@@ -14,11 +14,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { renameSelectOption } from '@/components/properties/notify-definition-write'
 import {
   parseSelectOptions,
   readCurrentValue,
 } from '@/components/properties/PropertyRowEditor/shared'
 import { useDateInput } from '@/hooks/useDateInput'
+import { type SelectOptionsEditorState, useSelectOptionsDraft } from '@/hooks/useSelectOptionsDraft'
+import { reloadChangedPageStores } from '@/hooks/useSyncEvents'
 import { unwrap } from '@/lib/app-error'
 import type { PageHeading, PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
@@ -64,20 +67,6 @@ export interface SelectEditorState {
   localValue: string
   options: string[]
   handleSelectChange: (val: string) => void
-}
-
-export interface SelectOptionsEditorState {
-  open: boolean
-  setOpen: (v: boolean) => void
-  options: string[]
-  newOptionInput: string
-  setNewOptionInput: (v: string) => void
-  canAddOption: boolean
-  handleOpen: () => void
-  handleAdd: () => void
-  handleRemove: (opt: string) => void
-  handleMove: (opt: string, direction: 'up' | 'down') => void
-  handleSave: () => Promise<void>
 }
 
 export interface RefPickerEditorState {
@@ -181,67 +170,57 @@ export function usePropertyRowEditor({
   const options = useMemo(() => parseSelectOptions(def), [def])
 
   // --- Edit select options popover state ---
-  const [editOptionsOpen, setEditOptionsOpen] = useState(false)
-  const [editingOptions, setEditingOptions] = useState<string[]>([])
-  const [newOptionInput, setNewOptionInput] = useState('')
+  const saveOptions = useCallback(
+    async (next: string[]) => {
+      if (!def || currentSpaceId === null) return false
+      try {
+        const updatedDef = unwrap(
+          await commands.updatePropertyDefOptions(currentSpaceId, def.key, JSON.stringify(next)),
+        )
+        onDefUpdated?.(updatedDef)
+        return true
+      } catch (err) {
+        logger.error('PropertyRowEditor', 'Failed to update select options', { key: def.key }, err)
+        notify.error(t('pageProperty.updateOptionsFailed'))
+        return false
+      }
+    },
+    [def, currentSpaceId, onDefUpdated, t],
+  )
 
-  const handleOpenEditOptions = useCallback(() => {
-    setEditingOptions([...options])
-    setNewOptionInput('')
-    setEditOptionsOpen(true)
-  }, [options])
+  // #5841 — a rename reaches every block of the space, so the open page's
+  // values are read again, and the definition after the rename or its undo.
+  const renameOption = useCallback(
+    async (from: string, to: string) => {
+      if (!def || currentSpaceId === null) return false
+      const spaceId = currentSpaceId
+      const { key } = def
+      const changed = (): void => {
+        reloadChangedPageStores()
+        commands
+          .getPropertyDef(spaceId, key)
+          .then(unwrap)
+          .then((fresh) => {
+            if (fresh) onDefUpdated?.(fresh)
+          })
+          .catch((err: unknown) => {
+            logger.warn(
+              'PropertyRowEditor',
+              'Failed to reload the renamed definition',
+              { key },
+              err,
+            )
+          })
+      }
+      return renameSelectOption(spaceId, key, from, to, changed)
+    },
+    [def, currentSpaceId, onDefUpdated],
+  )
 
-  const handleRemoveOption = useCallback((opt: string) => {
-    setEditingOptions((prev) => prev.filter((o) => o !== opt))
-  }, [])
-
-  const handleMoveOption = useCallback((opt: string, direction: 'up' | 'down') => {
-    setEditingOptions((prev) => {
-      const idx = prev.indexOf(opt)
-      if (idx === -1) return prev
-      const targetIdx = direction === 'up' ? idx - 1 : idx + 1
-      if (targetIdx < 0 || targetIdx >= prev.length) return prev
-      const next = [...prev]
-      const tmp = next[idx] as string
-      next[idx] = next[targetIdx] as string
-      next[targetIdx] = tmp
-      return next
-    })
-  }, [])
-
-  const handleAddOption = useCallback(() => {
-    const trimmed = newOptionInput.trim()
-    if (!trimmed) return
-    setEditingOptions((prev) => (prev.includes(trimmed) ? prev : [...prev, trimmed]))
-    setNewOptionInput('')
-  }, [newOptionInput])
-
-  const canAddOption = newOptionInput.trim().length > 0
-
-  const handleSaveOptions = useCallback(async () => {
-    if (!def || currentSpaceId === null) return
-    try {
-      const updatedDef = unwrap(
-        await commands.updatePropertyDefOptions(
-          currentSpaceId,
-          def.key,
-          JSON.stringify(editingOptions),
-        ),
-      )
-      onDefUpdated?.(updatedDef)
-      setEditOptionsOpen(false)
-    } catch (err) {
-      logger.error(
-        'PropertyRowEditor',
-        'Failed to update select options',
-        {
-          key: def?.key ?? '',
-        },
-        err,
-      )
-      notify.error(t('pageProperty.updateOptionsFailed'))
-    }
-  }, [def, currentSpaceId, editingOptions, onDefUpdated, t])
+  const selectOptions = useSelectOptionsDraft(options, {
+    save: saveOptions,
+    rename: renameOption,
+  })
 
   // --- Ref picker popover state ---
   const [refPickerOpen, setRefPickerOpen] = useState(false)
@@ -358,19 +337,7 @@ export function usePropertyRowEditor({
       handleBlur,
     },
     select: { localValue, options, handleSelectChange },
-    selectOptions: {
-      open: editOptionsOpen,
-      setOpen: setEditOptionsOpen,
-      options: editingOptions,
-      newOptionInput,
-      setNewOptionInput,
-      canAddOption,
-      handleOpen: handleOpenEditOptions,
-      handleAdd: handleAddOption,
-      handleRemove: handleRemoveOption,
-      handleMove: handleMoveOption,
-      handleSave: handleSaveOptions,
-    },
+    selectOptions,
     refPicker: {
       open: refPickerOpen,
       setOpen: setRefPickerOpen,

@@ -153,6 +153,9 @@ fn dispatch_engine_op(
             engine.apply_rename_property_key(&p.old_key, &p.new_key)
         }
         agaric_store::op::OpPayload::RewriteProperties(p) => engine.apply_rewrite_properties(p),
+        agaric_store::op::OpPayload::RenamePropertyOption(p) => engine
+            .apply_rename_property_option(&p.key, &p.old_option, &p.new_option)
+            .map(|_| ()),
         agaric_store::op::OpPayload::AddAttachment(p) => engine.apply_add_attachment(
             p.block_id.as_str(),
             p.attachment_id.as_str(),

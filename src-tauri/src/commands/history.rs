@@ -14,10 +14,10 @@ use agaric_engine::apply::loro_apply::{
     apply_rename_attachment_via_loro,
 };
 use agaric_engine::apply::property_defs::{
-    apply_rename_property_key_via_loro, apply_rewrite_properties_via_loro,
-    apply_set_property_def_via_loro,
+    apply_rename_property_key_via_loro, apply_rename_property_option_via_loro,
+    apply_rewrite_properties_via_loro, apply_set_property_def_via_loro,
 };
-use agaric_engine::reverse::forward_property_key;
+use agaric_engine::reverse::{forward_definition_key, forward_property_key};
 use agaric_store::op::{OpPayload, OpRef, SetPropertyDefPayload, UndoResult};
 use agaric_store::op_log;
 use agaric_store::pagination;
@@ -823,6 +823,8 @@ impl ReverseCohortFanout {
 /// under now, followed through the renames and merges of its space since the
 /// op `reversed` (its `created_at` and ref) ran (#5841), before the prior is
 /// read: under the op's own key it would bring back a key the space renamed.
+/// A set's select value follows the key's option renames the same way, and an
+/// option rename's reverse renames back under the key the definition has now.
 async fn with_recorded_prior_in_tx(
     tx: &mut CommandTx,
     reverse: &OpPayload,
@@ -833,7 +835,8 @@ async fn with_recorded_prior_in_tx(
     let mut reverse = reverse.clone();
     match &mut reverse {
         OpPayload::SetProperty(p) => {
-            p.key = forward_property_key(tx, p.block_id.as_str(), &p.key, after).await?;
+            let value = p.value_text.as_mut();
+            p.key = forward_property_key(tx, p.block_id.as_str(), &p.key, value, after).await?;
             fit_reverse_to_declared_type(tx, p).await?;
             p.prior = Some(
                 agaric_engine::block_ops::held_property_value(tx, p.block_id.as_str(), &p.key)
@@ -842,7 +845,10 @@ async fn with_recorded_prior_in_tx(
             );
         }
         OpPayload::DeleteProperty(p) => {
-            p.key = forward_property_key(tx, p.block_id.as_str(), &p.key, after).await?;
+            p.key = forward_property_key(tx, p.block_id.as_str(), &p.key, None, after).await?;
+        }
+        OpPayload::RenamePropertyOption(p) => {
+            p.key = forward_definition_key(tx, p.space_id.as_str(), &p.key, after).await?;
         }
         OpPayload::MoveBlock(p) => {
             p.prior = super::blocks::live_placement(tx, p.block_id.as_str()).await?;
@@ -964,7 +970,8 @@ async fn fit_reverse_to_declared_type(
 /// (#5841). A `RenamePropertyKey` reverse renames back, refused as the rename
 /// is onto a key the space declares or uses; a `RewriteProperties` reverse
 /// restores each write's prior, a merge's definitions refused as a
-/// `SetPropertyDef` reverse's are.
+/// `SetPropertyDef` reverse's are. A `RenamePropertyOption` reverse renames the
+/// option back, refused as the rename is.
 ///
 /// `op_created_at` is the SAME timestamp the caller bound as the reverse op's
 /// `op_log.created_at` (mint it via `reverse_op_timestamp`). The DeleteBlock
@@ -1089,6 +1096,11 @@ pub async fn apply_reverse_in_tx(
         }
         OpPayload::RewriteProperties(p) => {
             apply_reverse_rewrite_properties(tx, state, device_id, p).await?;
+        }
+        // #5841: refused, as the rename is, when the definition, its type or
+        // its options have changed since.
+        OpPayload::RenamePropertyOption(p) => {
+            apply_reverse_rename_property_option(tx, state, device_id, p).await?;
         }
         // Note: CreateBlock never appears here because reverse::compute_reverse
         // maps CreateBlock → DeleteBlock, and RestoreBlock → DeleteBlock.
@@ -1425,6 +1437,25 @@ async fn apply_reverse_add_page_alias(
     }
     agaric_engine::apply::loro_apply::apply_add_page_alias_via_loro(tx, state, device_id, p, false)
         .await
+}
+
+/// `RenamePropertyOption` arm of [`apply_reverse_in_tx`]: the forward apply,
+/// after the rename's own refusals.
+async fn apply_reverse_rename_property_option(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    p: &agaric_store::op::RenamePropertyOptionPayload,
+) -> Result<(), AppError> {
+    super::property_options::refuse_unrenamable_option(
+        tx,
+        p.space_id.as_str(),
+        &p.key,
+        &p.old_option,
+        &p.new_option,
+    )
+    .await?;
+    apply_rename_property_option_via_loro(tx, state, device_id, p).await
 }
 
 /// `RewriteProperties` arm of [`apply_reverse_in_tx`] (#5841): the payload is

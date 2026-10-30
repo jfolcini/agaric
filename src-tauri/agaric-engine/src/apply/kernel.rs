@@ -589,8 +589,8 @@ async fn apply_page_alias_op(
     }
 }
 
-/// `SetPropertyDef` / `RenamePropertyKey` / `RewriteProperties` (#5841); none
-/// moves the cache counts.
+/// `SetPropertyDef` / `RenamePropertyKey` / `RenamePropertyOption` /
+/// `RewriteProperties` (#5841); none moves the cache counts.
 async fn apply_property_def_op(
     conn: &mut sqlx::SqliteConnection,
     state: &crate::loro::shared::LoroState,
@@ -610,6 +610,10 @@ async fn apply_property_def_op(
         OpType::RewriteProperties => {
             let p: RewritePropertiesPayload = serde_json::from_str(&record.payload)?;
             apply_rewrite_properties_via_loro(conn, state, device_id, &p).await
+        }
+        OpType::RenamePropertyOption => {
+            let p: RenamePropertyOptionPayload = serde_json::from_str(&record.payload)?;
+            apply_rename_property_option_via_loro(conn, state, device_id, &p).await
         }
         other => Err(AppError::InvalidOperation(format!(
             "apply_property_def_op: {other:?} is not a definition op"
@@ -728,7 +732,10 @@ pub async fn apply_op_tx_with_mode(
         OpType::AddPageAlias | OpType::RemovePageAlias => {
             apply_page_alias_op(conn, state, record, op_type, replay).await?;
         }
-        OpType::SetPropertyDef | OpType::RenamePropertyKey | OpType::RewriteProperties => {
+        OpType::SetPropertyDef
+        | OpType::RenamePropertyKey
+        | OpType::RewriteProperties
+        | OpType::RenamePropertyOption => {
             apply_property_def_op(conn, state, record, op_type).await?;
         }
     }

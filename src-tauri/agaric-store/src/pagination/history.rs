@@ -313,7 +313,8 @@ async fn global_history_first_page(
          WHERE (?1 IS NULL OR ol.op_type = ?1) \
            AND (?2 IS NULL OR ( \
                 EXISTS (SELECT 1 FROM blocks sb WHERE sb.id = ol.block_id AND sb.space_id = ?2) \
-                OR (ol.op_type IN ('set_property_def', 'rename_property_key', 'rewrite_properties') \
+                OR (ol.op_type IN ('set_property_def', 'rename_property_key', 'rewrite_properties', \
+                                   'rename_property_option') \
                     AND ol.block_id = ?2) \
                 OR ( \
                     ol.op_type IN ('delete_attachment', 'rename_attachment') \
@@ -361,7 +362,8 @@ async fn global_history_after(
            AND (?1 IS NULL OR ol.op_type = ?1) \
            AND (?2 IS NULL OR ( \
                 EXISTS (SELECT 1 FROM blocks sb WHERE sb.id = ol.block_id AND sb.space_id = ?2) \
-                OR (ol.op_type IN ('set_property_def', 'rename_property_key', 'rewrite_properties') \
+                OR (ol.op_type IN ('set_property_def', 'rename_property_key', 'rewrite_properties', \
+                                   'rename_property_option') \
                     AND ol.block_id = ?2) \
                 OR ( \
                     ol.op_type IN ('delete_attachment', 'rename_attachment') \

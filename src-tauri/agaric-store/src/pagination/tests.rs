@@ -5968,7 +5968,8 @@ mod global_history_keyset_5424 {
                 OR (ol.created_at = ?3 AND ol.seq = ?4 AND ol.device_id < ?6))) \
            AND (?7 IS NULL OR ( \
                 ol.block_id IN (SELECT id FROM blocks WHERE space_id = ?7) \
-                OR (ol.op_type IN ('set_property_def', 'rename_property_key', 'rewrite_properties') \
+                OR (ol.op_type IN ('set_property_def', 'rename_property_key', 'rewrite_properties', \
+                                   'rename_property_option') \
                     AND ol.block_id = ?7) \
                 OR ( \
                     ol.op_type IN ('delete_attachment', 'rename_attachment') \
@@ -6299,8 +6300,9 @@ mod global_history_keyset_5424 {
         assert_eq!(seqs, vec![3, 1], "space A's definition ops, not space B's");
     }
 
-    /// #5841: a rename or a merge names its space as `block_id` too, so the
-    /// space filter lists them as it lists a definition op.
+    /// #5841: a key or option rename and a merge name their space as
+    /// `block_id` too, so the space filter lists them as it lists a
+    /// definition op.
     #[tokio::test]
     async fn global_history_space_filter_lists_the_spaces_rename_and_merge_ops() {
         let (pool, _dir) = test_pool().await;
@@ -6310,6 +6312,8 @@ mod global_history_keyset_5424 {
             (1, "rename_property_key", SPACE_A_ID),
             (2, "rewrite_properties", SPACE_B_ID),
             (3, "rewrite_properties", SPACE_A_ID),
+            (4, "rename_property_option", SPACE_A_ID),
+            (5, "rename_property_option", SPACE_B_ID),
         ] {
             insert_op(&pool, "dev-a", seq, op_type, Some(space), None, 1_000 + seq).await;
         }
@@ -6328,8 +6332,8 @@ mod global_history_keyset_5424 {
         }
         assert_eq!(
             seqs,
-            vec![3, 1],
-            "space A's rename and merge, not space B's"
+            vec![4, 3, 1],
+            "space A's renames and merge, not space B's"
         );
     }
 
@@ -6368,7 +6372,8 @@ mod global_history_keyset_5424 {
      WHERE (?1 IS NULL OR ol.op_type = ?1) \
        AND (?2 IS NULL OR ( \
             EXISTS (SELECT 1 FROM blocks sb WHERE sb.id = ol.block_id AND sb.space_id = ?2) \
-            OR (ol.op_type IN ('set_property_def', 'rename_property_key', 'rewrite_properties') \
+            OR (ol.op_type IN ('set_property_def', 'rename_property_key', 'rewrite_properties', \
+                               'rename_property_option') \
                 AND ol.block_id = ?2) \
             OR ( \
                 ol.op_type IN ('delete_attachment', 'rename_attachment') \
@@ -6399,7 +6404,8 @@ mod global_history_keyset_5424 {
        AND (?1 IS NULL OR ol.op_type = ?1) \
        AND (?2 IS NULL OR ( \
             EXISTS (SELECT 1 FROM blocks sb WHERE sb.id = ol.block_id AND sb.space_id = ?2) \
-            OR (ol.op_type IN ('set_property_def', 'rename_property_key', 'rewrite_properties') \
+            OR (ol.op_type IN ('set_property_def', 'rename_property_key', 'rewrite_properties', \
+                               'rename_property_option') \
                 AND ol.block_id = ?2) \
             OR ( \
                 ol.op_type IN ('delete_attachment', 'rename_attachment') \

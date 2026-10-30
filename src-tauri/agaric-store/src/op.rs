@@ -57,6 +57,7 @@ pub enum OpType {
     SetPropertyDef,
     RenamePropertyKey,
     RewriteProperties,
+    RenamePropertyOption,
 }
 
 impl OpType {
@@ -97,6 +98,7 @@ impl OpType {
             OpType::SetPropertyDef => "set_property_def",
             OpType::RenamePropertyKey => "rename_property_key",
             OpType::RewriteProperties => "rewrite_properties",
+            OpType::RenamePropertyOption => "rename_property_option",
         }
     }
 }
@@ -148,6 +150,7 @@ impl FromStr for OpType {
             "set_property_def" => Ok(OpType::SetPropertyDef),
             "rename_property_key" => Ok(OpType::RenamePropertyKey),
             "rewrite_properties" => Ok(OpType::RewriteProperties),
+            "rename_property_option" => Ok(OpType::RenamePropertyOption),
             other => Err(format!("unknown op type: {other}")),
         }
     }
@@ -323,6 +326,18 @@ pub struct RenamePropertyKeyPayload {
     pub space_id: BlockId,
     pub old_key: String,
     pub new_key: String,
+}
+
+/// Payload for the `rename_property_option` op — renames `old_option` of
+/// `space_id`'s select `key` to `new_option`, in the definition's options (in
+/// place, keeping their order) and in every value of the space's blocks equal
+/// to it (#5841).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenamePropertyOptionPayload {
+    pub space_id: BlockId,
+    pub key: String,
+    pub old_option: String,
+    pub new_option: String,
 }
 
 /// Why a `rewrite_properties` op rewrote `space_id`'s definitions and values
@@ -578,6 +593,7 @@ pub enum OpPayload {
     SetPropertyDef(SetPropertyDefPayload),
     RenamePropertyKey(RenamePropertyKeyPayload),
     RewriteProperties(RewritePropertiesPayload),
+    RenamePropertyOption(RenamePropertyOptionPayload),
 }
 
 impl OpPayload {
@@ -602,6 +618,7 @@ impl OpPayload {
             OpPayload::SetPropertyDef(_) => OpType::SetPropertyDef,
             OpPayload::RenamePropertyKey(_) => OpType::RenamePropertyKey,
             OpPayload::RewriteProperties(_) => OpType::RewriteProperties,
+            OpPayload::RenamePropertyOption(_) => OpType::RenamePropertyOption,
         }
     }
 
@@ -616,8 +633,8 @@ impl OpPayload {
     /// Returns the `block_id` from the inner payload, if present.
     ///
     /// The alias variants answer their `page_id`, and the definition variants
-    /// (`SetPropertyDef`, `RenamePropertyKey`, `RewriteProperties`) their
-    /// `space_id`. `DeleteAttachment` and
+    /// (`SetPropertyDef`, `RenamePropertyKey`, `RewriteProperties`,
+    /// `RenamePropertyOption`) their `space_id`. `DeleteAttachment` and
     /// `RenameAttachment` identify the target by `attachment_id` only, so this
     /// method returns `None` for them.
     pub fn block_id(&self) -> Option<&str> {
@@ -640,6 +657,7 @@ impl OpPayload {
             OpPayload::SetPropertyDef(p) => Some(p.space_id.as_str()),
             OpPayload::RenamePropertyKey(p) => Some(p.space_id.as_str()),
             OpPayload::RewriteProperties(p) => Some(p.space_id.as_str()),
+            OpPayload::RenamePropertyOption(p) => Some(p.space_id.as_str()),
         }
     }
 
@@ -672,7 +690,8 @@ impl OpPayload {
             | OpPayload::RemovePageAlias(_)
             | OpPayload::SetPropertyDef(_)
             | OpPayload::RenamePropertyKey(_)
-            | OpPayload::RewriteProperties(_) => None,
+            | OpPayload::RewriteProperties(_)
+            | OpPayload::RenamePropertyOption(_) => None,
         }
     }
 
@@ -967,6 +986,7 @@ mod tests {
             OpType::SetPropertyDef,
             OpType::RenamePropertyKey,
             OpType::RewriteProperties,
+            OpType::RenamePropertyOption,
         ]
     }
 
@@ -1116,6 +1136,12 @@ mod tests {
                         prior: None,
                     },
                 ],
+            }),
+            OpPayload::RenamePropertyOption(RenamePropertyOptionPayload {
+                space_id: BlockId::from_string(TEST_BID).unwrap(),
+                key: "stage".into(),
+                old_option: "review".into(),
+                new_option: "in_review".into(),
             }),
         ]
     }
@@ -2667,6 +2693,7 @@ mod proptest_tests {
             Just(OpType::SetPropertyDef),
             Just(OpType::RenamePropertyKey),
             Just(OpType::RewriteProperties),
+            Just(OpType::RenamePropertyOption),
         ]
     }
 

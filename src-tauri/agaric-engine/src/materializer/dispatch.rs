@@ -1432,6 +1432,8 @@ pub fn invalidations_for_op(
         OpType::RenamePropertyKey | OpType::RewriteProperties => {
             tasks.push(MaterializeTask::RebuildAgendaCache);
         }
+        // A select value feeds no cache.
+        OpType::RenamePropertyOption => {}
     }
     Ok(tasks)
 }
@@ -3668,6 +3670,7 @@ mod tests {
             OpType::SetPropertyDef,
             OpType::RenamePropertyKey,
             OpType::RewriteProperties,
+            OpType::RenamePropertyOption,
         ];
         for probe in &all {
             // Round-trip guard: the dispatch parses the stored string back
@@ -3746,6 +3749,9 @@ mod tests {
                 OpType::RewriteProperties => {
                     r#"{"space_id":"B1","reason":"merge","defs":[],"values":[]}"#
                 }
+                OpType::RenamePropertyOption => {
+                    r#"{"space_id":"B1","key":"stage","old_option":"a","new_option":"b"}"#
+                }
             }
         }
 
@@ -3768,6 +3774,7 @@ mod tests {
             OpType::SetPropertyDef,
             OpType::RenamePropertyKey,
             OpType::RewriteProperties,
+            OpType::RenamePropertyOption,
         ];
         let probe = MaterializeTask::SetBlockPageId {
             block_id: Arc::from("probe"),

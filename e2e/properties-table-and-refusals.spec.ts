@@ -30,6 +30,7 @@ import {
 const GS_1 = '0000000000000000000BLOCK01'
 const QUICK_NOTES = '00000000000000000000PAGE02'
 const MTG_1 = '0000000000000000000BLOCK17'
+const MEETINGS = '00000000000000000000PAGE05'
 
 interface PropertyRow {
   key: string
@@ -270,11 +271,12 @@ test.describe('Select definition options and in-use delete @editor', () => {
 
   test("edited options are exactly what a block's project chip offers", async ({ page }) => {
     await projectRow(page).getByRole('button', { name: 'Edit options', exact: true }).click()
-    const json = activePopover(page).getByRole('textbox', { name: 'Options JSON' })
-    await expect(json).toHaveValue('["alpha","beta","gamma"]')
-    await json.fill('["alpha","beta","delta"]')
-    await activePopover(page).getByRole('button', { name: 'Save', exact: true }).click()
-    await expect(json).toHaveCount(0)
+    const editor = activePopover(page)
+    await editor.getByRole('button', { name: 'Remove option gamma', exact: true }).click()
+    await editor.getByRole('textbox', { name: 'New option value', exact: true }).fill('delta')
+    await editor.getByRole('button', { name: 'Add option', exact: true }).click()
+    await editor.getByRole('button', { name: 'Save options', exact: true }).click()
+    await expect(editor).toHaveCount(0)
     await expect.poll(() => storedOptions(page, 'project')).toEqual(['alpha', 'beta', 'delta'])
 
     await openPage(page, 'Meetings')
@@ -282,6 +284,34 @@ test.describe('Select definition options and in-use delete @editor', () => {
     await block.getByRole('button', { name: 'Project: alpha', exact: true }).click()
     const offered = page.getByRole('listbox', { name: 'Edit property' }).getByRole('option')
     await expect(offered).toHaveText(['alpha', 'beta', 'delta'])
+  })
+
+  test('renaming an option renames the values blocks hold, and Undo takes it back', async ({
+    page,
+  }) => {
+    await projectRow(page).getByRole('button', { name: 'Edit options', exact: true }).click()
+    const editor = activePopover(page)
+    await editor.getByRole('button', { name: 'Rename option alpha', exact: true }).click()
+    await editor.getByRole('textbox', { name: 'New name for alpha', exact: true }).fill('apollo')
+    await editor.getByRole('button', { name: 'Save option name', exact: true }).click()
+    await expect(
+      editor.getByRole('button', { name: 'Rename option apollo', exact: true }),
+    ).toBeVisible()
+    await expect.poll(() => storedOptions(page, 'project')).toEqual(['apollo', 'beta', 'gamma'])
+    await expect.poll(() => storedProperties(page, MTG_1)).toMatchObject({ project: 'apollo' })
+    await page.keyboard.press('Escape')
+
+    await openPage(page, 'Meetings')
+    const block = page.locator(`[data-testid="sortable-block"][data-block-id="${MTG_1}"]`)
+    await expect(block.getByRole('button', { name: 'Project: apollo', exact: true })).toBeVisible()
+
+    await toasts(page, 'Renamed alpha to apollo in project')
+      .getByRole('button', { name: 'Undo', exact: true })
+      .click()
+    await expect.poll(() => storedOptions(page, 'project')).toEqual(['alpha', 'beta', 'gamma'])
+    await reopenPage(page, 'Meetings')
+    await expect(block.getByRole('button', { name: 'Project: alpha', exact: true })).toBeVisible()
+    expect(await storedProperties(page, MTG_1)).toMatchObject({ project: 'alpha' })
   })
 
   test('deleting a definition a block still uses is refused and the definition stays', async ({
@@ -305,5 +335,46 @@ test.describe('Select definition options and in-use delete @editor', () => {
     expect(await storedProperties(page, MTG_1)).toMatchObject({ project: 'alpha' })
 
     expectLoggedThenClear(page, 'property.errorDelete')
+  })
+})
+
+// ===========================================================================
+// Renaming an option from the page's own Properties table
+// ===========================================================================
+
+test.describe('Select option renamed from the page Properties table @editor', () => {
+  test('the chips on the open page follow the rename and its Undo', async ({ page }) => {
+    await waitForBoot(page)
+    await ipc(page, 'set_property', {
+      blockId: MEETINGS,
+      key: 'project',
+      value: { value_text: 'alpha' },
+    })
+    await openPage(page, 'Meetings')
+    await page.getByRole('button', { name: /^Properties/ }).click()
+    const block = page.locator(`[data-testid="sortable-block"][data-block-id="${MTG_1}"]`)
+    await expect(block.getByRole('button', { name: 'Project: alpha', exact: true })).toBeVisible()
+
+    await page.getByRole('button', { name: 'Edit options for project', exact: true }).click()
+    const editor = activePopover(page)
+    await editor.getByRole('button', { name: 'Rename option alpha', exact: true }).click()
+    await editor.getByRole('textbox', { name: 'New name for alpha', exact: true }).fill('apollo')
+    await editor.getByRole('button', { name: 'Save option name', exact: true }).click()
+
+    // The same page, not reopened: its block chip and its own value follow.
+    await expect(block.getByRole('button', { name: 'Project: apollo', exact: true })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('combobox', { name: 'project value', exact: true })).toHaveText(
+      'apollo',
+    )
+    expect(await storedProperties(page, MTG_1)).toMatchObject({ project: 'apollo' })
+    expect(await storedProperties(page, MEETINGS)).toMatchObject({ project: 'apollo' })
+
+    await toasts(page, 'Renamed alpha to apollo in project')
+      .getByRole('button', { name: 'Undo', exact: true })
+      .click()
+    await expect(block.getByRole('button', { name: 'Project: alpha', exact: true })).toBeVisible()
+    await expect.poll(() => storedOptions(page, 'project')).toEqual(['alpha', 'beta', 'gamma'])
+    expect(await storedProperties(page, MTG_1)).toMatchObject({ project: 'alpha' })
   })
 })
