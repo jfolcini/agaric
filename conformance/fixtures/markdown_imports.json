@@ -187,7 +187,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 41,
+      "count": 44,
       "ops": [
         {
           "op_type": "create_block"
@@ -280,6 +280,9 @@
           "op_type": "set_property_def"
         },
         {
+          "op_type": "set_property_def"
+        },
+        {
           "op_type": "create_block"
         },
         {
@@ -300,6 +303,10 @@
         },
         {
           "key": "year",
+          "op_type": "set_property"
+        },
+        {
+          "key": "title",
           "op_type": "set_property"
         },
         {
@@ -327,6 +334,10 @@
         },
         {
           "key": "year",
+          "op_type": "set_property"
+        },
+        {
+          "key": "title",
           "op_type": "set_property"
         }
       ]
@@ -384,6 +395,12 @@
       },
       {
         "block_id": "B13",
+        "key": "title",
+        "value": "Notes on the Analytical Engine",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B13",
         "key": "year",
         "value": 1843.0,
         "value_type": "Num"
@@ -404,6 +421,12 @@
         "block_id": "B14",
         "key": "reference-type",
         "value": "book",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B14",
+        "key": "title",
+        "value": "Computing Machinery and Intelligence",
         "value_type": "Text"
       },
       {
@@ -437,7 +460,7 @@
       "code": null,
       "error": null,
       "name": "two_references_and_a_repeat",
-      "returns": ["import_bibliography#pages_created=2#entries_skipped=1#properties_set=9"]
+      "returns": ["import_bibliography#pages_created=2#entries_skipped=1#properties_set=11"]
     }
   ],
   "name": "markdown_imports",

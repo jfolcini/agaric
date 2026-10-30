@@ -8,7 +8,8 @@
 // "{family} {year}" (commands/pages/bibliography.rs `citation_display_name`).
 // The summary and warning list are asserted from the Data tab, then the
 // created page is re-opened from the Pages list after a navigation
-// round-trip, which is the durable read.
+// round-trip, which is the durable read, and its paper title is read back
+// from the page's properties (#6032).
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -87,5 +88,16 @@ describe('Agaric real-backend bibliography import (#4671) @markdown', () => {
       timeoutMsg: `page editor title never read ${JSON.stringify(PAGE_TITLE)}`,
     })
     await expect(title).toBeDisplayed()
+  })
+
+  it("keeps the paper title as the page's title property (#6032)", async () => {
+    await navigateTo('Journal')
+    await reopenPageByTitle(PAGE_TITLE)
+    const properties = $('.page-property-table-header')
+    await properties.waitForClickable({ timeout: NAV_TIMEOUT })
+    await properties.click()
+    const paperTitle = $('[aria-label="title value"]')
+    await paperTitle.waitForDisplayed({ timeout: NAV_TIMEOUT })
+    expect(await paperTitle.getValue()).toBe('WDIO bibliography round trip')
   })
 })
