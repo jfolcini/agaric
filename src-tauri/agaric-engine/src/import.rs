@@ -6940,8 +6940,8 @@ mod tests_block_grammar_5160 {
 
     /// #5160 follow-up, items 9 and 10: an import keeps a fence's lines
     /// verbatim, blank lines and tabs included, as Source and a paste do, and
-    /// like them reads the tab after a marker as its space, so `-\t-` is the
-    /// `- -` marker pair.
+    /// like Source reads the tab after a marker as its space, so `-\t-` is the
+    /// `- -` marker pair, which a paste reads as one marker (#6190).
     #[test]
     fn an_import_keeps_a_fence_verbatim_and_a_tab_after_a_marker_is_its_space() {
         for md in [

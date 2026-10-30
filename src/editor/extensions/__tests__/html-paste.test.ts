@@ -404,11 +404,12 @@ describe('convertAndInsert — precomputed body plumbing (#3277)', () => {
 })
 
 // #5140 / #5160 D4 — with no usable HTML, text of more than one line (or one
-// list line, our copy of a block) is pasted as blocks (`paste_blocks` reads
-// it as the Edit as Markdown buffer is read, #6190), not into the editor, where ProseMirror would
-// escape its markers into literal paragraphs (`\## Plan`, `1\.`). The payload
-// splices it into the block at the selection. A single line stays inline, a
-// lone task line is `TaskPaste`'s.
+// list line where it starts the block, our copy of one block) is pasted as
+// blocks (`paste_blocks` reads it as the Edit as Markdown buffer is read,
+// #6190), not into the editor, where ProseMirror would escape its markers into
+// literal paragraphs (`\## Plan`, `1\.`). The payload splices it into the
+// block at the selection. A single line stays inline, a list line after text
+// too, and a lone task line is `TaskPaste`'s.
 describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)', () => {
   let editor: Editor | null = null
 
@@ -448,10 +449,6 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
     ['a `*` list', '* a\n* b'],
     ['a numbered list', '1. one\n2. two'],
     ['our own copy of a parent and child', '- parent\n  - child\n'],
-    ['our own copy of one block', '- only one\n'],
-    ['our own copy of one numbered block (#6190)', '1. only one\n'],
-    ['a single `*` item, a bullet as `-` is (#6190)', '* one'],
-    ['a single bullet with trailing blank lines', '- only one\n\n  \n'],
     ['a task with a child', '- [ ] buy milk\n  - oat'],
     ['an empty block with a child', '-\n  - child'],
   ])('routes %s as text, spliced at the caret', async (_name, text) => {
@@ -471,6 +468,43 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
     // Nothing lands in the editor itself.
     expect(editor.state.doc.textContent).toBe('Hello world')
   })
+
+  // One list line is our own copy of one block (#6190): where it starts the
+  // block it is that block, and after text it is the text pasted.
+  it.each([
+    ['our own copy of one block', '- only one\n'],
+    ['our own copy of one numbered block', '1. only one\n'],
+    ['a single `*` item, a bullet as `-` is', '* one'],
+    ['a single bullet with trailing blank lines', '- only one\n\n  \n'],
+  ])('routes %s as text, spliced at the start of the block', async (_name, text) => {
+    mockFocusedBlockId = 'BLOCK_A'
+    editor = await buildEditor(HELLO_WORLD)
+    editor.commands.setTextSelection(1)
+
+    expect(paste(editor, text)).toBe(true)
+
+    expect(dispatchBlockCommand).toHaveBeenCalledTimes(1)
+    expect(dispatchBlockCommand).toHaveBeenCalledWith('PASTE_BLOCKS', {
+      input: { kind: 'text', text },
+      targetBlockId: 'BLOCK_A',
+      splice: { before: '', after: 'Hello world' },
+      asText: expect.any(String),
+    })
+  })
+
+  // The block route writes a joined marker back as `- ` or `1. `: `3. foo`
+  // would read `1. foo` and `+ foo` just `foo`.
+  it.each(['3. foo', '2) foo', '* foo', '+ foo', '- foo'])(
+    'leaves the list line %j after text to the inline paste',
+    async (text) => {
+      editor = await buildEditor(HELLO_WORLD)
+      editor.commands.setTextSelection(7)
+
+      expect(paste(editor, text)).toBe(false)
+
+      expect(dispatchBlockCommand).not.toHaveBeenCalled()
+    },
+  )
 
   it.each([
     ['at the start', 1, { before: '', after: 'Hello world' }],

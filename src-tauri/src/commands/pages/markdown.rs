@@ -1013,8 +1013,10 @@ impl RenderMode {
 /// marker and a task as `- [ ] x`, which has no list style (D3): a blank line
 /// separates blocks but neighbouring list lines (D1), a plain block under a
 /// list block is a `+` item and a line holding only `\` an empty line (D4).
-/// The MCP tools and Duplicate keep `Source` (D5). The buffer commands take it
-/// as `source` or `document`, and read `Source` when given none.
+/// The MCP page tools (`get_page_markdown`, `edit_page_markdown`) and Duplicate
+/// keep `Source` (D5); `append_markdown` and `capture` read `Document`, as a
+/// paste does. The buffer commands take it as `source` or `document`, and read
+/// `Source` when given none.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Type)]
 #[serde(rename_all = "lowercase")]
 pub enum Dialect {

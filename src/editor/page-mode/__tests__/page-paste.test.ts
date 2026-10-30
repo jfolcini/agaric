@@ -222,18 +222,27 @@ describe('pasting Markdown text in page mode', () => {
     expect(rowsOf(ed.state.doc)).toEqual([[A, 0, 'axb']])
   })
 
-  it('reads one bullet line as its item, joined at the cursor, and one task line as a task', () => {
+  it('reads one bullet line where it starts a block as its item, and one task line as a task', () => {
     const ed = open([
-      [A, 0, 'ab'],
+      [A, 0, ''],
       [B, 0, ''],
     ])
-    caret(ed, 0, 1)
+    caret(ed, 0, 0)
     paste(ed, '- x')
     caret(ed, 1, 0)
     paste(ed, '- [ ] buy')
 
-    expect(ed.state.doc.child(0).textContent).toBe('axb')
+    expect(ed.state.doc.child(0).textContent).toBe('x')
     expect(leadingTask(ed.state.doc.child(1))?.todoState).toBe('TODO')
+  })
+
+  it('leaves one list line after text as the text pasted, its marker kept', () => {
+    const ed = open([[A, 0, 'ab']])
+    caret(ed, 0, 1)
+
+    paste(ed, '3. x')
+
+    expect(rowsOf(ed.state.doc)).toEqual([[A, 0, 'a3. xb']])
   })
 
   it('leaves lines with no Markdown to ProseMirror, a block each', () => {

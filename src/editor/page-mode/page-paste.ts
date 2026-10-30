@@ -12,9 +12,10 @@
  * stays a line of its block's text, each becoming its block's task state or
  * property once the caret has left it (`page-tasks.ts`, `page-properties.ts`).
  *
- * One line (but a list or task line, as block mode reads them), lines with no
- * Markdown in them, a plain-text paste (Shift), and a paste into code, or into
- * a list or a table in a block's content, keep ProseMirror's own paste.
+ * One line (but a list or task line where it starts a block, as block mode
+ * reads them), lines with no Markdown in them, a plain-text paste (Shift), and
+ * a paste into code, or into a list or a table in a block's content, keep
+ * ProseMirror's own paste.
  */
 
 import { Extension, type JSONContent } from '@tiptap/core'
@@ -80,10 +81,15 @@ export function pastedBlocks(text: string): PastedBlock[] {
 /** A list or task line with text, as block mode tells one: `-`, `*`, `+`, `1.` or `1)`. */
 const LIST_LINE = /^\s*(?:[-*+]|\d{1,9}[.)])\s+\S/
 
-/** Text worth reading as blocks: more than one line holding something, or one list line. */
-function holdsLines(text: string): boolean {
+/**
+ * Text worth reading as blocks: more than one line holding something, or one
+ * list line where it starts its block. After text it stays the text pasted,
+ * where its item would drop the marker.
+ */
+function holdsLines(text: string, startsBlock: boolean): boolean {
   return (
-    text.split(/\r\n?|\n/).filter((line) => line.trim() !== '').length > 1 || LIST_LINE.test(text)
+    text.split(/\r\n?|\n/).filter((line) => line.trim() !== '').length > 1 ||
+    (startsBlock && LIST_LINE.test(text))
   )
 }
 
@@ -112,11 +118,11 @@ function pastedSlice(
   $context: ResolvedPos,
   plain: boolean,
 ): { slice: Slice; styles: PastedStyles } | null {
-  if (plain || !holdsLines(text) || insideListOrTable($context)) return null
+  const atBlockStart = $context.depth >= 2 && $context.index(1) === 0 && $context.parentOffset === 0
+  if (plain || !holdsLines(text, atBlockStart) || insideListOrTable($context)) return null
   const blocks = pastedBlocks(text)
   if (blocks.length === 0) return null
   const depth = $context.depth === 0 ? 0 : depthOf($context.node(1))
-  const atBlockStart = $context.depth >= 2 && $context.index(1) === 0 && $context.parentOffset === 0
   return {
     slice: blocksSlice($context.doc.type.schema, blocks, depth),
     styles: { styles: blocks.map((block) => block.listStyle), atBlockStart },
