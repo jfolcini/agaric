@@ -18,6 +18,9 @@ import { bumpFlushSeq } from '@/stores/inline-property-commit'
 import { useSpaceStore } from '@/stores/space'
 import { classifyUnmountFlush, runUnmountFlush, settlePendingSaves } from '@/stores/unmount-flush'
 
+/** What `set_todo_state` answers: the block, and the refs of the ops it appended. */
+const stateRow = () => withOps(makeBlockRow({ id: 'BLOCK', todo_state: 'TODO' }))
+
 function run(loaded: string, changed: string, saved = true) {
   const edit = vi.fn<(id: string, content: string) => Promise<boolean>>(() =>
     Promise.resolve(saved),
@@ -48,7 +51,7 @@ describe('runUnmountFlush classifies the edit against the loaded content (#5160)
           total_count: null,
         }),
         set_property: () => undefined,
-        set_todo_state: () => undefined,
+        set_todo_state: () => stateRow(),
         get_batch_properties: () => ({}),
       }),
     )
@@ -125,7 +128,7 @@ describe('settlePendingSaves', () => {
   ])(
     'waits for a typed `$line` until its $ipc has answered and the text is written',
     async ({ line, ipc, saved }) => {
-      const answer = deferred<undefined>()
+      const answer = deferred<ReturnType<typeof stateRow> | undefined>()
       vi.mocked(invoke).mockImplementation(
         mockInvokeCommands({
           get_property_def: () => null,
@@ -148,7 +151,7 @@ describe('settlePendingSaves', () => {
       expect(settled).toBe(false)
       expect(edit).not.toHaveBeenCalled()
 
-      answer.resolve(undefined)
+      answer.resolve(ipc === 'set_todo_state' ? stateRow() : undefined)
       await waiting
       expect(edit).toHaveBeenCalledExactlyOnceWith('BLOCK', saved)
       await result.outcome
@@ -283,7 +286,7 @@ describe('one leave commits every kind the edit typed, as page mode does', () =>
       mockInvokeCommands({
         set_todo_state: (args) => {
           calls.push(`todo:${args['state'] as string}`)
-          return undefined
+          return stateRow()
         },
         get_batch_properties: () => ({}),
         get_property_def: () => null,
@@ -369,7 +372,7 @@ describe('one leave commits every kind the edit typed, as page mode does', () =>
     mockCommands({
       set_todo_state: () => {
         bumpFlushSeq('BLOCK')
-        return undefined
+        return stateRow()
       },
     })
     const { result, edit } = run('', TYPED)

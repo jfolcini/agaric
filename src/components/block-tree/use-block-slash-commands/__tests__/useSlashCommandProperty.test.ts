@@ -62,8 +62,13 @@ function stubPropertySlashInvoke(overrides: TypedInvokeHandlers = {}): void {
       block_id: args['blockId'] as string,
       key: args['key'] as string,
     }),
-    set_todo_state: (args) =>
-      makeBlockRow({ id: args['blockId'] as string, todo_state: args['state'] as string | null }),
+    set_todo_state: (args) => ({
+      op_refs: [{ device_id: 'dev1', seq: 3 }],
+      ...makeBlockRow({
+        id: args['blockId'] as string,
+        todo_state: args['state'] as string | null,
+      }),
+    }),
     set_priority: (args) =>
       makeBlockRow({ id: args['blockId'] as string, priority: args['level'] as string | null }),
     // The F-37 `blocked_by` probe /done fires; "no such property" by default.
@@ -91,7 +96,7 @@ describe('useSlashCommandProperty — TODO state', () => {
       blockId: 'BLOCK_1',
       state: 'TODO',
     })
-    expect(onNewAction).toHaveBeenCalledWith('PAGE_1')
+    expect(onNewAction).toHaveBeenCalledWith('PAGE_1', [{ device_id: 'dev1', seq: 3 }])
     expect(pageStore.getState().blocks[0]?.todo_state).toBe('TODO')
   })
 

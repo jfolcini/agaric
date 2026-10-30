@@ -13,7 +13,7 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock, makeBlockRow, makePropertyRow } from '@/__tests__/fixtures'
+import { makeBlock, makeBlockRow, makePropertyRow, withOps } from '@/__tests__/fixtures'
 import { echoEditBlock, stubInvoke, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { setTodoStateOnBlocks } from '@/components/block-tree/use-block-multi-select'
 import { useBlockProperties } from '@/components/block-tree/use-block-properties'
@@ -64,7 +64,9 @@ const taskClears = () =>
 function stub(overrides: TypedInvokeHandlers = {}): void {
   stubInvoke(mockedInvoke, {
     set_todo_state: (args) =>
-      makeBlockRow({ id: args['blockId'] as string, todo_state: args['state'] as string | null }),
+      withOps(
+        makeBlockRow({ id: args['blockId'] as string, todo_state: args['state'] as string | null }),
+      ),
     set_todo_state_batch: (args) => ({
       updated: (args['blockIds'] as string[]).length,
       op_refs: [],
@@ -177,8 +179,9 @@ describe('useBlockProperties handleToggleTodo', () => {
     createElement(PageBlockContext.Provider, { value: pageStore }, children)
 
   it('a block the cycle makes a task loses its list style, after the write', async () => {
-    const clearLists = vi.fn(() => {
+    const clearLists = vi.fn((): OpRef[] => {
       expect(calls('set_todo_state')).toHaveLength(1)
+      return []
     })
     const { result } = renderHook(() => useBlockProperties(clearLists), { wrapper })
 
@@ -192,7 +195,7 @@ describe('useBlockProperties handleToggleTodo', () => {
 
   it('a refused write clears no list style', async () => {
     stub({ set_todo_state: () => Promise.reject(new Error('refused')) })
-    const clearLists = vi.fn()
+    const clearLists = vi.fn((): OpRef[] => [])
     const { result } = renderHook(() => useBlockProperties(clearLists), { wrapper })
 
     await act(async () => {
@@ -204,7 +207,7 @@ describe('useBlockProperties handleToggleTodo', () => {
   })
 
   it('cycling a task on, or back to no state, clears no list style', async () => {
-    const clearLists = vi.fn()
+    const clearLists = vi.fn((): OpRef[] => [])
     setTodo(pageStore, 'CANCELLED', 'BLOCK_1')
     const { result } = renderHook(() => useBlockProperties(clearLists), { wrapper })
 

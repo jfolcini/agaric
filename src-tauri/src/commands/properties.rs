@@ -694,7 +694,7 @@ pub(crate) async fn resolve_prior_task_states_batch(
 /// IMMEDIATE lock would defeat the latency win. Callers that need the
 /// next-occurrence sibling fall through to the single-row path;
 /// `warn_if_batch_skips_recurrence` logs when a `repeat` carrier rides
-/// in the batch.
+/// in a batch that sets a state.
 #[instrument(skip(pool, device_id, materializer, block_ids), err)]
 pub async fn set_todo_state_batch_inner(
     pool: &SqlitePool,
@@ -718,7 +718,11 @@ pub async fn set_todo_state_batch_inner(
     // [`warn_if_batch_skips_recurrence`] so `set_property_batch_inner` — which
     // skips recurrence in exactly the same way — emits the same diagnostic
     // instead of nothing.
-    warn_if_batch_skips_recurrence(&mut tx, "set_todo_state_batch_inner", &block_ids).await?;
+    // A clear rolls nothing forward on the single-row path either (#6156:
+    // page mode clears tasks through this batch).
+    if state.is_some() {
+        warn_if_batch_skips_recurrence(&mut tx, "set_todo_state_batch_inner", &block_ids).await?;
+    }
 
     // #2038 / #5074: one membership query for the whole batch, carrying each
     // survivor's prior lifecycle state. See
@@ -2260,6 +2264,9 @@ pub async fn set_property(
 }
 
 /// Tauri command: set todo state on a block. Delegates to [`set_todo_state_inner`].
+///
+/// #6156: the reply carries the refs of every op it appended, the stamps' and
+/// the next occurrence's among them, so the frontend undoes it by those refs.
 #[tauri::command]
 #[specta::specta]
 pub async fn set_todo_state(
@@ -2267,21 +2274,26 @@ pub async fn set_todo_state(
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     state: Option<String>,
-) -> Result<BlockRow, AppError> {
+) -> Result<WithOps<BlockRow>, AppError> {
     let block_id_clone = block_id.clone().into_string();
     // #1627: see `set_property` — activeness gate folded into the tx.
     let active_id = ActiveBlockId::from_trusted_active(block_id.as_str());
-    let result = set_todo_state_inner(
-        ctx.pool(),
-        ctx.device_id(),
-        ctx.materializer(),
-        active_id,
-        state,
-    )
+    // Boxed: inlined, the recurrence's future makes the wrapper's trip `clippy::large_futures`.
+    let result = capture_op_refs(async {
+        Box::pin(set_todo_state_inner(
+            ctx.pool(),
+            ctx.device_id(),
+            ctx.materializer(),
+            active_id,
+            state,
+        ))
+        .await
+        .map(Into::into)
+    })
     .await
     .map_err(sanitize_internal_error)?;
     emit_property_changed_event(&app, block_id_clone, vec!["todo_state".to_string()]);
-    Ok(result.into())
+    Ok(result)
 }
 
 /// Tauri command: batch-set todo state on multiple blocks.

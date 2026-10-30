@@ -588,6 +588,23 @@ describe('useBlockMultiSelect undo notifications', () => {
     expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1', [BATCH_REF])
   })
 
+  it('calls onNewAction with the refs of the blocks a partial batch did set (#6156)', async () => {
+    // One of the two blocks was skipped, so the batch is reported failed; the one it set is
+    // still a write, and its undo takes back that one.
+    stubMultiSelectInvoke({
+      set_todo_state_batch: () => ({ updated: 1, op_refs: [BATCH_REF] }),
+    })
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleBatchSetTodo('TODO')
+    })
+
+    expect(vi.mocked(toast.error)).toHaveBeenCalled()
+    expect(onNewActionSpy).toHaveBeenCalledExactlyOnceWith('PAGE_1', [BATCH_REF])
+  })
+
   it('does not call onNewAction when rootParentId is null', async () => {
     const params = makeDefaultParams({ rootParentId: null })
     const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })

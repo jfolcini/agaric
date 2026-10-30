@@ -242,6 +242,53 @@ describe('#2468 — op_refs capture on migrated mutation handlers', () => {
     expect(stamp()).toBeNull()
   })
 
+  it('#6156 — set_todo_state returns the refs of every op it appends, the stamps’ among them, and undoing them takes the state and its stamp back', () => {
+    const stamp = () => dispatch('get_property', { blockId: A, key: 'created_at' })
+    const set = dispatch('set_todo_state', { blockId: A, state: 'TODO' }) as WithOpsResp
+    expect(set['todo_state']).toBe('TODO')
+    expect(set.op_refs, 'the state’s set, then the `created_at` stamp').toEqual(
+      opLog.slice(-2).map(({ device_id, seq }) => ({ device_id, seq })),
+    )
+    expect(stamp(), 'sanity: the set stamped the block').not.toBeNull()
+
+    dispatch('undo_ops', { ops: set.op_refs.toReversed() })
+
+    expect(rowOf(A)['todo_state']).toBeNull()
+    expect(stamp()).toBeNull()
+  })
+
+  it('#6156 — completing a repeating task returns the refs of its next occurrence too, and undoing them removes it', () => {
+    dispatch('set_property', {
+      blockId: A,
+      key: 'repeat',
+      value: {
+        value_text: '+1w',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    dispatch('set_due_date', { blockId: A, date: '2026-06-15' })
+    // The occurrence is created in the block's space.
+    rowOf(A)['space_id'] = SCOPE.space_id
+    const before = new Set(blocks.keys())
+    const logged = opLog.length
+
+    const done = dispatch('set_todo_state', { blockId: A, state: 'DONE' }) as WithOpsResp
+
+    const next = [...blocks.keys()].filter((id) => !before.has(id))
+    expect(next, 'sanity: completing it made the next occurrence').toHaveLength(1)
+    expect(done.op_refs, 'every op the completion appended').toEqual(
+      opLog.slice(logged).map(({ device_id, seq }) => ({ device_id, seq })),
+    )
+
+    dispatch('undo_ops', { ops: done.op_refs.toReversed() })
+
+    expect(rowOf(A)['todo_state']).toBeNull()
+    expect(rowOf(next[0] as string)['deleted_at'], 'the next occurrence is gone').not.toBeNull()
+  })
+
   it('#5057 — undoing a reserved-key delete_property is accepted, as on the backend', () => {
     // The delete records the `prior` it removes (#6156), which an undo judges it reversible by.
     dispatch('set_property', {

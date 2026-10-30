@@ -16,7 +16,7 @@ import type { StoreApi } from 'zustand'
 
 import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
-import { commands } from '@/lib/bindings'
+import { commands, type OpRef } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { clearListStyles } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
@@ -138,10 +138,12 @@ export async function setBlockPriority(
 /**
  * `clearLists` clears the list style of a block the cycle makes a task (#5691
  * D3: a task is a list kind, exclusive with bulleted and numbered): block
- * mode's command by default, page mode's own in page mode.
+ * mode's command by default, page mode's own in page mode. It resolves the
+ * refs of its writes, which join the state's in the cycle's undo entry (#6156);
+ * page mode's resolves none, as each of its writes joins the entry by its own.
  */
 export function useBlockProperties(
-  clearLists: (ids: string[]) => unknown = clearListStyles,
+  clearLists: (ids: string[]) => Promise<OpRef[]> | OpRef[] = clearListStyles,
 ): UseBlockPropertiesReturn {
   const pageStore = usePageBlockStoreApi()
   const enqueueTodoToggle = useToggleQueue()
@@ -166,10 +168,9 @@ export function useBlockProperties(
           blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, todo_state: nextState } : b)),
         }))
 
+        let refs: OpRef[]
         try {
-          unwrap(await commands.setTodoState(blockId, nextState))
-          const { rootParentId } = pageStore.getState()
-          if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
+          refs = unwrap(await commands.setTodoState(blockId, nextState)).op_refs
         } catch {
           // #2922 — only revert if nothing newer has superseded this call's
           // write. `enqueueTodoToggle` already prevents another queued
@@ -188,7 +189,11 @@ export function useBlockProperties(
         }
 
         // Only once the state is written: a refused write clears nothing.
-        if (current === null && nextState !== null) await clearLists([blockId])
+        if (current === null && nextState !== null) {
+          refs = [...refs, ...(await clearLists([blockId]))]
+        }
+        const { rootParentId } = pageStore.getState()
+        if (rootParentId) useUndoStore.getState().onNewAction(rootParentId, refs)
 
         // F-37: warn when completing a task that has unresolved dependencies
         if (nextState === 'DONE') warnIfBlocked(blockId)

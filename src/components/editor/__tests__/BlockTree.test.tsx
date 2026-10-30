@@ -495,7 +495,7 @@ const BLOCK_TREE_DEFAULTS: TypedInvokeHandlers = {
   set_property: (args) => withOps(makeBlockRow({ id: argBlockId(args) })),
   delete_property: (args) =>
     withOps({ block_id: argBlockId(args), key: String((args['key'] as string | undefined) ?? '') }),
-  set_todo_state: (args) => makeBlockRow({ id: argBlockId(args) }),
+  set_todo_state: (args) => withOps(makeBlockRow({ id: argBlockId(args) })),
   set_todo_state_batch: (args) =>
     withOps({ updated: (args['blockIds'] as string[] | undefined)?.length ?? 0 }),
   set_priority: (args) => makeBlockRow({ id: argBlockId(args) }),

@@ -723,11 +723,14 @@ export const propertiesHandlers = {
     const b = blocks.get(blockId)
     if (!b) throw notFoundRejection(`block '${blockId}' not found`)
     const state = (a['state'] as string | null) ?? null
+    const start = opLog.length
     writeTodoState(blockId, state, (fromState) => {
       b['todo_state'] = state
       pushOp('set_todo_state', { block_id: blockId, state, from_state: fromState })
     })
-    return { ...b }
+    // Every op appended, as `capture_op_refs` takes them: the stamps' and the next occurrence's
+    // among them (#6156).
+    return { ...b, op_refs: opLog.slice(start).map(({ device_id, seq }) => ({ device_id, seq })) }
   },
 
   // Batch set/clear todo state. Iterates the

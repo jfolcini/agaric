@@ -13,9 +13,11 @@
 // page's newest op, which a positional undo takes back instead of the change;
 // the entry's refs leave it. Only the real backend returns the stamp's ref.
 //
-// The batch toolbar's TODO on two bullets is the other direction: the batch
-// sets the states and stamps them, the bullets come off, and one entry holds
-// the refs of both writes.
+// A bullet made a task is the other direction. `/todo` on a bulleted block
+// sets the state and its `created_at` stamp (`set_todo_state`) and takes the
+// bullet off, and the batch toolbar's TODO on two bullets does the same in one
+// call (`set_todo_state_batch`): each records one entry holding the refs of
+// every write, which an undo reverses and which leaves a write made after.
 //
 // Globals (`$`, `browser`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -39,6 +41,8 @@ const TITLE = runScopedMarker('wdio-kind-undo-page')
 const MARKER = runScopedMarker('wdio-kind-undo')
 const TASK_TITLE = runScopedMarker('wdio-kind-undo-task-page')
 const TASK_MARKER = runScopedMarker('wdio-kind-undo-task')
+const TODO_TITLE = runScopedMarker('wdio-kind-undo-todo-page')
+const TODO_MARKER = runScopedMarker('wdio-kind-undo-todo')
 const BATCH_TITLE = runScopedMarker('wdio-kind-undo-batch-page')
 const BATCH_MARKERS = ['one', 'two'].map((n) => runScopedMarker(`wdio-kind-undo-batch-${n}`))
 
@@ -180,6 +184,52 @@ describe('Agaric real-backend undo of a kind change (#6156) @editor', () => {
 
     await reopenPageHolding(TASK_TITLE, TASK_MARKER)
     await expectKind(id, TASK, 'the task state and its stamp did not survive a re-open')
+    await expectLaterWriteKept(id, 'the write made after the change did not survive a re-open')
+  })
+
+  it('one Ctrl+Z after /todo on a bulleted block brings back the bullet and takes the task and its stamp off, and leaves a write made after, durably', async () => {
+    await openNewPage(TODO_TITLE)
+    await typeMarkerVerified(TODO_MARKER)
+    await navigateTo('Journal')
+    await reopenPageHolding(TODO_TITLE, TODO_MARKER)
+    const id = await blockStaticByMarker(TODO_MARKER).getAttribute('data-block-id')
+    if (id === null) throw new Error('the block has no id')
+    await invoke('set_property', {
+      blockId: id,
+      key: 'listStyle',
+      value: {
+        value_text: 'bullet',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    const BULLET: Kind = { text: TODO_MARKER, listStyle: 'bullet', todo: null, stamped: false }
+    await expectKind(id, BULLET, 'the block was never bulleted')
+    // The page read again holds the style, which a task takes off.
+    await reopenPageHolding(TODO_TITLE, TODO_MARKER)
+
+    await editAtEnd(id)
+    for (const ch of '/todo') await browser.keys([ch])
+    const item = $('[data-testid="suggestion-item"]*=Mark as to-do')
+    await item.waitForClickable({ timeout: ACTION_TIMEOUT })
+    await item.click()
+    await expectKind(
+      id,
+      { text: TODO_MARKER, listStyle: null, todo: 'TODO', stamped: true },
+      '/todo did not make the bullet a stamped task',
+    )
+    await browser.keys(['Escape'])
+    await $('[data-testid="block-editor"]').waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
+    await invoke('set_priority', { blockId: id, level: '2' })
+
+    await browser.keys(['Control', 'z'])
+    await expectKind(id, BULLET, 'the undo did not bring the bullet back and take the task off')
+    await expectLaterWriteKept(id, 'the undo took back the write made after the change')
+
+    await reopenPageHolding(TODO_TITLE, TODO_MARKER)
+    await expectKind(id, BULLET, 'the bullet did not survive a re-open')
     await expectLaterWriteKept(id, 'the write made after the change did not survive a re-open')
   })
 

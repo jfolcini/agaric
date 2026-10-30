@@ -308,8 +308,13 @@ export const commands = {
 	 *  frontend undo stack can address the action by exact ref (`undo_op`).
 	 */
 	setProperty: (blockId: BlockId, key: string, value: SetPropertyArgs) => typedError<WithOps<BlockRow>, AppError>(__TAURI_INVOKE("set_property", { blockId, key, value })),
-	/**  Tauri command: set todo state on a block. Delegates to [`set_todo_state_inner`]. */
-	setTodoState: (blockId: BlockId, state: string | null) => typedError<BlockRow, AppError>(__TAURI_INVOKE("set_todo_state", { blockId, state })),
+	/**
+	 *  Tauri command: set todo state on a block. Delegates to [`set_todo_state_inner`].
+	 * 
+	 *  #6156: the reply carries the refs of every op it appended, the stamps' and
+	 *  the next occurrence's among them, so the frontend undoes it by those refs.
+	 */
+	setTodoState: (blockId: BlockId, state: string | null) => typedError<WithOps<BlockRow>, AppError>(__TAURI_INVOKE("set_todo_state", { blockId, state })),
 	/**
 	 *  Tauri command: batch-set todo state on multiple blocks.
 	 * 

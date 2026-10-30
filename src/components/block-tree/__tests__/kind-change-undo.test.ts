@@ -2,29 +2,39 @@
  * An edit that changes a block's kind is one undo step with the list style or
  * task state it takes off (#6156): each path records ONE entry on the page's
  * undo stack holding the op refs of every write the action made, the task
- * state's set or clear (`set_todo_state_batch`) among them.
+ * state's set or clear (`set_todo_state`, `set_todo_state_batch`) among them.
  */
 
 import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import type { TFunction } from 'i18next'
+import { createElement, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
 import { makeBlock, makeBlockRow, makePropertyRow } from '@/__tests__/fixtures'
 import { stubInvoke, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { setTodoStateOnBlocks } from '@/components/block-tree/use-block-multi-select'
+import { useBlockProperties } from '@/components/block-tree/use-block-properties'
 import { makeSyntheticCtx } from '@/components/block-tree/use-block-slash-commands/__tests__/test-utils'
+import { useSlashCommandProperty } from '@/components/block-tree/use-block-slash-commands/useSlashCommandProperty'
 import { useSlashCommandStructural } from '@/components/block-tree/use-block-slash-commands/useSlashCommandStructural'
 import { useBlockTreeEventListeners } from '@/components/block-tree/use-block-tree-event-listeners'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import { useCheckboxSyntax } from '@/hooks/useCheckboxSyntax'
 import { useListStyleSyntax } from '@/hooks/useListStyleSyntax'
 import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
 import type { OpRef } from '@/lib/bindings'
 import { LIST_STYLE_KEY, setListStyle } from '@/lib/list-style'
 import { __resetBlockCommandBus, dispatchBlockCommand } from '@/stores/block-command-bus'
 import { useBlockStore } from '@/stores/blocks'
-import { clearTaskStates, createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
+import { bumpFlushSeq, commitCheckboxState } from '@/stores/inline-property-commit'
+import {
+  clearTaskStates,
+  createPageBlockStore,
+  PageBlockContext,
+  type PageBlockState,
+} from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
 
 vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
@@ -36,6 +46,7 @@ const EDIT: OpRef = { device_id: 'dev1', seq: 1 }
 const SET: OpRef = { device_id: 'dev1', seq: 2 }
 const DELETE: OpRef = { device_id: 'dev1', seq: 3 }
 const BATCH: OpRef = { device_id: 'dev1', seq: 4 }
+const STATE: OpRef = { device_id: 'dev1', seq: 7 }
 
 /** Every command these paths reach, each answering with the op refs it appended. */
 function stub(overrides: TypedInvokeHandlers = {}): void {
@@ -52,6 +63,13 @@ function stub(overrides: TypedInvokeHandlers = {}): void {
       op_refs: [DELETE],
       block_id: args['blockId'] as string,
       key: args['key'] as string,
+    }),
+    set_todo_state: (args) => ({
+      op_refs: [STATE],
+      ...makeBlockRow({
+        id: args['blockId'] as string,
+        todo_state: args['state'] as string | null,
+      }),
     }),
     set_todo_state_batch: (args) => ({
       op_refs: [BATCH],
@@ -150,6 +168,118 @@ describe('setTodoStateOnBlocks', () => {
     await setTodoStateOnBlocks(pageStore, 'PAGE_1', ['BLOCK_1', 'BLOCK_2'], 'TODO', t)
 
     expect(entries()).toEqual([[BATCH, styleClear('BLOCK_1'), styleClear('BLOCK_2')]])
+  })
+})
+
+describe('a task state set on one block', () => {
+  /** The read that finds `BLOCK_1` bulleted, as `clearListStyles` makes it. */
+  const bulleted = (): TypedInvokeHandlers => ({
+    get_batch_properties: () => ({
+      BLOCK_1: [makePropertyRow({ key: LIST_STYLE_KEY, value_text: 'bullet' })],
+    }),
+  })
+  const newStore = (): StoreApi<PageBlockState> => {
+    const pageStore = createPageBlockStore('PAGE_1')
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', content: 'hello' })] })
+    return pageStore
+  }
+  const slash = (id: 'todo' | 'doing', ctx: ReturnType<typeof makeSyntheticCtx>['ctx']) =>
+    renderHook(() => useSlashCommandProperty()).result.current.exact[id]?.(ctx, { id, label: id })
+
+  it('/todo on a bulleted block: the state and the style it clears are one entry', async () => {
+    stub(bulleted())
+
+    await slash('todo', makeSyntheticCtx().ctx)
+
+    expect(entries()).toEqual([[STATE, DELETE]])
+  })
+
+  it('/todo in page mode: the entry holds the state’s refs, the clear it asks for joins by its own', async () => {
+    const clearListStyle = vi.fn()
+
+    await slash('todo', { ...makeSyntheticCtx().ctx, clearListStyle })
+
+    expect(clearListStyle).toHaveBeenCalledTimes(1)
+    expect(entries()).toEqual([[STATE]])
+  })
+
+  it('/doing on a task: the state alone is the entry', async () => {
+    const { ctx, pageStore } = makeSyntheticCtx()
+    setTodo(pageStore, 'TODO')
+    stub(bulleted())
+
+    await slash('doing', ctx)
+
+    expect(entries()).toEqual([[STATE]])
+    expect(mockedInvoke.mock.calls.map(([name]) => name)).toEqual(['set_todo_state'])
+  })
+
+  describe('the cycle (Ctrl+Enter)', () => {
+    const toggle = async (pageStore: StoreApi<PageBlockState>, clearLists?: () => OpRef[]) => {
+      const wrapper = ({ children }: { children: ReactNode }) =>
+        createElement(PageBlockContext.Provider, { value: pageStore }, children)
+      const { result } = renderHook(() => useBlockProperties(clearLists), { wrapper })
+      await act(async () => {
+        await result.current.handleToggleTodo('BLOCK_1')
+      })
+    }
+
+    it('makes a bullet a task: the state and the style it clears are one entry', async () => {
+      stub(bulleted())
+
+      await toggle(newStore())
+
+      expect(entries()).toEqual([[STATE, DELETE]])
+    })
+
+    it('in page mode: the entry holds the state’s refs, the clear page mode makes joins by its own', async () => {
+      await toggle(newStore(), () => [])
+
+      expect(entries()).toEqual([[STATE]])
+    })
+
+    it('a task cycled on: the state alone is the entry', async () => {
+      const pageStore = newStore()
+      setTodo(pageStore, 'TODO')
+
+      await toggle(pageStore)
+
+      expect(entries()).toEqual([[STATE]])
+    })
+  })
+
+  it('`[ ] ` typed on a bulleted block: the state and the style it clears are one entry', async () => {
+    stub(bulleted())
+    const { result } = renderHook(() =>
+      useCheckboxSyntax({
+        focusedBlockId: 'BLOCK_1',
+        rootParentId: 'PAGE_1',
+        pageStore: newStore(),
+        t,
+      }),
+    )
+
+    act(() => result.current('TODO'))
+
+    await waitFor(() => expect(entries()).toEqual([[STATE, DELETE]]))
+  })
+
+  it('a `[ ] ` left in the text and committed: the state, the style it clears and the text are one entry', async () => {
+    stub(bulleted())
+    const pageStore = newStore()
+
+    await commitCheckboxState({
+      blockId: 'BLOCK_1',
+      content: '[ ] hello',
+      cleanContent: 'hello',
+      todoState: 'TODO',
+      mySeq: bumpFlushSeq('BLOCK_1'),
+      edit: (id, content) => pageStore.getState().edit(id, content),
+      pageStore,
+      rootParentId: 'PAGE_1',
+    })
+
+    expect(entries()).toEqual([[STATE, DELETE, EDIT]])
   })
 })
 
