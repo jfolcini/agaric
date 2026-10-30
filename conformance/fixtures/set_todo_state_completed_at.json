@@ -166,66 +166,77 @@
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"todo_state\"]"],
       "name": "done_stamps",
       "returns": ["B2#todo_state=DONE"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B3#changed_keys=[\"todo_state\"]"],
       "name": "reopen_first_done",
       "returns": ["B3#todo_state=DONE"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B3#changed_keys=[\"todo_state\"]"],
       "name": "reopen_clears",
       "returns": ["B3#todo_state=TODO"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B4#changed_keys=[\"todo_state\"]"],
       "name": "untask_first_done",
       "returns": ["B4#todo_state=DONE"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B4#changed_keys=[\"todo_state\"]"],
       "name": "untask_clears",
       "returns": ["B4#todo_state=null"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B5#changed_keys=[\"todo_state\"]"],
       "name": "open_state_stamps_nothing",
       "returns": ["B5#todo_state=DOING"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B6#changed_keys=[\"todo_state\"]"],
       "name": "todo_batch_stamps",
       "returns": ["set_todo_state_batch#updated=1"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B7#changed_keys=[\"todo_state\"]"],
       "name": "property_batch_stamps",
       "returns": ["set_property_batch#updated=1"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B8#changed_keys=[\"todo_state\"]"],
       "name": "property_stamps",
       "returns": ["B8"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B9#changed_keys=[\"todo_state\"]"],
       "name": "stamp_created_first",
       "returns": ["B9#todo_state=TODO"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B9#changed_keys=[\"todo_state\"]"],
       "name": "untask_clears_created",
       "returns": ["B9#todo_state=null"]
     }

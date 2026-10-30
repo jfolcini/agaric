@@ -14,6 +14,8 @@
 import { emit } from '@tauri-apps/api/event'
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks'
 
+import { logger } from '@/lib/logger'
+import { setEventSink } from '@/lib/tauri-mock/events'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { clearMockErrors, getInjectedError, injectMockError } from '@/lib/tauri-mock/injection'
 import {
@@ -83,6 +85,14 @@ export function setupMock(): void {
     // comment on `PLUGIN_HANDLERS` there.
     { shouldMockEvents: true },
   )
+
+  // A command's events reach the app's `listen()` callbacks by the same
+  // `plugin:event|emit` path as `__emitMockEvent` below.
+  setEventSink((event, payload) => {
+    emit(event, payload).catch((err: unknown) => {
+      logger.warn('tauri-mock', 'failed to emit a mock event', { event }, err)
+    })
+  })
 
   // Expose error injection to E2E tests via window globals
   const w = window as unknown as Record<string, unknown>

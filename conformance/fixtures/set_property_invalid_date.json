@@ -45,6 +45,7 @@
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"due_date\"]"],
       "name": "a_calendar_day_is_set",
       "returns": ["B2"]
     },

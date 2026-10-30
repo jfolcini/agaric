@@ -55,8 +55,7 @@ test('/schedule: the picked day becomes a scheduled chip that persists @editor',
 test('/bullet-list gives the block a bullet marker that persists @editor', async ({ page }) => {
   await runSlashCommand(page, 'bullet', BULLET_LIST)
 
-  // The marker is drawn from the `listStyle` property, which the mock only
-  // hands back on the next mount (it emits no `block:properties-changed`).
+  // Asserted after a reopen, which proves the `listStyle` property persisted.
   await expectPersisted(page, PAGE, blockRow(page, GS1).getByTestId('list-marker'), '•')
 })
 

@@ -1,0 +1,276 @@
+{
+  "description": "#6054 C: a property write's wrapper emits one `block:properties-changed` per block the caller named once its `_inner` commits, and the mock emits the same, so a mock-lane view refetches where the app's does. The three single-column setters each name their own column; `delete_property` names the keys it removed, so `repeat` takes its bound with it; a batch names every block it was handed, the one it skipped included; a refused write emits nothing.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Tasks",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "ship it",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": "1",
+        "scheduled_date": "2026-11-01",
+        "todo_state": "TODO"
+      },
+      {
+        "block_type": "content",
+        "content": "water plants",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "gone",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 10,
+      "ops": [
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-until",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_priority"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_scheduled_date"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "set_todo_state"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"priority\"]"],
+      "name": "set_priority_names_priority",
+      "returns": ["B2#priority=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"due_date\"]"],
+      "name": "set_due_date_names_due_date",
+      "returns": ["B2#due_date=2026-11-02"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"scheduled_date\"]"],
+      "name": "set_scheduled_date_names_scheduled_date",
+      "returns": ["B2#scheduled_date=2026-11-01"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"due_date\"]"],
+      "name": "a_clear_names_its_column_too",
+      "returns": ["B2#due_date=null"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "events": ["block:properties-changed#block_id=B3#changed_keys=[\"repeat\",\"repeat-until\"]"],
+      "name": "deleting_repeat_names_its_bound",
+      "returns": ["delete_property"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "events": [
+        "block:properties-changed#block_id=B2#changed_keys=[\"todo_state\"]",
+        "block:properties-changed#block_id=B4#changed_keys=[\"todo_state\"]"
+      ],
+      "name": "a_batch_names_the_block_it_skipped",
+      "returns": ["set_todo_state_batch#updated=1"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_refused_write_emits_nothing",
+      "returns": []
+    }
+  ],
+  "name": "property_change_events",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "level": "1"
+      },
+      "command": "set_priority",
+      "name": "set_priority_names_priority",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "date": "2026-11-02"
+      },
+      "command": "set_due_date",
+      "name": "set_due_date_names_due_date",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "date": "2026-11-01"
+      },
+      "command": "set_scheduled_date",
+      "name": "set_scheduled_date_names_scheduled_date",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "date": null
+      },
+      "command": "set_due_date",
+      "name": "a_clear_names_its_column_too",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "repeat"
+      },
+      "command": "delete_property",
+      "name": "deleting_repeat_names_its_bound",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S4"
+      },
+      "command": "delete_block",
+      "comment": "Tombstones S4, so the batch below skips it."
+    },
+    {
+      "args": {
+        "blockIds": ["S2", "S4"],
+        "state": "TODO"
+      },
+      "command": "set_todo_state_batch",
+      "name": "a_batch_names_the_block_it_skipped",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "level": "9"
+      },
+      "command": "set_priority",
+      "comment": "No such priority level.",
+      "expect_error": "validation",
+      "name": "a_refused_write_emits_nothing",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Tasks",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "ship it",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "water plants",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "gone",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      }
+    ],
+    "properties": [
+      {
+        "block_id": "S3",
+        "key": "repeat",
+        "value": {
+          "value_text": "weekly"
+        }
+      },
+      {
+        "block_id": "S3",
+        "key": "repeat-until",
+        "value": {
+          "value_date": "2026-12-31"
+        }
+      }
+    ],
+    "tags": []
+  }
+}

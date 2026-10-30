@@ -554,7 +554,12 @@ export function replayFixtureWithRecords(fixture: Fixture): {
 
 function relabelRecords(records: CommandRecord[], order: string[]): CommandRecord[] {
   const labels = canonicalLabelMap(order)
-  return records.map((r) => ({ ...r, returns: r.returns.map((t) => relabelToken(t, labels)) }))
+  const relabel = (tokens: string[]) => tokens.map((t) => relabelToken(t, labels))
+  return records.map(({ events, ...r }) => ({
+    ...r,
+    returns: relabel(r.returns),
+    ...(events ? { events: relabel(events) } : {}),
+  }))
 }
 
 /**

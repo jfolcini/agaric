@@ -10,6 +10,7 @@
  */
 
 import type { PropertyMergeCounts } from '@/lib/bindings'
+import { EVENT_PROPERTY_CHANGED } from '@/lib/block-event-names'
 import {
   BUILTIN_PROPERTY_DEFS,
   REPEAT_RULE_BOUNDS,
@@ -17,6 +18,7 @@ import {
 } from '@/lib/property-save-utils'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
+import { emitEvent } from '@/lib/tauri-mock/events'
 import { blocksHandlers } from '@/lib/tauri-mock/handlers/blocks'
 import {
   type TypedHandlers,
@@ -339,6 +341,23 @@ function createOccurrence(next: Occurrence): void {
   writePropertyRow(id, 'repeat-origin', { value_ref: next.originId })
 }
 
+/**
+ * `response`, after one `block:properties-changed` per block in `blockIds`
+ * naming `changedKeys`: what the backend's wrapper emits once its `_inner`
+ * commits (`property_changed_events`). The write is the `response` argument,
+ * so a refused one throws before anything is emitted.
+ */
+function propertiesChanged<T>(
+  blockIds: readonly string[],
+  changedKeys: readonly string[],
+  response: T,
+): T {
+  for (const blockId of blockIds) {
+    emitEvent(EVENT_PROPERTY_CHANGED, { block_id: blockId, changed_keys: [...changedKeys] })
+  }
+  return response
+}
+
 /** The `value_type` vocabulary `validate_property_def_shape` matches on. */
 const PROPERTY_DEF_VALUE_TYPES = new Set([
   'text',
@@ -566,9 +585,11 @@ export const propertiesHandlers = {
       const write = () =>
         setReservedColumnProperty(blockId, key, reservedChannel, valueText, valueDate)
       // #5394 — `set_property_inner` routes `todo_state` through `set_todo_state_in_tx`.
-      return key === 'todo_state' ? writeTodoState(blockId, valueText, write) : write()
+      const row = key === 'todo_state' ? writeTodoState(blockId, valueText, write) : write()
+      return propertiesChanged([blockId], [key], row)
     }
-    if (key === 'space') return setSpaceProperty(target, valueRef)
+    if (key === 'space')
+      return propertiesChanged([blockId], [key], setSpaceProperty(target, valueRef))
     const op = writePropertyRow(blockId, key, {
       value_text: valueText,
       value_num: valueNum,
@@ -578,7 +599,8 @@ export const propertiesHandlers = {
     })
     const b = blocks.get(blockId)
     // #2468 — `WithOps<BlockRow>`.
-    return b ? { ...b, op_refs: [{ device_id: op.device_id, seq: op.seq }] } : null
+    const row = b ? { ...b, op_refs: [{ device_id: op.device_id, seq: op.seq }] } : null
+    return propertiesChanged([blockId], [key], row)
   },
 
   delete_property: (args) => {
@@ -603,7 +625,8 @@ export const propertiesHandlers = {
     if (channel !== undefined) {
       const fromValue = (b[key] as string | null | undefined) ?? null
       // #5898 — a key the block does not hold appends nothing.
-      if (fromValue === null) return { block_id: blockId, key, op_refs: [] }
+      if (fromValue === null)
+        return propertiesChanged([blockId], [], { block_id: blockId, key, op_refs: [] })
       const start = opLog.length
       b[key] = null
       // `prior` as `held_property_value` records it, which the undo restores (#6156).
@@ -615,34 +638,40 @@ export const propertiesHandlers = {
       // #5378 — `delete_property_core` clears the task stamps with the state.
       if (key === 'todo_state') writeTaskStampTransitions(blockId, fromValue, null)
       // Every op appended, as `capture_op_refs` takes them: undone by these refs, the stamps come back too.
-      return {
+      return propertiesChanged([blockId], [key], {
         block_id: blockId,
         key,
         op_refs: opLog.slice(start).map(({ device_id, seq }) => ({ device_id, seq })),
-      }
+      })
     }
     // `space` clears the `blocks.space_id` column; its undo restores the space.
     if (key === 'space') {
       const fromSpace = (b['space_id'] as string | null | undefined) ?? null
-      if (fromSpace === null) return { block_id: blockId, key, op_refs: [] }
+      if (fromSpace === null)
+        return propertiesChanged([blockId], [], { block_id: blockId, key, op_refs: [] })
       setPageGroupSpace(blocks, blockId, null)
       const op = pushOp('delete_property', {
         block_id: blockId,
         key,
         from_value: typedValueOf({ value_ref: fromSpace }),
       })
-      return { block_id: blockId, key, op_refs: [{ device_id: op.device_id, seq: op.seq }] }
+      return propertiesChanged([blockId], [key], {
+        block_id: blockId,
+        key,
+        op_refs: [{ device_id: op.device_id, seq: op.seq }],
+      })
     }
     // #2468 — echoes `(block_id, key)` plus `op_refs`
     // (`WithOps<DeletePropertyResponse>`). #5898 — like `delete_property_core`,
     // a key the block does not hold appends nothing.
-    const opRefs = properties.get(blockId)?.has(key) ? [deletePropertyRow(blockId, key)] : []
+    const deleted = properties.get(blockId)?.has(key) ? [key] : []
     if (key === 'repeat') {
       for (const bound of REPEAT_RULE_BOUNDS) {
-        if (properties.get(blockId)?.has(bound)) opRefs.push(deletePropertyRow(blockId, bound))
+        if (properties.get(blockId)?.has(bound)) deleted.push(bound)
       }
     }
-    return { block_id: blockId, key, op_refs: opRefs }
+    const opRefs = deleted.map((k) => deletePropertyRow(blockId, k))
+    return propertiesChanged([blockId], deleted, { block_id: blockId, key, op_refs: opRefs })
   },
 
   get_properties: (args) => {
@@ -730,7 +759,10 @@ export const propertiesHandlers = {
     })
     // Every op appended, as `capture_op_refs` takes them: the stamps' and the next occurrence's
     // among them (#6156).
-    return { ...b, op_refs: opLog.slice(start).map(({ device_id, seq }) => ({ device_id, seq })) }
+    return propertiesChanged([blockId], ['todo_state'], {
+      ...b,
+      op_refs: opLog.slice(start).map(({ device_id, seq }) => ({ device_id, seq })),
+    })
   },
 
   // Batch set/clear todo state. Iterates the
@@ -764,10 +796,10 @@ export const propertiesHandlers = {
       updated++
     }
     // Every op appended, as `capture_op_refs` takes them: the stamps' among them (#6156).
-    return {
+    return propertiesChanged(inputIds, ['todo_state'], {
       updated,
       op_refs: opLog.slice(start).map(({ device_id, seq }) => ({ device_id, seq })),
-    }
+    })
   },
 
   // Batch set/clear an ALLOWLISTED reserved property across N blocks in one
@@ -817,7 +849,7 @@ export const propertiesHandlers = {
       if (key === 'todo_state') writeTaskStampTransitions(id, prior, value)
       updated++
     }
-    return updated
+    return propertiesChanged(inputIds, [key], updated)
   },
 
   set_priority: (args) => {
@@ -836,7 +868,7 @@ export const propertiesHandlers = {
       level: b['priority'],
       from_level: fromLevel,
     })
-    return { ...b }
+    return propertiesChanged([a['blockId'] as string], ['priority'], { ...b })
   },
 
   set_due_date: (args) => {
@@ -850,7 +882,7 @@ export const propertiesHandlers = {
       date: b['due_date'],
       from_date: fromDate,
     })
-    return { ...b }
+    return propertiesChanged([a['blockId'] as string], ['due_date'], { ...b })
   },
 
   set_scheduled_date: (args) => {
@@ -864,7 +896,7 @@ export const propertiesHandlers = {
       date: b['scheduled_date'],
       from_date: fromDate,
     })
-    return { ...b }
+    return propertiesChanged([a['blockId'] as string], ['scheduled_date'], { ...b })
   },
 
   // ---------------------------------------------------------------------------

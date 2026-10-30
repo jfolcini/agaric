@@ -4,7 +4,7 @@
  *
  * #2507: the backend ships a targeted payload on every property write —
  * `PropertyChangedEvent { block_id, changed_keys }`
- * (`emit_property_changed_event`, `src-tauri/src/commands/properties.rs`) — but
+ * (`property_changed_events`, `src-tauri/src/commands/properties.rs`) — but
  * the frontend used to register THREE independent `listen()` subscriptions of
  * that one event, each throwing the payload away and doing blanket work:
  *

@@ -11,7 +11,7 @@
 //!   [`SyncEvent::Complete`](agaric_sync::sync_events::SyncEvent::Complete)'s #1071 field, so the frontend reuses the same
 //!   `forEachPageStore` targeted-reload path with no new vocabulary.
 //! - [`EVENT_PROPERTY_CHANGED`] (`block:properties-changed`) — the SAME event
-//!   local `set_property` already emits (`emit_property_changed_event`,
+//!   local `set_property` already emits (`property_changed_events`,
 //!   `commands/properties.rs`), with the SAME `{ block_id, changed_keys }`
 //!   payload, so the property-change dispatcher needs no changes.
 //!

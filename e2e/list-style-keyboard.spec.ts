@@ -36,12 +36,8 @@ import {
  * lands on the first text position only intermittently.
  *
  * Every step that depends on a block KNOWING its style runs after a
- * `reopenPage`. The batch that feeds the markers — and the focused editor's
- * own reading of its style — refetches on the backend's
- * `block:properties-changed` event, which the JS tauri mock never emits (same
- * caveat as `slash-commands-coverage`), so in this harness a property write
- * only becomes visible on the next mount. The reopen is also what proves the
- * writes persisted rather than living in component state.
+ * `reopenPage`. The reopen is what proves the writes persisted rather than living in
+ * component state.
  *
  * Seed: "Getting Started" has 5 blocks; the first one is the one styled here.
  */

@@ -9,7 +9,9 @@
  * `AppErrorKind` plus the `ValidationCode` — is projected into the same row
  * tokens the Rust runner recorded in the fixture's `expected_ops`. `op_refs` is
  * never read (the two stacks' device ids differ); a list-valued field becomes
- * one `<field>-><id>` token per element.
+ * one `<field>-><id>` token per element. The Tauri events the handler emits
+ * (`emitEvent`) are recorded too, under `events`, against what the backend's
+ * wrapper emits (#6054).
  *
  * Keep {@link RETURN_SHAPE} in lockstep with the Rust `RETURN_SHAPE`, exactly
  * as `WIRE` in `conformance-query.ts` mirrors `run_step`. The two importers are
@@ -18,6 +20,7 @@
  */
 
 import { PROPERTY_DEF_ATTRS, idToken } from '@/lib/tauri-mock/__tests__/conformance-query'
+import { setEventSink } from '@/lib/tauri-mock/events'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 
 export interface CommandOpStep {
@@ -39,6 +42,8 @@ export interface CommandRecord {
   returns: string[]
   error: string | null
   code: string | null
+  /** The events the command emitted, in order; absent when it emitted none. */
+  events?: string[]
 }
 
 interface ReturnShape {
@@ -150,6 +155,10 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   // clears carries a clock date, so the snapshot drops it and a
   // `query_by_property` step reads which blocks hold one.
   set_todo_state: { idKey: 'id', attrs: ['todo_state'], lists: [] },
+  // #6054 — the three single-column setters, each the row it set.
+  set_priority: { idKey: 'id', attrs: ['priority'], lists: [] },
+  set_due_date: { idKey: 'id', attrs: ['due_date'], lists: [] },
+  set_scheduled_date: { idKey: 'id', attrs: ['scheduled_date'], lists: [] },
   // #5057 — the three batch COUNTERS answer with a bare number, which carries
   // no field to name it. The shape's single attribute names the scalar, so the
   // token reads `set_property_batch#updated=3` instead of exposing a synthetic
@@ -321,6 +330,20 @@ export function projectReturn(command: string, response: unknown): string[] {
   return out
 }
 
+/**
+ * One emitted event as a token: the event name as the head, then every payload
+ * field in name order, so an id-valued field relabels like an id in `returns`.
+ * Mirror of `event_token` in the Rust twin.
+ */
+function eventToken(event: string, payload: unknown): string {
+  const fields = payload as Record<string, unknown>
+  return idToken(
+    { ...fields, [HEADED_ID_KEY]: event },
+    HEADED_ID_KEY,
+    Object.keys(fields).toSorted(),
+  )
+}
+
 /** A declaration key as the wire string it must be; `null` when absent. */
 function declared(
   at: string,
@@ -431,6 +454,8 @@ export function runCommandOp(
   let returns: string[] = []
   let error: string | null = null
   let code: string | null = null
+  const events: string[] = []
+  const previousSink = setEventSink((event, payload) => events.push(eventToken(event, payload)))
   try {
     returns = projectReturn(step.command, labelContent(dispatch(step.command, args), createdIds))
   } catch (err) {
@@ -440,6 +465,8 @@ export function runCommandOp(
     error = kind
     const raw = rejection?.['code']
     code = typeof raw === 'string' ? raw : null
+  } finally {
+    setEventSink(previousSink)
   }
   checkDeclaration(
     at,
@@ -448,5 +475,5 @@ export function runCommandOp(
     error,
     code,
   )
-  return { name: step.name, returns, error, code }
+  return { name: step.name, returns, error, code, ...(events.length > 0 ? { events } : {}) }
 }
