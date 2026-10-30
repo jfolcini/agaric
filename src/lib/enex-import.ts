@@ -23,7 +23,8 @@
  * (`![](path)`) and hand the bytes back on {@link EnexNote.attachments}. The
  * caller ships those as `importMarkdown`'s `vaultFiles` — the SAME
  * vault-attachment path a folder import uses — so the backend ingests the
- * bytes and canonicalizes the ref to `attachment:<id>`. An `en-media` whose
+ * bytes and canonicalizes the ref to `attachment:<id>`, an image as an image
+ * and any other file as a link to it. An `en-media` whose
  * hash matches no resource is dropped (graceful, no crash); a resource nobody
  * references is simply never shipped.
  *
@@ -327,7 +328,7 @@ export function sanitizeResourceName(name: string): string {
     const cp = ch.codePointAt(0)
     if (cp !== undefined && cp >= 0x20) out += ch
   }
-  // The backend's image grammar (`image_destination` in import.rs) ends a bare
+  // The backend's image grammar (`link_destination` in import.rs) ends a bare
   // ref at whitespace or an unbalanced `)`, so `![](Screenshot 2024.png)` would
   // never be ingested: the name is the shipped path, so rename both to match.
   return out.trim().replace(/[\p{White_Space}()]+/gu, '_')

@@ -834,6 +834,7 @@ async fn with_recorded_prior_in_tx(
     match &mut reverse {
         OpPayload::SetProperty(p) => {
             p.key = forward_property_key(tx, p.block_id.as_str(), &p.key, after).await?;
+            fit_reverse_to_declared_type(tx, p).await?;
             p.prior = Some(
                 agaric_engine::block_ops::held_property_value(tx, p.block_id.as_str(), &p.key)
                     .await?
@@ -849,6 +850,66 @@ async fn with_recorded_prior_in_tx(
         _ => {}
     }
     Ok(reverse)
+}
+
+/// Fit a reverse `SetProperty` to the type its key is declared with now
+/// (#5841): the built-in's, else the block's space's. A value set before the
+/// key changed type is converted as the type change converted the key's
+/// values, so it lands in the type's column; one the type does not take is
+/// refused, since it would sit under the key in a form the type rejects. A
+/// value whose slot the type takes is left alone: a ref under a text key, and
+/// a select value outside the options, which an options edit leaves shown.
+async fn fit_reverse_to_declared_type(
+    conn: &mut sqlx::SqliteConnection,
+    p: &mut agaric_store::op::SetPropertyPayload,
+) -> Result<(), AppError> {
+    use agaric_engine::block_ops::{PropertyDeclaration, check_property_value};
+    use agaric_engine::loro::coerce::{coerce, value_fields_under};
+    let block_id = p.block_id.as_str();
+    // The Trash's blocks too, as a type change converts theirs.
+    let space = sqlx::query_scalar!(
+        r#"SELECT COALESCE(space_id, id) AS "space!: String" FROM blocks WHERE id = ?"#,
+        block_id
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+    let declared =
+        agaric_engine::block_ops::property_declaration(conn, space.as_deref(), &p.key).await?;
+    let Some(declared) = declared else {
+        return Ok(());
+    };
+    let shape = PropertyDeclaration {
+        value_type: declared.value_type,
+        options: None,
+    };
+    let held = p.value();
+    let args = (
+        held.value_text.clone(),
+        held.value_num,
+        held.value_date.clone(),
+        held.value_ref.as_ref().map(|r| r.as_str().to_owned()),
+        held.value_bool,
+    );
+    if check_property_value(&p.key, &args, Some(&shape)).is_ok() {
+        return Ok(());
+    }
+    let value = agaric_engine::loro::engine::PropertyValue::from(&held);
+    let fit = coerce(&value, &shape.value_type).ok_or_else(|| {
+        AppError::validation(format!(
+            "undoing this would put '{}' under '{}', now a {} property; change its type back \
+             first",
+            value.as_legacy_string().unwrap_or_default(),
+            p.key,
+            shape.value_type
+        ))
+    })?;
+    let fields = value_fields_under(&fit, &shape.value_type);
+    p.value_text = fields.value_text;
+    p.value_num = fields.value_num;
+    p.value_date = fields.value_date;
+    p.value_ref = fields.value_ref;
+    p.value_bool = fields.value_bool;
+    Ok(())
 }
 
 /// Apply the materialized effect of a reverse [`OpPayload`] to the blocks/tags/properties
@@ -902,8 +963,8 @@ async fn with_recorded_prior_in_tx(
 /// and is refused, as `create_property_def` is, when they would not fit it
 /// (#5841). A `RenamePropertyKey` reverse renames back, refused as the rename
 /// is onto a key the space declares or uses; a `RewriteProperties` reverse
-/// restores each write's prior, its definitions refused as a `SetPropertyDef`
-/// reverse's are.
+/// restores each write's prior, a merge's definitions refused as a
+/// `SetPropertyDef` reverse's are.
 ///
 /// `op_created_at` is the SAME timestamp the caller bound as the reverse op's
 /// `op_log.created_at` (mint it via `reverse_op_timestamp`). The DeleteBlock
@@ -1367,22 +1428,28 @@ async fn apply_reverse_add_page_alias(
 }
 
 /// `RewriteProperties` arm of [`apply_reverse_in_tx`] (#5841): the payload is
-/// already swapped by `reverse_rewrite_properties`, and each definition it
-/// restores is refused as a `SetPropertyDef` undo's is.
+/// already swapped by `reverse_rewrite_properties`. Each definition a merge's
+/// reverse restores is refused as a `SetPropertyDef` undo's is; a type
+/// change's reverse writes back the values it converted itself, and a value
+/// written since on a block it did not write re-reads under the restored
+/// type: a string shows or hides, a number or boolean keeps its column.
 async fn apply_reverse_rewrite_properties(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
     p: &agaric_store::op::RewritePropertiesPayload,
 ) -> Result<(), AppError> {
-    for write in &p.defs {
-        let def = SetPropertyDefPayload {
-            space_id: p.space_id.clone(),
-            key: write.key.clone(),
-            def: write.def.clone(),
-            prior: write.prior.clone(),
-        };
-        crate::commands::properties::refuse_restoring_def_over_conflicting_values(tx, &def).await?;
+    if p.reason == agaric_store::op::RewriteReason::Merge {
+        for write in &p.defs {
+            let def = SetPropertyDefPayload {
+                space_id: p.space_id.clone(),
+                key: write.key.clone(),
+                def: write.def.clone(),
+                prior: write.prior.clone(),
+            };
+            crate::commands::properties::refuse_restoring_def_over_conflicting_values(tx, &def)
+                .await?;
+        }
     }
     apply_rewrite_properties_via_loro(tx, state, device_id, p).await
 }

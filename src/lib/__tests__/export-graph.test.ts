@@ -15,6 +15,7 @@ import {
   resolveAttachmentRefsForCopy,
   sanitizeSegment,
 } from '@/lib/export-graph'
+import { scanAttachmentRefs } from '@/lib/import-attachments'
 
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -402,6 +403,34 @@ describe('exportGraphAsZip', () => {
     expect(md).toBe(`[report.pdf](../${assetName})`)
     expect(md).not.toContain('attachment:')
     expect(md?.startsWith('!')).toBe(false)
+  })
+
+  it('writes a file link whose name holds a parenthesis so a folder import reads it (#6032)', async () => {
+    const attId = 'ATT_SP'
+    stubExport(
+      {
+        list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: 'Project/Notes' })],
+        export_page_markdown: () => `[paper](attachment:${attId})`,
+        read_attachment_meta: () => ({
+          id: attId,
+          block_id: 'B1',
+          filename: 'paper(v2.pdf',
+          mime_type: 'application/pdf',
+          size_bytes: 3,
+          fs_path: 'x',
+          created_at: 0,
+          content_hash: null,
+        }),
+      },
+      new Uint8Array([9, 8, 7]),
+    )
+
+    const { blob } = await exportGraphAsZip(SPACE_ID)
+    const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
+    const assetName = `assets/${attId}__paper(v2.pdf`
+    expect(Object.keys(unzipped.files)).toContain(assetName)
+    const md = (await unzipped.file('Project/Notes.md')?.async('string')) ?? ''
+    expect(scanAttachmentRefs(md)).toEqual([`../${assetName}`])
   })
 
   it('collapses path separators in an attachment filename so the asset name cannot escape assets/ (#2961 Zip-Slip)', async () => {
@@ -1226,6 +1255,26 @@ describe('resolveAttachmentRefsForCopy (#2967)', () => {
     expect(result).toBe('[report.pdf](report.pdf)')
     expect(result).not.toContain('attachment:')
     expect(result.startsWith('!')).toBe(false)
+  })
+
+  it('writes a filename holding a space as a destination a Markdown reader takes whole (#6032)', async () => {
+    const attId = 'ATT_SP'
+    stubExport({
+      read_attachment_meta: () => ({
+        id: attId,
+        block_id: 'B1',
+        filename: 'my paper.pdf',
+        mime_type: 'application/pdf',
+        size_bytes: 3,
+        fs_path: 'x',
+        created_at: 0,
+        content_hash: null,
+      }),
+    })
+
+    const result = await resolveAttachmentRefsForCopy(`[paper](attachment:${attId})`)
+
+    expect(scanAttachmentRefs(result)).toEqual(['my paper.pdf'])
   })
 
   it('flattens a path separator in a hostile attachment filename', async () => {

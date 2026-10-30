@@ -668,3 +668,39 @@ mod tests_m64 {
         }
     }
 }
+
+#[cfg(test)]
+mod value_move_tests {
+    use super::*;
+    use agaric_core::ulid::BlockId;
+
+    fn write(value: Option<&str>, prior: Option<&str>) -> PropertyValueWrite {
+        let text = |v: &str| PropertyValueFields {
+            value_text: Some(v.to_owned()),
+            ..Default::default()
+        };
+        PropertyValueWrite {
+            block_id: BlockId::from_trusted("01HZ00000000000000000000X1"),
+            key: "effort".into(),
+            value: value.map(text),
+            prior: prior.map(text),
+        }
+    }
+
+    /// #5841 S3 — a type change writes one key per block, so neither its
+    /// converted write nor its removal reads as a move: an undo of an older
+    /// set keeps its key.
+    #[test]
+    fn a_type_change_write_is_not_a_move_5841() {
+        let block = "01HZ00000000000000000000X1";
+        for (what, writes) in [
+            ("converted", vec![write(Some("42"), Some("042"))]),
+            ("removed", vec![write(None, Some("abc"))]),
+        ] {
+            assert!(
+                value_move(&writes, block, "effort").is_none(),
+                "a {what} value stays under its key"
+            );
+        }
+    }
+}

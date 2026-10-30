@@ -15769,6 +15769,18 @@ fn attachment_ref_detection_and_match_rules_1925() {
     // Mime guess.
     assert_eq!(guess_attachment_mime("x/y.PNG"), "image/png");
     assert_eq!(guess_attachment_mime("a.pdf"), "application/pdf");
+    // #6032 — audio and archives the attachment allow-list accepts.
+    for (path, mime) in [
+        ("a.mp3", "audio/mpeg"),
+        ("a.M4A", "audio/mp4"),
+        ("a.wav", "audio/wav"),
+        ("a.ogg", "audio/ogg"),
+        ("a.flac", "audio/flac"),
+        ("a.zip", "application/zip"),
+        ("a.tar", "application/x-tar"),
+    ] {
+        assert_eq!(guess_attachment_mime(path), mime, "{path}");
+    }
     assert_eq!(
         guess_attachment_mime("a.unknownext"),
         "application/octet-stream"
@@ -15899,6 +15911,84 @@ async fn import_attaches_the_image_beside_the_note_6032() {
     assert_eq!(texts.len(), 2);
     assert!(texts[0].starts_with("see ![](attachment:"), "{texts:?}");
     assert!(texts[1].starts_with("and ![](attachment:"), "{texts:?}");
+
+    mat.shutdown();
+}
+
+/// #6032 — a file a note links to or embeds is attached, and its block links
+/// it as a file: `[label](attachment:<id>)`, never the broken image
+/// `![](attachment:<id>)` a PDF made. An embedded image stays an image, a
+/// linked one stays a link, a link to no shipped file stays as written without
+/// a warning, and the export lists each attachment once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_attaches_a_linked_file_as_a_file_link_6032() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let file = |path: &str| VaultFile {
+        path: path.into(),
+        bytes: b"%PDF-1.4".to_vec(),
+    };
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- read [paper](paper.pdf) now\n- scan ![[scan.pdf]]\n- pic ![a cat](cat.png)\n\
+         - away [gone](missing.pdf)\n- shot [a dog](dog.png)"
+            .into(),
+        Some("Vault/note.md".into()),
+        TEST_SPACE_ID.into(),
+        Some(vec![
+            file("paper.pdf"),
+            file("scan.pdf"),
+            file("cat.png"),
+            file("dog.png"),
+        ]),
+    )
+    .await
+    .unwrap();
+    assert!(result.warnings.is_empty(), "got {:?}", result.warnings);
+    settle(&mat).await;
+
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT a.id, a.mime_type, b.content FROM attachments a \
+         JOIN blocks b ON b.id = a.block_id WHERE a.deleted_at IS NULL ORDER BY b.position",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let [
+        (paper, paper_mime, paper_block),
+        (scan, scan_mime, scan_block),
+        (cat, cat_mime, cat_block),
+        (dog, dog_mime, dog_block),
+    ] = rows.as_slice()
+    else {
+        panic!("four attachments, got {rows:?}");
+    };
+    assert_eq!(paper_mime, "application/pdf");
+    assert_eq!(
+        paper_block,
+        &format!("read [paper](attachment:{paper}) now")
+    );
+    assert_eq!(scan_mime, "application/pdf");
+    assert_eq!(scan_block, &format!("scan [scan.pdf](attachment:{scan})"));
+    assert_eq!(cat_mime, "image/png");
+    assert_eq!(cat_block, &format!("pic ![a cat](attachment:{cat})"));
+    assert_eq!(dog_mime, "image/png");
+    assert_eq!(dog_block, &format!("shot [a dog](attachment:{dog})"));
+    let texts = content_block_texts(&pool).await;
+    assert_eq!(texts[3], "away [gone](missing.pdf)");
+
+    let md = export_page_markdown_inner(&pool, &result.page_id)
+        .await
+        .unwrap();
+    for id in [paper, scan, cat, dog] {
+        assert_eq!(md.matches(&format!("attachment:{id}")).count(), 1, "{md}");
+    }
 
     mat.shutdown();
 }

@@ -209,7 +209,9 @@ async function resolveRefValues(rows: readonly PropertyLossValue[]): Promise<voi
 }
 
 /** The page's title, then the block's text when the value is on a block of it. */
-function holderLabel(row: PropertyLossValue): string {
+export function holderLabel(
+  row: Pick<PropertyLossValue, 'block_id' | 'page_id' | 'page_title' | 'content'>,
+): string {
   const page = row.page_title ?? ''
   if (row.page_id === row.block_id) return page
   return `${page} › ${row.content ?? ''}`

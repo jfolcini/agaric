@@ -821,6 +821,15 @@ fn projecting_at() -> String {
         .unwrap_or_default()
 }
 
+/// A type change step's `key`, `valueType` and `options` (#5841 S3).
+fn type_change_target(args: &StepArgs<'_>) -> PropertyTypeTarget {
+    PropertyTypeTarget {
+        key: arg_req(args, "key"),
+        value_type: arg_req(args, "valueType"),
+        options: opt_arg_as(args, "options"),
+    }
+}
+
 fn opt_arg(args: &StepArgs<'_>, key: &str) -> Option<Value> {
     args.get(key).filter(|v| !v.is_null()).cloned()
 }
@@ -1546,6 +1555,51 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 total_count: None,
                 next_cursor: None,
             }
+        }
+        // ── What a type change converts and removes (#5841 S3) ──
+        //
+        // One headed row, `property_type_change_counts#converted=<n>#removed=<n>`;
+        // then one kind's values, paged by block id, each with its page,
+        // whether it is trashed, and the value before and after.
+        "preview_property_type_change" => {
+            let counts = preview_property_type_change_inner(
+                pool,
+                &arg_req::<String>(args, "spaceId"),
+                type_change_target(args),
+            )
+            .await?;
+            let v = serde_json::to_value(counts).expect("serialize PropertyTypeChangeCounts");
+            RawResult {
+                rows: vec![format!(
+                    "property_type_change_counts#converted={}#removed={}",
+                    attr_value("converted", v.get("converted")),
+                    attr_value("removed", v.get("removed")),
+                )],
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
+        "list_property_type_change_values" => {
+            let resp = list_property_type_change_values_inner(
+                pool,
+                &arg_req::<String>(args, "spaceId"),
+                type_change_target(args),
+                arg_req(args, "kind"),
+                opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
+                opt_arg(args, "limit").and_then(|v| v.as_i64()),
+            )
+            .await?;
+            page_result_with(
+                &serde_json::to_value(&resp).expect("serialize PageResponse"),
+                &|row| {
+                    row_token(
+                        row,
+                        "block_id",
+                        &["page_id", "deleted", "value", "converted"],
+                    )
+                },
+            )
         }
         // ── What a cross-space move drops (#5841 S0.6) ──
         //
@@ -2965,7 +3019,15 @@ pub(super) mod reader_delegation_tests {
     // `property_definitions` per key and one `query!` COUNT over
     // `block_properties JOIN blocks` (`commands/property_keys.rs`). The merge they describe is
     // `merge_property_key`, not a read arm. Writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 63;
+    // #5841 S3 wired `preview_property_type_change` and
+    // `list_property_type_change_values`: a `query_as!` SELECT over
+    // `property_definitions` and a `query!` SELECT over `block_properties JOIN
+    // blocks`, the paged one a second `query!` SELECT over `blocks` behind
+    // `PageRequest::new` and `build_page_response`
+    // (`commands/property_types.rs`). The change they
+    // describe is `change_property_type`, not a read arm. Writer set
+    // unchanged.
+    const SWEPT_ARM_COUNT: usize = 65;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

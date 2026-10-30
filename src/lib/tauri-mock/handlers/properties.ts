@@ -9,7 +9,7 @@
  * store.
  */
 
-import type { PropertyMergeCounts } from '@/lib/bindings'
+import type { PropertyMergeCounts, PropertyTypeChangeCounts } from '@/lib/bindings'
 import { EVENT_PROPERTY_CHANGED } from '@/lib/block-event-names'
 import {
   BUILTIN_PROPERTY_DEFS,
@@ -19,7 +19,7 @@ import {
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import { emitEvent } from '@/lib/tauri-mock/events'
-import { blocksHandlers } from '@/lib/tauri-mock/handlers/blocks'
+import { blocksHandlers, paginateKeyset } from '@/lib/tauri-mock/handlers/blocks'
 import {
   type TypedHandlers,
   appErrorRejection,
@@ -30,6 +30,7 @@ import {
   isLiveSpace,
   notFoundRejection,
   ownerSpaceOf,
+  pageRequestLimit,
   propertyDefinition,
   returnEmptyPage,
   validationRejection,
@@ -38,11 +39,17 @@ import {
 import { resolveRefValue } from '@/lib/tauri-mock/names'
 import {
   mergePropertyKey,
+  parsePropertyDefOptions,
   previewPropertyMerge,
   refuseBuiltinKey,
-  refusePropertyKeyShape,
   renamePropertyKey,
+  validatePropertyDefShape,
 } from '@/lib/tauri-mock/property-keys'
+import {
+  changePropertyType,
+  previewPropertyTypeChange,
+  propertyTypeChangeValues,
+} from '@/lib/tauri-mock/property-type-change'
 import { shiftDate } from '@/lib/tauri-mock/recurrence'
 import { setPageGroupSpace, valueFieldsOf } from '@/lib/tauri-mock/revert'
 import {
@@ -364,57 +371,6 @@ function liveBlock(blockId: string): Record<string, unknown> {
   if (!b) throw notFoundRejection(`block '${blockId}' not found`)
   if (b['deleted_at'] != null) throw validationRejection(`block '${blockId}' has been soft-deleted`)
   return b
-}
-
-/** The `value_type` vocabulary `validate_property_def_shape` matches on. */
-const PROPERTY_DEF_VALUE_TYPES = new Set([
-  'text',
-  'number',
-  'date',
-  'select',
-  'ref',
-  'boolean',
-  'url',
-])
-
-/** `serde_json::from_str::<Vec<String>>`: anything but an array of strings is refused. */
-function parsePropertyDefOptions(options: string): string[] {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(options)
-  } catch {
-    parsed = undefined
-  }
-  if (!Array.isArray(parsed) || parsed.some((o) => typeof o !== 'string')) {
-    throw validationRejection('options must be a JSON array of strings')
-  }
-  return parsed as string[]
-}
-
-/**
- * Mock twin of `validate_property_def_shape` (`commands/properties.rs`). The
- * mock used to accept every key, every value_type and every options blob, so a
- * conformance op could not tell a refusal from a write (#3830).
- */
-function validatePropertyDefShape(key: string, valueType: string, options: string | null): void {
-  refusePropertyKeyShape(key)
-  if (!PROPERTY_DEF_VALUE_TYPES.has(valueType)) {
-    throw validationRejection(
-      `invalid value_type '${valueType}': must be text, number, date, select, ref, boolean, or url`,
-    )
-  }
-  if (valueType === 'select') {
-    if (options === null) {
-      throw validationRejection('select-type definitions require an options array')
-    }
-    if (parsePropertyDefOptions(options).length === 0) {
-      throw validationRejection('select-type options must not be empty')
-    }
-  } else if (options !== null) {
-    throw validationRejection(
-      `options are only allowed for select-type definitions, not '${valueType}'`,
-    )
-  }
 }
 
 export const propertiesHandlers = {
@@ -1087,6 +1043,42 @@ export const propertiesHandlers = {
     )
   },
 
+  // #5841 S3 — `commands/property_types.rs`; the logic is in
+  // `property-type-change.ts`.
+  preview_property_type_change: (args) => {
+    const a = args as Record<string, unknown>
+    return previewPropertyTypeChange(
+      a['spaceId'] as string,
+      a['key'] as string,
+      a['valueType'] as string,
+      (a['options'] as string | null) ?? null,
+    )
+  },
+
+  list_property_type_change_values: (args) => {
+    const a = args as Record<string, unknown>
+    const limit = pageRequestLimit(a['limit'])
+    const rows = propertyTypeChangeValues(
+      a['spaceId'] as string,
+      a['key'] as string,
+      a['valueType'] as string,
+      (a['options'] as string | null) ?? null,
+      a['kind'] as string,
+    )
+    return paginateKeyset(rows, (row) => [row['block_id'] as string], limit, a['cursor'], null, [])
+  },
+
+  change_property_type: (args) => {
+    const a = args as Record<string, unknown>
+    return changePropertyType(
+      a['spaceId'] as string,
+      a['key'] as string,
+      a['valueType'] as string,
+      (a['options'] as string | null) ?? null,
+      a['acknowledged'] as PropertyTypeChangeCounts,
+    )
+  },
+
   // `count_property_usage_inner`: per key of the space's vocabulary (its own
   // definitions and the built-ins but `space` and `is_space`), the LIVE blocks
   // of the space holding a value, the column-backed keys read off the block
@@ -1208,6 +1200,9 @@ export const propertiesHandlers = {
   | 'rename_property_key'
   | 'preview_property_merge'
   | 'merge_property_key'
+  | 'preview_property_type_change'
+  | 'list_property_type_change_values'
+  | 'change_property_type'
   | 'list_projected_agenda'
   | 'notify_task'
   | 'get_reminder_settings'

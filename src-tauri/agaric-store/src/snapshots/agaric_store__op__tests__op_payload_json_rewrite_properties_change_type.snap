@@ -1,0 +1,39 @@
+---
+source: agaric-store/src/op.rs
+expression: json
+---
+defs:
+  - def:
+      options: ~
+      value_type: number
+    key: effort
+    prior:
+      options: ~
+      value_type: text
+op_type: rewrite_properties
+reason: change_type
+space_id: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+values:
+  - block_id: 01BX5ZZKBKACTAV9WEVGEMMVRZ
+    key: effort
+    prior:
+      value_bool: ~
+      value_date: ~
+      value_num: ~
+      value_ref: ~
+      value_text: "042"
+    value:
+      value_bool: ~
+      value_date: ~
+      value_num: 42
+      value_ref: ~
+      value_text: ~
+  - block_id: 01BX5ZZKBKACTAV9WEVGEMMVS0
+    key: effort
+    prior:
+      value_bool: ~
+      value_date: ~
+      value_num: ~
+      value_ref: ~
+      value_text: abc
+    value: ~
