@@ -1,8 +1,9 @@
 // ---------------------------------------------------------------------------
 // Real-backend: renaming a property key in Settings › Properties (#5841 S2).
 //
-// Two journal blocks get a `project:: <value>` line each, typed and blurred
-// with Escape, which stores an undeclared text property. Settings ›
+// Two journal blocks, siblings of a text block, get a `project:: <value>`
+// line each, typed and blurred with Escape, which stores an undeclared text
+// property. Settings ›
 // Properties then declares `project` as text and renames it to `area`:
 // `rename_property_key` moves the definition and every value the space's
 // blocks hold, in the engine and in SQL. After leaving the journal and coming
@@ -15,6 +16,8 @@
 import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
+  editAtEnd,
+  enterBlankSibling,
   expectAbsent,
   navigateTo,
   openJournalBlockEditor,
@@ -26,7 +29,9 @@ import {
   waitForToast,
 } from './helpers'
 
+const ANCHOR = runScopedMarker('wdio-rename-anchor')
 const VALUES = [runScopedMarker('wdio-rename-one'), runScopedMarker('wdio-rename-two')]
+const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
 const PANEL = '[data-testid="settings-panel-properties"]'
 const CREATE_KEY = `${PANEL} input[aria-label="Property key"]`
 const NEW_KEY = '[role="dialog"] input[aria-label="New property key"]'
@@ -38,8 +43,21 @@ describe('Agaric real-backend property key rename (#5841) @settings @editor', ()
   it('moves every block’s value to the new key, read again after a round-trip', async () => {
     await waitForAppReady()
     await navigateTo('Journal')
-    for (const value of VALUES) {
-      await openJournalBlockEditor()
+    // Each `project::` line goes into its own blank sibling of a text block:
+    // a block whose only text is a property line is empty, and "Add block"
+    // puts the cursor back into it rather than creating a second block.
+    await openJournalBlockEditor()
+    await typeMarkerVerified(ANCHOR)
+    const anchorId = await browser.execute(
+      (sel: string) =>
+        document.querySelector(sel)?.closest('[data-block-id]')?.getAttribute('data-block-id') ??
+        null,
+      EDITOR,
+    )
+    if (anchorId === null) throw new Error('the anchor block has no id')
+    for (const [i, value] of VALUES.entries()) {
+      if (i > 0) await editAtEnd(anchorId)
+      await enterBlankSibling()
       await typeMarkerVerified(`project:: ${value}`)
       await browser.keys(['Escape'])
       await $(chip(`Project: ${value}`)).waitForDisplayed({ timeout: ACTION_TIMEOUT })
