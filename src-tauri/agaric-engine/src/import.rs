@@ -850,7 +850,7 @@ fn is_skippable_attachment_ref(reference: &str) -> bool {
 /// `commands::pages::markdown`:
 ///   * Obsidian embed — `![[file.png]]` (optional `|display` suffix dropped),
 ///   * standard markdown image — `![alt](relative/path.png)`, its destination
-///     read by [`image_destination`] and percent-decoded,
+///     read by `image_destination` and percent-decoded,
 ///   * Logseq/relative asset paths captured by the markdown-image form above
 ///     (`![alt](assets/...)`).
 ///
