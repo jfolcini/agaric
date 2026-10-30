@@ -1566,16 +1566,21 @@ async fn bl_insert_page(pool: &sqlx::SqlitePool, id: &str, space: Option<&str>) 
     .expect("seed page block");
 }
 
-/// Register a space. `blocks.space_id REFERENCES spaces(id)` and
-/// `spaces.id REFERENCES blocks(id)` (migration 0089), so the block must
-/// already exist and the registry row must exist before anything points at it.
+/// Register a space the way production does: flag it `is_space = 'true'`, and
+/// migration 0089's trigger writes the `spaces` row. `blocks.space_id
+/// REFERENCES spaces(id)` and `spaces.id REFERENCES blocks(id)`, so the block
+/// must already exist and the registry row must exist before anything points
+/// at it.
 async fn bl_register_space(pool: &sqlx::SqlitePool, id: &str) {
     // dynamic-sql: test-only fixture seed (not a production query path).
-    sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
-        .bind(id)
-        .execute(pool)
-        .await
-        .expect("register space");
+    sqlx::query(
+        "INSERT OR IGNORE INTO block_properties (block_id, key, value_text) \
+         VALUES (?, 'is_space', 'true')",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .expect("register space");
 }
 
 async fn bl_insert_content(
@@ -4595,6 +4600,14 @@ async fn eq_fixture() -> (sqlx::SqlitePool, TempDir) {
         .execute(&pool)
         .await
         .expect("zero P's child count");
+    // A registry row with no `is_space` row, as a `DeleteProperty(is_space)`
+    // leaves it (#6207).
+    // dynamic-sql: test-only fault injection.
+    sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+        .bind(EQ_PAGE_Q)
+        .execute(&pool)
+        .await
+        .expect("register Q without its flag");
 
     (pool, dir)
 }
@@ -4654,6 +4667,7 @@ async fn reconcile_all_reports_every_artefact_from_one_unfiltered_dump_4901() {
         ("page_link_cache.row", &p_to_b),
         ("page_link_cache.row", &g_to_b),
         ("fts_blocks.row", EQ_DEAD_T),
+        ("spaces.row", EQ_PAGE_Q),
         ("block_links.row", &t_to_b),
         ("block_links.row", &g_to_b),
         ("block_links_unresolved.row", &a_to_z),
@@ -4674,7 +4688,7 @@ async fn reconcile_all_reports_every_artefact_from_one_unfiltered_dump_4901() {
     );
     assert_eq!(
         got, want,
-        "the sweep must report exactly these nineteen, in this order"
+        "the sweep must report exactly these twenty, in this order"
     );
 
     let ownership = &divergences[0];
@@ -4944,4 +4958,334 @@ async fn a_write_after_the_blocks_dump_still_reads_as_a_divergence_4901() {
         "the stale slice still holds two children of A; the settled table holds three"
     );
     assert_reconciled(&pool, "a fresh dump sees the new block").await;
+}
+
+// ===========================================================================
+// Artefact 16 — `block_tags` and `page_aliases` against the engine (#6207)
+// ===========================================================================
+
+/// A user space holding two pages and a child of the first, a tag on that
+/// child and an alias on the first page, all built through the command path
+/// so the engine and SQL hold what production writes. Returns the space, the
+/// two pages, the child and the tag, in that order.
+async fn pr_vault() -> (sqlx::SqlitePool, TempDir, Materializer, [String; 5]) {
+    use crate::commands::{
+        add_tag_inner, create_block_inner, create_page_in_space_inner, create_space_inner,
+        set_page_aliases_inner,
+    };
+    let dir = TempDir::new().expect("tempdir");
+    let pool = crate::db::init_pool(&dir.path().join("projected.db"))
+        .await
+        .expect("init_pool");
+    let mat = Materializer::new(pool.clone());
+    let space = create_space_inner(&pool, DEV, &mat, "Projected".to_owned(), None)
+        .await
+        .expect("create space")
+        .to_string();
+    let mut pages = Vec::new();
+    for title in ["First page", "Second page"] {
+        let page =
+            create_page_in_space_inner(&pool, DEV, &mat, None, title.to_owned(), space.clone())
+                .await
+                .expect("create page");
+        pages.push(page.to_string());
+    }
+    let child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".to_owned(),
+        "a tagged child".to_owned(),
+        Some(BlockId::from_trusted(&pages[0])),
+        None,
+    )
+    .await
+    .expect("create child");
+    let tag = create_block_inner(&pool, DEV, &mat, "tag".into(), "topic".into(), None, None)
+        .await
+        .expect("create tag");
+    add_tag_inner(&pool, DEV, &mat, child.id.clone(), tag.id.clone())
+        .await
+        .expect("add tag");
+    set_page_aliases_inner(&pool, DEV, &mat, &pages[0], vec!["Alpha".to_owned()])
+        .await
+        .expect("set aliases");
+    mat.flush_background().await.expect("flush_background");
+    let ids = [
+        space,
+        pages[0].clone(),
+        pages[1].clone(),
+        child.id.to_string(),
+        tag.id.to_string(),
+    ];
+    (pool, dir, mat, ids)
+}
+
+/// `reconcile_all`'s divergences whose artefact starts with `prefix`, as
+/// `(artefact, key, expected, actual)`.
+async fn pr_divergences(
+    pool: &sqlx::SqlitePool,
+    mat: &Materializer,
+    prefix: &str,
+) -> Vec<(&'static str, String, String, String)> {
+    reconcile_all(pool, mat.loro_state(), None, eq_today())
+        .await
+        .expect("reconcile_all")
+        .into_iter()
+        .filter(|d| d.artefact.starts_with(prefix))
+        .map(|d| (d.artefact, d.key, d.expected, d.actual))
+        .collect()
+}
+
+/// Run one `block_tags` / `page_aliases` write behind the engine's back.
+async fn pr_exec(pool: &sqlx::SqlitePool, sql: &'static str, binds: &[&str]) {
+    // dynamic-sql: test-only fault injection.
+    let mut query = sqlx::query(sql);
+    for bind in binds {
+        query = query.bind(*bind);
+    }
+    query.execute(pool).await.expect("fault injection");
+}
+
+/// Write an alias claim into `page`'s engine map alone, as a merged peer's
+/// claim lands before anything projects it.
+fn pr_engine_claim(mat: &Materializer, space: &str, page: &str, alias: &str) {
+    let space = agaric_store::space::SpaceId::from_trusted(space);
+    let mut guard = mat
+        .loro_state()
+        .registry
+        .for_space(&space, DEV)
+        .expect("for_space");
+    guard
+        .engine_mut()
+        .apply_add_page_alias(page, alias)
+        .expect("engine alias claim");
+}
+
+/// **#6207 `block_tags`.** The tag the command path wrote agrees with the
+/// engine; a row dropped behind the engine's back and a row the engine never
+/// held are each reported, keyed by ids.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn block_tags_reconcile_with_the_engine_and_report_each_drift_6207() {
+    let (pool, _dir, mat, [space, page_a, _, child, tag]) = pr_vault().await;
+    assert_eq!(
+        pr_divergences(&pool, &mat, "engine.block_tags").await,
+        Vec::new(),
+        "a tag added through the command path agrees with the engine's tag map"
+    );
+    assert_eq!(
+        dump_block_tags(&pool).await.expect("dump block_tags"),
+        vec![(child.clone(), tag.clone())],
+        "the fixture holds the one tag edge the check compares"
+    );
+
+    pr_exec(
+        &pool,
+        "DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?",
+        &[&child, &tag],
+    )
+    .await;
+    pr_exec(
+        &pool,
+        "INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)",
+        &[&page_a, &tag],
+    )
+    .await;
+    let drift: Vec<(&str, String, String)> = pr_divergences(&pool, &mat, "engine.block_tags")
+        .await
+        .into_iter()
+        .map(|(artefact, key, _, actual)| (artefact, key, actual))
+        .collect();
+    assert_eq!(
+        drift,
+        vec![
+            (
+                "engine.block_tags.row",
+                format!("{space} / {child} -> {tag}"),
+                "no row in block_tags".to_owned(),
+            ),
+            (
+                "engine.block_tags.row",
+                format!("{space} / {page_a} -> {tag}"),
+                "a row in block_tags".to_owned(),
+            ),
+        ],
+        "the dropped edge reports missing and the stray edge extra"
+    );
+    mat.shutdown();
+}
+
+/// **#6207 `block_tags`, the purged tag.** Purging a tag removes its rows
+/// while its id stays in the tagged block's engine map: that is not a
+/// divergence.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_purged_tag_left_in_the_engine_tag_map_is_not_a_divergence_6207() {
+    use crate::commands::{delete_block_inner, purge_block_inner};
+    let (pool, _dir, mat, [space, _, _, child, tag]) = pr_vault().await;
+    delete_block_inner(&pool, DEV, &mat, BlockId::from_trusted(&tag))
+        .await
+        .expect("delete tag");
+    purge_block_inner(&pool, DEV, &mat, BlockId::from_trusted(&tag))
+        .await
+        .expect("purge tag");
+    mat.flush_background().await.expect("flush_background");
+
+    let held = {
+        let space = agaric_store::space::SpaceId::from_trusted(&space);
+        let mut guard = mat
+            .loro_state()
+            .registry
+            .for_space(&space, DEV)
+            .expect("for_space");
+        guard.engine_mut().read_tags(&child).expect("read_tags")
+    };
+    assert_eq!(
+        (held, dump_block_tags(&pool).await.expect("dump block_tags")),
+        (vec![tag.clone()], Vec::new()),
+        "the engine keeps the purged tag's id on the child; SQL keeps no row"
+    );
+    assert_eq!(
+        pr_divergences(&pool, &mat, "engine.block_tags").await,
+        Vec::new(),
+        "a purged tag's id is dropped before the comparison"
+    );
+    mat.shutdown();
+}
+
+/// **#6207 `page_aliases`.** The alias the command path wrote agrees with
+/// the engine. A second page's engine claim on it is legitimate while the
+/// lower page id holds the row; once the higher page holds the row instead,
+/// the check names both pages, and production's merge projection settles it
+/// the same way the check does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_aliases_reconcile_with_the_engine_under_the_lower_page_id_rule_6207() {
+    let (pool, _dir, mat, [space, page_a, page_b, _, _]) = pr_vault().await;
+    assert_eq!(
+        pr_divergences(&pool, &mat, "engine.page_aliases").await,
+        Vec::new(),
+        "an alias set through the command path agrees with the engine"
+    );
+    assert_eq!(
+        dump_page_aliases(&pool).await.expect("dump page_aliases"),
+        vec![(page_a.clone(), "Alpha".to_owned())],
+        "the fixture holds the one alias row the check compares"
+    );
+
+    // The two pages contest the alias in the engine, as after a merge; the
+    // lower id must hold the row, spelled as its own map holds it.
+    let (low, high) = if page_a < page_b {
+        (page_a.clone(), page_b.clone())
+    } else {
+        (page_b.clone(), page_a.clone())
+    };
+    pr_engine_claim(&mat, &space, &page_b, "ALPHA");
+    pr_exec(&pool, "DELETE FROM page_aliases", &[]).await;
+    pr_exec(
+        &pool,
+        "INSERT INTO page_aliases (page_id, alias) VALUES (?, ?)",
+        &[&high, if high == page_a { "Alpha" } else { "ALPHA" }],
+    )
+    .await;
+    let drift: Vec<(String, String)> = pr_divergences(&pool, &mat, "engine.page_aliases")
+        .await
+        .into_iter()
+        .map(|(_, key, _, actual)| (key, actual))
+        .collect();
+    let spelled = |page: &str| if page == page_a { "Alpha" } else { "ALPHA" };
+    assert_eq!(
+        drift,
+        vec![
+            (
+                format!("{space} / {low}"),
+                format!("no row for {:?} on this page", spelled(&low)),
+            ),
+            (
+                format!("{space} / {high}"),
+                format!("a page_aliases row for {:?}", spelled(&high)),
+            ),
+        ],
+        "a contested alias held by the higher page id reports both pages"
+    );
+
+    // Production's import projection, run for the lower page with its engine
+    // claims, hands it the row: the check and the projection agree.
+    let mut conn = pool.acquire().await.expect("acquire");
+    agaric_engine::loro::projection::reproject_page_aliases_from_engine(
+        &mut conn,
+        &low,
+        &[spelled(&low).to_owned()],
+    )
+    .await
+    .expect("reproject the lower page");
+    drop(conn);
+    assert_eq!(
+        pr_divergences(&pool, &mat, "engine.page_aliases").await,
+        Vec::new(),
+        "after the merge projection the lower page id holds the alias, the higher page's \
+         claim staying unprojected in its engine"
+    );
+    mat.shutdown();
+}
+
+// ===========================================================================
+// Artefact 17 — the `spaces` registry (#6207)
+// ===========================================================================
+
+const SR_SPACE: &str = "01SRSPACE62070000000000000";
+const SR_TRASHED: &str = "01SRTRASH62070000000000000";
+const SR_UNREGISTERED: &str = "01SRUNREG62070000000000000";
+const SR_UNFLAGGED: &str = "01SRUNFLAG6207000000000000";
+
+/// The `spaces.*` divergences of the per-op gate, as `(key, actual)`.
+async fn sr_divergences(pool: &sqlx::SqlitePool) -> Vec<(String, String)> {
+    reconcile(pool, &dump_blocks(pool).await.expect("dump"))
+        .await
+        .expect("reconcile")
+        .into_iter()
+        .filter(|d| d.artefact == "spaces.row")
+        .map(|d| (d.key, d.actual))
+        .collect()
+}
+
+/// **#6207 `spaces`.** Two flagged blocks, one soft-deleted, are registered
+/// by the 0089 trigger and agree with the registry through the per-op gate;
+/// a flagged block whose row went missing and a row with no flagged block
+/// are each reported.
+#[tokio::test]
+async fn spaces_registry_reconciles_with_is_space_and_reports_each_drift_6207() {
+    let dir = TempDir::new().expect("tempdir");
+    let pool = crate::db::init_pool(&dir.path().join("spaces.db"))
+        .await
+        .expect("init_pool");
+    for id in [SR_SPACE, SR_TRASHED, SR_UNREGISTERED, SR_UNFLAGGED] {
+        bl_insert_page(&pool, id, None).await;
+    }
+    for id in [SR_SPACE, SR_TRASHED, SR_UNREGISTERED] {
+        bl_register_space(&pool, id).await;
+    }
+    soft_delete_block(&pool, SR_TRASHED).await;
+    assert_eq!(
+        sr_divergences(&pool).await,
+        Vec::new(),
+        "the registry agrees with is_space, and a soft-deleted space keeps its row"
+    );
+    assert_eq!(
+        dump_spaces(&pool).await.expect("dump spaces"),
+        [SR_SPACE, SR_TRASHED, SR_UNREGISTERED]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        "the trigger registered every flagged block, the soft-deleted one included"
+    );
+
+    pr_exec(&pool, "DELETE FROM spaces WHERE id = ?", &[SR_UNREGISTERED]).await;
+    pr_exec(&pool, "INSERT INTO spaces (id) VALUES (?)", &[SR_UNFLAGGED]).await;
+    assert_eq!(
+        sr_divergences(&pool).await,
+        vec![
+            (SR_UNREGISTERED.to_owned(), "no row in spaces".to_owned()),
+            (SR_UNFLAGGED.to_owned(), "a row in spaces".to_owned()),
+        ],
+        "the flagged block with no row reports missing, the unflagged row extra"
+    );
 }

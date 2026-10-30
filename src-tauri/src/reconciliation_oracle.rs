@@ -85,6 +85,8 @@
 //! | `block_tag_inherited` (tag inheritance, #5628) | `blocks` — `parent_id`, `deleted_at` — **and** `block_tags` | the in-transaction arms of `tag_inheritance::apply_op_tag_inheritance`, the purge cascades, `loro_sync`'s post-import refresh / `rebuild_all` (the `RebuildTagInheritanceCache` task) — row membership in [`reconcile`], `inherited_from` in [`diff_block_tag_inherited_provenance`] only |
 //! | SQL `blocks` ITSELF against the Loro engine (#5628) | the live engine docs — not a SQL table | the per-op projections in `loro::projection` (`project_*_to_sql`) after every engine apply / the SQL-only fallbacks, which write SQL without the engine — audited by [`reconcile_engine`], NOT by [`reconcile`] |
 //! | SQL `attachments` against the Loro engine (#5608) | the attachment entries the live engine docs' nodes hold | `apply::attachments` (the op path) / `reproject_attachments_from_engine` (imports and recovery) / `repair::attachments` (the boot backfill) — audited by [`reconcile_engine`], NOT by [`reconcile`] |
+//! | SQL `block_tags` and `page_aliases` against the Loro engine (#6207) | each space doc's tag maps and `page_aliases` root, for the blocks both sides hold | `project_add_tag_to_sql` / `project_remove_tag_to_sql` and `project_add_page_alias_to_sql` / `project_remove_page_alias_to_sql` (the op apply arms, the op-log recovery arms) / `reproject_block_tags_from_engine` and `reproject_page_aliases_from_engine` (imports and recovery) / `repair::page_aliases` (the boot backfill) / the purge cascades — audited by [`reconcile_engine`], NOT by [`reconcile`] |
+//! | `spaces`, the registry (#6207) | `block_properties` — the `is_space = 'true'` rows, a soft-deleted space's included | the `spaces_register_is_space` trigger (migration 0089), fired by every `is_space` property insert / the FK cascade of a purge (the only removal) — in [`reconcile`] |
 //!
 //! # `page_link_cache` has NO synchronous arm at all (#3296)
 //!
@@ -1824,6 +1826,10 @@ struct EngineBlock {
     promoted: [Option<String>; 4],
     /// No `deleted_at` register on the node.
     live: bool,
+    /// The node's tag map, as `read_tags` dedups it.
+    tags: Vec<String>,
+    /// The node's alias map; `None` when it never held one.
+    aliases: Option<Vec<String>>,
 }
 
 /// One engine attachment entry and the node that holds it.
@@ -1886,6 +1892,8 @@ fn read_engine_space(bytes: &[u8]) -> Result<EngineSpace, AppError> {
                 position: core.position,
                 promoted,
                 live: engine.read_deleted_at(block_id)?.is_none(),
+                tags: engine.read_tags(block_id)?,
+                aliases: engine.read_page_aliases(block_id)?,
             },
         ));
     }
@@ -1900,10 +1908,10 @@ fn read_engine_space(bytes: &[u8]) -> Result<EngineSpace, AppError> {
 /// neither marks a space dirty nor creates an engine. A doc that cannot be
 /// exported or read fails the run, as a table the oracle cannot read does.
 fn read_engine_view(
-    state: &agaric_engine::loro::shared::LoroState,
+    registry: &agaric_engine::loro::registry::LoroEngineRegistry,
 ) -> Result<EngineView, AppError> {
     let mut view = EngineView::default();
-    for (space_id, bytes) in state.registry.snapshot_all_engines() {
+    for (space_id, bytes) in registry.snapshot_all_engines() {
         let space_id = space_id.as_str().to_owned();
         let (blocks, attachments) = read_engine_space(&bytes?)?;
         for (block_id, block) in blocks {
@@ -2249,35 +2257,209 @@ fn diff_attachment_fields(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Artefact 16 — `block_tags` and `page_aliases` against the Loro engine (#6207)
+// ---------------------------------------------------------------------------
+
+async fn dump_page_aliases(pool: &SqlitePool) -> Result<Vec<(String, String)>, AppError> {
+    let rows = sqlx::query!("SELECT page_id, alias FROM page_aliases")
+        .fetch_all(pool)
+        .await?;
+    Ok(rows.into_iter().map(|r| (r.page_id, r.alias)).collect())
+}
+
+const ENGINE_BLOCK_TAGS_OWNER: &str = "the tag writers in agaric-engine: \
+     project_add_tag_to_sql / project_remove_tag_to_sql after the engine apply (the local \
+     apply arms, the op-log recovery arms) and the SQL-only fallback that runs them without \
+     the engine, reproject_block_tags_from_engine (sync import, engine-first recovery), and \
+     the purge cascades: SQL shows one tag set while peers and an engine-first recovery use \
+     the engine's";
+
+const ENGINE_PAGE_ALIASES_OWNER: &str = "the alias writers in agaric-engine: \
+     project_add_page_alias_to_sql / project_remove_page_alias_to_sql after the engine apply \
+     (the local apply arms, the op-log recovery arms), reproject_page_aliases_from_engine \
+     (sync import, engine-first recovery; it gives a contested alias to the lower page id), \
+     the purge cascades, and repair::page_aliases, the boot backfill of rows written before \
+     #5387. Removing or purging a contested alias's holder does not hand the alias to the \
+     next claimant, which reads here as a missing row until an engine-first recovery \
+     projects it";
+
+/// The blocks a doc holds and `blocks` has a row for, each with that doc's
+/// space and node. A block on one side only is [`diff_engine_membership`]'s,
+/// and a block in a space with no engine has nothing to compare against.
+fn engine_held_blocks<'a>(
+    view: &'a EngineView,
+    by_id: &BTreeMap<&str, &BaseBlock>,
+) -> BTreeMap<&'a str, (&'a str, &'a EngineBlock)> {
+    view.blocks
+        .iter()
+        .filter(|((_, block_id), _)| by_id.contains_key(block_id.as_str()))
+        .map(|((space_id, block_id), node)| (block_id.as_str(), (space_id.as_str(), node)))
+        .collect()
+}
+
+/// `block_tags` as the held nodes' tag maps make it, less the tag ids with no
+/// `blocks` row: a purged tag's id stays in the map of every block it tagged,
+/// and no row can reference it.
+fn fold_engine_block_tags(
+    held: &BTreeMap<&str, (&str, &EngineBlock)>,
+    by_id: &BTreeMap<&str, &BaseBlock>,
+) -> BTreeSet<(String, String)> {
+    held.iter()
+        .flat_map(|(block_id, (_, node))| {
+            node.tags
+                .iter()
+                .filter(|tag_id| by_id.contains_key(tag_id.as_str()))
+                .map(|tag_id| ((*block_id).to_owned(), tag_id.clone()))
+        })
+        .collect()
+}
+
+/// `page_aliases` as the held pages' alias maps make it. An alias belongs to
+/// the lowest page id that claims it, spelled as that page's map holds it,
+/// whichever device merged the claims (#5387); claims are keyed by the alias
+/// trimmed and ASCII-lowercased, the fold `COLLATE NOCASE` compares with.
+fn fold_engine_page_aliases(
+    held: &BTreeMap<&str, (&str, &EngineBlock)>,
+) -> BTreeSet<(String, String)> {
+    let mut holders: BTreeMap<String, (&str, &str)> = BTreeMap::new();
+    // `held` iterates by page id, so a key's first claim is the lowest page's.
+    for (page_id, (_, node)) in held {
+        for alias in node.aliases.iter().flatten() {
+            let alias = alias.trim();
+            holders
+                .entry(alias.to_ascii_lowercase())
+                .or_insert((page_id, alias));
+        }
+    }
+    holders
+        .into_values()
+        .map(|(page_id, alias)| (page_id.to_owned(), alias.to_owned()))
+        .collect()
+}
+
+/// `(block, tag)` rows against the engine's, both directions, over the held
+/// blocks only.
+fn diff_engine_block_tags(
+    held: &BTreeMap<&str, (&str, &EngineBlock)>,
+    by_id: &BTreeMap<&str, &BaseBlock>,
+    block_tags: &[(String, String)],
+    out: &mut Vec<Divergence>,
+) {
+    let expected = fold_engine_block_tags(held, by_id);
+    let stored: BTreeSet<(String, String)> = block_tags
+        .iter()
+        .filter(|(block_id, _)| held.contains_key(block_id.as_str()))
+        .cloned()
+        .collect();
+    let key = |block_id: &str, tag_id: &str| {
+        let space_id = held.get(block_id).map_or("", |(space_id, _)| space_id);
+        format!("{space_id} / {block_id} -> {tag_id}")
+    };
+    for (block_id, tag_id) in expected.difference(&stored) {
+        out.push(Divergence {
+            artefact: "engine.block_tags.row",
+            key: key(block_id, tag_id),
+            expected: "a block_tags row (the engine's tag map holds the tag)".to_owned(),
+            actual: "no row in block_tags".to_owned(),
+            owner: ENGINE_BLOCK_TAGS_OWNER,
+        });
+    }
+    for (block_id, tag_id) in stored.difference(&expected) {
+        out.push(Divergence {
+            artefact: "engine.block_tags.row",
+            key: key(block_id, tag_id),
+            expected: "no row (the engine's tag map does not hold the tag)".to_owned(),
+            actual: "a row in block_tags".to_owned(),
+            owner: ENGINE_BLOCK_TAGS_OWNER,
+        });
+    }
+}
+
+/// `(page, alias)` rows against the engine's, both directions, over the held
+/// pages only. The key carries ids alone: an alias is the user's text, and the
+/// report a user files keeps keys and drops values (#609).
+fn diff_engine_page_aliases(
+    held: &BTreeMap<&str, (&str, &EngineBlock)>,
+    page_aliases: &[(String, String)],
+    out: &mut Vec<Divergence>,
+) {
+    let expected = fold_engine_page_aliases(held);
+    let stored: BTreeSet<(String, String)> = page_aliases
+        .iter()
+        .filter(|(page_id, _)| held.contains_key(page_id.as_str()))
+        .cloned()
+        .collect();
+    let key = |page_id: &str| {
+        let space_id = held.get(page_id).map_or("", |(space_id, _)| space_id);
+        format!("{space_id} / {page_id}")
+    };
+    for (page_id, alias) in expected.difference(&stored) {
+        out.push(Divergence {
+            artefact: "engine.page_aliases.row",
+            key: key(page_id),
+            expected: format!("a page_aliases row for {alias:?} (the lowest page id claiming it)"),
+            actual: format!("no row for {alias:?} on this page"),
+            owner: ENGINE_PAGE_ALIASES_OWNER,
+        });
+    }
+    for (page_id, alias) in stored.difference(&expected) {
+        out.push(Divergence {
+            artefact: "engine.page_aliases.row",
+            key: key(page_id),
+            expected: format!("no row for {alias:?} (no claim, or a lower page id's)"),
+            actual: format!("a page_aliases row for {alias:?}"),
+            owner: ENGINE_PAGE_ALIASES_OWNER,
+        });
+    }
+}
+
+/// `block_tags` and `page_aliases` against the engine view.
+fn diff_engine_tags_and_aliases(
+    view: &EngineView,
+    by_id: &BTreeMap<&str, &BaseBlock>,
+    block_tags: &[(String, String)],
+    page_aliases: &[(String, String)],
+    out: &mut Vec<Divergence>,
+) {
+    let held = engine_held_blocks(view, by_id);
+    diff_engine_block_tags(&held, by_id, block_tags, out);
+    diff_engine_page_aliases(&held, page_aliases, out);
+}
+
 /// SQL `blocks` against the Loro engine — the merge truth for text, the tree
 /// and typed scalar properties (AGENTS.md invariant 2). Every other artefact
 /// audits a cache against SQL base tables; this one audits the base table.
 ///
 /// Compared: row membership, `block_type`, `content`, `parent_id`, sibling
 /// order (see [`sibling_places`]) and the four promoted property columns,
-/// plus "live in the engine, deleted in SQL", and the `attachments` rows (see
-/// [`diff_engine_attachments`]). Not compared, each because a correct vault
-/// legitimately differs: the other `block_properties` rows (typed by
-/// `property_definitions`, and a dangling `value_ref` is dropped on purpose),
-/// `block_tags` (a purged tag's id stays in the engine's tag map), the
-/// reverse liveness direction (see [`diff_engine_columns`]), and page aliases
-/// (the lower page id holds a contested alias, #5387).
+/// plus "live in the engine, deleted in SQL", the `attachments` rows (see
+/// [`diff_engine_attachments`]), and the `block_tags` and `page_aliases` rows
+/// of the blocks both sides hold (#6207), with a purged tag's id dropped (see
+/// [`fold_engine_block_tags`]) and a contested alias given to the lower page
+/// id (see [`fold_engine_page_aliases`]). Not compared, each because a correct
+/// vault legitimately differs: the other `block_properties` rows (typed by
+/// `property_definitions`, and a dangling `value_ref` is dropped on purpose)
+/// and the reverse liveness direction (see [`diff_engine_columns`]).
 ///
 /// The engine side is read through the engine's own read API, the calls
 /// `db::recovery::reproject_space_from_engine` makes; none of the projection
 /// writers it audits runs. Divergences come back membership first, then
-/// columns, then attachments, in a stable order.
+/// columns, attachments, tags and aliases, in a stable order.
 pub fn reconcile_engine(
     state: &agaric_engine::loro::shared::LoroState,
     blocks: &[BaseBlock],
     attachments: &[BaseAttachment],
+    block_tags: &[(String, String)],
+    page_aliases: &[(String, String)],
 ) -> Result<Vec<Divergence>, AppError> {
-    let view = read_engine_view(state)?;
+    let view = read_engine_view(&state.registry)?;
     let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
     let mut out = Vec::new();
     diff_engine_membership(&view, &by_id, &mut out);
     diff_engine_columns(&view, &by_id, &mut out);
     diff_engine_attachments(&view, &by_id, attachments, &mut out);
+    diff_engine_tags_and_aliases(&view, &by_id, block_tags, page_aliases, &mut out);
     Ok(out)
 }
 
@@ -3198,6 +3380,75 @@ async fn read_fts_blocks(pool: &SqlitePool) -> Result<BTreeMap<String, Vec<Strin
 }
 
 // ---------------------------------------------------------------------------
+// Artefact 17 — the `spaces` registry (#6207)
+// ---------------------------------------------------------------------------
+
+/// Every `is_space` property row, as `(block_id, value_text)`.
+async fn dump_is_space_flags(pool: &SqlitePool) -> Result<Vec<(String, Option<String>)>, AppError> {
+    let rows =
+        sqlx::query!("SELECT block_id, value_text FROM block_properties WHERE key = 'is_space'")
+            .fetch_all(pool)
+            .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.block_id, r.value_text))
+        .collect())
+}
+
+async fn dump_spaces(pool: &SqlitePool) -> Result<BTreeSet<String>, AppError> {
+    let rows = sqlx::query_scalar!("SELECT id FROM spaces")
+        .fetch_all(pool)
+        .await?;
+    Ok(rows.into_iter().collect())
+}
+
+const SPACES_MISSING_OWNER: &str = "the spaces_register_is_space trigger (migration 0089), \
+     which registers the block in the transaction that inserts its is_space = 'true' property \
+     row: every path that makes a space (create_space, the seeded-space bootstrap, the sync \
+     and recovery projections, snapshot restore) relies on it, so no block can be placed in \
+     this space";
+
+const SPACES_EXTRA_OWNER: &str = "a spaces row leaves only with its block's purge, by FK \
+     cascade (migration 0089), so either a writer inserted it without the is_space = 'true' \
+     row the trigger keys on, or a DeleteProperty(is_space) removed the flag and the registry \
+     kept the row, as 0089 designs it: every registry reader still treats the block as a space";
+
+/// Artefact 17 — the `spaces` registry against the blocks carrying
+/// `is_space = 'true'`, both directions. A soft-deleted space keeps its row,
+/// as it keeps its `is_space` property (0089: a live space is a registry row
+/// joined to a live block), so liveness is not consulted; a purged space has
+/// neither.
+fn diff_spaces_registry(
+    flags: &[(String, Option<String>)],
+    registry: &BTreeSet<String>,
+    out: &mut Vec<Divergence>,
+) {
+    let flagged: BTreeSet<String> = flags
+        .iter()
+        .filter(|(_, value)| value.as_deref() == Some("true"))
+        .map(|(block_id, _)| block_id.clone())
+        .collect();
+    for block_id in flagged.difference(registry) {
+        out.push(Divergence {
+            artefact: "spaces.row",
+            key: block_id.clone(),
+            expected: "a spaces row (the block carries is_space = 'true')".to_owned(),
+            actual: "no row in spaces".to_owned(),
+            owner: SPACES_MISSING_OWNER,
+        });
+    }
+    for block_id in registry.difference(&flagged) {
+        out.push(Divergence {
+            artefact: "spaces.row",
+            key: block_id.clone(),
+            expected: "no row (the block carries no is_space = 'true')".to_owned(),
+            actual: "a row in spaces".to_owned(),
+            owner: SPACES_EXTRA_OWNER,
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The oracle
 // ---------------------------------------------------------------------------
 
@@ -3732,6 +3983,14 @@ async fn reconcile_keeping_inherited(
     let stored_inherited = dump_block_tag_inherited(pool).await?;
     diff_block_tag_inherited_rows(&expected_inherited, &stored_inherited, &mut out);
 
+    // Artefact 17, maintained in the transaction of the property write, so a
+    // per-op gate like the rest. It folds `block_properties` alone.
+    diff_spaces_registry(
+        &dump_is_space_flags(pool).await?,
+        &dump_spaces(pool).await?,
+        &mut out,
+    );
+
     Ok((out, (expected_inherited, stored_inherited)))
 }
 
@@ -3791,6 +4050,8 @@ pub async fn reconcile_all(
         engines,
         &blocks,
         &dump_attachments(pool).await?,
+        &dump_block_tags(pool).await?,
+        &dump_page_aliases(pool).await?,
     )?);
     Ok(out)
 }

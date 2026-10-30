@@ -135,7 +135,8 @@ async fn fresh_pool(name: &str) -> (SqlitePool, TempDir) {
     (pool, dir)
 }
 
-/// Register a test space (`blocks` row + `spaces` FK target) in a fresh DB.
+/// Register a test space (`blocks` row, `is_space` row + the `spaces` FK
+/// target its trigger writes) in a fresh DB.
 async fn seed_space_row(pool: &SqlitePool, space_id: &str) {
     // The space block itself carries `space_id = NULL` (membership is itself);
     // a self-referencing `space_id` would violate the `blocks.space_id
@@ -153,12 +154,35 @@ async fn seed_space_row(pool: &SqlitePool, space_id: &str) {
     .execute(pool)
     .await
     .unwrap();
+    // The `is_space` row registers the space through migration 0089's
+    // trigger, as every production space write does.
     // dynamic-sql: test-only harness seed/readback (not a production query path)
-    sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
-        .bind(space_id)
-        .execute(pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT OR IGNORE INTO block_properties (block_id, key, value_text) \
+         VALUES (?, 'is_space', 'true')",
+    )
+    .bind(space_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Fail the case unless `block_tags`, `page_aliases` and the `spaces` registry
+/// agree with their sources (#6207): the engines in `registry` and the
+/// `is_space` rows.
+async fn assert_projected_tables(
+    pool: &SqlitePool,
+    registry: &LoroEngineRegistry,
+    context: &str,
+) -> Result<(), TestCaseError> {
+    if let Some(report) = crate::reconciliation_oracle::projected_tables_reconciliation_failure(
+        pool, registry, context,
+    )
+    .await
+    {
+        prop_assert!(false, "{}", report);
+    }
+    Ok(())
 }
 
 /// Seed the rooting page into BOTH the per-space engine tree AND SQL so every
@@ -916,6 +940,7 @@ proptest! {
                     "SQL positions not dense 1..=N for parent {:?}", parent
                 );
             }
+            assert_projected_tables(&pool, &state.registry, "B2 end of chain").await?;
             Ok(())
         })?;
     }
@@ -1353,6 +1378,7 @@ proptest! {
                 0,
                 "an op took the SQL-only FALLBACK — the test is false-green (not the engine path)"
             );
+            assert_projected_tables(&pool, &state.registry, "B6 end of chain").await?;
 
             // NON-VACUITY: a green oracle over an empty artefact observes
             // nothing. Four live pages were seeded (the two space blocks, the
@@ -1507,10 +1533,10 @@ proptest! {
                 "fts_blocks must hold the seeded blocks for the oracle to observe anything, got {:?}",
                 coverage
             );
-            // #4679 non-vacuity for the two artefacts it made reachable that
-            // still have NO oracle (#3345 takes them next). What is pinned is
-            // that the GENERATOR produces them, so an oracle written against
-            // B6 cannot pass unconditionally the way one would have before:
+            // #4679 non-vacuity for the two inputs it made reachable. What is
+            // pinned is that the GENERATOR produces them, so the oracles over
+            // them (`block_tags` against the engine, #6207) cannot pass
+            // unconditionally the way they would have before:
             //
             //  * a date op leaves a non-NULL `due_date` / `scheduled_date`
             //    column (before #4679 it projected a column CLEAR, so this
@@ -1600,6 +1626,7 @@ proptest! {
                 "B3 first boot took the SQL-only fallback"
             );
             let first = read_block_positions(&pool_a).await;
+            assert_projected_tables(&pool_a, &state.registry, "B3 first boot").await?;
 
             // --- Fresh boot: a clean DB + a CLEARED engine, then re-apply the
             //     SAME resolved op chain in seq order through the production
@@ -1636,6 +1663,7 @@ proptest! {
             );
 
             let replayed = read_block_positions(&pool_b).await;
+            assert_projected_tables(&pool_b, &state.registry, "B3 fresh boot").await?;
 
             prop_assert_eq!(
                 first,
@@ -1695,6 +1723,8 @@ proptest! {
             merge_snapshot(&pool_b, &reg_b, "peer-B", &snap_b).await?;
             merge_snapshot(&pool_b, &reg_b, "peer-B", &snap_a).await?;
             reproject_all_groups(&pool_b, &reg_b, "peer-B").await;
+            assert_projected_tables(&pool_a, &reg_a, "B4 peer A after both imports").await?;
+            assert_projected_tables(&pool_b, &reg_b, "B4 peer B after both imports").await?;
 
             let a_pos = read_block_positions(&pool_a).await;
             let b_pos = read_block_positions(&pool_b).await;
@@ -1919,6 +1949,7 @@ proptest! {
             let remote_links = read_block_links(&pool_remote).await;
             let remote_tags = read_block_tags(&pool_remote).await;
             let remote_tag_inherited = read_block_tag_inherited(&pool_remote).await;
+            assert_projected_tables(&pool_remote, &state.registry, "B5 REMOTE path").await?;
 
             // --- LOCAL path: call `apply_*_via_loro` directly. ---
             state.registry.clear();
@@ -1943,6 +1974,7 @@ proptest! {
             let local_links = read_block_links(&pool_local).await;
             let local_tags = read_block_tags(&pool_local).await;
             let local_tag_inherited = read_block_tag_inherited(&pool_local).await;
+            assert_projected_tables(&pool_local, &state.registry, "B5 LOCAL path").await?;
 
             prop_assert_eq!(
                 local_blocks,

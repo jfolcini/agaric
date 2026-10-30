@@ -933,6 +933,53 @@ pub async fn settle_block_space_ids_for_op(
     Ok(ran)
 }
 
+/// The formatted first divergence of the three tables #6207 audits —
+/// `block_tags` and `page_aliases` against `registry`'s engines, the `spaces`
+/// registry against `is_space` — or `None` when they agree.
+///
+/// Not the whole [`reconcile_engine`]: the harness fixtures seed blocks into
+/// SQL alone, which its membership arm rightly reports.
+pub async fn projected_tables_reconciliation_failure(
+    pool: &SqlitePool,
+    registry: &agaric_engine::loro::registry::LoroEngineRegistry,
+    context: &str,
+) -> Option<String> {
+    let divergences = match async {
+        let blocks = dump_blocks(pool).await?;
+        let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
+        let mut out = Vec::new();
+        diff_engine_tags_and_aliases(
+            &read_engine_view(registry)?,
+            &by_id,
+            &dump_block_tags(pool).await?,
+            &dump_page_aliases(pool).await?,
+            &mut out,
+        );
+        diff_spaces_registry(
+            &dump_is_space_flags(pool).await?,
+            &dump_spaces(pool).await?,
+            &mut out,
+        );
+        Ok::<_, AppError>(out)
+    }
+    .await
+    {
+        Ok(d) => d,
+        Err(e) => {
+            return Some(format!(
+                "projected-tables oracle could not read the database at [{context}]: {e}"
+            ));
+        }
+    };
+    let first = divergences.first()?;
+    Some(format!(
+        "PROJECTED TABLES RECONCILIATION FAILED at [{context}]\n  \
+         block_tags / page_aliases / spaces disagree with their sources in {} place(s); \
+         first:\n    {first}",
+        divergences.len(),
+    ))
+}
+
 /// The formatted first divergence, or `None` when derived state reconciles.
 ///
 /// Returns a `String` rather than panicking so proptest callers can feed it
