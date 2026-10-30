@@ -64,10 +64,7 @@ test.describe('Structural transforms via Turn into (#253, #1960) @editor', () =>
     await expect(firstBlock.locator('ol, ul, li')).toHaveCount(0)
 
     // The `1.` is drawn by the read pipeline from the property. It is asserted
-    // after a reopen because the JS tauri mock emits no
-    // `block:properties-changed` event, so the property batch this marker
-    // reads only refetches on the next mount (a mock↔backend gap, not a
-    // product one) — and the reopen additionally proves the style persisted.
+    // after a reopen, which proves the style persisted.
     await reopenPage(page, 'Getting Started')
     await expect(firstBlock.getByTestId('list-marker')).toHaveText('1.')
     await expect(firstBlock).toContainText('first item')

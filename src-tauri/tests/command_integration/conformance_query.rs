@@ -286,6 +286,26 @@ const PEER_REF_ATTRS: &[&str] = &[
     "unpaired_by_peer_at_ms",
 ];
 
+/// An `McpAgent` (#5667), whose token head is its name: the id, token and
+/// `created_at_ms` of a created agent are minted per stack. `space_ids`
+/// follows as [`list_segments`]. MUST match `MCP_AGENT_TOKEN` in the TS twin.
+const MCP_AGENT_ATTRS: &[&str] = &["mode", "last_used_ms"];
+
+/// `token` plus one `#<key>=<element>` segment per element of the list
+/// `row[key]`, or `#<key>=null` for none, so each element relabels as an
+/// id-valued attribute does. MUST match `listKeys` in the TS twin.
+fn list_segments(mut token: String, row: &Value, key: &str) -> String {
+    match row.get(key).and_then(Value::as_array) {
+        None => token.push_str(&format!("#{key}=null")),
+        Some(items) => {
+            for item in items {
+                token.push_str(&format!("#{key}={}", attr_value(key, Some(item))));
+            }
+        }
+    }
+    token
+}
+
 /// A `HistoryEntry` (#3824), whose token head is the `op_type` rather than an
 /// id. MUST match `HISTORY_TOKEN` in the TS twin.
 ///
@@ -819,6 +839,15 @@ fn projecting_at() -> String {
     PROJECTING_STEP
         .try_with(|s| format!("{s}: "))
         .unwrap_or_default()
+}
+
+/// A type change step's `key`, `valueType` and `options` (#5841 S3).
+fn type_change_target(args: &StepArgs<'_>) -> PropertyTypeTarget {
+    PropertyTypeTarget {
+        key: arg_req(args, "key"),
+        value_type: arg_req(args, "valueType"),
+        options: opt_arg_as(args, "options"),
+    }
 }
 
 fn opt_arg(args: &StepArgs<'_>, key: &str) -> Option<Value> {
@@ -1547,6 +1576,51 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 next_cursor: None,
             }
         }
+        // ── What a type change converts and removes (#5841 S3) ──
+        //
+        // One headed row, `property_type_change_counts#converted=<n>#removed=<n>`;
+        // then one kind's values, paged by block id, each with its page,
+        // whether it is trashed, and the value before and after.
+        "preview_property_type_change" => {
+            let counts = preview_property_type_change_inner(
+                pool,
+                &arg_req::<String>(args, "spaceId"),
+                type_change_target(args),
+            )
+            .await?;
+            let v = serde_json::to_value(counts).expect("serialize PropertyTypeChangeCounts");
+            RawResult {
+                rows: vec![format!(
+                    "property_type_change_counts#converted={}#removed={}",
+                    attr_value("converted", v.get("converted")),
+                    attr_value("removed", v.get("removed")),
+                )],
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
+        "list_property_type_change_values" => {
+            let resp = list_property_type_change_values_inner(
+                pool,
+                &arg_req::<String>(args, "spaceId"),
+                type_change_target(args),
+                arg_req(args, "kind"),
+                opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
+                opt_arg(args, "limit").and_then(|v| v.as_i64()),
+            )
+            .await?;
+            page_result_with(
+                &serde_json::to_value(&resp).expect("serialize PageResponse"),
+                &|row| {
+                    row_token(
+                        row,
+                        "block_id",
+                        &["page_id", "deleted", "value", "converted"],
+                    )
+                },
+            )
+        }
         // ── What a cross-space move drops (#5841 S0.6) ──
         //
         // `key#count=<n>` per key, ordered by key; then one key's values,
@@ -1721,6 +1795,26 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                     attr_value("eligible_ops", v.get("eligible_ops")),
                     attr_value("retention_days", v.get("retention_days")),
                 )],
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
+        // #5667 — `ORDER BY name, id` over a NOCASE name. Keyed by name, which
+        // is unique in any letter case, because a created agent's id is minted
+        // per stack; `token` and `created_at_ms` are too. Each granted space is
+        // its own `space_ids` segment so the relabel reaches it.
+        "list_mcp_agents" => {
+            let rows = agaric_lib::commands::mcp_agents::list_mcp_agents_inner(pool).await?;
+            let v = serde_json::to_value(&rows).expect("serialize Vec<McpAgent>");
+            RawResult {
+                rows: v.as_array().map_or_else(Vec::new, |a| {
+                    a.iter()
+                        .map(|r| {
+                            list_segments(row_token(r, "name", MCP_AGENT_ATTRS), r, "space_ids")
+                        })
+                        .collect()
+                }),
                 has_more: None,
                 total_count: None,
                 next_cursor: None,
@@ -2965,7 +3059,19 @@ pub(super) mod reader_delegation_tests {
     // `property_definitions` per key and one `query!` COUNT over
     // `block_properties JOIN blocks` (`commands/property_keys.rs`). The merge they describe is
     // `merge_property_key`, not a read arm. Writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 63;
+    // #5841 S3 wired `preview_property_type_change` and
+    // `list_property_type_change_values`: a `query_as!` SELECT over
+    // `property_definitions` and a `query!` SELECT over `block_properties JOIN
+    // blocks`, the paged one a second `query!` SELECT over `blocks` behind
+    // `PageRequest::new` and `build_page_response`
+    // (`commands/property_types.rs`). The change they
+    // describe is `change_property_type`, not a read arm. Writer set
+    // unchanged.
+    // #5667 wired `list_mcp_agents`: one `query_as!` SELECT over
+    // `mcp_agents` (`mcp::agents::list_agents`). The table's writers are
+    // `create_mcp_agent` / `revoke_mcp_agent` and the MCP server's
+    // `last_used_ms` stamp, none a read arm. Writer set unchanged.
+    const SWEPT_ARM_COUNT: usize = 66;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

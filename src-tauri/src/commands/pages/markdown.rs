@@ -19,7 +19,7 @@ use agaric_core::error::AppError;
 use agaric_core::ulid::{BlockId, PageId};
 use agaric_engine::import;
 use agaric_engine::import::{
-    ImportAnchor, ImportProgressUpdate, ImportResult, VaultFile, is_escaped,
+    ImportAnchor, ImportProgressUpdate, ImportResult, VaultFile, is_escaped, percent_decode,
 };
 use agaric_store::pagination::{BlockRow, Cursor, NULL_POSITION_SENTINEL, PageRequest};
 use agaric_store::space::SpaceId;
@@ -1926,11 +1926,12 @@ async fn load_attachments(
     //
     //     `attachments` has no "inline" flag: an inline image leaves BOTH a
     //     row here AND a `![filename](attachment:<id>)` token in the owning
-    //     block's `content` (same id); a non-image file (or an image
+    //     block's `content` (same id), as an imported file link leaves a
+    //     `[label](attachment:<id>)` token; a non-image file (or an image
     //     dropped with no editor open) leaves ONLY a row. The render loop
     //     below dedups on that token — via a plain substring check against
     //     `attachment:<id>`, which is reliable because ULIDs are unique —
-    //     so inline images aren't double-emitted while block-file
+    //     so inline images and links aren't double-emitted while block-file
     //     attachments (previously invisible in export) get a link line.
     //
     //     Mirrors `list_attachments_batch_inner`'s `json_each(?)` batching
@@ -3882,16 +3883,19 @@ fn first_line_needs_escape(
 /// still sees full bytes — never a 0-byte buffer left behind by a `mem::take`.
 ///
 /// `match_vault_file` keys on `path`/basename (never bytes), so this pre-pass is
-/// stable even as the ingest loop later empties `bytes` via `mem::take`.
+/// stable even as the ingest loop later empties `bytes` via `mem::take`. It
+/// resolves each ref from the same `note_dir` the ingest does, so both pick the
+/// same file.
 pub fn ingest_read_counts(
     pending_attachments: &[(String, Vec<import::AttachmentRef>)],
+    note_dir: &str,
     vault_files: &[VaultFile],
 ) -> HashMap<usize, usize> {
     let mut counts: HashMap<usize, usize> = HashMap::new();
     for (_block_id, refs) in pending_attachments {
         for att in refs {
             if let Some((idx, _ambiguous)) =
-                import::match_vault_file(&att.original_ref, vault_files)
+                import::match_vault_file(&att.original_ref, note_dir, vault_files)
             {
                 *counts.entry(idx).or_insert(0) += 1;
             }
@@ -4352,39 +4356,9 @@ fn relative_md_link_title(dest: &str, dir: &str) -> Option<String> {
         return None;
     }
     let stem = &dest[..dest.len() - ".md".len()];
-    let mut segments: Vec<&str> = dir.split('/').filter(|s| !s.is_empty()).collect();
-    for segment in stem.split('/') {
-        match segment {
-            "" | "." => {}
-            ".." if segments.len() > 1 => {
-                segments.pop();
-            }
-            ".." => return None,
-            _ => segments.push(segment),
-        }
-    }
-    Some(folder_path_to_namespace_title(&segments.join("/"))).filter(|t| !t.is_empty())
-}
-
-/// `%XX` escapes decoded to their bytes, read as UTF-8; anything else, and a
-/// malformed escape, stays as written.
-fn percent_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        let hex = bytes.get(i + 1..i + 3).filter(|_| bytes[i] == b'%');
-        if let Some(byte) =
-            hex.and_then(|h| u8::from_str_radix(std::str::from_utf8(h).ok()?, 16).ok())
-        {
-            out.push(byte);
-            i += 3;
-        } else {
-            out.push(bytes[i]);
-            i += 1;
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
+    let (vault, dir) = dir.split_once('/').unwrap_or((dir, ""));
+    let path = import::resolve_vault_path(dir, stem)?;
+    Some(folder_path_to_namespace_title(&format!("{vault}/{path}"))).filter(|t| !t.is_empty())
 }
 
 /// #128 / #1932 / #1934 — announce the import before the transaction opens.
@@ -6877,13 +6851,19 @@ fn take_or_clone_bytes(
 
 /// The vault-file index one attachment ref resolves to. A ref matching nothing
 /// is left as-is, and one matching several files by basename uses the first —
-/// both warn rather than failing the already-durable import.
+/// both warn rather than failing the already-durable import, except a link
+/// matching nothing, which may point anywhere.
 fn match_ref_to_vault_file(
     att: &import::AttachmentRef,
+    note_dir: &str,
     vault_files: &[VaultFile],
     warnings: &mut Vec<String>,
 ) -> Option<usize> {
-    let Some((idx, ambiguous)) = import::match_vault_file(&att.original_ref, vault_files) else {
+    let Some((idx, ambiguous)) = import::match_vault_file(&att.original_ref, note_dir, vault_files)
+    else {
+        if att.is_link() {
+            return None;
+        }
         warnings.push(format!(
             "referenced attachment '{}' was not found among the imported \
              vault files; left as-is",
@@ -6901,8 +6881,25 @@ fn match_ref_to_vault_file(
     Some(idx)
 }
 
+/// The token a ref to the ingested attachment `id` is rewritten to: a link
+/// stays the link `[label](attachment:<id>)`, an embedded image stays the
+/// image `![alt](attachment:<id>)`, and any other embedded file becomes a
+/// link, since a PDF written as an image renders broken. A link is labelled by
+/// its label or alt, else the file's name.
+fn attachment_token(att: &import::AttachmentRef, id: &str, filename: &str, mime: &str) -> String {
+    if !att.is_link() && mime.starts_with("image/") {
+        return format!("![{}](attachment:{id})", att.alt);
+    }
+    let label = if att.alt.is_empty() {
+        filename
+    } else {
+        &att.alt
+    };
+    format!("[{}](attachment:{id})", attachment_link_label(label))
+}
+
 /// Ingest every attachment ref detected in ONE content block, returning the
-/// `(ref, attachment id)` pairs its content rewrite needs.
+/// `(ref, attachment token)` pairs its content rewrite needs.
 ///
 /// ROW OWNERSHIP: a FRESH attachment row per owning block (matching the editor's
 /// `add_attachment_with_bytes_inner`; identical bytes may still share a
@@ -6919,25 +6916,27 @@ fn match_ref_to_vault_file(
 /// original ref in place and never abort the already-durable import.
 async fn ingest_block_attachments(
     ctx: &mut ImportCtx<'_>,
+    note_dir: &str,
     vault_files: &mut [VaultFile],
     ingest_counts: &mut HashMap<usize, usize>,
     moved_out: &mut std::collections::HashSet<usize>,
     block_id: &str,
     refs: &[import::AttachmentRef],
 ) -> Vec<(import::AttachmentRef, String)> {
-    // Per-BLOCK cache: original_ref → resolved `attachment:<id>` for
+    // Per-BLOCK cache: original_ref → the ingested `(id, filename, mime)` for
     // refs already ingested for THIS block. NOT carried across blocks.
-    let mut block_ingested: HashMap<String, String> = HashMap::new();
+    let mut block_ingested: HashMap<String, (String, String, String)> = HashMap::new();
     let mut block_rewrites: Vec<(import::AttachmentRef, String)> = Vec::new();
 
     for att in refs {
         // Already ingested for this block (same original ref string).
-        if let Some(attachment_id) = block_ingested.get(&att.original_ref) {
-            block_rewrites.push((att.clone(), attachment_id.clone()));
+        if let Some((id, filename, mime)) = block_ingested.get(&att.original_ref) {
+            block_rewrites.push((att.clone(), attachment_token(att, id, filename, mime)));
             continue;
         }
 
-        let Some(idx) = match_ref_to_vault_file(att, vault_files, &mut ctx.warnings) else {
+        let Some(idx) = match_ref_to_vault_file(att, note_dir, vault_files, &mut ctx.warnings)
+        else {
             continue;
         };
         let (filename, mime_type, size_bytes) = vault_file_ingest_fields(&vault_files[idx]);
@@ -6973,8 +6972,8 @@ async fn ingest_block_attachments(
             ctx.materializer,
             ctx.app_data_dir,
             BlockId::from_trusted(block_id),
-            filename,
-            mime_type,
+            filename.clone(),
+            mime_type.clone(),
             bytes,
         )
         .await
@@ -6994,16 +6993,20 @@ async fn ingest_block_attachments(
             }
         };
 
-        block_ingested.insert(att.original_ref.clone(), attachment_id.clone());
-        block_rewrites.push((att.clone(), attachment_id));
+        let token = attachment_token(att, &attachment_id, &filename, &mime_type);
+        block_ingested.insert(
+            att.original_ref.clone(),
+            (attachment_id, filename, mime_type),
+        );
+        block_rewrites.push((att.clone(), token));
     }
     block_rewrites
 }
 
-/// Rewrite one block's content: each matched ref's full token (`![[file]]` /
-/// `![alt](path)`) → canonical `![alt](attachment:<id>)`, preserving the
-/// original alt text. The CURRENT content is fetched first (it is the durable,
-/// tag/link-rewritten version) and tokens are replaced in it.
+/// Rewrite one block's content: each matched ref's full token (`![[file]]`,
+/// `![alt](path)`, `[label](path)`) → its canonical `attachment:<id>` token
+/// ([`attachment_token`]). The CURRENT content is fetched first (it is the
+/// durable, tag/link-rewritten version) and tokens are replaced in it.
 ///
 /// A transient DB read error, a vanished block, or a failed edit must NOT abort
 /// the (already durable) import — each warns and skips instead.
@@ -7038,9 +7041,8 @@ async fn rewrite_block_attachment_refs(
         // Block vanished (concurrent delete) — nothing to rewrite.
         return;
     };
-    for (att, attachment_id) in block_rewrites {
-        let canonical = format!("![{}](attachment:{})", att.alt, attachment_id);
-        new_content = new_content.replacen(&att.full_match, &canonical, 1);
+    for (att, token) in block_rewrites {
+        new_content = new_content.replacen(&att.full_match, token, 1);
     }
 
     // Edit via the normal in-tx content-update path (opens its own
@@ -7089,10 +7091,18 @@ async fn ingest_attachments(
     if pending_attachments.is_empty() {
         return;
     }
+    // The note's folder within the vault: its title's path, less the picked
+    // folder that leads it and the note's own name.
+    let note_dir = ctx
+        .page_title
+        .split_once('/')
+        .and_then(|(_vault, path)| path.rsplit_once('/'))
+        .map_or("", |(dir, _name)| dir)
+        .to_string();
     // #2724 — count how many INGEST ATTEMPTS will read each vault file so a
     // SINGLE-ATTEMPT file (the overwhelming common case) can have its bytes
     // MOVED out at ingest instead of cloned.
-    let mut ingest_counts = ingest_read_counts(&pending_attachments, &vault_files);
+    let mut ingest_counts = ingest_read_counts(&pending_attachments, &note_dir, &vault_files);
     // Defence-in-depth for the move/clone decision: an index whose bytes were
     // taken (moved) is recorded here so the clone arm can never re-ingest an
     // emptied buffer as a 0-byte attachment, even if the count above were ever
@@ -7103,6 +7113,7 @@ async fn ingest_attachments(
     for (block_id, refs) in &pending_attachments {
         let block_rewrites = ingest_block_attachments(
             ctx,
+            &note_dir,
             &mut vault_files,
             &mut ingest_counts,
             &mut moved_out,

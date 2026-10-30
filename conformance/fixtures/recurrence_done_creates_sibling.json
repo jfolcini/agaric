@@ -462,48 +462,56 @@
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"todo_state\"]"],
       "name": "daily_done_makes_the_next_day",
       "returns": ["B2#todo_state=DONE"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"todo_state\"]"],
       "name": "done_again_makes_nothing",
       "returns": ["B2#todo_state=DONE"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B3#changed_keys=[\"todo_state\"]"],
       "name": "weekly_done_shifts_both_dates",
       "returns": ["B3#todo_state=DONE"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B4#changed_keys=[\"todo_state\"]"],
       "name": "monthly_done_clamps_the_month_end",
       "returns": ["B4#todo_state=DONE"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B11#changed_keys=[\"todo_state\"]"],
       "name": "next_occurrence_done_keeps_the_clamped_day",
       "returns": ["B11#todo_state=DONE"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B5#changed_keys=[\"todo_state\"]"],
       "name": "property_write_done_makes_the_next_occurrence",
       "returns": ["B5"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B7#changed_keys=[\"todo_state\"]"],
       "name": "undated_task_starts",
       "returns": ["B7#todo_state=DOING"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B7#changed_keys=[\"todo_state\"]"],
       "name": "undated_done_appends_under_its_parent",
       "returns": ["B7#todo_state=DONE"]
     }

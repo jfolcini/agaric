@@ -421,9 +421,11 @@ function PageModeDocument({
     openHistory: () => {},
     turnInto: () => {},
   })
-  // A block made a task loses its list style through page mode's lists (#5691 D3).
-  const [clearLists] = useState(() => (ids: string[]) => {
+  // A block made a task loses its list style through page mode's lists (#5691 D3). Each write
+  // joins the change's undo entry by its own refs (#6156), so none are handed back.
+  const [clearLists] = useState(() => (ids: string[]): OpRef[] => {
     for (const id of ids) actions.current.setListStyle(id, 'none')
+    return []
   })
   const { handleToggleTodo, handleTogglePriority } = useBlockProperties(clearLists)
   const [drawerBlockId, setDrawerBlockId] = useState<string | null>(null)

@@ -1248,7 +1248,7 @@ async fn handle_set_property(
     // checkbox / priority badge etc. may need to re-render), so emit the
     // page-keyed `blocks:changed` AND the existing `block:properties-changed`
     // event with the exact `{ block_id, changed_keys }` payload the local
-    // `set_property` command emits (`emit_property_changed_event`), so the
+    // `set_property` command emits (`property_changed_events`), so the
     // property-change dispatcher needs no changes.
     emit_blocks_changed_for(pool, emitter, BlockId::from_trusted(&block_id)).await;
     emitter.emit_property_changed(block_id, vec![key_for_emit]);

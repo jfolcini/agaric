@@ -60,6 +60,7 @@ pub mod properties;
 #[cfg(test)]
 mod property_key_proptest;
 pub mod property_keys;
+pub mod property_types;
 pub mod queries;
 pub mod reconciliation;
 pub mod recovery;
@@ -173,6 +174,12 @@ pub use properties::{
 pub use property_keys::{
     PropertyMergeCounts, merge_property_key, merge_property_key_inner, preview_property_merge,
     preview_property_merge_inner, rename_property_key, rename_property_key_inner,
+};
+pub use property_types::{
+    PropertyTypeChangeCounts, PropertyTypeChangeKind, PropertyTypeChangeValue, PropertyTypeTarget,
+    change_property_type, change_property_type_inner, list_property_type_change_values,
+    list_property_type_change_values_inner, preview_property_type_change,
+    preview_property_type_change_inner,
 };
 pub use queries::{
     DateFilter, DateOp, MatchOffset, NamedDateRange, PropertyFilter, SearchBlockRow, SearchFilter,
@@ -588,6 +595,14 @@ pub struct CreatedBlocks {
 pub struct MovedBlocks {
     /// One row per moved root, in input order.
     pub moves: Vec<MoveResponse>,
+}
+
+/// Reply of [`set_todo_state_batch`]; same envelope as [`CreatedBlocks`], for
+/// a count (#6156).
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct TodoStateBatch {
+    /// How many live blocks it set; a missing or deleted id is skipped.
+    pub updated: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]

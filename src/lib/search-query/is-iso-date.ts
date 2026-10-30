@@ -26,7 +26,9 @@ export function isIsoDate(s: string): boolean {
   const d = Number(parts[2])
   if (m < 1 || m > 12) return false
   if (d < 1 || d > 31) return false
-  // Use Date for calendar validation (UTC parsing avoids TZ skew).
-  const dt = new Date(Date.UTC(y, m - 1, d))
+  // Use Date for calendar validation (UTC avoids TZ skew; `setUTCFullYear`,
+  // unlike `Date.UTC`, does not read years 0-99 as 1900-1999).
+  const dt = new Date(0)
+  dt.setUTCFullYear(y, m - 1, d)
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d
 }

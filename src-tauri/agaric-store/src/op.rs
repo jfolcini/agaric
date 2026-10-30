@@ -332,6 +332,9 @@ pub struct RenamePropertyKeyPayload {
 pub enum RewriteReason {
     /// One key merged into another of the same type.
     Merge,
+    /// A key's type changed; each value the new type converts or removes is
+    /// written.
+    ChangeType,
 }
 
 /// One definition a `rewrite_properties` op writes: `def` replaces `prior`,
@@ -1528,6 +1531,55 @@ mod tests {
         assert!(json.contains(r#""content_hash":"ab12""#), "got {json}");
         let back: AddAttachmentPayload = serde_json::from_str(&json).unwrap();
         assert_eq!(back, payload);
+    }
+
+    /// #5841 S3: a type change is a `rewrite_properties` whose reason is
+    /// `change_type`: one definition write, and a value write per value it
+    /// converts or removes. `all_test_payloads` holds one payload per op
+    /// type, so this one is pinned on its own.
+    #[test]
+    fn rewrite_properties_change_type_round_trips_5841() {
+        let def = |value_type: &str| PropertyDefState {
+            value_type: value_type.into(),
+            options: None,
+        };
+        let payload = OpPayload::RewriteProperties(RewritePropertiesPayload {
+            space_id: BlockId::from_string(TEST_BID).unwrap(),
+            reason: RewriteReason::ChangeType,
+            defs: vec![PropertyDefWrite {
+                key: "effort".into(),
+                def: Some(def("number")),
+                prior: Some(def("text")),
+            }],
+            values: vec![
+                PropertyValueWrite {
+                    block_id: BlockId::from_string(TEST_PID).unwrap(),
+                    key: "effort".into(),
+                    value: Some(PropertyValueFields {
+                        value_num: Some(42.0),
+                        ..Default::default()
+                    }),
+                    prior: Some(PropertyValueFields {
+                        value_text: Some("042".into()),
+                        ..Default::default()
+                    }),
+                },
+                PropertyValueWrite {
+                    block_id: BlockId::from_string(TEST_TID).unwrap(),
+                    key: "effort".into(),
+                    value: None,
+                    prior: Some(PropertyValueFields {
+                        value_text: Some("abc".into()),
+                        ..Default::default()
+                    }),
+                },
+            ],
+        });
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["reason"], "change_type", "the reason's wire name");
+        let back: OpPayload = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(back, payload, "round trip");
+        insta::assert_yaml_snapshot!("op_payload_json_rewrite_properties_change_type", json);
     }
 
     // -----------------------------------------------------------------------

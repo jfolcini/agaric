@@ -55,9 +55,12 @@ export function useCheckboxSyntax({
       commands
         .setTodoState(focusedBlockId, state)
         .then(unwrap)
-        .then(() => {
-          if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-          if (priorTodoState === null) void clearListStyles([focusedBlockId])
+        .then(async (set) => {
+          // The state and the style it takes off are one undo entry (#6156).
+          const cleared = priorTodoState === null ? await clearListStyles([focusedBlockId]) : []
+          if (rootParentId) {
+            useUndoStore.getState().onNewAction(rootParentId, [...set.op_refs, ...cleared])
+          }
           // F-37: warn when completing a task that has unresolved dependencies.
           // Single-key PK lookup; the check only
           // needs the `blocked_by` row, not the full vocabulary.

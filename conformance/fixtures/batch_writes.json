@@ -237,24 +237,37 @@
     {
       "code": null,
       "error": null,
+      "events": [
+        "block:properties-changed#block_id=B3#changed_keys=[\"todo_state\"]",
+        "block:properties-changed#block_id=B4#changed_keys=[\"todo_state\"]"
+      ],
       "name": "todo_state_on_two_blocks",
       "returns": ["set_todo_state_batch#updated=2"]
     },
     {
       "code": null,
       "error": null,
+      "events": [
+        "block:properties-changed#block_id=B3#changed_keys=[\"todo_state\"]",
+        "block:properties-changed#block_id=B9#changed_keys=[\"todo_state\"]"
+      ],
       "name": "todo_state_counts_an_op_created_block",
       "returns": ["set_todo_state_batch#updated=2"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B3#changed_keys=[\"todo_state\"]"],
       "name": "clear_todo_state",
       "returns": ["set_todo_state_batch#updated=1"]
     },
     {
       "code": null,
       "error": null,
+      "events": [
+        "block:properties-changed#block_id=B3#changed_keys=[\"priority\"]",
+        "block:properties-changed#block_id=B4#changed_keys=[\"priority\"]"
+      ],
       "name": "priority_on_two_blocks",
       "returns": ["set_property_batch#updated=2"]
     },
@@ -267,6 +280,7 @@
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B4#changed_keys=[\"due_date\"]"],
       "name": "due_date_is_a_date_column",
       "returns": ["set_property_batch#updated=1"]
     },

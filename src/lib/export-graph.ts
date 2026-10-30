@@ -37,6 +37,15 @@ const ASSETS_DIR = 'assets'
 const ATTACHMENT_REF_RE = /(!?)\[([^\]]*)\]\((attachment:[^)\s]+)\)/g
 
 /**
+ * `path` as a Markdown link destination: a name with a space or a parenthesis
+ * goes in `<…>`, since a bare destination ends at a space or an unbalanced
+ * parenthesis and an import would read no link.
+ */
+function markdownDestination(path: string): string {
+  return /[\s()]/.test(path) ? `<${path}>` : path
+}
+
+/**
  * Windows device names reserved case-insensitively regardless of extension
  * (`CON`, `con.txt`, `Nul.md` are all invalid on Windows) — matched against
  * the segment's basename (the part before its first `.`), not the whole
@@ -577,7 +586,7 @@ async function rewriteAttachmentRefs(
         skippedAttachmentIds.add(id)
         return match
       }
-      return `${bang}[${alt}](${relPrefix}${assetPath})`
+      return `${bang}[${alt}](${markdownDestination(`${relPrefix}${assetPath}`)})`
     },
   )
   return { md: rewritten, skippedAttachmentIds: Array.from(skippedAttachmentIds) }
@@ -641,7 +650,7 @@ export async function resolveAttachmentRefsForCopy(md: string): Promise<string> 
     const id = parseAttachmentRef(url)
     if (id == null) return alt
     const filename = resolved.get(id)
-    return filename == null ? alt : `${bang}[${alt}](${filename})`
+    return filename == null ? alt : `${bang}[${alt}](${markdownDestination(filename)})`
   })
 }
 

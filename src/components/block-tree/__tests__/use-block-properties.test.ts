@@ -18,7 +18,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock, makeBlockRow, makePropertyRow } from '@/__tests__/fixtures'
+import { makeBlock, makeBlockRow, makePropertyRow, withOps } from '@/__tests__/fixtures'
 import {
   type CommandReturns,
   deferred,
@@ -27,6 +27,7 @@ import {
 } from '@/__tests__/helpers/invoke'
 import { useBlockProperties } from '@/components/block-tree/use-block-properties'
 import { announce } from '@/lib/announcer'
+import type { OpRef } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
@@ -44,10 +45,12 @@ const originalOnNewAction = useUndoStore.getState().onNewAction
 
 /** The row `set_todo_state` echoes back: the block as it now stands. */
 function todoRow(args: Record<string, unknown>): CommandReturns['set_todo_state'] {
-  return makeBlockRow({
-    id: args['blockId'] as string,
-    todo_state: args['state'] as string | null,
-  })
+  return withOps(
+    makeBlockRow({
+      id: args['blockId'] as string,
+      todo_state: args['state'] as string | null,
+    }),
+  )
 }
 
 /** The row `set_priority` echoes back. */
@@ -494,18 +497,20 @@ describe('useBlockProperties handleTogglePriority toast and announcer', () => {
 // ---------------------------------------------------------------------------
 
 describe('useBlockProperties undo notifications', () => {
-  const onNewActionSpy = vi.fn((_pageId: string) => {})
+  const onNewActionSpy = vi.fn((_pageId: string, _opRefs?: OpRef[]) => {})
 
   beforeEach(() => {
     onNewActionSpy.mockClear()
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
   })
 
-  it('handleToggleTodo calls onNewAction after successful IPC', async () => {
+  it('handleToggleTodo calls onNewAction with the state’s refs after successful IPC (#6156)', async () => {
+    const ref: OpRef = { device_id: 'dev1', seq: 9 }
     pageStore.setState({
       blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'TODO' })],
       rootParentId: 'PAGE_1',
     })
+    stubPropertiesInvoke({ set_todo_state: (args) => ({ ...todoRow(args), op_refs: [ref] }) })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -513,7 +518,7 @@ describe('useBlockProperties undo notifications', () => {
       await result.current.handleToggleTodo('BLOCK_1')
     })
 
-    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
+    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1', [ref])
   })
 
   it('handleTogglePriority calls onNewAction after successful IPC', async () => {
@@ -733,7 +738,7 @@ describe('useBlockProperties #2922 rapid toggle race', () => {
     expect(pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')?.todo_state).toBe('DOING')
 
     await act(async () => {
-      first.resolve(makeBlockRow({ id: 'BLOCK_1', todo_state: 'DOING' }))
+      first.resolve(withOps(makeBlockRow({ id: 'BLOCK_1', todo_state: 'DOING' })))
       await secondToggle
     })
 
@@ -905,7 +910,7 @@ describe('useBlockProperties #2922 rapid toggle race', () => {
     expect(pageStore.getState().blocks.find((b) => b.id === 'BLOCK_2')?.todo_state).toBe('DOING')
 
     await act(async () => {
-      block1.resolve(makeBlockRow({ id: 'BLOCK_1', todo_state: 'DOING' }))
+      block1.resolve(withOps(makeBlockRow({ id: 'BLOCK_1', todo_state: 'DOING' })))
     })
     expect(pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')?.todo_state).toBe('DOING')
   })

@@ -126,25 +126,32 @@ describe('indexVaultFiles / resolveVaultRef', () => {
     const index = indexVaultFiles([md, png])
 
     // Exact vault-relative path.
-    expect(resolveVaultRef('assets/diagram.png', index)).toBe(png)
+    expect(resolveVaultRef('assets/diagram.png', '', index)).toEqual([png])
     // Basename fallback (Obsidian ![[diagram.png]] style).
-    expect(resolveVaultRef('diagram.png', index)).toBe(png)
+    expect(resolveVaultRef('diagram.png', '', index)).toEqual([png])
     // Backslash + ./ normalization on the reference.
-    expect(resolveVaultRef('.\\assets\\diagram.png', index)).toBe(png)
+    expect(resolveVaultRef('.\\assets\\diagram.png', '', index)).toEqual([png])
     // Unknown ref resolves to nothing.
-    expect(resolveVaultRef('missing.png', index)).toBeUndefined()
+    expect(resolveVaultRef('missing.png', '', index)).toEqual([])
   })
 
-  it('keeps the FIRST file on a basename collision (deterministic)', () => {
+  it('#6032 — ships every file of a basename collision, in pick order', () => {
     const a = folderFile([new Uint8Array([1])], 'img.png', 'MyVault/a/img.png')
     const b = folderFile([new Uint8Array([2])], 'img.png', 'MyVault/b/img.png')
     const index = indexVaultFiles([a, b])
 
     // Distinct exact paths both resolve precisely.
-    expect(resolveVaultRef('a/img.png', index)).toBe(a)
-    expect(resolveVaultRef('b/img.png', index)).toBe(b)
-    // Basename collision → the first indexed file wins.
-    expect(resolveVaultRef('img.png', index)).toBe(a)
+    expect(resolveVaultRef('a/img.png', '', index)).toEqual([a])
+    expect(resolveVaultRef('b/img.png', '', index)).toEqual([b])
+    // Basename collision → both ship; the backend takes the first and warns.
+    expect(resolveVaultRef('img.png', '', index)).toEqual([a, b])
+  })
+
+  it('#6032 — ships only the first two files of a basename tie', () => {
+    const files = ['a', 'b', 'c'].map((dir, i) =>
+      folderFile([new Uint8Array([i])], 'img.png', `MyVault/${dir}/img.png`),
+    )
+    expect(resolveVaultRef('img.png', '', indexVaultFiles(files))).toEqual(files.slice(0, 2))
   })
 
   it('keeps the FIRST file on an exact vault-relative-path collision too (byPath dedup, not just byBase)', () => {
@@ -153,7 +160,7 @@ describe('indexVaultFiles / resolveVaultRef', () => {
     const second = folderFile(['# b'], 'x.png', 'Vault2/notes/x.png')
     const index = indexVaultFiles([first, second])
 
-    expect(resolveVaultRef('notes/x.png', index)).toBe(first)
+    expect(resolveVaultRef('notes/x.png', '', index)).toEqual([first])
   })
 
   it('only strips a leading "./" on the reference — a stray "./" elsewhere falls through to the basename fallback', () => {
@@ -162,14 +169,33 @@ describe('indexVaultFiles / resolveVaultRef', () => {
 
     // want stays 'a./b.png' (no leading './'); no exact-path match, so it
     // falls back to the basename ('b.png'), which does resolve.
-    expect(resolveVaultRef('a./b.png', index)).toBe(target)
+    expect(resolveVaultRef('a./b.png', '', index)).toEqual([target])
   })
 
   it('removes a leading "./" on the reference outright (not by substitution)', () => {
     const target = folderFile(['n'], 'note.md', 'MyVault/note.md')
     const index = indexVaultFiles([target])
 
-    expect(resolveVaultRef('./note.md', index)).toBe(target)
+    expect(resolveVaultRef('./note.md', '', index)).toEqual([target])
+  })
+
+  it("#6032 — resolves from the note's folder, then the vault root, then by basename", () => {
+    const png = (path: string) => folderFile([new Uint8Array([1])], basename(path), `V/${path}`)
+    const root = png('img.png')
+    const inNotes = png('notes/img.png')
+    const inSub = png('notes/sub/img.png')
+    const pic = png('other/pic.png')
+    const index = indexVaultFiles([root, inNotes, inSub, pic])
+
+    expect(resolveVaultRef('img.png', 'notes', index)).toEqual([inNotes])
+    expect(resolveVaultRef('sub/img.png', 'notes', index)).toEqual([inSub])
+    expect(resolveVaultRef('img.png', '', index)).toEqual([root])
+    expect(resolveVaultRef('notes/img.png', 'journal', index)).toEqual([inNotes])
+    expect(resolveVaultRef('../img.png', 'notes/sub', index)).toEqual([inNotes])
+    expect(resolveVaultRef('./../other/pic.png', 'notes', index)).toEqual([pic])
+    // Climbing above the root fails both path steps rather than stopping at
+    // the root, so the basename's tie ships.
+    expect(resolveVaultRef('../../img.png', 'notes', index)).toEqual([root, inNotes])
   })
 })
 
@@ -184,7 +210,7 @@ describe('collectVaultFiles', () => {
     )
     const index = indexVaultFiles([md, png])
 
-    const collected = await collectVaultFiles('![](assets/diagram.png)', index)
+    const collected = await collectVaultFiles('![](assets/diagram.png)', '', index)
     expect(collected).toHaveLength(1)
     expect(collected?.[0]?.path).toBe('assets/diagram.png')
     expect(collected?.[0]?.bytes).toEqual([1, 2, 3, 4])
@@ -194,9 +220,50 @@ describe('collectVaultFiles', () => {
     const md = folderFile(['no refs here'], 'note.md', 'MyVault/note.md')
     const index = indexVaultFiles([md])
     // No refs at all.
-    expect(await collectVaultFiles('no refs here', index)).toBeNull()
+    expect(await collectVaultFiles('no refs here', '', index)).toBeNull()
     // A ref that matches no file.
-    expect(await collectVaultFiles('![](assets/missing.png)', index)).toBeNull()
+    expect(await collectVaultFiles('![](assets/missing.png)', '', index)).toBeNull()
+  })
+
+  it("#6032 — ships every file of a basename tie, and only the note's own for a note-relative ref", async () => {
+    const a = folderFile([new Uint8Array([0xa])], 'image.png', 'V/a/image.png', 'image/png')
+    const b = folderFile([new Uint8Array([0xb])], 'image.png', 'V/b/image.png', 'image/png')
+    const index = indexVaultFiles([a, b])
+
+    const tie = await collectVaultFiles('![](image.png)', 'c', index)
+    expect(tie?.map((f) => [f.path, f.bytes])).toEqual([
+      ['a/image.png', [0xa]],
+      ['b/image.png', [0xb]],
+    ])
+    const beside = await collectVaultFiles('![](image.png)', 'b', index)
+    expect(beside?.map((f) => [f.path, f.bytes])).toEqual([['b/image.png', [0xb]]])
+  })
+
+  it('#6032 — resolves a `<…>` or `%20` name holding a space', async () => {
+    const png = folderFile([new Uint8Array([7])], 'my image.png', 'V/my image.png', 'image/png')
+    const index = indexVaultFiles([png])
+
+    for (const content of ['![](<my image.png>)', '![](my%20image.png "title")']) {
+      const collected = await collectVaultFiles(content, '', index)
+      expect(
+        collected?.map((f) => f.path),
+        content,
+      ).toEqual(['my image.png'])
+    }
+  })
+
+  it('#6032 — ships a file a note links to, and nothing for a link to a note', async () => {
+    const pdf = folderFile(
+      [new Uint8Array([5])],
+      'paper.pdf',
+      'V/docs/paper.pdf',
+      'application/pdf',
+    )
+    const other = folderFile(['- o'], 'other.md', 'V/docs/other.md')
+    const index = indexVaultFiles([pdf, other])
+
+    const collected = await collectVaultFiles('[paper](paper.pdf) [o](other.md)', 'docs', index)
+    expect(collected?.map((f) => [f.path, f.bytes])).toEqual([['docs/paper.pdf', [5]]])
   })
 })
 
@@ -232,6 +299,16 @@ describe('mdFilesToUnits', () => {
     expect(loaded?.vaultFiles).toHaveLength(1)
     expect(loaded?.vaultFiles?.[0]?.path).toBe('assets/diagram.png')
     expect(loaded?.vaultFiles?.[0]?.bytes).toEqual([9, 9])
+  })
+
+  it("#6032 — resolves a note's refs from the note's own folder", async () => {
+    const md = folderFile(['![](image.png)'], 'note.md', 'V/b/note.md')
+    const a = folderFile([new Uint8Array([0xa])], 'image.png', 'V/a/image.png', 'image/png')
+    const b = folderFile([new Uint8Array([0xb])], 'image.png', 'V/b/image.png', 'image/png')
+    const [unit] = mdFilesToUnits([md, a, b], indexVaultFiles([md, a, b]), false)
+
+    const loaded = await unit?.load()
+    expect(loaded?.vaultFiles?.map((f) => f.path)).toEqual(['b/image.png'])
   })
 
   it('short-circuits to vaultFiles: null on a null vault index without ever calling collectVaultFiles, even when the content has attachment refs', async () => {

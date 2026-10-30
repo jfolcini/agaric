@@ -47,45 +47,118 @@
       "refs": []
     },
     {
-      "name": "an image with a title is not a ref",
+      "name": "an image's title in double quotes is not part of its name",
       "input": "![a](assets/x.png \"a title\")",
+      "refs": ["assets/x.png"]
+    },
+    {
+      "name": "an image's title in single quotes is not part of its name",
+      "input": "![a](x.png 'a title')",
+      "refs": ["x.png"]
+    },
+    {
+      "name": "an image's title in parentheses is not part of its name",
+      "input": "![a](x.png (a title))",
+      "refs": ["x.png"]
+    },
+    {
+      "name": "a bare markdown image name with a space is not a ref",
+      "input": "![](my image.png)",
+      "refs": [],
+      "note": "As CommonMark reads it: a bare destination ends at the space, and `image.png` is no title. A name with a space is written `<my image.png>` or `my%20image.png`, as the rows below read."
+    },
+    {
+      "name": "a markdown image name may hold balanced parentheses",
+      "input": "![](a(1).png)",
+      "refs": ["a(1).png"]
+    },
+    {
+      "name": "an unbalanced ( leaves no image",
+      "input": "![](a(1.png)",
       "refs": []
     },
     {
-      "name": "a markdown image whose name holds a space is not a ref",
-      "input": "![](my image.png)",
-      "refs": [],
-      "note": "#6032: today's behaviour, which #6032 changes; flip this row with the fix."
-    },
-    {
-      "name": "a markdown image whose name holds a ) is cut at it",
-      "input": "![](a(1).png)",
-      "refs": ["a(1"],
-      "note": "#6032: today's behaviour, which #6032 changes; flip this row with the fix."
-    },
-    {
-      "name": "a percent-encoded name is kept encoded",
+      "name": "a percent-encoded name is decoded",
       "input": "![](my%20image.png)",
-      "refs": ["my%20image.png"],
-      "note": "#6032: today's behaviour, which #6032 changes; flip this row with the fix."
+      "refs": ["my image.png"]
     },
     {
-      "name": "an angle-bracketed destination with a space is not a ref",
+      "name": "percent-encoded UTF-8 is decoded, a BOM kept and an invalid byte read as U+FFFD",
+      "input": "![](%EF%BB%BFcaf%C3%A9%FF.png)",
+      "refs": ["\ufeffcaf\u00e9\ufffd.png"]
+    },
+    {
+      "name": "a malformed percent escape stays as written",
+      "input": "![](a%zz%+41%2.png)",
+      "refs": ["a%zz%+41%2.png"]
+    },
+    {
+      "name": "an angle-bracketed destination may hold a space",
       "input": "![](<my image.png>)",
-      "refs": [],
-      "note": "#6032: today's behaviour, which #6032 changes; flip this row with the fix."
+      "refs": ["my image.png"]
     },
     {
-      "name": "an angle-bracketed destination keeps its brackets",
+      "name": "an angle-bracketed destination loses its brackets",
       "input": "![](<a.png>)",
-      "refs": ["<a.png>"],
-      "note": "#6032: today's behaviour, which #6032 changes; flip this row with the fix."
+      "refs": ["a.png"]
     },
     {
-      "name": "a link to a file is not a ref",
+      "name": "an angle-bracketed destination may carry a title",
+      "input": "![](<my image.png> \"a title\")",
+      "refs": ["my image.png"]
+    },
+    {
+      "name": "a link to a file",
       "input": "[paper](paper.pdf)",
+      "refs": ["paper.pdf"]
+    },
+    {
+      "name": "a link's angle-bracketed destination may hold a space",
+      "input": "[a paper](<my paper.pdf>)",
+      "refs": ["my paper.pdf"]
+    },
+    {
+      "name": "a link's percent-encoded destination is decoded",
+      "input": "[a paper](my%20paper.pdf)",
+      "refs": ["my paper.pdf"]
+    },
+    {
+      "name": "a link's title is not part of its name",
+      "input": "[paper](paper.pdf \"a title\")",
+      "refs": ["paper.pdf"]
+    },
+    {
+      "name": "embeds come first, then images and links in source order",
+      "input": "![](i1.png) [l](l1.pdf) ![[e1.png]] ![](i2.png)",
+      "refs": ["e1.png", "i1.png", "l1.pdf", "i2.png"]
+    },
+    {
+      "name": "a link in inline code is skipped",
+      "input": "`[skip](skip.pdf)` [keep](keep.pdf)",
+      "refs": ["keep.pdf"]
+    },
+    {
+      "name": "a link to a note is not a ref",
+      "input": "[a](Other.md) [b](b.MARKDOWN) [c](c.mdx) [d](d.txt) [e](e.org) [f](sub/f.md)",
       "refs": [],
-      "note": "#6032: today's behaviour, which #6032 changes; flip this row with the fix."
+      "note": "A note imports as a page, and a link to it is a page link (a `.md` one becomes `[[title]]`), never an attachment. These are the extensions a folder import reads as notes."
+    },
+    {
+      "name": "a link to a URL, a fragment or a mail address is not a ref",
+      "input": "[a](http://e.com/a.pdf) [b](https://e.com/b.pdf) [c](mailto:me@example.com) [d](#heading) [e](ftp://e.com/e.pdf) [f](//cdn.example.com/f.pdf)",
+      "refs": []
+    },
+    {
+      "name": "a link to an attachment: id is not a ref",
+      "input": "[paper](attachment:01ARZ3NDEKTSV4RRFFQ69G5FAV)",
+      "refs": [],
+      "note": "The id names an attachment of the Agaric database that wrote the file, whose bytes an import does not carry. A ZIP export writes each such link as `assets/<name>`, which reads as a link to a file."
+    },
+    {
+      "name": "a link around an image reads the image only",
+      "input": "[![a](x.png)](doc.pdf)",
+      "refs": ["x.png"],
+      "note": "A link whose text holds brackets is not read, as `[see [1]](paper.pdf)` is not; the image inside it is."
     },
     {
       "name": "U+FEFF ends a markdown image's name in JS, not in Rust",

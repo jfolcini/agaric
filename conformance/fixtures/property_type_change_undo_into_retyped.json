@@ -1,0 +1,221 @@
+{
+  "description": "#5841 S3 — undoing a set made before its key changed type. `X` set `effortx` to \"6\" then \"5\", and `Y` to \"abc\" then \"7\", before `effortx` became a number. Undoing `X`'s second set restores 6 as a number, under the same key; undoing `Y`'s would put \"abc\" under a number key, and is refused. Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "X",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Y",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 6,
+      "ops": [
+        {
+          "key": "effortx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "effortx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "effortx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "effortx",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "key": "effortx",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "effortx",
+        "value": 6.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B3",
+        "key": "effortx",
+        "value": 7.0,
+        "value_type": "Num"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "change_to_number",
+      "returns": ["effortx#value_type=number#options=null#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_an_older_set_that_fits",
+      "returns": ["undo_ops#reversed_op_type=set_property#new_op_type=set_property#is_redo=false"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "undo_an_older_set_that_does_not_fit",
+      "returns": []
+    }
+  ],
+  "name": "property_type_change_undo_into_retyped",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "effortx",
+        "value": {
+          "value_text": "6"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "effortx",
+        "value": {
+          "value_text": "5"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "effortx",
+        "value": {
+          "value_text": "abc"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "effortx",
+        "value": {
+          "value_text": "7"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 2,
+          "removed": 0
+        },
+        "key": "effortx",
+        "spaceId": "$SPACE",
+        "valueType": "number"
+      },
+      "command": "change_property_type",
+      "comment": "O5 — both values are numbers.",
+      "name": "change_to_number",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O2"]
+      },
+      "command": "undo_ops",
+      "comment": "O6 — X is back to 6, a number.",
+      "name": "undo_an_older_set_that_fits",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O4"]
+      },
+      "command": "undo_ops",
+      "comment": "\"abc\" is not a number: change the type back first.",
+      "expect_error": "validation",
+      "name": "undo_an_older_set_that_does_not_fit",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "X",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "Y",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "property_defs": [
+      {
+        "key": "effortx",
+        "options": null,
+        "value_type": "text"
+      }
+    ],
+    "tags": []
+  }
+}

@@ -17,29 +17,34 @@ use agaric_store::op::{PropertyDefState, SetPropertyDefPayload};
 use agaric_store::pagination;
 use agaric_store::pagination::ActiveBlockRow;
 use agaric_store::space::SpaceId;
+use agaric_sync::sync_events::{EVENT_PROPERTY_CHANGED, PropertyChangedEvent};
 
 use super::sanitize_internal_error;
 use super::*;
 
-/// Emit `EVENT_PROPERTY_CHANGED` with a log-on-error
-/// fallback so a transient emit failure does not propagate as a
-/// command error.  Centralises the previously-duplicated emit block
-/// shared by `set_property`, `set_todo_state`, `set_priority`,
-/// `set_due_date`, `set_scheduled_date`, and `delete_property`.
-fn emit_property_changed_event(
-    app: &tauri::AppHandle,
-    block_id: String,
-    changed_keys: Vec<String>,
-) {
-    use agaric_sync::sync_events::{EVENT_PROPERTY_CHANGED, PropertyChangedEvent};
-    crate::main_thread::emit(
-        app,
-        EVENT_PROPERTY_CHANGED,
-        PropertyChangedEvent {
-            block_id,
-            changed_keys,
-        },
-    );
+/// The `block:properties-changed` events a property write's wrapper emits once
+/// its `_inner` commits: one per block the caller named, whether or not the
+/// write changed it, each carrying `changed_keys`. The conformance harness
+/// records this same list, which holds the mock to it.
+pub fn property_changed_events(
+    block_ids: impl IntoIterator<Item = BlockId>,
+    changed_keys: &[String],
+) -> Vec<PropertyChangedEvent> {
+    block_ids
+        .into_iter()
+        .map(|id| PropertyChangedEvent {
+            block_id: id.into_string(),
+            changed_keys: changed_keys.to_vec(),
+        })
+        .collect()
+}
+
+/// A failed emit is logged by `main_thread::emit`, never returned: the write
+/// has already committed.
+fn emit_property_changed_events(app: &tauri::AppHandle, events: Vec<PropertyChangedEvent>) {
+    for event in events {
+        crate::main_thread::emit(app, EVENT_PROPERTY_CHANGED, event);
+    }
 }
 
 /// List all distinct property keys currently in use across all blocks.
@@ -694,7 +699,7 @@ pub(crate) async fn resolve_prior_task_states_batch(
 /// IMMEDIATE lock would defeat the latency win. Callers that need the
 /// next-occurrence sibling fall through to the single-row path;
 /// `warn_if_batch_skips_recurrence` logs when a `repeat` carrier rides
-/// in the batch.
+/// in a batch that sets a state.
 #[instrument(skip(pool, device_id, materializer, block_ids), err)]
 pub async fn set_todo_state_batch_inner(
     pool: &SqlitePool,
@@ -718,7 +723,11 @@ pub async fn set_todo_state_batch_inner(
     // [`warn_if_batch_skips_recurrence`] so `set_property_batch_inner` — which
     // skips recurrence in exactly the same way — emits the same diagnostic
     // instead of nothing.
-    warn_if_batch_skips_recurrence(&mut tx, "set_todo_state_batch_inner", &block_ids).await?;
+    // A clear rolls nothing forward on the single-row path either (#6156:
+    // page mode clears tasks through this batch).
+    if state.is_some() {
+        warn_if_batch_skips_recurrence(&mut tx, "set_todo_state_batch_inner", &block_ids).await?;
+    }
 
     // #2038 / #5074: one membership query for the whole batch, carrying each
     // survivor's prior lifecycle state. See
@@ -2229,13 +2238,12 @@ pub async fn set_property(
     key: String,
     value: SetPropertyArgs,
 ) -> Result<WithOps<BlockRow>, AppError> {
-    let block_id_clone = block_id.clone().into_string();
-    let key_clone = key.clone();
     // #1627: mint the type-state newtype without a pre-tx round-trip.
     // The activeness gate (existence + soft-deleted discrimination, with
     // identical NotFound/Validation errors) now runs inside the write
     // transaction's existing re-validation (`set_property_in_tx`).
     let active_id = ActiveBlockId::from_trusted_active(block_id.as_str());
+    let events = property_changed_events([block_id], std::slice::from_ref(&key));
     let result = capture_op_refs(async {
         set_property_inner(
             ctx.pool(),
@@ -2255,11 +2263,14 @@ pub async fn set_property(
     })
     .await
     .map_err(sanitize_internal_error)?;
-    emit_property_changed_event(&app, block_id_clone, vec![key_clone]);
+    emit_property_changed_events(&app, events);
     Ok(result)
 }
 
 /// Tauri command: set todo state on a block. Delegates to [`set_todo_state_inner`].
+///
+/// #6156: the reply carries the refs of every op it appended, the stamps' and
+/// the next occurrence's among them, so the frontend undoes it by those refs.
 #[tauri::command]
 #[specta::specta]
 pub async fn set_todo_state(
@@ -2267,21 +2278,26 @@ pub async fn set_todo_state(
     ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     state: Option<String>,
-) -> Result<BlockRow, AppError> {
-    let block_id_clone = block_id.clone().into_string();
+) -> Result<WithOps<BlockRow>, AppError> {
     // #1627: see `set_property` — activeness gate folded into the tx.
     let active_id = ActiveBlockId::from_trusted_active(block_id.as_str());
-    let result = set_todo_state_inner(
-        ctx.pool(),
-        ctx.device_id(),
-        ctx.materializer(),
-        active_id,
-        state,
-    )
+    let events = property_changed_events([block_id], &["todo_state".to_owned()]);
+    // Boxed: inlined, the recurrence's future makes the wrapper's trip `clippy::large_futures`.
+    let result = capture_op_refs(async {
+        Box::pin(set_todo_state_inner(
+            ctx.pool(),
+            ctx.device_id(),
+            ctx.materializer(),
+            active_id,
+            state,
+        ))
+        .await
+        .map(Into::into)
+    })
     .await
     .map_err(sanitize_internal_error)?;
-    emit_property_changed_event(&app, block_id_clone, vec!["todo_state".to_string()]);
-    Ok(result.into())
+    emit_property_changed_events(&app, events);
+    Ok(result)
 }
 
 /// Tauri command: batch-set todo state on multiple blocks.
@@ -2291,10 +2307,12 @@ pub async fn set_todo_state(
 /// FE used to drive in `useBlockMultiSelect.handleBatchSetTodo` into
 /// one round-trip / one op_log seq range / one writer-lock window.
 ///
-/// Emits one `EVENT_PROPERTY_CHANGED` per successfully-updated block
-/// so existing per-block listeners (e.g. agenda recompute, property
-/// drawer) keep firing without protocol changes. Failed-emit
-/// Breadcrumbs follow the established log-on-error pattern.
+/// Emits one `EVENT_PROPERTY_CHANGED` per block it was handed, skipped
+/// or not ([`property_changed_events`]), so the per-block listeners
+/// (e.g. agenda recompute, property drawer) get the single-row signal.
+///
+/// #6156: the reply carries the refs of every op the batch appended, the
+/// stamps' among them, so the frontend undoes it by those refs.
 #[tauri::command]
 #[specta::specta]
 pub async fn set_todo_state_batch(
@@ -2302,26 +2320,23 @@ pub async fn set_todo_state_batch(
     ctx: State<'_, WriteCtx>,
     block_ids: Vec<BlockId>,
     state: Option<String>,
-) -> Result<i64, AppError> {
-    let block_ids_for_emit = block_ids.clone();
-    let updated = set_todo_state_batch_inner(
-        ctx.pool(),
-        ctx.device_id(),
-        ctx.materializer(),
-        block_ids,
-        state,
-    )
+) -> Result<WithOps<TodoStateBatch>, AppError> {
+    let events = property_changed_events(block_ids.clone(), &["todo_state".to_owned()]);
+    let set = capture_op_refs(async {
+        set_todo_state_batch_inner(
+            ctx.pool(),
+            ctx.device_id(),
+            ctx.materializer(),
+            block_ids,
+            state,
+        )
+        .await
+        .map(|updated| TodoStateBatch { updated })
+    })
     .await
     .map_err(sanitize_internal_error)?;
-    // Emit per-block change events so the existing per-block listeners
-    // continue to receive the same signal shape they got from the
-    // single-row path. The inner already skipped missing rows silently,
-    // but emitting for ids that did not actually update is harmless —
-    // the listener side already debounces / re-reads.
-    for id in block_ids_for_emit {
-        emit_property_changed_event(&app, id.into_string(), vec!["todo_state".to_string()]);
-    }
-    Ok(updated)
+    emit_property_changed_events(&app, events);
+    Ok(set)
 }
 
 /// Tauri command: batch-set one allowlisted property on multiple blocks.
@@ -2344,8 +2359,7 @@ pub async fn set_property_batch(
     key: String,
     value: Option<String>,
 ) -> Result<i64, AppError> {
-    let block_ids_for_emit = block_ids.clone();
-    let key_for_emit = key.clone();
+    let events = property_changed_events(block_ids.clone(), std::slice::from_ref(&key));
     let updated = set_property_batch_inner(
         ctx.pool(),
         ctx.device_id(),
@@ -2356,13 +2370,7 @@ pub async fn set_property_batch(
     )
     .await
     .map_err(sanitize_internal_error)?;
-    // Emit per-block change events so the existing per-block listeners
-    // receive the same signal shape they got from the single-row path. The
-    // inner already skipped missing rows silently; emitting for ids that did
-    // not actually update is harmless (listeners debounce / re-read).
-    for id in block_ids_for_emit {
-        emit_property_changed_event(&app, id.into_string(), vec![key_for_emit.clone()]);
-    }
+    emit_property_changed_events(&app, events);
     Ok(updated)
 }
 
@@ -2382,9 +2390,9 @@ pub async fn set_priority(
     block_id: BlockId,
     level: Option<String>,
 ) -> Result<BlockRow, AppError> {
-    let block_id_clone = block_id.clone().into_string();
     // #1627: see `set_property` — activeness gate folded into the tx.
     let active_id = ActiveBlockId::from_trusted_active(block_id.as_str());
+    let events = property_changed_events([block_id], &["priority".to_owned()]);
     let result = set_priority_inner(
         ctx.pool(),
         ctx.device_id(),
@@ -2394,7 +2402,7 @@ pub async fn set_priority(
     )
     .await
     .map_err(sanitize_internal_error)?;
-    emit_property_changed_event(&app, block_id_clone, vec!["priority".to_string()]);
+    emit_property_changed_events(&app, events);
     Ok(result.into())
 }
 
@@ -2407,9 +2415,9 @@ pub async fn set_due_date(
     block_id: BlockId,
     date: Option<String>,
 ) -> Result<BlockRow, AppError> {
-    let block_id_clone = block_id.clone().into_string();
     // #1627: see `set_property` — activeness gate folded into the tx.
     let active_id = ActiveBlockId::from_trusted_active(block_id.as_str());
+    let events = property_changed_events([block_id], &["due_date".to_owned()]);
     let result = set_due_date_inner(
         ctx.pool(),
         ctx.device_id(),
@@ -2419,7 +2427,7 @@ pub async fn set_due_date(
     )
     .await
     .map_err(sanitize_internal_error)?;
-    emit_property_changed_event(&app, block_id_clone, vec!["due_date".to_string()]);
+    emit_property_changed_events(&app, events);
     Ok(result.into())
 }
 
@@ -2432,9 +2440,9 @@ pub async fn set_scheduled_date(
     block_id: BlockId,
     date: Option<String>,
 ) -> Result<BlockRow, AppError> {
-    let block_id_clone = block_id.clone().into_string();
     // #1627: see `set_property` — activeness gate folded into the tx.
     let active_id = ActiveBlockId::from_trusted_active(block_id.as_str());
+    let events = property_changed_events([block_id], &["scheduled_date".to_owned()]);
     let result = set_scheduled_date_inner(
         ctx.pool(),
         ctx.device_id(),
@@ -2444,7 +2452,7 @@ pub async fn set_scheduled_date(
     )
     .await
     .map_err(sanitize_internal_error)?;
-    emit_property_changed_event(&app, block_id_clone, vec!["scheduled_date".to_string()]);
+    emit_property_changed_events(&app, events);
     Ok(result.into())
 }
 
@@ -2479,7 +2487,8 @@ pub async fn delete_property(
     ))
     .await
     .map_err(sanitize_internal_error)?;
-    emit_property_changed_event(&app, block_id_clone.clone(), deleted.inner);
+    // The keys it actually removed, which may be none: `repeat` takes its bounds with it.
+    emit_property_changed_events(&app, property_changed_events([block_id], &deleted.inner));
     Ok(WithOps {
         inner: DeletePropertyResponse {
             block_id: block_id_clone,

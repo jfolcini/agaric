@@ -11,8 +11,15 @@
  *   - disallowed-scheme hrefs falling back to plain marked text.
  */
 
-import { render } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+
+import { axe } from '@/__tests__/helpers/axe'
+
+const mockOpenAttachmentLink = vi.hoisted(() => vi.fn(() => Promise.resolve()))
+const mockOpenUrl = vi.hoisted(() => vi.fn(() => Promise.resolve(true)))
+vi.mock('@/lib/attachment-utils', () => ({ openAttachmentLink: mockOpenAttachmentLink }))
+vi.mock('@/lib/open-url', () => ({ openUrl: mockOpenUrl }))
 
 import type { RenderContext } from '@/components/RichContentRenderer/context'
 import { renderTextInline } from '@/components/RichContentRenderer/marks/text'
@@ -119,5 +126,47 @@ describe('applyTextMarks — single-pass equivalence (#2201)', () => {
     )
     expect(container.querySelector('[data-testid="external-link"]')).toBeNull()
     expect(container.querySelector('strong')?.textContent).toBe('x')
+  })
+})
+
+describe('attachment links (#6032)', () => {
+  it('renders `[label](attachment:<id>)` as a file link that downloads the attachment', async () => {
+    const { container } = render(
+      <p>
+        {renderTextInline(
+          textNode('paper', [
+            { type: 'link', attrs: { href: 'attachment:01ATT0000000000000000AT01' } },
+          ]),
+          'k',
+          ctx,
+        )}
+      </p>,
+    )
+    const link = screen.getByRole('link', { name: 'paper' })
+    expect(link).toHaveAttribute('data-testid', 'attachment-link')
+    expect(container.querySelector('[data-testid="external-link"]')).toBeNull()
+
+    fireEvent.click(link)
+    fireEvent.keyDown(link, { key: 'Enter' })
+    expect(mockOpenAttachmentLink.mock.calls).toEqual([
+      ['01ATT0000000000000000AT01'],
+      ['01ATT0000000000000000AT01'],
+    ])
+    expect(mockOpenUrl).not.toHaveBeenCalled()
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
+  it('renders an `attachment:` href naming no id as plain text', () => {
+    render(
+      <>
+        {renderTextInline(
+          textNode('bad', [{ type: 'link', attrs: { href: 'attachment:../etc' } }]),
+          'k',
+          ctx,
+        )}
+      </>,
+    )
+    expect(screen.queryByRole('link')).toBeNull()
+    expect(screen.getByText('bad')).toBeInTheDocument()
   })
 })

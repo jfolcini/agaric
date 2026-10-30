@@ -1,0 +1,349 @@
+{
+  "description": "#5841 S3 — what each type change keeps. `flagx` to boolean keeps \"true\" as true and removes \"yes\"; `whenx` to date keeps \"2026-01-05\" and removes the impossible \"2026-02-30\"; `stagex` to a select with options `a` keeps \"a\" and removes \"b\"; `scorex` from number to text writes 2.5 as \"2.5\". Each value write holds the engine's own slot. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "X",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Y",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 11,
+      "ops": [
+        {
+          "key": "flagx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "flagx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "whenx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "whenx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stagex",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stagex",
+          "op_type": "set_property"
+        },
+        {
+          "key": "scorex",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "rewrite_properties"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "flagx",
+        "value": true,
+        "value_type": "Bool"
+      },
+      {
+        "block_id": "B2",
+        "key": "scorex",
+        "value": "2.5",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B2",
+        "key": "stagex",
+        "value": "a",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B2",
+        "key": "whenx",
+        "value": "2026-01-05",
+        "value_type": "Date"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "flagx_to_boolean",
+      "returns": ["flagx#value_type=boolean#options=null#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "whenx_to_date",
+      "returns": ["whenx#value_type=date#options=null#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "stagex_to_select",
+      "returns": ["stagex#value_type=select#options=[\"a\"]#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "scorex_to_text",
+      "returns": ["scorex#value_type=text#options=null#builtin=false"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "stagex_after_the_change",
+      "rows": ["stagex#value_type=select#options=[\"a\"]#builtin=false"],
+      "total_count": null
+    }
+  ],
+  "name": "property_type_change_kinds",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "flagx",
+        "value": {
+          "value_text": "true"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "flagx",
+        "value": {
+          "value_text": "yes"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "whenx",
+        "value": {
+          "value_text": "2026-01-05"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "whenx",
+        "value": {
+          "value_text": "2026-02-30"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "stagex",
+        "value": {
+          "value_text": "a"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "stagex",
+        "value": {
+          "value_text": "b"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "scorex",
+        "value": {
+          "value_num": 2.5
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 1,
+          "removed": 1
+        },
+        "key": "flagx",
+        "spaceId": "$SPACE",
+        "valueType": "boolean"
+      },
+      "command": "change_property_type",
+      "comment": "\"yes\" is not a boolean.",
+      "name": "flagx_to_boolean",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 1,
+          "removed": 1
+        },
+        "key": "whenx",
+        "spaceId": "$SPACE",
+        "valueType": "date"
+      },
+      "command": "change_property_type",
+      "comment": "February has no 30th.",
+      "name": "whenx_to_date",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 1,
+          "removed": 1
+        },
+        "key": "stagex",
+        "options": "[\"a\"]",
+        "spaceId": "$SPACE",
+        "valueType": "select"
+      },
+      "command": "change_property_type",
+      "comment": "Only `a` is an option.",
+      "name": "stagex_to_select",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 1,
+          "removed": 0
+        },
+        "key": "scorex",
+        "spaceId": "$SPACE",
+        "valueType": "text"
+      },
+      "command": "change_property_type",
+      "comment": "A number is text too.",
+      "name": "scorex_to_text",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "key": "stagex",
+        "spaceId": "$SPACE"
+      },
+      "command": "get_property_def",
+      "comment": "A select with its options.",
+      "name": "stagex_after_the_change"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "X",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "Y",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "property_defs": [
+      {
+        "key": "flagx",
+        "options": null,
+        "value_type": "text"
+      },
+      {
+        "key": "whenx",
+        "options": null,
+        "value_type": "text"
+      },
+      {
+        "key": "stagex",
+        "options": null,
+        "value_type": "text"
+      },
+      {
+        "key": "scorex",
+        "options": null,
+        "value_type": "number"
+      }
+    ],
+    "tags": []
+  }
+}

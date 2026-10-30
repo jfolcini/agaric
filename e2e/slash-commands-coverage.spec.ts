@@ -145,13 +145,8 @@ test.describe('Slash structural inserts @editor', () => {
    * / `<li>` anywhere, NO literal `1. ` in the text, and a `list-marker`
    * element that survives the reopen.
    *
-   * The marker is asserted after `reopenPage` rather than immediately: the
-   * batch that feeds `useListStyles` refetches on the backend's
-   * `block:properties-changed` event, and the JS tauri mock does not emit
-   * that event (it emits none) — so in THIS harness a property write only
-   * becomes visible on the next mount. That is a mock↔backend gap, not a
-   * product one; the reopen is also what proves persistence, which is the
-   * half of this test worth keeping either way.
+   * The marker is asserted after `reopenPage`, which is what proves
+   * persistence.
    */
   test('/numbered-list sets listStyle=ordered (no <ol>, no `1. ` prefix) and persists', async ({
     page,

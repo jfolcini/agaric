@@ -11,9 +11,11 @@
  *
  * {@link scanAttachmentRefs} is that pre-scan. It is a PURE function and the
  * frontend mirror of the Rust detector in `src-tauri/agaric-engine/src/import.rs`
- * (`detect_attachment_refs`, `is_skippable_attachment_ref`, the
- * `OBSIDIAN_EMBED_RE` / `MARKDOWN_IMAGE_RE` regexes, the fenced-code-block
- * `is_code` skipping in `parse_logseq_markdown`, and `inline_code_spans`).
+ * (`detect_attachment_refs`, `is_skippable_attachment_ref`, `links_a_file`,
+ * `link_destination`, `percent_decode`, the `OBSIDIAN_EMBED_RE` /
+ * `MARKDOWN_LINK_OPEN_RE` regexes,
+ * the fenced-code-block `is_code` skipping in `parse_logseq_markdown`, and
+ * `inline_code_spans`).
  *
  * The FE scanner decides which sibling bytes to ship; the BE detector decides
  * which refs to rewrite. If the FE detects a ref the BE does not, we ship bytes
@@ -32,12 +34,82 @@
 const OBSIDIAN_EMBED_RE = /!\[\[([^\]|\n]+?)(?:\|[^\]\n]*)?\]\]/g
 
 /**
- * Standard markdown image `![alt](url)` — group 1 is the alt text (may be
- * empty), group 2 is the URL/path (any run that is neither `)` nor whitespace
- * nor newline). The whitespace exclusion keeps a `![a](url "title")` title out
- * of the captured path. Mirrors `MARKDOWN_IMAGE_RE`.
+ * The opening of a standard markdown image `![alt](` — group 1 is the alt text
+ * — or of a link `[label](` — group 2 is the label, which holds no bracket, so
+ * the image in `[![a](x.png)](doc.pdf)` is read and not the link.
+ * {@link linkDestination} reads the rest of the token. Mirrors
+ * `MARKDOWN_LINK_OPEN_RE`.
  */
-const MARKDOWN_IMAGE_RE = /!\[([^\]\n]*)\]\(([^)\s\n]+)\)/g
+const MARKDOWN_LINK_OPEN_RE = /!\[([^\]\n]*)\]\(|\[([^[\]\n]*)\]\(/g
+
+/** A link's `<…>` destination, after any spaces. Mirrors `ANGLE_DESTINATION_RE`. */
+const ANGLE_DESTINATION_RE = /[^\S\n]*<([^<>\n]*)>/y
+
+/** Spaces before a bare destination. */
+const SPACES_RE = /[^\S\n]*/y
+
+/** A link's title: spaces, then `"…"`, `'…'` or `(…)`. Mirrors `LINK_TITLE_RE`. */
+const LINK_TITLE_RE = /[^\S\n]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\))/y
+
+/** A link's closing `)`, after any spaces. Mirrors `LINK_CLOSE_RE`. */
+const LINK_CLOSE_RE = /[^\S\n]*\)/y
+
+/** The match of the sticky `re` at `at` in `text`, or null. */
+function matchAt(re: RegExp, text: string, at: number): RegExpExecArray | null {
+  re.lastIndex = at
+  return re.exec(text)
+}
+
+/**
+ * The destination of the markdown image or link whose `![alt](` or `[label](`
+ * ends at `start` in `text`, and the index just past its closing `)`, read as
+ * CommonMark reads a link destination: a `<…>` one, or a bare one running to
+ * whitespace with its parentheses balanced, then an optional title. Null when
+ * none closes there, as in `![](my image.png)`. Mirrors `link_destination`.
+ */
+function linkDestination(text: string, start: number): { destination: string; end: number } | null {
+  let at = start
+  let destination: string
+  const angle = matchAt(ANGLE_DESTINATION_RE, text, at)
+  if (angle !== null) {
+    destination = angle[1] ?? ''
+    at += angle[0].length
+  } else {
+    at += matchAt(SPACES_RE, text, at)?.[0].length ?? 0
+    const bareStart = at
+    let depth = 0
+    for (; at < text.length; at++) {
+      const c = text[at] as string
+      if (c === '(') depth++
+      else if (c === ')') {
+        if (depth === 0) break
+        depth--
+      } else if (/\s/.test(c)) break
+    }
+    destination = text.slice(bareStart, at)
+  }
+  at += matchAt(LINK_TITLE_RE, text, at)?.[0].length ?? 0
+  const close = matchAt(LINK_CLOSE_RE, text, at)
+  return close === null ? null : { destination, end: at + close[0].length }
+}
+
+/** A run of `%XX` escapes. */
+const PERCENT_RUN_RE = /(?:%[0-9A-Fa-f]{2})+/g
+
+/** Keeps a decoded BOM, as Rust's `from_utf8_lossy` does. */
+const UTF8 = new TextDecoder('utf-8', { ignoreBOM: true })
+
+/**
+ * `%XX` escapes decoded to their bytes, read as UTF-8 (an invalid sequence as
+ * U+FFFD); anything else, and a malformed escape, stays as written. Mirrors
+ * `percent_decode`, which `decodeURIComponent` does not: it throws on a
+ * malformed escape.
+ */
+function percentDecode(text: string): string {
+  return text.replace(PERCENT_RUN_RE, (run) =>
+    UTF8.decode(Uint8Array.from(run.slice(1).split('%'), (hex) => Number.parseInt(hex, 16))),
+  )
+}
 
 /**
  * `true` when `reference` is one the import must NOT try to ingest as a vault
@@ -53,6 +125,27 @@ function isSkippableAttachmentRef(reference: string): boolean {
     r.startsWith('data:') ||
     r.startsWith('//') ||
     r.startsWith('attachment:')
+  )
+}
+
+/**
+ * The extensions a pick imports as pages, also the plain picker's `accept`
+ * list: Markdown and text files are read as Markdown, an Org file through
+ * `orgToMarkdown`. A link to one is a page link, never an attachment.
+ */
+export const NOTE_EXTENSIONS = ['.md', '.markdown', '.mdx', '.txt', '.org'] as const
+
+/**
+ * Whether a link to the decoded `destination` may name a file the import
+ * attaches: not a `#fragment`, nor a URL with a scheme, nor a note. Mirrors
+ * `links_a_file`.
+ */
+function linksAFile(destination: string): boolean {
+  const name = (destination.split(/[/\\]/).pop() ?? '').toLowerCase()
+  return (
+    !destination.startsWith('#') &&
+    !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(destination) &&
+    !NOTE_EXTENSIONS.some((ext) => name.endsWith(ext))
   )
 }
 
@@ -126,50 +219,52 @@ function blankFencedCodeLines(markdown: string): string {
  * Scan markdown for the distinct attachment references the #1925 backend will
  * try to match against the supplied vault files.
  *
- * Detects three inbound shapes (mirroring `detect_attachment_refs`):
+ * Detects four inbound shapes (mirroring `detect_attachment_refs`):
  *   - Obsidian embed `![[file.png]]` (optional `|display` suffix dropped),
- *   - standard markdown image `![alt](relative/path.png)`,
+ *   - standard markdown image `![alt](relative/path.png)`, its destination read
+ *     by {@link linkDestination} and percent-decoded,
  *   - Logseq/relative asset paths captured by the markdown-image form
- *     (`![alt](assets/...)`).
+ *     (`![alt](assets/...)`),
+ *   - a link to a file `[label](paper.pdf)`, read as an image is.
  *
  * SKIPS (leaving nothing to ship):
  *   - absolute / protocol-relative URLs and `data:` URIs,
  *   - already-canonical `attachment:<id>` refs,
+ *   - a link to a `#fragment`, to a URL with a scheme (`mailto:`) or to a note,
  *   - any ref inside a ```` ``` ````-fenced code block,
  *   - any ref inside an inline-code span (`` `...` ``).
  *
- * @returns the distinct referenced paths/filenames, in first-seen order.
+ * @returns the distinct referenced paths/filenames, in first-seen order: what
+ *   `AttachmentRef.original_ref` holds.
  */
 export function scanAttachmentRefs(markdown: string): string[] {
   const scanned = blankFencedCodeLines(markdown)
   const spans = inlineCodeSpans(scanned)
   const inCode = (pos: number): boolean => spans.some(([s, e]) => pos >= s && pos < e)
 
-  const seen = new Set<string>()
-  const refs: string[] = []
-  const push = (ref: string): void => {
-    const r = ref.trim()
-    if (r.length === 0 || isSkippableAttachmentRef(r)) return
-    if (!seen.has(r)) {
-      seen.add(r)
-      refs.push(r)
-    }
-  }
+  const refs = new Set<string>()
+  const isCandidate = (ref: string): boolean => ref.length > 0 && !isSkippableAttachmentRef(ref)
 
   // Obsidian embeds first (their `![[...]]` shape cannot also match the
   // markdown-image regex, so the two scans never double-count).
   OBSIDIAN_EMBED_RE.lastIndex = 0
   for (let m = OBSIDIAN_EMBED_RE.exec(scanned); m !== null; m = OBSIDIAN_EMBED_RE.exec(scanned)) {
-    if (inCode(m.index)) continue
-    push(m[1] ?? '')
+    const name = (m[1] ?? '').trim()
+    if (!inCode(m.index) && isCandidate(name)) refs.add(name)
   }
 
-  // Standard markdown images.
-  MARKDOWN_IMAGE_RE.lastIndex = 0
-  for (let m = MARKDOWN_IMAGE_RE.exec(scanned); m !== null; m = MARKDOWN_IMAGE_RE.exec(scanned)) {
-    if (inCode(m.index)) continue
-    push(m[2] ?? '')
+  // Standard markdown images and links.
+  const open = MARKDOWN_LINK_OPEN_RE
+  open.lastIndex = 0
+  for (let m = open.exec(scanned); m !== null; m = open.exec(scanned)) {
+    const token = linkDestination(scanned, open.lastIndex)
+    if (token === null) continue
+    open.lastIndex = token.end
+    const url = token.destination.trim()
+    if (inCode(m.index) || !isCandidate(url)) continue
+    const ref = percentDecode(url)
+    if (m[1] !== undefined || linksAFile(ref)) refs.add(ref)
   }
 
-  return refs
+  return [...refs]
 }

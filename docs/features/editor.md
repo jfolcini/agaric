@@ -151,6 +151,7 @@ The page reads as a document in a frame, as GitLab's rich text editor shows one:
 - **Drag the corner handle** of an image to resize.
 - **Select** an image in the text (click it, or arrow onto it), in blocks and in page mode, for its bubble: *Edit alt text* writes the alt into the image's Markdown, keeping its `|width` (`![alt|300](src)`, as typed in *Edit as Markdown*), *Open image … in full screen* opens it in the ImageLightbox (not offered for a web image the external-image setting withholds), and *Remove image* deletes it.
 - **PDF attachments** open in the **PdfViewerDialog**.
+- **A link to an attachment** in a block's text, `[label](attachment:<id>)` as an import writes a linked file or an embedded one that is not an image, shows with a paperclip; clicking it (Ctrl/Cmd+Click while editing) downloads the file.
 - **Audio attachments** play inline. `/voice` records a voice note from the microphone and attaches it to the block; recording stops on its own just before the 50 MB attachment limit.
 - Files render with type-specific icons (PDF, Word, Excel, image, generic).
 

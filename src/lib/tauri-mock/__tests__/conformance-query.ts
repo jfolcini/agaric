@@ -297,8 +297,18 @@ type RowsLocation =
  * and never attach content containing `#` or `->`.
  */
 type TokenSpec =
-  /** `row[idKey]`, plus one `#key=value` segment per `attrKeys` entry. */
-  | { readonly kind: 'id'; readonly idKey: string; readonly attrKeys?: readonly string[] }
+  /**
+   * `row[idKey]`, plus one `#key=value` segment per `attrKeys` entry, then one
+   * `#key=<element>` segment per element of each `listKeys` list (`#key=null`
+   * for none), so each element relabels as an id-valued attribute does. Mirror
+   * of `list_segments` in the Rust twin.
+   */
+  | {
+      readonly kind: 'id'
+      readonly idKey: string
+      readonly attrKeys?: readonly string[]
+      readonly listKeys?: readonly string[]
+    }
   /** The `list_page_links` edge pair — an edge's stable name is both ends. */
   | { readonly kind: 'pair' }
   /** A `PropertyRow`: `key#<ValueType>=<value>`. */
@@ -427,6 +437,15 @@ const PEER_REF_TOKEN = {
     'unpaired_by_peer_at_ms',
   ],
 } as const
+/** An `McpAgent` (#5667): keyed by name, since a created agent's id, token
+ *  and `created_at_ms` are minted per stack. MUST match `MCP_AGENT_ATTRS` and
+ *  the `list_mcp_agents` arm in the Rust twin. */
+const MCP_AGENT_TOKEN = {
+  kind: 'id',
+  idKey: 'name',
+  attrKeys: ['mode', 'last_used_ms'],
+  listKeys: ['space_ids'],
+} as const
 /** The `ReminderSettings` struct (#3830): no id, so a fixed head. MUST match
  *  the `get_reminder_settings` arm in the Rust twin. */
 const REMINDER_SETTINGS_TOKEN = {
@@ -458,6 +477,13 @@ const PROPERTY_MERGE_COUNTS_TOKEN = {
   kind: 'headed',
   head: 'property_merge_counts',
   attrKeys: ['moved', 'dropped'],
+} as const
+
+/** `preview_property_type_change`'s `PropertyTypeChangeCounts` (#5841 S3): no id, so a fixed head. */
+const PROPERTY_TYPE_CHANGE_COUNTS_TOKEN = {
+  kind: 'headed',
+  head: 'property_type_change_counts',
+  attrKeys: ['converted', 'removed'],
 } as const
 
 /** `resolve_page_by_alias`'s `(page_id, title)` hit (#3830). */
@@ -759,6 +785,26 @@ const WIRE: Readonly<Record<string, WireShape>> = {
     hasMoreKey: null,
     totalKey: null,
   },
+  // ── What changing a property's type converts and removes (#5841 S3) ──
+  //
+  // MUST match the `preview_property_type_change` and
+  // `list_property_type_change_values` arms in the Rust twin.
+  preview_property_type_change: {
+    rows: { kind: 'bare-row' },
+    token: PROPERTY_TYPE_CHANGE_COUNTS_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  list_property_type_change_values: {
+    rows: PAGED,
+    token: {
+      kind: 'id',
+      idKey: 'block_id',
+      attrKeys: ['page_id', 'deleted', 'value', 'converted'],
+    },
+    hasMoreKey: 'has_more',
+    totalKey: 'total_count',
+  },
   list_property_loss_values: {
     rows: PAGED,
     token: { kind: 'id', idKey: 'block_id', attrKeys: ['page_id', 'deleted', 'value_text'] },
@@ -829,6 +875,14 @@ const WIRE: Readonly<Record<string, WireShape>> = {
   list_peer_refs: {
     rows: { kind: 'bare-array' },
     token: PEER_REF_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  // #5667 — `ORDER BY name, id` over a NOCASE name, seeded on both stacks by
+  // `seed.mcp_agents`.
+  list_mcp_agents: {
+    rows: { kind: 'bare-array' },
+    token: MCP_AGENT_TOKEN,
     hasMoreKey: null,
     totalKey: null,
   },
@@ -1281,7 +1335,13 @@ function rowToken(raw: unknown, spec: TokenSpec): string {
   const row = (raw ?? {}) as Record<string, unknown>
   switch (spec.kind) {
     case 'id': {
-      return idToken(row, spec.idKey, spec.attrKeys ?? [])
+      let token = idToken(row, spec.idKey, spec.attrKeys ?? [])
+      for (const key of spec.listKeys ?? []) {
+        const items = row[key]
+        if (!Array.isArray(items)) token += `#${key}=null`
+        else for (const item of items) token += `#${key}=${attrValue(key, item)}`
+      }
+      return token
     }
     case 'pair': {
       const src = (row['source_id'] as string | undefined) ?? '?'

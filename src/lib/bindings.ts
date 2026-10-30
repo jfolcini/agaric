@@ -308,8 +308,13 @@ export const commands = {
 	 *  frontend undo stack can address the action by exact ref (`undo_op`).
 	 */
 	setProperty: (blockId: BlockId, key: string, value: SetPropertyArgs) => typedError<WithOps<BlockRow>, AppError>(__TAURI_INVOKE("set_property", { blockId, key, value })),
-	/**  Tauri command: set todo state on a block. Delegates to [`set_todo_state_inner`]. */
-	setTodoState: (blockId: BlockId, state: string | null) => typedError<BlockRow, AppError>(__TAURI_INVOKE("set_todo_state", { blockId, state })),
+	/**
+	 *  Tauri command: set todo state on a block. Delegates to [`set_todo_state_inner`].
+	 * 
+	 *  #6156: the reply carries the refs of every op it appended, the stamps' and
+	 *  the next occurrence's among them, so the frontend undoes it by those refs.
+	 */
+	setTodoState: (blockId: BlockId, state: string | null) => typedError<WithOps<BlockRow>, AppError>(__TAURI_INVOKE("set_todo_state", { blockId, state })),
 	/**
 	 *  Tauri command: batch-set todo state on multiple blocks.
 	 * 
@@ -318,12 +323,14 @@ export const commands = {
 	 *  FE used to drive in `useBlockMultiSelect.handleBatchSetTodo` into
 	 *  one round-trip / one op_log seq range / one writer-lock window.
 	 * 
-	 *  Emits one `EVENT_PROPERTY_CHANGED` per successfully-updated block
-	 *  so existing per-block listeners (e.g. agenda recompute, property
-	 *  drawer) keep firing without protocol changes. Failed-emit
-	 *  Breadcrumbs follow the established log-on-error pattern.
+	 *  Emits one `EVENT_PROPERTY_CHANGED` per block it was handed, skipped
+	 *  or not ([`property_changed_events`]), so the per-block listeners
+	 *  (e.g. agenda recompute, property drawer) get the single-row signal.
+	 * 
+	 *  #6156: the reply carries the refs of every op the batch appended, the
+	 *  stamps' among them, so the frontend undoes it by those refs.
 	 */
-	setTodoStateBatch: (blockIds: BlockId[], state: string | null) => typedError<number, AppError>(__TAURI_INVOKE("set_todo_state_batch", { blockIds, state })),
+	setTodoStateBatch: (blockIds: BlockId[], state: string | null) => typedError<WithOps<TodoStateBatch>, AppError>(__TAURI_INVOKE("set_todo_state_batch", { blockIds, state })),
 	/**
 	 *  Tauri command: batch-set one allowlisted property on multiple blocks.
 	 * 
@@ -500,6 +507,21 @@ export const commands = {
 	 *  Delegates to [`merge_property_key_inner`]; the response carries the op ref.
 	 */
 	mergePropertyKey: (spaceId: SpaceId, fromKey: string, intoKey: string, acknowledged: PropertyMergeCounts) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("merge_property_key", { spaceId, fromKey, intoKey, acknowledged })),
+	/**
+	 *  Tauri command: what changing a space's property to another type would
+	 *  convert and remove. Delegates to [`preview_property_type_change_inner`].
+	 */
+	previewPropertyTypeChange: (spaceId: SpaceId, key: string, valueType: string, options: string | null) => typedError<PropertyTypeChangeCounts, AppError>(__TAURI_INVOKE("preview_property_type_change", { spaceId, key, valueType, options })),
+	/**
+	 *  Tauri command: one page of the values a type change would convert or
+	 *  remove. Delegates to [`list_property_type_change_values_inner`].
+	 */
+	listPropertyTypeChangeValues: (spaceId: SpaceId, key: string, valueType: string, options: string | null, kind: PropertyTypeChangeKind, cursor: string | null, limit: number | null) => typedError<PageResponse<PropertyTypeChangeValue>, AppError>(__TAURI_INVOKE("list_property_type_change_values", { spaceId, key, valueType, options, kind, cursor, limit })),
+	/**
+	 *  Tauri command: change a space's property to another type. Delegates to
+	 *  [`change_property_type_inner`]; the response carries the op ref.
+	 */
+	changePropertyType: (spaceId: SpaceId, key: string, valueType: string, options: string | null, acknowledged: PropertyTypeChangeCounts) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("change_property_type", { spaceId, key, valueType, options, acknowledged })),
 	/**  Tauri command: list all sync peers. Delegates to [`list_peer_refs_inner`]. */
 	listPeerRefs: () => typedError<PeerRef[], AppError>(__TAURI_INVOKE("list_peer_refs")),
 	/**  Tauri command: delete (unpair) a sync peer. Delegates to [`delete_peer_ref_inner`]. */
@@ -3484,6 +3506,39 @@ export type PropertyRow = {
 	value_bool: number | null,
 };
 
+/**
+ *  What changing a key's type does to a space's values, the Trash's included:
+ *  `converted` ones are kept in the new type's form (one already in it among
+ *  them), `removed` ones the new type does not take, and they go.
+ */
+export type PropertyTypeChangeCounts = {
+	converted: number,
+	removed: number,
+};
+
+/**
+ *  Which of a type change's values [`list_property_type_change_values_inner`]
+ *  lists.
+ */
+export type PropertyTypeChangeKind = "converted" | "removed";
+
+/**
+ *  One value a type change converts or removes: the block holding it, its
+ *  page, and the value as text, before and after.
+ */
+export type PropertyTypeChangeValue = {
+	block_id: string,
+	page_id: string | null,
+	page_title: string | null,
+	content: string | null,
+	/**  The block is in the Trash; its value changes all the same. */
+	deleted: boolean,
+	/**  The value the block holds, as text. */
+	value: string,
+	/**  The value under the new type, as text; `None` when it is removed. */
+	converted: string | null,
+};
+
 /**  How many live blocks of a space hold a value under one key (#5841). */
 export type PropertyUsage = {
 	key: string,
@@ -4653,6 +4708,15 @@ export type TaskNotification = {
 	blockId?: string | null,
 };
 
+/**
+ *  Reply of [`set_todo_state_batch`]; same envelope as [`CreatedBlocks`], for
+ *  a count (#6156).
+ */
+export type TodoStateBatch = {
+	/**  How many live blocks it set; a missing or deleted id is skipped. */
+	updated: number,
+};
+
 /**  Result of an undo or redo operation. */
 export type UndoResult = {
 	/**  The op that was reversed (the original op for undo, the undo-op for redo). */
@@ -4758,9 +4822,11 @@ export type ValidationCode =
 "BuiltinPropertyLocked" | 
 /**
  *  A cross-space move whose acknowledged property losses differ from what
- *  it would drop now (`move_blocks_to_space`, #5841), or a property merge
+ *  it would drop now (`move_blocks_to_space`, #5841), a property merge
  *  whose acknowledged counts differ from what it would move and drop now
- *  (`merge_property_key`): another write changed the blocks or a
+ *  (`merge_property_key`), or a type change whose acknowledged counts
+ *  differ from what it would convert and remove now
+ *  (`change_property_type`): another write changed the blocks or a
  *  definition since the preview, so the caller previews again and asks
  *  once more.
  */
@@ -4782,8 +4848,8 @@ export type ValidationCode =
  *  `path` is the file's path RELATIVE to the vault root (the browser
  *  `webkitRelativePath` minus the top folder, or whatever the FE chooses), using
  *  `/` separators — e.g. `assets/diagram.png` or `images/screenshots/a.png`.
- *  It is matched against an in-content ref first by relative-path equality, then
- *  by basename (see `match_vault_file`).
+ *  It is matched against an in-content ref read from the note's folder, then
+ *  from the vault root, then by basename (see `match_vault_file`).
  * 
  *  This is an IPC **input**, so it needs `Deserialize` (unlike the
  *  backend→frontend [`ImportProgressUpdate`], which is `Serialize`-only).

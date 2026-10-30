@@ -45,6 +45,38 @@ const PNG = Buffer.from(
   'base64',
 )
 
+// A 2x1 blue PNG, told apart from `PNG` by its width.
+const WIDE_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAADklEQVR4nGNgYPj/H4QBDfsD/Yde1YcAAAAASUVORK5CYII=',
+  'base64',
+)
+
+// A one-page PDF of 3 x 3 points.
+const PDF = Buffer.from(
+  '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n' +
+    '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n' +
+    '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 3 3]>>endobj\n' +
+    'trailer<</Root 1 0 R>>\n%%EOF\n',
+)
+
+/**
+ * Wait until the block holding `marker` links its attachment `filename` as a
+ * file, labelled `label`, and shows it as a file chip, with no image.
+ */
+async function expectFileLinked(marker: string, label: string, filename: string): Promise<void> {
+  const block = blockStaticByMarker(marker)
+  await block.waitForDisplayed({ timeout: NAV_TIMEOUT })
+  const id = await block.getAttribute('data-block-id')
+  if (id === null) throw new Error(`the ${marker} block has no data-block-id`)
+  const link = $(`[data-block-id="${id}"] [data-testid="attachment-link"]`)
+  await link.waitForDisplayed({ timeout: NAV_TIMEOUT })
+  expect(await link.getText()).toBe(label)
+  await $(`li[data-block-id="${id}"] button[aria-label="Open file ${filename}"]`).waitForDisplayed({
+    timeout: NAV_TIMEOUT,
+  })
+  await expectAbsent(`[data-block-id="${id}"] img`, `an image in the ${marker} block`)
+}
+
 /** Write `contents` to a fresh temp file and pick it in the Data tab's `testid` input. */
 async function importFile(
   testid: string,
@@ -107,6 +139,52 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     const id = await block.getAttribute('data-block-id')
     if (id === null) throw new Error('the caption block has no data-block-id')
     await expectImageRendered(id, 'after the round trip')
+  })
+
+  it('#6032 — attaches the image beside the note, of two sharing a name with a space', async () => {
+    await waitForAppReady()
+    const marker = runScopedMarker('wdio-beside')
+    const folder = `${marker}-dir`
+    // `a/` is picked first, so a basename match would attach its 1 px image.
+    await importFolder(
+      'import-folder-input',
+      folder,
+      {
+        'a/my image.png': PNG,
+        'b/my image.png': WIDE_PNG,
+        'b/note.md': Buffer.from(
+          `- ${marker}-angle ![](<my image.png>)\n- ${marker}-escaped ![](my%20image.png)\n`,
+        ),
+      },
+      'Imported “',
+    )
+
+    await navigateTo('Journal')
+    await openPageTitled(`${folder}/b/note`)
+    for (const ref of ['angle', 'escaped']) {
+      const block = blockStaticByMarker(`${marker}-${ref}`)
+      await block.waitForDisplayed({ timeout: NAV_TIMEOUT })
+      const id = await block.getAttribute('data-block-id')
+      if (id === null) throw new Error(`the ${ref} block has no data-block-id`)
+      const width = await expectImageRendered(id, `the ${ref} ref`)
+      expect(width).toBe(2)
+    }
+  })
+
+  it('#6032 — attaches a PDF a note links to, shown as a file link, not a broken image', async () => {
+    await waitForAppReady()
+    const marker = runScopedMarker('wdio-linked')
+    const folder = `${marker}-dir`
+    await importFolder(
+      'import-folder-input',
+      folder,
+      { 'note.md': Buffer.from(`- ${marker}-read [paper](paper.pdf)\n`), 'paper.pdf': PDF },
+      'Imported “',
+    )
+
+    await navigateTo('Journal')
+    await openPageTitled(`${folder}/note`)
+    await expectFileLinked(`${marker}-read`, 'paper', 'paper.pdf')
   })
 
   it('imports a one-note .enex as one page holding its body blocks and image', async () => {
@@ -214,6 +292,37 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     await navigateTo('Journal')
     await openPageTitled(`${book}/${sub}/${marker}-deep`)
     await blockStaticByMarker(`${marker}-deep-body`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+  })
+
+  it('#6032 — attaches a PDF a Joplin note links to, shown as a file link', async () => {
+    await waitForAppReady()
+    const marker = runScopedMarker('wdio-jex-pdf')
+    const ids = { note: 'a'.repeat(32), pdf: 'b'.repeat(32) }
+    const jex = tar([
+      [
+        `${ids.note}.md`,
+        joplinItem(`${marker}-files\n\n${marker}-see [the report](:/${ids.pdf})`, {
+          id: ids.note,
+          parent_id: '',
+          type_: '1',
+        }),
+      ],
+      [
+        `${ids.pdf}.md`,
+        joplinItem('report.pdf', {
+          id: ids.pdf,
+          mime: 'application/pdf',
+          file_extension: 'pdf',
+          type_: '4',
+        }),
+      ],
+      [`resources/${ids.pdf}.pdf`, PDF.toString('latin1')],
+    ])
+    await importFile('import-jex-input', 'export.jex', jex, `Imported “${marker}-files”`)
+
+    await navigateTo('Journal')
+    await openPageTitled(`${marker}-files`)
+    await expectFileLinked(`${marker}-see`, 'the report', 'report.pdf')
   })
 
   // #6032 — a `/` in a title is part of the name, kept as the look-alike `∕`,

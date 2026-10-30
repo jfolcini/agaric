@@ -1,0 +1,69 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id AS \"block_id!: String\", b.page_id, pg.content AS page_title, b.content,\n                  b.deleted_at IS NOT NULL AS \"deleted!: bool\"\n           FROM blocks b LEFT JOIN blocks pg ON pg.id = b.page_id\n           WHERE b.id IN (SELECT value FROM json_each(?1))",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "page_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "page_id"
+          }
+        }
+      },
+      {
+        "name": "page_title",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
+      },
+      {
+        "name": "content",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
+      },
+      {
+        "name": "deleted!: bool",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "8218ed9d49df3bd0b1fd32664bfa5668528cb70f3dcfff2200826f9461cf453d"
+}

@@ -87,12 +87,16 @@
     {
       "code": null,
       "error": null,
+      "events": [
+        "block:properties-changed#block_id=B2#changed_keys=[\"repeat\",\"repeat-count\",\"repeat-seq\"]"
+      ],
       "name": "remove_the_repeat_rule",
       "returns": ["delete_property"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[]"],
       "name": "remove_the_repeat_limit",
       "returns": ["delete_property"]
     },

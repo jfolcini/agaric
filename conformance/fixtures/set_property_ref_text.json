@@ -112,18 +112,21 @@
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"reviewer\"]"],
       "name": "ref_by_title",
       "returns": ["B2"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"approver\"]"],
       "name": "ref_by_id",
       "returns": ["B2"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"watcher\"]"],
       "name": "ref_by_bracketed_title",
       "returns": ["B2"]
     },

@@ -16,7 +16,7 @@
 import { isAppError } from '@/lib/app-error'
 import type { VaultFile } from '@/lib/bindings'
 import { type EnexNote, enexNoteToMarkdown, sanitizeNoteTitleToFilename } from '@/lib/enex-import'
-import { scanAttachmentRefs } from '@/lib/import-attachments'
+import { NOTE_EXTENSIONS, scanAttachmentRefs } from '@/lib/import-attachments'
 import { type JexNote, jexNoteToMarkdown } from '@/lib/jex-import'
 import { isNotionExport, notionToMarkdown, stripNotionIds } from '@/lib/notion-import'
 import { orgToMarkdown } from '@/lib/org-import'
@@ -49,8 +49,7 @@ export function importErrorReason(err: unknown): string {
  * matches against (#1925). Strips the leading top-folder segment of a
  * `webkitRelativePath` (the browser always prefixes the chosen folder name,
  * e.g. `MyVault/assets/a.png` → `assets/a.png`), backslashes → `/`, and a
- * leading `./`. Mirrors the `norm` helper in `match_vault_file`, plus the
- * top-folder strip the FE owns (the BE expects vault-root-relative `path`s).
+ * leading `./`; the BE expects vault-root-relative `path`s.
  */
 export function vaultRelativePath(webkitRelativePath: string | undefined): string {
   // jsdom (and a plain `.md` pick) may leave `webkitRelativePath` empty or
@@ -69,49 +68,72 @@ export function basename(path: string): string {
  * A vault-folder file pick, indexed for attachment matching (#1925).
  *
  * `byPath` is keyed by the vault-root-relative path (exact-match, the precise
- * resolution); `byBase` is keyed by basename for the Obsidian `![[img.png]]`
- * fallback. Matching order mirrors the backend's `match_vault_file`:
- * relative-path equality first, then basename. On a basename collision the
- * FIRST file wins (deterministic), matching the backend's ambiguity rule —
- * shipping one candidate is enough since the BE re-matches by the same rule.
+ * resolution); `byBase` holds every file of each basename, in pick order, for
+ * the Obsidian `![[img.png]]` fallback.
  */
 export interface VaultIndex {
   byPath: Map<string, File>
-  byBase: Map<string, File>
+  byBase: Map<string, File[]>
 }
 
 /**
  * Index a folder pick's `FileList` for attachment matching. Non-markdown
  * assets and markdown files alike are indexed (a markdown file is never a
- * scanned ref, so including it is harmless). The first file wins on a basename
+ * scanned ref, so including it is harmless). The first file wins on a path
  * collision so the lookup is deterministic.
  */
 export function indexVaultFiles(files: File[]): VaultIndex {
   const byPath = new Map<string, File>()
-  const byBase = new Map<string, File>()
+  const byBase = new Map<string, File[]>()
   for (const file of files) {
     const rel = vaultRelativePath(file.webkitRelativePath)
     if (!byPath.has(rel)) byPath.set(rel, file)
     const base = basename(rel)
-    if (!byBase.has(base)) byBase.set(base, file)
+    byBase.set(base, [...(byBase.get(base) ?? []), file])
   }
   return { byPath, byBase }
 }
 
 /**
- * Resolve one scanned attachment ref against the vault index, mirroring the
- * backend `match_vault_file` order: exact vault-relative path, then basename.
+ * The `/`-separated `path` read from the folder `dir`, both relative to the
+ * vault root: empty and `.` segments dropped and each `..` climbing one
+ * folder. Null when a `..` would climb above the vault root. Mirrors
+ * `resolve_vault_path`.
  */
-export function resolveVaultRef(reference: string, index: VaultIndex): File | undefined {
-  const want = reference.replace(/\\/g, '/').replace(/^\.\//, '')
-  return index.byPath.get(want) ?? index.byBase.get(basename(want))
+export function resolveVaultPath(dir: string, path: string): string | null {
+  const segments: string[] = []
+  for (const segment of [...dir.split('/'), ...path.split('/')]) {
+    if (segment === '..') {
+      if (segments.pop() === undefined) return null
+    } else if (segment !== '' && segment !== '.') segments.push(segment)
+  }
+  return segments.join('/')
+}
+
+/**
+ * The files one scanned attachment ref may name, in the backend
+ * `match_vault_file` order: the path read from the note's folder `noteDir`,
+ * else the vault-root path, else the first two files of its basename. The
+ * backend takes the first of a basename tie and warns, so a tie ships.
+ */
+export function resolveVaultRef(reference: string, noteDir: string, index: VaultIndex): File[] {
+  const want = reference.replace(/\\/g, '/')
+  for (const dir of [noteDir, '']) {
+    const path = resolveVaultPath(dir, want)
+    const file = path === null ? undefined : index.byPath.get(path)
+    if (file) return [file]
+  }
+  // Two are enough for the backend's warning; every same-named file of a large
+  // export could pass the import's attachment budget.
+  return (index.byBase.get(basename(want)) ?? []).slice(0, 2)
 }
 
 /**
  * Collect the referenced sibling files for one markdown document into the
  * `VaultFile[]` IPC payload (#1925). Pre-scans `content` for attachment refs,
- * resolves each against the picked-folder index, and reads ONLY the matched
- * files' bytes (a ref with no matching file is omitted — the backend warns).
+ * resolves each against the picked-folder index from the note's folder
+ * `noteDir`, and reads ONLY the matched files' bytes (a ref with no matching
+ * file is omitted — the backend warns).
  *
  * Returns `null` when there is nothing to ship (no refs, or none resolved) so
  * the wrapper sends `null` ⇒ the pre-#1925 behaviour. Reading is async (
@@ -119,16 +141,18 @@ export function resolveVaultRef(reference: string, index: VaultIndex): File | un
  */
 export async function collectVaultFiles(
   content: string,
+  noteDir: string,
   index: VaultIndex,
 ): Promise<VaultFile[] | null> {
   const refs = scanAttachmentRefs(content)
 
   // Resolve refs to distinct files (a ref may resolve to a file already picked
-  // up by another ref — dedup by the file object so we read each once).
+  // up by another ref — dedup by path so we read each once).
   const matched = new Map<string, File>()
   for (const ref of refs) {
-    const file = resolveVaultRef(ref, index)
-    if (file) matched.set(vaultRelativePath(file.webkitRelativePath), file)
+    for (const file of resolveVaultRef(ref, noteDir, index)) {
+      matched.set(vaultRelativePath(file.webkitRelativePath), file)
+    }
   }
   if (matched.size === 0) return null
 
@@ -224,14 +248,7 @@ function linkedNotePaths(content: string, notesByName: Map<string, string[]>): s
   return [...paths]
 }
 
-/**
- * The extensions a pick imports as pages, also the plain picker's `accept`
- * list: Markdown and text files are read as Markdown, an Org file through
- * {@link orgToMarkdown}.
- */
-export const NOTE_EXTENSIONS = ['.md', '.markdown', '.mdx', '.txt', '.org'] as const
-
-/** A file a note may embed and the import can attach: an image or a PDF. */
+/** A file a note may embed or link, never counted as skipped: an image or a PDF. */
 const ATTACHMENT_RE = /\.(?:png|jpe?g|gif|webp|svg|bmp|ico|avif|pdf)$/i
 
 /** The extension of `name` among {@link NOTE_EXTENSIONS}, or null. */
@@ -248,7 +265,7 @@ export function isNotionPick(files: readonly File[]): boolean {
 
 /**
  * The files of a pick that imported as nothing: neither a note, nor a file a
- * note may embed, nor one a note did embed (`attached`, vault-relative paths),
+ * note may embed or link, nor one a note did (`attached`, vault-relative paths),
  * nor hidden (`.obsidian/`, `.DS_Store`). A Notion export's database tables
  * are counted apart, as `databases`, since each row of one is also a page of
  * the export; Notion writes each as `X.csv` and again as `X_all.csv`.
@@ -335,7 +352,10 @@ export function mdFilesToUnits(
       // single-file import (no index) has no siblings. A folder note always
       // ships its note names, even none: that marks it as a folder's, whose
       // references into other notes wait for `link_import_anchors`.
-      const vaultFiles = vaultIndex == null ? null : await collectVaultFiles(content, vaultIndex)
+      const notePath = vaultRelativePath(file.webkitRelativePath)
+      const noteDir = notePath.slice(0, Math.max(notePath.lastIndexOf('/'), 0))
+      const vaultFiles =
+        vaultIndex == null ? null : await collectVaultFiles(content, noteDir, vaultIndex)
       const vaultNotes = vaultIndex == null ? null : linkedNotePaths(content, notesByName)
       return { content, path, vaultFiles, vaultNotes }
     },

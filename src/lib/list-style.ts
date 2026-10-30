@@ -79,21 +79,22 @@ export async function clearListStyle(blockId: string): Promise<OpRef[]> {
  * does (#5691 D3: a task is a third list kind, exclusive with bulleted and
  * numbered). One read finds them, as no command deletes a property on many
  * blocks. Call it once the task state is written, so a refused write clears
- * nothing. Resolves whether it cleared them all; a failure is logged and told.
+ * nothing. Resolves the refs of the clears, for the caller's undo entry
+ * (#6156); a failure is logged and told, and resolves those made before it.
  */
-export async function clearListStyles(ids: readonly string[]): Promise<boolean> {
-  if (ids.length === 0) return true
+export async function clearListStyles(ids: readonly string[]): Promise<OpRef[]> {
+  const refs: OpRef[] = []
+  if (ids.length === 0) return refs
   try {
     const rows = unwrap(await commands.getBatchProperties([...ids]))
     for (const id of ids) {
-      if (listStyleFromRows(rows[id]) !== 'none') await clearListStyle(id)
+      if (listStyleFromRows(rows[id]) !== 'none') refs.push(...(await clearListStyle(id)))
     }
-    return true
   } catch (err) {
     logger.error('list-style', 'Failed to clear the list styles of new tasks', { ids }, err)
     notify.error(i18n.t('blockTree.clearListStyleFailed'))
-    return false
   }
+  return refs
 }
 
 /**

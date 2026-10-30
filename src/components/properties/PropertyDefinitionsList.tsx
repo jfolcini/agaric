@@ -4,7 +4,8 @@
  * A space selector (definitions are per space, #5841; it starts on the
  * active space), search/filter, create form, list rendering, delete
  * confirmation, edit options for select-type properties, renaming a key,
- * merging it into another, and copying a definition to another space. A
+ * merging it into another, changing its type, and copying a definition to
+ * another space. A
  * built-in definition shows a lock and offers no action.
  */
 
@@ -16,6 +17,7 @@ import { useTranslation } from 'react-i18next'
 import { EmptyState } from '@/components/common/EmptyState'
 import { ListViewState } from '@/components/common/ListViewState'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
+import { ChangePropertyType } from '@/components/properties/ChangePropertyType'
 import { CopyDefinitionToSpace } from '@/components/properties/CopyDefinitionToSpace'
 import { MergePropertyDefinition } from '@/components/properties/MergePropertyDefinition'
 import { notifyDefinitionWrite } from '@/components/properties/notify-definition-write'
@@ -42,12 +44,10 @@ import { commands } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { formatPropertyName, selectOptionsJson } from '@/lib/property-utils'
+import { formatPropertyName, selectOptionsJson, VALUE_TYPES } from '@/lib/property-utils'
 import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
-
-const VALUE_TYPES = ['text', 'number', 'date', 'select', 'ref', 'boolean', 'url'] as const
 
 /** The space marker every space block carries is app bookkeeping (#5629). */
 const SPACE_MARKER_KEY = 'is_space'
@@ -492,6 +492,12 @@ export function PropertyDefinitionsList(): React.ReactElement {
                               definition={def}
                               spaceId={spaceId}
                               definitions={definitions}
+                              onChanged={reload}
+                              className="text-muted-foreground"
+                            />
+                            <ChangePropertyType
+                              definition={def}
+                              spaceId={spaceId}
                               onChanged={reload}
                               className="text-muted-foreground"
                             />

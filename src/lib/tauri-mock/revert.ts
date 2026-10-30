@@ -17,7 +17,8 @@ import { normalizeTagName } from '@/lib/name-tokens'
 import { foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { deleteCohort, nextCohortMarker, restoreCohort } from '@/lib/tauri-mock/cohort'
 import { indexLinks, linkedTargets, relinkRestored } from '@/lib/tauri-mock/link-index'
-import { forwardPropertyKey, revertPropertyKeyOp } from '@/lib/tauri-mock/property-keys'
+import { forwardPropertyKey, revertPropertyKeyOp, rowOf } from '@/lib/tauri-mock/property-keys'
+import { fitToDeclaredType } from '@/lib/tauri-mock/property-type-change'
 import { type MockOpLogEntry, opLog, spacePropertyDefs } from '@/lib/tauri-mock/seed'
 
 type BlockRow = Record<string, unknown>
@@ -266,22 +267,16 @@ function revertPropertyMap(
     return true
   }
 
-  if (opType === 'set_property') {
-    if (fromValue == null) {
-      // Prior state: property did not exist → remove the new entry.
-      properties.get(blockId)?.delete(key)
-    } else {
-      // Prior state: property existed with the given typed value.
-      if (!properties.has(blockId)) properties.set(blockId, new Map())
-      properties.get(blockId)?.set(key, { key, ...fromValue })
-    }
+  if (fromValue == null) {
+    // set_property's prior state: the property did not exist → remove the new
+    // entry. delete_property's: nothing to re-add.
+    if (opType === 'set_property') properties.get(blockId)?.delete(key)
     return true
   }
-
-  // delete_property: re-add the prior typed value (or no-op if absent).
-  if (fromValue == null) return true
+  // The prior typed value, under the key's type now (#5841 S3).
+  const restored = fitToDeclaredType(blockId, key, fromValue)
   if (!properties.has(blockId)) properties.set(blockId, new Map())
-  properties.get(blockId)?.set(key, { key, ...fromValue })
+  properties.get(blockId)?.set(key, rowOf(key, restored))
   return true
 }
 

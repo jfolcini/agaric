@@ -38,6 +38,7 @@ mod pages_tag_property_conformance_tests;
 mod property_cmd_tests;
 mod property_key_cmd_tests;
 mod property_line_tests;
+mod property_type_cmd_tests;
 mod query_cmd_tests;
 mod search_blocks_struct_tests;
 mod snapshot_tests;

@@ -518,11 +518,11 @@ describe('parseEnex — resource paths, mime fallbacks and en-media dedupe (#251
   })
 
   it('renames a file-name with a space or parenthesis so the backend ingests it', () => {
-    // The backend's image grammar ends a ref at whitespace or `)`, so an embed
-    // of `Screenshot 2024.png` is never matched and its bytes are dropped. The
-    // rename happens before the collision check: a resource already called
-    // `Screenshot_2024.png` must not share the renamed one's path, or both
-    // embeds would show the first file's bytes.
+    // The backend's image grammar ends a bare ref at whitespace or an
+    // unbalanced `)`, so an embed of `Screenshot 2024.png` is never matched and
+    // its bytes are dropped. The rename happens before the collision check: a
+    // resource already called `Screenshot_2024.png` must not share the renamed
+    // one's path, or both embeds would show the first file's bytes.
     const xml = noteWith(
       ref(BYTE.a.md5) + ref(BYTE.b.md5) + ref(BYTE.c.md5),
       res({ b64: BYTE.a.b64, mime: 'image/png', fileName: 'Screenshot 2024.png' }),

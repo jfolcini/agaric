@@ -37,13 +37,13 @@ pub struct PropertyMergeCounts {
     pub dropped: i64,
 }
 
-/// Refuse a rename or merge of `key`, one the app writes for itself
-/// (`INTERNAL_PROPERTY_KEYS`): moving the template markers' values, say, would
-/// break templates.
-fn refuse_internal_key(key: &str) -> Result<(), AppError> {
+/// Refuse a rename, merge or type change of `key`, one the app writes for
+/// itself (`INTERNAL_PROPERTY_KEYS`): moving or converting the template
+/// markers' values, say, would break templates.
+pub(crate) fn refuse_internal_key(key: &str) -> Result<(), AppError> {
     if is_internal_property_key(key) {
         return Err(AppError::validation(format!(
-            "property '{key}' is the app's own and cannot be renamed or merged"
+            "property '{key}' is the app's own and cannot be changed"
         )));
     }
     Ok(())
@@ -83,7 +83,7 @@ pub(crate) async fn refuse_taken_key(
 }
 
 /// `space_id`'s definition of `key`, or `NotFound`.
-async fn declared_def(
+pub(crate) async fn declared_def(
     conn: &mut SqliteConnection,
     space_id: &str,
     key: &str,
@@ -233,7 +233,7 @@ pub async fn preview_property_merge_inner(
 
 /// `value` in the slot the engine's own kind of it projects from: a string is
 /// text, whatever the definition later types it as.
-fn value_fields(value: &PropertyValue) -> Option<PropertyValueFields> {
+pub(crate) fn value_fields(value: &PropertyValue) -> Option<PropertyValueFields> {
     let mut fields = PropertyValueFields::default();
     match value {
         PropertyValue::Str(s) => fields.value_text = Some(s.clone()),

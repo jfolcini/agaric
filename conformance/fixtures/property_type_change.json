@@ -1,0 +1,441 @@
+{
+  "description": "#5841 S3 — `change_property_type` takes `effortx` from text to number in one `rewrite_properties` op (reason `change_type`). `X` holds \"3\", `Y` \"042\" and the trashed `W` \"7\", which convert to numbers; `Z` holds \"abc\", which goes, recorded so an undo brings it back. Refused, in order: a built-in key (`BuiltinPropertyLocked`), one of the app's own, a malformed target (a select with no options), an undeclared key (`not_found`), the type the key has, and a stale acknowledgement (`UnacknowledgedPropertyLoss`). `undo_ops` puts the text values and the definition back, which the second change relies on: it is acknowledged with the same counts. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "X",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Y",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Z",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "W",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 8,
+      "ops": [
+        {
+          "key": "effortx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "effortx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "effortx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "effortx",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "rewrite_properties"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "effortx",
+        "value": 3.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B3",
+        "key": "effortx",
+        "value": 42.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B5",
+        "key": "effortx",
+        "value": 7.0,
+        "value_type": "Num"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": "BuiltinPropertyLocked",
+      "error": "validation",
+      "name": "a_builtin_key_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "an_internal_key_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_select_without_options_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "an_undeclared_key_is_not_found",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "the_same_type_is_refused",
+      "returns": []
+    },
+    {
+      "code": "UnacknowledgedPropertyLoss",
+      "error": "validation",
+      "name": "a_stale_acknowledgement_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "change_to_number",
+      "returns": ["effortx#value_type=number#options=null#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_change",
+      "returns": [
+        "undo_ops#reversed_op_type=rewrite_properties#new_op_type=rewrite_properties#is_redo=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "change_again",
+      "returns": ["effortx#value_type=number#options=null#builtin=false"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "effortx_after_the_change",
+      "rows": ["effortx#value_type=number#options=null#builtin=false"],
+      "total_count": null
+    }
+  ],
+  "name": "property_type_change",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "effortx",
+        "value": {
+          "value_text": "3"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "effortx",
+        "value": {
+          "value_text": "042"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "effortx",
+        "value": {
+          "value_text": "abc"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "key": "effortx",
+        "value": {
+          "value_text": "7"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S5"
+      },
+      "command": "delete_block",
+      "comment": "A trashed card's value converts too."
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 0,
+          "removed": 0
+        },
+        "key": "due_date",
+        "spaceId": "$SPACE",
+        "valueType": "text"
+      },
+      "command": "change_property_type",
+      "comment": "Built-ins are code constants.",
+      "expect_code": "BuiltinPropertyLocked",
+      "expect_error": "validation",
+      "name": "a_builtin_key_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 0,
+          "removed": 0
+        },
+        "key": "template",
+        "spaceId": "$SPACE",
+        "valueType": "number"
+      },
+      "command": "change_property_type",
+      "comment": "The template marker is the app's own.",
+      "expect_error": "validation",
+      "name": "an_internal_key_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 0,
+          "removed": 0
+        },
+        "key": "effortx",
+        "spaceId": "$SPACE",
+        "valueType": "select"
+      },
+      "command": "change_property_type",
+      "comment": "A select needs its options.",
+      "expect_error": "validation",
+      "name": "a_select_without_options_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 0,
+          "removed": 0
+        },
+        "key": "nothing",
+        "spaceId": "$SPACE",
+        "valueType": "number"
+      },
+      "command": "change_property_type",
+      "comment": "Not found.",
+      "expect_error": "not_found",
+      "name": "an_undeclared_key_is_not_found",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 4,
+          "removed": 0
+        },
+        "key": "effortx",
+        "spaceId": "$SPACE",
+        "valueType": "text"
+      },
+      "command": "change_property_type",
+      "comment": "Already text.",
+      "expect_error": "validation",
+      "name": "the_same_type_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 4,
+          "removed": 0
+        },
+        "key": "effortx",
+        "spaceId": "$SPACE",
+        "valueType": "number"
+      },
+      "command": "change_property_type",
+      "comment": "The change converts three and removes one.",
+      "expect_code": "UnacknowledgedPropertyLoss",
+      "expect_error": "validation",
+      "name": "a_stale_acknowledgement_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 3,
+          "removed": 1
+        },
+        "key": "effortx",
+        "spaceId": "$SPACE",
+        "valueType": "number"
+      },
+      "command": "change_property_type",
+      "comment": "O6 — the definition after the change.",
+      "name": "change_to_number",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O6"]
+      },
+      "command": "undo_ops",
+      "comment": "O7 — the text values, `abc` among them, and the text definition are back.",
+      "name": "undo_the_change",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 3,
+          "removed": 1
+        },
+        "key": "effortx",
+        "spaceId": "$SPACE",
+        "valueType": "number"
+      },
+      "command": "change_property_type",
+      "comment": "O8 — the same counts as the first change.",
+      "name": "change_again",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "key": "effortx",
+        "spaceId": "$SPACE"
+      },
+      "command": "get_property_def",
+      "comment": "A number now.",
+      "name": "effortx_after_the_change"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "X",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "Y",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "Z",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "W",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 4
+      }
+    ],
+    "properties": [],
+    "property_defs": [
+      {
+        "key": "effortx",
+        "options": null,
+        "value_type": "text"
+      }
+    ],
+    "tags": []
+  }
+}

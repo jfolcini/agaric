@@ -2024,7 +2024,7 @@ async fn set_property_emits_blocks_changed_and_property_changed() {
     );
 
     // Payload PARITY with the local `set_property` command: it emits
-    // `emit_property_changed_event(app, block_id, vec![key])` →
+    // `property_changed_events([block_id], &[key])` →
     // `PropertyChangedEvent { block_id, changed_keys: [key] }`. The MCP write
     // must emit the byte-identical payload so the FE property-change dispatcher
     // needs no changes.

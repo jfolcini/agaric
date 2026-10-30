@@ -731,8 +731,8 @@ pub enum ImportProgressUpdate {
 /// `path` is the file's path RELATIVE to the vault root (the browser
 /// `webkitRelativePath` minus the top folder, or whatever the FE chooses), using
 /// `/` separators — e.g. `assets/diagram.png` or `images/screenshots/a.png`.
-/// It is matched against an in-content ref first by relative-path equality, then
-/// by basename (see `match_vault_file`).
+/// It is matched against an in-content ref read from the note's folder, then
+/// from the vault root, then by basename (see `match_vault_file`).
 ///
 /// This is an IPC **input**, so it needs `Deserialize` (unlike the
 /// backend→frontend [`ImportProgressUpdate`], which is `Serialize`-only).
@@ -747,22 +747,33 @@ pub struct VaultFile {
 /// One attachment reference detected in a block's content (#1925).
 ///
 /// Produced by [`detect_attachment_refs`]. The importer uses `original_ref` (the
-/// exact URL/path token as it appears in the source, e.g. `assets/img.png` or
-/// `![[diagram.png]]`'s inner `diagram.png`) to match against the supplied
-/// [`VaultFile`] list, and `alt` to preserve the alt text when rewriting to
-/// `![alt](attachment:<id>)`.
+/// path the token names, e.g. `assets/img.png` or `![[diagram.png]]`'s inner
+/// `diagram.png`) to match against the supplied [`VaultFile`] list, and `alt`
+/// to preserve the alt text or link label in the rewritten `attachment:<id>`
+/// token.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachmentRef {
-    /// The alt text to preserve in the rewritten `![alt](attachment:<id>)`.
-    /// Empty for Obsidian embeds `![[file]]` (which carry no alt) and for
-    /// markdown images with an empty `![]` label.
+    /// An image's alt text or a link's label, kept in the rewritten token.
+    /// Empty for Obsidian embeds `![[file]]` (which carry no alt) and for an
+    /// empty `![]` or `[]`.
     pub alt: String,
-    /// The raw reference path/URL exactly as it appears in the source content,
-    /// used to match a [`VaultFile`] and to locate the token for rewriting.
+    /// The path the token names, used to match a [`VaultFile`]: an embed's name
+    /// as written, an image's destination without its `<…>` and percent-decoded
+    /// (`<my image.png>` and `my%20image.png` both name `my image.png`).
     pub original_ref: String,
-    /// The full matched token in the source (`![[diagram.png]]` or
-    /// `![alt](assets/img.png)`), so the rewrite can replace it byte-for-byte.
+    /// The full matched token in the source (`![[diagram.png]]`,
+    /// `![alt](assets/img.png "title")` or `[label](paper.pdf)`), so the
+    /// rewrite can replace it byte-for-byte.
     pub full_match: String,
+}
+
+impl AttachmentRef {
+    /// Whether the ref is a link `[label](file)` rather than an embed or an
+    /// image: it is rewritten as a link whatever the file, and one naming no
+    /// shipped file may point anywhere, so it is not missing.
+    pub fn is_link(&self) -> bool {
+        !self.full_match.starts_with('!')
+    }
 }
 
 /// Obsidian embed `![[file.png]]` — group 1 is the inner ref (path or basename,
@@ -772,15 +783,66 @@ static OBSIDIAN_EMBED_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"!\[\[([^\]\|\n]+?)(?:\|[^\]\n]*)?\]\]").expect("invalid obsidian-embed regex")
 });
 
-/// Standard markdown image `![alt](url)` — group 1 is the alt text (may be
-/// empty), group 2 is the URL/path (any run that is neither `)` nor whitespace
-/// nor newline). Mirrors the editor's `![alt](url)` serializer shape so a
-/// rewritten ref round-trips. The `[^\)\s\n]` URL class excludes whitespace so a
-/// title suffix `![a](url "t")` is not swept into the path (the title is left
-/// untouched, treated as not-a-vault-file).
-static MARKDOWN_IMAGE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"!\[([^\]\n]*)\]\(([^\)\s\n]+)\)").expect("invalid markdown-image regex")
+/// The opening of a standard markdown image `![alt](` — group 1 is the alt
+/// text — or of a link `[label](` — group 2 is the label, which holds no
+/// bracket, so the image in `[![a](x.png)](doc.pdf)` is read and not the link.
+/// [`link_destination`] reads the rest of the token.
+static MARKDOWN_LINK_OPEN_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"!\[([^\]\n]*)\]\(|\[([^\[\]\n]*)\]\(").expect("invalid markdown-link regex")
 });
+
+/// A link's `<…>` destination, after any spaces — group 1 is the destination.
+static ANGLE_DESTINATION_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[^\S\n]*<([^<>\n]*)>").expect("invalid angle-destination regex")
+});
+
+/// A link's title after its destination: spaces, then `"…"`, `'…'` or `(…)`.
+static LINK_TITLE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"^[^\S\n]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\))"#).expect("invalid link-title regex")
+});
+
+/// A link's closing `)`, after any spaces.
+static LINK_CLOSE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[^\S\n]*\)").expect("invalid link-close regex"));
+
+/// The destination of the markdown image or link whose text after `![alt](`
+/// or `[label](` is `rest`, and the length of `rest` through its closing `)`,
+/// read as CommonMark reads a link destination
+/// (<https://spec.commonmark.org/0.31.2/#link-destination>): a `<…>` one
+/// holding no `<`, `>` or line break, or a bare one running to whitespace with
+/// its parentheses balanced (`a(1).png`), then an optional title. `None` when
+/// `rest` closes no image or link, as `my image.png)` does: a bare destination
+/// ends at the space and `image.png` is no title. Backslash escapes are not
+/// read.
+fn link_destination(rest: &str) -> Option<(&str, usize)> {
+    let (destination, mut at) = if let Some(caps) = ANGLE_DESTINATION_RE.captures(rest) {
+        let whole = caps.get(0).expect("group 0 present");
+        (caps.get(1).expect("group 1 present").as_str(), whole.end())
+    } else {
+        let bare = rest.trim_start_matches(|c: char| c.is_whitespace() && c != '\n');
+        let mut depth = 0_usize;
+        let len = bare
+            .find(|c: char| match c {
+                '(' => {
+                    depth += 1;
+                    false
+                }
+                ')' if depth == 0 => true,
+                ')' => {
+                    depth -= 1;
+                    false
+                }
+                _ => c.is_whitespace(),
+            })
+            .unwrap_or(bare.len());
+        (&bare[..len], rest.len() - bare.len() + len)
+    };
+    if let Some(title) = LINK_TITLE_RE.find(&rest[at..]) {
+        at += title.end();
+    }
+    let close = LINK_CLOSE_RE.find(&rest[at..])?;
+    Some((destination, at + close.end()))
+}
 
 /// `true` when `reference` is one this import must NOT try to ingest as a vault
 /// attachment (#1925): an absolute URL (`http://`, `https://`, `data:`), a
@@ -795,27 +857,52 @@ fn is_skippable_attachment_ref(reference: &str) -> bool {
         || r.starts_with("attachment:")
 }
 
+/// The extensions a folder import reads as notes (`NOTE_EXTENSIONS` in
+/// `src/lib/import-attachments.ts`): a link to one is a page link.
+const NOTE_EXTENSIONS: [&str; 5] = ["md", "markdown", "mdx", "txt", "org"];
+
+/// URL scheme at the start of a link destination (`mailto:`, `ftp:`).
+static URL_SCHEME_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[A-Za-z][A-Za-z0-9+.-]*:").expect("invalid url-scheme regex"));
+
+/// Whether a link to the decoded `destination` may name a file the import
+/// attaches: not a `#fragment`, nor a URL with a scheme, nor a note.
+fn links_a_file(destination: &str) -> bool {
+    let name = destination
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(destination);
+    let names_note = name
+        .rsplit_once('.')
+        .is_some_and(|(_, ext)| NOTE_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()));
+    !destination.starts_with('#') && !URL_SCHEME_RE.is_match(destination) && !names_note
+}
+
 /// Detect attachment references in one block's `content` (#1925).
 ///
-/// Handles three inbound shapes, mirroring the tag/wiki-link detection style in
+/// Handles four inbound shapes, mirroring the tag/wiki-link detection style in
 /// `commands::pages::markdown`:
 ///   * Obsidian embed — `![[file.png]]` (optional `|display` suffix dropped),
-///   * standard markdown image — `![alt](relative/path.png)`,
+///   * standard markdown image — `![alt](relative/path.png)`, its destination
+///     read by `link_destination` and percent-decoded,
 ///   * Logseq/relative asset paths captured by the markdown-image form above
-///     (`![alt](assets/...)`).
+///     (`![alt](assets/...)`),
+///   * a link to a file — `[label](paper.pdf)`, read as an image is.
 ///
 /// SKIPS, leaving the token verbatim:
 ///   * absolute / protocol-relative URLs and `data:` URIs,
 ///   * already-canonical `attachment:<id>` refs,
+///   * a link to a `#fragment`, to a URL with a scheme (`mailto:`) or to a
+///     note (`links_a_file`),
 ///   * any ref inside an inline-code span (`` `...` ``); the CALLER skips whole
 ///     `is_code` fenced blocks before calling this (mirroring the #1924
 ///     inline-tag pre-pass), so this function need not re-check `is_code`.
 ///
 /// Returns every Obsidian embed first (in source order), then every markdown
-/// image (in source order) — **not** overall source order (#3675). The embed
-/// scan runs to completion over the whole document before the image scan
-/// starts and nothing sorts afterwards, so an image that appears *before* an
-/// embed still comes back second.
+/// image and link (in source order) — **not** overall source order (#3675).
+/// The embed scan runs to completion over the whole document before the image
+/// scan starts and nothing sorts afterwards, so an image that appears *before*
+/// an embed still comes back second.
 ///
 /// That grouping is a scan artefact rather than a contract, and this docstring
 /// used to promise plain source order instead. The promise was the wrong half:
@@ -855,20 +942,32 @@ pub fn detect_attachment_refs(content: &str, code_spans: &[(usize, usize)]) -> V
         });
     }
 
-    // Standard markdown images.
-    for cap in MARKDOWN_IMAGE_RE.captures_iter(content) {
-        let whole = cap.get(0).expect("group 0 present");
-        if in_code(whole.start()) {
+    // Standard markdown images and links.
+    let mut from = 0;
+    while let Some(cap) = MARKDOWN_LINK_OPEN_RE.captures_at(content, from) {
+        let open = cap.get(0).expect("group 0 present");
+        from = open.end();
+        let Some((destination, len)) = link_destination(&content[from..]) else {
+            continue;
+        };
+        from += len;
+        if in_code(open.start()) {
             continue;
         }
-        let url = cap[2].trim();
+        let url = destination.trim();
         if url.is_empty() || is_skippable_attachment_ref(url) {
             continue;
         }
+        let original_ref = percent_decode(url);
+        let alt = match (cap.get(1), cap.get(2)) {
+            (Some(alt), _) => alt,
+            (None, Some(label)) if links_a_file(&original_ref) => label,
+            _ => continue,
+        };
         refs.push(AttachmentRef {
-            alt: cap[1].to_string(),
-            original_ref: url.to_string(),
-            full_match: whole.as_str().to_string(),
+            alt: alt.as_str().to_string(),
+            original_ref,
+            full_match: content[open.start()..from].to_string(),
         });
     }
 
@@ -939,41 +1038,95 @@ pub fn rewrite_obsidian_note_embeds(content: &str, names_note: impl Fn(&str) -> 
         .into_owned()
 }
 
+/// `%XX` escapes decoded to their bytes, read as UTF-8; anything else, and a
+/// malformed escape, stays as written.
+pub fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = bytes
+            .get(i + 1..i + 3)
+            .filter(|h| bytes[i] == b'%' && h.iter().all(u8::is_ascii_hexdigit));
+        if let Some(byte) =
+            hex.and_then(|h| u8::from_str_radix(std::str::from_utf8(h).ok()?, 16).ok())
+        {
+            out.push(byte);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// The `/`-separated `path` read from the folder `dir`, both relative to the
+/// vault root: empty and `.` segments dropped and each `..` climbing one
+/// folder. `None` when a `..` would climb above the vault root.
+pub fn resolve_vault_path(dir: &str, path: &str) -> Option<String> {
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in dir.split('/').chain(path.split('/')) {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop()?;
+            }
+            _ => segments.push(segment),
+        }
+    }
+    Some(segments.join("/"))
+}
+
 /// Match one detected attachment `reference` against the supplied vault files
 /// (#1925), returning the index of the chosen [`VaultFile`] or `None`.
 ///
-/// Rule (documented, deterministic):
-///   1. **Relative-path equality** first — the ref's normalized path (`\`→`/`,
-///      leading `./` stripped) equals a vault file's normalized `path`. This is
-///      the precise match (e.g. `assets/img.png` → the file at `assets/img.png`).
-///   2. **Basename fallback** — the ref's final path segment equals a vault
+/// `note_dir` is the folder of the note holding the ref, relative to the vault
+/// root. Rule (documented, deterministic), `\` read as `/` throughout:
+///   1. **Note-relative path** — the ref read from `note_dir`
+///      ([`resolve_vault_path`]) equals a vault file's path, as a Markdown
+///      editor resolves `![](img.png)` next to its note.
+///   2. **Vault-root path** — the ref read from the vault root does
+///      (`assets/img.png` from a note in `journal/`).
+///   3. **Basename fallback** — the ref's final path segment equals a vault
 ///      file's final segment (e.g. Obsidian's `![[img.png]]` carries only the
 ///      basename). On multiple basename matches the FIRST in `vault_files` order
 ///      is chosen (deterministic) and `ambiguous` is set so the caller can warn.
 ///
+/// A step whose `..` climbs above the vault root matches nothing.
+///
 /// Returns `(index, ambiguous)`. `ambiguous` is only ever `true` for the
-/// basename-fallback path with >1 candidate; an exact path match is never
-/// ambiguous.
-pub fn match_vault_file(reference: &str, vault_files: &[VaultFile]) -> Option<(usize, bool)> {
-    fn norm(p: &str) -> String {
-        let p = p.replace('\\', "/");
-        p.strip_prefix("./").unwrap_or(&p).to_string()
-    }
+/// basename-fallback path with >1 candidate; a path match is never ambiguous.
+pub fn match_vault_file(
+    reference: &str,
+    note_dir: &str,
+    vault_files: &[VaultFile],
+) -> Option<(usize, bool)> {
     fn basename(p: &str) -> &str {
         p.rsplit('/').next().unwrap_or(p)
     }
 
-    let want = norm(reference);
-    // 1. Exact relative-path equality.
-    if let Some(i) = vault_files.iter().position(|f| norm(&f.path) == want) {
+    let want = reference.replace('\\', "/");
+    let paths: Vec<String> = vault_files
+        .iter()
+        .map(|f| f.path.replace('\\', "/"))
+        .collect();
+    let at_path = |dir: &str| {
+        let target = resolve_vault_path(dir, &want)?;
+        paths
+            .iter()
+            .position(|p| resolve_vault_path("", p).is_some_and(|p| p == target))
+    };
+    // 1. Note-relative path, 2. vault-root path.
+    if let Some(i) = at_path(note_dir).or_else(|| at_path("")) {
         return Some((i, false));
     }
-    // 2. Basename fallback.
+    // 3. Basename fallback.
     let want_base = basename(&want);
-    let candidates: Vec<usize> = vault_files
+    let candidates: Vec<usize> = paths
         .iter()
         .enumerate()
-        .filter(|(_, f)| basename(&norm(&f.path)) == want_base)
+        .filter(|(_, p)| basename(p) == want_base)
         .map(|(i, _)| i)
         .collect();
     match candidates.as_slice() {
@@ -1030,11 +1183,12 @@ pub fn inline_code_spans(content: &str) -> Vec<(usize, usize)> {
 
 /// Guess an attachment MIME type from a filename/path extension (#1925).
 ///
-/// Covers the common vault asset types (images, pdf, plain text, json). Falls
-/// back to `application/octet-stream` for unknown extensions — the caller then
-/// skips+warns because the attachment MIME allow-list rejects it (matching the
-/// `add_attachment_with_bytes_inner` validation), so an unrecognized asset never
-/// silently lands with a wrong type.
+/// Covers the common vault asset types (images, audio, pdf, plain text, json,
+/// zip and tar archives). Falls back to `application/octet-stream` for unknown
+/// extensions — the caller then skips+warns because the attachment MIME
+/// allow-list rejects it (matching the `add_attachment_with_bytes_inner`
+/// validation), so an unrecognized asset never silently lands with a wrong
+/// type.
 pub fn guess_attachment_mime(path: &str) -> String {
     let ext = path
         .rsplit('.')
@@ -1051,8 +1205,15 @@ pub fn guess_attachment_mime(path: &str) -> String {
         "bmp" => "image/bmp",
         "ico" => "image/x-icon",
         "avif" => "image/avif",
+        "mp3" => "audio/mpeg",
+        "m4a" => "audio/mp4",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        "flac" => "audio/flac",
         "pdf" => "application/pdf",
         "json" => "application/json",
+        "zip" => "application/zip",
+        "tar" => "application/x-tar",
         "txt" | "md" | "csv" | "log" => "text/plain",
         _ => "application/octet-stream",
     }

@@ -27,6 +27,7 @@ import {
 import { normalizeTagName } from '@/lib/name-tokens'
 import { compareNocase, compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { TASK_STATE_TO_MARKER } from '@/lib/task-states'
+import { withoutEvents } from '@/lib/tauri-mock/events'
 import { blocksHandlers, parseOutline } from '@/lib/tauri-mock/handlers/blocks'
 import { propertiesHandlers } from '@/lib/tauri-mock/handlers/properties'
 import {
@@ -560,23 +561,25 @@ function writeFrontMatter(
   spaceId: string | null,
   out: { opRefs: OpRefs; namesCreated: Record<string, unknown>[]; warnings: string[] },
 ): { properties_set: number; properties_deleted: number } {
-  for (const key of writes.deleted) {
-    out.opRefs.push(...propertiesHandlers.delete_property({ blockId: pageId, key }).op_refs)
-  }
-  for (const [key, value] of writes.set) {
-    const row = propertiesHandlers.set_property({
-      blockId: pageId,
-      key,
-      value: {
-        value_text: value,
-        value_num: null,
-        value_date: null,
-        value_ref: null,
-        value_bool: null,
-      },
-    }) as { op_refs: OpRefs } | null
-    out.opRefs.push(...(row?.op_refs ?? []))
-  }
+  withoutEvents(() => {
+    for (const key of writes.deleted) {
+      out.opRefs.push(...propertiesHandlers.delete_property({ blockId: pageId, key }).op_refs)
+    }
+    for (const [key, value] of writes.set) {
+      const row = propertiesHandlers.set_property({
+        blockId: pageId,
+        key,
+        value: {
+          value_text: value,
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
+      }) as { op_refs: OpRefs } | null
+      out.opRefs.push(...(row?.op_refs ?? []))
+    }
+  })
   if (writes.aliases !== null) {
     const written = writePageAliases(pageId, wantedAliases(writes.aliases))
     out.opRefs.push(...written.opRefs)
@@ -1217,16 +1220,22 @@ const COLUMN_WRITERS: ReadonlyMap<string, (blockId: string, value: string | null
 function writeMarks(id: string, writes: MarkWrites): OpRefs {
   const spaceId = definitionSpaceOf(id)
   const start = opLog.length
-  for (const key of writes.deleted) propertiesHandlers.delete_property({ blockId: id, key })
-  for (const [key, value] of writes.set) {
-    const column = COLUMN_WRITERS.get(key)
-    if (column === undefined) {
-      propertiesHandlers.set_property({ blockId: id, key, value: lineColumns(spaceId, key, value) })
-    } else {
-      column(id, value)
+  withoutEvents(() => {
+    for (const key of writes.deleted) propertiesHandlers.delete_property({ blockId: id, key })
+    for (const [key, value] of writes.set) {
+      const column = COLUMN_WRITERS.get(key)
+      if (column === undefined) {
+        propertiesHandlers.set_property({
+          blockId: id,
+          key,
+          value: lineColumns(spaceId, key, value),
+        })
+      } else {
+        column(id, value)
+      }
     }
-  }
-  if (writes.todoState !== null) COLUMN_WRITERS.get('todo_state')?.(id, writes.todoState.to)
+    if (writes.todoState !== null) COLUMN_WRITERS.get('todo_state')?.(id, writes.todoState.to)
+  })
   return opLog.slice(start).map(({ device_id, seq }) => ({ device_id, seq }))
 }
 

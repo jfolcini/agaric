@@ -74,15 +74,16 @@ use agaric_lib::commands::pages::{
     ListPagesWithMetadataFilter, PageSort, PageSubtree, list_pages_with_metadata_inner,
 };
 use agaric_lib::commands::{
-    PAGE_LINKS_EDGE_CAP, PropertyFilter, PropertyLoss, ResolvedBlock, SearchBlockRow, SearchFilter,
-    batch_resolve_inner, count_agenda_batch_by_source_inner, count_backlinks_batch_inner,
-    count_property_usage_inner, create_block_inner, delete_block_inner, export_page_markdown_inner,
-    filtered_blocks_query_inner, get_batch_properties_inner, get_block_inner, get_properties_inner,
+    PAGE_LINKS_EDGE_CAP, PropertyFilter, PropertyLoss, PropertyTypeTarget, ResolvedBlock,
+    SearchBlockRow, SearchFilter, batch_resolve_inner, count_agenda_batch_by_source_inner,
+    count_backlinks_batch_inner, count_property_usage_inner, create_block_inner,
+    delete_block_inner, export_page_markdown_inner, filtered_blocks_query_inner,
+    get_batch_properties_inner, get_block_inner, get_properties_inner,
     list_all_tags_in_space_inner, list_attachments_batch_inner, list_backlinks_grouped_inner,
     list_blocks_inner, list_journal_pages_in_range_inner, list_page_links_inner,
     list_projected_agenda_inner, list_unlinked_references_inner, load_page_subtree_inner,
-    preview_space_move_inner, query_by_property_inner, restore_block_inner, revert_ops_inner,
-    search_blocks_inner,
+    preview_property_type_change_inner, preview_space_move_inner, query_by_property_inner,
+    restore_block_inner, revert_ops_inner, search_blocks_inner,
 };
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
@@ -3182,6 +3183,80 @@ fn bench_count_property_usage(c: &mut Criterion) {
     report_measurement_only(NAME, &acc);
 }
 
+/// `preview_property_type_change` — what the Change type dialog shows (#5841
+/// S3): changing a text key 100K blocks hold to number. Every 10th value is
+/// "abc", the rest numbers as text, so the shape probe pins both counts. No
+/// budget until `bench-slo` has measured it.
+fn bench_preview_property_type_change(c: &mut Criterion) {
+    const NAME: &str = "preview_property_type_change @ 100K";
+    const KEY: &str = "slo_type_key";
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_preview_property_type_change"));
+    rt.block_on(async {
+        seed_blocks_bulk(&pool, FIXTURE_SIZE).await;
+        assign_all_to_slo_space(&pool).await;
+        sqlx::query(
+            "INSERT INTO property_definitions (space_id, key, value_type, created_at) \
+             VALUES (?, ?, 'text', '2025-01-01T00:00:00Z')",
+        )
+        .bind(SLO_SPACE_ID)
+        .bind(KEY)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // `seed_blocks_bulk` positions are its index + 1.
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) \
+             SELECT id, ?, CASE WHEN (position - 1) % 10 = 0 THEN 'abc' \
+                                ELSE CAST(position AS TEXT) END \
+             FROM blocks WHERE id <> ?",
+        )
+        .bind(KEY)
+        .bind(SLO_SPACE_ID)
+        .execute(&pool)
+        .await
+        .unwrap();
+    });
+    let preview = || {
+        let target = PropertyTypeTarget {
+            key: KEY.into(),
+            value_type: "number".into(),
+            options: None,
+        };
+        preview_property_type_change_inner(&pool, SLO_SPACE_ID, target)
+    };
+
+    let counts = rt.block_on(preview()).unwrap();
+    let removed = (0..FIXTURE_SIZE).filter(|i| i % 10 == 0).count() as i64;
+    assert_eq!(
+        (counts.converted, counts.removed),
+        (FIXTURE_SIZE as i64 - removed, removed),
+        "preview_property_type_change @ 100K: the numbers convert, every 10th value goes"
+    );
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    group.bench_function("preview_property_type_change_100k", |b| {
+        b.to_async(&rt).iter_custom(|iters| {
+            let (preview, acc) = (&preview, &acc);
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let _ = preview().await.unwrap();
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+
+    report_measurement_only(NAME, &acc);
+}
+
 /// `revert_ops_inner` — 50-op batch revert against a single page with
 /// 100K total ops in its history. Aspirational budget: 200 ms.
 ///
@@ -5354,6 +5429,8 @@ criterion_group!(
     bench_preview_space_move,
     // #5841 S0 — the Settings › Properties usage badges; no budget yet.
     bench_count_property_usage,
+    // #5841 S3 — the Change type dialog's counts; no budget yet.
+    bench_preview_property_type_change,
     // #2601 — graduated from the problem tier: the bounded-horizon
     // materialization makes the warm-cache read an O(window) index scan that
     // clears its budget with margin at every fixture size.

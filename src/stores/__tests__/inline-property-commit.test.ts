@@ -11,7 +11,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { makeBlock, makeBlockRow, makePropertyRow } from '@/__tests__/fixtures'
+import { makeBlock, makeBlockRow, makePropertyRow, withOps } from '@/__tests__/fixtures'
 import { type TypedInvokeHandlers, stubInvoke } from '@/__tests__/helpers/invoke'
 import type { BlockRow, PropertyRow } from '@/lib/bindings'
 import { parseInlineProperties } from '@/lib/inline-property-parse'
@@ -190,7 +190,7 @@ describe('commitCheckboxState — a typed `- [x]` on a repeating task (#5285)', 
     overrides: TypedInvokeHandlers = {},
   ): Promise<string[]> {
     stubInvoke(vi.mocked(invoke), {
-      set_todo_state: () => makeBlockRow({ id: 'BLOCK_1', todo_state: 'DONE' }),
+      set_todo_state: () => withOps(makeBlockRow({ id: 'BLOCK_1', todo_state: 'DONE' })),
       get_property: (args) => (args['key'] === 'repeat' ? repeat : null),
       get_batch_properties: () => ({}),
       // The page as the backend holds it after the DONE: the block and its next occurrence.
