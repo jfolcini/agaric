@@ -1,0 +1,285 @@
+{
+  "description": "#5667 — the three MCP agent commands: `create_mcp_agent` and `revoke_mcp_agent` through the command leg, `list_mcp_agents` as the read that observes them. `mcp_agents` is device-local and outside the snapshot, and each stack mints a created agent's id, token and `created_at_ms`, so the list is keyed by name (unique in any letter case) and the create's return names only what the caller chose. `seed.mcp_agents` exists for the one thing a created agent cannot give both stacks: an id `revoke_mcp_agent` can name. `create_space` makes `C1` so a create can grant a LIVE space: only that op moves the snapshot. Each granted space is its own `space_ids` segment, so `C1` relabels like any id-valued attribute; `GONE` is a seeded grant whose space no longer exists, which grants nothing and lists as stored. The refusals run in the backend's order: the name, then the space list, then the name clash its `ON CONFLICT(name)` finds.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 7,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "creates_the_space_to_grant",
+      "returns": ["create_space#space_id=B2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "creates_an_agent_for_every_space",
+      "returns": ["create_mcp_agent#name=claude#mode=read_only#last_used_ms=null"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "creates_an_agent_for_one_live_space",
+      "returns": ["create_mcp_agent#name=Scoped#mode=read_write#last_used_ms=null", "space_ids->B2"]
+    },
+    {
+      "code": "InvalidAgentName",
+      "error": "validation",
+      "name": "refuses_a_blank_name",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "refuses_an_empty_space_list",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "refuses_a_block_that_is_not_a_space",
+      "returns": []
+    },
+    {
+      "code": "DuplicateAgentName",
+      "error": "validation",
+      "name": "refuses_a_name_held_in_another_case",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "revokes_a_seeded_agent",
+      "returns": ["revoke_mcp_agent"]
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "revoking_it_again_is_not_found",
+      "returns": []
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "agents_after_writes",
+      "rows": [
+        "claude#mode=read_only#last_used_ms=null#space_ids=null",
+        "Keeper#mode=read_write#last_used_ms=5000#space_ids=GONE",
+        "Scoped#mode=read_write#last_used_ms=null#space_ids=B2"
+      ],
+      "total_count": null
+    }
+  ],
+  "name": "mcp_agents_lifecycle",
+  "ops": [
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Work"
+      },
+      "command": "create_space",
+      "comment": "The live space the scoped agent below is granted.",
+      "name": "creates_the_space_to_grant",
+      "via": "command"
+    },
+    {
+      "args": {
+        "mode": "read_only",
+        "name": "  claude  ",
+        "spaceIds": null
+      },
+      "command": "create_mcp_agent",
+      "comment": "No space list grants every space, so the return carries no `space_ids` token. The name is stored trimmed.",
+      "name": "creates_an_agent_for_every_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "mode": "read_write",
+        "name": "Scoped",
+        "spaceIds": ["C1"]
+      },
+      "command": "create_mcp_agent",
+      "comment": "A live space is accepted and returned. Without this arm a mock refusing every space list would pass the dead-space refusal below.",
+      "name": "creates_an_agent_for_one_live_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "mode": "read_only",
+        "name": " \t ",
+        "spaceIds": null
+      },
+      "command": "create_mcp_agent",
+      "comment": "Blank after trimming.",
+      "expect_code": "InvalidAgentName",
+      "expect_error": "validation",
+      "name": "refuses_a_blank_name",
+      "via": "command"
+    },
+    {
+      "args": {
+        "mode": "read_only",
+        "name": "Nowhere",
+        "spaceIds": []
+      },
+      "command": "create_mcp_agent",
+      "comment": "An empty list would grant nothing; every space is `null`, not `[]`. Uncoded.",
+      "expect_error": "validation",
+      "name": "refuses_an_empty_space_list",
+      "via": "command"
+    },
+    {
+      "args": {
+        "mode": "read_only",
+        "name": "Pager",
+        "spaceIds": ["S1"]
+      },
+      "command": "create_mcp_agent",
+      "comment": "`S1` is a live PAGE, not a space: the check is that the id is a live space, not that a block exists. Uncoded.",
+      "expect_error": "validation",
+      "name": "refuses_a_block_that_is_not_a_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "mode": "read_write",
+        "name": "KEEPER",
+        "spaceIds": null
+      },
+      "command": "create_mcp_agent",
+      "comment": "The seeded `Keeper` holds the name in another letter case; the column is NOCASE.",
+      "expect_code": "DuplicateAgentName",
+      "expect_error": "validation",
+      "name": "refuses_a_name_held_in_another_case",
+      "via": "command"
+    },
+    {
+      "args": {
+        "id": "AGENT-REVOKED"
+      },
+      "command": "revoke_mcp_agent",
+      "comment": "Revoking deletes the row: the list below no longer carries `Revoked`.",
+      "name": "revokes_a_seeded_agent",
+      "via": "command"
+    },
+    {
+      "args": {
+        "id": "AGENT-REVOKED"
+      },
+      "command": "revoke_mcp_agent",
+      "comment": "The same id again names no agent.",
+      "expect_error": "not_found",
+      "name": "revoking_it_again_is_not_found",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {},
+      "command": "list_mcp_agents",
+      "comment": "`claude`, `Keeper`, `Scoped`: NOCASE order, where BINARY puts `claude` last. `Revoked` is gone and no refused create left a row. `Keeper` pins the seeded `last_used_ms` and a grant whose space no longer exists; `Scoped` the created space, relabeled.",
+      "name": "agents_after_writes"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      }
+    ],
+    "mcp_agents": [
+      {
+        "created_at_ms": 1000,
+        "id": "AGENT-KEEPER",
+        "last_used_ms": 5000,
+        "mode": "read_write",
+        "name": "Keeper",
+        "space_ids": ["GONE"],
+        "token": "agt_00000000000000000000000000000001"
+      },
+      {
+        "created_at_ms": 2000,
+        "id": "AGENT-REVOKED",
+        "last_used_ms": null,
+        "mode": "read_only",
+        "name": "Revoked",
+        "space_ids": null,
+        "token": "agt_00000000000000000000000000000002"
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

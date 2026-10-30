@@ -236,17 +236,6 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
     'write is the `pending_pairing` key in app_settings, and no command on the IPC surface ' +
     'reads that key on either stack, so no query step can observe the clear',
 
-  // ── MCP agents (#5667) ──
-  // Debt, not a blocker: a `seed.mcp_agents` section and a `list_mcp_agents`
-  // projection keyed by name, since each stack generates the id and token,
-  // would pin all three commands.
-  create_mcp_agent:
-    '`mcp_agents` outside the conformance snapshot scope: neither the snapshot nor a ' +
-    'query projection carries agent rows',
-  revoke_mcp_agent:
-    '`mcp_agents` outside the conformance snapshot scope: neither the snapshot nor a ' +
-    'query projection carries agent rows, and no seed section names the id it takes',
-
   // ── Observability / runtime toggles (no persistent domain state) ──
   log_frontend: 'no persistent state — forwards a frontend log line',
   ingest_otel_spans: 'no persistent state — telemetry export',
@@ -402,11 +391,6 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   compute_block_vs_current_diff:
     'selected by an `op_log` `(historical_created_at, historical_seq)` point — an op ' +
     'coordinate each stack generates independently, not fixture-expressible',
-
-  // ── MCP agents (#5667) ── debt beside its two writers in NO_FIXTURE_ALLOWLIST.
-  list_mcp_agents:
-    '`mcp_agents` outside the conformance snapshot scope: no seed section puts agent rows ' +
-    'on both stacks, and no projection binds a row whose id and token each stack generates',
 
   // ── Process / environment / telemetry status (no domain state) ──
   collect_bug_report_metadata: 'no domain state — host + build metadata',
@@ -605,7 +589,7 @@ const PINNING_BLOCKED_MUTATING: ReadonlySet<string> = new Set([
  * ratchet exists to make visible. Both directions now name the command in the
  * diff — pin one and delete its line here, waive one and add it.
  */
-const NOT_YET_PINNED_MUTATING: readonly string[] = ['create_mcp_agent', 'revoke_mcp_agent']
+const NOT_YET_PINNED_MUTATING: readonly string[] = []
 
 /**
  * The read leg's debt. A waiver belongs here when the snapshot or the query
@@ -620,7 +604,7 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = ['create_mcp_agent', 'revoke_
  * `spaces_lifecycle.json`'s `create_space` — which is what the #5056 check
  * below predicted would happen.
  */
-const NOT_YET_PINNED_READ: readonly string[] = ['list_mcp_agents']
+const NOT_YET_PINNED_READ: readonly string[] = []
 
 /**
  * #5056 — the check that makes the read-leg classification falsifiable instead

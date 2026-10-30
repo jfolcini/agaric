@@ -269,6 +269,15 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   // #5371 — answers `()`; `page_opens` is outside the snapshot, so a
   // `last-opened` query step observes it.
   record_page_open: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
+  // #5667 — `mcp_agents` is outside the snapshot, so `list_mcp_agents`
+  // observes both writers. A created agent's id, token and `created_at_ms` are
+  // minted per stack; each granted space is a `space_ids-><id>` token.
+  create_mcp_agent: {
+    idKey: HEADED_ID_KEY,
+    attrs: ['name', 'mode', 'last_used_ms'],
+    lists: ['space_ids'],
+  },
+  revoke_mcp_agent: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
 }
 
 /** Mirror of `project_return`: the row token, then one arrow per list element. */
