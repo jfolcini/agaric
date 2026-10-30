@@ -1560,7 +1560,9 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
         }
         // ── Per-space usage count (#5841 S0) ──
         //
-        // `key#count=<n>` per key of the space's vocabulary, ordered by key.
+        // `key#count=<n>#unfit=<n>#unfit_in_trash=<n>` per key of the space's
+        // vocabulary, ordered by key: the live blocks using it, and its values
+        // that don't fit it, live and trashed (#6206).
         "count_property_usage" => {
             let rows =
                 count_property_usage_inner(pool, &arg_req::<String>(args, "spaceId")).await?;
@@ -1568,7 +1570,11 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             RawResult {
                 rows: v
                     .as_array()
-                    .map(|a| a.iter().map(|r| row_token(r, "key", &["count"])).collect())
+                    .map(|a| {
+                        a.iter()
+                            .map(|r| row_token(r, "key", &["count", "unfit", "unfit_in_trash"]))
+                            .collect()
+                    })
                     .unwrap_or_default(),
                 has_more: None,
                 total_count: None,
@@ -1641,6 +1647,24 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                         &["page_id", "deleted", "value", "converted"],
                     )
                 },
+            )
+        }
+        // ── A key's values that don't fit it (#6206) ──
+        //
+        // Paged by block id, each with its page, whether it is trashed, the
+        // value as text and the column it is stored in.
+        "list_unfit_property_values" => {
+            let resp = list_unfit_property_values_inner(
+                pool,
+                &arg_req::<String>(args, "spaceId"),
+                arg_req(args, "key"),
+                opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
+                opt_arg(args, "limit").and_then(|v| v.as_i64()),
+            )
+            .await?;
+            page_result_with(
+                &serde_json::to_value(&resp).expect("serialize PageResponse"),
+                &|row| row_token(row, "block_id", &["page_id", "deleted", "value", "form"]),
             )
         }
         // ── What a cross-space move drops (#5841 S0.6) ──
@@ -3083,7 +3107,13 @@ pub(super) mod reader_delegation_tests {
     // `mcp_agents` (`mcp::agents::list_agents`). The table's writers are
     // `create_mcp_agent` / `revoke_mcp_agent` and the MCP server's
     // `last_used_ms` stamp, none a read arm. Writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 65;
+    // #6206 wired `list_unfit_property_values`: one `query!` SELECT over
+    // `property_definitions`, `block_properties` and `blocks` behind
+    // `PageRequest::new` and `build_page_response`
+    // (`commands/property_unfit.rs`), the same SELECT `count_property_usage`
+    // now runs too. The removal it lists for is `remove_unfit_property_values`,
+    // not a read arm. Writer set unchanged.
+    const SWEPT_ARM_COUNT: usize = 66;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

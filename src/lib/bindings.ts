@@ -527,6 +527,22 @@ export const commands = {
 	 *  [`change_property_type_inner`]; the response carries the op ref.
 	 */
 	changePropertyType: (spaceId: SpaceId, key: string, valueType: string, options: string | null, acknowledged: PropertyTypeChangeCounts) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("change_property_type", { spaceId, key, valueType, options, acknowledged })),
+	/**
+	 *  Tauri command: one page of a key's values that don't fit it. Delegates to
+	 *  [`list_unfit_property_values_inner`].
+	 */
+	listUnfitPropertyValues: (spaceId: SpaceId, key: string, cursor: string | null, limit: number | null) => typedError<PageResponse<UnfitPropertyValue>, AppError>(__TAURI_INVOKE("list_unfit_property_values", { spaceId, key, cursor, limit })),
+	/**
+	 *  Tauri command: remove a key's values that don't fit it. Delegates to
+	 *  [`remove_unfit_property_values_inner`]; the response carries the op ref.
+	 */
+	removeUnfitPropertyValues: (spaceId: SpaceId, key: string, acknowledged: PropertyUnfitCounts) => typedError<WithOps<PropertyUnfitCounts>, AppError>(__TAURI_INVOKE("remove_unfit_property_values", { spaceId, key, acknowledged })),
+	/**
+	 *  Tauri command: add a select's values that don't fit it to its options.
+	 *  Delegates to [`add_unfit_values_to_options_inner`]; the response carries
+	 *  the op ref.
+	 */
+	addUnfitValuesToOptions: (spaceId: SpaceId, key: string) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("add_unfit_values_to_options", { spaceId, key })),
 	/**  Tauri command: list all sync peers. Delegates to [`list_peer_refs_inner`]. */
 	listPeerRefs: () => typedError<PeerRef[], AppError>(__TAURI_INVOKE("list_peer_refs")),
 	/**  Tauri command: delete (unpair) a sync peer. Delegates to [`delete_peer_ref_inner`]. */
@@ -3528,11 +3544,23 @@ export type PropertyTypeChangeValue = {
 	converted: string | null,
 };
 
-/**  How many live blocks of a space hold a value under one key (#5841). */
+/**
+ *  How many values of a key don't fit it: `unfit` on live blocks,
+ *  `unfit_in_trash` on trashed ones.
+ */
+export type PropertyUnfitCounts = {
+	unfit: number,
+	unfit_in_trash: number,
+};
+
+/**
+ *  How many live blocks of a space hold a value under one key (#5841), and
+ *  how many of its values don't fit it (#6206).
+ */
 export type PropertyUsage = {
 	key: string,
 	count: number,
-};
+} & PropertyUnfitCounts;
 
 /**
  *  The right-hand-side value type for `HasProperty`.
@@ -3555,6 +3583,9 @@ export type PropertyValue = { type: "Text"; value: string } |
  *  `PropertyDate` leaf.
  */
 { type: "Date"; value: string };
+
+/**  The column a value is stored in. */
+export type PropertyValueForm = "text" | "number" | "date" | "ref" | "boolean";
 
 export type PurgeResponse = {
 	block_id: string,
@@ -4721,6 +4752,21 @@ export type UndoResult = {
 	new_op_type: string,
 	/**  Whether this was a redo (true) or undo (false). */
 	is_redo: boolean,
+};
+
+/**
+ *  One value that doesn't fit its key: the block holding it, its page, the
+ *  value as text and the column it is stored in.
+ */
+export type UnfitPropertyValue = {
+	block_id: string,
+	page_id: string | null,
+	page_title: string | null,
+	content: string | null,
+	/**  The block is in the Trash. */
+	deleted: boolean,
+	value: string,
+	form: PropertyValueForm,
 };
 
 /**
