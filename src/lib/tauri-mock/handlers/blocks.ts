@@ -570,9 +570,11 @@ function duplicateSubtree(rootId: string): Record<string, unknown>[] {
 /**
  * Create a copy of `src` under `parentId` at the 0-based live `slot`, then
  * write its carried properties: `listStyle`, the four columns, then every other
- * key in byte order. Each appended op's ref lands in `opRefs`. The backend's
- * `created_at` / `completed_at` writes are left out: the conformance digest
- * (`RawOp::canonicalize`) and properties query drop both keys.
+ * key in byte order. A task carries no `listStyle`: the backend copies through
+ * a Document buffer, where a task has none (#5691 D3). Each appended op's ref
+ * lands in `opRefs`. The backend's `created_at` / `completed_at` writes are left
+ * out: the conformance digest (`RawOp::canonicalize`) and properties query drop
+ * both keys.
  */
 function duplicateRow(
   src: Record<string, unknown>,
@@ -616,14 +618,14 @@ function duplicateRow(
     properties.get(id)?.set(key, 'block_id' in prop ? { ...prop, block_id: id } : { ...prop })
     record(pushOp('set_property', { block_id: id, key, from_value: null }))
   }
-  copyProperty(LIST_STYLE_KEY)
+  if (src['todo_state'] == null) copyProperty(LIST_STYLE_KEY)
   for (const column of DUPLICATED_COLUMNS) {
     if (src[column] == null) continue
     row[column] = src[column]
     record(pushOp('set_property', { block_id: id, key: column, from_value: null }))
   }
   const customKeys = [...srcProps.keys()]
-    // The reserved keys the backend's source render leaves out: they
+    // The reserved keys the backend's buffer render leaves out: they
     // describe the original (its space, timestamps, one occurrence of its
     // recurrence, template). The rule itself is copied (#5160 P4).
     .filter((key) => key !== LIST_STYLE_KEY && !INLINE_PROPERTY_RESERVED_KEYS.has(key))

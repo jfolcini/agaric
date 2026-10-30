@@ -154,7 +154,7 @@ describe('tauri-mock duplicate_block', () => {
     expect(underNested.map((b) => b['id'])).toEqual([IN_NESTED])
   })
 
-  it('carries the task columns and content properties, not the ones that describe the original', () => {
+  it('carries the task columns and content properties, not those of the original or a task style', () => {
     const [copy] = duplicate(SRC) as [Row]
 
     expect(dispatch('get_block', { blockId: copy.id })).toMatchObject({
@@ -167,7 +167,6 @@ describe('tauri-mock duplicate_block', () => {
     expect(
       Object.fromEntries(props.map((p) => [p.key, p.value_text ?? p.value_ref ?? p.value_date])),
     ).toEqual({
-      listStyle: 'ordered',
       colour: 'red',
       repeatable: 'yes',
       reviewer: C,
