@@ -2228,17 +2228,20 @@ async fn declare(pool: &SqlitePool, space: &str, key: &str, value_type: &str) {
 }
 
 /// #6206 — a string its key's type does not take is kept in `value_text`, and
-/// the numeric guard passes "2026-02-30" and "1-2". The fold reads
+/// the numeric guard passes "2026-02-30", "1-2" and "7". The fold reads
 /// `value_text` only where the key's type keeps its strings there: `hours` is
-/// a number and `when` a date in this space, and `repeat-seq` a built-in
-/// number, while `note` is text here and `misc`, a number only in the other
-/// space, is undeclared here, so their text-stored numerics still fold.
+/// a number, `when` a date, `flag` a boolean and `link` a ref in this space,
+/// and `repeat-seq` a built-in number, while `note` is text here and `misc`, a
+/// number only in the other space, is undeclared here, so their text-stored
+/// numerics still fold.
 #[tokio::test]
 async fn a_kept_misfit_under_a_typed_key_stays_out_of_the_fold_6206() {
     let (pool, _d) = test_pool().await;
     seed(&pool).await;
     declare(&pool, SPACE, "hours", "number").await;
     declare(&pool, SPACE, "when", "date").await;
+    declare(&pool, SPACE, "flag", "boolean").await;
+    declare(&pool, SPACE, "link", "ref").await;
     declare(&pool, SPACE, "note", "text").await;
     declare(&pool, OTHER_SPACE, "misc", "number").await;
     let (b1, b2) = ("01B1000000000000000000000", "01B2000000000000000000000");
@@ -2246,6 +2249,8 @@ async fn a_kept_misfit_under_a_typed_key_stays_out_of_the_fold_6206() {
     set_property(&pool, b2, "hours", "2026-02-30").await;
     set_property_date(&pool, b1, "when", "2026-01-05").await;
     set_property(&pool, b2, "when", "1-2").await;
+    set_property(&pool, b2, "flag", "1").await;
+    set_property(&pool, b2, "link", "7").await;
     set_property_num(&pool, b1, "repeat-seq", 2.0).await;
     set_property(&pool, b2, "repeat-seq", "2026-02-30").await;
     set_property(&pool, b1, "note", "4").await;
@@ -2259,6 +2264,8 @@ async fn a_kept_misfit_under_a_typed_key_stays_out_of_the_fold_6206() {
         agg_prop(AggOp::Sum, "repeat-seq"),
         agg_prop(AggOp::Sum, "note"),
         agg_prop(AggOp::Sum, "misc"),
+        agg_prop(AggOp::Sum, "flag"),
+        agg_prop(AggOp::Sum, "link"),
     ];
     let resp = compile_and_run(&pool, request).await.unwrap();
 
@@ -2279,6 +2286,16 @@ async fn a_kept_misfit_under_a_typed_key_stays_out_of_the_fold_6206() {
         agg_at(&resp, 5).value,
         Some(5.0),
         "undeclared here folds: {resp:?}"
+    );
+    assert_eq!(
+        agg_at(&resp, 6).value,
+        None,
+        "a boolean folds nothing: {resp:?}"
+    );
+    assert_eq!(
+        agg_at(&resp, 7).value,
+        None,
+        "a ref folds nothing: {resp:?}"
     );
 }
 

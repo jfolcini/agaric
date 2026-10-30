@@ -316,7 +316,7 @@ export const properties: Record<string, string> = {
   'propertiesView.typeChangeLabel': 'Change the type of {{key}}',
   'propertiesView.typeChangeTitle': 'Change the type of {{key}}',
   'propertiesView.typeChangeDescription':
-    "Each value of {{key}} in this space is converted to the new type. A value that doesn't fit is kept as text and no longer counts as that type; a date key's agenda, for example, ignores it.",
+    "Each value of {{key}} in this space is converted to the new type. A value that doesn't fit is kept as text and no longer counts as that type: the Agenda, for example, skips a value that isn't a date.",
   'propertiesView.typeChangeTypeLabel': 'New type',
   'propertiesView.typeChangeTypePlaceholder': 'Pick a type',
   'propertiesView.typeChangeConverts_one': '{{count}} value is converted.',

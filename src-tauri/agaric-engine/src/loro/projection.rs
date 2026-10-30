@@ -4357,6 +4357,16 @@ mod tests {
         );
     }
 
+    /// A string under a ref is in `value_ref` only as a block id; any other is
+    /// kept as text, with no `value_ref` to satisfy the foreign key (#6206).
+    #[tokio::test]
+    async fn a_string_under_a_ref_is_one_only_as_a_block_id_6206() {
+        assert_eq!(
+            projected_row("link", pv("not-a-block-id")).await,
+            Some((Some("not-a-block-id".into()), None, None, None, None))
+        );
+    }
+
     /// #5841 S3 (Q6) — a native number under a text key keeps its column.
     #[tokio::test]
     async fn a_native_number_under_text_keeps_value_num_5841() {
