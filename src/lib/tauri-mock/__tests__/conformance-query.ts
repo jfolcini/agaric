@@ -328,6 +328,8 @@ type TokenSpec =
    * the Rust twin, which zips the same array against the same names.
    */
   | { readonly kind: 'tuple'; readonly names: readonly string[] }
+  /** An `AttachmentRow`, per {@link attachmentToken}. */
+  | { readonly kind: 'attachment' }
 
 interface WireShape {
   /** How the row array is located in the response. */
@@ -394,19 +396,43 @@ const PROPERTY_DEF_TOKEN = {
  *  `created_at` is fixture-authored epoch-ms on a seeded row, not a clock, and
  *  it is the sort key the ordered steps pin. MUST match `ATTACHMENT_ATTRS` in
  *  the Rust twin. */
-const ATTACHMENT_TOKEN = {
-  kind: 'id',
-  idKey: 'id',
-  attrKeys: [
-    'block_id',
-    'filename',
-    'mime_type',
-    'size_bytes',
-    'fs_path',
-    'created_at',
-    'content_hash',
-  ],
-} as const
+const ATTACHMENT_ATTRS = [
+  'block_id',
+  'filename',
+  'mime_type',
+  'size_bytes',
+  'fs_path',
+  'created_at',
+  'content_hash',
+] as const
+/** The columns of an op-added attachment the caller supplied; its `id`,
+ *  `fs_path`, `content_hash` and `created_at` are minted per stack. MUST match
+ *  `ADDED_ATTACHMENT_ATTRS` in the Rust twin. */
+const ADDED_ATTACHMENT_ATTRS = ['block_id', 'filename', 'mime_type', 'size_bytes'] as const
+
+/** The id of each attachment an `add_attachment` op added, in op order: the
+ *  n-th is what an `An` label names. Rust twin: `added_attachment_ids` in
+ *  `conformance.rs`. */
+export function addedAttachmentIds(): string[] {
+  const added: string[] = []
+  for (const entry of opLog) {
+    if (entry.op_type !== 'add_attachment') continue
+    const id = (JSON.parse(entry.payload) as Record<string, unknown>)['attachment_id'] as string
+    if (!added.includes(id)) added.push(id)
+  }
+  return added
+}
+
+/** An `AttachmentRow` token: an op-added row as `An#<the caller's columns>`,
+ *  the label an `attachmentId` arg names it by, a seeded row whole. Rust twin:
+ *  `attachment_token`. */
+function attachmentToken(row: Record<string, unknown>): string {
+  const n = addedAttachmentIds().indexOf(row['id'] as string) + 1
+  return n === 0
+    ? idToken(row, 'id', ATTACHMENT_ATTRS)
+    : idToken({ ...row, id: `A${n}` }, 'id', ADDED_ATTACHMENT_ATTRS)
+}
+const ATTACHMENT_TOKEN = { kind: 'attachment' } as const
 /** A `LinkMetadata` (#3830): the url plus every other column. `fetched_at` is
  *  fixture-authored epoch-ms on a seeded row, not a clock. MUST match
  *  `LINK_METADATA_ATTRS` in the Rust twin. */
@@ -1353,6 +1379,9 @@ function rowToken(raw: unknown, spec: TokenSpec): string {
     }
     case 'headed': {
       return withAttrs(spec.head, row, spec.attrKeys)
+    }
+    case 'attachment': {
+      return attachmentToken(row)
     }
     case 'tuple': {
       const cells = Array.isArray(raw) ? (raw as unknown[]) : []

@@ -25,6 +25,7 @@ import {
   runCommandOp,
 } from '@/lib/tauri-mock/__tests__/conformance-command'
 import {
+  addedAttachmentIds,
   CONFORMANCE_SPACE_ID,
   createdBlockIdsInOpOrder,
   type QueryResult,
@@ -351,12 +352,7 @@ export function expandContentLabels(text: string, createdIds: readonly string[])
 function resolveAttachmentLabel(label: string): string {
   const m = /^A(\d{1,6})$/.exec(label)
   if (!m) return label
-  const added: string[] = []
-  for (const entry of opLog) {
-    if (entry.op_type !== 'add_attachment') continue
-    const id = (JSON.parse(entry.payload) as Record<string, unknown>)['attachment_id'] as string
-    if (!added.includes(id)) added.push(id)
-  }
+  const added = addedAttachmentIds()
   const n = Number(m[1])
   const id = n >= 1 ? added[n - 1] : undefined
   if (id == null) {

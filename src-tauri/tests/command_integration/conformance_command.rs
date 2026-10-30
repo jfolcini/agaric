@@ -353,9 +353,10 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     ),
     ("revoke_mcp_agent", HEADED_ID_KEY, &[], &[]),
     // #5071 — the two imports, whose blocks the snapshot pins. `warnings` stay
-    // off: they are prose that may carry `#`. The TS twin has no entry, because
-    // the fixture driving them is backend-only on the mock (`DRIFT_SKIP`): the
-    // grammar has one implementation, in Rust.
+    // off: they are prose that may carry `#`. The grammar has one
+    // implementation, in Rust, so `markdown_imports` is backend-only on the mock
+    // (`DRIFT_SKIP`); the TS twin carries `import_markdown` alone, for
+    // `import_markdown_plain`'s grammar-trivial input.
     (
         "import_markdown",
         "page_id",

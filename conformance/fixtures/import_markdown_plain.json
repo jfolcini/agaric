@@ -1,0 +1,209 @@
+{
+  "description": "#5071 keeps the markdown grammar in Rust, so `markdown_imports` is backend-only on the mock. This fixture compares the one input both importers read alike: plain paragraphs, one of them holding a `[[id]]` token. The token names S1, trashed before the import, so the import writes no edge to it and owes one instead (`block_links_unresolved`).",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Old",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Imports",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Plain",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "First paragraph",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "See [[000000000000000000000000S1]] here",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 13,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_space_to_import_into",
+      "returns": ["create_space#space_id=B2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_target_joins_the_space",
+      "returns": ["move_blocks_to_space#moved=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "trash_the_target",
+      "returns": ["B1#deleted_at=DELETED#descendants_affected=1", "affected_page_ids->B1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "two_paragraphs",
+      "returns": ["B3#page_title=Plain#blocks_created=2#properties_set=0"]
+    }
+  ],
+  "name": "import_markdown_plain",
+  "ops": [
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Imports"
+      },
+      "command": "create_space",
+      "comment": "The target space, `C1`: an import refuses the harness space.",
+      "name": "a_space_to_import_into",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S1"],
+        "spaceId": "C1"
+      },
+      "command": "move_blocks_to_space",
+      "comment": "The link target joins the import's space, so restoring it pays the edge.",
+      "name": "the_target_joins_the_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S1"
+      },
+      "command": "delete_block",
+      "name": "trash_the_target",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "First paragraph\n\nSee [[S1]] here\n",
+        "filename": "Plain.md",
+        "spaceId": "C1"
+      },
+      "command": "import_markdown",
+      "name": "two_paragraphs",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Old",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

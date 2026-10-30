@@ -1,0 +1,184 @@
+{
+  "description": "The row an op-added attachment leaves, read back. Its `id`, `fs_path`, `content_hash` and `created_at` are minted per stack, so the attachment readers project an op-added row as `An` (the n-th add, as an `attachmentId` arg names it) with only the columns the caller supplied; a seeded row keeps every column. `content_hash` is the backend's blake3 of the bytes, which the mock does not compute, and the bytes on disk are out of reach of both runners.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Uploads",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "one seeded",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "bare",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 2,
+      "ops": [
+        {
+          "op_type": "add_attachment"
+        },
+        {
+          "op_type": "add_attachment"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "add_beside_a_seeded_row",
+      "returns": [
+        "add_attachment_with_bytes#block_id=B2#filename=notes.txt#mime_type=text/plain#size_bytes=3"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "add_to_a_bare_block",
+      "returns": [
+        "add_attachment_with_bytes#block_id=B3#filename=photo.png#mime_type=image/png#size_bytes=5"
+      ]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "seeded_then_added",
+      "rows": [
+        "ATT1#block_id=B2#filename=scan.pdf#mime_type=application/pdf#size_bytes=4096#fs_path=attachments/ATT1.pdf#created_at=1000#content_hash=blake3-of-scan",
+        "A1#block_id=B2#filename=notes.txt#mime_type=text/plain#size_bytes=3"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "added_rows_by_block",
+      "rows": [
+        "B2->ATT1#block_id=B2#filename=scan.pdf#mime_type=application/pdf#size_bytes=4096#fs_path=attachments/ATT1.pdf#created_at=1000#content_hash=blake3-of-scan",
+        "B2->A1#block_id=B2#filename=notes.txt#mime_type=text/plain#size_bytes=3",
+        "B3->A2#block_id=B3#filename=photo.png#mime_type=image/png#size_bytes=5"
+      ],
+      "total_count": null
+    }
+  ],
+  "name": "attachment_added_rows",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "bytes": [104, 105, 10],
+        "filename": "notes.txt",
+        "mimeType": "text/plain"
+      },
+      "command": "add_attachment_with_bytes",
+      "name": "add_beside_a_seeded_row",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "bytes": [1, 2, 3, 4, 5],
+        "filename": "photo.png",
+        "mimeType": "image/png"
+      },
+      "command": "add_attachment_with_bytes",
+      "name": "add_to_a_bare_block",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "list_attachments",
+      "comment": "The seeded row first (`created_at` 1000), then the added one.",
+      "name": "seeded_then_added"
+    },
+    {
+      "args": {
+        "blockIds": ["S2", "S3"]
+      },
+      "command": "list_attachments_batch",
+      "name": "added_rows_by_block"
+    }
+  ],
+  "seed": {
+    "attachments": [
+      {
+        "block_id": "S2",
+        "content_hash": "blake3-of-scan",
+        "created_at": 1000,
+        "filename": "scan.pdf",
+        "fs_path": "attachments/ATT1.pdf",
+        "id": "ATT1",
+        "mime_type": "application/pdf",
+        "size_bytes": 4096
+      }
+    ],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Uploads",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "one seeded",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "bare",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

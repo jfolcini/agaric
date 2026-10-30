@@ -254,6 +254,14 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     attrs: ['block_id', 'filename', 'mime_type', 'size_bytes'],
     lists: [],
   },
+  // #5071 — the markdown import, driven on the mock only with input its
+  // approximation reads as the backend does (`import_markdown_plain.json`).
+  // `warnings` stay off: they are prose that may carry `#`.
+  import_markdown: {
+    idKey: 'page_id',
+    attrs: ['page_title', 'blocks_created', 'properties_set'],
+    lists: ['collapsed'],
+  },
   // #5057 — op-log maintenance. One count, deterministically zero on this
   // corpus: the cutoff is `now()` minus a window with a seven-day floor, and
   // every op a fixture replays is minted during the run.
