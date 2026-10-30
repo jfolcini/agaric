@@ -444,19 +444,19 @@ pub fn summarise_append_markdown(args: &Value, result: &Value) -> String {
     } else {
         format!(" under {parent_prefix}")
     };
-    summarise_outline(TOOL_APPEND_MARKDOWN, &place, result)
+    summarise_markdown_append(TOOL_APPEND_MARKDOWN, &place, result)
 }
 
 /// `capture — N block(s) on <date>` (#5396), counted as `append_markdown`
 /// counts. The date is the argument as given.
 pub fn summarise_capture(args: &Value, result: &Value) -> String {
     let date = str_field(args, "date").unwrap_or("today");
-    summarise_outline(TOOL_CAPTURE, &format!(" on {date}"), result)
+    summarise_markdown_append(TOOL_CAPTURE, &format!(" on {date}"), result)
 }
 
 /// `<tool> — N block(s)<place>`, then the pages and tags created, from the
 /// `blocks` rows a Markdown append returns.
-fn summarise_outline(tool: &str, place: &str, result: &Value) -> String {
+fn summarise_markdown_append(tool: &str, place: &str, result: &Value) -> String {
     let rows = result
         .get("blocks")
         .and_then(Value::as_array)

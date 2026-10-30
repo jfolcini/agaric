@@ -173,7 +173,7 @@ function storedListStyle(id: string): string | null {
 }
 
 /**
- * `push_anchored_source_bullet` in a Document buffer: the block with its `^ID`
+ * `push_anchored_bullet` in a Document buffer: the block with its `^ID`
  * ending its last line or, when that line is code or would be written as an
  * escaped blank line, on a line of its own at the text's column.
  */

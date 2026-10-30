@@ -63,6 +63,11 @@ vi.mock('@/components/dialogs/QueryBuilderModal', () => ({
     ) : null,
 }))
 
+let touch = false
+let mobile = false
+vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: () => touch }))
+vi.mock('@/hooks/useIsMobile', () => ({ useIsMobile: () => mobile }))
+
 const mockedInvoke = vi.mocked(invoke)
 
 function backendText(id: string): string | null {
@@ -158,6 +163,8 @@ beforeEach(() => {
   useNavigationStore.setState({ selectedBlockId: null })
   useBlockStore.setState({ focusedBlockId: null })
   mockedInvoke.mockImplementation(passThrough)
+  touch = false
+  mobile = false
 })
 
 afterEach(() => {
@@ -178,6 +185,26 @@ describe('PageModeEditor', () => {
       expect(await axe(container)).toHaveNoViolations()
     })
   })
+
+  it.each([
+    [true, true, true],
+    [true, false, false],
+    [false, true, false],
+  ])(
+    'narrows the lane (`index.css`) on a phone only: touch %s, narrow %s, narrowed %s, with no a11y violations',
+    async (isTouch, isMobile, narrowed) => {
+      touch = isTouch
+      mobile = isMobile
+      const { pageId } = seedPage(['first'])
+      const { container } = renderPageMode(pageId)
+      const editor = await editorIn(container)
+
+      expect(editor.view.dom.parentElement?.classList.contains('page-mode-phone')).toBe(narrowed)
+      await waitFor(async () => {
+        expect(await axe(container)).toHaveNoViolations()
+      })
+    },
+  )
 
   it('saves typing through the block commands, one undo entry per block as block mode', async () => {
     const { pageId, ids } = seedPage(['first', 'second'])

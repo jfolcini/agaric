@@ -1242,6 +1242,25 @@
   @apply absolute bottom-0 right-full w-19;
   top: calc(-1 * var(--page-block-gap, 0px));
 }
+/* On a phone (`PageModeEditor`) the lane is as narrow as the chevron and the
+   checkbox drawn side by side: each reaches 44 px as a hit area
+   (`touch-hit-area`) rather than as its box, and the checkbox's stops at the
+   text. */
+.page-mode-phone > .page-mode-editor {
+  @apply pl-14;
+}
+.page-mode-phone :is(.collapse-toggle, .task-marker) {
+  @apply min-h-0 min-w-0 touch-hit-area;
+}
+.page-mode-phone .page-block-controls {
+  @apply mr-3;
+}
+.page-mode-phone .page-block-gutter {
+  @apply mr-9 min-w-0;
+}
+.page-mode-phone [data-page-block]::before {
+  @apply w-14;
+}
 /* What a collapsed block hides (`page-collapse.ts`). */
 .page-mode-editor [data-page-block].page-block-hidden {
   display: none;

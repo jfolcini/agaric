@@ -125,6 +125,7 @@ import { blockIdOf } from '@/editor/token-ids'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { CONTENT_COMMIT_DEBOUNCE_MS } from '@/hooks/useDebouncedContentCommit'
 import { DRAFT_MAX_LATENCY_MS } from '@/hooks/useDraftAutosave'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { delegatedLinkClickProps, useOpenLinkInNewTab } from '@/hooks/useOpenInBackgroundTab'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
@@ -142,6 +143,7 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { searchPropertyKeys } from '@/lib/slash-commands'
 import type { FlatBlock } from '@/lib/tree-utils'
+import { cn } from '@/lib/utils'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import { clearTaskStates, usePageBlockStoreApi } from '@/stores/page-blocks'
@@ -391,6 +393,7 @@ function PageModeDocument({
   // On touch the toolbar pins to the screen's foot, over the quick-capture button: as block
   // mode's, it shows only while the text is edited, by block mode's rule for leaving it.
   const isTouch = useIsTouch()
+  const isMobile = useIsMobile()
   const [editing, setEditing] = useState(false)
   const flushRef = useRef<() => Promise<boolean>>(() => Promise.resolve(true))
   const [properties] = useState(() => new PageProperties(openedWith))
@@ -1062,7 +1065,11 @@ function PageModeDocument({
           <EditorContent
             editor={editor}
             tabIndex={-1}
-            className="relative rounded-md focus-ring-visible"
+            // A phone's lane is narrower (`index.css`).
+            className={cn(
+              'relative rounded-md focus-ring-visible',
+              isTouch && isMobile && 'page-mode-phone',
+            )}
             onFocus={isTouch ? () => setEditing(true) : undefined}
             {...{ [SURFACE]: '' }}
             {...linkClick}

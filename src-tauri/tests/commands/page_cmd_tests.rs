@@ -5128,6 +5128,19 @@ async fn duplicate_block_carries_each_task_state() {
             "a {state} copy carries its state, and nothing else"
         );
     }
+
+    // A state from before the task states were fixed (#5841), which no
+    // command writes now: the buffer carries it as a `todo_state::` line.
+    let original = dup_child(&pool, &mat, &page, "WAITING").await;
+    set_task_columns(&pool, original.as_str(), Some("WAITING"), None, None, None).await;
+
+    let rows = duplicate(&pool, &mat, &original).await;
+
+    assert_eq!(
+        dup_storage(&pool, &rows[0].id).await,
+        [r#"columns todo=Some("WAITING") priority=None scheduled=None due=None"#],
+        "a WAITING copy carries its state, and nothing else"
+    );
 }
 
 /// A bulleted block's copy is bulleted and its plain child, a `+ ` item in the

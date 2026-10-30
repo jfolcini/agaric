@@ -973,7 +973,7 @@ enum PageRead {
     /// The buffer, the clipboard and a buffer save: the page's own
     /// properties, aliases and tags (#5160 S8), and the names a block may be
     /// written with.
-    Source,
+    Buffer,
     /// A duplicate, which writes every id raw: nothing more.
     Duplicate,
 }
@@ -1068,7 +1068,7 @@ fn render_block(
             push_block_bullet(output, &indent, &list_marker, &task_marker, &resolved, mode);
         }
         RenderMode::Clipboard | RenderMode::Agent | RenderMode::Document => {
-            push_source_bullet(
+            push_buffer_bullet(
                 output,
                 block,
                 &indent,
@@ -1252,7 +1252,7 @@ fn named_block_text(content: &str, data: &PageExportData) -> String {
 /// Whether a name may replace an id depends on whether the parser will read
 /// the block as code, which the bullet's fence tracking decides; so the raw
 /// bullet is written first, and rewritten with names when they read back.
-fn push_source_bullet(
+fn push_buffer_bullet(
     output: &mut String,
     block: &BlockRow,
     indent: &str,
@@ -1265,14 +1265,14 @@ fn push_source_bullet(
     let content = block.content.as_deref().unwrap_or("");
     if mode == RenderMode::Agent {
         let named = named_block_text(content, data);
-        push_anchored_source_bullet(output, indent, list_marker, task_marker, &named, id);
+        push_anchored_bullet(output, indent, list_marker, task_marker, &named, id);
         return;
     }
     let push = |output: &mut String, content: &str| match mode {
         RenderMode::Clipboard => {
             push_clipboard_bullet(output, indent, list_marker, task_marker, content, id)
         }
-        _ => push_anchored_source_bullet(output, indent, list_marker, task_marker, content, id),
+        _ => push_anchored_bullet(output, indent, list_marker, task_marker, content, id),
     };
     let start = output.len();
     let is_code = push(output, content);
@@ -1315,7 +1315,7 @@ fn push_clipboard_bullet(
         return code.any;
     }
     output.truncate(start);
-    push_anchored_source_bullet(output, indent, list_marker, task_marker, content, id)
+    push_anchored_bullet(output, indent, list_marker, task_marker, content, id)
 }
 
 /// `content` as a Document block with `^id` at the end of its last line or,
@@ -1323,7 +1323,7 @@ fn push_clipboard_bullet(
 /// end of any fence the block leaves open; also when that line holds nothing,
 /// which is written as an escape the anchor would turn into text
 /// ([`import::needs_blank_line_escape`]). Returns whether any line is code.
-fn push_anchored_source_bullet(
+fn push_anchored_bullet(
     output: &mut String,
     indent: &str,
     list_marker: &str,
@@ -1716,9 +1716,9 @@ fn render_subtrees<'a>(
 /// page nested under `root` is not here: `descendants` stops at a nested page.
 /// Returns the buffer and the ids it holds, in order.
 fn render_subtree(data: &PageExportData, root: &BlockRow) -> (String, Vec<String>) {
-    let mode = RenderMode::Document;
     let children_by_parent = group_children_by_parent(data.page.id.as_str(), &data.descendants);
-    let list_ordinals = compute_list_ordinals(&children_by_parent, &data.list_styles, mode);
+    let list_ordinals =
+        compute_list_ordinals(&children_by_parent, &data.list_styles, RenderMode::Document);
     let mut output = String::new();
     let ids = render_subtrees(
         &mut output,
@@ -1726,7 +1726,7 @@ fn render_subtree(data: &PageExportData, root: &BlockRow) -> (String, Vec<String
         &children_by_parent,
         &list_ordinals,
         data,
-        mode,
+        RenderMode::Document,
         &mut DocumentLayout::default(),
     )
     .into_iter()
@@ -2517,7 +2517,7 @@ pub async fn get_page_buffer_inner(
 ) -> Result<PageBuffer, AppError> {
     BlockId::from_string(page_id)?;
     let mut tx = pool.begin().await?;
-    let data = load_page_export_data(&mut tx, page_id, PageRead::Source).await?;
+    let data = load_page_export_data(&mut tx, page_id, PageRead::Buffer).await?;
     tx.commit().await?;
     let (source, _) = render_page_document(&data);
     let (text, line_ids) = anchor_free(&source);
@@ -2565,7 +2565,7 @@ pub async fn get_blocks_source_inner(
     let Some(page_id) = page_id else {
         return Ok(String::new());
     };
-    let data = load_page_export_data(&mut tx, &page_id, PageRead::Source).await?;
+    let data = load_page_export_data(&mut tx, &page_id, PageRead::Buffer).await?;
     tx.commit().await?;
     Ok(render_clipboard_source(&data, &ids, with_children))
 }
@@ -3485,7 +3485,7 @@ async fn load_page_export_data(
     } else {
         (Vec::new(), Vec::new())
     };
-    let name_snapshot = if read == PageRead::Source {
+    let name_snapshot = if read == PageRead::Buffer {
         load_name_snapshot(conn, &page.id, &descendants, &refs.page_titles).await?
     } else {
         NameSnapshot::default()

@@ -193,7 +193,7 @@ async fn rearranged_source(
     levels: &[usize],
 ) -> (String, BTreeMap<String, Vec<String>>) {
     let mut conn = fx.pool.acquire().await.unwrap();
-    let mut data = load_page_export_data(&mut conn, &fx.page, PageRead::Source)
+    let mut data = load_page_export_data(&mut conn, &fx.page, PageRead::Buffer)
         .await
         .unwrap();
     let mut children: BTreeMap<String, Vec<String>> = BTreeMap::new();

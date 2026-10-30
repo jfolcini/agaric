@@ -95,6 +95,21 @@ async function expectKind(id: string, want: Kind, what: string): Promise<void> {
   }
 }
 
+/** Make block `id` a bulleted block on the backend. */
+async function bullet(id: string): Promise<void> {
+  await invoke('set_property', {
+    blockId: id,
+    key: 'listStyle',
+    value: {
+      value_text: 'bullet',
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
+    },
+  })
+}
+
 /** The write the undo of the change must leave, which landed after it. */
 async function expectLaterWriteKept(id: string, what: string): Promise<void> {
   const { priority } = await invoke<{ priority: string | null }>('get_block', { blockId: id })
@@ -111,17 +126,7 @@ describe('Agaric real-backend undo of a kind change (#6156) @editor', () => {
     await reopenPageHolding(TITLE, MARKER)
     const id = await blockStaticByMarker(MARKER).getAttribute('data-block-id')
     if (id === null) throw new Error('the block has no id')
-    await invoke('set_property', {
-      blockId: id,
-      key: 'listStyle',
-      value: {
-        value_text: 'bullet',
-        value_num: null,
-        value_date: null,
-        value_ref: null,
-        value_bool: null,
-      },
-    })
+    await bullet(id)
     const BULLET: Kind = { text: MARKER, listStyle: 'bullet' }
     await expectKind(id, BULLET, 'the block was never bulleted')
     // The page read again holds the style.
@@ -194,17 +199,7 @@ describe('Agaric real-backend undo of a kind change (#6156) @editor', () => {
     await reopenPageHolding(TODO_TITLE, TODO_MARKER)
     const id = await blockStaticByMarker(TODO_MARKER).getAttribute('data-block-id')
     if (id === null) throw new Error('the block has no id')
-    await invoke('set_property', {
-      blockId: id,
-      key: 'listStyle',
-      value: {
-        value_text: 'bullet',
-        value_num: null,
-        value_date: null,
-        value_ref: null,
-        value_bool: null,
-      },
-    })
+    await bullet(id)
     const BULLET: Kind = { text: TODO_MARKER, listStyle: 'bullet', todo: null, stamped: false }
     await expectKind(id, BULLET, 'the block was never bulleted')
     // The page read again holds the style, which a task takes off.
@@ -246,17 +241,7 @@ describe('Agaric real-backend undo of a kind change (#6156) @editor', () => {
       const id = await blockStaticByMarker(text).getAttribute('data-block-id')
       if (id === null) throw new Error(`the block ${text} has no id`)
       blocks.push({ text, id })
-      await invoke('set_property', {
-        blockId: id,
-        key: 'listStyle',
-        value: {
-          value_text: 'bullet',
-          value_num: null,
-          value_date: null,
-          value_ref: null,
-          value_bool: null,
-        },
-      })
+      await bullet(id)
     }
     const prioritized = blocks[0]?.id
     if (prioritized === undefined) throw new Error('the page holds no block')
