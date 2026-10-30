@@ -1,0 +1,257 @@
+{
+  "description": "#6054 — a `block_links` edge takes its kind when the reindex's INSERT writes it (#4551), and only a target the INSERT keeps is written: once the target is of another space, an edit that turns `[[id]]` into `((id))` keeps the edge, still a `page_link`. The mock re-read the kind from the content. Found by the differential fuzz lane. `C1`, on the harness page `S1`, links `S2`; `create_space` makes a second space (`C2`) and `S2` moves into it; `C1` then names `S2` as a block reference.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Target",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "see ((000000000000000000000000S2))",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Away",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 10,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [
+      {
+        "kind": "page_link",
+        "source_id": "B3",
+        "source_page_id": "B1",
+        "target_id": "B2"
+      }
+    ],
+    "properties": [
+      {
+        "block_id": "B4",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_page_link",
+      "returns": [
+        "B3#block_type=content#content=see [[000000000000000000000000S2]]#parent_id=B1#position=1"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_second_space",
+      "returns": ["create_space#space_id=B4"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_target_moves_away",
+      "returns": ["move_blocks_to_space#moved=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "now_a_block_reference",
+      "returns": ["B3#content=see ((000000000000000000000000S2))"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "as_a_page_link",
+      "rows": [
+        "B1#page_title=Home#truncated=false",
+        "B1->B3#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "filtered#count=1#truncated=false"
+      ],
+      "total_count": 1
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "as_a_block_reference",
+      "rows": ["filtered#count=0#truncated=false"],
+      "total_count": 0
+    }
+  ],
+  "name": "link_kind_kept_while_unlinkable",
+  "ops": [
+    {
+      "args": {
+        "blockType": "content",
+        "content": "see [[S2]]",
+        "index": 0,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "name": "a_page_link",
+      "via": "command"
+    },
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Away"
+      },
+      "command": "create_space",
+      "name": "a_second_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S2"],
+        "spaceId": "C2"
+      },
+      "command": "move_blocks_to_space",
+      "name": "the_target_moves_away",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C1",
+        "toText": "see ((S2))"
+      },
+      "command": "edit_block",
+      "comment": "S1 holds the token, so the edit passes; the INSERT cannot link S2, so it does not re-kind the edge",
+      "name": "now_a_block_reference",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockId": "S2",
+        "kind": "page_link",
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "name": "as_a_page_link"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "kind": "block_ref",
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "name": "as_a_block_reference"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Target",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

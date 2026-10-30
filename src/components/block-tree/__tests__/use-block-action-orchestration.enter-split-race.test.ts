@@ -187,9 +187,8 @@ describe('#2914 — Enter on multi-block content does not race splitBlock vs cre
 // while a live block of the SAME page already holds that token
 // (`page_holds_token`, `cross_space_validation.rs`). The caret split used to
 // save the shortened source first, which removed the only holder of a link
-// sitting after the caret, so the after-text's create was refused. The tauri
-// mock does not model that rule (its `create_block` / `edit_block` scan no
-// content), so the pin here is the ORDER against the mock's real state: the
+// sitting after the caret, so the after-text's create was refused. The pin
+// here is the ORDER against the mock's real state, which models the rule: the
 // create lands while the source still holds the full text. Real store, real
 // mock dispatch; only the roving editor handle is a stub.
 describe('#5272 — a caret split creates the after-text before shortening the source', () => {

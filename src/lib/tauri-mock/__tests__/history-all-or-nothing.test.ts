@@ -19,6 +19,7 @@ const CHILD = '000000000000000000000CHILD'
 const OTHER_CHILD = '00000000000000000OTHERCHILD'
 const TAG = '000000000000000000000000TAG'
 const HOLDER = '00000000000000000000HOLDER'
+const LINKED = '000000000000000000TARGETPG'
 
 interface Ref {
   device_id: string
@@ -165,6 +166,34 @@ describe('tauri-mock history handlers are all-or-nothing (#6051)', () => {
       dispatch('create_property_def', { spaceId: SPACE, key: 'lvl', valueType: 'text' })
       dispatch('delete_block', { blockId: OTHER_CHILD })
     })
+    const before = snapshotAll()
+
+    let thrown: unknown = null
+    try {
+      dispatch('revert_ops', { ops: refs.all })
+    } catch (err) {
+      thrown = err
+    }
+
+    expect(validationCode(thrown)).toBe('DuplicatePageTitle')
+    expect(snapshotAll()).toEqual(before)
+  })
+
+  // The link index is two more stores a reverse writes: the tokens a source
+  // owes (`unresolvedLinks`) and the kind an edge keeps while its target is
+  // unlinkable (`keptLinkKinds`). Undoing the second edit below drops the kept
+  // kind, so the refused batch has to hand it back.
+  it('puts back the link index a reverse writes', () => {
+    seed.unresolvedLinks.clear()
+    seed.keptLinkKinds.clear()
+    const refs = seedTwoOps(() => {
+      seedPage(OTHER_CHILD, 'x', PAGE, 'content')
+      seedPage(LINKED, 'T', null)
+      dispatch('edit_block', { blockId: OTHER_CHILD, toText: `[[${LINKED}]]` })
+      dispatch('delete_block', { blockId: LINKED })
+      dispatch('edit_block', { blockId: OTHER_CHILD, toText: `((${LINKED}))` })
+    })
+    expect([...seed.keptLinkKinds.keys()]).toEqual([OTHER_CHILD])
     const before = snapshotAll()
 
     let thrown: unknown = null

@@ -1,6 +1,7 @@
 /**
- * Tauri mock — what a cross-space move drops (#5841 S0.6). Mirrors
- * `src-tauri/src/commands/blocks/space_move.rs`.
+ * Tauri mock — what a cross-space move drops (#5841 S0.6), mirroring
+ * `src-tauri/src/commands/blocks/space_move.rs`, and how it re-ranks the roots
+ * it moves, which both `space` writers share.
  *
  * A move keeps a property when both spaces define its key identically (same
  * `value_type` and `options`) or neither defines it; a built-in is never a
@@ -13,9 +14,12 @@ import type { PropertyLoss } from '@/lib/bindings'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import {
   appErrorRejection,
+  comparePositionThenId,
   ownerSpaceOf,
+  spaceRootGroup,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
+import { setPageGroupSpace } from '@/lib/tauri-mock/revert'
 import { blocks, properties, propertyDefs, pushOp } from '@/lib/tauri-mock/seed'
 
 /** `MAX_REVERT_OPS` (`commands/history.rs`): the ops one undo reverts. */
@@ -127,4 +131,66 @@ export function dropAcknowledgedLosses(ids: string[], target: string, rawAck: un
       },
     })
   }
+}
+
+/**
+ * The space write `set_property_in_tx` makes for `b`, a live page or top-level
+ * tag, on the way to `spaceId`: its page group takes the space. Returns
+ * whether it arrives as a root of a space it was not in, which `rankArrivals`
+ * must then rank: a move into the space a root already holds leaves every rank
+ * as it was.
+ *
+ * #5100: the backend purges a root from the doc of the space it left and
+ * reprojects that group's dense ranks PER BLOCK, so a survivor that sat behind
+ * it moves up one — and the next arrival from that group departs carrying its
+ * shifted rank. Unstamped roots stand in for the conformance harness space,
+ * whose snapshot leg never `stampMockSpace`s; spaces are left out of that
+ * stand-in because each ranks in its own group, never in another's.
+ */
+export function leaveForSpace(b: Record<string, unknown>, spaceId: string): boolean {
+  const fromSpace = (b['space_id'] as string | null | undefined) ?? null
+  setPageGroupSpace(blocks, b['id'] as string, spaceId)
+  if ((b['parent_id'] as string | null) !== null || fromSpace === spaceId) return false
+  const left =
+    fromSpace === null
+      ? [...blocks.values()].filter(
+          (row) =>
+            (row['parent_id'] as string | null) === null &&
+            ((row['space_id'] as string | null | undefined) ?? null) === null &&
+            properties.get(row['id'] as string)?.get('is_space')?.['value_text'] !== 'true',
+        )
+      : spaceRootGroup(fromSpace)
+  left.toSorted(comparePositionThenId).forEach((row, i) => {
+    row['position'] = i + 1
+  })
+  return true
+}
+
+/**
+ * Rank the roots in `arrived` ahead of the residents of `spaceId`'s root group.
+ *
+ * Arrivals land ahead of residents because the engine ranks the group by each
+ * node's legacy position meta, and an arrival's meta is the small per-space
+ * rank it was seeded with while a resident's is the `position`
+ * `create_block_in_tx` appended over the whole `parent_id IS NULL` set. Among
+ * themselves arrivals keep the rank each held when it departed. This is where
+ * the mock parts company with the backend, which merely compares metas: the
+ * two disagree once a resident's meta falls BELOW an arrival's, which two
+ * ordinary moves into one space are enough to produce, because
+ * `reproject_dense_positions` rewrites `blocks.position` and never the Loro
+ * `FIELD_POSITION` that `legacy_slot` reads, so a meta stays whatever its
+ * block was seeded with. Matching that needs a shadow meta per block, more
+ * machinery than the mock earns (#5099).
+ */
+export function rankArrivals(spaceId: string, arrived: ReadonlySet<string>): void {
+  if (arrived.size === 0) return
+  // `comparePositionThenId` is exactly `legacy_slot`'s `(sib_pos, sib_id)`, so
+  // two arrivals that left DIFFERENT spaces holding the same rank break their
+  // tie the way the engine does.
+  const group = spaceRootGroup(spaceId).toSorted(comparePositionThenId)
+  const arriving = group.filter((row) => arrived.has(row['id'] as string))
+  const resident = group.filter((row) => !arrived.has(row['id'] as string))
+  ;[...arriving, ...resident].forEach((row, i) => {
+    row['position'] = i + 1
+  })
 }
