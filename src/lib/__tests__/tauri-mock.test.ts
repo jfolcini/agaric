@@ -3613,6 +3613,18 @@ describe('import_markdown', () => {
     expect(children).toEqual(['Body'])
   })
 
+  // `strip_title_heading` drops the blank lines after the title too, so the
+  // front matter an export writes right after it is still leading and no
+  // block's, as in `markdown_imports.json`'s `a_nested_page`.
+  it('drops the blank lines after a leading `# Title` too, so front matter after it is no block (matches backend)', () => {
+    const result = invoke('import_markdown', {
+      content: '# titled\n\n---\nseason: spring\n---\n\n- a\n- b\n',
+      filename: 'titled.md',
+      spaceId: 'SPACE_PERSONAL',
+    }) as Record<string, unknown>
+    expect(result['blocks_created']).toBe(2)
+  })
+
   it('keeps a leading `# heading` that differs from the derived title as content', () => {
     const result = invoke('import_markdown', {
       content: '# Heading Title\n\nContent here',
