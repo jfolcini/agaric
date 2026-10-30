@@ -121,8 +121,13 @@ function stubSlashInvoke(overrides: TypedInvokeHandlers = {}): void {
       block_id: args['blockId'] as string,
       key: args['key'] as string,
     }),
-    set_todo_state: (args) =>
-      makeBlockRow({ id: args['blockId'] as string, todo_state: args['state'] as string | null }),
+    set_todo_state: (args) => ({
+      op_refs: [{ device_id: 'dev1', seq: 4 }],
+      ...makeBlockRow({
+        id: args['blockId'] as string,
+        todo_state: args['state'] as string | null,
+      }),
+    }),
     set_priority: (args) =>
       makeBlockRow({ id: args['blockId'] as string, priority: args['level'] as string | null }),
     list_property_keys: () => [],
@@ -705,7 +710,7 @@ describe('useBlockSlashCommands undo notifications', () => {
       await result.current.handleSlashCommand({ id: 'todo', label: 'TODO' })
     })
 
-    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
+    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1', [{ device_id: 'dev1', seq: 4 }])
   })
 
   it('does not call onNewAction when rootParentId is null', async () => {
@@ -842,7 +847,7 @@ describe('useBlockSlashCommands handleSlashCommand stability (#)', () => {
     await act(async () => {
       await result.current.handleSlashCommand({ id: 'todo', label: 'TODO' })
     })
-    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_UPDATED')
+    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_UPDATED', [{ device_id: 'dev1', seq: 4 }])
   })
 })
 

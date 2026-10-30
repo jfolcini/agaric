@@ -42,7 +42,8 @@ describe('shownListStyle', () => {
 })
 
 describe('clearListStyles', () => {
-  it('reads the blocks once and clears only those that store a list style', async () => {
+  it('reads the blocks once, clears only those that store a list style, and resolves the clears’ refs', async () => {
+    const ref = (id: string) => ({ device_id: 'dev1', seq: id === 'A' ? 1 : 2 })
     stubInvoke(mockedInvoke, {
       get_batch_properties: () => ({
         A: [styled('bullet')],
@@ -51,11 +52,11 @@ describe('clearListStyles', () => {
       delete_property: (args) => ({
         block_id: args['blockId'] as string,
         key: LIST_STYLE_KEY,
-        op_refs: [],
+        op_refs: [ref(args['blockId'] as string)],
       }),
     })
 
-    await expect(clearListStyles(['A', 'B', 'C'])).resolves.toBe(true)
+    await expect(clearListStyles(['A', 'B', 'C'])).resolves.toEqual([ref('A'), ref('C')])
 
     expect(calls('get_batch_properties')).toEqual([
       ['get_batch_properties', { blockIds: ['A', 'B', 'C'] }],
@@ -68,7 +69,7 @@ describe('clearListStyles', () => {
 
   it('asks nothing for no blocks', async () => {
     stubInvoke(mockedInvoke, {})
-    await expect(clearListStyles([])).resolves.toBe(true)
+    await expect(clearListStyles([])).resolves.toEqual([])
     expect(mockedInvoke).not.toHaveBeenCalled()
   })
 
@@ -77,7 +78,7 @@ describe('clearListStyles', () => {
       get_batch_properties: () => Promise.reject(new Error('refused')),
     })
 
-    await expect(clearListStyles(['A'])).resolves.toBe(false)
+    await expect(clearListStyles(['A'])).resolves.toEqual([])
 
     expect(calls('delete_property')).toEqual([])
     expect(vi.mocked(toast.error).mock.calls.map(([message]) => message)).toEqual([

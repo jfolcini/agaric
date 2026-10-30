@@ -259,10 +259,11 @@ export async function commitInlineProperties(opts: {
  *   phantom checked box the backend never recorded.
  * - On SUCCESS: adopts the backend echo for `todo_state` (falls back to the
  *   sent state), optimistically writes it into `pageStore`, strips the
- *   marker via `edit(cleanContent)`, nudges the undo stack and, for DONE,
+ *   marker via `edit(cleanContent)`, records the undo entry and, for DONE,
  *   reloads the page if the task repeats (`reloadIfRepeating`). A block the
  *   store does not hold as a task loses its list style first (#5691 D3: a
- *   task is a list kind, exclusive with bulleted and numbered).
+ *   task is a list kind, exclusive with bulleted and numbered); the entry
+ *   holds the refs of both writes (#6156).
  * - On FAILURE (state write rejected): persists the RAW content (marker
  *   intact) via `edit(content)` so the box stays re-parseable, and writes no
  *   optimistic state.
@@ -294,17 +295,20 @@ export async function commitCheckboxState(opts: {
   const wasTask = (pageStore?.getState().blocksById?.get(blockId)?.todo_state ?? null) !== null
   try {
     const echo = unwrap(await commands.setTodoState(blockId, todoState))
-    if (!wasTask) await clearListStyles([blockId])
+    const cleared = wasTask ? [] : await clearListStyles([blockId])
     // A newer flush on this block superseded us while the IPC was in
     // flight — bail without applying so we don't clobber it.
     if (readFlushSeq(blockId) !== mySeq) return true
-    const settledState = typeof echo?.todo_state === 'string' ? echo.todo_state : todoState
+    const settledState = typeof echo.todo_state === 'string' ? echo.todo_state : todoState
     pageStore?.setState((s) => ({
       blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, todo_state: settledState } : b)),
     }))
     // Strip the marker only now that the state is committed.
     const outcome = edit(blockId, cleanContent)
-    if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
+    // The state and the style it takes off are one undo entry (#6156), which the edit's joins.
+    if (rootParentId) {
+      useUndoStore.getState().onNewAction(rootParentId, [...echo.op_refs, ...cleared])
+    }
     const ok = await Promise.resolve(outcome).catch((err: unknown) => {
       logger.warn(
         'BlockTree',

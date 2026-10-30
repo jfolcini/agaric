@@ -590,6 +590,14 @@ pub struct MovedBlocks {
     pub moves: Vec<MoveResponse>,
 }
 
+/// Reply of [`set_todo_state_batch`]; same envelope as [`CreatedBlocks`], for
+/// a count (#6156).
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct TodoStateBatch {
+    /// How many live blocks it set; a missing or deleted id is skipped.
+    pub updated: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct TagResponse {
     pub block_id: String,

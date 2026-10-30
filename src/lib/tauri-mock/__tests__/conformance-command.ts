@@ -153,7 +153,8 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   // #5057 — the three batch COUNTERS answer with a bare number, which carries
   // no field to name it. The shape's single attribute names the scalar, so the
   // token reads `set_property_batch#updated=3` instead of exposing a synthetic
-  // key. See `projectReturn`.
+  // key. See `projectReturn`. `set_todo_state_batch` answers `{ updated,
+  // op_refs }` (#6156), which its attribute reads the same token off.
   set_property_batch: { idKey: HEADED_ID_KEY, attrs: ['updated'], lists: [] },
   set_todo_state_batch: { idKey: HEADED_ID_KEY, attrs: ['updated'], lists: [] },
   add_tags_by_ids: { idKey: HEADED_ID_KEY, attrs: ['tagged'], lists: [] },

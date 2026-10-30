@@ -10776,6 +10776,329 @@ async fn undo_and_redo_of_a_task_made_bulleted_by_the_refs_of_its_two_writes_615
     mat.shutdown();
 }
 
+/// #6156 — the refs of setting each of `ids` to `style`, or of taking its
+/// style off for `None`.
+async fn set_list_styles(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    ids: &[String],
+    style: Option<&str>,
+) -> Vec<OpRef> {
+    let mut refs = Vec::new();
+    for id in ids {
+        let written = match style {
+            Some(style) => {
+                capture_op_refs(set_property_inner(
+                    pool,
+                    DEV,
+                    mat,
+                    id.clone().into(),
+                    "listStyle".into(),
+                    Some(style.into()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ))
+                .await
+                .unwrap()
+                .op_refs
+            }
+            None => {
+                capture_op_refs(delete_property_inner(
+                    pool,
+                    DEV,
+                    mat,
+                    id.clone().into(),
+                    "listStyle".into(),
+                ))
+                .await
+                .unwrap()
+                .op_refs
+            }
+        };
+        refs.extend(written);
+    }
+    refs
+}
+
+/// #6156 — bullets made tasks are the batch's set and the styles' clears, and
+/// the frontend undoes the refs they return as one entry, newest first. That
+/// gives back the bullets and takes the tasks and their stamps off, while a
+/// priority written after them stays: an undo by position would take it too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_bullets_made_tasks_by_the_batch_refs_keeps_a_later_priority_6156() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (_page_id, ids) = create_page_with_children(&pool, &mat).await;
+    set_list_styles(&pool, &mat, &ids, Some("bullet")).await;
+    settle(&mat).await;
+    let mut bullets = Vec::new();
+    for id in &ids {
+        bullets.push(value_slots(&pool, id).await);
+    }
+
+    let batch = capture_op_refs(set_todo_state_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        ids.iter().map(|id| BlockId::from(id.clone())).collect(),
+        Some("TODO".into()),
+    ))
+    .await
+    .unwrap();
+    let styles = set_list_styles(&pool, &mat, &ids, None).await;
+    settle(&mat).await;
+    assert_eq!(batch.inner, 2, "sanity: the batch set both blocks");
+    assert_eq!(
+        batch.op_refs.len(),
+        4,
+        "the state's set and the `created_at` stamp, per block"
+    );
+    assert_eq!(styles.len(), 2, "one clear per style");
+    for id in &ids {
+        let task = value_slots(&pool, id).await;
+        assert_eq!(task.0.0.as_deref(), Some("TODO"), "sanity: a task");
+        assert_eq!(task.1.len(), 1, "sanity: its stamp, and no style");
+    }
+
+    set_priority_inner(&pool, DEV, &mat, ids[0].clone().into(), Some("1".into()))
+        .await
+        .unwrap();
+    let made: Vec<OpRef> = batch.op_refs.into_iter().chain(styles).collect();
+    let undone = undo_ops_inner(&pool, DEV, &mat, made.into_iter().rev().collect())
+        .await
+        .expect("#6156: one undo of the batch's and the styles' refs must not fail");
+    settle(&mat).await;
+
+    assert_eq!(undone.len(), 6, "one reverse per op");
+    let mut kept = bullets[0].clone();
+    kept.0.1 = Some("1".into());
+    assert_eq!(
+        value_slots(&pool, &ids[0]).await,
+        kept,
+        "the bullet is back and the task gone, and the later priority stays"
+    );
+    assert_eq!(
+        value_slots(&pool, &ids[1]).await,
+        bullets[1],
+        "the bullet is back and the task gone"
+    );
+    mat.shutdown();
+}
+
+/// #6156 — the other direction: tasks made bulleted are the styles' sets and
+/// the batch's clear, which records each task's state, so the undo of their
+/// refs gives back the tasks and their stamps and takes the bullets off, while
+/// a later priority stays. One task is done, so the clear also takes its
+/// `completed_at` off, and the undo gives that back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_tasks_made_bulleted_by_the_batch_refs_keeps_a_later_priority_6156() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (_page_id, ids) = create_page_with_children(&pool, &mat).await;
+    let block_ids = || ids.iter().map(|id| BlockId::from(id.clone())).collect();
+    set_todo_state_batch_inner(&pool, DEV, &mat, block_ids(), Some("TODO".into()))
+        .await
+        .unwrap();
+    set_todo_state_inner(&pool, DEV, &mat, ids[1].clone().into(), Some("DONE".into()))
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let mut tasks = Vec::new();
+    for id in &ids {
+        tasks.push(value_slots(&pool, id).await);
+    }
+
+    let styles = set_list_styles(&pool, &mat, &ids, Some("bullet")).await;
+    let batch = capture_op_refs(set_todo_state_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        block_ids(),
+        None,
+    ))
+    .await
+    .unwrap();
+    settle(&mat).await;
+    // Per block the state's clear and its `created_at`'s; the done one's `completed_at` too.
+    assert_eq!(batch.op_refs.len(), 5, "one ref per clear");
+    for id in &ids {
+        let bulleted = value_slots(&pool, id).await;
+        assert_eq!(bulleted.0.0, None, "sanity: the clear took the state off");
+        assert_eq!(bulleted.1.len(), 1, "sanity: the style, and no stamp");
+    }
+
+    set_priority_inner(&pool, DEV, &mat, ids[0].clone().into(), Some("1".into()))
+        .await
+        .unwrap();
+    let made: Vec<OpRef> = styles.into_iter().chain(batch.op_refs).collect();
+    let undone = undo_ops_inner(&pool, DEV, &mat, made.into_iter().rev().collect())
+        .await
+        .expect("#6156: one undo of the styles' and the batch's refs must not fail");
+    settle(&mat).await;
+
+    assert_eq!(undone.len(), 7, "one reverse per op");
+    let mut kept = tasks[0].clone();
+    kept.0.1 = Some("1".into());
+    assert_eq!(
+        value_slots(&pool, &ids[0]).await,
+        kept,
+        "the task and its stamp are back and the bullet gone, and the later priority stays"
+    );
+    assert_eq!(
+        value_slots(&pool, &ids[1]).await,
+        tasks[1],
+        "the done task and both its stamps are back and the bullet gone"
+    );
+    mat.shutdown();
+}
+
+/// #6156 — one bullet made a task is `set_todo_state`'s writes and the style's
+/// clear, and the frontend undoes the refs they return as one entry, newest
+/// first. That gives back the bullet and takes the task and its stamp off,
+/// while a priority written after stays: an undo by position would take it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_a_bullet_made_a_task_by_the_refs_of_set_todo_state_keeps_a_later_priority_6156() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (_page_id, ids) = create_page_with_children(&pool, &mat).await;
+    let target = ids[0].clone();
+    set_list_styles(&pool, &mat, std::slice::from_ref(&target), Some("bullet")).await;
+    settle(&mat).await;
+    let bullet = value_slots(&pool, &target).await;
+
+    let state = capture_op_refs(Box::pin(set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        target.clone().into(),
+        Some("TODO".into()),
+    )))
+    .await
+    .unwrap();
+    let style = set_list_styles(&pool, &mat, std::slice::from_ref(&target), None).await;
+    settle(&mat).await;
+    assert_eq!(
+        state.op_refs.len(),
+        2,
+        "the state's set and the `created_at` stamp"
+    );
+    assert_eq!(style.len(), 1, "the style's clear");
+    let task = value_slots(&pool, &target).await;
+    assert_eq!(task.0.0.as_deref(), Some("TODO"), "sanity: a task");
+    assert_eq!(task.1.len(), 1, "sanity: its stamp, and no style");
+
+    set_priority_inner(&pool, DEV, &mat, target.clone().into(), Some("1".into()))
+        .await
+        .unwrap();
+    let made: Vec<OpRef> = state.op_refs.into_iter().chain(style).collect();
+    let undone = undo_ops_inner(&pool, DEV, &mat, made.into_iter().rev().collect())
+        .await
+        .expect("#6156: one undo of the state's and the style's refs must not fail");
+    settle(&mat).await;
+
+    assert_eq!(undone.len(), 3, "one reverse per op");
+    let mut kept = bullet;
+    kept.0.1 = Some("1".into());
+    assert_eq!(
+        value_slots(&pool, &target).await,
+        kept,
+        "the bullet is back and the task and its stamp gone, and the later priority stays"
+    );
+    mat.shutdown();
+}
+
+/// #6156 — completing a repeating task also makes its next occurrence, in the
+/// same transaction, so the refs `set_todo_state` returns cover that block's
+/// creation and its properties too: one undo of them gives the block back as it
+/// was, with no state and no `completed_at`, and takes the occurrence away, as
+/// the group undo it replaces did. A bare ref-set would fail the whole undo on
+/// any op it cannot reverse.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_a_repeating_task_completed_by_the_refs_of_set_todo_state_takes_its_next_occurrence_6156()
+ {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (_page_id, ids) = create_page_with_children(&pool, &mat).await;
+    let target = ids[0].clone();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        target.clone().into(),
+        Some("2025-06-15".into()),
+    )
+    .await
+    .unwrap();
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        target.clone().into(),
+        "repeat".into(),
+        Some("daily".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let before = value_slots(&pool, &target).await;
+    let live_copies = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM blocks WHERE content = 'child one' AND deleted_at IS NULL",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    assert_eq!(live_copies().await, 1, "sanity: one block of that text");
+
+    let done = capture_op_refs(Box::pin(set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        target.clone().into(),
+        Some("DONE".into()),
+    )))
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        live_copies().await,
+        2,
+        "sanity: completing it made the next occurrence"
+    );
+
+    let undone = undo_ops_inner(
+        &pool,
+        DEV,
+        &mat,
+        done.op_refs.iter().cloned().rev().collect(),
+    )
+    .await
+    .expect("#6156: one undo of the refs of a repeating completion must not fail");
+    settle(&mat).await;
+
+    assert_eq!(undone.len(), done.op_refs.len(), "one reverse per op");
+    assert_eq!(
+        value_slots(&pool, &target).await,
+        before,
+        "the block is as it was: no state, no `completed_at`"
+    );
+    assert_eq!(
+        live_copies().await,
+        1,
+        "the next occurrence went with the completion"
+    );
+    mat.shutdown();
+}
+
 /// #6014 — a set records the value it overwrites in the slot that value lives
 /// in, so its undo restores every column-backed key and every typed
 /// `block_properties` slot exactly. The values are written to the tables

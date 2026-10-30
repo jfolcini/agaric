@@ -16,7 +16,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createStore, type StoreApi } from 'zustand'
 
-import { makeBlock, makeBlockRow, makePropertyRow } from '@/__tests__/fixtures'
+import { makeBlock, makeBlockRow, makePropertyRow, withOps } from '@/__tests__/fixtures'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { useCheckboxSyntax } from '@/hooks/useCheckboxSyntax'
 import { commands } from '@/lib/bindings'
@@ -237,7 +237,7 @@ describe('useCheckboxSyntax', () => {
     // First call resolves so the guard resets; second call is then allowed.
     mockedSetTodoState.mockResolvedValue({
       status: 'ok',
-      data: makeBlock({ id: 'B1', todo_state: 'DONE' }),
+      data: withOps(makeBlockRow({ id: 'B1', todo_state: 'DONE' })),
     })
     // DONE path reads `blocked_by` via `getProperty`; resolve it (no deps).
     mockedGetProperty.mockResolvedValue({ status: 'ok', data: null })
@@ -299,7 +299,7 @@ describe('useCheckboxSyntax — [x] on a repeating task (#5285)', () => {
     )
     mockedSetTodoState.mockResolvedValue({
       status: 'ok',
-      data: makeBlockRow({ id: 'BLOCK_1', parent_id: 'PAGE_1', todo_state: 'DONE' }),
+      data: withOps(makeBlockRow({ id: 'BLOCK_1', parent_id: 'PAGE_1', todo_state: 'DONE' })),
     })
   })
 
