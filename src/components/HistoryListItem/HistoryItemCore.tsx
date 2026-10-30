@@ -126,7 +126,15 @@ export function opIcon(opType: string): LucideIcon {
   if (opType.startsWith('edit')) return Pencil
   if (opType.startsWith('move')) return ArrowRight
   if (opType === 'add_tag' || opType === 'remove_tag') return Tag
-  if (opType === 'set_property' || opType === 'delete_property') return Settings
+  if (
+    opType === 'set_property' ||
+    opType === 'delete_property' ||
+    opType === 'set_property_def' ||
+    opType === 'rename_property_key' ||
+    opType === 'rename_property_option' ||
+    opType === 'rewrite_properties'
+  )
+    return Settings
   // #4277 — all three attachment ops share the paperclip so the family is
   // recognisable in a mixed list; the badge text carries the verb. Listed
   // before the `startsWith('delete')` branch so `delete_attachment` keeps

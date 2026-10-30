@@ -206,6 +206,61 @@ describe('getPayloadRawContent', () => {
     expect(getPayloadRawContent(makeEntry(payload, 'set_property_def'))).toBeNull()
   })
 
+  it('returns null for a set_property_def payload whose key is empty', () => {
+    const payload = JSON.stringify({ space_id: 'SP1', key: '', def: null, prior: null })
+    expect(getPayloadRawContent(makeEntry(payload, 'set_property_def'))).toBeNull()
+  })
+
+  it.each([
+    ['rename_property_key without its old key', 'rename_property_key', { new_key: 'area' }],
+    ['rename_property_key without its new key', 'rename_property_key', { old_key: 'project' }],
+    [
+      'rename_property_option without its key',
+      'rename_property_option',
+      { old_option: 'review', new_option: 'in_review' },
+    ],
+    [
+      'rename_property_option without its old option',
+      'rename_property_option',
+      { key: 'stage', new_option: 'in_review' },
+    ],
+    [
+      'rename_property_option without its new option',
+      'rename_property_option',
+      { key: 'stage', old_option: 'review' },
+    ],
+    ['rewrite_properties without defs', 'rewrite_properties', { reason: 'merge' }],
+    ['a merge with a null def write', 'rewrite_properties', { defs: [null, { key: 'phase' }] }],
+    [
+      'a merge with a key that is not a string',
+      'rewrite_properties',
+      { defs: [{ key: 'stage' }, { key: 3 }] },
+    ],
+    [
+      'a type change without a def write',
+      'rewrite_properties',
+      { reason: 'change_type', defs: [] },
+    ],
+    [
+      'a type change without its key',
+      'rewrite_properties',
+      {
+        reason: 'change_type',
+        defs: [{ def: { value_type: 'number' }, prior: { value_type: 'text' } }],
+      },
+    ],
+    [
+      'a type change without its new definition',
+      'rewrite_properties',
+      {
+        reason: 'change_type',
+        defs: [{ key: 'effort', def: null, prior: { value_type: 'text' } }],
+      },
+    ],
+  ])('returns null for %s', (_label, opType, payload) => {
+    expect(getPayloadRawContent(makeEntry(JSON.stringify(payload), opType))).toBeNull()
+  })
+
   it('returns null for an alias payload whose alias is an empty string', () => {
     const entry = makeEntry(JSON.stringify({ page_id: 'PG1', alias: '' }), 'add_page_alias')
     expect(getPayloadRawContent(entry)).toBeNull()

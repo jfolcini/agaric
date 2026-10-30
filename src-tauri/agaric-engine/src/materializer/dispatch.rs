@@ -1376,7 +1376,7 @@ pub fn move_same_page_hint(
 /// does **not** parse to any [`OpType`] (a corrupt/forward-version
 /// `op_log` row, not a known variant) emits a `tracing::warn!` and
 /// returns no tasks (preserving the prior unknown-op behaviour), and the
-/// `create_block` arm propagates JSON parse failures via `?`. The
+/// arms that read their payload propagate JSON parse failures via `?`. The
 /// metric-driven FTS-optimize threshold for `edit_block` is **not**
 /// captured here — it depends on `&Materializer` state and is driven
 /// by [`Materializer::maybe_enqueue_fts_optimize`] after the returned
@@ -1426,7 +1426,7 @@ pub fn invalidations_for_op(
         OpType::AddAttachment | OpType::DeleteAttachment | OpType::RenameAttachment => {}
         // `page_aliases` feeds no cache: every reader queries it directly.
         OpType::AddPageAlias | OpType::RemovePageAlias => {}
-        OpType::SetPropertyDef => push_property_def_invalidations(record, &mut tasks),
+        OpType::SetPropertyDef => push_property_def_invalidations(record, &mut tasks)?,
         // #5841: `agenda_cache.source` names the key a date came from, and
         // these ops move dates between keys.
         OpType::RenamePropertyKey | OpType::RewriteProperties => {
@@ -1440,18 +1440,20 @@ pub fn invalidations_for_op(
 
 /// `SetPropertyDef` invalidations (#5841). `agenda_cache` reads `value_date`,
 /// which a definition moves values into or out of only when it, or the one it
-/// replaced, is a `date`; a payload this cannot read rebuilds it anyway.
-fn push_property_def_invalidations(record: &OpRecord, tasks: &mut Vec<MaterializeTask>) {
-    let dated = match serde_json::from_str::<PropertyDefOpHint>(&record.payload) {
-        Ok(hint) => [hint.def, hint.prior]
-            .iter()
-            .flatten()
-            .any(|def| def.value_type == "date"),
-        Err(_) => true,
-    };
-    if dated {
+/// replaced, is a `date`.
+fn push_property_def_invalidations(
+    record: &OpRecord,
+    tasks: &mut Vec<MaterializeTask>,
+) -> Result<(), AppError> {
+    let hint: PropertyDefOpHint = serde_json::from_str(&record.payload)?;
+    if [hint.def, hint.prior]
+        .iter()
+        .flatten()
+        .any(|def| def.value_type == "date")
+    {
         tasks.push(MaterializeTask::RebuildAgendaCache);
     }
+    Ok(())
 }
 
 /// `CreateBlock` invalidations, pushed onto `tasks` in enqueue order.

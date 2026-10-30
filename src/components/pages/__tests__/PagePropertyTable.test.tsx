@@ -25,6 +25,7 @@ import {
 } from '@/__tests__/helpers/invoke'
 import type { AppError } from '@/lib/app-error'
 import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
+import { getBlockPropertyInvalidationKey } from '@/lib/block-property-events'
 import { getTodayString } from '@/lib/date-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { dispatch } from '@/lib/tauri-mock/handlers'
@@ -78,7 +79,9 @@ import { PagePropertyTable } from '@/components/pages/PagePropertyTable'
 import { performPageUndo } from '@/hooks/useUndoShortcuts'
 import { t } from '@/lib/i18n'
 import { invalidatePropertyCaches } from '@/lib/property-caches'
+import { PageBlockStoreProvider } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
+import { useUndoStore } from '@/stores/undo'
 
 const mockedToastError = vi.mocked(toast.error)
 
@@ -2169,6 +2172,42 @@ describe('PagePropertyTable renames a select option (#5841 S4)', () => {
       expect(offered()).toEqual([t('pageProperty.emptyOption'), 'alpha', 'beta', 'gamma'])
     })
     expect(properties.get(MTG_1)?.get('project')?.['value_text']).toBe('alpha')
+  })
+
+  it("keeps the open page's redo: the rename is a space op, not one of the page's", async () => {
+    const user = userEvent.setup()
+    useUndoStore.getState().clearPage(PAGE_ID)
+    render(
+      <PageBlockStoreProvider pageId={PAGE_ID}>
+        <PagePropertyTable pageId={PAGE_ID} forceExpanded />
+      </PageBlockStoreProvider>,
+    )
+    await waitFor(() => {
+      expect(screen.getByLabelText(valueLabel)).toHaveValue('alpha')
+    })
+    await user.selectOptions(screen.getByLabelText(valueLabel), 'beta')
+    await waitFor(() => {
+      expect(properties.get(PAGE_ID)?.get('project')?.['value_text']).toBe('beta')
+    })
+    await act(async () => {
+      expect(await performPageUndo(PAGE_ID)).toBe(true)
+    })
+    expect(properties.get(PAGE_ID)?.get('project')?.['value_text']).toBe('alpha')
+
+    const chipsKey = getBlockPropertyInvalidationKey()
+    await renameFromTable('alpha', 'apollo')
+    await waitFor(() => {
+      expect(screen.getByLabelText(valueLabel)).toHaveValue('apollo')
+    })
+    // The page's chips read their values again.
+    await waitFor(() => {
+      expect(getBlockPropertyInvalidationKey()).toBe(chipsKey + 1)
+    })
+
+    await act(async () => {
+      await useUndoStore.getState().redo(PAGE_ID)
+    })
+    expect(properties.get(PAGE_ID)?.get('project')?.['value_text']).toBe('beta')
   })
 
   it("a refused rename shows the backend's reason and changes nothing", async () => {
