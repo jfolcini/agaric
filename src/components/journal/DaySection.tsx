@@ -281,7 +281,8 @@ function DaySectionInner({
   }, [isWindowControlled, hasEntered])
 
   // In daily mode (heading hidden), still the "open in editor" link and the
-  // page's star and delete, on the row the day page's Blocks | Page switch ends.
+  // page's star and delete, on the row the day page's Blocks | Page switch (on a
+  // phone, its *Page actions* menu) ends.
   const dailyActions =
     hideHeading && entry.pageId && onNavigateToPage ? (
       <>

@@ -5,8 +5,8 @@
  * `aria-disabled`, not `disabled`, so the tooltip can say why instead, and
  * choosing it does nothing. A press keeps the focus where it was, so the switch
  * finds the caret being typed at, in either mode, still there. It shows in a
- * page's header (on a phone, the header's *Page actions* menu has the item
- * instead) and on the journal's day; its shortcut is the page's
+ * page's header and on the journal's day (on a phone, their *Page actions*
+ * menu has the item instead); its shortcut is the page's
  * (`useEditModeShortcut`).
  */
 
