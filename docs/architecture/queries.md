@@ -80,4 +80,4 @@ Two batched IPCs the system relies on heavily:
 - **`batch_resolve(ulids: Vec<BlockId>)`** — resolves N ULIDs to titles in one call. Used everywhere chips render (page links, tag refs, block refs). Replaces what was a per-chip `get_block` fan-out.
 - **`get_batch_properties(block_ids: Vec<BlockId>)`** — fetches properties for N blocks at once. Used by `BatchPropertiesProvider` to populate property chips across an agenda or backlink list.
 
-Both are the pattern: every read surface that would have called `get_X` per row hoists the call to the parent, batches, and passes a map down via React context.
+Both are the pattern: every read surface that would have called `get_X` per row hoists the call to the parent, batches, and passes a map down via React context. Each refuses more than `MAX_BATCH_BLOCK_IDS` ids per call (mirrored in `src/lib/ipc-helpers.ts`), so a caller that can hold more sends them in chunks, as `fetchAndCacheLinks` does.

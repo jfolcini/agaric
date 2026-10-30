@@ -44,6 +44,7 @@ import {
 import type { ResolvedBlock } from '@/lib/bindings'
 import { unresolvedBlockLabel } from '@/lib/block-title'
 import { t } from '@/lib/i18n'
+import { MAX_BATCH_BLOCK_IDS } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { useResolveStore } from '@/stores/resolve'
 import { keyFor } from '@/stores/resolve'
@@ -661,5 +662,60 @@ describe('fetchAndCacheLinks — no active space', () => {
 
     expect(mockedBatchResolve).not.toHaveBeenCalled()
     expect(useResolveStore.getState().cache.size).toBe(0)
+  })
+})
+
+// `batch_resolve` refuses more than `MAX_BATCH_BLOCK_IDS` ids in one call, and a
+// page can link more targets than that.
+describe('fetchAndCacheLinks — more targets than one batch accepts', () => {
+  const ids = Array.from({ length: MAX_BATCH_BLOCK_IDS + 1 }, (_, i) => `TARGET_${i}`)
+
+  /** A backend stand-in that refuses an over-cap call, as `ensure_batch_within_cap` does. */
+  function backend(refuse: (asked: string[]) => boolean = () => false) {
+    return (asked: string[]) =>
+      asked.length > MAX_BATCH_BLOCK_IDS || refuse(asked)
+        ? Promise.reject({ kind: 'validation', message: 'ids length exceeds maximum' })
+        : Promise.resolve(
+            asked.map((id) => ({ id, title: `Title ${id}`, block_type: 'page', deleted: false })),
+          )
+  }
+
+  afterEach(() => {
+    mockedBatchResolve.mockReset()
+  })
+
+  it('resolves every target into the cache', async () => {
+    mockedBatchResolve.mockImplementation(backend())
+
+    await fetchAndCacheLinks(new Set(ids), TEST_SPACE_ID, () => false)
+
+    const cache = useResolveStore.getState().cache
+    const resolved = ids.filter((id) => cache.get(keyFor(TEST_SPACE_ID, id))?.resolved === true)
+    expect(resolved).toHaveLength(ids.length)
+    expect(useResolveStore.getState().resolveTitle(ids.at(-1) as string)).toBe(
+      `Title ${ids.at(-1)}`,
+    )
+  })
+
+  it('keeps the other chunk’s answers when one chunk is refused, and logs the refusal', async () => {
+    mockedBatchResolve.mockImplementation(backend((asked) => asked.includes(ids[0] as string)))
+
+    await fetchAndCacheLinks(new Set(ids), TEST_SPACE_ID, () => false)
+
+    const cache = useResolveStore.getState().cache
+    const last = ids.at(-1) as string
+    expect(cache.get(keyFor(TEST_SPACE_ID, last))).toEqual({
+      title: `Title ${last}`,
+      deleted: false,
+      resolved: true,
+    })
+    expect(cache.has(keyFor(TEST_SPACE_ID, ids[0] as string))).toBe(false)
+    expect(mockedLoggerWarn).toHaveBeenCalledTimes(1)
+    expect(mockedLoggerWarn).toHaveBeenCalledWith(
+      'BlockTree',
+      'Batch resolve failed for uncached block links',
+      undefined,
+      expect.objectContaining({ kind: 'validation' }),
+    )
   })
 })

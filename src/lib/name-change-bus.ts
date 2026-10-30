@@ -344,7 +344,7 @@ export function invalidateNameCaches(): void {
 }
 
 /**
- * #4008 review note 3 — the batch trash's cap is `MAX_TRASH_BATCH_IDS`
+ * #4008 review note 3 — the batch trash's cap is `MAX_BATCH_BLOCK_IDS`
  * (1000), and {@link notifyPageRemoved} is a synchronous fan-out: every
  * mounted `useBlockResolve` rebuilds its whole cached pages list with `filter`
  * per event, so the cost is `ids x mounted BlockTrees x pages in space`

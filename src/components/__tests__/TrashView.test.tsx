@@ -38,7 +38,7 @@ import {
   _resetGraphStructureEventsForTest,
   getGraphStructureKey,
 } from '@/lib/graph-structure-events'
-import { MAX_TRASH_BATCH_IDS } from '@/lib/ipc-helpers'
+import { MAX_BATCH_BLOCK_IDS } from '@/lib/ipc-helpers'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { keyFor, useResolveStore } from '@/stores/resolve'
@@ -88,7 +88,7 @@ function stubInvoke(handlers: Readonly<TypedInvokeHandlers>) {
  * `list_trash` handler for the chunked-drain tests: page 1 is the one row the
  * view renders, page 2 (reached only by the cursor walk inside
  * `purgeAllDeletedInSpace` / `restoreAllDeletedInSpace`, never loaded by the
- * view) brings the drain to `MAX_TRASH_BATCH_IDS + 1` ids, i.e. two chunks.
+ * view) brings the drain to `MAX_BATCH_BLOCK_IDS + 1` ids, i.e. two chunks.
  * Rendering that many rows is what made these tests cost seconds each (#3885).
  */
 function listTrashWithUnloadedTail(args: Readonly<Record<string, unknown>>) {
@@ -101,7 +101,7 @@ function listTrashWithUnloadedTail(args: Readonly<Record<string, unknown>>) {
     }
   }
   return {
-    items: Array.from({ length: MAX_TRASH_BATCH_IDS }, (_, i) =>
+    items: Array.from({ length: MAX_BATCH_BLOCK_IDS }, (_, i) =>
       makeBlock({ id: `F${i}`, content: `filler ${i}`, deleted_at: 1736899200000 }),
     ),
     next_cursor: null,
@@ -1974,20 +1974,20 @@ describe('TrashView', () => {
   })
 
   // #3835 — `purgeAllDeletedInSpace` chunks the purge into
-  // `MAX_TRASH_BATCH_IDS`-sized batches, each its OWN committed
+  // `MAX_BATCH_BLOCK_IDS`-sized batches, each its OWN committed
   // transaction. A later chunk failing must surface what the earlier,
   // already-committed chunk(s) removed instead of the plain
   // `emptyTrashFailed` toast, which implies nothing happened at all.
   it('shows partial-progress toast (not the generic failure) when a later empty-trash chunk fails', async () => {
     const user = userEvent.setup()
-    // Two purge_blocks_by_ids chunks: MAX_TRASH_BATCH_IDS (succeeds), then 1 (fails).
+    // Two purge_blocks_by_ids chunks: MAX_BATCH_BLOCK_IDS (succeeds), then 1 (fails).
     let purgeCalls = 0
     stubInvoke({
       list_trash: listTrashWithUnloadedTail,
       batch_resolve: () => [],
       purge_blocks_by_ids: () => {
         purgeCalls += 1
-        if (purgeCalls === 1) return { affected_count: MAX_TRASH_BATCH_IDS }
+        if (purgeCalls === 1) return { affected_count: MAX_BATCH_BLOCK_IDS }
         throw new Error('db error on second chunk')
       },
       trash_descendant_counts: () => ({}),
@@ -2001,7 +2001,7 @@ describe('TrashView', () => {
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
-        `Removed ${MAX_TRASH_BATCH_IDS} items before an error interrupted emptying trash`,
+        `Removed ${MAX_BATCH_BLOCK_IDS} items before an error interrupted emptying trash`,
       )
     })
     // NOT the generic "nothing happened" copy.
@@ -2341,7 +2341,7 @@ describe('TrashView', () => {
           .map((id) => ({ id, title: 'item 1', block_type: 'content', deleted: false })),
       restore_blocks_by_ids: () => {
         restoreCalls += 1
-        if (restoreCalls === 1) return { affected_count: MAX_TRASH_BATCH_IDS }
+        if (restoreCalls === 1) return { affected_count: MAX_BATCH_BLOCK_IDS }
         throw new Error('db error on second chunk')
       },
       trash_descendant_counts: () => ({}),
@@ -2363,11 +2363,11 @@ describe('TrashView', () => {
 
       await waitFor(() => {
         expect(toast.error).toHaveBeenCalledWith(
-          `Restored ${MAX_TRASH_BATCH_IDS} items before an error interrupted restoring all`,
+          `Restored ${MAX_BATCH_BLOCK_IDS} items before an error interrupted restoring all`,
         )
       })
       expect(mockedAnnounce).toHaveBeenCalledWith(
-        `Restore all partially completed — ${MAX_TRASH_BATCH_IDS} items restored before an error interrupted it`,
+        `Restore all partially completed — ${MAX_BATCH_BLOCK_IDS} items restored before an error interrupted it`,
       )
       expect(toast.error).not.toHaveBeenCalledWith('Failed to restore all items')
       expect(restoreCalls).toBe(2)

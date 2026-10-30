@@ -107,18 +107,15 @@ export function withAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise
 // ---------------------------------------------------------------------------
 
 /**
- * Backend cap on the `block_ids` batch accepted by `restore_blocks_by_ids`
- * / `purge_blocks_by_ids` (`MAX_BATCH_BLOCK_IDS` in
- * `src-tauri/src/commands/mod.rs`). Mirrored here so
- * {@link restoreAllDeletedInSpace} / {@link purgeAllDeletedInSpace} can
- * chunk an arbitrarily large trash into backend-accepted batches instead
- * of surfacing `AppError::Validation` for a busy trash. Exported (#3885)
- * so tests of the chunked path can build a fixture sized off this
- * constant — `MAX_TRASH_BATCH_IDS + 1` — instead of a magic literal that
- * silently stops meaning "one over the batch cap" if this value ever
- * changes.
+ * Backend cap on the id list one batch command accepts (`MAX_BATCH_BLOCK_IDS`
+ * in `src-tauri/agaric-store/src/pagination/mod.rs`, enforced by
+ * `ensure_batch_within_cap`); a longer list is refused with
+ * `AppError::Validation`. Callers that can hold more ids send them in chunks
+ * of this size: {@link restoreAllDeletedInSpace}, {@link purgeAllDeletedInSpace}
+ * and `fetchAndCacheLinks` (`batch_resolve`). Exported (#3885) so tests size
+ * their fixtures off it (`MAX_BATCH_BLOCK_IDS + 1`) instead of a magic literal.
  */
-export const MAX_TRASH_BATCH_IDS = 1000
+export const MAX_BATCH_BLOCK_IDS = 1000
 
 /**
  * Collect every trash-root id belonging to `spaceId` by walking
@@ -174,9 +171,9 @@ export async function restoreAllDeletedInSpace(spaceId: string): Promise<BulkTra
   // ancestor is always in an EARLIER chunk than anything it would revive.
   // If that ordering ever changes, this loop breaks silently — nothing here
   // would notice.
-  for (let i = 0; i < ids.length; i += MAX_TRASH_BATCH_IDS) {
+  for (let i = 0; i < ids.length; i += MAX_BATCH_BLOCK_IDS) {
     try {
-      const resp = unwrap(await commands.restoreBlocksByIds(ids.slice(i, i + MAX_TRASH_BATCH_IDS)))
+      const resp = unwrap(await commands.restoreBlocksByIds(ids.slice(i, i + MAX_BATCH_BLOCK_IDS)))
       affectedCount += resp.affected_count
     } catch (err) {
       throw new PartialPurgeError(affectedCount, err)
@@ -246,9 +243,9 @@ export class PartialPurgeError extends Error {
 export async function purgeAllDeletedInSpace(spaceId: string): Promise<BulkTrashResponse> {
   const ids = await collectAllTrashRootIds(spaceId)
   let affectedCount = 0
-  for (let i = 0; i < ids.length; i += MAX_TRASH_BATCH_IDS) {
+  for (let i = 0; i < ids.length; i += MAX_BATCH_BLOCK_IDS) {
     try {
-      const resp = unwrap(await commands.purgeBlocksByIds(ids.slice(i, i + MAX_TRASH_BATCH_IDS)))
+      const resp = unwrap(await commands.purgeBlocksByIds(ids.slice(i, i + MAX_BATCH_BLOCK_IDS)))
       affectedCount += resp.affected_count
     } catch (err) {
       throw new PartialPurgeError(affectedCount, err)

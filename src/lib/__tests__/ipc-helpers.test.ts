@@ -25,7 +25,7 @@ import {
   createBlock,
   importMarkdown,
   logFrontend,
-  MAX_TRASH_BATCH_IDS,
+  MAX_BATCH_BLOCK_IDS,
   PartialPurgeError,
   purgeAllDeletedInSpace,
   readAttachment,
@@ -413,8 +413,8 @@ describe('restoreAllDeletedInSpace', () => {
     await expect(restoreAllDeletedInSpace('SPACE_A')).rejects.toThrow('db error')
   })
 
-  it('chunk size is exactly MAX_TRASH_BATCH_IDS', () => {
-    expect(MAX_TRASH_BATCH_IDS).toBe(1000)
+  it('chunk size is exactly MAX_BATCH_BLOCK_IDS', () => {
+    expect(MAX_BATCH_BLOCK_IDS).toBe(1000)
   })
 })
 
