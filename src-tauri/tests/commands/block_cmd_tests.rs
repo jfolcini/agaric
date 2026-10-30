@@ -9052,6 +9052,90 @@ async fn move_blocks_to_space_moves_the_graph_edges_5426() {
     );
 }
 
+/// #6209 — `block_tag_refs` drops a ref from a source in another space than
+/// its tag only when it indexes the source, so the tag's own `space` move must
+/// re-index the blocks that name it: moving the tag away drops the ref, moving
+/// it back re-admits it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn moving_a_tag_to_another_space_rescopes_its_inline_refs_6209() {
+    const SPACE_A: &str = "MBS11_SPACE_A";
+    const SPACE_B: &str = "MBS11_SPACE_B";
+
+    async fn tagged_in_a(pool: &SqlitePool, tag: &BlockId) -> Vec<String> {
+        query_by_tags_inner(
+            pool,
+            vec![tag.to_string()],
+            vec![],
+            "or".into(),
+            None,
+            None,
+            None,
+            &SpaceScope::Active(SpaceId::from_trusted(SPACE_A)),
+            None,
+        )
+        .await
+        .unwrap()
+        .items
+        .into_iter()
+        .map(|row| row.id.to_string())
+        .collect()
+    }
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    seed_space(&pool, SPACE_A).await;
+    seed_space(&pool, SPACE_B).await;
+    let in_a = SpaceScope::Active(SpaceId::from_trusted(SPACE_A));
+    let create = async |block_type: &str, content: String, parent: Option<BlockId>| {
+        create_block_inner_with_space(
+            &pool,
+            DEV,
+            &mat,
+            block_type.into(),
+            content,
+            parent,
+            None,
+            &in_a,
+            None,
+        )
+        .await
+        .unwrap()
+        .id
+    };
+
+    let page = create("page", "P".into(), None).await;
+    let tag = create("tag", "x".into(), None).await;
+    let holder = create("content", format!("see #[{tag}]"), Some(page))
+        .await
+        .to_string();
+    settle(&mat).await;
+    assert_eq!(
+        tagged_in_a(&pool, &tag).await,
+        vec![holder.clone()],
+        "the block in A names x, which is in A"
+    );
+
+    move_blocks_to_space_inner(&pool, DEV, &mat, vec![tag.clone()], SPACE_B.into(), &[])
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        tagged_in_a(&pool, &tag).await,
+        Vec::<String>::new(),
+        "x left A, so the block in A no longer references it"
+    );
+
+    move_blocks_to_space_inner(&pool, DEV, &mat, vec![tag.clone()], SPACE_A.into(), &[])
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        tagged_in_a(&pool, &tag).await,
+        vec![holder],
+        "x came back to A, so the block in A references it again"
+    );
+}
+
 /// #5275 — a page or tag create stamps `space` too, but that op is not
 /// dispatched: the `space` arm enqueues the vault-wide rebuilds a move
 /// needs, and a fresh block has nothing to re-scope.

@@ -27,7 +27,7 @@
 use sqlx::SqlitePool;
 
 use crate::db::CommandTx;
-use crate::materializer::{MaterializeTask, Materializer};
+use crate::materializer::Materializer;
 use agaric_core::error::AppError;
 use agaric_engine::apply::loro_apply::hydrate_space_block_into_own_engine;
 use agaric_store::op_log::OpRecord;
@@ -141,8 +141,6 @@ pub async fn bootstrap_spaces(
         tx.enqueue_background(record);
     }
     tx.commit_and_dispatch(materializer).await?;
-
-    enqueue_tag_ref_rebuilds(materializer, tags_migrated + tags_repaired);
 
     tracing::info!(
         spaces_created,
@@ -286,39 +284,6 @@ async fn backfill_space_less_in_tx(
     Ok((pages, tags))
 }
 
-/// Placing or moving a tag only makes its references ADMISSIBLE; nothing
-/// re-derives them. `SetProperty` dispatch enqueues no tag-ref work (narrow
-/// by design — `invalidations_for_op`), the per-block `ReindexBlockTagRefs`
-/// is keyed on the SOURCE block (the untouched blocks that carry `#[ULID]`),
-/// and the boot backstop in `lib.rs` fires only when `block_tag_refs` is
-/// ENTIRELY empty — one surviving row (a tag created in the space that uses
-/// it) retires it for good. So without this the moved tag shows up in its
-/// new space's tag list while the Tag filter, the backlink projection and
-/// `tags_cache.usage_count` — all of which UNION `block_tag_refs` — keep
-/// returning nothing for it. Refs first, then the tags cache: `usage_count`
-/// UNIONs the refs table (ordering note on `cache::rebuild_all_caches`).
-/// Both tasks are durable/retryable (`'__GLOBAL__'` retry-queue sentinel),
-/// and the enqueue is best-effort like every other rebuild.
-fn enqueue_tag_ref_rebuilds(materializer: &Materializer, tags_placed: usize) {
-    if tags_placed == 0 {
-        return;
-    }
-    for task in [
-        MaterializeTask::RebuildBlockTagRefsCache,
-        MaterializeTask::RebuildTagsCache,
-    ] {
-        let name = format!("{task:?}");
-        if let Err(e) = materializer.try_enqueue_background(task) {
-            tracing::warn!(
-                error = %e,
-                task = %name,
-                tags_placed,
-                "failed to enqueue tag-ref rebuild after tag space placement",
-            );
-        }
-    }
-}
-
 /// #4717: place every space-less block NOW, in its own transaction.
 ///
 /// The boot pass above catches a block that arrived without a space while
@@ -377,7 +342,6 @@ pub async fn place_space_less_blocks(
         tx.enqueue_background(record);
     }
     tx.commit_and_dispatch(materializer).await?;
-    enqueue_tag_ref_rebuilds(materializer, placed.1);
     Ok(placed)
 }
 
@@ -679,9 +643,8 @@ mod tests {
     }
 
     /// Same observation for the every-boot neighbour: an ORPHAN tag placed by
-    /// `migrate_orphan_tags_to_space` has the same starved cache, and the
-    /// gate is `tags_migrated + tags_repaired > 0`, so a placement alone must
-    /// trigger the rebuild too.
+    /// `migrate_orphan_tags_to_space` has the same starved cache, so its
+    /// `space` op alone must trigger the rebuild too.
     #[tokio::test]
     async fn placed_orphan_tag_matches_the_tag_filter_after_boot() {
         let (pool, mat, _tmp) = boot_pool().await;

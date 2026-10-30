@@ -68,10 +68,17 @@ fn sender_or_closed(
 /// see the freshly-populated rows. The strictly dependency-correct
 /// order is in `cache::rebuild_all_caches` (test-only); that
 /// function is the canonical reference for which rebuild reads which
-/// upstream column/table. Keeping the array in this loose order keeps
-/// the test assertions stable; the dedup + eventual consistency
-/// combine to make the discrepancy invisible to users in practice.
+/// upstream column/table.
+///
+/// One pair cannot lean on that: a lifecycle op does not change
+/// `page_id` or `space_id`, but a restore does re-add `block_tag_refs`
+/// rows that only the same set's `RebuildTagsCache` would count. The set
+/// is enqueued one task at a time and the consumer drains what has
+/// arrived, so it can split across drains, where `dedup_tasks` cannot
+/// reorder it (#6216). So `RebuildBlockTagRefsCache` comes first.
 pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 9] = [
+    // #6216: before `RebuildTagsCache`, whose `usage_count` counts these rows.
+    MaterializeTask::RebuildBlockTagRefsCache,
     MaterializeTask::RebuildTagsCache,
     MaterializeTask::RebuildPagesCache,
     // #2042: the page-wide `pages_cache.{inbound_link_count,child_block_count}`
@@ -88,11 +95,6 @@ pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 9] = [
     MaterializeTask::RebuildProjectedAgendaCache,
     MaterializeTask::RebuildTagInheritanceCache,
     MaterializeTask::RebuildPageIds,
-    // Inline `#[ULID]` references may disappear when a block
-    // (or a subtree containing referencing blocks) is deleted; the
-    // full recompute picks that up on the same queue drain as the
-    // other caches.
-    MaterializeTask::RebuildBlockTagRefsCache,
     // SQL-review §H-2: the page-level link roll-up cache feeds
     // `list_page_links_inner`. Soft-delete / restore / purge cascades
     // can drop or re-introduce page edges (every block under the
@@ -170,6 +172,7 @@ pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 9] = [
 /// over the perf win when the scope is uncertain (a page block's delete DOES
 /// change `pages_cache`).
 const CONTENT_LIFECYCLE_REBUILD_TASKS: [MaterializeTask; 7] = [
+    MaterializeTask::RebuildBlockTagRefsCache,
     MaterializeTask::RebuildTagsCache,
     // #2042: see the doc comment above — a content block's lifecycle changes
     // its owning page's counts, now recomputed on the background queue. Placed
@@ -186,7 +189,6 @@ const CONTENT_LIFECYCLE_REBUILD_TASKS: [MaterializeTask; 7] = [
     // (`remove_subtree_inherited` / the purge cascade). A restore takes the
     // full set, which keeps it.
     MaterializeTask::RebuildPageIds,
-    MaterializeTask::RebuildBlockTagRefsCache,
     MaterializeTask::RebuildPageLinkCache,
 ];
 
@@ -463,6 +465,12 @@ fn inbound_sync_block_tag_refs_tasks(
             })
             .collect()
     }
+}
+
+/// A `page` or `tag` row among an inbound sync's changed blocks.
+struct ChangedPageOrTag {
+    id: String,
+    block_type: String,
 }
 
 /// #4293: the third per-block fan-out shares the budget
@@ -751,10 +759,12 @@ impl Materializer {
         // import has nothing to look up, so it skips the pool read like the
         // sibling selectors do (the debounce tests arm with one under paused
         // time, where a pool acquire times out).
+        let mut a_tag_changed = false;
         if !changed_blocks.is_empty() && changed_blocks.len() <= SYNC_FTS_PER_BLOCK_MAX {
-            for block_id in self.changed_page_and_tag_ids(changed_blocks).await? {
+            for row in self.changed_page_and_tag_ids(changed_blocks).await? {
+                a_tag_changed |= row.block_type == "tag";
                 self.try_enqueue_background(MaterializeTask::ReindexFtsReferences {
-                    block_id: Arc::from(block_id),
+                    block_id: Arc::from(row.id),
                 })?;
             }
         }
@@ -776,7 +786,16 @@ impl Materializer {
         // `try_enqueue_background` is correct for both (no blocking enqueue
         // needed). The selection is the pure, unit-tested
         // [`inbound_sync_block_tag_refs_tasks`].
-        for task in inbound_sync_block_tag_refs_tasks(changed_blocks) {
+        //
+        // #6209: a changed tag may have changed space, and the blocks naming
+        // it are not in `changed_blocks`, so the whole table is re-derived,
+        // as the local `space` arm does.
+        let tag_ref_tasks = if a_tag_changed {
+            vec![MaterializeTask::RebuildBlockTagRefsCache]
+        } else {
+            inbound_sync_block_tag_refs_tasks(changed_blocks)
+        };
+        for task in tag_ref_tasks {
             self.try_enqueue_background(task)?;
         }
         // #4293: `block_links`; [`inbound_sync_block_links_tasks`] carries the why.
@@ -794,18 +813,19 @@ impl Materializer {
     }
 
     /// #5241: the `page` / `tag` blocks among `changed_blocks` — the ones
-    /// whose title other blocks' FTS rows embed.
+    /// whose title other blocks' FTS rows embed — with their `block_type`.
     async fn changed_page_and_tag_ids(
         &self,
         changed_blocks: &[agaric_core::ulid::BlockId],
-    ) -> Result<Vec<String>, AppError> {
+    ) -> Result<Vec<ChangedPageOrTag>, AppError> {
         let ids: Vec<&str> = changed_blocks
             .iter()
             .map(agaric_core::ulid::BlockId::as_str)
             .collect();
         let ids_json = serde_json::to_string(&ids)?;
-        Ok(sqlx::query_scalar!(
-            "SELECT id FROM blocks \
+        Ok(sqlx::query_as!(
+            ChangedPageOrTag,
+            "SELECT id, block_type FROM blocks \
              WHERE id IN (SELECT value FROM json_each(?)) \
                AND block_type IN ('page', 'tag')",
             ids_json,
@@ -1962,7 +1982,13 @@ fn push_property_op_invalidations(
             // too but does not dispatch that op (nothing to re-scope), so this
             // arm fires only for a move, its undo, or boot's placement of a
             // space-less block.
+            // #6209: `block_tag_refs` drops a cross-space ref only when it
+            // indexes the source, and a moved tag's referrers are not known
+            // here (nor, after a move away, are they in the table to find on
+            // the move back), so the whole table is re-derived, before the
+            // tags cache that counts it.
             if key == SPACE_PROPERTY_KEY {
+                tasks.push(MaterializeTask::RebuildBlockTagRefsCache);
                 tasks.push(MaterializeTask::RebuildTagsCache);
                 tasks.push(MaterializeTask::RebuildPagesCacheCounts);
                 tasks.push(MaterializeTask::RebuildPageLinkCache);
@@ -3261,6 +3287,8 @@ mod tests {
     /// #5275: a `space` set re-homes the page group, so the space-scoped
     /// link and tag roll-ups are rebuilt, and (#5426) the page-link cache
     /// whose `space_id` the graph read filters on; it is not an agenda key.
+    /// #6209: the inline tag refs are re-derived first, since a moved tag's
+    /// refs from its old space must go.
     #[test]
     fn invalidations_for_op_set_property_space_rebuilds_link_and_tag_counts_5275() {
         let r = make_record(
@@ -3272,6 +3300,7 @@ mod tests {
         assert_eq!(
             labels(&tasks),
             vec![
+                "RebuildBlockTagRefsCache",
                 "RebuildTagsCache",
                 "RebuildPagesCacheCounts",
                 "RebuildPageLinkCache"
@@ -3293,6 +3322,7 @@ mod tests {
             labels(&tasks),
             vec![
                 "RebuildAgendaCache",
+                "RebuildBlockTagRefsCache",
                 "RebuildTagsCache",
                 "RebuildPagesCacheCounts",
                 "RebuildPageLinkCache"

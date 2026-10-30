@@ -579,8 +579,47 @@ async fn dispatch_delete_block_fires_rebuild_block_tag_refs_cache() {
     );
 }
 
-// `full_cache_rebuild_tasks_has_seven_entries_in_canonical_order`
-// (above, in the section) already asserts that
-// FULL_CACHE_REBUILD_TASKS includes `RebuildBlockTagRefsCache` at slot 6.
-// Keep that single authoritative assertion rather than duplicating it
-// here.
+// `full_cache_rebuild_tasks_has_nine_entries_in_canonical_order`
+// (`agenda_fts_misc.rs`) pins where FULL_CACHE_REBUILD_TASKS holds
+// `RebuildBlockTagRefsCache`; it is not duplicated here.
+
+/// #6216: `enqueue_lifecycle_rebuild_set` sends the set one task at a time and
+/// the consumer drains whatever has arrived, so a busy machine can run each
+/// rebuild in its own drain, where dedup's tail rule cannot reorder anything.
+/// Only the array order can keep `RebuildTagsCache` after the refs it counts.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_set_drained_one_task_at_a_time_counts_the_restored_ref_6216() {
+    async fn drain_one_by_one(mat: &Materializer) {
+        for task in &super::super::dispatch::FULL_CACHE_REBUILD_TASKS {
+            mat.try_enqueue_background(task.clone()).unwrap();
+            mat.flush_background().await.unwrap();
+        }
+    }
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let tag = "01HBTRTAGSPLIT00000000006A";
+    let src = "01HBTRBLKSPLIT00000000006A";
+    insert_block_direct(&pool, tag, "tag", "split").await;
+    insert_block_direct(&pool, src, "content", &format!("#[{tag}]")).await;
+    soft_delete_block_direct(&pool, src).await;
+    drain_one_by_one(&mat).await;
+
+    // The restore's own write; the lifecycle set does the rest.
+    sqlx::query("UPDATE blocks SET deleted_at = NULL WHERE id = ?")
+        .bind(src)
+        .execute(&pool)
+        .await
+        .unwrap();
+    drain_one_by_one(&mat).await;
+
+    let usage: i64 = sqlx::query_scalar("SELECT usage_count FROM tags_cache WHERE tag_id = ?")
+        .bind(tag)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        usage, 1,
+        "the restored block's inline ref must count once the split restore set settles"
+    );
+}

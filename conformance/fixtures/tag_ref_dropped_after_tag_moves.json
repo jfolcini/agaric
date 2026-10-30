@@ -1,0 +1,267 @@
+{
+  "description": "#6209 — an inline `#[tag]` counts only while the tag is in its source's space, and the tag's own move re-scopes it: `C1`, on the harness page `S1`, names the tag `S2` and `C2` names the tag `S3`; `create_space` makes a second space (`C3`) and `S2` moves into it, so the harness space's tag query finds `C2` but no longer `C1`.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "mover",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "stayer",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "see #[000000000000000000000000S2]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "keep #[000000000000000000000000S3]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Away",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B6",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 10,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B6",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "the_source",
+      "returns": [
+        "B4#block_type=content#content=see %23[000000000000000000000000S2]#parent_id=B1#position=1"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_holder_of_the_tag_that_stays",
+      "returns": [
+        "B5#block_type=content#content=keep %23[000000000000000000000000S3]#parent_id=B1#position=2"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_second_space",
+      "returns": ["create_space#space_id=B6"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_tag_moves_away",
+      "returns": ["move_blocks_to_space#moved=1"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "the_source_no_longer_holds_the_tag",
+      "rows": ["B5#parent_id=B1#page_id=B1#position=2#deleted_at=null"],
+      "total_count": null
+    }
+  ],
+  "name": "tag_ref_dropped_after_tag_moves",
+  "ops": [
+    {
+      "args": {
+        "blockType": "content",
+        "content": "see #[S2]",
+        "index": 0,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "name": "the_source",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "keep #[S3]",
+        "index": 1,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "name": "a_holder_of_the_tag_that_stays",
+      "via": "command"
+    },
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Away"
+      },
+      "command": "create_space",
+      "name": "a_second_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S2"],
+        "spaceId": "C3"
+      },
+      "command": "move_blocks_to_space",
+      "name": "the_tag_moves_away",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "limit": 100,
+        "mode": "or",
+        "prefixes": [],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "tagIds": ["S2", "S3"]
+      },
+      "command": "query_by_tags",
+      "comment": "C2 still holds S3; C1 stays in the harness space and S2 left it",
+      "name": "the_source_no_longer_holds_the_tag"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "tag",
+        "content": "mover",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "tag",
+        "content": "stayer",
+        "id": "S3",
+        "parent_id": null,
+        "position": 3
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
