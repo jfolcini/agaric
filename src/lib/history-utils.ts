@@ -22,13 +22,27 @@ const PROPERTY_KEY_OP_LABELS: Partial<
   },
   rename_property_key: ({ old_key: oldKey, new_key: newKey }) =>
     typeof oldKey === 'string' && typeof newKey === 'string' ? `${oldKey} → ${newKey}` : null,
-  // A merge writes `from`'s definition, then `into`'s.
+  // A merge writes `from`'s definition, then `into`'s; a type change (#5841 S3) one.
   rewrite_properties: (payload) => {
     const defs = payload['defs']
     if (!Array.isArray(defs)) return null
+    if (payload['reason'] === 'change_type') return typeChangeLabel(defs[0])
     const keys = defs.map((d: unknown) => (d as Record<string, unknown> | null)?.['key'])
     return keys.every((k) => typeof k === 'string') ? keys.join(' → ') : null
   },
+}
+
+/** `key: from → to` of a type change's definition write. */
+function typeChangeLabel(write: unknown): string | null {
+  const w = write as {
+    key?: unknown
+    def?: { value_type?: unknown }
+    prior?: { value_type?: unknown }
+  }
+  const [key, from, to] = [w?.key, w?.prior?.value_type, w?.def?.value_type]
+  return typeof key === 'string' && typeof from === 'string' && typeof to === 'string'
+    ? `${key}: ${from} → ${to}`
+    : null
 }
 
 /**

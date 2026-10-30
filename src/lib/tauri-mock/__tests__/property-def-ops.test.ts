@@ -7,6 +7,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import { coerce } from '@/lib/tauri-mock/coerce'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { opLog, properties, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 
@@ -564,5 +565,327 @@ describe('where rename and merge ops show', () => {
     expect(history(SPACE, 'rename_property_key')).toEqual(['rename_property_key'])
     expect(history(SPACE, 'rewrite_properties')).toEqual(['rewrite_properties'])
     expect(history('SPACE_WORK', 'rename_property_key')).toEqual([])
+  })
+})
+
+// #5841 S3 — changing a property key's type.
+
+describe('change_property_type', () => {
+  interface Counts {
+    converted: number
+    removed: number
+  }
+  interface ValueRow {
+    block_id: string
+    deleted: boolean
+    value: string
+    converted: string | null
+  }
+
+  /** `effortx` is text, held as "3", "042", "abc" and, in the Trash, "7". */
+  function seedEffort(): void {
+    declare('effortx')
+    setText(X, 'effortx', '3')
+    setText(Y, 'effortx', '042')
+    setText(Z, 'effortx', 'abc')
+    setText(TRASHED, 'effortx', '7')
+    call('delete_block', { blockId: TRASHED })
+  }
+
+  function preview(valueType: string, options: string | null = null, key = 'effortx'): Counts {
+    return call('preview_property_type_change', { spaceId: SPACE, key, valueType, options })
+  }
+
+  function values(
+    kind: 'converted' | 'removed',
+    valueType: string,
+    cursor: string | null = null,
+    limit = 50,
+  ): { items: ValueRow[]; next_cursor: string | null; has_more: boolean } {
+    return call('list_property_type_change_values', {
+      spaceId: SPACE,
+      key: 'effortx',
+      valueType,
+      options: null,
+      kind,
+      cursor,
+      limit,
+    })
+  }
+
+  function change(
+    valueType: string,
+    acknowledged: Counts,
+    options: string | null = null,
+    key = 'effortx',
+  ): WithOpsDef {
+    return call<WithOpsDef>('change_property_type', {
+      spaceId: SPACE,
+      key,
+      valueType,
+      options,
+      acknowledged,
+    })
+  }
+
+  function rowOf(blockId: string, key = 'effortx'): Record<string, unknown> | undefined {
+    return call<Array<Record<string, unknown>>>('get_properties', { blockId }).find(
+      (r) => r['key'] === key,
+    )
+  }
+
+  const text = (t: string) => ({
+    value_text: t,
+    value_num: null,
+    value_date: null,
+    value_ref: null,
+    value_bool: null,
+  })
+  const num = (n: number) => ({
+    value_text: null,
+    value_num: n,
+    value_date: null,
+    value_ref: null,
+    value_bool: null,
+  })
+
+  it('previews what converts and what is removed, Trash included', () => {
+    seedEffort()
+    expect(preview('number')).toEqual({ converted: 3, removed: 1 })
+    expect(preview('date')).toEqual({ converted: 0, removed: 4 })
+    expect(preview('url')).toEqual({ converted: 4, removed: 0 })
+  })
+
+  it('lists the values of each kind by block, a page at a time', () => {
+    seedEffort()
+    expect(values('removed', 'number').items).toEqual([
+      expect.objectContaining({ block_id: Z, value: 'abc', converted: null, deleted: false }),
+    ])
+    const first = values('converted', 'number', null, 2)
+    expect(first.items.map((r) => [r.block_id, r.value, r.converted])).toEqual([
+      [X, '3', '3'],
+      [Y, '042', '42'],
+    ])
+    expect(first.has_more).toBe(true)
+    const second = values('converted', 'number', first.next_cursor, 2)
+    expect(second.items).toEqual([
+      expect.objectContaining({ block_id: TRASHED, value: '7', converted: '7', deleted: true }),
+    ])
+    expect(second.has_more).toBe(false)
+  })
+
+  it('refuses a built-in, internal, malformed, undeclared or unchanged type, writing nothing', () => {
+    seedEffort()
+    const before = opLog.length
+    expect(rejectionOf(() => preview('text', null, 'due_date'))).toMatchObject({
+      kind: 'validation',
+      code: 'BuiltinPropertyLocked',
+    })
+    expect(rejectionOf(() => preview('number', null, 'template')).kind).toBe('validation')
+    expect(rejectionOf(() => preview('colour')).kind).toBe('validation')
+    expect(rejectionOf(() => preview('select')).kind).toBe('validation')
+    expect(rejectionOf(() => preview('number', null, 'nothing')).kind).toBe('not_found')
+    expect(rejectionOf(() => preview('text')).kind).toBe('validation')
+    expect(rejectionOf(() => change('number', { converted: 4, removed: 0 }))).toMatchObject({
+      kind: 'validation',
+      code: 'UnacknowledgedPropertyLoss',
+    })
+    expect(opLog.length).toBe(before)
+    expect(textOf(Z, 'effortx')).toBe('abc')
+  })
+
+  it('converts and removes in one op, and the values move to the typed slot', () => {
+    seedEffort()
+    const before = opLog.length
+    const resp = change('number', { converted: 3, removed: 1 })
+    expect(opLog.length).toBe(before + 1)
+    const op = lastOp()
+    expect(op.op_type).toBe('rewrite_properties')
+    expect(op.payload).toEqual({
+      space_id: SPACE,
+      reason: 'change_type',
+      defs: [
+        {
+          key: 'effortx',
+          def: { value_type: 'number', options: null },
+          prior: { value_type: 'text', options: null },
+        },
+      ],
+      values: [
+        { block_id: X, key: 'effortx', value: num(3), prior: text('3') },
+        { block_id: Y, key: 'effortx', value: num(42), prior: text('042') },
+        { block_id: Z, key: 'effortx', value: null, prior: text('abc') },
+        { block_id: TRASHED, key: 'effortx', value: num(7), prior: text('7') },
+      ],
+    })
+    expect(resp).toMatchObject({ key: 'effortx', value_type: 'number', op_refs: [op.ref] })
+    expect(rowOf(Y)).toMatchObject(num(42))
+    expect(rowOf(Z)).toBeUndefined()
+    expect(rowOf(TRASHED)).toMatchObject(num(7))
+    expect(listedDef('effortx')).toMatchObject({ value_type: 'number' })
+  })
+
+  it('undo restores the values and the definition, and redo changes it again', () => {
+    seedEffort()
+    const { op_refs } = change('number', { converted: 3, removed: 1 })
+    const [undone] = call<Array<{ new_op_ref: Ref }>>('undo_ops', { ops: op_refs })
+    expect(rowOf(Y)).toMatchObject(text('042'))
+    expect(rowOf(Z)).toMatchObject(text('abc'))
+    expect(listedDef('effortx')).toMatchObject({ value_type: 'text' })
+    call('redo_page_op', {
+      undoDeviceId: undone?.new_op_ref.device_id,
+      undoSeq: undone?.new_op_ref.seq,
+    })
+    expect(rowOf(Y)).toMatchObject(num(42))
+    expect(rowOf(Z)).toBeUndefined()
+  })
+
+  it('moves a value whose form does not change to the new slot, and back on undo', () => {
+    declare('effortx')
+    setText(X, 'effortx', '2026-01-05')
+    setText(Y, 'effortx', '2026-02-30')
+    const { op_refs } = change('date', { converted: 1, removed: 1 })
+    expect(lastOp().payload['values']).toEqual([
+      { block_id: Y, key: 'effortx', value: null, prior: text('2026-02-30') },
+    ])
+    expect(rowOf(X)).toMatchObject({ value_text: null, value_date: '2026-01-05' })
+    call('undo_ops', { ops: op_refs })
+    expect(rowOf(X)).toMatchObject(text('2026-01-05'))
+    expect(rowOf(Y)).toMatchObject(text('2026-02-30'))
+  })
+
+  it('to boolean takes true and false only; to select keeps the listed options', () => {
+    declare('effortx')
+    setText(X, 'effortx', 'true')
+    setText(Y, 'effortx', 'yes')
+    expect(preview('boolean')).toEqual({ converted: 1, removed: 1 })
+    expect(preview('select', '["true"]')).toEqual({ converted: 1, removed: 1 })
+    change('boolean', { converted: 1, removed: 1 })
+    expect(rowOf(X)).toMatchObject({ value_text: null, value_bool: 1 })
+    expect(rowOf(Y)).toBeUndefined()
+  })
+
+  it('undo of an earlier value converts it under the new type, or refuses one that does not fit', () => {
+    declare('effortx')
+    setText(X, 'effortx', '6')
+    const second = setText(X, 'effortx', '5')
+    setText(Y, 'effortx', 'abc')
+    const third = setText(Y, 'effortx', '1')
+    change('number', { converted: 2, removed: 0 })
+    call('undo_ops', { ops: second })
+    expect(rowOf(X)).toMatchObject(num(6))
+    const before = opLog.length
+    expect(rejectionOf(() => call('undo_ops', { ops: third })).kind).toBe('validation')
+    expect(opLog.length).toBe(before)
+    expect(rowOf(Y)).toMatchObject(num(1))
+  })
+
+  it("undo of an earlier value fits the slot only, never the select's options", () => {
+    declare('stagey', 'select', '["a","c"]')
+    setText(X, 'stagey', 'c')
+    const second = setText(X, 'stagey', 'a')
+    call('update_property_def_options', { spaceId: SPACE, key: 'stagey', options: '["a"]' })
+    call('undo_ops', { ops: second })
+    expect(rowOf(X, 'stagey')).toMatchObject(text('c'))
+  })
+
+  it("undo of an earlier value on the space's own block converts it too", () => {
+    declare('effortx')
+    setText(SPACE, 'effortx', '6')
+    const second = setText(SPACE, 'effortx', '5')
+    change('number', { converted: 1, removed: 0 })
+    call('undo_ops', { ops: second })
+    expect(rowOf(SPACE)).toMatchObject(num(6))
+  })
+
+  it("undoing a change re-projects the strings written since under the old type's slot", () => {
+    declare('effortx', 'number')
+    call('set_property', { blockId: X, key: 'effortx', value: num(3) })
+    const { op_refs } = change('text', { converted: 1, removed: 0 })
+    setText(Y, 'effortx', '5')
+    setText(Z, 'effortx', 'abc')
+    call('undo_ops', { ops: op_refs })
+    expect(rowOf(X)).toMatchObject(num(3))
+    expect(rowOf(Y)).toMatchObject(num(5))
+    expect(rowOf(Z)).toBeUndefined()
+  })
+
+  it('checks the limit before refusing the key', () => {
+    const err = rejectionOf(() =>
+      call('list_property_type_change_values', {
+        spaceId: SPACE,
+        key: 'due_date',
+        valueType: 'text',
+        options: null,
+        kind: 'removed',
+        cursor: null,
+        limit: 0,
+      }),
+    )
+    expect(err).toMatchObject({ kind: 'validation' })
+    expect(err.code).toBeUndefined()
+  })
+
+  it("lists a number as Rust's Display writes it", () => {
+    declare('scorex', 'number')
+    call('set_property', { blockId: X, key: 'scorex', value: num(-0) })
+    call('set_property', { blockId: Y, key: 'scorex', value: num(1e21) })
+    const page = call<{ items: ValueRow[] }>('list_property_type_change_values', {
+      spaceId: SPACE,
+      key: 'scorex',
+      valueType: 'text',
+      options: null,
+      kind: 'converted',
+      cursor: null,
+      limit: 50,
+    })
+    expect(page.items.map((r) => [r.value, r.converted])).toEqual([
+      ['-0', '-0'],
+      ['1000000000000000000000', '1000000000000000000000'],
+    ])
+  })
+
+  // The cells of `coerce.rs`'s table the fixtures do not reach.
+  it.each([
+    [' 4 ', 'number', 4],
+    ['1e3', 'number', 1000],
+    ['-.5', 'number', -0.5],
+    ['inf', 'number', null],
+    ['NaN', 'number', null],
+    ['1e400', 'number', null],
+    ['0x10', 'number', null],
+    ['+3', 'number', 3],
+    ['1.', 'number', 1],
+    ['.5', 'number', 0.5],
+    ['1e-400', 'number', 0],
+    ['', 'number', null],
+    ['.', 'number', null],
+    ['e5', 'number', null],
+    ['1_000', 'number', null],
+    ['INF', 'number', null],
+    ['-Infinity', 'number', null],
+    ['nan', 'number', null],
+    // Rust's `str::trim` strips Unicode White_Space: U+0085 is, U+FEFF is not.
+    ['\u00854\u0085', 'number', 4],
+    ['﻿4', 'number', null],
+    ['0024-02-29', 'date', '0024-02-29'],
+    ['0025-02-29', 'date', null],
+    ['true ', 'boolean', null],
+    ['TRUE', 'boolean', null],
+    ['01arz3ndektsv4rrffq69g5fav', 'ref', '01ARZ3NDEKTSV4RRFFQ69G5FAV'],
+    ['81ARZ3NDEKTSV4RRFFQ69G5FAV', 'ref', null],
+    ['2026-1-05', 'date', null],
+    [42, 'text', '42'],
+    [-0, 'text', '-0'],
+    [1e21, 'text', '1000000000000000000000'],
+    [1e-7, 'text', '0.0000001'],
+    [0.1 + 0.2, 'text', '0.30000000000000004'],
+    [-2.5e-3, 'select', '-0.0025'],
+    [true, 'url', 'true'],
+    [true, 'number', null],
+    [1, 'boolean', null],
+    [7, 'date', null],
+  ] as const)('coerces %j to %s as %j', (value, to, expected) => {
+    expect(coerce(value, to)).toBe(expected)
   })
 })

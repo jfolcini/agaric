@@ -35,6 +35,7 @@ const READ_ONLY_EXACT: ReadonlySet<string> = new Set<string>([
   'run_advanced_query',
   'preview_space_move',
   'preview_property_merge',
+  'preview_property_type_change',
 ])
 
 /** True when the snake_case IPC `command` has no persistent effect. */

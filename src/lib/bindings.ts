@@ -508,6 +508,21 @@ export const commands = {
 	 *  Delegates to [`merge_property_key_inner`]; the response carries the op ref.
 	 */
 	mergePropertyKey: (spaceId: SpaceId, fromKey: string, intoKey: string, acknowledged: PropertyMergeCounts) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("merge_property_key", { spaceId, fromKey, intoKey, acknowledged })),
+	/**
+	 *  Tauri command: what changing a space's property to another type would
+	 *  convert and remove. Delegates to [`preview_property_type_change_inner`].
+	 */
+	previewPropertyTypeChange: (spaceId: SpaceId, key: string, valueType: string, options: string | null) => typedError<PropertyTypeChangeCounts, AppError>(__TAURI_INVOKE("preview_property_type_change", { spaceId, key, valueType, options })),
+	/**
+	 *  Tauri command: one page of the values a type change would convert or
+	 *  remove. Delegates to [`list_property_type_change_values_inner`].
+	 */
+	listPropertyTypeChangeValues: (spaceId: SpaceId, key: string, valueType: string, options: string | null, kind: PropertyTypeChangeKind, cursor: string | null, limit: number | null) => typedError<PageResponse<PropertyTypeChangeValue>, AppError>(__TAURI_INVOKE("list_property_type_change_values", { spaceId, key, valueType, options, kind, cursor, limit })),
+	/**
+	 *  Tauri command: change a space's property to another type. Delegates to
+	 *  [`change_property_type_inner`]; the response carries the op ref.
+	 */
+	changePropertyType: (spaceId: SpaceId, key: string, valueType: string, options: string | null, acknowledged: PropertyTypeChangeCounts) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("change_property_type", { spaceId, key, valueType, options, acknowledged })),
 	/**  Tauri command: list all sync peers. Delegates to [`list_peer_refs_inner`]. */
 	listPeerRefs: () => typedError<PeerRef[], AppError>(__TAURI_INVOKE("list_peer_refs")),
 	/**  Tauri command: delete (unpair) a sync peer. Delegates to [`delete_peer_ref_inner`]. */
@@ -3492,6 +3507,39 @@ export type PropertyRow = {
 	value_bool: number | null,
 };
 
+/**
+ *  What changing a key's type does to a space's values, the Trash's included:
+ *  `converted` ones are kept in the new type's form (one already in it among
+ *  them), `removed` ones the new type does not take, and they go.
+ */
+export type PropertyTypeChangeCounts = {
+	converted: number,
+	removed: number,
+};
+
+/**
+ *  Which of a type change's values [`list_property_type_change_values_inner`]
+ *  lists.
+ */
+export type PropertyTypeChangeKind = "converted" | "removed";
+
+/**
+ *  One value a type change converts or removes: the block holding it, its
+ *  page, and the value as text, before and after.
+ */
+export type PropertyTypeChangeValue = {
+	block_id: string,
+	page_id: string | null,
+	page_title: string | null,
+	content: string | null,
+	/**  The block is in the Trash; its value changes all the same. */
+	deleted: boolean,
+	/**  The value the block holds, as text. */
+	value: string,
+	/**  The value under the new type, as text; `None` when it is removed. */
+	converted: string | null,
+};
+
 /**  How many live blocks of a space hold a value under one key (#5841). */
 export type PropertyUsage = {
 	key: string,
@@ -4775,9 +4823,11 @@ export type ValidationCode =
 "BuiltinPropertyLocked" | 
 /**
  *  A cross-space move whose acknowledged property losses differ from what
- *  it would drop now (`move_blocks_to_space`, #5841), or a property merge
+ *  it would drop now (`move_blocks_to_space`, #5841), a property merge
  *  whose acknowledged counts differ from what it would move and drop now
- *  (`merge_property_key`): another write changed the blocks or a
+ *  (`merge_property_key`), or a type change whose acknowledged counts
+ *  differ from what it would convert and remove now
+ *  (`change_property_type`): another write changed the blocks or a
  *  definition since the preview, so the caller previews again and asks
  *  once more.
  */

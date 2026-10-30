@@ -107,9 +107,11 @@ pub enum ValidationCode {
     /// code and the same in every vault.
     BuiltinPropertyLocked,
     /// A cross-space move whose acknowledged property losses differ from what
-    /// it would drop now (`move_blocks_to_space`, #5841), or a property merge
+    /// it would drop now (`move_blocks_to_space`, #5841), a property merge
     /// whose acknowledged counts differ from what it would move and drop now
-    /// (`merge_property_key`): another write changed the blocks or a
+    /// (`merge_property_key`), or a type change whose acknowledged counts
+    /// differ from what it would convert and remove now
+    /// (`change_property_type`): another write changed the blocks or a
     /// definition since the preview, so the caller previews again and asks
     /// once more.
     UnacknowledgedPropertyLoss,
