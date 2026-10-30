@@ -206,4 +206,29 @@ describe('tauri-mock history handlers are all-or-nothing (#6051)', () => {
     expect(validationCode(thrown)).toBe('DuplicatePageTitle')
     expect(snapshotAll()).toEqual(before)
   })
+
+  // A link written while its target is deleted is owed; undoing the delete
+  // (and the edit) settles that debt, so the refused batch has to hand it back.
+  it('puts back the links a reverse settles', () => {
+    seed.unresolvedLinks.clear()
+    seed.keptLinkKinds.clear()
+    const refs = seedTwoOps(() => {
+      seedPage(OTHER_CHILD, 'x', PAGE, 'content')
+      seedPage(LINKED, 'T', null)
+      dispatch('delete_block', { blockId: LINKED })
+      dispatch('edit_block', { blockId: OTHER_CHILD, toText: `[[${LINKED}]]` })
+    })
+    expect([...seed.unresolvedLinks.keys()]).toEqual([OTHER_CHILD])
+    const before = snapshotAll()
+
+    let thrown: unknown = null
+    try {
+      dispatch('revert_ops', { ops: refs.all })
+    } catch (err) {
+      thrown = err
+    }
+
+    expect(validationCode(thrown)).toBe('DuplicatePageTitle')
+    expect(snapshotAll()).toEqual(before)
+  })
 })
