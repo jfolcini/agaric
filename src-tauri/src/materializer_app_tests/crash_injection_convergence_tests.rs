@@ -69,7 +69,8 @@ async fn seed_space_and_page() -> (SqlitePool, TempDir, agaric_engine::loro::sha
         .await
         .expect("init_pool");
 
-    // space tag block + `spaces` registry row (blocks.space_id FK target, #708).
+    // space tag block + its `is_space` row, whose 0089 trigger writes the
+    // `spaces` registry row (blocks.space_id FK target, #708).
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content, parent_id, position) \
          VALUES (?, 'tag', 'space', NULL, 0)",
@@ -78,11 +79,13 @@ async fn seed_space_and_page() -> (SqlitePool, TempDir, agaric_engine::loro::sha
     .execute(&pool)
     .await
     .expect("seed space block");
-    sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
-        .bind(SPACE_ID)
-        .execute(&pool)
-        .await
-        .expect("register space");
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'is_space', 'true')",
+    )
+    .bind(SPACE_ID)
+    .execute(&pool)
+    .await
+    .expect("register space");
 
     // Page row in SQL with its denormalized space_id/page_id set, so the later
     // child create resolves a space via its parent.
@@ -114,6 +117,24 @@ async fn seed_space_and_page() -> (SqlitePool, TempDir, agaric_engine::loro::sha
     drop(guard);
 
     (pool, dir, state)
+}
+
+/// Panic unless `block_tags`, `page_aliases` and the `spaces` registry agree
+/// with their sources (#6207).
+async fn assert_projected_tables(
+    pool: &SqlitePool,
+    state: &agaric_engine::loro::shared::LoroState,
+    context: &str,
+) {
+    if let Some(report) = crate::reconciliation_oracle::projected_tables_reconciliation_failure(
+        pool,
+        &state.registry,
+        context,
+    )
+    .await
+    {
+        panic!("{report}");
+    }
 }
 
 /// Build a REMOTE `CreateBlock` op record. Modelled as remote: constructed
@@ -330,6 +351,7 @@ async fn remote_op_commit_failure_leaves_engine_ahead_then_reproject_converges_2
         Some(PAGE_ID),
         "reprojected remote block gets its page_id backfilled (page-scoped-visible)"
     );
+    assert_projected_tables(&pool, &state, "after the reprojection").await;
 }
 
 /// #2604 — the SAME REMOTE-op commit-failure as above, but WITH the rollback
@@ -433,6 +455,7 @@ async fn remote_op_abort_under_revert_scope_rewinds_engine_no_divergence_2604() 
         Some(PAGE_ID),
         "the re-applied block keeps its parent linkage"
     );
+    assert_projected_tables(&pool, &state, "after the clean re-apply").await;
 }
 
 /// #2604 LOCAL path — a `CommandTx` armed with `arm_engine_rollback` that is
@@ -504,6 +527,7 @@ async fn local_command_tx_abort_rewinds_engine_no_divergence_2604() {
         0,
         "the SQL projection rolled back with the dropped tx"
     );
+    assert_projected_tables(&pool, &state, "after the dropped tx").await;
 }
 
 /// #2604 LOCAL path — the COMMIT side: an armed `CommandTx` that commits keeps
@@ -552,4 +576,5 @@ async fn local_command_tx_commit_keeps_engine_and_projects_sql_2604() {
         1,
         "the committed op's SQL projection landed — engine and SQL agree"
     );
+    assert_projected_tables(&pool, &state, "after the commit").await;
 }
