@@ -1,4 +1,4 @@
-# Session 3095 — Rename a property key and merge one into another (#5841 S2)
+# Session 3112 — Rename a property key and merge one into another (#5841 S2)
 
 Slice S2 of #5841, built on S1 (#6187). The maintainer decided its four open questions in issue comment 6504560322:
 - undo follows renames and merges made on other devices;
