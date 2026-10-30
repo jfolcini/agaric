@@ -270,8 +270,7 @@ test.describe('Combined marks @editor @markdown', () => {
     // mark is schema-exclusive with every other mark), so apply them to
     // two non-overlapping ranges and verify both end up in the saved
     // block. "flag" (chars 8..12) gets bold; "here" (chars 13..17) gets
-    // code. Right to left: the markers revealed around a word just marked
-    // shift the drawn offsets after it.
+    // code.
     await selectEditorRange(page, 13, 17)
     await page.keyboard.press('Control+Shift+K')
     await selectEditorRange(page, 8, 12)

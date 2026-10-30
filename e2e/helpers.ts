@@ -1550,11 +1550,11 @@ export async function typeSlashCommand(page: Page, command: string) {
  * a focus it takes a caret at the document's start for Chrome's focus reset.
  *
  * `from` / `to` are character offsets into the block's own text, counted from
- * the start: text inside a `contenteditable="false"` widget (the list marker,
- * markdown-reveal's markers) is not counted. Walks the text nodes in document
- * order and maps offsets to the correct `(Text, offset)` pair so the
- * helper works for blocks that contain multiple inline spans (e.g.
- * links, inline marks).
+ * the start: text inside a `contenteditable="false"` widget or chip (the list
+ * marker, markdown-reveal's markers, a tag or ref chip's label) is not counted.
+ * Walks the text nodes in document order and maps offsets to the correct
+ * `(Text, offset)` pair so the helper works for blocks that contain multiple
+ * inline spans (e.g. links, inline marks).
  */
 export async function selectEditorRange(page: Page, from: number, to: number): Promise<void> {
   await page.evaluate(
