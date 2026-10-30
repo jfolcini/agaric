@@ -18,6 +18,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { resolveStoreTitle, unresolvedBlockLabel } from '@/lib/block-title'
+import { MAX_BATCH_BLOCK_IDS } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { requireActiveScope } from '@/lib/space-scope'
 import { keyFor, useResolveStore } from '@/stores/resolve'
@@ -65,8 +66,12 @@ export function collectUncachedLinkIds(
 
 /**
  * Batch-resolve the given ids and write results back to the resolve store.
- * Logs and swallows transport errors; honours a cancellation predicate so
- * the caller can drop an answer that no longer applies.
+ * A page can link more targets than `batch_resolve` accepts in one call, so
+ * the ids go in chunks of {@link MAX_BATCH_BLOCK_IDS}, one after another to
+ * leave the reader pool to the rest of the app. Each chunk's failure is
+ * logged and swallowed on its own, so the other chunks' answers still land.
+ * Honours a cancellation predicate so the caller can drop an answer that no
+ * longer applies.
  *
  * The resolve is scoped to the active `spaceId`. Foreign-space targets are
  * filtered out by the backend; we mark them as `deleted: true` placeholders
@@ -80,52 +85,56 @@ export async function fetchAndCacheLinks(
   isCancelled: () => boolean,
 ): Promise<void> {
   if (spaceId == null) return
-  try {
-    const resolved = unwrap(await commands.batchResolve([...ids], requireActiveScope(spaceId)))
-    if (isCancelled()) return
-    const store = useResolveStore.getState()
-    const resolvedIds = new Set(resolved.map((r) => r.id))
-    // #1072 — collapse the per-id writeback into a single batchSet so the
-    // resolve cache is cloned and `version` is bumped at most once for the
-    // whole batch (zero when everything was already cached), instead of
-    // K+M full-Map clones + K+M version bumps. batchSet diffs-once /
-    // clones-once / bumps-once (#753) and, like `set`, writes under
-    // activeSpaceId() and caps via evictOldest — behaviour is preserved.
-    const entries: Array<{ id: string; title: string; deleted: boolean; resolved?: boolean }> = []
-    for (const r of resolved) {
-      // #4228/#4239 — one gate, `resolveStoreTitle`, shared with every other
-      // seed writer (`@/lib/block-title`'s docblock enumerates them), so the
-      // same block id reached by two paths produces the same bytes and
-      // `batchSet`'s value diff sees a genuine no-op. A resolved-but-blank
-      // `r.title` therefore gets the "Untitled" placeholder those seeders
-      // use — not the `[[id…]]` broken-link shape, which is reserved below
-      // for a target the backend didn't return at all.
-      entries.push({
-        id: r.id,
-        title: resolveStoreTitle(r.block_type, r.title),
-        deleted: r.deleted,
-      })
+  const all = [...ids]
+  for (let i = 0; i < all.length; i += MAX_BATCH_BLOCK_IDS) {
+    const chunk = all.slice(i, i + MAX_BATCH_BLOCK_IDS)
+    try {
+      const resolved = unwrap(await commands.batchResolve(chunk, requireActiveScope(spaceId)))
+      if (isCancelled()) return
+      const store = useResolveStore.getState()
+      const resolvedIds = new Set(resolved.map((r) => r.id))
+      // #1072 — collapse the per-id writeback into a single batchSet so the
+      // resolve cache is cloned and `version` is bumped at most once per
+      // chunk (zero when everything was already cached), instead of
+      // K+M full-Map clones + K+M version bumps. batchSet diffs-once /
+      // clones-once / bumps-once (#753) and, like `set`, writes under
+      // activeSpaceId() and caps via evictOldest — behaviour is preserved.
+      const entries: Array<{ id: string; title: string; deleted: boolean; resolved?: boolean }> = []
+      for (const r of resolved) {
+        // #4228/#4239 — one gate, `resolveStoreTitle`, shared with every other
+        // seed writer (`@/lib/block-title`'s docblock enumerates them), so the
+        // same block id reached by two paths produces the same bytes and
+        // `batchSet`'s value diff sees a genuine no-op. A resolved-but-blank
+        // `r.title` therefore gets the "Untitled" placeholder those seeders
+        // use — not the `[[id…]]` broken-link shape, which is reserved below
+        // for a target the backend didn't return at all.
+        entries.push({
+          id: r.id,
+          title: resolveStoreTitle(r.block_type, r.title),
+          deleted: r.deleted,
+        })
+      }
+      // Every requested id the backend did not return is a
+      // foreign-space (or genuinely unknown) target. Cache a deleted
+      // placeholder so the chip's resolveStatus hits and the broken-link
+      // styling fires; without this, an unknown id falls through to the
+      // 'active' default and the chip silently renders as live.
+      //
+      // #4238 — this writer stores `resolved: false`, and it is what the flag
+      // exists for: an entry that stands for "nothing was returned" rather than
+      // "here is the row" (`markMovedOut` writes the same). Before #4238
+      // that distinction was carried by the `[[id…]]` bytes alone, which is why
+      // a resolved-but-BLANK row (a different thing entirely) had to imitate
+      // them. The label is still stored so any direct `.title` reader agrees
+      // with the resolvers, but it is `resolved` that consumers ask.
+      for (const id of chunk) {
+        if (resolvedIds.has(id)) continue
+        entries.push({ id, title: unresolvedBlockLabel(id), deleted: true, resolved: false })
+      }
+      store.batchSet(entries)
+    } catch (err) {
+      logger.warn('BlockTree', 'Batch resolve failed for uncached block links', undefined, err)
     }
-    // Every requested id the backend did not return is a
-    // foreign-space (or genuinely unknown) target. Cache a deleted
-    // placeholder so the chip's resolveStatus hits and the broken-link
-    // styling fires; without this, an unknown id falls through to the
-    // 'active' default and the chip silently renders as live.
-    //
-    // #4238 — this writer stores `resolved: false`, and it is what the flag
-    // exists for: an entry that stands for "nothing was returned" rather than
-    // "here is the row" (`markMovedOut` writes the same). Before #4238
-    // that distinction was carried by the `[[id…]]` bytes alone, which is why
-    // a resolved-but-BLANK row (a different thing entirely) had to imitate
-    // them. The label is still stored so any direct `.title` reader agrees
-    // with the resolvers, but it is `resolved` that consumers ask.
-    for (const id of ids) {
-      if (resolvedIds.has(id)) continue
-      entries.push({ id, title: unresolvedBlockLabel(id), deleted: true, resolved: false })
-    }
-    store.batchSet(entries)
-  } catch (err) {
-    logger.warn('BlockTree', 'Batch resolve failed for uncached block links', undefined, err)
   }
 }
 

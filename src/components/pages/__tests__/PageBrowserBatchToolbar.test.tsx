@@ -677,7 +677,7 @@ function screenPicker(): HTMLElement {
 
 // #4008 review note 3 — `notifyPageRemoved` is a SYNCHRONOUS fan-out: every
 // mounted `useBlockResolve` rebuilds its whole cached pages list with `filter`
-// per event. One event per trashed id, at the `MAX_TRASH_BATCH_IDS` cap of
+// per event. One event per trashed id, at the `MAX_BATCH_BLOCK_IDS` cap of
 // 1000 and with the journal's several mounted `BlockTree`s, is tens of
 // millions of element copies on the UI thread with no yield. Above
 // `NAME_CACHE_FANOUT_MAX_IDS` the toolbar must collapse that into a single
