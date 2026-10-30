@@ -984,13 +984,13 @@ enum PageRead {
 /// an anchor. `Source` writes the buffer source mode edits (#5140), which
 /// `import::parse_source_outline` reads back as exactly this tree: every block
 /// carries its `^ID`, and ids stay raw unless a name reads back to the same
-/// id. `Clipboard` is `Document` for text that leaves the app, which a paste
-/// reads (#6190): a block carries its `^ID` only when it would not read back
-/// without it. `Agent` is the page an MCP agent reads (#5375): the export's
-/// names, which may be ambiguous, and every block's `^ID` written as source
-/// mode writes it, so the agent can name the block it edits next. `Document`
-/// is `Source` in the Document dialect ([`Dialect`]), which
-/// `import::parse_document_outline` reads back.
+/// id. `Document` is `Source` in the Document dialect ([`Dialect`]), which
+/// `import::parse_document_outline` reads back. `Clipboard` is `Document` for
+/// text that leaves the app, which a paste reads (#6190): a block carries its
+/// `^ID` only when it would not read back without it. `Agent` is the page an
+/// MCP agent reads (#5375): `Document`, every block with its `^ID` so the
+/// agent can name the block it edits next, but with the export's names, which
+/// may be ambiguous.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RenderMode {
     Export,
@@ -1003,20 +1003,19 @@ enum RenderMode {
 impl RenderMode {
     /// Whether the rendering is laid out in the Document dialect ([`Dialect`]).
     fn lays_out_document(self) -> bool {
-        matches!(self, Self::Document | Self::Clipboard)
+        matches!(self, Self::Document | Self::Clipboard | Self::Agent)
     }
 }
 
-/// The two grammars Edit as Markdown's buffer is written in (#5691). `Source`
-/// writes every block as an outline bullet, its list marker after the bullet.
-/// `Document` writes a plain block as its own paragraph, a list block with its
-/// marker and a task as `- [ ] x`, which has no list style (D3): a blank line
-/// separates blocks but neighbouring list lines (D1), a plain block under a
-/// list block is a `+` item and a line holding only `\` an empty line (D4).
-/// The MCP page tools (`get_page_markdown`, `edit_page_markdown`) and Duplicate
-/// keep `Source` (D5); `append_markdown` and `capture` read `Document`, as a
-/// paste does. The buffer commands take it as `source` or `document`, and read
-/// `Source` when given none.
+/// The two grammars a page's buffer is written in (#5691). `Document` writes a
+/// plain block as its own paragraph, a list block with its marker and a task
+/// as `- [ ] x`, which has no list style (D3): a blank line separates blocks
+/// but neighbouring list lines (D1), a plain block under a list block is a `+`
+/// item and a line holding only `\` an empty line (D4). Edit as Markdown,
+/// Duplicate, journal templates and the MCP page tools write and read it, as a
+/// paste reads it (#6190). `Source` writes every block as an outline bullet,
+/// its list marker after the bullet; nothing in the app asks for it, and the
+/// buffer commands read it only when given no dialect.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Type)]
 #[serde(rename_all = "lowercase")]
 pub enum Dialect {
@@ -1026,16 +1025,20 @@ pub enum Dialect {
 }
 
 impl Dialect {
+    /// The rendering a buffer in this dialect is written in.
+    fn mode(self) -> RenderMode {
+        match self {
+            Self::Source => RenderMode::Source,
+            Self::Document => RenderMode::Document,
+        }
+    }
+
     /// The page's buffer, its front matter and then its block tree, every
     /// block with its `^ID`, and the ids of the blocks it holds, in order.
     fn render(self, data: &PageExportData) -> (String, Vec<String>) {
-        let mode = match self {
-            Self::Source => RenderMode::Source,
-            Self::Document => RenderMode::Document,
-        };
         let mut output = String::new();
         render_frontmatter(&mut output, data);
-        let ids = render_block_tree(&mut output, data.page.id.as_str(), data, mode)
+        let ids = render_block_tree(&mut output, data.page.id.as_str(), data, self.mode())
             .into_iter()
             .map(|(id, _)| id)
             .collect();
@@ -1272,8 +1275,8 @@ fn named_block_text(content: &str, data: &PageExportData) -> String {
     )
 }
 
-/// A block's bullet as source mode writes it, with its own `^ID`, or as the
-/// clipboard does, or, for an agent, with its `^ID` and the export's names.
+/// A block as its buffer writes it, with its own `^ID`, or as the clipboard
+/// does, or, for an agent, with its `^ID` and the export's names.
 ///
 /// Whether a name may replace an id depends on whether the parser will read
 /// the block as code, which the bullet's fence tracking decides; so the raw
@@ -1298,7 +1301,7 @@ fn push_source_bullet(
             task_marker,
             &named,
             id,
-            RenderMode::Source,
+            RenderMode::Document,
         );
         return;
     }
@@ -1580,8 +1583,8 @@ fn render_page_for_agent(data: &PageExportData) -> String {
     render_page_for_agent_spans(data).0
 }
 
-/// [`render_page_for_agent`], with each block's id and the byte offset its
-/// text starts at, in render order.
+/// [`render_page_for_agent`], with each block's id and the byte offset it
+/// starts at, the blank line before it included, in render order.
 fn render_page_for_agent_spans(data: &PageExportData) -> (String, Vec<(String, usize)>) {
     let title = data.page.content.as_deref().unwrap_or("Untitled");
     let mut output = format!("# {title}\n\n");
@@ -1681,7 +1684,8 @@ pub fn anchor_free_as(source: &str, dialect: Dialect) -> (String, Vec<Option<Str
 
 /// Every descendant of `page_id`, depth-first in sibling order, each through
 /// [`render_block`]. Returns the ids it rendered, in render order, each with
-/// the byte offset in `output` its text starts at.
+/// the byte offset in `output` it starts at, the blank line a Document layout
+/// writes before it included.
 fn render_block_tree(
     output: &mut String,
     page_id: &str,
@@ -1731,7 +1735,8 @@ fn render_block_tree(
 
 /// `roots` at depth 0 and everything under them, depth-first in sibling
 /// order, each through [`render_block`]. Returns the ids it rendered, in
-/// render order, each with the byte offset in `output` its text starts at.
+/// render order, each with the byte offset in `output` it starts at, the blank
+/// line a Document layout writes before it included.
 fn render_subtrees<'a>(
     output: &mut String,
     roots: &[&'a BlockRow],
@@ -1767,15 +1772,19 @@ fn render_subtrees<'a>(
     rendered
 }
 
-/// `root` and its subtree as source mode writes them, `root` at depth 0: every
-/// block with its `^ID`, which ends a fence the block leaves open and keeps a
-/// trailing ` ^word` in its content from reading back as an anchor. A page
-/// nested under `root` is not here: `descendants` stops at a nested page.
-/// Returns the buffer and the ids it holds, in order.
-fn render_subtree_source(data: &PageExportData, root: &BlockRow) -> (String, Vec<String>) {
+/// `root` and its subtree as a buffer in `dialect` writes them, `root` at
+/// depth 0: every block with its `^ID`, which ends a fence the block leaves
+/// open and keeps a trailing ` ^word` in its content from reading back as an
+/// anchor. A page nested under `root` is not here: `descendants` stops at a
+/// nested page. Returns the buffer and the ids it holds, in order.
+fn render_subtree(
+    data: &PageExportData,
+    root: &BlockRow,
+    dialect: Dialect,
+) -> (String, Vec<String>) {
     let children_by_parent = group_children_by_parent(data.page.id.as_str(), &data.descendants);
     let list_ordinals =
-        compute_list_ordinals(&children_by_parent, &data.list_styles, RenderMode::Source);
+        compute_list_ordinals(&children_by_parent, &data.list_styles, dialect.mode());
     let mut output = String::new();
     let ids = render_subtrees(
         &mut output,
@@ -1783,7 +1792,7 @@ fn render_subtree_source(data: &PageExportData, root: &BlockRow) -> (String, Vec
         &children_by_parent,
         &list_ordinals,
         data,
-        RenderMode::Source,
+        dialect.mode(),
         &mut DocumentLayout::default(),
     )
     .into_iter()
@@ -2700,18 +2709,19 @@ fn render_clipboard_source(
 
 /// Copy a content block and its content subtree to right after the original
 /// (#5140), as one transaction and so one undo. The subtree is rendered as a
-/// source buffer and parsed back, so the copy carries what that buffer
-/// carries: content verbatim with its raw refs, the list marker, the task
-/// state, priority and dates, and the custom properties. A nested page is not
-/// copied. Returns every created row, the root copy first, then its
-/// descendants depth-first.
+/// Document buffer (#6190) and parsed back, so the copy carries what that
+/// buffer carries: content verbatim with its raw refs, the list marker, the
+/// task state, priority and dates, and the custom properties. A task has no
+/// list style there (#5691 D3), so the copy of a block holding both is a task
+/// without one. A nested page is not copied. Returns every created row, the
+/// root copy first, then its descendants depth-first.
 ///
 /// # Errors
 ///
 /// - [`AppError::Ulid`] — `block_id` is not a ULID
 /// - [`AppError::NotFound`] — no block has that id
 /// - [`AppError::Validation`] — the block is soft-deleted or not a content
-///   block, a copied value doesn't read back from the source grammar (a
+///   block, a copied value doesn't read back from the buffer's grammar (a
 ///   carriage return in the text), the copy would append more ops than one
 ///   undo reverts, or a copied block would be nested past `MAX_BLOCK_DEPTH`
 #[instrument(skip(pool, device_id, materializer), err)]
@@ -2720,6 +2730,18 @@ pub async fn duplicate_block_inner(
     device_id: &str,
     materializer: &Materializer,
     block_id: BlockId,
+) -> Result<Vec<BlockRow>, AppError> {
+    duplicate_block_as(pool, device_id, materializer, block_id, Dialect::Document).await
+}
+
+/// [`duplicate_block_inner`] through a buffer in `dialect`, which the tests
+/// also run in `Source` to hold the copy to what it was.
+async fn duplicate_block_as(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_id: BlockId,
+    dialect: Dialect,
 ) -> Result<Vec<BlockRow>, AppError> {
     let block_id = BlockId::from_string(block_id.into_string())?;
     let mut tx = CommandTx::begin_immediate(pool, "duplicate_block").await?;
@@ -2737,8 +2759,8 @@ pub async fn duplicate_block_inner(
         .clone()
         .ok_or_else(|| AppError::validation(format!("block '{block_id}' is on no page")))?;
     let data = load_page_export_data(&mut tx, page_id.as_str(), PageRead::Duplicate).await?;
-    let (source, ids) = render_subtree_source(&data, &root);
-    let parsed = import::parse_source_outline(&source);
+    let (source, ids) = render_subtree(&data, &root, dialect);
+    let parsed = dialect.read(&source, None);
     // A value the grammar cannot carry, such as a carriage return in the
     // text, reads back as extra text or an extra block: refuse, never write a
     // mangled copy.
@@ -2774,7 +2796,7 @@ pub async fn duplicate_block_inner(
 }
 
 /// Copy `source_page_id`'s blocks under `dest_page_id` as Duplicate copies a
-/// subtree (#5395): rendered as a source buffer and parsed back, so the copy
+/// subtree (#5395): rendered as a Document buffer and parsed back, so the copy
 /// carries content with its raw refs, list markers, task states, dates and
 /// custom properties, nesting included; a nested page is not copied. `expand`
 /// rewrites each block's content before it is written. Every op rides the
@@ -2783,7 +2805,7 @@ pub async fn duplicate_block_inner(
 /// depth-first.
 ///
 /// The copy refuses BEFORE its first insert, as `Ok(Err(why))`, when a
-/// copied value doesn't read back from the source grammar (a carriage return
+/// copied value doesn't read back from the buffer's grammar (a carriage return
 /// in the text) or when the copy would append more ops than one undo
 /// reverts: the caller's transaction holds nothing of the copy then, so the
 /// caller may go on without it. The op count never falls short for the fresh
@@ -2806,14 +2828,14 @@ pub(crate) async fn copy_page_blocks_in_tx(
     let data = load_page_export_data(tx, source_page_id, PageRead::Duplicate).await?;
     let mut source = String::new();
     let ids: Vec<String> =
-        render_block_tree(&mut source, source_page_id, &data, RenderMode::Source)
+        render_block_tree(&mut source, source_page_id, &data, RenderMode::Document)
             .into_iter()
             .map(|(id, _)| id)
             .collect();
     if ids.is_empty() {
         return Ok(Ok(Vec::new()));
     }
-    let mut parsed = import::parse_source_outline(&source);
+    let mut parsed = import::parse_document_outline(&source);
     let anchors = parsed.blocks.iter().map(|b| b.block_anchor.as_deref());
     if !anchors.eq(ids.iter().map(|id| Some(id.as_str()))) {
         return Ok(Err(format!(
@@ -2934,9 +2956,9 @@ impl PasteSplice {
 
 /// `block` as the text it was pasted as, for a paste after text (#5160 D4):
 /// the list marker and checkbox the parse read into properties back before
-/// its text, and its other properties back as `key:: value` lines, as Source
-/// mode writes them. Text that `starts_line` is escaped as Source mode escapes
-/// a first line, so no marker in it is read back.
+/// its text, and its other properties back as `key:: value` lines. Text that
+/// `starts_line` is escaped as a block's text escapes a list marker or a
+/// checkbox, so no marker in it is read back.
 fn pasted_as_text(block: &import::ParsedBlock, starts_line: bool) -> String {
     // The last value of a key is the one a paste writes.
     let mut properties: Vec<(&str, &str)> = Vec::new();
@@ -2964,7 +2986,9 @@ fn pasted_as_text(block: &import::ParsedBlock, starts_line: bool) -> String {
     } else {
         markers + &block.content
     };
-    if starts_line && first_line_needs_escape(&text, false, "", "", RenderMode::Source) {
+    if starts_line
+        && (import::needs_list_marker_escape(&text) || import::needs_task_marker_escape(&text))
+    {
         text.insert(0, '\\');
     }
     for (key, value) in properties {
@@ -3747,8 +3771,10 @@ fn push_block_bullet(
 ) -> CodeLines {
     let fence_opener = match mode {
         RenderMode::Export => import::fence_opener,
-        RenderMode::Source | RenderMode::Agent => import::source_fence_opener,
-        RenderMode::Document | RenderMode::Clipboard => import::document_fence_opener,
+        RenderMode::Source => import::source_fence_opener,
+        RenderMode::Document | RenderMode::Clipboard | RenderMode::Agent => {
+            import::document_fence_opener
+        }
     };
 
     let mut lines = resolved.split('\n').peekable();
@@ -6187,9 +6213,9 @@ enum PropertyWrite {
     /// An imported file: a value its definition refuses stays text in the
     /// block, with a warning (#5160 D11).
     Import,
-    /// Duplicate re-stores values a block already held, from a source render:
-    /// a `ref`-declared value is the raw id, and options the key has since
-    /// retired or narrowed must not make the copy fail.
+    /// Duplicate re-stores values a block already held, from a Document
+    /// buffer: a `ref`-declared value is the raw id, and options the key has
+    /// since retired or narrowed must not make the copy fail.
     Copy,
     /// Pasted text, read as an import reads a file (D11).
     Paste,
@@ -8570,14 +8596,14 @@ mod tests {
                 render_page_for_agent(&data),
                 format!(
                     "# Title\n\n---\naliases: [Plan B]\ntags: [work]\nstatus: active\n\
-                     project: Project Alpha\n---\n\n- plan #work ^{PARENT}\n  \
-                     - see [[Linked Page]] ^{CHILD}\n    owner:: Ada\n"
+                     project: Project Alpha\n---\n\nplan #work ^{PARENT}\n\n  \
+                     see [[Linked Page]] ^{CHILD}\n    owner:: Ada\n"
                 )
             );
         }
 
-        /// A title two pages share is still written as the name, which source
-        /// mode would not write, and the block keeps its `^ID`.
+        /// A title two pages share is still written as the name, which the
+        /// buffer would not write, and the block keeps its `^ID`.
         #[test]
         fn two_pages_that_share_a_title_are_both_named() {
             const TWIN: &str = "01J00000000000000000PAGEL2";
@@ -8586,7 +8612,7 @@ mod tests {
             data.page_titles = names(&[(LINKED, "Dup"), (TWIN, "Dup")]);
             assert_eq!(
                 render_page_for_agent(&data),
-                format!("# Title\n\n- [[Dup]] or [[Dup]] ^{PARENT}\n")
+                format!("# Title\n\n[[Dup]] or [[Dup]] ^{PARENT}\n")
             );
         }
 
@@ -8603,7 +8629,7 @@ mod tests {
             data.same_page_ref_targets.insert(CHILD.into());
             assert_eq!(
                 render_page_for_agent(&data),
-                format!("# Title\n\n- see [[#^{CHILD}]] ^{PARENT}\n- target ^{CHILD}\n")
+                format!("# Title\n\nsee [[#^{CHILD}]] ^{PARENT}\n\ntarget ^{CHILD}\n")
             );
         }
     }

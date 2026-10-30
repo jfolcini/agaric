@@ -3546,7 +3546,7 @@ async fn each_write_tool_opens_one_command_transaction_5402() {
         "edit_page_markdown",
         json!({
             "page_id": page,
-            "markdown": with_bullet_moved_last(&base, &edited),
+            "markdown": with_block_moved_last(&base, &edited),
             "base": base,
             "space_id": space,
         }),
@@ -4068,20 +4068,21 @@ async fn editable_source(pool: &SqlitePool, mat: &Materializer, page: &str, spac
     read["markdown"].as_str().unwrap().to_owned()
 }
 
-/// `source` with the line that ends with `block`'s anchor moved to the end.
-fn with_bullet_moved_last(source: &str, block: &str) -> String {
+/// `source`, plain blocks a blank line apart, with the one that ends with
+/// `block`'s anchor moved to the end.
+fn with_block_moved_last(source: &str, block: &str) -> String {
     let anchor = format!("^{block}");
-    let mut lines: Vec<&str> = source.trim_end_matches('\n').split('\n').collect();
-    let at = lines
+    let mut blocks: Vec<&str> = source.trim_end_matches('\n').split("\n\n").collect();
+    let at = blocks
         .iter()
-        .position(|line| line.ends_with(&anchor))
-        .expect("the block's line");
-    let line = lines.remove(at);
-    lines.push(line);
-    lines.join("\n") + "\n"
+        .position(|text| text.ends_with(&anchor))
+        .expect("the block's text");
+    let text = blocks.remove(at);
+    blocks.push(text);
+    blocks.join("\n\n") + "\n"
 }
 
-/// Read, move one bullet, write: one `MoveBlock`, and nothing else.
+/// Read, move one block, write: one `MoveBlock`, and nothing else.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn edit_page_markdown_round_trip_writes_one_move_5399() {
     let (tools, mat, pool, space, emitter, _dir) = mk_tools_recording().await;
@@ -4100,7 +4101,7 @@ async fn edit_page_markdown_round_trip_writes_one_move_5399() {
             "edit_page_markdown",
             json!({
                 "page_id": "P",
-                "markdown": with_bullet_moved_last(&base, &a),
+                "markdown": with_block_moved_last(&base, &a),
                 "base": base,
                 "space_id": space,
             }),
@@ -4117,7 +4118,7 @@ async fn edit_page_markdown_round_trip_writes_one_move_5399() {
     assert_eq!(emitter.blocks_changed(), [vec![page]]);
 }
 
-/// A base the page has moved on from is refused as the app's source mode
+/// A base the page has moved on from is refused as Edit as Markdown
 /// refuses it, so the agent reads again.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn edit_page_markdown_stale_base_is_refused_5399() {
@@ -4138,7 +4139,7 @@ async fn edit_page_markdown_stale_base_is_refused_5399() {
             "edit_page_markdown",
             json!({
                 "page_id": page,
-                "markdown": with_bullet_moved_last(&base, &a),
+                "markdown": with_block_moved_last(&base, &a),
                 "base": base,
                 "space_id": space,
             }),
@@ -4171,7 +4172,7 @@ async fn edit_page_markdown_cross_space_refused_5399() {
             "edit_page_markdown",
             json!({
                 "page_id": page,
-                "markdown": with_bullet_moved_last(&base, &a),
+                "markdown": with_block_moved_last(&base, &a),
                 "base": base,
                 "space_id": space,
             }),
@@ -4185,6 +4186,182 @@ async fn edit_page_markdown_cross_space_refused_5399() {
     );
     assert_eq!(op_count(&pool).await, before, "no op was written");
     assert_eq!(live_children(&pool, &page).await, [a, b]);
+}
+
+/// A page titled `title` in `space`: bulleted `x` with the plain `y` under it,
+/// the numbered `one` and `two`, the task `t` and the plain `p`. Returns the
+/// page id and the blocks' ids in that order.
+async fn mk_list_page(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    space: &str,
+    title: &str,
+) -> (String, Vec<String>) {
+    let page = mk_page(pool, mat, space, title).await;
+    let mut ids: Vec<String> = Vec::new();
+    for (content, parent, style) in [
+        ("x", None, Some("bullet")),
+        ("y", Some(0), None),
+        ("one", None, Some("ordered")),
+        ("two", None, Some("ordered")),
+        ("t", None, None),
+        ("p", None, None),
+    ] {
+        let parent = parent.map_or(&page, |at: usize| &ids[at]);
+        let block = mk_child_of(pool, mat, parent, content).await;
+        if let Some(style) = style {
+            set_property_inner(
+                pool,
+                DEV,
+                mat,
+                block.as_str().into(),
+                "listStyle".into(),
+                Some(style.into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        }
+        ids.push(block);
+    }
+    crate::commands::set_todo_state_inner(
+        pool,
+        DEV,
+        mat,
+        ids[4].as_str().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
+    settle(mat).await;
+    (page, ids)
+}
+
+/// The page as get_page_markdown hands it to an agent to read.
+async fn agent_read(tools: &ReadWriteTools, page: &str, space: &str) -> String {
+    let read = tools
+        .call_tool(
+            "get_page_markdown",
+            json!({ "page_id": page, "space_id": space }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("read the page");
+    read["markdown"].as_str().unwrap().to_owned()
+}
+
+/// `markdown` with each line's trailing ` ^ULID` removed.
+fn without_anchors(markdown: &str) -> String {
+    let lines: Vec<&str> = markdown
+        .lines()
+        .map(|line| match line.rsplit_once(" ^") {
+            Some((text, id)) if BlockId::from_string(id).is_ok() => text,
+            _ => line,
+        })
+        .collect();
+    lines.join("\n") + "\n"
+}
+
+/// The editable read is the page's Document buffer, and sent back unchanged
+/// it saves as nothing (#6190).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_page_markdown_of_an_unchanged_read_writes_nothing_6190() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let (page, ids) = mk_list_page(&pool, &mat, &space, "P").await;
+    let base = editable_source(&pool, &mat, &page, &space).await;
+    let [x, y, one, two, t, p] = &ids[..] else {
+        panic!("six blocks");
+    };
+    assert_eq!(
+        base,
+        format!("- x ^{x}\n  + y ^{y}\n1. one ^{one}\n2. two ^{two}\n- [ ] t ^{t}\n\np ^{p}\n"),
+        "the editable read is the Document buffer"
+    );
+    let before = op_count(&pool).await;
+
+    let result = tools
+        .call_tool(
+            "edit_page_markdown",
+            json!({ "page_id": page, "markdown": base, "base": base, "space_id": space }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("an unchanged read saves");
+    settle(&mat).await;
+
+    assert_eq!(op_count(&pool).await, before, "no op was written: {result}");
+}
+
+/// A plain code block writes its `^ULID` on a line of its own after the
+/// closing fence, which only the Document dialect reads as that block's
+/// anchor: the save must split the agent's text in that dialect, or the
+/// unchanged block is deleted and created again under a new id (#6190).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_page_markdown_of_an_unchanged_code_block_writes_nothing_6190() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let page = mk_page(&pool, &mat, &space, "P").await;
+    let code = mk_child_of(&pool, &mat, &page, "```sh\necho hi\n```").await;
+    let after = mk_child_of(&pool, &mat, &page, "after").await;
+    settle(&mat).await;
+    let base = editable_source(&pool, &mat, &page, &space).await;
+    assert_eq!(
+        base,
+        format!("```sh\necho hi\n```\n^{code}\n\nafter ^{after}\n"),
+        "the code block's anchor is a line of its own"
+    );
+    let before = op_count(&pool).await;
+
+    let result = tools
+        .call_tool(
+            "edit_page_markdown",
+            json!({ "page_id": page, "markdown": base, "base": base, "space_id": space }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("an unchanged read saves");
+    settle(&mat).await;
+
+    assert_eq!(op_count(&pool).await, before, "no op was written: {result}");
+}
+
+/// What an agent reads, appended under another page, reads back as the same
+/// blocks with the same list kinds, under new ids (#6190).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_page_markdown_appended_reads_back_as_the_blocks_read_6190() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let (page, _) = mk_list_page(&pool, &mat, &space, "P").await;
+    let copy = mk_page(&pool, &mat, &space, "Copy").await;
+    settle(&mat).await;
+    let read = agent_read(&tools, &page, &space).await;
+    let blocks = read
+        .strip_prefix("# P\n\n")
+        .expect("the title, then the blocks");
+
+    tools
+        .call_tool(
+            "append_markdown",
+            json!({ "parent_id": copy, "markdown": blocks, "space_id": space }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("append what was read");
+    settle(&mat).await;
+    let again = agent_read(&tools, &copy, &space).await;
+
+    assert_eq!(
+        without_anchors(again.strip_prefix("# Copy\n\n").expect("the title")),
+        without_anchors(blocks),
+        "read: {read}\nread again: {again}"
+    );
+    assert_eq!(
+        without_anchors(blocks),
+        "- x\n  + y\n1. one\n2. two\n- [ ] t\n\np\n",
+        "each list kind is read as its own"
+    );
 }
 
 // -------------------------------------------------------------------
