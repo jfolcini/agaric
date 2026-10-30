@@ -316,19 +316,19 @@ export const properties: Record<string, string> = {
   'propertiesView.typeChangeLabel': 'Change the type of {{key}}',
   'propertiesView.typeChangeTitle': 'Change the type of {{key}}',
   'propertiesView.typeChangeDescription':
-    "Each value of {{key}} in this space is converted to the new type; a value it can't hold is removed.",
+    "Each value of {{key}} in this space is converted to the new type. A value that doesn't fit is kept as text and no longer counts as that type; a date key's agenda, for example, ignores it.",
   'propertiesView.typeChangeTypeLabel': 'New type',
   'propertiesView.typeChangeTypePlaceholder': 'Pick a type',
   'propertiesView.typeChangeConverts_one': '{{count}} value is converted.',
   'propertiesView.typeChangeConverts_other': '{{count}} values are converted.',
-  'propertiesView.typeChangeRemoves_one':
-    "{{count}} value isn't a {{type}} and is removed (Undo brings it back).",
-  'propertiesView.typeChangeRemoves_other':
-    "{{count}} values aren't a {{type}} and are removed (Undo brings them back).",
+  'propertiesView.typeChangeUnfit_one':
+    "{{count}} value isn't a {{type}}: it is kept as text and no longer counts as one.",
+  'propertiesView.typeChangeUnfit_other':
+    "{{count}} values aren't a {{type}}: they are kept as text and no longer count as one.",
   'propertiesView.typeChangeTrashNote': 'Blocks in the Trash count too.',
   'propertiesView.typeChangeValuesLabel': 'Values the change touches',
-  'propertiesView.typeChangeRemovedTab_one': 'Removed ({{count}})',
-  'propertiesView.typeChangeRemovedTab_other': 'Removed ({{count}})',
+  'propertiesView.typeChangeUnfitTab_one': "Don't fit ({{count}})",
+  'propertiesView.typeChangeUnfitTab_other': "Don't fit ({{count}})",
   'propertiesView.typeChangeConvertedTab_one': 'Converted ({{count}})',
   'propertiesView.typeChangeConvertedTab_other': 'Converted ({{count}})',
   'propertiesView.typeChangeCountsChanged': 'The values changed; check and confirm again.',

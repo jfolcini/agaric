@@ -509,7 +509,7 @@ const PROPERTY_MERGE_COUNTS_TOKEN = {
 const PROPERTY_TYPE_CHANGE_COUNTS_TOKEN = {
   kind: 'headed',
   head: 'property_type_change_counts',
-  attrKeys: ['converted', 'removed'],
+  attrKeys: ['converted', 'unfit'],
 } as const
 
 /** `resolve_page_by_alias`'s `(page_id, title)` hit (#3830). */

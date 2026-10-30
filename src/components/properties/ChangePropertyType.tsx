@@ -1,12 +1,12 @@
 /**
  * ChangePropertyType -- "Change type…" on a user property definition (#5841).
  * `change_property_type` converts each value the space's blocks hold under
- * the key, Trash included, and removes the ones the new type cannot hold, in
- * one op the toast can undo. The dialog shows `preview_property_type_change`'s
- * counts and the blocks behind each first, and the change sends the counts
- * back as its acknowledgement. When the backend refuses that (the values
- * changed since), the dialog previews again and asks again, as
- * `MergePropertyDefinition` does.
+ * the key, Trash included, and keeps the ones the new type cannot hold as
+ * text (#6206), in one op the toast can undo. The dialog shows
+ * `preview_property_type_change`'s counts and the blocks behind each first,
+ * and the change sends the counts back as its acknowledgement. When the
+ * backend refuses that (the values changed since), the dialog previews again
+ * and asks again, as `MergePropertyDefinition` does.
  */
 
 import { useInfiniteQuery } from '@tanstack/react-query'
@@ -226,10 +226,10 @@ export function ChangePropertyType({
         <>
           <div className="space-y-1" data-testid="property-type-change-counts">
             <p>{t('propertiesView.typeChangeConverts', { count: shown.counts.converted })}</p>
-            {shown.counts.removed > 0 && (
+            {shown.counts.unfit > 0 && (
               <p>
-                {t('propertiesView.typeChangeRemoves', {
-                  count: shown.counts.removed,
+                {t('propertiesView.typeChangeUnfit', {
+                  count: shown.counts.unfit,
                   type: shown.target.valueType,
                 })}
               </p>
@@ -278,7 +278,6 @@ export function ChangePropertyType({
               {t('action.cancel')}
             </Button>
             <Button
-              variant={shown !== null && shown.counts.removed > 0 ? 'destructive' : 'default'}
               disabled={shown === null || changing}
               onClick={() => {
                 // `change` reports its own failure; never rejects.
@@ -301,7 +300,7 @@ interface TypeChangeTabsProps {
   preview: Preview
 }
 
-/** The removed and the converted values, a tab each; a tab with none is disabled. */
+/** The values that don't fit and the converted ones, a tab each; a tab with none is disabled. */
 function TypeChangeTabs({
   spaceId,
   propertyKey,
@@ -309,10 +308,10 @@ function TypeChangeTabs({
   preview,
 }: TypeChangeTabsProps): React.ReactElement | null {
   const { t } = useTranslation()
-  const { converted, removed } = preview.counts
+  const { converted, unfit } = preview.counts
   const [picked, setPicked] = useState<PropertyTypeChangeKind | null>(null)
-  if (converted + removed === 0) return null
-  const tab = picked ?? (removed > 0 ? 'removed' : 'converted')
+  if (converted + unfit === 0) return null
+  const tab = picked ?? (unfit > 0 ? 'unfit' : 'converted')
   const values = (kind: PropertyTypeChangeKind) => (
     <TabsContent value={kind} className="pt-2">
       <TypeChangeValues
@@ -327,17 +326,17 @@ function TypeChangeTabs({
   return (
     <Tabs
       value={tab}
-      onValueChange={(next) => setPicked(next === 'converted' ? 'converted' : 'removed')}
+      onValueChange={(next) => setPicked(next === 'converted' ? 'converted' : 'unfit')}
     >
       <TabsList aria-label={t('propertiesView.typeChangeValuesLabel')}>
-        <TabsTrigger value="removed" disabled={removed === 0}>
-          {t('propertiesView.typeChangeRemovedTab', { count: removed })}
+        <TabsTrigger value="unfit" disabled={unfit === 0}>
+          {t('propertiesView.typeChangeUnfitTab', { count: unfit })}
         </TabsTrigger>
         <TabsTrigger value="converted" disabled={converted === 0}>
           {t('propertiesView.typeChangeConvertedTab', { count: converted })}
         </TabsTrigger>
       </TabsList>
-      {values('removed')}
+      {values('unfit')}
       {values('converted')}
     </Tabs>
   )

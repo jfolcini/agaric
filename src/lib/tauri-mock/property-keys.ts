@@ -468,19 +468,27 @@ function strColumnFor(valueType: unknown): string {
 }
 
 /**
- * `value_fields_under`: `value` in the slot a write under `valueType` uses. A
- * string's slot is the type's; under no type, or text, it is `value_text`, the
- * engine's own kind of it, as a rewrite's payload records it.
+ * `value` in the slot `reproject_property_row_from_engine` projects it into
+ * under `valueType`. A string is read as the type reads it (`coerce`) and
+ * takes the type's slot; under no type, or text, it is `value_text`, the
+ * engine's own kind of it, as a rewrite's payload records it; and one the type
+ * does not take stays in `value_text` (#6206).
  */
 export function fieldsUnder(value: HeldValue, valueType: unknown): ValueFields {
   const fields: ValueFields = Object.fromEntries(VALUE_SLOTS.map((slot) => [slot, null]))
+  const fit =
+    typeof value === 'string' && typeof valueType === 'string' ? coerce(value, valueType) : value
+  if (fit === null) {
+    fields['value_text'] = value
+    return fields
+  }
   const slot =
-    typeof value === 'string'
+    typeof fit === 'string'
       ? strColumnFor(valueType)
-      : typeof value === 'number'
+      : typeof fit === 'number'
         ? 'value_num'
         : 'value_bool'
-  fields[slot] = value
+  fields[slot] = fit
   return fields
 }
 
@@ -513,22 +521,16 @@ function applyValueWrite(spaceId: string, write: ValueWrite): void {
 }
 
 /**
- * A retyped key's other strings are projected under its new type, as
- * `reproject_property_row_from_engine` does through `coerce`: moved to its
- * slot, or, when the type does not take them, dropped; numbers and booleans
- * stay. KNOWN GAP: the mock has no engine to keep a dropped string, so a
- * change back does not show it again as the backend's does.
+ * A retyped key's other strings are projected under its new type: moved to
+ * its slot, or kept in `value_text` when the type does not take them; numbers
+ * and booleans stay.
  */
 function reprojectKey(spaceId: string, key: string): void {
   const valueType = declaredType(spaceId, key)
-  const projectedType = typeof valueType === 'string' ? valueType : 'text'
   for (const blockId of holders(spaceId, key)) {
     const held = properties.get(blockId)
     const value = heldValueOf(held?.get(key) ?? {})
-    if (typeof value !== 'string') continue
-    const fit = coerce(value, projectedType)
-    if (fit === null) held?.delete(key)
-    else held?.set(key, rowOf(key, fieldsUnder(fit, valueType)))
+    if (typeof value === 'string') held?.set(key, rowOf(key, fieldsUnder(value, valueType)))
   }
 }
 
