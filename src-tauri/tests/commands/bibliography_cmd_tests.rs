@@ -97,9 +97,9 @@ async fn import_bibliography_bibtex_happy_path_creates_typed_pages_1454() {
 
     assert_eq!(result.pages_created, 2, "warnings: {:?}", result.warnings);
     assert_eq!(result.entries_skipped, 0);
-    // Entry 1 sets all 8 properties; entry 2 sets citation-key,
-    // reference-type, authors, year = 4.
-    assert_eq!(result.properties_set, 12, "warnings: {:?}", result.warnings);
+    // Entry 1 sets every property; entry 2 sets citation-key,
+    // reference-type, title, authors and year.
+    assert_eq!(result.properties_set, 14, "warnings: {:?}", result.warnings);
     assert!(
         result.warnings.is_empty(),
         "clean input must import warning-free: {:?}",
@@ -122,6 +122,10 @@ async fn import_bibliography_bibtex_happy_path_creates_typed_pages_1454() {
     assert_eq!(
         doe_props["reference-type"].value_text.as_deref(),
         Some("article")
+    );
+    assert_eq!(
+        doe_props["title"].value_text.as_deref(),
+        Some("A Study of Things")
     );
     assert_eq!(
         doe_props["authors"].value_text.as_deref(),
@@ -155,6 +159,10 @@ async fn import_bibliography_bibtex_happy_path_creates_typed_pages_1454() {
     assert_eq!(
         smith_props["reference-type"].value_text.as_deref(),
         Some("book")
+    );
+    assert_eq!(
+        smith_props["title"].value_text.as_deref(),
+        Some("Another Work")
     );
     assert!(
         !smith_props.contains_key("doi"),
@@ -205,7 +213,7 @@ async fn import_bibliography_csl_json_happy_path_1454() {
     .unwrap();
 
     assert_eq!(result.pages_created, 1, "warnings: {:?}", result.warnings);
-    assert_eq!(result.properties_set, 8);
+    assert_eq!(result.properties_set, 9);
 
     let page = page_id_by_title(&pool, "Doe 2020")
         .await
@@ -217,6 +225,10 @@ async fn import_bibliography_csl_json_happy_path_1454() {
         Some("article-journal")
     );
     assert_eq!(props["authors"].value_text.as_deref(), Some("Doe, Jane"));
+    assert_eq!(
+        props["title"].value_text.as_deref(),
+        Some("A Study of Things")
+    );
     assert_eq!(props["year"].value_num, Some(2020.0));
     assert_eq!(
         props["journal"].value_text.as_deref(),
@@ -484,6 +496,39 @@ async fn import_bibliography_falls_back_to_citation_key_title_1454() {
     assert_eq!(result.pages_created, 2, "warnings: {:?}", result.warnings);
     assert!(page_id_by_title(&pool, "no-author").await.is_some());
     assert!(page_id_by_title(&pool, "no-year").await.is_some());
+
+    mat.shutdown();
+}
+
+/// #6032 — the paper title is a property only when the entry has one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_bibliography_entry_without_title_stores_none_6032() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let src = "@misc{untitled, author={Doe, Jane}, year={2000}}\n\
+               @misc{blank, author={Roe, Rita}, year={2001}, title={ }}";
+    let result = import_bibliography_inner(
+        &pool,
+        DEV,
+        &mat,
+        src.into(),
+        Some("bibtex".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.pages_created, 2, "warnings: {:?}", result.warnings);
+    // citation-key, reference-type, authors and year, per entry.
+    assert_eq!(result.properties_set, 8, "warnings: {:?}", result.warnings);
+
+    for title in ["Doe 2000", "Roe 2001"] {
+        let page = page_id_by_title(&pool, title).await.expect(title);
+        let props = props_of(&pool, &page).await;
+        assert!(!props.contains_key("title"), "{title}: {props:?}");
+    }
 
     mat.shutdown();
 }
@@ -1005,7 +1050,7 @@ async fn import_bibliography_keeps_existing_year_declaration_4382() {
 /// #4382 / #4395 review note 2 — an in-use **text** key is skipped too, and
 /// the warning tells the truth about what declaring it would have cost.
 ///
-/// Seven of the eight [`BIB_PROPERTY_DEFS`] keys prefer `text`, and for
+/// Every [`BIB_PROPERTY_DEFS`] key but `year` prefers `text`, and for
 /// those the `year` wording ("would reject every later text edit") is
 /// false: a `text` declaration accepts `value_text` happily. What a `text`
 /// declaration *does* reject is a `value_num` / `value_date` / `value_bool`

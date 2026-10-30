@@ -45,7 +45,7 @@ use super::super::*;
 pub const IMPORT_BIB_CHUNK_ENTRIES: usize = 200;
 
 /// The typed property definitions a bibliography import *prefers* for its
-/// eight keys. A preference, not a guarantee: the space's existing shape
+/// keys. A preference, not a guarantee: the space's existing shape
 /// for a key always wins, and the import coerces its own values to that
 /// shape instead (see [`declare_bib_property_defs`] for the two ways a key
 /// can already have a shape, and why declaring over either would be
@@ -53,6 +53,7 @@ pub const IMPORT_BIB_CHUNK_ENTRIES: usize = 200;
 const BIB_PROPERTY_DEFS: &[(&str, &str)] = &[
     ("citation-key", "text"),
     ("reference-type", "text"),
+    ("title", "text"),
     ("authors", "text"),
     ("year", "number"),
     ("doi", "text"),
@@ -94,7 +95,7 @@ fn citation_display_name(entry: &BibEntry) -> String {
 /// yet, and fold what was declared into `decls` (#4382).
 ///
 /// `decls` arrives holding the `property_definitions` rows that already
-/// exist in the space for the import's eight keys, read from `tx`. A key
+/// exist in the space for the import's keys, read from `tx`. A key
 /// already in `decls` is left alone — `INSERT OR IGNORE` would no-op anyway.
 ///
 /// # Why an UNdeclared key can also be unsafe to declare
@@ -104,8 +105,8 @@ fn citation_display_name(entry: &BibEntry) -> String {
 /// import creates. The dangerous case is a key with existing **values** and no
 /// declaration — the ordinary state, since an undeclared key is fully
 /// permissive: `validate_property_value` skips its type check when
-/// `declaration` is `None`, so for a non-reserved key (none of the eight
-/// is reserved) *any* of the five typed slots is accepted. `set_property`
+/// `declaration` is `None`, so for a non-reserved key (none of the import's
+/// keys is reserved) *any* of the five typed slots is accepted. `set_property`
 /// and the MCP `set_property` tool both expose all five.
 ///
 /// `year` is the severe example: a user keeping `"circa 1920"` has no
@@ -198,7 +199,7 @@ async fn declare_bib_property_defs(
             );
             // The consequence of declaring differs by preferred type, and
             // the warning has to name the one the user would actually hit
-            // (#4395 review note 2). Seven of the eight keys are `text`,
+            // (#4395 review note 2). Every key but `year` is `text`,
             // for which "would reject every later text edit" is simply
             // false — see the type-specific paragraph in this function's
             // docblock.
@@ -524,6 +525,7 @@ fn entry_property_values(entry: &BibEntry) -> Vec<(&'static str, String)> {
         props.push(("year", year.to_string()));
     }
     for (key, value) in [
+        ("title", &entry.title),
         ("doi", &entry.doi),
         ("url", &entry.url),
         ("journal", &entry.journal),
