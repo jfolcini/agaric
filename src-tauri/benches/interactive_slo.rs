@@ -2101,34 +2101,48 @@ async fn seed_page_mode_page(pool: &SqlitePool, n: usize) -> PageModePage {
 /// counts: the rows `load_page_subtree` returns, the blocks or targets each
 /// batch read answers for. Ids go in chunks of [`MAX_BATCH_BLOCK_IDS`], which
 /// every batch command rejects past, so a page past it costs one call per chunk.
-async fn page_mode_read(pool: &SqlitePool, command: &str, page: &PageModePage) -> usize {
-    if command == "load_page_subtree" {
-        let subtree = load_page_subtree_inner(pool, PAGE_MODE_PAGE_ID, SLO_SPACE_ID).await;
-        return subtree.unwrap().blocks.len();
-    }
+async fn page_mode_read(pool: &SqlitePool, read: PageModeRead, page: &PageModePage) -> usize {
     let scope = SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID));
-    let ids = if command == "batch_resolve" {
-        &page.targets
-    } else {
-        &page.blocks
-    };
     let mut answered = 0;
-    for chunk in ids.chunks(MAX_BATCH_BLOCK_IDS) {
-        let chunk = chunk.to_vec();
-        answered += match command {
-            "get_batch_properties" => get_batch_properties_inner(pool, chunk).await.unwrap().len(),
-            "list_attachments_batch" => list_attachments_batch_inner(pool, chunk)
-                .await
-                .unwrap()
-                .len(),
-            "batch_resolve" => batch_resolve_inner(pool, chunk, &scope)
-                .await
-                .unwrap()
-                .len(),
-            other => panic!("not a page-mode read: {other}"),
-        };
+    match read {
+        PageModeRead::Subtree => {
+            let subtree = load_page_subtree_inner(pool, PAGE_MODE_PAGE_ID, SLO_SPACE_ID).await;
+            answered = subtree.unwrap().blocks.len();
+        }
+        PageModeRead::Properties => {
+            for chunk in page.blocks.chunks(MAX_BATCH_BLOCK_IDS) {
+                answered += get_batch_properties_inner(pool, chunk.to_vec())
+                    .await
+                    .unwrap()
+                    .len();
+            }
+        }
+        PageModeRead::Attachments => {
+            for chunk in page.blocks.chunks(MAX_BATCH_BLOCK_IDS) {
+                answered += list_attachments_batch_inner(pool, chunk.to_vec())
+                    .await
+                    .unwrap()
+                    .len();
+            }
+        }
+        PageModeRead::Resolve => {
+            for chunk in page.targets.chunks(MAX_BATCH_BLOCK_IDS) {
+                answered += batch_resolve_inner(pool, chunk.to_vec(), &scope)
+                    .await
+                    .unwrap()
+                    .len();
+            }
+        }
     }
     answered
+}
+
+#[derive(Clone, Copy)]
+enum PageModeRead {
+    Subtree,
+    Properties,
+    Attachments,
+    Resolve,
 }
 
 /// #5691 — the batch reads page mode makes of a page of `n` blocks in the 100K
@@ -2142,17 +2156,22 @@ fn time_page_mode_reads(c: &mut Criterion, n: usize) {
     let pool = rt.block_on(fresh_pool(&dir, &format!("slo_page_mode_reads_{n}")));
     let page = rt.block_on(seed_page_mode_page(&pool, n));
     let reads = [
-        ("load_page_subtree", n),
-        ("get_batch_properties", n.div_ceil(PAGE_MODE_PROPERTY_EVERY)),
+        ("load_page_subtree", PageModeRead::Subtree, n),
+        (
+            "get_batch_properties",
+            PageModeRead::Properties,
+            n.div_ceil(PAGE_MODE_PROPERTY_EVERY),
+        ),
         (
             "list_attachments_batch",
+            PageModeRead::Attachments,
             n.div_ceil(PAGE_MODE_ATTACHMENT_EVERY),
         ),
-        ("batch_resolve", n),
+        ("batch_resolve", PageModeRead::Resolve, n),
     ];
-    for (command, expected) in reads {
+    for (command, read, expected) in reads {
         assert_eq!(
-            rt.block_on(page_mode_read(&pool, command, &page)),
+            rt.block_on(page_mode_read(&pool, read, &page)),
             expected,
             "{command} @ {n}-block page: untimed probe must answer for every seeded block (#5691)"
         );
@@ -2162,12 +2181,12 @@ fn time_page_mode_reads(c: &mut Criterion, n: usize) {
     let accs = reads.map(|_| Acc::new());
     let mut group = c.benchmark_group("interactive_slo");
     group.sample_size(SAMPLE_SIZE);
-    for ((command, _), acc) in reads.into_iter().zip(&accs) {
+    for ((command, read, _), acc) in reads.into_iter().zip(&accs) {
         group.bench_function(format!("{command}_{n}_page_in_100k"), |b| {
             b.to_async(&rt).iter_custom(|iters| async move {
                 let start = Instant::now();
                 for _ in 0..iters {
-                    page_mode_read(pool_ref, command, page_ref).await;
+                    page_mode_read(pool_ref, read, page_ref).await;
                 }
                 let elapsed = start.elapsed();
                 acc.record(elapsed, iters);
@@ -2177,7 +2196,7 @@ fn time_page_mode_reads(c: &mut Criterion, n: usize) {
     }
     group.finish();
 
-    for ((command, _), acc) in reads.into_iter().zip(&accs) {
+    for ((command, _, _), acc) in reads.into_iter().zip(&accs) {
         report_measurement_only(&format!("{command} @ {n}-block page"), acc);
     }
 }
