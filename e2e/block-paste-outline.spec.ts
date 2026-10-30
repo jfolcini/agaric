@@ -1,7 +1,9 @@
+import { blockRow } from './domain'
 import {
   blurEditors,
   expect,
   focusBlock,
+  focusBlockById,
   ipc,
   openPage,
   readClipboard,
@@ -63,6 +65,16 @@ const CHILD_TEXT = 'a child that travels with its parent'
 interface Row {
   id: string
   content: string | null
+}
+
+/** The list style the backend holds for block `blockId`, or null. */
+async function listStyle(page: import('@playwright/test').Page, blockId: string) {
+  const props = await ipc<Array<{ key: string; value_text: string | null }>>(
+    page,
+    'get_properties',
+    { blockId },
+  )
+  return props.find((p) => p.key === 'listStyle')?.value_text ?? null
 }
 
 async function childrenOf(page: import('@playwright/test').Page, parentId: string) {
@@ -171,7 +183,11 @@ test.describe('Copy/paste block outline (keyboard + system clipboard, #913) @edi
     await expect(page.getByTestId('batch-toolbar')).toContainText('1')
     await page.keyboard.press('Control+c')
     await expect.poll(() => readClipboard(page)).toContain(GS1_TEXT)
-    const lines = (await readClipboard(page)).trimEnd().split('\n')
+    // Two plain blocks in the Document dialect (#6190), a blank line between them.
+    const lines = (await readClipboard(page))
+      .trimEnd()
+      .split('\n')
+      .filter((line) => line !== '')
     // Two lines: the parent at column 0, the child indented beneath it.
     expect(lines).toHaveLength(2)
     expect(lines[0]?.startsWith(' ')).toBe(false) // parent flush-left
@@ -284,12 +300,12 @@ test.describe('Copy/paste block outline (keyboard + system clipboard, #913) @edi
   })
 })
 
-// #5140 Phase 3b — copy renders the outline in the backend's source grammar
-// (`get_blocks_source`) and paste parses it back there (`paste_blocks`), so a
+// #5140 Phase 3b — copy renders the outline in the Document dialect
+// (`get_blocks_source`, #6190) and paste parses it back there (`paste_blocks`), so a
 // multi-line block stays one block and a copied subtree stays nested wherever
 // it is pasted. Every assertion reads the mock backend back.
 
-test.describe('Copy/paste through the source grammar (#5140 Phase 3b) @editor', () => {
+test.describe('Copy/paste through the Markdown grammar (#5140 Phase 3b) @editor', () => {
   test.beforeEach(async ({ context, page }) => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write'])
     await waitForBoot(page)
@@ -353,5 +369,47 @@ test.describe('Copy/paste through the source grammar (#5140 Phase 3b) @editor', 
     await expect.poll(async () => (await copies()).length).toBe(1)
     const copy = (await copies())[0]
     expect((await childrenOf(page, copy?.id ?? '')).map((r) => r.content)).toEqual([CHILD_TEXT])
+  })
+
+  test('`- a` and `- b` pasted into an empty block make two bulleted blocks, which stay bulleted (#6190)', async ({
+    page,
+  }) => {
+    const empty = await ipc<{ id: string }>(page, 'create_block', {
+      blockType: 'content',
+      content: '',
+      parentId: PAGE_ID,
+      index: null,
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      blockId: null,
+    })
+    await openPage(page, PAGE)
+    const live = await focusBlockById(page, empty.id)
+
+    await pasteText(live, '- a\n- b')
+    await blurEditors(page)
+
+    // The empty block takes the first item, its style included; the second lands after it.
+    const pastedRows = async () => {
+      const rows = await childrenOf(page, PAGE_ID)
+      const at = rows.findIndex((r) => r.id === empty.id)
+      return rows.slice(at, at + 2)
+    }
+    const pasted = async () =>
+      Promise.all((await pastedRows()).map(async (r) => [r.content, await listStyle(page, r.id)]))
+    const bulleted = [
+      ['a', 'bullet'],
+      ['b', 'bullet'],
+    ]
+    await expect.poll(pasted).toEqual(bulleted)
+    const ids = (await pastedRows()).map((r) => r.id)
+    for (const id of ids) {
+      await expect(blockRow(page, id).getByTestId('list-marker')).toBeVisible()
+    }
+
+    await reopenPage(page, PAGE)
+    expect(await pasted()).toEqual(bulleted)
+    for (const id of ids) {
+      await expect(blockRow(page, id).getByTestId('list-marker')).toBeVisible()
+    }
   })
 })

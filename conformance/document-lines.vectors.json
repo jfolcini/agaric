@@ -1014,7 +1014,151 @@
       ]
     }
   ],
-  "description": "#5691 — Edit as Markdown's Document dialect, one case per hard case of the line-split format: the tree, each block under its id, the text a page holding it is written as, and the id each line of that text carries; and under `typed`, text typed with no blank line between blocks and the tree it reads as, ids aside. Authored by `markdown_document_tests.rs` with CONFORMANCE_UPDATE=1; never hand-edit.",
+  "description": "#5691 — Edit as Markdown's Document dialect, one case per hard case of the line-split format: the tree, each block under its id, the text a page holding it is written as, and the id each line of that text carries; under `typed`, text typed with no blank line between blocks and the tree it reads as, ids aside; and under `pasted`, text pasted from outside and the tree a paste reads it as (#6190). Authored by `markdown_document_tests.rs` with CONFORMANCE_UPDATE=1; never hand-edit.",
+  "pasted": [
+    {
+      "name": "D2: `-` and `*` make bulleted blocks and `1.` a numbered one; D4: `+` a plain child",
+      "text": "- a\n* b\n1. c\n   + d\n",
+      "tree": [
+        {
+          "content": "a",
+          "depth": 0,
+          "properties": {
+            "listStyle": "bullet"
+          }
+        },
+        {
+          "content": "b",
+          "depth": 0,
+          "properties": {
+            "listStyle": "bullet"
+          }
+        },
+        {
+          "content": "c",
+          "depth": 0,
+          "properties": {
+            "listStyle": "ordered"
+          }
+        },
+        {
+          "content": "d",
+          "depth": 1,
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "name": "D3: a task has no list style, and its property lines are its own",
+      "text": "- [ ] t\n  key:: v\n1. [x] u\n",
+      "tree": [
+        {
+          "content": "t",
+          "depth": 0,
+          "properties": {
+            "key": "v",
+            "todo_state": "TODO"
+          }
+        },
+        {
+          "content": "u",
+          "depth": 0,
+          "properties": {
+            "todo_state": "DONE"
+          }
+        }
+      ]
+    },
+    {
+      "name": "front matter is no page's: a break, a paragraph and a break",
+      "text": "---\ntitle: x\n---\n",
+      "tree": [
+        {
+          "content": "---",
+          "depth": 0,
+          "properties": {}
+        },
+        {
+          "content": "title: x",
+          "depth": 0,
+          "properties": {}
+        },
+        {
+          "content": "---",
+          "depth": 0,
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "name": "a property line before any block is text",
+      "text": "key:: v\n\npara\n",
+      "tree": [
+        {
+          "content": "key:: v",
+          "depth": 0,
+          "properties": {}
+        },
+        {
+          "content": "para",
+          "depth": 0,
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "name": "a property line with no value is text",
+      "text": "- a\n  note::\n",
+      "tree": [
+        {
+          "content": "a\nnote::",
+          "depth": 0,
+          "properties": {
+            "listStyle": "bullet"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a fence ends with the list item holding it",
+      "text": "- ```\n  code\nafter\n\nnext\n",
+      "tree": [
+        {
+          "content": "```\ncode\nafter",
+          "depth": 0,
+          "properties": {
+            "listStyle": "bullet"
+          }
+        },
+        {
+          "content": "next",
+          "depth": 0,
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "name": "a trailing `^word` that is no block id is text, and a block id, in either case, is not",
+      "text": "a ^word\n\nb ^01J0000000000000000000000B\n\nc ^01j0000000000000000000000c\n",
+      "tree": [
+        {
+          "content": "a ^word",
+          "depth": 0,
+          "properties": {}
+        },
+        {
+          "content": "b",
+          "depth": 0,
+          "properties": {}
+        },
+        {
+          "content": "c",
+          "depth": 0,
+          "properties": {}
+        }
+      ]
+    }
+  ],
   "typed": [
     {
       "name": "a heading typed under a paragraph starts its own block",

@@ -1,11 +1,12 @@
 /**
  * #5140 Phase 3b — mock `get_blocks_source` and `paste_blocks`, the clipboard
- * pair. Both are approximations of the backend grammar (list markers, headings,
- * paragraphs, indentation, continuation lines, a checkbox as the task state;
- * no fences, anchors, list-style markers, properties or names), so what is
- * pinned here is the shape the Playwright specs rely on: a copied subtree
- * pastes back as the same tree. Everything is read back through the mock's own
- * read commands. Backend parity for `paste_blocks` is pinned by
+ * pair, both in the Document dialect (#6190). The copy approximates the
+ * backend's (no anchors or names); the paste reads text as the backend does,
+ * list markers as list styles and a checkbox as the task state, but keeps
+ * property lines as text. What is pinned here is the shape the Playwright
+ * specs rely on: a copied subtree pastes back as the same tree, list styles
+ * included. Everything is read back through the mock's own read commands.
+ * Backend parity for `paste_blocks` is pinned by
  * `conformance/fixtures/paste_blocks.json`.
  */
 
@@ -52,6 +53,11 @@ function put(
   // `childrenOf` lists the asked space only, and a page carries its blocks' space.
   if (type === 'page') row['space_id'] = SPACE
   return row
+}
+
+/** The list style block `blockId` stores, or null. */
+function styleOf(blockId: string): unknown {
+  return properties.get(blockId)?.get('listStyle')?.['value_text'] ?? null
 }
 
 function childrenOf(parentId: string): Row[] {
@@ -106,24 +112,35 @@ describe('tauri-mock clipboard pair', () => {
   })
 
   describe('get_blocks_source', () => {
-    it('renders a root alone: its continuation lines indented under the bullet, no children', () => {
-      expect(source([CODE], false)).toBe('- ```\n  first line\n  second line\n  ```\n')
+    it('renders a plain root alone as its own paragraph, no children', () => {
+      expect(source([CODE], false)).toBe(`${FENCED}\n`)
     })
 
     it('renders the content subtree two columns deeper per level, skipping a nested page', () => {
-      expect(source([CODE], true)).toBe(
-        '- ```\n  first line\n  second line\n  ```\n  - child\n    - grandchild\n',
-      )
+      expect(source([CODE], true)).toBe(`${FENCED}\n\n  child\n\n    grandchild\n`)
     })
 
     it('renders roots in document order and drops a selected descendant', () => {
       expect(source([B, CHILD, A, CODE], true)).toBe(
-        '- alpha\n- ```\n  first line\n  second line\n  ```\n  - child\n    - grandchild\n- beta\n',
+        `alpha\n\n${FENCED}\n\n  child\n\n    grandchild\n\nbeta\n`,
+      )
+    })
+
+    it('writes a list marker, numbered by its run, a checkbox, and `+` for a plain block under a marked one (#6190)', () => {
+      const style = (value: string) =>
+        new Map([['listStyle', { key: 'listStyle', value_text: value }]])
+      properties.set(A, style('bullet'))
+      properties.set(CODE, style('ordered'))
+      properties.set(B, style('ordered'))
+      ;(blocks.get(CHILD) as Record<string, unknown>)['todo_state'] = 'TODO'
+
+      expect(source([A, CODE, B], true)).toBe(
+        '- alpha\n1. ```\n   first line\n   second line\n   ```\n   - [ ] child\n     + grandchild\n2. beta\n',
       )
     })
 
     it("skips trashed ids and ids off the first live id's page", () => {
-      expect(source([TRASHED, A, ELSEWHERE, MISSING], false)).toBe('- alpha\n')
+      expect(source([TRASHED, A, ELSEWHERE, MISSING], false)).toBe('alpha\n')
     })
 
     it('answers the empty string when nothing is left to copy', () => {
@@ -163,7 +180,7 @@ describe('tauri-mock clipboard pair', () => {
       ])
     })
 
-    it('reads text that does not open with a bullet by the same grammar: a heading owns what follows, lines join into a paragraph, `*` bullets nest', () => {
+    it('reads text that does not open with a bullet by the same grammar: a heading owns nothing, lines join into a paragraph, `*` bullets nest', () => {
       const pasted = paste(A, {
         kind: 'text',
         text: '## Plan\n\nIntro line one\nline two\n\n* first\n  * nested\n\nAfter',
@@ -171,22 +188,33 @@ describe('tauri-mock clipboard pair', () => {
 
       expect(pasted.map((r) => [r.content, r.parent_id])).toEqual([
         ['## Plan', PAGE],
-        ['Intro line one\nline two', pasted[0]?.id],
-        ['first', pasted[0]?.id],
+        ['Intro line one\nline two', PAGE],
+        ['first', PAGE],
         ['nested', pasted[2]?.id],
-        ['After', pasted[0]?.id],
+        ['After', PAGE],
       ])
     })
 
-    it('starts a block at any list marker and nests by the content column', () => {
-      const pasted = paste(A, { kind: 'text', text: '1. one\n   + two\n2) three\n-\tfour' })
+    it('starts a block at any list marker, nests by the content column, and stores its list style (#6190)', () => {
+      const pasted = paste(A, { kind: 'text', text: '1. one\n   + two\n2) three\n-\tfour\n* five' })
 
       expect(pasted.map((r) => [r.content, r.parent_id])).toEqual([
         ['one', PAGE],
         ['two', pasted[0]?.id],
         ['three', PAGE],
         ['four', PAGE],
+        ['five', PAGE],
       ])
+      expect(childrenOf(PAGE).map((r) => [r.content, styleOf(r.id)])).toEqual([
+        ['alpha', null],
+        ['one', 'ordered'],
+        ['three', 'ordered'],
+        ['four', 'bullet'],
+        ['five', 'bullet'],
+        [FENCED, null],
+        ['beta', null],
+      ])
+      expect(styleOf(pasted[1]?.id ?? '')).toBeNull()
     })
 
     it.each([
@@ -226,7 +254,7 @@ describe('tauri-mock clipboard pair', () => {
         '# H\n2. b',
         [
           ['# H', 'Home'],
-          ['b', '# H'],
+          ['b', 'Home'],
         ],
       ],
       // Inside a list item the same rule holds: a line at the item's content
@@ -296,31 +324,44 @@ describe('tauri-mock clipboard pair', () => {
       ])
     })
 
-    it('pastes what get_blocks_source copied back as the same tree', () => {
+    it('pastes what get_blocks_source copied back as the same tree, list styles included', () => {
+      properties.set(CHILD, new Map([['listStyle', { key: 'listStyle', value_text: 'ordered' }]]))
       paste(B, { kind: 'text', text: source([CODE], true) })
 
+      const copy = childrenOf(PAGE).at(-1) as Row
       expect(tree(PAGE).at(-1)).toEqual({
         content: FENCED,
         children: [{ content: 'child', children: [{ content: 'grandchild', children: [] }] }],
       })
+      const [child] = childrenOf(copy.id)
+      const [grandchild] = childrenOf(child?.id ?? '')
+      expect([copy.id, child?.id, grandchild?.id].map((at) => styleOf(at ?? ''))).toEqual([
+        null,
+        'ordered',
+        null,
+      ])
     })
 
-    it('appends one create op per pasted block and returns their refs', () => {
+    it("appends a create op per pasted block, then its list style's, and returns their refs", () => {
       const resp = dispatch('paste_blocks', {
         anchorBlockId: A,
         input: { kind: 'text', text: '- x\n  - y' },
       }) as { blocks: Row[]; op_refs: Array<{ device_id: string; seq: number }> }
 
-      const creates = opLog.filter((op) => op.op_type === 'create_block')
-      expect(resp.op_refs).toEqual(creates.map((op) => ({ device_id: op.device_id, seq: op.seq })))
-      expect(creates).toHaveLength(2)
+      expect(resp.op_refs).toEqual(opLog.map((op) => ({ device_id: op.device_id, seq: op.seq })))
+      expect(opLog.map((op) => op.op_type)).toEqual([
+        'create_block',
+        'set_property',
+        'create_block',
+        'set_property',
+      ])
     })
 
     // #5160 D4 — a paste into the anchor's text.
     it('splices into the anchor: it becomes the first block, whose children follow its own, and the text after the cursor ends the last', () => {
       const resp = dispatch('paste_blocks', {
         anchorBlockId: CODE,
-        input: { kind: 'text', text: '# Title\n\nIntro\n\n# Next\n\nLast' },
+        input: { kind: 'text', text: '# Title\n\n  Intro\n\n# Next\n\n  Last' },
         splice: { before: 'Hello ', after: 'world' },
       }) as { blocks: Row[]; op_refs: Array<{ device_id: string; seq: number }> }
 

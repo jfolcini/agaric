@@ -42,32 +42,44 @@ paste:
     content: Clothes
     depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: Socks
     depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: Rain jacket
     depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: Documents
     depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: Passport
     depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: "Budget: 300 €"
     depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
 source:
   blocks:
     - block_anchor: ~

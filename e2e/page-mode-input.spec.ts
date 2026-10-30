@@ -1,8 +1,9 @@
 /**
  * Page mode (#5691) takes in what block mode does, against the mock backend:
  * Markdown text pasted from outside comes in as blocks at their depths, with
- * their marks, read back from the backend and again after leaving the page and
- * coming back; `:` opens the emoji picker, whose Enter inserts the emoji, and
+ * their marks, and a list's items as bulleted blocks as block mode's paste
+ * makes them (#6190), read back from the backend and again after leaving the
+ * page and coming back; `:` opens the emoji picker, whose Enter inserts the emoji, and
  * which its setting turns off; and the `{{query` hint, whose Tab takes it
  * rather than indenting the block.
  */
@@ -77,6 +78,26 @@ async function backend(page: Page, pageId: string): Promise<Array<[string, numbe
   }
   walk(pageId, 0)
   return out
+}
+
+/** The page's top-level blocks as the backend holds them, as `[text, list style]`. */
+async function listStyles(page: Page, pageId: string): Promise<Array<[string, string | null]>> {
+  const { blocks } = await ipc<{
+    blocks: Array<{ id: string; parent_id: string; position: number; content: string | null }>
+  }>(page, 'load_page_subtree', { rootBlockId: pageId, scope: SCOPE })
+  const top = blocks
+    .filter((b) => b.parent_id === pageId)
+    .toSorted((x, y) => x.position - y.position)
+  return Promise.all(
+    top.map(async (b): Promise<[string, string | null]> => {
+      const props = await ipc<Array<{ key: string; value_text: string | null }>>(
+        page,
+        'get_properties',
+        { blockId: b.id },
+      )
+      return [b.content ?? '', props.find((p) => p.key === 'listStyle')?.value_text ?? null]
+    }),
+  )
 }
 
 /** The document as shown: each block's text and depth. */
@@ -169,6 +190,30 @@ test.describe('page mode takes in what block mode does (#5691) @editor @pages', 
         ['link', 0],
         ['end', 0],
       ])
+  })
+
+  test('a pasted `- a` and `- b` make two bulleted blocks, as block mode’s paste does, and stay so (#6190)', async ({
+    page,
+  }) => {
+    const title = 'List pasted'
+    const pageId = await seedRows(page, title, [[0, '']])
+    await openInPageMode(page, title, 1)
+    await caretAtEnd(page, 0)
+
+    await pasteFromOutside(page, '- a\n- b')
+
+    const bulleted: Array<[string, string | null]> = [
+      ['a', 'bullet'],
+      ['b', 'bullet'],
+    ]
+    await expect.poll(() => listStyles(page, pageId)).toEqual(bulleted)
+    const markers = page.locator(`${EDITOR} [data-page-block] > [data-testid="list-marker"]`)
+    await expect(markers).toHaveCount(2)
+
+    await openViaPalette(page, 'Getting Started')
+    await openInPageMode(page, title, 2)
+    expect(await listStyles(page, pageId)).toEqual(bulleted)
+    await expect(markers).toHaveCount(2)
   })
 
   test('`:` opens the emoji picker, whose Enter inserts the emoji and leaves the block whole, as saved', async ({

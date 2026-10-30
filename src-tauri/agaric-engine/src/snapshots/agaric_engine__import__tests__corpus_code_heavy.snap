@@ -60,42 +60,42 @@ paste:
     properties: []
   - block_anchor: ~
     content: "Run the migration first:"
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: "```bash\n# comment, not a heading\n- not a bullet\npsql -f migrate.sql\n```"
-    depth: 1
+    depth: 0
     is_code: true
     properties: []
   - block_anchor: ~
     content: "Then check the config:"
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: "~~~yaml\n- name: web\n  replicas: 3\n~~~"
-    depth: 1
+    depth: 0
     is_code: true
     properties: []
   - block_anchor: ~
     content: "How to document a snippet:"
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: "````md\n```js\nconsole.log(\"hi\")\n```\n- item inside the example\n````"
-    depth: 1
+    depth: 0
     is_code: true
     properties: []
   - block_anchor: ~
     content: "Old-style indented code:"
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: make release
-    depth: 2
+    depth: 1
     is_code: false
     properties: []
 source:

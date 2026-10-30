@@ -69,49 +69,57 @@ paste:
     properties: []
   - block_anchor: ~
     content: "**Date:** 24 September 2026"
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: "## Agenda"
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: "Welcome  "
-    depth: 2
+    depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: "Roadmap review  "
-    depth: 2
+    depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: "Q4 bets  "
-    depth: 3
+    depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: Retro
-    depth: 2
+    depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: "## Decisions"
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: "Move standup to 10:00  "
-    depth: 2
+    depth: 0
     is_code: false
     properties:
       - - listStyle
         - ordered
   - block_anchor: ~
     content: Adopt the new on-call rota
-    depth: 2
+    depth: 0
     is_code: false
     properties:
       - - listStyle

@@ -450,7 +450,8 @@ async fn paste_blocks_keeps_a_ref_id_of_another_space_as_text() {
         .unwrap();
     let anchor = dup_child(&pool, &mat, &page, "anchor").await;
     settle(&mat).await;
-    let text = format!("- copied\n  reviewer:: {elsewhere}\n");
+    // A `+` item is a plain block (#6190), so its only rows are its property lines.
+    let text = format!("+ copied\n  reviewer:: {elsewhere}\n");
 
     let pasted = paste_blocks_inner(&pool, DEV, &mat, anchor, paste_text(&text), None)
         .await
@@ -703,8 +704,9 @@ async fn paste_blocks_keeps_a_refused_value_as_text_with_a_warning() {
         .unwrap();
     let anchor = dup_child(&pool, &mat, &page, "anchor").await;
     settle(&mat).await;
-    let text = "- a\n  priority:: high\n- b\n  due:: tomorrow\n- c\n  Priority:: 1\n  \
-                reviewer:: Alice\n- d\n  key:: \n";
+    // `+` items are plain blocks (#6190), so a block's only rows are its property lines.
+    let text = "+ a\n  priority:: high\n+ b\n  due:: tomorrow\n+ c\n  Priority:: 1\n  \
+                reviewer:: Alice\n+ d\n  key:: \n";
 
     let pasted = paste_blocks_inner(&pool, DEV, &mat, anchor.clone(), paste_text(text), None)
         .await

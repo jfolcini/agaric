@@ -46,24 +46,26 @@ paste:
       - - priority
         - "1"
   - block_anchor: 01J0000000000000000000000B
-    content: Book flights
+    content: "- Book flights"
     depth: 1
     is_code: false
     properties:
       - - listStyle
         - bullet
   - block_anchor: 01J0000000000000000000000C
-    content: Pick dates
+    content: 1. Pick dates
     depth: 1
     is_code: false
     properties:
       - - listStyle
-        - ordered
+        - bullet
   - block_anchor: 01J0000000000000000000000D
     content: "A block with a [[Page]] link and #tag"
     depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
 source:
   blocks:
     - block_anchor: 01J0000000000000000000000A

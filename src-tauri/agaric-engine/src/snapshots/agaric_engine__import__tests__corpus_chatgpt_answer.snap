@@ -89,28 +89,32 @@ paste:
     properties: []
   - block_anchor: ~
     content: "**Remove dead plants** – they harbour pests."
-    depth: 1
+    depth: 0
     is_code: false
     properties:
       - - listStyle
         - ordered
   - block_anchor: ~
     content: "**Rake leaves** into a compost pile."
-    depth: 1
+    depth: 0
     is_code: false
     properties:
       - - listStyle
         - ordered
   - block_anchor: ~
     content: Shred them first so they break down faster.
-    depth: 2
+    depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: Avoid diseased leaves.
-    depth: 2
+    depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: "### 2. Protect the soil"
     depth: 0
@@ -118,32 +122,36 @@ paste:
     properties: []
   - block_anchor: ~
     content: Add a 5–8 cm layer of mulch.
-    depth: 1
+    depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: Plant a cover crop such as winter rye.
-    depth: 1
+    depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: "---"
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: "**Tip:** you can check your soil with:"
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: "```bash\nsoil-test --ph --moisture\n```"
-    depth: 1
+    depth: 0
     is_code: true
     properties: []
   - block_anchor: ~
     content: "Let me know if you'd like a week-by-week schedule!"
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
 source:

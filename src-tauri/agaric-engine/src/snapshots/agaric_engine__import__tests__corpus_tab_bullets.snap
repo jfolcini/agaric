@@ -32,22 +32,30 @@ paste:
     content: Groceries
     depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: Milk
     depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: Eggs
     depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: Call the plumber
     depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
 source:
   blocks:
     - block_anchor: ~

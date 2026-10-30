@@ -13,12 +13,13 @@
  *     block-creation path: `dispatchBlockCommand('PASTE_BLOCKS', …)` → the
  *     focused BlockTree's `pasteBlocks(focusedBlockId, { kind: 'blocks', … })`.
  *
- * With no usable HTML, plain text of more than one line — or one bullet line,
- * our own copy of a block — takes the same route as `{ kind: 'text', … }`, so
- * the backend reads it with the import grammar instead of ProseMirror escaping
- * its markers into literal paragraphs. A single line is read as inline
- * markdown at the caret (#5160 N11); a lone task line stays with `TaskPaste`
- * and a bare URL with `ExternalLink`.
+ * With no usable HTML, plain text of more than one line — or one list line
+ * where it starts the block, our own copy of one block — takes the same route
+ * as `{ kind: 'text', … }`, so the backend reads it as the Edit as Markdown
+ * buffer is read (#6190) instead of ProseMirror escaping its markers into
+ * literal paragraphs. Any other single line, a list line after text too, is
+ * read as inline markdown at the caret (#5160 N11); a lone task line stays
+ * with `TaskPaste` and a bare URL with `ExternalLink`.
  *
  * Both routes splice like a text editor (#5160 D4): the payload carries the
  * block's text before and after the selection, so the first pasted block joins
@@ -261,20 +262,26 @@ export async function convertAndInsert(
   }
 }
 
-/** A `- ` bullet line, or a bare `-`: the shape copy writes for one block. */
-const BULLET_LINE_RE = /^[ \t]*-(?: |$)/
+/**
+ * A list line with text, `-`, `*`, `+`, `1.` or `1)` and a space: the shape
+ * copy writes for one bulleted or numbered block (#6190).
+ */
+const LIST_LINE_RE = /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\S/
 
 /**
  * Plain text to paste as blocks rather than into the editor (#5160 D4): more
- * than one non-blank line, or one bullet line, our own copy of one block. Any
- * other single line stays inline, a lone task line stays with `TaskPaste`, and
- * a lone `-` is just a dash.
+ * than one non-blank line, or one list line, our own copy of one block, where
+ * it starts the block of the `view` it is pasted into. After text it joins as
+ * the text pasted, which the block route would rewrite (`3.` to `1.`, `*` to
+ * `-`). Any other single line stays inline, a lone task line stays with
+ * `TaskPaste`, and a lone `-` is just a dash.
  */
-function isBlockPaste(text: string): boolean {
+function isBlockPaste(text: string, view?: EditorView): boolean {
   const lines = text.split(/\r?\n/).filter((line) => line.trim() !== '')
   if (lines.length > 1) return true
   const first = lines[0]
-  if (first === undefined || !BULLET_LINE_RE.test(first) || first.trim() === '-') return false
+  if (first === undefined || !LIST_LINE_RE.test(first)) return false
+  if (view !== undefined && pasteSplice(view).before !== '') return false
   return pastedTaskParagraph(text) === null
 }
 
@@ -497,7 +504,7 @@ export const HtmlPaste = Extension.create({
             if (!body) {
               // No usable HTML → text worth reading as blocks goes to the
               // block-paste path, and one line is read inline at the caret.
-              if (!isBlockPaste(plainText)) return pasteOneLine(view, plainText)
+              if (!isBlockPaste(plainText, view)) return pasteOneLine(view, plainText)
               dispatchPasteBlocks(view, { kind: 'text', text: plainText }, plainText, targetBlockId)
               return true
             }

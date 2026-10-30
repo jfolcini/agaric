@@ -78,7 +78,7 @@ describe('htmlBodyToOutline — block structure', () => {
   })
 
   // #5160 D16 — a heading owns what follows it until a heading of its level or
-  // higher, so HTML paste gives the tree text paste and import give.
+  // higher, so HTML paste gives the tree import gives.
   it('nests the blocks after a heading under it, lists keeping their own nesting', () => {
     const html =
       '<h1>Title</h1><p>Intro</p><h2>Part A</h2><ul><li>x<ul><li>y</li></ul></li></ul>' +

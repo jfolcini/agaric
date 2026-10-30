@@ -2,8 +2,11 @@
 //! is its own paragraph, a list block carries its marker, a task is `- [ ] x`.
 //! `Dialect::Document` renders a page and `import::parse_document_outline` and
 //! `import::parse_document_text` must read it back as that tree, or a save with
-//! no edits would not be a no-op. The render→read proptests are the oracle,
-//! over [`super`]'s generator.
+//! no edits would not be a no-op. A clipboard copy (`render_clipboard_source`)
+//! is written in the dialect too, and must read back as a paste
+//! (`import::parse_pasted_text`) reads it, as the same tree less the anchors
+//! (#6190). The render→read proptests are the oracle, over [`super`]'s
+//! generator.
 //!
 //! One normalisation: a block with both a task state and a list style is
 //! written as a task, which has no list style (D3), so it reads back without
@@ -231,6 +234,18 @@ proptest! {
         let parsed = read_by_ids(&text, &line_ids);
         check_no_page_properties(&text, &parsed)?;
         check_read_back(&text, &parsed.blocks, &as_document(expected), true)?;
+    }
+
+    /// A copy of every block, so each root carries its subtree, pastes back
+    /// as the tree, but for [`as_document`] (#6190).
+    #[test]
+    fn a_clipboard_copy_pastes_back_as_the_tree_it_was_rendered_from(
+        forest in arb_document_forest()
+    ) {
+        let (data, expected) = build_page(&forest);
+        let ids: Vec<String> = expected.iter().map(|(_, _, id, _)| id.clone()).collect();
+        let md = render_clipboard_source(&data, &ids, true);
+        check_read_back(&md, &import::parse_pasted_text(&md), &as_document(expected), false)?;
     }
 
     /// Render → read → render writes the same bytes.
@@ -550,6 +565,74 @@ fn typed_rows() -> Vec<(&'static str, &'static str, Vec<BlockSpec>)> {
     ]
 }
 
+/// Text pasted from outside (#6190): each text and the tree a paste reads it
+/// as. A paste reads the dialect as it reads any text from outside: no page
+/// properties, a `key::` with no value is text, a fence ends with the list
+/// item holding it, and a trailing `^word` that is no block id is text.
+fn pasted_rows() -> Vec<(&'static str, &'static str, Vec<BlockSpec>)> {
+    let with_key = |spec: BlockSpec| BlockSpec {
+        properties: BTreeMap::from([("key".to_string(), ("v".to_string(), false))]),
+        ..spec
+    };
+    vec![
+        (
+            "D2: `-` and `*` make bulleted blocks and `1.` a numbered one; D4: `+` a plain child",
+            "- a\n* b\n1. c\n   + d\n",
+            vec![
+                styled(0, "a", "bullet"),
+                styled(0, "b", "bullet"),
+                styled(0, "c", "ordered"),
+                plain(1, "d"),
+            ],
+        ),
+        (
+            "D3: a task has no list style, and its property lines are its own",
+            "- [ ] t\n  key:: v\n1. [x] u\n",
+            vec![with_key(task(0, "t", "TODO")), task(0, "u", "DONE")],
+        ),
+        (
+            "front matter is no page's: a break, a paragraph and a break",
+            "---\ntitle: x\n---\n",
+            vec![plain(0, "---"), plain(0, "title: x"), plain(0, "---")],
+        ),
+        (
+            "a property line before any block is text",
+            "key:: v\n\npara\n",
+            vec![plain(0, "key:: v"), plain(0, "para")],
+        ),
+        (
+            "a property line with no value is text",
+            "- a\n  note::\n",
+            vec![styled(0, "a\nnote::", "bullet")],
+        ),
+        (
+            "a fence ends with the list item holding it",
+            "- ```\n  code\nafter\n\nnext\n",
+            vec![styled(0, "```\ncode\nafter", "bullet"), plain(0, "next")],
+        ),
+        (
+            "a trailing `^word` that is no block id is text, and a block id, in either case, is not",
+            "a ^word\n\nb ^01J0000000000000000000000B\n\nc ^01j0000000000000000000000c\n",
+            vec![plain(0, "a ^word"), plain(0, "b"), plain(0, "c")],
+        ),
+    ]
+}
+
+/// Each pasted text reads as its tree.
+#[test]
+fn a_paste_reads_each_pasted_text_as_its_tree() {
+    for (name, text, forest) in pasted_rows() {
+        let (_, expected) = build_page(&forest);
+        let result = check_read_back(
+            text,
+            &import::parse_pasted_text(text),
+            &as_document(expected),
+            false,
+        );
+        assert!(result.is_ok(), "{name}: {result:?}");
+    }
+}
+
 /// Each typed text reads as its tree.
 #[test]
 fn a_heading_a_fence_or_a_break_typed_under_text_starts_its_own_block() {
@@ -580,8 +663,8 @@ fn each_hard_case_is_written_as_its_row_and_read_back() {
 
 /// `conformance/document-lines.vectors.json`: each row as the tree it reads
 /// back as, every block under its id, the text it is written as and the id
-/// each line of the text carries, and each typed text with the tree it reads
-/// as. Rust authors it (`CONFORMANCE_UPDATE=1`) from the rows above, which
+/// each line of the text carries, and each typed or pasted text with the tree
+/// it reads as. Rust authors it (`CONFORMANCE_UPDATE=1`) from the rows above, which
 /// assert it; the editor's reader asserts it too.
 #[test]
 fn the_document_lines_vectors_are_the_rows() {
@@ -600,26 +683,31 @@ fn the_document_lines_vectors_are_the_rows() {
             json!({ "name": name, "tree": tree, "text": text, "lineIds": line_ids })
         })
         .collect();
-    let typed: Vec<Value> = typed_rows()
-        .into_iter()
-        .map(|(name, text, forest)| {
-            let tree: Vec<Value> = as_document(build_page(&forest).1)
-                .into_iter()
-                .map(|(depth, content, _, properties)| {
-                    json!({ "depth": depth, "content": content, "properties": properties })
-                })
-                .collect();
-            json!({ "name": name, "tree": tree, "text": text })
-        })
-        .collect();
+    let read = |rows: Vec<(&str, &str, Vec<BlockSpec>)>| -> Vec<Value> {
+        rows.into_iter()
+            .map(|(name, text, forest)| {
+                let tree: Vec<Value> = as_document(build_page(&forest).1)
+                    .into_iter()
+                    .map(|(depth, content, _, properties)| {
+                        json!({ "depth": depth, "content": content, "properties": properties })
+                    })
+                    .collect();
+                json!({ "name": name, "tree": tree, "text": text })
+            })
+            .collect()
+    };
+    let typed = read(typed_rows());
+    let pasted = read(pasted_rows());
     let vectors = json!({
         "description": "#5691 — Edit as Markdown's Document dialect, one case per hard case of the \
             line-split format: the tree, each block under its id, the text a page holding it is \
-            written as, and the id each line of that text carries; and under `typed`, text typed \
-            with no blank line between blocks and the tree it reads as, ids aside. Authored by \
-            `markdown_document_tests.rs` with CONFORMANCE_UPDATE=1; never hand-edit.",
+            written as, and the id each line of that text carries; under `typed`, text typed \
+            with no blank line between blocks and the tree it reads as, ids aside; and under \
+            `pasted`, text pasted from outside and the tree a paste reads it as (#6190). \
+            Authored by `markdown_document_tests.rs` with CONFORMANCE_UPDATE=1; never hand-edit.",
         "cases": cases,
         "typed": typed,
+        "pasted": pasted,
     });
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),

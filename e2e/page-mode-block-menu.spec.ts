@@ -389,7 +389,8 @@ test.describe('page mode block menu (#5972) @editor @pages', () => {
     await selectBlocks(page, 1, 3)
     await rightClick(page, ids[1])
     await pick(page, 'Copy selection')
-    await expect.poll(() => readClipboard(page)).toBe('- b one\n  - b child\n- b two\n')
+    // Plain blocks in the Document dialect a paste reads back (#6190).
+    await expect.poll(() => readClipboard(page)).toBe('b one\n\n  b child\n\nb two\n')
 
     await selectBlocks(page, 1, 3)
     await rightClick(page, ids[3])

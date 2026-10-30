@@ -319,7 +319,8 @@ async fn append_markdown_lands_the_outline_at_its_position() {
             "append_markdown",
             json!({
                 "parent_id": page.to_lowercase(),
-                "markdown": "# Head\n\n- item\n",
+                // A heading owns what is indented under it, as a paste reads it (#6190).
+                "markdown": "# Head\n\n  - item\n",
                 "position": 1,
                 "space_id": space,
             }),

@@ -544,7 +544,8 @@ describe('PageBlockMenu: the commands’ rows', () => {
 
     await rightClick(view, view.ids[0] as string)
     fireEvent.click(row(t('contextMenu.copySubtreeContent')))
-    await waitFor(() => expect(mockedWriteText).toHaveBeenLastCalledWith('- parent\n  - child\n'))
+    // The clipboard carries the Document dialect, which a paste reads (#6190).
+    await waitFor(() => expect(mockedWriteText).toHaveBeenLastCalledWith('parent\n\n  child\n'))
 
     await rightClick(view, view.ids[0] as string)
     fireEvent.click(row(t('contextMenu.copyPageRef')))
@@ -1041,7 +1042,7 @@ describe('PageBlockMenu: a selection of several blocks', () => {
 
     fireEvent.click(row(t('contextMenu.copySelectionContent')))
 
-    await waitFor(() => expect(mockedWriteText).toHaveBeenCalledWith('- a\n- b\n  - c\n'))
+    await waitFor(() => expect(mockedWriteText).toHaveBeenCalledWith('a\n\nb\n\n  c\n'))
   })
 
   it('offers no Duplicate or Merge on a selection', async () => {

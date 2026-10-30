@@ -1,7 +1,7 @@
 /**
  * Page mode's paste of Markdown text (`page-paste.ts`): the blocks it reads
- * as, at their depths with their marks, and the pastes it leaves to
- * ProseMirror.
+ * as, as block mode's paste reads them (#6190), at their depths with their
+ * marks and list styles, and the pastes it leaves to ProseMirror.
  */
 
 import type { Editor } from '@tiptap/core'
@@ -14,6 +14,8 @@ import {
   openPage,
   rowsOf,
 } from '@/editor/page-mode/__tests__/page-mode-fixtures'
+import { listSource } from '@/editor/page-mode/__tests__/page-node-view-fixtures'
+import { PageLists } from '@/editor/page-mode/page-lists'
 import { pastedBlocks } from '@/editor/page-mode/page-paste'
 import { leadingTask } from '@/editor/page-mode/page-tasks'
 
@@ -31,6 +33,18 @@ afterEach(() => {
 function open(rows: Parameters<typeof openPage>[0]) {
   editor = openPage(rows, idMinter())
   return editor
+}
+
+/** `rows` in page mode with list styles, and what holds them. */
+function openWithLists(rows: Parameters<typeof openPage>[0]) {
+  const lists = new PageLists(
+    {},
+    rows.map(([id, depth]) => ({ id, depth })),
+    () => false,
+  )
+  const source = listSource(lists)
+  editor = openPage(rows, idMinter(), undefined, source)
+  return { editor, lists, setStyle: source.setStyle }
 }
 
 /** Paste `text` as Ctrl+V does with only text on the clipboard; `pasteText` is Shift's plain paste. */
@@ -65,6 +79,38 @@ describe('pastedBlocks', () => {
 
   it('reads nothing from lines that hold no Markdown', () => {
     expect(pastedBlocks('from\noutside')).toEqual([])
+  })
+
+  it('reads each list kind as block mode does (#6190): `-` and `*` bullets, `1.` numbered, `+` and a task plain', () => {
+    const blocks = pastedBlocks('- a\n* b\n1. c\n   + d\n- [ ] t')
+    expect(blocks.map((b) => [b.depth, b.listStyle])).toEqual([
+      [0, 'bullet'],
+      [0, 'bullet'],
+      [0, 'ordered'],
+      [1, 'none'],
+      [0, 'none'],
+    ])
+    expect(blocks.map((b) => b.content[0]?.content?.[0]?.text)).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+      '[ ] t',
+    ])
+  })
+
+  it('keeps a heading’s next blocks its siblings, and a property line a line of its block', () => {
+    const blocks = pastedBlocks('# Head\n\npara\n\n- a\n  key:: v')
+    expect(blocks.map((b) => [b.depth, b.content[0]?.type])).toEqual([
+      [0, 'heading'],
+      [0, 'paragraph'],
+      [0, 'paragraph'],
+    ])
+    expect(blocks[2]?.content[0]?.content?.map((node) => node.text ?? node.type)).toEqual([
+      'a',
+      'hardBreak',
+      'key:: v',
+    ])
   })
 })
 
@@ -176,18 +222,27 @@ describe('pasting Markdown text in page mode', () => {
     expect(rowsOf(ed.state.doc)).toEqual([[A, 0, 'axb']])
   })
 
-  it('reads one bullet line as its item, joined at the cursor, and one task line as a task', () => {
+  it('reads one bullet line where it starts a block as its item, and one task line as a task', () => {
     const ed = open([
-      [A, 0, 'ab'],
+      [A, 0, ''],
       [B, 0, ''],
     ])
-    caret(ed, 0, 1)
+    caret(ed, 0, 0)
     paste(ed, '- x')
     caret(ed, 1, 0)
     paste(ed, '- [ ] buy')
 
-    expect(ed.state.doc.child(0).textContent).toBe('axb')
+    expect(ed.state.doc.child(0).textContent).toBe('x')
     expect(leadingTask(ed.state.doc.child(1))?.todoState).toBe('TODO')
+  })
+
+  it('leaves one list line after text as the text pasted, its marker kept', () => {
+    const ed = open([[A, 0, 'ab']])
+    caret(ed, 0, 1)
+
+    paste(ed, '3. x')
+
+    expect(rowsOf(ed.state.doc)).toEqual([[A, 0, 'a3. xb']])
   })
 
   it('leaves lines with no Markdown to ProseMirror, a block each', () => {
@@ -212,6 +267,59 @@ describe('pasting Markdown text in page mode', () => {
       [A, 0, '\\- a'],
       [N1, 0, '\\- b'],
     ])
+  })
+
+  it('gives each pasted list item its style, the block pasted into the first’s (#6190)', () => {
+    const {
+      editor: ed,
+      lists,
+      setStyle,
+    } = openWithLists([
+      [A, 0, ''],
+      [B, 0, 'after'],
+    ])
+    caret(ed, 0, 0)
+
+    paste(ed, '- a\n1. b\n   + c\n* d')
+
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'a'],
+      [N1, 0, 'b'],
+      [N2, 1, 'c'],
+      [N3, 0, 'd'],
+      [B, 0, 'after'],
+    ])
+    expect(rowsOf(ed.state.doc).map(([id]) => lists.styleOf(id))).toEqual([
+      'bullet',
+      'ordered',
+      'none',
+      'bullet',
+      'none',
+    ])
+    expect(setStyle).toHaveBeenCalledTimes(3)
+  })
+
+  it('reads one numbered line as its numbered block, as block mode does (#6190)', () => {
+    const { editor: ed, lists } = openWithLists([[A, 0, '']])
+    caret(ed, 0, 0)
+
+    paste(ed, '1. x')
+
+    expect(rowsOf(ed.state.doc)).toEqual([[A, 0, 'x']])
+    expect(lists.styleOf(A)).toBe('ordered')
+  })
+
+  it('after text, leaves the block pasted into its own style, and gives the next ones theirs', () => {
+    const { editor: ed, lists } = openWithLists([[A, 0, 'beforeafter']])
+    caret(ed, 0, 6)
+
+    paste(ed, '- a\n1. b')
+
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'beforea'],
+      [N1, 0, 'bafter'],
+    ])
+    expect([lists.styleOf(A), lists.styleOf(N1)]).toEqual(['none', 'ordered'])
   })
 
   it('leaves text pasted into a list in a block’s content to that list', () => {

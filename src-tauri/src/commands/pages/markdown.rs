@@ -984,12 +984,13 @@ enum PageRead {
 /// an anchor. `Source` writes the buffer source mode edits (#5140), which
 /// `import::parse_source_outline` reads back as exactly this tree: every block
 /// carries its `^ID`, and ids stay raw unless a name reads back to the same
-/// id. `Clipboard` is `Source` for text that leaves the app: a block carries
-/// its `^ID` only when it would not read back without it. `Agent` is the page
-/// an MCP agent reads (#5375): the export's names, which may be ambiguous, and
-/// every block's `^ID` written as source mode writes it, so the agent can name
-/// the block it edits next. `Document` is `Source` in the Document dialect
-/// ([`Dialect`]), which `import::parse_document_outline` reads back.
+/// id. `Clipboard` is `Document` for text that leaves the app, which a paste
+/// reads (#6190): a block carries its `^ID` only when it would not read back
+/// without it. `Agent` is the page an MCP agent reads (#5375): the export's
+/// names, which may be ambiguous, and every block's `^ID` written as source
+/// mode writes it, so the agent can name the block it edits next. `Document`
+/// is `Source` in the Document dialect ([`Dialect`]), which
+/// `import::parse_document_outline` reads back.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RenderMode {
     Export,
@@ -999,14 +1000,23 @@ enum RenderMode {
     Document,
 }
 
+impl RenderMode {
+    /// Whether the rendering is laid out in the Document dialect ([`Dialect`]).
+    fn lays_out_document(self) -> bool {
+        matches!(self, Self::Document | Self::Clipboard)
+    }
+}
+
 /// The two grammars Edit as Markdown's buffer is written in (#5691). `Source`
 /// writes every block as an outline bullet, its list marker after the bullet.
 /// `Document` writes a plain block as its own paragraph, a list block with its
 /// marker and a task as `- [ ] x`, which has no list style (D3): a blank line
 /// separates blocks but neighbouring list lines (D1), a plain block under a
 /// list block is a `+` item and a line holding only `\` an empty line (D4).
-/// The MCP tools and Duplicate keep `Source` (D5). The buffer commands take it
-/// as `source` or `document`, and read `Source` when given none.
+/// The MCP page tools (`get_page_markdown`, `edit_page_markdown`) and Duplicate
+/// keep `Source` (D5); `append_markdown` and `capture` read `Document`, as a
+/// paste does. The buffer commands take it as `source` or `document`, and read
+/// `Source` when given none.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Type)]
 #[serde(rename_all = "lowercase")]
 pub enum Dialect {
@@ -1075,7 +1085,7 @@ fn render_block(
     let list_marker = list_marker_for(&id, list_styles, list_ordinals);
     let task_marker = task_marker(block);
     let (indent, list_marker, prop_indent) = match mode {
-        RenderMode::Document => layout.place(output, block, depth, list_marker),
+        mode if mode.lays_out_document() => layout.place(output, block, depth, list_marker),
         _ => ("  ".repeat(depth), list_marker, "  ".repeat(depth + 1)),
     };
     match mode {
@@ -1315,10 +1325,10 @@ fn push_source_bullet(
     push(output, &named);
 }
 
-/// `content` as a source bullet without its `^id`, unless the bullet needs it
-/// to read back: when the block leaves a fence open, which the anchor line
-/// ends, or when the bullet alone reads back as other content, as one ending
-/// in ` ^word` or in a blank line does. Returns whether any line is code.
+/// `content` as a Document block without its `^id`, unless the block needs it
+/// to read back as a paste reads it: when the block leaves a fence open, which
+/// the anchor line ends, or when the block alone reads back as other content,
+/// as one ending in ` ^` and a block id does. Returns whether any line is code.
 fn push_clipboard_bullet(
     output: &mut String,
     indent: &str,
@@ -1334,9 +1344,9 @@ fn push_clipboard_bullet(
         list_marker,
         task_marker,
         content,
-        RenderMode::Source,
+        RenderMode::Document,
     );
-    let read_back = import::parse_source_outline(&output[start..]).blocks;
+    let read_back = import::parse_pasted_text(&output[start..]);
     if !code.open && matches!(read_back.as_slice(), [block] if block.content == content) {
         return code.any;
     }
@@ -1348,7 +1358,7 @@ fn push_clipboard_bullet(
         task_marker,
         content,
         id,
-        RenderMode::Source,
+        RenderMode::Document,
     )
 }
 
@@ -2602,9 +2612,10 @@ pub async fn get_page_buffer_as(
 }
 
 /// The blocks `block_ids` names as the clipboard carries them (#5140): the
-/// page's source buffer for just those blocks, each with its subtree unless
-/// `with_children` is false, in document order, and with a `^ID` only where a
-/// block needs one to read back. The page is the first live content block's;
+/// page's buffer in the Document dialect (#6190), which a paste reads back,
+/// for just those blocks, each with its subtree unless `with_children` is
+/// false, in document order, and with a `^ID` only where a block needs one to
+/// read back. The page is the first live content block's;
 /// an id that is not a live content block of that page is skipped, and so is
 /// one under another selected block, which carries it. Nothing to copy is `""`.
 ///
@@ -3656,7 +3667,7 @@ fn compute_list_ordinals(
         let mut run: usize = 0;
         for child in children {
             let id = child.id.clone().into_string();
-            let task = mode == RenderMode::Document && child.todo_state.is_some();
+            let task = mode.lays_out_document() && child.todo_state.is_some();
             if list_styles.get(&id).map(String::as_str) == Some("ordered") && !task {
                 run += 1;
                 ordinals.insert(id, run);
@@ -3735,10 +3746,8 @@ fn push_block_bullet(
 ) -> CodeLines {
     let fence_opener = match mode {
         RenderMode::Export => import::fence_opener,
-        RenderMode::Source | RenderMode::Clipboard | RenderMode::Agent => {
-            import::source_fence_opener
-        }
-        RenderMode::Document => import::document_fence_opener,
+        RenderMode::Source | RenderMode::Agent => import::source_fence_opener,
+        RenderMode::Document | RenderMode::Clipboard => import::document_fence_opener,
     };
 
     let mut lines = resolved.split('\n').peekable();

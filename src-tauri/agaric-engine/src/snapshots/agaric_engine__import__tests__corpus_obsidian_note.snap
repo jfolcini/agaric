@@ -104,12 +104,16 @@ paste:
     content: reading
     depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: "books\naliases: [Deep Work notes]\nstatus: in-progress"
     depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: "---"
     depth: 0
@@ -122,64 +126,74 @@ paste:
     properties: []
   - block_anchor: ~
     content: "Cal Newport argues that focused work is **rare** and _valuable_. See also [[Digital Minimalism|his later book]] and [[Deep Work#Rule 1]]."
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: "> [!note] Key idea\n> Schedule every minute of your day."
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: "## Takeaways"
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: Work deeply
-    depth: 2
+    depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: Choose a depth philosophy
-    depth: 3
+    depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: Ritualize
-    depth: 3
+    depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: Embrace boredom ^boredom
-    depth: 2
+    depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: Quit social media
-    depth: 2
+    depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - bullet
   - block_anchor: ~
     content: "~~~python\nblocks = plan(day)\n~~~"
-    depth: 2
+    depth: 0
     is_code: true
     properties: []
   - block_anchor: ~
     content: "## Tasks"
-    depth: 1
+    depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
     content: Finish chapter 3
-    depth: 2
+    depth: 0
     is_code: false
     properties:
       - - todo_state
         - TODO
   - block_anchor: ~
     content: Buy the book
-    depth: 2
+    depth: 0
     is_code: false
     properties:
       - - todo_state

@@ -5,7 +5,8 @@
 // The editor sends the text and the block's halves around the cursor, and
 // `paste_blocks` splices them in one transaction: the block becomes its first
 // half plus the first pasted block, the rest follow as blocks (a heading
-// owning what comes after it, D16), and the second half ends the last one.
+// owning nothing, as the Edit as Markdown buffer reads it, #6190), and the
+// second half ends the last one.
 // The mock models the grammar only approximately, and its reload cannot show
 // what the editor's own draft flush does to the block after the paste, so only
 // this lane proves the splice is what the backend keeps: the tree is read after
@@ -119,10 +120,10 @@ describe('Agaric real-backend spliced paste (#5160 D4) @editor', () => {
     expect(anchor.text).toContain(`${HEAD} ${LEAD} first`)
     expect(anchor.text).not.toContain(TAIL)
     expect((await row(PLAN)).level).toBe('1')
-    expect((await row(STEP)).level).toBe('2')
-    expect((await row(DETAIL)).level).toBe('3')
+    expect((await row(STEP)).level).toBe('1')
+    expect((await row(DETAIL)).level).toBe('2')
     const last = await row(LAST)
-    expect(last.level).toBe('2')
+    expect(last.level).toBe('1')
     expect(last.text).toContain(`${LAST}${TAIL}`)
   })
 })
