@@ -13,7 +13,7 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock, makeBlockRow, makePropertyRow } from '@/__tests__/fixtures'
+import { makeBlock, makeBlockRow, makePropertyRow, withOps } from '@/__tests__/fixtures'
 import { echoEditBlock, stubInvoke, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { setTodoStateOnBlocks } from '@/components/block-tree/use-block-multi-select'
 import { useBlockProperties } from '@/components/block-tree/use-block-properties'
@@ -22,6 +22,7 @@ import { useSlashCommandProperty } from '@/components/block-tree/use-block-slash
 import { useSlashCommandStructural } from '@/components/block-tree/use-block-slash-commands/useSlashCommandStructural'
 import { useCheckboxSyntax } from '@/hooks/useCheckboxSyntax'
 import { useListStyleSyntax } from '@/hooks/useListStyleSyntax'
+import type { OpRef } from '@/lib/bindings'
 import { LIST_STYLE_KEY } from '@/lib/list-style'
 import { bumpFlushSeq, commitCheckboxState } from '@/stores/inline-property-commit'
 import {
@@ -55,16 +56,21 @@ const calls = (command: string) =>
   mockedInvoke.mock.calls.filter(([name]) => name === command).map(([, args]) => args)
 /** The task-state clears asked for, as `clearTaskStates` asks for them. */
 const taskClears = () =>
-  calls('delete_property').filter(
-    (args) => (args as Record<string, unknown>)['key'] === 'todo_state',
+  calls('set_todo_state_batch').filter(
+    (args) => (args as Record<string, unknown>)['state'] === null,
   )
 
 /** Every command these flows reach, answering as the backend does; a test overrides one. */
 function stub(overrides: TypedInvokeHandlers = {}): void {
   stubInvoke(mockedInvoke, {
     set_todo_state: (args) =>
-      makeBlockRow({ id: args['blockId'] as string, todo_state: args['state'] as string | null }),
-    set_todo_state_batch: (args) => (args['blockIds'] as string[]).length,
+      withOps(
+        makeBlockRow({ id: args['blockId'] as string, todo_state: args['state'] as string | null }),
+      ),
+    set_todo_state_batch: (args) => ({
+      updated: (args['blockIds'] as string[]).length,
+      op_refs: [],
+    }),
     set_property: (args) => ({
       op_refs: [],
       ...makeBlockRow({ id: args['blockId'] as string }),
@@ -102,10 +108,7 @@ describe('clearTaskStates', () => {
 
     await expect(clearTaskStates(pageStore, ['BLOCK_1', 'BLOCK_2', 'BLOCK_3'])).resolves.toBe(true)
 
-    expect(taskClears()).toEqual([
-      { blockId: 'BLOCK_2', key: 'todo_state' },
-      { blockId: 'BLOCK_3', key: 'todo_state' },
-    ])
+    expect(taskClears()).toEqual([{ blockIds: ['BLOCK_2', 'BLOCK_3'], state: null }])
     expect(['BLOCK_1', 'BLOCK_2', 'BLOCK_3'].map(todoOf)).toEqual([null, null, null])
   })
 
@@ -115,7 +118,7 @@ describe('clearTaskStates', () => {
   })
 
   it('a refused write leaves the task, and says so', async () => {
-    stub({ delete_property: () => Promise.reject(new Error('refused')) })
+    stub({ set_todo_state_batch: () => Promise.reject(new Error('refused')) })
 
     await expect(clearTaskStates(pageStore, ['BLOCK_2'])).resolves.toBe(false)
 
@@ -125,25 +128,19 @@ describe('clearTaskStates', () => {
     ])
   })
 
-  it('a write refused part way keeps the clears made before it', async () => {
+  it('resolves false when the backend skipped a block it asked for', async () => {
     setTodo(pageStore, 'DONE', 'BLOCK_3')
-    stub({
-      delete_property: (args) =>
-        args['blockId'] === 'BLOCK_3'
-          ? Promise.reject(new Error('refused'))
-          : { op_refs: [], block_id: args['blockId'] as string, key: args['key'] as string },
-    })
+    stub({ set_todo_state_batch: () => ({ updated: 1, op_refs: [] }) })
 
     await expect(clearTaskStates(pageStore, ['BLOCK_2', 'BLOCK_3'])).resolves.toBe(false)
-
-    expect(['BLOCK_2', 'BLOCK_3'].map(todoOf)).toEqual([null, 'DONE'])
   })
 })
 
 describe('setTodoStateOnBlocks', () => {
   it('clears the list styles of the blocks it made tasks, after the write', async () => {
-    const clearLists = vi.fn(() => {
+    const clearLists = vi.fn((): OpRef[] => {
       expect(calls('set_todo_state_batch')).toHaveLength(1)
+      return []
     })
 
     await setTodoStateOnBlocks(pageStore, 'PAGE_1', ['BLOCK_1', 'BLOCK_2'], 'DONE', t, clearLists)
@@ -161,7 +158,7 @@ describe('setTodoStateOnBlocks', () => {
 
   it('a refused write clears no list style', async () => {
     stub({ set_todo_state_batch: () => Promise.reject(new Error('refused')) })
-    const clearLists = vi.fn()
+    const clearLists = vi.fn((): OpRef[] => [])
 
     await setTodoStateOnBlocks(pageStore, 'PAGE_1', ['BLOCK_1'], 'TODO', t, clearLists)
 
@@ -169,7 +166,7 @@ describe('setTodoStateOnBlocks', () => {
   })
 
   it('clearing the task state clears no list style', async () => {
-    const clearLists = vi.fn()
+    const clearLists = vi.fn((): OpRef[] => [])
 
     await setTodoStateOnBlocks(pageStore, 'PAGE_1', ['BLOCK_1', 'BLOCK_2'], null, t, clearLists)
 
@@ -182,8 +179,9 @@ describe('useBlockProperties handleToggleTodo', () => {
     createElement(PageBlockContext.Provider, { value: pageStore }, children)
 
   it('a block the cycle makes a task loses its list style, after the write', async () => {
-    const clearLists = vi.fn(() => {
+    const clearLists = vi.fn((): OpRef[] => {
       expect(calls('set_todo_state')).toHaveLength(1)
+      return []
     })
     const { result } = renderHook(() => useBlockProperties(clearLists), { wrapper })
 
@@ -197,7 +195,7 @@ describe('useBlockProperties handleToggleTodo', () => {
 
   it('a refused write clears no list style', async () => {
     stub({ set_todo_state: () => Promise.reject(new Error('refused')) })
-    const clearLists = vi.fn()
+    const clearLists = vi.fn((): OpRef[] => [])
     const { result } = renderHook(() => useBlockProperties(clearLists), { wrapper })
 
     await act(async () => {
@@ -209,7 +207,7 @@ describe('useBlockProperties handleToggleTodo', () => {
   })
 
   it('cycling a task on, or back to no state, clears no list style', async () => {
-    const clearLists = vi.fn()
+    const clearLists = vi.fn((): OpRef[] => [])
     setTodo(pageStore, 'CANCELLED', 'BLOCK_1')
     const { result } = renderHook(() => useBlockProperties(clearLists), { wrapper })
 
@@ -270,9 +268,9 @@ describe('slash commands', () => {
 
     expect(mockedInvoke.mock.calls.map(([name]) => name)).toEqual([
       'set_property',
-      'delete_property',
+      'set_todo_state_batch',
     ])
-    expect(taskClears()).toEqual([{ blockId: 'BLOCK_1', key: 'todo_state' }])
+    expect(taskClears()).toEqual([{ blockIds: ['BLOCK_1'], state: null }])
     expect(store.getState().blocksById.get('BLOCK_1')?.todo_state).toBeNull()
   })
 
@@ -299,7 +297,7 @@ describe('slash commands', () => {
     expect(taskClears()).toEqual([])
 
     await turnInto?.(ctx, { id: 'turn-bullet-list', label: 'Bullet list' })
-    expect(taskClears()).toEqual([{ blockId: 'BLOCK_1', key: 'todo_state' }])
+    expect(taskClears()).toEqual([{ blockIds: ['BLOCK_1'], state: null }])
     expect(store.getState().blocksById.get('BLOCK_1')?.todo_state).toBeNull()
   })
 })
@@ -333,8 +331,8 @@ describe('typed list kinds', () => {
     typedList('bullet')
 
     await waitFor(() => expect(todoOf('BLOCK_2')).toBeNull())
-    expect(names()).toEqual(['set_property', 'delete_property'])
-    expect(taskClears()).toEqual([{ blockId: 'BLOCK_2', key: 'todo_state' }])
+    expect(names()).toEqual(['set_property', 'set_todo_state_batch'])
+    expect(taskClears()).toEqual([{ blockIds: ['BLOCK_2'], state: null }])
   })
 
   it('a refused `1. ` leaves the task', async () => {

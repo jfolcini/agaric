@@ -308,8 +308,13 @@ export const commands = {
 	 *  frontend undo stack can address the action by exact ref (`undo_op`).
 	 */
 	setProperty: (blockId: BlockId, key: string, value: SetPropertyArgs) => typedError<WithOps<BlockRow>, AppError>(__TAURI_INVOKE("set_property", { blockId, key, value })),
-	/**  Tauri command: set todo state on a block. Delegates to [`set_todo_state_inner`]. */
-	setTodoState: (blockId: BlockId, state: string | null) => typedError<BlockRow, AppError>(__TAURI_INVOKE("set_todo_state", { blockId, state })),
+	/**
+	 *  Tauri command: set todo state on a block. Delegates to [`set_todo_state_inner`].
+	 * 
+	 *  #6156: the reply carries the refs of every op it appended, the stamps' and
+	 *  the next occurrence's among them, so the frontend undoes it by those refs.
+	 */
+	setTodoState: (blockId: BlockId, state: string | null) => typedError<WithOps<BlockRow>, AppError>(__TAURI_INVOKE("set_todo_state", { blockId, state })),
 	/**
 	 *  Tauri command: batch-set todo state on multiple blocks.
 	 * 
@@ -322,8 +327,11 @@ export const commands = {
 	 *  so existing per-block listeners (e.g. agenda recompute, property
 	 *  drawer) keep firing without protocol changes. Failed-emit
 	 *  Breadcrumbs follow the established log-on-error pattern.
+	 * 
+	 *  #6156: the reply carries the refs of every op the batch appended, the
+	 *  stamps' among them, so the frontend undoes it by those refs.
 	 */
-	setTodoStateBatch: (blockIds: BlockId[], state: string | null) => typedError<number, AppError>(__TAURI_INVOKE("set_todo_state_batch", { blockIds, state })),
+	setTodoStateBatch: (blockIds: BlockId[], state: string | null) => typedError<WithOps<TodoStateBatch>, AppError>(__TAURI_INVOKE("set_todo_state_batch", { blockIds, state })),
 	/**
 	 *  Tauri command: batch-set one allowlisted property on multiple blocks.
 	 * 
@@ -4651,6 +4659,15 @@ export type TaskNotification = {
 	 *  Optional — a free-form notification need not reference a block.
 	 */
 	blockId?: string | null,
+};
+
+/**
+ *  Reply of [`set_todo_state_batch`]; same envelope as [`CreatedBlocks`], for
+ *  a count (#6156).
+ */
+export type TodoStateBatch = {
+	/**  How many live blocks it set; a missing or deleted id is skipped. */
+	updated: number,
 };
 
 /**  Result of an undo or redo operation. */

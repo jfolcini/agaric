@@ -8347,6 +8347,61 @@ async fn set_property_batch_warns_when_batch_skips_recurrence_3264() {
     mat.shutdown();
 }
 
+/// #6156: page mode clears tasks through `set_todo_state_batch_inner`, and a
+/// clear rolls nothing forward on the single-row path either, so a clear over
+/// a `repeat` carrier must not log the recurrence-skip warn. Setting a state
+/// over the same block still does.
+#[tokio::test]
+async fn set_todo_state_batch_warns_on_a_set_not_on_a_clear_6156() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "repeating task".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) \
+         VALUES (?, 'repeat', 'daily')",
+    )
+    .bind(b.id.as_str())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let (set_buf, set_guard) = warn_capture();
+    set_todo_state_batch_inner(&pool, DEV, &mat, vec![b.id.clone()], Some("TODO".into()))
+        .await
+        .unwrap();
+    drop(set_guard);
+    assert!(
+        warn_log(&set_buf).contains("command=\"set_todo_state_batch_inner\""),
+        "a set over a `repeat` carrier warns, got: {:?}",
+        warn_log(&set_buf)
+    );
+
+    let (clear_buf, clear_guard) = warn_capture();
+    let updated = set_todo_state_batch_inner(&pool, DEV, &mat, vec![b.id.clone()], None)
+        .await
+        .unwrap();
+    drop(clear_guard);
+    assert_eq!(updated, 1, "the clear is written");
+    assert!(
+        !warn_log(&clear_buf).contains("agaric::batch_recurrence_skip"),
+        "a clear skips no recurrence, so it must not warn, got: {:?}",
+        warn_log(&clear_buf)
+    );
+
+    mat.shutdown();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_property_ref_cross_space_rejected() {
     // A ref-type property whose target lives in a different

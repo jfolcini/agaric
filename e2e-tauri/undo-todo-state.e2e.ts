@@ -5,20 +5,16 @@
 // path (agaric-engine/src/reverse/) is only proven here. Ctrl+Z reaches
 // `useUndoShortcuts` only in the page editor with NO block focused, so the
 // page comes from the sidebar's "New Page" and the reversed action is the
-// task checkbox — one `set_todo_state` IPC, one `set_property` op, whose
-// effect is readable straight off the checkbox's `aria-label`.
+// task checkbox — one `set_todo_state` IPC, whose effect is readable straight
+// off the checkbox's `aria-label`.
 //
 // TIMING IS LOAD-BEARING, and is why the block is committed by navigating
-// away rather than with Enter+Escape. `handleToggleTodo` pushes a REF-LESS
-// undo entry, so Ctrl+Z resolves it through the positional `undoPageGroup`
-// fallback, which reverts every op within `UNDO_GROUP_WINDOW_MS` (500 ms) of
-// the newest one. In run 34088762135 the Escape that dropped the empty
-// Enter-sibling landed inside that window, so the one Ctrl+Z also reversed
-// that `delete_block` and the page fell out from under the spec ("block not
-// in current space" → the page editor healed the stale reference and bounced
-// to Journal). The Journal round-trip below puts seconds between the block's
-// own ops and the checkbox's, so the group holds the checkbox op alone — and
-// it doubles as the blur that commits the text (`draft-blur-persist`).
+// away rather than with Enter+Escape. `handleToggleTodo` records an undo entry
+// holding the refs of its own writes (#6156), so Ctrl+Z reverses exactly those,
+// but a write within `UNDO_GROUP_WINDOW_MS` (500 ms) of the text's own commit
+// joins that commit's entry and is reversed with it. The Journal round-trip
+// below puts seconds between the two — and it doubles as the blur that commits
+// the text (`draft-blur-persist`).
 //
 // WHY NOT undoing a block CREATE, which this spec used to attempt: an empty
 // block cannot survive losing focus. BlockTree's #4729 leaked-empty-block

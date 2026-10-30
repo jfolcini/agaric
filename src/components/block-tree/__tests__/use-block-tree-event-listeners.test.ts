@@ -17,7 +17,7 @@ import { createElement } from 'react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
-import { makeBlock, makeBlockRow } from '@/__tests__/fixtures'
+import { makeBlock, makeBlockRow, withOps } from '@/__tests__/fixtures'
 import { stubInvoke, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { useBlockProperties } from '@/components/block-tree/use-block-properties'
 import type { UseBlockTreeEventListenersOptions } from '@/components/block-tree/use-block-tree-event-listeners'
@@ -106,7 +106,9 @@ function stubListenerInvoke(overrides: TypedInvokeHandlers = {}): void {
     set_priority: (args) =>
       makeBlockRow({ id: args['blockId'] as string, priority: args['level'] as string | null }),
     set_todo_state: (args) =>
-      makeBlockRow({ id: args['blockId'] as string, todo_state: args['state'] as string | null }),
+      withOps(
+        makeBlockRow({ id: args['blockId'] as string, todo_state: args['state'] as string | null }),
+      ),
     get_property: () => null,
     ...overrides,
   })

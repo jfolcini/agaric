@@ -23,9 +23,9 @@ import { useUndoStore } from '@/stores/undo'
 /**
  * #2468 — `opRefs` threads a migrated command's `op_refs` (the exact op-log
  * refs it appended) into the undo store so Ctrl+Z is ref-addressed. Handlers
- * whose command is NOT migrated (`setTodoState` / `setPriority`) omit it —
- * the undo store records a positional-fallback entry; the conditional forward
- * keeps their call shape identical to pre-#2468.
+ * whose command is NOT migrated (`setPriority`) omit it — the undo store
+ * records a positional-fallback entry; the conditional forward keeps their
+ * call shape identical to pre-#2468.
  */
 export function notifyUndo(rootParentId: string | null, opRefs?: OpRef[]): void {
   if (!rootParentId) return
