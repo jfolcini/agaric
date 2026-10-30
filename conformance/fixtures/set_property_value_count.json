@@ -72,6 +72,7 @@
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"note\"]"],
       "name": "one_value_sets",
       "returns": ["B2"]
     },
@@ -90,12 +91,14 @@
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B3#changed_keys=[\"due_date\"]"],
       "name": "reserved_key_sets",
       "returns": ["B3"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B3#changed_keys=[\"due_date\"]"],
       "name": "no_value_clears_a_reserved_key",
       "returns": ["B3"]
     }

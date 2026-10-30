@@ -14,10 +14,19 @@
 //!   "error": null, "code": null }
 //! ```
 //!
-//! `returns` reuses the query leg's row-token grammar ([`row_token`] /
-//! [`relabel_token`]), so id relabelling, the `deleted_at` → `DELETED`
-//! sentinel and the separator-aliasing refusals all apply. Two rules are
-//! specific to this leg:
+//! An op whose wrapper emits Tauri events once its `_inner` commits also
+//! records them, in emission order, under `events` (#6054):
+//! `["block:properties-changed#block_id=B2#changed_keys=[\"todo_state\"]"]`.
+//! The harness builds them with the function the wrapper builds them with
+//! (`property_changed_events`), from the ids and keys each arm restates, so the
+//! mock is held to the payloads the app emits. The wrapper itself does not run
+//! here: one that stops emitting, or names other ids, is not caught. An op that
+//! emits nothing records no `events` key.
+//!
+//! `returns` and `events` reuse the query leg's row-token grammar
+//! ([`row_token`] / [`relabel_token`]), so id relabelling, the `deleted_at` →
+//! `DELETED` sentinel and the separator-aliasing refusals all apply. Two rules
+//! are specific to this leg:
 //!
 //!   * **`op_refs` is dropped.** `WithOps.op_refs` carries `(device_id, seq)`,
 //!     and the two runners' device ids differ. The op COUNT is already pinned
@@ -39,8 +48,10 @@ use super::conformance_query::{
 use agaric_core::ulid::{ActiveBlockId, AttachmentId, BlockId};
 use agaric_engine::import::ImportAnchor;
 use agaric_lib::commands::pages::{Dialect, apply_page_source_as};
+use agaric_lib::commands::properties::property_changed_events;
 use agaric_store::op::OpRef;
 use agaric_store::space::{SpaceId, SpaceScope};
+use agaric_sync::sync_events::{EVENT_PROPERTY_CHANGED, PropertyChangedEvent};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -175,6 +186,10 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // clears carries a clock date, so the snapshot drops it and a
     // `query_by_property` step reads which blocks hold one.
     ("set_todo_state", "id", &["todo_state"], &[]),
+    // #6054 — the three single-column setters, each the row it set.
+    ("set_priority", "id", &["priority"], &[]),
+    ("set_due_date", "id", &["due_date"], &[]),
+    ("set_scheduled_date", "id", &["scheduled_date"], &[]),
     // #5057 — the three batch COUNTERS answer with a bare `i64`, which carries
     // no field to name it. The shape's single attribute names the scalar, so
     // the token reads `set_property_batch#updated=3` instead of exposing a
@@ -360,9 +375,23 @@ fn to_json<T: Serialize>(outcome: Result<T, AppError>) -> Result<Value, AppError
     outcome.map(|v| serde_json::to_value(v).expect("serialize command response"))
 }
 
+/// [`to_json`], appending to `emitted` the events the command's wrapper emits
+/// when it succeeds.
+fn emitting<T: Serialize>(
+    outcome: Result<T, AppError>,
+    emitted: &mut Vec<PropertyChangedEvent>,
+    events: Vec<PropertyChangedEvent>,
+) -> Result<Value, AppError> {
+    if outcome.is_ok() {
+        emitted.extend(events);
+    }
+    to_json(outcome)
+}
+
 /// Run one fixture op through its `*_inner`, with the same arg expansion
 /// `apply_op` gives the payload path. `Ok` is the serialized response; `Err`
-/// is the command's own refusal, untouched.
+/// is the command's own refusal, untouched. The events its wrapper would emit
+/// are appended to `emitted`.
 pub(super) async fn apply_op_via_command(
     pool: &SqlitePool,
     mat: &Materializer,
@@ -375,6 +404,7 @@ pub(super) async fn apply_op_via_command(
     op: &Value,
     created_ids: &[String],
     op_refs: &[(String, i64)],
+    emitted: &mut Vec<PropertyChangedEvent>,
 ) -> Result<Value, AppError> {
     let command = op["command"].as_str().expect("op command");
     let args = &op["args"];
@@ -564,7 +594,7 @@ pub(super) async fn apply_op_via_command(
                     panic!("conformance op '{command}' is missing arg 'value'")
                 }))
                 .unwrap_or_else(|e| panic!("conformance op '{command}': value: {e}"));
-            to_json(
+            emitting(
                 set_property_inner(
                     pool,
                     DEV,
@@ -579,9 +609,11 @@ pub(super) async fn apply_op_via_command(
                     None,
                 )
                 .await,
+                emitted,
+                property_changed_events([block_id()], &[req_str("key")]),
             )
         }
-        "set_property_batch" => to_json(
+        "set_property_batch" => emitting(
             set_property_batch_inner(
                 pool,
                 DEV,
@@ -591,8 +623,10 @@ pub(super) async fn apply_op_via_command(
                 opt_str("value"),
             )
             .await,
+            emitted,
+            property_changed_events(block_ids(), &[req_str("key")]),
         ),
-        "set_todo_state" => to_json(
+        "set_todo_state" => emitting(
             set_todo_state_inner(
                 pool,
                 DEV,
@@ -601,10 +635,50 @@ pub(super) async fn apply_op_via_command(
                 opt_str("state"),
             )
             .await,
+            emitted,
+            property_changed_events([block_id()], &["todo_state".to_owned()]),
         ),
-        "set_todo_state_batch" => {
-            to_json(set_todo_state_batch_inner(pool, DEV, mat, block_ids(), opt_str("state")).await)
-        }
+        "set_todo_state_batch" => emitting(
+            set_todo_state_batch_inner(pool, DEV, mat, block_ids(), opt_str("state")).await,
+            emitted,
+            property_changed_events(block_ids(), &["todo_state".to_owned()]),
+        ),
+        "set_priority" => emitting(
+            set_priority_inner(
+                pool,
+                DEV,
+                mat,
+                block_id().into_string().into(),
+                opt_str("level"),
+            )
+            .await,
+            emitted,
+            property_changed_events([block_id()], &["priority".to_owned()]),
+        ),
+        "set_due_date" => emitting(
+            set_due_date_inner(
+                pool,
+                DEV,
+                mat,
+                block_id().into_string().into(),
+                opt_str("date"),
+            )
+            .await,
+            emitted,
+            property_changed_events([block_id()], &["due_date".to_owned()]),
+        ),
+        "set_scheduled_date" => emitting(
+            set_scheduled_date_inner(
+                pool,
+                DEV,
+                mat,
+                block_id().into_string().into(),
+                opt_str("date"),
+            )
+            .await,
+            emitted,
+            property_changed_events([block_id()], &["scheduled_date".to_owned()]),
+        ),
         "add_tags_by_ids" => to_json(
             add_tags_by_ids_inner(
                 pool,
@@ -701,17 +775,22 @@ pub(super) async fn apply_op_via_command(
             .await,
         ),
         // The deleted keys name the changed-property event; the wire returns none.
-        "delete_property" => to_json(
-            delete_property_inner(
+        "delete_property" => {
+            let outcome = delete_property_inner(
                 pool,
                 DEV,
                 mat,
                 ActiveBlockId::from_trusted_active(block_id().as_str()),
                 req_str("key"),
             )
-            .await
-            .map(drop),
-        ),
+            .await;
+            let deleted = outcome.as_ref().cloned().unwrap_or_default();
+            emitting(
+                outcome.map(drop),
+                emitted,
+                property_changed_events([block_id()], &deleted),
+            )
+        }
         // #5057 — positional undo. `pageId` is a label like any other block
         // arg; `undoDepth` is an ORDINAL ("the newest undoable op on this
         // page"), which is why this one is spellable where the ref-addressed
@@ -1313,25 +1392,35 @@ pub(super) async fn run_command_op(
         )
     });
     let at = format!("fixture '{fixture_name}' op '{name}' (command '{command}')");
-    let (returns, error, code) =
-        match apply_op_via_command(pool, mat, app_data_dir, op, created_ids, op_refs).await {
-            Ok(mut response) => (
-                PROJECTING_STEP.sync_scope(at.clone(), || {
-                    // A returned row's text, as the snapshot reads it.
-                    if let Some(Value::String(content)) = response.get_mut("content") {
-                        *content = label_created_ids(content, created_ids);
-                    }
-                    project_return(command, &response)
-                }),
-                Value::Null,
-                Value::Null,
-            ),
-            Err(e) => (
-                Vec::new(),
-                serde_json::to_value(e.kind()).expect("serialize AppErrorKind"),
-                serde_json::to_value(e.validation_code()).expect("serialize ValidationCode"),
-            ),
-        };
+    let mut emitted = Vec::new();
+    let outcome = apply_op_via_command(
+        pool,
+        mat,
+        app_data_dir,
+        op,
+        created_ids,
+        op_refs,
+        &mut emitted,
+    )
+    .await;
+    let (returns, error, code) = match outcome {
+        Ok(mut response) => (
+            PROJECTING_STEP.sync_scope(at.clone(), || {
+                // A returned row's text, as the snapshot reads it.
+                if let Some(Value::String(content)) = response.get_mut("content") {
+                    *content = label_created_ids(content, created_ids);
+                }
+                project_return(command, &response)
+            }),
+            Value::Null,
+            Value::Null,
+        ),
+        Err(e) => (
+            Vec::new(),
+            serde_json::to_value(e.kind()).expect("serialize AppErrorKind"),
+            serde_json::to_value(e.validation_code()).expect("serialize ValidationCode"),
+        ),
+    };
     if declarations == Declarations::Enforced {
         check_declaration(
             &at,
@@ -1341,27 +1430,58 @@ pub(super) async fn run_command_op(
             code.as_str(),
         );
     }
-    json!({ "name": name, "returns": returns, "error": error, "code": code })
+    let mut record = json!({ "name": name, "returns": returns, "error": error, "code": code });
+    if !emitted.is_empty() {
+        let events: Vec<String> = PROJECTING_STEP.sync_scope(at, || {
+            emitted
+                .iter()
+                .map(|payload| event_token(EVENT_PROPERTY_CHANGED, payload))
+                .collect()
+        });
+        record["events"] = json!(events);
+    }
+    record
 }
 
-/// The `expected_ops` value: every record's `returns` relabelled through the
-/// canonical map, or `Null` when no op opted in (so the key stays absent).
+/// One emitted event as a token: the event name as the head, then every
+/// payload field in name order, so an id-valued field relabels like an id in
+/// `returns`. MUST match `eventToken` in the TS twin.
+fn event_token(event: &str, payload: &impl Serialize) -> String {
+    let Value::Object(mut row) = serde_json::to_value(payload).expect("serialize event payload")
+    else {
+        panic!("event '{event}' carries a payload that is not an object");
+    };
+    let mut fields: Vec<String> = row.keys().cloned().collect();
+    fields.sort_unstable();
+    row.insert(HEADED_ID_KEY.to_owned(), json!(event));
+    let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
+    row_token(&Value::Object(row), HEADED_ID_KEY, &fields)
+}
+
+/// The `expected_ops` value: every record's `returns` and `events` relabelled
+/// through the canonical map, or `Null` when no op opted in (so the key stays
+/// absent).
 pub(super) fn relabel_records(records: &[Value], labels: &BTreeMap<String, String>) -> Value {
     if records.is_empty() {
         return Value::Null;
     }
+    let relabel = |tokens: &Value| -> Value {
+        tokens
+            .as_array()
+            .expect("record tokens")
+            .iter()
+            .map(|t| json!(relabel_token(t.as_str().expect("token"), labels)))
+            .collect()
+    };
     Value::Array(
         records
             .iter()
             .map(|record| {
                 let mut record = record.clone();
-                let returns: Vec<String> = record["returns"]
-                    .as_array()
-                    .expect("record returns")
-                    .iter()
-                    .map(|t| relabel_token(t.as_str().expect("token"), labels))
-                    .collect();
-                record["returns"] = json!(returns);
+                record["returns"] = relabel(&record["returns"]);
+                if let Some(events) = record.get("events") {
+                    record["events"] = relabel(events);
+                }
                 record
             })
             .collect(),
@@ -1518,7 +1638,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 60;
+    const MUTATING_ARM_COUNT: usize = 63;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

@@ -739,54 +739,63 @@
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"todo_state\"]"],
       "name": "until_passed_ends_the_chain",
       "returns": ["B2#todo_state=DONE"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B3#changed_keys=[\"todo_state\"]"],
       "name": "until_ahead_is_carried",
       "returns": ["B3#todo_state=DONE"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B4#changed_keys=[\"todo_state\"]"],
       "name": "count_spent_ends_the_chain",
       "returns": ["B4#todo_state=DONE"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B5#changed_keys=[\"todo_state\"]"],
       "name": "count_counts_up",
       "returns": ["B5#todo_state=DONE"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B13#changed_keys=[\"todo_state\"]"],
       "name": "count_counts_up_again",
       "returns": ["B13#todo_state=DONE"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B14#changed_keys=[\"todo_state\"]"],
       "name": "count_reached_ends_the_chain",
       "returns": ["B14#todo_state=DONE"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B6#changed_keys=[\"todo_state\"]"],
       "name": "seq_without_count_is_not_carried",
       "returns": ["B6#todo_state=DONE"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B7#changed_keys=[\"todo_state\"]"],
       "name": "until_without_a_date_is_not_checked",
       "returns": ["B7#todo_state=DONE"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B8#changed_keys=[\"todo_state\"]"],
       "name": "count_without_seq_starts_at_one",
       "returns": ["B8#todo_state=DONE"]
     },
@@ -799,12 +808,14 @@
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B10#changed_keys=[\"todo_state\"]"],
       "name": "todo_batch_skips_recurrence",
       "returns": ["set_todo_state_batch#updated=1"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B11#changed_keys=[\"todo_state\"]"],
       "name": "property_batch_skips_recurrence",
       "returns": ["set_property_batch#updated=1"]
     }

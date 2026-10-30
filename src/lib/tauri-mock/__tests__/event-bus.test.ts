@@ -24,7 +24,8 @@ import { emit, listen } from '@tauri-apps/api/event'
 import { clearMocks } from '@tauri-apps/api/mocks'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { setupMock } from '../index'
+import { dispatch } from '../handlers'
+import { SEED_IDS, setupMock } from '../index'
 
 interface MockEventWindow {
   __emitMockEvent?: (event: string, payload?: unknown) => Promise<void>
@@ -97,6 +98,20 @@ describe('mock event bus (#2683)', () => {
     expect(handler).toHaveBeenCalledWith({
       event: 'deep-link',
       payload: { urls: ['agaric://page/abc123'] },
+    })
+
+    unlisten()
+  })
+
+  it('carries what a mock command emits to a listen() callback (#6054)', async () => {
+    const handler = vi.fn()
+    const unlisten = await listen('block:properties-changed', handler)
+
+    dispatch('set_priority', { blockId: SEED_IDS.BLOCK_GS_1, level: '1' })
+
+    expect(handler).toHaveBeenCalledWith({
+      event: 'block:properties-changed',
+      payload: { block_id: SEED_IDS.BLOCK_GS_1, changed_keys: ['priority'] },
     })
 
     unlisten()

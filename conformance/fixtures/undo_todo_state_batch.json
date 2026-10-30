@@ -70,12 +70,17 @@
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"todo_state\"]"],
       "name": "hold_cancelled",
       "returns": ["B2#todo_state=CANCELLED"]
     },
     {
       "code": null,
       "error": null,
+      "events": [
+        "block:properties-changed#block_id=B2#changed_keys=[\"todo_state\"]",
+        "block:properties-changed#block_id=B3#changed_keys=[\"todo_state\"]"
+      ],
       "name": "batch_doing",
       "returns": ["set_todo_state_batch#updated=2"]
     },

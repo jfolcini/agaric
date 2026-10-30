@@ -84,18 +84,21 @@
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"project\"]"],
       "name": "set_a",
       "returns": ["B2"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"project\"]"],
       "name": "set_b_over_a",
       "returns": ["B2"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B3#changed_keys=[\"project\"]"],
       "name": "set_c_from_absent",
       "returns": ["B3"]
     },

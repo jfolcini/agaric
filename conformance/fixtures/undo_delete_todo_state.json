@@ -70,24 +70,28 @@
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"todo_state\"]"],
       "name": "task_s2",
       "returns": ["B2#todo_state=TODO"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B3#changed_keys=[\"todo_state\"]"],
       "name": "task_s3",
       "returns": ["B3#todo_state=TODO"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B3#changed_keys=[\"todo_state\"]"],
       "name": "clear_s3",
       "returns": ["delete_property"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"todo_state\"]"],
       "name": "clear_s2",
       "returns": ["delete_property"]
     },

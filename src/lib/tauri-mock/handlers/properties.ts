@@ -10,6 +10,7 @@
  */
 
 import type { PropertyMergeCounts, PropertyTypeChangeCounts } from '@/lib/bindings'
+import { EVENT_PROPERTY_CHANGED } from '@/lib/block-event-names'
 import {
   BUILTIN_PROPERTY_DEFS,
   REPEAT_RULE_BOUNDS,
@@ -17,6 +18,7 @@ import {
 } from '@/lib/property-save-utils'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
+import { emitEvent } from '@/lib/tauri-mock/events'
 import { blocksHandlers, paginateKeyset } from '@/lib/tauri-mock/handlers/blocks'
 import {
   type TypedHandlers,
@@ -346,6 +348,31 @@ function createOccurrence(next: Occurrence): void {
   writePropertyRow(id, 'repeat-origin', { value_ref: next.originId })
 }
 
+/**
+ * `response`, after one `block:properties-changed` per block in `blockIds`
+ * naming `changedKeys`: what the backend's wrapper emits once its `_inner`
+ * commits (`property_changed_events`). The write is the `response` argument,
+ * so a refused one throws before anything is emitted.
+ */
+function propertiesChanged<T>(
+  blockIds: readonly string[],
+  changedKeys: readonly string[],
+  response: T,
+): T {
+  for (const blockId of blockIds) {
+    emitEvent(EVENT_PROPERTY_CHANGED, { block_id: blockId, changed_keys: [...changedKeys] })
+  }
+  return response
+}
+
+/** `fetch_live_block_in_tx`: the block a write may touch, or the backend's refusal. */
+function liveBlock(blockId: string): Record<string, unknown> {
+  const b = blocks.get(blockId)
+  if (!b) throw notFoundRejection(`block '${blockId}' not found`)
+  if (b['deleted_at'] != null) throw validationRejection(`block '${blockId}' has been soft-deleted`)
+  return b
+}
+
 export const propertiesHandlers = {
   // Mirrors `pagination::query_by_property` (#3827). One `block_properties`
   // (or native-column) row per block; the comparison operator applies to
@@ -522,9 +549,11 @@ export const propertiesHandlers = {
       const write = () =>
         setReservedColumnProperty(blockId, key, reservedChannel, valueText, valueDate)
       // #5394 — `set_property_inner` routes `todo_state` through `set_todo_state_in_tx`.
-      return key === 'todo_state' ? writeTodoState(blockId, valueText, write) : write()
+      const row = key === 'todo_state' ? writeTodoState(blockId, valueText, write) : write()
+      return propertiesChanged([blockId], [key], row)
     }
-    if (key === 'space') return setSpaceProperty(target, valueRef)
+    if (key === 'space')
+      return propertiesChanged([blockId], [key], setSpaceProperty(target, valueRef))
     const op = writePropertyRow(blockId, key, {
       value_text: valueText,
       value_num: valueNum,
@@ -534,7 +563,8 @@ export const propertiesHandlers = {
     })
     const b = blocks.get(blockId)
     // #2468 — `WithOps<BlockRow>`.
-    return b ? { ...b, op_refs: [{ device_id: op.device_id, seq: op.seq }] } : null
+    const row = b ? { ...b, op_refs: [{ device_id: op.device_id, seq: op.seq }] } : null
+    return propertiesChanged([blockId], [key], row)
   },
 
   delete_property: (args) => {
@@ -559,7 +589,8 @@ export const propertiesHandlers = {
     if (channel !== undefined) {
       const fromValue = (b[key] as string | null | undefined) ?? null
       // #5898 — a key the block does not hold appends nothing.
-      if (fromValue === null) return { block_id: blockId, key, op_refs: [] }
+      if (fromValue === null)
+        return propertiesChanged([blockId], [], { block_id: blockId, key, op_refs: [] })
       const start = opLog.length
       b[key] = null
       // `prior` as `held_property_value` records it, which the undo restores (#6156).
@@ -571,34 +602,40 @@ export const propertiesHandlers = {
       // #5378 — `delete_property_core` clears the task stamps with the state.
       if (key === 'todo_state') writeTaskStampTransitions(blockId, fromValue, null)
       // Every op appended, as `capture_op_refs` takes them: undone by these refs, the stamps come back too.
-      return {
+      return propertiesChanged([blockId], [key], {
         block_id: blockId,
         key,
         op_refs: opLog.slice(start).map(({ device_id, seq }) => ({ device_id, seq })),
-      }
+      })
     }
     // `space` clears the `blocks.space_id` column; its undo restores the space.
     if (key === 'space') {
       const fromSpace = (b['space_id'] as string | null | undefined) ?? null
-      if (fromSpace === null) return { block_id: blockId, key, op_refs: [] }
+      if (fromSpace === null)
+        return propertiesChanged([blockId], [], { block_id: blockId, key, op_refs: [] })
       setPageGroupSpace(blocks, blockId, null)
       const op = pushOp('delete_property', {
         block_id: blockId,
         key,
         from_value: typedValueOf({ value_ref: fromSpace }),
       })
-      return { block_id: blockId, key, op_refs: [{ device_id: op.device_id, seq: op.seq }] }
+      return propertiesChanged([blockId], [key], {
+        block_id: blockId,
+        key,
+        op_refs: [{ device_id: op.device_id, seq: op.seq }],
+      })
     }
     // #2468 — echoes `(block_id, key)` plus `op_refs`
     // (`WithOps<DeletePropertyResponse>`). #5898 — like `delete_property_core`,
     // a key the block does not hold appends nothing.
-    const opRefs = properties.get(blockId)?.has(key) ? [deletePropertyRow(blockId, key)] : []
+    const deleted = properties.get(blockId)?.has(key) ? [key] : []
     if (key === 'repeat') {
       for (const bound of REPEAT_RULE_BOUNDS) {
-        if (properties.get(blockId)?.has(bound)) opRefs.push(deletePropertyRow(blockId, bound))
+        if (properties.get(blockId)?.has(bound)) deleted.push(bound)
       }
     }
-    return { block_id: blockId, key, op_refs: opRefs }
+    const opRefs = deleted.map((k) => deletePropertyRow(blockId, k))
+    return propertiesChanged([blockId], deleted, { block_id: blockId, key, op_refs: opRefs })
   },
 
   get_properties: (args) => {
@@ -676,9 +713,9 @@ export const propertiesHandlers = {
   set_todo_state: (args) => {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
-    const b = blocks.get(blockId)
-    if (!b) throw notFoundRejection(`block '${blockId}' not found`)
+    const b = liveBlock(blockId)
     const state = (a['state'] as string | null) ?? null
+    assertValidReservedPropertyValue('todo_state', 'value_text', state)
     const start = opLog.length
     writeTodoState(blockId, state, (fromState) => {
       b['todo_state'] = state
@@ -686,7 +723,10 @@ export const propertiesHandlers = {
     })
     // Every op appended, as `capture_op_refs` takes them: the stamps' and the next occurrence's
     // among them (#6156).
-    return { ...b, op_refs: opLog.slice(start).map(({ device_id, seq }) => ({ device_id, seq })) }
+    return propertiesChanged([blockId], ['todo_state'], {
+      ...b,
+      op_refs: opLog.slice(start).map(({ device_id, seq }) => ({ device_id, seq })),
+    })
   },
 
   // Batch set/clear todo state. Iterates the
@@ -720,10 +760,10 @@ export const propertiesHandlers = {
       updated++
     }
     // Every op appended, as `capture_op_refs` takes them: the stamps' among them (#6156).
-    return {
+    return propertiesChanged(inputIds, ['todo_state'], {
       updated,
       op_refs: opLog.slice(start).map(({ device_id, seq }) => ({ device_id, seq })),
-    }
+    })
   },
 
   // Batch set/clear an ALLOWLISTED reserved property across N blocks in one
@@ -773,7 +813,7 @@ export const propertiesHandlers = {
       if (key === 'todo_state') writeTaskStampTransitions(id, prior, value)
       updated++
     }
-    return updated
+    return propertiesChanged(inputIds, [key], updated)
   },
 
   set_priority: (args) => {
@@ -783,8 +823,7 @@ export const propertiesHandlers = {
       'value_text',
       (a['level'] as string | null) ?? null,
     )
-    const b = blocks.get(a['blockId'] as string)
-    if (!b) throw notFoundRejection(`block '${a['blockId'] as string}' not found`)
+    const b = liveBlock(a['blockId'] as string)
     const fromLevel = (b['priority'] as string | null) ?? null
     b['priority'] = (a['level'] as string | null) ?? null
     pushOp('set_priority', {
@@ -792,35 +831,37 @@ export const propertiesHandlers = {
       level: b['priority'],
       from_level: fromLevel,
     })
-    return { ...b }
+    return propertiesChanged([a['blockId'] as string], ['priority'], { ...b })
   },
 
   set_due_date: (args) => {
     const a = args as Record<string, unknown>
-    const b = blocks.get(a['blockId'] as string)
-    if (!b) throw notFoundRejection(`block '${a['blockId'] as string}' not found`)
+    const date = (a['date'] as string | null) ?? null
+    if (date !== null) assertValidDateFormat(date)
+    const b = liveBlock(a['blockId'] as string)
     const fromDate = (b['due_date'] as string | null) ?? null
-    b['due_date'] = (a['date'] as string | null) ?? null
+    b['due_date'] = date
     pushOp('set_due_date', {
       block_id: a['blockId'],
       date: b['due_date'],
       from_date: fromDate,
     })
-    return { ...b }
+    return propertiesChanged([a['blockId'] as string], ['due_date'], { ...b })
   },
 
   set_scheduled_date: (args) => {
     const a = args as Record<string, unknown>
-    const b = blocks.get(a['blockId'] as string)
-    if (!b) throw notFoundRejection(`block '${a['blockId'] as string}' not found`)
+    const date = (a['date'] as string | null) ?? null
+    if (date !== null) assertValidDateFormat(date)
+    const b = liveBlock(a['blockId'] as string)
     const fromDate = (b['scheduled_date'] as string | null) ?? null
-    b['scheduled_date'] = (a['date'] as string | null) ?? null
+    b['scheduled_date'] = date
     pushOp('set_scheduled_date', {
       block_id: a['blockId'],
       date: b['scheduled_date'],
       from_date: fromDate,
     })
-    return { ...b }
+    return propertiesChanged([a['blockId'] as string], ['scheduled_date'], { ...b })
   },
 
   // ---------------------------------------------------------------------------

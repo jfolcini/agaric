@@ -35,8 +35,9 @@
 //! background fan-out). Validation that exists only in the command layer, and
 //! the value a command returns, never reach that boundary — so an op may opt
 //! in to the OTHER leg with `"via": "command"` (#4670): that op alone runs its
-//! `*_inner`, and its return value or refusal is recorded in `expected_ops`
-//! (`conformance_command.rs`). Every other op keeps the payload replay.
+//! `*_inner`, and its return value or refusal, with the events its wrapper
+//! emits, is recorded in `expected_ops` (`conformance_command.rs`). Every other
+//! op keeps the payload replay.
 //!
 //! The runner therefore SEEDS each fixture's seed blocks into the test
 //! materializer's per-space Loro tree (mirroring the raw-SQL seed insert) so

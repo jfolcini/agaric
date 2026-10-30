@@ -61,12 +61,14 @@
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B3#changed_keys=[]"],
       "name": "a_freeform_key_the_block_lacks",
       "returns": ["delete_property"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B3#changed_keys=[]"],
       "name": "a_column_key_the_block_lacks",
       "returns": ["delete_property"]
     },

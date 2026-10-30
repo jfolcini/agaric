@@ -76,18 +76,21 @@
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"project\"]"],
       "name": "set_project",
       "returns": ["B2"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"area\"]"],
       "name": "set_area",
       "returns": ["B2"]
     },
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"area\"]"],
       "name": "delete_area",
       "returns": ["delete_property"]
     },
