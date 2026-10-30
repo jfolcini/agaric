@@ -1,7 +1,57 @@
 ---
 source: agaric-engine/src/import.rs
-expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_markdown(&text)), \"source\":\n    output_shape(parse_source_outline(&text)), \"paste\":\n    blocks_shape(parse_pasted_text(&text)),\n})"
+expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_markdown(&text)), \"document\":\n    output_shape(parse_document_outline(&text)), \"paste\":\n    blocks_shape(parse_pasted_text(&text)),\n})"
 ---
+document:
+  blocks:
+    - block_anchor: ~
+      content: "# Deploy notes"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "Run the migration first:"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "```bash\n# comment, not a heading\n- not a bullet\npsql -f migrate.sql\n```"
+      depth: 0
+      is_code: true
+      properties: []
+    - block_anchor: ~
+      content: "Then check the config:"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "~~~yaml\n- name: web\n  replicas: 3\n~~~"
+      depth: 0
+      is_code: true
+      properties: []
+    - block_anchor: ~
+      content: "How to document a snippet:"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "````md\n```js\nconsole.log(\"hi\")\n```\n- item inside the example\n````"
+      depth: 0
+      is_code: true
+      properties: []
+    - block_anchor: ~
+      content: "Old-style indented code:"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: make release
+      depth: 1
+      is_code: false
+      properties: []
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings: []
 import:
   blocks:
     - block_anchor: ~
@@ -98,53 +148,3 @@ paste:
     depth: 1
     is_code: false
     properties: []
-source:
-  blocks:
-    - block_anchor: ~
-      content: "# Deploy notes"
-      depth: 0
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: "Run the migration first:"
-      depth: 1
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: "```bash\n# comment, not a heading\n- not a bullet\npsql -f migrate.sql\n```"
-      depth: 1
-      is_code: true
-      properties: []
-    - block_anchor: ~
-      content: "Then check the config:"
-      depth: 1
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: "~~~yaml\n- name: web\n  replicas: 3\n~~~"
-      depth: 1
-      is_code: true
-      properties: []
-    - block_anchor: ~
-      content: "How to document a snippet:"
-      depth: 1
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: "````md\n```js\nconsole.log(\"hi\")\n```\n- item inside the example\n````"
-      depth: 1
-      is_code: true
-      properties: []
-    - block_anchor: ~
-      content: "Old-style indented code:"
-      depth: 1
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: make release
-      depth: 2
-      is_code: false
-      properties: []
-  frontmatter: []
-  frontmatter_list_items: {}
-  warnings: []

@@ -1,5 +1,5 @@
 {
-  "description": "#5071 — the three renders of the markdown grammar, each over the same page: the export, the source buffer and a clipboard copy. A document cannot ride in a row token (`#` is the attribute separator, and every export opens `# Title`), so each step's row names the sibling file beside this one that holds the backend's render, `markdown_documents.<step>.txt`, with the blake3 of its bytes; `CONFORMANCE_UPDATE=1` writes the file and the Rust runner asserts the render equals it. The grammar has one implementation, in Rust: the mock's renders are deliberate approximations, so this fixture's query leg is backend-only on the mock (`QUERY_DRIFT_SKIP` in conformance.test.ts). One page carries the shapes that matter: a heading, nesting two deep, a block whose text runs over two lines, inline marks, a same-page block ref (the export anchors its target), a page link and a tag ref (written as names), page front matter (a property, an alias and a tag), and a block attachment and a page attachment (the export writes a link line for each). Seed: S1 (Field Notes) > S2 (## Findings) > S3 (inline marks) > S4; S1 > S5 (two lines), S6, S7; S8 (Reading List); S9 (Tags) > S10 (research). The ops give S6 its ref to S3 and S7 its link to S8 and tag S10 through `edit_block`, because the seed insert bypasses the materializer that derives `block_links`. Re-author `expected` / `expected_queries` and the documents via CONFORMANCE_UPDATE=1.",
+  "description": "#5071 — the two renders of the markdown grammar, each over the same page: the export and a clipboard copy (the page's buffer is pinned line by line through `get_page_buffer`). A document cannot ride in a row token (`#` is the attribute separator, and every export opens `# Title`), so each step's row names the sibling file beside this one that holds the backend's render, `markdown_documents.<step>.txt`, with the blake3 of its bytes; `CONFORMANCE_UPDATE=1` writes the file and the Rust runner asserts the render equals it. The grammar has one implementation, in Rust: the mock's renders are deliberate approximations, so this fixture's query leg is backend-only on the mock (`QUERY_DRIFT_SKIP` in conformance.test.ts). One page carries the shapes that matter: a heading, nesting two deep, a block whose text runs over two lines, inline marks, a same-page block ref (the export anchors its target), a page link and a tag ref (written as names), page front matter (a property, an alias and a tag), and a block attachment and a page attachment (the export writes a link line for each). Seed: S1 (Field Notes) > S2 (## Findings) > S3 (inline marks) > S4; S1 > S5 (two lines), S6, S7; S8 (Reading List); S9 (Tags) > S10 (research). The ops give S6 its ref to S3 and S7 its link to S8 and tag S10 through `edit_block`, because the seed insert bypasses the materializer that derives `block_links`. Re-author `expected` / `expected_queries` and the documents via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [
       {
@@ -195,16 +195,6 @@
       "cursor": null,
       "error": null,
       "has_more": null,
-      "name": "source",
-      "rows": [
-        "markdown_documents.source.txt#blake3=da979d4afa9daf9ca19932887b63bb6d23002a1687016c3ce7c51bf3faf5849b"
-      ],
-      "total_count": null
-    },
-    {
-      "cursor": null,
-      "error": null,
-      "has_more": null,
       "name": "clipboard",
       "rows": [
         "markdown_documents.clipboard.txt#blake3=20593e2376c0656c2523586df1b55067fa10feb45548deed7d11c6bf794aee7b"
@@ -237,14 +227,6 @@
       "command": "export_page_markdown",
       "comment": "The file for other tools: ids become names and links, front matter heads the page, and each attachment gets a link line.",
       "name": "export"
-    },
-    {
-      "args": {
-        "pageId": "S1"
-      },
-      "command": "get_page_source",
-      "comment": "The buffer source mode edits: front matter, then every block with its `^ID`, a name only where it reads back to the same id.",
-      "name": "source"
     },
     {
       "args": {

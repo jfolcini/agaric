@@ -202,7 +202,7 @@
         "line#text=stage: open",
         "line#text=---",
         "line#text=",
-        "B2#text=- alpha, by line",
+        "B2#text=alpha, by line",
         "line#text="
       ],
       "total_count": null
@@ -212,11 +212,11 @@
   "ops": [
     {
       "args": {
-        "baseSource": "---\naliases: [Home base]\ntags: [work]\ndrop: me\nstage: open\n---\n\n- alpha ^000000000000000000000000S2\n",
+        "baseSource": "---\naliases: [Home base]\ntags: [work]\ndrop: me\nstage: open\n---\n\nalpha ^000000000000000000000000S2\n",
         "lineIds": [null, null, null, null, null, null, null, "000000000000000000000000S2", null],
         "merge": false,
         "pageId": "S1",
-        "source": "---\naliases: [Home base]\ntags: [work]\ndrop: me\nstage: open\n---\n\n- alpha\n"
+        "source": "---\naliases: [Home base]\ntags: [work]\ndrop: me\nstage: open\n---\n\nalpha\n"
       },
       "command": "apply_page_source",
       "comment": "The buffer is the page's own source, front matter and all: nothing differs, so nothing is written.",
@@ -225,11 +225,11 @@
     },
     {
       "args": {
-        "baseSource": "---\naliases: [Home base]\ntags: [work]\ndrop: me\nstage: open\n---\n\n- alpha ^000000000000000000000000S2\n",
+        "baseSource": "---\naliases: [Home base]\ntags: [work]\ndrop: me\nstage: open\n---\n\nalpha ^000000000000000000000000S2\n",
         "lineIds": [null, null, null, null, null, null, null, "000000000000000000000000S2", null],
         "merge": false,
         "pageId": "S1",
-        "source": "---\naliases: [Home base]\ntags: [work]\nowner: ann\nstage: done\n---\n\n- alpha\n"
+        "source": "---\naliases: [Home base]\ntags: [work]\nowner: ann\nstage: done\n---\n\nalpha\n"
       },
       "command": "apply_page_source",
       "comment": "`stage` changes, `owner` is new and `drop` is left out: two properties set on the page and one deleted, as the property drawer writes them.",
@@ -238,11 +238,11 @@
     },
     {
       "args": {
-        "baseSource": "---\naliases: [Home base]\ntags: [work]\nowner: ann\nstage: done\n---\n\n- alpha ^000000000000000000000000S2\n",
+        "baseSource": "---\naliases: [Home base]\ntags: [work]\nowner: ann\nstage: done\n---\n\nalpha ^000000000000000000000000S2\n",
         "lineIds": [null, null, null, null, null, null, null, "000000000000000000000000S2", null],
         "merge": false,
         "pageId": "S1",
-        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\n- alpha\n"
+        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\nalpha\n"
       },
       "command": "apply_page_source",
       "comment": "The alias list is replaced and the tag `work` swapped for the seeded `idea`: its association is added and `work`'s removed.",
@@ -251,7 +251,7 @@
     },
     {
       "args": {
-        "baseSource": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\n- alpha ^000000000000000000000000S2\n",
+        "baseSource": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\nalpha ^000000000000000000000000S2\n",
         "lineIds": [
           null,
           null,
@@ -266,7 +266,7 @@
         ],
         "merge": false,
         "pageId": "S1",
-        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\nnot a pair\n---\n\n- alpha\n"
+        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\nnot a pair\n---\n\nalpha\n"
       },
       "command": "apply_page_source",
       "comment": "A front matter line that is no `key: value` pair refuses the save by its line: the page has no block to keep it in as text.",
@@ -276,11 +276,11 @@
     },
     {
       "args": {
-        "baseSource": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\n- alpha ^000000000000000000000000S2\n",
+        "baseSource": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\nalpha ^000000000000000000000000S2\n",
         "lineIds": [null, null, null, null, null, null, null, "000000000000000000000000S2", null],
         "merge": false,
         "pageId": "S1",
-        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: nope\n---\n\n- alpha\n"
+        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: nope\n---\n\nalpha\n"
       },
       "command": "apply_page_source",
       "comment": "`nope` is not an option of the `stage` definition, so the save is refused as the property drawer refuses it.",
@@ -290,11 +290,11 @@
     },
     {
       "args": {
-        "baseSource": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\n- alpha ^000000000000000000000000S2\n",
+        "baseSource": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\nalpha ^000000000000000000000000S2\n",
         "lineIds": [null, null, null, null, null, null, "000000000000000000000000S2", null],
         "merge": false,
         "pageId": "S1",
-        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n\n- alpha\n"
+        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n\nalpha\n"
       },
       "command": "apply_page_source",
       "comment": "A `---` no `---` closes is front matter left open, refused rather than saved as blocks.",
@@ -304,11 +304,11 @@
     },
     {
       "args": {
-        "baseSource": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\n- alpha ^000000000000000000000000S2\n",
+        "baseSource": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\nalpha ^000000000000000000000000S2\n",
         "lineIds": [null, null, null, null, null, null, null, "000000000000000000000000S2", null],
         "merge": false,
         "pageId": "S1",
-        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: open\n---\n\n- alpha, by line\n"
+        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: open\n---\n\nalpha, by line\n"
       },
       "command": "apply_page_source",
       "comment": "`stage` and alpha's line both changed: one save sets the property and edits the block.",

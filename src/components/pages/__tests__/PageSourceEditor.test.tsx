@@ -102,7 +102,7 @@ function routeToMockBackend(): PageBuffer {
 }
 
 function pageBuffer(pageId: string): PageBuffer {
-  return dispatch('get_page_buffer', { pageId, dialect: 'document' }) as PageBuffer
+  return dispatch('get_page_buffer', { pageId }) as PageBuffer
 }
 
 function renderEditor(pageId = PAGE_ID) {
@@ -330,7 +330,6 @@ describe('PageSourceEditor saving', () => {
         baseSource: base.source,
         merge: false,
         lineIds: base.line_ids,
-        dialect: 'document',
       },
     ])
     expect(pageBuffer(PAGE_GETTING_STARTED)).toEqual({ ...base, text, source: expect.any(String) })
@@ -807,7 +806,6 @@ describe('PageSourceEditor when the page changed elsewhere', () => {
       pageId: PAGE_GETTING_STARTED,
       source: edited.text,
       lineIds: edited.lineIds,
-      dialect: 'document',
     }
     expect(applyCalls()).toEqual([
       { ...save, baseSource: base.source, merge: false },

@@ -72,10 +72,7 @@ describe('page-blocks applyPageSource (#5140 Phase 4b)', () => {
     const { BLOCK_GS_1, BLOCK_GS_2, PAGE_GETTING_STARTED } = SEED_IDS
     const pageStore = createPageBlockStore(PAGE_GETTING_STARTED)
     await pageStore.getState().load()
-    const base = dispatch('get_page_buffer', {
-      pageId: PAGE_GETTING_STARTED,
-      dialect: 'document',
-    }) as PageBuffer
+    const base = dispatch('get_page_buffer', { pageId: PAGE_GETTING_STARTED }) as PageBuffer
     const lines = base.text.split('\n')
     const gs2 = base.line_ids.indexOf(BLOCK_GS_2)
     const source = lines
@@ -189,7 +186,6 @@ describe('page-blocks applyPageSource (#5140 Phase 4b)', () => {
           baseSource: '- b\n',
           merge: true,
           lineIds: [null, null],
-          dialect: 'document',
         },
       ],
     ])

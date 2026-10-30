@@ -12,7 +12,7 @@
 //! | Tool | Backing `*_inner` | Notes |
 //! |------|-------------------|-------|
 //! | `append_block` | `append_block_resolving_names` | `block_type` hard-coded to `"content"`. `parent_id` required. |
-//! | `append_markdown` | [`append_markdown_inner`] | A Markdown outline under `parent_id`, read and resolved as paste does: an unmatched `[[Name]]` / `#name` creates the page or tag. |
+//! | `append_markdown` | [`append_markdown_inner`] | Markdown under `parent_id`, read and resolved as paste does: an unmatched `[[Name]]` / `#name` creates the page or tag. |
 //! | `update_block_content` | `edit_block_resolving_names` | |
 //! | `set_property` | [`set_property_inner`] | Exactly one of `value_*` must be provided. |
 //! | `add_tag` | [`add_tag_inner`] | Tag block must already exist in the block's space. |
@@ -22,12 +22,12 @@
 //! | `create_tag` | [`create_block_inner_with_space`] | `block_type = "tag"`; returns the space's same-name tag when one exists. |
 //! | `delete_property` | [`delete_property_inner`] | Rejects `space`; the inner refuses system-managed keys. |
 //! | `undo` | [`revert_ops_inner`] | Reverts `op_refs` as one op group. Refuses an op another origin wrote. |
-//! | `capture` | [`capture_to_journal_inner`] | #5396 — a Markdown outline at the end of a day's journal page, creating the day with its template, in one transaction. `date` is `today` (default), `yesterday` or `YYYY-MM-DD` on the device's clock. |
+//! | `capture` | [`capture_to_journal_inner`] | #5396 — Markdown at the end of a day's journal page, creating the day with its template, in one transaction. `date` is `today` (default), `yesterday` or `YYYY-MM-DD` on the device's clock. |
 //! | `move_blocks` | [`move_blocks_batch_inner`] | One transaction; ids kept. Every block and the parent must be in `space_id`. |
 //! | `remove_tag` | [`remove_tag_inner`] | |
 //! | `restore_block` | [`restore_block_inner`] | Takes the `deleted_at` that `delete_block` / `list_trash` returned. |
 //! | `batch` | the `_in_tx` halves of the tools it names | #5399 — `append_block`, `update_block_content`, `set_property`, `add_tag`, `remove_tag`, `move_blocks` and `delete_block` calls in one transaction: one activity entry, one undo, nothing written when one is refused. |
-//! | `edit_page_markdown` | [`apply_page_source_as`] in [`Dialect::Document`] | #5399 — the page's Markdown as `get_page_markdown` with `editable` reads it, edited, saved as the app's Edit as Markdown saves it. A stale `base` is refused. |
+//! | `edit_page_markdown` | [`apply_page_source_inner`] | #5399 — the page's Markdown as `get_page_markdown` with `editable` reads it, edited, saved as the app's Edit as Markdown saves it. A stale `base` is refused. |
 //! | `set_page_aliases` | [`set_page_aliases_inner`] | Replaces the page's whole alias list in one transaction. An alias another page holds is refused, nothing written. |
 //!
 //! Every `tools_ro` tool follows the write tools, served by the
@@ -81,8 +81,8 @@ use crate::commands::blocks::crud::{DeleteInTx, delete_block_in_tx, dispatch_del
 use crate::commands::blocks::move_ops::move_blocks_batch_in_tx;
 use crate::commands::blocks::space_move::describe_losses;
 use crate::commands::pages::markdown::{
-    Dialect, anchor_free_as, append_block_resolving_names, append_block_resolving_names_in_tx,
-    apply_page_source_as, edit_block_resolving_names, edit_block_resolving_names_in_tx,
+    anchor_free, append_block_resolving_names, append_block_resolving_names_in_tx,
+    apply_page_source_inner, edit_block_resolving_names, edit_block_resolving_names_in_tx,
 };
 use crate::commands::properties::set_property_inner_in_tx;
 use crate::commands::tags::{add_tag_in_tx, remove_tag_inner_in_tx};
@@ -510,7 +510,7 @@ fn tool_desc_append_markdown() -> ToolDescription {
     ToolDescription {
         name: TOOL_APPEND_MARKDOWN.to_string(),
         description: format!(
-            "Append a Markdown outline under an existing parent in one call, as one undo, \
+            "Append Markdown under an existing parent in one call, as one undo, \
              exactly as a paste in the app lands it: list items nest by indentation, a `- ` or \
              `* ` item is a bulleted block, `1. ` a numbered one and `+ ` a plain one, a blank \
              line separates paragraphs, a heading and a fenced code block are blocks of their \
@@ -527,11 +527,11 @@ fn tool_desc_append_markdown() -> ToolDescription {
             "properties": {
                 "parent_id": {
                     "type": "string",
-                    "description": "ULID of the parent block or page the outline lands under, or the page's title or alias.",
+                    "description": "ULID of the parent block or page the Markdown lands under, or the page's title or alias.",
                 },
                 "markdown": {
                     "type": "string",
-                    "description": "The Markdown outline to append.",
+                    "description": "The Markdown to append.",
                 },
                 "position": {
                     "type": "integer",
@@ -806,7 +806,7 @@ fn tool_desc_capture() -> ToolDescription {
     ToolDescription {
         name: TOOL_CAPTURE.to_string(),
         description: "Capture a thought into a day's journal in one call, as one undo: the \
-             Markdown outline lands at the end of the day's page, read as append_markdown reads \
+             Markdown lands at the end of the day's page, read as append_markdown reads \
              it, and a missing day is created with the space's journal template first."
             .to_string(),
         input_schema: json!({
@@ -814,7 +814,7 @@ fn tool_desc_capture() -> ToolDescription {
             "additionalProperties": false,
             "required": ["content", "space_id"],
             "properties": {
-                "content": { "type": "string", "description": "The Markdown outline to capture." },
+                "content": { "type": "string", "description": "The Markdown to capture." },
                 "space_id": { "type": "string", "description": "ULID of the space the journal belongs to." },
                 "date": {
                     "type": "string",
@@ -2098,7 +2098,7 @@ fn at_op(index: usize, err: AppError) -> AppError {
 }
 
 /// Saves through Edit as Markdown's save, which takes the buffer's text with
-/// its anchors beside it, not in it: [`anchor_free_as`] splits the agent's
+/// its anchors beside it, not in it: [`anchor_free`] splits the agent's
 /// anchored text the way the app's editor holds it.
 async fn handle_edit_page_markdown(
     pool: &SqlitePool,
@@ -2118,7 +2118,7 @@ async fn handle_edit_page_markdown(
         &space_id,
     )
     .await?;
-    let (text, line_ids) = anchor_free_as(&args.markdown, Dialect::Document);
+    let (text, line_ids) = anchor_free(&args.markdown);
     // A stale base is refused, as the app's save first refuses it: a merge
     // keeps a block both sides changed twice, which an agent cannot review.
     let flags = SourceSaveFlags {
@@ -2129,7 +2129,7 @@ async fn handle_edit_page_markdown(
     let report = with_space_guard(
         &space_id,
         vec![page_id.clone()],
-        Box::pin(apply_page_source_as(
+        Box::pin(apply_page_source_inner(
             pool,
             device_id,
             materializer,
@@ -2137,7 +2137,6 @@ async fn handle_edit_page_markdown(
             text,
             args.base,
             flags,
-            Dialect::Document,
         )),
     )
     .await?;

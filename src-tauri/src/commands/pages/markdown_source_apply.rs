@@ -1,8 +1,8 @@
 //! Saving a page edited as its source buffer (#5140): [`apply_page_source`].
 //!
 //! The save parses two buffers: the page's current source (T0), rendered as
-//! `get_page_source` renders it and read as the text `get_page_buffer` gives,
-//! and the text the user edited (T1). Blocks pair by the id beside the line
+//! `get_page_buffer` renders it and read as the text it gives, and the text
+//! the user edited (T1). Blocks pair by the id beside the line
 //! each starts on, and only what differs between the two parses is written,
 //! compared before any name is resolved. So an unchanged buffer writes
 //! nothing, and a name the block already held keeps the meaning its render
@@ -60,8 +60,9 @@ pub struct PageSourceReport {
     pub warnings: Vec<String>,
 }
 
-/// Save `source`, the text of the page's source buffer as the user edited it,
-/// over the page (#5140), as one transaction and so one undo. `flags.line_ids`
+/// Save `source`, the text of the page's buffer as the user edited it, in the
+/// Document dialect (#5691), over the page (#5140), as one transaction and so
+/// one undo. `flags.line_ids`
 /// holds the id each of its lines carries (#5160 A). `base_source` is the
 /// source the edit started from, `get_page_buffer`'s `source`: when it is not
 /// the page's source now, the save is refused as stale, unless `flags.merge`:
@@ -84,7 +85,8 @@ pub struct PageSourceReport {
 /// A name typed into a block is resolved in the page's space as an import
 /// resolves it, creating the page or tag no name there matches. A checkbox
 /// does what a click on it does: the #5074 stamps and, on the edge into DONE,
-/// the next occurrence.
+/// the next occurrence. A task shows no list style (D3): a block hiding one
+/// loses it when the save changes the block, and keeps it otherwise.
 ///
 /// A property key names the reserved key or definition it folds to (#5160
 /// D13), a `key::` line with no value deletes the property (P7), and a ref
@@ -120,48 +122,12 @@ pub async fn apply_page_source_inner(
     base_source: String,
     flags: SourceSaveFlags,
 ) -> Result<PageSourceReport, AppError> {
-    Box::pin(apply_page_source_as(
-        pool,
-        device_id,
-        materializer,
-        page_id,
-        source,
-        base_source,
-        flags,
-        Dialect::Source,
-    ))
-    .await
-}
-
-/// [`apply_page_source_inner`] for a buffer in `dialect` (#5691): `source`,
-/// `base_source` and the page's own source are read in it. In a Document
-/// buffer a task shows no list style (D3); a block hiding one loses it when
-/// the save changes the block, and keeps it otherwise.
-///
-/// # Errors
-///
-/// As [`apply_page_source_inner`].
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the dialect beside the flags every caller of the source save builds"
-)]
-#[instrument(skip(pool, device_id, materializer, source, base_source), err)]
-pub async fn apply_page_source_as(
-    pool: &SqlitePool,
-    device_id: &str,
-    materializer: &Materializer,
-    page_id: &str,
-    source: String,
-    base_source: String,
-    flags: SourceSaveFlags,
-    dialect: Dialect,
-) -> Result<PageSourceReport, AppError> {
     let page_id = BlockId::from_string(page_id)?;
     let mut tx = CommandTx::begin_immediate(pool, "apply_page_source").await?;
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
     let data = load_page_export_data(&mut tx, page_id.as_str(), PageRead::Source).await?;
-    let (base, stale) = read_base(&data, &base_source, flags.merge, dialect)?;
+    let (base, stale) = read_base(&data, &base_source, flags.merge)?;
     let mut lines = PropertyLines::load_for_block(&mut tx, &page_id, PropertyWrite::Edit).await?;
     let mut warnings = Vec::new();
     let (blocks, front) = read_buffer(
@@ -241,12 +207,10 @@ async fn resolve_value_refs(
         .await
 }
 
-/// The page's current source as the save reads it: the dialect it is written
-/// in, the ids of the blocks the render holds, in order, and its parse (T0),
-/// block for block, with each block's parent among them, and the front matter
-/// it opens with.
+/// The page's current source as the save reads it: the ids of the blocks the
+/// render holds, in order, and its parse (T0), block for block, with each
+/// block's parent among them, and the front matter it opens with.
 struct Base {
-    dialect: Dialect,
     ids: Vec<String>,
     blocks: Vec<import::ParsedBlock>,
     parents: Vec<Option<usize>>,
@@ -262,9 +226,8 @@ fn read_base(
     data: &PageExportData,
     base_source: &str,
     merge: bool,
-    dialect: Dialect,
 ) -> Result<(Base, bool), AppError> {
-    let (current, ids) = dialect.render(data);
+    let (current, ids) = render_page_document(data);
     let stale = current != base_source;
     if stale && !merge {
         return Err(AppError::validation_coded(
@@ -272,7 +235,7 @@ fn read_base(
             "the page changed after its source was read",
         ));
     }
-    let parsed = read_own_source(&current, dialect);
+    let parsed = read_own_source(&current);
     let front_matter = front_matter::FrontMatter::of(&parsed);
     let blocks = parsed.blocks;
     let unread = (0..blocks.len().max(ids.len())).find(|&i| {
@@ -287,7 +250,6 @@ fn read_base(
     }
     Ok((
         Base {
-            dialect,
             parents: outline_parents(&blocks),
             ids,
             blocks,
@@ -297,16 +259,15 @@ fn read_base(
     ))
 }
 
-/// `source`, a page's source as `get_page_source` renders it in `dialect`, read
-/// as the text [`anchor_free_as`] makes of it, each block under the id the line
-/// it starts on carries. The text cannot carry the few blocks its anchors keep
-/// apart, a block's content ending in a blank line (in a Document buffer, only
-/// inside a fence it leaves open) or leaving a fence open before its property
-/// lines, so the save compares the buffer with this reading, not with the
-/// anchored one: the page's own text writes nothing.
-fn read_own_source(source: &str, dialect: Dialect) -> import::ParseOutput {
-    let (text, line_ids) = anchor_free_as(source, dialect);
-    let mut parsed = dialect.read(&text, Some(&id_lines(&line_ids)));
+/// `source`, a page's source as `get_page_buffer` renders it, read as the text
+/// [`anchor_free`] makes of it, each block under the id the line it starts on
+/// carries. The text cannot carry the few blocks its anchors keep apart, a
+/// block that leaves a fence open before its own last blank line or its
+/// property lines, so the save compares the buffer with this reading, not
+/// with the anchored one: the page's own text writes nothing.
+fn read_own_source(source: &str) -> import::ParseOutput {
+    let (text, line_ids) = anchor_free(source);
+    let mut parsed = import::parse_document_text(&text, &id_lines(&line_ids));
     for block in &mut parsed.blocks {
         block.block_anchor = block
             .line
@@ -353,7 +314,7 @@ fn read_buffer(
     lines: &mut PropertyLines,
     warnings: &mut Vec<String>,
 ) -> Result<(Vec<import::ParsedBlock>, front_matter::FrontMatterEdit), AppError> {
-    let older = stale.then(|| read_own_source(base_source, base.dialect));
+    let older = stale.then(|| read_own_source(base_source));
     let from = older
         .as_ref()
         .map_or_else(|| base.front_matter.clone(), front_matter::FrontMatter::of);
@@ -364,7 +325,7 @@ fn read_buffer(
         .filter_map(|block| block.block_anchor.as_deref())
         .chain(base.ids.iter().map(String::as_str))
         .collect();
-    let parsed = read_by_line(text, line_ids, &known, warnings, base.dialect)?;
+    let parsed = read_by_line(text, line_ids, &known, warnings)?;
     let front = front_matter::FrontMatterEdit::read(&parsed, from, lines)?;
     let mut blocks = parsed.blocks;
     lines.canonicalize(&mut blocks, edited_from);
@@ -385,7 +346,6 @@ fn read_by_line(
     line_ids: &[Option<String>],
     known: &HashSet<&str>,
     warnings: &mut Vec<String>,
-    dialect: Dialect,
 ) -> Result<import::ParseOutput, AppError> {
     // Counted as the parser counts them, a lone carriage return a line end.
     let lines = text.replace("\r\n", "\n").split(['\n', '\r']).count();
@@ -395,7 +355,7 @@ fn read_by_line(
             line_ids.len()
         )));
     }
-    let mut parsed = dialect.read(text, Some(&id_lines(line_ids)));
+    let mut parsed = import::parse_document_text(text, &id_lines(line_ids));
     warnings.append(&mut parsed.warnings);
     let mut first: HashMap<String, usize> = HashMap::new();
     for block in &mut parsed.blocks {
@@ -984,11 +944,10 @@ async fn write_changes(
 }
 
 /// Whether the page stores a list style for base block `slot` that its buffer
-/// does not show: a Document buffer writes a task with no list style (#5691
-/// D3), so a block it changes loses the style, and one it leaves keeps it.
+/// does not show: the buffer writes a task with no list style (#5691 D3), so a
+/// block it changes loses the style, and one it leaves keeps it.
 fn hides_list_style(data: &PageExportData, base: &Base, slot: usize) -> bool {
-    base.dialect == Dialect::Document
-        && data.list_styles.contains_key(&base.ids[slot])
+    data.list_styles.contains_key(&base.ids[slot])
         && !base.blocks[slot]
             .properties
             .iter()
@@ -1073,8 +1032,8 @@ async fn delete_dropped(
     Ok(deletes)
 }
 
-/// Tauri command: save a page edited as its source buffer, in `dialect`,
-/// `Source` when none (#5691). Delegates to [`apply_page_source_as`].
+/// Tauri command: save a page edited as its buffer. Delegates to
+/// [`apply_page_source_inner`].
 #[tauri::command]
 #[specta::specta]
 pub async fn apply_page_source(
@@ -1084,9 +1043,8 @@ pub async fn apply_page_source(
     base_source: String,
     merge: bool,
     line_ids: Vec<Option<String>>,
-    dialect: Option<Dialect>,
 ) -> Result<WithOps<PageSourceReport>, AppError> {
-    capture_op_refs(Box::pin(apply_page_source_as(
+    capture_op_refs(Box::pin(apply_page_source_inner(
         ctx.pool(),
         ctx.device_id(),
         ctx.materializer(),
@@ -1094,7 +1052,6 @@ pub async fn apply_page_source(
         source,
         base_source,
         SourceSaveFlags { merge, line_ids },
-        dialect.unwrap_or_default(),
     )))
     .await
     .map_err(sanitize_internal_error)
@@ -1218,9 +1175,9 @@ mod tests {
             .collect()
     }
 
-    /// Whether the text carries `block` once saved: not when its content ends
-    /// in a blank line or leaves a fence open before its property lines, which
-    /// only an anchor kept apart ([`read_own_source`]).
+    /// Whether the text carries `block` once saved: not when it leaves a fence
+    /// open before its own last blank line or its property lines, which only
+    /// an anchor kept apart ([`read_own_source`]).
     fn text_carries(block: &import::ParsedBlock) -> bool {
         let last = |key: &str| {
             block
@@ -1230,22 +1187,20 @@ mod tests {
                 .find(|(k, _)| k == key)
                 .map(|(_, value)| value.as_str())
         };
-        let list_marker = match last("listStyle") {
-            Some("bullet") => "- ",
-            Some(_) => "1. ",
-            None => "",
+        let checkbox = last("todo_state").and_then(import::task_marker_for);
+        let (list_marker, task_marker) = match (checkbox, last("listStyle")) {
+            (Some(c), _) => ("- ", format!("[{c}] ")),
+            (None, Some("bullet")) => ("- ", String::new()),
+            (None, Some(_)) => ("1. ", String::new()),
+            (None, None) => ("", String::new()),
         };
-        let task_marker = last("todo_state")
-            .and_then(import::task_marker_for)
-            .map(|c| format!("[{c}] "))
-            .unwrap_or_default();
         let open = super::super::push_block_bullet(
             &mut String::new(),
             "",
             list_marker,
             &task_marker,
             &block.content,
-            super::super::RenderMode::Source,
+            super::super::RenderMode::Document,
         )
         .open;
         let ends_blank = block
@@ -1253,7 +1208,7 @@ mod tests {
             .rsplit_once('\n')
             .is_some_and(|(_, last)| last.trim().is_empty());
         let property_lines = block.properties.iter().any(|(key, _)| key != "listStyle");
-        !(ends_blank || (open && property_lines))
+        !(open && (ends_blank || property_lines))
     }
 
     proptest! {
@@ -1265,11 +1220,11 @@ mod tests {
         /// a block the text cannot carry ([`text_carries`]) is skipped.
         #[test]
         fn a_saved_buffer_renders_back_to_what_was_saved(text in arb_document()) {
-            let saved = import::parse_source_text(&text, &HashSet::new()).blocks;
+            let saved = import::parse_document_text(&text, &HashSet::new()).blocks;
             prop_assume!(saved.iter().all(text_carries));
             let (data, ids) = stored(&saved);
-            let md = render_page_source(&data);
-            let again = read_own_source(&md, Dialect::Source).blocks;
+            let (md, _) = render_page_document(&data);
+            let again = read_own_source(&md).blocks;
             prop_assert_eq!(tree(&again), tree(&saved), "text: {:?}\nmd:\n{}", text, md);
             let anchors: Vec<Option<&str>> =
                 again.iter().map(|block| block.block_anchor.as_deref()).collect();

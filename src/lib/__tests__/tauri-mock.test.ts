@@ -3050,10 +3050,13 @@ describe('export_page_markdown', () => {
 })
 
 // ---------------------------------------------------------------------------
-// get_page_source
+// get_page_buffer
 // ---------------------------------------------------------------------------
 
-describe('get_page_source', () => {
+describe('get_page_buffer', () => {
+  const source = (pageId: string): unknown =>
+    (invoke('get_page_buffer', { pageId }) as { source: string }).source
+
   it('renders live descendants depth-first in sibling order, each with its anchor', () => {
     blocks.set('SRC_PAGE', makeBlock('SRC_PAGE', 'page', 'Source', null, 90))
     blocks.set('SRC_A', makeBlock('SRC_A', 'content', 'a', 'SRC_PAGE', 2))
@@ -3064,13 +3067,11 @@ describe('get_page_source', () => {
       deleted_at: '2026-04-15T12:00:00Z',
     })
 
-    expect(invoke('get_page_source', { pageId: 'SRC_PAGE' })).toBe(
-      '- b ^SRC_B\n- a ^SRC_A\n  - a1 ^SRC_A1\n',
-    )
+    expect(source('SRC_PAGE')).toBe('b ^SRC_B\n\na ^SRC_A\n\n  a1 ^SRC_A1\n')
   })
 
   it('throws for non-existent page', () => {
-    expect(() => invoke('get_page_source', { pageId: 'NONEXISTENT' })).toThrow('not found')
+    expect(() => source('NONEXISTENT')).toThrow('not found')
   })
 
   it('throws for a trashed page', () => {
@@ -3079,16 +3080,14 @@ describe('get_page_source', () => {
       deleted_at: '2026-04-15T12:00:00Z',
     })
 
-    expect(() => invoke('get_page_source', { pageId: 'SRC_TRASHED' })).toThrow('not found')
+    expect(() => source('SRC_TRASHED')).toThrow('not found')
   })
 
   it('rejects a block that is not a page with a validation error', () => {
     blocks.set('SRC_PAGE', makeBlock('SRC_PAGE', 'page', 'Source', null, 90))
     blocks.set('SRC_A', makeBlock('SRC_A', 'content', 'a', 'SRC_PAGE', 1))
 
-    expect(() => invoke('get_page_source', { pageId: 'SRC_A' })).toThrow(
-      expect.objectContaining({ kind: 'validation' }),
-    )
+    expect(() => source('SRC_A')).toThrow(expect.objectContaining({ kind: 'validation' }))
   })
 })
 
@@ -3612,6 +3611,18 @@ describe('import_markdown', () => {
       invoke('list_blocks', { parentId: pageId }) as { items: Record<string, unknown>[] }
     ).items.map((b) => b['content'])
     expect(children).toEqual(['Body'])
+  })
+
+  // `strip_title_heading` drops the blank lines after the title too, so the
+  // front matter an export writes right after it is still leading and no
+  // block's, as in `markdown_imports.json`'s `a_nested_page`.
+  it('drops the blank lines after a leading `# Title` too, so front matter after it is no block (matches backend)', () => {
+    const result = invoke('import_markdown', {
+      content: '# titled\n\n---\nseason: spring\n---\n\n- a\n- b\n',
+      filename: 'titled.md',
+      spaceId: 'SPACE_PERSONAL',
+    }) as Record<string, unknown>
+    expect(result['blocks_created']).toBe(2)
   })
 
   it('keeps a leading `# heading` that differs from the derived title as content', () => {

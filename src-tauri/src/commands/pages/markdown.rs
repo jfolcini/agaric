@@ -958,7 +958,8 @@ struct PageExportData {
     properties: Vec<FrontmatterRow>,
     aliases: Vec<String>,
     tag_names_fm: Vec<String>,
-    /// Read by source mode only, to decide which names it may write.
+    /// Read by the buffer and the clipboard only, to decide which names they
+    /// may write.
     name_snapshot: NameSnapshot,
 }
 
@@ -969,7 +970,7 @@ enum PageRead {
     /// An export: the attachments, the page's own properties, aliases and
     /// tags, and the titles of ref-typed property values.
     Export,
-    /// Source mode, the clipboard and a source save: the page's own
+    /// The buffer, the clipboard and a buffer save: the page's own
     /// properties, aliases and tags (#5160 S8), and the names a block may be
     /// written with.
     Source,
@@ -981,80 +982,50 @@ enum PageRead {
 /// checkbox after the bullet (#5160 D6), or a `todo_state::` line for a state
 /// outside the checkbox alphabet. `Export` writes a file for other tools: ids
 /// become names and links, and only a block a same-page ref points at carries
-/// an anchor. `Source` writes the buffer source mode edits (#5140), which
-/// `import::parse_source_outline` reads back as exactly this tree: every block
+/// an anchor. `Document` writes the buffer Edit as Markdown edits (#5691),
+/// which `import::parse_document_outline` reads back as exactly this tree: a
+/// plain block is its own paragraph, a list block carries its marker and a
+/// task is `- [ ] x`, which has no list style (D3); a blank line separates
+/// blocks but neighbouring list lines (D1), a plain block under a list block
+/// is a `+` item and a line holding only `\` an empty line (D4). Every block
 /// carries its `^ID`, and ids stay raw unless a name reads back to the same
-/// id. `Document` is `Source` in the Document dialect ([`Dialect`]), which
-/// `import::parse_document_outline` reads back. `Clipboard` is `Document` for
-/// text that leaves the app, which a paste reads (#6190): a block carries its
-/// `^ID` only when it would not read back without it. `Agent` is the page an
-/// MCP agent reads (#5375): `Document`, every block with its `^ID` so the
-/// agent can name the block it edits next, but with the export's names, which
-/// may be ambiguous.
+/// id. Duplicate, journal templates and the MCP page tools write and read it
+/// too, as a paste reads it (#6190). `Clipboard` is `Document` for text that
+/// leaves the app, which a paste reads: a block carries its `^ID` only when it
+/// would not read back without it. `Agent` is the page an MCP agent reads
+/// (#5375): `Document`, every block with its `^ID` so the agent can name the
+/// block it edits next, but with the export's names, which may be ambiguous.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RenderMode {
     Export,
-    Source,
     Clipboard,
     Agent,
     Document,
 }
 
 impl RenderMode {
-    /// Whether the rendering is laid out in the Document dialect ([`Dialect`]).
+    /// Whether the rendering is laid out as a Document buffer.
     fn lays_out_document(self) -> bool {
         matches!(self, Self::Document | Self::Clipboard | Self::Agent)
     }
 }
 
-/// The two grammars a page's buffer is written in (#5691). `Document` writes a
-/// plain block as its own paragraph, a list block with its marker and a task
-/// as `- [ ] x`, which has no list style (D3): a blank line separates blocks
-/// but neighbouring list lines (D1), a plain block under a list block is a `+`
-/// item and a line holding only `\` an empty line (D4). Edit as Markdown,
-/// Duplicate, journal templates and the MCP page tools write and read it, as a
-/// paste reads it (#6190). `Source` writes every block as an outline bullet,
-/// its list marker after the bullet; nothing in the app asks for it, and the
-/// buffer commands read it only when given no dialect.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Type)]
-#[serde(rename_all = "lowercase")]
-pub enum Dialect {
-    #[default]
-    Source,
-    Document,
-}
-
-impl Dialect {
-    /// The rendering a buffer in this dialect is written in.
-    fn mode(self) -> RenderMode {
-        match self {
-            Self::Source => RenderMode::Source,
-            Self::Document => RenderMode::Document,
-        }
-    }
-
-    /// The page's buffer, its front matter and then its block tree, every
-    /// block with its `^ID`, and the ids of the blocks it holds, in order.
-    fn render(self, data: &PageExportData) -> (String, Vec<String>) {
-        let mut output = String::new();
-        render_frontmatter(&mut output, data);
-        let ids = render_block_tree(&mut output, data.page.id.as_str(), data, self.mode())
-            .into_iter()
-            .map(|(id, _)| id)
-            .collect();
-        (output, ids)
-    }
-
-    /// `text` read as a buffer in this dialect: each block under the id its
-    /// line carries when `id_lines` names them, else under its `^ID`.
-    fn read(self, text: &str, id_lines: Option<&HashSet<usize>>) -> import::ParseOutput {
-        match (self, id_lines) {
-            (Self::Source, None) => import::parse_source_outline(text),
-            (Self::Source, Some(lines)) => import::parse_source_text(text, lines),
-            (Self::Document, None) => import::parse_document_outline(text),
-            (Self::Document, Some(lines)) => import::parse_document_text(text, lines),
-        }
-    }
+/// The page's buffer, its front matter and then its block tree in
+/// [`RenderMode::Document`], every block with its `^ID`, and the ids of the
+/// blocks it holds, in order.
+fn render_page_document(data: &PageExportData) -> (String, Vec<String>) {
+    let mut output = String::new();
+    render_frontmatter(&mut output, data);
+    let ids = render_block_tree(
+        &mut output,
+        data.page.id.as_str(),
+        data,
+        RenderMode::Document,
+    )
+    .into_iter()
+    .map(|(id, _)| id)
+    .collect();
+    (output, ids)
 }
 
 /// Emits one block as `<indent>- <content>` — the *exact* shape
@@ -1096,7 +1067,7 @@ fn render_block(
             let resolved = export_block_text(content, &id, data);
             push_block_bullet(output, &indent, &list_marker, &task_marker, &resolved, mode);
         }
-        RenderMode::Source | RenderMode::Clipboard | RenderMode::Agent | RenderMode::Document => {
+        RenderMode::Clipboard | RenderMode::Agent | RenderMode::Document => {
             push_source_bullet(
                 output,
                 block,
@@ -1143,13 +1114,13 @@ fn render_block(
     // no new syntax, just the previously-missing emission for the
     // escape-hatch custom-property case. `descendant_properties` was
     // batch-read once for the whole subtree, so this is a HashMap lookup,
-    // not a per-block query. Source mode writes a ref-typed value as its raw
+    // not a per-block query. The buffer writes a ref-typed value as its raw
     // id, which is what the value is, and quotes a value its line cannot
     // carry as it is (#5160 X5).
     let no_titles = HashMap::new();
     let (ref_titles, write_value): (_, fn(&str) -> String) = match mode {
         RenderMode::Export | RenderMode::Agent => (ref_titles, str::to_string),
-        RenderMode::Source | RenderMode::Clipboard | RenderMode::Document => {
+        RenderMode::Clipboard | RenderMode::Document => {
             (&no_titles, import::write_source_property_value)
         }
     };
@@ -1166,7 +1137,7 @@ fn render_block(
     // in `content` — that's an inline image, already rendered above by
     // `resolve_ulids_for_export`/`push_block_bullet` — so only
     // genuine file attachments (PDFs/docs/images with no inline token)
-    // get a line here. Source mode has no attachment lines: attachments
+    // get a line here. The buffer has no attachment lines: attachments
     // have their own UI.
     if mode == RenderMode::Export
         && let Some(atts) = attachments_by_block.get(&id)
@@ -1294,24 +1265,14 @@ fn push_source_bullet(
     let content = block.content.as_deref().unwrap_or("");
     if mode == RenderMode::Agent {
         let named = named_block_text(content, data);
-        push_anchored_source_bullet(
-            output,
-            indent,
-            list_marker,
-            task_marker,
-            &named,
-            id,
-            RenderMode::Document,
-        );
+        push_anchored_source_bullet(output, indent, list_marker, task_marker, &named, id);
         return;
     }
     let push = |output: &mut String, content: &str| match mode {
         RenderMode::Clipboard => {
             push_clipboard_bullet(output, indent, list_marker, task_marker, content, id)
         }
-        _ => {
-            push_anchored_source_bullet(output, indent, list_marker, task_marker, content, id, mode)
-        }
+        _ => push_anchored_source_bullet(output, indent, list_marker, task_marker, content, id),
     };
     let start = output.len();
     let is_code = push(output, content);
@@ -1354,23 +1315,14 @@ fn push_clipboard_bullet(
         return code.any;
     }
     output.truncate(start);
-    push_anchored_source_bullet(
-        output,
-        indent,
-        list_marker,
-        task_marker,
-        content,
-        id,
-        RenderMode::Document,
-    )
+    push_anchored_source_bullet(output, indent, list_marker, task_marker, content, id)
 }
 
-/// `content` as a source bullet, or in `mode` a Document block, with `^id` at
-/// the end of its last line or, when that line is code, on a line of its own,
-/// which the parser reads as the end of any fence the block leaves open; in a
-/// Document buffer also when that line holds nothing, which is written as an
-/// escape the anchor would turn into text ([`import::needs_blank_line_escape`]).
-/// Returns whether any line is code.
+/// `content` as a Document block with `^id` at the end of its last line or,
+/// when that line is code, on a line of its own, which the parser reads as the
+/// end of any fence the block leaves open; also when that line holds nothing,
+/// which is written as an escape the anchor would turn into text
+/// ([`import::needs_blank_line_escape`]). Returns whether any line is code.
 fn push_anchored_source_bullet(
     output: &mut String,
     indent: &str,
@@ -1378,13 +1330,12 @@ fn push_anchored_source_bullet(
     task_marker: &str,
     content: &str,
     id: &str,
-    mode: RenderMode,
 ) -> bool {
+    let mode = RenderMode::Document;
     let start = output.len();
-    let blank_last = mode == RenderMode::Document
-        && content
-            .rsplit_once('\n')
-            .is_some_and(|(_, last)| import::needs_blank_line_escape(last));
+    let blank_last = content
+        .rsplit_once('\n')
+        .is_some_and(|(_, last)| import::needs_blank_line_escape(last));
     if !blank_last {
         // Written with the marker, not appended to: the marker can change the
         // last line's escape (`key::` becomes the property line `key:: ^ID`).
@@ -1569,14 +1520,6 @@ fn render_page_markdown(page_id: &str, data: &PageExportData) -> String {
     output
 }
 
-/// The page as the one markdown buffer source mode edits (#5140): its
-/// properties, aliases and tags as the export's front matter (#5160 S8), then
-/// its block tree. The title and page attachments have their own UIs.
-#[cfg(test)]
-fn render_page_source(data: &PageExportData) -> String {
-    Dialect::Source.render(data).0
-}
-
 /// The page as an MCP agent reads it (#5375): `# Title`, the export's front
 /// matter, then the block tree in [`RenderMode::Agent`].
 fn render_page_for_agent(data: &PageExportData) -> String {
@@ -1644,15 +1587,10 @@ fn agent_markdown_stretch(
 /// is no block id, stays. Public so the command tests can write an edited
 /// buffer as the source it was loaded from, anchors and all.
 pub fn anchor_free(source: &str) -> (String, Vec<Option<String>>) {
-    anchor_free_as(source, Dialect::Source)
-}
-
-/// [`anchor_free`] for a buffer in `dialect`.
-pub fn anchor_free_as(source: &str, dialect: Dialect) -> (String, Vec<Option<String>>) {
     let mut lines: Vec<(&str, Option<String>)> =
         source.split('\n').map(|line| (line, None)).collect();
     let mut own_lines = HashSet::new();
-    for block in dialect.read(source, None).blocks {
+    for block in import::parse_document_outline(source).blocks {
         let (Some(word), Some(start)) = (block.block_anchor, block.line) else {
             continue;
         };
@@ -1772,19 +1710,15 @@ fn render_subtrees<'a>(
     rendered
 }
 
-/// `root` and its subtree as a buffer in `dialect` writes them, `root` at
-/// depth 0: every block with its `^ID`, which ends a fence the block leaves
-/// open and keeps a trailing ` ^word` in its content from reading back as an
-/// anchor. A page nested under `root` is not here: `descendants` stops at a
-/// nested page. Returns the buffer and the ids it holds, in order.
-fn render_subtree(
-    data: &PageExportData,
-    root: &BlockRow,
-    dialect: Dialect,
-) -> (String, Vec<String>) {
+/// `root` and its subtree as a Document buffer writes them, `root` at depth 0:
+/// every block with its `^ID`, which ends a fence the block leaves open and
+/// keeps a trailing ` ^word` in its content from reading back as an anchor. A
+/// page nested under `root` is not here: `descendants` stops at a nested page.
+/// Returns the buffer and the ids it holds, in order.
+fn render_subtree(data: &PageExportData, root: &BlockRow) -> (String, Vec<String>) {
+    let mode = RenderMode::Document;
     let children_by_parent = group_children_by_parent(data.page.id.as_str(), &data.descendants);
-    let list_ordinals =
-        compute_list_ordinals(&children_by_parent, &data.list_styles, dialect.mode());
+    let list_ordinals = compute_list_ordinals(&children_by_parent, &data.list_styles, mode);
     let mut output = String::new();
     let ids = render_subtrees(
         &mut output,
@@ -1792,7 +1726,7 @@ fn render_subtree(
         &children_by_parent,
         &list_ordinals,
         data,
-        dialect.mode(),
+        mode,
         &mut DocumentLayout::default(),
     )
     .into_iter()
@@ -2511,21 +2445,6 @@ pub async fn export_page_markdown_inner(
     Ok(render_page_markdown(page_id, &data))
 }
 
-/// The page's source-mode markdown buffer (#5140): its front matter and block
-/// tree, every block with its `^ID`, as [`get_page_buffer_inner`] reads it.
-/// The page and tag names it may write are resolved in the same read snapshot
-/// as the content.
-///
-/// # Errors
-///
-/// As [`export_page_markdown_inner`].
-#[instrument(skip(pool), err)]
-pub async fn get_page_source_inner(pool: &SqlitePool, page_id: &str) -> Result<String, AppError> {
-    Ok(get_page_buffer_as(pool, page_id, Dialect::Source)
-        .await?
-        .source)
-}
-
 /// The page as the MCP `get_page_markdown` tool returns it (#5375):
 /// `render_page_for_agent` over the export's read, in one snapshot.
 ///
@@ -2582,9 +2501,11 @@ pub struct PageBuffer {
     pub line_ids: Vec<Option<String>>,
 }
 
-/// The page's source buffer (#5140) with each block's id beside its text
-/// rather than in it (#5160 A): [`get_page_source_inner`]'s buffer, and the
-/// same buffer less its anchors, with the id each line carries.
+/// The page's buffer (#5140), in the Document dialect (#5691), with each
+/// block's id beside its text rather than in it (#5160 A): the page's front
+/// matter and block tree, every block with its `^ID`, and the same buffer less
+/// its anchors, with the id each line carries. The page and tag names it may
+/// write are resolved in the same read snapshot as the content.
 ///
 /// # Errors
 ///
@@ -2594,26 +2515,12 @@ pub async fn get_page_buffer_inner(
     pool: &SqlitePool,
     page_id: &str,
 ) -> Result<PageBuffer, AppError> {
-    get_page_buffer_as(pool, page_id, Dialect::Source).await
-}
-
-/// [`get_page_buffer_inner`] in `dialect` (#5691).
-///
-/// # Errors
-///
-/// As [`export_page_markdown_inner`].
-#[instrument(skip(pool), err)]
-pub async fn get_page_buffer_as(
-    pool: &SqlitePool,
-    page_id: &str,
-    dialect: Dialect,
-) -> Result<PageBuffer, AppError> {
     BlockId::from_string(page_id)?;
     let mut tx = pool.begin().await?;
     let data = load_page_export_data(&mut tx, page_id, PageRead::Source).await?;
     tx.commit().await?;
-    let (source, _) = dialect.render(&data);
-    let (text, line_ids) = anchor_free_as(&source, dialect);
+    let (source, _) = render_page_document(&data);
+    let (text, line_ids) = anchor_free(&source);
     Ok(PageBuffer {
         source,
         text,
@@ -2731,18 +2638,6 @@ pub async fn duplicate_block_inner(
     materializer: &Materializer,
     block_id: BlockId,
 ) -> Result<Vec<BlockRow>, AppError> {
-    duplicate_block_as(pool, device_id, materializer, block_id, Dialect::Document).await
-}
-
-/// [`duplicate_block_inner`] through a buffer in `dialect`, which the tests
-/// also run in `Source` to hold the copy to what it was.
-async fn duplicate_block_as(
-    pool: &SqlitePool,
-    device_id: &str,
-    materializer: &Materializer,
-    block_id: BlockId,
-    dialect: Dialect,
-) -> Result<Vec<BlockRow>, AppError> {
     let block_id = BlockId::from_string(block_id.into_string())?;
     let mut tx = CommandTx::begin_immediate(pool, "duplicate_block").await?;
     // #2604 — rollback-safe engine apply (rewind on tx abort).
@@ -2759,8 +2654,8 @@ async fn duplicate_block_as(
         .clone()
         .ok_or_else(|| AppError::validation(format!("block '{block_id}' is on no page")))?;
     let data = load_page_export_data(&mut tx, page_id.as_str(), PageRead::Duplicate).await?;
-    let (source, ids) = render_subtree(&data, &root, dialect);
-    let parsed = dialect.read(&source, None);
+    let (source, ids) = render_subtree(&data, &root);
+    let parsed = import::parse_document_outline(&source);
     // A value the grammar cannot carry, such as a carriage return in the
     // text, reads back as extra text or an extra block: refuse, never write a
     // mangled copy.
@@ -3742,7 +3637,7 @@ fn list_marker_for(
 /// Lines inside a fenced code block (```` ``` ```` or `~~~`, closed by a run of
 /// the same character at least as long) are emitted verbatim: the importer
 /// reads them as code without an escape, and code must not gain stray
-/// backslashes. The one exception is source mode's
+/// backslashes. The one exception, outside an export, is
 /// [`import::needs_anchor_line_escape`], for a code line the parser would read
 /// as a line that ends the fence.
 ///
@@ -3771,7 +3666,6 @@ fn push_block_bullet(
 ) -> CodeLines {
     let fence_opener = match mode {
         RenderMode::Export => import::fence_opener,
-        RenderMode::Source => import::source_fence_opener,
         RenderMode::Document | RenderMode::Clipboard | RenderMode::Agent => {
             import::document_fence_opener
         }
@@ -6219,7 +6113,7 @@ enum PropertyWrite {
     Copy,
     /// Pasted text, read as an import reads a file (D11).
     Paste,
-    /// A source-mode save writes what the user typed: a value its definition
+    /// A buffer save writes what the user typed: a value its definition
     /// refuses refuses the save, naming the line.
     Edit,
 }
@@ -7239,29 +7133,15 @@ pub async fn export_page_markdown(
         .map_err(sanitize_internal_error)
 }
 
-/// Tauri command: render a page as its source-mode markdown buffer. Delegates to [`get_page_source_inner`].
-#[tauri::command]
-#[specta::specta]
-pub async fn get_page_source(
-    read_pool: State<'_, ReadPool>,
-    page_id: PageId,
-) -> Result<String, AppError> {
-    get_page_source_inner(&read_pool.0, page_id.as_str())
-        .await
-        .map_err(sanitize_internal_error)
-}
-
-/// Tauri command: a page's source buffer with each block's id beside its text,
-/// in `dialect`, `Source` when none (#5691). Delegates to
-/// [`get_page_buffer_as`].
+/// Tauri command: a page's buffer with each block's id beside its text.
+/// Delegates to [`get_page_buffer_inner`].
 #[tauri::command]
 #[specta::specta]
 pub async fn get_page_buffer(
     read_pool: State<'_, ReadPool>,
     page_id: PageId,
-    dialect: Option<Dialect>,
 ) -> Result<PageBuffer, AppError> {
-    get_page_buffer_as(&read_pool.0, page_id.as_str(), dialect.unwrap_or_default())
+    get_page_buffer_inner(&read_pool.0, page_id.as_str())
         .await
         .map_err(sanitize_internal_error)
 }
@@ -7480,7 +7360,7 @@ mod tests {
         resolves: bool,
     }
 
-    /// #5160 — what the name pass of import, paste and source mode does with
+    /// #5160 — what the name pass of import, paste and the buffer does with
     /// one block of text. The page names are the titles it looks up or
     /// creates: the whole link text when a page of that title exists, else
     /// the text before its first `#`. A row that still differs from the

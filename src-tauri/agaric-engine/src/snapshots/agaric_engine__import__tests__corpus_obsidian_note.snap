@@ -1,7 +1,108 @@
 ---
 source: agaric-engine/src/import.rs
-expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_markdown(&text)), \"source\":\n    output_shape(parse_source_outline(&text)), \"paste\":\n    blocks_shape(parse_pasted_text(&text)),\n})"
+expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_markdown(&text)), \"document\":\n    output_shape(parse_document_outline(&text)), \"paste\":\n    blocks_shape(parse_pasted_text(&text)),\n})"
 ---
+document:
+  blocks:
+    - block_anchor: ~
+      content: "# Deep Work"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "Cal Newport argues that focused work is **rare** and _valuable_. See also [[Digital Minimalism|his later book]] and [[Deep Work#Rule 1]]."
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "> [!note] Key idea\n> Schedule every minute of your day."
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "## Takeaways"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Work deeply
+      depth: 0
+      is_code: false
+      properties:
+        - - listStyle
+          - bullet
+    - block_anchor: ~
+      content: Choose a depth philosophy
+      depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - bullet
+    - block_anchor: ~
+      content: Ritualize
+      depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - bullet
+    - block_anchor: boredom
+      content: Embrace boredom
+      depth: 0
+      is_code: false
+      properties:
+        - - listStyle
+          - bullet
+    - block_anchor: ~
+      content: Quit social media
+      depth: 0
+      is_code: false
+      properties:
+        - - listStyle
+          - bullet
+    - block_anchor: ~
+      content: "~~~python\nblocks = plan(day)\n~~~"
+      depth: 0
+      is_code: true
+      properties: []
+    - block_anchor: ~
+      content: "## Tasks"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Finish chapter 3
+      depth: 0
+      is_code: false
+      properties:
+        - - todo_state
+          - TODO
+    - block_anchor: ~
+      content: Buy the book
+      depth: 0
+      is_code: false
+      properties:
+        - - todo_state
+          - DONE
+        - - rating
+          - "4"
+  frontmatter:
+    - - tags
+      - "reading, books"
+    - - aliases
+      - Deep Work notes
+    - - status
+      - in-progress
+  frontmatter_lines:
+    aliases: 5
+    status: 6
+    tags: 2
+  frontmatter_list_items:
+    aliases:
+      - Deep Work notes
+    tags:
+      - reading
+      - books
+  warnings: []
 import:
   blocks:
     - block_anchor: ~
@@ -200,94 +301,3 @@ paste:
         - DONE
       - - rating
         - "4"
-source:
-  blocks:
-    - block_anchor: ~
-      content: "# Deep Work"
-      depth: 0
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: "Cal Newport argues that focused work is **rare** and _valuable_. See also [[Digital Minimalism|his later book]] and [[Deep Work#Rule 1]]."
-      depth: 1
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: "> [!note] Key idea\n> Schedule every minute of your day."
-      depth: 1
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: "## Takeaways"
-      depth: 1
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: Work deeply
-      depth: 2
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: Choose a depth philosophy
-      depth: 3
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: Ritualize
-      depth: 3
-      is_code: false
-      properties: []
-    - block_anchor: boredom
-      content: Embrace boredom
-      depth: 2
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: Quit social media
-      depth: 2
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: "~~~python\nblocks = plan(day)\n~~~"
-      depth: 2
-      is_code: true
-      properties: []
-    - block_anchor: ~
-      content: "## Tasks"
-      depth: 1
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: Finish chapter 3
-      depth: 2
-      is_code: false
-      properties:
-        - - todo_state
-          - TODO
-    - block_anchor: ~
-      content: Buy the book
-      depth: 2
-      is_code: false
-      properties:
-        - - todo_state
-          - DONE
-        - - rating
-          - "4"
-  frontmatter:
-    - - tags
-      - "reading, books"
-    - - aliases
-      - Deep Work notes
-    - - status
-      - in-progress
-  frontmatter_lines:
-    aliases: 5
-    status: 6
-    tags: 2
-  frontmatter_list_items:
-    aliases:
-      - Deep Work notes
-    tags:
-      - reading
-      - books
-  warnings: []

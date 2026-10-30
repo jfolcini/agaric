@@ -1,6 +1,6 @@
 //! `apply_page_source` over generated pages on a real pool (#5140): saving a
-//! page's own text by its line ids writes nothing, and saving its blocks
-//! rearranged lands exactly that tree with the fewest moves. The pages come
+//! page's own Document buffer by its line ids writes nothing (#5691), and
+//! saving its blocks rearranged lands exactly that tree with the fewest moves. The pages come
 //! from the render proptests' generator ([`arb_forest`]).
 
 use std::collections::BTreeMap;
@@ -218,7 +218,7 @@ async fn rearranged_source(
         block.parent_id = Some(BlockId::from_trusted(&parent));
         block.position = Some(position);
     }
-    (render_page_source(&data), children)
+    (render_page_document(&data).0, children)
 }
 
 /// A level for each of `n` blocks, clamped where used to one below the block
@@ -285,46 +285,6 @@ async fn fewest_moves(pool: &SqlitePool, after: &BTreeMap<String, Vec<String>>) 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(CASES))]
 
-    /// #5160 A — the page's own text, each block's id beside the line it
-    /// starts on, saves as nothing, every feature the generator writes, raw
-    /// and humanised refs and the blocks the text cannot carry exactly among
-    /// them: the save reads the page's source as that same text.
-    #[test]
-    fn saving_a_pages_own_text_by_its_line_ids_writes_nothing(forest in arb_forest()) {
-        Runtime::new().unwrap().block_on(async {
-            let fx = fixture().await;
-            let ids = create_forest(&fx, &forest).await;
-            write_metadata(&fx.pool, &ids, &forest).await;
-            let buffer = get_page_buffer_inner(&fx.pool, &fx.page).await.unwrap();
-            let before = op_counts(&fx.pool).await;
-
-            let report = save(
-                &fx,
-                (buffer.text.clone(), buffer.line_ids.clone()),
-                &buffer.source,
-            )
-            .await;
-
-            let after = op_counts(&fx.pool).await;
-            prop_assert_eq!(appended(&before, &after), BTreeMap::new(), "text:\n{}", buffer.text);
-            prop_assert_eq!(
-                (report.created, report.edited, report.moved, report.deleted),
-                (0, 0, 0, 0),
-                "text:\n{}",
-                buffer.text
-            );
-            prop_assert_eq!((report.properties_set, report.properties_deleted), (0, 0));
-            prop_assert!(report.names_created.is_empty());
-            // A fence a block leaves open ends at the next block, and says so.
-            prop_assert!(
-                report.warnings.iter().all(|warning| warning.contains("code fence")),
-                "{:?}",
-                report.warnings
-            );
-            Ok(())
-        })?;
-    }
-
     /// The page's blocks shuffled and re-indented, each line keeping its id: the
     /// save lands exactly that tree, with moves only, and no more of them than
     /// the tree needs.
@@ -335,7 +295,7 @@ proptest! {
         Runtime::new().unwrap().block_on(async {
             let fx = fixture().await;
             let ids = create_forest(&fx, &forest).await;
-            let base = get_page_source_inner(&fx.pool, &fx.page).await.unwrap();
+            let base = get_page_buffer_inner(&fx.pool, &fx.page).await.unwrap().source;
             let (source, tree) = rearranged_source(&fx, &ids, &order, &levels).await;
             let expected_moves = fewest_moves(&fx.pool, &tree).await;
             let before = op_counts(&fx.pool).await;
@@ -352,35 +312,11 @@ proptest! {
                 source
             );
             prop_assert_eq!(i64::from(report.moved), expected_moves);
-            let saved = get_page_source_inner(&fx.pool, &fx.page).await.unwrap();
+            let saved = get_page_buffer_inner(&fx.pool, &fx.page).await.unwrap().source;
             prop_assert_eq!(saved, source, "the page is now the rearranged tree");
             Ok(())
         })?;
     }
-}
-
-/// Save `text` as a Document buffer (#5691), each line carrying the id
-/// `line_ids` gives, edited from `base`.
-async fn save_document(
-    fx: &Fixture,
-    (text, line_ids): (String, Vec<Option<String>>),
-    base: &str,
-) -> PageSourceReport {
-    apply_page_source_as(
-        &fx.pool,
-        DEV,
-        &fx.materializer,
-        &fx.page,
-        text,
-        base.to_owned(),
-        SourceSaveFlags {
-            merge: false,
-            line_ids,
-        },
-        Dialect::Document,
-    )
-    .await
-    .unwrap()
 }
 
 proptest! {
@@ -395,10 +331,10 @@ proptest! {
             let fx = fixture().await;
             let ids = create_forest(&fx, &forest).await;
             write_metadata(&fx.pool, &ids, &forest).await;
-            let buffer = get_page_buffer_as(&fx.pool, &fx.page, Dialect::Document).await.unwrap();
+            let buffer = get_page_buffer_inner(&fx.pool, &fx.page).await.unwrap();
             let before = op_counts(&fx.pool).await;
 
-            let report = save_document(
+            let report = save(
                 &fx,
                 (buffer.text.clone(), buffer.line_ids.clone()),
                 &buffer.source,
@@ -457,13 +393,11 @@ fn a_tasks_hidden_list_style_goes_only_with_an_edit() {
             .await
             .unwrap()
         };
-        let buffer = get_page_buffer_as(&fx.pool, &fx.page, Dialect::Document)
-            .await
-            .unwrap();
+        let buffer = get_page_buffer_inner(&fx.pool, &fx.page).await.unwrap();
         assert_eq!(buffer.text, "- [ ] text\n- [ ] checkbox\n- [ ] kept\n");
 
         let before = op_counts(&fx.pool).await;
-        let report = save_document(
+        let report = save(
             &fx,
             (buffer.text.clone(), buffer.line_ids.clone()),
             &buffer.source,
@@ -482,7 +416,7 @@ fn a_tasks_hidden_list_style_goes_only_with_an_edit() {
             .text
             .replacen("- [ ] text", "- [ ] text edited", 1)
             .replacen("- [ ] checkbox", "- [/] checkbox", 1);
-        let report = save_document(&fx, (edited, buffer.line_ids.clone()), &buffer.source).await;
+        let report = save(&fx, (edited, buffer.line_ids.clone()), &buffer.source).await;
         assert_eq!((report.edited, report.properties_deleted), (1, 2));
         assert_eq!(
             styled().await,
@@ -517,9 +451,7 @@ fn a_tasks_hidden_list_style_goes_with_an_edit_to_its_property_lines() {
         ];
         let ids = create_forest(&fx, &forest).await;
         write_metadata(&fx.pool, &ids, &forest).await;
-        let buffer = get_page_buffer_as(&fx.pool, &fx.page, Dialect::Document)
-            .await
-            .unwrap();
+        let buffer = get_page_buffer_inner(&fx.pool, &fx.page).await.unwrap();
         assert_eq!(
             buffer.text,
             "- [ ] changed\n  k:: v\n- [ ] removed\n  k:: v\n- [ ] added\n- [ ] kept\n  k:: v\n"
@@ -540,7 +472,7 @@ fn a_tasks_hidden_list_style_goes_with_an_edit_to_its_property_lines() {
             .collect::<Vec<_>>()
             .join("\n");
         let line_ids = lines.iter().map(|(_, id)| id.clone()).collect();
-        let report = save_document(&fx, (text, line_ids), &buffer.source).await;
+        let report = save(&fx, (text, line_ids), &buffer.source).await;
 
         assert_eq!(report.edited, 0);
         assert_eq!((report.properties_set, report.properties_deleted), (2, 4));
@@ -554,21 +486,10 @@ fn a_tasks_hidden_list_style_goes_with_an_edit_to_its_property_lines() {
     });
 }
 
-/// #5691 G2b — the buffer commands' `dialect` as the wire spells it: Source
-/// for none and for `source`, Document for `document`. A page holding a block
-/// of every kind the Document dialect writes, its own Document buffer saved in
-/// the dialect the wire names, appends no op.
+/// #5691 G2b — a page holding a block of every kind the Document dialect
+/// writes: its own buffer, saved, appends no op.
 #[test]
-fn a_pages_own_document_saved_in_the_dialect_the_wire_names_appends_no_op() {
-    let wire = |value: serde_json::Value| {
-        serde_json::from_value::<Option<Dialect>>(value)
-            .unwrap()
-            .unwrap_or_default()
-    };
-    assert_eq!(wire(serde_json::json!(null)), Dialect::Source);
-    assert_eq!(wire(serde_json::json!("source")), Dialect::Source);
-    let dialect = wire(serde_json::json!("document"));
-    assert_eq!(dialect, Dialect::Document);
+fn a_pages_own_document_with_every_kind_of_block_appends_no_op() {
     Runtime::new().unwrap().block_on(async {
         let fx = fixture().await;
         let block = |level: usize, content: &str| BlockSpec {
@@ -607,9 +528,7 @@ fn a_pages_own_document_saved_in_the_dialect_the_wire_names_appends_no_op() {
         ];
         let ids = create_forest(&fx, &forest).await;
         write_metadata(&fx.pool, &ids, &forest).await;
-        let buffer = get_page_buffer_as(&fx.pool, &fx.page, dialect)
-            .await
-            .unwrap();
+        let buffer = get_page_buffer_inner(&fx.pool, &fx.page).await.unwrap();
         assert_eq!(
             buffer.text,
             "## Findings\n\n```sh\necho hi\n```\n\n---\n\n- bullet\n  + plain child\n1. numbered\n\
@@ -617,7 +536,7 @@ fn a_pages_own_document_saved_in_the_dialect_the_wire_names_appends_no_op() {
         );
 
         let before = op_counts(&fx.pool).await;
-        let report = apply_page_source_as(
+        let report = apply_page_source_inner(
             &fx.pool,
             DEV,
             &fx.materializer,
@@ -628,7 +547,6 @@ fn a_pages_own_document_saved_in_the_dialect_the_wire_names_appends_no_op() {
                 merge: false,
                 line_ids: buffer.line_ids.clone(),
             },
-            dialect,
         )
         .await
         .unwrap();

@@ -116,7 +116,6 @@ use super::conformance::{
 };
 use super::conformance_snapshot::token_key;
 use agaric_core::ulid::{BlockId, PageId};
-use agaric_lib::commands::pages::{Dialect, get_page_buffer_as};
 use agaric_store::backlink::{BacklinkFilter, BacklinkSort, LinkKind};
 use agaric_store::query::{AdvancedQueryRequest, compile_and_run};
 use agaric_store::tag_query::TagExpr;
@@ -1871,15 +1870,11 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
         // One row per line of the text: the id `line_ids` gives the line,
         // relabeled, or `line` for none, and the line itself, so the anchors'
         // removal and each id's line are pinned together. `source` stays off
-        // it: it is `get_page_source`'s render, which the mock approximates
-        // (only the backend writes an anchor after a code block on its own
-        // line), and which the `get_page_source` arm below pins as a document.
-        // `dialect` is optional, as on the wire (#5691).
+        // it: the mock approximates the anchored render, writing no id in the
+        // text as a name.
         "get_page_buffer" => {
             let page_id: PageId = arg_req(args, "pageId");
-            let buffer =
-                get_page_buffer_as(pool, page_id.as_str(), arg_or::<Dialect>(args, "dialect"))
-                    .await?;
+            let buffer = get_page_buffer_inner(pool, page_id.as_str()).await?;
             let lines: Vec<&str> = buffer.text.split('\n').collect();
             assert_eq!(
                 lines.len(),
@@ -1907,7 +1902,7 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
         }
         // ── Rendered documents (#5071) ──
         //
-        // The three renders of the markdown grammar, each compared out of band
+        // The two renders of the markdown grammar, each compared out of band
         // against the sibling file `document_result` names.
         "export_page_markdown" => {
             let page_id: PageId = arg_req(args, "pageId");
@@ -1915,10 +1910,6 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 args,
                 &export_page_markdown_inner(pool, page_id.as_str()).await?,
             )
-        }
-        "get_page_source" => {
-            let page_id: PageId = arg_req(args, "pageId");
-            document_result(args, &get_page_source_inner(pool, page_id.as_str()).await?)
         }
         "get_blocks_source" => document_result(
             args,
@@ -3056,19 +3047,17 @@ pub(super) mod reader_delegation_tests {
     // to `block_properties` (`commands/spaces.rs`). The `is_space` /
     // `accent_color` rows it reads are written by `create_space` and
     // `set_property`, neither a read arm. Writer set unchanged.
-    // #5160 A wired `get_page_buffer`: `get_page_source_inner`'s read
-    // (`load_page_export_data` in a plain `pool.begin()` tx, SELECTs only)
-    // plus `anchor_free`, a pure string pass (`commands/pages/markdown.rs`).
-    // Writer set unchanged.
+    // #5160 A wired `get_page_buffer`: `load_page_export_data` in a plain
+    // `pool.begin()` tx, SELECTs only, plus `anchor_free`, a pure string pass
+    // (`commands/pages/markdown.rs`). Writer set unchanged.
     // #5422 wired `count_unlinked_references`: the title/alias SELECTs and
     // one COUNT over the same `fts_blocks` scan `list_unlinked_references`
     // runs (`count_unlinked_references` in
     // `agaric-store/src/backlink/grouped.rs`). Writer set unchanged.
-    // #5071 wired `export_page_markdown`, `get_page_source` and
-    // `get_blocks_source`: each is `load_page_export_data` in a plain
-    // `pool.begin()` tx, SELECTs only (the clipboard one first SELECTs the
-    // page id), then a pure render (`commands/pages/markdown.rs`). Writer set
-    // unchanged.
+    // #5071 wired `export_page_markdown` and `get_blocks_source`: each is
+    // `load_page_export_data` in a plain `pool.begin()` tx, SELECTs only (the
+    // clipboard one first SELECTs the page id), then a pure render
+    // (`commands/pages/markdown.rs`). Writer set unchanged.
     // #5841 S0.6 wired `preview_space_move` and `list_property_loss_values`:
     // one `query_as!` SELECT each over `blocks`, `block_properties` and
     // `property_definitions` (`commands/blocks/space_move.rs`), the paged one
@@ -3094,7 +3083,7 @@ pub(super) mod reader_delegation_tests {
     // `mcp_agents` (`mcp::agents::list_agents`). The table's writers are
     // `create_mcp_agent` / `revoke_mcp_agent` and the MCP server's
     // `last_used_ms` stamp, none a read arm. Writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 66;
+    const SWEPT_ARM_COUNT: usize = 65;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

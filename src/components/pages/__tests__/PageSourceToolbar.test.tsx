@@ -72,7 +72,7 @@ afterEach(() => {
 })
 
 function pageBuffer(): PageBuffer {
-  return dispatch('get_page_buffer', { pageId: PAGE, dialect: 'document' }) as PageBuffer
+  return dispatch('get_page_buffer', { pageId: PAGE }) as PageBuffer
 }
 
 function renderEditor() {

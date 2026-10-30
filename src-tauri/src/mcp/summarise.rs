@@ -455,7 +455,7 @@ pub fn summarise_capture(args: &Value, result: &Value) -> String {
 }
 
 /// `<tool> — N block(s)<place>`, then the pages and tags created, from the
-/// `blocks` rows an outline append returns.
+/// `blocks` rows a Markdown append returns.
 fn summarise_outline(tool: &str, place: &str, result: &Value) -> String {
     let rows = result
         .get("blocks")

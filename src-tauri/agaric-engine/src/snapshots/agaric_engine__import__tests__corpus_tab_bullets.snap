@@ -1,7 +1,40 @@
 ---
 source: agaric-engine/src/import.rs
-expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_markdown(&text)), \"source\":\n    output_shape(parse_source_outline(&text)), \"paste\":\n    blocks_shape(parse_pasted_text(&text)),\n})"
+expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_markdown(&text)), \"document\":\n    output_shape(parse_document_outline(&text)), \"paste\":\n    blocks_shape(parse_pasted_text(&text)),\n})"
 ---
+document:
+  blocks:
+    - block_anchor: ~
+      content: Groceries
+      depth: 0
+      is_code: false
+      properties:
+        - - listStyle
+          - bullet
+    - block_anchor: ~
+      content: Milk
+      depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - bullet
+    - block_anchor: ~
+      content: Eggs
+      depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - bullet
+    - block_anchor: ~
+      content: Call the plumber
+      depth: 0
+      is_code: false
+      properties:
+        - - listStyle
+          - bullet
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings: []
 import:
   blocks:
     - block_anchor: ~
@@ -56,28 +89,3 @@ paste:
     properties:
       - - listStyle
         - bullet
-source:
-  blocks:
-    - block_anchor: ~
-      content: Groceries
-      depth: 0
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: Milk
-      depth: 1
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: Eggs
-      depth: 1
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: Call the plumber
-      depth: 0
-      is_code: false
-      properties: []
-  frontmatter: []
-  frontmatter_list_items: {}
-  warnings: []

@@ -635,7 +635,7 @@ const READ_WRITE_TABLE_PAIRS: Readonly<
     writes: ['create_space', 'create_page_in_space', 'move_blocks_to_space'],
   },
   'markdown import/export': {
-    reads: ['export_page_markdown', 'get_page_source', 'get_blocks_source'],
+    reads: ['export_page_markdown', 'get_blocks_source'],
     writes: ['import_markdown', 'import_bibliography'],
   },
 }
@@ -679,9 +679,6 @@ const QUERY_STEPS_BACKEND_ONLY: Readonly<Record<string, string>> = {
   export_page_markdown:
     'decided in #5071: one markdown grammar, in Rust; the export is pinned against a ' +
     'backend-authored sibling document',
-  get_page_source:
-    'decided in #5071: one markdown grammar, in Rust; the source buffer is pinned against ' +
-    'a backend-authored sibling document',
   get_blocks_source:
     'decided in #5071: one markdown grammar, in Rust; the clipboard copy is pinned ' +
     'against a backend-authored sibling document',

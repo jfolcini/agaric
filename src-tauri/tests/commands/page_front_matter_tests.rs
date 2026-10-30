@@ -88,17 +88,17 @@ async fn hidden_keys(pool: &SqlitePool, page: &BlockId) -> Vec<String> {
 }
 
 /// The export's front matter heads the buffer: aliases, tags, then the
-/// properties the drawer shows, and a blank line before the first bullet.
-/// A page with none has none (`get_page_source_writes_in_space_names`).
+/// properties the drawer shows, and a blank line before the first block.
+/// A page with none has none (`get_page_buffer_writes_in_space_names`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn get_page_source_writes_the_pages_properties_as_front_matter() {
+async fn get_page_buffer_writes_the_pages_properties_as_front_matter() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let (page, body) = front_matter_page(&pool, &mat).await;
 
     assert_eq!(
         page_source(&pool, &page).await,
-        format!("---\naliases: [Home base]\ntags: [work]\nstage: open\n---\n\n- body ^{body}\n")
+        format!("---\naliases: [Home base]\ntags: [work]\nstage: open\n---\n\nbody ^{body}\n")
     );
 }
 
@@ -198,7 +198,7 @@ async fn apply_page_source_creates_the_pages_properties_from_either_form() {
         let body = dup_child(&pool, &mat, &page, "body").await;
         settle(&mat).await;
         let base = page_source(&pool, &page).await;
-        assert_eq!(base, format!("- body ^{body}\n"), "{title}: none written");
+        assert_eq!(base, format!("body ^{body}\n"), "{title}: none written");
 
         let report = save_source(&pool, &mat, &page, &format!("{head}{base}"), &base)
             .await
@@ -410,7 +410,7 @@ async fn get_page_buffer_keeps_the_front_matter_as_text_carrying_no_id() {
 
     assert_eq!(
         buffer.text,
-        "---\naliases: [Home base]\ntags: [work]\nstage: open\n---\n\n- body\n"
+        "---\naliases: [Home base]\ntags: [work]\nstage: open\n---\n\nbody\n"
     );
     let mut ids = vec![None; 8];
     ids[6] = Some(body.into_string());
@@ -450,7 +450,7 @@ async fn apply_page_source_by_line_ids_writes_the_front_matter_and_a_block() {
     let (source, mut lines) = buffer_lines(&pool, &page).await;
     assert_eq!(lines[3], plain("stage: open"), "seed: line 4");
     lines[3].0 = "stage: done".into();
-    lines[6].0 = "- body, edited".into();
+    lines[6].0 = "body, edited".into();
     let before = last_seq(&pool).await;
 
     let report = save_by_line(&pool, &mat, &page, &lines, &source, false)
@@ -465,7 +465,7 @@ async fn apply_page_source_by_line_ids_writes_the_front_matter_and_a_block() {
     assert_eq!(
         page_source(&pool, &page).await,
         format!(
-            "---\naliases: [Home base]\ntags: [work]\nstage: done\n---\n\n- body, edited ^{body}\n"
+            "---\naliases: [Home base]\ntags: [work]\nstage: done\n---\n\nbody, edited ^{body}\n"
         )
     );
 }
@@ -518,12 +518,13 @@ async fn apply_page_source_by_line_ids_names_lines_below_the_front_matter() {
     assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
 
     let mut copied = lines.clone();
-    copied.insert(7, lines[6].clone());
+    copied.insert(7, plain(""));
+    copied.insert(8, lines[6].clone());
     let report = save_by_line(&pool, &mat, &page, &copied, &source, false)
         .await
         .unwrap();
     assert_eq!(
         report.warnings,
-        ["line 8: a copy of the block on line 7; saved as a new block"]
+        ["line 9: a copy of the block on line 7; saved as a new block"]
     );
 }

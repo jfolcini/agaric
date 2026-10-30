@@ -36,7 +36,7 @@ const HELLO = 'Hello, Agaric!'
 const BLOCKED = 'Too many blocks for page mode.'
 
 function pageBuffer(): PageBuffer {
-  return dispatch('get_page_buffer', { pageId: PAGE, dialect: 'document' }) as PageBuffer
+  return dispatch('get_page_buffer', { pageId: PAGE }) as PageBuffer
 }
 
 /** Every IPC goes to the real tauri-mock; returns the seeded page's buffer. */

@@ -83,8 +83,8 @@ function store(tree: TreeBlock[]): void {
   }
 }
 
-function buffer(dialect?: string): PageBuffer {
-  return dispatch('get_page_buffer', { pageId: PAGE, dialect }) as PageBuffer
+function buffer(): PageBuffer {
+  return dispatch('get_page_buffer', { pageId: PAGE }) as PageBuffer
 }
 
 function save(text: string, lineIds: Array<string | null>, baseSource: string): PageSourceReport {
@@ -94,7 +94,6 @@ function save(text: string, lineIds: Array<string | null>, baseSource: string): 
     baseSource,
     merge: false,
     lineIds,
-    dialect: 'document',
   }) as PageSourceReport
 }
 
@@ -135,7 +134,7 @@ describe('the mock in the Document dialect (#5691)', () => {
     (_name, row) => {
       store(row.tree)
 
-      const own = buffer('document')
+      const own = buffer()
       expect({ text: own.text, lineIds: own.line_ids }).toEqual({
         text: row.text,
         lineIds: row.lineIds,
@@ -149,7 +148,7 @@ describe('the mock in the Document dialect (#5691)', () => {
   it.each([...vectors.cases, ...vectors.typed].map((row) => [row.name, row] as const))(
     '%s: the text saved to an empty page creates its blocks',
     (_name, row) => {
-      const empty = buffer('document')
+      const empty = buffer()
       const lineIds = row.text.split('\n').map(() => null)
       const refused = row.tree.find(
         ({ properties: { todo_state } }) => todo_state !== undefined && !STATES.has(todo_state),
@@ -186,7 +185,7 @@ describe('the mock in the Document dialect (#5691)', () => {
       },
     ])
 
-    expect(buffer('document').text).toBe('- [ ] a\n1. b\n\nd\n  todo_state:: WAITING\n')
+    expect(buffer().text).toBe('- [ ] a\n1. b\n\nd\n  todo_state:: WAITING\n')
   })
 
   it('reads back a block that leaves a fence open under the mock ids, which are not ULIDs', () => {
@@ -196,7 +195,7 @@ describe('the mock in the Document dialect (#5691)', () => {
       { id: id('BLOCK02'), depth: 0, content: 'after', properties: {} },
     ])
 
-    const own = buffer('document')
+    const own = buffer()
 
     expect(own.line_ids.filter((carried) => carried !== null)).toEqual([
       id('BLOCK01'),
@@ -215,7 +214,7 @@ describe('the mock in the Document dialect (#5691)', () => {
         properties: { listStyle: 'bullet', todo_state: 'TODO', priority: '2' },
       },
     ])
-    const own = buffer('document')
+    const own = buffer()
     const edited = own.text.replace('[ ]', '[x]').replace('priority:: 2', 'priority:: 3')
 
     const { op_refs: ops } = save(edited, own.line_ids, own.source) as PageSourceReport & {
@@ -228,16 +227,5 @@ describe('the mock in the Document dialect (#5691)', () => {
     expect(blocks.get(id('A'))).toMatchObject({ todo_state: 'TODO', priority: '2' })
     expect(properties.get(id('A'))?.has('completed_at')).toBe(false)
     expect(properties.get(id('A'))?.get('listStyle')?.['value_text']).toBe('bullet')
-  })
-
-  it('gives the Source buffer when no dialect is named', () => {
-    store([
-      { id: id('A'), depth: 0, content: 'a', properties: { listStyle: 'bullet' } },
-      { id: id('B'), depth: 0, content: 'b', properties: {} },
-    ])
-
-    expect(buffer().text).toBe('- a\n- b\n')
-    expect(buffer('source').text).toBe('- a\n- b\n')
-    expect(buffer('document').text).toBe('- a\n\nb\n')
   })
 })

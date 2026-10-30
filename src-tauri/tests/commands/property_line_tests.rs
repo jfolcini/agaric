@@ -220,7 +220,7 @@ async fn apply_page_source_a_line_with_no_value_deletes_the_property() {
     );
     assert_eq!(
         page_source(&pool, &page).await,
-        format!("- has both ^{block}\n")
+        format!("has both ^{block}\n")
     );
 }
 
@@ -235,9 +235,9 @@ async fn apply_page_source_keeps_a_line_with_no_value_for_a_key_not_held_as_text
     let block = dup_child(&pool, &mat, &page, "soup").await;
     settle(&mat).await;
     let base = page_source(&pool, &page).await;
-    let line = format!("- soup ^{block}\n");
+    let line = format!("soup ^{block}\n");
     let source = format!(
-        "{}- bread\n  Flour::\n",
+        "{}\nbread\n  Flour::\n",
         with(&base, &line, &format!("{line}  Ingredients::\n"))
     );
 
@@ -273,7 +273,7 @@ async fn apply_page_source_folds_a_key_to_its_canonical_spelling() {
     let block = dup_child(&pool, &mat, &page, "task").await;
     settle(&mat).await;
     let base = page_source(&pool, &page).await;
-    let line = format!("- task ^{block}\n");
+    let line = format!("task ^{block}\n");
     let typed = "  Priority:: 2\n  due-date:: 2026-05-01\n  Scheduled_Date:: 2026-04-01\n  \
                  REPEAT:: +1d\n  due:: 2026-06-01\n";
     let source = with(&base, &line, &format!("{line}{typed}"));
@@ -294,7 +294,7 @@ async fn apply_page_source_folds_a_key_to_its_canonical_spelling() {
     assert_eq!(
         page_source(&pool, &page).await,
         format!(
-            "- task ^{block}\n  priority:: 2\n  scheduled_date:: 2026-04-01\n  \
+            "task ^{block}\n  priority:: 2\n  scheduled_date:: 2026-04-01\n  \
              due_date:: 2026-05-01\n  due:: 2026-06-01\n  repeat:: +1d\n"
         ),
         "written back canonical"
@@ -332,8 +332,8 @@ async fn apply_page_source_leaves_a_key_held_in_another_spelling_as_it_is() {
     settle(&mat).await;
     let stored = dup_storage(&pool, &block).await;
     let base = page_source(&pool, &page).await;
-    let line = format!("- other ^{other}\n");
-    let source = with(&base, &line, &format!("- other, edited ^{other}\n"));
+    let line = format!("other ^{other}\n");
+    let source = with(&base, &line, &format!("other, edited ^{other}\n"));
 
     let report = save_source(&pool, &mat, &page, &source, &base)
         .await
@@ -400,7 +400,7 @@ async fn a_repeat_rule_the_engine_cannot_read_is_refused() {
     let block = dup_child(&pool, &mat, &page, "task").await;
     settle(&mat).await;
     let base = page_source(&pool, &page).await;
-    let line = format!("- task ^{block}\n");
+    let line = format!("task ^{block}\n");
     let typed = with(&base, &line, &format!("{line}  repeat:: every tuesday\n"));
 
     let result = save_source(&pool, &mat, &page, &typed, &base).await;

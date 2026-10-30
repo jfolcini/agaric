@@ -1,5 +1,5 @@
 {
-  "description": "#5140 Phase 4a — `apply_page_source` saves a page edited as its source buffer: the text `get_page_buffer` gives, with the id each of its lines carries in `lineIds` (#5160 A), is diffed against the page's own render by id, and the difference is written as edits, moves, creates and deletes. Covers only what the tauri mock models, so every seeded block is plain single-line text (no task markers, list styles, properties or names, and no `[[`, `#`, `->` or `::`), which both stacks' `get_page_source` render byte for byte as `- content ^ID`, a further line indented under its bullet; the ids are the seed labels' expanded ids. Each successful step's `baseSource` is the page's source after the step before it, so every step also passes the stale check; the create runs last because its block's id is minted per stack. One kind of change per step, so the op log's order does not depend on the order the command writes kinds in, and the delete is kept out of a reordered sibling group. Seed: S1 (Home) > S2 (alpha), S3 (bravo), S4 (charlie), S5 (delta) > S6 (echo). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "description": "#5140 Phase 4a — `apply_page_source` saves a page edited as its source buffer: the text `get_page_buffer` gives, with the id each of its lines carries in `lineIds` (#5160 A), is diffed against the page's own render by id, and the difference is written as edits, moves, creates and deletes. Covers only what the tauri mock models, so every seeded block is plain single-line text (no task markers, list styles, properties or names, and no `[[`, `#`, `->` or `::`), which both stacks' `get_page_buffer` render byte for byte in the Document dialect as `content ^ID`, a blank line between blocks, a child two columns under its parent's text and a further line at its block's column; the ids are the seed labels' expanded ids. Each successful step's `baseSource` is the page's source after the step before it, so every step also passes the stale check; the create runs last because its block's id is minted per stack. One kind of change per step, so the op log's order does not depend on the order the command writes kinds in, and the delete is kept out of a reordered sibling group. Seed: S1 (Home) > S2 (alpha), S3 (bravo), S4 (charlie), S5 (delta) > S6 (echo). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -196,18 +196,22 @@
   "ops": [
     {
       "args": {
-        "baseSource": "- alpha ^000000000000000000000000S2\n- bravo ^000000000000000000000000S3\n- charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n  - echo ^000000000000000000000000S6\n",
+        "baseSource": "alpha ^000000000000000000000000S2\n\nbravo ^000000000000000000000000S3\n\ncharlie ^000000000000000000000000S4\n\ndelta ^000000000000000000000000S5\n\n  echo ^000000000000000000000000S6\n",
         "lineIds": [
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S3",
+          null,
           "000000000000000000000000S4",
+          null,
           "000000000000000000000000S5",
+          null,
           "000000000000000000000000S6",
           null
         ],
         "merge": false,
         "pageId": "S1",
-        "source": "- alpha\n- bravo\n- charlie\n- delta\n  - echo\n"
+        "source": "alpha\n\nbravo\n\ncharlie\n\ndelta\n\n  echo\n"
       },
       "command": "apply_page_source",
       "comment": "The buffer is the page's own source, so nothing differs and nothing is written: every count is zero.",
@@ -216,18 +220,22 @@
     },
     {
       "args": {
-        "baseSource": "- alpha ^000000000000000000000000S2\n- bravo ^000000000000000000000000S3\n- charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n  - echo ^000000000000000000000000S6\n",
+        "baseSource": "alpha ^000000000000000000000000S2\n\nbravo ^000000000000000000000000S3\n\ncharlie ^000000000000000000000000S4\n\ndelta ^000000000000000000000000S5\n\n  echo ^000000000000000000000000S6\n",
         "lineIds": [
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S3",
+          null,
           "000000000000000000000000S4",
+          null,
           "000000000000000000000000S5",
+          null,
           "000000000000000000000000S6",
           null
         ],
         "merge": false,
         "pageId": "S1",
-        "source": "- alpha\n- bravo edited\n- charlie\n- delta\n  - echo\n"
+        "source": "alpha\n\nbravo edited\n\ncharlie\n\ndelta\n\n  echo\n"
       },
       "command": "apply_page_source",
       "comment": "Only bravo's text changed: one edit, no move, create or delete.",
@@ -236,18 +244,22 @@
     },
     {
       "args": {
-        "baseSource": "- alpha ^000000000000000000000000S2\n- bravo edited ^000000000000000000000000S3\n- charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n  - echo ^000000000000000000000000S6\n",
+        "baseSource": "alpha ^000000000000000000000000S2\n\nbravo edited ^000000000000000000000000S3\n\ncharlie ^000000000000000000000000S4\n\ndelta ^000000000000000000000000S5\n\n  echo ^000000000000000000000000S6\n",
         "lineIds": [
           "000000000000000000000000S3",
+          null,
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S4",
+          null,
           "000000000000000000000000S5",
+          null,
           "000000000000000000000000S6",
           null
         ],
         "merge": false,
         "pageId": "S1",
-        "source": "- bravo edited\n- alpha\n- charlie\n- delta\n  - echo\n"
+        "source": "bravo edited\n\nalpha\n\ncharlie\n\ndelta\n\n  echo\n"
       },
       "command": "apply_page_source",
       "comment": "Bravo and alpha swap places. The longest run already in order stays, so one of the two moves.",
@@ -256,18 +268,22 @@
     },
     {
       "args": {
-        "baseSource": "- bravo edited ^000000000000000000000000S3\n- alpha ^000000000000000000000000S2\n- charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n  - echo ^000000000000000000000000S6\n",
+        "baseSource": "bravo edited ^000000000000000000000000S3\n\nalpha ^000000000000000000000000S2\n\ncharlie ^000000000000000000000000S4\n\ndelta ^000000000000000000000000S5\n\n  echo ^000000000000000000000000S6\n",
         "lineIds": [
           "000000000000000000000000S3",
+          null,
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S4",
+          null,
           "000000000000000000000000S5",
+          null,
           "000000000000000000000000S6",
           null
         ],
         "merge": false,
         "pageId": "S1",
-        "source": "- bravo edited\n- alpha\n  - charlie\n- delta\n  - echo\n"
+        "source": "bravo edited\n\nalpha\n\n  charlie\n\ndelta\n\n  echo\n"
       },
       "command": "apply_page_source",
       "comment": "Charlie is indented under alpha: one move into alpha's children, and the page's own children keep their order.",
@@ -276,17 +292,20 @@
     },
     {
       "args": {
-        "baseSource": "- bravo edited ^000000000000000000000000S3\n- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n  - echo ^000000000000000000000000S6\n",
+        "baseSource": "bravo edited ^000000000000000000000000S3\n\nalpha ^000000000000000000000000S2\n\n  charlie ^000000000000000000000000S4\n\ndelta ^000000000000000000000000S5\n\n  echo ^000000000000000000000000S6\n",
         "lineIds": [
           "000000000000000000000000S3",
+          null,
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S4",
+          null,
           "000000000000000000000000S5",
           null
         ],
         "merge": false,
         "pageId": "S1",
-        "source": "- bravo edited\n- alpha\n  - charlie\n- delta\n"
+        "source": "bravo edited\n\nalpha\n\n  charlie\n\ndelta\n"
       },
       "command": "apply_page_source",
       "comment": "Echo is left out of the buffer, so it is deleted. Its sibling group is not reordered, so the tombstone's slot is the same on both stacks.",
@@ -295,17 +314,20 @@
     },
     {
       "args": {
-        "baseSource": "- bravo edited ^000000000000000000000000S3\n- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n",
+        "baseSource": "bravo edited ^000000000000000000000000S3\n\nalpha ^000000000000000000000000S2\n\n  charlie ^000000000000000000000000S4\n\ndelta ^000000000000000000000000S5\n",
         "lineIds": [
           "000000000000000000000000S3",
+          null,
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S4",
+          null,
           "000000000000000000000000S5",
           null
         ],
         "merge": false,
         "pageId": "S1",
-        "source": "- bravo edited again\n- alpha\n  - charlie\n- delta\n"
+        "source": "bravo edited again\n\nalpha\n\n  charlie\n\ndelta\n"
       },
       "command": "apply_page_source",
       "comment": "Text typed at the end of bravo's line: the id beside the line still names bravo, which is edited to `bravo edited again`.",
@@ -314,18 +336,21 @@
     },
     {
       "args": {
-        "baseSource": "- bravo edited again ^000000000000000000000000S3\n- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n",
+        "baseSource": "bravo edited again ^000000000000000000000000S3\n\nalpha ^000000000000000000000000S2\n\n  charlie ^000000000000000000000000S4\n\ndelta ^000000000000000000000000S5\n",
         "lineIds": [
           "000000000000000000000000S3",
+          null,
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S4",
+          null,
           "000000000000000000000000S5",
           null,
           null
         ],
         "merge": false,
         "pageId": "S1",
-        "source": "- bravo edited again\n- alpha\n  - charlie\n- delta\n  more\n"
+        "source": "bravo edited again\n\nalpha\n\n  charlie\n\ndelta\nmore\n"
       },
       "command": "apply_page_source",
       "comment": "A line typed under delta's line carries no id, so it continues delta: delta is edited to two lines, `delta` and `more`, and keeps its id.",
@@ -334,17 +359,20 @@
     },
     {
       "args": {
-        "baseSource": "- alpha ^000000000000000000000000S2\n- bravo ^000000000000000000000000S3\n- charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n  - echo ^000000000000000000000000S6\n",
+        "baseSource": "alpha ^000000000000000000000000S2\n\nbravo ^000000000000000000000000S3\n\ncharlie ^000000000000000000000000S4\n\ndelta ^000000000000000000000000S5\n\n  echo ^000000000000000000000000S6\n",
         "lineIds": [
           "000000000000000000000000S3",
+          null,
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S4",
+          null,
           "000000000000000000000000S5",
           null
         ],
         "merge": false,
         "pageId": "S1",
-        "source": "- bravo edited\n- alpha\n  - charlie\n- delta edited\n"
+        "source": "bravo edited\n\nalpha\n\n  charlie\n\ndelta edited\n"
       },
       "command": "apply_page_source",
       "comment": "The base is the source before any step ran, so the page changed since it was loaded, and the save is refused.",
@@ -383,22 +411,26 @@
     },
     {
       "args": {
-        "baseSource": "- bravo edited again ^000000000000000000000000S3\n- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- delta\n  more ^000000000000000000000000S5\n",
+        "baseSource": "bravo edited again ^000000000000000000000000S3\n\nalpha ^000000000000000000000000S2\n\n  charlie ^000000000000000000000000S4\n\ndelta\nmore ^000000000000000000000000S5\n",
         "lineIds": [
           "000000000000000000000000S3",
           null,
+          null,
+          null,
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S4",
+          null,
           "000000000000000000000000S5",
           null,
           null
         ],
         "merge": false,
         "pageId": "S1",
-        "source": "- bravo edited again\n- inserted\n- alpha\n  - charlie\n- delta\n  more\n"
+        "source": "bravo edited again\n\ninserted\n\nalpha\n\n  charlie\n\ndelta\nmore\n"
       },
       "command": "apply_page_source",
-      "comment": "An unanchored bullet between bravo and alpha becomes a new block at that slot. Last, because the block's id is minted per stack and every later base would have to spell it.",
+      "comment": "An unanchored paragraph between bravo and alpha becomes a new block at that slot. Last, because the block's id is minted per stack and every later base would have to spell it.",
       "name": "create_between_two_blocks",
       "via": "command"
     }

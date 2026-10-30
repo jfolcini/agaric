@@ -1,5 +1,5 @@
 {
-  "description": "#5160 A — `apply_page_source` with `lineIds`: the buffer is text without `^ID` anchors, as `get_page_buffer` gives it, and each block is the one whose id the line it starts on carries. A copy is a new block and a cut is a move (D15): an id on a second line, or naming no block of the page, is saved as a new block with a warning. A fence left open ends before the next line that carries an id (D5). The page's own source is read as that same text, so its own text writes nothing, and the stale check and `merge` hold. Only what the tauri mock models: plain single-line text, as in `apply_page_source.json`, and a fenced block whose code lines read as no bullet, which both stacks' `get_page_buffer` give line for line (the anchored sources differ there: the backend writes a code block's anchor on a line of its own). Each step's `baseSource` is the source the step before left, except the merge step's, which is stale. The query reads the buffer the steps left. Seed: S1 (Home) > S2 (alpha), S3 (bravo), S4 (charlie); S5 (Elsewhere) > S6 (foreign). Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "description": "#5160 A — `apply_page_source` with `lineIds`: the buffer is text without `^ID` anchors, as `get_page_buffer` gives it, and each block is the one whose id the line it starts on carries. A copy is a new block and a cut is a move (D15): an id on a second line, or naming no block of the page, is saved as a new block with a warning. A fence left open ends before the next line that carries an id (D5). The page's own source is read as that same text, so its own text writes nothing, and the stale check and `merge` hold. Only what the tauri mock models: plain single-line text, as in `apply_page_source.json`, and a fenced block whose code lines read as no bullet, which both stacks' `get_page_buffer` give line for line. Each step's `baseSource` is the source the step before left, except the merge step's, which is stale. The query reads the buffer the steps left. Seed: S1 (Home) > S2 (alpha), S3 (bravo), S4 (charlie); S5 (Elsewhere) > S6 (foreign). Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -176,12 +176,16 @@
       "has_more": null,
       "name": "the_buffer_the_steps_left",
       "rows": [
-        "B2#text=- ```",
-        "line#text=  code",
-        "B4#text=  - charlie",
-        "B3#text=- bravo edited",
-        "B7#text=- alpha copied",
-        "B8#text=- borrowed",
+        "B2#text=```",
+        "line#text=code",
+        "line#text=",
+        "B4#text=  charlie",
+        "line#text=",
+        "B3#text=bravo edited",
+        "line#text=",
+        "B7#text=alpha copied",
+        "line#text=",
+        "B8#text=borrowed",
         "line#text="
       ],
       "total_count": null
@@ -191,16 +195,18 @@
   "ops": [
     {
       "args": {
-        "baseSource": "- alpha ^000000000000000000000000S2\n- bravo ^000000000000000000000000S3\n- charlie ^000000000000000000000000S4\n",
+        "baseSource": "alpha ^000000000000000000000000S2\n\nbravo ^000000000000000000000000S3\n\ncharlie ^000000000000000000000000S4\n",
         "lineIds": [
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S3",
+          null,
           "000000000000000000000000S4",
           null
         ],
         "merge": false,
         "pageId": "S1",
-        "source": "- alpha\n- bravo\n- charlie\n"
+        "source": "alpha\n\nbravo\n\ncharlie\n"
       },
       "command": "apply_page_source",
       "comment": "The page's own text, anchors removed, with each block's id beside the line it starts on: nothing differs, so nothing is written.",
@@ -209,16 +215,18 @@
     },
     {
       "args": {
-        "baseSource": "- alpha ^000000000000000000000000S2\n- bravo ^000000000000000000000000S3\n- charlie ^000000000000000000000000S4\n",
+        "baseSource": "alpha ^000000000000000000000000S2\n\nbravo ^000000000000000000000000S3\n\ncharlie ^000000000000000000000000S4\n",
         "lineIds": [
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S3",
+          null,
           "000000000000000000000000S4",
           null
         ],
         "merge": false,
         "pageId": "S1",
-        "source": "- alpha\n- bravo edited\n- charlie\n"
+        "source": "alpha\n\nbravo edited\n\ncharlie\n"
       },
       "command": "apply_page_source",
       "comment": "Bravo's line changed and still carries bravo's id: one edit, no anchor in the text.",
@@ -227,16 +235,18 @@
     },
     {
       "args": {
-        "baseSource": "- alpha ^000000000000000000000000S2\n- bravo edited ^000000000000000000000000S3\n- charlie ^000000000000000000000000S4\n",
+        "baseSource": "alpha ^000000000000000000000000S2\n\nbravo edited ^000000000000000000000000S3\n\ncharlie ^000000000000000000000000S4\n",
         "lineIds": [
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S4",
+          null,
           "000000000000000000000000S3",
           null
         ],
         "merge": false,
         "pageId": "S1",
-        "source": "- alpha\n  - charlie\n- bravo edited\n"
+        "source": "alpha\n\n  charlie\n\nbravo edited\n"
       },
       "command": "apply_page_source",
       "comment": "Charlie's line, cut and pasted under alpha, carries its id with it: a move, not a delete and a create.",
@@ -245,35 +255,39 @@
     },
     {
       "args": {
-        "baseSource": "- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- bravo edited ^000000000000000000000000S3\n",
+        "baseSource": "alpha ^000000000000000000000000S2\n\n  charlie ^000000000000000000000000S4\n\nbravo edited ^000000000000000000000000S3\n",
         "lineIds": [
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S4",
+          null,
           "000000000000000000000000S3"
         ],
         "merge": false,
         "pageId": "S1",
-        "source": "- alpha\n  - charlie\n- bravo edited\n"
+        "source": "alpha\n\n  charlie\n\nbravo edited\n"
       },
       "command": "apply_page_source",
-      "comment": "Three ids for four lines of text is a client's mistake, refused before anything is written.",
+      "comment": "Five ids for six lines of text is a client's mistake, refused before anything is written.",
       "expect_error": "validation",
       "name": "line_ids_one_short_are_refused",
       "via": "command"
     },
     {
       "args": {
-        "baseSource": "- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- bravo edited ^000000000000000000000000S3\n",
+        "baseSource": "alpha ^000000000000000000000000S2\n\n  charlie ^000000000000000000000000S4\n\nbravo edited ^000000000000000000000000S3\n",
         "lineIds": [
           "000000000000000000000000S2",
           null,
+          null,
           "000000000000000000000000S4",
+          null,
           "000000000000000000000000S3",
           null
         ],
         "merge": false,
         "pageId": "S1",
-        "source": "- ```\n  code\n  - charlie\n- bravo edited\n"
+        "source": "```\ncode\n\n  charlie\n\nbravo edited\n"
       },
       "command": "apply_page_source",
       "comment": "Alpha now opens a fence it never closes. Charlie's line carries an id, so the fence ends before it (#5160 D5): alpha is edited to the fence and its code line, and charlie stays alpha's child rather than turning into code.",
@@ -282,18 +296,22 @@
     },
     {
       "args": {
-        "baseSource": "- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- bravo edited ^000000000000000000000000S3\n",
+        "baseSource": "alpha ^000000000000000000000000S2\n\n  charlie ^000000000000000000000000S4\n\nbravo edited ^000000000000000000000000S3\n",
         "lineIds": [
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S4",
+          null,
           "000000000000000000000000S3",
+          null,
           "000000000000000000000000S2",
+          null,
           "000000000000000000000000S6",
           null
         ],
         "merge": true,
         "pageId": "S1",
-        "source": "- alpha\n  - charlie\n- bravo edited\n- alpha copied\n- borrowed\n"
+        "source": "alpha\n\n  charlie\n\nbravo edited\n\nalpha copied\n\nborrowed\n"
       },
       "command": "apply_page_source",
       "comment": "Edited from the text before the fence step, so saved with `merge`, which keeps the page's alpha. Two lines added at the end: one carrying alpha's id again, a copy, and one carrying S6's, a block of the other page. Each is a new block (#5160 D15); alpha keeps its id and S6 is not moved. Last, because the new blocks' ids are minted per stack.",
