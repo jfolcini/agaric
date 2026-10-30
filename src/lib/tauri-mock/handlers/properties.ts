@@ -29,6 +29,7 @@ import {
   notFoundRejection,
   ownerSpaceOf,
   propertyDefinition,
+  rejectNonSpaceHolder,
   returnEmptyPage,
   validationRejection,
   readActiveSpaceScope,
@@ -55,6 +56,7 @@ import {
   spacePropertyDefs,
   todayDate,
 } from '@/lib/tauri-mock/seed'
+import { leaveForSpace, rankArrivals } from '@/lib/tauri-mock/space-move'
 
 /** #4554 — the two `app_settings` keys `reminders::get_settings` reads; `'1'` = enabled. */
 const REMINDERS_ENABLED_KEY = 'reminders.enabled'
@@ -215,21 +217,14 @@ function setSpaceProperty(
   valueRef: string | null,
 ): Record<string, unknown> {
   const blockId = target['id'] as string
-  if (
-    target['block_type'] !== 'page' &&
-    !(target['block_type'] === 'tag' && target['parent_id'] == null)
-  ) {
-    throw validationRejection(
-      `property 'space' can only be set on a page or top-level tag block; block '${blockId}' is a '${target['block_type'] as string}' block`,
-    )
-  }
+  rejectNonSpaceHolder(target)
   if (valueRef === null || !isLiveSpace(valueRef)) {
     throw validationRejection(
       `space_id '${valueRef}' does not refer to a live, registered space block`,
     )
   }
   const fromSpace = (target['space_id'] as string | null | undefined) ?? null
-  setPageGroupSpace(blocks, blockId, valueRef)
+  if (leaveForSpace(target, valueRef)) rankArrivals(valueRef, new Set([blockId]))
   const op = pushOp('set_property', {
     block_id: blockId,
     key: 'space',

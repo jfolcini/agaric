@@ -8,6 +8,7 @@
  */
 
 import type { McpAgent } from '@/lib/bindings'
+import type { MockLinkKind } from '@/lib/tauri-mock/link-scan'
 
 let counter = 0
 
@@ -46,10 +47,15 @@ export const blockTags = new Map<string, Set<string>>()
 export const blockTagRefs = new Map<string, Set<string>>()
 
 // The link tokens no edge was written for (`block_links_unresolved`,
-// `source_id → Set<target_id>`): the target was not live when the source was
-// indexed. `holdsLink` (`link-scan.ts`) reads it; `indexLinks` and
-// `relinkRestored` (`link-index.ts`) keep it.
+// `source_id → Set<target_id>`): the target was not live, or not of the
+// source's space, when the source was indexed. `holdsLink` (`link-scan.ts`)
+// reads it; `indexLinks` and `relinkRestored` (`link-index.ts`) keep it.
 export const unresolvedLinks = new Map<string, Set<string>>()
+
+// The kind each kept `block_links` edge was written with, where its source now
+// spells the token the other way (`source_id → target_id → kind`). `edgeKind`
+// (`link-scan.ts`) reads it; `indexLinks` (`link-index.ts`) keeps it.
+export const keptLinkKinds = new Map<string, Map<string, MockLinkKind>>()
 
 // Property definitions store, per space (#5841): space_id → key → row
 export const propertyDefs = new Map<string, Map<string, Record<string, unknown>>>()
@@ -449,6 +455,7 @@ export function seedBlocks(): void {
   blockTags.clear()
   blockTagRefs.clear()
   unresolvedLinks.clear()
+  keptLinkKinds.clear()
   propertyDefs.clear()
   pageAliases.clear()
   attachments.clear()

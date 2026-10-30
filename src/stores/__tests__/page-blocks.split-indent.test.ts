@@ -465,9 +465,8 @@ describe('PageBlockStore', () => {
     // only while a live block of the SAME page already holds that token
     // (`page_holds_token`, `cross_space_validation.rs`). Shortening the
     // original before creating the after-part removed the only holder, so a
-    // split that moved such a link into the new block was refused. The tauri
-    // mock does not model that rule (its `create_block` / `edit_block` scan no
-    // content), so the pin here is the ORDER against the mock's real state: the
+    // split that moved such a link into the new block was refused. The pin here
+    // is the ORDER against the mock's real state, which models the rule: the
     // create reaches the backend while the original still holds the link.
     describe('#5272 — after-parts are created before the original is shortened', () => {
       const { BLOCK_GS_1, PAGE_GETTING_STARTED, PAGE_QUICK_NOTES } = SEED_IDS

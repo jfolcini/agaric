@@ -39,6 +39,7 @@ import {
   pageRequestLimit,
   refreshDescendantPageIds,
   rejectCrossSpaceTokens,
+  rejectNonSpaceHolder,
   relinkRestored,
   renumberSiblings,
   restoreCohort,
@@ -47,7 +48,6 @@ import {
   readActiveSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
 import { resolveInboundNames } from '@/lib/tauri-mock/names'
-import { setPageGroupSpace } from '@/lib/tauri-mock/revert'
 import {
   allOrNothing,
   attachmentBytes,
@@ -57,6 +57,7 @@ import {
   blockTags,
   blocks,
   fakeId,
+  keptLinkKinds,
   pageAliases,
   properties,
   propertyDefs,
@@ -66,6 +67,8 @@ import {
 } from '@/lib/tauri-mock/seed'
 import {
   dropAcknowledgedLosses,
+  leaveForSpace,
+  rankArrivals,
   spaceMoveLossValues,
   spaceMoveLosses,
 } from '@/lib/tauri-mock/space-move'
@@ -142,6 +145,7 @@ function purgeCohortAndSatellites(cohort: Iterable<string>): void {
     blockTags.delete(id)
     blockTagRefs.delete(id)
     unresolvedLinks.delete(id)
+    keptLinkKinds.delete(id)
     pageAliases.delete(id)
     blockDrafts.delete(id)
     // #5841 — a purged space's property definitions go with it.
@@ -1371,7 +1375,7 @@ export const blocksHandlers = {
       row.position = rootRank
     }
     const position = row['position'] as number
-    indexLinks(row, new Set())
+    indexLinks(row, new Map())
     const op = pushOp('create_block', {
       block_id: id,
       content: row.content,
@@ -2195,11 +2199,12 @@ export const blocksHandlers = {
     // #5841 S0.6 — the drops land before the `space` ops, as on the backend.
     dropAcknowledgedLosses(inputIds, spaceId, a['acknowledgedLoss'])
     let count = 0
-    // Root arrivals, re-ranked in ONE pass after the loop (see below).
+    // Root arrivals, re-ranked in ONE pass after the loop (`rankArrivals`).
     const arrivedAtRoot = new Set<string>()
     for (const blockId of inputIds) {
       const b = blocks.get(blockId)
       if (!b || b['deleted_at']) continue
+      rejectNonSpaceHolder(b)
       // The prior membership, so a revert restores THAT space (#5057 review).
       const fromSpace = (b['space_id'] as string | null | undefined) ?? null
       const fromValue =
@@ -2212,31 +2217,7 @@ export const blocksHandlers = {
               value_ref: fromSpace,
               value_bool: null,
             }
-      setPageGroupSpace(blocks, blockId, spaceId)
-      if ((b['parent_id'] as string | null) === null) {
-        arrivedAtRoot.add(blockId)
-        // #5100: the backend purges the block from the doc of the space it left
-        // and reprojects that group's dense ranks PER BLOCK, so a survivor that
-        // sat behind it moves up one — and the next arrival from that group
-        // departs carrying its shifted rank. Unstamped roots stand in for the
-        // conformance harness space, whose snapshot leg never `stampMockSpace`s;
-        // spaces are left out of that stand-in because each ranks in its own
-        // group, never in another's.
-        if (fromSpace !== spaceId) {
-          const left =
-            fromSpace === null
-              ? [...blocks.values()].filter(
-                  (row) =>
-                    (row['parent_id'] as string | null) === null &&
-                    ((row['space_id'] as string | null | undefined) ?? null) === null &&
-                    properties.get(row['id'] as string)?.get('is_space')?.['value_text'] !== 'true',
-                )
-              : spaceRootGroup(fromSpace)
-          left.toSorted(comparePositionThenId).forEach((row, i) => {
-            row['position'] = i + 1
-          })
-        }
-      }
+      if (leaveForSpace(b, spaceId)) arrivedAtRoot.add(blockId)
       pushOp('set_property', {
         block_id: blockId,
         key: 'space',
@@ -2254,29 +2235,7 @@ export const blocksHandlers = {
       const b = blocks.get(blockId)
       if (b && !b['deleted_at']) rejectDuplicateName(b)
     }
-    // Arrivals land ahead of residents because the engine ranks the group by
-    // each node's legacy position meta, and an arrival's meta is the small
-    // per-space rank it was seeded with while a resident's is the `position`
-    // `create_block_in_tx` appended over the whole `parent_id IS NULL` set.
-    // Among themselves arrivals keep the rank each held when it departed. This
-    // is where the mock parts company with the backend, which merely compares
-    // metas: the two disagree once a resident's meta falls BELOW an arrival's,
-    // which two ordinary moves into one space are enough to produce, because
-    // `reproject_dense_positions` rewrites `blocks.position` and never the Loro
-    // `FIELD_POSITION` that `legacy_slot` reads, so a meta stays whatever its
-    // block was seeded with. Matching that needs a shadow meta per block, more
-    // machinery than the mock earns (#5099).
-    if (arrivedAtRoot.size > 0) {
-      // `comparePositionThenId` is exactly `legacy_slot`'s `(sib_pos, sib_id)`,
-      // so two arrivals that left DIFFERENT spaces holding the same rank break
-      // their tie the way the engine does.
-      const group = spaceRootGroup(spaceId).toSorted(comparePositionThenId)
-      const arriving = group.filter((row) => arrivedAtRoot.has(row['id'] as string))
-      const resident = group.filter((row) => !arrivedAtRoot.has(row['id'] as string))
-      ;[...arriving, ...resident].forEach((row, i) => {
-        row['position'] = i + 1
-      })
-    }
+    rankArrivals(spaceId, arrivedAtRoot)
     return count
   }),
 

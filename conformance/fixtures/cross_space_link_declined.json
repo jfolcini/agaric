@@ -1,0 +1,326 @@
+{
+  "description": "#6054 — a link token whose target is in another space, or in none, writes no `block_links` edge: the reindex's INSERT keeps a target only when its space is the source's (`NULL = ?3` drops one in no space), and records the token as owed instead. The write itself is not refused when the gate lets it through (#5272): a token the page already holds, or a target in no space. `C1`, on the harness page `S1`, links `S2`; `create_space` makes a second space (`C2`) and `S2` moves into it, keeping that edge. `C3` names `S2` again, which `S1` already holds, and `C4` names the space block `C2`, which is in no space: neither gets an edge. `S2` then goes through the Trash and back, and its restore re-links no referrer of another space.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Target",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "see [[000000000000000000000000S2]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Away",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "and [[000000000000000000000000S2]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "in [[C2]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 13,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "restore_block"
+        }
+      ]
+    },
+    "page_links": [
+      {
+        "kind": "page_link",
+        "source_id": "B3",
+        "source_page_id": "B1",
+        "target_id": "B2"
+      }
+    ],
+    "properties": [
+      {
+        "block_id": "B4",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "the_source",
+      "returns": [
+        "B3#block_type=content#content=see [[000000000000000000000000S2]]#parent_id=B1#position=1"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_second_space",
+      "returns": ["create_space#space_id=B4"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_target_moves_away",
+      "returns": ["move_blocks_to_space#moved=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_held_token_of_another_space",
+      "returns": [
+        "B5#block_type=content#content=and [[000000000000000000000000S2]]#parent_id=B1#position=2"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_target_in_no_space",
+      "returns": ["B6#block_type=content#content=in [[C2]]#parent_id=B1#position=3"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_target_goes_to_the_trash",
+      "returns": ["B2#deleted_at=DELETED#descendants_affected=1", "affected_page_ids->B2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_target_comes_back",
+      "returns": ["B2#restored_count=1"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_of_the_moved_target",
+      "rows": ["B3#parent_id=B1#page_id=B1#position=1#deleted_at=null"],
+      "total_count": null
+    }
+  ],
+  "name": "cross_space_link_declined",
+  "ops": [
+    {
+      "args": {
+        "blockType": "content",
+        "content": "see [[S2]]",
+        "index": 0,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "name": "the_source",
+      "via": "command"
+    },
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Away"
+      },
+      "command": "create_space",
+      "name": "a_second_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S2"],
+        "spaceId": "C2"
+      },
+      "command": "move_blocks_to_space",
+      "name": "the_target_moves_away",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "and [[S2]]",
+        "index": 1,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "comment": "S1 holds the token, so the write passes, and the target is of another space",
+      "name": "a_held_token_of_another_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "in [[C2]]",
+        "index": 2,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "comment": "a space block is in no space",
+      "name": "a_target_in_no_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "delete_block",
+      "name": "the_target_goes_to_the_trash",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "restore_block",
+      "comment": "the restore re-indexes C3, which still owes S2: it is of another space",
+      "name": "the_target_comes_back",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockId": "S2",
+        "limit": 50,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "get_backlinks",
+      "comment": "only the edge made before the move",
+      "name": "backlinks_of_the_moved_target"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Target",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

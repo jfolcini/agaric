@@ -93,8 +93,9 @@ function contentLinksTo(content: string | null | undefined, targetId: string): b
  * edges from content on every read, where the backend writes them when it
  * indexes the source, so two facts the content does not carry decide an edge
  * too: a purged target takes its edges with it (`ON DELETE CASCADE`), and a
- * target that was not live when the source was indexed got none and is still
- * owed one (`unresolved`, the mock's `block_links_unresolved`).
+ * target that was not live, or not of the source's space, when the source was
+ * indexed got none and is still owed one (`unresolved`, the mock's
+ * `block_links_unresolved`).
  */
 export function holdsLink(
   source: Record<string, unknown>,
@@ -141,6 +142,27 @@ export function classifyLinkKind(
   return content?.includes(`((${targetId}))`) ? 'block_ref' : 'page_link'
 }
 
+/** `source_id → target_id → kind` of the kept edges `edgeKind` reads. */
+export type KeptLinkKinds = ReadonlyMap<string, ReadonlyMap<string, MockLinkKind>>
+
+/**
+ * The kind `source`'s edge to `targetId` holds. The reindex writes the kind
+ * only for a target its INSERT keeps (#4551), so an edge kept to a target it
+ * can no longer link (trashed, or of another space) keeps the kind it was
+ * written with: `kept` holds those whose content now spells the token the
+ * other way.
+ */
+export function edgeKind(
+  source: Record<string, unknown>,
+  targetId: string,
+  kept: KeptLinkKinds,
+): MockLinkKind {
+  return (
+    kept.get(source['id'] as string)?.get(targetId) ??
+    classifyLinkKind(source['content'] as string | null, targetId)
+  )
+}
+
 /**
  * Scan every block's content for `[[ULID]]` and `((ULID))` tokens and return
  * the implied block-link edges, each one {@link holdsLink} admits. The
@@ -159,14 +181,14 @@ export function classifyLinkKind(
  * the snapshot leg of any fixture that soft-deletes a linking block red on a
  * divergence of the mock's own making (#4848).
  *
- * Deliberately UNSCOPED: the `SpaceScope` filter the link-serving handlers
- * apply is the caller's business (see `inSpaceScope` in `handlers/shared.ts`),
- * and the conformance snapshot — the one place the mock's derivation is
- * compared against the backend's real `block_links` table — is single-space.
+ * Deliberately UNSCOPED, as the `block_links` table is: the `SpaceScope`
+ * filter the link-serving handlers apply is the caller's business (see
+ * `inSpaceScope` in `handlers/shared.ts`).
  */
 export function deriveLinkEdges(
   allBlocks: Map<string, Record<string, unknown>>,
   unresolved: ReadonlyMap<string, ReadonlySet<string>>,
+  kept: KeptLinkKinds = new Map(),
 ): MockLinkEdge[] {
   const edges: MockLinkEdge[] = []
   for (const blk of allBlocks.values()) {
@@ -178,7 +200,7 @@ export function deriveLinkEdges(
         sourceId: blk['id'] as string,
         targetId,
         sourcePageId,
-        kind: classifyLinkKind(content, targetId),
+        kind: edgeKind(blk, targetId, kept),
       })
     }
   }

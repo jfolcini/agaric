@@ -12,7 +12,7 @@
  * See the Rust module's doc comment for the relabeling contract.
  */
 
-import { deriveLinkEdges } from '@/lib/tauri-mock/link-scan'
+import { type KeptLinkKinds, deriveLinkEdges } from '@/lib/tauri-mock/link-scan'
 
 // ---------------------------------------------------------------------------
 // Mock state shapes (subset of what handlers.ts reads/writes).
@@ -29,6 +29,8 @@ export interface MockState {
   opLog: ReadonlyArray<{ op_type: string; payload: string }>
   /** The link tokens no edge was written for (`holdsLink`). */
   unresolvedLinks: ReadonlyMap<string, ReadonlySet<string>>
+  /** The kinds kept edges were written with (`edgeKind`). */
+  keptLinkKinds?: KeptLinkKinds
 }
 
 // ---------------------------------------------------------------------------
@@ -211,7 +213,7 @@ export function buildSnapshot(
   // property of the pair (`classifyLinkKind` reads the whole content), so every
   // occurrence of a pair already carries the same kind and the first one wins.
   const linkRows = new Map<string, Record<string, unknown>>()
-  for (const edge of deriveLinkEdges(state.blocks, state.unresolvedLinks)) {
+  for (const edge of deriveLinkEdges(state.blocks, state.unresolvedLinks, state.keptLinkKinds)) {
     const pair = `${edge.sourceId} ${edge.targetId}`
     if (linkRows.has(pair)) continue
     linkRows.set(pair, {

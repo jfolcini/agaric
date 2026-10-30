@@ -43,6 +43,7 @@ import {
   attachments,
   blocks,
   blockTags,
+  keptLinkKinds,
   linkMetadata,
   makeBlock,
   opLog,
@@ -542,7 +543,14 @@ export function replayFixtureWithRecords(fixture: Fixture): {
   // N4) sees one; the stamp writes nothing the snapshot reads.
   stampMockSpace()
   const records = replayOps(fixture)
-  const state: MockState = { blocks, properties, blockTags, opLog, unresolvedLinks }
+  const state: MockState = {
+    blocks,
+    properties,
+    blockTags,
+    opLog,
+    unresolvedLinks,
+    keptLinkKinds,
+  }
   const order = canonicalOrder(fixture)
   const snapshot = buildSnapshot(state, order)
   const createdIds = createdBlockIdsInOpOrder()

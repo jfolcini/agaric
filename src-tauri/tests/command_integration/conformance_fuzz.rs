@@ -44,23 +44,28 @@
 //! ## Known blind spots
 //!
 //! Whatever the generator cannot emit, this lane cannot compare. Today that is
-//! the attachment ops (no mock handler and no fixture vocabulary),
-//! `SetProperty(space)` (see [`chain_to_fixture`]), a `todo_state` (so
-//! `list_unfinished_tasks` answers nothing), and the timestamps the snapshot
-//! omits. The texts carry `[[…]]`, `((…))` and `#[…]` tokens ([`weave_tokens`],
-//! #6054) naming the seed page, the seed tag or an earlier block, live,
-//! trashed, purged or in another space, so `page_links` and the backlink,
-//! tag-ref and inherited-tag reads compare. No text names a space block, and
-//! only an edit names a page of another space (see [`chain_to_fixture`]). The
-//! chain makes no second page in the test space and writes no page title, so
+//! the attachment ops (no mock handler and no fixture vocabulary), a
+//! `DeleteProperty(space)`, a `todo_state` (so `list_unfinished_tasks` answers
+//! nothing), and the columns the snapshot omits: the timestamps and
+//! `blocks.space_id`. The texts carry `[[…]]`, `((…))` and `#[…]` tokens
+//! ([`weave_tokens`], #6054) naming the seed page, the seed tag or an earlier
+//! block, live, trashed, purged, in no space or in another space, so
+//! `page_links` and the backlink, tag-ref and inherited-tag reads compare, the
+//! links the backend declines included. Only an edit names a block of another
+//! space, and no `#[…]` names the seed tag before it moves (see
+//! [`chain_to_fixture`]). The space moves are the seed tag's and
+//! [`MOVED_PAGE`]'s, each into a new space ([`Invalid::SpaceMove`]), and the
+//! generator's `SetProperty(space)`, which names a content block. No text
+//! names [`MOVED_PAGE`] and the chain writes no page title, so
 //! `list_page_links` and `list_unlinked_references` still answer nothing. The
-//! reads are the fixed [`read_steps`], so a read outside them, and the
-//! wall-clock `list_projected_agenda`, go uncompared. Of the refusals, it
-//! reaches the ones [`Invalid`] lists, the repeated `add_tag` and the
-//! unattached `remove_tag` that the generator's own tag ops draw, a cross-space
-//! token in an edit, and an out-of-range `limit` on each read in
-//! [`LIMIT_CAPS`]. The reached-command, refusal and read tallies the lane
-//! prints are the honest statement of what it did cover.
+//! reads are the fixed [`read_steps`] of the harness space, so a read outside
+//! them, a read of a space the chain made, and the wall-clock
+//! `list_projected_agenda`, go uncompared. Of the refusals, it reaches the
+//! ones [`Invalid`] lists, the repeated `add_tag` and the unattached
+//! `remove_tag` that the generator's own tag ops draw, a cross-space token in
+//! an edit, a space write to a content block, and an out-of-range `limit` on
+//! each read in [`LIMIT_CAPS`]. The reached-command, refusal and read tallies
+//! the lane prints are the honest statement of what it did cover.
 
 use std::cell::RefCell;
 
@@ -68,7 +73,7 @@ use super::conformance::replay_fixture;
 use super::conformance_command::{Declarations, relabel_records};
 use super::conformance_query::run_query_steps;
 use super::conformance_snapshot::canonical_label_map;
-use agaric_engine::proptest_db_harness::{op_chain_strategy, resolve_chain};
+use agaric_engine::proptest_db_harness::{HARNESS_SPACE_IDS, op_chain_strategy, resolve_chain};
 use agaric_store::op::{OpPayload, SPACE_PROPERTY_KEY};
 use proptest::prelude::{Just, Strategy, any, prop_oneof};
 use proptest::sample::Index;
@@ -105,6 +110,12 @@ const SEED_PAGE: &str = "S1";
 /// applies. A `tag` block, because the `add_tag` command refuses any other.
 const SEED_TAG: &str = "S2";
 
+/// The seeded page an [`Invalid::SpaceMove`] can move out of the harness
+/// space. No text names it: a link between two pages of the space makes
+/// `list_page_links` answer, and the mock's roll-up there is a later item of
+/// #6054.
+const MOVED_PAGE: &str = "S3";
+
 /// The most refused commands one chain splices in: enough to interleave them
 /// with the valid ops, few enough that the chain stays mostly valid.
 const MAX_INVALID: usize = 3;
@@ -115,13 +126,12 @@ const MAX_INVALID: usize = 3;
 /// "coverage that is assumed rather than visible".
 ///
 /// MEASURED, not assumed: over [`DEFAULT_CASES`] the generator reaches these
-/// seven many times each, and `restore_block` and `delete_property` only a
-/// handful. The seed is random per run (that is the point of a fuzz lane), so
-/// asserting on the tail would make this flaky rather than strict, and a
-/// weekly lane that reddens on its own RNG teaches people to re-run it without
-/// reading it.
+/// many times each, and `restore_block` and `delete_property` only a handful.
+/// The seed is random per run (that is the point of a fuzz lane), so asserting
+/// on the tail would make this flaky rather than strict, and a weekly lane that
+/// reddens on its own RNG teaches people to re-run it without reading it.
 ///
-/// So the floor covers the seven robust ones and the tail is REPORTED instead —
+/// So the floor covers the robust ones and the tail is REPORTED instead —
 /// every run prints the full tally, which is what makes a narrowing visible
 /// whether or not it crosses this list.
 const EXPECTED_COMMANDS: &[&str] = &[
@@ -130,8 +140,10 @@ const EXPECTED_COMMANDS: &[&str] = &[
     "delete_block",
     "edit_block",
     "move_block",
+    "move_blocks_to_space",
     "remove_tag",
     "set_property",
+    "set_property(space)",
 ];
 
 // ---------------------------------------------------------------------------
@@ -139,12 +151,14 @@ const EXPECTED_COMMANDS: &[&str] = &[
 // ---------------------------------------------------------------------------
 
 /// The fixture seed every generated chain starts from: a page to hang the tree
-/// off and a tag to use as a tag target.
+/// off, a tag to use as a tag target and a page to move. The two that can
+/// move rank first, so a departure shifts the roots behind it.
 fn seed() -> Value {
     json!({
         "blocks": [
-            { "id": SEED_PAGE, "block_type": "page", "content": "Home", "parent_id": null, "position": 1 },
-            { "id": SEED_TAG, "block_type": "tag", "content": "tag", "parent_id": null, "position": 2 },
+            { "id": SEED_PAGE, "block_type": "page", "content": "Home", "parent_id": null, "position": 3 },
+            { "id": SEED_TAG, "block_type": "tag", "content": "tag", "parent_id": null, "position": 1 },
+            { "id": MOVED_PAGE, "block_type": "page", "content": "Near", "parent_id": null, "position": 2 },
         ],
         "properties": [],
         "tags": [],
@@ -158,17 +172,17 @@ fn seed() -> Value {
 /// resolve — each mints its own ULID per create and reconciles through the
 /// canonical `Bn` relabel (see `resolve_op_arg_id`).
 ///
-/// Dropped, because neither the fixture vocabulary nor the mock has them:
+/// `AddAttachment` / `DeleteAttachment` are dropped: attachment apply writes
+/// the `attachments` table and touches the filesystem; there is no mock
+/// handler and no snapshot column, so a rendered op would be uncomparable, not
+/// covered.
 ///
-/// * `AddAttachment` / `DeleteAttachment` — attachment apply writes the
-///   `attachments` table and touches the filesystem; there is no mock handler
-///   and no snapshot column, so a rendered op would be uncomparable, not
-///   covered.
-/// * `SetProperty(space)` — a page-group space migration writes
-///   `blocks.space_id`, which the snapshot deliberately excludes on BOTH sides
-///   (`parity_property_key` here, the `key === 'space'` skip in
-///   `conformance-snapshot.ts`). Rendering it would add op_log-digest noise for
-///   an effect neither side can observe.
+/// The generator aims `SetProperty(space)` at a content block only, which
+/// holds no space, so both stacks refuse it. Its first space id renders it as
+/// `set_property`, its second as `move_blocks_to_space`, into the space the
+/// chain made last, or a new one. The snapshot holds no `space_id`, so what a
+/// space move does shows in the ranks, the op digest and the reads of the
+/// harness space.
 ///
 /// Each `(index, invalid)` in `invalid` is rendered by [`render_invalid`]
 /// before the payload at `index` (past the end: after the last one). The n-th
@@ -183,20 +197,32 @@ fn chain_to_fixture(
 ) -> Value {
     let mut label_of: BTreeMap<String, String> = BTreeMap::new();
     let mut creates = 0usize;
-    // What a woven token may not name. No text names a `CrossSpace` splice's
-    // space block: it is in no space, so the backend's link INSERT declines it
-    // (`NULL = ?3`), which `indexLinks` in the mock does not model. No created
-    // text names its away page either: a create refused for a cross-space
-    // token makes no `Cn` and shifts every later label. An edit may, and is
-    // refused.
-    let (mut not_in_edit, mut not_in_create) = (Vec::new(), Vec::new());
+    // What a created text may not name: a block of another space. A create
+    // refused for a cross-space token makes no `Cn` and shifts every later
+    // label. An edit may name one, and is refused unless its page already
+    // holds the token (#5272), when the link is declined instead.
+    let mut elsewhere: Vec<String> = Vec::new();
+    // The space a generated `SetProperty(space)` moves its block into.
+    let mut last_space: Option<String> = None;
+    // No `#[…]` names the seed tag before it moves: the backend keeps an
+    // inline tag ref to a tag that left the source's space until the next
+    // delete, restore or purge rebuilds them all, which the mock does not
+    // model.
+    let mut no_tag_ref: Vec<String> = Vec::new();
+    if invalid
+        .iter()
+        .any(|(_, kind)| matches!(kind, Invalid::SpaceMove(Mover::SeedTag, _)))
+    {
+        no_tag_ref.push(SEED_TAG.to_owned());
+    }
     let mut weaves = weaves.iter();
-    let mut weave = |text: &str, creates: usize, skip: &[String]| {
+    let mut weave = |text: &str, creates: usize, skip: &[String], no_tag_ref: &[String]| {
         weave_tokens(
             text,
             weaves.next().map_or(&[][..], Vec::as_slice),
             creates,
             skip,
+            no_tag_ref,
         )
     };
     let mut ops: Vec<Value> = Vec::new();
@@ -222,15 +248,24 @@ fn chain_to_fixture(
     for (at, payload) in payloads.iter().enumerate() {
         while let Some((_, kind)) = splices.next_if(|(splice_at, _)| *splice_at == at) {
             ops.extend(render_invalid(kind, &mut creates));
-            if matches!(kind, Invalid::CrossSpace) {
-                let (space, page) = (format!("C{}", creates - 1), format!("C{creates}"));
-                not_in_edit.push(space.clone());
-                not_in_create.extend([space, page]);
+            match kind {
+                Invalid::CrossSpace => {
+                    last_space = Some(format!("C{}", creates - 1));
+                    elsewhere.push(format!("C{creates}"));
+                }
+                Invalid::SpaceMove(mover, _) => {
+                    last_space = Some(format!("C{creates}"));
+                    if matches!(mover, Mover::SeedTag) {
+                        elsewhere.push(SEED_TAG.to_owned());
+                        no_tag_ref.clear();
+                    }
+                }
+                _ => {}
             }
         }
         let op = match payload {
             OpPayload::CreateBlock(c) => {
-                let content = weave(&c.content, creates, &not_in_create);
+                let content = weave(&c.content, creates, &elsewhere, &no_tag_ref);
                 creates += 1;
                 let parent = c
                     .parent_id
@@ -251,7 +286,7 @@ fn chain_to_fixture(
             }
             OpPayload::EditBlock(e) => json!({ "command": "edit_block", "args": {
                 "blockId": label(&label_of, e.block_id.as_str()),
-                "toText": weave(&e.to_text, creates, &not_in_edit),
+                "toText": weave(&e.to_text, creates, &[], &no_tag_ref),
             }}),
             OpPayload::MoveBlock(m) => {
                 let new_parent = m
@@ -276,7 +311,25 @@ fn chain_to_fixture(
             OpPayload::PurgeBlock(p) => json!({ "command": "purge_block", "args": {
                 "blockId": label(&label_of, p.block_id.as_str()),
             }}),
-            OpPayload::SetProperty(s) if s.key != SPACE_PROPERTY_KEY => {
+            OpPayload::SetProperty(s) if s.key == SPACE_PROPERTY_KEY => {
+                let space = last_space.clone().unwrap_or_else(|| {
+                    creates += 1;
+                    ops.push(create_space(creates));
+                    format!("C{creates}")
+                });
+                last_space = Some(space.clone());
+                let via = if s
+                    .value_ref
+                    .as_ref()
+                    .is_some_and(|r| r.as_str() == HARNESS_SPACE_IDS[0])
+                {
+                    Via::SetProperty
+                } else {
+                    Via::MoveBlocks
+                };
+                space_move(via, &label(&label_of, s.block_id.as_str()), &space)
+            }
+            OpPayload::SetProperty(s) => {
                 let mut value = serde_json::Map::new();
                 if let Some(text) = &s.value_text {
                     value.insert("value_text".into(), json!(text));
@@ -290,12 +343,10 @@ fn chain_to_fixture(
                     "value": Value::Object(value),
                 }})
             }
-            OpPayload::DeleteProperty(d) if d.key != SPACE_PROPERTY_KEY => {
-                json!({ "command": "delete_property", "args": {
-                    "blockId": label(&label_of, d.block_id.as_str()),
-                    "key": d.key,
-                }})
-            }
+            OpPayload::DeleteProperty(d) => json!({ "command": "delete_property", "args": {
+                "blockId": label(&label_of, d.block_id.as_str()),
+                "key": d.key,
+            }}),
             OpPayload::AddTag(t) => json!({ "command": "add_tag", "args": {
                 "blockId": label(&label_of, t.block_id.as_str()),
                 "tagId": SEED_TAG,
@@ -348,9 +399,10 @@ fn weaves_strategy() -> impl Strategy<Value = Vec<Weave>> {
 /// `text` with the tokens of `weave` appended, written with labels
 /// (`expand_content_labels` resolves them on both stacks). A target is the seed
 /// page, the seed tag or one of the `creates` blocks made so far, whatever
-/// became of it: one the chain deleted or purged, or a `CrossSpace` page in
-/// another space. Those are the skip and refusal paths of the link
-/// derivations. A label in `skip` is never a target.
+/// became of it: one the chain deleted or purged, a space block, which is in no
+/// space, or a block of another space. Those are the skip, decline and refusal
+/// paths of the link derivations. A label in `skip` is never a target, and one
+/// in `no_tag_ref` never that of a `#[…]`.
 ///
 /// The generator's own content alphabet has no brackets, so these are the only
 /// tokens a generated text holds; the shared `content_strategy` stays as it is
@@ -360,6 +412,7 @@ fn weave_tokens(
     weave: &[(TokenKind, Index)],
     creates: usize,
     skip: &[String],
+    no_tag_ref: &[String],
 ) -> String {
     let targets: Vec<String> = [SEED_PAGE.to_owned(), SEED_TAG.to_owned()]
         .into_iter()
@@ -369,6 +422,9 @@ fn weave_tokens(
     let mut out = text.to_owned();
     for (kind, pick) in weave {
         let target = pick.get(&targets);
+        if matches!(kind, TokenKind::TagRef) && no_tag_ref.contains(target) {
+            continue;
+        }
         out.push_str(&match kind {
             TokenKind::Link => format!(" [[{target}]]"),
             TokenKind::Ref => format!(" (({target}))"),
@@ -378,11 +434,12 @@ fn weave_tokens(
     out
 }
 
-/// A command on a block in a state the generator's model never targets
-/// (#6054), mostly one the backend refuses. Spliced into a chain so the lane
-/// compares refusals as well as successes. Each is rendered with the ops that
-/// put its target in that state, so its outcome does not depend on the chain
-/// around it. (`Deleted(Restore)` and `Deleted(Purge)` are the accepted cases.)
+/// A command the generator's model never emits (#6054), mostly one the
+/// backend refuses. Spliced into a chain so the lane compares refusals as well
+/// as successes. Each is rendered with the ops that put its target in that
+/// state, so its outcome does not depend on the chain around it.
+/// (`Deleted(Restore)`, `Deleted(Purge)` and `SpaceMove` are the accepted
+/// cases.)
 #[derive(Debug, Clone, Copy)]
 enum Invalid {
     /// A command on a block that was created and purged: no row has its id.
@@ -395,6 +452,24 @@ enum Invalid {
     BadDate,
     /// A tag applied to a page of another space.
     CrossSpace,
+    /// The seed tag or [`MOVED_PAGE`] moved into a space made for it. Always a
+    /// new space, so the arrival order #5099 leaves unmodelled never comes up.
+    SpaceMove(Mover, Via),
+}
+
+/// What an [`Invalid::SpaceMove`] moves. Once the seed tag is away, every
+/// later `add_tag` and every token naming it is cross-space.
+#[derive(Debug, Clone, Copy)]
+enum Mover {
+    SeedTag,
+    Page,
+}
+
+/// The two commands that write a block's `space`.
+#[derive(Debug, Clone, Copy)]
+enum Via {
+    SetProperty,
+    MoveBlocks,
 }
 
 /// The command an [`Invalid::Missing`] or [`Invalid::Deleted`] names its
@@ -434,12 +509,36 @@ fn invalid_strategy() -> impl Strategy<Value = Invalid> {
         Just(Invalid::CollidingId),
         Just(Invalid::BadDate),
         Just(Invalid::CrossSpace),
+        (
+            prop_oneof![Just(Mover::SeedTag), Just(Mover::Page)],
+            prop_oneof![Just(Via::SetProperty), Just(Via::MoveBlocks)],
+        )
+            .prop_map(|(mover, via)| Invalid::SpaceMove(mover, via)),
     ]
 }
 
 /// The harness space, as a `create_block` scope.
 fn harness_scope() -> Value {
     json!({ "kind": "active", "space_id": "$SPACE" })
+}
+
+/// A `create_space` making the chain's `n`-th block.
+fn create_space(n: usize) -> Value {
+    json!({ "command": "create_space", "args": {
+        "name": format!("Away {n}"), "accentColor": null,
+    }})
+}
+
+/// `block` moved into `space` through `via`.
+fn space_move(via: Via, block: &str, space: &str) -> Value {
+    match via {
+        Via::SetProperty => json!({ "command": "set_property", "args": {
+            "blockId": block, "key": SPACE_PROPERTY_KEY, "value": { "value_ref": space },
+        }}),
+        Via::MoveBlocks => json!({ "command": "move_blocks_to_space", "args": {
+            "blockIds": [block], "spaceId": space,
+        }}),
+    }
 }
 
 /// `invalid` as fixture ops, counting every block they create into `creates`
@@ -473,15 +572,22 @@ fn render_invalid(invalid: Invalid, creates: &mut usize) -> Vec<Value> {
         Invalid::CrossSpace => {
             *creates += 2;
             let (space, page) = (*creates - 1, *creates);
-            ops.push(json!({ "command": "create_space", "args": {
-                "name": format!("Away {space}"), "accentColor": null,
-            }}));
+            ops.push(create_space(space));
             ops.push(json!({ "command": "create_page_in_space", "args": {
                 "content": "away", "parentId": null, "spaceId": format!("C{space}"),
             }}));
             ops.push(json!({ "command": "add_tag", "args": {
                 "blockId": format!("C{page}"), "tagId": SEED_TAG,
             }}));
+        }
+        Invalid::SpaceMove(mover, via) => {
+            *creates += 1;
+            ops.push(create_space(*creates));
+            let block = match mover {
+                Mover::SeedTag => SEED_TAG,
+                Mover::Page => MOVED_PAGE,
+            };
+            ops.push(space_move(via, block, &format!("C{creates}")));
         }
     }
     ops
@@ -702,8 +808,13 @@ fn search_term(fixture: &Value) -> String {
                 .or(op["args"]["toText"].as_str())
         })
         .flat_map(str::split_whitespace)
-        // A woven token is a label, not the text either stack stored.
-        .find(|word| word.len() >= 3 && word.chars().all(char::is_alphanumeric))
+        // A woven token is a label, not the text either stack stored. A word
+        // like `C12` is one too: the read steps expand it to a block id.
+        .find(|word| {
+            word.len() >= 3
+                && word.chars().all(char::is_alphanumeric)
+                && !(word.starts_with(['C', 'S']) && word[1..].bytes().all(|b| b.is_ascii_digit()))
+        })
         .unwrap_or("absent")
         .to_owned()
 }
@@ -971,7 +1082,11 @@ fn mock_matches_backend_on_generated_op_chains_4669() {
         declare_refusals(&mut fixture, &backend.records);
         let ops = fixture["ops"].as_array().expect("rendered ops");
         for (op, record) in ops.iter().zip(&backend.records) {
-            let command = op["command"].as_str().expect("rendered command");
+            // A space write is tallied apart, so the floor can hold it.
+            let command = match op["command"].as_str().expect("rendered command") {
+                "set_property" if op["args"]["key"] == SPACE_PROPERTY_KEY => "set_property(space)",
+                command => command,
+            };
             *reached.borrow_mut().entry(command.to_owned()).or_default() += 1;
             if let Some(kind) = record["error"].as_str() {
                 *refused
@@ -1072,4 +1187,17 @@ fn mock_matches_backend_on_generated_op_chains_4669() {
             reached.keys().collect::<Vec<_>>(),
         );
     }
+}
+
+/// The search term skips a word the read steps would expand as a label: a
+/// generated `C02` once named a block the chain never made, and the replay
+/// panicked.
+#[test]
+fn search_term_skips_a_label_shaped_word() {
+    let fixture = json!({ "ops": [{ "args": { "content": "C02 S7 plain" } }] });
+    assert_eq!(
+        search_term(&fixture),
+        "plain",
+        "a label-shaped word is no search term"
+    );
 }

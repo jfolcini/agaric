@@ -543,7 +543,8 @@ pub(super) async fn apply_op_via_command(
         "purge_blocks_by_ids" => {
             to_json(purge_blocks_by_ids_inner(pool, DEV, mat, block_ids()).await)
         }
-        // The value is the caller's own text; only the block is a label.
+        // The value is the caller's own text, except a `value_ref`, which is a
+        // label like the block (`expandOpArgs` in `conformance-replay.ts`).
         "set_property" => {
             let value: SetPropertyArgs =
                 serde_json::from_value(arg("value").cloned().unwrap_or_else(|| {
@@ -560,7 +561,7 @@ pub(super) async fn apply_op_via_command(
                     value.value_text,
                     value.value_num,
                     value.value_date,
-                    value.value_ref,
+                    value.value_ref.map(|l| resolve_op_arg_id(&l, created_ids)),
                     value.value_bool,
                     None,
                 )
