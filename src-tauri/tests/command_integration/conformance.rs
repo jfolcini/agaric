@@ -703,6 +703,20 @@ pub(super) async fn resolve_attachment_label(pool: &SqlitePool, label: &str) -> 
     else {
         return label.to_owned();
     };
+    let added = added_attachment_ids(pool).await;
+    added.get(n.wrapping_sub(1)).cloned().unwrap_or_else(|| {
+        panic!(
+            "conformance op arg '{label}' names the {n}th added attachment, but only {} have \
+             been added at this point in the op list",
+            added.len()
+        )
+    })
+}
+
+/// The id of each attachment an `add_attachment` op added, in op order: the
+/// n-th is what an `An` label names. TS twin: `addedAttachmentIds` in
+/// `conformance-query.ts`.
+pub(super) async fn added_attachment_ids(pool: &SqlitePool) -> Vec<String> {
     let mut added: Vec<String> = Vec::new();
     for (id,) in sqlx::query_as::<_, (String,)>(
         "SELECT json_extract(payload, '$.attachment_id') FROM op_log \
@@ -717,13 +731,7 @@ pub(super) async fn resolve_attachment_label(pool: &SqlitePool, label: &str) -> 
             added.push(id);
         }
     }
-    added.get(n.wrapping_sub(1)).cloned().unwrap_or_else(|| {
-        panic!(
-            "conformance op arg '{label}' names the {n}th added attachment, but only {} have \
-             been added at this point in the op list",
-            added.len()
-        )
-    })
+    added
 }
 
 /// Every op this fixture has appended, in `seq` order — what an `On` op-arg

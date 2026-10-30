@@ -44,6 +44,7 @@ import {
   definitionSpaceOf,
   linkEdges,
   encodeNextCursor,
+  nextDenseRank,
   metaRowMatchesFilter,
   notFoundRejection,
   isLiveSpace,
@@ -58,6 +59,7 @@ import {
   readActiveSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
 import { tagsHandlers } from '@/lib/tauri-mock/handlers/tags'
+import { indexLinks } from '@/lib/tauri-mock/link-index'
 import {
   findEmptyPageTitled,
   resolveInboundNames,
@@ -2177,10 +2179,20 @@ export const pagesHandlers = {
     const adopted = spaceId ? findEmptyPageTitled(pageTitle, spaceId) : null
     const pageId = adopted ?? fakeId()
     if (adopted === null) {
+      const space = spaceId === '' ? null : spaceId
+      const position = nextDenseRank(null, space)
       blocks.set(pageId, {
-        ...makeBlock(pageId, 'page', pageTitle, null, blocks.size),
-        space_id: spaceId === '' ? null : spaceId,
+        ...makeBlock(pageId, 'page', pageTitle, null, position),
+        space_id: space,
       })
+      pushOp('create_block', {
+        block_id: pageId,
+        content: pageTitle,
+        parent_id: null,
+        block_type: 'page',
+        position,
+      })
+      if (space) pushOp('set_property', { block_id: pageId, key: 'space', from_value: null })
     }
 
     // Pre-compute the content blocks so we know `blocks_total` before emitting
@@ -2203,13 +2215,22 @@ export const pagesHandlers = {
     warnings.push(...(names?.warnings ?? []))
 
     let blocksCreated = 0
-    let position = 0
+    let position = nextDenseRank(pageId, null)
     for (const [i, trimmed] of contentLines.entries()) {
       const blockId = fakeId()
       const block = makeBlock(blockId, 'content', trimmed, pageId, position)
       // A checkbox after the bullet is the block's task state (#5160 D6).
       block['todo_state'] = parsed[i]?.todoState ?? null
       blocks.set(blockId, block)
+      // A token whose target is not linkable is owed an edge, not given one.
+      indexLinks(block, new Map())
+      pushOp('create_block', {
+        block_id: blockId,
+        content: trimmed,
+        parent_id: pageId,
+        block_type: 'content',
+        position,
+      })
       blocksCreated++
       position++
       emit({ kind: 'progress', blocks_done: blocksCreated, blocks_total: blocksTotal })

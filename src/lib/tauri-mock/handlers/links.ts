@@ -38,7 +38,8 @@ import {
   readActiveSpaceScope,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
-import { blockTags, blocks, linkMetadata, pageAliases, properties } from '@/lib/tauri-mock/seed'
+import { inheritedTagIds } from '@/lib/tauri-mock/handlers/tags'
+import { blocks, linkMetadata, pageAliases, properties } from '@/lib/tauri-mock/seed'
 
 /** Does `b` hold `key`: a `block_properties` row, or a set column for a
  *  column-backed key (#6051)? */
@@ -610,12 +611,9 @@ export const linksHandlers = {
   // strongest edges first, then by both ids.
   list_page_links: (args) => {
     const a = (args as Record<string, unknown> | null | undefined) ?? {}
-    // When `tagIds` is non-empty, restrict edges to
-    // those whose target page carries at least one of the listed tags.
-    // Mirrors the backend semantics (`block_tags`-only resolution in the
-    // mock world; the real backend additionally unions
-    // `block_tag_inherited` / `block_tag_refs`, which the mock does not
-    // model — see seed.ts).
+    // When `tagIds` is non-empty, restrict edges to those whose target page
+    // carries at least one of the listed tags: attached, inline `#[id]` or
+    // inherited (`block_tags` ∪ `block_tag_refs` ∪ `block_tag_inherited`).
     const rawTagIds = a['tagIds'] as string[] | null | undefined
     const tagFilter = rawTagIds && rawTagIds.length > 0 ? new Set(rawTagIds) : null
     const spaceId = readActiveSpaceScope('list_page_links', a)
@@ -639,8 +637,12 @@ export const linksHandlers = {
         edge.sourceId
       if (sourcePage === edge.targetId) continue
       if (!livePageInScope(sourcePage) || !livePageInScope(edge.targetId)) continue
-      if (tagFilter && ![...tagFilter].some((tid) => blockTags.get(edge.targetId)?.has(tid))) {
-        continue
+      if (tagFilter) {
+        const held = new Set([
+          ...refInclusiveTags(edge.targetId),
+          ...inheritedTagIds(edge.targetId),
+        ])
+        if (![...tagFilter].some((tid) => held.has(tid))) continue
       }
       const key = `${sourcePage}→${edge.targetId}`
       const row = counts.get(key)

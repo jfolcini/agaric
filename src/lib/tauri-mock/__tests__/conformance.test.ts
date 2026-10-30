@@ -313,6 +313,12 @@ const SNAPSHOT_OPS_INERT: ReadonlyMap<string, string> = new Map<string, string>(
       'projected snapshot; the op digest, returns and query steps carry the claim',
   ],
   [
+    'attachment_added_rows',
+    'the adds touch `attachments` only, which is not one of the ' +
+      "snapshot's five arrays, so no op sequence can move it; the " +
+      'attachment query steps carry the claim',
+  ],
+  [
     'peer_ref_writes',
     'the three writers touch `peer_refs` only, which is not one of the ' +
       "snapshot's five arrays, so no op sequence can move it; the " +

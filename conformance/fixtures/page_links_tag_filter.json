@@ -1,0 +1,320 @@
+{
+  "description": "#6054 — `list_page_links`'s `tagIds` keeps an edge whose target page carries one of the tags directly (`block_tags`), by inheritance (`block_tag_inherited`) or by an inline `#[id]` in its title (`block_tag_refs`). S2 holds the tag only by the inline ref, S3 only directly and S7 (a page nested under S6) only by inheritance, so a filter reading `block_tags` alone answers the S3 edge alone; S4 is untagged and drops out under either reading.",
+  "expected": {
+    "block_tags": [
+      {
+        "block_id": "B3",
+        "tag_id": "B5"
+      },
+      {
+        "block_id": "B6",
+        "tag_id": "B5"
+      }
+    ],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Ref Target #[000000000000000000000000S5]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Direct Target",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Untagged",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "flag",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Tagged Parent",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B6",
+        "parent_id": null,
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Nested Target",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B7",
+        "parent_id": "B6",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "see [[000000000000000000000000S2]] and [[000000000000000000000000S3]] and [[000000000000000000000000S4]] and [[000000000000000000000000S7]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 4,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "create_block"
+        }
+      ]
+    },
+    "page_links": [
+      {
+        "kind": "page_link",
+        "source_id": "B8",
+        "source_page_id": "B1",
+        "target_id": "B2"
+      },
+      {
+        "kind": "page_link",
+        "source_id": "B8",
+        "source_page_id": "B1",
+        "target_id": "B3"
+      },
+      {
+        "kind": "page_link",
+        "source_id": "B8",
+        "source_page_id": "B1",
+        "target_id": "B4"
+      },
+      {
+        "kind": "page_link",
+        "source_id": "B8",
+        "source_page_id": "B1",
+        "target_id": "B7"
+      }
+    ],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "tag_by_inline_ref",
+      "returns": ["B2#content=Ref Target %23[000000000000000000000000S5]"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "tag_directly",
+      "returns": ["B3#tag_id=B5"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "tag_the_parent_page",
+      "returns": ["B6#tag_id=B5"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "links_to_three_pages",
+      "returns": [
+        "B8#block_type=content#content=see [[000000000000000000000000S2]] and [[000000000000000000000000S3]] and [[000000000000000000000000S4]] and [[000000000000000000000000S7]]#parent_id=B1#position=1"
+      ]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "page_links_to_tagged_targets",
+      "rows": ["B1->B2#ref_count=1", "B1->B3#ref_count=1", "B1->B7#ref_count=1"],
+      "total_count": 3
+    }
+  ],
+  "name": "page_links_tag_filter",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "Ref Target #[S5]"
+      },
+      "command": "edit_block",
+      "comment": "The tag reaches S2 through `block_tag_refs` only.",
+      "name": "tag_by_inline_ref",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "tagId": "S5"
+      },
+      "command": "add_tag",
+      "comment": "The tag reaches S3 through `block_tags`.",
+      "name": "tag_directly",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "tagId": "S5"
+      },
+      "command": "add_tag",
+      "comment": "S6 is not linked; S7, the page nested under it, holds the tag only through `block_tag_inherited`.",
+      "name": "tag_the_parent_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "see [[S2]] and [[S3]] and [[S4]] and [[S7]]",
+        "index": 0,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "name": "links_to_three_pages",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "tagIds": ["S5"]
+      },
+      "command": "list_page_links",
+      "comment": "The three tagged targets, however each holds the tag; the untagged S4 is filtered out.",
+      "name": "page_links_to_tagged_targets"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Ref Target",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "page",
+        "content": "Direct Target",
+        "id": "S3",
+        "parent_id": null,
+        "position": 3
+      },
+      {
+        "block_type": "page",
+        "content": "Untagged",
+        "id": "S4",
+        "parent_id": null,
+        "position": 4
+      },
+      {
+        "block_type": "tag",
+        "content": "flag",
+        "id": "S5",
+        "parent_id": null,
+        "position": 5
+      },
+      {
+        "block_type": "page",
+        "content": "Tagged Parent",
+        "id": "S6",
+        "parent_id": null,
+        "position": 6
+      },
+      {
+        "block_type": "page",
+        "content": "Nested Target",
+        "id": "S7",
+        "parent_id": "S6",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

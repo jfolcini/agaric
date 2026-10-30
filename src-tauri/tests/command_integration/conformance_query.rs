@@ -111,7 +111,9 @@ use super::common::tags::{
     query_by_tags_inner,
 };
 use super::common::*;
-use super::conformance::{read_created_block_ids_in_op_order, resolve_op_arg_id, seed_label_to_id};
+use super::conformance::{
+    added_attachment_ids, read_created_block_ids_in_op_order, resolve_op_arg_id, seed_label_to_id,
+};
 use super::conformance_snapshot::token_key;
 use agaric_core::ulid::{BlockId, PageId};
 use agaric_lib::commands::pages::{Dialect, get_page_buffer_as};
@@ -242,7 +244,7 @@ pub(super) const PROPERTY_DEF_ATTRS: &[&str] = &["value_type", "options", "built
 /// against the "never a clock" rule, because a seeded attachment's stamp is
 /// fixture-authored epoch-ms rather than `now_ms()` — it is what the
 /// `ORDER BY created_at, id` steps sort on, so leaving it off would pin the
-/// order without saying what it was. MUST match `ATTACHMENT_TOKEN` in the TS
+/// order without saying what it was. MUST match `ATTACHMENT_ATTRS` in the TS
 /// twin.
 const ATTACHMENT_ATTRS: &[&str] = &[
     "block_id",
@@ -253,6 +255,26 @@ const ATTACHMENT_ATTRS: &[&str] = &[
     "created_at",
     "content_hash",
 ];
+
+/// The columns of an op-added attachment the caller supplied; its `id`,
+/// `fs_path`, `content_hash` and `created_at` are minted per stack. MUST match
+/// `ADDED_ATTACHMENT_ATTRS` in the TS twin.
+const ADDED_ATTACHMENT_ATTRS: &[&str] = &["block_id", "filename", "mime_type", "size_bytes"];
+
+/// An `AttachmentRow` token: an op-added row as `An#<the caller's columns>`,
+/// the label an `attachmentId` arg names it by, a seeded row whole. TS twin:
+/// `attachmentToken`.
+fn attachment_token(row: &Value, added: &[String]) -> String {
+    let id = row.get("id").and_then(Value::as_str);
+    match added.iter().position(|a| Some(a.as_str()) == id) {
+        Some(i) => {
+            let mut row = row.clone();
+            row["id"] = Value::String(format!("A{}", i + 1));
+            row_token(&row, "id", ADDED_ATTACHMENT_ATTRS)
+        }
+        None => row_token(row, "id", ATTACHMENT_ATTRS),
+    }
+}
 
 /// A `LinkMetadata` (#3830), whose token head is the url and whose attributes
 /// are every other column. `fetched_at` is fixture-authored epoch-ms on a
@@ -1668,11 +1690,10 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
         "list_attachments" => {
             let rows = list_attachments_inner(pool, arg_req::<BlockId>(args, "blockId")).await?;
             let v = serde_json::to_value(&rows).expect("serialize Vec<AttachmentRow>");
+            let added = added_attachment_ids(pool).await;
             RawResult {
                 rows: v.as_array().map_or_else(Vec::new, |a| {
-                    a.iter()
-                        .map(|r| row_token(r, "id", ATTACHMENT_ATTRS))
-                        .collect()
+                    a.iter().map(|r| attachment_token(r, &added)).collect()
                 }),
                 has_more: None,
                 total_count: None,
@@ -1689,8 +1710,9 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             // the ordered comparison pins.
             let v =
                 serde_json::to_value(&map).expect("serialize HashMap<String, Vec<AttachmentRow>>");
+            let added = added_attachment_ids(pool).await;
             RawResult {
-                rows: map_rows_tokens(&v, &|r| row_token(r, "id", ATTACHMENT_ATTRS)),
+                rows: map_rows_tokens(&v, &|r| attachment_token(r, &added)),
                 has_more: None,
                 total_count: None,
                 next_cursor: None,
