@@ -29,7 +29,8 @@
  *    {@link JexNote.attachments} as `importMarkdown`'s `vaultFiles` — the SAME
  *    vault-attachment path a folder import (and the `.enex` importer, #2513
  *    part 1) uses, so the backend ingests the bytes and canonicalizes the ref
- *    to `attachment:<id>`, an image as an image and any other file as a link.
+ *    to `attachment:<id>`: an embedded image stays an image and a link or any
+ *    other file becomes a link.
  *  - **Internal note links** `[label](:/<noteId>)` → `[[Target Title|label]]`
  *    when the target note exists in the archive; an unresolved `:/id` is left
  *    untouched as a stable placeholder rather than producing a broken embed.
@@ -58,6 +59,7 @@ import {
   sanitizeResourceName,
   UNTITLED_PLACEHOLDER,
 } from '@/lib/enex-import'
+import { NOTE_EXTENSIONS } from '@/lib/import-attachments'
 
 /** A decoded resource attachment referenced by a note (#2513, part 2). */
 export interface JexResource {
@@ -534,7 +536,11 @@ function rewriteNoteBody(
       const resource = resourcesById.get(refId)
       if (resource !== undefined) {
         if (!attachments.some((a) => a.path === resource.path)) attachments.push(resource)
-        return `${bang}[${label}](${resource.path})`
+        // The importer reads a link to `notes.txt` as a page link, but a
+        // resource is never a note: embedding it still lands a file link.
+        const lower = resource.path.toLowerCase()
+        const embed = bang || (NOTE_EXTENSIONS.some((ext) => lower.endsWith(ext)) ? '!' : '')
+        return `${embed}[${label}](${resource.path})`
       }
       const targetTitle = noteTitleById.get(refId)
       if (targetTitle === undefined) return match

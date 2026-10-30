@@ -1274,6 +1274,17 @@ describe('parseJex Joplin fidelity (#6032)', () => {
     expect(noteTitled(notes, 'Shot').attachments.map((a) => a.path)).toEqual(['pic.png'])
   })
 
+  it('ships a linked resource with a note extension as a file, not a page link (#6032)', () => {
+    const txt = '4f'.repeat(16)
+    const archive = sampleJex([
+      ...resourceMembers(txt, 'log.txt', 'text/plain', 'txt'),
+      noteMember('5a'.repeat(16), 'Logs', `see [the log](:/${txt})`),
+    ])
+    const note = noteTitled(parseJex(archive).notes, 'Logs')
+    expect(note.attachments.map((a) => a.path)).toEqual(['log.txt'])
+    expect(scanAttachmentRefs(note.markdown)).toEqual(['log.txt'])
+  })
+
   it('renames a resource whose title holds a space or a parenthesis, so the importer ingests it', () => {
     const shot = '2d'.repeat(16)
     const archive = buildTar([

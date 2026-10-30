@@ -1,6 +1,6 @@
 /**
  * E2E for #6032 — a link to an attachment, `[label](attachment:<id>)`, which
- * an import writes for a linked or embedded file that is not an image.
+ * an import writes for a linked file or an embedded one that is not an image.
  *
  * The block shows the link as a file link, not an image and not a web link,
  * after a navigation round-trip, and a click downloads the stored file under

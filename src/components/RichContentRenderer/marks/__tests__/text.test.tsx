@@ -13,7 +13,8 @@
 
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
+
+import { axe } from '@/__tests__/helpers/axe'
 
 const mockOpenAttachmentLink = vi.hoisted(() => vi.fn(() => Promise.resolve()))
 const mockOpenUrl = vi.hoisted(() => vi.fn(() => Promise.resolve(true)))

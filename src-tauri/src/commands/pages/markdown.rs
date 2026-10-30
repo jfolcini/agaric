@@ -1926,11 +1926,12 @@ async fn load_attachments(
     //
     //     `attachments` has no "inline" flag: an inline image leaves BOTH a
     //     row here AND a `![filename](attachment:<id>)` token in the owning
-    //     block's `content` (same id); a non-image file (or an image
+    //     block's `content` (same id), as an imported file link leaves a
+    //     `[label](attachment:<id>)` token; a non-image file (or an image
     //     dropped with no editor open) leaves ONLY a row. The render loop
     //     below dedups on that token — via a plain substring check against
     //     `attachment:<id>`, which is reliable because ULIDs are unique —
-    //     so inline images aren't double-emitted while block-file
+    //     so inline images and links aren't double-emitted while block-file
     //     attachments (previously invisible in export) get a link line.
     //
     //     Mirrors `list_attachments_batch_inner`'s `json_each(?)` batching
@@ -6880,12 +6881,13 @@ fn match_ref_to_vault_file(
     Some(idx)
 }
 
-/// The token a ref to the ingested attachment `id` is rewritten to: an image
-/// `![alt](attachment:<id>)`, or any other file as the link
-/// `[label](attachment:<id>)`, labelled by the ref's label or alt, else the
-/// file's name. A PDF written as an image renders broken.
+/// The token a ref to the ingested attachment `id` is rewritten to: a link
+/// stays the link `[label](attachment:<id>)`, an embedded image stays the
+/// image `![alt](attachment:<id>)`, and any other embedded file becomes a
+/// link, since a PDF written as an image renders broken. A link is labelled by
+/// its label or alt, else the file's name.
 fn attachment_token(att: &import::AttachmentRef, id: &str, filename: &str, mime: &str) -> String {
-    if mime.starts_with("image/") {
+    if !att.is_link() && mime.starts_with("image/") {
         return format!("![{}](attachment:{id})", att.alt);
     }
     let label = if att.alt.is_empty() {

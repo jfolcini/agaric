@@ -248,7 +248,7 @@ function linkedNotePaths(content: string, notesByName: Map<string, string[]>): s
   return [...paths]
 }
 
-/** A file a note may embed or link and the import can attach: an image or a PDF. */
+/** A file a note may embed or link, never counted as skipped: an image or a PDF. */
 const ATTACHMENT_RE = /\.(?:png|jpe?g|gif|webp|svg|bmp|ico|avif|pdf)$/i
 
 /** The extension of `name` among {@link NOTE_EXTENSIONS}, or null. */
