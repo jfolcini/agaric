@@ -90,7 +90,7 @@ use agaric_lib::materializer::Materializer;
 use agaric_store::cache::{rebuild_projected_agenda_cache, rebuild_tags_cache};
 use agaric_store::fts::rebuild_fts_index;
 use agaric_store::op::OpRef;
-use agaric_store::pagination::{BlockRow, PageResponse};
+use agaric_store::pagination::{BlockRow, MAX_BATCH_BLOCK_IDS, PageResponse};
 use agaric_store::search_types::SearchScope;
 use agaric_store::space::{SpaceId, SpaceScope};
 use agaric_sync::sync_protocol::loro_sync::sweep_deferred_purges;
@@ -2022,6 +2022,172 @@ fn bench_journal_week_open(c: &mut Criterion) {
     group.finish();
 
     assert_under_budget("journal week open (7 days) @ 100K", &acc, BUDGET_MS);
+}
+
+/// `PAGE_MODE_BLOCK_CAP` in `src/editor/page-mode/page-mode-fit.ts`: the
+/// largest page page mode opens.
+const PAGE_MODE_BLOCK_CAP: usize = 1_000;
+/// Must be a valid ULID: `load_page_subtree_inner` parses the root id.
+const PAGE_MODE_PAGE_ID: &str = "01PGMDPAGE0000000000000001";
+const PAGE_MODE_PROPERTY_EVERY: usize = 5;
+const PAGE_MODE_TASK_EVERY: usize = 10;
+const PAGE_MODE_ATTACHMENT_EVERY: usize = 20;
+
+/// The blocks of `seed_page_mode_page`'s page in position order, and the
+/// block each one links.
+struct PageModePage {
+    blocks: Vec<agaric_core::ulid::BlockId>,
+    targets: Vec<agaric_core::ulid::BlockId>,
+}
+
+/// The 100K vault plus a page of `n` blocks, all in [`SLO_SPACE_ID`]. Each
+/// block links its own background block, the most ids `resolveLinks` can send
+/// for the page; every [`PAGE_MODE_PROPERTY_EVERY`]th block holds a property,
+/// every [`PAGE_MODE_TASK_EVERY`]th is a `TODO`, and every
+/// [`PAGE_MODE_ATTACHMENT_EVERY`]th has an attachment.
+async fn seed_page_mode_page(pool: &SqlitePool, n: usize) -> PageModePage {
+    let background = seed_blocks_bulk(pool, FIXTURE_SIZE).await;
+    let blocks = seed_export_page(pool, PAGE_MODE_PAGE_ID, n).await;
+    let targets: Vec<String> = background
+        .into_iter()
+        .step_by(FIXTURE_SIZE / n)
+        .take(n)
+        .collect();
+    let mut tx = pool.begin().await.unwrap();
+    for (i, (id, target)) in blocks.iter().zip(&targets).enumerate() {
+        sqlx::query("UPDATE blocks SET content = content || ?, todo_state = ? WHERE id = ?")
+            .bind(format!(" [[{target}]]"))
+            .bind((i % PAGE_MODE_TASK_EVERY == 0).then_some("TODO"))
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        if i % PAGE_MODE_PROPERTY_EVERY == 0 {
+            sqlx::query(
+                "INSERT INTO block_properties (block_id, key, value_text) \
+                 VALUES (?, 'slo_status', 'open')",
+            )
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        }
+        if i % PAGE_MODE_ATTACHMENT_EVERY == 0 {
+            // Migration 0108's triggers refuse an `fs_path` outside `attachments/`.
+            sqlx::query(
+                "INSERT INTO attachments \
+                 (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+                 VALUES (?, ?, 'image/png', 'figure.png', 1024, ?, ?)",
+            )
+            .bind(format!("ATT{id}"))
+            .bind(id)
+            .bind(format!("attachments/ATT{id}.png"))
+            .bind(SLO_BASE_TS_MS)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        }
+    }
+    tx.commit().await.unwrap();
+    assign_all_to_slo_space(pool).await;
+    PageModePage {
+        blocks: blocks.into_iter().map(Into::into).collect(),
+        targets: targets.into_iter().map(Into::into).collect(),
+    }
+}
+
+/// One batch read page mode makes of `page`, returning what its shape probe
+/// counts: the rows `load_page_subtree` returns, the blocks or targets each
+/// batch read answers for. Ids go in chunks of [`MAX_BATCH_BLOCK_IDS`], which
+/// every batch command rejects past, so a page past it costs one call per chunk.
+async fn page_mode_read(pool: &SqlitePool, command: &str, page: &PageModePage) -> usize {
+    if command == "load_page_subtree" {
+        let subtree = load_page_subtree_inner(pool, PAGE_MODE_PAGE_ID, SLO_SPACE_ID).await;
+        return subtree.unwrap().blocks.len();
+    }
+    let scope = SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID));
+    let ids = if command == "batch_resolve" {
+        &page.targets
+    } else {
+        &page.blocks
+    };
+    let mut answered = 0;
+    for chunk in ids.chunks(MAX_BATCH_BLOCK_IDS) {
+        let chunk = chunk.to_vec();
+        answered += match command {
+            "get_batch_properties" => get_batch_properties_inner(pool, chunk).await.unwrap().len(),
+            "list_attachments_batch" => list_attachments_batch_inner(pool, chunk)
+                .await
+                .unwrap()
+                .len(),
+            "batch_resolve" => batch_resolve_inner(pool, chunk, &scope)
+                .await
+                .unwrap()
+                .len(),
+            other => panic!("not a page-mode read: {other}"),
+        };
+    }
+    answered
+}
+
+/// #5691 — the batch reads page mode makes of a page of `n` blocks in the 100K
+/// vault, when it opens the page and again after each save (`bringIn`): the
+/// store's `load` (`load_page_subtree`), `readPageFit` (`get_batch_properties`,
+/// `list_attachments_batch`) and `resolveLinks` (`batch_resolve`). Measurement
+/// only: no budget until `bench-slo` has measured them.
+fn time_page_mode_reads(c: &mut Criterion, n: usize) {
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, &format!("slo_page_mode_reads_{n}")));
+    let page = rt.block_on(seed_page_mode_page(&pool, n));
+    let reads = [
+        ("load_page_subtree", n),
+        ("get_batch_properties", n.div_ceil(PAGE_MODE_PROPERTY_EVERY)),
+        (
+            "list_attachments_batch",
+            n.div_ceil(PAGE_MODE_ATTACHMENT_EVERY),
+        ),
+        ("batch_resolve", n),
+    ];
+    for (command, expected) in reads {
+        assert_eq!(
+            rt.block_on(page_mode_read(&pool, command, &page)),
+            expected,
+            "{command} @ {n}-block page: untimed probe must answer for every seeded block (#5691)"
+        );
+    }
+
+    let (pool_ref, page_ref) = (&pool, &page);
+    let accs = reads.map(|_| Acc::new());
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    for ((command, _), acc) in reads.into_iter().zip(&accs) {
+        group.bench_function(format!("{command}_{n}_page_in_100k"), |b| {
+            b.to_async(&rt).iter_custom(|iters| async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    page_mode_read(pool_ref, command, page_ref).await;
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            });
+        });
+    }
+    group.finish();
+
+    for ((command, _), acc) in reads.into_iter().zip(&accs) {
+        report_measurement_only(&format!("{command} @ {n}-block page"), acc);
+    }
+}
+
+fn bench_page_mode_reads_at_cap(c: &mut Criterion) {
+    time_page_mode_reads(c, PAGE_MODE_BLOCK_CAP);
+}
+
+/// The size the maintainer weighs raising the cap to.
+fn bench_page_mode_reads_at_twice_cap(c: &mut Criterion) {
+    time_page_mode_reads(c, 2 * PAGE_MODE_BLOCK_CAP);
 }
 
 /// `list_pages_with_metadata` — the pages view's first page over 10K pages /
@@ -5426,6 +5592,9 @@ criterion_group!(
     bench_move_block,
     // #5691 — the other save-path commands; no budget yet.
     bench_delete_restore_block,
+    // #5691 — page mode's batch reads at its cap and at twice it; no budget yet.
+    bench_page_mode_reads_at_cap,
+    bench_page_mode_reads_at_twice_cap,
     bench_preview_space_move,
     // #5841 S0 — the Settings › Properties usage badges; no budget yet.
     bench_count_property_usage,
