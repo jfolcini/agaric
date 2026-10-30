@@ -1546,12 +1546,12 @@ export async function typeSlashCommand(page: Page, command: string) {
  * sees the earlier selection.
  *
  * Not a bare DOM selection either: ProseMirror can decline to read one, and
- * its next transaction then draws its own selection back over it. It ignores
- * a caret in a widget (the list marker is the first text node), and just after
+ * its next transaction then draws its own selection back over it. Just after
  * a focus it takes a caret at the document's start for Chrome's focus reset.
  *
- * `from` / `to` are character offsets into the block's text content,
- * counted from the start. Walks the visible text nodes in document
+ * `from` / `to` are character offsets into the block's own text, counted from
+ * the start: text inside a `contenteditable="false"` widget (the list marker,
+ * markdown-reveal's markers) is not counted. Walks the text nodes in document
  * order and maps offsets to the correct `(Text, offset)` pair so the
  * helper works for blocks that contain multiple inline spans (e.g.
  * links, inline marks).
@@ -1561,7 +1561,12 @@ export async function selectEditorRange(page: Page, from: number, to: number): P
     ({ from: fromOff, to: toOff }) => {
       const root = document.querySelector('[data-testid="block-editor"] [contenteditable="true"]')
       if (!root) throw new Error('selectEditorRange: focused editor not found')
-      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: (text) =>
+          text.parentElement?.closest('[contenteditable="false"]')
+            ? NodeFilter.FILTER_REJECT
+            : NodeFilter.FILTER_ACCEPT,
+      })
       const textNodes: Text[] = []
       let node: Node | null = walker.nextNode()
       while (node !== null) {

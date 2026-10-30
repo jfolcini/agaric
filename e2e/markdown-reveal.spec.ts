@@ -72,8 +72,8 @@ test('the caret in bold text reveals its markers, and they never reach the clipb
       document.body.dataset['copied'] = e.clipboardData?.getData('text/plain') ?? ''
     })
   })
-  // `Make **bold** end`, selected from drawn offset 3 to 15, markers counted.
-  await selectEditorRange(page, 3, 15)
+  // `Make bold end`, selected from offset 3 to 11, the markers drawn across it.
+  await selectEditorRange(page, 3, 11)
   await page.keyboard.press('Control+c')
   await expect(page.locator('body')).toHaveAttribute('data-copied', 'e bold e')
 
@@ -151,8 +151,8 @@ test('a click past a marker types outside the bold, and a click on its near half
   await page.keyboard.type('Y')
   await expect(editor.locator('strong')).toHaveText('boldY')
 
-  // The near half of the opening marker is outside the bold. `Make **b|oldY**X rest`, markers drawn.
-  await selectEditorRange(page, 8, 8)
+  // The near half of the opening marker is outside the bold. `Make b|oldYX rest`, markers drawn.
+  await selectEditorRange(page, 6, 6)
   await expect(page.getByTestId('md-reveal-marker')).toHaveCount(2)
   box = await opening.boundingBox()
   if (!box) throw new Error('the opening marker has no layout box')
@@ -184,8 +184,8 @@ test('an IME composition beside a marker leaves the markers in place until it en
   const markers = page.getByTestId('md-reveal-marker')
   await selectEditorRange(page, 7, 7)
   await expect(markers).toHaveText(['**', '**'])
-  // `Make **bold|** rest` with the markers drawn, then past the closing marker.
-  await selectEditorRange(page, 11, 11)
+  // `Make bold| rest` with the markers drawn, then past the closing marker.
+  await selectEditorRange(page, 9, 9)
   await page.keyboard.press('ArrowRight')
 
   const cdp = await page.context().newCDPSession(page)

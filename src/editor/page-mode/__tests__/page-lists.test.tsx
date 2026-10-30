@@ -784,7 +784,7 @@ describe('the list keys and input rules', () => {
       expect(setStyle.mock.calls).toEqual([[A, 'none']])
     })
 
-    it('a style given back and taken off again comes back with no later undo', () => {
+    it('a style given back and taken off again stays off with no later undo', () => {
       const { editor, lists } = open([[A, 0, 'one']], { [A]: style('bullet') })
       caret(editor, 0, 0)
       typeText(editor, '# ')
