@@ -385,8 +385,8 @@ function TypeChangeValues({
         },
         initialPageParam: undefined as string | undefined,
         getNextPageParam: (lastPage) => (lastPage.has_more ? lastPage.next_cursor : undefined),
-        // Each open re-reads: the values are what the change would do now.
-        refetchOnMount: 'always',
+        // Dropped once unmounted: the preview number restarts with the
+        // dialog's row, so a later preview could find a page cached here.
         gcTime: 0,
       },
       queryClient,

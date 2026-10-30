@@ -1491,8 +1491,10 @@ async fn reproject_reserved_columns_from_engine(
 /// consults `value_types`, the block's space's definitions
 /// ([`crate::block_ops::load_value_types`], defaulting to `"text"`), to
 /// pick the column, and it still tolerates a legacy pre-§2.1 `Str`-encoded
-/// number/boolean. An explicit `Null` (cleared), or a `number`-typed `Str`
-/// whose text fails to parse, routes to no column — and since
+/// number/boolean. An explicit `Null` (cleared), or a `Str` its key's type
+/// does not take (`coerce`: a number that fails to parse, a date that is not
+/// `YYYY-MM-DD`, a boolean other than `true` / `false`, a ref that is not a
+/// ULID), routes to no column — and since
 /// `block_properties` has an `exactly_one_value` CHECK (migration 0062)
 /// that forbids an all-NULL row, such a value is represented as row-absent
 /// (no INSERT; the up-front DELETE already cleared any prior row), matching

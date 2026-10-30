@@ -1430,9 +1430,9 @@ async fn apply_reverse_add_page_alias(
 /// `RewriteProperties` arm of [`apply_reverse_in_tx`] (#5841): the payload is
 /// already swapped by `reverse_rewrite_properties`. Each definition a merge's
 /// reverse restores is refused as a `SetPropertyDef` undo's is; a type
-/// change's reverse writes back the values it converted itself, so a value
-/// written since re-reads under the restored type: a string shows or hides, a
-/// number or boolean keeps its column.
+/// change's reverse writes back the values it converted itself, and a value
+/// written since on a block it did not write re-reads under the restored
+/// type: a string shows or hides, a number or boolean keeps its column.
 async fn apply_reverse_rewrite_properties(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     state: &agaric_engine::loro::shared::LoroState,

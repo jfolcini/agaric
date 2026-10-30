@@ -667,3 +667,56 @@ async fn a_key_changed_to_date_lists_its_values_in_the_agenda_5841() {
     settle(&mat).await;
     assert_eq!(sources().await, vec!["property:deadline".to_owned()]);
 }
+
+/// Undoing a set leaves a value its key's type takes in the slot it was set
+/// in: a ref under a text key stays a ref rather than turning into its id
+/// as text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undoing_a_set_keeps_a_value_the_type_takes_in_its_own_slot_5841() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    space(&pool).await;
+    declare(&pool, &mat, "seealso", "text", None).await;
+    let (x, a, b) = (
+        page(&pool, &mat, "X").await,
+        page(&pool, &mat, "A").await,
+        page(&pool, &mat, "B").await,
+    );
+    set(&pool, &mat, &x, "seealso", V::Ref(a.clone())).await;
+    let second = set(&pool, &mat, &x, "seealso", V::Ref(b)).await;
+
+    undo_ops_inner(&pool, DEV, &mat, vec![second])
+        .await
+        .unwrap();
+    assert_eq!(
+        row(&pool, &x, "seealso").await,
+        Some((None, None, None, Some(a), None)),
+        "the ref, as a ref"
+    );
+}
+
+/// The space's own block holds values under the space's keys, and a type
+/// change converts them: undoing an older set on it fits the value to the
+/// key's type as on any other block of the space.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undoing_an_older_set_on_the_space_block_converts_it_5841() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    space(&pool).await;
+    declare(&pool, &mat, "effortx", "text", None).await;
+    set(&pool, &mat, TEST_SPACE_ID, "effortx", V::Text("6")).await;
+    let second = set(&pool, &mat, TEST_SPACE_ID, "effortx", V::Text("5")).await;
+    change(&pool, &mat, ("effortx", "number", None), counts(1, 0))
+        .await
+        .unwrap();
+    assert_eq!(row(&pool, TEST_SPACE_ID, "effortx").await, num(5.0));
+
+    undo_ops_inner(&pool, DEV, &mat, vec![second])
+        .await
+        .unwrap();
+    assert_eq!(
+        row(&pool, TEST_SPACE_ID, "effortx").await,
+        num(6.0),
+        "6, as a number"
+    );
+}

@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 
+use futures_util::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use sqlx::{SqliteConnection, SqlitePool};
 use tauri::State;
@@ -131,16 +132,19 @@ async fn type_change_defs(
 }
 
 /// The values `space_id`'s blocks hold under `key`, the Trash's included, by
-/// block id from after `after`, each with what it becomes under `to`.
+/// block id from after `after`, each with what it becomes under `to`: those
+/// `keep` takes, up to the first `wanted` of them.
 async fn conversions(
     conn: &mut SqliteConnection,
     space_id: &str,
     key: &str,
     to: &PropertyDefState,
     after: Option<&str>,
+    keep: impl Fn(&Conversion) -> bool,
+    wanted: usize,
 ) -> Result<Vec<Conversion>, AppError> {
     let options = parse_options(to.options.as_deref())?;
-    let rows = sqlx::query!(
+    let mut rows = sqlx::query!(
         r#"SELECT bp.block_id AS "block_id!: String", bp.value_text, bp.value_num,
                   bp.value_date, bp.value_ref, bp.value_bool
            FROM block_properties bp JOIN blocks b ON b.id = bp.block_id
@@ -151,22 +155,25 @@ async fn conversions(
         key,
         after,
     )
-    .fetch_all(conn)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| {
-            let value = PropertyValue::from(&PropertyValueFields {
-                value_text: row.value_text,
-                value_num: row.value_num,
-                value_date: row.value_date,
-                value_ref: row.value_ref.map(BlockId::from),
-                value_bool: row.value_bool.map(|b| b != 0),
-            });
-            let converted = convert(&value, &to.value_type, options.as_deref());
-            (row.block_id, value, converted)
-        })
-        .collect())
+    .fetch(conn);
+    let mut kept = Vec::new();
+    while kept.len() < wanted
+        && let Some(row) = rows.try_next().await?
+    {
+        let value = PropertyValue::from(&PropertyValueFields {
+            value_text: row.value_text,
+            value_num: row.value_num,
+            value_date: row.value_date,
+            value_ref: row.value_ref.map(BlockId::from),
+            value_bool: row.value_bool.map(|b| b != 0),
+        });
+        let converted = convert(&value, &to.value_type, options.as_deref());
+        let conversion = (row.block_id, value, converted);
+        if keep(&conversion) {
+            kept.push(conversion);
+        }
+    }
+    Ok(kept)
 }
 
 fn counts_of(conversions: &[Conversion]) -> PropertyTypeChangeCounts {
@@ -190,7 +197,16 @@ pub async fn preview_property_type_change_inner(
     let mut conn = pool.acquire().await?;
     let (_, to) = type_change_defs(&mut conn, space_id, &target).await?;
     Ok(counts_of(
-        &conversions(&mut conn, space_id, &target.key, &to, None).await?,
+        &conversions(
+            &mut conn,
+            space_id,
+            &target.key,
+            &to,
+            None,
+            |_| true,
+            usize::MAX,
+        )
+        .await?,
     ))
 }
 
@@ -254,12 +270,18 @@ pub async fn list_property_type_change_values_inner(
     let (_, to) = type_change_defs(&mut conn, space_id, &target).await?;
     let after = page.after.as_ref().map(|c| c.id.as_str());
     let converted = kind == PropertyTypeChangeKind::Converted;
-    let listed: Vec<Conversion> = conversions(&mut conn, space_id, &target.key, &to, after)
-        .await?
-        .into_iter()
-        .filter(|(.., w)| w.is_some() == converted)
-        .take(usize::try_from(page.limit + 1).unwrap_or(usize::MAX))
-        .collect();
+    let of_kind = |(.., w): &Conversion| w.is_some() == converted;
+    let wanted = usize::try_from(page.limit + 1).unwrap_or(usize::MAX);
+    let listed = conversions(
+        &mut conn,
+        space_id,
+        &target.key,
+        &to,
+        after,
+        of_kind,
+        wanted,
+    )
+    .await?;
     let rows = with_holders(&mut conn, listed).await?;
     build_page_response(rows, page.limit, |last| {
         Cursor::for_id(last.block_id.clone())
@@ -316,7 +338,7 @@ pub async fn change_property_type_inner(
     tx.arm_engine_rollback(materializer.loro_state());
     let key = target.key.as_str();
     let (from, to) = type_change_defs(&mut tx, space_id, &target).await?;
-    let held = conversions(&mut tx, space_id, key, &to, None).await?;
+    let held = conversions(&mut tx, space_id, key, &to, None, |_| true, usize::MAX).await?;
     let counts = counts_of(&held);
     if counts != acknowledged {
         return Err(AppError::validation_coded(

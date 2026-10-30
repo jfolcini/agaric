@@ -931,3 +931,42 @@ async fn a_renamed_date_lists_under_its_new_key_in_the_agenda_5841() {
     settle(&mat).await;
     assert_eq!(source().await, vec!["property:due_on".to_owned()]);
 }
+
+/// Undoing a merge restores the merged key's definition, and is refused, as
+/// an undo of its deletion is, when that would hide a value written under
+/// the key since.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undoing_a_merge_is_refused_over_a_value_the_restored_type_cannot_hold_5841() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    space(&pool).await;
+    declare(&pool, &mat, "hours", "number", None).await;
+    declare(&pool, &mat, "effort2", "number", None).await;
+    let (x, y) = (page(&pool, &mat, "X").await, page(&pool, &mat, "Y").await);
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        x.as_str().into(),
+        "hours".into(),
+        None,
+        Some(5.0),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let merged = merge(&pool, &mat, "hours", "effort2", 1, 0).await.unwrap();
+    set_text(&pool, &mat, &y, "hours", "about two").await;
+    let ops = op_count(&pool).await;
+
+    let err = undo_ops_inner(&pool, DEV, &mat, merged.op_refs)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+    assert_eq!(op_count(&pool).await, ops, "nothing appended");
+    assert_eq!(def_row(&pool, "hours").await, None, "still merged");
+    assert_eq!(props(&pool, &y).await, vec![kv("hours", "about two")]);
+}

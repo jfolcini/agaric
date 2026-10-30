@@ -192,6 +192,21 @@ mod tests {
         ]
     }
 
+    /// A `set_property` write, one slot set: any string as text, a date of
+    /// any year, any number, any boolean, and a block id (a ref names a
+    /// block, so it is a ULID), in either case.
+    fn written_args() -> impl Strategy<Value = crate::block_ops::TypedPropertyArgs> {
+        const DATE: &str = "[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])";
+        const BLOCK_ID: &str = "[0-7][0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{25}";
+        prop_oneof![
+            "[ -~]{1,12}".prop_map(|t| (Some(t), None, None, None, None)),
+            any::<f64>().prop_map(|n| (None, Some(n), None, None, None)),
+            DATE.prop_map(|d| (None, None, Some(d), None, None)),
+            BLOCK_ID.prop_map(|r| (None, None, None, Some(r), None)),
+            any::<bool>().prop_map(|b| (None, None, None, None, Some(b))),
+        ]
+    }
+
     fn value_type() -> impl Strategy<Value = &'static str> {
         prop::sample::select(&TYPES[..])
     }
@@ -239,6 +254,27 @@ mod tests {
                     check_property_value("k", &args, Some(&decl)).is_ok(),
                     "{:?} under {}", fit, to
                 );
+            }
+        }
+
+        /// What the command layer accepts under a type is a value the type
+        /// keeps as it is, so the projection shows every value a user can
+        /// write.
+        #[test]
+        fn a_value_the_type_accepts_converts_to_itself(args in written_args()) {
+            let (value_text, value_num, value_date, value_ref, value_bool) = args.clone();
+            let value = PropertyValue::from(&PropertyValueFields {
+                value_text,
+                value_num,
+                value_date,
+                value_ref: value_ref.map(BlockId::from),
+                value_bool,
+            });
+            for to in TYPES {
+                let decl = PropertyDeclaration { value_type: to.to_owned(), options: None };
+                if check_property_value("k", &args, Some(&decl)).is_ok() {
+                    prop_assert_eq!(coerce(&value, to), Some(value.clone()), "under {}", to);
+                }
             }
         }
 

@@ -121,6 +121,23 @@ describe('ChangePropertyType', () => {
     expect(converted.closest('li')).toHaveTextContent('Welcome to Agaric!')
   })
 
+  it("shows a ref's target by its title", async () => {
+    const user = userEvent.setup()
+    await setContext(WELCOME, SEED_IDS.PAGE_MEETINGS)
+    render(<PropertyDefinitionsList />)
+    const dialog = await pickType('ref')
+    expect(await within(dialog).findByText(converts(1))).toBeInTheDocument()
+
+    await user.click(
+      within(dialog).getByRole('tab', {
+        name: t('propertiesView.typeChangeConvertedTab', { count: 1 }),
+      }),
+    )
+    expect(
+      await within(dialog).findByText(`${SEED_IDS.PAGE_MEETINGS} → Meetings`),
+    ).toBeInTheDocument()
+  })
+
   it('lists the removed values a page at a time, and Load more brings the rest', async () => {
     const user = userEvent.setup()
     // 49 more blocks of the meetings page hold `context`: 51 in all, past one page.
