@@ -37,7 +37,10 @@ const GRIP = 'data-page-grip'
 /** The attribute of the block the grip is on, whose chevron stays shown (`index.css`). */
 const GRIP_ON = 'data-page-grip-on'
 
-/** The event a click on the grip sends the editor's root, for the block menu (`PageBlockMenu`). */
+/**
+ * The event a click on a grip sends the editor's root, for the block menu (`PageBlockMenu`): this
+ * one, or the touch toolbar's block-menu button (`page-toolbar.tsx`).
+ */
 export const GRIP_MENU = 'page-grip-menu'
 
 export interface GripMenuDetail {

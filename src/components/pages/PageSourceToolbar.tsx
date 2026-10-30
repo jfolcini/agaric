@@ -1,16 +1,15 @@
 /**
  * PageSourceToolbar — the block editor's toolbar on *Edit as Markdown*
  * (#5160 phase 5): the same buttons, frame and overflow, each doing what the
- * buffer does for it (`source-toolbar-actions`), plus a button opening the
- * block menu on the block the cursor is in, since a long press in a text
- * field belongs to the phone. On touch it also carries Save and Cancel, so a
+ * buffer does for it (`source-toolbar-actions`), plus the block-menu button
+ * (`BlockMenuButton`). On touch it also carries Save and Cancel, so a
  * phone with no keyboard can finish (X9).
  */
 
 import type { Command } from '@tiptap/pm/state'
 import type { Editor } from '@tiptap/react'
 import { useEditorState } from '@tiptap/react'
-import { GripVertical, Minus } from 'lucide-react'
+import { Minus } from 'lucide-react'
 import type React from 'react'
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -19,6 +18,11 @@ import { BlockDatePicker } from '@/components/block-tree/BlockDatePicker'
 import { QueryBuilderModal } from '@/components/dialogs/QueryBuilderModal'
 import { BlockContextMenu } from '@/components/editor/BlockContextMenu'
 import { EmojiPickerDialog } from '@/components/EmojiPicker'
+import {
+  BLOCK_MENU,
+  BLOCK_MENU_ITEMS,
+  BlockMenuButton,
+} from '@/components/FormattingToolbar/BlockMenuButton'
 import {
   buildConfigByKey,
   buildToolbarItems,
@@ -32,7 +36,6 @@ import {
 import {
   type RenderMode,
   renderConfigButton,
-  Tip,
   toolbarPressHandlers,
 } from '@/components/FormattingToolbar/shared'
 import {
@@ -75,7 +78,6 @@ import { formatDate } from '@/lib/date-utils'
 import { TURN_INTO_OPTIONS, turnIntoTypeKey } from '@/lib/slash-commands'
 import { cn } from '@/lib/utils'
 
-const BLOCK_MENU = 'pageSource.blockMenu'
 const SAVE = 'action.save'
 
 export interface PageSourceToolbarProps {
@@ -116,8 +118,7 @@ function sourceItems(groups: ToolbarItemGroups, isTouch: boolean): ToolbarItem[]
   }
   const ordered = [
     ...shown.filter((item) => item.group !== 4),
-    { kind: 'separator' as const, key: 'sep-3', group: 3, priority: 0 },
-    { kind: 'button' as const, key: BLOCK_MENU, group: 4, priority: 85 },
+    ...BLOCK_MENU_ITEMS,
     ...shown.filter((item) => item.group === 4),
   ]
   return isTouch ? [...ordered, { kind: 'button', key: SAVE, group: 4, priority: 100 }] : ordered
@@ -348,50 +349,6 @@ export function PageSourceToolbar({
         onSave={saveQuery}
       />
     </>
-  )
-}
-
-interface BlockMenuButtonProps {
-  mode: RenderMode
-  disabled: boolean
-  open: boolean
-  onOpen: (anchor: HTMLElement) => void
-}
-
-/** Opens the block menu on the block the cursor is in, below the button. */
-function BlockMenuButton({ mode, disabled, open, onOpen }: BlockMenuButtonProps) {
-  const { t } = useTranslation()
-  const press: Pick<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onPointerDown' | 'onClick'> = {
-    onPointerDown: (e) => {
-      if (e.button !== 0) return
-      e.preventDefault()
-      onOpen(e.currentTarget)
-    },
-    onClick: (e) => {
-      if (e.detail === 0) onOpen(e.currentTarget)
-    },
-  }
-  const common = {
-    'aria-label': t('contextMenu.blockActions'),
-    'aria-haspopup': 'menu' as const,
-    'aria-expanded': open,
-    disabled,
-    ...press,
-  }
-  if (mode === 'overflow') {
-    return (
-      <Button variant="ghost" size="sm" className={toolbarMenuRowClass} {...common}>
-        <GripVertical className="mr-2" />
-        <span>{t('contextMenu.blockActions')}</span>
-      </Button>
-    )
-  }
-  return (
-    <Tip label={t('pageSource.blockMenuTip')}>
-      <Button variant="ghost" size="icon-xs" {...common}>
-        <GripVertical />
-      </Button>
-    </Tip>
   )
 }
 

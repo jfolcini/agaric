@@ -26,6 +26,8 @@ import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
 
 vi.mock('@/components/pages/PageSourceToolbar', () => ({ PageSourceToolbar: () => null }))
+let touch = false
+vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: () => touch }))
 
 const mockedInvoke = vi.mocked(invoke)
 const PAGE = SEED_IDS.PAGE_GETTING_STARTED
@@ -122,6 +124,7 @@ async function linkOverAChange() {
 }
 
 beforeEach(() => {
+  touch = false
   vi.clearAllMocks()
   localStorage.clear()
   useUndoStore.setState({ pages: new Map() })
@@ -185,6 +188,18 @@ describe('PageSourceEditor link to page mode', () => {
     expect(onSwitchToPage).toHaveBeenCalledOnce()
     expect(onClose).not.toHaveBeenCalled()
     expect(applyCount()).toBe(0)
+  })
+
+  it('on touch, is under the buffer too, whose Cancel and Save are on its toolbar', async () => {
+    touch = true
+    const user = userEvent.setup()
+    const { onSwitchToPage } = renderEditor()
+    await loadedEditor()
+    expect(screen.queryByRole('button', { name: t('action.cancel') })).not.toBeInTheDocument()
+
+    await user.click(pageLink())
+
+    expect(onSwitchToPage).toHaveBeenCalledOnce()
   })
 
   it('Ctrl+E in the buffer switches, as the tooltip says', async () => {

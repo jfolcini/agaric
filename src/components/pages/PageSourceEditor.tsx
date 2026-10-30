@@ -568,25 +568,23 @@ export function PageSourceEditor({
           {saveError}
         </p>
       )}
-      {/* On touch, Save and Cancel are on the buffer's toolbar pinned above the keyboard (X9). */}
-      {(!isTouch || mode !== 'edit') && (
-        <div className="flex justify-end gap-2">
-          {onSwitchToPage !== undefined && (
-            <PageModeLink
-              blocked={pageModeBlocked}
-              disabled={saving}
-              onClick={handleSwitchToPage}
-            />
-          )}
-          <Button variant="outline" onClick={handleCancel} disabled={saving}>
-            {t('action.cancel')}
-          </Button>
-          <Button onClick={handleSave} disabled={saving || unchanged}>
-            {saving && <Spinner />}
-            {saveLabel}
-          </Button>
-        </div>
-      )}
+      <div className="flex justify-end gap-2">
+        {onSwitchToPage !== undefined && (
+          <PageModeLink blocked={pageModeBlocked} disabled={saving} onClick={handleSwitchToPage} />
+        )}
+        {/* On touch, Save and Cancel are on the buffer's toolbar pinned above the keyboard (X9). */}
+        {(!isTouch || mode !== 'edit') && (
+          <>
+            <Button variant="outline" onClick={handleCancel} disabled={saving}>
+              {t('action.cancel')}
+            </Button>
+            <Button onClick={handleSave} disabled={saving || unchanged}>
+              {saving && <Spinner />}
+              {saveLabel}
+            </Button>
+          </>
+        )}
+      </div>
       <ConfirmDialog
         open={confirmingDeleteAll}
         onOpenChange={setConfirmingDeleteAll}

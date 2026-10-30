@@ -16,6 +16,11 @@
  *
  * Discard is left off: page mode saves as it goes, with no edit to throw away.
  * The task button's tooltip says what it does here: Ctrl+Enter cycles the task.
+ *
+ * On touch the bar ends with the block-menu button (`BlockMenuButton`), which
+ * opens the block menu as a click on the grip does, on the caret's block, or
+ * on the selection when it spans blocks: a phone has no pointer to bring the
+ * grip, no right click and no menu key, and a hold in the text selects it.
  */
 
 import type { Editor } from '@tiptap/react'
@@ -27,9 +32,11 @@ import { type StoreApi, useStore } from 'zustand'
 import { FormattingToolbar } from '@/components/FormattingToolbar'
 import { getActiveEditor } from '@/editor/active-editor'
 import { blockIdsBetween } from '@/editor/page-mode/page-block-actions'
+import { GRIP_MENU, type GripMenuDetail } from '@/editor/page-mode/page-gutter'
 import type { PageLists } from '@/editor/page-mode/page-lists'
 import { caretBlockId } from '@/editor/page-mode/page-tasks'
 import type { PickerItem } from '@/editor/SuggestionList'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import type { ListStyle } from '@/lib/list-style'
 import { CALLOUT_COMMANDS, SLASH_COMMANDS, TURN_INTO_COMMANDS } from '@/lib/slash-commands'
 import {
@@ -63,6 +70,15 @@ const ITEMS = new Map(
 const selectedBlocks = (editor: Editor): string[] => {
   const { from, to } = editor.state.selection
   return blockIdsBetween(editor.state.doc, from, to)
+}
+
+/** Open the block menu below `anchor` on the caret's block, as the grip opens its block's. */
+function openBlockMenu(editor: Editor, anchor: HTMLElement): void {
+  const blockId = caretBlockId(editor.state)
+  if (blockId === null) return
+  editor.view.dom.dispatchEvent(
+    new CustomEvent<GripMenuDetail>(GRIP_MENU, { detail: { blockId, grip: anchor } }),
+  )
 }
 
 /** What page mode does for each block command the toolbar sends. */
@@ -107,6 +123,8 @@ interface PageToolbarProps {
   actions: React.RefObject<PageToolbarActions>
   lists: PageLists
   pageStore: StoreApi<PageBlockState>
+  /** Whether the block menu is open, which its button on touch shows. */
+  blockMenuOpen: boolean
 }
 
 export function PageToolbar({
@@ -114,7 +132,9 @@ export function PageToolbar({
   actions,
   lists,
   pageStore,
+  blockMenuOpen,
 }: PageToolbarProps): React.ReactElement {
+  const isTouch = useIsTouch()
   useEffect(
     () =>
       registerFocusedCommandTarget(
@@ -148,6 +168,11 @@ export function PageToolbar({
       tips={TIPS}
       hiddenItems={HIDDEN}
       className="sticky top-0 z-10 bg-background"
+      blockMenu={
+        isTouch
+          ? { open: blockMenuOpen, onOpen: (anchor) => openBlockMenu(editor, anchor) }
+          : undefined
+      }
     />
   )
 }

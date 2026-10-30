@@ -3,7 +3,7 @@
  * Editor › *Edit pages as* opens pages in page mode; a page header's Blocks |
  * Page switch, and Ctrl+Shift+M, change only the page on screen; a page over
  * page mode's cap keeps block mode and the switch says why; a phone offers
- * neither. Axe on the settings row and the switch.
+ * both. Axe on the settings row and the switch.
  */
 
 import { createRequire } from 'node:module'
@@ -174,7 +174,7 @@ test.describe('on a phone (#5691) @editor @pages @settings @mobile', () => {
     userAgent: iPhone13.userAgent,
   })
 
-  test('neither the setting nor the switch is offered, and pages edit as blocks', async ({
+  test('the setting and the switch are offered, and the setting opens pages in page mode', async ({
     page,
   }) => {
     await page.addInitScript(() => localStorage.setItem('agaric-edit-mode', 'page'))
@@ -183,13 +183,13 @@ test.describe('on a phone (#5691) @editor @pages @settings @mobile', () => {
 
     await openPageMobile(page, 'On a phone')
 
-    await expect(page.locator('[data-testid="block-static"]').first()).toBeVisible()
-    await expect(page.getByRole('radiogroup', { name: 'Editing mode' })).toHaveCount(0)
-    await expect(page.locator(EDITOR)).toHaveCount(0)
+    await expect(page.locator(EDITOR)).toBeVisible()
+    await expect(page.locator('[data-testid="block-static"]')).toHaveCount(0)
+    await expect(modeSwitch(page, 'Page')).toHaveAttribute('aria-checked', 'true')
 
     await navigateMobile(page, 'Settings')
     await openSettingsTab(page, 'Editor')
     await expect(page.getByTestId('emoji-picker-toggle')).toBeVisible()
-    await expect(page.getByRole('combobox', { name: 'Edit pages as' })).toHaveCount(0)
+    await expect(page.getByRole('combobox', { name: 'Edit pages as' })).toBeVisible()
   })
 })

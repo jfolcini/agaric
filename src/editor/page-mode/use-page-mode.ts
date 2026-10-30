@@ -2,7 +2,7 @@
  * usePageMode — whether `PageEditor`, or the journal's `DayPageEditor`, shows a
  * page in page mode (#5691), and its Blocks | Page switch. Pages open as the device's *Edit pages as* setting
  * says (`PREFERENCES.editMode`); the switch changes the mode of the page on
- * screen only. Desktop only. A page over page mode's cap (`page-mode-fit.ts`)
+ * screen only. A page over page mode's cap (`page-mode-fit.ts`)
  * stays in block mode, the switch saying why, as the page store's rows show
  * it. A switch keeps the caret and the place the page is scrolled to
  * (`page-mode-switch.ts`). No TipTap here: `PageEditor` imports this
@@ -22,7 +22,6 @@ import {
   scrollPlace,
 } from '@/editor/page-mode/page-mode-switch'
 import type { PageModeEditorHandle } from '@/editor/page-mode/PageModeEditor'
-import { useIsTouch } from '@/hooks/useIsTouch'
 import { t } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
 import { type EditMode, PREFERENCES, usePreference } from '@/lib/preferences'
@@ -30,8 +29,6 @@ import { useBlockStore } from '@/stores/blocks'
 import { usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
 
 export interface PageModeState {
-  /** Page mode can be offered here: a desktop pointer. */
-  available: boolean
   /** Page mode is chosen for this page and nothing keeps the page out of it. */
   wanted: boolean
   /** The mode the switch shows. */
@@ -72,7 +69,6 @@ function placeOnFocus(caret: BlockCaret): void {
 }
 
 export function usePageMode(pageId: string): PageModeState {
-  const available = !useIsTouch()
   const [setting] = usePreference(PREFERENCES.editMode)
   const [chosen, setChosen] = useState<ForPage<{ mode: EditMode }> | null>(null)
   const mode = chosen?.pageId === pageId ? chosen.mode : setting
@@ -109,8 +105,8 @@ export function usePageMode(pageId: string): PageModeState {
   useEffect(() => {
     const returned = wasBlocked.current && blocker === null
     wasBlocked.current = blocker !== null
-    if (returned && available && mode === 'page') takeCursor()
-  }, [available, blocker, mode, takeCursor])
+    if (returned && mode === 'page') takeCursor()
+  }, [blocker, mode, takeCursor])
 
   /** Whether page mode's text is saved, once its save has run; true outside page mode. */
   const saved = useCallback(
@@ -193,7 +189,7 @@ export function usePageMode(pageId: string): PageModeState {
     [saved, pageId, pageStore, setFocused, takeCursor],
   )
 
-  const wanted = available && mode === 'page' && blocker === null
+  const wanted = mode === 'page' && blocker === null
   // Block mode's tree reads the page as it mounts, a skeleton showing meanwhile: the place goes
   // back once it shows the blocks it read.
   useLayoutEffect(() => {
@@ -207,9 +203,8 @@ export function usePageMode(pageId: string): PageModeState {
   }, [wanted, loading])
 
   return {
-    available,
     wanted,
-    mode: available && blocker === null ? mode : 'blocks',
+    mode: blocker === null ? mode : 'blocks',
     blocked: blocker === null ? null : blockerMessage(blocker),
     editorRef,
     opening,
