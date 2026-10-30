@@ -4296,6 +4296,38 @@ async fn edit_page_markdown_of_an_unchanged_read_writes_nothing_6190() {
     assert_eq!(op_count(&pool).await, before, "no op was written: {result}");
 }
 
+/// A plain code block writes its `^ULID` on a line of its own after the
+/// closing fence, which only the Document dialect reads as that block's
+/// anchor: the save must split the agent's text in that dialect, or the
+/// unchanged block is deleted and created again under a new id (#6190).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_page_markdown_of_an_unchanged_code_block_writes_nothing_6190() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let page = mk_page(&pool, &mat, &space, "P").await;
+    let code = mk_child_of(&pool, &mat, &page, "```sh\necho hi\n```").await;
+    let after = mk_child_of(&pool, &mat, &page, "after").await;
+    settle(&mat).await;
+    let base = editable_source(&pool, &mat, &page, &space).await;
+    assert_eq!(
+        base,
+        format!("```sh\necho hi\n```\n^{code}\n\nafter ^{after}\n"),
+        "the code block's anchor is a line of its own"
+    );
+    let before = op_count(&pool).await;
+
+    let result = tools
+        .call_tool(
+            "edit_page_markdown",
+            json!({ "page_id": page, "markdown": base, "base": base, "space_id": space }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("an unchanged read saves");
+    settle(&mat).await;
+
+    assert_eq!(op_count(&pool).await, before, "no op was written: {result}");
+}
+
 /// What an agent reads, appended under another page, reads back as the same
 /// blocks with the same list kinds, under new ids (#6190).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -6213,9 +6213,9 @@ enum PropertyWrite {
     /// An imported file: a value its definition refuses stays text in the
     /// block, with a warning (#5160 D11).
     Import,
-    /// Duplicate re-stores values a block already held, from a source render:
-    /// a `ref`-declared value is the raw id, and options the key has since
-    /// retired or narrowed must not make the copy fail.
+    /// Duplicate re-stores values a block already held, from a Document
+    /// buffer: a `ref`-declared value is the raw id, and options the key has
+    /// since retired or narrowed must not make the copy fail.
     Copy,
     /// Pasted text, read as an import reads a file (D11).
     Paste,

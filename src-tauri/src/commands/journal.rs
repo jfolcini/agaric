@@ -1469,6 +1469,7 @@ mod tests {
 
     use crate::commands::{
         create_block_inner, create_page_in_space_inner, delete_block_inner, set_property_inner,
+        set_todo_state_inner,
     };
     use agaric_core::ulid::{ActiveBlockId, BlockId};
 
@@ -1627,9 +1628,11 @@ mod tests {
 
     /// A bulleted template block is copied bulleted, and the plain block
     /// under it, a `+ ` item in the buffer the copy goes through, plain under
-    /// the bulleted copy (#6190).
+    /// the bulleted copy; a legacy task holding a list style is copied as a
+    /// task without it, which the Document buffer has no syntax for (#6190,
+    /// #5691 D3).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn the_template_copy_keeps_a_bulleted_block_and_its_plain_child() {
+    async fn the_template_copy_keeps_lists_and_drops_the_list_style_of_a_task() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
         let space = mk_space(&pool, "Personal").await;
@@ -1663,6 +1666,31 @@ mod tests {
         .await
         .expect("bulleted");
         child(&pool, &mat, &bulleted, "plain").await;
+        let task = child(&pool, &mat, &template, "task").await;
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            ActiveBlockId::from(task.clone()),
+            "listStyle".into(),
+            Some("bullet".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("bulleted task");
+        set_todo_state_inner(
+            &pool,
+            DEV,
+            &mat,
+            ActiveBlockId::from(task),
+            Some("TODO".into()),
+        )
+        .await
+        .expect("task state");
 
         let day = NaiveDate::parse_from_str(DAY, "%Y-%m-%d").unwrap();
         let page = journal_for_date_inner(&pool, DEV, &mat, day, &space)
@@ -1672,8 +1700,8 @@ mod tests {
             .into_string();
         mat.flush_background().await.unwrap();
 
-        let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
-            "SELECT b.content, p.content, s.value_text FROM blocks b \
+        let rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT b.content, p.content, s.value_text, b.todo_state FROM blocks b \
              JOIN blocks p ON p.id = b.parent_id \
              LEFT JOIN block_properties s ON s.block_id = b.id AND s.key = 'listStyle' \
              WHERE b.page_id = ? AND b.id != b.page_id AND b.deleted_at IS NULL \
@@ -1689,11 +1717,18 @@ mod tests {
                 (
                     "bulleted".to_owned(),
                     DAY.to_owned(),
-                    Some("bullet".to_owned())
+                    Some("bullet".to_owned()),
+                    None
                 ),
-                ("plain".to_owned(), "bulleted".to_owned(), None),
+                ("plain".to_owned(), "bulleted".to_owned(), None, None),
+                (
+                    "task".to_owned(),
+                    DAY.to_owned(),
+                    None,
+                    Some("TODO".to_owned())
+                ),
             ],
-            "(content, parent's content, list style) of each copy"
+            "(content, parent's content, list style, task state) of each copy"
         );
 
         mat.shutdown();

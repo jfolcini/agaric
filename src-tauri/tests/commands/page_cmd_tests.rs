@@ -7565,10 +7565,10 @@ async fn paste_blocks_splice_writes_the_first_blocks_task_state_on_the_anchor() 
 /// With text before the cursor the first pasted block joins it as the text it
 /// was pasted as: the markers and property lines the parse read into
 /// properties are written back into the text, escaped where the text starts a
-/// line as Source mode escapes a first line, and the anchor keeps its own task
-/// state and properties. A heading's marker is text before the cursor, so a
-/// paste at the start of `## Plan` is one of these: the block stays a heading
-/// and the first line is its text.
+/// line as a block's text escapes a list marker or a checkbox, and the anchor
+/// keeps its own task state and properties. A heading's marker is text before
+/// the cursor, so a paste at the start of `## Plan` is one of these: the block
+/// stays a heading and the first line is its text.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn paste_blocks_splice_mid_text_joins_the_first_block_as_text() {
     for (case, text, cursor, joined) in [
