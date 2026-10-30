@@ -1,7 +1,7 @@
 /**
  * The *Page actions* row that switches the page's editing mode (#5691),
  * naming the mode the page is not in; a blocked page's row says why and does
- * nothing (`PageHeaderMenu`).
+ * nothing (`PageHeaderMenu`, and the journal day's menu in `DayPageEditor`).
  */
 
 import { FileText, Rows3 } from 'lucide-react'

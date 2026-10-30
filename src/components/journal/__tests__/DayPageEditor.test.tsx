@@ -6,7 +6,8 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { Ref } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -96,6 +97,29 @@ async function loadDay(): Promise<void> {
 }
 
 const radio = (name: string) => screen.getByRole('radio', { name })
+const modeSwitch = () => screen.queryByRole('radiogroup', { name: t('pageMode.switchLabel') })
+const menuTrigger = () => screen.queryByRole('button', { name: t('pageHeader.pageActions') })
+
+/** A touch screen `width` px wide, until the returned restore runs. */
+function asTouch(width: number): () => void {
+  const desktopWidth = window.innerWidth
+  const matchMedia = vi.spyOn(window, 'matchMedia').mockImplementation(
+    (query: string) =>
+      ({
+        matches: query === '(pointer: coarse)',
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      }) as unknown as MediaQueryList,
+  )
+  const touchPoints = vi.spyOn(navigator, 'maxTouchPoints', 'get').mockReturnValue(5)
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
+  return () => {
+    matchMedia.mockRestore()
+    touchPoints.mockRestore()
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: desktopWidth })
+  }
+}
 const pressCtrlE = (): void => {
   fireEvent.keyDown(document, { key: 'e', ctrlKey: true })
 }
@@ -184,10 +208,54 @@ describe('DayPageEditor', () => {
       expect(screen.getByTestId('page-mode')).toHaveAttribute('data-page-id', DAY)
       expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
       expect(radio(t('pageMode.page'))).toHaveAttribute('aria-checked', 'true')
+      expect(menuTrigger()).not.toBeInTheDocument()
     } finally {
       matchMedia.mockRestore()
       touchPoints.mockRestore()
     }
+  })
+
+  describe('on a phone, the switch a row of the day’s Page actions menu', () => {
+    let restore: () => void
+    beforeEach(() => {
+      restore = asTouch(390)
+    })
+    afterEach(() => restore())
+
+    const openMenu = async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(menuTrigger() as HTMLElement)
+      return screen.findByRole('menu', { name: t('pageHeader.pageActions') })
+    }
+
+    it('shows the menu and no switch, the row passing axe', async () => {
+      const { container } = renderDay()
+
+      expect(modeSwitch()).not.toBeInTheDocument()
+      expect(menuTrigger()).toBeInTheDocument()
+      expect(await axe(container)).toHaveNoViolations()
+    })
+
+    it('its row names the other mode, switches the day to it and closes the menu', async () => {
+      const user = userEvent.setup()
+      const { baseElement } = renderDay()
+
+      const menu = await openMenu(user)
+      expect(await axe(baseElement)).toHaveNoViolations()
+      await user.click(within(menu).getByRole('menuitem', { name: t('pageMode.editAsPage') }))
+
+      expect(screen.getByTestId('page-mode')).toHaveAttribute('data-page-id', DAY)
+      await waitFor(() => {
+        expect(screen.queryByRole('menu', { name: t('pageHeader.pageActions') })).toBeNull()
+      })
+      const inPage = await openMenu(user)
+      expect(
+        within(inPage).queryByRole('menuitem', { name: t('pageMode.editAsPage') }),
+      ).not.toBeInTheDocument()
+      await user.click(within(inPage).getByRole('menuitem', { name: t('pageMode.editAsBlocks') }))
+
+      expect(await screen.findByTestId('block-tree')).toBeInTheDocument()
+      expect(screen.queryByTestId('page-mode')).not.toBeInTheDocument()
+    })
   })
 
   it('Ctrl+E opens page mode on the block being edited, and back saves first, then shows the blocks', async () => {
