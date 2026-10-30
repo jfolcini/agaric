@@ -169,6 +169,7 @@
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B4#changed_keys=[\"space\"]"],
       "name": "the_middle_page_is_set_into_its_own_space",
       "returns": ["B4"]
     }

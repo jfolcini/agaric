@@ -152,6 +152,7 @@
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"space\"]"],
       "name": "the_tag_moves",
       "returns": ["B2"]
     },
@@ -164,6 +165,7 @@
     {
       "code": null,
       "error": null,
+      "events": ["block:properties-changed#block_id=B3#changed_keys=[\"space\"]"],
       "name": "the_page_moves",
       "returns": ["B3"]
     }
