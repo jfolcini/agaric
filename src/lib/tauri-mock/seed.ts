@@ -247,6 +247,8 @@ export function allOrNothing<A extends unknown[], R>(
       attachments,
       pageAliases,
       propertyDefs,
+      unresolvedLinks,
+      keptLinkKinds,
     })
     const opCount = opLog.length
     const seq = opSeqCounter
@@ -259,6 +261,8 @@ export function allOrNothing<A extends unknown[], R>(
       refill(attachments, saved.attachments)
       refill(pageAliases, saved.pageAliases)
       refill(propertyDefs, saved.propertyDefs)
+      refill(unresolvedLinks, saved.unresolvedLinks)
+      refill(keptLinkKinds, saved.keptLinkKinds)
       opLog.length = opCount
       opSeqCounter = seq
       throw err

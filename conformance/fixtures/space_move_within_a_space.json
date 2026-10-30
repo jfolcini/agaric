@@ -1,0 +1,254 @@
+{
+  "description": "#6054 — a move into the space a page is already in changes nothing: no rank closes up and none opens, because the page's engine doc already holds it. `move_blocks_to_space` and `set_property(space)` write through the same `set_property_in_tx`, so both leave the ranks alone. The mock ranked the page first, as it does an arrival from another space. `create_space` makes a space (`C1`) and three pages in it (`C2` to `C4`), which rank behind the space block; `C4` is moved into `C1`, then `C3` is.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Away",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "first",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "second",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "third",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 15,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_space",
+      "returns": ["create_space#space_id=B2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_first_page",
+      "returns": ["create_page_in_space#page_id=B3"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_second_page",
+      "returns": ["create_page_in_space#page_id=B4"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_third_page",
+      "returns": ["create_page_in_space#page_id=B5"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_last_page_moves_into_its_own_space",
+      "returns": ["move_blocks_to_space#moved=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_middle_page_is_set_into_its_own_space",
+      "returns": ["B4"]
+    }
+  ],
+  "name": "space_move_within_a_space",
+  "ops": [
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Away"
+      },
+      "command": "create_space",
+      "name": "a_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "first",
+        "parentId": null,
+        "spaceId": "C1"
+      },
+      "command": "create_page_in_space",
+      "name": "the_first_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "second",
+        "parentId": null,
+        "spaceId": "C1"
+      },
+      "command": "create_page_in_space",
+      "name": "the_second_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "third",
+        "parentId": null,
+        "spaceId": "C1"
+      },
+      "command": "create_page_in_space",
+      "name": "the_third_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["C4"],
+        "spaceId": "C1"
+      },
+      "command": "move_blocks_to_space",
+      "comment": "It stays last: nothing arrives, nothing departs.",
+      "name": "the_last_page_moves_into_its_own_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C3",
+        "key": "space",
+        "value": {
+          "value_ref": "C1"
+        }
+      },
+      "command": "set_property",
+      "comment": "It stays in the middle.",
+      "name": "the_middle_page_is_set_into_its_own_space",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

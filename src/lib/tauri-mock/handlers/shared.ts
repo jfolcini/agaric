@@ -27,12 +27,7 @@ import { pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
 import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { definitionSpaceOf, linksTo, ownerSpaceOf } from '@/lib/tauri-mock/link-index'
-import {
-  type MockLinkEdge,
-  classifyLinkKind,
-  linkTokenRe,
-  scanLinkTargets,
-} from '@/lib/tauri-mock/link-scan'
+import { type MockLinkEdge, linkTokenRe, scanLinkTargets } from '@/lib/tauri-mock/link-scan'
 import { forwardPropertyKey, propertyKeyReversePayload } from '@/lib/tauri-mock/property-keys'
 import { isValidRepeatRuleMock } from '@/lib/tauri-mock/recurrence'
 import {
@@ -645,7 +640,7 @@ export const returnEmptyPage = () => ({
 // snapshot builder can assert on the SAME derivation the handlers run instead
 // of re-declaring the regex. Re-exported here so the domain handler modules
 // keep their single "everything shared comes from ./shared" import.
-export { type MockLinkEdge, classifyLinkKind, linkTokenRe, scanLinkTargets }
+export { type MockLinkEdge, linkTokenRe, scanLinkTargets }
 export {
   definitionSpaceOf,
   indexLinks,

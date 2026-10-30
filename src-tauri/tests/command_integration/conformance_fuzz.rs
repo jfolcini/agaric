@@ -49,10 +49,13 @@
 //! nothing), and the columns the snapshot omits: the timestamps and
 //! `blocks.space_id`. The texts carry `[[…]]`, `((…))` and `#[…]` tokens
 //! ([`weave_tokens`], #6054) naming the seed page, the seed tag or an earlier
-//! block, live, trashed, purged, in no space or in another space, so
-//! `page_links` and the backlink, tag-ref and inherited-tag reads compare, the
-//! links the backend declines included. Only an edit names a block of another
-//! space, and no `#[…]` names the seed tag before it moves (see
+//! block, live, trashed, purged, in no space or, in an edit, in another space,
+//! so `page_links` and the backlink, tag-ref and inherited-tag reads compare,
+//! the links the backend declines included. The write gate refuses a text that
+//! names a block of another space unless its page already holds the token
+//! (#5272), so a seed-tag move first puts a block naming the tag on the seed
+//! page ([`Invalid::SpaceMove`]); a later edit may then name the tag from its
+//! new space. No `#[…]` names the seed tag before it moves (see
 //! [`chain_to_fixture`]). The space moves are the seed tag's and
 //! [`MOVED_PAGE`]'s, each into a new space ([`Invalid::SpaceMove`]), and the
 //! generator's `SetProperty(space)`, which names a content block. No text
@@ -454,6 +457,7 @@ enum Invalid {
     CrossSpace,
     /// The seed tag or [`MOVED_PAGE`] moved into a space made for it. Always a
     /// new space, so the arrival order #5099 leaves unmodelled never comes up.
+    /// The seed tag first gets a block on the seed page that links it.
     SpaceMove(Mover, Via),
 }
 
@@ -581,6 +585,16 @@ fn render_invalid(invalid: Invalid, creates: &mut usize) -> Vec<Value> {
             }}));
         }
         Invalid::SpaceMove(mover, via) => {
+            if matches!(mover, Mover::SeedTag) {
+                // The seed page holds the tag's token before the tag moves, so
+                // a later edit may name it from another space (#5272) and the
+                // link that edit writes is declined.
+                *creates += 1;
+                ops.push(json!({ "command": "create_block", "args": {
+                    "parentId": SEED_PAGE, "blockType": "content",
+                    "content": format!("[[{SEED_TAG}]]"), "index": 0, "scope": harness_scope(),
+                }}));
+            }
             *creates += 1;
             ops.push(create_space(*creates));
             let block = match mover {
@@ -1194,7 +1208,7 @@ fn mock_matches_backend_on_generated_op_chains_4669() {
 /// panicked.
 #[test]
 fn search_term_skips_a_label_shaped_word() {
-    let fixture = json!({ "ops": [{ "args": { "content": "C02 S7 plain" } }] });
+    let fixture = json!({ "ops": [{ "args": { "content": "C02 S12 plain" } }] });
     assert_eq!(
         search_term(&fixture),
         "plain",

@@ -136,7 +136,9 @@ export function dropAcknowledgedLosses(ids: string[], target: string, rawAck: un
 /**
  * The space write `set_property_in_tx` makes for `b`, a live page or top-level
  * tag, on the way to `spaceId`: its page group takes the space. Returns
- * whether it is a root, which `rankArrivals` must then rank.
+ * whether it arrives as a root of a space it was not in, which `rankArrivals`
+ * must then rank: a move into the space a root already holds leaves every rank
+ * as it was.
  *
  * #5100: the backend purges a root from the doc of the space it left and
  * reprojects that group's dense ranks PER BLOCK, so a survivor that sat behind
@@ -148,21 +150,19 @@ export function dropAcknowledgedLosses(ids: string[], target: string, rawAck: un
 export function leaveForSpace(b: Record<string, unknown>, spaceId: string): boolean {
   const fromSpace = (b['space_id'] as string | null | undefined) ?? null
   setPageGroupSpace(blocks, b['id'] as string, spaceId)
-  if ((b['parent_id'] as string | null) !== null) return false
-  if (fromSpace !== spaceId) {
-    const left =
-      fromSpace === null
-        ? [...blocks.values()].filter(
-            (row) =>
-              (row['parent_id'] as string | null) === null &&
-              ((row['space_id'] as string | null | undefined) ?? null) === null &&
-              properties.get(row['id'] as string)?.get('is_space')?.['value_text'] !== 'true',
-          )
-        : spaceRootGroup(fromSpace)
-    left.toSorted(comparePositionThenId).forEach((row, i) => {
-      row['position'] = i + 1
-    })
-  }
+  if ((b['parent_id'] as string | null) !== null || fromSpace === spaceId) return false
+  const left =
+    fromSpace === null
+      ? [...blocks.values()].filter(
+          (row) =>
+            (row['parent_id'] as string | null) === null &&
+            ((row['space_id'] as string | null | undefined) ?? null) === null &&
+            properties.get(row['id'] as string)?.get('is_space')?.['value_text'] !== 'true',
+        )
+      : spaceRootGroup(fromSpace)
+  left.toSorted(comparePositionThenId).forEach((row, i) => {
+    row['position'] = i + 1
+  })
   return true
 }
 
