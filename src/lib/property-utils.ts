@@ -21,6 +21,9 @@ export function formatPropertyName(key: string): string {
   return key.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
+/** The `value_type`s a definition can have. */
+export const VALUE_TYPES = ['text', 'number', 'date', 'select', 'ref', 'boolean', 'url'] as const
+
 /**
  * The options JSON `create_property_def` requires for a select, read from a
  * comma-separated list. `null` when the list names no option: the backend

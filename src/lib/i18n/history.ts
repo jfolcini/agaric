@@ -21,7 +21,7 @@ export const history: Record<string, string> = {
   'history.opTypeDeleteProperty': 'Delete property',
   'history.opTypeSetPropertyDef': 'Property definition',
   'history.opTypeRenamePropertyKey': 'Property renamed',
-  'history.opTypeRewriteProperties': 'Properties merged',
+  'history.opTypeRewriteProperties': 'Properties rewritten',
   'history.opTypeAddAttachment': 'Add attachment',
   'history.opTypeRemoveAttachment': 'Remove attachment',
   'history.opTypeRenameAttachment': 'Rename attachment',
@@ -42,7 +42,7 @@ export const history: Record<string, string> = {
   'history.opTypeDescription.renamePropertyKey':
     "A space's property was renamed, on every block that held it",
   'history.opTypeDescription.rewriteProperties':
-    "One of a space's properties was merged into another",
+    "One of a space's properties was merged into another, or changed type",
   'history.opTypeDescription.addAttachment': 'An attachment was added to a block',
   'history.opTypeDescription.deleteAttachment': 'An attachment was removed from a block',
   'history.opTypeDescription.renameAttachment': 'An attachment was renamed',

@@ -238,5 +238,14 @@ pub(super) fn all_op_payloads() -> Vec<(&'static str, OpPayload)> {
                 values: Vec::new(),
             }),
         ),
+        (
+            "rewrite_properties",
+            OpPayload::RewriteProperties(RewritePropertiesPayload {
+                space_id: BlockId::test_id("SP001"),
+                reason: RewriteReason::ChangeType,
+                defs: Vec::new(),
+                values: Vec::new(),
+            }),
+        ),
     ]
 }

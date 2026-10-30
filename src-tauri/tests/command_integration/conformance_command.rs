@@ -80,6 +80,8 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // the target's after the union.
     ("rename_property_key", "key", PROPERTY_DEF_ATTRS, &[]),
     ("merge_property_key", "key", PROPERTY_DEF_ATTRS, &[]),
+    // #5841 S3 — a type change answers the definition after it.
+    ("change_property_type", "key", PROPERTY_DEF_ATTRS, &[]),
     // #5057 — the undo family all answer `UndoResult`, singly or in a list, so
     // they share one shape: the `OpRef`s it carries are dropped because the two
     // runners' device ids differ, leaving the two op_type fields and `is_redo`.
@@ -665,6 +667,24 @@ pub(super) async fn apply_op_via_command(
                     panic!("conformance op '{command}' is missing arg 'acknowledged'")
                 }))
                 .expect("acknowledged is {moved, dropped}"),
+            )
+            .await,
+        ),
+        "change_property_type" => to_json(
+            change_property_type_inner(
+                pool,
+                DEV,
+                mat,
+                &space_id(),
+                PropertyTypeTarget {
+                    key: req_str("key"),
+                    value_type: req_str("valueType"),
+                    options: opt_str("options"),
+                },
+                serde_json::from_value(arg("acknowledged").cloned().unwrap_or_else(|| {
+                    panic!("conformance op '{command}' is missing arg 'acknowledged'")
+                }))
+                .expect("acknowledged is {converted, removed}"),
             )
             .await,
         ),
@@ -1455,7 +1475,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 57;
+    const MUTATING_ARM_COUNT: usize = 58;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

@@ -6658,3 +6658,310 @@ async fn apply_remote_follows_a_rename_and_a_merge_5841() {
         "the moved value is a date, and the block holding both keeps its own"
     );
 }
+
+/// Import into `pool`, `to`'s, what `from`'s doc of [`SPACE_A`] holds that
+/// `to`'s does not; each side is a registry and the device it writes as.
+async fn push_space(
+    pool: &SqlitePool,
+    from: (&LoroEngineRegistry, &str),
+    to: (&LoroEngineRegistry, &str),
+) {
+    let space = SpaceId::from_trusted(SPACE_A);
+    let from_vv =
+        to.0.for_space(&space, to.1)
+            .expect("for_space to")
+            .engine_mut()
+            .version_vector();
+    let bytes = from
+        .0
+        .for_space(&space, from.1)
+        .expect("for_space from")
+        .engine_mut()
+        .export_update_since(&from_vv)
+        .expect("export update");
+    let outcome = apply_remote(
+        pool,
+        to.0,
+        to.1,
+        LoroSyncMessage::Update {
+            protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+            space_id: space,
+            from_vv,
+            bytes,
+        },
+    )
+    .await
+    .expect("apply_remote");
+    assert!(
+        matches!(outcome, ApplyOutcome::Imported { .. }),
+        "the update imports, got {outcome:?}"
+    );
+}
+
+/// `block`'s `(value_text, value_num, value_date, value_bool)` row under `key`.
+type TypedRow = (Option<String>, Option<f64>, Option<String>, Option<i64>);
+
+async fn typed_row(pool: &SqlitePool, block: &str, key: &str) -> Option<TypedRow> {
+    sqlx::query_as(
+        "SELECT value_text, value_num, value_date, value_bool FROM block_properties \
+         WHERE block_id = ? AND key = ?",
+    )
+    .bind(block)
+    .bind(key)
+    .fetch_optional(pool)
+    .await
+    .expect("typed row")
+}
+
+/// Two devices, A and B, each with a pool and a `LoroState`, both holding
+/// [`SPACE_A`] with `BLOCK_A` and `BLOCK_B`, `key` declared as text and
+/// `BLOCK_A` holding `held` under it, from a third device's doc.
+struct TwoDevices {
+    pools: [(SqlitePool, TempDir); 2],
+    states: [agaric_engine::loro::shared::LoroState; 2],
+}
+
+const DEVICES: [&str; 2] = ["device-A", "device-B"];
+
+async fn two_devices(key: &str, held: &str) -> TwoDevices {
+    use agaric_store::op::PropertyDefState;
+    let pools = [fresh_pool().await, fresh_pool().await];
+    for (pool, _) in &pools {
+        for sql in [
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?1, 'page', 'A', ?1)",
+            "INSERT INTO spaces (id) VALUES (?1)",
+        ] {
+            sqlx::query(sql)
+                .bind(SPACE_A)
+                .execute(pool)
+                .await
+                .expect("register space");
+        }
+    }
+    let origin = LoroEngineRegistry::new();
+    {
+        let mut guard = origin
+            .for_space(&SpaceId::from_trusted(SPACE_A), "device-O")
+            .expect("for_space origin");
+        let e = guard.engine_mut();
+        let text = PropertyDefState {
+            value_type: "text".into(),
+            options: None,
+        };
+        e.apply_set_property_def(key, Some(&text)).expect("declare");
+        for block in [BLOCK_A, BLOCK_B] {
+            e.apply_create_block(block, "content", "x", None, 0)
+                .expect("create");
+        }
+        e.apply_set_property(BLOCK_A, key, Some(held))
+            .expect("held");
+    }
+    let states = [
+        agaric_engine::loro::shared::LoroState::new(),
+        agaric_engine::loro::shared::LoroState::new(),
+    ];
+    for ((pool, _), (state, device)) in pools.iter().zip(states.iter().zip(DEVICES)) {
+        push_space(pool, (&origin, "device-O"), (&state.registry, device)).await;
+    }
+    TwoDevices { pools, states }
+}
+
+/// A's change of `key` from text to `to`, as `change_property_type` writes it:
+/// `writes` are `BLOCK_A`'s value before and after, when its form changes.
+async fn change_on_a(
+    devices: &TwoDevices,
+    key: &str,
+    to: &str,
+    writes: Vec<agaric_store::op::PropertyValueWrite>,
+) {
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{PropertyDefState, PropertyDefWrite, RewritePropertiesPayload};
+    let def = |value_type: &str| PropertyDefState {
+        value_type: value_type.into(),
+        options: None,
+    };
+    let change = RewritePropertiesPayload {
+        space_id: BlockId::from_trusted(SPACE_A),
+        reason: agaric_store::op::RewriteReason::ChangeType,
+        defs: vec![PropertyDefWrite {
+            key: key.into(),
+            def: Some(def(to)),
+            prior: Some(def("text")),
+        }],
+        values: writes,
+    };
+    let mut conn = devices.pools[0].0.acquire().await.expect("acquire A");
+    agaric_engine::apply::property_defs::apply_rewrite_properties_via_loro(
+        &mut conn,
+        &devices.states[0],
+        DEVICES[0],
+        &change,
+    )
+    .await
+    .expect("A changes the type");
+}
+
+fn value_write(
+    key: &str,
+    value: Option<agaric_store::op::PropertyValueFields>,
+    prior: &str,
+) -> agaric_store::op::PropertyValueWrite {
+    agaric_store::op::PropertyValueWrite {
+        block_id: agaric_core::ulid::BlockId::from_trusted(BLOCK_A),
+        key: key.into(),
+        value,
+        prior: Some(agaric_store::op::PropertyValueFields {
+            value_text: Some(prior.into()),
+            ..Default::default()
+        }),
+    }
+}
+
+/// #5841 S3 — B imports A's type change: its values are converted or gone, as
+/// on A, and the definition is A's.
+#[tokio::test]
+async fn apply_remote_follows_a_type_change_5841() {
+    let devices = two_devices("effortx", "3").await;
+    let pool_b = &devices.pools[1].0;
+    {
+        let mut guard = devices.states[0]
+            .registry
+            .for_space(&SpaceId::from_trusted(SPACE_A), DEVICES[0])
+            .expect("for_space A");
+        guard
+            .engine_mut()
+            .apply_set_property(BLOCK_B, "effortx", Some("abc"))
+            .expect("abc on A");
+    }
+    push_space(
+        pool_b,
+        (&devices.states[0].registry, DEVICES[0]),
+        (&devices.states[1].registry, DEVICES[1]),
+    )
+    .await;
+    assert_eq!(
+        typed_row(pool_b, BLOCK_B, "effortx").await,
+        Some((Some("abc".into()), None, None, None)),
+        "B holds both values as text first"
+    );
+    let three = agaric_store::op::PropertyValueFields {
+        value_num: Some(3.0),
+        ..Default::default()
+    };
+    let removal = agaric_store::op::PropertyValueWrite {
+        block_id: agaric_core::ulid::BlockId::from_trusted(BLOCK_B),
+        ..value_write("effortx", None, "abc")
+    };
+    change_on_a(
+        &devices,
+        "effortx",
+        "number",
+        vec![value_write("effortx", Some(three), "3"), removal],
+    )
+    .await;
+
+    push_space(
+        pool_b,
+        (&devices.states[0].registry, DEVICES[0]),
+        (&devices.states[1].registry, DEVICES[1]),
+    )
+    .await;
+    assert_eq!(
+        def_row(pool_b, "effortx").await,
+        Some(("number".into(), None)),
+        "B holds A's definition"
+    );
+    assert_eq!(
+        typed_row(pool_b, BLOCK_A, "effortx").await,
+        Some((None, Some(3.0), None, None)),
+        "the converted value is a number"
+    );
+    assert_eq!(
+        typed_row(pool_b, BLOCK_B, "effortx").await,
+        None,
+        "the removed one is gone"
+    );
+}
+
+/// A changes `key` from text to `to` while B writes `stray`, which `to` does
+/// not take, on another block; after both imports neither device shows it,
+/// and both show A's converted value as `kept`.
+async fn a_concurrent_stray_is_hidden_on_both_devices(
+    to: &str,
+    held: &str,
+    writes: Vec<agaric_store::op::PropertyValueWrite>,
+    stray: &str,
+    kept: TypedRow,
+) {
+    let key = "flagx";
+    let devices = two_devices(key, held).await;
+    change_on_a(&devices, key, to, writes).await;
+    let on_b = agaric_store::op::SetPropertyPayload::with_value(
+        agaric_core::ulid::BlockId::from_trusted(BLOCK_B),
+        key.into(),
+        agaric_store::op::PropertyValueFields {
+            value_text: Some(stray.into()),
+            ..Default::default()
+        },
+    );
+    let mut conn = devices.pools[1].0.acquire().await.expect("acquire B");
+    agaric_engine::apply::loro_apply::apply_set_property_via_loro(
+        &mut conn,
+        &devices.states[1],
+        DEVICES[1],
+        &on_b,
+        None,
+    )
+    .await
+    .expect("B writes under text");
+    drop(conn);
+
+    let [(pool_a, _), (pool_b, _)] = &devices.pools;
+    let [a, b] = [&devices.states[0].registry, &devices.states[1].registry];
+    push_space(pool_b, (a, DEVICES[0]), (b, DEVICES[1])).await;
+    push_space(pool_a, (b, DEVICES[1]), (a, DEVICES[0])).await;
+    for (device, pool) in DEVICES.iter().zip([pool_a, pool_b]) {
+        assert_eq!(
+            typed_row(pool, BLOCK_B, key).await,
+            None,
+            "{device}: '{stray}' is not a {to}"
+        );
+        assert_eq!(
+            typed_row(pool, BLOCK_A, key).await,
+            Some(kept.clone()),
+            "{device}: the converted value"
+        );
+    }
+}
+
+/// #5841 S3 — a string written under text while another device changes the
+/// key to boolean is hidden on both, not read as false.
+#[tokio::test]
+async fn a_concurrent_stray_string_under_a_new_boolean_is_hidden_5841() {
+    let truth = agaric_store::op::PropertyValueFields {
+        value_bool: Some(true),
+        ..Default::default()
+    };
+    a_concurrent_stray_is_hidden_on_both_devices(
+        "boolean",
+        "true",
+        vec![value_write("flagx", Some(truth), "true")],
+        "yes",
+        (None, None, None, Some(1)),
+    )
+    .await;
+}
+
+/// #5841 S3 — the same for a date: a stray string is hidden, not projected
+/// into `value_date` unchecked.
+#[tokio::test]
+async fn a_concurrent_stray_string_under_a_new_date_is_hidden_5841() {
+    a_concurrent_stray_is_hidden_on_both_devices(
+        "date",
+        "2026-01-05",
+        Vec::new(),
+        "soon",
+        (None, None, Some("2026-01-05".into()), None),
+    )
+    .await;
+}
