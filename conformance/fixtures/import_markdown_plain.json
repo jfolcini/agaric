@@ -170,7 +170,7 @@
         "spaceId": "C1"
       },
       "command": "move_blocks_to_space",
-      "comment": "The link target joins the import's space, so restoring it pays the edge.",
+      "comment": "The import refuses the harness space, so the link target joins the import's space: a token only links within one space.",
       "name": "the_target_joins_the_space",
       "via": "command"
     },

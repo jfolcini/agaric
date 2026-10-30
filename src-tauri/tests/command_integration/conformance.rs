@@ -715,7 +715,7 @@ pub(super) async fn resolve_attachment_label(pool: &SqlitePool, label: &str) -> 
 
 /// The id of each attachment an `add_attachment` op added, in op order: the
 /// n-th is what an `An` label names. TS twin: `addedAttachmentIds` in
-/// `conformance-replay.ts`.
+/// `conformance-query.ts`.
 pub(super) async fn added_attachment_ids(pool: &SqlitePool) -> Vec<String> {
     let mut added: Vec<String> = Vec::new();
     for (id,) in sqlx::query_as::<_, (String,)>(
