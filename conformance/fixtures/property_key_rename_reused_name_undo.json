@@ -1,0 +1,212 @@
+{
+  "description": "#5841 S2 — a rename onto a name a deleted value once had: undoing the rename, then the delete, puts each value back under its own key. `one` holds `project = mine`, gets `area = old` (O2), which is deleted (O3); `project` is renamed to `area` (O4) and the rename undone (O5). Undoing O3 brings `old` back under `area`, beside `project = mine`, not over it. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "one",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 6,
+      "ops": [
+        {
+          "key": "project",
+          "op_type": "set_property"
+        },
+        {
+          "key": "area",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
+          "op_type": "rename_property_key"
+        },
+        {
+          "op_type": "rename_property_key"
+        },
+        {
+          "key": "area",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "area",
+        "value": "old",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B2",
+        "key": "project",
+        "value": "mine",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "set_project",
+      "returns": ["B2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "set_area",
+      "returns": ["B2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "delete_area",
+      "returns": ["delete_property"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "rename_project_to_area",
+      "returns": ["area#value_type=text#options=null#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_rename",
+      "returns": [
+        "undo_ops#reversed_op_type=rename_property_key#new_op_type=rename_property_key#is_redo=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_delete",
+      "returns": [
+        "undo_ops#reversed_op_type=delete_property#new_op_type=set_property#is_redo=false"
+      ]
+    }
+  ],
+  "name": "property_key_rename_reused_name_undo",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "project",
+        "value": {
+          "value_text": "mine"
+        }
+      },
+      "command": "set_property",
+      "comment": "O1",
+      "name": "set_project",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "area",
+        "value": {
+          "value_text": "old"
+        }
+      },
+      "command": "set_property",
+      "comment": "O2 — `area` is free-form.",
+      "name": "set_area",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "area"
+      },
+      "command": "delete_property",
+      "comment": "O3",
+      "name": "delete_area",
+      "via": "command"
+    },
+    {
+      "args": {
+        "newKey": "area",
+        "oldKey": "project",
+        "spaceId": "$SPACE"
+      },
+      "command": "rename_property_key",
+      "comment": "O4 — onto the name O2 used.",
+      "name": "rename_project_to_area",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O4"]
+      },
+      "command": "undo_ops",
+      "comment": "O5 — `one` holds `project = mine` again.",
+      "name": "undo_the_rename",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O3"]
+      },
+      "command": "undo_ops",
+      "comment": "`one` holds `area = old` and `project = mine`.",
+      "name": "undo_the_delete",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "one",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "property_defs": [
+      {
+        "key": "project",
+        "options": null,
+        "value_type": "text"
+      }
+    ],
+    "tags": []
+  }
+}

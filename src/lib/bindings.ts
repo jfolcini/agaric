@@ -485,6 +485,21 @@ export const commands = {
 	 *  vocabulary. Delegates to [`count_property_usage_inner`].
 	 */
 	countPropertyUsage: (spaceId: SpaceId) => typedError<PropertyUsage[], AppError>(__TAURI_INVOKE("count_property_usage", { spaceId })),
+	/**
+	 *  Tauri command: rename a space's property key. Delegates to
+	 *  [`rename_property_key_inner`]; the response carries the op ref.
+	 */
+	renamePropertyKey: (spaceId: SpaceId, oldKey: string, newKey: string) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("rename_property_key", { spaceId, oldKey, newKey })),
+	/**
+	 *  Tauri command: what merging one of a space's property keys into another
+	 *  would move and drop. Delegates to [`preview_property_merge_inner`].
+	 */
+	previewPropertyMerge: (spaceId: SpaceId, fromKey: string, intoKey: string) => typedError<PropertyMergeCounts, AppError>(__TAURI_INVOKE("preview_property_merge", { spaceId, fromKey, intoKey })),
+	/**
+	 *  Tauri command: merge one of a space's property keys into another.
+	 *  Delegates to [`merge_property_key_inner`]; the response carries the op ref.
+	 */
+	mergePropertyKey: (spaceId: SpaceId, fromKey: string, intoKey: string, acknowledged: PropertyMergeCounts) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("merge_property_key", { spaceId, fromKey, intoKey, acknowledged })),
 	/**  Tauri command: list all sync peers. Delegates to [`list_peer_refs_inner`]. */
 	listPeerRefs: () => typedError<PeerRef[], AppError>(__TAURI_INVOKE("list_peer_refs")),
 	/**  Tauri command: delete (unpair) a sync peer. Delegates to [`delete_peer_ref_inner`]. */
@@ -3391,6 +3406,17 @@ export type PropertyLossValue = {
 };
 
 /**
+ *  What merging one key into another does to a space's blocks, the Trash's
+ *  included (#5841): `moved` blocks hold the merged key and not the target, so
+ *  their value moves; `dropped` blocks hold both, so they keep the target and
+ *  lose the merged key's value, which an undo brings back.
+ */
+export type PropertyMergeCounts = {
+	moved: number,
+	dropped: number,
+};
+
+/**
  *  Predicate on a `has-property:` primitive.
  * 
  *  Invalid states are unrepresentable: a single internally-tagged
@@ -4732,9 +4758,11 @@ export type ValidationCode =
 "BuiltinPropertyLocked" | 
 /**
  *  A cross-space move whose acknowledged property losses differ from what
- *  it would drop now (`move_blocks_to_space`, #5841): another write changed
- *  the pages or a definition since the preview, so the caller previews
- *  again and asks once more.
+ *  it would drop now (`move_blocks_to_space`, #5841), or a property merge
+ *  whose acknowledged counts differ from what it would move and drop now
+ *  (`merge_property_key`): another write changed the blocks or a
+ *  definition since the preview, so the caller previews again and asks
+ *  once more.
  */
 "UnacknowledgedPropertyLoss";
 

@@ -161,6 +161,39 @@ describe('HistoryItemCore', () => {
     expect(screen.getByTestId('history-type-badge')).toHaveClass('bg-op-tag')
   })
 
+  it('renders a rename_property_key row as old → new, in plain text and the property tone', () => {
+    renderCore(
+      <HistoryItemCore
+        entry={makeEntry(1, 'rename_property_key', {
+          space_id: 'SP1',
+          old_key: '_draft_',
+          new_key: 'final',
+        })}
+      />,
+    )
+    expect(screen.getByText('_draft_ → final')).toBeInTheDocument()
+    expect(screen.getByTestId('history-type-badge')).toHaveClass('bg-op-tag')
+  })
+
+  it('renders a rewrite_properties row as from → into, in plain text and the property tone', () => {
+    const def = { value_type: 'text', options: null }
+    renderCore(
+      <HistoryItemCore
+        entry={makeEntry(1, 'rewrite_properties', {
+          space_id: 'SP1',
+          reason: 'merge',
+          defs: [
+            { key: '_stage_', def: null, prior: def },
+            { key: 'phase', def, prior: def },
+          ],
+          values: [],
+        })}
+      />,
+    )
+    expect(screen.getByText('_stage_ → phase')).toBeInTheDocument()
+    expect(screen.getByTestId('history-type-badge')).toHaveClass('bg-op-tag')
+  })
+
   it('hides the diff-toggle button when onToggleDiff is not supplied', () => {
     renderCore(<HistoryItemCore entry={makeEntry(1, 'edit_block', { to_text: 'hi' })} />)
     expect(screen.queryByRole('button')).not.toBeInTheDocument()

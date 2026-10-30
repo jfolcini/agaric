@@ -76,6 +76,10 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         &[],
     ),
     ("delete_property_def", "key", PROPERTY_DEF_ATTRS, &[]),
+    // #5841 S2 — a rename answers the definition under its new key, a merge
+    // the target's after the union.
+    ("rename_property_key", "key", PROPERTY_DEF_ATTRS, &[]),
+    ("merge_property_key", "key", PROPERTY_DEF_ATTRS, &[]),
     // #5057 — the undo family all answer `UndoResult`, singly or in a list, so
     // they share one shape: the `OpRef`s it carries are dropped because the two
     // runners' device ids differ, leaving the two op_type fields and `is_redo`.
@@ -638,6 +642,32 @@ pub(super) async fn apply_op_via_command(
         "delete_property_def" => {
             to_json(delete_property_def_inner(pool, DEV, mat, &space_id(), req_str("key")).await)
         }
+        "rename_property_key" => to_json(
+            rename_property_key_inner(
+                pool,
+                DEV,
+                mat,
+                &space_id(),
+                req_str("oldKey"),
+                req_str("newKey"),
+            )
+            .await,
+        ),
+        "merge_property_key" => to_json(
+            merge_property_key_inner(
+                pool,
+                DEV,
+                mat,
+                &space_id(),
+                req_str("fromKey"),
+                req_str("intoKey"),
+                serde_json::from_value(arg("acknowledged").cloned().unwrap_or_else(|| {
+                    panic!("conformance op '{command}' is missing arg 'acknowledged'")
+                }))
+                .expect("acknowledged is {moved, dropped}"),
+            )
+            .await,
+        ),
         // The deleted keys name the changed-property event; the wire returns none.
         "delete_property" => to_json(
             delete_property_inner(
@@ -1425,7 +1455,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 55;
+    const MUTATING_ARM_COUNT: usize = 57;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

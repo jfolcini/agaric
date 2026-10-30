@@ -1,5 +1,6 @@
-//! Property definitions in the engine (#5841): `SetPropertyDef` and the reads
-//! the SQL `property_definitions` projection is rebuilt from.
+//! Property definitions in the engine (#5841): `SetPropertyDef`,
+//! `RenamePropertyKey`, `RewriteProperties` and the reads the SQL
+//! `property_definitions` projection is rebuilt from.
 //!
 //! Under [`PROPERTY_DEFINITIONS_ROOT`] each key the space declares holds one
 //! plain map value `{value_type, options}`, never a container: two devices
@@ -7,7 +8,7 @@
 //! last-writer-wins keeps one whole definition rather than orphaning the
 //! entries of a losing container.
 
-use agaric_store::op::PropertyDefState;
+use agaric_store::op::{PropertyDefState, RewritePropertiesPayload};
 
 use super::*;
 
@@ -65,17 +66,131 @@ impl LoroEngine {
         key: &str,
         def: Option<&PropertyDefState>,
     ) -> Result<(), AppError> {
+        if self.put_property_def(key, def)? {
+            self.doc.commit();
+        }
+        Ok(())
+    }
+
+    /// [`Self::apply_set_property_def`] without the commit; `false` when the
+    /// root already held `def`.
+    fn put_property_def(
+        &mut self,
+        key: &str,
+        def: Option<&PropertyDefState>,
+    ) -> Result<bool, AppError> {
         let root = self.doc.get_map(PROPERTY_DEFINITIONS_ROOT);
         let held = root.get(key).and_then(|voc| voc.into_value().ok());
         let wanted = def.map(def_to_loro);
         if held == wanted {
-            return Ok(());
+            return Ok(false);
         }
         match wanted {
             Some(value) => root.insert(key, value),
             None => root.delete(key),
         }
         .map_err(|e| AppError::validation(format!("loro: set_property_def {key}: {e}")))?;
+        Ok(true)
+    }
+
+    /// Mirrors `RenamePropertyKey`: every block holding `old_key` and no value
+    /// under `new_key` (an explicit null counts as none, as SQL holds no row
+    /// for it) gets the value under `new_key` instead, and the definition
+    /// moves when the root declares `old_key` and not `new_key`. A block or a
+    /// root already holding `new_key` keeps it, so a replay leaves a later
+    /// write under `old_key` where it is. Nothing to move records no op.
+    pub fn apply_rename_property_key(
+        &mut self,
+        old_key: &str,
+        new_key: &str,
+    ) -> Result<(), AppError> {
+        let movable = self.blocks_movable(old_key, new_key)?;
+        let rename_err =
+            |e: loro::LoroError| AppError::validation(format!("loro: rename {old_key}: {e}"));
+        for (block_props, value) in &movable {
+            block_props
+                .insert(new_key, value.clone())
+                .map_err(rename_err)?;
+            block_props.delete(old_key).map_err(rename_err)?;
+        }
+        let defs = self.doc.get_map(PROPERTY_DEFINITIONS_ROOT);
+        let def_moves = defs.get(new_key).is_none();
+        if let (Some(def), true) = (defs.get(old_key), def_moves) {
+            let def = def.into_value().map_err(|_| {
+                AppError::validation(format!(
+                    "loro: property definition {old_key} is a container"
+                ))
+            })?;
+            defs.insert(new_key, def).map_err(rename_err)?;
+            defs.delete(old_key).map_err(rename_err)?;
+        }
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// The per-block maps [`Self::apply_rename_property_key`] moves a value
+    /// in, with the value, collected before any is changed.
+    fn blocks_movable(
+        &self,
+        old_key: &str,
+        new_key: &str,
+    ) -> Result<Vec<(LoroMap, LoroValue)>, AppError> {
+        let mut movable = Vec::new();
+        let mut err = None;
+        self.doc
+            .get_map(BLOCK_PROPERTIES_ROOT)
+            .for_each(|block_id, voc| {
+                if err.is_some() {
+                    return;
+                }
+                let Some(block_props) = voc.into_container().ok().and_then(|c| c.into_map().ok())
+                else {
+                    err = Some(AppError::validation(format!(
+                        "loro: rename block {block_id} props is not a LoroMap"
+                    )));
+                    return;
+                };
+                let Some(held) = block_props.get(old_key) else {
+                    return;
+                };
+                let taken = block_props
+                    .get(new_key)
+                    .is_some_and(|voc| !matches!(voc.into_value(), Ok(LoroValue::Null)));
+                match held.into_value() {
+                    Ok(value) if !taken => movable.push((block_props, value)),
+                    Ok(_) => {}
+                    Err(_) => {
+                        err = Some(AppError::validation(format!(
+                            "loro: rename {block_id}/{old_key} expected scalar"
+                        )));
+                    }
+                }
+            });
+        err.map_or(Ok(movable), Err)
+    }
+
+    /// Mirrors `RewriteProperties`: each definition write, then each value
+    /// write (a value, or its removal), in one commit. A value of a block the
+    /// doc no longer holds, one purged since the op was written, is dropped.
+    pub fn apply_rewrite_properties(
+        &mut self,
+        p: &RewritePropertiesPayload,
+    ) -> Result<(), AppError> {
+        for write in &p.defs {
+            self.put_property_def(&write.key, write.def.as_ref())?;
+        }
+        for write in &p.values {
+            let block_id = write.block_id.as_str();
+            if !self.contains_block(block_id) {
+                continue;
+            }
+            match &write.value {
+                Some(value) => self.put_property(block_id, &write.key, &value.into())?,
+                None => {
+                    self.remove_property(block_id, &write.key)?;
+                }
+            }
+        }
         self.doc.commit();
         Ok(())
     }
@@ -238,6 +353,210 @@ mod tests {
             e.doc.oplog_frontiers(),
             before,
             "a replayed op leaves the doc as it was"
+        );
+    }
+
+    /// An engine of `peer` whose blocks `B1`, `B2` and `B3` hold `project`
+    /// (`p1`, `p2`, `p3`), declared text.
+    fn holding_project(peer: &str) -> LoroEngine {
+        let mut e = LoroEngine::with_peer_id(peer).expect("peer");
+        e.apply_set_property_def("project", Some(&def("text", None)))
+            .expect("declare");
+        for (id, value) in [("B1", "p1"), ("B2", "p2"), ("B3", "p3")] {
+            e.apply_create_block(id, "content", id, None, 0)
+                .expect("create block");
+            e.apply_set_property(id, "project", Some(value))
+                .expect("set");
+        }
+        e
+    }
+
+    /// Every block's `key` value, by block id.
+    fn values_of(e: &LoroEngine, key: &str) -> Vec<(String, PropertyValue)> {
+        let mut holders = e.read_property_holders(key).unwrap();
+        holders.sort_by(|a, b| a.0.cmp(&b.0));
+        holders
+    }
+
+    fn text(id: &str, value: &str) -> (String, PropertyValue) {
+        (id.to_owned(), PropertyValue::Str(value.to_owned()))
+    }
+
+    #[test]
+    fn rename_moves_every_value_and_the_definition() {
+        let mut e = holding_project("dev-a");
+        e.apply_rename_property_key("project", "area")
+            .expect("rename");
+        assert_eq!(
+            values_of(&e, "area"),
+            vec![text("B1", "p1"), text("B2", "p2"), text("B3", "p3")],
+            "every value moved"
+        );
+        assert!(values_of(&e, "project").is_empty(), "none stayed behind");
+        assert_eq!(
+            e.read_property_def("area").unwrap(),
+            Some(def("text", None))
+        );
+        assert_eq!(e.read_property_def("project").unwrap(), None);
+    }
+
+    /// Boot replay can meet the rename again after a later write under the
+    /// old key: the block already holding the new key keeps both values.
+    #[test]
+    fn a_replayed_rename_leaves_a_later_old_key_write_where_it_is() {
+        let mut e = holding_project("dev-a");
+        e.apply_rename_property_key("project", "area")
+            .expect("rename");
+        e.apply_set_property("B1", "project", Some("later"))
+            .expect("a later write");
+        e.apply_rename_property_key("project", "area")
+            .expect("replay");
+        assert_eq!(
+            values_of(&e, "area"),
+            vec![text("B1", "p1"), text("B2", "p2"), text("B3", "p3")],
+            "the renamed value is not overwritten"
+        );
+        assert_eq!(
+            values_of(&e, "project"),
+            vec![text("B1", "later")],
+            "the later write stays under its key"
+        );
+    }
+
+    #[test]
+    fn a_second_rename_apply_records_no_op() {
+        let mut e = holding_project("dev-a");
+        e.apply_rename_property_key("project", "area")
+            .expect("rename");
+        let before = e.doc.oplog_frontiers();
+        e.apply_rename_property_key("project", "area")
+            .expect("re-apply");
+        assert_eq!(e.doc.oplog_frontiers(), before, "nothing left to move");
+    }
+
+    /// A peer that writes the old key without having seen the rename: its
+    /// value meets the rename's delete of the slot and Loro keeps one of the
+    /// two, the same on both peers; every other block holds the new key.
+    #[test]
+    fn a_concurrent_write_of_the_old_key_converges() {
+        let mut a = holding_project("dev-a");
+        let mut b = LoroEngine::with_peer_id("dev-b").expect("peer b");
+        b.import(&a.export_snapshot().unwrap()).expect("b joins");
+        a.apply_rename_property_key("project", "area")
+            .expect("a renames");
+        b.apply_set_property("B1", "project", Some("from-b"))
+            .expect("b writes the old key");
+        merge_both_ways(&mut a, &mut b);
+        assert_eq!(
+            values_of(&a, "project"),
+            values_of(&b, "project"),
+            "peers converge"
+        );
+        assert_eq!(values_of(&a, "area"), values_of(&b, "area"));
+        assert_eq!(
+            values_of(&a, "area"),
+            vec![text("B1", "p1"), text("B2", "p2"), text("B3", "p3")],
+            "the rename's moves survive the concurrent write"
+        );
+        assert!(
+            values_of(&a, "project")
+                .iter()
+                .all(|holder| *holder == text("B1", "from-b")),
+            "only the peer's own write can remain under the old key"
+        );
+    }
+
+    /// Two devices rename one key differently: both new keys exist, with the
+    /// same values, and merging one into the other loses nothing.
+    #[test]
+    fn two_renames_of_one_key_keep_both_and_a_merge_loses_nothing() {
+        let mut a = holding_project("dev-a");
+        let mut b = LoroEngine::with_peer_id("dev-b").expect("peer b");
+        b.import(&a.export_snapshot().unwrap()).expect("b joins");
+        a.apply_rename_property_key("project", "area")
+            .expect("a renames");
+        b.apply_rename_property_key("project", "domain")
+            .expect("b renames");
+        merge_both_ways(&mut a, &mut b);
+        let all = vec![text("B1", "p1"), text("B2", "p2"), text("B3", "p3")];
+        assert_eq!(values_of(&a, "area"), all, "A's key holds every value");
+        assert_eq!(values_of(&a, "domain"), all, "and B's key too");
+        assert!(values_of(&a, "project").is_empty());
+        assert_eq!(
+            a.read_property_defs().unwrap(),
+            b.read_property_defs().unwrap()
+        );
+        assert_eq!(
+            a.read_property_defs()
+                .unwrap()
+                .into_iter()
+                .map(|(key, _)| key)
+                .collect::<Vec<_>>(),
+            vec!["area".to_owned(), "domain".to_owned()]
+        );
+
+        // Every block holds both keys, so merging `domain` into `area` drops
+        // each `domain` value, which equals the `area` value it keeps.
+        let merge = RewritePropertiesPayload {
+            space_id: agaric_core::ulid::BlockId::from_trusted("SPACE"),
+            reason: agaric_store::op::RewriteReason::Merge,
+            defs: vec![agaric_store::op::PropertyDefWrite {
+                key: "domain".into(),
+                def: None,
+                prior: Some(def("text", None)),
+            }],
+            values: ["B1", "B2", "B3"]
+                .into_iter()
+                .zip(["p1", "p2", "p3"])
+                .map(|(id, value)| agaric_store::op::PropertyValueWrite {
+                    block_id: agaric_core::ulid::BlockId::from_trusted(id),
+                    key: "domain".into(),
+                    value: None,
+                    prior: Some(agaric_store::op::PropertyValueFields {
+                        value_text: Some(value.into()),
+                        ..Default::default()
+                    }),
+                })
+                .collect(),
+        };
+        a.apply_rewrite_properties(&merge).expect("merge");
+        assert_eq!(values_of(&a, "area"), all, "nothing lost");
+        assert!(values_of(&a, "domain").is_empty());
+        assert_eq!(a.read_property_def("domain").unwrap(), None);
+    }
+
+    /// A rewrite's writes land in one commit, and a write to a block the doc
+    /// no longer holds is dropped rather than giving it a property map.
+    #[test]
+    fn a_rewrite_writes_values_and_skips_a_purged_block() {
+        let mut e = holding_project("dev-a");
+        e.apply_purge_block("B3").expect("purge");
+        let value = |v: &str| agaric_store::op::PropertyValueFields {
+            value_text: Some(v.into()),
+            ..Default::default()
+        };
+        let write = |id: &str, key: &str, v: Option<&str>| agaric_store::op::PropertyValueWrite {
+            block_id: agaric_core::ulid::BlockId::from_trusted(id),
+            key: key.into(),
+            value: v.map(value),
+            prior: None,
+        };
+        let rewrite = RewritePropertiesPayload {
+            space_id: agaric_core::ulid::BlockId::from_trusted("SPACE"),
+            reason: agaric_store::op::RewriteReason::Merge,
+            defs: Vec::new(),
+            values: vec![
+                write("B1", "project", None),
+                write("B1", "area", Some("p1")),
+                write("B3", "area", Some("p3")),
+            ],
+        };
+        e.apply_rewrite_properties(&rewrite).expect("rewrite");
+        assert_eq!(values_of(&e, "area"), vec![text("B1", "p1")]);
+        assert_eq!(values_of(&e, "project"), vec![text("B2", "p2")]);
+        assert!(
+            e.doc.get_map(BLOCK_PROPERTIES_ROOT).get("B3").is_none(),
+            "the purged block gets no property map"
         );
     }
 

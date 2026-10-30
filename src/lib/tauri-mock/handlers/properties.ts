@@ -9,9 +9,9 @@
  * store.
  */
 
+import type { PropertyMergeCounts } from '@/lib/bindings'
 import {
   BUILTIN_PROPERTY_DEFS,
-  NON_DELETABLE_PROPERTIES,
   REPEAT_RULE_BOUNDS,
   SYSTEM_MANAGED_PROPERTY_KEYS,
 } from '@/lib/property-save-utils'
@@ -34,6 +34,13 @@ import {
   readActiveSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
 import { resolveRefValue } from '@/lib/tauri-mock/names'
+import {
+  mergePropertyKey,
+  previewPropertyMerge,
+  refuseBuiltinKey,
+  refusePropertyKeyShape,
+  renamePropertyKey,
+} from '@/lib/tauri-mock/property-keys'
 import { shiftDate } from '@/lib/tauri-mock/recurrence'
 import { setPageGroupSpace, valueFieldsOf } from '@/lib/tauri-mock/revert'
 import {
@@ -357,32 +364,13 @@ function parsePropertyDefOptions(options: string): string[] {
   return parsed as string[]
 }
 
-/** Mock twin of `refuse_builtin_definition_write` (`commands/properties.rs`, #5841). */
-function refuseBuiltinDefinitionWrite(key: string): void {
-  if (NON_DELETABLE_PROPERTIES.has(key)) {
-    throw appErrorRejection({
-      kind: 'validation',
-      code: 'BuiltinPropertyLocked',
-      message: `property '${key}' is built in and cannot be changed`,
-    })
-  }
-}
-
 /**
  * Mock twin of `validate_property_def_shape` (`commands/properties.rs`). The
  * mock used to accept every key, every value_type and every options blob, so a
  * conformance op could not tell a refusal from a write (#3830).
  */
 function validatePropertyDefShape(key: string, valueType: string, options: string | null): void {
-  refuseBuiltinDefinitionWrite(key)
-  if (key.length === 0 || key.length > 64) {
-    throw validationRejection('property definition key must be 1-64 characters')
-  }
-  if (!/^[A-Za-z0-9_-]+$/.test(key)) {
-    throw validationRejection(
-      'property definition key must contain only alphanumeric, underscore, or hyphen characters',
-    )
-  }
+  refusePropertyKeyShape(key)
   if (!PROPERTY_DEF_VALUE_TYPES.has(valueType)) {
     throw validationRejection(
       `invalid value_type '${valueType}': must be text, number, date, select, ref, boolean, or url`,
@@ -977,7 +965,7 @@ export const propertiesHandlers = {
     const spaceId = a['spaceId'] as string
     const key = a['key'] as string
     const options = a['options'] as string
-    refuseBuiltinDefinitionWrite(key)
+    refuseBuiltinKey(key)
     // The backend parses the array BEFORE it looks the key up, so a malformed
     // or empty array on an unknown key is a validation refusal, not NotFound.
     if (parsePropertyDefOptions(options).length === 0) {
@@ -1001,7 +989,7 @@ export const propertiesHandlers = {
     const a = args as Record<string, unknown>
     const spaceId = a['spaceId'] as string
     const key = a['key'] as string
-    refuseBuiltinDefinitionWrite(key)
+    refuseBuiltinKey(key)
     // A definition a block of the space still holds a value under is refused
     // rather than orphaning the rows, in the backend's words: the Settings
     // screen shows them. Trashed blocks count, as `blocks.space_id` keeps
@@ -1022,6 +1010,32 @@ export const propertiesHandlers = {
     const op = pushPropertyDefOp(spaceId, key, null, def)
     defs.delete(key)
     return { ...def, builtin: false, op_refs: [op] }
+  },
+
+  // #5841 S2 — `commands/property_keys.rs`; the logic is in `property-keys.ts`,
+  // which the undo of either op shares.
+  rename_property_key: (args) => {
+    const a = args as Record<string, unknown>
+    return renamePropertyKey(a['spaceId'] as string, a['oldKey'] as string, a['newKey'] as string)
+  },
+
+  preview_property_merge: (args) => {
+    const a = args as Record<string, unknown>
+    return previewPropertyMerge(
+      a['spaceId'] as string,
+      a['fromKey'] as string,
+      a['intoKey'] as string,
+    )
+  },
+
+  merge_property_key: (args) => {
+    const a = args as Record<string, unknown>
+    return mergePropertyKey(
+      a['spaceId'] as string,
+      a['fromKey'] as string,
+      a['intoKey'] as string,
+      a['acknowledged'] as PropertyMergeCounts,
+    )
   },
 
   // `count_property_usage_inner`: per key of the space's vocabulary (its own
@@ -1142,6 +1156,9 @@ export const propertiesHandlers = {
   | 'update_property_def_options'
   | 'delete_property_def'
   | 'count_property_usage'
+  | 'rename_property_key'
+  | 'preview_property_merge'
+  | 'merge_property_key'
   | 'list_projected_agenda'
   | 'notify_task'
   | 'get_reminder_settings'

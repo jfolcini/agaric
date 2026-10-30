@@ -705,8 +705,7 @@ export function BlockPropertyEditor({
               // the target key's existing values contradict the carried
               // type, in the same transaction as the insert. That is the
               // race-free backstop this pre-flight cannot be (two pools, no
-              // shared transaction, and `listPropertyKeys` is capped at 1000
-              // keys). Nothing here changes: the carry is already
+              // shared transaction). Nothing here changes: the carry is already
               // best-effort, so a refusal lands in the `catch` below, the
               // key stays undeclared, and the VALUE carry proceeds — which
               // is exactly the outcome the pre-flight aims for.
@@ -760,8 +759,7 @@ export function BlockPropertyEditor({
                 // pre-flight above already established the row is ours and
                 // unreferenced, which is why this delete is expected to
                 // succeed. It can still be refused if another write claimed
-                // the key in between (or if the key list was truncated past
-                // its 1000-key cap) — and what then survives is a declaration
+                // the key in between — and what then survives is a declaration
                 // over an unused key, which the user can still remove from the
                 // Properties tab. Never the un-exitable state of note 4.
                 if (declaredKey && spaceId) {

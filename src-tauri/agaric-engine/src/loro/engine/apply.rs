@@ -558,6 +558,18 @@ impl LoroEngine {
         key: &str,
         value: &PropertyValue,
     ) -> Result<(), AppError> {
+        self.put_property(block_id, key, value)?;
+        self.doc.commit();
+        Ok(())
+    }
+    /// [`Self::apply_set_property_typed`] without the commit, for an op that
+    /// writes several values in one commit.
+    pub(super) fn put_property(
+        &mut self,
+        block_id: &str,
+        key: &str,
+        value: &PropertyValue,
+    ) -> Result<(), AppError> {
         let props_root: LoroMap = self.doc.get_map(BLOCK_PROPERTIES_ROOT);
         // Re-using an attached container is fine; `insert_container`
         // errors if the slot is already populated, so we read first.
@@ -587,9 +599,7 @@ impl LoroEngine {
             AppError::validation(format!(
                 "loro: set_property block {block_id} key {key}: {e}"
             ))
-        })?;
-        self.doc.commit();
-        Ok(())
+        })
     }
     /// String-valued `SetProperty` shim for legacy callers / parity paths.
     /// `value = None` writes an explicit Null (clear). Prefer
@@ -615,10 +625,18 @@ impl LoroEngine {
     ///   * key absent on this block -> Ok(()) no-op.
     ///   * block has never had any properties -> Ok(()) no-op.
     pub fn apply_delete_property(&mut self, block_id: &str, key: &str) -> Result<(), AppError> {
+        if self.remove_property(block_id, key)? {
+            self.doc.commit();
+        }
+        Ok(())
+    }
+    /// [`Self::apply_delete_property`] without the commit; `false` when there
+    /// was nothing to remove.
+    pub(super) fn remove_property(&mut self, block_id: &str, key: &str) -> Result<bool, AppError> {
         let props_root: LoroMap = self.doc.get_map(BLOCK_PROPERTIES_ROOT);
         let Some(voc) = props_root.get(block_id) else {
             // No props ever written for this block — idempotent no-op.
-            return Ok(());
+            return Ok(false);
         };
         let block_props: LoroMap = voc
             .into_container()
@@ -635,15 +653,14 @@ impl LoroEngine {
             })?;
         if block_props.get(key).is_none() {
             // Key was never set (or already deleted) — idempotent no-op.
-            return Ok(());
+            return Ok(false);
         }
         block_props.delete(key).map_err(|e| {
             AppError::validation(format!(
                 "loro: delete_property block {block_id} key {key}: {e}"
             ))
         })?;
-        self.doc.commit();
-        Ok(())
+        Ok(true)
     }
     /// Mirrors `AddTag` — associates `tag_id` with `block_id` in the
     /// `block_tags` map.  See the `BLOCK_TAGS_ROOT` docstring for the

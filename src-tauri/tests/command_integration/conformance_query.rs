@@ -1524,6 +1524,29 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 next_cursor: None,
             }
         }
+        // ── What a property merge moves and drops (#5841 S2) ──
+        //
+        // One headed row, `property_merge_counts#moved=<n>#dropped=<n>`.
+        "preview_property_merge" => {
+            let counts = preview_property_merge_inner(
+                pool,
+                &arg_req::<String>(args, "spaceId"),
+                arg_req(args, "fromKey"),
+                arg_req(args, "intoKey"),
+            )
+            .await?;
+            let v = serde_json::to_value(counts).expect("serialize PropertyMergeCounts");
+            RawResult {
+                rows: vec![format!(
+                    "property_merge_counts#moved={}#dropped={}",
+                    attr_value("moved", v.get("moved")),
+                    attr_value("dropped", v.get("dropped")),
+                )],
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
         // ── What a cross-space move drops (#5841 S0.6) ──
         //
         // `key#count=<n>` per key, ordered by key; then one key's values,
@@ -2938,7 +2961,11 @@ pub(super) mod reader_delegation_tests {
     // #5841 S0 wired `count_property_usage`: one `query_as!` SELECT over
     // `blocks`, `block_properties` and `property_definitions`, after a
     // `spaces` lookup (`commands/properties.rs`). Writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 62;
+    // #5841 S2 wired `preview_property_merge`: a `query_as!` SELECT over
+    // `property_definitions` per key and one `query!` COUNT over
+    // `block_properties JOIN blocks` (`commands/property_keys.rs`). The merge they describe is
+    // `merge_property_key`, not a read arm. Writer set unchanged.
+    const SWEPT_ARM_COUNT: usize = 63;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

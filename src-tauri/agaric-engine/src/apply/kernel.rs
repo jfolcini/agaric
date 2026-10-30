@@ -589,6 +589,34 @@ async fn apply_page_alias_op(
     }
 }
 
+/// `SetPropertyDef` / `RenamePropertyKey` / `RewriteProperties` (#5841); none
+/// moves the cache counts.
+async fn apply_property_def_op(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    record: &OpRecord,
+    op_type: OpType,
+) -> Result<(), AppError> {
+    let device_id = &record.device_id;
+    match op_type {
+        OpType::SetPropertyDef => {
+            let p: SetPropertyDefPayload = serde_json::from_str(&record.payload)?;
+            apply_set_property_def_via_loro(conn, state, device_id, &p).await
+        }
+        OpType::RenamePropertyKey => {
+            let p: RenamePropertyKeyPayload = serde_json::from_str(&record.payload)?;
+            apply_rename_property_key_via_loro(conn, state, device_id, &p).await
+        }
+        OpType::RewriteProperties => {
+            let p: RewritePropertiesPayload = serde_json::from_str(&record.payload)?;
+            apply_rewrite_properties_via_loro(conn, state, device_id, &p).await
+        }
+        other => Err(AppError::InvalidOperation(format!(
+            "apply_property_def_op: {other:?} is not a definition op"
+        ))),
+    }
+}
+
 /// `AddAttachment` / `DeleteAttachment` / `RenameAttachment` (#5608); none
 /// moves the cache counts.
 async fn apply_attachment_op(
@@ -700,9 +728,8 @@ pub async fn apply_op_tx_with_mode(
         OpType::AddPageAlias | OpType::RemovePageAlias => {
             apply_page_alias_op(conn, state, record, op_type, replay).await?;
         }
-        OpType::SetPropertyDef => {
-            let p: SetPropertyDefPayload = serde_json::from_str(&record.payload)?;
-            apply_set_property_def_via_loro(conn, state, &record.device_id, &p).await?;
+        OpType::SetPropertyDef | OpType::RenamePropertyKey | OpType::RewriteProperties => {
+            apply_property_def_op(conn, state, record, op_type).await?;
         }
     }
     // Maintain `pages_cache.{inbound_link_count,child_block_count}`.

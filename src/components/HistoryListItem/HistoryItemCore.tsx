@@ -64,7 +64,9 @@ function isPlainTextOpType(opType: string): boolean {
     opType === 'rename_attachment' ||
     opType === 'add_page_alias' ||
     opType === 'remove_page_alias' ||
-    opType === 'set_property_def'
+    opType === 'set_property_def' ||
+    opType === 'rename_property_key' ||
+    opType === 'rewrite_properties'
   )
 }
 
@@ -90,7 +92,9 @@ function opBadgeClasses(opType: string): string {
     opType.startsWith('property') ||
     opType === 'set_property' ||
     opType === 'delete_property' ||
-    opType === 'set_property_def'
+    opType === 'set_property_def' ||
+    opType === 'rename_property_key' ||
+    opType === 'rewrite_properties'
   ) {
     return 'bg-op-tag text-op-tag-foreground'
   }

@@ -3,9 +3,9 @@
  *
  * A space selector (definitions are per space, #5841; it starts on the
  * active space), search/filter, create form, list rendering, delete
- * confirmation, edit options for select-type properties, and copying a
- * definition to another space. A built-in definition shows a lock and offers
- * no action.
+ * confirmation, edit options for select-type properties, renaming a key,
+ * merging it into another, and copying a definition to another space. A
+ * built-in definition shows a lock and offers no action.
  */
 
 import { HelpCircle, Lock, Plus, Search, Settings2, Trash2 } from 'lucide-react'
@@ -17,7 +17,9 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { ListViewState } from '@/components/common/ListViewState'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { CopyDefinitionToSpace } from '@/components/properties/CopyDefinitionToSpace'
+import { MergePropertyDefinition } from '@/components/properties/MergePropertyDefinition'
 import { notifyDefinitionWrite } from '@/components/properties/notify-definition-write'
+import { RenamePropertyDefinition } from '@/components/properties/RenamePropertyDefinition'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -478,11 +480,27 @@ export function PropertyDefinitionsList(): React.ReactElement {
                         )}
                       >
                         {spaceId !== null && (
-                          <CopyDefinitionToSpace
-                            definition={def}
-                            fromSpaceId={spaceId}
-                            className="text-muted-foreground"
-                          />
+                          <>
+                            <RenamePropertyDefinition
+                              definition={def}
+                              spaceId={spaceId}
+                              definitions={definitions}
+                              onChanged={reload}
+                              className="text-muted-foreground"
+                            />
+                            <MergePropertyDefinition
+                              definition={def}
+                              spaceId={spaceId}
+                              definitions={definitions}
+                              onChanged={reload}
+                              className="text-muted-foreground"
+                            />
+                            <CopyDefinitionToSpace
+                              definition={def}
+                              fromSpaceId={spaceId}
+                              className="text-muted-foreground"
+                            />
+                          </>
                         )}
                         <IconButton
                           variant="ghost"
