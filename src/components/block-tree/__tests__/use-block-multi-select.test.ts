@@ -62,6 +62,9 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockMultiSe
   }
 }
 
+/** The ref the batch's default stub answers with. */
+const BATCH_REF = { device_id: 'dev1', seq: 1 }
+
 /** The ids one batch IPC was handed. */
 function batchIds(args: Record<string, unknown>): string[] {
   return (args['blockIds'] as string[]) ?? []
@@ -79,7 +82,7 @@ function batchIds(args: Record<string, unknown>): string[] {
  */
 function stubMultiSelectInvoke(overrides: TypedInvokeHandlers = {}): void {
   stubInvoke(mockedInvoke, {
-    set_todo_state_batch: (args) => batchIds(args).length,
+    set_todo_state_batch: (args) => ({ updated: batchIds(args).length, op_refs: [BATCH_REF] }),
     get_batch_properties: () => ({}),
     delete_blocks_by_ids: (args) => ({
       deleted_count: batchIds(args).length,
@@ -178,7 +181,7 @@ describe('useBlockMultiSelect handleBatchSetTodo', () => {
     // Backend returns affected_count < ids.length when some ids are
     // missing or already-deleted. The hook surfaces that as a partial
     // failure so the user sees an honest summary.
-    stubMultiSelectInvoke({ set_todo_state_batch: () => 1 }) // 1 of 2
+    stubMultiSelectInvoke({ set_todo_state_batch: () => ({ updated: 1, op_refs: [] }) }) // 1 of 2
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
 
@@ -582,7 +585,7 @@ describe('useBlockMultiSelect undo notifications', () => {
       await result.current.handleBatchSetTodo('TODO')
     })
 
-    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
+    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1', [BATCH_REF])
   })
 
   it('does not call onNewAction when rootParentId is null', async () => {
@@ -670,7 +673,7 @@ describe('useBlockMultiSelect reentrancy guard (#)', () => {
 
     // Release the first call and await its completion.
     await act(async () => {
-      first.resolve(1)
+      first.resolve({ updated: 1, op_refs: [] })
       await firstDone
     })
   })
@@ -762,7 +765,7 @@ describe('useBlockMultiSelect callback stability (#)', () => {
     expect(mockedInvoke).toHaveBeenCalledTimes(1)
 
     await act(async () => {
-      first.resolve(1)
+      first.resolve({ updated: 1, op_refs: [] })
       await firstDone
     })
 

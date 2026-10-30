@@ -2,7 +2,7 @@
  * An edit that changes a block's kind is one undo step with the list style or
  * task state it takes off (#6156): each path records ONE entry on the page's
  * undo stack holding the op refs of every write the action made, the task
- * state's clear (`delete_property`) among them.
+ * state's set or clear (`set_todo_state_batch`) among them.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -11,8 +11,9 @@ import type { TFunction } from 'i18next'
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock, makeBlockRow } from '@/__tests__/fixtures'
+import { makeBlock, makeBlockRow, makePropertyRow } from '@/__tests__/fixtures'
 import { stubInvoke, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
+import { setTodoStateOnBlocks } from '@/components/block-tree/use-block-multi-select'
 import { makeSyntheticCtx } from '@/components/block-tree/use-block-slash-commands/__tests__/test-utils'
 import { useSlashCommandStructural } from '@/components/block-tree/use-block-slash-commands/useSlashCommandStructural'
 import { useBlockTreeEventListeners } from '@/components/block-tree/use-block-tree-event-listeners'
@@ -34,6 +35,7 @@ const t = ((key: string) => key) as unknown as TFunction
 const EDIT: OpRef = { device_id: 'dev1', seq: 1 }
 const SET: OpRef = { device_id: 'dev1', seq: 2 }
 const DELETE: OpRef = { device_id: 'dev1', seq: 3 }
+const BATCH: OpRef = { device_id: 'dev1', seq: 4 }
 
 /** Every command these paths reach, each answering with the op refs it appended. */
 function stub(overrides: TypedInvokeHandlers = {}): void {
@@ -50,6 +52,10 @@ function stub(overrides: TypedInvokeHandlers = {}): void {
       op_refs: [DELETE],
       block_id: args['blockId'] as string,
       key: args['key'] as string,
+    }),
+    set_todo_state_batch: (args) => ({
+      op_refs: [BATCH],
+      updated: (args['blockIds'] as string[]).length,
     }),
     ...overrides,
   })
@@ -109,7 +115,7 @@ describe('clearTaskStates', () => {
 
     await clearTaskStates(pageStore, ['BLOCK_1'])
 
-    expect(entries()).toEqual([[SET, DELETE]])
+    expect(entries()).toEqual([[SET, BATCH]])
   })
 
   it('records nothing when no block is a task, or when the write is refused', async () => {
@@ -117,12 +123,33 @@ describe('clearTaskStates', () => {
     pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1' }), makeBlock({ id: 'BLOCK_2' })] })
     setTodo(pageStore, 'TODO', 'BLOCK_2')
     useUndoStore.getState().onNewAction('PAGE_1', [SET])
-    stub({ delete_property: () => Promise.reject(new Error('refused')) })
+    stub({ set_todo_state_batch: () => Promise.reject(new Error('refused')) })
 
     await clearTaskStates(pageStore, ['BLOCK_1'])
     await clearTaskStates(pageStore, ['BLOCK_2'])
 
     expect(entries()).toEqual([[SET]])
+  })
+})
+
+describe('setTodoStateOnBlocks', () => {
+  it('bullets made tasks: the batch and the styles it clears are one entry', async () => {
+    const pageStore = createPageBlockStore('PAGE_1')
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1' }), makeBlock({ id: 'BLOCK_2' })] })
+    const bullet = [makePropertyRow({ key: LIST_STYLE_KEY, value_text: 'bullet' })]
+    const styleClear = (id: string): OpRef => ({ device_id: 'dev1', seq: id === 'BLOCK_1' ? 5 : 6 })
+    stub({
+      get_batch_properties: () => ({ BLOCK_1: bullet, BLOCK_2: bullet }),
+      delete_property: (args) => ({
+        op_refs: [styleClear(args['blockId'] as string)],
+        block_id: args['blockId'] as string,
+        key: args['key'] as string,
+      }),
+    })
+
+    await setTodoStateOnBlocks(pageStore, 'PAGE_1', ['BLOCK_1', 'BLOCK_2'], 'TODO', t)
+
+    expect(entries()).toEqual([[BATCH, styleClear('BLOCK_1'), styleClear('BLOCK_2')]])
   })
 })
 
@@ -165,7 +192,7 @@ describe('slash commands', () => {
     const task = makeSyntheticCtx()
     setTodo(task.pageStore, 'TODO')
     await structural().exact['bullet-list']?.(task.ctx, { id: 'bullet-list', label: 'Bullet' })
-    expect(entries()).toEqual([[SET, DELETE]])
+    expect(entries()).toEqual([[SET, BATCH]])
   })
 })
 
@@ -188,7 +215,7 @@ describe('a typed list marker', () => {
     await waitFor(() =>
       expect(pageStore.getState().blocksById.get('BLOCK_2')?.todo_state).toBe(null),
     )
-    expect(entries()).toEqual([[SET, DELETE]])
+    expect(entries()).toEqual([[SET, BATCH]])
   })
 })
 

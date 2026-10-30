@@ -742,6 +742,7 @@ export const propertiesHandlers = {
       throw validationRejection('block_ids list cannot be empty')
     }
     const newState = (a['state'] as string | null) ?? null
+    const start = opLog.length
     let updated = 0
     for (const id of inputIds) {
       const b = blocks.get(id)
@@ -759,7 +760,11 @@ export const propertiesHandlers = {
       writeTaskStampTransitions(id, fromState, newState)
       updated++
     }
-    return updated
+    // Every op appended, as `capture_op_refs` takes them: the stamps' among them (#6156).
+    return {
+      updated,
+      op_refs: opLog.slice(start).map(({ device_id, seq }) => ({ device_id, seq })),
+    }
   },
 
   // Batch set/clear an ALLOWLISTED reserved property across N blocks in one

@@ -2295,6 +2295,9 @@ pub async fn set_todo_state(
 /// so existing per-block listeners (e.g. agenda recompute, property
 /// drawer) keep firing without protocol changes. Failed-emit
 /// Breadcrumbs follow the established log-on-error pattern.
+///
+/// #6156: the reply carries the refs of every op the batch appended, the
+/// stamps' among them, so the frontend undoes it by those refs.
 #[tauri::command]
 #[specta::specta]
 pub async fn set_todo_state_batch(
@@ -2302,15 +2305,19 @@ pub async fn set_todo_state_batch(
     ctx: State<'_, WriteCtx>,
     block_ids: Vec<BlockId>,
     state: Option<String>,
-) -> Result<i64, AppError> {
+) -> Result<WithOps<TodoStateBatch>, AppError> {
     let block_ids_for_emit = block_ids.clone();
-    let updated = set_todo_state_batch_inner(
-        ctx.pool(),
-        ctx.device_id(),
-        ctx.materializer(),
-        block_ids,
-        state,
-    )
+    let set = capture_op_refs(async {
+        set_todo_state_batch_inner(
+            ctx.pool(),
+            ctx.device_id(),
+            ctx.materializer(),
+            block_ids,
+            state,
+        )
+        .await
+        .map(|updated| TodoStateBatch { updated })
+    })
     .await
     .map_err(sanitize_internal_error)?;
     // Emit per-block change events so the existing per-block listeners
@@ -2321,7 +2328,7 @@ pub async fn set_todo_state_batch(
     for id in block_ids_for_emit {
         emit_property_changed_event(&app, id.into_string(), vec!["todo_state".to_string()]);
     }
-    Ok(updated)
+    Ok(set)
 }
 
 /// Tauri command: batch-set one allowlisted property on multiple blocks.

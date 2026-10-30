@@ -322,8 +322,11 @@ export const commands = {
 	 *  so existing per-block listeners (e.g. agenda recompute, property
 	 *  drawer) keep firing without protocol changes. Failed-emit
 	 *  Breadcrumbs follow the established log-on-error pattern.
+	 * 
+	 *  #6156: the reply carries the refs of every op the batch appended, the
+	 *  stamps' among them, so the frontend undoes it by those refs.
 	 */
-	setTodoStateBatch: (blockIds: BlockId[], state: string | null) => typedError<number, AppError>(__TAURI_INVOKE("set_todo_state_batch", { blockIds, state })),
+	setTodoStateBatch: (blockIds: BlockId[], state: string | null) => typedError<WithOps<TodoStateBatch>, AppError>(__TAURI_INVOKE("set_todo_state_batch", { blockIds, state })),
 	/**
 	 *  Tauri command: batch-set one allowlisted property on multiple blocks.
 	 * 
@@ -4651,6 +4654,15 @@ export type TaskNotification = {
 	 *  Optional — a free-form notification need not reference a block.
 	 */
 	blockId?: string | null,
+};
+
+/**
+ *  Reply of [`set_todo_state_batch`]; same envelope as [`CreatedBlocks`], for
+ *  a count (#6156).
+ */
+export type TodoStateBatch = {
+	/**  How many live blocks it set; a missing or deleted id is skipped. */
+	updated: number,
 };
 
 /**  Result of an undo or redo operation. */

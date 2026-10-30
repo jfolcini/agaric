@@ -496,7 +496,8 @@ const BLOCK_TREE_DEFAULTS: TypedInvokeHandlers = {
   delete_property: (args) =>
     withOps({ block_id: argBlockId(args), key: String((args['key'] as string | undefined) ?? '') }),
   set_todo_state: (args) => makeBlockRow({ id: argBlockId(args) }),
-  set_todo_state_batch: (args) => (args['blockIds'] as string[] | undefined)?.length ?? 0,
+  set_todo_state_batch: (args) =>
+    withOps({ updated: (args['blockIds'] as string[] | undefined)?.length ?? 0 }),
   set_priority: (args) => makeBlockRow({ id: argBlockId(args) }),
   set_due_date: (args) => makeBlockRow({ id: argBlockId(args) }),
   set_scheduled_date: (args) => makeBlockRow({ id: argBlockId(args) }),
@@ -6843,7 +6844,7 @@ describe('BlockTree batch toolbar (#657)', () => {
       selectedBlockIds: ['A', 'B'],
     })
 
-    stubBlockTree({ set_todo_state_batch: () => 2 })
+    stubBlockTree({ set_todo_state_batch: () => withOps({ updated: 2 }) })
 
     renderBlockTree()
     await screen.findByTestId('sortable-block-A')
@@ -6912,7 +6913,7 @@ describe('BlockTree batch toolbar (#657)', () => {
     expect(screen.getByRole('button', { name: /Delete/i })).toBeDisabled()
 
     // Resolve the pending invoke call (returns the affected count) to clean up.
-    pendingBatch.resolve(2)
+    pendingBatch.resolve(withOps({ updated: 2 }))
   })
 })
 

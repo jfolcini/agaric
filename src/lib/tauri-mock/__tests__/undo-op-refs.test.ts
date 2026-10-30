@@ -218,6 +218,30 @@ describe('#2468 — op_refs capture on migrated mutation handlers', () => {
     expect(stamps()).toEqual(held)
   })
 
+  it('#6156 — set_todo_state_batch returns the refs of every op it appends, the stamps’ among them, and undoing them takes the set or the clear back', () => {
+    const stamp = () => dispatch('get_property', { blockId: A, key: 'created_at' })
+    const set = dispatch('set_todo_state_batch', {
+      blockIds: [A],
+      state: 'TODO',
+    }) as WithOpsResp
+    expect(set['updated']).toBe(1)
+    expect(set.op_refs, 'the state’s set, then the `created_at` stamp').toEqual(
+      opLog.slice(-2).map(({ device_id, seq }) => ({ device_id, seq })),
+    )
+    const held = stamp()
+    expect(held, 'sanity: the set stamped the block').not.toBeNull()
+
+    const clear = dispatch('set_todo_state_batch', { blockIds: [A], state: null }) as WithOpsResp
+    expect(clear.op_refs, 'the state’s clear, then the stamp’s').toHaveLength(2)
+    dispatch('undo_ops', { ops: clear.op_refs.toReversed() })
+    expect(rowOf(A)['todo_state']).toBe('TODO')
+    expect(stamp()).toEqual(held)
+
+    dispatch('undo_ops', { ops: set.op_refs.toReversed() })
+    expect(rowOf(A)['todo_state']).toBeNull()
+    expect(stamp()).toBeNull()
+  })
+
   it('#5057 — undoing a reserved-key delete_property is accepted, as on the backend', () => {
     // The delete records the `prior` it removes (#6156), which an undo judges it reversible by.
     dispatch('set_property', {

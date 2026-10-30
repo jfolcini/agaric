@@ -3,6 +3,7 @@ import { useCallback, useRef, useState } from 'react'
 import type { StoreApi } from 'zustand'
 
 import { unwrap } from '@/lib/app-error'
+import type { OpRef } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { clearListStyles } from '@/lib/list-style'
@@ -63,7 +64,9 @@ export interface UseBlockMultiSelectReturn {
  * then say how many it set or failed to. Resolves whether it set every one.
  * A task is a list kind (#5691 D3): once every one is set, the blocks it made
  * tasks lose their list style through `clearLists`, page mode's own in page
- * mode; a refused write clears none.
+ * mode; a refused write clears none. The undo entry holds the refs of both
+ * writes (#6156), so its undo takes back these and no later write; page mode's
+ * clears resolve none, as each joins the entry by its own.
  */
 export async function setTodoStateOnBlocks(
   pageStore: StoreApi<PageBlockState>,
@@ -71,7 +74,7 @@ export async function setTodoStateOnBlocks(
   ids: string[],
   state: string | null,
   t: TFunction,
-  clearLists: (ids: string[]) => unknown = clearListStyles,
+  clearLists: (ids: string[]) => Promise<OpRef[]> | OpRef[] = clearListStyles,
 ): Promise<boolean> {
   const idSet = new Set(ids)
   const { blocksById } = pageStore.getState()
@@ -89,8 +92,11 @@ export async function setTodoStateOnBlocks(
   // `blocks.todo_state` writes in a single IMMEDIATE tx.
   let successCount = 0
   let failCount = 0
+  let refs: OpRef[] = []
   try {
-    successCount = unwrap(await commands.setTodoStateBatch(ids, state))
+    const set = unwrap(await commands.setTodoStateBatch(ids, state))
+    successCount = set.updated
+    refs = set.op_refs
     // Treat any id we asked for that the backend silently
     // skipped (missing / already-deleted) as a "fail" for the
     // toast counter so the user sees an honest summary.
@@ -98,15 +104,14 @@ export async function setTodoStateOnBlocks(
   } catch {
     failCount = ids.length
   }
-  if (successCount > 0 && rootParentId) {
-    useUndoStore.getState().onNewAction(rootParentId)
-  }
   if (failCount > 0) {
+    if (rootParentId) useUndoStore.getState().onNewAction(rootParentId, refs)
     notify.error(t('blockTree.updateFailedMessage', { failCount, totalCount: ids.length }))
     return false
   }
   notify.success(t('blockTree.setStateMessage', { successCount, state: state ?? 'none' }))
-  if (madeTasks.length > 0) await clearLists(madeTasks)
+  if (madeTasks.length > 0) refs = [...refs, ...(await clearLists(madeTasks))]
+  if (rootParentId) useUndoStore.getState().onNewAction(rootParentId, refs)
   return true
 }
 
