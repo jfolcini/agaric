@@ -35,7 +35,7 @@ import { PageBlock, PageDocument } from '@/editor/page-mode/page-document'
 import { PageDrag } from '@/editor/page-mode/page-drag'
 import { PageKeys } from '@/editor/page-mode/page-keys'
 import { type PageListSource, pageListKeys } from '@/editor/page-mode/page-lists'
-import { pagePaste } from '@/editor/page-mode/page-paste'
+import { PagePaste } from '@/editor/page-mode/page-paste'
 import { PageRenderedKeys } from '@/editor/page-mode/page-rendered'
 import { type PageTaskSource, pageTasks } from '@/editor/page-mode/page-tasks'
 import type { PickerItem } from '@/editor/SuggestionList'
@@ -86,7 +86,7 @@ export function pageModeExtensions(options: PageModeExtensionOptions): Extension
     EmojiPicker,
     // Ahead of `PageKeys`' Tab: the hint takes Tab only while it shows.
     QueryHint.extend({ priority: 1001 }),
-    pagePaste(options.lists),
+    PagePaste.configure({ lists: options.lists }),
     PageBlockIds.configure(options.mintId === undefined ? {} : { mintId: options.mintId }),
     PageKeys.configure({ onNavigate: options.onNavigate }),
     PageBlockKeys,

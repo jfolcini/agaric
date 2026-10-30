@@ -1,7 +1,9 @@
 import {
   expect,
   focusBlock,
+  ipc,
   openPage,
+  reopenPage,
   saveBlock,
   selectEditorRange,
   test,
@@ -63,6 +65,46 @@ test.describe('Selection bubble menu (#924) @editor', () => {
       .first()
       .locator('[data-testid="block-static"]')
     await expect(staticBlock.locator('strong')).toHaveText('world')
+  })
+
+  test('Bold marks the selected word of a bulleted block, past its list marker', async ({
+    page,
+  }) => {
+    const blockId = await page
+      .locator('[data-testid="block-static"]')
+      .first()
+      .getAttribute('data-block-id')
+    if (blockId === null) throw new Error('the first block has no id')
+    await ipc(page, 'set_property', {
+      blockId,
+      key: 'listStyle',
+      value: {
+        value_text: 'bullet',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    await reopenPage(page, 'Getting Started')
+
+    const editor = await focusBlock(page)
+    await expect(editor.locator('.list-marker')).toHaveCount(1)
+    await page.keyboard.press('Control+a')
+    await page.keyboard.type('hello world')
+    await selectEditorRange(page, 6, 11)
+    await page
+      .locator('[data-testid="selection-bubble-menu"]')
+      .getByRole('button', { name: 'Bold' })
+      .click()
+    await expect(editor.locator('strong')).toHaveText('world')
+
+    await editor.click()
+    await saveBlock(page)
+    await reopenPage(page, 'Getting Started')
+    expect((await ipc<{ content: string }>(page, 'get_block', { blockId })).content).toBe(
+      'hello **world**',
+    )
   })
 
   test('bubble menu does NOT show when the selection is empty (caret only)', async ({ page }) => {

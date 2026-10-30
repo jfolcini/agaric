@@ -166,8 +166,8 @@ function pasteWithStyles(
   })
 }
 
-// Configured only through `pagePaste`.
-const PagePaste = Extension.create<{ lists: PageListSource | undefined }>({
+/** Page mode's paste of Markdown text, which gives a list item `lists`' style; none gives none. */
+export const PagePaste = Extension.create<{ lists: PageListSource | undefined }>({
   name: 'pagePaste',
   // Ahead of the id rules (`page-block-ids.ts`), whose paste lands the blocks with no style.
   priority: 101,
@@ -206,8 +206,3 @@ const PagePaste = Extension.create<{ lists: PageListSource | undefined }>({
     ]
   },
 })
-
-/** Page mode's paste of Markdown text, which gives a list item `lists`' style; none gives none. */
-export function pagePaste(lists: PageListSource | undefined) {
-  return PagePaste.configure({ lists })
-}
