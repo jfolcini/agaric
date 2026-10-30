@@ -412,7 +412,8 @@ fn prepare_chain_b5(payloads: Vec<OpPayload>) -> Vec<OpPayload> {
 /// #4679: its name is a `date/YYYY-MM-DD` tag — the exact shape
 /// `agaric_store::cache::agenda`'s tag arm selects (`LIKE 'date/%'`, length
 /// 15) — so a generated tag edge is an `agenda_cache` source, not just a
-/// `block_tags` row. Nothing here audits `agenda_cache` yet (#3345 next).
+/// `block_tags` row. Nothing here audits `agenda_cache`; `reconcile_all`
+/// does (#3345).
 async fn seed_tag(pool: &SqlitePool) {
     // dynamic-sql: test-only harness seed/readback (not a production query path)
     sqlx::query(

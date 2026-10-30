@@ -2281,7 +2281,7 @@ const ENGINE_PAGE_ALIASES_OWNER: &str = "the alias writers in agaric-engine: \
      (sync import, engine-first recovery; it gives a contested alias to the lower page id), \
      the purge cascades, and repair::page_aliases, the boot backfill of rows written before \
      #5387. Removing or purging a contested alias's holder does not hand the alias to the \
-     next claimant, which reads here as a missing row until an engine-first recovery \
+     next claimant (#6229), which reads here as a missing row until an engine-first recovery \
      projects it";
 
 /// The blocks a doc holds and `blocks` has a row for, each with that doc's
@@ -3409,9 +3409,11 @@ const SPACES_MISSING_OWNER: &str = "the spaces_register_is_space trigger (migrat
      this space";
 
 const SPACES_EXTRA_OWNER: &str = "a spaces row leaves only with its block's purge, by FK \
-     cascade (migration 0089), so either a writer inserted it without the is_space = 'true' \
-     row the trigger keys on, or a DeleteProperty(is_space) removed the flag and the registry \
-     kept the row, as 0089 designs it: every registry reader still treats the block as a space";
+     cascade (migration 0089), and no path the app offers deletes is_space (the property UI \
+     hides it as internal and non-deletable, the MCP space guard refuses the space block, which \
+     is in no space, and the Markdown buffer leaves it out), so a writer inserted the row \
+     without the is_space = 'true' row the trigger keys on, or a DeleteProperty(is_space) got \
+     past those: the registry readers and list_spaces now disagree on whether this is a space";
 
 /// Artefact 17 — the `spaces` registry against the blocks carrying
 /// `is_space = 'true'`, both directions. A soft-deleted space keeps its row,

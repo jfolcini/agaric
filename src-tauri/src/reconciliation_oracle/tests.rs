@@ -4600,8 +4600,7 @@ async fn eq_fixture() -> (sqlx::SqlitePool, TempDir) {
         .execute(&pool)
         .await
         .expect("zero P's child count");
-    // A registry row with no `is_space` row, as a `DeleteProperty(is_space)`
-    // leaves it (#6207).
+    // A registry row with no `is_space` row (#6207).
     // dynamic-sql: test-only fault injection.
     sqlx::query("INSERT INTO spaces (id) VALUES (?)")
         .bind(EQ_PAGE_Q)
@@ -4688,7 +4687,7 @@ async fn reconcile_all_reports_every_artefact_from_one_unfiltered_dump_4901() {
     );
     assert_eq!(
         got, want,
-        "the sweep must report exactly these twenty, in this order"
+        "the sweep must report exactly these, in this order"
     );
 
     let ownership = &divergences[0];
