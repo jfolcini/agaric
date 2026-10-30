@@ -1627,7 +1627,9 @@ export const blocksHandlers = {
         to_text: content,
         from_text: anchor['content'],
       })
+      const linked = linkedTargets(anchor)
       anchor['content'] = content
+      indexLinks(anchor, linked)
       opRefs.push({ device_id: op.device_id, seq: op.seq })
       // At the start of the block the anchor takes the first block's list
       // style and state (`splice_into_anchor`); after text `joinSplice` wrote

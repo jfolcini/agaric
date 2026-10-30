@@ -18,7 +18,7 @@
       },
       {
         "block_type": "content",
-        "content": "anchor",
+        "content": "anspliced [[000000000000000000000000S3]]chor",
         "deleted_at": null,
         "due_date": null,
         "id": "B2",
@@ -109,7 +109,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 6,
+      "count": 7,
       "ops": [
         {
           "op_type": "delete_block"
@@ -119,6 +119,9 @@
         },
         {
           "op_type": "create_block"
+        },
+        {
+          "op_type": "edit_block"
         },
         {
           "op_type": "edit_block"
@@ -155,6 +158,14 @@
       "name": "paste",
       "returns": [
         "B7#block_type=content#content=pasted [[000000000000000000000000S3]]#parent_id=B1#position=2"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "paste_splice",
+      "returns": [
+        "B2#block_type=content#content=anspliced [[000000000000000000000000S3]]chor#parent_id=B1#position=1"
       ]
     },
     {
@@ -218,6 +229,22 @@
       },
       "command": "paste_blocks",
       "name": "paste",
+      "via": "command"
+    },
+    {
+      "args": {
+        "anchorBlockId": "S2",
+        "input": {
+          "kind": "text",
+          "text": "spliced [[000000000000000000000000S3]]"
+        },
+        "splice": {
+          "after": "chor",
+          "before": "an"
+        }
+      },
+      "command": "paste_blocks",
+      "name": "paste_splice",
       "via": "command"
     },
     {
