@@ -17,6 +17,7 @@
  * drivers.
  */
 
+import type { McpAgent } from '@/lib/bindings'
 import {
   type CommandOpStep,
   type CommandRecord,
@@ -45,6 +46,7 @@ import {
   blockTags,
   linkMetadata,
   makeBlock,
+  mcpAgents,
   opLog,
   pageAliases,
   peerRefs,
@@ -103,6 +105,12 @@ export interface Fixture {
      * inserts the same `(page_id, alias)` pairs into the `page_aliases` table.
      */
     page_aliases?: Array<{ page_id: string; alias: string }>
+    /**
+     * #5667 — MCP agent rows, copied verbatim into the mock's `mcpAgents`
+     * map; the Rust twin inserts the same columns into `mcp_agents`. A seeded
+     * id is how `revoke_mcp_agent` names the same agent on both stacks.
+     */
+    mcp_agents?: McpAgent[]
   }
   ops: CommandOpStep[]
   expected: Record<string, unknown> | null
@@ -255,6 +263,9 @@ export function loadSeed(fixture: Fixture): void {
     // and `attrValue` renders an absent one exactly as it renders an explicit
     // null, so a third copy of the peer column list would buy nothing.
     peerRefs.set(p['peer_id'] as string, { ...p })
+  }
+  for (const a of fixture.seed.mcp_agents ?? []) {
+    mcpAgents.set(a.id, { ...a })
   }
   for (const r of fixture.seed.page_aliases ?? []) {
     const pageId = seedLabelToId(r.page_id)
@@ -433,10 +444,12 @@ export function expandOpArgs(
       return copy
     })
   }
-  if (Array.isArray(out['blockIds'])) {
-    out['blockIds'] = out['blockIds'].map((label) =>
-      typeof label === 'string' ? resolveOpArgId(label, createdIds) : label,
-    )
+  for (const key of ['blockIds', 'spaceIds']) {
+    if (Array.isArray(out[key])) {
+      out[key] = out[key].map((label) =>
+        typeof label === 'string' ? resolveOpArgId(label, createdIds) : label,
+      )
+    }
   }
   // #5057 — an `OpRef` arg is an `On` label, never a literal.
   if (typeof out['opRef'] === 'string') out['opRef'] = resolveOpRefLabel(out['opRef'])
