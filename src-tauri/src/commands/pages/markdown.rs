@@ -6850,7 +6850,8 @@ fn take_or_clone_bytes(
 
 /// The vault-file index one attachment ref resolves to. A ref matching nothing
 /// is left as-is, and one matching several files by basename uses the first —
-/// both warn rather than failing the already-durable import.
+/// both warn rather than failing the already-durable import, except a link
+/// matching nothing, which may point anywhere.
 fn match_ref_to_vault_file(
     att: &import::AttachmentRef,
     note_dir: &str,
@@ -6859,6 +6860,9 @@ fn match_ref_to_vault_file(
 ) -> Option<usize> {
     let Some((idx, ambiguous)) = import::match_vault_file(&att.original_ref, note_dir, vault_files)
     else {
+        if att.is_link() {
+            return None;
+        }
         warnings.push(format!(
             "referenced attachment '{}' was not found among the imported \
              vault files; left as-is",
@@ -6876,8 +6880,24 @@ fn match_ref_to_vault_file(
     Some(idx)
 }
 
+/// The token a ref to the ingested attachment `id` is rewritten to: an image
+/// `![alt](attachment:<id>)`, or any other file as the link
+/// `[label](attachment:<id>)`, labelled by the ref's label or alt, else the
+/// file's name. A PDF written as an image renders broken.
+fn attachment_token(att: &import::AttachmentRef, id: &str, filename: &str, mime: &str) -> String {
+    if mime.starts_with("image/") {
+        return format!("![{}](attachment:{id})", att.alt);
+    }
+    let label = if att.alt.is_empty() {
+        filename
+    } else {
+        &att.alt
+    };
+    format!("[{}](attachment:{id})", attachment_link_label(label))
+}
+
 /// Ingest every attachment ref detected in ONE content block, returning the
-/// `(ref, attachment id)` pairs its content rewrite needs.
+/// `(ref, attachment token)` pairs its content rewrite needs.
 ///
 /// ROW OWNERSHIP: a FRESH attachment row per owning block (matching the editor's
 /// `add_attachment_with_bytes_inner`; identical bytes may still share a
@@ -6901,15 +6921,15 @@ async fn ingest_block_attachments(
     block_id: &str,
     refs: &[import::AttachmentRef],
 ) -> Vec<(import::AttachmentRef, String)> {
-    // Per-BLOCK cache: original_ref → resolved `attachment:<id>` for
+    // Per-BLOCK cache: original_ref → the ingested `(id, filename, mime)` for
     // refs already ingested for THIS block. NOT carried across blocks.
-    let mut block_ingested: HashMap<String, String> = HashMap::new();
+    let mut block_ingested: HashMap<String, (String, String, String)> = HashMap::new();
     let mut block_rewrites: Vec<(import::AttachmentRef, String)> = Vec::new();
 
     for att in refs {
         // Already ingested for this block (same original ref string).
-        if let Some(attachment_id) = block_ingested.get(&att.original_ref) {
-            block_rewrites.push((att.clone(), attachment_id.clone()));
+        if let Some((id, filename, mime)) = block_ingested.get(&att.original_ref) {
+            block_rewrites.push((att.clone(), attachment_token(att, id, filename, mime)));
             continue;
         }
 
@@ -6950,8 +6970,8 @@ async fn ingest_block_attachments(
             ctx.materializer,
             ctx.app_data_dir,
             BlockId::from_trusted(block_id),
-            filename,
-            mime_type,
+            filename.clone(),
+            mime_type.clone(),
             bytes,
         )
         .await
@@ -6971,16 +6991,20 @@ async fn ingest_block_attachments(
             }
         };
 
-        block_ingested.insert(att.original_ref.clone(), attachment_id.clone());
-        block_rewrites.push((att.clone(), attachment_id));
+        let token = attachment_token(att, &attachment_id, &filename, &mime_type);
+        block_ingested.insert(
+            att.original_ref.clone(),
+            (attachment_id, filename, mime_type),
+        );
+        block_rewrites.push((att.clone(), token));
     }
     block_rewrites
 }
 
-/// Rewrite one block's content: each matched ref's full token (`![[file]]` /
-/// `![alt](path)`) → canonical `![alt](attachment:<id>)`, preserving the
-/// original alt text. The CURRENT content is fetched first (it is the durable,
-/// tag/link-rewritten version) and tokens are replaced in it.
+/// Rewrite one block's content: each matched ref's full token (`![[file]]`,
+/// `![alt](path)`, `[label](path)`) → its canonical `attachment:<id>` token
+/// ([`attachment_token`]). The CURRENT content is fetched first (it is the
+/// durable, tag/link-rewritten version) and tokens are replaced in it.
 ///
 /// A transient DB read error, a vanished block, or a failed edit must NOT abort
 /// the (already durable) import — each warns and skips instead.
@@ -7015,9 +7039,8 @@ async fn rewrite_block_attachment_refs(
         // Block vanished (concurrent delete) — nothing to rewrite.
         return;
     };
-    for (att, attachment_id) in block_rewrites {
-        let canonical = format!("![{}](attachment:{})", att.alt, attachment_id);
-        new_content = new_content.replacen(&att.full_match, &canonical, 1);
+    for (att, token) in block_rewrites {
+        new_content = new_content.replacen(&att.full_match, token, 1);
     }
 
     // Edit via the normal in-tx content-update path (opens its own

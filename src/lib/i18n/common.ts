@@ -394,12 +394,6 @@ export const common: Record<string, string> = {
   // unreadable metadata), surfaced as a soft warning in the result panel.
   'data.importJexSkipped_one': 'Skipped {{count}} unreadable or encrypted item.',
   'data.importJexSkipped_other': 'Skipped {{count}} unreadable or encrypted items.',
-  // A Joplin resource link (`[name](:/id)`, no `!`) stays a link, whatever the
-  // file: the importer brings in only embedded images.
-  'data.importJexFileLinks_one':
-    'Did not import {{count}} linked, not embedded, file; its link stays in the note.',
-  'data.importJexFileLinks_other':
-    'Did not import {{count}} linked, not embedded, files; their links stay in the notes.',
   // A folder pick's file that is neither a note nor an image or PDF a note may
   // embed (#6032).
   'data.importFolderSkipped_one': 'Skipped {{count}} file that is not a note, an image or a PDF.',

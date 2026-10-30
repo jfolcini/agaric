@@ -251,6 +251,20 @@ describe('collectVaultFiles', () => {
       ).toEqual(['my image.png'])
     }
   })
+
+  it('#6032 — ships a file a note links to, and nothing for a link to a note', async () => {
+    const pdf = folderFile(
+      [new Uint8Array([5])],
+      'paper.pdf',
+      'V/docs/paper.pdf',
+      'application/pdf',
+    )
+    const other = folderFile(['- o'], 'other.md', 'V/docs/other.md')
+    const index = indexVaultFiles([pdf, other])
+
+    const collected = await collectVaultFiles('[paper](paper.pdf) [o](other.md)', 'docs', index)
+    expect(collected?.map((f) => [f.path, f.bytes])).toEqual([['docs/paper.pdf', [5]]])
+  })
 })
 
 describe('mdFilesToUnits', () => {

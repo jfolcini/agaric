@@ -11,8 +11,9 @@
  *
  * {@link scanAttachmentRefs} is that pre-scan. It is a PURE function and the
  * frontend mirror of the Rust detector in `src-tauri/agaric-engine/src/import.rs`
- * (`detect_attachment_refs`, `is_skippable_attachment_ref`, `image_destination`,
- * `percent_decode`, the `OBSIDIAN_EMBED_RE` / `MARKDOWN_IMAGE_OPEN_RE` regexes,
+ * (`detect_attachment_refs`, `is_skippable_attachment_ref`, `links_a_file`,
+ * `link_destination`, `percent_decode`, the `OBSIDIAN_EMBED_RE` /
+ * `MARKDOWN_LINK_OPEN_RE` regexes,
  * the fenced-code-block `is_code` skipping in `parse_logseq_markdown`, and
  * `inline_code_spans`).
  *
@@ -33,23 +34,25 @@
 const OBSIDIAN_EMBED_RE = /!\[\[([^\]|\n]+?)(?:\|[^\]\n]*)?\]\]/g
 
 /**
- * The opening `![alt](` of a standard markdown image — group 1 is the alt text
- * (may be empty). {@link imageDestination} reads the rest of the token.
- * Mirrors `MARKDOWN_IMAGE_OPEN_RE`.
+ * The opening of a standard markdown image `![alt](` — group 1 is the alt text
+ * — or of a link `[label](` — group 2 is the label, which holds no bracket, so
+ * the image in `[![a](x.png)](doc.pdf)` is read and not the link.
+ * {@link linkDestination} reads the rest of the token. Mirrors
+ * `MARKDOWN_LINK_OPEN_RE`.
  */
-const MARKDOWN_IMAGE_OPEN_RE = /!\[([^\]\n]*)\]\(/g
+const MARKDOWN_LINK_OPEN_RE = /!\[([^\]\n]*)\]\(|\[([^[\]\n]*)\]\(/g
 
-/** An image's `<…>` destination, after any spaces. Mirrors `ANGLE_DESTINATION_RE`. */
+/** A link's `<…>` destination, after any spaces. Mirrors `ANGLE_DESTINATION_RE`. */
 const ANGLE_DESTINATION_RE = /[^\S\n]*<([^<>\n]*)>/y
 
 /** Spaces before a bare destination. */
 const SPACES_RE = /[^\S\n]*/y
 
-/** An image's title: spaces, then `"…"`, `'…'` or `(…)`. Mirrors `IMAGE_TITLE_RE`. */
-const IMAGE_TITLE_RE = /[^\S\n]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\))/y
+/** A link's title: spaces, then `"…"`, `'…'` or `(…)`. Mirrors `LINK_TITLE_RE`. */
+const LINK_TITLE_RE = /[^\S\n]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\))/y
 
-/** An image's closing `)`, after any spaces. Mirrors `IMAGE_CLOSE_RE`. */
-const IMAGE_CLOSE_RE = /[^\S\n]*\)/y
+/** A link's closing `)`, after any spaces. Mirrors `LINK_CLOSE_RE`. */
+const LINK_CLOSE_RE = /[^\S\n]*\)/y
 
 /** The match of the sticky `re` at `at` in `text`, or null. */
 function matchAt(re: RegExp, text: string, at: number): RegExpExecArray | null {
@@ -58,16 +61,13 @@ function matchAt(re: RegExp, text: string, at: number): RegExpExecArray | null {
 }
 
 /**
- * The destination of the markdown image whose `![alt](` ends at `start` in
- * `text`, and the index just past its closing `)`, read as CommonMark reads a
- * link destination: a `<…>` one, or a bare one running to whitespace with its
- * parentheses balanced, then an optional title. Null when no image closes
- * there, as in `![](my image.png)`. Mirrors `image_destination`.
+ * The destination of the markdown image or link whose `![alt](` or `[label](`
+ * ends at `start` in `text`, and the index just past its closing `)`, read as
+ * CommonMark reads a link destination: a `<…>` one, or a bare one running to
+ * whitespace with its parentheses balanced, then an optional title. Null when
+ * none closes there, as in `![](my image.png)`. Mirrors `link_destination`.
  */
-function imageDestination(
-  text: string,
-  start: number,
-): { destination: string; end: number } | null {
+function linkDestination(text: string, start: number): { destination: string; end: number } | null {
   let at = start
   let destination: string
   const angle = matchAt(ANGLE_DESTINATION_RE, text, at)
@@ -88,8 +88,8 @@ function imageDestination(
     }
     destination = text.slice(bareStart, at)
   }
-  at += matchAt(IMAGE_TITLE_RE, text, at)?.[0].length ?? 0
-  const close = matchAt(IMAGE_CLOSE_RE, text, at)
+  at += matchAt(LINK_TITLE_RE, text, at)?.[0].length ?? 0
+  const close = matchAt(LINK_CLOSE_RE, text, at)
   return close === null ? null : { destination, end: at + close[0].length }
 }
 
@@ -125,6 +125,27 @@ function isSkippableAttachmentRef(reference: string): boolean {
     r.startsWith('data:') ||
     r.startsWith('//') ||
     r.startsWith('attachment:')
+  )
+}
+
+/**
+ * The extensions a pick imports as pages, also the plain picker's `accept`
+ * list: Markdown and text files are read as Markdown, an Org file through
+ * `orgToMarkdown`. A link to one is a page link, never an attachment.
+ */
+export const NOTE_EXTENSIONS = ['.md', '.markdown', '.mdx', '.txt', '.org'] as const
+
+/**
+ * Whether a link to the decoded `destination` may name a file the import
+ * attaches: not a `#fragment`, nor a URL with a scheme, nor a note. Mirrors
+ * `links_a_file`.
+ */
+function linksAFile(destination: string): boolean {
+  const name = (destination.split(/[/\\]/).pop() ?? '').toLowerCase()
+  return (
+    !destination.startsWith('#') &&
+    !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(destination) &&
+    !NOTE_EXTENSIONS.some((ext) => name.endsWith(ext))
   )
 }
 
@@ -198,16 +219,18 @@ function blankFencedCodeLines(markdown: string): string {
  * Scan markdown for the distinct attachment references the #1925 backend will
  * try to match against the supplied vault files.
  *
- * Detects three inbound shapes (mirroring `detect_attachment_refs`):
+ * Detects four inbound shapes (mirroring `detect_attachment_refs`):
  *   - Obsidian embed `![[file.png]]` (optional `|display` suffix dropped),
  *   - standard markdown image `![alt](relative/path.png)`, its destination read
- *     by {@link imageDestination} and percent-decoded,
+ *     by {@link linkDestination} and percent-decoded,
  *   - Logseq/relative asset paths captured by the markdown-image form
- *     (`![alt](assets/...)`).
+ *     (`![alt](assets/...)`),
+ *   - a link to a file `[label](paper.pdf)`, read as an image is.
  *
  * SKIPS (leaving nothing to ship):
  *   - absolute / protocol-relative URLs and `data:` URIs,
  *   - already-canonical `attachment:<id>` refs,
+ *   - a link to a `#fragment`, to a URL with a scheme (`mailto:`) or to a note,
  *   - any ref inside a ```` ``` ````-fenced code block,
  *   - any ref inside an inline-code span (`` `...` ``).
  *
@@ -230,15 +253,17 @@ export function scanAttachmentRefs(markdown: string): string[] {
     if (!inCode(m.index) && isCandidate(name)) refs.add(name)
   }
 
-  // Standard markdown images.
-  const open = MARKDOWN_IMAGE_OPEN_RE
+  // Standard markdown images and links.
+  const open = MARKDOWN_LINK_OPEN_RE
   open.lastIndex = 0
   for (let m = open.exec(scanned); m !== null; m = open.exec(scanned)) {
-    const image = imageDestination(scanned, open.lastIndex)
-    if (image === null) continue
-    open.lastIndex = image.end
-    const url = image.destination.trim()
-    if (!inCode(m.index) && isCandidate(url)) refs.add(percentDecode(url))
+    const token = linkDestination(scanned, open.lastIndex)
+    if (token === null) continue
+    open.lastIndex = token.end
+    const url = token.destination.trim()
+    if (inCode(m.index) || !isCandidate(url)) continue
+    const ref = percentDecode(url)
+    if (m[1] !== undefined || linksAFile(ref)) refs.add(ref)
   }
 
   return [...refs]

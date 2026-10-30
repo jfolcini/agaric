@@ -240,8 +240,8 @@ describe('parseJex', () => {
   })
 
   it('degrades to zero notes on an empty/garbage archive without throwing', () => {
-    expect(parseJex(new Uint8Array(0))).toEqual({ notes: [], skipped: 0, fileLinks: 0 })
-    expect(parseJex(new Uint8Array(1024))).toEqual({ notes: [], skipped: 0, fileLinks: 0 })
+    expect(parseJex(new Uint8Array(0))).toEqual({ notes: [], skipped: 0 })
+    expect(parseJex(new Uint8Array(1024))).toEqual({ notes: [], skipped: 0 })
   })
 })
 
@@ -1253,37 +1253,25 @@ describe('parseJex Joplin fidelity (#6032)', () => {
     expect(noteTitled(notes, 'Tables').markdown).toBe('| a | b |\n| --- | --- |\n| 1 | 2 |')
   })
 
-  it('leaves a link to a file that is not an image as a link, unshipped and counted', () => {
+  it('ships the file a resource link names, as an embed ships its file (#6032)', () => {
     const pdf = '9a'.repeat(16)
     const other = '0b'.repeat(16)
     const archive = sampleJex([
       ...resourceMembers(pdf, 'report.pdf', 'application/pdf', 'pdf'),
-      noteMember(other, 'Files', `[report.pdf](:/${pdf}) and ![pic](:/${RES_ID})`),
-      noteMember('1c'.repeat(16), 'Again', `[the report](:/${pdf})`),
+      noteMember(
+        other,
+        'Files',
+        `[report.pdf](:/${pdf}) and ![pic](:/${RES_ID}) [again](:/${pdf})`,
+      ),
+      noteMember('1c'.repeat(16), 'Shot', `[shot](:/${RES_ID})`),
     ])
-    const { notes, fileLinks } = parseJex(archive)
+    const { notes } = parseJex(archive)
     const note = noteTitled(notes, 'Files')
-    expect(note.markdown).toBe('[report.pdf](report.pdf) and ![pic](pic.png)')
-    // The backend imports only image refs, and an image ref to a PDF renders
-    // as a broken image, so the PDF's bytes do not ship.
-    expect(note.attachments.map((a) => a.path)).toEqual(['pic.png'])
-    expect(scanAttachmentRefs(note.markdown)).toEqual(['pic.png'])
-    expect(noteTitled(notes, 'Again').attachments).toEqual([])
-    expect(fileLinks).toBe(2)
-  })
-
-  // The warning the count drives says "linked, not embedded", not "not an image".
-  it('counts a link to an image, with no `!`, as a file left unshipped', () => {
-    const { notes, fileLinks } = parseJex(
-      buildTar([
-        ...resourceMembers(RES_ID, 'pic.png', 'image/png', 'png'),
-        noteMember('4f'.repeat(16), 'Shot', `[shot](:/${RES_ID})`),
-      ]),
-    )
-    const note = noteTitled(notes, 'Shot')
-    expect(note.markdown).toBe('[shot](pic.png)')
-    expect(note.attachments).toEqual([])
-    expect(fileLinks).toBe(1)
+    expect(note.markdown).toBe('[report.pdf](report.pdf) and ![pic](pic.png) [again](report.pdf)')
+    // The importer attaches a linked file, so its bytes ship once.
+    expect(note.attachments.map((a) => a.path)).toEqual(['report.pdf', 'pic.png'])
+    expect(scanAttachmentRefs(note.markdown)).toEqual(['report.pdf', 'pic.png'])
+    expect(noteTitled(notes, 'Shot').attachments.map((a) => a.path)).toEqual(['pic.png'])
   })
 
   it('renames a resource whose title holds a space or a parenthesis, so the importer ingests it', () => {

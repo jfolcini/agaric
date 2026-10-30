@@ -1,8 +1,10 @@
-import { ArrowUpRight } from 'lucide-react'
+import { ArrowUpRight, Paperclip } from 'lucide-react'
 import type React from 'react'
 
 import type { RenderContext } from '@/components/RichContentRenderer/context'
 import type { LinkMark, TextNode } from '@/editor/types'
+import { ATTACHMENT_REF_SCHEME, parseAttachmentRef } from '@/lib/attachment-ref'
+import { openAttachmentLink } from '@/lib/attachment-utils'
 import { i18n } from '@/lib/i18n'
 import { openUrl } from '@/lib/open-url'
 import { isAllowedUrl } from '@/lib/url-validation'
@@ -14,23 +16,23 @@ import { isAllowedUrl } from '@/lib/url-validation'
  * directly visible on the JSX element. Runtime a11y is preserved — the span
  * still has a valid role + keyboard handler.
  */
-// `openUrl` never rejects — it returns a boolean (see open-url.ts), which is
-// why both handlers below can drop its promise.
-function externalLinkProps(
-  href: string,
+// `openUrl` and `openAttachmentLink` never reject, which is why both handlers
+// below can drop the promise `open` returns.
+function linkProps(
+  open: () => Promise<unknown>,
   interactive: boolean | undefined,
 ): Record<string, unknown> {
   const props: Record<string, unknown> = {
     role: 'link',
     onClick: (e: React.MouseEvent) => {
       e.stopPropagation()
-      void openUrl(href)
+      void open()
     },
     onKeyDown: (e: React.KeyboardEvent) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
         e.stopPropagation()
-        void openUrl(href)
+        void open()
       }
     },
   }
@@ -50,11 +52,32 @@ function renderExternalLink(
       className="external-link cursor-pointer"
       data-testid="external-link"
       data-href={href}
-      {...externalLinkProps(href, ctx.interactive)}
+      {...linkProps(() => openUrl(href), ctx.interactive)}
     >
       {label}
       <span className="sr-only"> {i18n.t('link.opensInNewTab')}</span>
       <ArrowUpRight className="inline-block ml-0.5 size-[0.8em] opacity-60" aria-hidden="true" />
+    </span>
+  )
+}
+
+/** A link to an attachment, `[label](attachment:<id>)`: a click downloads the file. */
+function renderAttachmentLink(
+  label: React.ReactNode,
+  attachmentId: string,
+  ctx: RenderContext,
+  key: string,
+): React.ReactElement {
+  return (
+    <span
+      key={key}
+      className="external-link cursor-pointer"
+      data-testid="attachment-link"
+      data-attachment-id={attachmentId}
+      {...linkProps(() => openAttachmentLink(attachmentId), ctx.interactive)}
+    >
+      <Paperclip className="inline-block mr-0.5 size-[0.8em] opacity-60" aria-hidden="true" />
+      {label}
     </span>
   )
 }
@@ -150,10 +173,14 @@ function applyTextMarks(node: TextNode, ctx: RenderContext, key: string): React.
   // Re-validate href scheme at the render sink: input-time validation
   // (external-link extension / link editor) is bypassed by the markdown
   // import / peer sync, so a `javascript:`/`data:` href can reach stored
-  // content. Render those as plain marked text rather than a clickable link
-  // that would hand the href to `openUrl`.
-  if (linkMark && isAllowedUrl(linkMark.attrs.href)) {
-    content = renderExternalLink(content, linkMark.attrs.href, ctx, `${key}-link`)
+  // content. Render those, and an `attachment:` href naming no id, as plain
+  // marked text rather than a clickable link.
+  const href = linkMark?.attrs.href ?? ''
+  const attachmentId = parseAttachmentRef(href)
+  if (attachmentId !== null) {
+    content = renderAttachmentLink(content, attachmentId, ctx, `${key}-link`)
+  } else if (linkMark && !href.startsWith(ATTACHMENT_REF_SCHEME) && isAllowedUrl(href)) {
+    content = renderExternalLink(content, href, ctx, `${key}-link`)
   }
 
   return content

@@ -749,21 +749,30 @@ pub struct VaultFile {
 /// Produced by [`detect_attachment_refs`]. The importer uses `original_ref` (the
 /// path the token names, e.g. `assets/img.png` or `![[diagram.png]]`'s inner
 /// `diagram.png`) to match against the supplied [`VaultFile`] list, and `alt`
-/// to preserve the alt text when rewriting to `![alt](attachment:<id>)`.
+/// to preserve the alt text or link label in the rewritten `attachment:<id>`
+/// token.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachmentRef {
-    /// The alt text to preserve in the rewritten `![alt](attachment:<id>)`.
-    /// Empty for Obsidian embeds `![[file]]` (which carry no alt) and for
-    /// markdown images with an empty `![]` label.
+    /// An image's alt text or a link's label, kept in the rewritten token.
+    /// Empty for Obsidian embeds `![[file]]` (which carry no alt) and for an
+    /// empty `![]` or `[]`.
     pub alt: String,
     /// The path the token names, used to match a [`VaultFile`]: an embed's name
     /// as written, an image's destination without its `<…>` and percent-decoded
     /// (`<my image.png>` and `my%20image.png` both name `my image.png`).
     pub original_ref: String,
-    /// The full matched token in the source (`![[diagram.png]]` or
-    /// `![alt](assets/img.png "title")`), so the rewrite can replace it
-    /// byte-for-byte.
+    /// The full matched token in the source (`![[diagram.png]]`,
+    /// `![alt](assets/img.png "title")` or `[label](paper.pdf)`), so the
+    /// rewrite can replace it byte-for-byte.
     pub full_match: String,
+}
+
+impl AttachmentRef {
+    /// Whether the ref is a link `[label](file)` rather than an embed or an
+    /// image: one naming no shipped file points anywhere, so it is not missing.
+    pub fn is_link(&self) -> bool {
+        !self.full_match.starts_with('!')
+    }
 }
 
 /// Obsidian embed `![[file.png]]` — group 1 is the inner ref (path or basename,
@@ -773,35 +782,38 @@ static OBSIDIAN_EMBED_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"!\[\[([^\]\|\n]+?)(?:\|[^\]\n]*)?\]\]").expect("invalid obsidian-embed regex")
 });
 
-/// The opening `![alt](` of a standard markdown image — group 1 is the alt
-/// text (may be empty). [`image_destination`] reads the rest of the token.
-static MARKDOWN_IMAGE_OPEN_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"!\[([^\]\n]*)\]\(").expect("invalid markdown-image regex"));
+/// The opening of a standard markdown image `![alt](` — group 1 is the alt
+/// text — or of a link `[label](` — group 2 is the label, which holds no
+/// bracket, so the image in `[![a](x.png)](doc.pdf)` is read and not the link.
+/// [`link_destination`] reads the rest of the token.
+static MARKDOWN_LINK_OPEN_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"!\[([^\]\n]*)\]\(|\[([^\[\]\n]*)\]\(").expect("invalid markdown-link regex")
+});
 
-/// An image's `<…>` destination, after any spaces — group 1 is the destination.
+/// A link's `<…>` destination, after any spaces — group 1 is the destination.
 static ANGLE_DESTINATION_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[^\S\n]*<([^<>\n]*)>").expect("invalid angle-destination regex")
 });
 
-/// An image's title after its destination: spaces, then `"…"`, `'…'` or `(…)`.
-static IMAGE_TITLE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"^[^\S\n]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\))"#)
-        .expect("invalid image-title regex")
+/// A link's title after its destination: spaces, then `"…"`, `'…'` or `(…)`.
+static LINK_TITLE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"^[^\S\n]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\))"#).expect("invalid link-title regex")
 });
 
-/// An image's closing `)`, after any spaces.
-static IMAGE_CLOSE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[^\S\n]*\)").expect("invalid image-close regex"));
+/// A link's closing `)`, after any spaces.
+static LINK_CLOSE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[^\S\n]*\)").expect("invalid link-close regex"));
 
-/// The destination of the markdown image whose text after `![alt](` is `rest`,
-/// and the length of `rest` through the image's closing `)`, read as
-/// CommonMark reads a link destination
+/// The destination of the markdown image or link whose text after `![alt](`
+/// or `[label](` is `rest`, and the length of `rest` through its closing `)`,
+/// read as CommonMark reads a link destination
 /// (<https://spec.commonmark.org/0.31.2/#link-destination>): a `<…>` one
 /// holding no `<`, `>` or line break, or a bare one running to whitespace with
 /// its parentheses balanced (`a(1).png`), then an optional title. `None` when
-/// `rest` closes no image, as `my image.png)` does: a bare destination ends at
-/// the space and `image.png` is no title. Backslash escapes are not read.
-fn image_destination(rest: &str) -> Option<(&str, usize)> {
+/// `rest` closes no image or link, as `my image.png)` does: a bare destination
+/// ends at the space and `image.png` is no title. Backslash escapes are not
+/// read.
+fn link_destination(rest: &str) -> Option<(&str, usize)> {
     let (destination, mut at) = if let Some(caps) = ANGLE_DESTINATION_RE.captures(rest) {
         let whole = caps.get(0).expect("group 0 present");
         (caps.get(1).expect("group 1 present").as_str(), whole.end())
@@ -824,10 +836,10 @@ fn image_destination(rest: &str) -> Option<(&str, usize)> {
             .unwrap_or(bare.len());
         (&bare[..len], rest.len() - bare.len() + len)
     };
-    if let Some(title) = IMAGE_TITLE_RE.find(&rest[at..]) {
+    if let Some(title) = LINK_TITLE_RE.find(&rest[at..]) {
         at += title.end();
     }
-    let close = IMAGE_CLOSE_RE.find(&rest[at..])?;
+    let close = LINK_CLOSE_RE.find(&rest[at..])?;
     Some((destination, at + close.end()))
 }
 
@@ -844,28 +856,52 @@ fn is_skippable_attachment_ref(reference: &str) -> bool {
         || r.starts_with("attachment:")
 }
 
+/// The extensions a folder import reads as notes (`NOTE_EXTENSIONS` in
+/// `src/lib/import-attachments.ts`): a link to one is a page link.
+const NOTE_EXTENSIONS: [&str; 5] = ["md", "markdown", "mdx", "txt", "org"];
+
+/// URL scheme at the start of a link destination (`mailto:`, `ftp:`).
+static URL_SCHEME_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[A-Za-z][A-Za-z0-9+.-]*:").expect("invalid url-scheme regex"));
+
+/// Whether a link to the decoded `destination` may name a file the import
+/// attaches: not a `#fragment`, nor a URL with a scheme, nor a note.
+fn links_a_file(destination: &str) -> bool {
+    let name = destination
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(destination);
+    let names_note = name
+        .rsplit_once('.')
+        .is_some_and(|(_, ext)| NOTE_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()));
+    !destination.starts_with('#') && !URL_SCHEME_RE.is_match(destination) && !names_note
+}
+
 /// Detect attachment references in one block's `content` (#1925).
 ///
-/// Handles three inbound shapes, mirroring the tag/wiki-link detection style in
+/// Handles four inbound shapes, mirroring the tag/wiki-link detection style in
 /// `commands::pages::markdown`:
 ///   * Obsidian embed — `![[file.png]]` (optional `|display` suffix dropped),
 ///   * standard markdown image — `![alt](relative/path.png)`, its destination
-///     read by `image_destination` and percent-decoded,
+///     read by `link_destination` and percent-decoded,
 ///   * Logseq/relative asset paths captured by the markdown-image form above
-///     (`![alt](assets/...)`).
+///     (`![alt](assets/...)`),
+///   * a link to a file — `[label](paper.pdf)`, read as an image is.
 ///
 /// SKIPS, leaving the token verbatim:
 ///   * absolute / protocol-relative URLs and `data:` URIs,
 ///   * already-canonical `attachment:<id>` refs,
+///   * a link to a `#fragment`, to a URL with a scheme (`mailto:`) or to a
+///     note (`links_a_file`),
 ///   * any ref inside an inline-code span (`` `...` ``); the CALLER skips whole
 ///     `is_code` fenced blocks before calling this (mirroring the #1924
 ///     inline-tag pre-pass), so this function need not re-check `is_code`.
 ///
 /// Returns every Obsidian embed first (in source order), then every markdown
-/// image (in source order) — **not** overall source order (#3675). The embed
-/// scan runs to completion over the whole document before the image scan
-/// starts and nothing sorts afterwards, so an image that appears *before* an
-/// embed still comes back second.
+/// image and link (in source order) — **not** overall source order (#3675).
+/// The embed scan runs to completion over the whole document before the image
+/// scan starts and nothing sorts afterwards, so an image that appears *before*
+/// an embed still comes back second.
 ///
 /// That grouping is a scan artefact rather than a contract, and this docstring
 /// used to promise plain source order instead. The promise was the wrong half:
@@ -905,12 +941,12 @@ pub fn detect_attachment_refs(content: &str, code_spans: &[(usize, usize)]) -> V
         });
     }
 
-    // Standard markdown images.
+    // Standard markdown images and links.
     let mut from = 0;
-    while let Some(cap) = MARKDOWN_IMAGE_OPEN_RE.captures_at(content, from) {
+    while let Some(cap) = MARKDOWN_LINK_OPEN_RE.captures_at(content, from) {
         let open = cap.get(0).expect("group 0 present");
         from = open.end();
-        let Some((destination, len)) = image_destination(&content[from..]) else {
+        let Some((destination, len)) = link_destination(&content[from..]) else {
             continue;
         };
         from += len;
@@ -921,9 +957,15 @@ pub fn detect_attachment_refs(content: &str, code_spans: &[(usize, usize)]) -> V
         if url.is_empty() || is_skippable_attachment_ref(url) {
             continue;
         }
+        let original_ref = percent_decode(url);
+        let alt = match (cap.get(1), cap.get(2)) {
+            (Some(alt), _) => alt,
+            (None, Some(label)) if links_a_file(&original_ref) => label,
+            _ => continue,
+        };
         refs.push(AttachmentRef {
-            alt: cap[1].to_string(),
-            original_ref: percent_decode(url),
+            alt: alt.as_str().to_string(),
+            original_ref,
             full_match: content[open.start()..from].to_string(),
         });
     }

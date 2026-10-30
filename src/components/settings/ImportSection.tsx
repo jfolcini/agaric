@@ -27,12 +27,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { SettingRow } from '@/components/ui/setting-row'
 import { parseEnex } from '@/lib/enex-import'
 import { formatBytes } from '@/lib/format'
+import { NOTE_EXTENSIONS } from '@/lib/import-attachments'
 import { parseJex } from '@/lib/jex-import'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import {
   type ImportUnit,
-  NOTE_EXTENSIONS,
   enexNotesToUnits,
   importErrorReason,
   indexVaultFiles,
@@ -305,7 +305,7 @@ export function ImportSection(): React.ReactElement {
       for (const file of fileArray) {
         try {
           const buf = await file.arrayBuffer()
-          const { notes, skipped, fileLinks } = parseJex(new Uint8Array(buf))
+          const { notes, skipped } = parseJex(new Uint8Array(buf))
           // An archive that yields no notes is treated as a parse failure so the
           // user gets an explicit "not a valid Joplin export" toast rather than a
           // silent no-op (mirrors the `.enex` malformed-file behaviour).
@@ -313,9 +313,6 @@ export function ImportSection(): React.ReactElement {
             throw new Error('no importable notes found in archive')
           }
           if (skipped > 0) preWarnings.push(t('data.importJexSkipped', { count: skipped }))
-          if (fileLinks > 0) {
-            preWarnings.push(t('data.importJexFileLinks', { count: fileLinks }))
-          }
           units.push(...jexNotesToUnits(notes))
         } catch (err) {
           logger.error(

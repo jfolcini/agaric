@@ -24,15 +24,12 @@
  * `todo_due`, so the task shows on the page and in the agenda. Joplin's
  * references (`:/<32-hex-id>`, `joplin://<id>`, with an optional `#anchor` or
  * `"title"`, and `<img src=":/id">`) are rewritten text-side:
- *  - **Resource embeds** `![alt](:/<resId>)` → `![alt](path)`, with the
- *    decoded bytes shipped on {@link JexNote.attachments} as `importMarkdown`'s
- *    `vaultFiles` — the SAME vault-attachment path a folder import (and the
- *    `.enex` importer, #2513 part 1) uses, so the backend ingests the bytes and
- *    canonicalizes the ref to `attachment:<id>`.
- *  - **Resource links** `[label](:/<resId>)`, with no `!`, → `[label](path)`,
- *    counted in {@link JexParseResult.fileLinks}: the backend ingests only
- *    `![]()`, and an image ref to a PDF would render as a broken image, so the
- *    file is not imported and its bytes are not shipped, whatever its type.
+ *  - **Resource embeds and links** `![alt](:/<resId>)` / `[label](:/<resId>)`
+ *    → `![alt](path)` / `[label](path)`, with the decoded bytes shipped on
+ *    {@link JexNote.attachments} as `importMarkdown`'s `vaultFiles` — the SAME
+ *    vault-attachment path a folder import (and the `.enex` importer, #2513
+ *    part 1) uses, so the backend ingests the bytes and canonicalizes the ref
+ *    to `attachment:<id>`, an image as an image and any other file as a link.
  *  - **Internal note links** `[label](:/<noteId>)` → `[[Target Title|label]]`
  *    when the target note exists in the archive; an unresolved `:/id` is left
  *    untouched as a stable placeholder rather than producing a broken embed.
@@ -105,12 +102,6 @@ export interface JexParseResult {
    * NOT counted (they are simply ignored). Surfaced by the caller as a warning.
    */
   skipped: number
-  /**
-   * Count of resource links (`[label](:/id)`, no `!`) left as links: the
-   * backend imports only image refs, so these files are not imported.
-   * Surfaced by the caller as a warning.
-   */
-  fileLinks: number
 }
 
 /**
@@ -517,21 +508,18 @@ function imgTagsToMarkdown(body: string): string {
   })
 }
 
-/** A note body with its Joplin references rewritten, and what that shipped or left. */
+/** A note body with its Joplin references rewritten, and the resources that ships. */
 interface RewrittenBody {
   markdown: string
-  /** The resources the body embeds, in first-referenced order. */
+  /** The resources the body embeds or links, in first-referenced order. */
   attachments: JexResource[]
-  /** Resource links left as links (see {@link JexParseResult.fileLinks}). */
-  fileLinks: number
 }
 
 /**
- * Rewrite a note body's Joplin references: a resource embed → the ingested
- * vault path (collecting the shipped {@link JexResource}), a resource link →
- * that path as a plain link (counted, not shipped), an internal note link → a
- * `[[Target|label]]` wikilink, and any unresolved ref left untouched as a
- * stable placeholder.
+ * Rewrite a note body's Joplin references: a resource embed or link → the
+ * ingested vault path (collecting the shipped {@link JexResource}), an
+ * internal note link → a `[[Target|label]]` wikilink, and any unresolved ref
+ * left untouched as a stable placeholder.
  */
 function rewriteNoteBody(
   body: string,
@@ -539,15 +527,13 @@ function rewriteNoteBody(
   noteTitleById: Map<string, string>,
 ): RewrittenBody {
   const attachments: JexResource[] = []
-  let fileLinks = 0
   const markdown = body.replace(
     JOPLIN_REF_RE,
     (match, bang: string, label: string, refIdRaw: string) => {
       const refId = refIdRaw.toLowerCase()
       const resource = resourcesById.get(refId)
       if (resource !== undefined) {
-        if (bang === '') fileLinks++
-        else if (!attachments.some((a) => a.path === resource.path)) attachments.push(resource)
+        if (!attachments.some((a) => a.path === resource.path)) attachments.push(resource)
         return `${bang}[${label}](${resource.path})`
       }
       const targetTitle = noteTitleById.get(refId)
@@ -555,7 +541,7 @@ function rewriteNoteBody(
       return label.length > 0 ? `[[${targetTitle}|${label}]]` : `[[${targetTitle}]]`
     },
   )
-  return { markdown, attachments, fileLinks }
+  return { markdown, attachments }
 }
 
 /**
@@ -586,11 +572,9 @@ export function parseJex(archive: Uint8Array): JexParseResult {
   for (const raw of rawNotes) noteTitleById.set(raw.id, pageTitleFor(raw, folders))
 
   // Rewrite each note body's `:/id` refs and collect its attachments.
-  let fileLinks = 0
   const notes: JexNote[] = rawNotes.map((raw) => {
     const body = raw.isHtml ? htmlToMarkdown(raw.body) : imgTagsToMarkdown(raw.body)
     const rewritten = rewriteNoteBody(body, resourcesById, noteTitleById)
-    fileLinks += rewritten.fileLinks
     const sections = [raw.todo === null ? '' : todoBlock(raw.title, raw.todo), rewritten.markdown]
     // A link to a tag the archive lacks (or holds encrypted) names nothing.
     const tags = (noteTagIds.get(raw.id) ?? []).flatMap((id) => tagTitles.get(id) ?? [])
@@ -604,7 +588,7 @@ export function parseJex(archive: Uint8Array): JexParseResult {
     }
   })
 
-  return { notes, skipped, fileLinks }
+  return { notes, skipped }
 }
 
 /**
