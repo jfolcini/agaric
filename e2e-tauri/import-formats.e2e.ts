@@ -45,6 +45,12 @@ const PNG = Buffer.from(
   'base64',
 )
 
+// A 2x1 blue PNG, told apart from `PNG` by its width.
+const WIDE_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAADklEQVR4nGNgYPj/H4QBDfsD/Yde1YcAAAAASUVORK5CYII=',
+  'base64',
+)
+
 /** Write `contents` to a fresh temp file and pick it in the Data tab's `testid` input. */
 async function importFile(
   testid: string,
@@ -107,6 +113,36 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     const id = await block.getAttribute('data-block-id')
     if (id === null) throw new Error('the caption block has no data-block-id')
     await expectImageRendered(id, 'after the round trip')
+  })
+
+  it('#6032 — attaches the image beside the note, of two sharing a name with a space', async () => {
+    await waitForAppReady()
+    const marker = runScopedMarker('wdio-beside')
+    const folder = `${marker}-dir`
+    // `a/` is picked first, so a basename match would attach its 1 px image.
+    await importFolder(
+      'import-folder-input',
+      folder,
+      {
+        'a/my image.png': PNG,
+        'b/my image.png': WIDE_PNG,
+        'b/note.md': Buffer.from(
+          `- ${marker}-angle ![](<my image.png>)\n- ${marker}-escaped ![](my%20image.png)\n`,
+        ),
+      },
+      'Imported “',
+    )
+
+    await navigateTo('Journal')
+    await openPageTitled(`${folder}/b/note`)
+    for (const ref of ['angle', 'escaped']) {
+      const block = blockStaticByMarker(`${marker}-${ref}`)
+      await block.waitForDisplayed({ timeout: NAV_TIMEOUT })
+      const id = await block.getAttribute('data-block-id')
+      if (id === null) throw new Error(`the ${ref} block has no data-block-id`)
+      const width = await expectImageRendered(id, `the ${ref} ref`)
+      expect(width).toBe(2)
+    }
   })
 
   it('imports a one-note .enex as one page holding its body blocks and image', async () => {

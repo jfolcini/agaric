@@ -770,8 +770,9 @@ export async function waitForImportResult(summary: string): Promise<void> {
 }
 
 /**
- * Pick the folder `folder` holding `files` in the Data tab's folder-pick input
- * `inputTestId` and wait until the result region reads `summary`.
+ * Pick the folder `folder` holding `files` (keyed by their paths inside it) in
+ * the Data tab's folder-pick input `inputTestId` and wait until the result
+ * region reads `summary`.
  * WebKitWebDriver cannot pick a folder (Send Keys with a directory hands the
  * input the directory itself as one File), so the input's FileList is set in
  * the page, each File carrying the `webkitRelativePath` a folder picker gives.
@@ -784,9 +785,9 @@ export async function importFolder(
 ): Promise<void> {
   await openDataTab()
   await $(`[data-testid="${inputTestId}"]`).waitForExist({ timeout: ACTION_TIMEOUT })
-  const entries = Object.entries(files).map(([name, bytes]) => ({
-    name,
-    rel: `${folder}/${name}`,
+  const entries = Object.entries(files).map(([rel, bytes]) => ({
+    name: rel.slice(rel.lastIndexOf('/') + 1),
+    rel: `${folder}/${rel}`,
     b64: bytes.toString('base64'),
   }))
   await browser.execute(
@@ -1079,9 +1080,10 @@ export async function pasteFileIntoFocusedBlock(
 /**
  * Wait until block `id` renders exactly one image, decoded from a `blob:` URL:
  * GatedImage wraps the bytes `read_attachment` returns, so a decoded image
- * (`naturalWidth > 0`) proves the bytes are on disk.
+ * (`naturalWidth > 0`) proves the bytes are on disk. Returns its
+ * `naturalWidth`, which tells apart images that share a name.
  */
-export async function expectImageRendered(id: string, when: string): Promise<void> {
+export async function expectImageRendered(id: string, when: string): Promise<number> {
   await $(`[data-block-id="${id}"]`).scrollIntoView()
   let seen: Array<{ src: string; complete: boolean; width: number }> = []
   await browser
@@ -1114,6 +1116,7 @@ export async function expectImageRendered(id: string, when: string): Promise<voi
     .catch(() => {
       throw new Error(`${when}: the image block renders ${JSON.stringify(seen)}`)
     })
+  return seen[0]?.width ?? 0
 }
 
 const PAGE_SOURCE = '[data-testid="page-source-editor"]'

@@ -327,9 +327,9 @@ export function sanitizeResourceName(name: string): string {
     const cp = ch.codePointAt(0)
     if (cp !== undefined && cp >= 0x20) out += ch
   }
-  // The backend's image grammar (`MARKDOWN_IMAGE_RE` in import.rs) ends a ref
-  // at whitespace or `)`, so `![](Screenshot 2024.png)` would never be
-  // ingested: the name is the shipped path, so rename both to match.
+  // The backend's image grammar (`image_destination` in import.rs) ends a bare
+  // ref at whitespace or an unbalanced `)`, so `![](Screenshot 2024.png)` would
+  // never be ingested: the name is the shipped path, so rename both to match.
   return out.trim().replace(/[\p{White_Space}()]+/gu, '_')
 }
 
