@@ -47,39 +47,65 @@
       "refs": []
     },
     {
-      "name": "an image with a title is not a ref",
+      "name": "an image's title in double quotes is not part of its name",
       "input": "![a](assets/x.png \"a title\")",
+      "refs": ["assets/x.png"]
+    },
+    {
+      "name": "an image's title in single quotes is not part of its name",
+      "input": "![a](x.png 'a title')",
+      "refs": ["x.png"]
+    },
+    {
+      "name": "an image's title in parentheses is not part of its name",
+      "input": "![a](x.png (a title))",
+      "refs": ["x.png"]
+    },
+    {
+      "name": "a bare markdown image name with a space is not a ref",
+      "input": "![](my image.png)",
+      "refs": [],
+      "note": "As CommonMark reads it: a bare destination ends at the space, and `image.png` is no title. A name with a space is written `<my image.png>` or `my%20image.png`, as the rows below read."
+    },
+    {
+      "name": "a markdown image name may hold balanced parentheses",
+      "input": "![](a(1).png)",
+      "refs": ["a(1).png"]
+    },
+    {
+      "name": "an unbalanced ( leaves no image",
+      "input": "![](a(1.png)",
       "refs": []
     },
     {
-      "name": "a markdown image whose name holds a space is not a ref",
-      "input": "![](my image.png)",
-      "refs": [],
-      "note": "#6032: today's behaviour, which #6032 changes; flip this row with the fix."
-    },
-    {
-      "name": "a markdown image whose name holds a ) is cut at it",
-      "input": "![](a(1).png)",
-      "refs": ["a(1"],
-      "note": "#6032: today's behaviour, which #6032 changes; flip this row with the fix."
-    },
-    {
-      "name": "a percent-encoded name is kept encoded",
+      "name": "a percent-encoded name is decoded",
       "input": "![](my%20image.png)",
-      "refs": ["my%20image.png"],
-      "note": "#6032: today's behaviour, which #6032 changes; flip this row with the fix."
+      "refs": ["my image.png"]
     },
     {
-      "name": "an angle-bracketed destination with a space is not a ref",
+      "name": "percent-encoded UTF-8 is decoded, a BOM kept and an invalid byte read as U+FFFD",
+      "input": "![](%EF%BB%BFcaf%C3%A9%FF.png)",
+      "refs": ["\ufeffcaf\u00e9\ufffd.png"]
+    },
+    {
+      "name": "a malformed percent escape stays as written",
+      "input": "![](a%zz%+41%2.png)",
+      "refs": ["a%zz%+41%2.png"]
+    },
+    {
+      "name": "an angle-bracketed destination may hold a space",
       "input": "![](<my image.png>)",
-      "refs": [],
-      "note": "#6032: today's behaviour, which #6032 changes; flip this row with the fix."
+      "refs": ["my image.png"]
     },
     {
-      "name": "an angle-bracketed destination keeps its brackets",
+      "name": "an angle-bracketed destination loses its brackets",
       "input": "![](<a.png>)",
-      "refs": ["<a.png>"],
-      "note": "#6032: today's behaviour, which #6032 changes; flip this row with the fix."
+      "refs": ["a.png"]
+    },
+    {
+      "name": "an angle-bracketed destination may carry a title",
+      "input": "![](<my image.png> \"a title\")",
+      "refs": ["my image.png"]
     },
     {
       "name": "a link to a file is not a ref",

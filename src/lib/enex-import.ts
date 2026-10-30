@@ -71,8 +71,8 @@ import { scanNameTokens } from '@/lib/name-tokens'
 export interface EnexAttachment {
   /**
    * Vault-relative path used both as the markdown embed target and the
-   * shipped `VaultFile.path`, so the backend matches them (relative-path
-   * equality, then basename — see `match_vault_file`).
+   * shipped `VaultFile.path`, so the backend matches them (see
+   * `match_vault_file`).
    */
   path: string
   /** Raw decoded resource bytes (the exact bytes Evernote MD5-hashes). */
@@ -327,9 +327,9 @@ export function sanitizeResourceName(name: string): string {
     const cp = ch.codePointAt(0)
     if (cp !== undefined && cp >= 0x20) out += ch
   }
-  // The backend's image grammar (`MARKDOWN_IMAGE_RE` in import.rs) ends a ref
-  // at whitespace or `)`, so `![](Screenshot 2024.png)` would never be
-  // ingested: the name is the shipped path, so rename both to match.
+  // The backend's image grammar (`image_destination` in import.rs) ends a bare
+  // ref at whitespace or an unbalanced `)`, so `![](Screenshot 2024.png)` would
+  // never be ingested: the name is the shipped path, so rename both to match.
   return out.trim().replace(/[\p{White_Space}()]+/gu, '_')
 }
 

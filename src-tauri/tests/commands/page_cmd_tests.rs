@@ -15753,18 +15753,18 @@ fn attachment_ref_detection_and_match_rules_1925() {
         },
     ];
     assert_eq!(
-        match_vault_file("assets/a.png", &vault),
+        match_vault_file("assets/a.png", "", &vault),
         Some((1, false)),
         "exact relative-path match"
     );
     // Basename fallback (Obsidian `![[a.png]]` carries only the basename) —
     // ambiguous across two files, picks the first deterministically.
     assert_eq!(
-        match_vault_file("a.png", &vault),
+        match_vault_file("a.png", "", &vault),
         Some((0, true)),
         "basename fallback picks first + flags ambiguous"
     );
-    assert_eq!(match_vault_file("nope.png", &vault), None);
+    assert_eq!(match_vault_file("nope.png", "", &vault), None);
 
     // Mime guess.
     assert_eq!(guess_attachment_mime("x/y.PNG"), "image/png");
@@ -15773,6 +15773,134 @@ fn attachment_ref_detection_and_match_rules_1925() {
         guess_attachment_mime("a.unknownext"),
         "application/octet-stream"
     );
+}
+
+/// #6032 — a ref resolves from the note's own folder first, then from the
+/// vault root, then by basename; a `..` above the vault root fails its step.
+#[test]
+fn attachment_ref_resolves_note_relative_then_root_then_basename_6032() {
+    use agaric_engine::import::match_vault_file;
+
+    let file = |path: &str| VaultFile {
+        path: path.into(),
+        bytes: vec![1],
+    };
+    let vault = vec![
+        file("img.png"),
+        file("notes/img.png"),
+        file("notes/sub/img.png"),
+        file("other/pic.png"),
+        file("a/dup.png"),
+        file("b/dup.png"),
+    ];
+
+    assert_eq!(
+        match_vault_file("img.png", "notes", &vault),
+        Some((1, false)),
+        "the note's own folder beats the vault root"
+    );
+    assert_eq!(
+        match_vault_file("sub/img.png", "notes", &vault),
+        Some((2, false)),
+        "a path below the note's folder"
+    );
+    assert_eq!(
+        match_vault_file("img.png", "", &vault),
+        Some((0, false)),
+        "a note at the root reads the root path"
+    );
+    assert_eq!(
+        match_vault_file("notes/img.png", "journal", &vault),
+        Some((1, false)),
+        "the vault-root path when the note-relative one names no file"
+    );
+    assert_eq!(
+        match_vault_file("../img.png", "notes/sub", &vault),
+        Some((1, false)),
+        "`..` climbs one folder"
+    );
+    assert_eq!(
+        match_vault_file("./../other/pic.png", "notes", &vault),
+        Some((3, false)),
+        "`./` is dropped and `..` climbs"
+    );
+    assert_eq!(
+        match_vault_file("../../img.png", "notes", &vault),
+        Some((0, true)),
+        "a `..` above the root fails both path steps rather than stopping at the \
+         root, leaving the basename, which three files share"
+    );
+    assert_eq!(
+        match_vault_file("pic.png", "notes", &vault),
+        Some((3, false)),
+        "a basename found in no path step"
+    );
+    assert_eq!(
+        match_vault_file("dup.png", "c", &vault),
+        Some((4, true)),
+        "a basename tie takes the first and flags it"
+    );
+    assert_eq!(
+        match_vault_file("dup.png", "b", &vault),
+        Some((5, false)),
+        "the note's folder settles a basename tie"
+    );
+}
+
+/// #6032 — two vault files named `image.png` ship, and the note in `b/`
+/// naming `image.png` attaches `b/image.png`, not the first one shipped. Its
+/// second block names the same file from the vault root, so the read count
+/// must resolve as the ingest does: counting the first ref by basename would
+/// let the first ingest move `b`'s bytes out from under the second.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_attaches_the_image_beside_the_note_6032() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let app_data_dir = _dir.path();
+
+    let vault = vec![
+        VaultFile {
+            path: "a/image.png".into(),
+            bytes: vec![0xA, 1, 1],
+        },
+        VaultFile {
+            path: "b/image.png".into(),
+            bytes: vec![0xB, 2, 2],
+        },
+    ];
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        "- see ![](image.png)\n- and ![](b/image.png)".into(),
+        Some("Vault/b/note.md".into()),
+        TEST_SPACE_ID.into(),
+        Some(vault),
+    )
+    .await
+    .unwrap();
+    assert!(result.warnings.is_empty(), "got {:?}", result.warnings);
+    settle(&mat).await;
+
+    let rows = attachment_rows(&pool).await;
+    assert_eq!(rows.len(), 2);
+    for (_id, _block, fs_path, _hash) in &rows {
+        let on_disk = std::fs::read(app_data_dir.join(fs_path)).unwrap();
+        assert_eq!(
+            on_disk,
+            vec![0xB, 2, 2],
+            "the image in the note's own folder"
+        );
+    }
+    let texts = content_block_texts(&pool).await;
+    assert_eq!(texts.len(), 2);
+    assert!(texts[0].starts_with("see ![](attachment:"), "{texts:?}");
+    assert!(texts[1].starts_with("and ![](attachment:"), "{texts:?}");
+
+    mat.shutdown();
 }
 
 // ======================================================================
@@ -16401,7 +16529,7 @@ fn ingest_read_counts_counts_occurrences_not_distinct_refs_2724() {
     // Pre-fix this returned `Some(1)` (distinct-ref dedup) → move authorised.
     let twice_one_block = vec![("blk-1".to_string(), vec![mkref("a.png"), mkref("a.png")])];
     assert_eq!(
-        ingest_read_counts(&twice_one_block, &vault)
+        ingest_read_counts(&twice_one_block, "", &vault)
             .get(&0)
             .copied(),
         Some(2),
@@ -16412,7 +16540,7 @@ fn ingest_read_counts_counts_occurrences_not_distinct_refs_2724() {
     // The common single-use case keeps count 1 so the mem::take fast path applies.
     let single = vec![("blk-2".to_string(), vec![mkref("a.png")])];
     assert_eq!(
-        ingest_read_counts(&single, &vault).get(&0).copied(),
+        ingest_read_counts(&single, "", &vault).get(&0).copied(),
         Some(1),
         "a single occurrence keeps count 1 so the mem::take optimisation still applies"
     );
@@ -16424,7 +16552,9 @@ fn ingest_read_counts_counts_occurrences_not_distinct_refs_2724() {
         ("blk-4".to_string(), vec![mkref("a.png")]),
     ];
     assert_eq!(
-        ingest_read_counts(&cross_block, &vault).get(&0).copied(),
+        ingest_read_counts(&cross_block, "", &vault)
+            .get(&0)
+            .copied(),
         Some(2),
         "two blocks each referencing the file count 2 (per-block ingests), so it is cloned"
     );
@@ -16432,7 +16562,7 @@ fn ingest_read_counts_counts_occurrences_not_distinct_refs_2724() {
     // A ref matching no vault file contributes no count.
     let unmatched = vec![("blk-5".to_string(), vec![mkref("missing.png")])];
     assert!(
-        ingest_read_counts(&unmatched, &vault).is_empty(),
+        ingest_read_counts(&unmatched, "", &vault).is_empty(),
         "an unmatched ref contributes no ingest-read count"
     );
 }
