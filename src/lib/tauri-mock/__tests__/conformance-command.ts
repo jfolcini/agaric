@@ -120,6 +120,10 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   create_property_def: { idKey: 'key', attrs: PROPERTY_DEF_ATTRS, lists: [] },
   update_property_def_options: { idKey: 'key', attrs: PROPERTY_DEF_ATTRS, lists: [] },
   delete_property_def: { idKey: 'key', attrs: PROPERTY_DEF_ATTRS, lists: [] },
+  // #5841 S2 — the rename answers the definition under its new key, the merge
+  // the target's definition after the union.
+  rename_property_key: { idKey: 'key', attrs: PROPERTY_DEF_ATTRS, lists: [] },
+  merge_property_key: { idKey: 'key', attrs: PROPERTY_DEF_ATTRS, lists: [] },
   // #5057 — the draft writers answer with `()`, so their whole record is the
   // refusal declaration plus a head naming which one ran. `flush_all_drafts`
   // adds the one field a caller can see: how many rows it CONSUMED, which

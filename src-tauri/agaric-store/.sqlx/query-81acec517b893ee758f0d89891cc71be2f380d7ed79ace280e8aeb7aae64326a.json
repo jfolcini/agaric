@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, ol.is_replicated AS \"is_replicated!: bool\" FROM op_log ol WHERE (ol.created_at, ol.seq, ol.device_id) < (?4, ?5, ?6) AND (?1 IS NULL OR ol.op_type = ?1) AND (?2 IS NULL OR ( EXISTS (SELECT 1 FROM blocks sb WHERE sb.id = ol.block_id AND sb.space_id = ?2) OR (ol.op_type = 'set_property_def' AND ol.block_id = ?2) OR ( ol.op_type IN ('delete_attachment', 'rename_attachment') AND ( EXISTS ( SELECT 1 FROM attachments a JOIN blocks sb ON sb.id = a.block_id WHERE a.id = json_extract(ol.payload, '$.attachment_id') AND sb.space_id = ?2 ) OR ( ol.op_type = 'delete_attachment' AND EXISTS ( SELECT 1 FROM op_log src_add JOIN blocks sb ON sb.id = src_add.block_id WHERE src_add.op_type = 'add_attachment' AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') AND sb.space_id = ?2 ) ) ) ) )) ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC LIMIT ?3",
+  "query": "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, ol.is_replicated AS \"is_replicated!: bool\" FROM op_log ol WHERE (?1 IS NULL OR ol.op_type = ?1) AND (?2 IS NULL OR ( EXISTS (SELECT 1 FROM blocks sb WHERE sb.id = ol.block_id AND sb.space_id = ?2) OR (ol.op_type IN ('set_property_def', 'rename_property_key', 'rewrite_properties') AND ol.block_id = ?2) OR ( ol.op_type IN ('delete_attachment', 'rename_attachment') AND ( EXISTS ( SELECT 1 FROM attachments a JOIN blocks sb ON sb.id = a.block_id WHERE a.id = json_extract(ol.payload, '$.attachment_id') AND sb.space_id = ?2 ) OR ( ol.op_type = 'delete_attachment' AND EXISTS ( SELECT 1 FROM op_log src_add JOIN blocks sb ON sb.id = src_add.block_id WHERE src_add.op_type = 'add_attachment' AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') AND sb.space_id = ?2 ) ) ) ) )) ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC LIMIT ?3",
   "describe": {
     "columns": [
       {
@@ -71,7 +71,7 @@
       }
     ],
     "parameters": {
-      "Right": 6
+      "Right": 3
     },
     "nullable": [
       false,
@@ -82,5 +82,5 @@
       false
     ]
   },
-  "hash": "7de96e836a218888584ebd671f290732afb19876603cab74d961019029347962"
+  "hash": "81acec517b893ee758f0d89891cc71be2f380d7ed79ace280e8aeb7aae64326a"
 }

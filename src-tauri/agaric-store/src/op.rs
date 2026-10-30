@@ -55,6 +55,8 @@ pub enum OpType {
     AddPageAlias,
     RemovePageAlias,
     SetPropertyDef,
+    RenamePropertyKey,
+    RewriteProperties,
 }
 
 impl OpType {
@@ -93,6 +95,8 @@ impl OpType {
             OpType::AddPageAlias => "add_page_alias",
             OpType::RemovePageAlias => "remove_page_alias",
             OpType::SetPropertyDef => "set_property_def",
+            OpType::RenamePropertyKey => "rename_property_key",
+            OpType::RewriteProperties => "rewrite_properties",
         }
     }
 }
@@ -142,6 +146,8 @@ impl FromStr for OpType {
             "add_page_alias" => Ok(OpType::AddPageAlias),
             "remove_page_alias" => Ok(OpType::RemovePageAlias),
             "set_property_def" => Ok(OpType::SetPropertyDef),
+            "rename_property_key" => Ok(OpType::RenamePropertyKey),
+            "rewrite_properties" => Ok(OpType::RewriteProperties),
             other => Err(format!("unknown op type: {other}")),
         }
     }
@@ -306,6 +312,56 @@ pub struct SetPropertyDefPayload {
     /// The definition the op replaced, which its undo restores; `None` when
     /// the space did not declare the key.
     pub prior: Option<PropertyDefState>,
+}
+
+/// Payload for the `rename_property_key` op — moves `space_id`'s definition of
+/// `old_key`, and every value under it, to `new_key` (#5841). A block or a
+/// space already holding `new_key` keeps what it holds, so a replay that meets
+/// a later write under `old_key` leaves it there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenamePropertyKeyPayload {
+    pub space_id: BlockId,
+    pub old_key: String,
+    pub new_key: String,
+}
+
+/// Why a `rewrite_properties` op rewrote `space_id`'s definitions and values
+/// (#5841).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RewriteReason {
+    /// One key merged into another of the same type.
+    Merge,
+}
+
+/// One definition a `rewrite_properties` op writes: `def` replaces `prior`,
+/// `None` meaning the space does not declare `key`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PropertyDefWrite {
+    pub key: String,
+    pub def: Option<PropertyDefState>,
+    pub prior: Option<PropertyDefState>,
+}
+
+/// One value a `rewrite_properties` op writes: `value` replaces `prior` under
+/// `key` on `block_id`, `None` meaning the block holds no value there.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PropertyValueWrite {
+    pub block_id: BlockId,
+    pub key: String,
+    pub value: Option<PropertyValueFields>,
+    pub prior: Option<PropertyValueFields>,
+}
+
+/// Payload for the `rewrite_properties` op (#5841): absolute writes of
+/// `space_id`'s definitions, then of its values, each recording what it
+/// replaced, so a replay writes the same state and the reverse is the swap.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RewritePropertiesPayload {
+    pub space_id: BlockId,
+    pub reason: RewriteReason,
+    pub defs: Vec<PropertyDefWrite>,
+    pub values: Vec<PropertyValueWrite>,
 }
 
 /// Payload for the `set_property` op — upserts a typed key-value property on a block (exactly one value field must be set).
@@ -517,6 +573,8 @@ pub enum OpPayload {
     AddPageAlias(AddPageAliasPayload),
     RemovePageAlias(RemovePageAliasPayload),
     SetPropertyDef(SetPropertyDefPayload),
+    RenamePropertyKey(RenamePropertyKeyPayload),
+    RewriteProperties(RewritePropertiesPayload),
 }
 
 impl OpPayload {
@@ -539,6 +597,8 @@ impl OpPayload {
             OpPayload::AddPageAlias(_) => OpType::AddPageAlias,
             OpPayload::RemovePageAlias(_) => OpType::RemovePageAlias,
             OpPayload::SetPropertyDef(_) => OpType::SetPropertyDef,
+            OpPayload::RenamePropertyKey(_) => OpType::RenamePropertyKey,
+            OpPayload::RewriteProperties(_) => OpType::RewriteProperties,
         }
     }
 
@@ -552,7 +612,8 @@ impl OpPayload {
 
     /// Returns the `block_id` from the inner payload, if present.
     ///
-    /// The alias variants answer their `page_id`, and `SetPropertyDef` its
+    /// The alias variants answer their `page_id`, and the definition variants
+    /// (`SetPropertyDef`, `RenamePropertyKey`, `RewriteProperties`) their
     /// `space_id`. `DeleteAttachment` and
     /// `RenameAttachment` identify the target by `attachment_id` only, so this
     /// method returns `None` for them.
@@ -574,6 +635,8 @@ impl OpPayload {
             OpPayload::AddPageAlias(p) => Some(p.page_id.as_str()),
             OpPayload::RemovePageAlias(p) => Some(p.page_id.as_str()),
             OpPayload::SetPropertyDef(p) => Some(p.space_id.as_str()),
+            OpPayload::RenamePropertyKey(p) => Some(p.space_id.as_str()),
+            OpPayload::RewriteProperties(p) => Some(p.space_id.as_str()),
         }
     }
 
@@ -604,7 +667,9 @@ impl OpPayload {
             | OpPayload::DeleteProperty(_)
             | OpPayload::AddPageAlias(_)
             | OpPayload::RemovePageAlias(_)
-            | OpPayload::SetPropertyDef(_) => None,
+            | OpPayload::SetPropertyDef(_)
+            | OpPayload::RenamePropertyKey(_)
+            | OpPayload::RewriteProperties(_) => None,
         }
     }
 
@@ -717,6 +782,32 @@ pub const BUILTIN_PROPERTY_DEFS: [BuiltinPropertyDef; 14] = [
     BuiltinPropertyDef::select("is_space", &["true"]),
     BuiltinPropertyDef::select("listStyle", &["bullet", "ordered"]),
 ];
+
+/// The keys the app writes for its own bookkeeping, which a user's rename or
+/// merge moves neither from nor onto (#5841): the built-ins the app sets itself,
+/// the template markers, the image layout and a migration marker. Mirrored by
+/// `INTERNAL_PROPERTY_KEYS` in `src/lib/block-utils.ts`.
+pub const INTERNAL_PROPERTY_KEYS: [&str; 14] = [
+    "repeat",
+    "created_at",
+    "completed_at",
+    "repeat-seq",
+    "repeat-origin",
+    "is_space",
+    "accent_color",
+    "personal_to_work_migration_v1",
+    "template",
+    "journal-template",
+    "listStyle",
+    "image_width",
+    "image_alignment",
+    "image_caption",
+];
+
+/// Whether `key` is one of the [`INTERNAL_PROPERTY_KEYS`].
+pub fn is_internal_property_key(key: &str) -> bool {
+    INTERNAL_PROPERTY_KEYS.contains(&key)
+}
 
 /// The built-in definition of `key`, or `None` for a user's key.
 pub fn builtin_property_def(key: &str) -> Option<&'static BuiltinPropertyDef> {
@@ -871,6 +962,8 @@ mod tests {
             OpType::AddPageAlias,
             OpType::RemovePageAlias,
             OpType::SetPropertyDef,
+            OpType::RenamePropertyKey,
+            OpType::RewriteProperties,
         ]
     }
 
@@ -970,6 +1063,56 @@ mod tests {
                     value_type: "select".into(),
                     options: Some(r#"["draft"]"#.into()),
                 }),
+            }),
+            OpPayload::RenamePropertyKey(RenamePropertyKeyPayload {
+                space_id: BlockId::from_string(TEST_BID).unwrap(),
+                old_key: "project".into(),
+                new_key: "area".into(),
+            }),
+            OpPayload::RewriteProperties(RewritePropertiesPayload {
+                space_id: BlockId::from_string(TEST_BID).unwrap(),
+                reason: RewriteReason::Merge,
+                defs: vec![
+                    PropertyDefWrite {
+                        key: "stage".into(),
+                        def: None,
+                        prior: Some(PropertyDefState {
+                            value_type: "select".into(),
+                            options: Some(r#"["a"]"#.into()),
+                        }),
+                    },
+                    PropertyDefWrite {
+                        key: "phase".into(),
+                        def: Some(PropertyDefState {
+                            value_type: "select".into(),
+                            options: Some(r#"["b","a"]"#.into()),
+                        }),
+                        prior: Some(PropertyDefState {
+                            value_type: "select".into(),
+                            options: Some(r#"["b"]"#.into()),
+                        }),
+                    },
+                ],
+                values: vec![
+                    PropertyValueWrite {
+                        block_id: BlockId::from_string(TEST_PID).unwrap(),
+                        key: "stage".into(),
+                        value: None,
+                        prior: Some(PropertyValueFields {
+                            value_text: Some("a".into()),
+                            ..Default::default()
+                        }),
+                    },
+                    PropertyValueWrite {
+                        block_id: BlockId::from_string(TEST_PID).unwrap(),
+                        key: "phase".into(),
+                        value: Some(PropertyValueFields {
+                            value_text: Some("a".into()),
+                            ..Default::default()
+                        }),
+                        prior: None,
+                    },
+                ],
             }),
         ]
     }
@@ -2386,6 +2529,25 @@ mod tests {
         );
     }
 
+    /// #5841: the rename and merge refusals check built-ins only; a
+    /// column-backed key is one of them.
+    #[test]
+    fn every_column_backed_key_is_builtin() {
+        for key in COLUMN_BACKED_PROPERTY_KEYS {
+            assert!(is_builtin_property_key(key), "'{key}' is column-backed");
+        }
+    }
+
+    #[test]
+    fn internal_keys_are_internal_and_user_keys_are_not() {
+        for key in ["template", "journal-template", "accent_color", "repeat"] {
+            assert!(is_internal_property_key(key), "'{key}' is the app's own");
+        }
+        for key in ["project", "status", "due_date"] {
+            assert!(!is_internal_property_key(key), "'{key}' is not internal");
+        }
+    }
+
     #[test]
     fn user_settable_properties_are_not_builtin() {
         for key in ["status", "url", "effort", "assignee", "location"] {
@@ -2451,6 +2613,8 @@ mod proptest_tests {
             Just(OpType::AddPageAlias),
             Just(OpType::RemovePageAlias),
             Just(OpType::SetPropertyDef),
+            Just(OpType::RenamePropertyKey),
+            Just(OpType::RewriteProperties),
         ]
     }
 

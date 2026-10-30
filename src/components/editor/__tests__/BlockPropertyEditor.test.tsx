@@ -77,11 +77,15 @@ const mockGetProperties = vi.fn().mockResolvedValue({ status: 'ok', data: [] })
 const mockGetPropertyDef = vi.fn().mockResolvedValue({ status: 'ok', data: null })
 const mockCreatePropertyDef = vi.fn().mockResolvedValue({ status: 'ok', data: null })
 const mockDeleteProperty = vi.fn().mockResolvedValue({ status: 'ok', data: {} })
-// #4041 review notes 3+4 — the rename's declaration pre-flight: `listPropertyKeys`
-// is the distinct `block_properties` key list (the same predicate
+// #4041 review notes 3+4 — the rename's declaration pre-flight: `queryByProperty`
+// finds a block of the space holding the key (the predicate
 // `delete_property_def_inner` counts before refusing), and `deletePropertyDef`
 // withdraws a declaration a failed rename created.
-const mockListPropertyKeys = vi.fn().mockResolvedValue({ status: 'ok', data: [] })
+const NO_HOLDERS = {
+  status: 'ok',
+  data: { items: [], next_cursor: null, has_more: false, total_count: null },
+}
+const mockQueryByProperty = vi.fn().mockResolvedValue(NO_HOLDERS)
 const mockDeletePropertyDef = vi.fn().mockResolvedValue({ status: 'ok', data: null })
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
@@ -94,7 +98,7 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       getPropertyDef: (...args: unknown[]) => mockGetPropertyDef(...args),
       createPropertyDef: (...args: unknown[]) => mockCreatePropertyDef(...args),
       deleteProperty: (...args: unknown[]) => mockDeleteProperty(...args),
-      listPropertyKeys: (...args: unknown[]) => mockListPropertyKeys(...args),
+      queryByProperty: (...args: unknown[]) => mockQueryByProperty(...args),
       deletePropertyDef: (...args: unknown[]) => mockDeletePropertyDef(...args),
     },
   }
@@ -200,7 +204,7 @@ describe('BlockPropertyEditor', () => {
     mockGetPropertyDef.mockReset().mockResolvedValue({ status: 'ok', data: null })
     mockCreatePropertyDef.mockReset().mockResolvedValue({ status: 'ok', data: null })
     mockDeleteProperty.mockReset().mockResolvedValue({ status: 'ok', data: {} })
-    mockListPropertyKeys.mockReset().mockResolvedValue({ status: 'ok', data: [] })
+    mockQueryByProperty.mockReset().mockResolvedValue(NO_HOLDERS)
     mockDeletePropertyDef.mockReset().mockResolvedValue({ status: 'ok', data: null })
     mockToastError.mockReset()
     // `computePosition` also takes a `mockRejectedValueOnce` below (the
@@ -999,8 +1003,8 @@ describe('BlockPropertyEditor', () => {
      * Stand-in `property_definitions` table, mutated by `createPropertyDef`
      * and `deletePropertyDef`.
      *
-     * `keysInUse` is the distinct `block_properties` key list — what
-     * `list_property_keys` returns, and the same predicate
+     * `keysInUse` is the keys blocks of the space hold — what
+     * `query_by_property` finds a holder for, and the same predicate
      * `delete_property_def_inner` COUNTs before refusing a delete. Modelling
      * both from one source keeps the fixture honest about the state note 4
      * describes: a declaration over an in-use key cannot be withdrawn.
@@ -1029,8 +1033,12 @@ describe('BlockPropertyEditor', () => {
           return Promise.resolve({ status: 'ok', data: defs.get(key) })
         },
       )
-      mockListPropertyKeys.mockImplementation(() =>
-        Promise.resolve({ status: 'ok', data: [...keysInUse] }),
+      mockQueryByProperty.mockImplementation((request: { key: string }) =>
+        Promise.resolve(
+          keysInUse.includes(request.key)
+            ? { status: 'ok', data: { ...NO_HOLDERS.data, items: [{ id: 'HOLDER' }] } }
+            : NO_HOLDERS,
+        ),
       )
       // `delete_property_def_inner` (`src-tauri/src/commands/properties.rs`):
       // refuses every builtin key outright, refuses while any

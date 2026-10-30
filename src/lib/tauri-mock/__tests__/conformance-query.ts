@@ -453,6 +453,13 @@ const COMPACTION_STATUS_TOKEN = {
   attrKeys: ['total_ops', 'eligible_ops', 'retention_days'],
 } as const
 
+/** `preview_property_merge`'s `PropertyMergeCounts` (#5841 S2): no id, so a fixed head. */
+const PROPERTY_MERGE_COUNTS_TOKEN = {
+  kind: 'headed',
+  head: 'property_merge_counts',
+  attrKeys: ['moved', 'dropped'],
+} as const
+
 /** `resolve_page_by_alias`'s `(page_id, title)` hit (#3830). */
 const PAGE_ALIAS_HIT_TOKEN = { kind: 'tuple', names: ['page_id', 'title'] } as const
 /** `list_page_aliases_by_prefix`'s `(page_id, alias, title)` rows (#3830). */
@@ -739,6 +746,16 @@ const WIRE: Readonly<Record<string, WireShape>> = {
   preview_space_move: {
     rows: { kind: 'bare-array' },
     token: { kind: 'id', idKey: 'key', attrKeys: ['count'] },
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  // ── What a property merge moves and drops (#5841 S2) ──
+  //
+  // One `PropertyMergeCounts` struct, no id. MUST match the
+  // `preview_property_merge` arm in the Rust twin.
+  preview_property_merge: {
+    rows: { kind: 'bare-row' },
+    token: PROPERTY_MERGE_COUNTS_TOKEN,
     hasMoreKey: null,
     totalKey: null,
   },

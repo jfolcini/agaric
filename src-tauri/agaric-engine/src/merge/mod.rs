@@ -149,6 +149,10 @@ fn dispatch_engine_op(
         agaric_store::op::OpPayload::SetPropertyDef(p) => {
             engine.apply_set_property_def(&p.key, p.def.as_ref())
         }
+        agaric_store::op::OpPayload::RenamePropertyKey(p) => {
+            engine.apply_rename_property_key(&p.old_key, &p.new_key)
+        }
+        agaric_store::op::OpPayload::RewriteProperties(p) => engine.apply_rewrite_properties(p),
         agaric_store::op::OpPayload::AddAttachment(p) => engine.apply_add_attachment(
             p.block_id.as_str(),
             p.attachment_id.as_str(),

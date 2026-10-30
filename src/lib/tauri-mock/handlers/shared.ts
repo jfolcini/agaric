@@ -33,6 +33,7 @@ import {
   linkTokenRe,
   scanLinkTargets,
 } from '@/lib/tauri-mock/link-scan'
+import { forwardPropertyKey, propertyKeyReversePayload } from '@/lib/tauri-mock/property-keys'
 import { isValidRepeatRuleMock } from '@/lib/tauri-mock/recurrence'
 import {
   applyRevertForOp,
@@ -2267,6 +2268,20 @@ function propertyReversePayload(
 }
 
 /**
+ * The reverse of a definition op, a rename or a merge (#5841), or null for any
+ * other op. A definition op swaps what it set and what it replaced.
+ */
+function definitionOpReversePayload(
+  opType: string,
+  p: Record<string, unknown>,
+): Record<string, unknown> | null {
+  if (opType === 'set_property_def') {
+    return { space_id: p['space_id'], key: p['key'], def: p['prior'], prior: p['def'] }
+  }
+  return propertyKeyReversePayload(opType, p)
+}
+
+/**
  * #4870 — the FORWARD payload of {@link reverseOpTypeFor}`(target)`:
  * what the backend's reverse row carries, in place of the bookkeeping stash
  * (`{ reversed }` / `{ re_applied }` / `{ reverted }`) the mock used to write.
@@ -2289,6 +2304,8 @@ function propertyReversePayload(
  */
 export function reversePayloadFor(target: MockOpLogEntry): Record<string, unknown> {
   const p = JSON.parse(target.payload) as Record<string, unknown>
+  const definitionReverse = definitionOpReversePayload(target.op_type, p)
+  if (definitionReverse !== null) return definitionReverse
   const blockId = p['block_id']
   switch (target.op_type) {
     case 'edit_block': {
@@ -2319,7 +2336,9 @@ export function reversePayloadFor(target: MockOpLogEntry): Record<string, unknow
     }
     case 'set_property':
     case 'delete_property': {
-      return propertyReversePayload(target.op_type, p)
+      // #5841 S2 — under the key the value lives under now.
+      const key = forwardPropertyKey(target, blockId as string, p['key'] as string)
+      return propertyReversePayload(target.op_type, { ...p, key })
     }
     // #5057 — the symmetric swap `reverse_rename_attachment` computes. Without
     // it this fell to `default:`, which reads `block_id` — absent on an
@@ -2347,10 +2366,6 @@ export function reversePayloadFor(target: MockOpLogEntry): Record<string, unknow
     case 'add_page_alias':
     case 'remove_page_alias': {
       return { page_id: p['page_id'], alias: p['alias'] }
-    }
-    // #5841 — the reverse of a definition op swaps what it set and what it replaced.
-    case 'set_property_def': {
-      return { space_id: p['space_id'], key: p['key'], def: p['prior'], prior: p['def'] }
     }
     default: {
       // The soft-delete lifecycle trio reverses into `delete_block` /

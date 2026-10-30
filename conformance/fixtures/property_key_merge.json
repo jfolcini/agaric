@@ -1,0 +1,350 @@
+{
+  "description": "#5841 S2 — `merge_property_key` merges `stage` (select `a`) into `phase` (select `b`) in one `rewrite_properties` op. `X` holds `stage` only, so its value moves; `Y` holds `phase` only and is untouched; `Z` holds both, so it keeps `phase` and its `stage` value is removed (and recorded). `phase`'s options become `b` then `a`, and `stage`'s definition goes. Refused with `UnacknowledgedPropertyLoss` when the acknowledged counts are stale, and refused across types (`count` is a number). `undo_ops` puts everything back, which the second merge relies on: it is acknowledged with the same counts as the first. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "X",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Y",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Z",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 7,
+      "ops": [
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "key": "phase",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "key": "phase",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "rewrite_properties"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "phase",
+        "value": "a",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B3",
+        "key": "phase",
+        "value": "b",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B4",
+        "key": "phase",
+        "value": "b",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": "UnacknowledgedPropertyLoss",
+      "error": "validation",
+      "name": "a_stale_acknowledgement_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "different_types_are_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "merge_stage_into_phase",
+      "returns": ["phase#value_type=select#options=[\"b\",\"a\"]#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_merge",
+      "returns": [
+        "undo_ops#reversed_op_type=rewrite_properties#new_op_type=rewrite_properties#is_redo=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "merge_again",
+      "returns": ["phase#value_type=select#options=[\"b\",\"a\"]#builtin=false"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "phase_after_the_merge",
+      "rows": ["phase#value_type=select#options=[\"b\",\"a\"]#builtin=false"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "stage_is_gone",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "property_key_merge",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "stage",
+        "value": {
+          "value_text": "a"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "phase",
+        "value": {
+          "value_text": "b"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "stage",
+        "value": {
+          "value_text": "a"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "phase",
+        "value": {
+          "value_text": "b"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "dropped": 0,
+          "moved": 0
+        },
+        "fromKey": "stage",
+        "intoKey": "phase",
+        "spaceId": "$SPACE"
+      },
+      "command": "merge_property_key",
+      "comment": "The merge would move one value and drop one.",
+      "expect_code": "UnacknowledgedPropertyLoss",
+      "expect_error": "validation",
+      "name": "a_stale_acknowledgement_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "dropped": 0,
+          "moved": 1
+        },
+        "fromKey": "stage",
+        "intoKey": "count",
+        "spaceId": "$SPACE"
+      },
+      "command": "merge_property_key",
+      "comment": "`count` is a number: change one type first.",
+      "expect_error": "validation",
+      "name": "different_types_are_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "dropped": 1,
+          "moved": 1
+        },
+        "fromKey": "stage",
+        "intoKey": "phase",
+        "spaceId": "$SPACE"
+      },
+      "command": "merge_property_key",
+      "comment": "O5 — `phase` after the union.",
+      "name": "merge_stage_into_phase",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O5"]
+      },
+      "command": "undo_ops",
+      "comment": "O6 — `stage` and its values are back, `Z`'s included, and `phase` has its own options.",
+      "name": "undo_the_merge",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "dropped": 1,
+          "moved": 1
+        },
+        "fromKey": "stage",
+        "intoKey": "phase",
+        "spaceId": "$SPACE"
+      },
+      "command": "merge_property_key",
+      "comment": "O7 — the same counts as the first merge.",
+      "name": "merge_again",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "key": "phase",
+        "spaceId": "$SPACE"
+      },
+      "command": "get_property_def",
+      "comment": "Options `b` then `a`.",
+      "name": "phase_after_the_merge"
+    },
+    {
+      "args": {
+        "key": "stage",
+        "spaceId": "$SPACE"
+      },
+      "command": "get_property_def",
+      "comment": "The merged key is no longer declared.",
+      "expect_empty": true,
+      "name": "stage_is_gone"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "X",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "Y",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "Z",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      }
+    ],
+    "properties": [],
+    "property_defs": [
+      {
+        "key": "stage",
+        "options": "[\"a\"]",
+        "value_type": "select"
+      },
+      {
+        "key": "phase",
+        "options": "[\"b\"]",
+        "value_type": "select"
+      },
+      {
+        "key": "count",
+        "options": null,
+        "value_type": "number"
+      }
+    ],
+    "tags": []
+  }
+}

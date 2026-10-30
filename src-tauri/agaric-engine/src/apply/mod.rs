@@ -14,7 +14,8 @@
 //! - `pages_cache`: `maintain_pages_cache_counts_after_op` +
 //!   `recompute_pages_cache_counts_for_pages` and their helpers.
 //! - `attachments`: the three per-op `apply_*_attachment_tx` writers.
-//! - `property_defs`: the `SetPropertyDef` apply and its value re-typing.
+//! - `property_defs`: the definition ops' apply (`SetPropertyDef` and its value
+//!   re-typing, `RenamePropertyKey`, `RewriteProperties`).
 //!
 //! What STAYS app-side (reaches these through re-export shims at the old
 //! `crate::materializer::handlers::…` paths): the `Materializer` coordinator /
@@ -34,7 +35,8 @@ use agaric_store::op::{
     AddAttachmentPayload, AddPageAliasPayload, AddTagPayload, CreateBlockPayload,
     DeleteAttachmentPayload, DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload,
     MoveBlockPayload, OpType, PurgeBlockPayload, RemovePageAliasPayload, RemoveTagPayload,
-    RenameAttachmentPayload, RestoreBlockPayload, SetPropertyDefPayload, SetPropertyPayload,
+    RenameAttachmentPayload, RenamePropertyKeyPayload, RestoreBlockPayload,
+    RewritePropertiesPayload, SetPropertyDefPayload, SetPropertyPayload,
 };
 use agaric_store::op_log::OpRecord;
 use agaric_store::tag_inheritance;

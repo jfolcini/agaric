@@ -10,6 +10,8 @@ import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { getTodayString } from '@/lib/date-utils'
 import { PRIORITY_LEVELS } from '@/lib/priority-levels'
+import { paginationLimit } from '@/lib/safe-limit'
+import { requireActiveScope } from '@/lib/space-scope'
 import { TASK_STATES } from '@/lib/task-states'
 
 /** Ergonomic single-value-field param shape produced by
@@ -247,25 +249,24 @@ export function carriedRenameDefinition(
  * - A key that is ALREADY declared in `spaceId` — `create_property_def` is
  *   INSERT OR IGNORE, so nothing would be created anyway, and the existing row is the
  *   user's, never this rename's to withdraw.
- * - A key any block already holds a value for — `list_property_keys` is the
- *   distinct `block_properties` key list, the same predicate the delete's
- *   refusal counts.
+ * - A key a live block of `spaceId` already holds a value for, of any type:
+ *   `query_by_property` with only `key` set. Definitions are per space
+ *   (#5841), so a key another space uses is no reason to decline.
  *
  * Skipping the copy costs only what #4010 added: the renamed key stays
  * undeclared, exactly as before that fix, and the VALUE still carries over
- * untouched. `list_property_keys` truncates at the 1000 most-used keys, so a
- * vault past that cap can still slip a rarely-used key through — that
- * remainder is what the caller's compensating delete is for.
+ * untouched. The probe does not see blocks in the Trash; that remainder is
+ * what the caller's compensating delete is for.
  *
  * #4399 — since `create_property_def` grew an in-use probe of its own, this
  * is no longer the only thing between a rename and a declaration over
  * someone else's values. The backend probe runs inside the insert's
  * `BEGIN IMMEDIATE`, so it closes both gaps this one has by construction:
- * the TOCTOU between the read pool and the write pool, and the keys past the
- * 1000-key cap. This check stays because it is strictly broader — it also
- * declines already-declared keys, which the backend accepts by design — and
- * because declining locally saves a round-trip whose only possible outcome is
- * a rejection.
+ * the TOCTOU between the read pool and the write pool, and trashed holders.
+ * This check stays because it is strictly broader — it also declines
+ * already-declared keys, which the backend accepts by design — and because
+ * declining locally saves a round-trip whose only possible outcome is a
+ * rejection.
  *
  * Throws whatever the two lookups throw; the caller treats a failed
  * pre-flight like a failed copy (best-effort, rename proceeds).
@@ -273,7 +274,26 @@ export function carriedRenameDefinition(
 export async function renameMayDeclareKey(spaceId: string, newKey: string): Promise<boolean> {
   if (NON_DELETABLE_PROPERTIES.has(newKey) || COLUMN_BACKED_PROPERTY_KEYS.has(newKey)) return false
   if (unwrap(await commands.getPropertyDef(spaceId, newKey)) != null) return false
-  return !unwrap(await commands.listPropertyKeys()).includes(newKey)
+  const holders = unwrap(
+    await commands.queryByProperty(
+      {
+        key: newKey,
+        valueText: null,
+        valueDate: null,
+        operator: null,
+        cursor: null,
+        limit: paginationLimit(1),
+        excludeParentId: null,
+        contentNonEmpty: null,
+        blockType: null,
+        valueTextIn: null,
+        valueDateRange: null,
+        excludeTodoStates: null,
+      },
+      requireActiveScope(spaceId),
+    ),
+  )
+  return holders.items.length === 0
 }
 
 /**

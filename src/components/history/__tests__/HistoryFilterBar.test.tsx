@@ -120,8 +120,8 @@ describe('HistoryFilterBar', () => {
     const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
     const options = select.querySelectorAll('option')
 
-    // __all__ + 16 op types = 17 options
-    expect(options).toHaveLength(17)
+    // __all__ + 18 op types = 19 options
+    expect(options).toHaveLength(19)
     expect(options[0]).toHaveTextContent('All types')
     expect(options[1]).toHaveTextContent('Edit')
     expect(options[2]).toHaveTextContent('Create')
@@ -136,6 +136,9 @@ describe('HistoryFilterBar', () => {
     expect(values).toContain('remove_page_alias')
     // #5841 — a definition change is an op, listed in global history.
     expect(values).toContain('set_property_def')
+    // #5841 S2 — a key rename and a merge are ops, listed in global history.
+    expect(values).toContain('rename_property_key')
+    expect(values).toContain('rewrite_properties')
   })
 
   it('calls onFilterChange(null) when "All types" is selected', async () => {
@@ -241,7 +244,7 @@ describe('HistoryFilterBar', () => {
       // Title.
       expect(content).toHaveTextContent('What do these mean?')
 
-      // Spot-check a handful of descriptions across the 16 op types — these
+      // Spot-check a handful of descriptions across the 18 op types — these
       // are the values supplied by the i18n keys
       // `history.opTypeDescription.<op_type>`.
       expect(content).toHaveTextContent('A new block was created')
@@ -257,10 +260,12 @@ describe('HistoryFilterBar', () => {
       expect(content).toHaveTextContent('An alias was added to a page')
       expect(content).toHaveTextContent('An alias was removed from a page')
       expect(content).toHaveTextContent(t('history.opTypeDescription.setPropertyDef'))
+      expect(content).toHaveTextContent(t('history.opTypeDescription.renamePropertyKey'))
+      expect(content).toHaveTextContent(t('history.opTypeDescription.rewriteProperties'))
 
-      // All 16 op types render as <dt>/<dd> rows inside the legend's <dl>.
+      // All 18 op types render as <dt>/<dd> rows inside the legend's <dl>.
       const rows = content.querySelectorAll('dl > div')
-      expect(rows).toHaveLength(16)
+      expect(rows).toHaveLength(18)
     })
   })
 })

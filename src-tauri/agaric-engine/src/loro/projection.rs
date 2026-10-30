@@ -1659,6 +1659,100 @@ pub async fn reproject_key_values(
     Ok(rewritten)
 }
 
+/// Project a `RenamePropertyKey` (#5841): every row of `space_id` under
+/// `old_key` whose block holds no `new_key` row moves to `new_key`, and the
+/// space's definition moves when it declares no `new_key`, keeping its
+/// `created_at`. The engine's rule, so the two agree.
+pub async fn project_rename_property_key_to_sql(
+    conn: &mut SqliteConnection,
+    space_id: &str,
+    old_key: &str,
+    new_key: &str,
+) -> Result<(), AppError> {
+    sqlx::query!(
+        "UPDATE block_properties SET key = ?3 \
+         WHERE key = ?2 \
+           AND EXISTS (SELECT 1 FROM blocks b WHERE b.id = block_properties.block_id \
+                       AND (b.space_id = ?1 OR b.id = ?1)) \
+           AND NOT EXISTS (SELECT 1 FROM block_properties t \
+                           WHERE t.block_id = block_properties.block_id AND t.key = ?3)",
+        space_id,
+        old_key,
+        new_key,
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query!(
+        "UPDATE property_definitions SET key = ?3 \
+         WHERE space_id = ?1 AND key = ?2 \
+           AND NOT EXISTS (SELECT 1 FROM property_definitions t \
+                           WHERE t.space_id = ?1 AND t.key = ?3)",
+        space_id,
+        old_key,
+        new_key,
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// Project a `RewriteProperties`'s value writes (#5841): each write's row is
+/// replaced by its value, typed by `value_types` (the space's definitions
+/// after the op's own), or removed. A write to a block with no row in the
+/// space is skipped, as the engine skips one it no longer holds.
+pub async fn project_property_value_writes(
+    conn: &mut SqliteConnection,
+    space_id: &str,
+    writes: &[agaric_store::op::PropertyValueWrite],
+    value_types: &std::collections::HashMap<String, String>,
+) -> Result<(), AppError> {
+    if writes.is_empty() {
+        return Ok(());
+    }
+    let ids_json = serde_json::to_string(
+        &writes
+            .iter()
+            .map(|w| w.block_id.as_str())
+            .collect::<Vec<_>>(),
+    )?;
+    let in_space: std::collections::HashSet<String> = sqlx::query_scalar!(
+        r#"SELECT b.id AS "id!: String" FROM blocks b
+           WHERE b.id IN (SELECT value FROM json_each(?1))
+             AND (+b.space_id = ?2 OR +b.id = ?2)"#,
+        ids_json,
+        space_id,
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .collect();
+    for write in writes
+        .iter()
+        .filter(|w| in_space.contains(w.block_id.as_str()))
+    {
+        let block_id = write.block_id.as_str();
+        sqlx::query!(
+            "DELETE FROM block_properties WHERE block_id = ? AND key = ?",
+            block_id,
+            write.key,
+        )
+        .execute(&mut *conn)
+        .await?;
+        if let Some(value) = &write.value {
+            let value = crate::loro::engine::PropertyValue::from(value);
+            reproject_property_row_from_engine(
+                conn,
+                &write.block_id,
+                &write.key,
+                &value,
+                value_types,
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
 /// Re-project a block's full tag set from the engine into the SQL
 /// `block_tags` table after a sync-pull import.
 ///

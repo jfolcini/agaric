@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COALESCE(space_id, id) AS \"space!: String\" FROM blocks WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "space!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7adbebe05bd5ab12aabd04e79f1850f47a3d9560e53b93eff68d23d1d5131a01"
+}

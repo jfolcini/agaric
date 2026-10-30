@@ -455,12 +455,28 @@ describe('carriedRenameDefinition', () => {
 // still fail and `delete_property_def_inner` refuses to remove a definition for
 // a builtin key or for one any `block_properties` row references.
 describe('renameMayDeclareKey', () => {
-  /** Backend stand-in: `get_property_def` + `list_property_keys`. */
-  function installBackend(defs: Record<string, PropertyDefinition>, keysInUse: string[]) {
+  /** Backend stand-in: `get_property_def`, and the keys blocks hold per space (`query_by_property`). */
+  function installBackend(
+    defs: Record<string, PropertyDefinition>,
+    keysInUse: string[],
+    keysInOtherSpace: string[] = [],
+  ) {
     mockedInvoke.mockImplementation(
       mockInvokeCommands({
         get_property_def: (args) => defs[String(args['key'])] ?? null,
-        list_property_keys: () => keysInUse,
+        query_by_property: (args) => {
+          const request = args['request'] as { key: string }
+          const scope = args['scope'] as { space_id: string }
+          const held = (scope.space_id === 'SPACE_A' ? keysInUse : keysInOtherSpace).includes(
+            request.key,
+          )
+          return {
+            items: held ? [makeBlockRow({ id: 'HOLDER' })] : [],
+            next_cursor: null,
+            has_more: false,
+            total_count: null,
+          }
+        },
       }),
     )
   }
@@ -475,6 +491,11 @@ describe('renameMayDeclareKey', () => {
     // those rows exist, so it must not be written in the first place.
     installBackend({}, ['estimate', 'status'])
     expect(await renameMayDeclareKey('SPACE_A', 'status')).toBe(false)
+  })
+
+  it('allows a key only another space uses: definitions are per space (#5841)', async () => {
+    installBackend({}, [], ['effortPoints'])
+    expect(await renameMayDeclareKey('SPACE_A', 'effortPoints')).toBe(true)
   })
 
   it('refuses an already-declared key — that row is not this rename to withdraw', async () => {

@@ -216,6 +216,13 @@ function matchesOpType(entry: MockOpLogEntry, opTypeFilter: string | null): bool
   return opTypeFilter === null || entry.op_type === opTypeFilter
 }
 
+/** The op types whose `op_log.block_id` is their space (#5841). */
+const SPACE_KEYED_OP_TYPES: ReadonlySet<string> = new Set([
+  'set_property_def',
+  'rename_property_key',
+  'rewrite_properties',
+])
+
 /**
  * The `__all__` branch's space predicate: the op's block belongs to the
  * requested space, resolved through its owning page (`ownerSpaceOf`).
@@ -230,7 +237,7 @@ function inSpace(entry: MockOpLogEntry, spaceId: string): boolean {
   const blockId = opBlockId(entry)
   if (blockId === null) return true
   // #5841 — a definition op's block is its space, which belongs to no space.
-  if (entry.op_type === 'set_property_def') return blockId === spaceId
+  if (SPACE_KEYED_OP_TYPES.has(entry.op_type)) return blockId === spaceId
   return ownerSpaceOf(blocks.get(blockId) ?? { id: blockId }) === spaceId
 }
 

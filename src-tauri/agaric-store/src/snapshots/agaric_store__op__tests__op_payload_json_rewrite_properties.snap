@@ -1,0 +1,39 @@
+---
+source: src/op.rs
+expression: json
+---
+defs:
+  - def: ~
+    key: stage
+    prior:
+      options: "[\"a\"]"
+      value_type: select
+  - def:
+      options: "[\"b\",\"a\"]"
+      value_type: select
+    key: phase
+    prior:
+      options: "[\"b\"]"
+      value_type: select
+op_type: rewrite_properties
+reason: merge
+space_id: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+values:
+  - block_id: 01BX5ZZKBKACTAV9WEVGEMMVRZ
+    key: stage
+    prior:
+      value_bool: ~
+      value_date: ~
+      value_num: ~
+      value_ref: ~
+      value_text: a
+    value: ~
+  - block_id: 01BX5ZZKBKACTAV9WEVGEMMVRZ
+    key: phase
+    prior: ~
+    value:
+      value_bool: ~
+      value_date: ~
+      value_num: ~
+      value_ref: ~
+      value_text: a

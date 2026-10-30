@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE block_properties SET key = ?3 WHERE key = ?2 AND EXISTS (SELECT 1 FROM blocks b WHERE b.id = block_properties.block_id AND (b.space_id = ?1 OR b.id = ?1)) AND NOT EXISTS (SELECT 1 FROM block_properties t WHERE t.block_id = block_properties.block_id AND t.key = ?3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "7e93e6fbf8092e36054dd69181efe319cb662d1e3b1b2da65cfc7af6061615bd"
+}

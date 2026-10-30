@@ -142,6 +142,25 @@ describe('getPayloadRawContent', () => {
     expect(getPayloadRawContent(makeEntry(payload, 'set_property_def'))).toBe('effort')
   })
 
+  it('returns old → new for a rename_property_key payload', () => {
+    const payload = JSON.stringify({ space_id: 'SP1', old_key: 'project', new_key: 'area' })
+    expect(getPayloadRawContent(makeEntry(payload, 'rename_property_key'))).toBe('project → area')
+  })
+
+  it('returns the merged keys, from → into, for a rewrite_properties payload', () => {
+    const def = { value_type: 'select', options: '["a"]' }
+    const payload = JSON.stringify({
+      space_id: 'SP1',
+      reason: 'merge',
+      defs: [
+        { key: 'stage', def: null, prior: def },
+        { key: 'phase', def, prior: def },
+      ],
+      values: [],
+    })
+    expect(getPayloadRawContent(makeEntry(payload, 'rewrite_properties'))).toBe('stage → phase')
+  })
+
   it('returns null for a set_property_def payload without a key', () => {
     const payload = JSON.stringify({ space_id: 'SP1', def: null, prior: null })
     expect(getPayloadRawContent(makeEntry(payload, 'set_property_def'))).toBeNull()

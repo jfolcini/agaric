@@ -17,6 +17,7 @@ import { normalizeTagName } from '@/lib/name-tokens'
 import { foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { deleteCohort, nextCohortMarker, restoreCohort } from '@/lib/tauri-mock/cohort'
 import { indexLinks, linkedTargets, relinkRestored } from '@/lib/tauri-mock/link-index'
+import { forwardPropertyKey, revertPropertyKeyOp } from '@/lib/tauri-mock/property-keys'
 import { type MockOpLogEntry, opLog, spacePropertyDefs } from '@/lib/tauri-mock/seed'
 
 type BlockRow = Record<string, unknown>
@@ -556,6 +557,40 @@ function revertDeleteAttachment(payload: Record<string, unknown>, state: RevertS
 // ---------------------------------------------------------------------------
 
 /**
+ * The reverses of ops that carry no `block_id`, handled before the block-row
+ * lookup in {@link applyRevertForOp}: the three attachment reverses (#5057,
+ * agaric-engine `reverse/attachment_ops.rs`), and a rename or a merge, which
+ * names its space (#5841 S2).
+ */
+const BLOCKLESS_REVERTS: Partial<
+  Record<string, (payload: Record<string, unknown>, state: RevertState) => void>
+> = {
+  rename_attachment: (payload, state) => {
+    const row = state.attachments?.get(payload['attachment_id'] as string)
+    if (row) row['filename'] = payload['old_filename']
+  },
+  // The BYTES stay: a real `delete_attachment` leaves them for the GC pass
+  // (#1993), and so must the synthetic one this mints.
+  add_attachment: (payload, state) => {
+    state.attachments?.delete(payload['attachment_id'] as string)
+  },
+  delete_attachment: revertDeleteAttachment,
+  rename_property_key: (payload) => {
+    revertPropertyKeyOp('rename_property_key', payload)
+  },
+  rewrite_properties: (payload) => {
+    revertPropertyKeyOp('rewrite_properties', payload)
+  },
+}
+
+/** #5841 S2 — a value's undo lands under the key the value lives under now. */
+function forwardValueKey(target: MockOpLogEntry, payload: Record<string, unknown>): void {
+  if (target.op_type !== 'set_property' && target.op_type !== 'delete_property') return
+  const blockId = payload['block_id'] as string
+  payload['key'] = forwardPropertyKey(target, blockId, payload['key'] as string)
+}
+
+/**
  * Apply the inverse of `target` to the in-memory mock state, mutating the
  * matching row(s) in place. Unknown op types and missing target blocks are
  * silent no-ops.
@@ -572,26 +607,14 @@ export function applyRevertForOp(
 ): void {
   const payload = JSON.parse(target.payload) as Record<string, unknown>
 
-  // #5057 — the three attachment reverses (agaric-engine
-  // `reverse/attachment_ops.rs`). Handled before the block-row lookup below
-  // because an attachment op carries no `block_id`.
-  if (target.op_type === 'rename_attachment') {
-    const row = state.attachments?.get(payload['attachment_id'] as string)
-    if (row) row['filename'] = payload['old_filename']
-    return
-  }
-  // The BYTES stay: a real `delete_attachment` leaves them for the GC pass
-  // (#1993), and so must the synthetic one this mints.
-  if (target.op_type === 'add_attachment') {
-    state.attachments?.delete(payload['attachment_id'] as string)
-    return
-  }
-  if (target.op_type === 'delete_attachment') {
-    revertDeleteAttachment(payload, state)
+  const revertBlockless = BLOCKLESS_REVERTS[target.op_type]
+  if (revertBlockless) {
+    revertBlockless(payload, state)
     return
   }
 
   const blockId = payload['block_id'] as string
+  forwardValueKey(target, payload)
 
   // Block-row reverts: silent no-op if the block is missing from the map.
   const b = blocks.get(blockId)

@@ -221,5 +221,22 @@ pub(super) fn all_op_payloads() -> Vec<(&'static str, OpPayload)> {
                 prior: None,
             }),
         ),
+        (
+            "rename_property_key",
+            OpPayload::RenamePropertyKey(RenamePropertyKeyPayload {
+                space_id: BlockId::test_id("SP001"),
+                old_key: "project".into(),
+                new_key: "area".into(),
+            }),
+        ),
+        (
+            "rewrite_properties",
+            OpPayload::RewriteProperties(RewritePropertiesPayload {
+                space_id: BlockId::test_id("SP001"),
+                reason: RewriteReason::Merge,
+                defs: Vec::new(),
+                values: Vec::new(),
+            }),
+        ),
     ]
 }
