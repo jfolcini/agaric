@@ -206,6 +206,8 @@ export const pages: Record<string, string> = {
   'pageMode.blocks': 'Blocks',
   'pageMode.page': 'Page',
   'pageMode.pageHint': 'Edit the whole page as one document',
+  'pageMode.editAsPage': 'Edit as page',
+  'pageMode.editAsBlocks': 'Edit as blocks',
   'pageMode.editorLabel': 'Page text',
   'pageMode.gripTip': 'Drag to move · Click for the block menu',
   'pageMode.todoToggleTip': 'Set or clear TODO',

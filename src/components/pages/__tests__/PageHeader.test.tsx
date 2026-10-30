@@ -17,12 +17,13 @@ import type { InvokeArgs } from '@tauri-apps/api/core'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type React from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
 
 import { PageHeader } from '@/components/pages/PageHeader'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import type { AppError } from '@/lib/app-error'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
@@ -55,6 +56,8 @@ vi.mock('@/lib/clipboard', () => ({
 vi.mock('@/lib/active-draft-flush', () => ({
   flushActiveDraft: vi.fn(),
 }))
+
+vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: vi.fn(() => false) }))
 
 import { flushActiveDraft } from '@/lib/active-draft-flush'
 
@@ -92,6 +95,7 @@ vi.mock('lucide-react', () => ({
   Download: () => <svg data-testid="download-icon" />,
   ExternalLink: () => <svg data-testid="external-link-icon" />,
   FileCode: () => <svg data-testid="file-code-icon" />,
+  FileText: () => <svg data-testid="file-text-icon" />,
   FolderOutput: () => <svg data-testid="folder-output-icon" />,
   Info: () => <svg data-testid="info-icon" />,
   LayoutTemplate: (props: Record<string, unknown>) => (
@@ -112,6 +116,7 @@ vi.mock('lucide-react', () => ({
   Plus: () => <svg data-testid="plus-icon" />,
   Redo2: () => <svg data-testid="redo2-icon" />,
   Repeat: () => <svg data-testid="repeat-icon" />,
+  Rows3: () => <svg data-testid="rows3-icon" />,
   Settings2: () => <svg data-testid="settings2-icon" />,
   Smile: (props: Record<string, unknown>) => <svg data-testid="smile-icon" {...props} />,
   Bookmark: (props: Record<string, unknown>) => <svg data-testid="star-icon" {...props} />,
@@ -908,6 +913,119 @@ describe('PageHeader editing-mode switch (#5691)', () => {
     await waitFor(async () => {
       expect(await axe(container)).toHaveNoViolations()
     })
+  })
+})
+
+// #5691 — on a touch phone the switch would push the star and the kebab to a second row.
+describe('PageHeader editing mode on a phone (#5691)', () => {
+  const desktopWidth = window.innerWidth
+  const setDevice = (touch: boolean, width: number): void => {
+    vi.mocked(useIsTouch).mockReturnValue(touch)
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
+  }
+  beforeEach(() => setDevice(true, 390))
+  afterEach(() => setDevice(false, desktopWidth))
+
+  const modeSwitch = () => screen.queryByRole('radiogroup', { name: t('pageMode.switchLabel') })
+  const openPageActions = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole('button', { name: t('pageHeader.pageActions') }))
+    return screen.findByRole('menu', { name: t('pageHeader.pageActions') })
+  }
+
+  it('the header has no switch; Page actions names the other mode and switches to it', async () => {
+    const user = userEvent.setup()
+    const onEditModeChange = vi.fn()
+    const asBlocks = renderPageHeader(
+      <PageHeader
+        pageId="PAGE_1"
+        title="My Page"
+        editMode="blocks"
+        onEditModeChange={onEditModeChange}
+      />,
+    )
+    expect(modeSwitch()).not.toBeInTheDocument()
+
+    const menu = await openPageActions(user)
+    await user.click(within(menu).getByRole('menuitem', { name: t('pageMode.editAsPage') }))
+    expect(onEditModeChange.mock.calls).toEqual([['page']])
+    await waitFor(() => {
+      expect(screen.queryByRole('menu', { name: t('pageHeader.pageActions') })).toBeNull()
+    })
+    asBlocks.unmount()
+
+    renderPageHeader(
+      <PageHeader
+        pageId="PAGE_1"
+        title="My Page"
+        editMode="page"
+        onEditModeChange={onEditModeChange}
+      />,
+    )
+    const inPage = await openPageActions(user)
+    expect(
+      within(inPage).queryByRole('menuitem', { name: t('pageMode.editAsPage') }),
+    ).not.toBeInTheDocument()
+    await user.click(within(inPage).getByRole('menuitem', { name: t('pageMode.editAsBlocks') }))
+    expect(onEditModeChange.mock.calls).toEqual([['page'], ['blocks']])
+  })
+
+  it('Ctrl+Shift+M and the palette’s command still switch the mode', () => {
+    const onEditModeChange = vi.fn()
+    renderPageHeader(
+      <PageHeader
+        pageId="PAGE_1"
+        title="My Page"
+        editMode="blocks"
+        onEditModeChange={onEditModeChange}
+      />,
+    )
+    fireEvent.keyDown(document, { key: 'M', ctrlKey: true, shiftKey: true })
+    window.dispatchEvent(new CustomEvent(TOGGLE_PAGE_MODE_EVENT))
+
+    expect(onEditModeChange.mock.calls).toEqual([['page'], ['page']])
+  })
+
+  it('a blocked page’s item says why, to a screen reader too, and does nothing', async () => {
+    const user = userEvent.setup()
+    const onEditModeChange = vi.fn()
+    const why = 'Page mode can’t show tasks yet.'
+    renderPageHeader(
+      <PageHeader
+        pageId="PAGE_1"
+        title="My Page"
+        editMode="blocks"
+        onEditModeChange={onEditModeChange}
+        editModeBlocked={why}
+      />,
+    )
+    const menu = await openPageActions(user)
+    const item = within(menu).getByRole('menuitem', { name: t('pageMode.editAsPage') })
+
+    expect(item).toHaveAttribute('aria-disabled', 'true')
+    expect(item).toHaveAccessibleDescription(why)
+    expect(item).toHaveTextContent(why)
+    await user.click(item)
+    expect(onEditModeChange).not.toHaveBeenCalled()
+    expect(await axe(menu)).toHaveNoViolations()
+  })
+
+  // A mouse at phone width, or a touch tablet, has room for the switch.
+  it.each([
+    [false, 390],
+    [true, 1024],
+  ])('touch %s at %s px keeps the switch in the header, not in the menu', async (touch, width) => {
+    setDevice(touch, width)
+    const user = userEvent.setup()
+    renderPageHeader(
+      <PageHeader pageId="PAGE_1" title="My Page" editMode="blocks" onEditModeChange={() => {}} />,
+    )
+    expect(modeSwitch()).toBeInTheDocument()
+
+    const menu = await openPageActions(user)
+    expect(within(menu).getByRole('menuitem', { name: /Add alias/ })).toBeInTheDocument()
+    expect(
+      within(menu).queryByRole('menuitem', { name: t('pageMode.editAsPage') }),
+    ).not.toBeInTheDocument()
   })
 })
 

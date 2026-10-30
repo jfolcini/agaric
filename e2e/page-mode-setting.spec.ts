@@ -3,7 +3,7 @@
  * Editor › *Edit pages as* opens pages in page mode; a page header's Blocks |
  * Page switch, and Ctrl+Shift+M, change only the page on screen; a page over
  * page mode's cap keeps block mode and the switch says why; a phone offers
- * both. Axe on the settings row and the switch.
+ * both, the switch as a *Page actions* row. Axe on the settings row and the switch.
  */
 
 import { createRequire } from 'node:module'
@@ -185,7 +185,10 @@ test.describe('on a phone (#5691) @editor @pages @settings @mobile', () => {
 
     await expect(page.locator(EDITOR)).toBeVisible()
     await expect(page.locator('[data-testid="block-static"]')).toHaveCount(0)
-    await expect(modeSwitch(page, 'Page')).toHaveAttribute('aria-checked', 'true')
+    await expect(page.getByRole('radiogroup', { name: 'Editing mode' })).toHaveCount(0)
+    await page.getByRole('button', { name: 'Page actions', exact: true }).tap()
+    await expect(page.getByRole('menuitem', { name: 'Edit as blocks', exact: true })).toBeVisible()
+    await page.keyboard.press('Escape')
 
     await navigateMobile(page, 'Settings')
     await openSettingsTab(page, 'Editor')

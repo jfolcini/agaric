@@ -23,8 +23,11 @@ import { PageTagSection } from '@/components/pages/PageTagSection'
 import { PageTitleEditor } from '@/components/pages/PageTitleEditor'
 import { SpaceMoveConfirmDialog } from '@/components/pages/SpaceMoveConfirmDialog'
 import { Breadcrumb, type BreadcrumbCrumb } from '@/components/ui/breadcrumb'
+import { useEditModeShortcut } from '@/editor/page-mode/use-page-mode'
 import { useBlockTags } from '@/hooks/useBlockTags'
 import { useEmojiRecents } from '@/hooks/useEmojiRecents'
+import { useIsMobile } from '@/hooks/useIsMobile'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { usePageAliases } from '@/hooks/usePageAliases'
 import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import { usePageTemplateMeta } from '@/hooks/usePageTemplateMeta'
@@ -59,7 +62,10 @@ export interface PageHeaderProps {
   onEditSource?: (() => void) | undefined
   /** The page-actions kebab, so focus can return to it. */
   kebabRef?: React.RefObject<HTMLButtonElement | null> | undefined
-  /** The page's editing mode; the Blocks | Page switch and its shortcut need `onEditModeChange`. */
+  /**
+   * The page's editing mode; the Blocks | Page switch (on a phone, a *Page actions* item, so the
+   * header fits one row) and its shortcut need `onEditModeChange`.
+   */
   editMode?: EditMode | undefined
   onEditModeChange?: ((mode: EditMode) => void) | undefined
   /** Why page mode is not offered for this page. */
@@ -78,6 +84,10 @@ export function PageHeader({
   const { t } = useTranslation()
   const ownKebabRef = useRef<HTMLButtonElement>(null)
   const kebab = kebabRef ?? ownKebabRef
+  const isTouch = useIsTouch()
+  const isMobile = useIsMobile()
+  const onPhone = isTouch && isMobile
+  useEditModeShortcut(editMode ?? 'blocks', onEditModeChange)
 
   // --- Page-delete flow (Part A) ---
   // `usePageDeleteAction` owns the confirm dialog + success-toast-with-
@@ -319,6 +329,16 @@ export function PageHeader({
     [onEditSource],
   )
 
+  const handleMenuEditModeChange = useMemo(
+    () =>
+      onEditModeChange &&
+      ((mode: EditMode) => {
+        setKebabOpen(false)
+        onEditModeChange(mode)
+      }),
+    [onEditModeChange],
+  )
+
   const handleOpenInNewTab = useCallback(() => {
     useTabsStore.getState().openInNewTab(pageId, editableTitle || title)
     setKebabOpen(false)
@@ -542,10 +562,11 @@ export function PageHeader({
         {/* Capped and centred like `.page-editor`, so the title and its
             actions line up with the column below the outlet. */}
         <div className="page-header space-y-2 max-w-reading mx-auto">
-          {/* Title row: the title, the star and the page-actions kebab,
-              which holds every other page action. If the title is wider
-              than the row, the two icons wrap right-aligned below it; the
-              title keeps its minimum width (`PageTitleEditor`). */}
+          {/* Title row: the title, the Blocks | Page switch, the star and
+              the page-actions kebab, which holds every other page action
+              (on a phone the switch too, so the row fits one line). If the
+              title is wider than the row, the controls wrap right-aligned
+              below it; the title keeps its minimum width (`PageTitleEditor`). */}
           <div className="flex flex-wrap items-center justify-end gap-2">
             <PageTitleEditor
               title={title}
@@ -556,7 +577,7 @@ export function PageHeader({
               onKeyDown={handleTitleKeyDown}
               onKeyUp={handleTitleKeyUp}
             />
-            {onEditModeChange && (
+            {onEditModeChange && !onPhone && (
               <EditModeSwitch
                 mode={editMode ?? 'blocks'}
                 onChange={onEditModeChange}
@@ -588,6 +609,9 @@ export function PageHeader({
               onToggleJournalTemplate={handleToggleJournalTemplate}
               onExport={handleExport}
               onEditSource={handleEditSource}
+              editMode={editMode}
+              onEditModeChange={onPhone ? handleMenuEditModeChange : undefined}
+              editModeBlocked={editModeBlocked}
               kebabRef={kebab}
               onDeleteRequest={handleRequestDelete}
               onOpenInNewTab={handleOpenInNewTab}

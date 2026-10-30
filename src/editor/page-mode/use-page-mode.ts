@@ -1,6 +1,7 @@
 /**
  * usePageMode — whether `PageEditor`, or the journal's `DayPageEditor`, shows a
- * page in page mode (#5691), and its Blocks | Page switch. Pages open as the device's *Edit pages as* setting
+ * page in page mode (#5691), and its Blocks | Page switch (on a phone, the page
+ * header's *Page actions* item). Pages open as the device's *Edit pages as* setting
  * says (`PREFERENCES.editMode`); the switch changes the mode of the page on
  * screen only. A page over page mode's cap (`page-mode-fit.ts`)
  * stays in block mode, the switch saying why, as the page store's rows show
@@ -23,7 +24,9 @@ import {
 } from '@/editor/page-mode/page-mode-switch'
 import type { PageModeEditorHandle } from '@/editor/page-mode/PageModeEditor'
 import { t } from '@/lib/i18n'
+import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { notify } from '@/lib/notify'
+import { TOGGLE_PAGE_MODE_EVENT } from '@/lib/overlay-events'
 import { type EditMode, PREFERENCES, usePreference } from '@/lib/preferences'
 import { useBlockStore } from '@/stores/blocks'
 import { usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
@@ -212,4 +215,29 @@ export function usePageMode(pageId: string): PageModeState {
     changeMode,
     afterFlush,
   }
+}
+
+/**
+ * The `togglePageMode` shortcut and the palette's command flip `mode`, a blocked Page included, so
+ * `onChange` can say why. The page mounts it, not its switch, which a phone shows in a menu.
+ */
+export function useEditModeShortcut(
+  mode: EditMode,
+  onChange: ((mode: EditMode) => void) | undefined,
+): void {
+  useEffect(() => {
+    if (onChange === undefined) return
+    const toggle = (): void => onChange(mode === 'page' ? 'blocks' : 'page')
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (!matchesShortcutBinding(e, 'togglePageMode')) return
+      e.preventDefault()
+      toggle()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    window.addEventListener(TOGGLE_PAGE_MODE_EVENT, toggle)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener(TOGGLE_PAGE_MODE_EVENT, toggle)
+    }
+  }, [mode, onChange])
 }

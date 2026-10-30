@@ -13,7 +13,7 @@ import { AddBlockButton } from '@/components/editor/AddBlockButton'
 import { BlockTree } from '@/components/editor/BlockTree'
 import { EditModeSwitch } from '@/components/pages/EditModeSwitch'
 import { PageModeSlot } from '@/editor/page-mode/PageModeSlot'
-import { usePageMode } from '@/editor/page-mode/use-page-mode'
+import { useEditModeShortcut, usePageMode } from '@/editor/page-mode/use-page-mode'
 import { useScrollToFocus } from '@/hooks/useScrollToFocus'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { useBlockStore } from '@/stores/blocks'
@@ -34,6 +34,7 @@ export function DayPageEditor({
   onAddBlock,
 }: DayPageEditorProps): React.ReactElement {
   const pageMode = usePageMode(pageId)
+  useEditModeShortcut(pageMode.mode, pageMode.changeMode)
 
   // A link into the day (search, a backlink, a breadcrumb): block mode focuses
   // its block once it has scrolled to it; page mode puts its cursor there itself.

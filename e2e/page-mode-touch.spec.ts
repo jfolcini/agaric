@@ -1,6 +1,7 @@
 /**
- * Page mode on a touch phone (#5691) against the mock backend: the header's
- * switch opens it, as does *Page* under Edit as Markdown's buffer, and the
+ * Page mode on a touch phone (#5691) against the mock backend: *Page actions*
+ * opens and leaves it, the header keeping one row, as does *Page* under Edit as
+ * Markdown's buffer, and the
  * toolbar's *Block actions* opens the block menu on the block the cursor was
  * tapped into, as no grip, right click or menu key can there. A row's move and
  * typed text are read back after leaving the page and coming back. Typing at
@@ -37,21 +38,23 @@ async function seedPage(page: Page, title: string, texts: readonly string[]): Pr
   return ids
 }
 
-/** Open `title` and tap the header's switch over to page mode. */
+/** Tap *Page actions*, then its row `name`. */
+async function pageAction(page: Page, name: string): Promise<void> {
+  await page.getByRole('button', { name: 'Page actions', exact: true }).tap()
+  await page.getByRole('menuitem', { name, exact: true }).tap()
+}
+
+/** Open `title` and switch it to page mode through *Page actions*. */
 async function openInPageMode(page: Page, title: string, count: number): Promise<void> {
   await openPageMobile(page, title)
-  await page
-    .getByRole('radiogroup', { name: 'Editing mode' })
-    .getByRole('radio', { name: 'Page' })
-    .tap()
+  await pageAction(page, 'Edit as page')
   await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(count)
 }
 
 /** Open `title` in Edit as Markdown and tap the *Page* under its buffer. */
 async function openInPageModeFromMarkdown(page: Page, title: string, count: number): Promise<void> {
   await openPageMobile(page, title)
-  await page.getByRole('button', { name: 'Page actions', exact: true }).tap()
-  await page.getByRole('menuitem', { name: 'Edit as Markdown', exact: true }).tap()
+  await pageAction(page, 'Edit as Markdown')
   await expect(page.getByTestId('page-source-editor')).toBeVisible()
   await page.getByRole('button', { name: 'Page', exact: true }).tap()
   await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(count)
@@ -68,7 +71,7 @@ async function tapInto(page: Page, id: string | undefined): Promise<void> {
   await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 20)))
 }
 
-/** Leave the page and come back, which reads it again; it opens in page mode, as the switch left it. */
+/** Leave the page and come back, which reads it again; it opens in the mode *Page actions* left it in. */
 async function reopen(page: Page, title: string): Promise<void> {
   await openPageMobile(page, 'Getting Started')
   await openPageMobile(page, title)
@@ -88,6 +91,22 @@ test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () =>
   test.beforeEach(async ({ page }) => {
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await waitForBoot(page)
+  })
+
+  test('Page actions switches the page to page mode, which is kept, and back', async ({ page }) => {
+    await seedPage(page, 'Touch switch', ['alpha', 'beta'])
+    await openPageMobile(page, 'Touch switch')
+    await expect(page.getByRole('radiogroup', { name: 'Editing mode' })).toHaveCount(0)
+
+    await pageAction(page, 'Edit as page')
+    await expect(pageText(page)).toHaveText(['alpha', 'beta'])
+    await expect(page.locator('[data-testid="block-static"]')).toHaveCount(0)
+    await reopen(page, 'Touch switch')
+    await expect(pageText(page)).toHaveText(['alpha', 'beta'])
+
+    await pageAction(page, 'Edit as blocks')
+    await expect(page.locator(EDITOR)).toHaveCount(0)
+    await expect(page.locator('[data-testid="block-static"]')).toHaveCount(2)
   })
 
   test('the toolbar’s Block actions moves the tapped block, and the move is saved', async ({
