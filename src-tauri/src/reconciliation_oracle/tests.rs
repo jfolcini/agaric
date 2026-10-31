@@ -4512,6 +4512,9 @@ const EQ_REPEAT_L: &str = "01EQRPTLL49010000000000000";
 /// Repeating, bounded by `repeat-until`; links A on its OWN page.
 const EQ_REPEAT_R: &str = "01EQRPTRR49010000000000000";
 const EQ_GHOST_Z: &str = "01EQGHOSTZ4901000000000000";
+/// A space [`eq_engines`] gives a doc, and its one page, which both sides hold.
+const EQ_SPACE_E: &str = "01EQSPACEE6206000000000000";
+const EQ_PAGE_S: &str = "01EQPAGES62060000000000000";
 
 fn eq_today() -> chrono::NaiveDate {
     chrono::NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid date")
@@ -4521,7 +4524,8 @@ fn eq_today() -> chrono::NaiveDate {
 /// every rule the two restructured folds carry armed by a row that must fail
 /// it. Nothing here is a pure corruption: each state is one production reaches
 /// between an apply landing and its maintainer draining, except the count
-/// UPDATE, which stands in for a missed increment.
+/// UPDATE, which stands in for a missed increment, and the engine-held
+/// space's value and definition, which stand in for missed projections.
 async fn eq_fixture() -> (sqlx::SqlitePool, TempDir) {
     let dir = TempDir::new().expect("tempdir");
     let pool = crate::db::init_pool(&dir.path().join("reconcile_all.db"))
@@ -4580,6 +4584,22 @@ async fn eq_fixture() -> (sqlx::SqlitePool, TempDir) {
     insert_block_link(&pool, EQ_TAG_G, EQ_LIVE_B).await;
     tc_tag_edge(&pool, EQ_LIVE_B, EQ_TAG_G).await;
 
+    // The engine-held space (#6206): its page's date-typed value sits in
+    // `value_text`, and its doc declares a key SQL does not (`eq_engines`).
+    bl_insert_page(&pool, EQ_SPACE_E, None).await;
+    bl_register_space(&pool, EQ_SPACE_E).await;
+    bl_insert_page(&pool, EQ_PAGE_S, Some(EQ_SPACE_E)).await;
+    pa_text_property(&pool, EQ_PAGE_S, "due2", "2026-01-05").await;
+    // dynamic-sql: test-only fixture seed.
+    sqlx::query(
+        "INSERT INTO property_definitions (space_id, key, value_type, created_at) \
+         VALUES (?, 'due2', 'date', 'T')",
+    )
+    .bind(EQ_SPACE_E)
+    .execute(&pool)
+    .await
+    .expect("declare due2");
+
     // FTS indexed while T is live, so its row survives the tombstone.
     seed_fts_index(&pool).await;
     // T: soft-deleted, and its owner drifted to Q while its parent is P.
@@ -4611,6 +4631,33 @@ async fn eq_fixture() -> (sqlx::SqlitePool, TempDir) {
     (pool, dir)
 }
 
+/// The engines [`eq_fixture`] runs against: one doc, for `EQ_SPACE_E`,
+/// holding the page SQL holds, its `due2` value, and a definition SQL lacks.
+fn eq_engines() -> agaric_engine::loro::shared::LoroState {
+    let state = agaric_engine::loro::shared::LoroState::new();
+    {
+        let space = agaric_store::space::SpaceId::from_trusted(EQ_SPACE_E);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        let engine = guard.engine_mut();
+        engine
+            .apply_create_block(EQ_PAGE_S, "page", EQ_PAGE_S, None, 1)
+            .expect("seed the page");
+        engine
+            .apply_set_property(EQ_PAGE_S, "due2", Some("2026-01-05"))
+            .expect("seed the value");
+        for (key, value_type) in [("due2", "date"), ("extra", "text")] {
+            let def = PropertyDefState {
+                value_type: value_type.to_owned(),
+                options: None,
+            };
+            engine
+                .apply_set_property_def(key, Some(&def))
+                .expect("seed a definition");
+        }
+    }
+    state
+}
+
 /// **The equivalence pin for #4901.** `reconcile_all` reports exactly this
 /// list, in this order, for the fixture above — the same list the pre-#4901
 /// sweep produced when every artefact read `blocks` for itself.
@@ -4628,14 +4675,9 @@ async fn eq_fixture() -> (sqlx::SqlitePool, TempDir) {
 async fn reconcile_all_reports_every_artefact_from_one_unfiltered_dump_4901() {
     let (pool, _dir) = eq_fixture().await;
 
-    let divergences = reconcile_all(
-        &pool,
-        &agaric_engine::loro::shared::LoroState::new(),
-        None,
-        eq_today(),
-    )
-    .await
-    .expect("reconcile_all");
+    let divergences = reconcile_all(&pool, &eq_engines(), None, eq_today())
+        .await
+        .expect("reconcile_all");
 
     let got: Vec<(&str, &str)> = divergences
         .iter()
@@ -4685,6 +4727,11 @@ async fn reconcile_all_reports_every_artefact_from_one_unfiltered_dump_4901() {
             .iter()
             .map(|k| ("projected_agenda_cache.row", k.as_str())),
     );
+    let s_props = format!("{EQ_SPACE_E} / {EQ_PAGE_S}");
+    want.extend([
+        ("engine.block_properties.row", s_props.as_str()),
+        ("engine.property_definitions.row", EQ_SPACE_E),
+    ]);
     assert_eq!(
         got, want,
         "the sweep must report exactly these, in this order"
@@ -5287,4 +5334,443 @@ async fn spaces_registry_reconciles_with_is_space_and_reports_each_drift_6207() 
         ],
         "the flagged block with no row reports missing, the unflagged row extra"
     );
+}
+
+// ===========================================================================
+// Artefact 18 — `block_properties` and `property_definitions` against the
+// engine (#6206)
+// ===========================================================================
+
+/// The blocks [`pp_vault`] writes to, by role.
+struct PpVault {
+    space: String,
+    /// A value of each typed form, written locally, and the `stage` value a
+    /// type change moved to `value_date`.
+    typed: String,
+    /// A ref under a text key and a date under an undeclared key, each in the
+    /// slot the local write named, and the `stage` value that does not fit.
+    local: String,
+    /// A ref to a purged block.
+    dangling: String,
+    /// The block the refs of `typed` and `local` name.
+    target: String,
+}
+
+/// One `set_property` through the command path, `slot` naming the payload's
+/// field.
+async fn pp_set(
+    pool: &sqlx::SqlitePool,
+    mat: &Materializer,
+    block: &str,
+    key: &str,
+    slot: &str,
+    value: &str,
+) {
+    crate::commands::set_property_inner(
+        pool,
+        DEV,
+        mat,
+        block.into(),
+        key.to_owned(),
+        (slot == "text").then(|| value.to_owned()),
+        (slot == "num").then(|| value.parse::<f64>().expect("a number")),
+        (slot == "date").then(|| value.to_owned()),
+        (slot == "ref").then(|| value.to_owned()),
+        (slot == "bool").then(|| value == "true"),
+        None,
+    )
+    .await
+    .expect("set_property");
+}
+
+/// A user space whose blocks hold every form a property row takes, all
+/// written through the command path: typed values, a ref under a text key and
+/// a date under an undeclared key as the local apply stores them, a `stage`
+/// key a type change re-projected from the engine (one value fits the new
+/// type, one does not), a ref whose block was purged, and a select whose
+/// options were edited.
+async fn pp_vault() -> (sqlx::SqlitePool, TempDir, Materializer, PpVault) {
+    use crate::commands::{
+        PropertyTypeTarget, change_property_type_inner, create_block_inner,
+        create_page_in_space_inner, create_property_def_inner, create_space_inner,
+        delete_block_inner, preview_property_type_change_inner, purge_block_inner,
+        update_property_def_options_inner,
+    };
+    let dir = TempDir::new().expect("tempdir");
+    let pool = crate::db::init_pool(&dir.path().join("properties.db"))
+        .await
+        .expect("init_pool");
+    let mat = Materializer::new(pool.clone());
+    let space = create_space_inner(&pool, DEV, &mat, "Typed".to_owned(), None)
+        .await
+        .expect("create space")
+        .to_string();
+    let page =
+        create_page_in_space_inner(&pool, DEV, &mat, None, "Holder".to_owned(), space.clone())
+            .await
+            .expect("create page");
+    let mut ids = Vec::new();
+    for content in ["typed", "local", "dangling", "target", "gone"] {
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".to_owned(),
+            content.to_owned(),
+            Some(page.clone()),
+            None,
+        )
+        .await
+        .expect("create block");
+        ids.push(block.id.to_string());
+    }
+    let [typed, local, dangling, target, gone] = <[String; 5]>::try_from(ids).expect("five ids");
+    for (key, value_type) in [
+        ("when", "date"),
+        ("count", "number"),
+        ("done", "boolean"),
+        ("link", "ref"),
+        ("note", "text"),
+        ("stage", "text"),
+    ] {
+        create_property_def_inner(
+            &pool,
+            DEV,
+            &mat,
+            &space,
+            key.to_owned(),
+            value_type.to_owned(),
+            None,
+        )
+        .await
+        .expect("create definition");
+    }
+    for (block, key, slot, value) in [
+        (&typed, "when", "date", "2026-01-05"),
+        (&typed, "count", "num", "3"),
+        (&typed, "done", "bool", "true"),
+        (&typed, "link", "ref", target.as_str()),
+        (&typed, "note", "text", "hello"),
+        (&typed, "stage", "text", "2026-04-04"),
+        (&local, "note", "ref", target.as_str()),
+        (&local, "owner", "date", "2026-02-01"),
+        (&local, "stage", "text", "soon"),
+        (&dangling, "link", "ref", gone.as_str()),
+    ] {
+        pp_set(&pool, &mat, block, key, slot, value).await;
+    }
+    let to_date = PropertyTypeTarget {
+        key: "stage".to_owned(),
+        value_type: "date".to_owned(),
+        options: None,
+    };
+    let counts = preview_property_type_change_inner(&pool, &space, to_date.clone())
+        .await
+        .expect("preview the type change");
+    change_property_type_inner(&pool, DEV, &mat, &space, to_date, counts)
+        .await
+        .expect("change stage to a date");
+    update_property_def_options_inner(
+        &pool,
+        DEV,
+        &mat,
+        &space,
+        "effort".to_owned(),
+        r#"["1h","1d"]"#.to_owned(),
+    )
+    .await
+    .expect("edit effort's options");
+    delete_block_inner(&pool, DEV, &mat, BlockId::from_trusted(&gone))
+        .await
+        .expect("delete the ref target");
+    purge_block_inner(&pool, DEV, &mat, BlockId::from_trusted(&gone))
+        .await
+        .expect("purge the ref target");
+    mat.flush_background().await.expect("flush_background");
+    let vault = PpVault {
+        space,
+        typed,
+        local,
+        dangling,
+        target,
+    };
+    (pool, dir, mat, vault)
+}
+
+/// `block`'s rows as `(key, cell)`, by key.
+async fn pp_cells(pool: &sqlx::SqlitePool, block: &str) -> Vec<(String, String)> {
+    let mut cells: Vec<(String, String)> = dump_block_properties(pool)
+        .await
+        .expect("dump block_properties")
+        .iter()
+        .filter(|row| row.block_id == block)
+        .map(|row| {
+            let cell = stored_cell(row).map_or_else(|| "no value".to_owned(), |c| c.to_string());
+            (row.key.clone(), cell)
+        })
+        .collect();
+    cells.sort();
+    cells
+}
+
+/// `(key, cell)` pairs, owned.
+fn pp_want(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+    pairs
+        .iter()
+        .map(|(key, cell)| ((*key).to_owned(), (*cell).to_owned()))
+        .collect()
+}
+
+/// `reconcile_all`'s divergences named `artefact`, as `(key, expected,
+/// actual, owner)`.
+async fn pp_drift(
+    pool: &sqlx::SqlitePool,
+    mat: &Materializer,
+    artefact: &str,
+) -> Vec<(String, String, String, &'static str)> {
+    reconcile_all(pool, mat.loro_state(), None, eq_today())
+        .await
+        .expect("reconcile_all")
+        .into_iter()
+        .filter(|d| d.artefact == artefact)
+        .map(|d| (d.key, d.expected, d.actual, d.owner))
+        .collect()
+}
+
+/// **#6206 rows.** Every form the command path writes agrees with the
+/// engine: a typed value in its own column, a date a type change moved to
+/// `value_date`, a value that does not fit kept in `value_text`, a ref under
+/// a text key and a date under an undeclared key in the slot the local write
+/// named, and no row for a ref whose block was purged. The import projection
+/// then writes the local slots as text, and that agrees too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn property_rows_reconcile_with_the_engine_in_every_form_6206() {
+    let (pool, _dir, mat, v) = pp_vault().await;
+    assert_eq!(
+        pp_drift(&pool, &mat, "engine.block_properties.row").await,
+        Vec::new(),
+        "every row the command path wrote is one its engine value admits"
+    );
+    let target_ref = format!("value_ref {}", v.target);
+    assert_eq!(
+        pp_cells(&pool, &v.typed).await,
+        pp_want(&[
+            ("count", "value_num 3"),
+            ("done", "value_bool true"),
+            ("link", &target_ref),
+            ("note", r#"value_text "hello""#),
+            ("stage", r#"value_date "2026-04-04""#),
+            ("when", r#"value_date "2026-01-05""#),
+        ]),
+        "the typed block holds each value in its type's column"
+    );
+    assert_eq!(
+        pp_cells(&pool, &v.local).await,
+        pp_want(&[
+            ("note", &target_ref),
+            ("owner", r#"value_date "2026-02-01""#),
+            ("stage", r#"value_text "soon""#),
+        ]),
+        "the local slots and the value that does not fit are where the check must admit them"
+    );
+    assert_eq!(
+        pp_cells(&pool, &v.dangling).await,
+        Vec::new(),
+        "the purge took the dangling ref's row with its target"
+    );
+    let engine_props = |block: &str| {
+        let space = agaric_store::space::SpaceId::from_trusted(&v.space);
+        let mut guard = mat
+            .loro_state()
+            .registry
+            .for_space(&space, DEV)
+            .expect("for_space");
+        guard
+            .engine_mut()
+            .read_all_properties_typed(block)
+            .expect("read properties")
+    };
+    assert!(
+        engine_props(&v.dangling)
+            .iter()
+            .any(|(key, value)| key == "link" && matches!(value, PropertyValue::Str(_))),
+        "the engine keeps the purged block's id under the dangling ref"
+    );
+
+    let local_props = engine_props(&v.local);
+    let mut conn = pool.acquire().await.expect("acquire");
+    let value_types = agaric_engine::block_ops::load_value_types(&mut conn, &v.space)
+        .await
+        .expect("load value types");
+    agaric_engine::loro::projection::reproject_block_properties_from_engine(
+        &mut conn,
+        &BlockId::from_trusted(&v.local),
+        &local_props,
+        &value_types,
+    )
+    .await
+    .expect("import projection");
+    drop(conn);
+    assert_eq!(
+        pp_cells(&pool, &v.local).await,
+        pp_want(&[
+            ("note", &format!("value_text {:?}", v.target)),
+            ("owner", r#"value_text "2026-02-01""#),
+            ("stage", r#"value_text "soon""#),
+        ]),
+        "the import projection writes the local slots as text"
+    );
+    assert_eq!(
+        pp_drift(&pool, &mat, "engine.block_properties.row").await,
+        Vec::new(),
+        "the text slots the import projection writes are admitted too"
+    );
+    mat.shutdown();
+}
+
+/// **#6206 rows.** A row dropped, moved to another column, holding another
+/// value, or with no engine value behind it is each reported, keyed by ids,
+/// the property key and both values in expected / actual.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn each_property_row_drift_is_reported_by_column_and_value_6206() {
+    let (pool, _dir, mat, v) = pp_vault().await;
+    for (sql, block) in [
+        (
+            "DELETE FROM block_properties WHERE block_id = ? AND key = 'count'",
+            &v.typed,
+        ),
+        (
+            "UPDATE block_properties SET value_text = value_date, value_date = NULL \
+             WHERE block_id = ? AND key = 'when'",
+            &v.typed,
+        ),
+        (
+            "UPDATE block_properties SET value_bool = 0 WHERE block_id = ? AND key = 'done'",
+            &v.typed,
+        ),
+        (
+            "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'ghost', 'boo')",
+            &v.local,
+        ),
+    ] {
+        pr_exec(&pool, sql, &[block]).await;
+    }
+    let drift: Vec<(String, String, String)> = pp_drift(&pool, &mat, "engine.block_properties.row")
+        .await
+        .into_iter()
+        .map(|(key, expected, actual, _)| (key, expected, actual))
+        .collect();
+    let typed = format!("{} / {}", v.space, v.typed);
+    let local = format!("{} / {}", v.space, v.local);
+    // By block, then by property key, as the check reports them.
+    let mut want: Vec<(String, String, String)> = [
+        (
+            &typed,
+            r#""count" (number): value_num 3"#,
+            r#""count" (number): no row"#,
+        ),
+        (
+            &typed,
+            r#""done" (boolean): value_bool true"#,
+            r#""done" (boolean): value_bool false"#,
+        ),
+        (
+            &typed,
+            r#""when" (date): value_date "2026-01-05""#,
+            r#""when" (date): value_text "2026-01-05""#,
+        ),
+        (
+            &local,
+            r#""ghost" (undeclared): no row"#,
+            r#""ghost" (undeclared): value_text "boo""#,
+        ),
+    ]
+    .into_iter()
+    .map(|(key, expected, actual)| (key.clone(), expected.to_owned(), actual.to_owned()))
+    .collect();
+    want.sort();
+    assert_eq!(
+        drift, want,
+        "each drifted row reports exactly once, as predicted"
+    );
+    mat.shutdown();
+}
+
+const PP_NO_ENGINE_SPACE: &str = "01PPNOENGINE62060000000000";
+
+/// **#6206 definitions.** The space's definitions, its defaults, its own and
+/// an edited select's options, agree with its doc's root, and a space with no
+/// engine is no divergence. A row dropped, a row the doc lacks and options SQL
+/// alone changed are each reported, the SQL-only row naming the boot backfill.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn each_property_definition_drift_is_reported_against_the_doc_6206() {
+    let (pool, _dir, mat, v) = pp_vault().await;
+    let stored = dump_property_definitions(&pool)
+        .await
+        .expect("dump definitions");
+    let mut keys: Vec<&str> = stored
+        .iter()
+        .filter(|def| def.space_id == v.space)
+        .map(|def| def.key.as_str())
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "assignee", "count", "done", "effort", "link", "location", "note", "stage", "status",
+            "url", "when"
+        ],
+        "the space holds its defaults and its own definitions for the check to compare"
+    );
+    pr_exec(
+        &pool,
+        "INSERT INTO property_definitions (space_id, key, value_type, created_at) \
+         VALUES (?, 'when', 'date', 'T')",
+        &[PP_NO_ENGINE_SPACE],
+    )
+    .await;
+    assert_eq!(
+        pp_drift(&pool, &mat, "engine.property_definitions.row").await,
+        Vec::new(),
+        "the definitions agree with the doc, and a space with no engine is left out"
+    );
+
+    for sql in [
+        "DELETE FROM property_definitions WHERE space_id = ? AND key = 'when'",
+        "INSERT INTO property_definitions (space_id, key, value_type, created_at) \
+         VALUES (?, 'legacy', 'text', 'T')",
+        r#"UPDATE property_definitions SET options = '["1h"]' WHERE space_id = ? AND key = 'effort'"#,
+    ] {
+        pr_exec(&pool, sql, &[&v.space]).await;
+    }
+    let owned = |expected: &str, actual: &str, owner| {
+        (
+            v.space.clone(),
+            expected.to_owned(),
+            actual.to_owned(),
+            owner,
+        )
+    };
+    assert_eq!(
+        pp_drift(&pool, &mat, "engine.property_definitions.row").await,
+        vec![
+            owned(
+                r#""effort": select ["1h","1d"]"#,
+                r#""effort": select ["1h"]"#,
+                ENGINE_PROPERTY_DEFINITIONS_OWNER,
+            ),
+            owned(
+                r#""legacy": no definition (the doc's root does not declare it)"#,
+                r#""legacy": text"#,
+                ENGINE_PROPERTY_DEFINITIONS_SQL_ONLY_OWNER,
+            ),
+            owned(
+                r#""when": date"#,
+                r#""when": no row in property_definitions"#,
+                ENGINE_PROPERTY_DEFINITIONS_OWNER,
+            ),
+        ],
+        "each drifted definition reports once, by key, keyed by its space"
+    );
+    mat.shutdown();
 }

@@ -933,9 +933,10 @@ pub async fn settle_block_space_ids_for_op(
     Ok(ran)
 }
 
-/// The formatted first divergence of the three tables #6207 audits —
-/// `block_tags` and `page_aliases` against `registry`'s engines, the `spaces`
-/// registry against `is_space` — or `None` when they agree.
+/// The formatted first divergence of the tables #6207 and #6206 audit —
+/// `block_tags`, `page_aliases`, `block_properties` and `property_definitions`
+/// against `registry`'s engines, the `spaces` registry against `is_space` — or
+/// `None` when they agree.
 ///
 /// Not the whole [`reconcile_engine`]: the harness fixtures seed blocks into
 /// SQL alone, which its membership arm rightly reports.
@@ -947,12 +948,20 @@ pub async fn projected_tables_reconciliation_failure(
     let divergences = match async {
         let blocks = dump_blocks(pool).await?;
         let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
+        let view = read_engine_view(registry)?;
         let mut out = Vec::new();
         diff_engine_tags_and_aliases(
-            &read_engine_view(registry)?,
+            &view,
             &by_id,
             &dump_block_tags(pool).await?,
             &dump_page_aliases(pool).await?,
+            &mut out,
+        );
+        diff_engine_properties(
+            &view,
+            &by_id,
+            &dump_block_properties(pool).await?,
+            &dump_property_definitions(pool).await?,
             &mut out,
         );
         diff_spaces_registry(
@@ -974,7 +983,8 @@ pub async fn projected_tables_reconciliation_failure(
     let first = divergences.first()?;
     Some(format!(
         "PROJECTED TABLES RECONCILIATION FAILED at [{context}]\n  \
-         block_tags / page_aliases / spaces disagree with their sources in {} place(s); \
+         block_tags / page_aliases / block_properties / property_definitions / spaces \
+         disagree with their sources in {} place(s); \
          first:\n    {first}",
         divergences.len(),
     ))

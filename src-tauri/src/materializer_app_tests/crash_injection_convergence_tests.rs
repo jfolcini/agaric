@@ -119,8 +119,9 @@ async fn seed_space_and_page() -> (SqlitePool, TempDir, agaric_engine::loro::sha
     (pool, dir, state)
 }
 
-/// Panic unless `block_tags`, `page_aliases` and the `spaces` registry agree
-/// with their sources (#6207).
+/// Panic unless `block_tags`, `page_aliases`, `block_properties`,
+/// `property_definitions` and the `spaces` registry agree with their sources
+/// (#6207, #6206).
 async fn assert_projected_tables(
     pool: &SqlitePool,
     state: &agaric_engine::loro::shared::LoroState,

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT block_id, key, value_date, value_text, value_num FROM block_properties",
+  "query": "SELECT block_id, key, value_date, value_text, value_num, value_ref,\n                  value_bool AS \"value_bool: bool\"\n           FROM block_properties",
   "describe": {
     "columns": [
       {
@@ -57,6 +57,28 @@
             "name": "value_num"
           }
         }
+      },
+      {
+        "name": "value_ref",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_ref"
+          }
+        }
+      },
+      {
+        "name": "value_bool: bool",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_bool"
+          }
+        }
       }
     ],
     "parameters": {
@@ -67,8 +89,10 @@
       false,
       true,
       true,
+      true,
+      true,
       true
     ]
   },
-  "hash": "597f410cf1f45077d5c7f78b844dd1542cc81d2fe1e5da3d9c794ebe03826c69"
+  "hash": "fc2bd9f04d5227c66ddec1fa2bd9e2c1ca8724013e9b242cae7ed27e49516755"
 }

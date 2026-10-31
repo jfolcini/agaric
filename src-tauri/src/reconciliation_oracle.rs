@@ -86,6 +86,7 @@
 //! | SQL `blocks` ITSELF against the Loro engine (#5628) | the live engine docs — not a SQL table | the per-op projections in `loro::projection` (`project_*_to_sql`) after every engine apply / the SQL-only fallbacks, which write SQL without the engine — audited by [`reconcile_engine`], NOT by [`reconcile`] |
 //! | SQL `attachments` against the Loro engine (#5608) | the attachment entries the live engine docs' nodes hold | `apply::attachments` (the op path) / `reproject_attachments_from_engine` (imports and recovery) / `repair::attachments` (the boot backfill) — audited by [`reconcile_engine`], NOT by [`reconcile`] |
 //! | SQL `block_tags` and `page_aliases` against the Loro engine (#6207) | each space doc's tag maps and `page_aliases` root, for the blocks both sides hold | `project_add_tag_to_sql` / `project_remove_tag_to_sql` and `project_add_page_alias_to_sql` / `project_remove_page_alias_to_sql` (the op apply arms, the op-log recovery arms) / `reproject_block_tags_from_engine` and `reproject_page_aliases_from_engine` (imports and recovery) / `repair::page_aliases` (the boot backfill) / the purge cascades — audited by [`reconcile_engine`], NOT by [`reconcile`] |
+//! | SQL `block_properties` and `property_definitions` against the Loro engine (#6206) | each held node's property map, typed by its space's `property_definitions` rows and the built-ins, for the blocks both sides hold; each space doc's `property_definitions` root | `project_set_property_to_sql` / `project_delete_property_to_sql` (the op apply arms, the op-log recovery arms) / `reproject_block_properties_from_engine` (imports and recovery) / `reproject_key_values` and `project_property_value_writes` (retypes and rewrites) / the rename projections / the purge cascades; `project_property_def_to_sql` (every definition op, `project_pass_defs`, recovery) / `repair::property_definitions` (the boot backfill) — audited by [`reconcile_engine`], NOT by [`reconcile`] |
 //! | `spaces`, the registry (#6207) | `block_properties` — the `is_space = 'true'` rows, a soft-deleted space's included | the `spaces_register_is_space` trigger (migration 0089), fired by every `is_space` property insert / the FK cascade of a purge (the only removal) — in [`reconcile`] |
 //!
 //! # `page_link_cache` has NO synchronous arm at all (#3296)
@@ -170,6 +171,8 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use agaric_core::error::AppError;
+use agaric_engine::loro::engine::PropertyValue;
+use agaric_store::op::PropertyDefState;
 use regex::Regex;
 use sqlx::SqlitePool;
 
@@ -1830,6 +1833,8 @@ struct EngineBlock {
     tags: Vec<String>,
     /// The node's alias map; `None` when it never held one.
     aliases: Option<Vec<String>>,
+    /// The node's property map, the promoted keys and `space` included.
+    properties: Vec<(String, PropertyValue)>,
 }
 
 /// One engine attachment entry and the node that holds it.
@@ -1850,12 +1855,16 @@ struct EngineView {
     /// Keyed by attachment id: the entries the docs' nodes hold, tombstones
     /// included (#5608).
     attachments: BTreeMap<String, EngineAttachmentEntry>,
+    /// Keyed `(space_id, key)`: each doc's `property_definitions` root.
+    definitions: BTreeMap<(String, String), PropertyDefState>,
 }
 
-/// One exported doc's nodes, and the attachment entries they hold.
+/// One exported doc's nodes, the attachment entries they hold, and its
+/// property definitions.
 type EngineSpace = (
     Vec<(String, EngineBlock)>,
     Vec<(String, agaric_engine::loro::engine::EngineAttachment)>,
+    Vec<(String, PropertyDefState)>,
 );
 
 /// Every node of one exported doc: the import-then-read that
@@ -1894,10 +1903,11 @@ fn read_engine_space(bytes: &[u8]) -> Result<EngineSpace, AppError> {
                 live: engine.read_deleted_at(block_id)?.is_none(),
                 tags: engine.read_tags(block_id)?,
                 aliases: engine.read_page_aliases(block_id)?,
+                properties,
             },
         ));
     }
-    Ok((out, attachments))
+    Ok((out, attachments, engine.read_property_defs()?))
 }
 
 /// Read every engine the registry holds.
@@ -1913,9 +1923,12 @@ fn read_engine_view(
     let mut view = EngineView::default();
     for (space_id, bytes) in registry.snapshot_all_engines() {
         let space_id = space_id.as_str().to_owned();
-        let (blocks, attachments) = read_engine_space(&bytes?)?;
+        let (blocks, attachments, definitions) = read_engine_space(&bytes?)?;
         for (block_id, block) in blocks {
             view.blocks.insert((space_id.clone(), block_id), block);
+        }
+        for (key, def) in definitions {
+            view.definitions.insert((space_id.clone(), key), def);
         }
         for (block_id, entry) in attachments {
             view.attachments.insert(
@@ -2427,6 +2440,353 @@ fn diff_engine_tags_and_aliases(
     diff_engine_page_aliases(&held, page_aliases, out);
 }
 
+// ---------------------------------------------------------------------------
+// Artefact 18 — `block_properties` and `property_definitions` against the
+// Loro engine (#6206)
+// ---------------------------------------------------------------------------
+
+/// One `property_definitions` row: a space's own definition of a key. The
+/// built-ins are code constants with no row (migration 0128).
+#[derive(Debug, Clone)]
+pub struct BaseDefinition {
+    space_id: String,
+    key: String,
+    value_type: String,
+    /// A select's options, as the JSON array the row stores.
+    options: Option<String>,
+}
+
+async fn dump_property_definitions(pool: &SqlitePool) -> Result<Vec<BaseDefinition>, AppError> {
+    let rows = sqlx::query!("SELECT space_id, key, value_type, options FROM property_definitions")
+        .fetch_all(pool)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| BaseDefinition {
+            space_id: r.space_id,
+            key: r.key,
+            value_type: r.value_type,
+            options: r.options,
+        })
+        .collect())
+}
+
+const ENGINE_BLOCK_PROPERTIES_OWNER: &str = "the property writers in agaric-engine: \
+     project_set_property_to_sql / project_delete_property_to_sql after the engine apply (the \
+     local apply arms, the op-log recovery arms), reproject_block_properties_from_engine and its \
+     per-key reproject_property_row_from_engine (sync import, engine-first recovery), \
+     reproject_key_values (the retype a SetPropertyDef or RewriteProperties runs, and the \
+     import's definitions pass), project_property_value_writes (RewriteProperties), \
+     project_rename_property_key_to_sql / project_rename_property_option_to_sql, and the purge \
+     cascades: SQL shows one value while peers and an engine-first recovery use the engine's. \
+     A ref to a block the same import projects later (a page's ref to its own child) reads \
+     here as a missing row: the import's property pass runs block by block, the FK guard in \
+     reproject_property_row_from_engine drops the ref, and nothing projects it again until \
+     the referring block changes (#6232)";
+
+const ENGINE_PROPERTY_DEFINITIONS_OWNER: &str = "project_property_def_to_sql after the engine \
+     apply of SetPropertyDef, RenamePropertyOption and RewriteProperties, \
+     project_rename_property_key_to_sql, the import's definitions pass (project_pass_defs), \
+     engine-first recovery (project_engine_property_defs) and the space purge cascade: SQL types \
+     this space's values by one definition while peers and an engine-first recovery use the \
+     doc's";
+
+const ENGINE_PROPERTY_DEFINITIONS_SQL_ONLY_OWNER: &str = "repair_property_definitions, the \
+     boot backfill that gives a row written before #5841 its SetPropertyDef: it runs at every \
+     boot, after recovery (which keeps such a row), so the row is one it has not landed yet (it \
+     failed and logged, and the next boot retries it) or one a writer put in SQL without the \
+     engine: no peer receives this definition";
+
+/// A Crockford base32 ULID in either case that fits 128 bits: 26 characters,
+/// the first at most `7`.
+static ORACLE_ULID_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^[0-7][0-9A-HJKMNP-TV-Z]{25}$").expect("ULID pattern compiles")
+});
+
+/// `s` is a calendar-valid `YYYY-MM-DD`: ten characters that chrono reads as a
+/// date and prints back unchanged, which no unpadded or signed form survives.
+fn oracle_is_date(s: &str) -> bool {
+    s.len() == 10
+        && chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+            .is_ok_and(|date| date.format("%Y-%m-%d").to_string() == s)
+}
+
+/// One `block_properties` value, by the column that holds it.
+#[derive(Debug, Clone, PartialEq)]
+enum PropertyCell {
+    Text(String),
+    Num(f64),
+    Date(String),
+    Ref(String),
+    Bool(bool),
+}
+
+impl std::fmt::Display for PropertyCell {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Text(s) => write!(f, "value_text {s:?}"),
+            Self::Num(n) => write!(f, "value_num {n}"),
+            Self::Date(s) => write!(f, "value_date {s:?}"),
+            Self::Ref(s) => write!(f, "value_ref {s}"),
+            Self::Bool(b) => write!(f, "value_bool {b}"),
+        }
+    }
+}
+
+/// `row`'s value, in the one column `exactly_one_value` lets it fill.
+fn stored_cell(row: &BaseProperty) -> Option<PropertyCell> {
+    row.value_text
+        .clone()
+        .map(PropertyCell::Text)
+        .or_else(|| row.value_num.map(PropertyCell::Num))
+        .or_else(|| row.value_date.clone().map(PropertyCell::Date))
+        .or_else(|| row.value_ref.clone().map(PropertyCell::Ref))
+        .or_else(|| row.value_bool.map(PropertyCell::Bool))
+}
+
+/// Each row a correct vault can hold for one engine value under `value_type`
+/// (`None`: neither a built-in nor the space declares the key), `None` among
+/// them meaning no row. The oracle's own type check, written from the rules
+/// and sharing nothing with `coerce`:
+///
+/// * a number, a boolean: its own column, whatever the type; a null: no row;
+/// * a string under a number, boolean or date key: that column when it parses
+///   as the type (trimmed and finite, exactly `true` / `false`, a strict
+///   calendar date), else `value_text`;
+/// * a string under a ref key: `value_ref`, uppercased, when it is a ULID whose
+///   block has a row, no row when that block has none (the FK guard, and the
+///   purge cascade that deletes a row its target takes with it), else
+///   `value_text`;
+/// * a string under any other type, or none: `value_text`, or the slot a local
+///   write named. The local apply writes the payload's slot,
+///   `validate_declared_type` lets text and select take a ref and an
+///   undeclared key any slot, and no retype between types whose strings land
+///   in `value_text` (`str_column_for`) moves the row. A re-projection writes
+///   `value_text`, so devices already differ here: a ULID can be in
+///   `value_ref`, or no row once its block is purged, and a date in
+///   `value_date`. The cost: a projection that wrongly sends such a string to
+///   `value_ref` or `value_date` reads as a local write and is not reported.
+fn admissible_rows(
+    value: &PropertyValue,
+    value_type: Option<&str>,
+    by_id: &BTreeMap<&str, &BaseBlock>,
+) -> Vec<Option<PropertyCell>> {
+    use PropertyCell as C;
+    let s = match value {
+        PropertyValue::Num(n) => return vec![Some(C::Num(*n))],
+        PropertyValue::Bool(b) => return vec![Some(C::Bool(*b))],
+        PropertyValue::Null => return vec![None],
+        PropertyValue::Str(s) => s,
+    };
+    let text = Some(C::Text(s.clone()));
+    let as_ref = ORACLE_ULID_RE.is_match(s).then(|| {
+        let id = s.to_ascii_uppercase();
+        by_id.contains_key(id.as_str()).then_some(C::Ref(id))
+    });
+    let as_date = oracle_is_date(s).then(|| Some(C::Date(s.clone())));
+    match value_type {
+        Some("number") => {
+            let num = s.trim().parse::<f64>().ok().filter(|n| n.is_finite());
+            vec![num.map(C::Num).or(text)]
+        }
+        Some("boolean") => vec![match s.as_str() {
+            "true" => Some(C::Bool(true)),
+            "false" => Some(C::Bool(false)),
+            _ => text,
+        }],
+        Some("date") => vec![as_date.unwrap_or(text)],
+        Some("ref") => vec![as_ref.unwrap_or(text)],
+        _ => std::iter::once(text).chain(as_ref).chain(as_date).collect(),
+    }
+}
+
+/// The type `key` has in `space_id`: the built-in's, else the space's own
+/// definition's.
+fn declared_type<'a>(
+    definitions: &'a BTreeMap<(&str, &str), &BaseDefinition>,
+    space_id: &str,
+    key: &str,
+) -> Option<&'a str> {
+    agaric_store::op::BUILTIN_PROPERTY_DEFS
+        .iter()
+        .find(|def| def.key == key)
+        .map(|def| def.value_type)
+        .or_else(|| {
+            definitions
+                .get(&(space_id, key))
+                .map(|def| def.value_type.as_str())
+        })
+}
+
+/// `"when" (date): value_date "2026-01-05" or no row`.
+fn describe_rows(key: &str, value_type: Option<&str>, rows: &[Option<PropertyCell>]) -> String {
+    let rows: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            row.as_ref()
+                .map_or_else(|| "no row".to_owned(), ToString::to_string)
+        })
+        .collect();
+    format!(
+        "{key:?} ({}): {}",
+        value_type.unwrap_or("undeclared"),
+        rows.join(" or ")
+    )
+}
+
+/// One held block's rows against its node's values, every key either side
+/// holds. The promoted keys live in `blocks` columns, compared by
+/// [`diff_engine_columns`], and `space` is `blocks.space_id`, the doc
+/// [`diff_engine_membership`] expects the block in.
+fn diff_block_property_rows(
+    (block_id, space_id, node): (&str, &str, &EngineBlock),
+    stored: Option<&BTreeMap<&str, Option<PropertyCell>>>,
+    definitions: &BTreeMap<(&str, &str), &BaseDefinition>,
+    by_id: &BTreeMap<&str, &BaseBlock>,
+    out: &mut Vec<Divergence>,
+) {
+    let column_backed =
+        |key: &str| key == "space" || ENGINE_PROMOTED_COLUMNS.iter().any(|(k, _)| *k == key);
+    let engine: BTreeMap<&str, &PropertyValue> = node
+        .properties
+        .iter()
+        .filter(|(key, _)| !column_backed(key))
+        .map(|(key, value)| (key.as_str(), value))
+        .collect();
+    let keys: BTreeSet<&str> = engine
+        .keys()
+        .copied()
+        .chain(stored.into_iter().flat_map(|rows| rows.keys().copied()))
+        .collect();
+    for key in keys {
+        let value_type = declared_type(definitions, space_id, key);
+        let admissible = engine
+            .get(key)
+            .map_or_else(|| vec![None], |v| admissible_rows(v, value_type, by_id));
+        let actual = stored.and_then(|rows| rows.get(key)).cloned().flatten();
+        if admissible.contains(&actual) {
+            continue;
+        }
+        out.push(Divergence {
+            artefact: "engine.block_properties.row",
+            key: format!("{space_id} / {block_id}"),
+            expected: describe_rows(key, value_type, &admissible),
+            actual: describe_rows(key, value_type, &[actual]),
+            owner: ENGINE_BLOCK_PROPERTIES_OWNER,
+        });
+    }
+}
+
+/// `block_properties` against the held nodes' property maps, both directions:
+/// each engine value against [`admissible_rows`] under its space's
+/// definitions (the SQL rows, as the projection types by them, and the
+/// built-ins), and each row against an engine value. The key carries ids
+/// alone: the property key and the values are the user's text, and the report
+/// a user files keeps keys and drops values (#609).
+fn diff_engine_block_properties(
+    held: &BTreeMap<&str, (&str, &EngineBlock)>,
+    by_id: &BTreeMap<&str, &BaseBlock>,
+    properties: &[BaseProperty],
+    definitions: &[BaseDefinition],
+    out: &mut Vec<Divergence>,
+) {
+    let definitions: BTreeMap<(&str, &str), &BaseDefinition> = definitions
+        .iter()
+        .map(|def| ((def.space_id.as_str(), def.key.as_str()), def))
+        .collect();
+    let mut stored: BTreeMap<&str, BTreeMap<&str, Option<PropertyCell>>> = BTreeMap::new();
+    for row in properties
+        .iter()
+        .filter(|row| held.contains_key(row.block_id.as_str()))
+    {
+        stored
+            .entry(row.block_id.as_str())
+            .or_default()
+            .insert(row.key.as_str(), stored_cell(row));
+    }
+    for (block_id, (space_id, node)) in held {
+        diff_block_property_rows(
+            (block_id, space_id, node),
+            stored.get(block_id),
+            &definitions,
+            by_id,
+            out,
+        );
+    }
+}
+
+/// A definition as both sides are compared: its type, and a select's options
+/// as stored. Both sides take the one string the op carries.
+fn comparable_definition(value_type: &str, options: Option<&str>) -> String {
+    options.map_or_else(
+        || value_type.to_owned(),
+        |options| format!("{value_type} {options}"),
+    )
+}
+
+/// `property_definitions` against each doc's root, both directions, for the
+/// spaces with an engine. Built-ins are in neither. `created_at` is SQL's
+/// alone. Keyed by the space; the property key is the user's text.
+fn diff_engine_property_definitions(
+    view: &EngineView,
+    definitions: &[BaseDefinition],
+    out: &mut Vec<Divergence>,
+) {
+    let doc: BTreeMap<(&str, &str), String> = view
+        .definitions
+        .iter()
+        .map(|((space_id, key), def)| {
+            let def = comparable_definition(&def.value_type, def.options.as_deref());
+            ((space_id.as_str(), key.as_str()), def)
+        })
+        .collect();
+    let stored: BTreeMap<(&str, &str), String> = definitions
+        .iter()
+        .filter(|def| view.spaces.contains(&def.space_id))
+        .map(|def| {
+            let comparable = comparable_definition(&def.value_type, def.options.as_deref());
+            ((def.space_id.as_str(), def.key.as_str()), comparable)
+        })
+        .collect();
+    let keys: BTreeSet<&(&str, &str)> = doc.keys().chain(stored.keys()).collect();
+    for &(space_id, key) in keys {
+        let (want, got) = (doc.get(&(space_id, key)), stored.get(&(space_id, key)));
+        if want == got {
+            continue;
+        }
+        let describe = |def: Option<&String>, side: &str| {
+            def.map_or_else(
+                || format!("{key:?}: {side}"),
+                |def| format!("{key:?}: {def}"),
+            )
+        };
+        out.push(Divergence {
+            artefact: "engine.property_definitions.row",
+            key: space_id.to_owned(),
+            expected: describe(want, "no definition (the doc's root does not declare it)"),
+            actual: describe(got, "no row in property_definitions"),
+            owner: if want.is_some() {
+                ENGINE_PROPERTY_DEFINITIONS_OWNER
+            } else {
+                ENGINE_PROPERTY_DEFINITIONS_SQL_ONLY_OWNER
+            },
+        });
+    }
+}
+
+/// `block_properties` and `property_definitions` against the engine view.
+fn diff_engine_properties(
+    view: &EngineView,
+    by_id: &BTreeMap<&str, &BaseBlock>,
+    properties: &[BaseProperty],
+    definitions: &[BaseDefinition],
+    out: &mut Vec<Divergence>,
+) {
+    let held = engine_held_blocks(view, by_id);
+    diff_engine_block_properties(&held, by_id, properties, definitions, out);
+    diff_engine_property_definitions(view, definitions, out);
+}
+
 /// SQL `blocks` against the Loro engine — the merge truth for text, the tree
 /// and typed scalar properties (AGENTS.md invariant 2). Every other artefact
 /// audits a cache against SQL base tables; this one audits the base table.
@@ -2434,24 +2794,28 @@ fn diff_engine_tags_and_aliases(
 /// Compared: row membership, `block_type`, `content`, `parent_id`, sibling
 /// order (see [`sibling_places`]) and the four promoted property columns,
 /// plus "live in the engine, deleted in SQL", the `attachments` rows (see
-/// [`diff_engine_attachments`]), and the `block_tags` and `page_aliases` rows
+/// [`diff_engine_attachments`]), the `block_tags` and `page_aliases` rows
 /// of the blocks both sides hold (#6207), with a purged tag's id dropped (see
 /// [`fold_engine_block_tags`]) and a contested alias given to the lower page
-/// id (see [`fold_engine_page_aliases`]). Not compared, each because a correct
-/// vault legitimately differs: the other `block_properties` rows (typed by
-/// `property_definitions`, and a dangling `value_ref` is dropped on purpose)
-/// and the reverse liveness direction (see [`diff_engine_columns`]).
+/// id (see [`fold_engine_page_aliases`]), the other `block_properties` rows of
+/// those blocks against the rows their values admit (see [`admissible_rows`]),
+/// and `property_definitions` against each doc's root (#6206). Not compared,
+/// because a correct vault legitimately differs: the reverse liveness
+/// direction (see [`diff_engine_columns`]).
 ///
 /// The engine side is read through the engine's own read API, the calls
 /// `db::recovery::reproject_space_from_engine` makes; none of the projection
 /// writers it audits runs. Divergences come back membership first, then
-/// columns, attachments, tags and aliases, in a stable order.
+/// columns, attachments, tags, aliases, property rows and definitions, in a
+/// stable order.
 pub fn reconcile_engine(
     state: &agaric_engine::loro::shared::LoroState,
     blocks: &[BaseBlock],
     attachments: &[BaseAttachment],
     block_tags: &[(String, String)],
     page_aliases: &[(String, String)],
+    properties: &[BaseProperty],
+    definitions: &[BaseDefinition],
 ) -> Result<Vec<Divergence>, AppError> {
     let view = read_engine_view(&state.registry)?;
     let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
@@ -2460,6 +2824,7 @@ pub fn reconcile_engine(
     diff_engine_columns(&view, &by_id, &mut out);
     diff_engine_attachments(&view, &by_id, attachments, &mut out);
     diff_engine_tags_and_aliases(&view, &by_id, block_tags, page_aliases, &mut out);
+    diff_engine_properties(&view, &by_id, properties, definitions, &mut out);
     Ok(out)
 }
 
@@ -2467,9 +2832,10 @@ pub fn reconcile_engine(
 // Artefact 10 — `agenda_cache`, the date roll-up (#3345)
 // ---------------------------------------------------------------------------
 
-/// One `block_properties` row, reduced to the columns the agenda reads.
+/// One `block_properties` row: its five value columns, exactly one of them set
+/// (CHECK `exactly_one_value`, migration 0062).
 #[derive(Debug, Clone)]
-struct BaseProperty {
+pub struct BaseProperty {
     block_id: String,
     key: String,
     /// The typed date sidecar. NON-NULL is what promotes a property to an
@@ -2481,11 +2847,17 @@ struct BaseProperty {
     /// Carries `repeat-count` / `repeat-seq`. REAL in the schema, whole numbers
     /// in practice.
     value_num: Option<f64>,
+    /// Read only to compare against the engine.
+    value_ref: Option<String>,
+    /// Read only to compare against the engine.
+    value_bool: Option<bool>,
 }
 
 async fn dump_block_properties(pool: &SqlitePool) -> Result<Vec<BaseProperty>, AppError> {
     let rows = sqlx::query!(
-        "SELECT block_id, key, value_date, value_text, value_num FROM block_properties"
+        r#"SELECT block_id, key, value_date, value_text, value_num, value_ref,
+                  value_bool AS "value_bool: bool"
+           FROM block_properties"#
     )
     .fetch_all(pool)
     .await?;
@@ -2497,6 +2869,8 @@ async fn dump_block_properties(pool: &SqlitePool) -> Result<Vec<BaseProperty>, A
             value_date: r.value_date,
             value_text: r.value_text,
             value_num: r.value_num,
+            value_ref: r.value_ref,
+            value_bool: r.value_bool,
         })
         .collect())
 }
@@ -4054,6 +4428,8 @@ pub async fn reconcile_all(
         &dump_attachments(pool).await?,
         &dump_block_tags(pool).await?,
         &dump_page_aliases(pool).await?,
+        &dump_block_properties(pool).await?,
+        &dump_property_definitions(pool).await?,
     )?);
     Ok(out)
 }
