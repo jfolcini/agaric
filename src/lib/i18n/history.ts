@@ -45,7 +45,7 @@ export const history: Record<string, string> = {
   'history.opTypeDescription.renamePropertyOption':
     "An option of a space's select property was renamed, on every block that held it",
   'history.opTypeDescription.rewriteProperties':
-    "One of a space's properties was merged into another, changed type, or had the values that don't fit it removed or converted",
+    "One of a space's properties was merged into another, changed type, or had the values that don't fit it removed, converted or moved",
   'history.opTypeDescription.addAttachment': 'An attachment was added to a block',
   'history.opTypeDescription.deleteAttachment': 'An attachment was removed from a block',
   'history.opTypeDescription.renameAttachment': 'An attachment was renamed',

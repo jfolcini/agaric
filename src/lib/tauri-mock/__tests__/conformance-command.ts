@@ -145,6 +145,12 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     attrs: ['unfit', 'unfit_in_trash'],
     lists: [],
   },
+  // #6206 — a move answers what it moved and what it left.
+  move_unfit_property_values: {
+    idKey: HEADED_ID_KEY,
+    attrs: ['moved', 'occupied', 'unfit_there'],
+    lists: [],
+  },
   add_unfit_values_to_options: { idKey: 'key', attrs: PROPERTY_DEF_ATTRS, lists: [] },
   // #5057 — the draft writers answer with `()`, so their whole record is the
   // refusal declaration plus a head naming which one ran. `flush_all_drafts`

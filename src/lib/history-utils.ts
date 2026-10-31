@@ -28,7 +28,8 @@ const PROPERTY_KEY_OP_LABELS: Partial<
       : null,
   // A merge writes `from`'s definition, then `into`'s; a type change (#5841 S3)
   // one; a removal or a conversion of the values that don't fit (#6206) none,
-  // only values of its key.
+  // only values of its key; a move of them none, a value removed under its key
+  // then written under the other.
   rewrite_properties: (payload) => {
     const defs = payload['defs']
     if (!Array.isArray(defs)) return null
@@ -36,17 +37,25 @@ const PROPERTY_KEY_OP_LABELS: Partial<
     if (payload['reason'] === 'remove_unfit' || payload['reason'] === 'convert_unfit') {
       return valuesKey(payload['values'])
     }
+    if (payload['reason'] === 'move_unfit') return moveLabel(payload['values'])
     const keys = defs.map((d: unknown) => (d as Record<string, unknown> | null)?.['key'])
     return keys.every((k) => typeof k === 'string') ? keys.join(' → ') : null
   },
 }
 
-/** The key a removal's or a conversion's value writes are under. */
+/** The key of a rewrite's first value write: a removal's or a conversion's, or a move's source. */
 function valuesKey(values: unknown): string | null {
   const key = Array.isArray(values)
     ? (values[0] as Record<string, unknown> | undefined)?.['key']
     : undefined
   return typeof key === 'string' ? key : null
+}
+
+/** `from → into` of a move's first two value writes. */
+function moveLabel(values: unknown): string | null {
+  if (!Array.isArray(values)) return null
+  const [from, into] = [valuesKey(values), valuesKey(values.slice(1))]
+  return from !== null && into !== null ? `${from} → ${into}` : null
 }
 
 /** `key: from → to` of a type change's definition write. */

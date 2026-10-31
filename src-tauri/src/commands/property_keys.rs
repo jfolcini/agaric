@@ -198,8 +198,9 @@ async fn property_merge_counts(
 }
 
 /// The blocks of `space_id`, the Trash's included, holding a value of `key`
-/// SQL shows: the target values [`property_merge_counts`] counts.
-async fn visible_holders(
+/// SQL shows: the target values [`property_merge_counts`] counts, and the
+/// blocks a move of values that don't fit leaves alone.
+pub(super) async fn visible_holders(
     conn: &mut SqliteConnection,
     space_id: &str,
     key: &str,

@@ -1,0 +1,27 @@
+---
+source: agaric-store/src/op.rs
+expression: json
+---
+defs: []
+op_type: rewrite_properties
+reason: move_unfit
+space_id: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+values:
+  - block_id: 01BX5ZZKBKACTAV9WEVGEMMVRZ
+    key: when
+    prior:
+      value_bool: ~
+      value_date: ~
+      value_num: 5
+      value_ref: ~
+      value_text: ~
+    value: ~
+  - block_id: 01BX5ZZKBKACTAV9WEVGEMMVRZ
+    key: notes
+    prior: ~
+    value:
+      value_bool: ~
+      value_date: ~
+      value_num: ~
+      value_ref: ~
+      value_text: "5"

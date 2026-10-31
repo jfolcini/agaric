@@ -231,6 +231,19 @@ describe('getPayloadRawContent', () => {
     expect(getPayloadRawContent(makeEntry(payload, 'rewrite_properties'))).toBe('when')
   })
 
+  it('returns both keys for a move of the values that do not fit one to the other', () => {
+    const payload = JSON.stringify({
+      space_id: 'SP1',
+      reason: 'move_unfit',
+      defs: [],
+      values: [
+        { block_id: 'B1', key: 'when', value: null, prior: { value_num: 5 } },
+        { block_id: 'B1', key: 'notes', value: { value_text: '5' }, prior: null },
+      ],
+    })
+    expect(getPayloadRawContent(makeEntry(payload, 'rewrite_properties'))).toBe('when → notes')
+  })
+
   it('returns null for a set_property_def payload without a key', () => {
     const payload = JSON.stringify({ space_id: 'SP1', def: null, prior: null })
     expect(getPayloadRawContent(makeEntry(payload, 'set_property_def'))).toBeNull()
