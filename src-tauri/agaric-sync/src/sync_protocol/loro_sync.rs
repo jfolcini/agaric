@@ -1032,10 +1032,18 @@ async fn project_pass_defs(
     Ok(retyped)
 }
 
-/// Pass A — core columns + properties.  This upserts EVERY changed
+/// Pass A — core columns, then properties.  This upserts EVERY changed
 /// block (including the tag blocks themselves), so all `blocks` rows
 /// referenced by `block_tags.tag_id` (FK to `blocks(id)`) exist before
 /// Pass B's tag-edge inserts.
+///
+/// Core rows land before property rows, as recovery orders them: the FK
+/// guard on a ref drops a row whose target has no `blocks` row yet, and a
+/// ref may point at a block later in the import, such as a page's new child
+/// (#6232). The exception is the space's own block, which
+/// `project_space_block_first` put first (#4775): it goes whole, core then
+/// properties, before the rest, because its `is_space` row registers the
+/// space that every other core row stamps `space_id` from.
 ///
 /// Load the space's property definitions ONCE for the whole pass (hoisted
 /// out of the per-block loop to avoid an N+1 SELECT). Every block of this
@@ -1057,18 +1065,30 @@ async fn project_pass_a(
     } else {
         agaric_engine::block_ops::load_value_types(&mut *tx, space_id.as_str()).await?
     };
-    for (block_id, (snapshot_opt, full_state)) in changed_blocks.iter().zip(block_states) {
-        // Runs for EVERY changed block, rank-only ones included: this is the
-        // upsert that writes the refreshed dense `position` (and it is a full
-        // core-column upsert, so it correctly creates the row if SQL somehow
-        // never had one — #3162 never turns a missing row into a silent no-op).
-        project_block_full_to_sql(&mut *tx, space_id, block_id, snapshot_opt.as_ref()).await?;
-        // Re-project the block's properties: mirrors remote
-        // SetProperty / DeleteProperty changes into `block_properties`.
-        // Skipped for rank-only siblings (#3162) — this import carried no
-        // property change for them.
-        if let Some((props, _, _, _, _)) = full_state {
-            reproject_block_properties_from_engine(&mut *tx, block_id, props, &value_types).await?;
+    let space_block = usize::from(
+        changed_blocks
+            .first()
+            .is_some_and(|b| b.as_str() == space_id.as_str()),
+    );
+    let (space_ids, rest_ids) = changed_blocks.split_at(space_block);
+    let (space_states, rest_states) = block_states.split_at(space_block);
+    for (ids, states) in [(space_ids, space_states), (rest_ids, rest_states)] {
+        for (block_id, (snapshot_opt, _)) in ids.iter().zip(states) {
+            // Runs for EVERY changed block, rank-only ones included: this is the
+            // upsert that writes the refreshed dense `position` (and it is a full
+            // core-column upsert, so it correctly creates the row if SQL somehow
+            // never had one — #3162 never turns a missing row into a silent no-op).
+            project_block_full_to_sql(&mut *tx, space_id, block_id, snapshot_opt.as_ref()).await?;
+        }
+        for (block_id, (_, full_state)) in ids.iter().zip(states) {
+            // Re-project the block's properties: mirrors remote
+            // SetProperty / DeleteProperty changes into `block_properties`.
+            // Skipped for rank-only siblings (#3162) — this import carried no
+            // property change for them.
+            if let Some((props, _, _, _, _)) = full_state {
+                reproject_block_properties_from_engine(&mut *tx, block_id, props, &value_types)
+                    .await?;
+            }
         }
     }
     Ok(())
