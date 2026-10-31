@@ -352,6 +352,9 @@ pub enum RewriteReason {
     ChangeType,
     /// Every value of a key its definition does not take was removed (#6206).
     RemoveUnfit,
+    /// Values of a key its definition does not take were replaced by ones it
+    /// does (#6206).
+    ConvertUnfit,
 }
 
 /// One definition a `rewrite_properties` op writes: `def` replaces `prior`,
@@ -1645,6 +1648,35 @@ mod tests {
         let back: OpPayload = serde_json::from_value(json.clone()).unwrap();
         assert_eq!(back, payload, "round trip");
         insta::assert_yaml_snapshot!("op_payload_json_rewrite_properties_remove_unfit", json);
+    }
+
+    /// #6206: converting a key's values that don't fit is a
+    /// `rewrite_properties` whose reason is `convert_unfit`: no definition
+    /// write, and a value write per value replaced, recording it.
+    #[test]
+    fn rewrite_properties_convert_unfit_round_trips_6206() {
+        let payload = OpPayload::RewriteProperties(RewritePropertiesPayload {
+            space_id: BlockId::from_string(TEST_BID).unwrap(),
+            reason: RewriteReason::ConvertUnfit,
+            defs: Vec::new(),
+            values: vec![PropertyValueWrite {
+                block_id: BlockId::from_string(TEST_PID).unwrap(),
+                key: "when".into(),
+                value: Some(PropertyValueFields {
+                    value_text: Some("2026-03-01".into()),
+                    ..Default::default()
+                }),
+                prior: Some(PropertyValueFields {
+                    value_text: Some("soon".into()),
+                    ..Default::default()
+                }),
+            }],
+        });
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["reason"], "convert_unfit", "the reason's wire name");
+        let back: OpPayload = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(back, payload, "round trip");
+        insta::assert_yaml_snapshot!("op_payload_json_rewrite_properties_convert_unfit", json);
     }
 
     // -----------------------------------------------------------------------

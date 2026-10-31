@@ -6,12 +6,18 @@ use agaric_core::error::ValidationCode;
 use agaric_store::op::OpRef;
 
 /// [`TEST_SPACE_ID`] as a registered space with a doc of its own.
-async fn space(pool: &SqlitePool) {
+pub(super) async fn space(pool: &SqlitePool) {
     ensure_test_space(pool).await;
     mark_block_as_space(pool, TEST_SPACE_ID).await;
 }
 
-async fn declare(pool: &SqlitePool, mat: &Materializer, key: &str, ty: &str, opts: Option<&str>) {
+pub(super) async fn declare(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    key: &str,
+    ty: &str,
+    opts: Option<&str>,
+) {
     create_property_def_inner(
         pool,
         DEV,
@@ -26,14 +32,14 @@ async fn declare(pool: &SqlitePool, mat: &Materializer, key: &str, ty: &str, opt
 }
 
 /// A value as `set_property` takes it, one slot set.
-enum V {
+pub(super) enum V {
     Text(&'static str),
     Num(f64),
     Date(&'static str),
     Bool(bool),
 }
 
-async fn set(pool: &SqlitePool, mat: &Materializer, block: &str, key: &str, value: V) {
+pub(super) async fn set(pool: &SqlitePool, mat: &Materializer, block: &str, key: &str, value: V) {
     let (mut text, mut num, mut date, mut flag) = (None, None, None, None);
     match value {
         V::Text(v) => text = Some(v.to_owned()),
@@ -59,7 +65,7 @@ async fn set(pool: &SqlitePool, mat: &Materializer, block: &str, key: &str, valu
 }
 
 /// Change `key` to `ty`, acknowledging `(converted, unfit)`.
-async fn change(
+pub(super) async fn change(
     pool: &SqlitePool,
     mat: &Materializer,
     (key, ty, opts): (&str, &str, Option<&str>),
@@ -81,20 +87,20 @@ async fn change(
     .unwrap();
 }
 
-async fn narrow(pool: &SqlitePool, mat: &Materializer, key: &str, options: &str) {
+pub(super) async fn narrow(pool: &SqlitePool, mat: &Materializer, key: &str, options: &str) {
     update_property_def_options_inner(pool, DEV, mat, TEST_SPACE_ID, key.into(), options.into())
         .await
         .unwrap();
 }
 
-async fn trash(pool: &SqlitePool, mat: &Materializer, block: &str) {
+pub(super) async fn trash(pool: &SqlitePool, mat: &Materializer, block: &str) {
     delete_block_inner(pool, DEV, mat, BlockId::from_trusted(block))
         .await
         .unwrap();
     settle(mat).await;
 }
 
-fn unfit(live: i64, in_trash: i64) -> PropertyUnfitCounts {
+pub(super) fn unfit(live: i64, in_trash: i64) -> PropertyUnfitCounts {
     PropertyUnfitCounts {
         unfit: live,
         unfit_in_trash: in_trash,
@@ -162,7 +168,7 @@ async fn add(
 }
 
 /// A `block_properties` row: the block and its five value slots.
-type Row = (
+pub(super) type Row = (
     String,
     Option<String>,
     Option<f64>,
@@ -172,7 +178,7 @@ type Row = (
 );
 
 /// Every row under `key`, by block.
-async fn rows(pool: &SqlitePool, key: &str) -> Vec<Row> {
+pub(super) async fn rows(pool: &SqlitePool, key: &str) -> Vec<Row> {
     sqlx::query_as(
         "SELECT block_id, value_text, value_num, value_date, value_ref, value_bool \
          FROM block_properties WHERE key = ? ORDER BY block_id",
@@ -193,7 +199,7 @@ async fn options(pool: &SqlitePool, key: &str) -> Option<String> {
         .unwrap()
 }
 
-async fn op_count(pool: &SqlitePool) -> i64 {
+pub(super) async fn op_count(pool: &SqlitePool) -> i64 {
     sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
         .fetch_one(pool)
         .await
@@ -201,7 +207,10 @@ async fn op_count(pool: &SqlitePool) -> i64 {
 }
 
 /// The op `op_ref` names: its type, its `block_id` and its payload.
-async fn op(pool: &SqlitePool, op_ref: &OpRef) -> (String, Option<String>, serde_json::Value) {
+pub(super) async fn op(
+    pool: &SqlitePool,
+    op_ref: &OpRef,
+) -> (String, Option<String>, serde_json::Value) {
     let (op_type, block_id, payload): (String, Option<String>, String) = sqlx::query_as(
         "SELECT op_type, block_id, payload FROM op_log WHERE device_id = ? AND seq = ?",
     )
@@ -214,7 +223,7 @@ async fn op(pool: &SqlitePool, op_ref: &OpRef) -> (String, Option<String>, serde
 }
 
 /// The blocks of the space's doc holding a value under `key`, by block.
-fn engine_holders(mat: &Materializer, key: &str) -> Vec<String> {
+pub(super) fn engine_holders(mat: &Materializer, key: &str) -> Vec<String> {
     let mut held: Vec<String> = mat
         .loro_state()
         .registry

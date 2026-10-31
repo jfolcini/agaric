@@ -1667,6 +1667,22 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 &|row| row_token(row, "block_id", &["page_id", "deleted", "value", "form"]),
             )
         }
+        // Grouped by the value as shown and paged by it, each with its live
+        // and trashed counts.
+        "list_distinct_unfit_property_values" => {
+            let resp = list_distinct_unfit_property_values_inner(
+                pool,
+                &arg_req::<String>(args, "spaceId"),
+                arg_req(args, "key"),
+                opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
+                opt_arg(args, "limit").and_then(|v| v.as_i64()),
+            )
+            .await?;
+            page_result_with(
+                &serde_json::to_value(&resp).expect("serialize PageResponse"),
+                &|row| row_token(row, "value", &["unfit", "unfit_in_trash"]),
+            )
+        }
         // ── What a cross-space move drops (#5841 S0.6) ──
         //
         // `key#count=<n>` per key, ordered by key; then one key's values,
@@ -3113,7 +3129,11 @@ pub(super) mod reader_delegation_tests {
     // (`commands/property_unfit.rs`), the same SELECT `count_property_usage`
     // now runs too. The removal it lists for is `remove_unfit_property_values`,
     // not a read arm. Writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 66;
+    // #6206 wired `list_distinct_unfit_property_values`: the same SELECT,
+    // grouped in Rust, behind `PageRequest::new` and `build_page_response`.
+    // The conversion it lists for is `convert_unfit_property_values`, not a
+    // read arm. Writer set unchanged.
+    const SWEPT_ARM_COUNT: usize = 67;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///
