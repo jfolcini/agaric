@@ -346,6 +346,9 @@ describe('UnfitPropertyValues', () => {
     await projectLosesBeta()
     render(<PropertyDefinitionsList />)
     const dialog = await openDialog('project')
+    const review = t('propertiesView.unfitDescription', { key: 'project', type: 'select' })
+    const convert = t('propertiesView.convertIntro', { type: 'select' })
+    expect(within(dialog).getByText(review)).toBeInTheDocument()
     await user.click(button(dialog, 'propertiesView.convertOpen') as HTMLElement)
     expect(
       await within(dialog).findByLabelText(
@@ -353,8 +356,13 @@ describe('UnfitPropertyValues', () => {
       ),
     ).toBeInTheDocument()
     expect(button(dialog, 'propertiesView.unfitRemove')).not.toBeInTheDocument()
+    // The review's sentence about Remove would be stale here.
+    expect(within(dialog).getByText(convert)).toBeInTheDocument()
+    expect(within(dialog).queryByText(review)).not.toBeInTheDocument()
 
     await user.click(within(dialog).getByRole('button', { name: t('nav.back') }))
+    expect(within(dialog).getByText(review)).toBeInTheDocument()
+    expect(within(dialog).queryByText(convert)).not.toBeInTheDocument()
     expect(button(dialog, 'propertiesView.unfitRemove')).toBeInTheDocument()
     expect(
       within(dialog).queryByLabelText(

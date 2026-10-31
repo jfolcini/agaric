@@ -1,5 +1,5 @@
 {
-  "description": "#6206 — `list_distinct_unfit_property_values` groups a key's values that don't fit it by the value as shown (the text `5` and a peer's number 5 are one), with live and Trash counts, paged by that value in byte order. `convert_unfit_property_values` replaces each mapped value, the Trash's included, by its replacement read under the key's type, as one `rewrite_properties` op (reason `convert_unfit`); a value left out stays. It is refused when a mapped value's counts are stale (`UnacknowledgedPropertyLoss`) and when a replacement doesn't fit: a date that is no calendar day, blank text, a select value outside the options. `undo_ops` puts the values back, still not fitting, and `redo_page_op` converts them again. With nothing held under a mapped value it appends no op. A peer's number and boolean under a text key and under a select with options convert to a text and to options. `whenx` changes from text to date: `X`'s date fits; the trashed `Y`'s \"never\", `Z`'s and `W`'s \"soon\", the trashed `V`'s \"later\", `U`'s peer number 5 and `T`'s \"5\" do not. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "description": "#6206 — `list_distinct_unfit_property_values` groups a key's values that don't fit it by the value as shown (the text `5` and a peer's number 5 are one), with live and Trash counts, paged by that value in byte order. `convert_unfit_property_values` replaces each mapped value, the Trash's included, by its replacement read under the key's type, as one `rewrite_properties` op (reason `convert_unfit`); a value left out stays. It is refused when a mapped value's counts are stale (`UnacknowledgedPropertyLoss`) and when a replacement doesn't fit: a date that is no calendar day, blank text, a select value outside the options. `undo_ops` puts the values back, still not fitting, and `redo_page_op` converts them again. With nothing held under a mapped value it appends no op. A peer's number and boolean under a text key and under a select with options convert to a text and to options. One replacement of the `5` converts the text and the number, and `undo_ops` gives each back in its own form. `whenx` changes from text to date: `X`'s date fits; the trashed `Y`'s \"never\", `Z`'s and `W`'s \"soon\", the trashed `V`'s \"later\", `U`'s peer number 5 and `T`'s \"5\" do not. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -109,7 +109,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 19,
+      "count": 21,
       "ops": [
         {
           "key": "whenx",
@@ -160,6 +160,12 @@
         },
         {
           "op_type": "delete_block"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "rewrite_properties"
         },
         {
           "op_type": "rewrite_properties"
@@ -321,6 +327,20 @@
       "error": null,
       "name": "convert_stagex_to_options",
       "returns": ["convert_unfit_property_values#unfit=2#unfit_in_trash=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "convert_the_fives",
+      "returns": ["convert_unfit_property_values#unfit=2#unfit_in_trash=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_fives",
+      "returns": [
+        "undo_ops#reversed_op_type=rewrite_properties#new_op_type=rewrite_properties#is_redo=false"
+      ]
     }
   ],
   "expected_queries": [
@@ -722,6 +742,35 @@
       "command": "convert_unfit_property_values",
       "comment": "O19 — the number and the boolean, each to an option.",
       "name": "convert_stagex_to_options",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "whenx",
+        "replacements": [
+          {
+            "acknowledged": {
+              "unfit": 2,
+              "unfit_in_trash": 0
+            },
+            "replacement": "2026-05-05",
+            "value": "5"
+          }
+        ],
+        "spaceId": "$SPACE"
+      },
+      "command": "convert_unfit_property_values",
+      "comment": "O20 — the text 5 and the peer's number 5 are one value: one replacement writes both.",
+      "name": "convert_the_fives",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O20"]
+      },
+      "command": "undo_ops",
+      "comment": "O21 — each is back as it was: the text as text, the number as a number.",
+      "name": "undo_the_fives",
       "via": "command"
     }
   ],

@@ -103,6 +103,12 @@ function textOf(blockId: string, key: string): unknown {
   return properties.get(blockId)?.get(key)?.['value_text']
 }
 
+/** The `replacements` the first `convert_unfit_property_values` call sent. */
+function sentReplacements(): unknown {
+  const call = mockedInvoke.mock.calls.find(([cmd]) => cmd === 'convert_unfit_property_values')
+  return (call?.[1] as { replacements?: unknown } | undefined)?.replacements
+}
+
 describe('ConvertUnfitValues', () => {
   it('lists each value once, with its live and trashed blocks', async () => {
     await whenHoldsWords()
@@ -288,6 +294,87 @@ describe('ConvertUnfitValues', () => {
     })
     expect(textOf(MTG_1, 'size')).toBe('many')
     expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+
+  it('converts a typed number to a number', async () => {
+    const user = userEvent.setup()
+    await declare('size', 'number')
+    holds(MTG_1, 'size', { value_text: 'many' })
+    render(<PropertyDefinitionsList />)
+    const dialog = await openConvert('size')
+    await findRow(dialog, 'many')
+    await user.type(replacement(dialog, 'many'), ' 3.5 ')
+    await user.click(convertButton(dialog, 1))
+
+    await waitFor(() => {
+      expect(properties.get(MTG_1)?.get('size')?.['value_num']).toBe(3.5)
+    })
+    expect(textOf(MTG_1, 'size')).toBeNull()
+  })
+
+  it("sends a boolean's Yes as true and converts the value to a boolean", async () => {
+    const user = userEvent.setup()
+    await declare('flag', 'boolean')
+    holds(MTG_1, 'flag', { value_text: 'maybe' })
+    render(<PropertyDefinitionsList />)
+    const dialog = await openConvert('flag')
+    await findRow(dialog, 'maybe')
+    await user.selectOptions(replacement(dialog, 'maybe'), t('property.booleanTrue'))
+    await user.click(convertButton(dialog, 1))
+
+    await waitFor(() => {
+      expect(properties.get(MTG_1)?.get('flag')?.['value_bool']).toBe(1)
+    })
+    expect(sentReplacements()).toEqual([
+      { value: 'maybe', replacement: 'true', acknowledged: { unfit: 1, unfit_in_trash: 0 } },
+    ])
+  })
+
+  it('loads the next page on request, keeping what was typed on the one before', async () => {
+    const user = userEvent.setup()
+    await whenHoldsWords()
+    // The mock's two values, one to a page: `later` on the first, `soon` after its cursor.
+    const page = (value: string, unfit: number, next: string | null) => ({
+      items: [{ value, unfit, unfit_in_trash: 0 }],
+      next_cursor: next,
+      has_more: next !== null,
+      total_count: null,
+    })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd !== 'list_distinct_unfit_property_values') return dispatch(cmd, args)
+      const { cursor } = args as { cursor: string | null }
+      return cursor === null ? page('later', 1, 'after-later') : page('soon', 2, null)
+    })
+    render(<PropertyDefinitionsList />)
+    const dialog = await openConvert('when')
+    await findRow(dialog, 'later')
+    expect(within(dialog).queryByText('soon')).not.toBeInTheDocument()
+    await user.type(replacement(dialog, 'later'), '2026-04-01')
+
+    await user.click(within(dialog).getByRole('button', { name: t('action.loadMore') }))
+    await findRow(dialog, 'soon')
+    expect(replacement(dialog, 'later')).toHaveValue('2026-04-01')
+    expect(within(dialog).queryByRole('button', { name: t('action.loadMore') })).toBeNull()
+    await user.type(replacement(dialog, 'soon'), '2026-03-01')
+    await user.click(convertButton(dialog, 3))
+
+    await waitFor(() => {
+      expect(dateOf(MTG_2, 'when')).toBe('2026-04-01')
+    })
+    expect(dateOf(MTG_1, 'when')).toBe('2026-03-01')
+    expect(dateOf(PROJ_1, 'when')).toBe('2026-03-01')
+    expect(sentReplacements()).toEqual([
+      {
+        value: 'later',
+        replacement: '2026-04-01',
+        acknowledged: { unfit: 1, unfit_in_trash: 0 },
+      },
+      {
+        value: 'soon',
+        replacement: '2026-03-01',
+        acknowledged: { unfit: 2, unfit_in_trash: 0 },
+      },
+    ])
   })
 
   it('says so when the values cannot be loaded', async () => {

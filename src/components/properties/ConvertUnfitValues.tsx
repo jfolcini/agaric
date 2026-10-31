@@ -181,7 +181,6 @@ export function ConvertUnfitValues({
 
   const body = (
     <div className="space-y-3 text-sm">
-      <p className="text-muted-foreground">{t('propertiesView.convertIntro', { type })}</p>
       {askedAgain && (
         <p role="alert" className="text-destructive">
           {t('propertiesView.typeChangeCountsChanged')}

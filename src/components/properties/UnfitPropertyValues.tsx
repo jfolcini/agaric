@@ -218,7 +218,9 @@ export function UnfitPropertyValues({
           <Header>
             <Title>{t('propertiesView.unfitTitle', { key })}</Title>
             <Description>
-              {t('propertiesView.unfitDescription', { key, type: definition.value_type })}
+              {step === 'convert'
+                ? t('propertiesView.convertIntro', { type: definition.value_type })
+                : t('propertiesView.unfitDescription', { key, type: definition.value_type })}
             </Description>
           </Header>
           {step === 'convert' ? (

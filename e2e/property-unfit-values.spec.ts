@@ -13,11 +13,10 @@ import {
 /**
  * #6206 — Settings › Properties counts a key's values that don't fit it and
  * removes them, adds them to a select's options, or converts each to a value
- * that fits. The seeded Personal space
- * declares `project` as a select of alpha, beta and gamma, held by two meeting
- * blocks as alpha and beta; editing the options to drop beta leaves the second
- * block's beta not fitting. Each effect is read back after leaving the view
- * and coming back.
+ * that fits. The seeded Personal space declares `project` as a select of
+ * alpha, beta and gamma, held by two meeting blocks as alpha and beta; editing
+ * the options to drop beta leaves the second block's beta not fitting. Each
+ * effect is read back after leaving the view and coming back.
  */
 
 test.beforeEach(async ({ page }) => {
@@ -116,7 +115,7 @@ test.describe("Values that don't fit a property @settings", () => {
     await comeBack(page)
     await expect(unfitBadge(page)).toHaveText("1 doesn't fit")
 
-    // The toast's Undo is read back before it can time out; the conversion after it.
+    // Convert again, and read the conversion back after leaving the view.
     await convertBetaToAlpha(page)
     await comeBack(page)
     await expect(panel(page).getByTestId('property-usage-project')).toHaveText('2 uses')
