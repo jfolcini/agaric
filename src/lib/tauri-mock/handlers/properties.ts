@@ -9,7 +9,11 @@
  * store.
  */
 
-import type { PropertyMergeCounts, PropertyTypeChangeCounts } from '@/lib/bindings'
+import type {
+  PropertyMergeCounts,
+  PropertyTypeChangeCounts,
+  PropertyUnfitCounts,
+} from '@/lib/bindings'
 import { EVENT_PROPERTY_CHANGED } from '@/lib/block-event-names'
 import {
   BUILTIN_PROPERTY_DEFS,
@@ -52,6 +56,12 @@ import {
   previewPropertyTypeChange,
   propertyTypeChangeValues,
 } from '@/lib/tauri-mock/property-type-change'
+import {
+  addUnfitValuesToOptions,
+  removeUnfitPropertyValues,
+  unfitCounts,
+  unfitValues,
+} from '@/lib/tauri-mock/property-unfit'
 import { shiftDate } from '@/lib/tauri-mock/recurrence'
 import { setPageGroupSpace, valueFieldsOf } from '@/lib/tauri-mock/revert'
 import {
@@ -1089,7 +1099,7 @@ export const propertiesHandlers = {
   // `count_property_usage_inner`: per key of the space's vocabulary (its own
   // definitions and the built-ins but `space` and `is_space`), the LIVE blocks
   // of the space holding a value, the column-backed keys read off the block
-  // row. Key-ordered.
+  // row, and its values that don't fit it (#6206). Key-ordered.
   count_property_usage: (args) => {
     const spaceId = (args as Record<string, unknown>)['spaceId'] as string
     // The backend's `spaces` registry: a block flagged `is_space`, or a space a
@@ -1116,7 +1126,29 @@ export const propertiesHandlers = {
       ]),
     ]
       .toSorted(compareUtf8Bytes)
-      .map((key) => ({ key, count: held(key) }))
+      .map((key) => Object.assign({ key, count: held(key) }, unfitCounts(spaceId, key)))
+  },
+
+  // #6206 — `commands/property_unfit.rs`; the logic is in `property-unfit.ts`.
+  list_unfit_property_values: (args) => {
+    const a = args as Record<string, unknown>
+    const limit = pageRequestLimit(a['limit'])
+    const rows = unfitValues(a['spaceId'] as string, a['key'] as string)
+    return paginateKeyset(rows, (row) => [row['block_id'] as string], limit, a['cursor'], null, [])
+  },
+
+  remove_unfit_property_values: (args) => {
+    const a = args as Record<string, unknown>
+    return removeUnfitPropertyValues(
+      a['spaceId'] as string,
+      a['key'] as string,
+      a['acknowledged'] as PropertyUnfitCounts,
+    )
+  },
+
+  add_unfit_values_to_options: (args) => {
+    const a = args as Record<string, unknown>
+    return addUnfitValuesToOptions(a['spaceId'] as string, a['key'] as string)
   },
 
   // ---------------------------------------------------------------------------
@@ -1211,6 +1243,9 @@ export const propertiesHandlers = {
   | 'preview_property_type_change'
   | 'list_property_type_change_values'
   | 'change_property_type'
+  | 'list_unfit_property_values'
+  | 'remove_unfit_property_values'
+  | 'add_unfit_values_to_options'
   | 'list_projected_agenda'
   | 'notify_task'
   | 'get_reminder_settings'

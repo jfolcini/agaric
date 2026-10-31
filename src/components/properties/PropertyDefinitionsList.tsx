@@ -23,6 +23,7 @@ import { EditSelectOptions } from '@/components/properties/EditSelectOptions'
 import { MergePropertyDefinition } from '@/components/properties/MergePropertyDefinition'
 import { notifyDefinitionWrite } from '@/components/properties/notify-definition-write'
 import { RenamePropertyDefinition } from '@/components/properties/RenamePropertyDefinition'
+import { UnfitPropertyValues } from '@/components/properties/UnfitPropertyValues'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -39,7 +40,7 @@ import {
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { isValidation, unwrap } from '@/lib/app-error'
-import type { PropertyDefinition } from '@/lib/bindings'
+import type { PropertyDefinition, PropertyUsage } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
@@ -66,8 +67,9 @@ export function PropertyDefinitionsList(): React.ReactElement {
   // #3306 — settled failure vs genuinely-empty vocabulary.
   const [loadError, setLoadError] = useState(false)
   const [searchFilter, setSearchFilter] = useState('')
-  // Live blocks holding a value, per key; null while loading or after a failure, which show no count.
-  const [usage, setUsage] = useState<ReadonlyMap<string, number> | null>(null)
+  // Live blocks holding a value and the values that don't fit, per key; null while loading or
+  // after a failure, which show no count.
+  const [usage, setUsage] = useState<ReadonlyMap<string, PropertyUsage> | null>(null)
   const usageSeq = useRef(0)
 
   // Create form state
@@ -110,7 +112,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
     if (spaceId === null) return
     try {
       const rows = unwrap(await commands.countPropertyUsage(spaceId))
-      if (seq === usageSeq.current) setUsage(new Map(rows.map((row) => [row.key, row.count])))
+      if (seq === usageSeq.current) setUsage(new Map(rows.map((row) => [row.key, row])))
     } catch (error) {
       logger.warn('PropertyDefinitionsList', 'count_property_usage failed', { spaceId }, error)
     }
@@ -337,13 +339,21 @@ export function PropertyDefinitionsList(): React.ReactElement {
                     key={def.key}
                     className="max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-y-0"
                   >
-                    <div className="flex min-w-0 items-center gap-3 [@media(pointer:coarse)]:min-h-11">
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 [@media(pointer:coarse)]:min-h-11">
                       <span className="font-medium text-sm">{formatPropertyName(def.key)}</span>
                       <Badge tone="secondary">{def.value_type}</Badge>
                       {usage?.has(def.key) && (
                         <Badge tone="outline" data-testid={`property-usage-${def.key}`}>
-                          {t('propertiesView.usageCount', { count: usage.get(def.key) })}
+                          {t('propertiesView.usageCount', { count: usage.get(def.key)?.count })}
                         </Badge>
+                      )}
+                      {spaceId !== null && (
+                        <UnfitPropertyValues
+                          definition={def}
+                          spaceId={spaceId}
+                          counts={usage?.get(def.key) ?? null}
+                          onChanged={reload}
+                        />
                       )}
                     </div>
                     {hasOptionsCell && (

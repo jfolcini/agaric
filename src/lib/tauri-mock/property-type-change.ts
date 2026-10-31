@@ -106,19 +106,25 @@ export function propertyTypeChangeValues(
   const [, to] = typeChangeTarget(spaceId, key, valueType, options)
   return heldValues(spaceId, key, to)
     .filter((h) => (h.converted === null) === (kind === 'unfit'))
-    .map((h) => {
-      const b = blocks.get(h.blockId) ?? {}
-      const pageId = (b['page_id'] as string | null | undefined) ?? null
-      return {
-        block_id: h.blockId,
-        page_id: pageId,
-        page_title: pageId === null ? null : (blocks.get(pageId)?.['content'] ?? null),
-        content: b['content'] ?? null,
-        deleted: b['deleted_at'] != null,
+    .map((h) =>
+      Object.assign(holderRow(h.blockId), {
         value: heldText(h.value),
         converted: h.converted === null ? null : heldText(h.converted),
-      }
-    })
+      }),
+    )
+}
+
+/** The block holding a listed value: its page, its content and whether it is trashed. */
+export function holderRow(blockId: string): Row {
+  const b = blocks.get(blockId) ?? {}
+  const pageId = (b['page_id'] as string | null | undefined) ?? null
+  return {
+    block_id: blockId,
+    page_id: pageId,
+    page_title: pageId === null ? null : (blocks.get(pageId)?.['content'] ?? null),
+    content: b['content'] ?? null,
+    deleted: b['deleted_at'] != null,
+  }
 }
 
 /** `change_property_type_inner`: the definition after the change, and the op. */
@@ -194,9 +200,14 @@ const DECLARED_SLOTS: Readonly<Record<string, readonly string[]>> = {
  * options edit has left out since keeps working.
  */
 function fitsDeclaredType(fields: Row, valueType: string): boolean {
-  const slots = DECLARED_SLOTS[valueType]
-  if (slots && !slots.some((slot) => fields[slot] != null)) return false
+  if (!admitsShape(fields, valueType)) return false
   return fields['value_date'] == null || isIsoDate(fields['value_date'] as string)
+}
+
+/** `declared_type_admits_shape`: `fields` are in a slot `valueType` takes. */
+export function admitsShape(fields: Row, valueType: string): boolean {
+  const slots = DECLARED_SLOTS[valueType]
+  return slots === undefined || slots.some((slot) => fields[slot] != null)
 }
 
 /**
