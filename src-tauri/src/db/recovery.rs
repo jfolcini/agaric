@@ -7180,6 +7180,43 @@ mod tests {
         );
     }
 
+    /// #6206: disaster recovery keeps a string its key's type does not take,
+    /// as text, out of the type's column.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recovery_keeps_a_value_its_type_does_not_take_as_text_6206() {
+        const SPACE: &str = "01HZ00000000000000000000S1";
+        const BLOCK: &str = "01HZ0000000000000000000B01";
+        let (pool, _dir) = test_pool().await;
+        let mut engine = agaric_engine::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
+        engine
+            .apply_create_block(BLOCK, "content", "x", None, 0)
+            .unwrap();
+        engine
+            .apply_set_property(BLOCK, "due2", Some("soon"))
+            .unwrap();
+        let date = agaric_store::op::PropertyDefState {
+            value_type: "date".into(),
+            options: None,
+        };
+        engine.apply_set_property_def("due2", Some(&date)).unwrap();
+        insert_snapshot(&pool, SPACE, engine.export_snapshot().unwrap()).await;
+
+        assert!(reproject_blocks_from_engine(&pool).await.unwrap());
+
+        let value: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT value_text, value_date FROM block_properties WHERE block_id = ? AND key = 'due2'",
+        )
+        .bind(BLOCK)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            value,
+            Some((Some("soon".to_owned()), None)),
+            "kept as text, not as a date"
+        );
+    }
+
     /// #5608: disaster recovery takes attachment rows from the engine, the
     /// merge truth: a peer's attachment this device has no op for, and one
     /// whose local rename a peer's later rename superseded. The op-log replay

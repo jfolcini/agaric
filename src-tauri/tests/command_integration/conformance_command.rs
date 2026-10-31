@@ -786,7 +786,7 @@ pub(super) async fn apply_op_via_command(
                 serde_json::from_value(arg("acknowledged").cloned().unwrap_or_else(|| {
                     panic!("conformance op '{command}' is missing arg 'acknowledged'")
                 }))
-                .expect("acknowledged is {converted, removed}"),
+                .expect("acknowledged is {converted, unfit}"),
             )
             .await,
         ),

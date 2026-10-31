@@ -1,7 +1,7 @@
 /**
  * #5841 S3 — changing a property's type from Settings › Properties, against
  * the mock backend: offered on user definitions only, the dialog previews what
- * converts and what is removed and lists the blocks of each, the change
+ * converts and what doesn't fit and lists the blocks of each, the change
  * acknowledges those counts, a stale acknowledgement previews again, the
  * toast's Undo restores, and a refusal shows the backend's reason.
  */
@@ -73,8 +73,7 @@ function counts(dialog: HTMLElement): HTMLElement {
 }
 
 const converts = (count: number) => t('propertiesView.typeChangeConverts', { count })
-const removes = (count: number, type: string) =>
-  t('propertiesView.typeChangeRemoves', { count, type })
+const unfit = (count: number, type: string) => t('propertiesView.typeChangeUnfit', { count, type })
 
 /** The badge of `context`'s row: its type. */
 function contextType(): string | null | undefined {
@@ -107,11 +106,20 @@ describe('ChangePropertyType', () => {
     const dialog = await pickType('number')
 
     expect(await within(dialog).findByText(converts(1))).toBeInTheDocument()
-    expect(counts(dialog)).toHaveTextContent(removes(2, 'number'))
+    expect(counts(dialog)).toHaveTextContent(unfit(2, 'number'))
     expect(counts(dialog)).toHaveTextContent(t('propertiesView.typeChangeTrashNote'))
+    expect(
+      within(dialog).getByText(t('propertiesView.typeChangeDescription', { key: 'context' })),
+    ).toBeInTheDocument()
+    expect(
+      within(dialog).getByRole('tab', {
+        name: t('propertiesView.typeChangeUnfitTab', { count: 2 }),
+        selected: true,
+      }),
+    ).toBeInTheDocument()
 
-    const removed = await within(dialog).findByText('Meetings › Weekly standup notes')
-    expect(removed.closest('li')).toHaveTextContent('@office')
+    const doesNotFit = await within(dialog).findByText('Meetings › Weekly standup notes')
+    expect(doesNotFit.closest('li')).toHaveTextContent('@office')
     await user.click(
       within(dialog).getByRole('tab', {
         name: t('propertiesView.typeChangeConvertedTab', { count: 1 }),
@@ -138,7 +146,7 @@ describe('ChangePropertyType', () => {
     ).toBeInTheDocument()
   })
 
-  it('lists the removed values a page at a time, and Load more brings the rest', async () => {
+  it("lists the values that don't fit a page at a time, and Load more brings the rest", async () => {
     const user = userEvent.setup()
     // 49 more blocks of the meetings page hold `context`: 51 in all, past one page.
     for (let i = 0; i < 49; i++) {
@@ -173,28 +181,31 @@ describe('ChangePropertyType', () => {
       '@office, @home',
     )
     expect(await within(dialog).findByText(converts(1))).toBeInTheDocument()
-    expect(counts(dialog)).toHaveTextContent(removes(1, 'select'))
+    expect(counts(dialog)).toHaveTextContent(unfit(1, 'select'))
     await user.click(confirmButton(dialog))
 
     await waitFor(() => {
       expect(spacePropertyDefs(PERSONAL.id).get('context')?.['value_type']).toBe('select')
     })
     expect(spacePropertyDefs(PERSONAL.id).get('context')?.['options']).toBe('["@office","@home"]')
-    expect(properties.get(MTG_2)?.has('context')).toBe(false)
+    expect(properties.get(MTG_2)?.get('context')?.['value_text']).toBe('@remote')
   })
 
   it("changes the type, and the toast's Undo brings the type and the values back", async () => {
     const user = userEvent.setup()
     render(<PropertyDefinitionsList />)
     const dialog = await pickType('number')
-    expect(await within(dialog).findByText(removes(2, 'number'))).toBeInTheDocument()
+    expect(await within(dialog).findByText(unfit(2, 'number'))).toBeInTheDocument()
     await user.click(confirmButton(dialog))
 
     await waitFor(() => {
       expect(contextType()).toBe('number')
     })
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(properties.get(MTG_1)?.has('context')).toBe(false)
+    expect(properties.get(MTG_1)?.get('context')).toMatchObject({
+      value_text: '@office',
+      value_num: null,
+    })
 
     const message = t('propertiesView.typeChanged', { key: 'context', type: 'number' })
     const call = vi.mocked(toast.success).mock.calls.find(([shown]) => shown === message)
@@ -213,7 +224,7 @@ describe('ChangePropertyType', () => {
     const user = userEvent.setup()
     render(<PropertyDefinitionsList />)
     const dialog = await pickType('number')
-    expect(await within(dialog).findByText(removes(2, 'number'))).toBeInTheDocument()
+    expect(await within(dialog).findByText(unfit(2, 'number'))).toBeInTheDocument()
 
     // Another view gives a third block a context after the preview.
     await setContext(WELCOME, '5')
@@ -256,7 +267,7 @@ describe('ChangePropertyType', () => {
     })
     render(<PropertyDefinitionsList />)
     const dialog = await pickType('number')
-    expect(await within(dialog).findByText(removes(2, 'number'))).toBeInTheDocument()
+    expect(await within(dialog).findByText(unfit(2, 'number'))).toBeInTheDocument()
     await user.click(confirmButton(dialog))
 
     await waitFor(() => {

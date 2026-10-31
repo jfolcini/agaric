@@ -1307,8 +1307,9 @@ fn declared_value_type_or_text<'a>(
 }
 
 /// [`reproject_block_properties_from_engine`]'s per-key row: route the engine
-/// value to its typed `block_properties` column and INSERT it (row-absent for a
-/// cleared or dangling value, or a string its key's type does not take).
+/// value to its typed `block_properties` column and INSERT it, a string its
+/// key's type does not take to `value_text` (#6206); row-absent for a cleared
+/// or dangling value.
 async fn reproject_property_row_from_engine(
     conn: &mut SqliteConnection,
     block_id: &agaric_core::ulid::BlockId,
@@ -1322,7 +1323,7 @@ async fn reproject_property_row_from_engine(
     let block_id_str = block_id.as_str();
     let fields = match value {
         // Native typed values route straight to their column, whatever the
-        // key's declared type (#5841): only a stray string is hidden.
+        // key's declared type (#5841).
         PropertyValue::Num(n) => PropertyValueFields {
             value_num: Some(*n),
             ..Default::default()
@@ -1336,22 +1337,14 @@ async fn reproject_property_row_from_engine(
         // Str-encoded number/bool): it lands where the key's declared type
         // puts it, as that type reads it (`coerce`), defaulting to "text" for
         // an undefined key (warn so a missing definition is observable). One
-        // the type does not take is row-absent, never a fallback to
-        // `value_text` (#383), and stays in the engine, so a change back to a
-        // type that takes it shows it again (#5841).
+        // the type does not take is kept in `value_text`, out of the column
+        // the type's readers read (#6206).
         PropertyValue::Str(s) => {
             let value_type = declared_value_type_or_text(value_types, key, block_id);
             coerce(value, value_type).map_or_else(
-                || {
-                    tracing::warn!(
-                        key = %key,
-                        block_id = %block_id.as_str(),
-                        value = %s,
-                        value_type,
-                        "reproject_block_properties_from_engine: the value does not fit \
-                         its key's type; dropping (row-absent)"
-                    );
-                    PropertyValueFields::default()
+                || PropertyValueFields {
+                    value_text: Some(s.clone()),
+                    ..Default::default()
                 },
                 |fit| value_fields_under(&fit, value_type),
             )
@@ -1368,11 +1361,10 @@ async fn reproject_property_row_from_engine(
 
     // The `block_properties.exactly_one_value` CHECK (migration 0062)
     // forbids an all-NULL row. An explicit-null engine value (a cleared
-    // property), or a string its key's type does not take, routes to no
-    // column. The correct SQL representation of a cleared property is
-    // row-absent — the up-front DELETE already removed any prior row — so
-    // skip the INSERT rather than violate the CHECK and abort the whole
-    // inbound-sync transaction.
+    // property) routes to no column. The correct SQL representation of a
+    // cleared property is row-absent — the up-front DELETE already removed
+    // any prior row — so skip the INSERT rather than violate the CHECK and
+    // abort the whole inbound-sync transaction.
     if value_text.is_none()
         && value_num.is_none()
         && value_date.is_none()
@@ -1491,14 +1483,14 @@ async fn reproject_reserved_columns_from_engine(
 /// consults `value_types`, the block's space's definitions
 /// ([`crate::block_ops::load_value_types`], defaulting to `"text"`), to
 /// pick the column, and it still tolerates a legacy pre-§2.1 `Str`-encoded
-/// number/boolean. An explicit `Null` (cleared), or a `Str` its key's type
-/// does not take (`coerce`: a number that fails to parse, a date that is not
-/// `YYYY-MM-DD`, a boolean other than `true` / `false`, a ref that is not a
-/// ULID), routes to no column — and since
+/// number/boolean. A `Str` its key's type does not take (`coerce`: a number
+/// that fails to parse, a date that is not `YYYY-MM-DD`, a boolean other than
+/// `true` / `false`, a ref that is not a ULID) is kept in `value_text`, where
+/// the type's readers, reading its own column, do not see it (#6206). An
+/// explicit `Null` (cleared) routes to no column — and since
 /// `block_properties` has an `exactly_one_value` CHECK (migration 0062)
-/// that forbids an all-NULL row, such a value is represented as row-absent
-/// (no INSERT; the up-front DELETE already cleared any prior row), matching
-/// "cleared property" semantics.
+/// that forbids an all-NULL row, it is represented as row-absent (no INSERT;
+/// the up-front DELETE already cleared any prior row).
 ///
 /// ## Reserved keys → hot-path `blocks` columns
 ///
@@ -1565,10 +1557,11 @@ pub async fn reproject_block_properties_from_engine(
     Ok(())
 }
 
-/// The `block_properties` column a `Str` value lands in under a definition of
-/// `value_type` (`None`: the key is undeclared), as
-/// `reproject_property_row_from_engine` routes it. A definition change moves
-/// the key's values only when this changes (#5841).
+/// The `block_properties` column a `Str` value the type takes lands in under a
+/// definition of `value_type` (`None`: the key is undeclared), as
+/// `reproject_property_row_from_engine` routes it; one it does not take lands
+/// in `value_text`. A definition change moves the key's values only when this
+/// changes (#5841).
 pub fn str_column_for(value_type: Option<&str>) -> &'static str {
     match value_type {
         Some("number") => "value_num",
@@ -4260,13 +4253,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reproject_number_parse_failure_drops_row() {
-        // #383: a `number`-typed property whose Str payload fails to parse as
-        // f64 routes to no column. The all-None guard then returns, so the
-        // row is correctly absent (the `exactly_one_value` CHECK forbids an
-        // all-NULL row; row-absent is the right SQL representation). We do NOT
-        // fall back to value_text. A warn (asserted only by code review) makes
-        // the silent drop observable.
+    async fn reproject_keeps_an_unparseable_number_as_text_6206() {
+        // #6206: a `number`-typed property whose Str payload fails to parse as
+        // f64 is kept in value_text, out of value_num, the column the number
+        // readers read.
         let (pool, _dir) = fresh_pool().await;
         seed_block_and_property_defs(&pool).await;
 
@@ -4281,8 +4271,6 @@ mod tests {
             .expect("reproject");
         drop(conn);
 
-        // No row should exist for `effort` — neither value_num nor a
-        // value_text fallback.
         let row: Option<(Option<f64>, Option<String>)> = sqlx::query_as(
             "SELECT value_num, value_text FROM block_properties \
              WHERE block_id = ? AND key = 'effort'",
@@ -4291,9 +4279,10 @@ mod tests {
         .fetch_optional(&pool)
         .await
         .expect("fetch effort");
-        assert!(
-            row.is_none(),
-            "unparseable number must drop to row-absent (no value_text fallback), got {row:?}"
+        assert_eq!(
+            row,
+            Some((None, Some("not-a-number".into()))),
+            "an unparseable number is kept as text, not as a number"
         );
     }
 
@@ -4324,14 +4313,14 @@ mod tests {
         .expect("fetch")
     }
 
-    /// #5841 S3 — a string under a boolean is shown only when it is `true`
-    /// or `false`; any other is hidden, not read as false.
+    /// #5841 S3 — a string under a boolean is a boolean only when it is
+    /// `true` or `false`; any other is kept as text, not read as false (#6206).
     #[tokio::test]
-    async fn a_string_under_a_boolean_shows_only_as_true_or_false_5841() {
+    async fn a_string_under_a_boolean_is_one_only_as_true_or_false_6206() {
         assert_eq!(
             projected_row("done", pv("yes")).await,
-            None,
-            "a stray string is hidden"
+            Some((Some("yes".into()), None, None, None, None)),
+            "a stray string is kept as text"
         );
         assert_eq!(
             projected_row("done", pv("false")).await,
@@ -4340,25 +4329,45 @@ mod tests {
         );
     }
 
-    /// #5841 S3 — a string under a date is shown only when it is a date.
+    /// #5841 S3 — a string under a date is in `value_date` only when it is a
+    /// date; any other is kept as text (#6206).
     #[tokio::test]
-    async fn a_string_under_a_date_shows_only_as_a_date_5841() {
-        assert_eq!(projected_row("due", pv("soon")).await, None);
-        assert_eq!(projected_row("due", pv("2026-02-30")).await, None);
+    async fn a_string_under_a_date_is_one_only_as_a_date_6206() {
+        assert_eq!(
+            projected_row("due", pv("soon")).await,
+            Some((Some("soon".into()), None, None, None, None))
+        );
+        assert_eq!(
+            projected_row("due", pv("2026-02-30")).await,
+            Some((Some("2026-02-30".into()), None, None, None, None))
+        );
     }
 
-    /// #5841 S3 — a string under a number is shown only as a finite number.
+    /// #5841 S3 — a string under a number is in `value_num` only as a finite
+    /// number; any other is kept as text (#6206).
     #[tokio::test]
-    async fn a_string_under_a_number_shows_only_as_a_finite_number_5841() {
-        assert_eq!(projected_row("effort", pv("inf")).await, None);
+    async fn a_string_under_a_number_is_one_only_as_a_finite_number_6206() {
+        assert_eq!(
+            projected_row("effort", pv("inf")).await,
+            Some((Some("inf".into()), None, None, None, None))
+        );
         assert_eq!(
             projected_row("effort", pv(" 042 ")).await,
             Some((None, Some(42.0), None, None, None))
         );
     }
 
-    /// #5841 S3 (Q6) — a native number under a text key keeps its column:
-    /// only a stray string is hidden.
+    /// A string under a ref is in `value_ref` only as a block id; any other is
+    /// kept as text, with no `value_ref` to satisfy the foreign key (#6206).
+    #[tokio::test]
+    async fn a_string_under_a_ref_is_one_only_as_a_block_id_6206() {
+        assert_eq!(
+            projected_row("link", pv("not-a-block-id")).await,
+            Some((Some("not-a-block-id".into()), None, None, None, None))
+        );
+    }
+
+    /// #5841 S3 (Q6) — a native number under a text key keeps its column.
     #[tokio::test]
     async fn a_native_number_under_text_keeps_value_num_5841() {
         assert_eq!(
@@ -4514,12 +4523,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reproject_skips_null_and_unparseable_values_without_violating_check() {
+    async fn reproject_skips_null_and_keeps_unparseable_as_text_without_violating_check() {
         // Regression for the `block_properties.exactly_one_value` CHECK
-        // (migration 0062): an explicit-null value and a `number` value
-        // whose string doesn't parse both route to no column. They must be
-        // skipped (row-absent), NOT inserted as an all-NULL row — otherwise
-        // the INSERT fails the CHECK and aborts the whole inbound-sync tx.
+        // (migration 0062): an explicit-null value routes to no column. It
+        // must be skipped (row-absent), NOT inserted as an all-NULL row —
+        // otherwise the INSERT fails the CHECK and aborts the whole
+        // inbound-sync tx. A `number` value whose string doesn't parse is
+        // kept in value_text (#6206).
         let (pool, _dir) = fresh_pool().await;
         seed_block_and_property_defs(&pool).await;
         // Pre-seed a stale `note` row so we also confirm the up-front DELETE
@@ -4545,15 +4555,17 @@ mod tests {
             .expect("reproject must succeed for null / unparseable values");
         drop(conn);
 
-        let count: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM block_properties WHERE block_id = ?")
-                .bind(BLOCK_A)
-                .fetch_one(&pool)
-                .await
-                .expect("count");
+        let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+            "SELECT key, value_text FROM block_properties WHERE block_id = ? ORDER BY key",
+        )
+        .bind(BLOCK_A)
+        .fetch_all(&pool)
+        .await
+        .expect("rows");
         assert_eq!(
-            count.0, 0,
-            "null/unparseable values produce no row; stale row swept"
+            rows,
+            vec![("effort".into(), Some("not-a-number".into()))],
+            "null produces no row, the stale row is swept, the unparseable value is text"
         );
     }
 

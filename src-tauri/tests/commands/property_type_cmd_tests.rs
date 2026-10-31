@@ -154,8 +154,8 @@ fn target(key: &str, ty: &str, opts: Option<&str>) -> PropertyTypeTarget {
     }
 }
 
-fn counts(converted: i64, removed: i64) -> PropertyTypeChangeCounts {
-    PropertyTypeChangeCounts { converted, removed }
+fn counts(converted: i64, unfit: i64) -> PropertyTypeChangeCounts {
+    PropertyTypeChangeCounts { converted, unfit }
 }
 
 async fn preview(
@@ -202,7 +202,7 @@ async fn effort(pool: &SqlitePool, mat: &Materializer) -> [String; 4] {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn preview_counts_converted_and_removed_values_the_trash_included_5841() {
+async fn preview_counts_converted_and_unfit_values_the_trash_included_5841() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     effort(&pool, &mat).await;
@@ -210,7 +210,7 @@ async fn preview_counts_converted_and_removed_values_the_trash_included_5841() {
     assert_eq!(
         preview(&pool, "effortx", "number", None).await.unwrap(),
         counts(3, 1),
-        "3, 042 and the trashed 7 convert; abc goes"
+        "3, 042 and the trashed 7 convert; abc does not fit"
     );
     assert_eq!(
         preview(&pool, "effortx", "boolean", None).await.unwrap(),
@@ -278,12 +278,12 @@ async fn list_pages_each_kind_by_block_id_5841() {
     );
     assert_eq!(seen[0].page_id.as_deref(), Some(converted[0].0.as_str()));
 
-    let removed = list(PropertyTypeChangeKind::Removed, None, Some(50))
+    let unfit = list(PropertyTypeChangeKind::Unfit, None, Some(50))
         .await
         .unwrap();
-    assert!(!removed.has_more);
+    assert!(!unfit.has_more);
     assert_eq!(
-        removed
+        unfit
             .items
             .iter()
             .map(|v| (
@@ -296,7 +296,7 @@ async fn list_pages_each_kind_by_block_id_5841() {
     );
 
     for limit in [0, 201] {
-        let refused = list(PropertyTypeChangeKind::Removed, None, Some(limit)).await;
+        let refused = list(PropertyTypeChangeKind::Unfit, None, Some(limit)).await;
         assert!(
             matches!(refused, Err(AppError::Validation { .. })),
             "limit {limit}: {refused:?}"
@@ -304,8 +304,10 @@ async fn list_pages_each_kind_by_block_id_5841() {
     }
 }
 
+/// #6206 — a value the new type does not take is kept, unwritten, as text in
+/// `value_text`, where the type's own readers do not see it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn change_converts_removes_and_writes_one_op_on_the_space_5841() {
+async fn change_converts_keeps_unfit_values_as_text_and_writes_one_op_on_the_space_6206() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let [x, y, z, w] = effort(&pool, &mat).await;
@@ -320,7 +322,11 @@ async fn change_converts_removes_and_writes_one_op_on_the_space_5841() {
     );
     assert_eq!(row(&pool, &x, "effortx").await, num(3.0));
     assert_eq!(row(&pool, &y, "effortx").await, num(42.0));
-    assert_eq!(row(&pool, &z, "effortx").await, None, "abc is gone");
+    assert_eq!(
+        row(&pool, &z, "effortx").await,
+        text("abc"),
+        "abc is kept as text"
+    );
     assert_eq!(row(&pool, &w, "effortx").await, num(7.0), "the Trash's too");
 
     assert_eq!(changed.op_refs.len(), 1, "a type change is one op");
@@ -343,7 +349,7 @@ async fn change_converts_removes_and_writes_one_op_on_the_space_5841() {
     assert_eq!(payload["defs"][0]["def"]["value_type"], "number");
     assert_eq!(payload["defs"][0]["prior"]["value_type"], "text");
     let values = payload["values"].as_array().unwrap();
-    assert_eq!(values.len(), 4, "every value changed form");
+    assert_eq!(values.len(), 3, "every value that changed form");
     let write_of = |block: &str| {
         values
             .iter()
@@ -360,7 +366,7 @@ async fn change_converts_removes_and_writes_one_op_on_the_space_5841() {
             .collect();
         set
     };
-    let (y_write, z_write) = (write_of(&y), write_of(&z));
+    let y_write = write_of(&y);
     assert_eq!(
         slot(&y_write["value"]),
         vec![("value_num".to_owned(), serde_json::json!(42.0))],
@@ -371,10 +377,9 @@ async fn change_converts_removes_and_writes_one_op_on_the_space_5841() {
         vec![("value_text".to_owned(), serde_json::json!("042"))],
         "the value it replaced, as the engine held it"
     );
-    assert!(z_write["value"].is_null(), "a removal writes no value");
-    assert_eq!(
-        slot(&z_write["prior"]),
-        vec![("value_text".to_owned(), serde_json::json!("abc"))]
+    assert!(
+        values.iter().all(|w| w["block_id"] != z.as_str()),
+        "a value that does not fit is not written"
     );
 
     // A value whose form stays is not written: the apply moves it.
@@ -393,10 +398,20 @@ async fn change_converts_removes_and_writes_one_op_on_the_space_5841() {
             .unwrap();
     let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
     let values = payload["values"].as_array().unwrap();
-    assert_eq!(values.len(), 1, "only the removal is written: {values:?}");
-    assert_eq!(values[0]["block_id"], y.as_str());
+    assert_eq!(values.len(), 0, "neither value changes form: {values:?}");
     assert_eq!(row(&pool, &x, "when").await, date("2026-01-05"));
-    assert_eq!(row(&pool, &y, "when").await, None);
+    assert_eq!(row(&pool, &y, "when").await, text("soon"));
+    settle(&mat).await;
+    let in_agenda: Vec<String> =
+        sqlx::query_scalar("SELECT block_id FROM agenda_cache WHERE source = 'property:when'")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        in_agenda,
+        vec![x.clone()],
+        "the agenda reads the date column alone"
+    );
 
     // A boolean is written in its own slot.
     declare(&pool, &mat, "flag", "text", None).await;
@@ -501,15 +516,20 @@ async fn undo_restores_the_values_and_the_definition_and_redo_changes_again_5841
         def_row(&pool, "effortx").await,
         Some(("number".into(), None))
     );
-    for (block, want) in [(&x, num(3.0)), (&y, num(42.0)), (&z, None), (&w, num(7.0))] {
+    for (block, want) in [
+        (&x, num(3.0)),
+        (&y, num(42.0)),
+        (&z, text("abc")),
+        (&w, num(7.0)),
+    ] {
         assert_eq!(row(&pool, block, "effortx").await, want, "redone");
     }
 }
 
 /// Undo of a type change after values were written under the new type: the
 /// change's own values come back, and a value written since re-reads under
-/// the old type. A number keeps its column; a string shows if the old type
-/// takes it and stays hidden in the doc if not.
+/// the old type. A number keeps its column; a string lands in the old type's
+/// column if it takes it, and is kept as text if not (#6206).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undo_after_later_writes_rereads_them_under_the_old_type_5841() {
     let (pool, _dir) = test_pool().await;
@@ -545,8 +565,8 @@ async fn undo_after_later_writes_rereads_them_under_the_old_type_5841() {
     );
     assert_eq!(
         row(&pool, &z, "hours").await,
-        None,
-        "one that does not is hidden"
+        text("about two"),
+        "one that does not is kept as text"
     );
     let held = mat
         .loro_state()
@@ -610,9 +630,10 @@ async fn every_type_pair_change_then_undo_restores_the_rows_5841() {
 }
 
 /// Undo of a set made before the key changed type: a value the type takes is
-/// converted to it, under the same key; one it does not take is refused.
+/// converted to it, under the same key; one it does not take is restored as
+/// text, as the projection keeps it (#6206).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn undoing_an_older_set_converts_it_or_is_refused_5841() {
+async fn undoing_an_older_set_converts_it_or_restores_it_as_text_6206() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     space(&pool).await;
@@ -621,7 +642,7 @@ async fn undoing_an_older_set_converts_it_or_is_refused_5841() {
     set(&pool, &mat, &x, "effortx", V::Text("6")).await;
     let second = set(&pool, &mat, &x, "effortx", V::Text("5")).await;
     set(&pool, &mat, &y, "effortx", V::Text("abc")).await;
-    let refused = set(&pool, &mat, &y, "effortx", V::Text("7")).await;
+    let unfit = set(&pool, &mat, &y, "effortx", V::Text("7")).await;
     change(&pool, &mat, ("effortx", "number", None), counts(2, 0))
         .await
         .unwrap();
@@ -630,16 +651,44 @@ async fn undoing_an_older_set_converts_it_or_is_refused_5841() {
         .await
         .unwrap();
     assert_eq!(row(&pool, &x, "effortx").await, num(6.0), "6, as a number");
-    let ops = op_count(&pool).await;
-    let err = undo_ops_inner(&pool, DEV, &mat, vec![refused])
-        .await
-        .unwrap_err();
-    assert!(
-        matches!(&err, AppError::Validation { message, .. } if message.contains("change its type back first")),
-        "got {err:?}"
+    let undone = undo_ops_inner(&pool, DEV, &mat, vec![unfit]).await;
+    assert!(undone.is_ok(), "not refused: {undone:?}");
+    assert_eq!(
+        row(&pool, &y, "effortx").await,
+        text("abc"),
+        "abc, kept as text"
     );
-    assert_eq!(row(&pool, &y, "effortx").await, num(7.0), "left as it is");
-    assert_eq!(op_count(&pool).await, ops, "and nothing appended");
+}
+
+/// #6206 — a kept misfit fixed by hand, then the fix undone: the misfit is
+/// back as text, not refused, and a redo puts the fix back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undoing_a_fix_of_a_kept_misfit_restores_it_as_text_6206() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    space(&pool).await;
+    declare(&pool, &mat, "when", "text", None).await;
+    let x = page(&pool, &mat, "X").await;
+    set(&pool, &mat, &x, "when", V::Text("soon")).await;
+    change(&pool, &mat, ("when", "date", None), counts(0, 1))
+        .await
+        .unwrap();
+    assert_eq!(row(&pool, &x, "when").await, text("soon"), "kept as text");
+    let fix = set(&pool, &mat, &x, "when", V::Date("2026-01-05")).await;
+
+    let undone = undo_ops_inner(&pool, DEV, &mat, vec![fix]).await;
+    assert!(undone.is_ok(), "not refused: {undone:?}");
+    assert_eq!(
+        row(&pool, &x, "when").await,
+        text("soon"),
+        "the misfit is back as text"
+    );
+
+    let undo = &undone.unwrap()[0].new_op_ref;
+    redo_page_op_inner(&pool, DEV, &mat, undo.device_id.clone(), undo.seq)
+        .await
+        .unwrap();
+    assert_eq!(row(&pool, &x, "when").await, date("2026-01-05"), "redone");
 }
 
 /// A date held as text joins the agenda once its key becomes a date.

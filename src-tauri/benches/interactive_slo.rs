@@ -3414,11 +3414,11 @@ fn bench_preview_property_type_change(c: &mut Criterion) {
     };
 
     let counts = rt.block_on(preview()).unwrap();
-    let removed = (0..FIXTURE_SIZE).filter(|i| i % 10 == 0).count() as i64;
+    let unfit = (0..FIXTURE_SIZE).filter(|i| i % 10 == 0).count() as i64;
     assert_eq!(
-        (counts.converted, counts.removed),
-        (FIXTURE_SIZE as i64 - removed, removed),
-        "preview_property_type_change @ 100K: the numbers convert, every 10th value goes"
+        (counts.converted, counts.unfit),
+        (FIXTURE_SIZE as i64 - unfit, unfit),
+        "preview_property_type_change @ 100K: the numbers convert, every 10th value does not fit"
     );
 
     let mut group = c.benchmark_group("interactive_slo");

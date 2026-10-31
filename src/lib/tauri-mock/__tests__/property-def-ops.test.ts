@@ -574,7 +574,7 @@ describe('where rename and merge ops show', () => {
 describe('change_property_type', () => {
   interface Counts {
     converted: number
-    removed: number
+    unfit: number
   }
   interface ValueRow {
     block_id: string
@@ -598,7 +598,7 @@ describe('change_property_type', () => {
   }
 
   function values(
-    kind: 'converted' | 'removed',
+    kind: 'converted' | 'unfit',
     valueType: string,
     cursor: string | null = null,
     limit = 50,
@@ -650,16 +650,16 @@ describe('change_property_type', () => {
     value_bool: null,
   })
 
-  it('previews what converts and what is removed, Trash included', () => {
+  it('previews what converts and what does not fit, Trash included', () => {
     seedEffort()
-    expect(preview('number')).toEqual({ converted: 3, removed: 1 })
-    expect(preview('date')).toEqual({ converted: 0, removed: 4 })
-    expect(preview('url')).toEqual({ converted: 4, removed: 0 })
+    expect(preview('number')).toEqual({ converted: 3, unfit: 1 })
+    expect(preview('date')).toEqual({ converted: 0, unfit: 4 })
+    expect(preview('url')).toEqual({ converted: 4, unfit: 0 })
   })
 
   it('lists the values of each kind by block, a page at a time', () => {
     seedEffort()
-    expect(values('removed', 'number').items).toEqual([
+    expect(values('unfit', 'number').items).toEqual([
       expect.objectContaining({ block_id: Z, value: 'abc', converted: null, deleted: false }),
     ])
     const first = values('converted', 'number', null, 2)
@@ -687,7 +687,7 @@ describe('change_property_type', () => {
     expect(rejectionOf(() => preview('select')).kind).toBe('validation')
     expect(rejectionOf(() => preview('number', null, 'nothing')).kind).toBe('not_found')
     expect(rejectionOf(() => preview('text')).kind).toBe('validation')
-    expect(rejectionOf(() => change('number', { converted: 4, removed: 0 }))).toMatchObject({
+    expect(rejectionOf(() => change('number', { converted: 4, unfit: 0 }))).toMatchObject({
       kind: 'validation',
       code: 'UnacknowledgedPropertyLoss',
     })
@@ -695,10 +695,10 @@ describe('change_property_type', () => {
     expect(textOf(Z, 'effortx')).toBe('abc')
   })
 
-  it('converts and removes in one op, and the values move to the typed slot', () => {
+  it('converts in one op, the values move to the typed slot, and one that does not fit stays as text', () => {
     seedEffort()
     const before = opLog.length
-    const resp = change('number', { converted: 3, removed: 1 })
+    const resp = change('number', { converted: 3, unfit: 1 })
     expect(opLog.length).toBe(before + 1)
     const op = lastOp()
     expect(op.op_type).toBe('rewrite_properties')
@@ -715,20 +715,19 @@ describe('change_property_type', () => {
       values: [
         { block_id: X, key: 'effortx', value: num(3), prior: text('3') },
         { block_id: Y, key: 'effortx', value: num(42), prior: text('042') },
-        { block_id: Z, key: 'effortx', value: null, prior: text('abc') },
         { block_id: TRASHED, key: 'effortx', value: num(7), prior: text('7') },
       ],
     })
     expect(resp).toMatchObject({ key: 'effortx', value_type: 'number', op_refs: [op.ref] })
     expect(rowOf(Y)).toMatchObject(num(42))
-    expect(rowOf(Z)).toBeUndefined()
+    expect(rowOf(Z)).toMatchObject(text('abc'))
     expect(rowOf(TRASHED)).toMatchObject(num(7))
     expect(listedDef('effortx')).toMatchObject({ value_type: 'number' })
   })
 
   it('undo restores the values and the definition, and redo changes it again', () => {
     seedEffort()
-    const { op_refs } = change('number', { converted: 3, removed: 1 })
+    const { op_refs } = change('number', { converted: 3, unfit: 1 })
     const [undone] = call<Array<{ new_op_ref: Ref }>>('undo_ops', { ops: op_refs })
     expect(rowOf(Y)).toMatchObject(text('042'))
     expect(rowOf(Z)).toMatchObject(text('abc'))
@@ -738,18 +737,17 @@ describe('change_property_type', () => {
       undoSeq: undone?.new_op_ref.seq,
     })
     expect(rowOf(Y)).toMatchObject(num(42))
-    expect(rowOf(Z)).toBeUndefined()
+    expect(rowOf(Z)).toMatchObject(text('abc'))
   })
 
   it('moves a value whose form does not change to the new slot, and back on undo', () => {
     declare('effortx')
     setText(X, 'effortx', '2026-01-05')
     setText(Y, 'effortx', '2026-02-30')
-    const { op_refs } = change('date', { converted: 1, removed: 1 })
-    expect(lastOp().payload['values']).toEqual([
-      { block_id: Y, key: 'effortx', value: null, prior: text('2026-02-30') },
-    ])
+    const { op_refs } = change('date', { converted: 1, unfit: 1 })
+    expect(lastOp().payload['values']).toEqual([])
     expect(rowOf(X)).toMatchObject({ value_text: null, value_date: '2026-01-05' })
+    expect(rowOf(Y)).toMatchObject(text('2026-02-30'))
     call('undo_ops', { ops: op_refs })
     expect(rowOf(X)).toMatchObject(text('2026-01-05'))
     expect(rowOf(Y)).toMatchObject(text('2026-02-30'))
@@ -759,26 +757,26 @@ describe('change_property_type', () => {
     declare('effortx')
     setText(X, 'effortx', 'true')
     setText(Y, 'effortx', 'yes')
-    expect(preview('boolean')).toEqual({ converted: 1, removed: 1 })
-    expect(preview('select', '["true"]')).toEqual({ converted: 1, removed: 1 })
-    change('boolean', { converted: 1, removed: 1 })
+    expect(preview('boolean')).toEqual({ converted: 1, unfit: 1 })
+    expect(preview('select', '["true"]')).toEqual({ converted: 1, unfit: 1 })
+    change('boolean', { converted: 1, unfit: 1 })
     expect(rowOf(X)).toMatchObject({ value_text: null, value_bool: 1 })
-    expect(rowOf(Y)).toBeUndefined()
+    expect(rowOf(Y)).toMatchObject(text('yes'))
   })
 
-  it('undo of an earlier value converts it under the new type, or refuses one that does not fit', () => {
+  it('undo of an earlier value converts it under the new type, or restores one that does not fit as text', () => {
     declare('effortx')
     setText(X, 'effortx', '6')
     const second = setText(X, 'effortx', '5')
     setText(Y, 'effortx', 'abc')
     const third = setText(Y, 'effortx', '1')
-    change('number', { converted: 2, removed: 0 })
+    change('number', { converted: 2, unfit: 0 })
     call('undo_ops', { ops: second })
     expect(rowOf(X)).toMatchObject(num(6))
     const before = opLog.length
-    expect(rejectionOf(() => call('undo_ops', { ops: third })).kind).toBe('validation')
-    expect(opLog.length).toBe(before)
-    expect(rowOf(Y)).toMatchObject(num(1))
+    call('undo_ops', { ops: third })
+    expect(opLog.length).toBe(before + 1)
+    expect(rowOf(Y)).toMatchObject(text('abc'))
   })
 
   it("undo of an earlier value fits the slot only, never the select's options", () => {
@@ -794,7 +792,7 @@ describe('change_property_type', () => {
     declare('effortx')
     setText(SPACE, 'effortx', '6')
     const second = setText(SPACE, 'effortx', '5')
-    change('number', { converted: 1, removed: 0 })
+    change('number', { converted: 1, unfit: 0 })
     call('undo_ops', { ops: second })
     expect(rowOf(SPACE)).toMatchObject(num(6))
   })
@@ -802,13 +800,13 @@ describe('change_property_type', () => {
   it("undoing a change re-projects the strings written since under the old type's slot", () => {
     declare('effortx', 'number')
     call('set_property', { blockId: X, key: 'effortx', value: num(3) })
-    const { op_refs } = change('text', { converted: 1, removed: 0 })
+    const { op_refs } = change('text', { converted: 1, unfit: 0 })
     setText(Y, 'effortx', '5')
     setText(Z, 'effortx', 'abc')
     call('undo_ops', { ops: op_refs })
     expect(rowOf(X)).toMatchObject(num(3))
     expect(rowOf(Y)).toMatchObject(num(5))
-    expect(rowOf(Z)).toBeUndefined()
+    expect(rowOf(Z)).toMatchObject(text('abc'))
   })
 
   it('checks the limit before refusing the key', () => {
@@ -818,7 +816,7 @@ describe('change_property_type', () => {
         key: 'due_date',
         valueType: 'text',
         options: null,
-        kind: 'removed',
+        kind: 'unfit',
         cursor: null,
         limit: 0,
       }),

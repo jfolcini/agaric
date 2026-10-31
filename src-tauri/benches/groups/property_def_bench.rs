@@ -1002,14 +1002,15 @@ fn bench_change_property_type(c: &mut Criterion) {
         rt.block_on(declare_date(&pool, &materializer));
         let all = n as i64;
         // Text keeps every date and writes none, so the apply re-projects all
-        // `n` rows; a number takes none, so every value is written removed.
+        // `n` rows; a number takes none, so it writes none either and every
+        // value is re-projected as text it does not fit (#6206).
         for (to, kept, acknowledged) in [
             (
                 "text",
                 "value_text",
                 PropertyTypeChangeCounts {
                     converted: all,
-                    removed: 0,
+                    unfit: 0,
                 },
             ),
             (
@@ -1017,7 +1018,7 @@ fn bench_change_property_type(c: &mut Criterion) {
                 "value_num",
                 PropertyTypeChangeCounts {
                     converted: 0,
-                    removed: all,
+                    unfit: all,
                 },
             ),
         ] {
@@ -1033,7 +1034,7 @@ fn bench_change_property_type(c: &mut Criterion) {
                 );
                 assert_eq!(
                     rows_under(&pool, RETYPE_KEY).await,
-                    acknowledged.converted,
+                    acknowledged.converted + acknowledged.unfit,
                     "{to}: no other row"
                 );
                 print_op_cost(&pool, registry, "rewrite_properties", &vv).await;

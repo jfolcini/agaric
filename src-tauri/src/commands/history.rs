@@ -861,10 +861,11 @@ async fn with_recorded_prior_in_tx(
 /// Fit a reverse `SetProperty` to the type its key is declared with now
 /// (#5841): the built-in's, else the block's space's. A value set before the
 /// key changed type is converted as the type change converted the key's
-/// values, so it lands in the type's column; one the type does not take is
-/// refused, since it would sit under the key in a form the type rejects. A
-/// value whose slot the type takes is left alone: a ref under a text key, and
-/// a select value outside the options, which an options edit leaves shown.
+/// values, so it lands in the type's column; one the type does not take goes
+/// back in the slot of its own kind, a string as text, as the projection keeps
+/// it (#6206). A value whose slot the type takes is left alone: a ref under a
+/// text key, and a select value outside the options, which an options edit
+/// leaves shown.
 async fn fit_reverse_to_declared_type(
     conn: &mut sqlx::SqliteConnection,
     p: &mut agaric_store::op::SetPropertyPayload,
@@ -896,16 +897,10 @@ async fn fit_reverse_to_declared_type(
         return Ok(());
     }
     let value = agaric_engine::loro::engine::PropertyValue::from(&held);
-    let fit = coerce(&value, &declared.value_type).ok_or_else(|| {
-        AppError::validation(format!(
-            "undoing this would put '{}' under '{}', now a {} property; change its type back \
-             first",
-            value.as_legacy_string().unwrap_or_default(),
-            p.key,
-            declared.value_type
-        ))
-    })?;
-    let fields = value_fields_under(&fit, &declared.value_type);
+    let fields = match coerce(&value, &declared.value_type) {
+        Some(fit) => value_fields_under(&fit, &declared.value_type),
+        None => super::property_keys::value_fields(&value).unwrap_or_default(),
+    };
     p.value_text = fields.value_text;
     p.value_num = fields.value_num;
     p.value_date = fields.value_date;
@@ -1459,7 +1454,8 @@ async fn apply_reverse_rename_property_option(
 /// reverse restores is refused as a `SetPropertyDef` undo's is; a type
 /// change's reverse writes back the values it converted itself, and a value
 /// written since on a block it did not write re-reads under the restored
-/// type: a string shows or hides, a number or boolean keeps its column.
+/// type: a string lands in the type's column, or in `value_text` when the type
+/// does not take it (#6206), and a number or boolean keeps its column.
 async fn apply_reverse_rewrite_properties(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     state: &agaric_engine::loro::shared::LoroState,

@@ -3,7 +3,8 @@
  * `src-tauri/src/commands/property_types.rs` (the preview, the value list and
  * the change, with their refusals) and the undo of an earlier value into a key
  * retyped since (`fit_reverse_to_declared_type`, `commands/history.rs`); what
- * a value becomes under a type is `coerce.ts`.
+ * a value becomes under a type is `coerce.ts`. A value the new type does not
+ * take is unfit: kept as it is, not written (#6206).
  *
  * The commands read the space's `block_properties` rows, Trash included, as
  * the backend does. `revert.ts` imports this module, so like `property-keys.ts`
@@ -76,8 +77,8 @@ function heldValues(spaceId: string, key: string, to: DefState): Held[] {
 }
 
 function countsOf(held: Held[]): PropertyTypeChangeCounts {
-  const removed = held.filter((h) => h.converted === null).length
-  return { converted: held.length - removed, removed }
+  const unfit = held.filter((h) => h.converted === null).length
+  return { converted: held.length - unfit, unfit }
 }
 
 /** `preview_property_type_change_inner`. */
@@ -104,7 +105,7 @@ export function propertyTypeChangeValues(
 ): Row[] {
   const [, to] = typeChangeTarget(spaceId, key, valueType, options)
   return heldValues(spaceId, key, to)
-    .filter((h) => (h.converted === null) === (kind === 'removed'))
+    .filter((h) => (h.converted === null) === (kind === 'unfit'))
     .map((h) => {
       const b = blocks.get(h.blockId) ?? {}
       const pageId = (b['page_id'] as string | null | undefined) ?? null
@@ -131,24 +132,28 @@ export function changePropertyType(
   const [from, to] = typeChangeTarget(spaceId, key, valueType, options)
   const held = heldValues(spaceId, key, to)
   const counts = countsOf(held)
-  if (counts.converted !== acknowledged.converted || counts.removed !== acknowledged.removed) {
+  if (counts.converted !== acknowledged.converted || counts.unfit !== acknowledged.unfit) {
     throw rejection({
       kind: 'validation',
       code: 'UnacknowledgedPropertyLoss',
       message:
-        `changing '${key}' to ${valueType} now converts ${counts.converted} and removes ` +
-        `${counts.removed} value(s); preview it again`,
+        `changing '${key}' to ${valueType} now converts ${counts.converted} value(s) and ` +
+        `leaves ${counts.unfit} that do not fit; preview it again`,
     })
   }
-  // A value whose converted form is the same is not written; the apply moves its slot.
-  const values: ValueWrite[] = held
-    .filter((h) => h.converted !== h.value)
-    .map((h) => ({
-      block_id: h.blockId,
-      key,
-      value: h.converted === null ? null : fieldsUnder(h.converted, 'text'),
-      prior: fieldsUnder(h.value, 'text'),
-    }))
+  // A value whose form stays, or that does not fit, is not written; the apply moves its slot.
+  const values: ValueWrite[] = held.flatMap((h) =>
+    h.converted === null || h.converted === h.value
+      ? []
+      : [
+          {
+            block_id: h.blockId,
+            key,
+            value: fieldsUnder(h.converted, 'text'),
+            prior: fieldsUnder(h.value, 'text'),
+          },
+        ],
+  )
   const payload = {
     space_id: spaceId,
     reason: 'change_type',
@@ -197,7 +202,8 @@ function fitsDeclaredType(fields: Row, valueType: string): boolean {
 /**
  * `fit_reverse_to_declared_type`: an undo that puts `fields` back under
  * `blockId`'s `key` puts them in the slot the key's type now uses, converted;
- * a value the type does not take is refused, as the backend refuses it.
+ * a value the type does not take goes back in the slot of its own kind, a
+ * string as text (#6206).
  */
 export function fitToDeclaredType(blockId: string, key: string, fields: Row): Row {
   const b = blocks.get(blockId)
@@ -205,14 +211,7 @@ export function fitToDeclaredType(blockId: string, key: string, fields: Row): Ro
   const valueType = declaredTypeOf(b ? (spaceOf(b) ?? blockId) : null, key)
   if (valueType === null || fitsDeclaredType(fields, valueType)) return fields
   const value = heldValueOf(fields)
-  const converted = value === null ? null : coerce(value, valueType)
-  if (converted === null) {
-    throw rejection({
-      kind: 'validation',
-      message:
-        `undoing this would put '${value === null ? '' : heldText(value)}' under '${key}', ` +
-        `now a ${valueType} property; change its type back first`,
-    })
-  }
-  return fieldsUnder(converted, valueType)
+  if (value === null) return fields
+  const converted = coerce(value, valueType)
+  return converted === null ? fieldsUnder(value, 'text') : fieldsUnder(converted, valueType)
 }

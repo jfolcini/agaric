@@ -6817,10 +6817,11 @@ fn value_write(
     }
 }
 
-/// #5841 S3 — B imports A's type change: its values are converted or gone, as
-/// on A, and the definition is A's.
+/// #5841 S3 — B imports A's type change: its values are converted, or kept as
+/// text where the new type does not take them (#6206), as on A, and the
+/// definition is A's.
 #[tokio::test]
-async fn apply_remote_follows_a_type_change_5841() {
+async fn apply_remote_follows_a_type_change_and_keeps_unfit_values_as_text_6206() {
     let devices = two_devices("effortx", "3").await;
     let pool_b = &devices.pools[1].0;
     {
@@ -6848,15 +6849,11 @@ async fn apply_remote_follows_a_type_change_5841() {
         value_num: Some(3.0),
         ..Default::default()
     };
-    let removal = agaric_store::op::PropertyValueWrite {
-        block_id: agaric_core::ulid::BlockId::from_trusted(BLOCK_B),
-        ..value_write("effortx", None, "abc")
-    };
     change_on_a(
         &devices,
         "effortx",
         "number",
-        vec![value_write("effortx", Some(three), "3"), removal],
+        vec![value_write("effortx", Some(three), "3")],
     )
     .await;
 
@@ -6878,15 +6875,16 @@ async fn apply_remote_follows_a_type_change_5841() {
     );
     assert_eq!(
         typed_row(pool_b, BLOCK_B, "effortx").await,
-        None,
-        "the removed one is gone"
+        Some((Some("abc".into()), None, None, None)),
+        "the one a number does not take is kept as text"
     );
 }
 
 /// A changes `key` from text to `to` while B writes `stray`, which `to` does
-/// not take, on another block; after both imports neither device shows it,
-/// and both show A's converted value as `kept`.
-async fn a_concurrent_stray_is_hidden_on_both_devices(
+/// not take, on another block; after both imports both devices keep it as
+/// text, out of `to`'s column (#6206), and both show A's converted value as
+/// `kept`.
+async fn a_concurrent_stray_is_kept_as_text_on_both_devices(
     to: &str,
     held: &str,
     writes: Vec<agaric_store::op::PropertyValueWrite>,
@@ -6923,8 +6921,8 @@ async fn a_concurrent_stray_is_hidden_on_both_devices(
     for (device, pool) in DEVICES.iter().zip([pool_a, pool_b]) {
         assert_eq!(
             typed_row(pool, BLOCK_B, key).await,
-            None,
-            "{device}: '{stray}' is not a {to}"
+            Some((Some(stray.to_owned()), None, None, None)),
+            "{device}: '{stray}' is not a {to}, so it stays text"
         );
         assert_eq!(
             typed_row(pool, BLOCK_A, key).await,
@@ -6935,14 +6933,14 @@ async fn a_concurrent_stray_is_hidden_on_both_devices(
 }
 
 /// #5841 S3 — a string written under text while another device changes the
-/// key to boolean is hidden on both, not read as false.
+/// key to boolean is kept as text on both, not read as false (#6206).
 #[tokio::test]
-async fn a_concurrent_stray_string_under_a_new_boolean_is_hidden_5841() {
+async fn a_concurrent_stray_string_under_a_new_boolean_is_kept_as_text_6206() {
     let truth = agaric_store::op::PropertyValueFields {
         value_bool: Some(true),
         ..Default::default()
     };
-    a_concurrent_stray_is_hidden_on_both_devices(
+    a_concurrent_stray_is_kept_as_text_on_both_devices(
         "boolean",
         "true",
         vec![value_write("flagx", Some(truth), "true")],
@@ -6952,11 +6950,11 @@ async fn a_concurrent_stray_string_under_a_new_boolean_is_hidden_5841() {
     .await;
 }
 
-/// #5841 S3 — the same for a date: a stray string is hidden, not projected
-/// into `value_date` unchecked.
+/// #5841 S3 — the same for a date: a stray string is kept as text, not
+/// projected into `value_date` unchecked (#6206).
 #[tokio::test]
-async fn a_concurrent_stray_string_under_a_new_date_is_hidden_5841() {
-    a_concurrent_stray_is_hidden_on_both_devices(
+async fn a_concurrent_stray_string_under_a_new_date_is_kept_as_text_6206() {
+    a_concurrent_stray_is_kept_as_text_on_both_devices(
         "date",
         "2026-01-05",
         Vec::new(),

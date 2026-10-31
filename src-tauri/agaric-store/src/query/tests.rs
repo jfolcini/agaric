@@ -2213,6 +2213,92 @@ async fn global_aggregate_property_coalesces_value_num_and_value_text() {
     assert_eq!(agg_at(&resp, 1).count, Some(3), "count: {resp:?}");
 }
 
+/// Declare `key` as `value_type` in `space`.
+async fn declare(pool: &SqlitePool, space: &str, key: &str, value_type: &str) {
+    sqlx::query(
+        "INSERT INTO property_definitions (space_id, key, value_type, created_at) \
+         VALUES (?, ?, ?, '2026-01-01T00:00:00Z')",
+    )
+    .bind(space)
+    .bind(key)
+    .bind(value_type)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// #6206 — a string its key's type does not take is kept in `value_text`, and
+/// the numeric guard passes "2026-02-30", "1-2" and "7". The fold reads
+/// `value_text` only where the key's type keeps its strings there: `hours` is
+/// a number, `when` a date, `flag` a boolean and `link` a ref in this space,
+/// and `repeat-seq` a built-in number, while `note` is text here and `misc`, a
+/// number only in the other space, is undeclared here, so their text-stored
+/// numerics still fold.
+#[tokio::test]
+async fn a_kept_misfit_under_a_typed_key_stays_out_of_the_fold_6206() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+    declare(&pool, SPACE, "hours", "number").await;
+    declare(&pool, SPACE, "when", "date").await;
+    declare(&pool, SPACE, "flag", "boolean").await;
+    declare(&pool, SPACE, "link", "ref").await;
+    declare(&pool, SPACE, "note", "text").await;
+    declare(&pool, OTHER_SPACE, "misc", "number").await;
+    let (b1, b2) = ("01B1000000000000000000000", "01B2000000000000000000000");
+    set_property_num(&pool, b1, "hours", 3.0).await;
+    set_property(&pool, b2, "hours", "2026-02-30").await;
+    set_property_date(&pool, b1, "when", "2026-01-05").await;
+    set_property(&pool, b2, "when", "1-2").await;
+    set_property(&pool, b2, "flag", "1").await;
+    set_property(&pool, b2, "link", "7").await;
+    set_property_num(&pool, b1, "repeat-seq", 2.0).await;
+    set_property(&pool, b2, "repeat-seq", "2026-02-30").await;
+    set_property(&pool, b1, "note", "4").await;
+    set_property(&pool, b1, "misc", "5").await;
+
+    let mut request = req(default_filter());
+    request.aggregates = vec![
+        agg_prop(AggOp::Sum, "hours"),
+        agg_prop(AggOp::Count, "hours"),
+        agg_prop(AggOp::Sum, "when"),
+        agg_prop(AggOp::Sum, "repeat-seq"),
+        agg_prop(AggOp::Sum, "note"),
+        agg_prop(AggOp::Sum, "misc"),
+        agg_prop(AggOp::Sum, "flag"),
+        agg_prop(AggOp::Sum, "link"),
+    ];
+    let resp = compile_and_run(&pool, request).await.unwrap();
+
+    assert_eq!(agg_at(&resp, 0).value, Some(3.0), "hours sum: {resp:?}");
+    assert_eq!(agg_at(&resp, 1).count, Some(1), "hours count: {resp:?}");
+    assert_eq!(
+        agg_at(&resp, 2).value,
+        None,
+        "a date folds nothing: {resp:?}"
+    );
+    assert_eq!(
+        agg_at(&resp, 3).value,
+        Some(2.0),
+        "built-in number: {resp:?}"
+    );
+    assert_eq!(agg_at(&resp, 4).value, Some(4.0), "text folds: {resp:?}");
+    assert_eq!(
+        agg_at(&resp, 5).value,
+        Some(5.0),
+        "undeclared here folds: {resp:?}"
+    );
+    assert_eq!(
+        agg_at(&resp, 6).value,
+        None,
+        "a boolean folds nothing: {resp:?}"
+    );
+    assert_eq!(
+        agg_at(&resp, 7).value,
+        None,
+        "a ref folds nothing: {resp:?}"
+    );
+}
+
 #[tokio::test]
 async fn global_aggregate_over_priority_column_skips_non_numeric() {
     let (pool, _d) = test_pool().await;

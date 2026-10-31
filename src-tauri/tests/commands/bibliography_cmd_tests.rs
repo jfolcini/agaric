@@ -788,8 +788,8 @@ const ONE_ENTRY_BIBTEX_1920: &str = r"
 /// the user is already keeping in another shape.
 ///
 /// The trap this pins: `year` is declared `number` vault-wide, so (1) every
-/// later text write to `year` on any block is rejected, (2) inbound sync
-/// drops those rows row-absent because `parse::<f64>()` fails, and (3) the
+/// later text write to `year` on any block is rejected, (2) those values are
+/// kept as text no number reader sees (#6206), and (3) the
 /// declaration cannot be deleted while rows reference the key — and the
 /// remedy `delete_property_def_inner` names, `set_property(value = None)`,
 /// is itself rejected for a non-reserved key. Un-exitable short of deleting

@@ -4,11 +4,11 @@
 // Settings › Properties declares `points` as text. Two journal blocks,
 // siblings of a text block, then get a `points:: <value>` line each, typed and
 // blurred with Escape: `3` and a marker. Changing `points` to number previews
-// one value converted and one removed, and the Removed tab lists the marker.
-// `change_property_type` writes the definition and every value in one op,
-// through the engine and SQL. After leaving the journal and coming back, the
-// blocks are read again from the backend: `3` is still a `Points` chip, and no
-// chip holds the marker.
+// one value converted and one that doesn't fit, and the Don't fit tab lists
+// the marker. `change_property_type` writes the definition and every value in
+// one op, through the engine and SQL. After leaving the journal and coming
+// back, the blocks are read again from the backend: `3` is still a `Points`
+// chip, and the marker is kept as text, still a `Points` chip (#6206).
 //
 // Globals (`$`, `$$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -19,7 +19,6 @@ import {
   chooseSelectOption,
   editAtEnd,
   enterBlankSibling,
-  expectAbsent,
   navigateTo,
   openJournalBlockEditor,
   openSettingsTab,
@@ -31,8 +30,8 @@ import {
 } from './helpers'
 
 const ANCHOR = runScopedMarker('wdio-retype-anchor')
-const REMOVED = runScopedMarker('wdio-retype-word')
-const VALUES = ['3', REMOVED]
+const UNFIT = runScopedMarker('wdio-retype-word')
+const VALUES = ['3', UNFIT]
 const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
 const PANEL = '[data-testid="settings-panel-properties"]'
 const CREATE_KEY = `${PANEL} input[aria-label="Property key"]`
@@ -52,7 +51,7 @@ async function dialogShows(text: string): Promise<boolean> {
 }
 
 describe('Agaric real-backend property type change (#5841) @settings @editor', () => {
-  it('converts the values that fit and removes the rest, read again after a round-trip', async () => {
+  it('converts the values that fit and keeps the rest as text, read again after a round-trip', async () => {
     await waitForAppReady()
 
     // Declare `points` as text, the type the create form starts on.
@@ -95,10 +94,11 @@ describe('Agaric real-backend property type change (#5841) @settings @editor', (
       async () =>
         (await dialogShows('1 value is converted.')) &&
         (await dialogShows("1 value isn't a number")) &&
-        (await dialogShows(REMOVED)),
+        (await dialogShows(UNFIT)),
       {
         timeout: ACTION_TIMEOUT,
-        timeoutMsg: 'the dialog never previewed 1 converted and 1 removed, listing the marker',
+        timeoutMsg:
+          "the dialog never previewed 1 converted and 1 that doesn't fit, listing the marker",
       },
     )
     const confirm = $(DIALOG).$('button*=Change type')
@@ -112,6 +112,9 @@ describe('Agaric real-backend property type change (#5841) @settings @editor', (
       timeout: NAV_TIMEOUT,
       timeoutMsg: 'the block holding 3 shows no points chip after the round-trip',
     })
-    await expectAbsent(chip(`Points: ${REMOVED}`), 'the removed value’s chip')
+    await $(chip(`Points: ${UNFIT}`)).waitForDisplayed({
+      timeout: NAV_TIMEOUT,
+      timeoutMsg: "the block holding the value that doesn't fit shows no points chip",
+    })
   })
 })

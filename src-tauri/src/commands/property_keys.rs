@@ -245,11 +245,11 @@ pub(crate) fn value_fields(value: &PropertyValue) -> Option<PropertyValueFields>
 }
 
 /// The value writes of merging `from_key` into `into_key`, read from the
-/// space's doc (a value SQL cannot show moves too, and stays hidden), in block
-/// order. Every `from_key` value is removed; one whose block is not in
-/// `into_shown` (the blocks whose `into_key` value SQL shows, as the preview
-/// counts them) is written there as well, over any value only the doc holds,
-/// which the write records so an undo puts it back.
+/// space's doc (a ref whose block is gone, which SQL cannot show, moves too),
+/// in block order. Every `from_key` value is removed; one whose block is not
+/// in `into_shown` (the blocks whose `into_key` value SQL shows, as the
+/// preview counts them) is written there as well, over any value only the doc
+/// holds, which the write records so an undo puts it back.
 fn merge_value_writes(
     state: &LoroState,
     device_id: &str,

@@ -347,8 +347,8 @@ pub struct RenamePropertyOptionPayload {
 pub enum RewriteReason {
     /// One key merged into another of the same type.
     Merge,
-    /// A key's type changed; each value the new type converts or removes is
-    /// written.
+    /// A key's type changed; each value the new type converts to another
+    /// form is written.
     ChangeType,
 }
 
@@ -1561,7 +1561,7 @@ mod tests {
 
     /// #5841 S3: a type change is a `rewrite_properties` whose reason is
     /// `change_type`: one definition write, and a value write per value it
-    /// converts or removes. `all_test_payloads` holds one payload per op
+    /// converts. `all_test_payloads` holds one payload per op
     /// type, so this one is pinned on its own.
     #[test]
     fn rewrite_properties_change_type_round_trips_5841() {

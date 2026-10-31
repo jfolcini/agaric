@@ -1354,10 +1354,8 @@ fn declared_type_admits_shape(value_type: &str, shape: &str) -> bool {
 ///  1. every later write of the stored shape, on any block of the space, is
 ///     rejected —
 ///     `"Property 'year' expects type 'number', got 'text'."`;
-///  2. on inbound sync a `Str` value is routed by `value_type`,
-///     `parse::<f64>()` fails, and there is a deliberate
-///     no-fallback-to-`value_text` rule, so the row is dropped row-absent
-///     and the user cannot even see which blocks are affected;
+///  2. every such value is one the type does not take, kept as text out of
+///     the type's column (#6206), so the type's readers never see it;
 ///  3. the declaration cannot be withdrawn —
 ///     [`delete_property_def_inner`] refuses while any `block_properties`
 ///     row references the key, and the remedy its error names
@@ -1697,7 +1695,7 @@ pub(super) async fn append_and_apply(
 
 /// Refuse an undo or redo restoring `p.def` when it moves the key's values to
 /// another column and [`create_property_def_inner`] would refuse that
-/// declaration over them: re-typed, they would fail to parse and vanish.
+/// declaration over them: re-typed, they would not fit it.
 pub(crate) async fn refuse_restoring_def_over_conflicting_values(
     conn: &mut sqlx::SqliteConnection,
     p: &SetPropertyDefPayload,
@@ -1881,10 +1879,10 @@ pub async fn get_property_def_inner(
 /// key. The only exit discards the data.
 ///
 /// Narrowing an options array arms neither the second nor the third
-/// link. Inbound sync routes a `select` value through
-/// `reproject_block_properties_from_engine`'s `"select" | "text" | …`
-/// arm straight to `value_text` with no membership check, so the orphan
-/// rows are never dropped and stay visible; and the exit is one
+/// link. Inbound sync projects a `select` value
+/// (`reproject_block_properties_from_engine`) to `value_text` with no
+/// membership check, so the orphan rows are never dropped and stay visible;
+/// and the exit is one
 /// non-destructive call to this very function with the option added
 /// back. Only link 1 fires, and it un-fires on demand. A refusal here
 /// would also break the legitimate retire-an-option flow the paragraph

@@ -1,5 +1,5 @@
 {
-  "description": "#5841 S3 — `preview_property_type_change` counts what changing a key's type would convert and remove in the harness space, the Trash's blocks included, and `list_property_type_change_values` pages each kind by block id, with the block's page, whether it is trashed, and the value before and after. `effortx` (text): `X` \"3\", `Y` \"abc\", `Z` \"042\", the trashed `W` \"7\", `V` \"xyz\". Refused as the change is. Re-author `expected` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "description": "#5841 S3 — `preview_property_type_change` counts what changing a key's type would convert and leave unfit in the harness space, the Trash's blocks included, and `list_property_type_change_values` pages each kind by block id, with the block's page, whether it is trashed, and the value before and after. `effortx` (text): `X` \"3\", `Y` \"abc\", `Z` \"042\", the trashed `W` \"7\", `V` \"xyz\". Refused as the change is. Re-author `expected` / `expected_queries` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -150,7 +150,7 @@
       "error": null,
       "has_more": null,
       "name": "to_number",
-      "rows": ["property_type_change_counts#converted=3#removed=2"],
+      "rows": ["property_type_change_counts#converted=3#unfit=2"],
       "total_count": null
     },
     {
@@ -158,7 +158,7 @@
       "error": null,
       "has_more": null,
       "name": "to_a_select",
-      "rows": ["property_type_change_counts#converted=2#removed=3"],
+      "rows": ["property_type_change_counts#converted=2#unfit=3"],
       "total_count": null
     },
     {
@@ -184,7 +184,7 @@
       "cursor": "v1:{id}",
       "error": null,
       "has_more": true,
-      "name": "removed_page_one",
+      "name": "unfit_page_one",
       "rows": ["B3#page_id=B1#deleted=false#value=abc#converted=null"],
       "total_count": null
     },
@@ -192,7 +192,7 @@
       "cursor": null,
       "error": null,
       "has_more": false,
-      "name": "removed_page_two",
+      "name": "unfit_page_two",
       "rows": ["B6#page_id=B1#deleted=false#value=xyz#converted=null"],
       "total_count": null
     },
@@ -297,7 +297,7 @@
         "valueType": "number"
       },
       "command": "preview_property_type_change",
-      "comment": "`X`, `Z` and the trashed `W` convert; `Y` and `V` go.",
+      "comment": "`X`, `Z` and the trashed `W` convert; `Y` and `V` do not fit.",
       "name": "to_number"
     },
     {
@@ -339,32 +339,32 @@
     {
       "args": {
         "key": "effortx",
-        "kind": "removed",
+        "kind": "unfit",
         "limit": 1,
         "spaceId": "$SPACE",
         "valueType": "number"
       },
       "command": "list_property_type_change_values",
       "comment": "One value a page: `Y`.",
-      "name": "removed_page_one"
+      "name": "unfit_page_one"
     },
     {
       "args": {
         "key": "effortx",
-        "kind": "removed",
+        "kind": "unfit",
         "limit": 1,
         "spaceId": "$SPACE",
         "valueType": "number"
       },
       "command": "list_property_type_change_values",
       "comment": "`V`, through the first page's cursor.",
-      "cursor_from": "removed_page_one",
-      "name": "removed_page_two"
+      "cursor_from": "unfit_page_one",
+      "name": "unfit_page_two"
     },
     {
       "args": {
         "key": "effortx",
-        "kind": "removed",
+        "kind": "unfit",
         "limit": 0,
         "spaceId": "$SPACE",
         "valueType": "number"
