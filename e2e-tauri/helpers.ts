@@ -105,6 +105,8 @@
 //   - The SpaceSwitcher (`switchToSpace`, `switcherLabel`): the Radix
 //     `Select` trigger `[aria-label="Switch space"]` (layout/SpaceSwitcher.tsx)
 //     and its `[role="option"]` items, one per space plus "Manage spaces…".
+//   - A page alias in the page header (`aliasBadge`): a `[data-slot="badge"]`
+//     holding the alias (PageAliasSection.tsx).
 // ---------------------------------------------------------------------------
 
 import { execFileSync } from 'node:child_process'
@@ -838,6 +840,11 @@ export async function reopenPageByTitle(title: string): Promise<void> {
  */
 export function pageEntryTitled(title: string) {
   return $(`span[title="${title}"]`)
+}
+
+/** The page header's badge of `alias`. */
+export function aliasBadge(alias: string): string {
+  return `//*[@data-slot="badge"][normalize-space(.)="${alias}"]`
 }
 
 /** Open the page titled exactly `title` from the Pages view, a namespace leaf included. */

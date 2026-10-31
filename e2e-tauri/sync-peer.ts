@@ -145,6 +145,7 @@ type Command =
   | { cmd: 'create_space'; name: string }
   | { cmd: 'move_to_space'; id: string; space_id: string }
   | { cmd: 'edit_block'; id: string; content: string }
+  | { cmd: 'set_page_aliases'; id: string; aliases: string[] }
   | { cmd: 'set_property'; id: string; key: string; value: string }
   | {
       cmd: 'create_property_def'
@@ -174,6 +175,7 @@ type Reply =
   | { reply: 'created'; id: string }
   | { reply: 'seeded'; op_batches: number; last_block_id: string }
   | { reply: 'edited' }
+  | { reply: 'aliases_set'; aliases: string[] }
   | { reply: 'property_set' }
   | { reply: 'tagged' }
   | { reply: 'moved' }
@@ -243,6 +245,8 @@ export interface SyncPeer {
   moveToSpace(id: string, spaceId: string): Promise<void>
   /** Replace the whole text of block `id` with `content`. */
   editBlock(id: string, content: string): Promise<void>
+  /** Make `aliases` the whole alias list of page `id`; resolves to the aliases it holds now. */
+  setPageAliases(id: string, aliases: string[]): Promise<string[]>
   /** Set text property `key` on block `id`. */
   setProperty(id: string, key: string, value: string): Promise<void>
   /**
@@ -376,6 +380,8 @@ export async function startSyncPeer(): Promise<SyncPeer> {
     editBlock: async (id, content) => {
       await request({ cmd: 'edit_block', id, content }, 'edited')
     },
+    setPageAliases: async (id, aliases) =>
+      (await request({ cmd: 'set_page_aliases', id, aliases }, 'aliases_set')).aliases,
     setProperty: async (id, key, value) => {
       await request({ cmd: 'set_property', id, key, value }, 'property_set')
     },

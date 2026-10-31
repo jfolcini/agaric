@@ -12,13 +12,13 @@
 //! phone's camera hands the joiner), `create_block_inner`,
 //! `create_block_inner_with_space`, `create_blocks_batch_inner`,
 //! `create_space_inner`, `create_property_def_inner`, `edit_block_inner`,
-//! `set_property_inner`, `set_todo_state_inner`, `set_due_date_inner`,
-//! `add_tag_inner`, `move_block_inner`, `move_blocks_to_space_inner`,
-//! `add_attachment_with_bytes_inner`, `get_active_block_inner`,
-//! `get_property_inner`, `list_attachments_inner`, `read_attachment_inner` and
-//! `list_peer_refs_inner`, and `start_pairing_armed_inner` for the pairing this
-//! vault hosts. `sync` wakes the daemon as `start_sync` does; it
-//! never runs a session itself.
+//! `set_page_aliases_inner`, `set_property_inner`, `set_todo_state_inner`,
+//! `set_due_date_inner`, `add_tag_inner`, `move_block_inner`,
+//! `move_blocks_to_space_inner`, `add_attachment_with_bytes_inner`,
+//! `get_active_block_inner`, `get_property_inner`, `list_attachments_inner`,
+//! `read_attachment_inner` and `list_peer_refs_inner`, and
+//! `start_pairing_armed_inner` for the pairing this vault hosts. `sync` wakes
+//! the daemon as `start_sync` does; it never runs a session itself.
 //!
 //! A session is a pull by the device that dials (#610), so each direction has
 //! its own wait: `sync` for this vault's pull from the app (`synced_at`), and
@@ -41,8 +41,8 @@ use agaric_lib::commands::{
     create_block_inner, create_block_inner_with_space, create_blocks_batch_inner,
     create_property_def_inner, create_space_inner, edit_block_inner, get_active_block_inner,
     get_property_inner, list_attachments_inner, list_peer_refs_inner, move_block_inner,
-    move_blocks_to_space_inner, read_attachment_inner, set_due_date_inner, set_property_inner,
-    set_todo_state_inner, start_pairing_armed_inner,
+    move_blocks_to_space_inner, read_attachment_inner, set_due_date_inner, set_page_aliases_inner,
+    set_property_inner, set_todo_state_inner, start_pairing_armed_inner,
 };
 use agaric_lib::db::{DbPools, init_pools, now_ms};
 use agaric_lib::materializer::Materializer;
@@ -127,6 +127,11 @@ enum Command {
     },
     /// Declare a property, as [`PropertyDefArgs`] spells it.
     CreatePropertyDef(PropertyDefArgs),
+    /// Make `aliases` the whole alias list of page `id`.
+    SetPageAliases {
+        id: String,
+        aliases: Vec<String>,
+    },
     /// Set text property `key` on block `id`.
     SetProperty {
         id: String,
@@ -234,6 +239,10 @@ enum Reply {
         last_block_id: String,
     },
     Edited,
+    /// The aliases the page holds now.
+    AliasesSet {
+        aliases: Vec<String>,
+    },
     PropertySet,
     Tagged,
     Moved,
@@ -386,6 +395,7 @@ impl Peer {
             Command::MoveToSpace { id, space_id } => self.move_to_space(id, space_id).await,
             Command::EditBlock { id, content } => self.edit_block(id, content).await,
             Command::CreatePropertyDef(args) => self.create_property_def(args).await,
+            Command::SetPageAliases { id, aliases } => self.set_page_aliases(id, aliases).await,
             Command::SetProperty { id, key, value } => self.set_property(id, key, value).await,
             Command::SetTodoState { id, state } => self.set_todo_state(id, state).await,
             Command::SetDueDate { id, date } => self.set_due_date(id, date).await,
@@ -683,6 +693,23 @@ impl Peer {
         .await?;
         self.last_write_ms = now_ms();
         Ok(Reply::PropertySet)
+    }
+
+    async fn set_page_aliases(
+        &mut self,
+        id: String,
+        aliases: Vec<String>,
+    ) -> Result<Reply, AppError> {
+        let aliases = set_page_aliases_inner(
+            &self.pools.write,
+            &self.device_id,
+            &self.materializer,
+            &id,
+            aliases,
+        )
+        .await?;
+        self.last_write_ms = now_ms();
+        Ok(Reply::AliasesSet { aliases })
     }
 
     async fn set_property(
@@ -1119,6 +1146,18 @@ mod tests {
                 space_id: Some("S1".into()),
             })),
             "…and a select's options and another space when it names them"
+        );
+    }
+
+    #[test]
+    fn set_page_aliases_takes_a_page_and_its_whole_alias_list() {
+        assert_eq!(
+            parse_command(r#"{"cmd":"set_page_aliases","id":"P1","aliases":["Plans","roadmap"]}"#),
+            Ok(Command::SetPageAliases {
+                id: "P1".into(),
+                aliases: vec!["Plans".into(), "roadmap".into()],
+            }),
+            "sync-peer.ts sends an alias edit as the page id and the page's whole alias list"
         );
     }
 
