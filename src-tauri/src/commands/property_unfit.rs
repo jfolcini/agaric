@@ -534,7 +534,7 @@ fn acknowledged_counts(
 }
 
 /// Replace each value of `space_id`'s blocks under `key` that doesn't fit it,
-/// the Trash's included, by the replacement its [`shown`] text is mapped to,
+/// the Trash's included, by the replacement its shown text is mapped to,
 /// read under the key's type, in one `RewriteProperties` op recording each, so
 /// an undo puts them all back. A value not mapped stays. Returns how many it
 /// converted; with nothing to convert it appends no op.
