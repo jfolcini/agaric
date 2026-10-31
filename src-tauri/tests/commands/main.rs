@@ -41,6 +41,7 @@ mod property_line_tests;
 mod property_option_cmd_tests;
 mod property_type_cmd_tests;
 mod property_unfit_cmd_tests;
+mod property_unfit_convert_cmd_tests;
 mod query_cmd_tests;
 mod search_blocks_struct_tests;
 mod snapshot_tests;

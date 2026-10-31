@@ -841,6 +841,14 @@ const WIRE: Readonly<Record<string, WireShape>> = {
     hasMoreKey: 'has_more',
     totalKey: 'total_count',
   },
+  // Grouped by the value as shown and paged by it. MUST match the
+  // `list_distinct_unfit_property_values` arm in the Rust twin.
+  list_distinct_unfit_property_values: {
+    rows: PAGED,
+    token: { kind: 'id', idKey: 'value', attrKeys: ['unfit', 'unfit_in_trash'] },
+    hasMoreKey: 'has_more',
+    totalKey: 'total_count',
+  },
   list_property_loss_values: {
     rows: PAGED,
     token: { kind: 'id', idKey: 'block_id', attrKeys: ['page_id', 'deleted', 'value_text'] },

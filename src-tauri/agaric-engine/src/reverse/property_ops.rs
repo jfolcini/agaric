@@ -8,6 +8,7 @@ use agaric_store::op::{
     SetPropertyDefPayload, SetPropertyPayload,
 };
 use agaric_store::op_log::OpRecord;
+use serde::Deserialize;
 use sqlx::{SqliteConnection, SqlitePool};
 
 /// A definition op records the definition it replaced, so its reverse is
@@ -171,7 +172,7 @@ async fn forward_in_space(
             }
             _ => {
                 let Some(block) = block else { continue };
-                let p: RewritePropertiesPayload = serde_json::from_str(&row.payload)?;
+                let p: RewriteValues = serde_json::from_str(&row.payload)?;
                 match value_move(&p.values, block, &key) {
                     Some(ValueMove::Out(to)) => {
                         if !moved_in {
@@ -186,6 +187,13 @@ async fn forward_in_space(
         }
     }
     Ok(key)
+}
+
+/// The value writes of a `rewrite_properties`, whatever its reason: a peer's
+/// newer reason must not fail this build's undo.
+#[derive(Deserialize)]
+struct RewriteValues {
+    values: Vec<PropertyValueWrite>,
 }
 
 /// How a rewrite moved `block_id`'s value of a key.
@@ -794,10 +802,57 @@ mod option_walk_tests {
         })
     }
 
+    /// `phase`, a select, merged into `area`: [`BLOCK`]'s value moves.
+    fn merge_phase_into_area() -> OpPayload {
+        OpPayload::RewriteProperties(RewritePropertiesPayload {
+            space_id: BlockId::from_trusted(SPACE),
+            reason: agaric_store::op::RewriteReason::Merge,
+            defs: vec![PropertyDefWrite {
+                key: "phase".into(),
+                def: None,
+                prior: Some(PropertyDefState {
+                    value_type: "select".into(),
+                    options: None,
+                }),
+            }],
+            values: vec![
+                PropertyValueWrite {
+                    block_id: BlockId::from_trusted(BLOCK),
+                    key: "phase".into(),
+                    value: None,
+                    prior: Some(PropertyValueFields {
+                        value_text: Some("a".into()),
+                        ..Default::default()
+                    }),
+                },
+                PropertyValueWrite {
+                    block_id: BlockId::from_trusted(BLOCK),
+                    key: "area".into(),
+                    value: Some(PropertyValueFields {
+                        value_text: Some("a".into()),
+                        ..Default::default()
+                    }),
+                    prior: None,
+                },
+            ],
+        })
+    }
+
     /// `(key, value)` walked from [`AFTER`] through `ops`, logged in order,
     /// for [`BLOCK`] of [`SPACE`].
     async fn walk(ops: Vec<OpPayload>, key: &str, value: &str) -> (String, String) {
-        let (pool, _dir) = test_pool().await;
+        let (pool, _dir) = logged(ops).await;
+        let mut conn = pool.acquire().await.unwrap();
+        let mut value = value.to_owned();
+        let key = forward_property_key(&mut conn, BLOCK, key, Some(&mut value), AFTER)
+            .await
+            .unwrap();
+        (key, value)
+    }
+
+    /// A pool holding [`BLOCK`] of [`SPACE`], whose log holds `ops` in order.
+    async fn logged(ops: Vec<OpPayload>) -> (sqlx::SqlitePool, tempfile::TempDir) {
+        let (pool, dir) = test_pool().await;
         for sql in [
             "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?1, 'page', 'S', ?1)",
             "INSERT INTO spaces (id) VALUES (?1)",
@@ -814,12 +869,7 @@ mod option_walk_tests {
         for (ts, op) in (1_000..).zip(ops) {
             append_local_op_at(&pool, DEV, op, ts).await.unwrap();
         }
-        let mut conn = pool.acquire().await.unwrap();
-        let mut value = value.to_owned();
-        let key = forward_property_key(&mut conn, BLOCK, key, Some(&mut value), AFTER)
-            .await
-            .unwrap();
-        (key, value)
+        (pool, dir)
     }
 
     fn kv(key: &str, value: &str) -> (String, String) {
@@ -935,39 +985,7 @@ mod option_walk_tests {
         .execute(&pool)
         .await
         .unwrap();
-        let merge = OpPayload::RewriteProperties(RewritePropertiesPayload {
-            space_id: BlockId::from_trusted(SPACE),
-            reason: agaric_store::op::RewriteReason::Merge,
-            defs: vec![PropertyDefWrite {
-                key: "phase".into(),
-                def: None,
-                prior: Some(PropertyDefState {
-                    value_type: "select".into(),
-                    options: None,
-                }),
-            }],
-            values: vec![
-                PropertyValueWrite {
-                    block_id: BlockId::from_trusted(BLOCK),
-                    key: "phase".into(),
-                    value: None,
-                    prior: Some(PropertyValueFields {
-                        value_text: Some("a".into()),
-                        ..Default::default()
-                    }),
-                },
-                PropertyValueWrite {
-                    block_id: BlockId::from_trusted(BLOCK),
-                    key: "area".into(),
-                    value: Some(PropertyValueFields {
-                        value_text: Some("a".into()),
-                        ..Default::default()
-                    }),
-                    prior: None,
-                },
-            ],
-        });
-        for (ts, op) in (1_000..).zip([key_rename("stage", "phase"), merge]) {
+        for (ts, op) in (1_000..).zip([key_rename("stage", "phase"), merge_phase_into_area()]) {
             append_local_op_at(&pool, DEV, op, ts).await.unwrap();
         }
         let mut conn = pool.acquire().await.unwrap();
@@ -976,6 +994,27 @@ mod option_walk_tests {
                 .await
                 .unwrap(),
             "phase"
+        );
+    }
+
+    /// A peer's rewrite of a reason this build does not know still moves a
+    /// value: a newer reason must not fail this build's undo (#6206).
+    #[tokio::test]
+    async fn a_rewrite_of_a_reason_this_build_does_not_know_still_moves_a_value_6206() {
+        let (pool, _dir) = logged(vec![merge_phase_into_area()]).await;
+        for sql in [
+            "INSERT INTO _op_log_mutation_allowed (token) VALUES (1)",
+            "UPDATE op_log SET payload = json_set(payload, '$.reason', 'a_later_reason')",
+            "DELETE FROM _op_log_mutation_allowed",
+        ] {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+        }
+        let mut conn = pool.acquire().await.unwrap();
+        let key = forward_property_key(&mut conn, BLOCK, "phase", None, AFTER).await;
+        assert_eq!(
+            key.map_err(|e| e.to_string()),
+            Ok("area".to_owned()),
+            "the value moved to `area`"
         );
     }
 }

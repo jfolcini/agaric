@@ -133,9 +133,14 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   change_property_type: { idKey: 'key', attrs: PROPERTY_DEF_ATTRS, lists: [] },
   // #5841 S4 — the definition after the option rename.
   rename_property_option: { idKey: 'key', attrs: PROPERTY_DEF_ATTRS, lists: [] },
-  // #6206 — a removal answers what it removed; adding to the options answers
-  // the definition after.
+  // #6206 — a removal or a conversion answers how many values it replaced;
+  // adding to the options answers the definition after.
   remove_unfit_property_values: {
+    idKey: HEADED_ID_KEY,
+    attrs: ['unfit', 'unfit_in_trash'],
+    lists: [],
+  },
+  convert_unfit_property_values: {
     idKey: HEADED_ID_KEY,
     attrs: ['unfit', 'unfit_in_trash'],
     lists: [],

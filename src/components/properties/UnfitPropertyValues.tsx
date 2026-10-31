@@ -2,8 +2,9 @@
  * UnfitPropertyValues -- the "N don't fit" badge on a property definition and
  * its dialog (#6206). The badge counts the space's live blocks whose value
  * doesn't fit the key's type or options; the dialog lists every such value,
- * the Trash's included, and removes them all in one op the toast can undo, or
- * adds a user select's to its options. Removal sends the counts it showed as
+ * the Trash's included, and removes them all in one op the toast can undo,
+ * adds a user select's to its options, or converts each as the user maps it
+ * (`ConvertUnfitValues`), but a ref's. Removal sends the counts it showed as
  * its acknowledgement; when the backend refuses that (the values changed
  * since), the dialog says so and the counts and list are read again, as
  * `ChangePropertyType` previews again. A mark on one of the key's values
@@ -20,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 import { EmptyState } from '@/components/common/EmptyState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { holderLabel } from '@/components/pages/SpaceMoveConfirmDialog'
+import { ConvertUnfitValues } from '@/components/properties/ConvertUnfitValues'
 import { notifyDefinitionWrite } from '@/components/properties/notify-definition-write'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -32,6 +34,7 @@ import type {
   PropertyDefinition,
   PropertyUnfitCounts,
   UnfitPropertyValue,
+  WithOps,
 } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
@@ -64,6 +67,7 @@ export function UnfitPropertyValues({
   // Asked again: the values changed after the user saw them.
   const [askedAgain, setAskedAgain] = useState(false)
   const [writing, setWriting] = useState(false)
+  const [step, setStep] = useState<'review' | 'convert'>('review')
   // Bumped when the values are read again, so the list reads them again too.
   const [listSeq, setListSeq] = useState(0)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -93,7 +97,9 @@ export function UnfitPropertyValues({
 
   const onOpenChange = (next: boolean): void => {
     setOpen(next)
-    if (!next) setAskedAgain(false)
+    if (next) return
+    setAskedAgain(false)
+    setStep('review')
   }
 
   const remove = async (acknowledged: PropertyUnfitCounts): Promise<void> => {
@@ -125,6 +131,13 @@ export function UnfitPropertyValues({
     } finally {
       setWriting(false)
     }
+  }
+
+  const converted = (result: WithOps<PropertyUnfitCounts>): void => {
+    onOpenChange(false)
+    const count = result.unfit + result.unfit_in_trash
+    notifyDefinitionWrite(t('propertiesView.convertDone', { count, key }), result.op_refs, changed)
+    changed()
   }
 
   const addToOptions = async (): Promise<void> => {
@@ -205,37 +218,56 @@ export function UnfitPropertyValues({
           <Header>
             <Title>{t('propertiesView.unfitTitle', { key })}</Title>
             <Description>
-              {t('propertiesView.unfitDescription', { key, type: definition.value_type })}
+              {step === 'convert'
+                ? t('propertiesView.convertIntro', { type: definition.value_type })
+                : t('propertiesView.unfitDescription', { key, type: definition.value_type })}
             </Description>
           </Header>
-          {parts.isMobile ? body : <DialogBody>{body}</DialogBody>}
-          <Footer>
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              {t('action.cancel')}
-            </Button>
-            {!definition.builtin && definition.value_type === 'select' && (
-              <Button
-                variant="outline"
-                disabled={writing}
-                onClick={() => {
-                  // `addToOptions` reports its own failure; never rejects.
-                  void addToOptions()
-                }}
-              >
-                {t('propertiesView.unfitAddToOptions')}
-              </Button>
-            )}
-            <Button
-              variant="destructive"
-              disabled={counts === null || writing}
-              onClick={() => {
-                // `remove` reports its own failure; never rejects.
-                if (counts !== null) void remove(counts)
-              }}
-            >
-              {t('propertiesView.unfitRemove')}
-            </Button>
-          </Footer>
+          {step === 'convert' ? (
+            <ConvertUnfitValues
+              definition={definition}
+              spaceId={spaceId}
+              onBack={() => setStep('review')}
+              onChanged={onChanged}
+              onDone={converted}
+            />
+          ) : (
+            <>
+              {parts.isMobile ? body : <DialogBody>{body}</DialogBody>}
+              <Footer>
+                <Button variant="outline" onClick={() => onOpenChange(false)}>
+                  {t('action.cancel')}
+                </Button>
+                {!definition.builtin && definition.value_type === 'select' && (
+                  <Button
+                    variant="outline"
+                    disabled={writing}
+                    onClick={() => {
+                      // `addToOptions` reports its own failure; never rejects.
+                      void addToOptions()
+                    }}
+                  >
+                    {t('propertiesView.unfitAddToOptions')}
+                  </Button>
+                )}
+                {definition.value_type !== 'ref' && (
+                  <Button variant="outline" disabled={writing} onClick={() => setStep('convert')}>
+                    {t('propertiesView.convertOpen')}
+                  </Button>
+                )}
+                <Button
+                  variant="destructive"
+                  disabled={counts === null || writing}
+                  onClick={() => {
+                    // `remove` reports its own failure; never rejects.
+                    if (counts !== null) void remove(counts)
+                  }}
+                >
+                  {t('propertiesView.unfitRemove')}
+                </Button>
+              </Footer>
+            </>
+          )}
         </Content>
       </Root>
     </>

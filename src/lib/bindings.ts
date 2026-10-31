@@ -544,6 +544,17 @@ export const commands = {
 	 *  the op ref.
 	 */
 	addUnfitValuesToOptions: (spaceId: SpaceId, key: string) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("add_unfit_values_to_options", { spaceId, key })),
+	/**
+	 *  Tauri command: one page of a key's distinct values that don't fit it.
+	 *  Delegates to [`list_distinct_unfit_property_values_inner`].
+	 */
+	listDistinctUnfitPropertyValues: (spaceId: SpaceId, key: string, cursor: string | null, limit: number | null) => typedError<PageResponse<DistinctUnfitValue>, AppError>(__TAURI_INVOKE("list_distinct_unfit_property_values", { spaceId, key, cursor, limit })),
+	/**
+	 *  Tauri command: replace a key's values that don't fit it as mapped.
+	 *  Delegates to [`convert_unfit_property_values_inner`]; the response carries
+	 *  the op ref.
+	 */
+	convertUnfitPropertyValues: (spaceId: SpaceId, key: string, replacements: UnfitValueReplacement[]) => typedError<WithOps<PropertyUnfitCounts>, AppError>(__TAURI_INVOKE("convert_unfit_property_values", { spaceId, key, replacements })),
 	/**  Tauri command: list all sync peers. Delegates to [`list_peer_refs_inner`]. */
 	listPeerRefs: () => typedError<PeerRef[], AppError>(__TAURI_INVOKE("list_peer_refs")),
 	/**  Tauri command: delete (unpair) a sync peer. Delegates to [`delete_peer_ref_inner`]. */
@@ -2096,6 +2107,12 @@ export type DiffSpan = {
 
 /**  Tag indicating what happened to a span of text. */
 export type DiffTag = "Equal" | "Delete" | "Insert";
+
+/**  One value of a key that doesn't fit it, and how many blocks hold it. */
+export type DistinctUnfitValue = {
+	/**  The value as [`list_unfit_property_values_inner`] shows it. */
+	value: string,
+} & PropertyUnfitCounts;
 
 /**  A single draft row from `block_drafts`. */
 export type Draft = {
@@ -4768,6 +4785,16 @@ export type UnfitPropertyValue = {
 	deleted: boolean,
 	value: string,
 	form: PropertyValueForm,
+};
+
+/**  What replaces one [`DistinctUnfitValue`]. */
+export type UnfitValueReplacement = {
+	/**  A [`DistinctUnfitValue::value`]. */
+	value: string,
+	/**  Read under the key's type as a typed write reads it. */
+	replacement: string,
+	/**  That value's counts as the user saw them. */
+	acknowledged: PropertyUnfitCounts,
 };
 
 /**

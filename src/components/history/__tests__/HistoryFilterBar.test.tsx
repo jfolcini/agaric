@@ -271,7 +271,7 @@ describe('HistoryFilterBar', () => {
       expect(content).toHaveTextContent(t('history.opTypeDescription.renamePropertyOption'))
       expect(content).toHaveTextContent(t('history.opTypeDescription.rewriteProperties'))
       expect(content).toHaveTextContent(
-        "One of a space's properties was merged into another, changed type, or had the values that don't fit it removed",
+        "One of a space's properties was merged into another, changed type, or had the values that don't fit it removed or converted",
       )
 
       // All 19 op types render as <dt>/<dd> rows inside the legend's <dl>.

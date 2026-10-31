@@ -201,6 +201,8 @@ macro_rules! agaric_commands {
             $crate::commands::property_unfit::list_unfit_property_values,
             $crate::commands::property_unfit::remove_unfit_property_values,
             $crate::commands::property_unfit::add_unfit_values_to_options,
+            $crate::commands::property_unfit::list_distinct_unfit_property_values,
+            $crate::commands::property_unfit::convert_unfit_property_values,
             // Sync
             $crate::commands::sync_cmds::list_peer_refs,
             $crate::commands::sync_cmds::delete_peer_ref,

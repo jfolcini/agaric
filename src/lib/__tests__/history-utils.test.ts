@@ -214,6 +214,23 @@ describe('getPayloadRawContent', () => {
     expect(getPayloadRawContent(makeEntry(payload, 'rewrite_properties'))).toBe('when')
   })
 
+  it('returns the key for a conversion of the values that do not fit it', () => {
+    const payload = JSON.stringify({
+      space_id: 'SP1',
+      reason: 'convert_unfit',
+      defs: [],
+      values: [
+        {
+          block_id: 'B1',
+          key: 'when',
+          value: { value_text: '2026-03-01' },
+          prior: { value_text: 'soon' },
+        },
+      ],
+    })
+    expect(getPayloadRawContent(makeEntry(payload, 'rewrite_properties'))).toBe('when')
+  })
+
   it('returns null for a set_property_def payload without a key', () => {
     const payload = JSON.stringify({ space_id: 'SP1', def: null, prior: null })
     expect(getPayloadRawContent(makeEntry(payload, 'set_property_def'))).toBeNull()

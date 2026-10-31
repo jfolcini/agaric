@@ -1,0 +1,912 @@
+{
+  "description": "#6206 — `list_distinct_unfit_property_values` groups a key's values that don't fit it by the value as shown (the text `5` and a peer's number 5 are one), with live and Trash counts, paged by that value in byte order. `convert_unfit_property_values` replaces each mapped value, the Trash's included, by its replacement read under the key's type, as one `rewrite_properties` op (reason `convert_unfit`); a value left out stays. It is refused when a mapped value's counts are stale (`UnacknowledgedPropertyLoss`) and when a replacement doesn't fit: a date that is no calendar day, blank text, a select value outside the options. `undo_ops` puts the values back, still not fitting, and `redo_page_op` converts them again. With nothing held under a mapped value it appends no op. A peer's number and boolean under a text key and under a select with options convert to a text and to options. One replacement of the `5` converts the text and the number, and `undo_ops` gives each back in its own form. `whenx` changes from text to date: `X`'s date fits; the trashed `Y`'s \"never\", `Z`'s and `W`'s \"soon\", the trashed `V`'s \"later\", `U`'s peer number 5 and `T`'s \"5\" do not. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "X",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Y",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Z",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "W",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "V",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "U",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "T",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 7,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 21,
+      "ops": [
+        {
+          "key": "whenx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "whenx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "whenx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "whenx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "whenx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "whenx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "whenx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "notex",
+          "op_type": "set_property"
+        },
+        {
+          "key": "notex",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stagex",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stagex",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "rewrite_properties"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "whenx",
+        "value": "2026-01-05",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B3",
+        "key": "whenx",
+        "value": "never",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B4",
+        "key": "notex",
+        "value": "42",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B4",
+        "key": "stagex",
+        "value": "q",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B4",
+        "key": "whenx",
+        "value": "2026-03-01",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B5",
+        "key": "notex",
+        "value": "true",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B5",
+        "key": "stagex",
+        "value": "z",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B5",
+        "key": "whenx",
+        "value": "2026-03-01",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B6",
+        "key": "whenx",
+        "value": "2026-04-01",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B7",
+        "key": "whenx",
+        "value": 5.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B8",
+        "key": "whenx",
+        "value": "5",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "whenx_becomes_a_date",
+      "returns": ["whenx#value_type=date#options=null#builtin=false"]
+    },
+    {
+      "code": "UnacknowledgedPropertyLoss",
+      "error": "validation",
+      "name": "a_stale_acknowledgement_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_date_that_is_no_day_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "convert_soon_and_later",
+      "returns": ["convert_unfit_property_values#unfit=2#unfit_in_trash=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_conversion",
+      "returns": [
+        "undo_ops#reversed_op_type=rewrite_properties#new_op_type=rewrite_properties#is_redo=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "redo_the_conversion",
+      "returns": [
+        "redo_page_op#reversed_op_type=rewrite_properties#new_op_type=rewrite_properties#is_redo=true"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "nothing_held",
+      "returns": ["convert_unfit_property_values#unfit=0#unfit_in_trash=0"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_blank_text_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "convert_notex_to_text",
+      "returns": ["convert_unfit_property_values#unfit=2#unfit_in_trash=0"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_value_outside_the_options_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "convert_stagex_to_options",
+      "returns": ["convert_unfit_property_values#unfit=2#unfit_in_trash=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "convert_the_fives",
+      "returns": ["convert_unfit_property_values#unfit=2#unfit_in_trash=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_fives",
+      "returns": [
+        "undo_ops#reversed_op_type=rewrite_properties#new_op_type=rewrite_properties#is_redo=false"
+      ]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": "v1:{id}",
+      "error": null,
+      "has_more": true,
+      "name": "whenx_page_one",
+      "rows": ["5#unfit=2#unfit_in_trash=0"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "whenx_page_two",
+      "rows": ["never#unfit=0#unfit_in_trash=1"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "notex_values",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "stagex_values",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "a_zero_limit_is_refused",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "property_unfit_convert",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "whenx",
+        "value": {
+          "value_text": "2026-01-05"
+        }
+      },
+      "command": "set_property",
+      "comment": "O1"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "whenx",
+        "value": {
+          "value_text": "never"
+        }
+      },
+      "command": "set_property",
+      "comment": "O2 — left alone throughout; on a block before the 5s, so neither block nor insertion order is the value order."
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "whenx",
+        "value": {
+          "value_text": "soon"
+        }
+      },
+      "command": "set_property",
+      "comment": "O3"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "key": "whenx",
+        "value": {
+          "value_text": "soon"
+        }
+      },
+      "command": "set_property",
+      "comment": "O4"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "key": "whenx",
+        "value": {
+          "value_text": "later"
+        }
+      },
+      "command": "set_property",
+      "comment": "O5"
+    },
+    {
+      "args": {
+        "blockId": "S7",
+        "key": "whenx",
+        "value": {
+          "value_num": 5
+        }
+      },
+      "command": "set_property",
+      "comment": "O6 — a peer's number under the text key."
+    },
+    {
+      "args": {
+        "blockId": "S8",
+        "key": "whenx",
+        "value": {
+          "value_text": "5"
+        }
+      },
+      "command": "set_property",
+      "comment": "O7"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "notex",
+        "value": {
+          "value_num": 42
+        }
+      },
+      "command": "set_property",
+      "comment": "O8 — a peer's number under a text key."
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "key": "notex",
+        "value": {
+          "value_bool": true
+        }
+      },
+      "command": "set_property",
+      "comment": "O9 — a peer's boolean under a text key."
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "stagex",
+        "value": {
+          "value_num": 5
+        }
+      },
+      "command": "set_property",
+      "comment": "O10 — a peer's number under a select."
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "key": "stagex",
+        "value": {
+          "value_bool": false
+        }
+      },
+      "command": "set_property",
+      "comment": "O11 — a peer's boolean under a select."
+    },
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "delete_block",
+      "comment": "O12"
+    },
+    {
+      "args": {
+        "blockId": "S6"
+      },
+      "command": "delete_block",
+      "comment": "O13"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 1,
+          "unfit": 6
+        },
+        "key": "whenx",
+        "spaceId": "$SPACE",
+        "valueType": "date"
+      },
+      "command": "change_property_type",
+      "comment": "O14 — `X`'s date fits; the six others stay as they are.",
+      "name": "whenx_becomes_a_date",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "whenx",
+        "replacements": [
+          {
+            "acknowledged": {
+              "unfit": 1,
+              "unfit_in_trash": 0
+            },
+            "replacement": "2026-03-01",
+            "value": "soon"
+          }
+        ],
+        "spaceId": "$SPACE"
+      },
+      "command": "convert_unfit_property_values",
+      "comment": "Two blocks hold \"soon\".",
+      "expect_code": "UnacknowledgedPropertyLoss",
+      "expect_error": "validation",
+      "name": "a_stale_acknowledgement_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "whenx",
+        "replacements": [
+          {
+            "acknowledged": {
+              "unfit": 2,
+              "unfit_in_trash": 0
+            },
+            "replacement": "2026-02-30",
+            "value": "soon"
+          }
+        ],
+        "spaceId": "$SPACE"
+      },
+      "command": "convert_unfit_property_values",
+      "comment": "February has no 30th.",
+      "expect_error": "validation",
+      "name": "a_date_that_is_no_day_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "whenx",
+        "replacements": [
+          {
+            "acknowledged": {
+              "unfit": 2,
+              "unfit_in_trash": 0
+            },
+            "replacement": "2026-03-01",
+            "value": "soon"
+          },
+          {
+            "acknowledged": {
+              "unfit": 0,
+              "unfit_in_trash": 1
+            },
+            "replacement": "2026-04-01",
+            "value": "later"
+          }
+        ],
+        "spaceId": "$SPACE"
+      },
+      "command": "convert_unfit_property_values",
+      "comment": "O15 — both \"soon\"s and the trashed \"later\" become dates; \"never\" and the 5s stay.",
+      "name": "convert_soon_and_later",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O15"]
+      },
+      "command": "undo_ops",
+      "comment": "O16 — they are back, as text.",
+      "name": "undo_the_conversion",
+      "via": "command"
+    },
+    {
+      "args": {
+        "undoOp": "O16"
+      },
+      "command": "redo_page_op",
+      "comment": "O17 — dates again.",
+      "name": "redo_the_conversion",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "whenx",
+        "replacements": [
+          {
+            "acknowledged": {
+              "unfit": 0,
+              "unfit_in_trash": 0
+            },
+            "replacement": "2026-03-01",
+            "value": "soon"
+          }
+        ],
+        "spaceId": "$SPACE"
+      },
+      "command": "convert_unfit_property_values",
+      "comment": "No block holds \"soon\" now: no op.",
+      "name": "nothing_held",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "notex",
+        "replacements": [
+          {
+            "acknowledged": {
+              "unfit": 1,
+              "unfit_in_trash": 0
+            },
+            "replacement": " ",
+            "value": "42"
+          }
+        ],
+        "spaceId": "$SPACE"
+      },
+      "command": "convert_unfit_property_values",
+      "comment": "Blank text is no value.",
+      "expect_error": "validation",
+      "name": "a_blank_text_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "notex",
+        "replacements": [
+          {
+            "acknowledged": {
+              "unfit": 1,
+              "unfit_in_trash": 0
+            },
+            "replacement": "42",
+            "value": "42"
+          },
+          {
+            "acknowledged": {
+              "unfit": 1,
+              "unfit_in_trash": 0
+            },
+            "replacement": "true",
+            "value": "true"
+          }
+        ],
+        "spaceId": "$SPACE"
+      },
+      "command": "convert_unfit_property_values",
+      "comment": "O18 — the number and the boolean, each as the text it reads.",
+      "name": "convert_notex_to_text",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "stagex",
+        "replacements": [
+          {
+            "acknowledged": {
+              "unfit": 1,
+              "unfit_in_trash": 0
+            },
+            "replacement": "w",
+            "value": "5"
+          }
+        ],
+        "spaceId": "$SPACE"
+      },
+      "command": "convert_unfit_property_values",
+      "comment": "`w` is not an option.",
+      "expect_error": "validation",
+      "name": "a_value_outside_the_options_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "stagex",
+        "replacements": [
+          {
+            "acknowledged": {
+              "unfit": 1,
+              "unfit_in_trash": 0
+            },
+            "replacement": "q",
+            "value": "5"
+          },
+          {
+            "acknowledged": {
+              "unfit": 1,
+              "unfit_in_trash": 0
+            },
+            "replacement": "z",
+            "value": "false"
+          }
+        ],
+        "spaceId": "$SPACE"
+      },
+      "command": "convert_unfit_property_values",
+      "comment": "O19 — the number and the boolean, each to an option.",
+      "name": "convert_stagex_to_options",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "whenx",
+        "replacements": [
+          {
+            "acknowledged": {
+              "unfit": 2,
+              "unfit_in_trash": 0
+            },
+            "replacement": "2026-05-05",
+            "value": "5"
+          }
+        ],
+        "spaceId": "$SPACE"
+      },
+      "command": "convert_unfit_property_values",
+      "comment": "O20 — the text 5 and the peer's number 5 are one value: one replacement writes both.",
+      "name": "convert_the_fives",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O20"]
+      },
+      "command": "undo_ops",
+      "comment": "O21 — each is back as it was: the text as text, the number as a number.",
+      "name": "undo_the_fives",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "key": "whenx",
+        "limit": 1,
+        "spaceId": "$SPACE"
+      },
+      "command": "list_distinct_unfit_property_values",
+      "comment": "One value a page, by value: the text 5 and the number 5, as one.",
+      "name": "whenx_page_one"
+    },
+    {
+      "args": {
+        "key": "whenx",
+        "limit": 1,
+        "spaceId": "$SPACE"
+      },
+      "command": "list_distinct_unfit_property_values",
+      "comment": "The trashed \"never\", through the first page's cursor.",
+      "cursor_from": "whenx_page_one",
+      "name": "whenx_page_two"
+    },
+    {
+      "args": {
+        "key": "notex",
+        "limit": 50,
+        "spaceId": "$SPACE"
+      },
+      "command": "list_distinct_unfit_property_values",
+      "comment": "Both converted.",
+      "expect_empty": true,
+      "name": "notex_values"
+    },
+    {
+      "args": {
+        "key": "stagex",
+        "limit": 50,
+        "spaceId": "$SPACE"
+      },
+      "command": "list_distinct_unfit_property_values",
+      "comment": "Both converted.",
+      "expect_empty": true,
+      "name": "stagex_values"
+    },
+    {
+      "args": {
+        "key": "whenx",
+        "limit": 0,
+        "spaceId": "$SPACE"
+      },
+      "command": "list_distinct_unfit_property_values",
+      "comment": "The limit is validated, not clamped.",
+      "expect_error": "validation",
+      "name": "a_zero_limit_is_refused"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "X",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "Y",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "Z",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "W",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": "V",
+        "id": "S6",
+        "parent_id": "S1",
+        "position": 5
+      },
+      {
+        "block_type": "content",
+        "content": "U",
+        "id": "S7",
+        "parent_id": "S1",
+        "position": 6
+      },
+      {
+        "block_type": "content",
+        "content": "T",
+        "id": "S8",
+        "parent_id": "S1",
+        "position": 7
+      }
+    ],
+    "properties": [],
+    "property_defs": [
+      {
+        "key": "notex",
+        "options": null,
+        "value_type": "text"
+      },
+      {
+        "key": "stagex",
+        "options": "[\"z\",\"q\"]",
+        "value_type": "select"
+      },
+      {
+        "key": "whenx",
+        "options": null,
+        "value_type": "text"
+      }
+    ],
+    "tags": []
+  }
+}
