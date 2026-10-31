@@ -1192,8 +1192,8 @@ async fn project_pass_c(
 /// page moved to another space leaves this doc exactly as a purged one does
 /// (#2907), and the new space's doc may be the next one this session imports.
 /// Deleting now would take the rows nothing else holds (drafts, opens) and
-/// those on untouched blocks that point at the page (links and tags), which
-/// that import does not recreate (a ref it does, from the doc that holds it,
+/// the links on untouched blocks that point at the page, which that import
+/// does not recreate (refs and tags it does, from the doc that holds them,
 /// #6236). Ids an engine already holds are not recorded: their doc owns their
 /// rows.
 async fn project_pass_d(
@@ -1224,41 +1224,75 @@ async fn project_pass_d(
     Ok(())
 }
 
-/// Whether the import gives one of `changed_blocks` its first `blocks` row,
-/// asked before Pass A writes them: only such an import can supply the target
-/// of a ref the FK guard dropped (#6236).
+/// Which first `blocks` rows an import gives: only such a row can supply the
+/// target an FK guard dropped (#6236).
+struct NewRows {
+    /// Some block gets its first row: the target of a dropped ref.
+    any: bool,
+    /// Some tag block does: the only target a tag edge has.
+    tag: bool,
+}
+
+/// The first `blocks` rows the import gives `changed_blocks`, asked before
+/// Pass A writes them; `block_states` is index-aligned with them.
 async fn brings_new_block_rows(
     tx: &mut sqlx::SqliteConnection,
     changed_blocks: &[agaric_core::ulid::BlockId],
-) -> Result<bool, AppError> {
+    block_states: &[ProjectedBlockState],
+) -> Result<NewRows, AppError> {
     let ids: Vec<&str> = changed_blocks
         .iter()
         .map(agaric_core::ulid::BlockId::as_str)
         .collect();
-    Ok(!absent_block_ids(&mut *tx, &ids).await?.is_empty())
+    let absent = absent_block_ids(&mut *tx, &ids).await?;
+    let tag = changed_blocks
+        .iter()
+        .zip(block_states)
+        .any(|(block_id, (snapshot, _))| {
+            absent.contains(block_id.as_str())
+                && snapshot.as_ref().is_some_and(|s| s.block_type == "tag")
+        });
+    Ok(NewRows {
+        any: !absent.is_empty(),
+        tag,
+    })
 }
 
-/// The ref pass (#6236), after every other pass of an import that gave a block
-/// its first row: a ref the engines hold that the FK guard dropped while its
-/// target had no row (another space's doc landing before the target's) gets
-/// its row. Returns the blocks it re-projected.
-async fn project_pass_refs(
+/// The dropped-row pass (#6236), after every other pass of an import that
+/// gave a block its first row: a ref or a tag the engines hold that an FK
+/// guard dropped while its target had no row (another space's doc landing
+/// before the target's) gets its row. Tags are read only when a tag block got
+/// its first row. Returns every block it gave a row, and the tagged ones.
+async fn project_pass_dropped(
     tx: &mut sqlx::SqliteConnection,
     registry: &LoroEngineRegistry,
-    brings_rows: bool,
-) -> Result<Vec<agaric_core::ulid::BlockId>, AppError> {
-    if !brings_rows {
-        return Ok(Vec::new());
+    new_rows: NewRows,
+) -> Result<
+    (
+        Vec<agaric_core::ulid::BlockId>,
+        Vec<agaric_core::ulid::BlockId>,
+    ),
+    AppError,
+> {
+    let mut healed = Vec::new();
+    if new_rows.any {
+        healed = agaric_engine::loro::projection::project_dropped_refs(tx, |space, key| {
+            registry.property_holders(&SpaceId::from_trusted(space), key)
+        })
+        .await?;
     }
-    agaric_engine::loro::projection::project_dropped_refs(tx, |space, key| {
-        registry.property_holders(&SpaceId::from_trusted(space), key)
-    })
-    .await
+    let mut tagged = Vec::new();
+    if new_rows.tag {
+        let edges = registry.tag_edges()?;
+        tagged = agaric_engine::loro::projection::project_dropped_tags(tx, &edges).await?;
+        healed.extend_from_slice(&tagged);
+    }
+    Ok((healed, tagged))
 }
 
 /// `changed_blocks` plus each block it lacks that a definition `retyped` or the
-/// ref pass `healed`: those owe the cache fan-out the caller runs over the
-/// changed set.
+/// dropped-row pass `healed`: those owe the cache fan-out the caller runs over
+/// the changed set.
 fn with_reprojected(
     mut changed_blocks: Vec<agaric_core::ulid::BlockId>,
     retyped: Vec<agaric_core::ulid::BlockId>,
@@ -1483,7 +1517,9 @@ fn fan_out_swept_tombstones(
 /// import could not be resolved incrementally. Purged blocks' inherited rows
 /// were already removed by Pass D. Runs after the projection tx commits (the
 /// subtree CTE reads the just-projected `blocks.parent_id`), mirroring the
-/// previous global rebuild's placement.
+/// previous global rebuild's placement. The blocks the dropped-row pass
+/// `tagged` are roots too: the import's scope names the tag it brought, not
+/// them (#6236).
 ///
 /// #2275 — the projection tx has ALREADY committed above (the #535 inbox
 /// slot is gone), so this derived-cache rebuild is best-effort: it must NOT
@@ -1500,6 +1536,7 @@ fn fan_out_swept_tombstones(
 async fn refresh_tag_inheritance(
     pool: &SqlitePool,
     tag_scope: agaric_engine::loro::engine::TagScope,
+    tagged: &[agaric_core::ulid::BlockId],
 ) {
     let rebuild_result: Result<(), AppError> = async {
         match tag_scope {
@@ -1507,11 +1544,12 @@ async fn refresh_tag_inheritance(
                 agaric_store::tag_inheritance::rebuild_all(pool).await?;
             }
             agaric_engine::loro::engine::TagScope::Subtrees(roots) => {
+                let roots: Vec<_> = roots.iter().chain(tagged).collect();
                 if !roots.is_empty() {
                     let mut tag_tx =
                         agaric_store::db::begin_immediate_logged(pool, "tag_inheritance_subtrees")
                             .await?;
-                    for root in &roots {
+                    for root in roots {
                         agaric_store::tag_inheritance::recompute_subtree_inheritance(
                             &mut tag_tx,
                             root.as_str(),
@@ -2369,7 +2407,7 @@ pub(crate) async fn import_and_project(
 
     project_space_block_first(space_id, &mut changed_blocks, &mut block_states);
 
-    let brings_rows = brings_new_block_rows(&mut tx, &changed_blocks).await?;
+    let new_rows = brings_new_block_rows(&mut tx, &changed_blocks, &block_states).await?;
 
     let retyped = project_pass_defs(&mut tx, registry, device_id, space_id, &def_keys).await?;
 
@@ -2381,7 +2419,7 @@ pub(crate) async fn import_and_project(
 
     project_pass_d(&mut tx, registry, &purged_blocks, tombstone_purged).await?;
 
-    let healed = project_pass_refs(&mut tx, registry, brings_rows).await?;
+    let (healed, tagged) = project_pass_dropped(&mut tx, registry, new_rows).await?;
 
     clear_inbox_slots(&mut tx, &clearable_ids).await?;
 
@@ -2389,7 +2427,7 @@ pub(crate) async fn import_and_project(
 
     fan_out_swept_tombstones(registry, device_id, space_id, &swept_tombstones);
 
-    refresh_tag_inheritance(pool, tag_scope).await;
+    refresh_tag_inheritance(pool, tag_scope, &tagged).await;
 
     Ok(with_reprojected(changed_blocks, retyped, healed))
 }

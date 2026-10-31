@@ -1611,6 +1611,157 @@ async fn a_ref_into_another_space_lands_whichever_space_arrives_first_6236() {
     mat_a.shutdown();
 }
 
+/// #6236: a page carries a tag, then the tag moves to another space. A fresh
+/// B keeps the page's tag, and the page's child inherits it, whichever space's
+/// doc B imports first. Imported first, the page's doc finds no row for the
+/// tag, so the FK guard drops the edge, and the tag's import must give it
+/// back. The tag moves into Work, which B seeds too, so that import gives the
+/// tag alone its first row. Apart from the ref test, whose heal would report
+/// the page changed on its own.
+///
+/// Counter-delta shape: none. Every `Materializer` has its own `LoroState`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_tag_into_another_space_lands_whichever_space_arrives_first_6236() {
+    use crate::commands::{
+        add_tag_inner, create_block_inner, create_block_inner_with_space,
+        create_page_in_space_inner, create_space_inner, move_blocks_to_space_inner,
+    };
+    use crate::materializer::Materializer;
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+    super::bootstrap::bootstrap_spaces(&pool_a, "device-A", &mat_a)
+        .await
+        .unwrap();
+    let holder_space = create_space_inner(&pool_a, "device-A", &mat_a, "Projects".into(), None)
+        .await
+        .unwrap()
+        .as_str()
+        .to_owned();
+    let tag_space = SPACE_WORK_ULID.to_owned();
+    let (holder_space, tag_space) = (&holder_space, &tag_space);
+    let holder = create_page_in_space_inner(
+        &pool_a,
+        "device-A",
+        &mat_a,
+        None,
+        "Holder".into(),
+        holder_space.clone(),
+    )
+    .await
+    .unwrap();
+    let child = create_block_inner(
+        &pool_a,
+        "device-A",
+        &mat_a,
+        "content".into(),
+        "detail".into(),
+        Some(holder.clone()),
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    let tag = create_block_inner_with_space(
+        &pool_a,
+        "device-A",
+        &mat_a,
+        "tag".into(),
+        "urgent".into(),
+        None,
+        None,
+        &agaric_store::space::SpaceScope::Active(agaric_store::space::SpaceId::from_trusted(
+            holder_space,
+        )),
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    add_tag_inner(&pool_a, "device-A", &mat_a, holder.clone(), tag.clone())
+        .await
+        .unwrap();
+    move_blocks_to_space_inner(
+        &pool_a,
+        "device-A",
+        &mat_a,
+        vec![tag.clone()],
+        tag_space.clone(),
+        &[],
+    )
+    .await
+    .unwrap();
+    mat_a.flush_background().await.unwrap();
+    async fn tags_of(pool: &SqlitePool, block: &BlockId) -> Vec<String> {
+        sqlx::query_scalar("SELECT tag_id FROM block_tags WHERE block_id = ?")
+            .bind(block.as_str())
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+    let a_tags = tags_of(&pool_a, &holder).await;
+    assert_eq!(
+        a_tags,
+        vec![tag.as_str().to_owned()],
+        "precondition: A's holder keeps its tag in the other space"
+    );
+
+    for (label, order) in [
+        ("tag's space first", [tag_space, holder_space]),
+        ("holder's space first", [holder_space, tag_space]),
+    ] {
+        let (pool_b, _dir_b) = test_pool().await;
+        let mat_b = Materializer::new(pool_b.clone());
+        super::bootstrap::bootstrap_spaces(&pool_b, "device-B", &mat_b)
+            .await
+            .unwrap();
+        let mut last_import = Vec::new();
+        for space in order {
+            last_import = sync_space_a_to_b(&pool_a, &mat_a, space, &pool_b, &mat_b).await;
+        }
+        assert_eq!(
+            tags_of(&pool_b, &holder).await,
+            a_tags,
+            "{label}: B holds the holder's tag as A does"
+        );
+        let inherited: Vec<(String, String)> = sqlx::query_as(
+            "SELECT tag_id, inherited_from FROM block_tag_inherited WHERE block_id = ?",
+        )
+        .bind(child.as_str())
+        .fetch_all(&pool_b)
+        .await
+        .unwrap();
+        assert_eq!(
+            inherited,
+            vec![(tag.as_str().to_owned(), holder.as_str().to_owned())],
+            "{label}: the holder's child inherits its tag"
+        );
+        assert!(
+            last_import.contains(&holder),
+            "{label}: the last import reports the holder as changed, so its page refreshes"
+        );
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid date");
+        let drift: Vec<String> =
+            crate::reconciliation_oracle::reconcile_all(&pool_b, mat_b.loro_state(), None, today)
+                .await
+                .unwrap()
+                .into_iter()
+                .filter(|d| {
+                    d.artefact == "engine.block_tags.row"
+                        || d.artefact.starts_with("block_tag_inherited.")
+                })
+                .map(|d| format!("{}: {}", d.artefact, d.key))
+                .collect();
+        assert_eq!(
+            drift,
+            Vec::<String>::new(),
+            "{label}: B's tag rows agree with its engines, and its inheritance with its tags"
+        );
+        mat_b.shutdown();
+    }
+    mat_a.shutdown();
+}
+
 /// #4801: a page moved to another space keeps its tasks' reserved columns
 /// (`todo_state`, `due_date`, …) on the paired device. The move hydrates the
 /// page's subtree into the target space's doc; the doc must carry the reserved
@@ -2639,9 +2790,9 @@ async fn an_interrupted_session_keeps_the_rows_for_the_next_one_5712() {
 
 /// #5712, the documented gap: a session that completes with the old space's
 /// doc but not the new one sweeps the moved blocks, as a purge. The new doc
-/// brings the blocks back next time, and with them the ref on `notes`, which
-/// the old doc still holds (#6236). B's own rows stay lost, and so do the link
-/// and the tag on `notes`: nothing re-projects them.
+/// brings the blocks back next time, and with them the ref and the tag on
+/// `notes`, which the old doc still holds (#6236). B's own rows stay lost, and
+/// so does the link on `notes`: nothing re-projects it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_session_without_the_new_doc_sweeps_the_moved_page_5712() {
     let fx = move_fixture().await;
@@ -2676,8 +2827,8 @@ async fn a_session_without_the_new_doc_sweeps_the_moved_page_5712() {
             b.links.contains(&(note.clone(), page)),
             b.tags.contains(&(note, tag)),
         ),
-        (true, false, false),
-        "the ref comes back from the doc that holds it (#6236); the link and the tag stay lost"
+        (true, false, true),
+        "the ref and the tag come back from the doc that holds them (#6236); the link stays lost"
     );
     assert_eq!(
         b_only_rows(&fx.pool_b, &fx.page).await.drafts,
