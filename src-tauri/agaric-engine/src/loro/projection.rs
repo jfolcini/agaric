@@ -1432,7 +1432,8 @@ async fn reproject_property_row_from_engine(
     // dropped (row-absent), which is the only valid representation —
     // NULL-ing `value_ref` would leave an all-NULL row that violates the
     // `exactly_one_value` CHECK, and authoritative-replace already removed
-    // any prior row via the up-front DELETE.
+    // any prior row via the up-front DELETE. `project_dropped_refs` projects a
+    // dropped ref again once its target has a row (#6236).
     sqlx::query!(
         "INSERT INTO block_properties \
              (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
@@ -1700,12 +1701,13 @@ pub async fn reproject_key_values(
     Ok(rewritten)
 }
 
-/// Re-project each ref the engines hold under a key its space declares `ref`
-/// that has no row while its target has a `blocks` row (#6236): the FK guard
-/// drops a ref whose target has no row yet, as when the target's space is
-/// imported after the holder's, and nothing else revisits the holder.
-/// `holders_of(space_id, key)` reads that space's engine and holds no guard
-/// past its return. Returns the blocks it re-projected.
+/// Re-project the refs the FK guard dropped (#6236): each value an engine holds
+/// under a key its space declares `ref`, whose holder has no row for the key
+/// while the target has a `blocks` row. The guard drops a ref whose target has
+/// no row yet, as when the target's space is imported after the holder's, and
+/// nothing else revisits the holder. `holders_of(space_id, key)` reads that
+/// space's engine and holds no guard past its return. Returns the blocks it
+/// re-projected.
 pub async fn project_dropped_refs(
     conn: &mut SqliteConnection,
     holders_of: impl Fn(

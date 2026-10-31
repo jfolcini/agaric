@@ -1287,15 +1287,18 @@ async fn a_space_created_on_one_device_reaches_its_peer_4775() {
 }
 
 /// Ship `space`'s doc from A to B the way the catch-up does: one full
-/// snapshot, merged into B's engine and projected.
+/// snapshot, merged into B's engine and projected. Returns the blocks the
+/// import reported changed.
 async fn sync_space_a_to_b(
     pool_a: &SqlitePool,
     mat_a: &crate::materializer::Materializer,
     space: &str,
     pool_b: &SqlitePool,
     mat_b: &crate::materializer::Materializer,
-) {
-    use agaric_sync::sync_protocol::loro_sync::{apply_remote, prepare_outgoing_for_pool};
+) -> Vec<BlockId> {
+    use agaric_sync::sync_protocol::loro_sync::{
+        ApplyOutcome, apply_remote, prepare_outgoing_for_pool,
+    };
     let space_id = agaric_store::space::SpaceId::from_trusted(space);
     let msg = prepare_outgoing_for_pool(
         pool_a,
@@ -1307,9 +1310,13 @@ async fn sync_space_a_to_b(
     .await
     .unwrap()
     .expect("#1257 freshness gate must not refuse a consistent engine");
-    apply_remote(pool_b, &mat_b.loro_state().registry, "device-B", msg)
+    let outcome = apply_remote(pool_b, &mat_b.loro_state().registry, "device-B", msg)
         .await
         .unwrap();
+    let ApplyOutcome::Imported { changed_blocks, .. } = outcome else {
+        panic!("a snapshot imports, got {outcome:?}");
+    };
+    changed_blocks
 }
 
 async fn deleted_at_of(pool: &SqlitePool, block_id: &str) -> Option<i64> {
@@ -1565,8 +1572,9 @@ async fn a_ref_into_another_space_lands_whichever_space_arrives_first_6236() {
         super::bootstrap::bootstrap_spaces(&pool_b, "device-B", &mat_b)
             .await
             .unwrap();
+        let mut last_import = Vec::new();
         for space in order {
-            sync_space_a_to_b(&pool_a, &mat_a, space, &pool_b, &mat_b).await;
+            last_import = sync_space_a_to_b(&pool_a, &mat_a, space, &pool_b, &mat_b).await;
         }
         let project: Option<Option<String>> = sqlx::query_scalar(
             "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'project'",
@@ -1579,6 +1587,10 @@ async fn a_ref_into_another_space_lands_whichever_space_arrives_first_6236() {
             project,
             Some(Some(target.as_str().to_owned())),
             "{label}: B holds the holder's ref to the target"
+        );
+        assert!(
+            last_import.contains(holder),
+            "{label}: the last import reports the holder as changed, so its page refreshes"
         );
         let today = chrono::NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid date");
         let drift: Vec<String> =
@@ -2628,8 +2640,8 @@ async fn an_interrupted_session_keeps_the_rows_for_the_next_one_5712() {
 /// #5712, the documented gap: a session that completes with the old space's
 /// doc but not the new one sweeps the moved blocks, as a purge. The new doc
 /// brings the blocks back next time, and with them the ref on `notes`, which
-/// the old doc still holds (#6236), but not the rows no doc holds: B's own,
-/// and the link and the tag on `notes` that point at the page and the tag.
+/// the old doc still holds (#6236). B's own rows stay lost, and so do the link
+/// and the tag on `notes`: nothing re-projects them.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_session_without_the_new_doc_sweeps_the_moved_page_5712() {
     let fx = move_fixture().await;

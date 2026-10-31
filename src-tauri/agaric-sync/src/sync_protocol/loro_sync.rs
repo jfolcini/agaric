@@ -1193,8 +1193,9 @@ async fn project_pass_c(
 /// (#2907), and the new space's doc may be the next one this session imports.
 /// Deleting now would take the rows nothing else holds (drafts, opens) and
 /// those on untouched blocks that point at the page (links and tags), which
-/// that import does not recreate; it does bring a ref back (#6236). Ids an
-/// engine already holds are not recorded: their doc owns their rows.
+/// that import does not recreate (a ref it does, from the doc that holds it,
+/// #6236). Ids an engine already holds are not recorded: their doc owns their
+/// rows.
 async fn project_pass_d(
     tx: &mut sqlx::SqliteConnection,
     registry: &LoroEngineRegistry,
@@ -1224,8 +1225,8 @@ async fn project_pass_d(
 }
 
 /// Whether the import gives one of `changed_blocks` its first `blocks` row,
-/// asked before Pass A writes them: only such an import can give a ref the
-/// FK guard dropped its target (#6236).
+/// asked before Pass A writes them: only such an import can supply the target
+/// of a ref the FK guard dropped (#6236).
 async fn brings_new_block_rows(
     tx: &mut sqlx::SqliteConnection,
     changed_blocks: &[agaric_core::ulid::BlockId],
@@ -1237,11 +1238,10 @@ async fn brings_new_block_rows(
     Ok(!absent_block_ids(&mut *tx, &ids).await?.is_empty())
 }
 
-/// The ref pass (#6236), after every other pass of an import that gave a
-/// block its row: each ref the engines hold that the FK guard dropped while
-/// its target had no row, in this import or an earlier one, such as one of
-/// another space whose doc landed before the target's, gets its row. Returns
-/// the blocks it re-projected.
+/// The ref pass (#6236), after every other pass of an import that gave a block
+/// its first row: a ref the engines hold that the FK guard dropped while its
+/// target had no row (another space's doc landing before the target's) gets
+/// its row. Returns the blocks it re-projected.
 async fn project_pass_refs(
     tx: &mut sqlx::SqliteConnection,
     registry: &LoroEngineRegistry,
@@ -1256,10 +1256,10 @@ async fn project_pass_refs(
     .await
 }
 
-/// `changed_blocks`, then each block it lacks that a definition `retyped` or
-/// the ref pass `healed`: those owe the cache fan-out the caller runs over the
+/// `changed_blocks` plus each block it lacks that a definition `retyped` or the
+/// ref pass `healed`: those owe the cache fan-out the caller runs over the
 /// changed set.
-fn and_also_projected(
+fn with_reprojected(
     mut changed_blocks: Vec<agaric_core::ulid::BlockId>,
     retyped: Vec<agaric_core::ulid::BlockId>,
     healed: Vec<agaric_core::ulid::BlockId>,
@@ -2391,7 +2391,7 @@ pub(crate) async fn import_and_project(
 
     refresh_tag_inheritance(pool, tag_scope).await;
 
-    Ok(and_also_projected(changed_blocks, retyped, healed))
+    Ok(with_reprojected(changed_blocks, retyped, healed))
 }
 
 /// Boot-recovery entry point: re-run `import_and_project` for a single

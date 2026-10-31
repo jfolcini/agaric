@@ -1090,8 +1090,9 @@ async fn project_engine_property_defs(
 /// in id order, so the FK guard dropped each ref into a space projected after
 /// the holder's, and every block has its row now. `false` when a space's
 /// holders do not read, which leaves its refs dropped and the rebuild
-/// incomplete, as a block whose properties do not read does (#2920). No engine
-/// write makes a map that does not read, so that arm has no test.
+/// incomplete, as a block whose properties do not read does (#2920): recovery
+/// runs at pool init, and a `?` here would fail every boot on one bad map. No
+/// engine write makes a map that does not read, so that arm has no test.
 async fn project_engine_dropped_refs(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     engines: &std::collections::HashMap<&str, agaric_engine::loro::engine::LoroEngine>,
@@ -7294,7 +7295,10 @@ mod tests {
             .unwrap();
         insert_snapshot(&pool, TARGET_SPACE, target_doc.export_snapshot().unwrap()).await;
 
-        assert!(reproject_blocks_from_engine(&pool).await.unwrap());
+        assert!(
+            reproject_blocks_from_engine(&pool).await.unwrap(),
+            "both snapshots reproject"
+        );
 
         let link: Option<(Option<String>, Option<String>)> = sqlx::query_as(
             "SELECT value_ref, value_text FROM block_properties WHERE block_id = ? AND key = 'link'",
