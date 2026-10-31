@@ -449,3 +449,78 @@ async fn move_with_nothing_to_move_appends_no_op_6206() {
     }
     assert_eq!(op_count(&pool).await, before);
 }
+
+/// A block that holds the target keeps its value whether or not it would fit
+/// there, and is counted as holding it: `F` holds `sizex` beside its "soon".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_block_holding_the_target_counts_as_holding_it_even_if_its_value_doesnt_fit_6206() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let [_, _, _, d, _, f] = move_seed(&pool, &mat).await;
+    set(&pool, &mat, &f, "sizex", V::Num(3.0)).await;
+
+    assert_eq!(
+        preview(&pool, "whenx", "sizex").await.unwrap(),
+        counts(1, 1, 3),
+        "the 5 moves; F's soon is no number but F holds sizex; B, C and E are no number"
+    );
+    move_values(&pool, &mat, ("whenx", "sizex"), counts(1, 1, 3))
+        .await
+        .unwrap();
+    assert_eq!(
+        rows(&pool, "sizex").await,
+        sorted(vec![numbered(&d, 5.0), numbered(&f, 3.0)]),
+        "F keeps its own sizex"
+    );
+}
+
+/// A text a key's type can't hold moves into the slot of the key that reads
+/// it: a date in `value_date`, "true" as a boolean, a select's option as text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_text_moves_into_the_slot_of_the_key_that_reads_it_6206() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let [a, b, c, d] = cards::<4>(&pool, &mat).await;
+    declare(&pool, &mat, "rawx", "text", None).await;
+    declare(&pool, &mat, "duex", "date", None).await;
+    declare(&pool, &mat, "flagx", "boolean", None).await;
+    declare(&pool, &mat, "kindx", "select", Some(r#"["red","green"]"#)).await;
+    for (card, text) in [
+        (&a, "2026-01-05"),
+        (&b, "true"),
+        (&c, "green"),
+        (&d, "7 apples"),
+    ] {
+        set(&pool, &mat, card, "rawx", V::Text(text)).await;
+    }
+    change(&pool, &mat, ("rawx", "number", None), (0, 4)).await;
+
+    for (into, left) in [
+        ("duex", counts(1, 0, 3)),
+        ("flagx", counts(1, 0, 2)),
+        ("kindx", counts(1, 0, 1)),
+    ] {
+        let moved = move_values(&pool, &mat, ("rawx", into), left)
+            .await
+            .unwrap();
+        assert_eq!(moved.inner, left, "into {into}");
+    }
+
+    assert_eq!(rows(&pool, "duex").await, vec![dated(&a, "2026-01-05")]);
+    assert_eq!(
+        rows(&pool, "flagx").await,
+        vec![(b.clone(), None, None, None, None, Some(1))],
+        "true is a boolean there"
+    );
+    assert_eq!(rows(&pool, "kindx").await, vec![texted(&c, "green")]);
+    assert_eq!(
+        rows(&pool, "rawx").await,
+        vec![texted(&d, "7 apples")],
+        "the text no other key reads stays"
+    );
+    assert_eq!(
+        engine_values(&mat, "flagx"),
+        vec![(b, PropertyValue::Bool(true))],
+        "and the doc holds it so"
+    );
+}
