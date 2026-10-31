@@ -1105,7 +1105,8 @@ async fn project_pass_a(
 /// because its rank shifted had no `block_tags` change in this import — any
 /// tag edit would have put it in the set through the tags root instead.
 /// Re-projecting a page's aliases can drop the row of an alias another page
-/// also claims, so the pass then hands each alias no row holds on (#6229).
+/// also claims, so the pass ends with `project_unheld_page_alias_claims`
+/// (#6229).
 async fn project_pass_b(
     tx: &mut sqlx::SqliteConnection,
     registry: &LoroEngineRegistry,

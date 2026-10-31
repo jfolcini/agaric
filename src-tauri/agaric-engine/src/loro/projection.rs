@@ -1137,8 +1137,8 @@ pub async fn reproject_page_aliases_from_engine(
 /// Give each alias the engines claim and no `page_aliases` row holds to its
 /// lowest claimant with a `blocks` row, spelled as that page's map holds it
 /// (#6229), so removing or purging a contested alias's holder hands the alias
-/// to the next claimant. A soft-deleted page still has its row, so it keeps
-/// its claim until it is purged.
+/// to the next claimant. A soft-deleted page still has a `blocks` row, so it
+/// keeps its claim until it is purged.
 ///
 /// Call it once per transaction, after the transaction's last alias op: run
 /// per op, a respell's remove (the same alias, re-cased, removed and added in
