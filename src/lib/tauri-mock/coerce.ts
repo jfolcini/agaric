@@ -14,7 +14,7 @@ export type HeldValue = string | number | boolean
 /** Rust's `f64` grammar: a sign, digits with an optional point, an optional exponent. */
 const RUST_F64 = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/
 /** Rust's `str::trim`: Unicode White_Space, which takes U+0085 and not U+FEFF, unlike JS's. */
-const RUST_TRIM = /^\p{White_Space}+|\p{White_Space}+$/gu
+export const RUST_TRIM = /^\p{White_Space}+|\p{White_Space}+$/gu
 /** `canonical_ulid`: Crockford base32, any case, no overflow. */
 const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/i
 

@@ -13,6 +13,7 @@ import type {
   PropertyMergeCounts,
   PropertyTypeChangeCounts,
   PropertyUnfitCounts,
+  UnfitValueReplacement,
 } from '@/lib/bindings'
 import { EVENT_PROPERTY_CHANGED } from '@/lib/block-event-names'
 import {
@@ -58,6 +59,8 @@ import {
 } from '@/lib/tauri-mock/property-type-change'
 import {
   addUnfitValuesToOptions,
+  convertUnfitPropertyValues,
+  distinctUnfitValues,
   removeUnfitPropertyValues,
   unfitCounts,
   unfitValues,
@@ -1151,6 +1154,23 @@ export const propertiesHandlers = {
     return addUnfitValuesToOptions(a['spaceId'] as string, a['key'] as string)
   },
 
+  // Grouped by the value as shown, paged by it in byte order.
+  list_distinct_unfit_property_values: (args) => {
+    const a = args as Record<string, unknown>
+    const limit = pageRequestLimit(a['limit'])
+    const rows = distinctUnfitValues(a['spaceId'] as string, a['key'] as string)
+    return paginateKeyset(rows, (row) => [row['value'] as string], limit, a['cursor'], null, [])
+  },
+
+  convert_unfit_property_values: (args) => {
+    const a = args as Record<string, unknown>
+    return convertUnfitPropertyValues(
+      a['spaceId'] as string,
+      a['key'] as string,
+      a['replacements'] as UnfitValueReplacement[],
+    )
+  },
+
   // ---------------------------------------------------------------------------
   // Peer name update
   // ---------------------------------------------------------------------------
@@ -1246,6 +1266,8 @@ export const propertiesHandlers = {
   | 'list_unfit_property_values'
   | 'remove_unfit_property_values'
   | 'add_unfit_values_to_options'
+  | 'list_distinct_unfit_property_values'
+  | 'convert_unfit_property_values'
   | 'list_projected_agenda'
   | 'notify_task'
   | 'get_reminder_settings'

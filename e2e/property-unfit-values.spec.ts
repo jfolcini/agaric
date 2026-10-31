@@ -12,7 +12,8 @@ import {
 
 /**
  * #6206 — Settings › Properties counts a key's values that don't fit it and
- * removes them, or adds them to a select's options. The seeded Personal space
+ * removes them, adds them to a select's options, or converts each to a value
+ * that fits. The seeded Personal space
  * declares `project` as a select of alpha, beta and gamma, held by two meeting
  * blocks as alpha and beta; editing the options to drop beta leaves the second
  * block's beta not fitting. Each effect is read back after leaving the view
@@ -64,6 +65,18 @@ async function openUnfit(page: Page) {
   return dialog
 }
 
+/** Convert the meeting block's beta to alpha; the badge goes. */
+async function convertBetaToAlpha(page: Page): Promise<void> {
+  const dialog = await openUnfit(page)
+  await dialog.getByRole('button', { name: 'Convert…', exact: true }).click()
+  await expect(dialog.getByText('1 block', { exact: true })).toBeVisible()
+  await dialog.getByRole('combobox', { name: 'Replacement for beta', exact: true }).click()
+  await page.getByRole('option', { name: 'alpha', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Convert 1', exact: true }).click()
+  await expect(activeDialog(page)).toHaveCount(0)
+  await expect(unfitBadge(page)).toHaveCount(0)
+}
+
 async function comeBack(page: Page): Promise<void> {
   await navigateToView(page, 'Journal')
   await openProperties(page)
@@ -88,6 +101,26 @@ test.describe("Values that don't fit a property @settings", () => {
     await comeBack(page)
     await expect(panel(page).getByTestId('property-usage-project')).toHaveText('2 uses')
     await expect(unfitBadge(page)).toHaveText("1 doesn't fit")
+  })
+
+  test("Convert replaces each with a value that fits, and the toast's Undo puts them back", async ({
+    page,
+  }) => {
+    await dropBeta(page)
+    await convertBetaToAlpha(page)
+    await page
+      .locator('[data-sonner-toast][data-front="true"]')
+      .getByRole('button', { name: 'Undo', exact: true })
+      .click()
+    await expect(unfitBadge(page)).toHaveText("1 doesn't fit")
+    await comeBack(page)
+    await expect(unfitBadge(page)).toHaveText("1 doesn't fit")
+
+    // The toast's Undo is read back before it can time out; the conversion after it.
+    await convertBetaToAlpha(page)
+    await comeBack(page)
+    await expect(panel(page).getByTestId('property-usage-project')).toHaveText('2 uses')
+    await expect(unfitBadge(page)).toHaveCount(0)
   })
 
   test('Add to options makes them fit', async ({ page }) => {

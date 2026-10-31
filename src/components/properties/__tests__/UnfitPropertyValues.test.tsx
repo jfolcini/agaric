@@ -314,6 +314,70 @@ describe('UnfitPropertyValues', () => {
     expect(await within(dialog).findByText(t('propertiesView.unfitNone'))).toBeInTheDocument()
   })
 
+  it('offers Convert… on a select and not on a ref, whose values are blocks', async () => {
+    const user = userEvent.setup()
+    await projectLosesBeta()
+    await dispatch('create_property_def', {
+      spaceId: PERSONAL.id,
+      key: 'owner',
+      valueType: 'ref',
+      options: null,
+    })
+    const slots = { value_num: null, value_date: null, value_ref: null, value_bool: null }
+    properties.get(MTG_1)?.set('owner', rowOf('owner', { value_text: 'Bob', ...slots }))
+    render(<PropertyDefinitionsList />)
+
+    let dialog = await openDialog('project')
+    expect(await within(dialog).findByText('beta')).toBeInTheDocument()
+    expect(button(dialog, 'propertiesView.convertOpen')).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: t('action.cancel') }))
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    dialog = await openDialog('owner')
+    expect(await within(dialog).findByText('Bob')).toBeInTheDocument()
+    expect(button(dialog, 'propertiesView.unfitRemove')).toBeInTheDocument()
+    expect(button(dialog, 'propertiesView.convertOpen')).not.toBeInTheDocument()
+  })
+
+  it('goes back from Convert to the review', async () => {
+    const user = userEvent.setup()
+    await projectLosesBeta()
+    render(<PropertyDefinitionsList />)
+    const dialog = await openDialog('project')
+    await user.click(button(dialog, 'propertiesView.convertOpen') as HTMLElement)
+    expect(
+      await within(dialog).findByLabelText(
+        t('propertiesView.convertReplacementLabel', { value: 'beta' }),
+      ),
+    ).toBeInTheDocument()
+    expect(button(dialog, 'propertiesView.unfitRemove')).not.toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: t('nav.back') }))
+    expect(button(dialog, 'propertiesView.unfitRemove')).toBeInTheDocument()
+    expect(
+      within(dialog).queryByLabelText(
+        t('propertiesView.convertReplacementLabel', { value: 'beta' }),
+      ),
+    ).not.toBeInTheDocument()
+    expect(await within(dialog).findByText('beta')).toBeInTheDocument()
+  })
+
+  it('opens again on the review, not on Convert', async () => {
+    const user = userEvent.setup()
+    await projectLosesBeta()
+    render(<PropertyDefinitionsList />)
+    let dialog = await openDialog('project')
+    await user.click(button(dialog, 'propertiesView.convertOpen') as HTMLElement)
+    await user.keyboard('{Escape}')
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+    dialog = await openDialog('project')
+    expect(button(dialog, 'propertiesView.unfitRemove')).toBeInTheDocument()
+  })
+
   it('returns focus to the badge on Cancel', async () => {
     const user = userEvent.setup()
     await projectLosesBeta()
