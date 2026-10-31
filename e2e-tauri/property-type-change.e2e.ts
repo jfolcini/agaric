@@ -112,7 +112,7 @@ describe('Agaric real-backend property type change (#5841) @settings @editor', (
       timeout: NAV_TIMEOUT,
       timeoutMsg: 'the block holding 3 shows no points chip after the round-trip',
     })
-    await $(chip(`Points: ${UNFIT}`)).waitForDisplayed({
+    await $(chip(`Points: ${UNFIT}, doesn't fit`)).waitForDisplayed({
       timeout: NAV_TIMEOUT,
       timeoutMsg: "the block holding the value that doesn't fit shows no points chip",
     })
