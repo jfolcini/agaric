@@ -17,6 +17,8 @@ interface InlinePropertyChipProps {
   onNavigate?: ((id: string) => void) | undefined
   /** Open the block's property drawer, where a boolean is a checkbox. */
   onShowProperties?: ((blockId: string) => void) | undefined
+  /** The value doesn't fit its key's definition (#6206). */
+  unfit?: boolean | undefined
 }
 
 /**
@@ -24,6 +26,7 @@ interface InlinePropertyChipProps {
  * text, date or number value opens the chip editor; a ref shows its target's
  * title as the resolve cache holds it now, so a rename shows at once, and opens
  * the target; a boolean says its state in words and opens the property drawer.
+ * Any of them carries a mark when its value doesn't fit its key (`unfit`).
  */
 export function InlinePropertyChip({
   blockId,
@@ -32,6 +35,7 @@ export function InlinePropertyChip({
   onEditKey,
   onNavigate,
   onShowProperties,
+  unfit,
 }: InlinePropertyChipProps): React.ReactElement {
   const { t } = useTranslation()
   const { key, value, kind } = property
@@ -43,6 +47,7 @@ export function InlinePropertyChip({
         targetId={value}
         onNavigate={onNavigate}
         onKeyClick={onKeyClick}
+        unfit={unfit}
       />
     )
   }
@@ -53,6 +58,7 @@ export function InlinePropertyChip({
         value={t(value === 'true' ? 'property.booleanTrue' : 'property.booleanFalse')}
         onClick={onShowProperties && (() => onShowProperties(blockId))}
         onKeyClick={onKeyClick}
+        unfit={unfit}
       />
     )
   }
@@ -62,6 +68,7 @@ export function InlinePropertyChip({
       value={value}
       onClick={() => onEditProp({ key, value })}
       onKeyClick={onKeyClick}
+      unfit={unfit}
     />
   )
 }
@@ -71,11 +78,13 @@ function RefPropertyChip({
   targetId,
   onNavigate,
   onKeyClick,
+  unfit,
 }: {
   propKey: string
   targetId: string
   onNavigate?: ((id: string) => void) | undefined
   onKeyClick: () => void
+  unfit?: boolean | undefined
 }): React.ReactElement {
   const { t } = useTranslation()
   const title = useResolveStore((s) => s.resolveTitle(targetId))
@@ -99,6 +108,7 @@ function RefPropertyChip({
       valueAriaLabel={t('property.openRefTarget', { title })}
       onClick={onNavigate && (() => onNavigate(targetId))}
       onKeyClick={onKeyClick}
+      unfit={unfit}
     />
   )
 }

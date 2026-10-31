@@ -248,6 +248,12 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
         mockListBlocks(...args).then((data: unknown) => ({ status: 'ok', data })),
       loadPageSubtree: (...args: unknown[]) =>
         mockLoadPageSubtree(...args).then((data: unknown) => ({ status: 'ok', data })),
+      // #6206 — the chips read the space's definitions to mark a value that doesn't fit.
+      listPropertyDefs: () =>
+        Promise.resolve({
+          status: 'ok',
+          data: { items: [], next_cursor: null, has_more: false, total_count: null },
+        }),
     },
   }
 })

@@ -28,6 +28,7 @@ import { commands } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { useSpaceStore } from '@/stores/space'
 
 export interface UsePropertyRowEditorArgs {
@@ -178,6 +179,8 @@ export function usePropertyRowEditor({
           await commands.updatePropertyDefOptions(currentSpaceId, def.key, JSON.stringify(next)),
         )
         onDefUpdated?.(updatedDef)
+        // The options decide which of the key's values fit, wherever they show.
+        invalidatePropertyCaches()
         return true
       } catch (err) {
         logger.error('PropertyRowEditor', 'Failed to update select options', { key: def.key }, err)

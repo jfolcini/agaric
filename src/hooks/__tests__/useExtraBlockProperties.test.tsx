@@ -171,8 +171,8 @@ describe('useExtraBlockProperties (provider-projected, #2288)', () => {
     await waitFor(() => {
       expect(result.current['B1']).toEqual([
         { key: 'note', value: 'hello' },
-        { key: 'when', value: '2025-03-04' },
-        { key: 'count', value: '42' },
+        { key: 'when', value: '2025-03-04', kind: 'date' },
+        { key: 'count', value: '42', kind: 'number' },
       ])
     })
   })

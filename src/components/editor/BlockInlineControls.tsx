@@ -9,8 +9,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import type { InlineProperty } from '@/hooks/useExtraBlockProperties'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
+import { useSpacePropertyDefs } from '@/hooks/useSpacePropertyDefs'
 import { dueDateColor, formatCompactDate } from '@/lib/date-utils'
 import { priorityColor } from '@/lib/priority-color'
+import { isUnfit } from '@/lib/property-fit'
 import { formatRepeatLabel } from '@/lib/repeat-utils'
 import { cn } from '@/lib/utils'
 import { useBlockStore } from '@/stores/blocks'
@@ -404,7 +406,7 @@ function RepeatIndicator({ repeatValue }: { repeatValue: string }): React.ReactE
   )
 }
 
-/** The inline property chips + `+N` overflow pill. */
+/** The inline property chips, each marked if it doesn't fit its key, + `+N` overflow pill. */
 function InlineProperties({
   blockId,
   filteredProperties,
@@ -423,6 +425,7 @@ function InlineProperties({
   onNavigate?: ((id: string) => void) | undefined
 }): React.ReactElement {
   const { t } = useTranslation()
+  const defs = useSpacePropertyDefs()
   return (
     <>
       {filteredProperties.slice(0, inlinePropLimit).map((p) => (
@@ -434,6 +437,7 @@ function InlineProperties({
           onEditKey={onEditKey}
           onNavigate={onNavigate}
           onShowProperties={onShowProperties}
+          unfit={isUnfit(p.key, p.kind ?? 'text', p.value, defs?.get(p.key))}
         />
       ))}
       {filteredProperties.length > inlinePropLimit && (

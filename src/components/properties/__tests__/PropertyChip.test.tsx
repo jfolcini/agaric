@@ -1,9 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { PropertyChip } from '@/components/properties/PropertyChip'
+import { t } from '@/lib/i18n'
 import { openUrl } from '@/lib/open-url'
 
 vi.mock('@/lib/open-url', () => ({ openUrl: vi.fn().mockResolvedValue(true) }))
@@ -410,6 +411,58 @@ describe('PropertyChip', () => {
     it('has no a11y violations rendering the open-link control', async () => {
       const { container } = render(
         <PropertyChip propKey="homepage" value="https://example.com" onClick={vi.fn()} />,
+      )
+
+      await waitFor(async () => {
+        expect(await axe(container)).toHaveNoViolations()
+      })
+    })
+  })
+
+  // #6206 — a value that doesn't fit its key's definition carries a mark.
+  describe('a value that does not fit', () => {
+    const MARK = t('property.unfitReview', { key: 'Project', value: 'beta' })
+
+    it('wears the warning tone, says so in its name, and carries the mark after the value', () => {
+      render(
+        <PropertyChip
+          propKey="project"
+          value="beta"
+          onClick={vi.fn()}
+          onKeyClick={vi.fn()}
+          unfit
+        />,
+      )
+
+      const chip = screen.getByRole('group', {
+        name: t('property.unfitChipLabel', { key: 'Project', value: 'beta' }),
+      })
+      expect(chip).toHaveClass('bg-alert-warning', 'text-alert-warning-foreground')
+      expect(chip).not.toHaveClass('bg-muted')
+      const buttons = within(chip).getAllByRole('button')
+      expect(buttons.map((b) => b.getAttribute('aria-label'))).toEqual([
+        t('property.editKeyLabel', { key: 'Project' }),
+        t('property.selectValue', { key: 'Project', value: 'beta' }),
+        MARK,
+      ])
+    })
+
+    it('carries no mark on a value that fits', () => {
+      render(<PropertyChip propKey="project" value="beta" onClick={vi.fn()} />)
+
+      expect(screen.queryByRole('button', { name: MARK })).not.toBeInTheDocument()
+      expect(screen.getByRole('group')).toHaveClass('bg-muted')
+    })
+
+    it('has no a11y violations with the mark', async () => {
+      const { container } = render(
+        <PropertyChip
+          propKey="project"
+          value="beta"
+          onClick={vi.fn()}
+          onKeyClick={vi.fn()}
+          unfit
+        />,
       )
 
       await waitFor(async () => {
