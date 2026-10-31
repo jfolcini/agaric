@@ -995,7 +995,8 @@ async fn project_engine_derived_rows(
 /// [`reproject_blocks_from_engine`]'s per-space pass: load the persisted
 /// snapshot into a throwaway engine and project every live block. `None` when
 /// the snapshot failed to decode (the space is skipped); otherwise
-/// `(blocks, skipped, engine)` for the space, the engine kept for the ref pass.
+/// `(blocks, skipped, engine)` for the space, the engine kept for the ref and
+/// tag passes.
 async fn reproject_space_from_engine(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     space_id_str: &str,
@@ -1115,6 +1116,36 @@ async fn project_engine_dropped_refs(
     })
     .await?;
     Ok(!unread.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// [`reproject_blocks_from_engine`]'s tag pass (#6236), beside its ref pass
+/// [`project_engine_dropped_refs`]: the spaces project in id order, so the FK
+/// guard dropped each tag into a space projected after the holder's. `false`
+/// when a space's tag maps do not read, which leaves its tags dropped and the
+/// rebuild incomplete rather than failing every boot. No engine write makes a
+/// tag map that does not read, so that arm has no test.
+async fn project_engine_dropped_tags(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    engines: &std::collections::HashMap<&str, agaric_engine::loro::engine::LoroEngine>,
+) -> Result<bool, agaric_core::error::AppError> {
+    let mut read = true;
+    let mut edges = Vec::new();
+    for (space_id, engine) in engines {
+        match engine.read_tag_edges() {
+            Ok(space_edges) => edges.extend(space_edges),
+            Err(e) => {
+                tracing::error!(
+                    space_id = %space_id,
+                    error = %e,
+                    "recovery (#6236): the space's tag maps do not read; its dropped tags stay \
+                     dropped"
+                );
+                read = false;
+            }
+        }
+    }
+    agaric_engine::loro::projection::project_dropped_tags(tx, &edges).await?;
+    Ok(read)
 }
 
 /// [`reproject_blocks_from_engine`]'s post-commit rebuild of the
@@ -1260,7 +1291,9 @@ pub(crate) async fn reproject_blocks_from_engine(
     }
 
     let refs_projected = project_engine_dropped_refs(&mut tx, &engines).await?;
-    let anything_skipped = skipped_spaces > 0 || skipped_blocks_total > 0 || !refs_projected;
+    let tags_projected = project_engine_dropped_tags(&mut tx, &engines).await?;
+    let anything_skipped =
+        skipped_spaces > 0 || skipped_blocks_total > 0 || !refs_projected || !tags_projected;
 
     if spaces_reprojected == 0 {
         // Every snapshot failed to DECODE — nothing rebuilt. Roll back the
@@ -7311,6 +7344,73 @@ mod tests {
             link,
             Some((Some(TARGET.to_owned()), None)),
             "the holder keeps its ref to the target"
+        );
+    }
+
+    /// #6236: disaster recovery keeps a tag into a space it projects later,
+    /// and the holder's child inherits it. It projects the spaces in id order,
+    /// so the holder's, first, finds no row for the tag, and the FK guard drops
+    /// the edge.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recovery_keeps_a_tag_into_a_space_it_projects_later_6236() {
+        const HOLDER_SPACE: &str = "01HZ00000000000000000000S1";
+        const TAG_SPACE: &str = "01HZ00000000000000000000S2";
+        const HOLDER: &str = "01HZ0000000000000000000H01";
+        const CHILD: &str = "01HZ0000000000000000000C01";
+        const TAG: &str = "01HZ0000000000000000000T01";
+        let (pool, _dir) = test_pool().await;
+        for space in [HOLDER_SPACE, TAG_SPACE] {
+            for sql in [
+                "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?1, 'page', 'S', ?1)",
+                "INSERT INTO spaces (id) VALUES (?1)",
+            ] {
+                sqlx::query(sql).bind(space).execute(&pool).await.unwrap();
+            }
+        }
+        let mut holder_doc =
+            agaric_engine::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
+        holder_doc
+            .apply_create_block(HOLDER, "page", "Holder", None, 0)
+            .unwrap();
+        holder_doc
+            .apply_create_block(CHILD, "content", "detail", Some(HOLDER), 0)
+            .unwrap();
+        holder_doc.apply_add_tag(HOLDER, TAG).unwrap();
+        insert_snapshot(&pool, HOLDER_SPACE, holder_doc.export_snapshot().unwrap()).await;
+        let mut tag_doc =
+            agaric_engine::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
+        tag_doc
+            .apply_create_block(TAG, "tag", "urgent", None, 0)
+            .unwrap();
+        insert_snapshot(&pool, TAG_SPACE, tag_doc.export_snapshot().unwrap()).await;
+
+        assert!(
+            reproject_blocks_from_engine(&pool).await.unwrap(),
+            "both snapshots reproject"
+        );
+
+        let tags: Vec<String> =
+            sqlx::query_scalar("SELECT tag_id FROM block_tags WHERE block_id = ?")
+                .bind(HOLDER)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(tags, vec![TAG.to_owned()], "the holder keeps its tag");
+        let inherited: Vec<(String, String)> = sqlx::query_as(
+            "SELECT tag_id, inherited_from FROM block_tag_inherited WHERE block_id = ?",
+        )
+        .bind(CHILD)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            inherited,
+            vec![(TAG.to_owned(), HOLDER.to_owned())],
+            "the holder's child inherits the tag"
+        );
+        assert!(
+            !engine_reproject_pending(&pool).await.unwrap(),
+            "a rebuild whose tag maps all read is complete, so no retry is armed"
         );
     }
 

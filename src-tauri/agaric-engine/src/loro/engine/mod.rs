@@ -2682,6 +2682,58 @@ mod op_coverage_tests {
         assert!(tags.is_empty());
     }
 
+    /// #6236 — each tagged block's edges, and none for a block whose tags
+    /// were all removed.
+    #[test]
+    fn read_tag_edges_lists_each_tagged_blocks_edges_6236() {
+        const UNTAGGED: &str = "01HZ00000000000000000000EF";
+        let mut engine = engine_with_block(BLOCK_A);
+        engine
+            .apply_create_block(BLOCK_B, "content", "", None, 1)
+            .expect("create B");
+        engine
+            .apply_create_block(UNTAGGED, "content", "", None, 2)
+            .expect("create UNTAGGED");
+        engine.apply_add_tag(BLOCK_A, TAG_X).expect("add X to A");
+        engine.apply_add_tag(BLOCK_A, TAG_Y).expect("add Y to A");
+        engine.apply_add_tag(BLOCK_B, TAG_Y).expect("add Y to B");
+        engine
+            .apply_add_tag(UNTAGGED, TAG_X)
+            .expect("add X to UNTAGGED");
+        engine
+            .apply_remove_tag(UNTAGGED, TAG_X)
+            .expect("remove X from UNTAGGED");
+
+        let mut edges = engine.read_tag_edges().expect("read edges");
+        edges.sort_unstable();
+        assert_eq!(
+            edges,
+            vec![
+                (BLOCK_A.to_owned(), TAG_X.to_owned()),
+                (BLOCK_A.to_owned(), TAG_Y.to_owned()),
+                (BLOCK_B.to_owned(), TAG_Y.to_owned()),
+            ],
+            "every edge the tag maps hold, and none for UNTAGGED"
+        );
+    }
+
+    /// #6236 — a tag slot that does not read fails the read.
+    #[test]
+    fn read_tag_edges_fails_on_a_slot_that_does_not_read_6236() {
+        let engine = engine_with_block(BLOCK_A);
+        engine
+            .doc
+            .get_map(super::BLOCK_TAGS_ROOT)
+            .insert(BLOCK_A, "not a container")
+            .expect("write a scalar slot");
+
+        let result = engine.read_tag_edges();
+        assert!(
+            matches!(result, Err(agaric_core::error::AppError::Validation { .. })),
+            "the slot's error is the read's, got {result:?}"
+        );
+    }
+
     // ── RemoveTag ─────────────────────────────────────────────────────
 
     #[test]

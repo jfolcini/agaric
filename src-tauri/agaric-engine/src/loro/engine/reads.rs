@@ -350,6 +350,21 @@ impl LoroEngine {
         }
         Ok(out)
     }
+    /// Every `(block, tag)` edge the doc's tag maps hold, each block's tags as
+    /// [`Self::read_tags`] reads them (#6236).
+    pub fn read_tag_edges(&self) -> Result<Vec<(String, String)>, AppError> {
+        let mut blocks = Vec::new();
+        self.doc
+            .get_map(BLOCK_TAGS_ROOT)
+            .for_each(|block_id, _| blocks.push(block_id.to_owned()));
+        let mut edges = Vec::new();
+        for block_id in blocks {
+            for tag_id in self.read_tags(&block_id)? {
+                edges.push((block_id.clone(), tag_id));
+            }
+        }
+        Ok(edges)
+    }
     /// True iff `deleted_at` has been set on this block (any non-null value).
     pub fn read_deleted(&self, block_id: &str) -> Result<bool, AppError> {
         let block_map = self.get_block_map(block_id, "read deleted")?;

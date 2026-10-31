@@ -1757,6 +1757,42 @@ pub async fn project_dropped_refs(
     Ok(healed)
 }
 
+/// Project the tag edges the FK guard in [`reproject_block_tags_from_engine`]
+/// dropped (#6236): each `(block, tag)` of `edges` with no `block_tags` row
+/// whose block and tag both have a `blocks` row. The guard drops an edge whose
+/// tag has no row yet, as when the tag's space is imported after the holder's,
+/// and nothing else revisits the holder. It only adds. Returns the blocks it
+/// gave a row, each once.
+pub async fn project_dropped_tags(
+    conn: &mut SqliteConnection,
+    edges: &[(String, String)],
+) -> Result<Vec<agaric_core::ulid::BlockId>, AppError> {
+    if edges.is_empty() {
+        return Ok(Vec::new());
+    }
+    let edges_json = serde_json::to_string(edges)?;
+    // `OR IGNORE` skips an edge already held, and `RETURNING` names only the
+    // rows inserted. Both guards: an edge whose block or tag has no row would
+    // fail the FK.
+    let tagged: std::collections::BTreeSet<String> = sqlx::query_scalar!(
+        r#"INSERT OR IGNORE INTO block_tags (block_id, tag_id)
+           SELECT json_extract(je.value, '$[0]'), json_extract(je.value, '$[1]')
+           FROM json_each(?1) je
+           WHERE EXISTS (SELECT 1 FROM blocks WHERE id = json_extract(je.value, '$[0]'))
+             AND EXISTS (SELECT 1 FROM blocks WHERE id = json_extract(je.value, '$[1]'))
+           RETURNING block_id AS "block_id!: String""#,
+        edges_json,
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .collect();
+    Ok(tagged
+        .iter()
+        .map(|id| agaric_core::ulid::BlockId::from_trusted(id))
+        .collect())
+}
+
 /// Project a `RenamePropertyKey` (#5841): every row of `space_id` under
 /// `old_key` whose block holds no `new_key` row moves to `new_key`, and the
 /// space's definition moves when it declares no `new_key`, keeping its
@@ -1912,8 +1948,9 @@ pub async fn project_property_value_writes(
 ///   that reached the changed set through a content / property / position
 ///   edit rather than a tag op. (The comparison uses the raw engine list,
 ///   so a dangling engine tag id — see FK safety below — keeps the sets
-///   unequal and re-runs the replace; that is deliberate, since the
-///   dangling target may have arrived by the next import.)
+///   unequal and re-runs the replace, which then picks up a target that has
+///   since arrived. A holder no later import touches gets that edge from
+///   [`project_dropped_tags`], #6236.)
 /// * **One `json_each` INSERT.** The re-insert is a single
 ///   `INSERT … SELECT FROM json_each(?)` statement over the whole tag
 ///   list (mirroring [`reproject_dense_positions`]) instead of one
@@ -1933,7 +1970,8 @@ pub async fn project_property_value_writes(
 /// inbound-sync tx (and keep failing on retry). So the INSERT is gated on
 /// the tag block existing: a dangling/foreign edge is silently dropped,
 /// matching the engine's intent (the tag block is gone) without breaking
-/// the sync.
+/// the sync. A foreign edge stays dropped only until the tag's space lands:
+/// [`project_dropped_tags`] then gives it its row (#6236).
 pub async fn reproject_block_tags_from_engine(
     conn: &mut SqliteConnection,
     block_id: &agaric_core::ulid::BlockId,
@@ -4691,6 +4729,77 @@ mod tests {
         assert!(
             matches!(result, Err(AppError::Validation { .. })),
             "the read's error is the pass's, got {result:?}"
+        );
+    }
+
+    /// #6236 — of the engines' tag edges, only one with no row whose block
+    /// and tag both have a `blocks` row gets its row: an edge to a tag with
+    /// no row and one from a block with no row stay dropped, and a row
+    /// already held stays as it is and is not reported. A block given two
+    /// rows is reported once.
+    #[tokio::test]
+    async fn dropped_tags_project_once_both_ends_have_a_row_6236() {
+        const TAGGED: &str = "01HZ0000000000000000000TB1";
+        const ALREADY: &str = "01HZ0000000000000000000AL1";
+        const NO_ROW: &str = "01HZ0000000000000000000NR1";
+        const TAG_ONE: &str = "01HZ0000000000000000000TG1";
+        const TAG_TWO: &str = "01HZ0000000000000000000TG2";
+        const NO_TAG: &str = "01HZ0000000000000000000NT1";
+        let (pool, _dir) = fresh_pool().await;
+        for (id, block_type) in [
+            (TAGGED, "content"),
+            (ALREADY, "content"),
+            (TAG_ONE, "tag"),
+            (TAG_TWO, "tag"),
+        ] {
+            sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, ?, '')")
+                .bind(id)
+                .bind(block_type)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(ALREADY)
+            .bind(TAG_ONE)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let edges: Vec<(String, String)> = [
+            (TAGGED, TAG_ONE),
+            (TAGGED, TAG_TWO),
+            (TAGGED, NO_TAG),
+            (ALREADY, TAG_ONE),
+            (NO_ROW, TAG_ONE),
+        ]
+        .into_iter()
+        .map(|(block, tag)| (block.to_owned(), tag.to_owned()))
+        .collect();
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        let tagged = project_dropped_tags(&mut conn, &edges)
+            .await
+            .expect("tag pass");
+        drop(conn);
+
+        assert_eq!(
+            tagged,
+            vec![BlockId::from_trusted(TAGGED)],
+            "only the block given a row is reported, once"
+        );
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT block_id, tag_id FROM block_tags ORDER BY block_id, tag_id")
+                .fetch_all(&pool)
+                .await
+                .expect("tag rows");
+        assert_eq!(
+            rows,
+            vec![
+                (ALREADY.to_owned(), TAG_ONE.to_owned()),
+                (TAGGED.to_owned(), TAG_ONE.to_owned()),
+                (TAGGED.to_owned(), TAG_TWO.to_owned()),
+            ],
+            "both healed edges land, the held row stays, the dangling edges have none"
         );
     }
 
