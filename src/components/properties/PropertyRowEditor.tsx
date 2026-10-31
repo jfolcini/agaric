@@ -31,9 +31,11 @@ import {
   type UsePropertyRowEditorReturn,
   usePropertyRowEditor,
 } from '@/components/properties/PropertyRowEditor/usePropertyRowEditor'
+import { UnfitValueMark } from '@/components/properties/UnfitValueMark'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
+import { isUnfit, valueForm } from '@/lib/property-fit'
 import { formatPropertyName } from '@/lib/property-utils'
 
 export interface PropertyRowEditorProps {
@@ -84,6 +86,7 @@ export function PropertyRowEditor({
     forceSaveOnBlur,
   })
   const valueLabel = t('pageProperty.valueLabel', { key: prop.key })
+  const unfit = isUnfit(prop.key, valueForm(prop), prop.value_text, def)
 
   return (
     <div className="property-row flex items-center gap-2 text-sm">
@@ -97,8 +100,10 @@ export function PropertyRowEditor({
           onSave={onSave}
           valueLabel={valueLabel}
           hasCreateNewPage={onCreateNewPage != null}
+          unfit={unfit}
         />
       </div>
+      {unfit && <UnfitValueMark propKey={prop.key} value={bag.currentValue} />}
       {bag.valueType === 'select' && !def?.builtin && (
         <SelectOptionsPopover propKey={prop.key} state={bag.selectOptions} />
       )}
@@ -123,9 +128,10 @@ interface EditorSlotProps {
   onSave: (rawValue: string) => void
   valueLabel: string
   hasCreateNewPage: boolean
+  unfit: boolean
 }
 
-function EditorSlot({ bag, prop, onSave, valueLabel, hasCreateNewPage }: EditorSlotProps) {
+function EditorSlot({ bag, prop, onSave, valueLabel, hasCreateNewPage, unfit }: EditorSlotProps) {
   switch (bag.valueType) {
     case 'ref': {
       return (
@@ -141,10 +147,16 @@ function EditorSlot({ bag, prop, onSave, valueLabel, hasCreateNewPage }: EditorS
       return <BooleanEditor prop={prop} onSave={onSave} />
     }
     case 'select': {
-      return <SelectEditor state={bag.select} ariaLabel={valueLabel} />
+      return (
+        <SelectEditor
+          state={bag.select}
+          ariaLabel={valueLabel}
+          unfitValue={unfit ? bag.currentValue : null}
+        />
+      )
     }
     case 'number': {
-      return <NumberEditor state={bag.textLike} ariaLabel={valueLabel} />
+      return <NumberEditor state={bag.textLike} ariaLabel={valueLabel} unfit={unfit} />
     }
     case 'date': {
       return <DateEditor state={bag.date} ariaLabel={valueLabel} />

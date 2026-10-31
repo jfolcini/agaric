@@ -140,13 +140,14 @@ export function usePropertyRowEditor({
 
   const handleBlur = useCallback(() => {
     if (valueType === 'date') {
-      handleDateBlur()
+      // Parsing an untouched value that doesn't fit would rewrite it, "next friday" into a date.
+      if (dateInput.trim() !== currentValue) handleDateBlur()
       return
     }
     if (forceSaveOnBlur || localValue !== currentValue) {
       onSave(localValue)
     }
-  }, [localValue, currentValue, onSave, valueType, handleDateBlur, forceSaveOnBlur])
+  }, [localValue, currentValue, onSave, valueType, handleDateBlur, dateInput, forceSaveOnBlur])
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {

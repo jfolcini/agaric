@@ -9,14 +9,16 @@ import { Input } from '@/components/ui/input'
 export interface NumberEditorProps {
   state: TextLikeEditorState
   ariaLabel: string
+  /** The stored value is not a number; a number input would show it empty. */
+  unfit: boolean
 }
 
-export function NumberEditor({ state, ariaLabel }: NumberEditorProps) {
+export function NumberEditor({ state, ariaLabel, unfit }: NumberEditorProps) {
   const { localValue, handleChange, handleBlur } = state
   return (
     <Input
       className="h-7 text-xs"
-      type="number"
+      type={unfit ? 'text' : 'number'}
       value={localValue}
       onChange={handleChange}
       onBlur={handleBlur}

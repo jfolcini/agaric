@@ -15,7 +15,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -55,6 +55,7 @@ vi.mock('lucide-react', () => ({
   Pencil: () => <svg data-testid="pencil-icon" />,
   Plus: () => <svg data-testid="plus-icon" />,
   Repeat: () => <svg data-testid="repeat-icon" />,
+  TriangleAlert: () => <svg data-testid="triangle-alert-icon" />,
   User: () => <svg data-testid="user-icon" />,
   X: () => <svg data-testid="x-icon" />,
 }))
@@ -67,6 +68,7 @@ import { toast } from 'sonner'
 import { PropertyRowEditor } from '@/components/properties/PropertyRowEditor'
 import { t } from '@/lib/i18n'
 import { propertyDefsQueryKey } from '@/lib/property-caches'
+import { formatPropertyName } from '@/lib/property-utils'
 import { queryClient } from '@/lib/query-client'
 
 const mockedToastError = vi.mocked(toast.error)
@@ -1443,6 +1445,178 @@ describe('PropertyRowEditor ref picker', () => {
       expect(
         screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })),
       ).toBeInTheDocument()
+    })
+  })
+})
+
+// #6206 — a value that doesn't fit its key's definition stays visible in the
+// row, wears the mark that opens its review, and is not rewritten by a blur.
+describe("PropertyRowEditor values that don't fit", () => {
+  const mark = (key: string, value: string) =>
+    screen.queryByRole('button', {
+      name: t('property.unfitReview', { key: formatPropertyName(key), value }),
+    })
+
+  it("shows a boolean key's text beside the indeterminate checkbox, and a toggle saves a boolean", async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('archived', { value_text: 'yes' })}
+        def={makeDef('archived', 'boolean')}
+        onSave={onSave}
+      />,
+    )
+
+    const checkbox = screen.getByRole('checkbox', {
+      name: t('property.booleanToggle', { key: 'archived' }),
+    })
+    expect(checkbox).toHaveAttribute('data-state', 'indeterminate')
+    expect(screen.getByText('yes')).toBeInTheDocument()
+    expect(mark('archived', 'yes')).toBeInTheDocument()
+
+    await user.click(checkbox)
+    expect(onSave).toHaveBeenCalledWith('true')
+  })
+
+  it("shows a ref key's text on the picker", () => {
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('owner', { value_text: 'Alice' })}
+        def={makeDef('owner', 'ref')}
+        onSave={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByLabelText(t('pageProperty.valueLabel', { key: 'owner' }))).toHaveTextContent(
+      'Alice',
+    )
+    expect(mark('owner', 'Alice')).toBeInTheDocument()
+  })
+
+  it('selects a value outside the options as a disabled item, and choosing an option saves it', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('project', { value_text: 'beta' })}
+        def={makeDef('project', 'select', '["alpha"]')}
+        onSave={onSave}
+      />,
+    )
+
+    const select = screen.getByLabelText(
+      t('pageProperty.valueLabel', { key: 'project' }),
+    ) as HTMLSelectElement
+    expect(select.value).toBe('beta')
+    expect(within(select).getByRole('option', { name: 'beta' })).toBeDisabled()
+    expect(mark('project', 'beta')).toBeInTheDocument()
+
+    await user.selectOptions(select, 'alpha')
+    expect(onSave).toHaveBeenCalledWith('alpha')
+  })
+
+  it('marks no option that fits, and adds no item for it', () => {
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('project', { value_text: 'alpha' })}
+        def={makeDef('project', 'select', '["alpha"]')}
+        onSave={vi.fn()}
+      />,
+    )
+
+    const select = screen.getByLabelText(
+      t('pageProperty.valueLabel', { key: 'project' }),
+    ) as HTMLSelectElement
+    expect(Array.from(select.options).map((o) => o.value)).toEqual(['__none__', 'alpha'])
+    expect(mark('project', 'alpha')).not.toBeInTheDocument()
+  })
+
+  it("shows a number key's text as text", () => {
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('effort', { value_text: 'abc' })}
+        def={makeDef('effort', 'number')}
+        onSave={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByLabelText(
+      t('pageProperty.valueLabel', { key: 'effort' }),
+    ) as HTMLInputElement
+    expect(input.type).toBe('text')
+    expect(input.value).toBe('abc')
+    expect(mark('effort', 'abc')).toBeInTheDocument()
+  })
+
+  it("shows a text key's boolean as true", () => {
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('author', { value_bool: 1 })}
+        def={makeDef('author', 'text')}
+        onSave={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByLabelText(
+      t('pageProperty.valueLabel', { key: 'author' }),
+    ) as HTMLInputElement
+    expect(input.value).toBe('true')
+    expect(mark('author', 'true')).toBeInTheDocument()
+  })
+
+  it("writes nothing when a date key's text is blurred untouched", async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('due', { value_text: 'tomorrow' })}
+        def={makeDef('due', 'date')}
+        onSave={onSave}
+      />,
+    )
+
+    await user.click(screen.getByLabelText(t('pageProperty.valueLabel', { key: 'due' })))
+    await user.tab()
+
+    // Positive control: 'parses NL date "tomorrow" on blur…' above saves the same text once typed.
+    expect(onSave).not.toHaveBeenCalled()
+    expect(mark('due', 'tomorrow')).toBeInTheDocument()
+  })
+
+  it('has no a11y violations with marked rows', async () => {
+    const { container } = render(
+      <>
+        <PropertyRowEditor
+          blockId="BLOCK_1"
+          prop={makeProp('archived', { value_text: 'yes' })}
+          def={makeDef('archived', 'boolean')}
+          onSave={vi.fn()}
+        />
+        <PropertyRowEditor
+          blockId="BLOCK_1"
+          prop={makeProp('project', { value_text: 'beta' })}
+          def={makeDef('project', 'select', '["alpha"]')}
+          onSave={vi.fn()}
+        />
+        <PropertyRowEditor
+          blockId="BLOCK_1"
+          prop={makeProp('effort', { value_text: 'abc' })}
+          def={makeDef('effort', 'number')}
+          onSave={vi.fn()}
+        />
+      </>,
+    )
+
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
     })
   })
 })

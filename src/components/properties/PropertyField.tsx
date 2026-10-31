@@ -19,11 +19,13 @@ import { HelpCircle, X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { UnfitValueMark } from '@/components/properties/UnfitValueMark'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useDateInput } from '@/hooks/useDateInput'
+import { cn } from '@/lib/utils'
 
 export interface PropertyFieldProps {
   /**
@@ -50,6 +52,8 @@ export interface PropertyFieldProps {
   onRemove?: (() => void) | null | undefined
   /** Accessible label for the remove button. */
   removeAriaLabel?: string
+  /** The value doesn't fit its key's definition (#6206): the field carries a mark. */
+  unfit?: boolean | undefined
 }
 
 export function PropertyField({
@@ -63,6 +67,7 @@ export function PropertyField({
   onSave,
   onRemove,
   removeAriaLabel,
+  unfit = false,
 }: PropertyFieldProps): React.ReactElement {
   const { t } = useTranslation()
   const isDate = inputType === 'date'
@@ -77,6 +82,23 @@ export function PropertyField({
     handleChange: handleDateChange,
     handleBlur: handleDateBlur,
   } = useDateInput({ initialValue: value, onSave: isDate ? onSave : undefined })
+
+  const input = (
+    <Input
+      className={cn('h-7 text-xs', (isRepeat || unfit) && 'flex-1')}
+      type={isDate ? 'text' : inputType}
+      aria-label={ariaLabel}
+      {...(testId !== undefined ? { 'data-testid': testId } : {})}
+      {...(isDate ? { value: dateInput } : { defaultValue: value })}
+      placeholder={isDate ? t('property.datePlaceholder') : undefined}
+      onBlur={isDate ? handleDateBlur : (e) => onSave(e.target.value)}
+      onChange={isDate ? handleDateChange : undefined}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+      }}
+    />
+  )
+  const mark = unfit && propKey !== undefined && <UnfitValueMark propKey={propKey} value={value} />
 
   return (
     <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
@@ -94,26 +116,15 @@ export function PropertyField({
       </Badge>
       <div className="flex-1">
         {/* when the row is the `repeat` property, wrap the Input
-            and a `<Popover>` help trigger in a flex container. For all
-            other rows (including dates, where `BuiltinDateFields.test`
-            queries `input.parentElement?.querySelector('.text-muted-foreground')`
+            and a `<Popover>` help trigger in a flex container, as a value
+            that doesn't fit wraps it with its mark. For all other rows
+            (including dates, where `BuiltinDateFields.test` queries
+            `input.parentElement?.querySelector('.text-muted-foreground')`
             to find the preview), keep the bare Input so the existing
             DOM structure stays intact. */}
         {isRepeat ? (
           <div className="flex items-center gap-1">
-            <Input
-              className="h-7 text-xs flex-1"
-              type={isDate ? 'text' : inputType}
-              aria-label={ariaLabel}
-              {...(testId !== undefined ? { 'data-testid': testId } : {})}
-              {...(isDate ? { value: dateInput } : { defaultValue: value })}
-              placeholder={isDate ? t('property.datePlaceholder') : undefined}
-              onBlur={isDate ? handleDateBlur : (e) => onSave(e.target.value)}
-              onChange={isDate ? handleDateChange : undefined}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-              }}
-            />
+            {input}
             <Popover>
               <PopoverTrigger asChild>
                 <Button
@@ -150,21 +161,15 @@ export function PropertyField({
                 <p className="text-muted-foreground italic">{t('property.repeatHelpExample')}</p>
               </PopoverContent>
             </Popover>
+            {mark}
+          </div>
+        ) : unfit ? (
+          <div className="flex items-center gap-1">
+            {input}
+            {mark}
           </div>
         ) : (
-          <Input
-            className="h-7 text-xs"
-            type={isDate ? 'text' : inputType}
-            aria-label={ariaLabel}
-            {...(testId !== undefined ? { 'data-testid': testId } : {})}
-            {...(isDate ? { value: dateInput } : { defaultValue: value })}
-            placeholder={isDate ? t('property.datePlaceholder') : undefined}
-            onBlur={isDate ? handleDateBlur : (e) => onSave(e.target.value)}
-            onChange={isDate ? handleDateChange : undefined}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-            }}
-          />
+          input
         )}
         {isDate && isParsing && (
           <p className="text-xs text-muted-foreground mt-0.5">{t('property.dateParsing')}</p>
