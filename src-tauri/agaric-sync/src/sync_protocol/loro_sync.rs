@@ -1035,14 +1035,15 @@ async fn project_pass_defs(
 /// Pass A — core columns, then properties.  This upserts EVERY changed
 /// block (including the tag blocks themselves), so all `blocks` rows
 /// referenced by `block_tags.tag_id` (FK to `blocks(id)`) exist before
-/// Pass B's tag-edge inserts. Every core row also lands before any
-/// property row, as recovery orders them: the FK guard on a ref drops a
-/// row whose target has no `blocks` row yet, and a ref may point at a
-/// block later in the import, such as a page's new child (#6232).
+/// Pass B's tag-edge inserts.
 ///
-/// #4775: the space's own block, which `project_space_block_first` put
-/// first, is projected whole before the rest: its `is_space` row registers
-/// the space that every other core row stamps `space_id` from.
+/// Core rows land before property rows, as recovery orders them: the FK
+/// guard on a ref drops a row whose target has no `blocks` row yet, and a
+/// ref may point at a block later in the import, such as a page's new child
+/// (#6232). The exception is the space's own block, which
+/// `project_space_block_first` put first (#4775): it goes whole, core then
+/// properties, before the rest, because its `is_space` row registers the
+/// space that every other core row stamps `space_id` from.
 ///
 /// Load the space's property definitions ONCE for the whole pass (hoisted
 /// out of the per-block loop to avoid an N+1 SELECT). Every block of this

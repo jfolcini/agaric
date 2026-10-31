@@ -1377,12 +1377,11 @@ async fn reproject_property_row_from_engine(
     // FK safety (#377): `value_ref` is a FK to `blocks(id)` (migration
     // 0062, ON DELETE CASCADE) under `foreign_keys = ON`. The engine can
     // legitimately hand back a ref whose target has no `blocks` row in
-    // THIS space — a cross-space reference. (A target the same import
-    // brings has its row: inbound sync writes core rows first, #6232.) An
-    // unguarded INSERT would raise FK 787 and abort the whole inbound-sync
-    // `BEGIN IMMEDIATE` transaction; every retry would fail identically,
-    // wedging sync for that peer/space. Guard the row exactly like the
-    // sibling `reproject_block_tags_from_engine`: insert only when
+    // THIS space — a cross-space reference. An unguarded INSERT would
+    // raise FK 787 and abort the whole inbound-sync `BEGIN IMMEDIATE`
+    // transaction; every retry would fail identically, wedging sync for
+    // that peer/space. Guard the row exactly like the sibling
+    // `reproject_block_tags_from_engine`: insert only when
     // `value_ref` is NULL (no FK to satisfy — the value lives in another
     // column) or its target block exists. A dangling/cross-space ref is
     // dropped (row-absent), which is the only valid representation —
@@ -4452,8 +4451,8 @@ mod tests {
         // Regression (#377): a ref-typed property whose target has no `blocks`
         // row in this space — a cross-space reference — must NOT raise an FK
         // violation that aborts the inbound-sync transaction (which would
-        // wedge sync, failing identically on every retry). The
-        // dangling ref is dropped (row-absent), mirroring the FK-safe
+        // wedge sync, failing identically on every retry). The dangling ref
+        // is dropped (row-absent), mirroring the FK-safe
         // `reproject_block_tags_from_engine`. The positive case (a ref to an
         // existing block IS inserted) is covered by `reproject_routes_ref_value`
         // above, so together they prove the guard is selective.
