@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT space_id, key FROM property_definitions WHERE value_type = 'ref'",
+  "describe": {
+    "columns": [
+      {
+        "name": "space_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "property_definitions",
+            "name": "space_id"
+          }
+        }
+      },
+      {
+        "name": "key",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "property_definitions",
+            "name": "key"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "842bc9c31306f1a1ee475e09e834a9e9d788c35a9bc639493621e6200a992c8f"
+}

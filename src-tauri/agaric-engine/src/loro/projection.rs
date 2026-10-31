@@ -1700,6 +1700,61 @@ pub async fn reproject_key_values(
     Ok(rewritten)
 }
 
+/// Re-project each ref the engines hold under a key its space declares `ref`
+/// that has no row while its target has a `blocks` row (#6236): the FK guard
+/// drops a ref whose target has no row yet, as when the target's space is
+/// imported after the holder's, and nothing else revisits the holder.
+/// `holders_of(space_id, key)` reads that space's engine and holds no guard
+/// past its return. Returns the blocks it re-projected.
+pub async fn project_dropped_refs(
+    conn: &mut SqliteConnection,
+    holders_of: impl Fn(
+        &str,
+        &str,
+    ) -> Result<Vec<(String, crate::loro::engine::PropertyValue)>, AppError>,
+) -> Result<Vec<agaric_core::ulid::BlockId>, AppError> {
+    use crate::loro::coerce::coerce;
+    use crate::loro::engine::PropertyValue;
+    let ref_keys =
+        sqlx::query!("SELECT space_id, key FROM property_definitions WHERE value_type = 'ref'")
+            .fetch_all(&mut *conn)
+            .await?;
+    let mut healed = Vec::new();
+    for def in ref_keys {
+        let targets: serde_json::Map<String, serde_json::Value> =
+            holders_of(&def.space_id, &def.key)?
+                .into_iter()
+                .filter_map(|(holder, value)| match coerce(&value, "ref") {
+                    Some(PropertyValue::Str(target)) => Some((holder, target.into())),
+                    _ => None,
+                })
+                .collect();
+        if targets.is_empty() {
+            continue;
+        }
+        let targets_json = serde_json::Value::Object(targets).to_string();
+        let dropped: Vec<(String, PropertyValue)> = sqlx::query!(
+            r#"SELECT CAST(je.key AS TEXT) AS "block_id!: String",
+                      CAST(je.value AS TEXT) AS "target!: String"
+               FROM json_each(?1) je
+               WHERE EXISTS (SELECT 1 FROM blocks WHERE id = je.value)
+                 AND NOT EXISTS (SELECT 1 FROM block_properties bp
+                                 WHERE bp.block_id = je.key AND bp.key = ?2)"#,
+            targets_json,
+            def.key,
+        )
+        .fetch_all(&mut *conn)
+        .await?
+        .into_iter()
+        .map(|row| (row.block_id, PropertyValue::Str(row.target)))
+        .collect();
+        healed.extend(
+            reproject_key_values(conn, &def.space_id, &def.key, Some("ref"), &dropped).await?,
+        );
+    }
+    Ok(healed)
+}
+
 /// Project a `RenamePropertyKey` (#5841): every row of `space_id` under
 /// `old_key` whose block holds no `new_key` row moves to `new_key`, and the
 /// space's definition moves when it declares no `new_key`, keeping its
@@ -4525,6 +4580,115 @@ mod tests {
         assert_eq!(
             count.0, 0,
             "a dangling ref property must be dropped (row-absent), not inserted"
+        );
+    }
+
+    /// The holders [`project_dropped_refs`] tests seed: blocks of
+    /// [`DEFS_SPACE`], whose `link` is declared `ref`.
+    const HEALED: &str = "01HZ0000000000000000000HE1";
+    const MISSING: &str = "01HZ0000000000000000000M15";
+    const HELD: &str = "01HZ0000000000000000000HD1";
+    const TARGET: &str = "01HZ0000000000000000000TG1";
+
+    /// [`seed_block_and_property_defs`], [`DEFS_SPACE`] registered, the
+    /// holders in it and the target, and `HELD`'s row pointing at `BLOCK_A`.
+    async fn seed_ref_holders(pool: &SqlitePool) {
+        seed_block_and_property_defs(pool).await;
+        for sql in [
+            "INSERT INTO blocks (id, block_type, content) VALUES (?1, 'content', 'space')",
+            "INSERT INTO spaces (id) VALUES (?1)",
+        ] {
+            sqlx::query(sql)
+                .bind(DEFS_SPACE)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+        for (id, space) in [
+            (HEALED, Some(DEFS_SPACE)),
+            (MISSING, Some(DEFS_SPACE)),
+            (HELD, Some(DEFS_SPACE)),
+            (TARGET, None),
+        ] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, space_id) \
+                 VALUES (?, 'content', '', ?)",
+            )
+            .bind(id)
+            .bind(space)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'link', ?)",
+        )
+        .bind(HELD)
+        .bind(BLOCK_A)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// #6236 — of a declared ref key's holders, only one with no row whose
+    /// target has a `blocks` row gets its row: a dangling ref stays dropped,
+    /// and a row already held stays as it is.
+    #[tokio::test]
+    async fn dropped_refs_project_once_their_target_has_a_row_6236() {
+        const DANGLING: &str = "01HZ000000000000000000DANG";
+        let (pool, _dir) = fresh_pool().await;
+        seed_ref_holders(&pool).await;
+        let holders = vec![
+            (HEALED.to_owned(), pv(TARGET)),
+            (MISSING.to_owned(), pv(DANGLING)),
+            (HELD.to_owned(), pv(TARGET)),
+        ];
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        let healed = project_dropped_refs(&mut conn, |space, key| {
+            assert_eq!((space, key), (DEFS_SPACE, "link"), "only a ref key is read");
+            Ok(holders.clone())
+        })
+        .await
+        .expect("ref pass");
+        drop(conn);
+
+        assert_eq!(
+            healed,
+            vec![BlockId::from_trusted(HEALED)],
+            "only the holder with no row whose target has one is re-projected"
+        );
+        let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+            "SELECT block_id, value_ref FROM block_properties WHERE key = 'link' ORDER BY block_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("link rows");
+        assert_eq!(
+            rows,
+            vec![
+                (HELD.to_owned(), Some(BLOCK_A.to_owned())),
+                (HEALED.to_owned(), Some(TARGET.to_owned())),
+            ],
+            "the healed ref lands, the held row stays, the dangling ref has none"
+        );
+    }
+
+    /// #6236 — a holder read that fails fails the pass.
+    #[tokio::test]
+    async fn a_holder_read_that_fails_fails_the_ref_pass_6236() {
+        let (pool, _dir) = fresh_pool().await;
+        seed_ref_holders(&pool).await;
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        let result = project_dropped_refs(&mut conn, |_, _| {
+            Err(AppError::validation("holders do not read".into()))
+        })
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation { .. })),
+            "the read's error is the pass's, got {result:?}"
         );
     }
 

@@ -2477,11 +2477,10 @@ const ENGINE_BLOCK_PROPERTIES_OWNER: &str = "the property writers in agaric-engi
      per-key reproject_property_row_from_engine (sync import, engine-first recovery), \
      reproject_key_values (the retype a SetPropertyDef or RewriteProperties runs, and the \
      import's definitions pass), project_property_value_writes (RewriteProperties), \
+     project_dropped_refs (a ref the FK guard dropped while its target had no row, at a sync \
+     import that gives a block its row and at the end of engine-first recovery), \
      project_rename_property_key_to_sql / project_rename_property_option_to_sql, and the purge \
-     cascades: SQL shows one value while peers and an engine-first recovery use the engine's. \
-     A ref to a block in another space reads here as a missing row when the target's space \
-     was imported after the holder's: the FK guard in reproject_property_row_from_engine \
-     drops the ref, and nothing projects it again until the referring block changes (#6236)";
+     cascades: SQL shows one value while peers and an engine-first recovery use the engine's";
 
 const ENGINE_PROPERTY_DEFINITIONS_OWNER: &str = "project_property_def_to_sql after the engine \
      apply of SetPropertyDef, RenamePropertyOption and RewriteProperties, \
