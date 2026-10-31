@@ -247,6 +247,8 @@ export const properties: Record<string, string> = {
   'property.booleanTrue': 'Yes',
   'property.booleanFalse': 'No',
   'property.openRefTarget': 'Open {{title}}',
+  'property.unfitReview': "{{value}} doesn't fit {{key}}: review its values",
+  'property.unfitChipLabel': "{{key}}: {{value}}, doesn't fit",
   'property.selectProperty': 'Select property...',
   'property.errorLoad': 'Failed to load property definitions',
   'property.errorCreate': 'Failed to create property definition',

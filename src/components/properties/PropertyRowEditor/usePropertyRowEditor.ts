@@ -28,6 +28,7 @@ import { commands } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { useSpaceStore } from '@/stores/space'
 
 export interface UsePropertyRowEditorArgs {
@@ -139,13 +140,14 @@ export function usePropertyRowEditor({
 
   const handleBlur = useCallback(() => {
     if (valueType === 'date') {
-      handleDateBlur()
+      // Parsing an untouched value that doesn't fit would rewrite it, "next friday" into a date.
+      if (dateInput.trim() !== currentValue) handleDateBlur()
       return
     }
     if (forceSaveOnBlur || localValue !== currentValue) {
       onSave(localValue)
     }
-  }, [localValue, currentValue, onSave, valueType, handleDateBlur, forceSaveOnBlur])
+  }, [localValue, currentValue, onSave, valueType, handleDateBlur, dateInput, forceSaveOnBlur])
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -178,6 +180,8 @@ export function usePropertyRowEditor({
           await commands.updatePropertyDefOptions(currentSpaceId, def.key, JSON.stringify(next)),
         )
         onDefUpdated?.(updatedDef)
+        // The options decide which of the key's values fit, wherever they show.
+        invalidatePropertyCaches()
         return true
       } catch (err) {
         logger.error('PropertyRowEditor', 'Failed to update select options', { key: def.key }, err)

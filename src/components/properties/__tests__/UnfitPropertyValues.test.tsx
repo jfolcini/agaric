@@ -20,6 +20,7 @@ import { t } from '@/lib/i18n'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { rowOf } from '@/lib/tauri-mock/property-keys'
 import { properties, SEED_IDS, seedBlocks, spacePropertyDefs } from '@/lib/tauri-mock/seed'
+import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -336,6 +337,44 @@ describe('UnfitPropertyValues', () => {
     })
     const dialog = await openDialog('context')
     expect(await within(dialog).findByText('@office')).toBeInTheDocument()
+    await waitFor(async () => {
+      expect(await axe(dialog)).toHaveNoViolations()
+    })
+  })
+})
+
+// A mark on a value that doesn't fit leaves its key in the navigation store's slot.
+describe('UnfitPropertyValues opened from a mark', () => {
+  beforeEach(() => {
+    useNavigationStore.setState({ pendingPropertyReview: null })
+  })
+
+  it("opens the slot's key's dialog with no click and clears the slot", async () => {
+    await projectLosesBeta()
+    await contextBecomesNumber()
+    useNavigationStore.setState({ pendingPropertyReview: 'project' })
+    render(<PropertyDefinitionsList />)
+
+    expect(
+      await screen.findByText(t('propertiesView.unfitTitle', { key: 'project' })),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(t('propertiesView.unfitTitle', { key: 'context' })),
+    ).not.toBeInTheDocument()
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveAccessibleName(t('propertiesView.unfitTitle', { key: 'project' }))
+    expect(await within(dialog).findByText('beta')).toBeInTheDocument()
+    expect(badge('context')).toBeInTheDocument()
+    expect(useNavigationStore.getState().pendingPropertyReview).toBeNull()
+  })
+
+  it('has no a11y violations with the dialog it opened', async () => {
+    await projectLosesBeta()
+    useNavigationStore.setState({ pendingPropertyReview: 'project' })
+    render(<PropertyDefinitionsList />)
+
+    const dialog = await screen.findByRole('dialog')
+    expect(await within(dialog).findByText('beta')).toBeInTheDocument()
     await waitFor(async () => {
       expect(await axe(dialog)).toHaveNoViolations()
     })

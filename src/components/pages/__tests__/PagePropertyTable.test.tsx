@@ -66,6 +66,7 @@ vi.mock('lucide-react', () => ({
   Pencil: () => <svg data-testid="pencil-icon" />,
   Plus: () => <svg data-testid="plus-icon" />,
   Repeat: () => <svg data-testid="repeat-icon" />,
+  TriangleAlert: () => <svg data-testid="triangle-alert-icon" />,
   User: () => <svg data-testid="user-icon" />,
   X: () => <svg data-testid="x-icon" />,
 }))
@@ -2226,5 +2227,66 @@ describe('PagePropertyTable renames a select option (#5841 S4)', () => {
     })
     expect(screen.getByLabelText(valueLabel)).toHaveValue('alpha')
     expect(properties.get(PAGE_ID)?.get('project')?.['value_text']).toBe('alpha')
+  })
+})
+
+// #6206 — a page value that doesn't fit its key is shown and marked in the
+// table, and picking one of the options makes it fit.
+describe("PagePropertyTable values that don't fit against the real tauri-mock (#6206)", () => {
+  const PAGE_ID = SEED_IDS.PAGE_QUICK_NOTES
+  const mark = (key: string, value: string) =>
+    screen.queryByRole('button', { name: t('property.unfitReview', { key, value }) })
+
+  beforeEach(() => {
+    seedBlocks()
+    const defs = spacePropertyDefs('SPACE_PERSONAL')
+    const project = defs.get('project')
+    if (!project) throw new Error('the seed declares project')
+    defs.set('project', { ...project, options: JSON.stringify(['alpha']) })
+    properties.set(
+      PAGE_ID,
+      new Map([
+        ['project', makeProp('project', { value_text: 'beta' })],
+        ['context', makeProp('context', { value_text: 'work' })],
+      ]),
+    )
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+  })
+
+  it('marks the value outside the options, and choosing an option makes it fit', async () => {
+    const user = userEvent.setup()
+    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+
+    const select = (await screen.findByLabelText(
+      t('pageProperty.valueLabel', { key: 'project' }),
+    )) as HTMLSelectElement
+    expect(select.value).toBe('beta')
+    expect(mark('Project', 'beta')).toBeInTheDocument()
+    expect(screen.getByLabelText(t('pageProperty.valueLabel', { key: 'context' }))).toHaveValue(
+      'work',
+    )
+    expect(mark('Context', 'work')).not.toBeInTheDocument()
+
+    await user.selectOptions(select, 'alpha')
+
+    await waitFor(() => {
+      expect(properties.get(PAGE_ID)?.get('project')?.['value_text']).toBe('alpha')
+    })
+    await waitFor(() => {
+      expect(mark('Project', 'beta')).not.toBeInTheDocument()
+    })
+    expect(mockedToastError).not.toHaveBeenCalled()
+  })
+
+  it('has no a11y violations with a marked row', async () => {
+    const { container } = render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+
+    expect(
+      await screen.findByLabelText(t('pageProperty.valueLabel', { key: 'project' })),
+    ).toBeInTheDocument()
+
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
+    })
   })
 })

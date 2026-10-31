@@ -205,7 +205,7 @@ function fitsDeclaredType(fields: Row, valueType: string): boolean {
 }
 
 /** `declared_type_admits_shape`: `fields` are in a slot `valueType` takes. */
-export function admitsShape(fields: Row, valueType: string): boolean {
+function admitsShape(fields: Row, valueType: string): boolean {
   const slots = DECLARED_SLOTS[valueType]
   return slots === undefined || slots.some((slot) => fields[slot] != null)
 }

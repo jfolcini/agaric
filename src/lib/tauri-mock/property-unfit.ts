@@ -10,6 +10,7 @@
  */
 
 import type { PropertyUnfitCounts } from '@/lib/bindings'
+import { fitsDefinition, UNCOUNTED_PROPERTY_KEYS, valueForm } from '@/lib/property-fit'
 import { BUILTIN_PROPERTY_DEFS } from '@/lib/property-save-utils'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import { type HeldValue, heldText } from '@/lib/tauri-mock/coerce'
@@ -25,7 +26,7 @@ import {
   rowHolders,
   userDef,
 } from '@/lib/tauri-mock/property-keys'
-import { admitsShape, holderRow } from '@/lib/tauri-mock/property-type-change'
+import { holderRow } from '@/lib/tauri-mock/property-type-change'
 import {
   blocks,
   properties,
@@ -38,7 +39,7 @@ type Row = Record<string, unknown>
 
 /** The definition `key`'s values are held to: the built-in's, else the space's, else none. */
 function countedDef(spaceId: string, key: string): DefState | null {
-  if (key === 'space' || key === 'is_space') return null
+  if (UNCOUNTED_PROPERTY_KEYS.has(key)) return null
   const builtin = BUILTIN_PROPERTY_DEFS.find((def) => def.key === key)
   if (builtin) {
     return {
@@ -50,11 +51,12 @@ function countedDef(spaceId: string, key: string): DefState | null {
   return def ? defState(def) : null
 }
 
-/** A ref fits a select whatever its options; a text must be one of them. */
+/** A row that holds no value fits no type, as no slot of it is set. */
 function fits(row: Row, def: DefState): boolean {
-  if (!admitsShape(row, def.value_type)) return false
-  if (def.value_type !== 'select' || row['value_ref'] != null || def.options === null) return true
-  return (JSON.parse(def.options) as string[]).includes(row['value_text'] as string)
+  const form = valueForm(row)
+  return (
+    form !== null && fitsDefinition(form, (row['value_text'] as string | undefined) ?? null, def)
+  )
 }
 
 /** The blocks of `spaceId`, Trash included, whose value of `key` doesn't fit it, by id. */
@@ -75,14 +77,6 @@ function countsOf(held: string[]): PropertyUnfitCounts {
   return { unfit: held.length - inTrash, unfit_in_trash: inTrash }
 }
 
-/** `PropertyValueForm::of`: the slot a value sits in. */
-function formOf(row: Row): string {
-  if (row['value_num'] != null) return 'number'
-  if (row['value_date'] != null) return 'date'
-  if (row['value_ref'] != null) return 'ref'
-  return row['value_bool'] != null ? 'boolean' : 'text'
-}
-
 /** The `unfit` / `unfit_in_trash` half of `count_property_usage`'s row for `key`. */
 export function unfitCounts(spaceId: string, key: string): PropertyUnfitCounts {
   return countsOf(unfitHolders(spaceId, key))
@@ -94,7 +88,7 @@ export function unfitValues(spaceId: string, key: string): Row[] {
     const row = heldRow(blockId, key)
     return Object.assign(holderRow(blockId), {
       value: heldText(heldValueOf(row) as HeldValue),
-      form: formOf(row),
+      form: valueForm(row) ?? 'text',
     })
   })
 }

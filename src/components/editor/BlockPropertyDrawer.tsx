@@ -36,6 +36,7 @@ import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { isUnfit, valueForm } from '@/lib/property-fit'
 import {
   buildInitParams,
   DRAFT_ROW_VALUE_TYPES,
@@ -365,9 +366,9 @@ export function BlockPropertyDrawer({
             ) : (
               properties.map((prop) => {
                 const propType = getType(prop.key)
+                const def = definitions.find((d) => d.key === prop.key)
                 // A ref's page picker and a boolean's checkbox are the page Properties table's.
                 if ((propType === 'ref' || propType === 'boolean') && blockId) {
-                  const def = definitions.find((d) => d.key === prop.key)
                   return (
                     <PropertyRowEditor
                       key={prop.key}
@@ -389,20 +390,30 @@ export function BlockPropertyDrawer({
                 }
                 const Icon = BUILTIN_PROPERTY_ICONS[prop.key]
                 const label = Icon ? formatPropertyName(prop.key) : prop.key
+                const value =
+                  prop.value_text ??
+                  prop.value_date ??
+                  (prop.value_num != null
+                    ? String(prop.value_num)
+                    : prop.value_bool != null
+                      ? String(prop.value_bool === 1)
+                      : '')
+                const unfit = isUnfit(prop.key, valueForm(prop), prop.value_text, def)
                 return (
                   <PropertyField
                     key={prop.key}
                     propKey={prop.key}
                     icon={Icon}
                     label={label}
-                    value={
-                      prop.value_text ??
-                      prop.value_date ??
-                      (prop.value_num != null ? String(prop.value_num) : '')
-                    }
+                    value={value}
+                    unfit={unfit}
                     ariaLabel={t('property.valueLabel', { key: prop.key })}
                     testId={`property-value-input-${prop.key}`}
-                    onSave={(v) => handleSaveField(prop.key, v, getType(prop.key))}
+                    onSave={(v) => {
+                      // Saving the untouched value back would refuse it, or rewrite it to fit.
+                      if (unfit && v === value) return
+                      void handleSaveField(prop.key, v, propType)
+                    }}
                     onRemove={
                       !SYSTEM_MANAGED_PROPERTY_KEYS.has(prop.key)
                         ? () => handleRemove(prop.key)

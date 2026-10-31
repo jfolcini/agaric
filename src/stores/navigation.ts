@@ -101,6 +101,13 @@ interface NavigationStore {
    */
   pendingSettingsTab: string | null
   /**
+   * #6206 — transient handoff slot: the property key whose values that don't
+   * fit Settings › Properties opens, written by a mark on such a value before
+   * it opens that tab. `UnfitPropertyValues` consumes and clears it when it
+   * opens the dialog. NOT persisted (excluded from `partialize`).
+   */
+  pendingPropertyReview: string | null
+  /**
    * Back / Forward history per space (a page id means nothing in another
    * space). In memory only: excluded from `partialize`, so it starts empty
    * on each launch.
@@ -117,6 +124,8 @@ interface NavigationStore {
   setPendingPageBrowserFilter: (q: string | null) => void
   /** Write or clear the pending Settings-tab handoff slot (#734). */
   setPendingSettingsTab: (tab: string | null) => void
+  /** Write or clear the pending property-review handoff slot (#6206). */
+  setPendingPropertyReview: (key: string | null) => void
   /** Replace a space's Back / Forward history. Written only by `@/stores/navigation-history`. */
   setNavHistory: (spaceKey: string, history: NavHistory) => void
 }
@@ -257,6 +266,7 @@ export const useNavigationStore = create<NavigationStore>()(
       selectedBlockId: null,
       pendingPageBrowserFilter: null,
       pendingSettingsTab: null,
+      pendingPropertyReview: null,
       navHistoryBySpace: {},
 
       setView: (view: View) => {
@@ -277,6 +287,10 @@ export const useNavigationStore = create<NavigationStore>()(
 
       setPendingSettingsTab: (tab: string | null) => {
         set({ pendingSettingsTab: tab })
+      },
+
+      setPendingPropertyReview: (key: string | null) => {
+        set({ pendingPropertyReview: key })
       },
 
       setNavHistory: (spaceKey: string, history: NavHistory) => {

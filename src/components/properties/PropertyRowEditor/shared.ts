@@ -19,6 +19,7 @@ export function readCurrentValue(prop: PropertyRow): string {
   if (prop.value_text != null) return prop.value_text
   if (prop.value_num != null) return String(prop.value_num)
   if (prop.value_date != null) return prop.value_date
+  if (prop.value_bool != null) return prop.value_bool === 1 ? 'true' : 'false'
   return ''
 }
 

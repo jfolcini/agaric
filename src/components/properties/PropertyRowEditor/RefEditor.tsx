@@ -12,6 +12,7 @@ import { FileSearch, Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
+import { readCurrentValue } from '@/components/properties/PropertyRowEditor/shared'
 import type { RefPickerEditorState } from '@/components/properties/PropertyRowEditor/usePropertyRowEditor'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -54,9 +55,11 @@ export function RefEditor({ prop, state, ariaLabel, hasCreateNewPage }: RefEdito
           onClick={handleOpen}
           aria-label={ariaLabel}
         >
-          {refDisplayTitle || (
-            <span className="text-muted-foreground">{t('block.searchPages')}</span>
-          )}
+          {refDisplayTitle ||
+            // A value in another slot doesn't fit, and shows as it is.
+            (prop.value_ref == null && readCurrentValue(prop)) || (
+              <span className="text-muted-foreground">{t('block.searchPages')}</span>
+            )}
         </Button>
       </PopoverTrigger>
       <PopoverContent

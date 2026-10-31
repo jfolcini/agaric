@@ -2,6 +2,7 @@ import { ExternalLink } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { UnfitValueMark } from '@/components/properties/UnfitValueMark'
 import { badgeVariants } from '@/components/ui/badge'
 import { IconButton } from '@/components/ui/icon-button'
 import { openUrl } from '@/lib/open-url'
@@ -17,6 +18,8 @@ interface PropertyChipProps {
   className?: string
   onClick?: (() => void) | undefined
   onKeyClick?: () => void
+  /** The value doesn't fit its key's definition (#6206): the chip carries a mark. */
+  unfit?: boolean | undefined
 }
 
 /**
@@ -42,6 +45,11 @@ interface PropertyChipProps {
  * one per chip would cost an IPC per rendered property. The value zone itself
  * stays the edit trigger, so a URL property is still editable from the chip.
  *
+ * A value that doesn't fit: the caller, which holds the space's definitions,
+ * passes `unfit` (#6206). The chip then wears the warning tone, its group
+ * name says the value doesn't fit, and an `UnfitValueMark` after the value
+ * opens the key's values that don't fit in Settings.
+ *
  * Chrome: the pill shares the design-system Badge primitive's chrome via
  * `badgeVariants()` (#1678) — base flex/shape/size tokens come from Badge so
  * the chip stays in the pill family; the muted tone and tighter padding/gap
@@ -54,11 +62,13 @@ export function PropertyChip({
   className,
   onClick,
   onKeyClick,
+  unfit = false,
 }: PropertyChipProps): React.ReactElement {
   const { t } = useTranslation()
   const Icon = BUILTIN_PROPERTY_ICONS[propKey]
   const displayName = formatPropertyName(propKey)
   const chipLabel = t('property.selectValue', { key: displayName, value })
+  const groupLabel = unfit ? t('property.unfitChipLabel', { key: displayName, value }) : chipLabel
 
   // The key is set apart from the value by weight: a fade (`opacity-60`) fails AA contrast (#5743).
   const keyLabel = onKeyClick ? (
@@ -134,7 +144,7 @@ export function PropertyChip({
     <div
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- generic labelled grouping; the suggested tags (fieldset/details/hgroup/optgroup) carry unwanted semantics and would break the inline-flex chip layout
       role="group"
-      aria-label={chipLabel}
+      aria-label={groupLabel}
       className={cn(
         // Compose the shared Badge primitive's pill chrome (base flex layout,
         // rounded-full shape, font-medium, text-xs size, transition) so the
@@ -145,15 +155,21 @@ export function PropertyChip({
         // tighter gap/padding than the default Badge. twMerge (via `cn`) resolves
         // these against the recipe's tokens deterministically (last wins).
         'gap-0.5 px-1.5 leading-none select-none touch-target [@media(pointer:coarse)]:px-2 [@media(pointer:coarse)]:py-0.5',
-        'bg-muted text-muted-foreground',
+        unfit
+          ? 'border-alert-warning-border bg-alert-warning text-alert-warning-foreground'
+          : 'bg-muted text-muted-foreground',
         'focus-within:ring-[3px] focus-within:ring-ring',
-        onClick && 'hover:bg-accent/50 active:bg-accent/70 transition-colors',
+        onClick &&
+          (unfit
+            ? 'hover:bg-alert-warning/80 transition-colors'
+            : 'hover:bg-accent/50 active:bg-accent/70 transition-colors'),
         className,
       )}
       data-testid="property-chip"
     >
       {keyLabel}
       {valueNode}
+      {unfit && <UnfitValueMark propKey={propKey} value={value} />}
       {openLink}
     </div>
   )

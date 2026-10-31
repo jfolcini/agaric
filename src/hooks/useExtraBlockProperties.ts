@@ -23,8 +23,10 @@
  *
  * Built-in fields are filtered out because they already render via the
  * dedicated badges (TodoToggle, PriorityBadge, DueChip, ScheduleChip).
- * Empty values are dropped so the row UI doesn't render empty rows. A ref or
- * boolean value carries its `kind`, which its chip draws (`InlinePropertyChip`).
+ * Empty values are dropped so the row UI doesn't render empty rows. A value
+ * not stored as text carries its `kind`: a ref's and a boolean's chip draw it
+ * (`InlinePropertyChip`), and every chip is checked by it against its key's
+ * definition (`isUnfit`).
  *
  * Identity invariants (PEND/perf): the derived map keeps prior per-block
  * array references when their content is unchanged so downstream
@@ -55,11 +57,12 @@ const BUILTIN_PROPERTY_KEYS: ReadonlySet<string> = new Set([
 /**
  * A property as the row's chip draws it. `value` is the text, date or number;
  * for a `ref`, the target's block id; for a `boolean`, `'true'` or `'false'`.
+ * `kind` is the slot the value is stored in; none is text.
  */
 export interface InlineProperty {
   key: string
   value: string
-  kind?: 'ref' | 'boolean' | undefined
+  kind?: 'number' | 'date' | 'ref' | 'boolean' | undefined
 }
 
 export type BlockPropertiesMap = Record<string, InlineProperty[]>
@@ -104,10 +107,10 @@ export function extraPropertiesOf(rows: readonly PropertyRow[]): InlineProperty[
       if (p.value_bool != null) {
         return { key: p.key, value: p.value_bool === 0 ? 'false' : 'true', kind: 'boolean' }
       }
-      return {
-        key: p.key,
-        value: p.value_text ?? p.value_date ?? (p.value_num != null ? String(p.value_num) : ''),
-      }
+      if (p.value_text != null) return { key: p.key, value: p.value_text }
+      if (p.value_date != null) return { key: p.key, value: p.value_date, kind: 'date' }
+      if (p.value_num != null) return { key: p.key, value: String(p.value_num), kind: 'number' }
+      return { key: p.key, value: '' }
     })
     .filter((p) => p.value !== '')
 }

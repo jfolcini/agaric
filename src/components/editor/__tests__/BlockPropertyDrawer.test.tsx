@@ -1276,6 +1276,85 @@ describe('BlockPropertyDrawer', () => {
   })
 })
 
+// #6206 — a value that doesn't fit its key is marked in its field, shows even
+// when it sits in the boolean slot, and an untouched blur leaves it as it is.
+describe("BlockPropertyDrawer values that don't fit", () => {
+  const mark = (key: string, value: string) =>
+    screen.queryByRole('button', { name: t('property.unfitReview', { key, value }) })
+
+  it("marks a value outside a select's options, and not one that fits", async () => {
+    setupMock(
+      [makeProp('project', { value_text: 'beta' }), makeProp('context', { value_text: 'work' })],
+      [{ ...makeDef('project', 'select'), options: '["alpha"]' }, makeDef('context')],
+    )
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
+
+    expect(await screen.findByLabelText(t('property.valueLabel', { key: 'project' }))).toHaveValue(
+      'beta',
+    )
+    expect(mark('Project', 'beta')).toBeInTheDocument()
+    expect(mark('Context', 'work')).not.toBeInTheDocument()
+  })
+
+  it("shows a text key's boolean as true", async () => {
+    setupMock([makeProp('note', { value_bool: 1 })], [makeDef('note')])
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
+
+    expect(await screen.findByLabelText(t('property.valueLabel', { key: 'note' }))).toHaveValue(
+      'true',
+    )
+    expect(mark('Note', 'true')).toBeInTheDocument()
+  })
+
+  describe('against the real mock', () => {
+    const blockId = SEED_IDS.BLOCK_GS_1
+
+    beforeEach(() => {
+      seedBlocks()
+      spacePropertyDefs('SPACE_PERSONAL').set('weight', {
+        key: 'weight',
+        value_type: 'number',
+        options: null,
+        created_at: '2026-01-01T00:00:00.000Z',
+        builtin: false,
+      })
+      properties.set(blockId, new Map([['weight', makeProp('weight', { value_text: 'abc' })]]))
+      mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+    })
+
+    it('writes nothing and raises no toast on an untouched blur, and saves an edit', async () => {
+      const user = userEvent.setup()
+      renderWithProvider(<BlockPropertyDrawer blockId={blockId} open onOpenChange={vi.fn()} />)
+      const input = await screen.findByLabelText(t('property.valueLabel', { key: 'weight' }))
+      expect(mark('Weight', 'abc')).toBeInTheDocument()
+
+      await user.click(input)
+      await user.tab()
+
+      expect(toast.error).not.toHaveBeenCalled()
+      expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
+      expect(properties.get(blockId)?.get('weight')?.['value_text']).toBe('abc')
+
+      // Positive control: an edit of the same field is written.
+      await user.clear(input)
+      await user.type(input, '42')
+      await user.tab()
+      await waitFor(() => {
+        expect(properties.get(blockId)?.get('weight')?.['value_num']).toBe(42)
+      })
+    })
+
+    it('has no a11y violations with a marked field', async () => {
+      renderWithProvider(<BlockPropertyDrawer blockId={blockId} open onOpenChange={vi.fn()} />)
+      await screen.findByLabelText(t('property.valueLabel', { key: 'weight' }))
+      const sheet = document.querySelector('[data-slot="sheet-content"]') as HTMLElement
+      await waitFor(async () => {
+        expect(await axe(sheet)).toHaveNoViolations()
+      })
+    })
+  })
+})
+
 // ── PropertyField unit tests ──────────────────────────────────────────────
 
 describe('PropertyField', () => {

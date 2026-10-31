@@ -6,13 +6,15 @@
  * adds a user select's to its options. Removal sends the counts it showed as
  * its acknowledgement; when the backend refuses that (the values changed
  * since), the dialog says so and the counts and list are read again, as
- * `ChangePropertyType` previews again.
+ * `ChangePropertyType` previews again. A mark on one of the key's values
+ * elsewhere (`UnfitValueMark`) opens the dialog through the navigation store's
+ * `pendingPropertyReview`.
  */
 
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { SearchCheck, TriangleAlert } from 'lucide-react'
 import type React from 'react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
@@ -39,6 +41,7 @@ import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { queryClient } from '@/lib/query-client'
 import { reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
+import { useNavigationStore } from '@/stores/navigation'
 
 export interface UnfitPropertyValuesProps {
   definition: PropertyDefinition
@@ -66,6 +69,17 @@ export function UnfitPropertyValues({
   const triggerRef = useRef<HTMLButtonElement>(null)
   const { key } = definition
   const live = counts?.unfit ?? 0
+
+  // A mark on one of the key's values asks for this dialog from another view.
+  const requested = useNavigationStore((s) => s.pendingPropertyReview === key)
+  useEffect(() => {
+    if (!requested) return
+    // oxlint-disable-next-line react/set-state-in-effect -- consumes the navigation store's one-shot handoff slot; the dialog is also opened by its badge, so it cannot be derived from the slot
+    setOpen(true)
+    // Only if it is still this key's: another mark may have written it since.
+    const navigation = useNavigationStore.getState()
+    if (navigation.pendingPropertyReview === key) navigation.setPendingPropertyReview(null)
+  }, [requested, key])
 
   // The badge counts live blocks, as the use count beside it does, so a key whose values that
   // don't fit are all in the Trash shows none until one is restored. The open dialog outlives a

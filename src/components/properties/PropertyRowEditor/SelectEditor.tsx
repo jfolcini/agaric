@@ -31,9 +31,11 @@ import type { SelectOptionsEditorState } from '@/hooks/useSelectOptionsDraft'
 export interface SelectEditorProps {
   state: SelectEditorState
   ariaLabel: string
+  /** The stored value when it is none of the options, else null. */
+  unfitValue: string | null
 }
 
-export function SelectEditor({ state, ariaLabel }: SelectEditorProps) {
+export function SelectEditor({ state, ariaLabel, unfitValue }: SelectEditorProps) {
   const { t } = useTranslation()
   const { localValue, options, handleSelectChange } = state
   return (
@@ -43,6 +45,12 @@ export function SelectEditor({ state, ariaLabel }: SelectEditorProps) {
       </SelectTrigger>
       <SelectContent>
         <SelectItem value="__none__">{t('pageProperty.emptyOption')}</SelectItem>
+        {/* A Radix Select shows a value no item carries as empty. */}
+        {unfitValue !== null && (
+          <SelectItem value={unfitValue} disabled>
+            {unfitValue}
+          </SelectItem>
+        )}
         {options.map((opt) => (
           <SelectItem key={opt} value={opt}>
             {opt}

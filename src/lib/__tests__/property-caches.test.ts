@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { invalidatePropertyCaches } from '@/lib/property-caches'
+import { invalidatePropertyCaches, propertyDefsQueryKey } from '@/lib/property-caches'
 import { propertyKeysQueryKey } from '@/lib/property-keys-cache'
 import { propertyValuesQueryKey } from '@/lib/property-values-cache'
 import { queryClient } from '@/lib/query-client'
@@ -14,5 +14,13 @@ describe('invalidatePropertyCaches', () => {
 
     expect(queryClient.getQueryState(propertyKeysQueryKey('SPACE_A'))?.isInvalidated).toBe(true)
     expect(queryClient.getQueryState(propertyValuesQueryKey('status'))?.isInvalidated).toBe(true)
+  })
+
+  it("marks the space's definitions stale (#6206)", () => {
+    queryClient.setQueryData(propertyDefsQueryKey('SPACE_A'), [])
+
+    invalidatePropertyCaches()
+
+    expect(queryClient.getQueryState(propertyDefsQueryKey('SPACE_A'))?.isInvalidated).toBe(true)
   })
 })
