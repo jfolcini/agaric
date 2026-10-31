@@ -1377,8 +1377,8 @@ async fn reproject_property_row_from_engine(
     // FK safety (#377): `value_ref` is a FK to `blocks(id)` (migration
     // 0062, ON DELETE CASCADE) under `foreign_keys = ON`. The engine can
     // legitimately hand back a ref whose target has no `blocks` row in
-    // THIS space — a cross-space reference, or a forward reference to a
-    // block projected later in the same `changed_blocks` loop. An
+    // THIS space — a cross-space reference. (A target the same import
+    // brings has its row: inbound sync writes core rows first, #6232.) An
     // unguarded INSERT would raise FK 787 and abort the whole inbound-sync
     // `BEGIN IMMEDIATE` transaction; every retry would fail identically,
     // wedging sync for that peer/space. Guard the row exactly like the
@@ -4450,10 +4450,9 @@ mod tests {
     #[tokio::test]
     async fn reproject_skips_dangling_ref_without_fk_abort_377() {
         // Regression (#377): a ref-typed property whose target has no `blocks`
-        // row in this space — a cross-space reference, or a forward reference
-        // to a block projected later in the same `changed_blocks` loop — must
-        // NOT raise an FK violation that aborts the inbound-sync transaction
-        // (which would wedge sync, failing identically on every retry). The
+        // row in this space — a cross-space reference — must NOT raise an FK
+        // violation that aborts the inbound-sync transaction (which would
+        // wedge sync, failing identically on every retry). The
         // dangling ref is dropped (row-absent), mirroring the FK-safe
         // `reproject_block_tags_from_engine`. The positive case (a ref to an
         // existing block IS inserted) is covered by `reproject_routes_ref_value`

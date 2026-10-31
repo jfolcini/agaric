@@ -7083,3 +7083,44 @@ async fn a_concurrent_write_of_a_renamed_option_stays_on_both_devices_5841() {
         );
     }
 }
+
+/// #6232 — a ref to a block the same import brings lands on B. The import
+/// projects P before its child C, so a pass that wrote P's properties before
+/// C's `blocks` row existed had the ref's FK guard drop P's row.
+#[tokio::test]
+async fn apply_remote_keeps_a_ref_to_a_block_the_same_import_brings_6232() {
+    use agaric_store::op::PropertyDefState;
+    let (pool, _dir) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+    let (a, b) = (LoroEngineRegistry::new(), LoroEngineRegistry::new());
+    {
+        let mut guard = a.for_space(&space, "device-A").expect("for_space A");
+        let e = guard.engine_mut();
+        let ref_def = PropertyDefState {
+            value_type: "ref".into(),
+            options: None,
+        };
+        e.apply_set_property_def("link", Some(&ref_def))
+            .expect("declare link as a ref");
+        e.apply_create_block(BLOCK_A, "page", "P", None, 0)
+            .expect("create P");
+        e.apply_create_block(BLOCK_C, "content", "C", Some(BLOCK_A), 0)
+            .expect("create C under P");
+        e.apply_set_property(BLOCK_A, "link", Some(BLOCK_C))
+            .expect("set P.link to C");
+    }
+    push_space_a(&pool, &a, &b).await;
+
+    let link: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT value_ref, value_text FROM block_properties WHERE block_id = ? AND key = 'link'",
+    )
+    .bind(BLOCK_A)
+    .fetch_optional(&pool)
+    .await
+    .expect("P.link row");
+    assert_eq!(
+        link,
+        Some((Some(BLOCK_C.to_owned()), None)),
+        "B holds P.link as a ref to C"
+    );
+}
