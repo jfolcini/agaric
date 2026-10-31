@@ -80,7 +80,7 @@ use loro::{ExportMode, LoroDoc};
 use parking_lot::lock_api::ArcMutexGuard;
 use parking_lot::{Mutex, RawMutex};
 
-use crate::loro::engine::LoroEngine;
+use crate::loro::engine::{LoroEngine, PropertyValue};
 use agaric_core::error::AppError;
 use agaric_store::space::SpaceId;
 
@@ -417,6 +417,22 @@ impl LoroEngineRegistry {
     pub fn loro_vv(&self, space_id: &SpaceId) -> Option<Vec<u8>> {
         let shared = { self.inner.lock().get(space_id).map(Arc::clone) }?;
         Some(shared.lock().version_vector())
+    }
+
+    /// `key`'s holders in `space_id`'s engine
+    /// ([`LoroEngine::read_property_holders`]), none for a space with no
+    /// engine, read as [`Self::loro_vv`] reads: without creating an engine or
+    /// marking the space dirty (#6236). The caller must hold no engine guard.
+    pub fn property_holders(
+        &self,
+        space_id: &SpaceId,
+        key: &str,
+    ) -> Result<Vec<(String, PropertyValue)>, AppError> {
+        let shared = { self.inner.lock().get(space_id).map(Arc::clone) };
+        shared.map_or_else(
+            || Ok(Vec::new()),
+            |shared| shared.lock().read_property_holders(key),
+        )
     }
 
     /// All [`SpaceId`]s currently registered, in arbitrary order.
@@ -931,6 +947,37 @@ mod tests {
             r.spaces_containing("BLOCK_NOWHERE").is_empty(),
             "no engine holds an unknown block"
         );
+    }
+
+    /// #6236 — a registered engine's holders of the key, and none for a space
+    /// with no engine, which the read does not create.
+    #[test]
+    fn property_holders_reads_a_registered_engine_and_creates_none_6236() {
+        let r = LoroEngineRegistry::new();
+        let a = SpaceId::from_trusted(SPACE_A);
+        {
+            let mut g = r.for_space(&a, "device-1").expect("space A");
+            let engine = g.engine_mut();
+            engine
+                .apply_create_block("HOLDER", "content", "h", None, 0)
+                .expect("create");
+            engine
+                .apply_set_property("HOLDER", "link", Some(SPACE_B))
+                .expect("set link");
+        }
+
+        assert_eq!(
+            r.property_holders(&a, "link").expect("read A"),
+            vec![("HOLDER".to_owned(), PropertyValue::Str(SPACE_B.to_owned()))],
+            "A's engine holds the link"
+        );
+        assert_eq!(
+            r.property_holders(&SpaceId::from_trusted(SPACE_B), "link")
+                .expect("read B"),
+            Vec::new(),
+            "a space with no engine holds nothing"
+        );
+        assert_eq!(r.len(), 1, "the read creates no engine");
     }
 
     /// #5712 — of the inbound syncs in flight, only the last to leave is told

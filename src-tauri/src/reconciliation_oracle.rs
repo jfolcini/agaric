@@ -86,7 +86,7 @@
 //! | SQL `blocks` ITSELF against the Loro engine (#5628) | the live engine docs — not a SQL table | the per-op projections in `loro::projection` (`project_*_to_sql`) after every engine apply / the SQL-only fallbacks, which write SQL without the engine — audited by [`reconcile_engine`], NOT by [`reconcile`] |
 //! | SQL `attachments` against the Loro engine (#5608) | the attachment entries the live engine docs' nodes hold | `apply::attachments` (the op path) / `reproject_attachments_from_engine` (imports and recovery) / `repair::attachments` (the boot backfill) — audited by [`reconcile_engine`], NOT by [`reconcile`] |
 //! | SQL `block_tags` and `page_aliases` against the Loro engine (#6207) | each space doc's tag maps and `page_aliases` root, for the blocks both sides hold | `project_add_tag_to_sql` / `project_remove_tag_to_sql` and `project_add_page_alias_to_sql` / `project_remove_page_alias_to_sql` (the op apply arms, the op-log recovery arms) / `reproject_block_tags_from_engine` and `reproject_page_aliases_from_engine` (imports and recovery) / `project_unheld_page_alias_claims` (the hand-off to the next claimant, at a local commit, a sync import and the deferred-purge sweep, #6229) / `repair::page_aliases` (the boot backfill) / the purge cascades — audited by [`reconcile_engine`], NOT by [`reconcile`] |
-//! | SQL `block_properties` and `property_definitions` against the Loro engine (#6206) | each held node's property map, typed by its space's `property_definitions` rows and the built-ins, for the blocks both sides hold; each space doc's `property_definitions` root | `project_set_property_to_sql` / `project_delete_property_to_sql` (the op apply arms, the op-log recovery arms) / `reproject_block_properties_from_engine` (imports and recovery) / `reproject_key_values` and `project_property_value_writes` (retypes and rewrites) / the rename projections / the purge cascades; `project_property_def_to_sql` (every definition op, `project_pass_defs`, recovery) / `repair::property_definitions` (the boot backfill) — audited by [`reconcile_engine`], NOT by [`reconcile`] |
+//! | SQL `block_properties` and `property_definitions` against the Loro engine (#6206) | each held node's property map, typed by its space's `property_definitions` rows and the built-ins, for the blocks both sides hold; each space doc's `property_definitions` root | `project_set_property_to_sql` / `project_delete_property_to_sql` (the op apply arms, the op-log recovery arms) / `reproject_block_properties_from_engine` (imports and recovery) / `reproject_key_values` and `project_property_value_writes` (retypes and rewrites) / `project_dropped_refs` (a ref the FK guard dropped, once its target has a row, #6236) / the rename projections / the purge cascades; `project_property_def_to_sql` (every definition op, `project_pass_defs`, recovery) / `repair::property_definitions` (the boot backfill) — audited by [`reconcile_engine`], NOT by [`reconcile`] |
 //! | `spaces`, the registry (#6207) | `block_properties` — the `is_space = 'true'` rows, a soft-deleted space's included | the `spaces_register_is_space` trigger (migration 0089), fired by every `is_space` property insert / the FK cascade of a purge (the only removal) — in [`reconcile`] |
 //!
 //! # `page_link_cache` has NO synchronous arm at all (#3296)
@@ -2477,11 +2477,10 @@ const ENGINE_BLOCK_PROPERTIES_OWNER: &str = "the property writers in agaric-engi
      per-key reproject_property_row_from_engine (sync import, engine-first recovery), \
      reproject_key_values (the retype a SetPropertyDef or RewriteProperties runs, and the \
      import's definitions pass), project_property_value_writes (RewriteProperties), \
+     project_dropped_refs (a ref the FK guard dropped while its target had no row, at a sync \
+     import that gives a block its row and at the end of engine-first recovery), \
      project_rename_property_key_to_sql / project_rename_property_option_to_sql, and the purge \
-     cascades: SQL shows one value while peers and an engine-first recovery use the engine's. \
-     A ref to a block in another space reads here as a missing row when the target's space \
-     was imported after the holder's: the FK guard in reproject_property_row_from_engine \
-     drops the ref, and nothing projects it again until the referring block changes (#6236)";
+     cascades: SQL shows one value while peers and an engine-first recovery use the engine's";
 
 const ENGINE_PROPERTY_DEFINITIONS_OWNER: &str = "project_property_def_to_sql after the engine \
      apply of SetPropertyDef, RenamePropertyOption and RewriteProperties, \

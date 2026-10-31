@@ -995,12 +995,15 @@ async fn project_engine_derived_rows(
 /// [`reproject_blocks_from_engine`]'s per-space pass: load the persisted
 /// snapshot into a throwaway engine and project every live block. `None` when
 /// the snapshot failed to decode (the space is skipped); otherwise
-/// `(blocks, skipped)` for the space.
+/// `(blocks, skipped, engine)` for the space, the engine kept for the ref pass.
 async fn reproject_space_from_engine(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     space_id_str: &str,
     bytes: &[u8],
-) -> Result<Option<(usize, usize)>, agaric_core::error::AppError> {
+) -> Result<
+    Option<(usize, usize, agaric_engine::loro::engine::LoroEngine)>,
+    agaric_core::error::AppError,
+> {
     // Build a throwaway engine and load this space's persisted snapshot. A
     // decode failure is non-fatal: skip this space (its local content still
     // stands from the op-log pass) and keep rebuilding the rest.
@@ -1027,7 +1030,7 @@ async fn reproject_space_from_engine(
     // from the engine index already, so there is nothing to sweep here.
     let block_ids = engine.live_blocks_preorder();
     if block_ids.is_empty() {
-        return Ok(Some((0, 0)));
+        return Ok(Some((0, 0, engine)));
     }
     let n = block_ids.len();
     // Per-block skip flags for THIS space. A block flagged here is excluded
@@ -1048,7 +1051,7 @@ async fn reproject_space_from_engine(
     )
     .await?;
     let space_skipped = skipped.iter().filter(|&&s| s).count();
-    Ok(Some((n, space_skipped)))
+    Ok(Some((n, space_skipped, engine)))
 }
 
 /// [`reproject_space_from_engine`]'s definitions pass (#5841): upsert every
@@ -1081,6 +1084,37 @@ async fn project_engine_property_defs(
         .await?;
     }
     Ok(true)
+}
+
+/// [`reproject_blocks_from_engine`]'s ref pass (#6236): it projects the spaces
+/// in id order, so the FK guard dropped each ref into a space projected after
+/// the holder's, and every block has its row now. `false` when a space's
+/// holders do not read, which leaves its refs dropped and the rebuild
+/// incomplete, as a block whose properties do not read does (#2920): recovery
+/// runs at pool init, and a `?` here would fail every boot on one bad map. No
+/// engine write makes a map that does not read, so that arm has no test.
+async fn project_engine_dropped_refs(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    engines: &std::collections::HashMap<&str, agaric_engine::loro::engine::LoroEngine>,
+) -> Result<bool, agaric_core::error::AppError> {
+    let unread = std::sync::atomic::AtomicBool::new(false);
+    agaric_engine::loro::projection::project_dropped_refs(tx, |space, key| {
+        let Some(engine) = engines.get(space) else {
+            return Ok(Vec::new());
+        };
+        Ok(engine.read_property_holders(key).unwrap_or_else(|e| {
+            tracing::error!(
+                space_id = %space,
+                error = %e,
+                "recovery (#6236): the space's property holders do not read; its dropped refs \
+                 stay dropped"
+            );
+            unread.store(true, std::sync::atomic::Ordering::Relaxed);
+            Vec::new()
+        }))
+    })
+    .await?;
+    Ok(!unread.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// [`reproject_blocks_from_engine`]'s post-commit rebuild of the
@@ -1210,20 +1244,23 @@ pub(crate) async fn reproject_blocks_from_engine(
     // re-attempts) instead of the recovery being silently, permanently lost.
     let mut skipped_spaces = 0usize;
     let mut skipped_blocks_total = 0usize;
+    let mut engines = std::collections::HashMap::new();
 
     for (space_id_str, bytes) in &snapshots {
-        let Some((n, space_skipped)) =
+        let Some((n, space_skipped, engine)) =
             reproject_space_from_engine(&mut tx, space_id_str, bytes).await?
         else {
             skipped_spaces += 1;
             continue;
         };
+        engines.insert(space_id_str.as_str(), engine);
         skipped_blocks_total += space_skipped;
         spaces_reprojected += 1;
         blocks_reprojected += n - space_skipped;
     }
 
-    let anything_skipped = skipped_spaces > 0 || skipped_blocks_total > 0;
+    let refs_projected = project_engine_dropped_refs(&mut tx, &engines).await?;
+    let anything_skipped = skipped_spaces > 0 || skipped_blocks_total > 0 || !refs_projected;
 
     if spaces_reprojected == 0 {
         // Every snapshot failed to DECODE — nothing rebuilt. Roll back the
@@ -7214,6 +7251,66 @@ mod tests {
             value,
             Some((Some("soon".to_owned()), None)),
             "kept as text, not as a date"
+        );
+    }
+
+    /// #6236: disaster recovery keeps a ref into a space it projects later.
+    /// It projects the spaces in id order, so the holder's, first, finds no row
+    /// for the target, and the FK guard drops the ref.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recovery_keeps_a_ref_into_a_space_it_projects_later_6236() {
+        const HOLDER_SPACE: &str = "01HZ00000000000000000000S1";
+        const TARGET_SPACE: &str = "01HZ00000000000000000000S2";
+        const HOLDER: &str = "01HZ0000000000000000000H01";
+        const TARGET: &str = "01HZ0000000000000000000T01";
+        let (pool, _dir) = test_pool().await;
+        for space in [HOLDER_SPACE, TARGET_SPACE] {
+            for sql in [
+                "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?1, 'page', 'S', ?1)",
+                "INSERT INTO spaces (id) VALUES (?1)",
+            ] {
+                sqlx::query(sql).bind(space).execute(&pool).await.unwrap();
+            }
+        }
+        let mut holder_doc =
+            agaric_engine::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
+        let ref_def = agaric_store::op::PropertyDefState {
+            value_type: "ref".into(),
+            options: None,
+        };
+        holder_doc
+            .apply_set_property_def("link", Some(&ref_def))
+            .unwrap();
+        holder_doc
+            .apply_create_block(HOLDER, "page", "Holder", None, 0)
+            .unwrap();
+        holder_doc
+            .apply_set_property(HOLDER, "link", Some(TARGET))
+            .unwrap();
+        insert_snapshot(&pool, HOLDER_SPACE, holder_doc.export_snapshot().unwrap()).await;
+        let mut target_doc =
+            agaric_engine::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
+        target_doc
+            .apply_create_block(TARGET, "page", "Target", None, 0)
+            .unwrap();
+        insert_snapshot(&pool, TARGET_SPACE, target_doc.export_snapshot().unwrap()).await;
+
+        assert!(
+            reproject_blocks_from_engine(&pool).await.unwrap(),
+            "both snapshots reproject"
+        );
+
+        let link: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT value_ref, value_text FROM block_properties WHERE block_id = ? AND key = 'link'",
+        )
+        .bind(HOLDER)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            link,
+            Some((Some(TARGET.to_owned()), None)),
+            "the holder keeps its ref to the target"
         );
     }
 

@@ -1287,15 +1287,18 @@ async fn a_space_created_on_one_device_reaches_its_peer_4775() {
 }
 
 /// Ship `space`'s doc from A to B the way the catch-up does: one full
-/// snapshot, merged into B's engine and projected.
+/// snapshot, merged into B's engine and projected. Returns the blocks the
+/// import reported changed.
 async fn sync_space_a_to_b(
     pool_a: &SqlitePool,
     mat_a: &crate::materializer::Materializer,
     space: &str,
     pool_b: &SqlitePool,
     mat_b: &crate::materializer::Materializer,
-) {
-    use agaric_sync::sync_protocol::loro_sync::{apply_remote, prepare_outgoing_for_pool};
+) -> Vec<BlockId> {
+    use agaric_sync::sync_protocol::loro_sync::{
+        ApplyOutcome, apply_remote, prepare_outgoing_for_pool,
+    };
     let space_id = agaric_store::space::SpaceId::from_trusted(space);
     let msg = prepare_outgoing_for_pool(
         pool_a,
@@ -1307,9 +1310,13 @@ async fn sync_space_a_to_b(
     .await
     .unwrap()
     .expect("#1257 freshness gate must not refuse a consistent engine");
-    apply_remote(pool_b, &mat_b.loro_state().registry, "device-B", msg)
+    let outcome = apply_remote(pool_b, &mat_b.loro_state().registry, "device-B", msg)
         .await
         .unwrap();
+    let ApplyOutcome::Imported { changed_blocks, .. } = outcome else {
+        panic!("a snapshot imports, got {outcome:?}");
+    };
+    changed_blocks
 }
 
 async fn deleted_at_of(pool: &SqlitePool, block_id: &str) -> Option<i64> {
@@ -1474,6 +1481,134 @@ async fn a_space_created_before_it_had_a_doc_reaches_its_peer_4775() {
     );
     mat_a.shutdown();
     mat_b.shutdown();
+}
+
+/// #6236: a page holds a ref to a page A then moves to another space. A
+/// fresh B keeps the ref whichever space's doc it imports first. Imported
+/// first, the holder's doc finds no row for the target, so the FK guard drops
+/// the ref, and the target's import must give it back.
+///
+/// Counter-delta shape: none. Every `Materializer` has its own `LoroState`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_ref_into_another_space_lands_whichever_space_arrives_first_6236() {
+    use crate::commands::{
+        create_page_in_space_inner, create_property_def_inner, create_space_inner,
+        move_blocks_to_space_inner, set_property_inner,
+    };
+    use crate::materializer::Materializer;
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+    super::bootstrap::bootstrap_spaces(&pool_a, "device-A", &mat_a)
+        .await
+        .unwrap();
+    let mut spaces = Vec::new();
+    for name in ["Projects", "Archive"] {
+        let space = create_space_inner(&pool_a, "device-A", &mat_a, name.into(), None)
+            .await
+            .unwrap();
+        spaces.push(space.as_str().to_owned());
+    }
+    let [holder_space, target_space] = [&spaces[0], &spaces[1]];
+    create_property_def_inner(
+        &pool_a,
+        "device-A",
+        &mat_a,
+        holder_space,
+        "project".into(),
+        "ref".into(),
+        None,
+    )
+    .await
+    .unwrap();
+    let mut pages = Vec::new();
+    for title in ["Holder", "Target"] {
+        let page = create_page_in_space_inner(
+            &pool_a,
+            "device-A",
+            &mat_a,
+            None,
+            title.into(),
+            holder_space.clone(),
+        )
+        .await
+        .unwrap();
+        pages.push(page);
+    }
+    let [holder, target] = [&pages[0], &pages[1]];
+    set_property_inner(
+        &pool_a,
+        "device-A",
+        &mat_a,
+        crate::ulid::verify_active(&pool_a, holder).await.unwrap(),
+        "project".into(),
+        None,
+        None,
+        None,
+        Some(target.as_str().to_owned()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    move_blocks_to_space_inner(
+        &pool_a,
+        "device-A",
+        &mat_a,
+        vec![target.clone()],
+        target_space.clone(),
+        &[],
+    )
+    .await
+    .unwrap();
+    mat_a.flush_background().await.unwrap();
+
+    for (label, order) in [
+        ("target's space first", [target_space, holder_space]),
+        ("holder's space first", [holder_space, target_space]),
+    ] {
+        let (pool_b, _dir_b) = test_pool().await;
+        let mat_b = Materializer::new(pool_b.clone());
+        super::bootstrap::bootstrap_spaces(&pool_b, "device-B", &mat_b)
+            .await
+            .unwrap();
+        let mut last_import = Vec::new();
+        for space in order {
+            last_import = sync_space_a_to_b(&pool_a, &mat_a, space, &pool_b, &mat_b).await;
+        }
+        let project: Option<Option<String>> = sqlx::query_scalar(
+            "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'project'",
+        )
+        .bind(holder.as_str())
+        .fetch_optional(&pool_b)
+        .await
+        .unwrap();
+        assert_eq!(
+            project,
+            Some(Some(target.as_str().to_owned())),
+            "{label}: B holds the holder's ref to the target"
+        );
+        assert!(
+            last_import.contains(holder),
+            "{label}: the last import reports the holder as changed, so its page refreshes"
+        );
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid date");
+        let drift: Vec<String> =
+            crate::reconciliation_oracle::reconcile_all(&pool_b, mat_b.loro_state(), None, today)
+                .await
+                .unwrap()
+                .into_iter()
+                .filter(|d| d.artefact == "engine.block_properties.row")
+                .map(|d| d.key)
+                .collect();
+        assert_eq!(
+            drift,
+            Vec::<String>::new(),
+            "{label}: B's property rows agree with its engines"
+        );
+        mat_b.shutdown();
+    }
+    mat_a.shutdown();
 }
 
 /// #4801: a page moved to another space keeps its tasks' reserved columns
@@ -2504,8 +2639,9 @@ async fn an_interrupted_session_keeps_the_rows_for_the_next_one_5712() {
 
 /// #5712, the documented gap: a session that completes with the old space's
 /// doc but not the new one sweeps the moved blocks, as a purge. The new doc
-/// brings the blocks back next time, but not the rows no doc holds: B's own,
-/// and the ones on `notes` that point at the page and the tag.
+/// brings the blocks back next time, and with them the ref on `notes`, which
+/// the old doc still holds (#6236). B's own rows stay lost, and so do the link
+/// and the tag on `notes`: nothing re-projects them.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_session_without_the_new_doc_sweeps_the_moved_page_5712() {
     let fx = move_fixture().await;
@@ -2540,8 +2676,8 @@ async fn a_session_without_the_new_doc_sweeps_the_moved_page_5712() {
             b.links.contains(&(note.clone(), page)),
             b.tags.contains(&(note, tag)),
         ),
-        (false, false, false),
-        "B lost them: no doc it imported holds them"
+        (true, false, false),
+        "the ref comes back from the doc that holds it (#6236); the link and the tag stay lost"
     );
     assert_eq!(
         b_only_rows(&fx.pool_b, &fx.page).await.drafts,

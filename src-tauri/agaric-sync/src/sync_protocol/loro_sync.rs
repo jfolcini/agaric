@@ -1192,9 +1192,10 @@ async fn project_pass_c(
 /// page moved to another space leaves this doc exactly as a purged one does
 /// (#2907), and the new space's doc may be the next one this session imports.
 /// Deleting now would take the rows nothing else holds (drafts, opens) and
-/// those on untouched blocks that point at the page (links, refs, tags),
-/// which that import does not recreate. Ids an engine already holds are not
-/// recorded: their doc owns their rows.
+/// those on untouched blocks that point at the page (links and tags), which
+/// that import does not recreate (a ref it does, from the doc that holds it,
+/// #6236). Ids an engine already holds are not recorded: their doc owns their
+/// rows.
 async fn project_pass_d(
     tx: &mut sqlx::SqliteConnection,
     registry: &LoroEngineRegistry,
@@ -1221,6 +1222,56 @@ async fn project_pass_d(
     .execute(&mut *tx)
     .await?;
     Ok(())
+}
+
+/// Whether the import gives one of `changed_blocks` its first `blocks` row,
+/// asked before Pass A writes them: only such an import can supply the target
+/// of a ref the FK guard dropped (#6236).
+async fn brings_new_block_rows(
+    tx: &mut sqlx::SqliteConnection,
+    changed_blocks: &[agaric_core::ulid::BlockId],
+) -> Result<bool, AppError> {
+    let ids: Vec<&str> = changed_blocks
+        .iter()
+        .map(agaric_core::ulid::BlockId::as_str)
+        .collect();
+    Ok(!absent_block_ids(&mut *tx, &ids).await?.is_empty())
+}
+
+/// The ref pass (#6236), after every other pass of an import that gave a block
+/// its first row: a ref the engines hold that the FK guard dropped while its
+/// target had no row (another space's doc landing before the target's) gets
+/// its row. Returns the blocks it re-projected.
+async fn project_pass_refs(
+    tx: &mut sqlx::SqliteConnection,
+    registry: &LoroEngineRegistry,
+    brings_rows: bool,
+) -> Result<Vec<agaric_core::ulid::BlockId>, AppError> {
+    if !brings_rows {
+        return Ok(Vec::new());
+    }
+    agaric_engine::loro::projection::project_dropped_refs(tx, |space, key| {
+        registry.property_holders(&SpaceId::from_trusted(space), key)
+    })
+    .await
+}
+
+/// `changed_blocks` plus each block it lacks that a definition `retyped` or the
+/// ref pass `healed`: those owe the cache fan-out the caller runs over the
+/// changed set.
+fn with_reprojected(
+    mut changed_blocks: Vec<agaric_core::ulid::BlockId>,
+    retyped: Vec<agaric_core::ulid::BlockId>,
+    healed: Vec<agaric_core::ulid::BlockId>,
+) -> Vec<agaric_core::ulid::BlockId> {
+    let mut projected: std::collections::HashSet<_> = changed_blocks.iter().cloned().collect();
+    changed_blocks.extend(
+        retyped
+            .into_iter()
+            .chain(healed)
+            .filter(|b| projected.insert(b.clone())),
+    );
+    changed_blocks
 }
 
 /// #5712: purge the blocks a pull's imports took out of a doc (Pass D) that no
@@ -2318,6 +2369,8 @@ pub(crate) async fn import_and_project(
 
     project_space_block_first(space_id, &mut changed_blocks, &mut block_states);
 
+    let brings_rows = brings_new_block_rows(&mut tx, &changed_blocks).await?;
+
     let retyped = project_pass_defs(&mut tx, registry, device_id, space_id, &def_keys).await?;
 
     project_pass_a(&mut tx, space_id, &changed_blocks, &block_states).await?;
@@ -2328,6 +2381,8 @@ pub(crate) async fn import_and_project(
 
     project_pass_d(&mut tx, registry, &purged_blocks, tombstone_purged).await?;
 
+    let healed = project_pass_refs(&mut tx, registry, brings_rows).await?;
+
     clear_inbox_slots(&mut tx, &clearable_ids).await?;
 
     commit_projection(tx, pool, space_id, &block_states).await?;
@@ -2336,11 +2391,7 @@ pub(crate) async fn import_and_project(
 
     refresh_tag_inheritance(pool, tag_scope).await;
 
-    // The blocks whose values a definition re-typed owe the cache fan-out
-    // their caller runs over the changed set.
-    let projected: std::collections::HashSet<_> = changed_blocks.iter().cloned().collect();
-    changed_blocks.extend(retyped.into_iter().filter(|b| !projected.contains(b)));
-    Ok(changed_blocks)
+    Ok(with_reprojected(changed_blocks, retyped, healed))
 }
 
 /// Boot-recovery entry point: re-run `import_and_project` for a single
