@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT space_id, key, value_type, options FROM property_definitions",
+  "describe": {
+    "columns": [
+      {
+        "name": "space_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "property_definitions",
+            "name": "space_id"
+          }
+        }
+      },
+      {
+        "name": "key",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "property_definitions",
+            "name": "key"
+          }
+        }
+      },
+      {
+        "name": "value_type",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "property_definitions",
+            "name": "value_type"
+          }
+        }
+      },
+      {
+        "name": "options",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "property_definitions",
+            "name": "options"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "a7eef8c69fbc24dcc7c17f6a58257ac4f6d9bc5c3dce072002cb88e0756788f8"
+}

@@ -167,9 +167,9 @@ async fn seed_space_row(pool: &SqlitePool, space_id: &str) {
     .unwrap();
 }
 
-/// Fail the case unless `block_tags`, `page_aliases` and the `spaces` registry
-/// agree with their sources (#6207): the engines in `registry` and the
-/// `is_space` rows.
+/// Fail the case unless `block_tags`, `page_aliases`, `block_properties`,
+/// `property_definitions` and the `spaces` registry agree with their sources
+/// (#6207, #6206): the engines in `registry` and the `is_space` rows.
 async fn assert_projected_tables(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
