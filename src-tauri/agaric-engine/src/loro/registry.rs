@@ -452,6 +452,20 @@ impl LoroEngineRegistry {
             .next()
     }
 
+    /// Every registered engine's alias claims (see
+    /// [`LoroEngine::page_alias_claims`]), sorted by page id, then alias. Every
+    /// engine, because an alias is unique across spaces. The caller must hold
+    /// no engine guard.
+    pub fn page_alias_claims(&self) -> Vec<(String, String)> {
+        let mut claims: Vec<(String, String)> = self
+            .probe_engines(|engine| Some(engine.page_alias_claims()))
+            .into_iter()
+            .flat_map(|(_, claims)| claims)
+            .collect();
+        claims.sort_unstable();
+        claims
+    }
+
     /// `probe`'s answer from every registered engine that has one, locking
     /// each engine in turn with the map lock already released.
     fn probe_engines<T>(&self, probe: impl Fn(&LoroEngine) -> Option<T>) -> Vec<(SpaceId, T)> {

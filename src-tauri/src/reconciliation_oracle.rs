@@ -85,7 +85,7 @@
 //! | `block_tag_inherited` (tag inheritance, #5628) | `blocks` — `parent_id`, `deleted_at` — **and** `block_tags` | the in-transaction arms of `tag_inheritance::apply_op_tag_inheritance`, the purge cascades, `loro_sync`'s post-import refresh / `rebuild_all` (the `RebuildTagInheritanceCache` task) — row membership in [`reconcile`], `inherited_from` in [`diff_block_tag_inherited_provenance`] only |
 //! | SQL `blocks` ITSELF against the Loro engine (#5628) | the live engine docs — not a SQL table | the per-op projections in `loro::projection` (`project_*_to_sql`) after every engine apply / the SQL-only fallbacks, which write SQL without the engine — audited by [`reconcile_engine`], NOT by [`reconcile`] |
 //! | SQL `attachments` against the Loro engine (#5608) | the attachment entries the live engine docs' nodes hold | `apply::attachments` (the op path) / `reproject_attachments_from_engine` (imports and recovery) / `repair::attachments` (the boot backfill) — audited by [`reconcile_engine`], NOT by [`reconcile`] |
-//! | SQL `block_tags` and `page_aliases` against the Loro engine (#6207) | each space doc's tag maps and `page_aliases` root, for the blocks both sides hold | `project_add_tag_to_sql` / `project_remove_tag_to_sql` and `project_add_page_alias_to_sql` / `project_remove_page_alias_to_sql` (the op apply arms, the op-log recovery arms) / `reproject_block_tags_from_engine` and `reproject_page_aliases_from_engine` (imports and recovery) / `repair::page_aliases` (the boot backfill) / the purge cascades — audited by [`reconcile_engine`], NOT by [`reconcile`] |
+//! | SQL `block_tags` and `page_aliases` against the Loro engine (#6207) | each space doc's tag maps and `page_aliases` root, for the blocks both sides hold | `project_add_tag_to_sql` / `project_remove_tag_to_sql` and `project_add_page_alias_to_sql` / `project_remove_page_alias_to_sql` (the op apply arms, the op-log recovery arms) / `reproject_block_tags_from_engine` and `reproject_page_aliases_from_engine` (imports and recovery) / `project_unheld_page_alias_claims` (the hand-off to the next claimant, at a local commit, a sync import and the deferred-purge sweep, #6229) / `repair::page_aliases` (the boot backfill) / the purge cascades — audited by [`reconcile_engine`], NOT by [`reconcile`] |
 //! | SQL `block_properties` and `property_definitions` against the Loro engine (#6206) | each held node's property map, typed by its space's `property_definitions` rows and the built-ins, for the blocks both sides hold; each space doc's `property_definitions` root | `project_set_property_to_sql` / `project_delete_property_to_sql` (the op apply arms, the op-log recovery arms) / `reproject_block_properties_from_engine` (imports and recovery) / `reproject_key_values` and `project_property_value_writes` (retypes and rewrites) / the rename projections / the purge cascades; `project_property_def_to_sql` (every definition op, `project_pass_defs`, recovery) / `repair::property_definitions` (the boot backfill) — audited by [`reconcile_engine`], NOT by [`reconcile`] |
 //! | `spaces`, the registry (#6207) | `block_properties` — the `is_space = 'true'` rows, a soft-deleted space's included | the `spaces_register_is_space` trigger (migration 0089), fired by every `is_space` property insert / the FK cascade of a purge (the only removal) — in [`reconcile`] |
 //!
@@ -2292,10 +2292,10 @@ const ENGINE_PAGE_ALIASES_OWNER: &str = "the alias writers in agaric-engine: \
      project_add_page_alias_to_sql / project_remove_page_alias_to_sql after the engine apply \
      (the local apply arms, the op-log recovery arms), reproject_page_aliases_from_engine \
      (sync import, engine-first recovery; it gives a contested alias to the lower page id), \
+     project_unheld_page_alias_claims (a local commit, a sync import and the deferred-purge \
+     sweep; it hands an alias whose holder dropped it or was purged to the next claimant), \
      the purge cascades, and repair::page_aliases, the boot backfill of rows written before \
-     #5387. Removing or purging a contested alias's holder does not hand the alias to the \
-     next claimant (#6229), which reads here as a missing row until an engine-first recovery \
-     projects it";
+     #5387";
 
 /// The blocks a doc holds and `blocks` has a row for, each with that doc's
 /// space and node. A block on one side only is [`diff_engine_membership`]'s,

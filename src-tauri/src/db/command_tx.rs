@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use super::begin_immediate_logged;
 use agaric_core::error::AppError;
+use agaric_store::op::OpType;
 
 #[cfg(test)]
 tokio::task_local! {
@@ -479,7 +480,8 @@ impl CommandTx {
     /// the queued ops touched, dispatched or not (#5371). Every local command
     /// commits its ops here, undo and attachment ops included, so this is the
     /// one place the LOCAL path keeps "Last edited" fresh; an error rolls the
-    /// command back.
+    /// command back. When the queued ops remove an alias or purge a block, it
+    /// also hands each alias no row holds to its next claimant (#6229).
     ///
     /// Returns the number of dispatches that fired. Dispatch failures
     /// are logged at warn level and do not surface here.
@@ -497,6 +499,7 @@ impl CommandTx {
         if let Some(tx) = self.inner.as_mut() {
             agaric_store::cache::raise_pages_last_edited_ms(tx, &touched).await?;
         }
+        self.hand_off_unheld_page_aliases(materializer).await?;
         // #2604 — detach the engine-rollback checkpoints WHILE the write lock is
         // still held (before the commit below releases it). On a commit failure
         // we rewind the in-place engine apply so it never stays ahead of the
@@ -560,6 +563,35 @@ impl CommandTx {
             }
         }
         Ok(count)
+    }
+
+    /// Run [`project_unheld_page_alias_claims`] in this transaction when the
+    /// queued ops remove an alias or purge a block.
+    ///
+    /// [`project_unheld_page_alias_claims`]: agaric_engine::loro::projection::project_unheld_page_alias_claims
+    async fn hand_off_unheld_page_aliases(
+        &mut self,
+        materializer: &crate::materializer::Materializer,
+    ) -> Result<(), sqlx::Error> {
+        let drops_alias_rows = self
+            .pending
+            .iter()
+            .map(PendingDispatch::record)
+            .chain(&self.undispatched)
+            .any(|record| {
+                record.op_type == OpType::RemovePageAlias.as_str()
+                    || record.op_type == OpType::PurgeBlock.as_str()
+            });
+        match self.inner.as_mut() {
+            Some(tx) if drops_alias_rows => {
+                agaric_engine::loro::projection::project_unheld_page_alias_claims(
+                    tx,
+                    &materializer.loro_state().registry,
+                )
+                .await
+            }
+            _ => Ok(()),
+        }
     }
 
     /// Commit the transaction without firing any dispatches.

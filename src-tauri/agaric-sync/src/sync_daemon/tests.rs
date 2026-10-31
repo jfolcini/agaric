@@ -13313,33 +13313,35 @@ async fn all_page_aliases_5387(pool: &SqlitePool) -> Vec<(String, String)> {
         .unwrap()
 }
 
-/// #5387: two devices that give one alias to different pages before they meet
-/// end with the same `page_aliases` rows, the lower page id holding it on both.
-/// Their engines hold both claims either way; the rows are what could differ,
-/// each device keeping the claim it projected first.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_contested_page_alias_goes_to_the_same_page_on_both_devices_5387() {
+/// Apply `payload` on `dev`, in `space`, through the local-edit pipeline.
+async fn on_5387(
+    dev: &Device2141,
+    space: &agaric_store::space::SpaceId,
+    payload: agaric_store::op::OpPayload,
+    ts: i64,
+) {
+    apply_local_op_602(&dev.pool, &dev.mat, &dev.state, &dev.id, space, payload, ts).await;
+}
+
+/// Two devices that gave one alias to different pages before they met: A
+/// writes pages `low` and `high` and B pulls them, then A gives `low` `plans`
+/// and B gives `high` `Plans`, and a session each way merges the claims.
+async fn contested_page_alias_5387(
+    device_ids: &[&str],
+    space: &agaric_store::space::SpaceId,
+    low: &str,
+    high: &str,
+) -> Vec<Device2141> {
     use crate::sync_protocol::SyncState;
     use agaric_core::ulid::BlockId;
     use agaric_store::op::{AddPageAliasPayload, CreateBlockPayload, OpPayload};
 
-    const LOW: &str = "01HZ5387PAGAXXXXXXXXXXXXXX";
-    const HIGH: &str = "01HZ5387PAGBXXXXXXXXXXXXXX";
-    let space = agaric_store::space::SpaceId::from_trusted("01HZ5387SPACEXXXXXXXXXXXXX");
-    let devices = make_n_devices_2141(&["DEV5387CC", "DEV5387DD"]).await;
+    let devices = make_n_devices_2141(device_ids).await;
     let (a, b) = (&devices[0], &devices[1]);
-    async fn on(
-        dev: &Device2141,
-        space: &agaric_store::space::SpaceId,
-        payload: OpPayload,
-        ts: i64,
-    ) {
-        apply_local_op_602(&dev.pool, &dev.mat, &dev.state, &dev.id, space, payload, ts).await;
-    }
-    for (page, ts) in [(LOW, 1_736_942_400_000), (HIGH, 1_736_942_400_001)] {
-        on(
+    for (page, ts) in [(low, 1_736_942_400_000), (high, 1_736_942_400_001)] {
+        on_5387(
             a,
-            &space,
+            space,
             OpPayload::CreateBlock(CreateBlockPayload {
                 block_id: BlockId::from_trusted(page),
                 block_type: "page".into(),
@@ -13360,12 +13362,12 @@ async fn a_contested_page_alias_goes_to_the_same_page_on_both_devices_5387() {
 
     // Neither device has seen the other's claim: one spelling each.
     for (dev, page, alias, ts) in [
-        (a, LOW, "plans", 1_736_942_400_100),
-        (b, HIGH, "Plans", 1_736_942_400_200),
+        (a, low, "plans", 1_736_942_400_100),
+        (b, high, "Plans", 1_736_942_400_200),
     ] {
-        on(
+        on_5387(
             dev,
-            &space,
+            space,
             OpPayload::AddPageAlias(AddPageAliasPayload {
                 page_id: BlockId::from_trusted(page),
                 alias: alias.into(),
@@ -13376,6 +13378,20 @@ async fn a_contested_page_alias_goes_to_the_same_page_on_both_devices_5387() {
     }
     assert_eq!(run_session_2141(b, a).await, SyncState::Complete);
     assert_eq!(run_session_2141(a, b).await, SyncState::Complete);
+    devices
+}
+
+/// #5387: two devices that give one alias to different pages before they meet
+/// end with the same `page_aliases` rows, the lower page id holding it on both.
+/// Their engines hold both claims either way; the rows are what could differ,
+/// each device keeping the claim it projected first.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_contested_page_alias_goes_to_the_same_page_on_both_devices_5387() {
+    const LOW: &str = "01HZ5387PAGAXXXXXXXXXXXXXX";
+    const HIGH: &str = "01HZ5387PAGBXXXXXXXXXXXXXX";
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ5387SPACEXXXXXXXXXXXXX");
+    let devices = contested_page_alias_5387(&["DEV5387CC", "DEV5387DD"], &space, LOW, HIGH).await;
+    let (a, b) = (&devices[0], &devices[1]);
 
     let expected = vec![(LOW.to_owned(), "plans".to_owned())];
     assert_eq!(
@@ -13387,6 +13403,80 @@ async fn a_contested_page_alias_goes_to_the_same_page_on_both_devices_5387() {
         all_page_aliases_5387(&b.pool).await,
         expected,
         "device B: the same page holds it, though B's own claim came first"
+    );
+
+    a.flush_and_shutdown().await;
+    b.flush_and_shutdown().await;
+}
+
+const LOW_6229: &str = "01HZ6229PAGAXXXXXXXXXXXXXX";
+const HIGH_6229: &str = "01HZ6229PAGBXXXXXXXXXXXXXX";
+
+/// #6229: when A removes a contested alias from the page holding it, B's import
+/// of the removal hands the alias to the other claimant.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_synced_removal_of_a_contested_alias_hands_it_to_the_other_claimant_6229() {
+    use crate::sync_protocol::SyncState;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{OpPayload, RemovePageAliasPayload};
+
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ6229SPACEXXXXXXXXXXXXX");
+    let devices =
+        contested_page_alias_5387(&["DEV6229AA", "DEV6229BB"], &space, LOW_6229, HIGH_6229).await;
+    let (a, b) = (&devices[0], &devices[1]);
+    on_5387(
+        a,
+        &space,
+        OpPayload::RemovePageAlias(RemovePageAliasPayload {
+            page_id: BlockId::from_trusted(LOW_6229),
+            alias: "plans".into(),
+        }),
+        1_736_942_400_300,
+    )
+    .await;
+    assert_eq!(run_session_2141(b, a).await, SyncState::Complete);
+    assert_eq!(
+        all_page_aliases_5387(&b.pool).await,
+        vec![(HIGH_6229.to_owned(), "Plans".to_owned())],
+        "B gives the alias to the page that still claims it"
+    );
+
+    a.flush_and_shutdown().await;
+    b.flush_and_shutdown().await;
+}
+
+/// #6229: when A purges the page holding a contested alias, B's sweep of the
+/// purge hands the alias to the other claimant.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_synced_purge_of_a_contested_alias_holder_hands_it_to_the_other_claimant_6229() {
+    use crate::sync_protocol::SyncState;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{DeleteBlockPayload, OpPayload, PurgeBlockPayload};
+
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ6229SPACEXXXXXXXXXXXXX");
+    let devices =
+        contested_page_alias_5387(&["DEV6229CC", "DEV6229DD"], &space, LOW_6229, HIGH_6229).await;
+    let (a, b) = (&devices[0], &devices[1]);
+    let low = BlockId::from_trusted(LOW_6229);
+    for (payload, ts) in [
+        (
+            OpPayload::DeleteBlock(DeleteBlockPayload {
+                block_id: low.clone(),
+            }),
+            1_736_942_400_300,
+        ),
+        (
+            OpPayload::PurgeBlock(PurgeBlockPayload { block_id: low }),
+            1_736_942_400_400,
+        ),
+    ] {
+        on_5387(a, &space, payload, ts).await;
+    }
+    assert_eq!(run_session_2141(b, a).await, SyncState::Complete);
+    assert_eq!(
+        all_page_aliases_5387(&b.pool).await,
+        vec![(HIGH_6229.to_owned(), "Plans".to_owned())],
+        "B gives the alias to the page that still claims it"
     );
 
     a.flush_and_shutdown().await;

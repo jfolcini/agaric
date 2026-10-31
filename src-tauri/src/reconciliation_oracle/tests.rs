@@ -5273,6 +5273,112 @@ async fn page_aliases_reconcile_with_the_engine_under_the_lower_page_id_rule_620
     mat.shutdown();
 }
 
+/// [`pr_vault`] after a merge left its two pages contesting the alias: the
+/// second page's engine map claims it too, as `ALPHA`, and the import
+/// projection has run for that page, so the lower page id holds the row.
+/// Returns `[low, high]`, each page with the spelling its own map holds.
+async fn pr_contested_vault() -> (
+    sqlx::SqlitePool,
+    TempDir,
+    Materializer,
+    [(String, &'static str); 2],
+) {
+    let (pool, dir, mat, [space, page_a, page_b, _, _]) = pr_vault().await;
+    pr_engine_claim(&mat, &space, &page_b, "ALPHA");
+    let mut conn = pool.acquire().await.expect("acquire");
+    agaric_engine::loro::projection::reproject_page_aliases_from_engine(
+        &mut conn,
+        &page_b,
+        &["ALPHA".to_owned()],
+    )
+    .await
+    .expect("reproject the second page");
+    drop(conn);
+    let mut pages = [(page_a, "Alpha"), (page_b, "ALPHA")];
+    pages.sort_unstable();
+    assert_eq!(
+        dump_page_aliases(&pool).await.expect("dump page_aliases"),
+        vec![(pages[0].0.clone(), pages[0].1.to_owned())],
+        "the lower page id holds the contested alias"
+    );
+    (pool, dir, mat, pages)
+}
+
+/// **#6229, a removal.** Once the page holding a contested alias drops it, the
+/// other claimant holds it, as the check and an engine-first recovery give it.
+/// Re-casing the alias on its holder keeps it there: that edit removes the old
+/// spelling before it adds the new one, and the hand-off waits for the commit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dropping_a_contested_alias_hands_it_to_the_other_claimant_6229() {
+    use crate::commands::set_page_aliases_inner;
+    let (pool, _dir, mat, [(low, _), (high, high_spelling)]) = pr_contested_vault().await;
+
+    set_page_aliases_inner(&pool, DEV, &mat, &low, vec!["alpha".to_owned()])
+        .await
+        .expect("re-case the alias");
+    assert_eq!(
+        dump_page_aliases(&pool).await.expect("dump page_aliases"),
+        vec![(low.clone(), "alpha".to_owned())],
+        "a re-cased alias stays on its holder"
+    );
+
+    set_page_aliases_inner(&pool, DEV, &mat, &low, Vec::new())
+        .await
+        .expect("drop the alias");
+    mat.flush_background().await.expect("flush_background");
+    assert_eq!(
+        dump_page_aliases(&pool).await.expect("dump page_aliases"),
+        vec![(high.clone(), high_spelling.to_owned())],
+        "the other claimant holds the alias, spelled as its map holds it"
+    );
+    assert_eq!(
+        pr_divergences(&pool, &mat, "engine.page_aliases").await,
+        Vec::new(),
+        "the rows agree with the engine claims"
+    );
+    mat.shutdown();
+}
+
+/// **#6229, a purge.** A holder in the Trash keeps a contested alias, since its
+/// page still has a row; purging it hands the alias to the other claimant.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purging_a_contested_alias_holder_hands_it_to_the_other_claimant_6229() {
+    use crate::commands::{delete_block_inner, purge_block_inner};
+    let (pool, _dir, mat, [(low, low_spelling), (high, high_spelling)]) =
+        pr_contested_vault().await;
+
+    delete_block_inner(&pool, DEV, &mat, BlockId::from_trusted(&low))
+        .await
+        .expect("delete the holder");
+    mat.flush_background().await.expect("flush_background");
+    assert_eq!(
+        dump_page_aliases(&pool).await.expect("dump page_aliases"),
+        vec![(low.clone(), low_spelling.to_owned())],
+        "a holder in the Trash keeps the alias"
+    );
+    assert_eq!(
+        pr_divergences(&pool, &mat, "engine.page_aliases").await,
+        Vec::new(),
+        "and the check expects it to"
+    );
+
+    purge_block_inner(&pool, DEV, &mat, BlockId::from_trusted(&low))
+        .await
+        .expect("purge the holder");
+    mat.flush_background().await.expect("flush_background");
+    assert_eq!(
+        dump_page_aliases(&pool).await.expect("dump page_aliases"),
+        vec![(high.clone(), high_spelling.to_owned())],
+        "the other claimant holds the alias once the holder is purged"
+    );
+    assert_eq!(
+        pr_divergences(&pool, &mat, "engine.page_aliases").await,
+        Vec::new(),
+        "the rows agree with the engine claims"
+    );
+    mat.shutdown();
+}
+
 // ===========================================================================
 // Artefact 17 — the `spaces` registry (#6207)
 // ===========================================================================

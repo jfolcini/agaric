@@ -88,6 +88,31 @@ impl LoroEngine {
         err.map_or(Ok(Some(aliases)), Err)
     }
 
+    /// Every alias claim in the doc, as `(page_id, alias as written)` (#6229).
+    /// A page whose slot cannot be read is logged and skipped: the hand-off
+    /// that reads this runs inside the user's commit.
+    pub fn page_alias_claims(&self) -> Vec<(String, String)> {
+        let mut pages = Vec::new();
+        self.doc
+            .get_map(PAGE_ALIASES_ROOT)
+            .for_each(|page_id, _| pages.push(page_id.to_owned()));
+        let mut claims = Vec::new();
+        for page_id in pages {
+            match self.read_page_aliases(&page_id) {
+                Ok(aliases) => claims.extend(
+                    aliases
+                        .into_iter()
+                        .flatten()
+                        .map(|alias| (page_id.clone(), alias)),
+                ),
+                Err(e) => {
+                    tracing::warn!(page_id, error = %e, "skipped an unreadable page alias slot");
+                }
+            }
+        }
+        claims
+    }
+
     /// The alias map `page_id` holds, if any.
     fn page_alias_map(&self, page_id: &str) -> Result<Option<LoroMap>, AppError> {
         let Some(voc) = self.doc.get_map(PAGE_ALIASES_ROOT).get(page_id) else {
@@ -183,6 +208,31 @@ mod tests {
         assert!(
             on_a.contains(&"roadmap".to_owned()),
             "the second first-add is not hidden"
+        );
+    }
+
+    #[test]
+    fn page_alias_claims_lists_each_page_claim_as_written_and_none_of_a_purged_page() {
+        const OTHER: &str = "01HZ0000000000000000000P02";
+        const PURGED: &str = "01HZ0000000000000000000P03";
+        let mut e = peer("dev-a");
+        e.apply_add_page_alias(PAGE, "Plans").expect("add");
+        e.apply_add_page_alias(PAGE, "roadmap").expect("add");
+        e.apply_add_page_alias(OTHER, "PLANS").expect("add");
+        e.apply_create_block(PURGED, "page", "Gone", None, 1)
+            .expect("create page");
+        e.apply_add_page_alias(PURGED, "gone").expect("add");
+        e.apply_purge_block(PURGED).expect("purge");
+        let mut claims = e.page_alias_claims();
+        claims.sort();
+        assert_eq!(
+            claims,
+            vec![
+                (PAGE.to_owned(), "Plans".to_owned()),
+                (PAGE.to_owned(), "roadmap".to_owned()),
+                (OTHER.to_owned(), "PLANS".to_owned()),
+            ],
+            "every page's claims as written, and none of the purged page's"
         );
     }
 

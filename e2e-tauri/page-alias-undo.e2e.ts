@@ -24,6 +24,7 @@
 import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
+  aliasBadge,
   blockStaticByMarker,
   clickUncovered,
   expectAbsent,
@@ -40,11 +41,6 @@ import {
 const MARKER = runScopedMarker('wdio-alias-undo')
 const KEPT = runScopedMarker('wdio-alias-kept')
 const UNDONE = runScopedMarker('wdio-alias-undone')
-
-/** The header badge of `alias` (PageAliasSection: a `Badge` holding the text). */
-function aliasBadge(alias: string): string {
-  return `//*[@data-slot="badge"][normalize-space(.)="${alias}"]`
-}
 
 /** Add `alias` through the page kebab's "Add alias", then close the editor. */
 async function addAlias(alias: string): Promise<void> {

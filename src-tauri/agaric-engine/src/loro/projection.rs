@@ -43,7 +43,7 @@
 
 use sqlx::SqliteConnection;
 
-use crate::loro::engine::BlockSnapshot;
+use crate::loro::engine::{BlockSnapshot, page_alias_key};
 use agaric_core::error::AppError;
 use agaric_store::db::reserved_key_blocks_column;
 use agaric_store::op::{
@@ -1130,6 +1130,51 @@ pub async fn reproject_page_aliases_from_engine(
         .execute(&mut *conn)
         .await?;
         project_add_page_alias_to_sql(conn, page_id, alias).await?;
+    }
+    Ok(())
+}
+
+/// Give each alias the engines claim and no `page_aliases` row holds to its
+/// lowest claimant with a `blocks` row, spelled as that page's map holds it
+/// (#6229), so removing or purging a contested alias's holder hands the alias
+/// to the next claimant. A soft-deleted page still has a `blocks` row, so it
+/// keeps its claim until it is purged.
+///
+/// Call it once per transaction, after the transaction's last alias op: run
+/// per op, a respell's remove (the same alias, re-cased, removed and added in
+/// one edit) would hand the row away before its add. The caller must hold no
+/// engine guard.
+pub async fn project_unheld_page_alias_claims(
+    conn: &mut SqliteConnection,
+    registry: &crate::loro::registry::LoroEngineRegistry,
+) -> Result<(), sqlx::Error> {
+    let claims = registry.page_alias_claims();
+    if claims.is_empty() {
+        return Ok(());
+    }
+    let mut held: std::collections::HashSet<String> =
+        sqlx::query_scalar!("SELECT alias FROM page_aliases")
+            .fetch_all(&mut *conn)
+            .await?
+            .iter()
+            .map(|alias| page_alias_key(alias))
+            .collect();
+    for (page_id, alias) in claims {
+        let key = page_alias_key(&alias);
+        if held.contains(&key) {
+            continue;
+        }
+        let inserted = sqlx::query!(
+            "INSERT INTO page_aliases (page_id, alias) \
+             SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?1)",
+            page_id,
+            alias,
+        )
+        .execute(&mut *conn)
+        .await?;
+        if inserted.rows_affected() > 0 {
+            held.insert(key);
+        }
     }
     Ok(())
 }
@@ -5454,6 +5499,55 @@ mod tests {
             page_alias_rows(&pool).await,
             vec![(BLOCK_B.to_owned(), "plans".to_owned())],
             "the holder keeps the alias against a page that has no row"
+        );
+    }
+
+    /// #6229: each alias no row holds goes to its lowest claimant with a
+    /// `blocks` row, spelled as that page's map holds it. `plans` and `notes`
+    /// are each claimed by both pages from opposite spaces, so engines read in
+    /// either order would give one of them to the higher page. A held alias
+    /// stays where it is, though a lower page claims it.
+    #[tokio::test]
+    async fn unheld_alias_claims_go_to_the_lowest_claimant_with_a_row() {
+        use crate::loro::registry::LoroEngineRegistry;
+        use agaric_store::space::SpaceId;
+        const NO_ROW: &str = "01HZ00000000000000000000A0";
+        const SPACE_1: &str = "01HZ0000000000000000000S01";
+        const SPACE_2: &str = "01HZ0000000000000000000S02";
+        let (pool, _dir) = fresh_pool().await;
+        seed_two_pages(&pool).await;
+        let registry = LoroEngineRegistry::new();
+        for (space, page, alias) in [
+            (SPACE_1, NO_ROW, "PLANS"),
+            (SPACE_1, BLOCK_A, "Plans"),
+            (SPACE_2, BLOCK_B, "plans"),
+            (SPACE_2, BLOCK_A, "notes"),
+            (SPACE_1, BLOCK_B, "NOTES"),
+            (SPACE_1, BLOCK_A, "kept"),
+        ] {
+            registry
+                .for_space(&SpaceId::from_trusted(space), "dev-a")
+                .expect("for_space")
+                .engine_mut()
+                .apply_add_page_alias(page, alias)
+                .expect("claim");
+        }
+        let mut conn = pool.acquire().await.unwrap();
+        project_add_page_alias_to_sql(&mut conn, BLOCK_B, "Kept")
+            .await
+            .unwrap();
+        project_unheld_page_alias_claims(&mut conn, &registry)
+            .await
+            .expect("the pass leaves a held alias alone");
+        drop(conn);
+        assert_eq!(
+            page_alias_rows(&pool).await,
+            vec![
+                (BLOCK_A.to_owned(), "notes".to_owned()),
+                (BLOCK_A.to_owned(), "Plans".to_owned()),
+                (BLOCK_B.to_owned(), "Kept".to_owned()),
+            ],
+            "the lower page with a row takes each unheld alias as it spells it"
         );
     }
 }

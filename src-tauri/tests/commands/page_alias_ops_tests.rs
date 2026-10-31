@@ -264,7 +264,6 @@ async fn clearing_a_page_drops_an_alias_it_lost_so_recovery_cannot_hand_it_back(
             .apply_add_page_alias(&loser, "x")
             .unwrap();
     }
-    set(&pool, &mat, &winner, &[]).await.unwrap();
     assert_eq!(
         engine_aliases(&mat, &loser),
         vec!["x"],
@@ -280,6 +279,13 @@ async fn clearing_a_page_drops_an_alias_it_lost_so_recovery_cannot_hand_it_back(
     assert!(
         engine_aliases(&mat, &loser).is_empty(),
         "clearing the loser clears its engine map too"
+    );
+    // The winner dropping it hands it to a claim that is left (#6229); the
+    // loser's is gone, so nothing comes back to it.
+    set(&pool, &mat, &winner, &[]).await.unwrap();
+    assert!(
+        aliases(&pool, &loser).await.is_empty(),
+        "the winner's drop hands the loser nothing it cleared"
     );
     let mut conn = pool.acquire().await.unwrap();
     agaric_engine::loro::projection::reproject_page_aliases_from_engine(

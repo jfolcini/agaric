@@ -1104,26 +1104,35 @@ async fn project_pass_a(
 /// Rank-only siblings are skipped (#3162): a sibling that appears solely
 /// because its rank shifted had no `block_tags` change in this import — any
 /// tag edit would have put it in the set through the tags root instead.
+/// Re-projecting a page's aliases can drop the row of an alias another page
+/// also claims, so the pass ends with `project_unheld_page_alias_claims`
+/// (#6229).
 async fn project_pass_b(
     tx: &mut sqlx::SqliteConnection,
+    registry: &LoroEngineRegistry,
     changed_blocks: &[agaric_core::ulid::BlockId],
     block_states: &[ProjectedBlockState],
 ) -> Result<(), AppError> {
     use agaric_engine::loro::projection::{
-        reproject_attachments_from_engine, reproject_block_tags_from_engine,
-        reproject_page_aliases_from_engine,
+        project_unheld_page_alias_claims, reproject_attachments_from_engine,
+        reproject_block_tags_from_engine, reproject_page_aliases_from_engine,
     };
 
+    let mut aliases_reprojected = false;
     for (block_id, (_, full_state)) in changed_blocks.iter().zip(block_states) {
         if let Some((_, tag_ids, _, aliases, attachments)) = full_state {
             reproject_block_tags_from_engine(&mut *tx, block_id, tag_ids).await?;
             if let Some(aliases) = aliases {
                 reproject_page_aliases_from_engine(&mut *tx, block_id.as_str(), aliases).await?;
+                aliases_reprojected = true;
             }
             if let Some(attachments) = attachments {
                 reproject_attachments_from_engine(&mut *tx, block_id.as_str(), attachments).await?;
             }
         }
+    }
+    if aliases_reprojected {
+        project_unheld_page_alias_claims(&mut *tx, registry).await?;
     }
     Ok(())
 }
@@ -1282,6 +1291,7 @@ pub async fn sweep_deferred_purges_if_last(
         .filter(|id| registry.spaces_containing(id).is_empty())
         .collect();
     agaric_engine::loro::projection::project_purge_blocks_to_sql(&mut tx, &unheld).await?;
+    agaric_engine::loro::projection::project_unheld_page_alias_claims(&mut tx, registry).await?;
     sqlx::query!("DELETE FROM sync_deferred_purges")
         .execute(&mut *tx)
         .await?;
@@ -2312,7 +2322,7 @@ pub(crate) async fn import_and_project(
 
     project_pass_a(&mut tx, space_id, &changed_blocks, &block_states).await?;
 
-    project_pass_b(&mut tx, &changed_blocks, &block_states).await?;
+    project_pass_b(&mut tx, registry, &changed_blocks, &block_states).await?;
 
     let swept_tombstones = project_pass_c(&mut tx, &changed_blocks, &block_states).await?;
 
