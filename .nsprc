@@ -3,5 +3,15 @@
     "active": true,
     "notes": "GHSA-vfj7-8cjw-p6xm - braces stack-exhaustion denial of service through deeply nested patterns (high). NO FIXED VERSION EXISTS: the advisory range is <=3.0.3 and 3.0.3 is the latest published release, so this cannot be resolved by upgrading or by an override. Reach: devDependencies only, via markdownlint-cli2 -> micromatch -> braces (the docs lint) and @wdio/mocha-framework -> mocha -> chokidar -> braces (the e2e-tauri WDIO lane). `npm ls braces --omit=dev` is empty, so it is absent from the shipped application tree and from every user-facing artifact. Exploiting it requires feeding braces an attacker-controlled glob; the only patterns it expands are the repo's own lint and test globs. Re-evaluate at expiry, and drop this entry the moment a patched braces ships.",
     "expiry": "2026-11-12"
+  },
+  "1244012": {
+    "active": true,
+    "notes": "GHSA-g3hv-75wg-m249 - minimatch denial of service via globparts amplification (moderate). The fix is minimatch 11.0.1, published 2026-10-27: younger than .npmrc min-release-age=7, so npm will not resolve it before 2026-11-04. Even then most of the reach cannot move: minimatch 11 is a rewrite on a new matcher (@isaacs/nonrecursive-glob-match) that drops the exported AST, and the 10.x consumers (@stryker-mutator/core, mocha, readdir-glob under webdriverio archiver, glob 13) declare ^10, while license-checker -> read-installed -> read-package-json -> glob 7 -> minimatch 3 has no fixed release on its major. Reach: devDependencies only (mutation testing, the e2e-tauri WDIO lane, the license hook); `npm ls minimatch --omit=dev` is empty, so it is absent from the shipped application. Exploiting it needs an attacker-controlled glob; these tools expand only the repo's own test, mutation and package globs. Re-evaluate at expiry: take minimatch 11 for any consumer that declares it, and drop this entry once nothing below 11.0.1 remains.",
+    "expiry": "2026-11-12"
+  },
+  "1244013": {
+    "active": true,
+    "notes": "GHSA-3g3m-2fjr-6pw4 - glob AbortSignal cancellation bypass allows post-timeout filesystem traversal (moderate). The fix is glob 14.0.2, published 2026-10-27: younger than .npmrc min-release-age=7, so npm will not resolve it before 2026-11-04. Reach: devDependencies only, glob 13 under @wdio/config and mocha (the e2e-tauri WDIO lane); `npm ls glob --omit=dev` is empty, so it is absent from the shipped application. Exploiting it needs an attacker-controlled walk that the caller aborts; these tools walk only the repo's own spec globs. At expiry, add the override glob@13 -> ^14.0.2 (14.x keeps the API and brings minimatch 11) and drop this entry.",
+    "expiry": "2026-11-07"
   }
 }
