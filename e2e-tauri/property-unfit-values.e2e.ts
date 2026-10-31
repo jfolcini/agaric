@@ -88,7 +88,9 @@ describe("Agaric real-backend values that don't fit a property (#6206) @settings
 
     await openSettingsTab('properties')
     await expectBadge('after its options lost beta')
-    await $(BADGE).click()
+    const badge = $(BADGE)
+    await badge.waitForClickable({ timeout: ACTION_TIMEOUT })
+    await badge.click()
     await browser.waitUntil(
       async () =>
         (await dialogShows("1 value doesn't fit.")) &&

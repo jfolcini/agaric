@@ -489,7 +489,8 @@ export const commands = {
 	deletePropertyDef: (spaceId: SpaceId, key: string) => typedError<WithOps<PropertyDefinition>, AppError>(__TAURI_INVOKE("delete_property_def", { spaceId, key })),
 	/**
 	 *  Tauri command: how many live blocks of a space use each key of its
-	 *  vocabulary. Delegates to [`count_property_usage_inner`].
+	 *  vocabulary, and how many of its values don't fit it (#6206). Delegates to
+	 *  [`count_property_usage_inner`].
 	 */
 	countPropertyUsage: (spaceId: SpaceId) => typedError<PropertyUsage[], AppError>(__TAURI_INVOKE("count_property_usage", { spaceId })),
 	/**

@@ -1,5 +1,5 @@
 {
-  "description": "#6206 — `remove_unfit_property_values` removes every value of a key that doesn't fit it, the Trash's included, as one `rewrite_properties` op (reason `remove_unfit`), refused when the acknowledged counts are stale (`UnacknowledgedPropertyLoss`); `undo_ops` puts them back, still not fitting. `add_unfit_values_to_options` adds a select's texts that don't fit to its options as one `set_property_def`, refused for a built-in (`BuiltinPropertyLocked`) and for a key that is not a select. With nothing to remove, the removal appends no op. A second removal acknowledging the first one's counts relies on the undo having put both values back. The seed and the misfits are `query_property_unfit`'s. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "description": "#6206 — `remove_unfit_property_values` removes every value of a key that doesn't fit it, the Trash's included, as one `rewrite_properties` op (reason `remove_unfit`), refused when the acknowledged counts are stale (`UnacknowledgedPropertyLoss`); `undo_ops` puts them back, still not fitting. `add_unfit_values_to_options` adds a select's texts that don't fit to its options as one `set_property_def`, refused for a built-in (`BuiltinPropertyLocked`) and for a key that is not a select. With nothing to remove, or nothing to add, neither appends an op. A second removal acknowledging the first one's counts relies on the undo having put both values back. The seed and the misfits are `query_property_unfit`'s. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -179,6 +179,12 @@
       "code": null,
       "error": null,
       "name": "add_b_to_stagex",
+      "returns": ["stagex#value_type=select#options=[\"a\",\"b\"]#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "nothing_to_add",
       "returns": ["stagex#value_type=select#options=[\"a\",\"b\"]#builtin=false"]
     },
     {
@@ -411,6 +417,16 @@
       "command": "add_unfit_values_to_options",
       "comment": "O12 — `b` is an option again.",
       "name": "add_b_to_stagex",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "stagex",
+        "spaceId": "$SPACE"
+      },
+      "command": "add_unfit_values_to_options",
+      "comment": "Nothing left to add: no op.",
+      "name": "nothing_to_add",
       "via": "command"
     },
     {

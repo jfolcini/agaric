@@ -18,6 +18,7 @@ import { PropertyDefinitionsList } from '@/components/properties/PropertyDefinit
 import type { AppError } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { dispatch } from '@/lib/tauri-mock/handlers'
+import { rowOf } from '@/lib/tauri-mock/property-keys'
 import { properties, SEED_IDS, seedBlocks, spacePropertyDefs } from '@/lib/tauri-mock/seed'
 import { useSpaceStore } from '@/stores/space'
 
@@ -127,6 +128,21 @@ describe('UnfitPropertyValues', () => {
     expect(button(dialog, 'propertiesView.unfitAddToOptions')).not.toBeInTheDocument()
   })
 
+  it('holds a built-in select to its options, and offers Remove but no Add to options', async () => {
+    const slots = { value_num: null, value_date: null, value_ref: null, value_bool: null }
+    properties.get(MTG_1)?.set('listStyle', rowOf('listStyle', { value_text: 'zigzag', ...slots }))
+    properties.get(MTG_2)?.set('listStyle', rowOf('listStyle', { value_text: 'ordered', ...slots }))
+    render(<PropertyDefinitionsList />)
+    await waitFor(() => {
+      expect(badge('listStyle')).toHaveTextContent(t('propertiesView.unfitBadge', { count: 1 }))
+    })
+    const dialog = await openDialog('listStyle')
+    expect(await within(dialog).findByText('zigzag')).toBeInTheDocument()
+    expect(within(dialog).queryByText('ordered')).not.toBeInTheDocument()
+    expect(button(dialog, 'propertiesView.unfitRemove')).toBeInTheDocument()
+    expect(button(dialog, 'propertiesView.unfitAddToOptions')).not.toBeInTheDocument()
+  })
+
   it("removes them, and the toast's Undo puts them back", async () => {
     const user = userEvent.setup()
     await projectLosesBeta()
@@ -218,6 +234,39 @@ describe('UnfitPropertyValues', () => {
     })
     expect(properties.get(MTG_2)?.get('project')?.['value_text']).toBe('beta')
     expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+
+  it('says nothing was added, and keeps the dialog, when no value is a text', async () => {
+    const user = userEvent.setup()
+    // `size` was a number held by a meeting block; as a select, its 5 is no option.
+    await dispatch('create_property_def', {
+      spaceId: PERSONAL.id,
+      key: 'size',
+      valueType: 'number',
+      options: null,
+    })
+    await dispatch('set_property', { blockId: MTG_1, key: 'size', value: { value_num: 5 } })
+    await dispatch('change_property_type', {
+      spaceId: PERSONAL.id,
+      key: 'size',
+      valueType: 'select',
+      options: '["s","m"]',
+      acknowledged: { converted: 0, unfit: 1 },
+    })
+    render(<PropertyDefinitionsList />)
+    const dialog = await openDialog('size')
+    const five = await within(dialog).findByText('5')
+    expect(five.closest('li')).toHaveTextContent(
+      t('propertiesView.unfitForm', { form: 'number', type: 'select' }),
+    )
+    await user.click(button(dialog, 'propertiesView.unfitAddToOptions') as HTMLElement)
+
+    await waitFor(() => {
+      expect(toast.info).toHaveBeenCalledWith(t('propertiesView.unfitNothingToAdd'))
+    })
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(spacePropertyDefs(PERSONAL.id).get('size')?.['options']).toBe('["s","m"]')
   })
 
   it("shows the backend's reason when adding to the options is refused", async () => {

@@ -355,6 +355,7 @@ export const properties: Record<string, string> = {
   'propertiesView.unfitRemoved_one': "Removed {{count}} value of {{key}} that didn't fit",
   'propertiesView.unfitRemoved_other': "Removed {{count}} values of {{key}} that didn't fit",
   'propertiesView.unfitAddedToOptions': 'Added the values to the options of {{key}}',
+  'propertiesView.unfitNothingToAdd': 'Nothing to add: only a text can become an option',
   'propertiesView.unfitRemoveFailed': "Failed to remove the values that don't fit",
   'propertiesView.unfitAddFailed': 'Failed to add the values to the options',
   'propertiesView.clearSearch': 'Clear search',

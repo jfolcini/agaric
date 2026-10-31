@@ -1324,7 +1324,8 @@ pub(crate) fn validate_property_def_shape(
 /// rejects is a row the user can never rewrite. In particular `text` and
 /// `select` admit `value_ref` as well as `value_text`, and the catch-all
 /// mirrors step 4's `_ => true` (an unrecognised declared type constrains
-/// nothing, so nothing conflicts with it).
+/// nothing, so nothing conflicts with it). The `CASE` in `unfit_values`
+/// (`property_unfit.rs`) is this table in SQL: change them together.
 fn declared_type_admits_shape(value_type: &str, shape: &str) -> bool {
     match value_type {
         "text" | "select" => shape == "text" || shape == "ref",
@@ -2651,7 +2652,8 @@ pub async fn delete_property_def(
 }
 
 /// Tauri command: how many live blocks of a space use each key of its
-/// vocabulary. Delegates to [`count_property_usage_inner`].
+/// vocabulary, and how many of its values don't fit it (#6206). Delegates to
+/// [`count_property_usage_inner`].
 #[tauri::command]
 #[specta::specta]
 pub async fn count_property_usage(

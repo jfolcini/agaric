@@ -34,6 +34,7 @@ import type {
 import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { queryClient } from '@/lib/query-client'
 import { reportIpcErrorWithReason } from '@/lib/report-ipc-error'
@@ -66,7 +67,9 @@ export function UnfitPropertyValues({
   const { key } = definition
   const live = counts?.unfit ?? 0
 
-  // The open dialog outlives a count that drops to zero while it is read again.
+  // The badge counts live blocks, as the use count beside it does, so a key whose values that
+  // don't fit are all in the Trash shows none until one is restored. The open dialog outlives a
+  // count that drops to zero while it is read again.
   if (live === 0 && !open) return null
 
   const changed = (): void => {
@@ -114,6 +117,11 @@ export function UnfitPropertyValues({
     setWriting(true)
     try {
       const result = unwrap(await commands.addUnfitValuesToOptions(spaceId, key))
+      if (result.op_refs.length === 0) {
+        // Only a text can be an option: a number or a boolean that doesn't fit stays as it is.
+        notify.info(t('propertiesView.unfitNothingToAdd'))
+        return
+      }
       onOpenChange(false)
       notifyDefinitionWrite(
         t('propertiesView.unfitAddedToOptions', { key }),

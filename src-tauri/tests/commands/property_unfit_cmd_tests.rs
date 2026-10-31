@@ -29,13 +29,18 @@ async fn declare(pool: &SqlitePool, mat: &Materializer, key: &str, ty: &str, opt
 enum V {
     Text(&'static str),
     Num(f64),
+    Date(&'static str),
+    Bool(bool),
 }
 
 async fn set(pool: &SqlitePool, mat: &Materializer, block: &str, key: &str, value: V) {
-    let (text, num) = match value {
-        V::Text(v) => (Some(v.to_owned()), None),
-        V::Num(v) => (None, Some(v)),
-    };
+    let (mut text, mut num, mut date, mut flag) = (None, None, None, None);
+    match value {
+        V::Text(v) => text = Some(v.to_owned()),
+        V::Num(v) => num = Some(v),
+        V::Date(v) => date = Some(v.to_owned()),
+        V::Bool(v) => flag = Some(v),
+    }
     set_property_inner(
         pool,
         DEV,
@@ -44,9 +49,9 @@ async fn set(pool: &SqlitePool, mat: &Materializer, block: &str, key: &str, valu
         key.into(),
         text,
         num,
+        date,
         None,
-        None,
-        None,
+        flag,
         None,
     )
     .await
@@ -320,18 +325,13 @@ async fn put(pool: &SqlitePool, block: &str, key: &str, slot: Slot<'_>) {
     .unwrap();
 }
 
-/// The predicate, one value form at a time under each type, from raw rows:
-/// `P1`–`P5` hold, under every key, a text, a number, a date, a ref and a
-/// boolean; `P6` holds "z" under the selects.
-#[tokio::test]
-async fn each_type_takes_only_its_own_forms_6206() {
-    use PropertyValueForm::{Boolean, Date, Number, Ref, Text};
-    let (pool, _dir) = test_pool().await;
-    ensure_test_space(&pool).await;
-    let p: Vec<String> = (1..=6)
+/// `count` pages `P1`, `P2`, … of [`TEST_SPACE_ID`], as raw rows, by block id.
+async fn raw_pages(pool: &SqlitePool, count: usize) -> Vec<String> {
+    ensure_test_space(pool).await;
+    let ids: Vec<String> = (1..=count)
         .map(|i| format!("01HZ000000000000000000PRD{i}"))
         .collect();
-    for (i, id) in p.iter().enumerate() {
+    for (i, id) in ids.iter().enumerate() {
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, page_id, position, space_id) \
              VALUES (?1, 'page', ?2, ?1, ?3, ?4)",
@@ -340,10 +340,21 @@ async fn each_type_takes_only_its_own_forms_6206() {
         .bind(format!("P{}", i + 1))
         .bind(i64::try_from(i).unwrap() + 1)
         .bind(TEST_SPACE_ID)
-        .execute(&pool)
+        .execute(pool)
         .await
         .unwrap();
     }
+    ids
+}
+
+/// The predicate, one value form at a time under each type, from raw rows:
+/// `P1`–`P5` hold, under every key, a text, a number, a date, a ref and a
+/// boolean; `P6` holds "z" under the selects.
+#[tokio::test]
+async fn each_type_takes_only_its_own_forms_6206() {
+    use PropertyValueForm::{Boolean, Date, Number, Ref, Text};
+    let (pool, _dir) = test_pool().await;
+    let p = raw_pages(&pool, 6).await;
     let types = [
         ("k-text", "text", None),
         ("k-url", "url", None),
@@ -428,6 +439,71 @@ async fn each_type_takes_only_its_own_forms_6206() {
             "true".into()
         ],
         "each value as text"
+    );
+}
+
+/// A built-in is held to its definition as a user's key is: `listStyle`, a
+/// select of `bullet` and `ordered`, takes those and no other text, whose
+/// options are the code constant's, not a `property_definitions` row's.
+#[tokio::test]
+async fn a_builtin_select_takes_only_its_options_6206() {
+    use PropertyValueForm::{Number, Text};
+    let (pool, _dir) = test_pool().await;
+    let p = raw_pages(&pool, 3).await;
+    put(&pool, &p[0], "listStyle", Slot::Text("ordered")).await;
+    put(&pool, &p[1], "listStyle", Slot::Text("zigzag")).await;
+    put(&pool, &p[2], "listStyle", Slot::Num(1.0)).await;
+
+    assert_eq!(
+        unfit_forms(&pool, "listStyle").await,
+        vec![(p[1].clone(), Text), (p[2].clone(), Number)],
+        "`ordered` is an option; `zigzag` and a number are not"
+    );
+}
+
+/// A space's definitions hold the values of its blocks, and of its own block,
+/// which a rewrite's value writes reach; another space's blocks holding the
+/// same key are none of them: a removal there would be a loss in a space that
+/// never saw the dialog.
+#[tokio::test]
+async fn the_scope_is_the_spaces_blocks_and_its_own_never_another_spaces_6206() {
+    let (pool, _dir) = test_pool().await;
+    let p = raw_pages(&pool, 1).await;
+    ensure_test_space_b(&pool).await;
+    let other = "01HZ000000000000000000OTH1";
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, page_id, position, space_id) \
+         VALUES (?1, 'page', 'Other', ?1, 1, ?2)",
+    )
+    .bind(other)
+    .bind(TEST_SPACE_B_ID)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO property_definitions (space_id, key, value_type, options, created_at) \
+         VALUES (?, 'k-number', 'number', NULL, '2026-01-01T00:00:00.000Z')",
+    )
+    .bind(TEST_SPACE_ID)
+    .execute(&pool)
+    .await
+    .unwrap();
+    for holder in [p[0].as_str(), TEST_SPACE_ID, other] {
+        put(&pool, holder, "k-number", Slot::Text("soon")).await;
+    }
+
+    assert_eq!(
+        unfit_forms(&pool, "k-number").await,
+        vec![
+            (p[0].clone(), PropertyValueForm::Text),
+            (TEST_SPACE_ID.to_owned(), PropertyValueForm::Text)
+        ],
+        "its page and its own block, not the other space's"
+    );
+    assert_eq!(
+        usage(&pool, "k-number").await.unfit,
+        unfit(2, 0),
+        "the count takes the same two"
     );
 }
 
@@ -683,6 +759,35 @@ async fn undo_restores_every_value_removed_and_redo_removes_them_again_6206() {
         vec![(x, None, None, Some("2026-01-05".into()), None, None)],
         "removed again"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_puts_back_a_boolean_and_a_date_kept_as_text_6206() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let [x, y, ..] = blocks(&pool, &mat).await;
+    declare(&pool, &mat, "flagx", "boolean", None).await;
+    declare(&pool, &mat, "dayx", "date", None).await;
+    set(&pool, &mat, &x, "flagx", V::Bool(true)).await;
+    set(&pool, &mat, &y, "dayx", V::Date("2026-01-05")).await;
+    change(&pool, &mat, ("flagx", "number", None), (0, 1)).await;
+    change(&pool, &mat, ("dayx", "number", None), (0, 1)).await;
+    let flag_rows = rows(&pool, "flagx").await;
+    let day_rows = rows(&pool, "dayx").await;
+    assert_eq!(
+        (flag_rows[0].5, day_rows[0].1.as_deref()),
+        (Some(1), Some("2026-01-05")),
+        "the boolean keeps its slot; the date stays as the text it reads"
+    );
+
+    for (key, seed) in [("flagx", flag_rows), ("dayx", day_rows)] {
+        let removed = remove(&pool, &mat, key, unfit(1, 0)).await.unwrap();
+        assert!(rows(&pool, key).await.is_empty(), "{key}: removed");
+        undo_ops_inner(&pool, DEV, &mat, removed.op_refs)
+            .await
+            .unwrap();
+        assert_eq!(rows(&pool, key).await, seed, "{key}: as it was");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

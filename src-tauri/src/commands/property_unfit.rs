@@ -124,6 +124,9 @@ async fn unfit_values(
     let builtins = counted_builtin_defs()?;
     // Every block id sorts after the empty string, so no cursor is no bound.
     let after = after.unwrap_or_default();
+    // `CROSS JOIN` pins the definitions as the outer loop and `idx_block_props_key` as the way
+    // into their keys' rows: with `sqlite_stat1`, which a vault has once its periodic optimise
+    // has run, the planner otherwise drives from every property row of the vault.
     let mut rows = sqlx::query!(
         r#"WITH defs(key, value_type, options) AS (
                SELECT key, value_type, options FROM property_definitions WHERE space_id = ?1
@@ -140,8 +143,8 @@ async fn unfit_values(
                   b.page_id AS "page_id?: String", pg.content AS "page_title?: String",
                   b.content AS "content?: String"
            FROM defs d
-           JOIN block_properties bp ON bp.key = d.key
-           JOIN blocks b ON b.id = bp.block_id
+           CROSS JOIN block_properties bp ON bp.key = d.key
+           CROSS JOIN blocks b ON b.id = bp.block_id
            LEFT JOIN blocks pg ON pg.id = b.page_id
            WHERE (?3 IS NULL OR d.key = ?3)
              AND bp.block_id > ?4
@@ -198,7 +201,8 @@ fn counts_of(values: &[Unfit]) -> PropertyUnfitCounts {
 }
 
 /// [`PropertyUnfitCounts`] of every key of `space_id` with a value that
-/// doesn't fit it.
+/// doesn't fit it, counted from the rows the list and both actions read: a
+/// count query of its own would be a second predicate to drift from theirs.
 pub(super) async fn unfit_counts(
     conn: &mut SqliteConnection,
     space_id: &str,
