@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 /// A peer's set, which no local write makes: `block` holds `value` under
 /// `key` whatever the space declares it as.
-async fn peer_set(
+pub(super) async fn peer_set(
     pool: &SqlitePool,
     mat: &Materializer,
     block: &str,
@@ -33,7 +33,13 @@ async fn peer_set(
         .unwrap();
 }
 
-async fn peer_number(pool: &SqlitePool, mat: &Materializer, block: &str, key: &str, n: f64) {
+pub(super) async fn peer_number(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    block: &str,
+    key: &str,
+    n: f64,
+) {
     let value = PropertyValueFields {
         value_num: Some(n),
         ..Default::default()
@@ -41,7 +47,13 @@ async fn peer_number(pool: &SqlitePool, mat: &Materializer, block: &str, key: &s
     peer_set(pool, mat, block, key, value).await;
 }
 
-async fn peer_bool(pool: &SqlitePool, mat: &Materializer, block: &str, key: &str, b: bool) {
+pub(super) async fn peer_bool(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    block: &str,
+    key: &str,
+    b: bool,
+) {
     let value = PropertyValueFields {
         value_bool: Some(b),
         ..Default::default()
@@ -51,7 +63,7 @@ async fn peer_bool(pool: &SqlitePool, mat: &Materializer, block: &str, key: &str
 
 /// What the space's doc holds under `key`, by block: the form it stores each
 /// value in, which SQL does not show.
-fn engine_values(mat: &Materializer, key: &str) -> Vec<(String, PropertyValue)> {
+pub(super) fn engine_values(mat: &Materializer, key: &str) -> Vec<(String, PropertyValue)> {
     let mut held = mat
         .loro_state()
         .registry
@@ -65,7 +77,7 @@ fn engine_values(mat: &Materializer, key: &str) -> Vec<(String, PropertyValue)> 
 }
 
 /// `N` cards on the page `Home` of [`TEST_SPACE_ID`], in creation order.
-async fn cards<const N: usize>(pool: &SqlitePool, mat: &Materializer) -> [String; N] {
+pub(super) async fn cards<const N: usize>(pool: &SqlitePool, mat: &Materializer) -> [String; N] {
     space(pool).await;
     let home =
         create_page_in_space_inner(pool, DEV, mat, None, "Home".into(), TEST_SPACE_ID.into())
@@ -177,19 +189,19 @@ async fn convert(
 }
 
 /// A row of `block` holding one slot: a date, a text or a number.
-fn dated(block: &str, date: &str) -> Row {
+pub(super) fn dated(block: &str, date: &str) -> Row {
     (block.to_owned(), None, None, Some(date.into()), None, None)
 }
 
-fn texted(block: &str, text: &str) -> Row {
+pub(super) fn texted(block: &str, text: &str) -> Row {
     (block.to_owned(), Some(text.into()), None, None, None, None)
 }
 
-fn numbered(block: &str, n: f64) -> Row {
+pub(super) fn numbered(block: &str, n: f64) -> Row {
     (block.to_owned(), None, Some(n), None, None, None)
 }
 
-fn sorted(mut want: Vec<Row>) -> Vec<Row> {
+pub(super) fn sorted(mut want: Vec<Row>) -> Vec<Row> {
     want.sort_by(|a, b| a.0.cmp(&b.0));
     want
 }

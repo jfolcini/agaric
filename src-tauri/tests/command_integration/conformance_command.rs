@@ -109,6 +109,13 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         &["unfit", "unfit_in_trash"],
         &[],
     ),
+    // #6206 — a move answers what it moved and what it left.
+    (
+        "move_unfit_property_values",
+        HEADED_ID_KEY,
+        &["moved", "occupied", "unfit_there"],
+        &[],
+    ),
     (
         "add_unfit_values_to_options",
         "key",
@@ -835,6 +842,21 @@ pub(super) async fn apply_op_via_command(
                     panic!("conformance op '{command}' is missing arg 'replacements'")
                 }))
                 .expect("replacements are [{value, replacement, acknowledged}]"),
+            )
+            .await,
+        ),
+        "move_unfit_property_values" => to_json(
+            move_unfit_property_values_inner(
+                pool,
+                DEV,
+                mat,
+                &space_id(),
+                req_str("key"),
+                req_str("intoKey"),
+                serde_json::from_value(arg("acknowledged").cloned().unwrap_or_else(|| {
+                    panic!("conformance op '{command}' is missing arg 'acknowledged'")
+                }))
+                .expect("acknowledged is {moved, occupied, unfit_there}"),
             )
             .await,
         ),
@@ -1708,7 +1730,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 67;
+    const MUTATING_ARM_COUNT: usize = 68;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

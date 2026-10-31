@@ -184,11 +184,13 @@ pub use property_types::{
     preview_property_type_change_inner,
 };
 pub use property_unfit::{
-    DistinctUnfitValue, PropertyUnfitCounts, PropertyValueForm, UnfitPropertyValue,
-    UnfitValueReplacement, add_unfit_values_to_options, add_unfit_values_to_options_inner,
-    convert_unfit_property_values, convert_unfit_property_values_inner,
-    list_distinct_unfit_property_values, list_distinct_unfit_property_values_inner,
-    list_unfit_property_values, list_unfit_property_values_inner, remove_unfit_property_values,
+    DistinctUnfitValue, PropertyUnfitCounts, PropertyValueForm, UnfitMoveCounts,
+    UnfitPropertyValue, UnfitValueReplacement, add_unfit_values_to_options,
+    add_unfit_values_to_options_inner, convert_unfit_property_values,
+    convert_unfit_property_values_inner, list_distinct_unfit_property_values,
+    list_distinct_unfit_property_values_inner, list_unfit_property_values,
+    list_unfit_property_values_inner, move_unfit_property_values, move_unfit_property_values_inner,
+    preview_unfit_property_move, preview_unfit_property_move_inner, remove_unfit_property_values,
     remove_unfit_property_values_inner,
 };
 pub use queries::{

@@ -1,0 +1,819 @@
+{
+  "description": "#6206 — `move_unfit_property_values` moves each value of a key that doesn't fit it, the Trash's included, to another key on the same block, where it fits read under that key's type (a number or a boolean becomes its text under a text key), in one `rewrite_properties` with the reason `move_unfit`: per block the value removed under its key, then written under the other. A block that already holds the other key keeps its value where it is, and so does a value that doesn't fit the other key; the move answers what it moved and left, refuses an acknowledgement that differs, and appends nothing when nothing moves. One undo puts every value back as it was held. The target is refused when it is the key itself, built in, the app's own, a ref, or undeclared; `preview_unfit_property_move` counts and refuses as the move does. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "X",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Y",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Z",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "W",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "V",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "U",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "T",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 7,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 15,
+      "ops": [
+        {
+          "key": "whenx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "whenx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "whenx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "whenx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "whenx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "whenx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "notesx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "whenx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "sizex",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "rewrite_properties"
+        },
+        {
+          "op_type": "rewrite_properties"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "whenx",
+        "value": "2026-01-05",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B3",
+        "key": "notesx",
+        "value": "soon",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B4",
+        "key": "notesx",
+        "value": "later",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B5",
+        "key": "sizex",
+        "value": 5.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B6",
+        "key": "notesx",
+        "value": "true",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B7",
+        "key": "notesx",
+        "value": "kept",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B7",
+        "key": "whenx",
+        "value": "soon",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B8",
+        "key": "notesx",
+        "value": "7",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B8",
+        "key": "sizex",
+        "value": 1.0,
+        "value_type": "Num"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "whenx_becomes_a_date",
+      "returns": ["whenx#value_type=date#options=null#builtin=false"]
+    },
+    {
+      "code": "UnacknowledgedPropertyLoss",
+      "error": "validation",
+      "name": "a_stale_acknowledgement_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "into_itself_is_refused",
+      "returns": []
+    },
+    {
+      "code": "BuiltinPropertyLocked",
+      "error": "validation",
+      "name": "into_a_builtin_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "into_the_apps_own_key_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "into_a_ref_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "into_an_undeclared_key_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "move_into_sizex",
+      "returns": ["move_unfit_property_values#moved=1#occupied=1#unfit_there=4"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "move_into_notesx",
+      "returns": ["move_unfit_property_values#moved=4#occupied=1#unfit_there=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_move",
+      "returns": [
+        "undo_ops#reversed_op_type=rewrite_properties#new_op_type=rewrite_properties#is_redo=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "redo_the_move",
+      "returns": [
+        "redo_page_op#reversed_op_type=rewrite_properties#new_op_type=rewrite_properties#is_redo=true"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "nothing_to_move",
+      "returns": ["move_unfit_property_values#moved=0#occupied=1#unfit_there=0"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "preview_into_notesx",
+      "rows": ["unfit_move_counts#moved=0#occupied=1#unfit_there=0"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "preview_into_sizex",
+      "rows": ["unfit_move_counts#moved=0#occupied=0#unfit_there=1"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "preview_into_itself",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "preview_into_a_builtin",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "preview_into_the_apps_own_key",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "preview_into_a_ref",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "not_found",
+      "has_more": null,
+      "name": "preview_into_an_undeclared_key",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "property_unfit_move",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "whenx",
+        "value": {
+          "value_text": "2026-01-05"
+        }
+      },
+      "command": "set_property",
+      "comment": "O1 — fits the date `whenx` becomes."
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "whenx",
+        "value": {
+          "value_text": "soon"
+        }
+      },
+      "command": "set_property",
+      "comment": "O2"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "whenx",
+        "value": {
+          "value_text": "later"
+        }
+      },
+      "command": "set_property",
+      "comment": "O3 — its block goes to the Trash."
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "key": "whenx",
+        "value": {
+          "value_num": 5
+        }
+      },
+      "command": "set_property",
+      "comment": "O4 — a peer's number under the text key."
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "key": "whenx",
+        "value": {
+          "value_bool": true
+        }
+      },
+      "command": "set_property",
+      "comment": "O5 — a peer's boolean under the text key."
+    },
+    {
+      "args": {
+        "blockId": "S7",
+        "key": "whenx",
+        "value": {
+          "value_text": "soon"
+        }
+      },
+      "command": "set_property",
+      "comment": "O6"
+    },
+    {
+      "args": {
+        "blockId": "S7",
+        "key": "notesx",
+        "value": {
+          "value_text": "kept"
+        }
+      },
+      "command": "set_property",
+      "comment": "O7 — `U` holds `notesx` already."
+    },
+    {
+      "args": {
+        "blockId": "S8",
+        "key": "whenx",
+        "value": {
+          "value_num": 7
+        }
+      },
+      "command": "set_property",
+      "comment": "O8 — a peer's number under the text key."
+    },
+    {
+      "args": {
+        "blockId": "S8",
+        "key": "sizex",
+        "value": {
+          "value_num": 1
+        }
+      },
+      "command": "set_property",
+      "comment": "O9 — `T` holds `sizex` already."
+    },
+    {
+      "args": {
+        "blockId": "S4"
+      },
+      "command": "delete_block",
+      "comment": "O10"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 1,
+          "unfit": 6
+        },
+        "key": "whenx",
+        "spaceId": "$SPACE",
+        "valueType": "date"
+      },
+      "command": "change_property_type",
+      "comment": "O11 — `X`'s date fits; the six others don't.",
+      "name": "whenx_becomes_a_date",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "moved": 4,
+          "occupied": 1,
+          "unfit_there": 0
+        },
+        "intoKey": "notesx",
+        "key": "whenx",
+        "spaceId": "$SPACE"
+      },
+      "command": "move_unfit_property_values",
+      "comment": "Five values move to `notesx`, not four.",
+      "expect_code": "UnacknowledgedPropertyLoss",
+      "expect_error": "validation",
+      "name": "a_stale_acknowledgement_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "moved": 0,
+          "occupied": 0,
+          "unfit_there": 0
+        },
+        "intoKey": "whenx",
+        "key": "whenx",
+        "spaceId": "$SPACE"
+      },
+      "command": "move_unfit_property_values",
+      "comment": "A key cannot take its own values.",
+      "expect_error": "validation",
+      "name": "into_itself_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "moved": 0,
+          "occupied": 0,
+          "unfit_there": 0
+        },
+        "intoKey": "priority",
+        "key": "whenx",
+        "spaceId": "$SPACE"
+      },
+      "command": "move_unfit_property_values",
+      "comment": "Built in.",
+      "expect_code": "BuiltinPropertyLocked",
+      "expect_error": "validation",
+      "name": "into_a_builtin_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "moved": 0,
+          "occupied": 0,
+          "unfit_there": 0
+        },
+        "intoKey": "template",
+        "key": "whenx",
+        "spaceId": "$SPACE"
+      },
+      "command": "move_unfit_property_values",
+      "comment": "The app's own key.",
+      "expect_error": "validation",
+      "name": "into_the_apps_own_key_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "moved": 0,
+          "occupied": 0,
+          "unfit_there": 0
+        },
+        "intoKey": "ownerx",
+        "key": "whenx",
+        "spaceId": "$SPACE"
+      },
+      "command": "move_unfit_property_values",
+      "comment": "A ref's values are blocks.",
+      "expect_error": "validation",
+      "name": "into_a_ref_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "moved": 0,
+          "occupied": 0,
+          "unfit_there": 0
+        },
+        "intoKey": "nothing",
+        "key": "whenx",
+        "spaceId": "$SPACE"
+      },
+      "command": "move_unfit_property_values",
+      "comment": "Not declared.",
+      "expect_error": "not_found",
+      "name": "into_an_undeclared_key_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "moved": 1,
+          "occupied": 1,
+          "unfit_there": 4
+        },
+        "intoKey": "sizex",
+        "key": "whenx",
+        "spaceId": "$SPACE"
+      },
+      "command": "move_unfit_property_values",
+      "comment": "O12 — only `W`'s 5 is a number and moves; `T` holds `sizex`, and soon, later and true are no number.",
+      "name": "move_into_sizex",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "moved": 4,
+          "occupied": 1,
+          "unfit_there": 0
+        },
+        "intoKey": "notesx",
+        "key": "whenx",
+        "spaceId": "$SPACE"
+      },
+      "command": "move_unfit_property_values",
+      "comment": "O13 — soon, the trashed later, true and `T`'s 7 move as text; `U` keeps its soon under `whenx`.",
+      "name": "move_into_notesx",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O13"]
+      },
+      "command": "undo_ops",
+      "comment": "O14 — each value is back under `whenx` as it was held.",
+      "name": "undo_the_move",
+      "via": "command"
+    },
+    {
+      "args": {
+        "undoOp": "O14"
+      },
+      "command": "redo_page_op",
+      "comment": "O15 — moved again.",
+      "name": "redo_the_move",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "moved": 0,
+          "occupied": 1,
+          "unfit_there": 0
+        },
+        "intoKey": "notesx",
+        "key": "whenx",
+        "spaceId": "$SPACE"
+      },
+      "command": "move_unfit_property_values",
+      "comment": "Only `U`'s soon is left, and `U` holds `notesx`: no op.",
+      "name": "nothing_to_move",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "intoKey": "notesx",
+        "key": "whenx",
+        "spaceId": "$SPACE"
+      },
+      "command": "preview_unfit_property_move",
+      "comment": "`U` holds `notesx`.",
+      "name": "preview_into_notesx"
+    },
+    {
+      "args": {
+        "intoKey": "sizex",
+        "key": "whenx",
+        "spaceId": "$SPACE"
+      },
+      "command": "preview_unfit_property_move",
+      "comment": "`U`'s soon is no number.",
+      "name": "preview_into_sizex"
+    },
+    {
+      "args": {
+        "intoKey": "whenx",
+        "key": "whenx",
+        "spaceId": "$SPACE"
+      },
+      "command": "preview_unfit_property_move",
+      "comment": "Refused as the move is.",
+      "expect_error": "validation",
+      "name": "preview_into_itself"
+    },
+    {
+      "args": {
+        "intoKey": "priority",
+        "key": "whenx",
+        "spaceId": "$SPACE"
+      },
+      "command": "preview_unfit_property_move",
+      "comment": "Refused as the move is.",
+      "expect_error": "validation",
+      "name": "preview_into_a_builtin"
+    },
+    {
+      "args": {
+        "intoKey": "template",
+        "key": "whenx",
+        "spaceId": "$SPACE"
+      },
+      "command": "preview_unfit_property_move",
+      "comment": "Refused as the move is.",
+      "expect_error": "validation",
+      "name": "preview_into_the_apps_own_key"
+    },
+    {
+      "args": {
+        "intoKey": "ownerx",
+        "key": "whenx",
+        "spaceId": "$SPACE"
+      },
+      "command": "preview_unfit_property_move",
+      "comment": "Refused as the move is.",
+      "expect_error": "validation",
+      "name": "preview_into_a_ref"
+    },
+    {
+      "args": {
+        "intoKey": "nothing",
+        "key": "whenx",
+        "spaceId": "$SPACE"
+      },
+      "command": "preview_unfit_property_move",
+      "comment": "Refused as the move is.",
+      "expect_error": "not_found",
+      "name": "preview_into_an_undeclared_key"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "X",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "Y",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "Z",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "W",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": "V",
+        "id": "S6",
+        "parent_id": "S1",
+        "position": 5
+      },
+      {
+        "block_type": "content",
+        "content": "U",
+        "id": "S7",
+        "parent_id": "S1",
+        "position": 6
+      },
+      {
+        "block_type": "content",
+        "content": "T",
+        "id": "S8",
+        "parent_id": "S1",
+        "position": 7
+      }
+    ],
+    "properties": [],
+    "property_defs": [
+      {
+        "key": "notesx",
+        "options": null,
+        "value_type": "text"
+      },
+      {
+        "key": "ownerx",
+        "options": null,
+        "value_type": "ref"
+      },
+      {
+        "key": "sizex",
+        "options": null,
+        "value_type": "number"
+      },
+      {
+        "key": "whenx",
+        "options": null,
+        "value_type": "text"
+      }
+    ],
+    "tags": []
+  }
+}

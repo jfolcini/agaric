@@ -3,8 +3,9 @@
  * its dialog (#6206). The badge counts the space's live blocks whose value
  * doesn't fit the key's type or options; the dialog lists every such value,
  * the Trash's included, and removes them all in one op the toast can undo,
- * adds a user select's to its options, or converts each as the user maps it
- * (`ConvertUnfitValues`), but a ref's. Removal sends the counts it showed as
+ * adds a user select's to its options, converts each as the user maps it
+ * (`ConvertUnfitValues`), but a ref's, or moves them to another key where they
+ * fit (`MoveUnfitValues`). Removal sends the counts it showed as
  * its acknowledgement; when the backend refuses that (the values changed
  * since), the dialog says so and the counts and list are read again, as
  * `ChangePropertyType` previews again. A mark on one of the key's values
@@ -22,6 +23,7 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { holderLabel } from '@/components/pages/SpaceMoveConfirmDialog'
 import { ConvertUnfitValues } from '@/components/properties/ConvertUnfitValues'
+import { MoveUnfitValues } from '@/components/properties/MoveUnfitValues'
 import { notifyDefinitionWrite } from '@/components/properties/notify-definition-write'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -33,10 +35,12 @@ import type {
   PageResponse,
   PropertyDefinition,
   PropertyUnfitCounts,
+  UnfitMoveCounts,
   UnfitPropertyValue,
   WithOps,
 } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
+import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -51,6 +55,8 @@ export interface UnfitPropertyValuesProps {
   spaceId: string
   /** `count_property_usage`'s answer for the key; null while it is read again. */
   counts: PropertyUnfitCounts | null
+  /** The space's definitions: the keys the values can move to are its user ones but refs. */
+  definitions: readonly PropertyDefinition[]
   /** Read the list and its counts again after a write, its undo, or a refusal. */
   onChanged: () => void
 }
@@ -59,6 +65,7 @@ export function UnfitPropertyValues({
   definition,
   spaceId,
   counts,
+  definitions,
   onChanged,
 }: UnfitPropertyValuesProps): React.ReactElement | null {
   const { t } = useTranslation()
@@ -67,12 +74,16 @@ export function UnfitPropertyValues({
   // Asked again: the values changed after the user saw them.
   const [askedAgain, setAskedAgain] = useState(false)
   const [writing, setWriting] = useState(false)
-  const [step, setStep] = useState<'review' | 'convert'>('review')
+  const [step, setStep] = useState<'review' | 'convert' | 'move'>('review')
   // Bumped when the values are read again, so the list reads them again too.
   const [listSeq, setListSeq] = useState(0)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const { key } = definition
   const live = counts?.unfit ?? 0
+  const targets = definitions.filter(
+    (d) =>
+      !d.builtin && d.key !== key && !INTERNAL_PROPERTY_KEYS.has(d.key) && d.value_type !== 'ref',
+  )
 
   // A mark on one of the key's values asks for this dialog from another view.
   const requested = useNavigationStore((s) => s.pendingPropertyReview === key)
@@ -137,6 +148,16 @@ export function UnfitPropertyValues({
     onOpenChange(false)
     const count = result.unfit + result.unfit_in_trash
     notifyDefinitionWrite(t('propertiesView.convertDone', { count, key }), result.op_refs, changed)
+    changed()
+  }
+
+  const moved = (result: WithOps<UnfitMoveCounts>, into: string): void => {
+    onOpenChange(false)
+    notifyDefinitionWrite(
+      t('propertiesView.moveDone', { count: result.moved, key, into }),
+      result.op_refs,
+      changed,
+    )
     changed()
   }
 
@@ -220,7 +241,9 @@ export function UnfitPropertyValues({
             <Description>
               {step === 'convert'
                 ? t('propertiesView.convertIntro', { type: definition.value_type })
-                : t('propertiesView.unfitDescription', { key, type: definition.value_type })}
+                : step === 'move'
+                  ? t('propertiesView.moveIntro', { key })
+                  : t('propertiesView.unfitDescription', { key, type: definition.value_type })}
             </Description>
           </Header>
           {step === 'convert' ? (
@@ -231,10 +254,20 @@ export function UnfitPropertyValues({
               onChanged={onChanged}
               onDone={converted}
             />
+          ) : step === 'move' ? (
+            <MoveUnfitValues
+              definition={definition}
+              spaceId={spaceId}
+              targets={targets}
+              onBack={() => setStep('review')}
+              onChanged={onChanged}
+              onDone={moved}
+            />
           ) : (
             <>
               {parts.isMobile ? body : <DialogBody>{body}</DialogBody>}
-              <Footer>
+              {/* Up to five actions, wider than the dialog in one row. */}
+              <Footer className="sm:flex-wrap">
                 <Button variant="outline" onClick={() => onOpenChange(false)}>
                   {t('action.cancel')}
                 </Button>
@@ -253,6 +286,11 @@ export function UnfitPropertyValues({
                 {definition.value_type !== 'ref' && (
                   <Button variant="outline" disabled={writing} onClick={() => setStep('convert')}>
                     {t('propertiesView.convertOpen')}
+                  </Button>
+                )}
+                {targets.length > 0 && (
+                  <Button variant="outline" disabled={writing} onClick={() => setStep('move')}>
+                    {t('propertiesView.moveOpen')}
                   </Button>
                 )}
                 <Button

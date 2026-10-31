@@ -352,6 +352,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
                           definition={def}
                           spaceId={spaceId}
                           counts={usage?.get(def.key) ?? null}
+                          definitions={definitions}
                           onChanged={reload}
                         />
                       )}

@@ -12,8 +12,8 @@ import {
 
 /**
  * #6206 — Settings › Properties counts a key's values that don't fit it and
- * removes them, adds them to a select's options, or converts each to a value
- * that fits. The seeded Personal space declares `project` as a select of
+ * removes them, adds them to a select's options, converts each to a value
+ * that fits, or moves them to another property where they fit. The seeded Personal space declares `project` as a select of
  * alpha, beta and gamma, held by two meeting blocks as alpha and beta; editing
  * the options to drop beta leaves the second block's beta not fitting. Each
  * effect is read back after leaving the view and coming back.
@@ -120,6 +120,43 @@ test.describe("Values that don't fit a property @settings", () => {
     await comeBack(page)
     await expect(panel(page).getByTestId('property-usage-project')).toHaveText('2 uses')
     await expect(unfitBadge(page)).toHaveCount(0)
+  })
+
+  test('Move to… moves them to another property on the same blocks', async ({ page }) => {
+    await dropBeta(page)
+    const dialog = await openUnfit(page)
+    await dialog.getByRole('button', { name: 'Move to…', exact: true }).click()
+    await dialog.getByRole('combobox', { name: 'Property to move them to', exact: true }).click()
+    await page.getByRole('option', { name: 'reviewer', exact: true }).click()
+    await expect(dialog.getByText('1 value moves to reviewer.', { exact: true })).toBeVisible()
+    await dialog.getByRole('button', { name: 'Move 1', exact: true }).click()
+    await expect(activeDialog(page)).toHaveCount(0)
+    await expect(unfitBadge(page)).toHaveCount(0)
+
+    await comeBack(page)
+    await expect(unfitBadge(page)).toHaveCount(0)
+    await expect(panel(page).getByTestId('property-usage-project')).toHaveText('1 use')
+    await expect(panel(page).getByTestId('property-usage-reviewer')).toHaveText('1 use')
+  })
+
+  test("the review's five actions stay inside the dialog", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await dropBeta(page)
+    const dialog = await openUnfit(page)
+    await expect(dialog.locator('[data-slot="dialog-footer"]').getByRole('button')).toHaveCount(5)
+    await expect
+      .poll(() =>
+        dialog.evaluate((box) => {
+          const { left, right } = box.getBoundingClientRect()
+          return [...box.querySelectorAll('[data-slot="dialog-footer"] button')]
+            .filter(
+              (b) =>
+                b.getBoundingClientRect().left < left || b.getBoundingClientRect().right > right,
+            )
+            .map((b) => b.textContent)
+        }),
+      )
+      .toEqual([])
   })
 
   test('Add to options makes them fit', async ({ page }) => {

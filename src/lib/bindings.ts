@@ -555,6 +555,17 @@ export const commands = {
 	 *  the op ref.
 	 */
 	convertUnfitPropertyValues: (spaceId: SpaceId, key: string, replacements: UnfitValueReplacement[]) => typedError<WithOps<PropertyUnfitCounts>, AppError>(__TAURI_INVOKE("convert_unfit_property_values", { spaceId, key, replacements })),
+	/**
+	 *  Tauri command: what moving a key's values that don't fit to another key
+	 *  would move and leave. Delegates to [`preview_unfit_property_move_inner`].
+	 */
+	previewUnfitPropertyMove: (spaceId: SpaceId, key: string, intoKey: string) => typedError<UnfitMoveCounts, AppError>(__TAURI_INVOKE("preview_unfit_property_move", { spaceId, key, intoKey })),
+	/**
+	 *  Tauri command: move a key's values that don't fit to another key where
+	 *  they fit. Delegates to [`move_unfit_property_values_inner`]; the response
+	 *  carries the op ref.
+	 */
+	moveUnfitPropertyValues: (spaceId: SpaceId, key: string, intoKey: string, acknowledged: UnfitMoveCounts) => typedError<WithOps<UnfitMoveCounts>, AppError>(__TAURI_INVOKE("move_unfit_property_values", { spaceId, key, intoKey, acknowledged })),
 	/**  Tauri command: list all sync peers. Delegates to [`list_peer_refs_inner`]. */
 	listPeerRefs: () => typedError<PeerRef[], AppError>(__TAURI_INVOKE("list_peer_refs")),
 	/**  Tauri command: delete (unpair) a sync peer. Delegates to [`delete_peer_ref_inner`]. */
@@ -4770,6 +4781,18 @@ export type UndoResult = {
 	new_op_type: string,
 	/**  Whether this was a redo (true) or undo (false). */
 	is_redo: boolean,
+};
+
+/**
+ *  What moving a key's values that don't fit to another key does to a
+ *  space's blocks, the Trash's included: `moved` values fit the other key and
+ *  move to it; on `occupied` blocks, which hold it already, and as
+ *  `unfit_there` values, which don't fit it, they stay.
+ */
+export type UnfitMoveCounts = {
+	moved: number,
+	occupied: number,
+	unfit_there: number,
 };
 
 /**
