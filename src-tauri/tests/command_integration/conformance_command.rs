@@ -95,6 +95,20 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     ("change_property_type", "key", PROPERTY_DEF_ATTRS, &[]),
     // #5841 S4 — an option rename answers the definition after it.
     ("rename_property_option", "key", PROPERTY_DEF_ATTRS, &[]),
+    // #6206 — a removal answers what it removed; adding to the options
+    // answers the definition after.
+    (
+        "remove_unfit_property_values",
+        HEADED_ID_KEY,
+        &["unfit", "unfit_in_trash"],
+        &[],
+    ),
+    (
+        "add_unfit_values_to_options",
+        "key",
+        PROPERTY_DEF_ATTRS,
+        &[],
+    ),
     // #5057 — the undo family all answer `UndoResult`, singly or in a list, so
     // they share one shape: the `OpRef`s it carries are dropped because the two
     // runners' device ids differ, leaving the two op_type fields and `is_redo`.
@@ -789,6 +803,23 @@ pub(super) async fn apply_op_via_command(
                 .expect("acknowledged is {converted, unfit}"),
             )
             .await,
+        ),
+        "remove_unfit_property_values" => to_json(
+            remove_unfit_property_values_inner(
+                pool,
+                DEV,
+                mat,
+                &space_id(),
+                req_str("key"),
+                serde_json::from_value(arg("acknowledged").cloned().unwrap_or_else(|| {
+                    panic!("conformance op '{command}' is missing arg 'acknowledged'")
+                }))
+                .expect("acknowledged is {unfit, unfit_in_trash}"),
+            )
+            .await,
+        ),
+        "add_unfit_values_to_options" => to_json(
+            add_unfit_values_to_options_inner(pool, DEV, mat, &space_id(), req_str("key")).await,
         ),
         // The deleted keys name the changed-property event; the wire returns none.
         "delete_property" => {
@@ -1657,7 +1688,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 64;
+    const MUTATING_ARM_COUNT: usize = 66;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

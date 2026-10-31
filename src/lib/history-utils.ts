@@ -26,14 +26,24 @@ const PROPERTY_KEY_OP_LABELS: Partial<
     typeof key === 'string' && typeof from === 'string' && typeof to === 'string'
       ? `${key}: ${from} → ${to}`
       : null,
-  // A merge writes `from`'s definition, then `into`'s; a type change (#5841 S3) one.
+  // A merge writes `from`'s definition, then `into`'s; a type change (#5841 S3)
+  // one; a removal of the values that don't fit (#6206) none, only values of its key.
   rewrite_properties: (payload) => {
     const defs = payload['defs']
     if (!Array.isArray(defs)) return null
     if (payload['reason'] === 'change_type') return typeChangeLabel(defs[0])
+    if (payload['reason'] === 'remove_unfit') return removedKey(payload['values'])
     const keys = defs.map((d: unknown) => (d as Record<string, unknown> | null)?.['key'])
     return keys.every((k) => typeof k === 'string') ? keys.join(' → ') : null
   },
+}
+
+/** The key a removal's value writes are under. */
+function removedKey(values: unknown): string | null {
+  const key = Array.isArray(values)
+    ? (values[0] as Record<string, unknown> | undefined)?.['key']
+    : undefined
+  return typeof key === 'string' ? key : null
 }
 
 /** `key: from → to` of a type change's definition write. */

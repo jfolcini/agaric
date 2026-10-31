@@ -1,0 +1,406 @@
+{
+  "description": "#6206 — `count_property_usage` counts each key's values that don't fit it, on live blocks and in the Trash, and `list_unfit_property_values` pages one key's by block id, with the block's page, whether it is trashed, the value as text and the column it is stored in. `stagex` (a select) loses the option `b` that `Y` holds. `whenx` changes from text to date: `X`'s date fits, and `Y`'s \"soon\" and the trashed `Z`'s \"later\" do not. An undeclared key has none, and the limit is validated. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "X",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Y",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Z",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 8,
+      "ops": [
+        {
+          "key": "stagex",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stagex",
+          "op_type": "set_property"
+        },
+        {
+          "key": "whenx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "whenx",
+          "op_type": "set_property"
+        },
+        {
+          "key": "whenx",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "rewrite_properties"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "stagex",
+        "value": "a",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B2",
+        "key": "whenx",
+        "value": "2026-01-05",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B3",
+        "key": "stagex",
+        "value": "b",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B3",
+        "key": "whenx",
+        "value": "soon",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B4",
+        "key": "whenx",
+        "value": "later",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "stagex_loses_b",
+      "returns": ["stagex#value_type=select#options=[\"a\"]#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "whenx_becomes_a_date",
+      "returns": ["whenx#value_type=date#options=null#builtin=false"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "usage_per_key",
+      "rows": [
+        "completed_at#count=0#unfit=0#unfit_in_trash=0",
+        "created_at#count=0#unfit=0#unfit_in_trash=0",
+        "due_date#count=0#unfit=0#unfit_in_trash=0",
+        "listStyle#count=0#unfit=0#unfit_in_trash=0",
+        "priority#count=0#unfit=0#unfit_in_trash=0",
+        "repeat#count=0#unfit=0#unfit_in_trash=0",
+        "repeat-count#count=0#unfit=0#unfit_in_trash=0",
+        "repeat-origin#count=0#unfit=0#unfit_in_trash=0",
+        "repeat-seq#count=0#unfit=0#unfit_in_trash=0",
+        "repeat-until#count=0#unfit=0#unfit_in_trash=0",
+        "scheduled_date#count=0#unfit=0#unfit_in_trash=0",
+        "stagex#count=2#unfit=1#unfit_in_trash=0",
+        "todo_state#count=0#unfit=0#unfit_in_trash=0",
+        "whenx#count=2#unfit=1#unfit_in_trash=1"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": "v1:{id}",
+      "error": null,
+      "has_more": true,
+      "name": "whenx_page_one",
+      "rows": ["B3#page_id=B1#deleted=false#value=soon#form=text"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "whenx_page_two",
+      "rows": ["B4#page_id=B1#deleted=true#value=later#form=text"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "stagex_values",
+      "rows": ["B3#page_id=B1#deleted=false#value=b#form=text"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "an_undeclared_key_has_none",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "a_zero_limit_is_refused",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "query_property_unfit",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "stagex",
+        "value": {
+          "value_text": "a"
+        }
+      },
+      "command": "set_property",
+      "comment": "O1"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "stagex",
+        "value": {
+          "value_text": "b"
+        }
+      },
+      "command": "set_property",
+      "comment": "O2"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "whenx",
+        "value": {
+          "value_text": "2026-01-05"
+        }
+      },
+      "command": "set_property",
+      "comment": "O3"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "whenx",
+        "value": {
+          "value_text": "soon"
+        }
+      },
+      "command": "set_property",
+      "comment": "O4"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "whenx",
+        "value": {
+          "value_text": "later"
+        }
+      },
+      "command": "set_property",
+      "comment": "O5"
+    },
+    {
+      "args": {
+        "blockId": "S4"
+      },
+      "command": "delete_block",
+      "comment": "O6 — a trashed card's values are counted apart."
+    },
+    {
+      "args": {
+        "key": "stagex",
+        "options": "[\"a\"]",
+        "spaceId": "$SPACE"
+      },
+      "command": "update_property_def_options",
+      "comment": "O7 — `Y`'s `b` is no longer an option.",
+      "name": "stagex_loses_b",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "converted": 1,
+          "unfit": 2
+        },
+        "key": "whenx",
+        "spaceId": "$SPACE",
+        "valueType": "date"
+      },
+      "command": "change_property_type",
+      "comment": "O8 — `X`'s date fits; `Y`'s \"soon\" and the trashed `Z`'s \"later\" stay as text.",
+      "name": "whenx_becomes_a_date",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "spaceId": "$SPACE"
+      },
+      "command": "count_property_usage",
+      "comment": "`stagex` 1 live; `whenx` 1 live and 1 in the Trash; every other key 0.",
+      "name": "usage_per_key"
+    },
+    {
+      "args": {
+        "key": "whenx",
+        "limit": 1,
+        "spaceId": "$SPACE"
+      },
+      "command": "list_unfit_property_values",
+      "comment": "One value a page, by block id: `Y`'s \"soon\".",
+      "name": "whenx_page_one"
+    },
+    {
+      "args": {
+        "key": "whenx",
+        "limit": 1,
+        "spaceId": "$SPACE"
+      },
+      "command": "list_unfit_property_values",
+      "comment": "The trashed `Z`'s \"later\", through the first page's cursor.",
+      "cursor_from": "whenx_page_one",
+      "name": "whenx_page_two"
+    },
+    {
+      "args": {
+        "key": "stagex",
+        "limit": 50,
+        "spaceId": "$SPACE"
+      },
+      "command": "list_unfit_property_values",
+      "comment": "`Y`'s `b`.",
+      "name": "stagex_values"
+    },
+    {
+      "args": {
+        "key": "nothing",
+        "limit": 50,
+        "spaceId": "$SPACE"
+      },
+      "command": "list_unfit_property_values",
+      "comment": "Not declared, so nothing fails to fit it.",
+      "expect_empty": true,
+      "name": "an_undeclared_key_has_none"
+    },
+    {
+      "args": {
+        "key": "whenx",
+        "limit": 0,
+        "spaceId": "$SPACE"
+      },
+      "command": "list_unfit_property_values",
+      "comment": "The limit is validated, not clamped.",
+      "expect_error": "validation",
+      "name": "a_zero_limit_is_refused"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "X",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "Y",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "Z",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      }
+    ],
+    "properties": [],
+    "property_defs": [
+      {
+        "key": "stagex",
+        "options": "[\"a\",\"b\"]",
+        "value_type": "select"
+      },
+      {
+        "key": "whenx",
+        "options": null,
+        "value_type": "text"
+      }
+    ],
+    "tags": []
+  }
+}

@@ -782,11 +782,11 @@ const WIRE: Readonly<Record<string, WireShape>> = {
 
   // ── Per-space usage count (#5841 S0) ──
   //
-  // A bare `Vec<PropertyUsage>` ordered by key. MUST match the arm in the Rust
-  // twin.
+  // A bare `Vec<PropertyUsage>` ordered by key, with each key's values that
+  // don't fit it (#6206). MUST match the arm in the Rust twin.
   count_property_usage: {
     rows: { kind: 'bare-array' },
-    token: { kind: 'id', idKey: 'key', attrKeys: ['count'] },
+    token: { kind: 'id', idKey: 'key', attrKeys: ['count', 'unfit', 'unfit_in_trash'] },
     hasMoreKey: null,
     totalKey: null,
   },
@@ -828,6 +828,16 @@ const WIRE: Readonly<Record<string, WireShape>> = {
       idKey: 'block_id',
       attrKeys: ['page_id', 'deleted', 'value', 'converted'],
     },
+    hasMoreKey: 'has_more',
+    totalKey: 'total_count',
+  },
+  // ── A key's values that don't fit it (#6206) ──
+  //
+  // Paged by block id. MUST match the `list_unfit_property_values` arm in the
+  // Rust twin.
+  list_unfit_property_values: {
+    rows: PAGED,
+    token: { kind: 'id', idKey: 'block_id', attrKeys: ['page_id', 'deleted', 'value', 'form'] },
     hasMoreKey: 'has_more',
     totalKey: 'total_count',
   },

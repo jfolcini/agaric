@@ -62,6 +62,7 @@ mod property_key_proptest;
 pub mod property_keys;
 pub mod property_options;
 pub mod property_types;
+pub mod property_unfit;
 pub mod queries;
 pub mod reconciliation;
 pub mod recovery;
@@ -181,6 +182,12 @@ pub use property_types::{
     change_property_type, change_property_type_inner, list_property_type_change_values,
     list_property_type_change_values_inner, preview_property_type_change,
     preview_property_type_change_inner,
+};
+pub use property_unfit::{
+    PropertyUnfitCounts, PropertyValueForm, UnfitPropertyValue, add_unfit_values_to_options,
+    add_unfit_values_to_options_inner, list_unfit_property_values,
+    list_unfit_property_values_inner, remove_unfit_property_values,
+    remove_unfit_property_values_inner,
 };
 pub use queries::{
     DateFilter, DateOp, MatchOffset, NamedDateRange, PropertyFilter, SearchBlockRow, SearchFilter,

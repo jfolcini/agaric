@@ -201,6 +201,19 @@ describe('getPayloadRawContent', () => {
     expect(getPayloadRawContent(makeEntry(payload, 'rewrite_properties'))).toBeNull()
   })
 
+  it('returns the key for a removal of the values that do not fit it', () => {
+    const payload = JSON.stringify({
+      space_id: 'SP1',
+      reason: 'remove_unfit',
+      defs: [],
+      values: [
+        { block_id: 'B1', key: 'when', value: null, prior: { value_text: 'soon' } },
+        { block_id: 'B2', key: 'when', value: null, prior: { value_num: 5 } },
+      ],
+    })
+    expect(getPayloadRawContent(makeEntry(payload, 'rewrite_properties'))).toBe('when')
+  })
+
   it('returns null for a set_property_def payload without a key', () => {
     const payload = JSON.stringify({ space_id: 'SP1', def: null, prior: null })
     expect(getPayloadRawContent(makeEntry(payload, 'set_property_def'))).toBeNull()
@@ -235,6 +248,16 @@ describe('getPayloadRawContent', () => {
       'a merge with a key that is not a string',
       'rewrite_properties',
       { defs: [{ key: 'stage' }, { key: 3 }] },
+    ],
+    [
+      'a removal without a value write',
+      'rewrite_properties',
+      { reason: 'remove_unfit', defs: [], values: [] },
+    ],
+    [
+      'a removal whose key is not a string',
+      'rewrite_properties',
+      { reason: 'remove_unfit', defs: [], values: [{ block_id: 'B1', key: 3 }] },
     ],
     [
       'a type change without a def write',

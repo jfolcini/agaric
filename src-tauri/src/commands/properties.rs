@@ -19,6 +19,7 @@ use agaric_store::pagination::ActiveBlockRow;
 use agaric_store::space::SpaceId;
 use agaric_sync::sync_events::{EVENT_PROPERTY_CHANGED, PropertyChangedEvent};
 
+use super::property_unfit::PropertyUnfitCounts;
 use super::sanitize_internal_error;
 use super::*;
 
@@ -1323,7 +1324,8 @@ pub(crate) fn validate_property_def_shape(
 /// rejects is a row the user can never rewrite. In particular `text` and
 /// `select` admit `value_ref` as well as `value_text`, and the catch-all
 /// mirrors step 4's `_ => true` (an unrecognised declared type constrains
-/// nothing, so nothing conflicts with it).
+/// nothing, so nothing conflicts with it). The `CASE` in `unfit_values`
+/// (`property_unfit.rs`) is this table in SQL: change them together.
 fn declared_type_admits_shape(value_type: &str, shape: &str) -> bool {
     match value_type {
         "text" | "select" => shape == "text" || shape == "ref",
@@ -2062,23 +2064,27 @@ pub async fn delete_property_def_inner(
 
 /// Space membership, not a value a user sets: every block of a space holds
 /// `space`, and `is_space` sits on the space's own block, which is in no space.
-const UNCOUNTED_PROPERTY_KEYS: [&str; 2] = ["space", "is_space"];
+pub(super) const UNCOUNTED_PROPERTY_KEYS: [&str; 2] = ["space", "is_space"];
 
-/// How many live blocks of a space hold a value under one key (#5841).
+/// How many live blocks of a space hold a value under one key (#5841), and
+/// how many of its values don't fit it (#6206).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
 pub struct PropertyUsage {
     pub key: String,
     pub count: i64,
+    #[serde(flatten)]
+    pub unfit: PropertyUnfitCounts,
 }
 
 /// Count, for every key `space_id` defines and every built-in, the live
-/// blocks of the space holding a value under it, ordered by key. Bounded by
-/// the space's vocabulary, so it is one flat list (invariant 3's exception).
+/// blocks of the space holding a value under it, and its values that don't
+/// fit it, live and trashed (#6206), ordered by key. Bounded by the space's
+/// vocabulary, so it is one flat list (invariant 3's exception).
 ///
-/// Trashed blocks are left out, though [`delete_property_def_inner`] counts
-/// them: a key showing 0 uses can still be refused. The column-backed keys
-/// are read from their `blocks` columns. `UNCOUNTED_PROPERTY_KEYS` are not
-/// listed.
+/// `count` leaves trashed blocks out, though [`delete_property_def_inner`]
+/// counts them: a key showing 0 uses can still be refused. The column-backed
+/// keys are read from their `blocks` columns. `UNCOUNTED_PROPERTY_KEYS` are
+/// not listed.
 ///
 /// # Errors
 ///
@@ -2105,8 +2111,7 @@ pub async fn count_property_usage_inner(
             .filter(|key| !UNCOUNTED_PROPERTY_KEYS.contains(key))
             .collect::<Vec<_>>(),
     )?;
-    Ok(sqlx::query_as!(
-        PropertyUsage,
+    let used = sqlx::query!(
         r#"WITH live AS MATERIALIZED (
                SELECT id, todo_state, priority, due_date, scheduled_date
                FROM blocks WHERE space_id = ?1 AND deleted_at IS NULL
@@ -2137,7 +2142,16 @@ pub async fn count_property_usage_inner(
         builtin_keys,
     )
     .fetch_all(&mut *conn)
-    .await?)
+    .await?;
+    let mut unfit = super::property_unfit::unfit_counts(&mut conn, space_id).await?;
+    Ok(used
+        .into_iter()
+        .map(|row| PropertyUsage {
+            unfit: unfit.remove(&row.key).unwrap_or_default(),
+            key: row.key,
+            count: row.count,
+        })
+        .collect())
 }
 
 /// Batch-fetch properties for multiple blocks in a single query.
@@ -2638,7 +2652,8 @@ pub async fn delete_property_def(
 }
 
 /// Tauri command: how many live blocks of a space use each key of its
-/// vocabulary. Delegates to [`count_property_usage_inner`].
+/// vocabulary, and how many of its values don't fit it (#6206). Delegates to
+/// [`count_property_usage_inner`].
 #[tauri::command]
 #[specta::specta]
 pub async fn count_property_usage(
