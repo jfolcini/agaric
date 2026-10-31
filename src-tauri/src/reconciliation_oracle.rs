@@ -2564,7 +2564,8 @@ fn stored_cell(row: &BaseProperty) -> Option<PropertyCell> {
 ///   in `value_text` (`str_column_for`) moves the row. A re-projection writes
 ///   `value_text`, so devices already differ here: a ULID can be in
 ///   `value_ref`, or no row once its block is purged, and a date in
-///   `value_date`.
+///   `value_date`. The cost: a projection that wrongly sends such a string to
+///   `value_ref` or `value_date` reads as a local write and is not reported.
 fn admissible_rows(
     value: &PropertyValue,
     value_type: Option<&str>,
@@ -2634,8 +2635,9 @@ fn describe_rows(key: &str, value_type: Option<&str>, rows: &[Option<PropertyCel
 }
 
 /// One held block's rows against its node's values, every key either side
-/// holds. The promoted keys and `space` live in `blocks` columns, compared by
-/// [`diff_engine_columns`].
+/// holds. The promoted keys live in `blocks` columns, compared by
+/// [`diff_engine_columns`], and `space` is `blocks.space_id`, the doc
+/// [`diff_engine_membership`] expects the block in.
 fn diff_block_property_rows(
     (block_id, space_id, node): (&str, &str, &EngineBlock),
     stored: Option<&BTreeMap<&str, Option<PropertyCell>>>,
@@ -2713,17 +2715,13 @@ fn diff_engine_block_properties(
     }
 }
 
-/// A definition as both sides are compared: its type, and its options with
-/// the JSON reformatted, so spacing alone is no difference.
+/// A definition as both sides are compared: its type, and a select's options
+/// as stored. Both sides take the one string the op carries.
 fn comparable_definition(value_type: &str, options: Option<&str>) -> String {
-    let options = options.map(|raw| {
-        serde_json::from_str::<serde_json::Value>(raw)
-            .map_or_else(|_| raw.to_owned(), |json| json.to_string())
-    });
-    match options {
-        Some(options) => format!("{value_type} {options}"),
-        None => value_type.to_owned(),
-    }
+    options.map_or_else(
+        || value_type.to_owned(),
+        |options| format!("{value_type} {options}"),
+    )
 }
 
 /// `property_definitions` against each doc's root, both directions, for the

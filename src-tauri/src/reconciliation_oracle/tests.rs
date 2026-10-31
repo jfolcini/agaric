@@ -5699,10 +5699,9 @@ async fn each_property_row_drift_is_reported_by_column_and_value_6206() {
 const PP_NO_ENGINE_SPACE: &str = "01PPNOENGINE62060000000000";
 
 /// **#6206 definitions.** The space's definitions, its defaults, its own and
-/// an edited select's options, agree with its doc's root; options spaced
-/// differently and a space with no engine are no divergence. A row dropped, a
-/// row the doc lacks and options SQL alone changed are each reported, the
-/// SQL-only row naming the boot backfill.
+/// an edited select's options, agree with its doc's root, and a space with no
+/// engine is no divergence. A row dropped, a row the doc lacks and options SQL
+/// alone changed are each reported, the SQL-only row naming the boot backfill.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn each_property_definition_drift_is_reported_against_the_doc_6206() {
     let (pool, _dir, mat, v) = pp_vault().await;
@@ -5725,13 +5724,6 @@ async fn each_property_definition_drift_is_reported_against_the_doc_6206() {
     );
     pr_exec(
         &pool,
-        r#"UPDATE property_definitions SET options = '[ "active", "paused", "done", "archived" ]'
-           WHERE space_id = ? AND key = 'status'"#,
-        &[&v.space],
-    )
-    .await;
-    pr_exec(
-        &pool,
         "INSERT INTO property_definitions (space_id, key, value_type, created_at) \
          VALUES (?, 'when', 'date', 'T')",
         &[PP_NO_ENGINE_SPACE],
@@ -5740,8 +5732,7 @@ async fn each_property_definition_drift_is_reported_against_the_doc_6206() {
     assert_eq!(
         pp_drift(&pool, &mat, "engine.property_definitions.row").await,
         Vec::new(),
-        "the definitions agree with the doc, whatever the options' spacing, and a space with \
-         no engine is left out"
+        "the definitions agree with the doc, and a space with no engine is left out"
     );
 
     for sql in [
