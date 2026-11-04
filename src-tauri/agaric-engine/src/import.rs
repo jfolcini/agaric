@@ -1269,7 +1269,7 @@ fn parse_import(content: &str, keep_refs: bool) -> ParseOutput {
     // frontmatter would otherwise be retained as block content. Doing this
     // first also lets `body.lines()` and the indent calculation see clean
     // Lines without stray `\r` characters.
-    // Tabs stay: `indent_columns` counts one as a level, and a fence keeps
+    // Tabs stay: `indent_columns` reads one to its tab stop, and a fence keeps
     // its lines verbatim (#5160 follow-up, item 9).
     let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
 
@@ -1483,7 +1483,7 @@ fn logseq_ids(blocks: &[ParsedBlock], ends_in_code: &[bool]) -> std::collections
 /// need no blank line, and nest by indentation. `-` and `*` mark a bullet
 /// block, `N.` and `N)` a numbered one, a checkbox after any marker a task
 /// (`- [ ] x`), which has no list style, and `+` a block with none, which is
-/// how a plain block under a list block is written. A heading, a fence and a
+/// how a plain block under another block is written. A heading, a fence and a
 /// thematic break start a block of their own wherever they stand outside a
 /// fence, under a paragraph with no blank line too, as CommonMark reads them
 /// (D1 as amended); a heading or a break is a block of one line, and owns
@@ -2479,29 +2479,42 @@ fn append_source_line(
     }
 }
 
-/// `line` less up to `width` columns of leading spaces and tabs.
+/// `line` less its leading spaces and tabs that start before column `width`.
 fn dedent(line: &str, width: usize) -> &str {
     let mut columns = 0;
     let mut cut = 0;
     for byte in line.bytes() {
-        columns += match byte {
-            b' ' => 1,
-            b'\t' => 2,
-            _ => break,
-        };
-        if columns > width {
+        if columns >= width {
             break;
         }
+        columns = match byte {
+            b' ' => columns + 1,
+            b'\t' => past_tab(columns),
+            _ => break,
+        };
         cut += 1;
     }
     &line[cut..]
 }
 
-/// The columns `line`'s indentation spans. A tab counts as two, one level, so
-/// a tab-indented outline nests.
+/// The column a tab at `columns` reaches: the next multiple of four, as
+/// CommonMark's tab stops put it, so a tab-indented outline nests as other
+/// tools read it (decision 2, #6277).
+fn past_tab(columns: usize) -> usize {
+    columns - columns % 4 + 4
+}
+
+/// The columns `line`'s indentation spans: its UTF-8 bytes, a tab reaching the
+/// next tab stop.
 fn indent_columns(line: &str) -> usize {
     let indent = &line[..line.len() - line.trim_start().len()];
-    indent.len() + indent.matches('\t').count()
+    indent.chars().fold(0, |columns, c| {
+        if c == '\t' {
+            past_tab(columns)
+        } else {
+            columns + c.len_utf8()
+        }
+    })
 }
 
 /// `true` when `line`, written as a block's continuation line, would read as
