@@ -47,7 +47,13 @@ async fn mk_space(pool: &SqlitePool, name: &str) -> String {
 async fn mk_tools() -> (ReadWriteTools, Materializer, SqlitePool, String, TempDir) {
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    let tools = ReadWriteTools::new(pool.clone(), pool.clone(), mat.clone(), DEV.to_string());
+    let tools = ReadWriteTools::new(
+        pool.clone(),
+        pool.clone(),
+        mat.clone(),
+        DEV.to_string(),
+        dir.path().to_path_buf(),
+    );
     let space_id = mk_space(&pool, " test space").await;
     (tools, mat, pool, space_id, dir)
 }
@@ -1093,9 +1099,15 @@ async fn list_spaces_happy_path_returns_spaces_with_default_flag() {
     // Use a bare pool (not `mk_tools`, which auto-seeds one space) so the
     // row count/order assertions below match the RO surface's equivalent
     // test exactly.
-    let (pool, _dir) = test_pool().await;
+    let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    let tools = ReadWriteTools::new(pool.clone(), pool.clone(), mat.clone(), DEV.to_string());
+    let tools = ReadWriteTools::new(
+        pool.clone(),
+        pool.clone(),
+        mat.clone(),
+        DEV.to_string(),
+        dir.path().to_path_buf(),
+    );
     crate::spaces::bootstrap_spaces_for_test(&pool, DEV)
         .await
         .unwrap();
@@ -1804,8 +1816,14 @@ async fn mk_tools_recording() -> (
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let emitter = Arc::new(RecordingViewChangeEmitter::new());
-    let tools = ReadWriteTools::new(pool.clone(), pool.clone(), mat.clone(), DEV.to_string())
-        .with_view_emitter(emitter.clone());
+    let tools = ReadWriteTools::new(
+        pool.clone(),
+        pool.clone(),
+        mat.clone(),
+        DEV.to_string(),
+        dir.path().to_path_buf(),
+    )
+    .with_view_emitter(emitter.clone());
     let space_id = mk_space(&pool, " test space").await;
     (tools, mat, pool, space_id, emitter, dir)
 }
@@ -2371,8 +2389,14 @@ async fn create_tag_signals_once_the_tag_list_holds_the_tag_6049() {
         space_id: space_id.clone(),
         seen: std::sync::Mutex::default(),
     });
-    let tools = ReadWriteTools::new(pool.clone(), pool.clone(), mat, DEV.to_string())
-        .with_view_emitter(emitter.clone());
+    let tools = ReadWriteTools::new(
+        pool.clone(),
+        pool.clone(),
+        mat,
+        DEV.to_string(),
+        std::env::temp_dir(),
+    )
+    .with_view_emitter(emitter.clone());
 
     tools
         .call_tool(
@@ -3590,6 +3614,7 @@ async fn list_spaces_answers_while_the_writers_are_busy_5402() {
         pools.read.clone(),
         mat.clone(),
         DEV.to_string(),
+        dir.path().to_path_buf(),
     );
     let space = mk_space(&pools.write, "Readable").await;
     settle(&mat).await;
@@ -3616,12 +3641,13 @@ async fn list_spaces_answers_while_the_writers_are_busy_5402() {
 /// both registries (#5379).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reads_through_rw_match_ro_5379() {
-    let (rw, mat, pool, space, _dir) = mk_tools().await;
+    let (rw, mat, pool, space, dir) = mk_tools().await;
     let ro = crate::mcp::tools_ro::ReadOnlyTools::new(
         pool.clone(),
         pool.clone(),
         mat.clone(),
         DEV.to_string(),
+        dir.path().to_path_buf(),
     );
     let page = mk_page(&pool, &mat, &space, "Haystack").await;
     mk_child_of(&pool, &mat, &page, "needle in the haystack").await;
@@ -3664,6 +3690,7 @@ async fn rw_reads_its_own_write_5379() {
         pools.read.clone(),
         mat.clone(),
         DEV.to_string(),
+        dir.path().to_path_buf(),
     );
     let space = mk_space(&pools.write, "Readable").await;
     let page = mk_page(&pools.write, &mat, &space, "Page").await;
@@ -3704,6 +3731,7 @@ async fn journal_for_date_on_rw_creates_the_day_as_the_agent_5379() {
         pools.read.clone(),
         mat.clone(),
         DEV.to_string(),
+        dir.path().to_path_buf(),
     )
     .with_view_emitter(emitter.clone());
     let space = mk_space(&pools.write, "Journal").await;
@@ -4056,6 +4084,7 @@ async fn editable_source(pool: &SqlitePool, mat: &Materializer, page: &str, spac
         pool.clone(),
         mat.clone(),
         DEV.to_string(),
+        std::env::temp_dir(),
     );
     let read = ro
         .call_tool(

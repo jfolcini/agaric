@@ -330,7 +330,7 @@ Agaric's strongest domain. Its index advantage now holds against OG only.
 
 ### 12. AI / Agent Integration
 
-Both sides moved. Agaric's MCP became per-agent and grew to 36 tools. Logseq 2.0's MCP became
+Both sides moved. Agaric's MCP became per-agent and grew to 37 tools. Logseq 2.0's MCP became
 reachable from the browser, and a token-scoped REST API landed on master after 2.0.2.
 
 | Capability | Logseq | Agaric | Status |
@@ -430,7 +430,7 @@ Trimmed to claims that survived verification on 2026-10-21.
 | **Conflict resolution** | Loro CRDT: blocks, text, properties, tags, moves and attachments converge without a user-facing conflict | File-level conflicts (OG) or alpha RTC (2.0) |
 | **Spaces** | Per-space journal, tabs, recents, identity, `Alt+1..9`, write-time cross-space enforcement, page move between spaces | One graph per instance |
 | **Editor breadth** | Native Mermaid, KaTeX, 5 callout types, 8 inline pickers, a block-mode toolbar, the Markdown reveal, opt-in page mode, Edit as Markdown, Markdown paste | Mermaid is a plugin; no toolbar; no page-as-document mode |
-| **Agent access** | 36 MCP tools, per-agent tokens, modes and space allow-lists | 2.0's MCP is narrower; its REST API is on master, in no release |
+| **Agent access** | 37 MCP tools, per-agent tokens, modes and space allow-lists | 2.0's MCP is narrower; its REST API is on master, in no release |
 | **ID durability** | ULIDs; renames propagate; export externalizes them and re-import re-internalizes them | UUID v4; OG stores link text |
 | **Supply chain** | SLSA provenance, Scorecard, CodeQL, blocking audits, a threat model, a release gated on a real-backend lane | Standard OSS CI |
 
@@ -592,7 +592,7 @@ master), with its beta status called out separately rather than deducted twice.
 | Search | 5 | **7** | **9** | **2.0 +1**: its trigram FTS5 dates from 2024, so 6 was an audit error; plus opt-in semantic search. **Agaric held**: the index edge over 2.0 is gone, but the 12-prefix filter language, 19-field scope and regex in-page find have no 2.0 equivalent |
 | Templates | 7 | 8 | 7 | — (journal templates carry properties; `/template` drops them and is not atomic) |
 | Spaces | 2 | 3 | **9** | — |
-| AI / agent access | 2 | 8 | **9** | **Agaric +1** (36 tools, per-agent tokens, modes and space allow-lists; not isolation). **2.0 held**: the proposed +1 rests on the REST API (#13019), which merged after 2.0.2 and is in no release |
+| AI / agent access | 2 | 8 | **9** | **Agaric +1** (37 tools, per-agent tokens, modes and space allow-lists; not isolation). **2.0 held**: the proposed +1 rests on the REST API (#13019), which merged after 2.0.2 and is in no release |
 | Sync / storage | 4 | 5 | **7** | **+2.** Two of the three deductions behind the 5 are gone: two-way sync is CI-verified and in daily Android ↔ Linux use, and QR pairing needs no multicast. Attachments converge, and the snapshot OOM is gone. Not 8: no backup, mDNS-only discovery, foreground-only Android, invisible quarantine |
 | Data integrity | 3 | 4 | **8** | — (integrity check and audits added; invisible quarantine, no backup, late convergence bugs #5608, #5712) |
 | Performance | 3 | 7 | 7 | — (lazy hydration; revert over budget, memory unmeasured) |
@@ -655,7 +655,7 @@ Ranked by how much each one stands between a user and sync that works out of the
 | 12 | Make inline queries live | Done (#5316) | — |
 | 13 | Multi-value properties | Open | `PRIMARY KEY (block_id, key)` |
 | 14 | A structured export | Open | JSON or EDN with definitions, history and saved queries |
-| 15 | An answer to bus factor 1 | Open | MCP grew (36 tools, per-agent scoping) but is not a plugin API |
+| 15 | An answer to bus factor 1 | Open | MCP grew (37 tools, per-agent scoping) but is not a plugin API |
 | 16 | Is LAN-only still right? | Partial | Opt-in relay shipped; discovery is still one network: sync item 1 |
 | 17 | Where does the hardening loop end? | Answered for this window | `feat` ~14% of recent commits and Python guards deleted or ported (#5579). The new question is cadence: 14 releases in 54 days, and 0.15.0 crashed on every Android launch before the real-backend release gate (fda49ef52) |
 
@@ -700,7 +700,7 @@ What each revision changed about the one before it.
 | Deadline warning in "Settings → General"; a per-space journal-template override | Settings → Tasks & reminders (#5635); override retired (#5405) |
 | Spaces switch with `Ctrl+1..9` (the 2026-08-30 text before its in-place patch) | `Alt+1..9`; `Ctrl+1..9` switches tabs (#6022) |
 | "Table dimension syntax with a grid picker"; seven inline pickers | `/tableRxC` removed (#5766); eight pickers with `#` (#5205) |
-| MCP: two RO/RW sockets, 17 tools, no auth or per-agent scoping | One socket, per-agent tokens, modes and spaces (#5759); 36 tools |
+| MCP: two RO/RW sockets, 17 tools, no auth or per-agent scoping | One socket, per-agent tokens, modes and spaces (#5759); 37 tools |
 | Two-way sync unverified | CI-verified (#5589, #5604, #5996) and in daily Android ↔ Linux use (maintainer report) |
 | Attachments never converge; snapshots hold the vault in RAM with an ~18 s lock; legacy CBOR catch-up wipes the op log | Converge (#5608, #5728); blob gone (#4693, #4727) |
 | LAN only, "relays cleared" | An opt-in relay (#5135), off by default |
@@ -804,7 +804,7 @@ listed by area, not by rank.
 | Advanced Tables (3.30M) | Pipe tables, size grid, row/column ops in the block-mode toolbar | Partial |
 | Calendar (3.21M) | Journal calendar with content dots | Done |
 | Style Settings (2.79M), Minimal Theme Settings (1.86M) | 6 fixed themes plus auto, no custom CSS | Gap |
-| Copilot (2.77M), Claudian (2.48M): AI agents in the vault | MCP with 36 tools and per-agent tokens; the agent runs outside the app | Partial |
+| Copilot (2.77M), Claudian (2.48M): AI agents in the vault | MCP with 37 tools and per-agent tokens; the agent runs outside the app | Partial |
 | Kanban (2.77M) | None | Gap |
 | Remotely Save (2.32M): sync through cloud storage | Peer-to-peer sync on one network; no cloud target | Design choice |
 | Iconize (2.27M) | None; tag colours and space accents only | Gap |

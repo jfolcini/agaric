@@ -91,8 +91,9 @@ pub use agenda::list_projected_agenda_inner_with_today;
 pub use attachments::{
     add_attachment_with_bytes, add_attachment_with_bytes_inner, delete_attachment,
     delete_attachment_inner, list_attachments, list_attachments_batch,
-    list_attachments_batch_inner, list_attachments_inner, read_attachment, read_attachment_inner,
-    rename_attachment, rename_attachment_inner,
+    list_attachments_batch_inner, list_attachments_inner, list_attachments_paged_inner,
+    list_page_attachments_inner, read_attachment, read_attachment_inner, rename_attachment,
+    rename_attachment_inner,
 };
 pub use blocks::{
     CreateBlockSpec, PropertyLoss, PropertyLossValue, batch_resolve, batch_resolve_inner,

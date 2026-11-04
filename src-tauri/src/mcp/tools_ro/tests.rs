@@ -50,7 +50,13 @@ async fn mk_tools() -> (ReadOnlyTools, Materializer, TempDir) {
     // for both the reader and writer slots in this fixture. The
     // production wiring uses split `init_pools` semantics; the
     // dedicated `tests_m82` block below exercises that path.
-    let tools = ReadOnlyTools::new(pool.clone(), pool, mat.clone(), DEV.to_string());
+    let tools = ReadOnlyTools::new(
+        pool.clone(),
+        pool,
+        mat.clone(),
+        DEV.to_string(),
+        dir.path().to_path_buf(),
+    );
     (tools, mat, dir)
 }
 
@@ -96,6 +102,7 @@ async fn list_tools_advertises_the_ro_tools() {
             "list_trash",
             "resolve",
             "query",
+            "list_attachments",
         ],
         "tool order is part of the wire contract — do not re-order (new tools append)",
     );
@@ -653,6 +660,11 @@ fn limit_validation_cases() -> Vec<(&'static str, i64, Value)> {
             TOOL_GET_AGENDA,
             AGENDA_RESULT_CAP,
             json!({"start_date": "2025-01-01", "end_date": "2025-01-02", "space_id": TEST_SPACE_ID}),
+        ),
+        (
+            TOOL_LIST_ATTACHMENTS,
+            LIST_RESULT_CAP,
+            json!({"block_id": "ANY", "space_id": TEST_SPACE_ID}),
         ),
     ]
 }
@@ -5623,4 +5635,349 @@ async fn list_pages_sorts_and_filters_across_a_cursor_5401() {
             "{args}: {err:?}"
         );
     }
+}
+
+// -------------------------------------------------------------------
+// list_attachments, and attachment entries on get_block / get_page (#5410)
+// -------------------------------------------------------------------
+
+/// Attach `bytes` to `block` as the app does, under the registry's
+/// app data dir, and return the attachment's id.
+async fn attach(
+    tools: &ReadOnlyTools,
+    mat: &Materializer,
+    block: &str,
+    filename: &str,
+    mime_type: &str,
+    bytes: &[u8],
+) -> String {
+    crate::commands::add_attachment_with_bytes_inner(
+        &tools.pool,
+        DEV,
+        mat,
+        &tools.app_data_dir,
+        BlockId::from_trusted(block),
+        filename.into(),
+        mime_type.into(),
+        bytes.to_vec(),
+    )
+    .await
+    .unwrap()
+    .id
+    .into_string()
+}
+
+fn item_ids(result: &Value) -> Vec<String> {
+    result["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["id"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_attachments_by_block_and_by_page_return_every_field_5410() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let page = mk_page_in(&tools, &mat, &space).await;
+    let child = mk_child(&tools, &mat, &page, "child").await;
+    let grandchild = mk_child(&tools, &mat, &child, "grandchild").await;
+    let on_page = attach(&tools, &mat, &page, "cover.png", "image/png", b"png bytes").await;
+    let on_child = attach(
+        &tools,
+        &mat,
+        &child,
+        "notes.md",
+        "text/markdown",
+        b"# notes",
+    )
+    .await;
+    let on_grandchild = attach(&tools, &mat, &grandchild, "rec.ogg", "audio/ogg", b"ogg").await;
+    settle(&mat).await;
+
+    let by_block = tools
+        .call_tool(
+            "list_attachments",
+            json!({ "space_id": space, "block_id": child }),
+            &test_ctx(),
+        )
+        .await
+        .expect("list_attachments by block_id");
+    assert_eq!(
+        item_ids(&by_block),
+        vec![on_child.clone()],
+        "got {by_block}"
+    );
+    assert_eq!(by_block["has_more"], false);
+    let item = &by_block["items"][0];
+    assert_eq!(item["block_id"], child.as_str());
+    assert_eq!(item["filename"], "notes.md");
+    assert_eq!(item["mime_type"], "text/markdown");
+    assert_eq!(item["size_bytes"], 7);
+    assert!(item["created_at"].as_i64().unwrap() > 0, "got {item}");
+    let path = PathBuf::from(item["path"].as_str().unwrap());
+    assert!(path.is_absolute(), "got {}", path.display());
+    assert!(
+        path.starts_with(&tools.app_data_dir),
+        "got {}",
+        path.display()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), b"# notes");
+
+    let by_page = tools
+        .call_tool(
+            "list_attachments",
+            json!({ "space_id": space, "page_id": page }),
+            &test_ctx(),
+        )
+        .await
+        .expect("list_attachments by page_id");
+    assert_eq!(
+        item_ids(&by_page),
+        vec![on_page, on_child, on_grandchild],
+        "the page's own and every descendant's, in id order: {by_page}"
+    );
+    for item in by_page["items"].as_array().unwrap() {
+        assert!(
+            PathBuf::from(item["path"].as_str().unwrap()).is_file(),
+            "got {item}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_attachments_refuses_a_target_in_another_space_5410() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let other = mk_space(&tools.pool, "Other").await;
+    let page = mk_page_in(&tools, &mat, &space).await;
+    let block = mk_child(&tools, &mat, &page, "text").await;
+    attach(&tools, &mat, &block, "a.txt", "text/plain", b"a").await;
+    settle(&mat).await;
+
+    for target in [json!({ "block_id": block }), json!({ "page_id": page })] {
+        let mut args = target.clone();
+        args["space_id"] = json!(other);
+        let err = tools
+            .call_tool("list_attachments", args, &test_ctx())
+            .await
+            .expect_err("a target in another space must be refused");
+        let message = err.to_string();
+        assert!(
+            matches!(err, AppError::Validation { .. })
+                && message.contains(&format!("belongs to space '{space}'")),
+            "{target}: got {message}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_attachments_takes_exactly_one_of_block_id_and_page_id_5410() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let page = mk_page_in(&tools, &mat, &space).await;
+    let block = mk_child(&tools, &mat, &page, "text").await;
+    settle(&mat).await;
+
+    for args in [
+        json!({ "space_id": space }),
+        json!({ "space_id": space, "block_id": block, "page_id": page }),
+    ] {
+        let err = tools
+            .call_tool("list_attachments", args.clone(), &test_ctx())
+            .await
+            .expect_err("needs exactly one target");
+        assert!(
+            matches!(&err, AppError::Validation { message, .. }
+                if message.contains("exactly one of `block_id` and `page_id`")),
+            "{args}: got {err:?}"
+        );
+    }
+    let err = tools
+        .call_tool(
+            "list_attachments",
+            json!({ "space_id": space, "page_id": block }),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("a content block is not a page");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_attachments_cursor_resumes_without_duplicates_5410() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let page = mk_page_in(&tools, &mat, &space).await;
+    let mut expected = Vec::new();
+    for i in 0..5 {
+        let block = mk_child(&tools, &mat, &page, &format!("block {i}")).await;
+        let bytes = format!("file {i}");
+        let name = format!("f{i}.txt");
+        expected.push(attach(&tools, &mat, &block, &name, "text/plain", bytes.as_bytes()).await);
+    }
+    settle(&mat).await;
+
+    let mut seen = Vec::new();
+    let mut pages = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let mut args = json!({ "space_id": space, "page_id": page, "limit": 2 });
+        if let Some(c) = &cursor {
+            args["cursor"] = json!(c);
+        }
+        let result = tools
+            .call_tool("list_attachments", args, &test_ctx())
+            .await
+            .expect("list_attachments page");
+        let ids = item_ids(&result);
+        pages.push(ids.len());
+        seen.extend(ids);
+        if result["has_more"] == false {
+            assert!(result["next_cursor"].is_null(), "got {result}");
+            break;
+        }
+        cursor = Some(result["next_cursor"].as_str().unwrap().to_owned());
+    }
+    assert_eq!(pages, vec![2, 2, 1]);
+    assert_eq!(seen, expected, "every attachment once, in id order");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_attachments_refuses_a_malformed_cursor_5410() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let page = mk_page_in(&tools, &mat, &space).await;
+    let block = mk_child(&tools, &mat, &page, "text").await;
+    settle(&mat).await;
+
+    for target in [json!({ "block_id": block }), json!({ "page_id": page })] {
+        let mut args = target.clone();
+        args["space_id"] = json!(space);
+        args["cursor"] = json!("not a cursor");
+        let err = tools
+            .call_tool("list_attachments", args, &test_ctx())
+            .await
+            .expect_err("a malformed cursor must be refused");
+        assert!(
+            matches!(&err, AppError::Validation { message, .. } if message.contains("invalid cursor")),
+            "{target}: got {err:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_attachments_leaves_out_a_deleted_blocks_files_5410() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let page = mk_page_in(&tools, &mat, &space).await;
+    let kept = mk_child(&tools, &mat, &page, "kept").await;
+    let deleted = mk_child(&tools, &mat, &page, "deleted").await;
+    let on_kept = attach(&tools, &mat, &kept, "kept.txt", "text/plain", b"kept").await;
+    attach(&tools, &mat, &deleted, "gone.txt", "text/plain", b"gone").await;
+    crate::commands::delete_block_inner(&tools.pool, DEV, &mat, BlockId::from_trusted(&deleted))
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let by_page = tools
+        .call_tool(
+            "list_attachments",
+            json!({ "space_id": space, "page_id": page }),
+            &test_ctx(),
+        )
+        .await
+        .expect("list_attachments by page_id");
+    assert_eq!(item_ids(&by_page), vec![on_kept], "got {by_page}");
+
+    let err = tools
+        .call_tool(
+            "list_attachments",
+            json!({ "space_id": space, "block_id": deleted }),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("a deleted block is not found");
+    assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_block_and_get_page_carry_attachment_entries_5410() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let page = mk_page_in(&tools, &mat, &space).await;
+    let with_file = mk_child(&tools, &mat, &page, "with a file").await;
+    let without = mk_child(&tools, &mat, &page, "without").await;
+    let on_page = attach(&tools, &mat, &page, "cover.png", "image/png", b"png").await;
+    let on_child = attach(&tools, &mat, &with_file, "rec.ogg", "audio/ogg", b"ogg").await;
+    settle(&mat).await;
+
+    let block = tools
+        .call_tool(
+            "get_block",
+            json!({ "block_id": with_file, "space_id": space }),
+            &test_ctx(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        block["attachments"],
+        json!([{ "id": on_child, "filename": "rec.ogg", "mime_type": "audio/ogg" }]),
+        "got {block}"
+    );
+    let bare = tools
+        .call_tool(
+            "get_block",
+            json!({ "block_id": without, "space_id": space }),
+            &test_ctx(),
+        )
+        .await
+        .unwrap();
+    assert!(bare.get("attachments").is_none(), "got {bare}");
+
+    let read = tools
+        .call_tool(
+            "get_page",
+            json!({ "page_id": page, "space_id": space }),
+            &test_ctx(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        read["page"]["attachments"],
+        json!([{ "id": on_page, "filename": "cover.png", "mime_type": "image/png" }]),
+        "got {read}"
+    );
+    let children = read["children"].as_array().unwrap();
+    let child = |id: &str| children.iter().find(|c| c["id"] == id).unwrap();
+    assert_eq!(
+        child(&with_file)["attachments"],
+        json!([{ "id": on_child, "filename": "rec.ogg", "mime_type": "audio/ogg" }]),
+        "got {read}"
+    );
+    assert!(child(&without).get("attachments").is_none(), "got {read}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn snapshot_list_attachments_response_shape() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let page = mk_page_in(&tools, &mat, &space).await;
+    attach(&tools, &mat, &page, "cover.png", "image/png", b"png").await;
+    settle(&mat).await;
+    let result = tools
+        .call_tool(
+            "list_attachments",
+            json!({ "space_id": space, "page_id": page }),
+            &test_ctx(),
+        )
+        .await
+        .unwrap();
+    insta::assert_yaml_snapshot!("tool_response_list_attachments", result, {
+        ".items[].id" => "[ULID]",
+        ".items[].block_id" => "[ULID]",
+        ".items[].created_at" => "[TIMESTAMP]",
+        ".items[].path" => "[PATH]",
+    });
 }
