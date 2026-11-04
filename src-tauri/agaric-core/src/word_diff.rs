@@ -1,11 +1,14 @@
-//! Word-level two-way diff for undo/redo history display, and the line-level
-//! three-way merge a source-mode save folds two edits of one block with.
+//! Word-level two-way diff for undo/redo history display, the line-level
+//! three-way merge a source-mode save folds two edits of one block with, and
+//! the common subsequence of two lists a file's blocks are paired by.
 //!
 //! Uses the `similar` crate's `TextDiff::from_words()` to produce
 //! `DiffSpan` items with `{Equal, Delete, Insert}` tags.
 
+use std::hash::Hash;
+
 use serde::Serialize;
-use similar::{ChangeTag, TextDiff, TextMerge};
+use similar::{Algorithm, ChangeTag, DiffOp, TextDiff, TextMerge, capture_diff_slices};
 
 /// Tag indicating what happened to a span of text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
@@ -55,10 +58,39 @@ pub fn merge_lines(base: &str, ours: &str, theirs: &str) -> Option<String> {
     Some(merged.strip_suffix('\n').unwrap_or(&merged).to_owned())
 }
 
+/// The items `old` and `new` keep in common, as `(old, new)` index pairs in
+/// order: a longest common subsequence, by Myers' diff, in memory linear in
+/// the two lengths.
+pub fn equal_pairs<T: Eq + Hash>(old: &[T], new: &[T]) -> Vec<(usize, usize)> {
+    capture_diff_slices(Algorithm::Myers, old, new)
+        .into_iter()
+        .flat_map(|op| match op {
+            DiffOp::Equal {
+                old_index,
+                new_index,
+                len,
+            } => (0..len).map(|k| (old_index + k, new_index + k)).collect(),
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn equal_pairs_are_a_longest_common_subsequence() {
+        let old = ["a", "b", "c", "d"];
+        let new = ["b", "x", "c", "a"];
+        assert_eq!(equal_pairs(&old, &new), vec![(1, 0), (2, 2)]);
+        assert_eq!(
+            equal_pairs(&["a", "b", "c"], &["a", "b", "c", "x"]),
+            vec![(0, 0), (1, 1), (2, 2)]
+        );
+        assert_eq!(equal_pairs::<&str>(&[], &new), Vec::new());
+    }
 
     /// Each side's edit of a line the other left merges, a last line deleted
     /// on one side included, which only reads as one line's deletion because

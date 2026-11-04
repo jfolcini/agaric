@@ -713,6 +713,7 @@ export const commands = {
 	 *  A `time` that is not `HH:MM` surfaces as [`AppError::Validation`].
 	 */
 	setReminderSettings: (settings: ReminderSettings) => typedError<null, AppError>(__TAURI_INVOKE("set_reminder_settings", { settings })),
+	speechStatus: () => typedError<SpeechStatus, AppError>(__TAURI_INVOKE("speech_status")),
 	/**
 	 *  Tauri command: import a Logseq-style markdown file as a page with
 	 *  block hierarchy. Delegates to [`import_markdown_with_progress`].
@@ -4366,6 +4367,16 @@ export type SpaceRow = {
  *  id up front.
  */
 export type SpaceScope = { kind: "active"; space_id: SpaceId };
+
+/**
+ *  Which engine speaks on this build, so the frontend can hide *Read aloud*
+ *  where there is none.
+ */
+export type SpeechStatus = 
+/**  No engine: *Read aloud* is hidden. */
+"Unsupported" | 
+/**  The frontend speaks through the webview's `speechSynthesis`. */
+"Webview";
 
 /**
  *  Snapshot of materializer + sync observability fields exposed to the
