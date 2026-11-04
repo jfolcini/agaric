@@ -37,6 +37,7 @@ If you click the Sync button before any device is paired, the **NoPeersDialog** 
 - **Per-peer progress** in the device's row while a sync is running: sync messages sent and received, then the attachment transfer with files and bytes done of total and a progress bar; the row clears when the sync ends (#5842). It shows for syncs this device starts (*Sync now*, *Sync all*, and its own periodic sync), not for a session the other device dialled in. While it shows, the row offers *Cancel sync* (#5739).
 - **Retry toast** per peer on failure — partial failures don't blow up the whole batch.
 - **Sync changes that could not be applied**, first in Settings › Sync & devices, shown whether or not a device is paired and hidden when there are none (#6057): each row names the space, when the change first arrived, its size, and why it would not merge. *Retry* takes a change off the list and tries it again the next time Agaric starts, not at the next sync; its toast offers *Restart now*. A retry that still fails comes back to the list after that start, with the new reason.
+- **Quarantine warning** at startup, only on the start that moved changes from another device to quarantine because they still could not be applied after repeated restarts: it says how many and stays until dismissed. Its *Review* opens Settings › Sync & devices. Later starts stay quiet, since a quarantined change cannot be deleted (#6057).
 
 ## How sync runs
 

@@ -6118,3 +6118,32 @@ async fn healthy_boot_does_not_warn_about_the_routine_cursor_rewind_4018() {
          back up; cursor was {cursor}, is now {healed_to}"
     );
 }
+
+/// #6057 — the boot that moves a stuck sync delta to quarantine reports it in
+/// the frontend-facing status, and the next boot reports 0 even though the
+/// quarantined row is still there: the toast fires once, not on every start.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn status_reports_quarantine_only_on_the_boot_that_moved_it_6057() {
+    use crate::sync_protocol::loro_sync_quarantine::QUARANTINE_AFTER_BOOTS;
+
+    let (pool, _dir) = test_pool().await;
+    // Not a Loro blob, so no boot can ever project it; one boot of budget left.
+    sqlx::query(
+        "INSERT INTO loro_sync_inbox (space_id, bytes, created_at, unresolved_boots) \
+         VALUES (?, ?, ?, ?)",
+    )
+    .bind("01HZ00000000000000000SPACE")
+    .bind(vec![0xDE_u8, 0xAD, 0xBE, 0xEF])
+    .bind(agaric_store::db::now_ms())
+    .bind(QUARANTINE_AFTER_BOOTS - 1)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let first = recover_at_boot_test(&pool, "dev-q").await.unwrap();
+    assert_eq!(first.to_status().sync_quarantined_this_boot, 1);
+
+    let second = recover_at_boot_test(&pool, "dev-q").await.unwrap();
+    assert_eq!(second.sync_inbox_quarantine_pending, 1);
+    assert_eq!(second.to_status().sync_quarantined_this_boot, 0);
+}

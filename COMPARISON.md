@@ -480,7 +480,7 @@ collect the benefit, or where its own documentation is wrong. Each carries its 2
 | **Advanced query engine depth** | 10 property operators, 4 value types, 7 group keys, property aggregates | **Fixed for the engine/UI gap** (#4569, #4804). Remaining: bounded group preview, no column picker, no text language |
 | **Saved views** | A saved-view UI and storage | **Partly fixed**: invisible since a space migration until #5828; now per-space `localStorage`, not synced; old views stay invisible |
 | **The notification subsystem** | OS plumbing on three platforms, a settings tab, a permission flow | **Partly fixed**: desktop `due_date` reminders while the app runs (#4806). No Android, catch-up, lead time or `scheduled_date` |
-| **The sync quarantine** | A quarantine table, boot fields `sync_inbox_quarantined` and `sync_inbox_quarantine_pending` | **Partly fixed**: Settings › Sync & devices lists the quarantined slots and retries one at the next start (#6057); the boot fields still reach logs only |
+| **The sync quarantine** | A quarantine table, boot fields `sync_inbox_quarantined` and `sync_inbox_quarantine_pending` | **Fixed**: Settings › Sync & devices lists the quarantined slots and retries one at the next start, and the start that quarantines one warns with a toast (#6057) |
 | **i18next** | ~3,056 keys across 13 namespaces (2026-08-30 count) | Two locales, `es` partial (#4555); not re-audited |
 
 ### Documentation that is false

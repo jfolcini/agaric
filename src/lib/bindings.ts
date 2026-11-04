@@ -3875,6 +3875,13 @@ export type RecoveryStatus = {
 	 *  raise the user-visible signal.
 	 */
 	replay_errors: string[],
+	/**
+	 *  #6057: inbound sync deltas THIS boot moved to quarantine (the same as
+	 *  [`RecoveryReport::sync_inbox_quarantined`]). The frontend warns once on
+	 *  the boot that quarantined something, not on every boot with a standing
+	 *  backlog, because nothing can delete a quarantined delta.
+	 */
+	sync_quarantined_this_boot: number,
 };
 
 /**
