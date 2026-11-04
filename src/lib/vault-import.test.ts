@@ -441,6 +441,23 @@ describe('restoring an export', () => {
       '{"propertyDefinitions": [{"key": "k", "options": null}], "titles": {}}',
       'not a property definition',
     ],
+    ['a list for a file', '[]', 'not a space file'],
+    ['a list for titles', '{"propertyDefinitions": [], "titles": []}', 'not a space file'],
+    [
+      'a list for a definition',
+      '{"propertyDefinitions": [[]], "titles": {}}',
+      'not a property definition',
+    ],
+    [
+      'a definition whose key is no string',
+      '{"propertyDefinitions": [{"key": 1, "value_type": "text", "options": null}], "titles": {}}',
+      'not a property definition',
+    ],
+    [
+      'a definition whose options are no string',
+      '{"propertyDefinitions": [{"key": "k", "value_type": "select", "options": 1}], "titles": {}}',
+      'not a property definition',
+    ],
   ])('says a space file with %s, and restores nothing from it', async (_, text, reason) => {
     const files = [folderFile([text], 'space.json', 'Export/.agaric/space.json', '')]
     const restored = await restoreSpaceFile(files, 'SPACE')

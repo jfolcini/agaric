@@ -1192,6 +1192,9 @@ describe('the space file and the title line (#6277 decision 8)', () => {
       P2: '---\nstage: a\n---\n# Front\n\n- body\n',
       P3: '# Not the title\n\n- body\n',
       P4: '- first\n# Late\n\n- body\n',
+      // A rule is no front matter, and front matter that never closes holds no title line.
+      P5: '- first\n---\n# Rule\n\n- body\n',
+      P6: '---\n# Open\n\n- body\n',
     }
     stubExport({
       list_all_pages_in_space: () => [
@@ -1199,6 +1202,8 @@ describe('the space file and the title line (#6277 decision 8)', () => {
         makePageHeading({ id: 'P2', content: 'Front' }),
         makePageHeading({ id: 'P3', content: 'Other' }),
         makePageHeading({ id: 'P4', content: 'Late' }),
+        makePageHeading({ id: 'P5', content: 'Rule' }),
+        makePageHeading({ id: 'P6', content: 'Open' }),
       ],
       export_page_markdown: (args) => markdown[args['pageId'] as string] ?? '',
     })
@@ -1210,6 +1215,8 @@ describe('the space file and the title line (#6277 decision 8)', () => {
     expect(await unzipped.file('Front.md')?.async('string')).toBe('---\nstage: a\n---\n- body\n')
     expect(await unzipped.file('Other.md')?.async('string')).toBe(markdown['P3'])
     expect(await unzipped.file('Late.md')?.async('string')).toBe(markdown['P4'])
+    expect(await unzipped.file('Rule.md')?.async('string')).toBe(markdown['P5'])
+    expect(await unzipped.file('Open.md')?.async('string')).toBe(markdown['P6'])
   })
 
   it('gives each space folder of an all-spaces export its own space file, and the root the report', async () => {
