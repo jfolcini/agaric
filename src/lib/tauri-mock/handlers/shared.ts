@@ -343,8 +343,8 @@ const JOURNAL_FORMAT_TOKENS: ReadonlyMap<string, string> = new Map([
 /**
  * Mirror of `format_date_fns`: `pattern` in the tokens `JOURNAL_FORMAT_TOKENS`
  * lists plus the ordinal day `Do` / `do`, single-quoted text and any
- * non-letter literal; `null` for a run of
- * letters it does not know or a quote nothing closes. Formats in `en-US`
+ * non-letter literal; `null` for a run of letters it does not know or a
+ * quote nothing closes. Formats in `en-US`
  * whatever the app locale: the backend's names are chrono's English ones.
  */
 function formatDateFnsSubset(d: Date, pattern: string): string | null {
