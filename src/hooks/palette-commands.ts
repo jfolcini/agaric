@@ -45,8 +45,11 @@ import {
   SunMoon,
   Tag as TagIcon,
   Trash2,
+  Volume2,
+  VolumeX,
 } from 'lucide-react'
 
+import { readOpenPageAloud } from '@/hooks/useReadAloud'
 import { cycleThemePreference } from '@/hooks/useTheme'
 import { announce } from '@/lib/announcer'
 import { writeText } from '@/lib/clipboard'
@@ -60,6 +63,7 @@ import {
   TOGGLE_PAGE_MODE_EVENT,
   TOGGLE_SIDEBAR_EVENT,
 } from '@/lib/overlay-events'
+import { stopReading } from '@/lib/speech/read-aloud'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
 import { navigateBack, navigateForward } from '@/stores/navigation-history'
@@ -87,6 +91,8 @@ export interface PaletteCommandSpec {
   shortcutId?: string
   /** Side-effect for the command. Receives a context so the same spec works in/outside the palette. */
   run: (ctx: PaletteCommandContext) => void
+  /** Offered only where *Read aloud* can speak (`speech`), or only while it reads (`reading`). */
+  requires?: 'speech' | 'reading'
 }
 
 // #2942 — the `go-<view>` entries mirror every `NAV_ITEMS` destination
@@ -368,6 +374,28 @@ export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
           )
           notify.error(t('pageHeader.exportFailed'))
         })
+    },
+  },
+  {
+    id: 'read-page-aloud',
+    labelKey: 'palette.cmdReadPageAloud',
+    category: 'action',
+    icon: Volume2,
+    requires: 'speech',
+    run: ({ onClose }) => {
+      onClose()
+      readOpenPageAloud()
+    },
+  },
+  {
+    id: 'stop-reading',
+    labelKey: 'palette.cmdStopReading',
+    category: 'action',
+    icon: VolumeX,
+    requires: 'reading',
+    run: ({ onClose }) => {
+      onClose()
+      stopReading()
     },
   },
   {

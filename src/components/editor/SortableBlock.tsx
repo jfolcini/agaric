@@ -58,6 +58,7 @@ import type { InlineProperty } from '@/hooks/useExtraBlockProperties'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { usePropertyDefForEdit } from '@/hooks/usePropertyDefForEdit'
+import { useIsBlockBeingRead } from '@/hooks/useReadAloud'
 import { useRescheduleDragSourceEnabled } from '@/hooks/useRescheduleDragSource'
 import { performActivePageUndo } from '@/hooks/useUndoShortcuts'
 import { detectBlockType } from '@/lib/block-type-convert'
@@ -684,6 +685,7 @@ function SortableBlockInner({
     useBlockTouchLongPress({ openContextMenu: openContextMenuClaimingGesture, isDraggingRef })
 
   const isTouchDevice = useIsTouch()
+  const isBeingRead = useIsBlockBeingRead(blockId)
   // #1349: stable id for the sr-only swipe-gesture description (per block).
   const swipeRowDescId = `swipe-row-desc-${blockId}`
 
@@ -747,6 +749,8 @@ function SortableBlockInner({
       style={style}
       data-block-id={blockId}
       data-testid="sortable-block"
+      // #5745 — the block *Read aloud* is speaking (`index.css`).
+      data-reading={isBeingRead ? '' : undefined}
       // #2770 — native HTML5 reschedule-drag source (WeeklyView only, see
       // `rescheduleDragEnabled` above). `undefined` rather than `false` when
       // disabled so this never overrides an ancestor's own `draggable`
