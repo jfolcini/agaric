@@ -6,7 +6,9 @@ import { ATTACHMENT_REF_SCHEME, parseAttachmentRef } from '@/lib/attachment-ref'
 import { commands } from '@/lib/bindings'
 import { readAttachment } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
+import { listAllPropertyDefs } from '@/lib/property-save-utils'
 import { requireActiveScope } from '@/lib/space-scope'
+import { SPACE_FILE_PATH, type SpaceFile, pathTitle } from '@/lib/vault-import'
 
 /**
  * Characters that are illegal in a path SEGMENT on common filesystems
@@ -26,6 +28,9 @@ const ILLEGAL_SEGMENT_CHARS_RE = /[\\:*?"<>|]/g
  * other tools.
  */
 const ASSETS_DIR = 'assets'
+
+/** Where the skip ledger goes, at the ZIP root: a folder import skips hidden folders. */
+const EXPORT_REPORT_PATH = '.agaric/export-report.txt'
 
 /**
  * Matches BOTH an inline-image link (`![alt](attachment:<id>)`) and a plain
@@ -217,7 +222,7 @@ export interface ExportGraphResult {
   skippedAttachments: number
 }
 
-/** One line of the `export-report.txt` skip ledger — see {@link buildExportReport}. */
+/** One line of the {@link EXPORT_REPORT_PATH} skip ledger — see {@link buildExportReport}. */
 interface SkippedPageEntry {
   title: string
 }
@@ -228,7 +233,7 @@ interface SkippedAttachmentEntry {
 }
 
 /**
- * Render the plain-text `export-report.txt` written into the ZIP whenever
+ * Render the plain-text {@link EXPORT_REPORT_PATH} written into the ZIP whenever
  * anything was skipped (#2965). Kept dead simple (no counts-in-docs style
  * table, just a flat list) since this is a one-shot artifact, not a
  * long-lived doc.
@@ -293,7 +298,9 @@ interface SpaceExportAccumulation {
  * Per-page/attachment failures are caught and skipped (partial output beats
  * none) but are COUNTED and returned via `skippedPageEntries` /
  * `skippedAttachmentEntries` (#2965) rather than silently disappearing —
- * callers combine these into their own `export-report.txt`.
+ * callers combine these into their own {@link EXPORT_REPORT_PATH}. What a
+ * file cannot carry goes in the space's {@link SPACE_FILE_PATH}, and each file
+ * drops the `# Title` line its path now names (#6277 decision 8).
  */
 async function exportSpacePagesIntoZip(
   zip: JSZip,
@@ -318,10 +325,12 @@ async function exportSpacePagesIntoZip(
   const seen = new Set<string>()
   let exportedPages = 0
   const skippedPageEntries: SkippedPageEntry[] = []
+  const titles: Record<string, string> = {}
   for (const page of pages) {
+    const title = page.content ?? 'Untitled'
     let md: string
     try {
-      md = unwrap(await commands.exportPageMarkdown(page.id))
+      md = dropTitleLine(unwrap(await commands.exportPageMarkdown(page.id)), title)
     } catch (err) {
       logger.warn('export-graph', 'page export failed', { pageId: page.id }, err)
       skippedPageEntries.push({ title: `${pathPrefix}${page.content ?? page.id}` })
@@ -332,7 +341,8 @@ async function exportSpacePagesIntoZip(
     // collisions (same full path, case-insensitively so 'API'/'api' don't
     // clash at extraction on case-insensitive filesystems) via `disambiguate`
     // (#1490/#2723 — see its doc comment for the suffix/counter scheme).
-    const zipPath = disambiguate(titleToZipPath(page.content ?? 'Untitled'), page.id, seen)
+    const zipPath = disambiguate(titleToZipPath(title), page.id, seen)
+    if (pathTitle(`${zipPath}.md`) !== title) titles[`${zipPath}.md`] = title
 
     // #1490 / #2961 — rewrite `attachment:<id>` refs (both inline image links
     // AND block-scoped file links) to portable asset paths, emitting the
@@ -361,7 +371,30 @@ async function exportSpacePagesIntoZip(
     ([attachmentId, referencedIn]) => ({ attachmentId, referencedIn }),
   )
 
+  const propertyDefinitions = (await listAllPropertyDefs(spaceId))
+    .filter((def) => !def.builtin)
+    .map(({ key, value_type, options }) => ({ key, value_type, options }))
+  if (propertyDefinitions.length > 0 || Object.keys(titles).length > 0) {
+    const space: SpaceFile = { propertyDefinitions, titles }
+    zip.file(`${pathPrefix}${SPACE_FILE_PATH}`, JSON.stringify(space, null, 2))
+  }
+
   return { exportedPages, skippedPageEntries, skippedAttachmentEntries }
+}
+
+/**
+ * `md` without the `# {title}` line `render_page_markdown` starts with, and
+ * the blank line after it, found at the very start or right after closing
+ * front matter; any other heading is content.
+ */
+function dropTitleLine(md: string, title: string): string {
+  const line = `# ${title}\n\n`
+  if (md.startsWith(line)) return md.slice(line.length)
+  const close = md.startsWith('---\n') ? md.indexOf('\n---\n', 3) : -1
+  const end = close + '\n---\n'.length
+  return close !== -1 && md.startsWith(line, end)
+    ? md.slice(0, end) + md.slice(end + line.length)
+    : md
 }
 
 /**
@@ -376,7 +409,7 @@ async function exportSpacePagesIntoZip(
  * #2965 — per-page/attachment failures are still caught and skipped (partial
  * output beats none), but are now COUNTED and returned instead of silently
  * disappearing behind an unconditional success; when anything was skipped an
- * `export-report.txt` listing what and where is also written into the ZIP.
+ * {@link EXPORT_REPORT_PATH} listing what and where is also written into the ZIP.
  *
  * #2964 — the page-export/attachment-rewrite/dedup logic itself now lives in
  * {@link exportSpacePagesIntoZip} (called here with `pathPrefix: ''`, which
@@ -403,7 +436,7 @@ export async function exportGraphAsZip(spaceId: string | null): Promise<ExportGr
     spaceId == null ? emptyAccumulation : await exportSpacePagesIntoZip(zip, spaceId, '')
 
   if (skippedPageEntries.length > 0 || skippedAttachmentEntries.length > 0) {
-    zip.file('export-report.txt', buildExportReport(skippedPageEntries, skippedAttachmentEntries))
+    zip.file(EXPORT_REPORT_PATH, buildExportReport(skippedPageEntries, skippedAttachmentEntries))
   }
 
   const blob = await zip.generateAsync({ type: 'blob' })
@@ -476,7 +509,7 @@ export async function exportAllSpacesAsZip(): Promise<ExportAllSpacesResult> {
   }
 
   if (allSkippedPages.length > 0 || allSkippedAttachments.length > 0) {
-    zip.file('export-report.txt', buildExportReport(allSkippedPages, allSkippedAttachments))
+    zip.file(EXPORT_REPORT_PATH, buildExportReport(allSkippedPages, allSkippedAttachments))
   }
 
   const blob = await zip.generateAsync({ type: 'blob' })

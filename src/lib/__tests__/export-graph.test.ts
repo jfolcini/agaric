@@ -45,6 +45,9 @@ const mockedFlushActiveDraft = vi.mocked(flushActiveDraft)
 // the page fetch only runs for an active space.
 const SPACE_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
 
+/** A space with no property definitions of its own. */
+const NO_DEFS = { items: [], next_cursor: null, has_more: false, total_count: null }
+
 /**
  * Install the commands an export fires.
  *
@@ -58,12 +61,15 @@ const SPACE_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
  */
 function stubExport(handlers: TypedInvokeHandlers, attachmentBytes?: Uint8Array): void {
   mockedInvoke.mockImplementation(
-    mockInvokeCommands(handlers, {
-      fallback: (command) =>
-        command === 'read_attachment' && attachmentBytes
-          ? Promise.resolve(attachmentBytes.buffer)
-          : strictInvokeFallback(command),
-    }),
+    mockInvokeCommands(
+      { list_property_defs: () => NO_DEFS, ...handlers },
+      {
+        fallback: (command) =>
+          command === 'read_attachment' && attachmentBytes
+            ? Promise.resolve(attachmentBytes.buffer)
+            : strictInvokeFallback(command),
+      },
+    ),
   )
 }
 
@@ -193,6 +199,8 @@ describe('exportGraphAsZip', () => {
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
 
     expect(Object.keys(unzipped.files).toSorted()).toEqual([
+      '.agaric/',
+      '.agaric/space.json',
       'Dup.md',
       'Dup_01HZA1B2-2.md',
       'Dup_01HZA1B2-3.md',
@@ -298,6 +306,8 @@ describe('exportGraphAsZip', () => {
     // The implicit directory entries are pinned too: they are what makes the
     // extra `Untitled/` level (i.e. the NOT-dropped empty segment) visible.
     expect(Object.keys(unzipped.files).toSorted()).toEqual([
+      '.agaric/',
+      '.agaric/space.json',
       'Untitled/',
       'Untitled/etc/',
       'Untitled/etc/x.md',
@@ -690,7 +700,7 @@ describe('exportGraphAsZip', () => {
     expect(result.skippedAttachments).toBe(0)
 
     const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
-    expect(unzipped.file('export-report.txt')).toBeNull()
+    expect(unzipped.file('.agaric/export-report.txt')).toBeNull()
     const md = await unzipped.file('Mixed.md')?.async('string')
     expect(md).toBe(`![ok](assets/${goodId}__ok.png)\n\n![bad](attachment:../../etc)`)
   })
@@ -740,7 +750,7 @@ describe('exportGraphAsZip skip accounting (#2965)', () => {
 
     const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
     expect(Object.keys(unzipped.files)).toContain('Good.md')
-    const report = await unzipped.file('export-report.txt')?.async('string')
+    const report = await unzipped.file('.agaric/export-report.txt')?.async('string')
     expect(report).toBeDefined()
     expect(report).toContain('Skipped pages (1):')
     expect(report).toContain('Broken')
@@ -768,7 +778,7 @@ describe('exportGraphAsZip skip accounting (#2965)', () => {
     expect(result.skippedAttachments).toBe(1)
 
     const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
-    const report = await unzipped.file('export-report.txt')?.async('string')
+    const report = await unzipped.file('.agaric/export-report.txt')?.async('string')
     expect(report).toBeDefined()
     expect(report).toContain('Skipped attachments (1):')
     expect(report).toContain(attId)
@@ -834,7 +844,7 @@ describe('exportGraphAsZip skip accounting (#2965)', () => {
     expect(result.skippedAttachments).toBe(0)
 
     const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
-    expect(unzipped.file('export-report.txt')).toBeNull()
+    expect(unzipped.file('.agaric/export-report.txt')).toBeNull()
   })
 })
 
@@ -871,7 +881,7 @@ describe('export-report.txt exact format (#2965)', () => {
     const result = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
 
-    expect(await unzipped.file('export-report.txt')?.async('string')).toBe(
+    expect(await unzipped.file('.agaric/export-report.txt')?.async('string')).toBe(
       `${REPORT_PREAMBLE}Skipped pages (2):\n  - Broken One\n  - Broken Two\n`,
     )
   })
@@ -888,7 +898,7 @@ describe('export-report.txt exact format (#2965)', () => {
     const result = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
 
-    expect(await unzipped.file('export-report.txt')?.async('string')).toBe(
+    expect(await unzipped.file('.agaric/export-report.txt')?.async('string')).toBe(
       `${REPORT_PREAMBLE}Skipped attachments (1):\n  - ATT_GONE (referenced in Page One.md)\n`,
     )
   })
@@ -912,7 +922,7 @@ describe('export-report.txt exact format (#2965)', () => {
     const result = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
 
-    expect(await unzipped.file('export-report.txt')?.async('string')).toBe(
+    expect(await unzipped.file('.agaric/export-report.txt')?.async('string')).toBe(
       `${REPORT_PREAMBLE}Skipped pages (1):\n  - Beta\n\nSkipped attachments (1):\n  - ATT_X (referenced in Alpha.md)\n`,
     )
   })
@@ -1024,7 +1034,7 @@ describe('exportAllSpacesAsZip (#2964)', () => {
     expect(result.skippedPages).toBe(1)
 
     const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
-    const report = await unzipped.file('export-report.txt')?.async('string')
+    const report = await unzipped.file('.agaric/export-report.txt')?.async('string')
     expect(report).toBeDefined()
     expect(report).toContain('Broken')
   })
@@ -1082,7 +1092,7 @@ describe('exportAllSpacesAsZip (#2964)', () => {
     const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
     // A skip ledger in a ZIP where nothing was skipped is worse than no
     // ledger: it tells the user their export is incomplete when it is not.
-    expect(unzipped.file('export-report.txt')).toBeNull()
+    expect(unzipped.file('.agaric/export-report.txt')).toBeNull()
   })
 
   it('writes export-report.txt when ONLY attachments were skipped (no page failed)', async () => {
@@ -1105,9 +1115,138 @@ describe('exportAllSpacesAsZip (#2964)', () => {
     expect(result.skippedAttachments).toBe(1)
 
     const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
-    expect(await unzipped.file('export-report.txt')?.async('string')).toBe(
+    expect(await unzipped.file('.agaric/export-report.txt')?.async('string')).toBe(
       `${REPORT_PREAMBLE}Skipped attachments (1):\n  - ATT_GONE (referenced in Personal/Notes.md)\n`,
     )
+  })
+})
+
+// #6277 decision 8 — what a file of the ZIP cannot carry goes in `.agaric/`,
+// so a folder import of the unzipped export restores it.
+describe('the space file and the title line (#6277 decision 8)', () => {
+  const def = (key: string, value_type: string, options: string | null = null) => ({
+    key,
+    value_type,
+    options,
+    created_at: '2026-01-01T00:00:00.000Z',
+    builtin: false,
+  })
+
+  async function spaceFile(zip: JSZip, path = '.agaric/space.json'): Promise<unknown> {
+    const text = await zip.file(path)?.async('string')
+    return text === undefined ? null : JSON.parse(text)
+  }
+
+  it("writes the space's own definitions, every page of them, and each title its path does not read back as", async () => {
+    stubExport({
+      list_property_defs: (args) =>
+        args['cursor'] == null
+          ? {
+              items: [{ ...def('due_date', 'date'), builtin: true }, def('effort', 'number')],
+              next_cursor: 'C1',
+              has_more: true,
+              total_count: null,
+            }
+          : { ...NO_DEFS, items: [def('stage', 'select', '["a","b"]')] },
+      list_all_pages_in_space: () => [
+        makePageHeading({ id: 'P1', content: 'a:b' }),
+        makePageHeading({ id: 'P2', content: 'Project/API' }),
+      ],
+      export_page_markdown: () => '- body\n',
+    })
+
+    const { blob } = await exportGraphAsZip(SPACE_ID)
+    const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
+
+    expect(await spaceFile(unzipped)).toEqual({
+      propertyDefinitions: [
+        { key: 'effort', value_type: 'number', options: null },
+        { key: 'stage', value_type: 'select', options: '["a","b"]' },
+      ],
+      titles: { 'a_b.md': 'a:b' },
+    })
+  })
+
+  it('writes no space file when the space defines nothing and every path reads back as its title', async () => {
+    stubExport({
+      list_all_pages_in_space: () => [
+        makePageHeading({ id: 'P1', content: 'Plain' }),
+        makePageHeading({ id: 'P2', content: 'Project/API' }),
+      ],
+      export_page_markdown: () => '- body\n',
+    })
+
+    const { blob } = await exportGraphAsZip(SPACE_ID)
+    const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
+
+    expect(Object.keys(unzipped.files).toSorted()).toEqual([
+      'Plain.md',
+      'Project/',
+      'Project/API.md',
+    ])
+  })
+
+  it('drops the leading `# Title` line, before or after front matter, and no other heading', async () => {
+    const markdown: Record<string, string> = {
+      P1: '# Notes\n\n- body\n',
+      P2: '---\nstage: a\n---\n# Front\n\n- body\n',
+      P3: '# Not the title\n\n- body\n',
+      P4: '- first\n# Late\n\n- body\n',
+    }
+    stubExport({
+      list_all_pages_in_space: () => [
+        makePageHeading({ id: 'P1', content: 'Notes' }),
+        makePageHeading({ id: 'P2', content: 'Front' }),
+        makePageHeading({ id: 'P3', content: 'Other' }),
+        makePageHeading({ id: 'P4', content: 'Late' }),
+      ],
+      export_page_markdown: (args) => markdown[args['pageId'] as string] ?? '',
+    })
+
+    const { blob } = await exportGraphAsZip(SPACE_ID)
+    const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
+
+    expect(await unzipped.file('Notes.md')?.async('string')).toBe('- body\n')
+    expect(await unzipped.file('Front.md')?.async('string')).toBe('---\nstage: a\n---\n- body\n')
+    expect(await unzipped.file('Other.md')?.async('string')).toBe(markdown['P3'])
+    expect(await unzipped.file('Late.md')?.async('string')).toBe(markdown['P4'])
+  })
+
+  it('gives each space folder of an all-spaces export its own space file, and the root the report', async () => {
+    stubExport({
+      list_spaces: () => [
+        { id: 'SPACE_A', name: 'Personal', accent_color: null },
+        { id: 'SPACE_B', name: 'Work', accent_color: null },
+      ],
+      list_property_defs: (args) =>
+        args['spaceId'] === 'SPACE_B' ? { ...NO_DEFS, items: [def('effort', 'number')] } : NO_DEFS,
+      list_all_pages_in_space: (args) => {
+        const scoped = (args['scope'] as { space_id: string }).space_id
+        return scoped === 'SPACE_A'
+          ? [makePageHeading({ id: 'PA', content: 'a:b' })]
+          : [makePageHeading({ id: 'PB_BAD', content: 'Broken' })]
+      },
+      export_page_markdown: (args) => {
+        if (args['pageId'] === 'PB_BAD') throw new Error('boom')
+        return '- body\n'
+      },
+    })
+
+    const result = await exportAllSpacesAsZip()
+    const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
+
+    expect(await spaceFile(unzipped, 'Personal/.agaric/space.json')).toEqual({
+      propertyDefinitions: [],
+      titles: { 'a_b.md': 'a:b' },
+    })
+    expect(await spaceFile(unzipped, 'Work/.agaric/space.json')).toEqual({
+      propertyDefinitions: [{ key: 'effort', value_type: 'number', options: null }],
+      titles: {},
+    })
+    expect(await unzipped.file('.agaric/export-report.txt')?.async('string')).toContain(
+      'Work/Broken',
+    )
+    expect(unzipped.file('Work/.agaric/export-report.txt')).toBeNull()
   })
 })
 

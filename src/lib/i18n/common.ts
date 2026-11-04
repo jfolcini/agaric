@@ -469,6 +469,10 @@ export const common: Record<string, string> = {
   'data.importFailedFileDetail': 'Failed to import {{name}}: {{reason}}',
   'data.importLinkingFailed':
     'The links between the imported notes could not be completed: {{reason}}',
+  // #6277 decision 8 — an export's `.agaric/space.json` restores the space's
+  // property definitions and the titles its file names cannot spell.
+  'data.importSpaceFileFailed': 'The export’s .agaric/space.json could not be restored: {{reason}}',
+  'data.importPropertyDefFailed': 'The property “{{key}}” could not be restored: {{reason}}',
   'data.importShowAll': 'Show all',
   'data.importShowLess': 'Show less',
   // Accessible names for the two progress bars (#1929).
@@ -483,7 +487,7 @@ export const common: Record<string, string> = {
   'data.exportSuccess': 'Export complete',
   'data.exportFailed': 'Export failed',
   // #2965 — partial-export warning: some pages/attachments were skipped but
-  // the ZIP (with an `export-report.txt` ledger) still downloaded.
+  // the ZIP (with an `.agaric/export-report.txt` ledger) still downloaded.
   'data.exportPartial': 'Export finished with some items skipped: {{detail}}',
   'data.exportSkippedPages_one': '{{count}} page skipped',
   'data.exportSkippedPages_other': '{{count}} pages skipped',

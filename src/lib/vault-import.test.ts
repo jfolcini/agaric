@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { enexNoteToMarkdown, type EnexNote } from '@/lib/enex-import'
+import { t } from '@/lib/i18n'
 import { jexNoteToMarkdown, type JexNote } from '@/lib/jex-import'
 import {
   basename,
@@ -18,7 +19,9 @@ import {
   isNotionPick,
   jexNotesToUnits,
   mdFilesToUnits,
+  pathTitle,
   resolveVaultRef,
+  restoreSpaceFile,
   sanitizeSpaceNameForFilename,
   skippedFiles,
   vaultRelativePath,
@@ -403,6 +406,64 @@ async function loadAll(files: File[]): Promise<Array<{ path: string; content: st
 }
 
 // #6032 — a folder pick dropped every note that was not `.md`, saying nothing.
+// #6277 decision 8 — an unzipped export folder-picked back in.
+describe('restoring an export', () => {
+  it('titles a note its space file lists by the recorded title, which its links then name', async () => {
+    const files = [
+      folderFile(['- body'], 'a_b.md', 'Export/a_b.md'),
+      folderFile(['- see [[a:b]]'], 'home.md', 'Export/home.md'),
+    ]
+    const units = mdFilesToUnits(files, indexVaultFiles(files), false, new Map([['a_b.md', 'a:b']]))
+
+    const loaded = await Promise.all(units.map((unit) => unit.load()))
+    expect(loaded.map((unit) => unit.path)).toEqual(['a:b.md', 'home.md'])
+    expect(loaded[1]?.vaultNotes).toEqual(['a:b.md'])
+  })
+
+  it('imports no note under a hidden folder: not the export report, nor any other', () => {
+    const files = [
+      folderFile(['report'], 'export-report.txt', 'Export/.agaric/export-report.txt', 'text/plain'),
+      folderFile(['x'], 'workspace.md', 'Export/.obsidian/workspace.md'),
+      folderFile(['x'], 'old.md', 'Export/notes/.trash/old.md'),
+      folderFile(['x'], 'kept.md', 'Export/notes/kept.md'),
+    ]
+    expect(mdFilesToUnits(files, indexVaultFiles(files), false).map((unit) => unit.name)).toEqual([
+      'kept.md',
+    ])
+  })
+
+  it.each([
+    ['no definitions', '{"titles": {}}', 'not a space file'],
+    ['null titles', '{"propertyDefinitions": [], "titles": null}', 'not a space file'],
+    [
+      'a title that is no string',
+      '{"propertyDefinitions": [], "titles": {"a.md": 1}}',
+      'not a space file',
+    ],
+    [
+      'a definition without a type',
+      '{"propertyDefinitions": [{"key": "k", "options": null}], "titles": {}}',
+      'not a property definition',
+    ],
+  ])('says a space file with %s, and restores nothing from it', async (_, text, reason) => {
+    const files = [folderFile([text], 'space.json', 'Export/.agaric/space.json', '')]
+    const restored = await restoreSpaceFile(files, 'SPACE')
+    expect(restored.titles.size).toBe(0)
+    expect(restored.warnings).toEqual([t('data.importSpaceFileFailed', { reason })])
+  })
+
+  it('reads no space file from a plain pick, which has no folder', async () => {
+    const file = new File(['{"propertyDefinitions": [], "titles": {"a.md": "b"}}'], 'space.json')
+    expect(await restoreSpaceFile([file], 'SPACE')).toEqual({ titles: new Map(), warnings: [] })
+  })
+
+  it('reads a path back as the importer titles it: no `.md`, segments trimmed, empty ones dropped', () => {
+    expect(pathTitle(' a / /b .md')).toBe('a/b')
+    expect(pathTitle('a_b.md')).toBe('a_b')
+    expect(pathTitle('Notes.MD')).toBe('Notes.MD')
+  })
+})
+
 describe('folder picks of other note formats (#6032)', () => {
   it('imports `.markdown`, `.mdx` and `.txt` as Markdown, each titled without its extension', async () => {
     const files = [
