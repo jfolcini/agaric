@@ -14637,7 +14637,7 @@ async fn import_reads_logseq_task_syntax_into_the_task_columns() {
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
     let md = "- TODO [#A] Write the report\n  SCHEDULED: <2026-10-01 Thu +1w>\n\
               - NOW [#C] Review PR 4412\n  DEADLINE: <2026-10-05 Mon>\n\
-              - DONE Book the room\n  SCHEDULED: <2026-10-01 Thu -2d>\n\
+              - DONE Book the room\n  SCHEDULED: <2026-10-01 Thu +1h>\n\
               - Plain text\n";
 
     let result = import_markdown_inner(
@@ -14672,7 +14672,7 @@ async fn import_reads_logseq_task_syntax_into_the_task_columns() {
         [
             "Write the report",
             "Review PR 4412",
-            "Book the room\nSCHEDULED: <2026-10-01 Thu -2d>",
+            "Book the room\nSCHEDULED: <2026-10-01 Thu +1h>",
             "Plain text",
         ]
     );
@@ -14729,6 +14729,57 @@ async fn import_maps_an_org_priority_letter_to_its_level() {
     .await
     .unwrap();
     assert_eq!(priority.as_deref(), Some("2"));
+    mat.shutdown();
+}
+
+/// #6032 N6 — an Org planning line keeps its date past a warning period or
+/// delay (`-3d`, `--3d`) and a non-English day name (`jeu.`, `周四`); each
+/// warning period dropped is reported.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_keeps_an_org_planning_date_past_a_warning_period_or_a_foreign_day() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let md = "- TODO a\n  DEADLINE: <2026-10-01 Thu -3d>\n\
+              - TODO b\n  SCHEDULED: <2026-10-02 Fri --3d>\n\
+              - TODO c\n  DEADLINE: <2026-10-03 jeu.>\n\
+              - TODO d\n  DEADLINE: <2026-10-04 周四>\n";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md.into(),
+        Some("Echeances.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        result.warnings,
+        ["2 SCHEDULED/DEADLINE warning period(s) or delay(s) were dropped; their dates were kept"]
+    );
+    let rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT b.content, b.scheduled_date, b.due_date FROM blocks b \
+         JOIN blocks p ON p.id = b.parent_id \
+         WHERE p.content = 'Echeances' AND b.deleted_at IS NULL ORDER BY b.position",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let date = |d: &str| Some(d.to_string());
+    assert_eq!(
+        rows,
+        [
+            ("a".to_string(), None, date("2026-10-01")),
+            ("b".to_string(), date("2026-10-02"), None),
+            ("c".to_string(), None, date("2026-10-03")),
+            ("d".to_string(), None, date("2026-10-04")),
+        ]
+    );
     mat.shutdown();
 }
 
