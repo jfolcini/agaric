@@ -320,9 +320,9 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
   return (
     <div
       className={cn(
-        // `items-start` + the controls' `min-h-8` (one text line box: `py-1` +
-        // 24px line) keep the leading controls on the FIRST text line (#5332).
-        'flex items-start gap-1 w-full max-sm:flex-wrap max-sm:gap-x-1 max-sm:gap-y-1.5 min-w-0',
+        // `items-start` + the controls' `min-h-block-line` (the first text
+        // line box) keep the leading controls on the FIRST text line (#5332).
+        'flex items-start gap-(--block-gap) w-full max-sm:flex-wrap max-sm:gap-x-1 max-sm:gap-y-1.5 min-w-0',
         // #1347: token-driven transition (respects prefers-reduced-motion).
         isSliding && 'swipe-content-sliding',
       )}
@@ -342,7 +342,7 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
       {isTouchDevice ? (
         <BlockGutterControls blockId={blockId} isSelected={isSelected} onSelect={onSelect} />
       ) : (
-        <div className="block-control-lane relative z-10 flex flex-shrink-0 items-center justify-end gap-0.5 min-h-8 min-w-12">
+        <div className="block-control-lane relative z-10 flex flex-shrink-0 items-center justify-end gap-0.5 min-h-block-line min-w-(--block-lane)">
           <BlockGutterControls
             blockId={blockId}
             dragAttributes={attributes}

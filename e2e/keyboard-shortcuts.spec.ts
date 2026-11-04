@@ -298,19 +298,16 @@ test.describe('Task and priority shortcuts @editor', () => {
     // Focus the first block
     await focusBlock(page)
 
-    // The first sortable block before Ctrl+Enter should have the empty checkbox
+    // A plain block has no checkbox before Ctrl+Enter
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
-    await expect(firstBlock.locator('[data-testid="task-checkbox-empty"]')).toBeVisible()
+    await expect(firstBlock.locator('[data-testid="task-marker"]')).toHaveCount(0)
 
     // Press Ctrl+Enter to cycle task state: none -> TODO
     await page.keyboard.down('Control')
     await page.keyboard.press('Enter')
     await page.keyboard.up('Control')
 
-    // The empty checkbox should disappear (task state changed)
-    await expect(firstBlock.locator('[data-testid="task-checkbox-empty"]')).not.toBeVisible({
-      timeout: 5000,
-    })
+    await expect(firstBlock.locator('[data-testid="task-checkbox-todo"]')).toBeVisible()
   })
 
   test('Ctrl+. toggles collapse on block with children', async ({ page }) => {

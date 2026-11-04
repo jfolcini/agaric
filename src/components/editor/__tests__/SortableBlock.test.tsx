@@ -636,7 +636,7 @@ describe('SortableBlock collapse/expand chevron', () => {
     // hover-revealed drag handle filling the text-adjacent slot via justify-end.
     expect(container.querySelector('span.w-5.h-5[aria-hidden]')).not.toBeInTheDocument()
     const lane = container.querySelector('.block-control-lane')
-    expect(lane?.className).toContain('min-w-12')
+    expect(lane?.className).toContain('min-w-(--block-lane)')
     expect(lane?.className).toContain('justify-end')
   })
 
@@ -744,36 +744,21 @@ describe('SortableBlock task marker', () => {
     })
   })
 
-  it('renders ghost checkbox when todoState is null (no task)', () => {
-    const { container } = render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        todoState={null}
-      />,
-    )
-
-    const marker = container.querySelector('.task-marker')
-    expect(marker).toBeInTheDocument()
-    // Ghost checkbox visible on hover
-    expect(container.querySelector('.task-checkbox-empty')).toBeInTheDocument()
-  })
-
-  it('renders ghost checkbox when todoState is undefined', () => {
-    const { container } = render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-      />,
-    )
-
-    const marker = container.querySelector('.task-marker')
-    expect(marker).toBeInTheDocument()
-    expect(container.querySelector('.task-checkbox-empty')).toBeInTheDocument()
+  it('a plain line has no checkbox, nor room for one, whether todoState is null or undefined', () => {
+    for (const todoState of [null, undefined]) {
+      const { container, unmount } = render(
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+          todoState={todoState}
+        />,
+      )
+      expect(container.querySelector('.task-marker')).not.toBeInTheDocument()
+      expect(container.querySelector('.inline-controls')).not.toBeInTheDocument()
+      unmount()
+    }
   })
 
   it('renders unchecked checkbox for TODO state', () => {
@@ -826,20 +811,6 @@ describe('SortableBlock task marker', () => {
     expect(screen.getByTestId('check-icon')).toBeInTheDocument()
     expect(container.querySelector('.task-checkbox-todo')).not.toBeInTheDocument()
     expect(container.querySelector('.task-checkbox-doing')).not.toBeInTheDocument()
-  })
-
-  it('has "Set as TODO" aria-label when no task state', () => {
-    render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        todoState={null}
-      />,
-    )
-
-    expect(screen.getByRole('button', { name: 'Set as TODO' })).toBeInTheDocument()
   })
 
   it('has descriptive aria-label when task state is set', () => {
@@ -1110,6 +1081,7 @@ describe('gutter alignment', () => {
         content="test"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
+        todoState="TODO"
       />,
     )
     const inlineControls = container.querySelector('.inline-controls')
@@ -1618,6 +1590,7 @@ describe('SortableBlock inline controls', () => {
         content="hello"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
+        todoState="TODO"
       />,
     )
 
@@ -1631,6 +1604,7 @@ describe('SortableBlock inline controls', () => {
         content="hello"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
+        todoState="TODO"
         hasChildren
       />,
     )
@@ -1650,6 +1624,7 @@ describe('SortableBlock inline controls', () => {
         content="hello"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
+        todoState="TODO"
       />,
     )
 
@@ -1749,6 +1724,7 @@ describe('SortableBlock inline controls', () => {
           content="hello"
           isFocused={false}
           rovingEditor={makeRovingEditor()}
+          todoState="TODO"
           priority="1"
         />
       </TestBlockActionsOverride>,
@@ -1766,6 +1742,7 @@ describe('SortableBlock inline controls', () => {
           content="hello"
           isFocused
           rovingEditor={makeRovingEditor()}
+          todoState="TODO"
           priority="1"
         />
       </TestBlockActionsOverride>,
@@ -1865,10 +1842,11 @@ describe('SortableBlock a11y enhancements', () => {
         content="hello"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
+        todoState="TODO"
       />,
     )
 
-    const marker = screen.getByRole('button', { name: /set as todo/i })
+    const marker = screen.getByRole('button', { name: /task: todo/i })
     expect(marker.className).toContain('focus-ring-visible')
   })
 
@@ -1880,6 +1858,7 @@ describe('SortableBlock a11y enhancements', () => {
           content="hello"
           isFocused={false}
           rovingEditor={makeRovingEditor()}
+          todoState="TODO"
           hasChildren
           priority="1"
         />
@@ -1888,7 +1867,7 @@ describe('SortableBlock a11y enhancements', () => {
 
     const handle = screen.getByRole('button', { name: /reorder block/i })
     const collapseBtn = screen.getByRole('button', { name: /collapse children/i })
-    const marker = screen.getByRole('button', { name: /set as todo/i })
+    const marker = screen.getByRole('button', { name: /task: todo/i })
     const badge = screen.getByRole('button', { name: /priority P1/i })
 
     for (const btn of [handle, collapseBtn, marker, badge]) {
@@ -1908,22 +1887,6 @@ describe('SortableBlock a11y enhancements', () => {
 
     const handle = screen.getByRole('button', { name: /reorder block/i })
     expect(handle.className).toContain('focus-visible:opacity-100')
-  })
-
-  it('empty checkbox has border-muted-foreground/40 (not border-transparent)', () => {
-    const { container } = render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        todoState={null}
-      />,
-    )
-
-    const emptyCheckbox = container.querySelector('.task-checkbox-empty')
-    expect(emptyCheckbox?.className).toContain('border-muted-foreground/40')
-    expect(emptyCheckbox?.className).not.toContain('border-transparent')
   })
 
   it('has no a11y violations', async () => {
@@ -3400,6 +3363,7 @@ describe('SortableBlock vertical alignment', () => {
         content="test"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
+        todoState="TODO"
         hasChildren
         priority="1"
         dueDate="2026-06-15"
@@ -3481,6 +3445,7 @@ describe('SortableBlock vertical alignment', () => {
         content="test"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
+        todoState="TODO"
         priority="1"
       />,
     )
@@ -3995,6 +3960,7 @@ describe('SortableBlock heading alignment', () => {
         content="# Heading"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
+        todoState="TODO"
       />,
     )
     const gutter = container.querySelector(`.block-control-lane`)
@@ -4011,6 +3977,7 @@ describe('SortableBlock heading alignment', () => {
         content="## Heading"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
+        todoState="TODO"
       />,
     )
     const gutter = container.querySelector(`.block-control-lane`)
@@ -4027,6 +3994,7 @@ describe('SortableBlock heading alignment', () => {
         content="normal text"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
+        todoState="TODO"
       />,
     )
     const gutter = container.querySelector(`.block-control-lane`)
@@ -4139,7 +4107,7 @@ describe('SortableBlock mobile gutter hidden', () => {
 
     const dragHandle = screen.getByTestId('drag-handle')
     const gutterDiv = dragHandle.parentElement as HTMLElement
-    expect(gutterDiv.className).toContain('min-w-12')
+    expect(gutterDiv.className).toContain('min-w-(--block-lane)')
     expect(gutterDiv.className).not.toContain('max-md:w-0')
     expect(gutterDiv.className).not.toContain('w-[68px]')
   })
@@ -4473,7 +4441,7 @@ describe(' responsive layout', () => {
     // clipped away.
     const dragHandle = screen.getByTestId('drag-handle')
     const gutter = dragHandle.parentElement as HTMLElement
-    expect(gutter.className).toContain('min-w-12')
+    expect(gutter.className).toContain('min-w-(--block-lane)')
     expect(gutter.className).not.toContain('w-[68px]')
     expect(gutter.className).not.toContain('max-md:w-0')
     expect(gutter.className).not.toContain('max-sm:w-0')
