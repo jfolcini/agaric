@@ -14,6 +14,7 @@ import type {
   BulletListNode,
   CodeBlockNode,
   DocNode,
+  FootnoteRefNode,
   HardBreakNode,
   HeadingNode,
   HorizontalRuleNode,
@@ -88,6 +89,10 @@ export function blockRef(id: string): BlockRefNode {
 
 export function mathInline(latex: string): MathInlineNode {
   return { type: 'math_inline', attrs: { latex } }
+}
+
+export function footnoteRef(label: string): FootnoteRefNode {
+  return { type: 'footnote_ref', attrs: { label } }
 }
 
 export function paragraph(...nodes: InlineNode[]): ParagraphNode {

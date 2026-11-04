@@ -82,6 +82,16 @@ export interface HardBreakNode {
 }
 
 /**
+ * A footnote reference `[^label]` (#6033): the label is one or more characters
+ * other than whitespace and `]`. A block whose text starts `[^label]: ` defines
+ * it (`definedLabel`).
+ */
+export interface FootnoteRefNode {
+  readonly type: 'footnote_ref'
+  readonly attrs: { readonly label: string }
+}
+
+/**
  * Inline math (#1437): a `$…$` span rendered via KaTeX. The LaTeX source is
  * stored verbatim in `attrs.latex` and serializes back to `$…$`. Atomic inline
  * node (the LaTeX is never directly editable as inline text — it is edited
@@ -167,6 +177,7 @@ export type InlineNode =
   | HardBreakNode
   | MathInlineNode
   | ImageNode
+  | FootnoteRefNode
 
 export interface TableCellNode {
   readonly type: 'tableCell'
@@ -259,6 +270,7 @@ function pmNodeSize(node: PMPositionNode): number {
     case 'hardBreak':
     case 'math_inline':
     case 'image':
+    case 'footnote_ref':
     case 'horizontalRule':
     case 'math_block': {
       return 1
@@ -282,6 +294,7 @@ function pmRightmostTextblockEnd(node: PMPositionNode, start: number): number | 
     case 'hardBreak':
     case 'math_inline':
     case 'image':
+    case 'footnote_ref':
     case 'text':
     case 'horizontalRule':
     case 'math_block': {
