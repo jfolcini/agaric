@@ -31,6 +31,7 @@ import {
   enterBlankSibling,
   expectAbsent,
   navigateTo,
+  openContextMenu,
   openEditHistory,
   openNewPage,
   reopenPageByTitle,
@@ -86,27 +87,23 @@ async function editRow(marker: string) {
   return row
 }
 
-/** The marked block's task checkbox, resolved through its row wrapper. */
-async function taskMarker(marker: string) {
+/** The marked block's id. */
+async function blockIdOf(marker: string): Promise<string | null> {
   const staticBlock = blockStaticByMarker(marker)
   await staticBlock.waitForDisplayed({ timeout: NAV_TIMEOUT })
-  const blockId = await staticBlock.getAttribute('data-block-id')
-  const checkbox = $(`[data-block-id="${blockId}"]`).$('[data-testid="task-marker"]')
-  await checkbox.waitForExist({ timeout: NAV_TIMEOUT })
-  return checkbox
+  return staticBlock.getAttribute('data-block-id')
 }
 
 /**
- * Wait until the checkbox reports (or stops reporting) a stored todo state:
- * "Task: {{state}}. Click to cycle." replaces "Set as TODO" once one is set
- * (BlockInlineControls `TaskMarkerButton`).
+ * Wait until the marked block shows a task checkbox, which only a block with a
+ * stored todo state has (BlockInlineControls), or shows none.
  */
 async function expectTodoState(marker: string, set: boolean, what: string): Promise<void> {
-  const checkbox = await taskMarker(marker)
-  await browser.waitUntil(
-    async () => ((await checkbox.getAttribute('aria-label')) ?? '').startsWith('Task:') === set,
-    { timeout: NAV_TIMEOUT, timeoutMsg: what },
-  )
+  const checkbox = `[data-block-id="${await blockIdOf(marker)}"] [data-testid="task-marker"]`
+  await browser.waitUntil(async () => (await $(checkbox).isExisting()) === set, {
+    timeout: NAV_TIMEOUT,
+    timeoutMsg: what,
+  })
 }
 
 describe('Agaric real-backend history: redo, revert, restore (#4671) @editor @pages', () => {
@@ -117,14 +114,18 @@ describe('Agaric real-backend history: redo, revert, restore (#4671) @editor @pa
     await openNewPage(page)
     await typeMarkerVerified(marker)
     // The round trip also puts seconds between the block's ops and the
-    // checkbox's, so the 500 ms undo group holds the checkbox op alone.
+    // todo state's, so the 500 ms undo group holds the todo state's op alone.
     await commitByLeaving()
     await reopenQuiet(page, marker, 'the typed block did not come back on re-open')
 
-    const checkbox = await taskMarker(marker)
-    await checkbox.moveTo()
-    await checkbox.click()
-    await expectTodoState(marker, true, 'the task checkbox never reported a set todo state')
+    // The block menu's "Set as TODO" runs the checkbox's own toggle.
+    await openContextMenu(
+      $(`[data-testid="sortable-block"][data-block-id="${await blockIdOf(marker)}"]`),
+    )
+    const setTodo = $('[role="menu"]').$('[role="menuitem"]*=Set as TODO')
+    await setTodo.waitForClickable({ timeout: ACTION_TIMEOUT })
+    await setTodo.click()
+    await expectTodoState(marker, true, 'the block menu never set a todo state')
 
     await browser.keys(['Control', 'z'])
     await waitForToast('Undid property change')

@@ -84,6 +84,10 @@ on:
   # runs; `gate` always reports.
   pull_request:
     branches: [main]
+  # The merge queue's run of the required `e2e-tauri-gate`; `detect` diffs the
+  # group's base_sha..head_sha, so a group the lane is inert to passes the gate
+  # without the build.
+  merge_group:
   # `release.yml`'s `e2e-tauri` job.
   workflow_call: {}
 
@@ -131,8 +135,8 @@ jobs:
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: bash scripts/classify-changes.sh >> "$GITHUB_OUTPUT"
 
   # Build once, then run the specs in three shards from the build's binaries

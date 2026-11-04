@@ -942,6 +942,22 @@ describe('PropertyDefinitionsList', () => {
       })
     })
 
+    it('reads the counts again each time the list is opened', async () => {
+      seedMock()
+      const first = render(<PropertyDefinitionsList />)
+      await waitFor(() => {
+        expect(usageBadge('context')).toHaveTextContent('2 uses')
+      })
+      first.unmount()
+      await dispatch('delete_block', { blockId: MTG_1 })
+
+      render(<PropertyDefinitionsList />)
+
+      await waitFor(() => {
+        expect(usageBadge('context')).toHaveTextContent('1 use')
+      })
+    })
+
     it('shows no count, not 0, while the counts load', async () => {
       seedMock()
       mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) =>
