@@ -7,7 +7,7 @@
  * plumbing layer.
  */
 
-import type { McpAgent } from '@/lib/bindings'
+import type { McpAgent, QuarantinedSlot } from '@/lib/bindings'
 import type { MockLinkKind } from '@/lib/tauri-mock/link-scan'
 
 let counter = 0
@@ -132,6 +132,12 @@ export const mcpAgents = new Map<string, McpAgent>()
 // `reminders.*` keys through it the way `reminders::get_settings` /
 // `set_settings` do (#3830).
 export const appSettings = new Map<string, string>()
+
+// `loro_sync_quarantine` rows (#6057): quarantine id → row. No command writes
+// one (only the boot replay does), so e2e seeds through
+// `window.__addMockQuarantinedSlot`.
+export const syncQuarantine = new Map<number, QuarantinedSlot>()
+let quarantineIdCounter = 0
 
 // #3469 (review) — the "how much longer until the pinned peer shows up"
 // counter that keeps `confirm_pairing` from materializing a peer
@@ -477,6 +483,8 @@ export function seedBlocks(): void {
   blockDrafts.clear()
   pageOpens.clear()
   mcpAgents.clear()
+  syncQuarantine.clear()
+  quarantineIdCounter = 0
   counter = 0
   opLog.length = 0
   opSeqCounter = 0
@@ -1078,6 +1086,31 @@ export function addMockAttachment(
   }
   attachments.set(row.id, row)
   return row
+}
+
+/**
+ * #6057: seed one quarantined sync delta, as the boot replay would leave it
+ * after `QUARANTINE_AFTER_BOOTS` failed boots. Exposed on
+ * `window.__addMockQuarantinedSlot`; fields the caller omits get plausible
+ * defaults. Returns a copy of the stored row.
+ */
+export function addMockQuarantinedSlot(fields: Partial<QuarantinedSlot> = {}): QuarantinedSlot {
+  quarantineIdCounter += 1
+  const now = Date.now()
+  const row: QuarantinedSlot = {
+    id: quarantineIdCounter,
+    inbox_id: quarantineIdCounter,
+    space_id: 'SPACE_PERSONAL',
+    byte_len: 1024,
+    declared_end_vv: '[]',
+    last_reason: 'replay failed: mock delta',
+    unresolved_boots: 5,
+    first_seen_at_ms: now,
+    quarantined_at_ms: now,
+    ...fields,
+  }
+  syncQuarantine.set(row.id, row)
+  return { ...row }
 }
 
 // ---------------------------------------------------------------------------

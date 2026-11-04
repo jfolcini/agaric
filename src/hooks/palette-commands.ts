@@ -49,9 +49,8 @@ import {
 
 import { cycleThemePreference } from '@/hooks/useTheme'
 import { announce } from '@/lib/announcer'
-import { unwrap } from '@/lib/app-error'
-import { commands } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
+import { pageMarkdownForCopy } from '@/lib/export-graph'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -354,9 +353,7 @@ export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
         notify.error(t('palette.noActivePage'))
         return
       }
-      commands
-        .exportPageMarkdown(activePage.pageId)
-        .then(unwrap)
+      pageMarkdownForCopy(activePage.pageId)
         .then(async (markdown) => {
           await writeText(markdown)
           notify.success(t('pageHeader.exportCopied'))

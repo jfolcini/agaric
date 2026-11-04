@@ -718,8 +718,8 @@ impl Materializer {
         // settles (bounded by max-wait). Each of those 7 tasks is
         // argument-less and reads current SQL state, so one fire covers
         // every coalesced import. The FTS and `block_tag_refs` paths below
-        // are UNCHANGED by the debounce — both are already changed-set-driven
-        // (O(changed), not O(vault)) and enqueued inline here per import.
+        // are UNCHANGED by the debounce: both are enqueued inline here per
+        // import, from the changed set.
         self.arm_inbound_rebuild_debounce();
         // FTS is not in `FULL_CACHE_REBUILD_TASKS` (local edits reindex
         // per-block via `UpdateFtsBlock`). #421: drive FTS from the exact

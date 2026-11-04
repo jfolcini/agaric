@@ -5,9 +5,9 @@
 // The frontend rewrites each into Markdown the importer reads
 // (`src/lib/notion-import.ts`, `src/lib/org-import.ts`); what that Markdown
 // stores is the backend's: a Notion `Key: value` line as a page property, a
-// link to `Notes%20<id>.md` resolved to the page `Notes` imports as
-// (`rewrite_relative_md_links`), and an Org headline's TODO keyword,
-// SCHEDULED line, drawer property and depth; and an Org file's own vocabulary
+// link to `Notes%20<id>.md` or to `reading.txt` resolved to the page that file
+// imports as (`rewrite_relative_md_links`), and an Org headline's TODO
+// keyword, SCHEDULED line, drawer property and depth; and an Org file's own vocabulary
 // and links (#6032 N4, N7): a `#+TODO` keyword as a task, a headline tag as a
 // tag, an `id:` link as a block reference or a page link, and a heading link
 // as text, not a page. The mock models none of these
@@ -173,6 +173,33 @@ describe('Agaric real-backend Notion, Org and text folder import (#6032) @markdo
     await browser.waitUntil(
       async () => (await page.getAttribute('title')) === `${folder}/${roamTitle}`,
       { timeout: NAV_TIMEOUT, timeoutMsg: 'the file id: link never resolved to its page' },
+    )
+  })
+
+  it('links a Markdown link to a sibling .txt note to the page it imports as', async () => {
+    await waitForAppReady()
+    const marker = runScopedMarker('wdio-6032-txt')
+    const folder = `${marker}-vault`
+    await importFolder(
+      'import-folder-input',
+      folder,
+      {
+        'a.md': Buffer.from(`- ${marker}-link [r](reading.txt)\n`),
+        'reading.txt': Buffer.from(`- ${marker}-text\n`),
+      },
+      'Imported “2 files”',
+    )
+
+    await navigateTo('Journal')
+    await navigateTo('Pages')
+    await openPageTitled(`${folder}/a`)
+    const chip = (await rowOf(`${marker}-link`)).$('[data-testid="block-link-chip"]')
+    await browser.waitUntil(
+      async () => (await chip.getAttribute('title')) === `${folder}/reading`,
+      {
+        timeout: NAV_TIMEOUT,
+        timeoutMsg: 'the link to reading.txt never resolved to the page reading',
+      },
     )
   })
 })

@@ -33,12 +33,11 @@ import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import { usePageTemplateMeta } from '@/hooks/usePageTemplateMeta'
 import { spaceMoveFailureMessage, useSpaceMove } from '@/hooks/useSpaceMove'
 import { refreshAfterUndoRedo } from '@/hooks/useUndoShortcuts'
-import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { announce } from '@/lib/announcer'
 import { unwrap, validationCode } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
-import { resolveAttachmentRefsForCopy } from '@/lib/export-graph'
+import { pageMarkdownForCopy } from '@/lib/export-graph'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { spliceEmojiIntoText } from '@/lib/insert-emoji-at-caret'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
@@ -215,23 +214,11 @@ export function PageHeader({
   } = usePageAliases(pageId, t)
 
   // --- Export as Markdown (copies to clipboard) ---
-  // Shared by BOTH entry points (kebab menu item + Ctrl+Shift+E shortcut, just
-  // below) so they can't drift. The raw backend markdown still carries
-  // internal `attachment:<ULID>` refs (#1434) for inline images / file
-  // links — a scheme only Agaric understands — so a bare clipboard copy (no
-  // accompanying `assets/` folder, unlike the ZIP/graph export) rewrites them
-  // via `resolveAttachmentRefsForCopy` before the text ever hits the
-  // clipboard, so pasted markdown has no dead links (#2967).
+  // Shared by the kebab menu item and the Ctrl+Shift+E shortcut below; the
+  // palette's command copies through the same `pageMarkdownForCopy`.
   const copyPageMarkdownToClipboard = useCallback(async (): Promise<void> => {
     try {
-      // #2969 — flush the focused block's pending debounced content commit
-      // (if any) before reading the page's markdown, so a just-typed run of
-      // keystrokes — most notably via the Ctrl+Shift+E shortcut below, which
-      // never blurs the editor — isn't silently missing from the export.
-      await flushActiveDraft()
-      const rawMarkdown = unwrap(await commands.exportPageMarkdown(pageId))
-      const markdown = await resolveAttachmentRefsForCopy(rawMarkdown)
-      await writeText(markdown)
+      await writeText(await pageMarkdownForCopy(pageId))
       notify.success(t('pageHeader.exportCopied'))
       announce(t('announce.exported'))
     } catch (err) {
