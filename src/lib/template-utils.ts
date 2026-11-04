@@ -1,6 +1,6 @@
 import { format as formatDateFns, addDays, getISOWeek } from 'date-fns'
 
-import { substituteTemplateVariables } from '@/editor/template-variables'
+import { substituteTemplateVariables, toDateFnsPattern } from '@/editor/template-variables'
 import { unwrap } from '@/lib/app-error'
 import type { BlockRow, CreateBlockSpec } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
@@ -152,18 +152,6 @@ export interface LegacyTemplateContext {
 type LegacyResolver = (arg: string | null, now: Date, ctx: LegacyTemplateContext) => string
 
 /**
- * Map the user-facing date-format tokens (`YYYY`/`DD`) onto the `date-fns`
- * pattern tokens (`yyyy`/`dd`). `date-fns` already uses `MM` for the
- * zero-padded month, so only year/day need translating. Mirrors the #1442
- * `{{date:FORMAT}}` mapping (`template-variables.ts#toDateFnsPattern`) — kept
- * as a local copy because that helper is module-private there and the `{{ }}`
- * system is intentionally NOT unified with the legacy `<% %>` one.
- */
-function legacyToDateFnsPattern(userFormat: string): string {
-  return userFormat.replace(/YYYY/g, 'yyyy').replace(/DD/g, 'dd')
-}
-
-/**
  * Format `date` with a user-supplied format string, falling back to
  * `fallback` (verbatim, never throwing) when the format is empty or invalid.
  */
@@ -173,7 +161,7 @@ function formatWithFallback(date: Date, userFormat: string | null, fallback: str
     // #4555 — a user FORMAT string can carry textual month/weekday tokens
     // (`<% today: MMMM d, yyyy %>`), so it must resolve through the same
     // single locale point as every other date-fns call.
-    const out = formatDateFns(date, legacyToDateFnsPattern(userFormat), {
+    const out = formatDateFns(date, toDateFnsPattern(userFormat), {
       locale: getDateLocale(),
     })
     // `date-fns/format` can return '' for a pathological pattern; treat that
@@ -283,8 +271,8 @@ function resolveLegacyToken(body: string, now: Date, ctx: LegacyTemplateContext)
  * - `<% month %>` → full month name (e.g. `June`)
  * - `<% isoweek %>` → ISO week number
  *
- * `FORMAT` uses `date-fns` tokens with the `{{date:FORMAT}}` `YYYY`/`DD`
- * convenience mapping (see `legacyToDateFnsPattern`). An invalid format falls
+ * `FORMAT` uses `date-fns` tokens with the `{{date:FORMAT}}` Moment-token
+ * mapping (see `toDateFnsPattern`). An invalid format falls
  * back to the default and never throws. Unknown tokens pass through verbatim.
  *
  * NOTE: this is the LEGACY system; the `{{ }}` grammar

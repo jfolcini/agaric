@@ -14,11 +14,11 @@
  * tolerated). Supported names:
  *
  *   - `{{date}}`          → today as `YYYY-MM-DD` (the project's ISO date)
- *   - `{{date:FORMAT}}`   → today via a `date-fns` format string. At minimum
- *                           `YYYY`, `MM`, `DD` are supported (mapped to the
- *                           `date-fns` `yyyy`/`MM`/`dd` tokens). Any other
- *                           `date-fns` pattern (e.g. `MMM d, yyyy`) also works
- *                           since the FORMAT is handed to `date-fns/format`.
+ *   - `{{date:FORMAT}}`   → today via a `date-fns` format string. The Moment
+ *                           tokens `YYYY`, `DD`, `D`, `Do`, `dddd` and `ddd`
+ *                           (an Obsidian template's) are mapped to their
+ *                           `date-fns` twins; any other `date-fns` pattern
+ *                           (e.g. `MMM d, yyyy`) is handed to `date-fns/format`.
  *   - `{{time}}`          → current time as `HH:mm` (24h)
  *   - `{{title}}`         → the target page's title (empty string if unknown)
  *   - `{{cursor}}`        → a *marker* (not literal text): records that the
@@ -65,14 +65,23 @@ export interface SubstitutionResult {
   hasCursor: boolean
 }
 
+/** The Moment tokens a FORMAT may use, by their `date-fns` spelling. */
+const MOMENT_TOKENS: Readonly<Record<string, string>> = {
+  YYYY: 'yyyy',
+  dddd: 'EEEE',
+  ddd: 'EEE',
+  DD: 'dd',
+  Do: 'do',
+  D: 'd',
+}
+
 /**
- * Map the user-facing `{{date:FORMAT}}` tokens (`YYYY`/`MM`/`DD`) onto the
- * `date-fns` pattern tokens (`yyyy`/`MM`/`dd`). `date-fns` already uses `MM`
- * for the zero-padded month, so only year/day need translating. Other tokens
- * in the format string are passed straight through to `date-fns/format`.
+ * Map the Moment tokens in a user FORMAT onto `date-fns` (`MM` and the rest
+ * already mean the same), leaving quoted text alone. Moment wins where the two
+ * disagree on a capital: `D` is the day of the month, not of the year.
  */
-function toDateFnsPattern(userFormat: string): string {
-  return userFormat.replace(/YYYY/g, 'yyyy').replace(/DD/g, 'dd')
+export function toDateFnsPattern(userFormat: string): string {
+  return userFormat.replace(/'[^']*(?:'|$)|YYYY|dddd|ddd|DD|Do|D/g, (m) => MOMENT_TOKENS[m] ?? m)
 }
 
 /** Resolve a single token name (sans braces) to its value, or `null` if unknown. */
