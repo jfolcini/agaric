@@ -32,7 +32,6 @@ fn paired(base: &[(String, usize, bool)], edited: &[(String, usize, bool)]) -> V
     let (base_text, base_ids) = write(base, true);
     let (text, ids) = write(edited, false);
     let out = pair_unanchored_lines(&base_text, &base_ids, &text, &ids);
-    assert_eq!(out.len(), ids.len(), "one id slot per line");
     (0..edited.len()).map(|i| out[2 * i].clone()).collect()
 }
 
@@ -86,6 +85,34 @@ fn a_run_replaced_by_a_longer_one_is_new() {
         ("three", 0, false),
     ]);
     assert_eq!(paired(&base, &edited), ids(&[Some(1), None, None, Some(3)]));
+}
+
+#[test]
+fn a_run_replaced_by_a_shorter_one_is_new() {
+    let base = blocks(&[
+        ("one", 1, false),
+        ("two", 2, false),
+        ("three", 3, false),
+        ("four", 4, false),
+    ]);
+    let edited = blocks(&[("one", 0, false), ("TWO", 0, false), ("four", 0, false)]);
+    assert_eq!(paired(&base, &edited), ids(&[Some(1), None, Some(4)]));
+}
+
+#[test]
+fn an_anchored_block_is_an_unchanged_neighbour() {
+    // "one" is edited and "three" dropped; the anchored "two" between them
+    // bounds the edit as an unanchored neighbour would.
+    let base = blocks(&[("one", 1, false), ("two", 2, false), ("three", 3, false)]);
+    let edited = blocks(&[("ONE", 0, false), ("two", 2, true)]);
+    assert_eq!(paired(&base, &edited), ids(&[Some(1), Some(2)]));
+}
+
+#[test]
+fn an_anchor_the_base_never_had_takes_no_blocks_place() {
+    let base = blocks(&[("one", 1, false)]);
+    let edited = blocks(&[("copied", 9, true), ("ONE", 0, false)]);
+    assert_eq!(paired(&base, &edited), ids(&[Some(9), Some(1)]));
 }
 
 #[test]

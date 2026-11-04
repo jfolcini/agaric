@@ -13,14 +13,21 @@ sides are in the form `apply_page_source_inner` takes.
 
 Blocks are read with `parse_document_text`, as the save reads them, and
 compared by content and properties, not depth, so a block nested under its
-neighbour keeps its id. Three passes: the longest common subsequence (common
-head and tail trimmed first, since the table is quadratic), then identical
-content elsewhere as a move, then, between two subsequence pairs, a run of
-changed blocks as long as the run it replaced, block for block. A block moved
-and edited in one save, or one of several identical blocks, comes back new;
-that loss is the one #5363's 2026-11-04 comment accepts.
+neighbour keeps its id. An anchored block stays in the sequence, keyed by its
+id, so it bounds an edit next to it as an unchanged neighbour would; the first
+draft took anchored blocks out, and the review found that anchoring a block
+then cost its neighbours their ids. Three passes: the longest common
+subsequence, through a new `agaric_core::word_diff::equal_pairs` (`similar`'s
+Myers diff, memory linear in the block counts, where the first draft's table
+was quadratic); then identical content elsewhere as a move; then, between two
+subsequence pairs, a run of changed blocks as long as the run it replaced,
+block for block. A block moved and edited in one save, or one of several
+identical blocks, comes back new; that loss is the one #5363's 2026-11-04
+comment accepts.
 
-Ran: `cargo test --lib -p agaric -- source_apply::pair` (11 tests, three
-proptests). Disabling the gap fill, the move pass and the anchored-id exclusion
-each turned the tests that name them red. `cargo clippy --workspace
+Ran: `cargo test --lib -p agaric -- source_apply::pair` (14 tests, three
+proptests) and `cargo test -p agaric-core --lib -- word_diff`. Disabling the
+gap fill, the move pass, the anchored bound, the length check on a gap and the
+anchored-place exclusion each turned the tests that name them red, as did
+breaking `equal_pairs`' index arithmetic. `cargo clippy --workspace
 --all-targets -- -D warnings`.
