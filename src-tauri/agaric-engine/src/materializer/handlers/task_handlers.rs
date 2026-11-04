@@ -342,8 +342,9 @@ async fn dispatch_committed_cohorts(
     // #4733: the FTS half of the same cohorts, ONCE over the batch.
     // `reindex_fts_for_ids` loads the tag and page reference maps per
     // CALL — a full scan of both — so a batch carrying N restore ops
-    // would pay N of them inside the loop above. The removal is a
-    // single batched DELETE for the same reason.
+    // would pay N of them inside the loop above. The removal is one batched
+    // DELETE, plus one reindex of the mentions when the batch deletes a page
+    // or tag (#6243), for the same reason.
     let batch_deleted: Vec<&str> = per_record_effects
         .iter()
         .flat_map(|e| e.deleted_cohort.iter())
