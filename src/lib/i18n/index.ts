@@ -80,12 +80,9 @@ void i18n.use(initReactI18next).init({
 /**
  * #4555 — keep `document.documentElement.lang` in sync with the resolved
  * i18next language, instead of the `lang="en"` `index.html` hardcodes at
- * build time and nothing in `src/` ever updated. Two live bugs this fixes:
- *   - Every AT announces content with English phonetics regardless of the
- *     actual page language.
- *   - `useVoiceInput.ts` derives `SpeechRecognition.lang` from
- *     `document.documentElement.lang || 'en-US'`, so a stale attribute feeds
- *     voice dictation the wrong acoustic model.
+ * build time and nothing in `src/` ever updated. Without this, every AT
+ * announces content with English phonetics regardless of the actual page
+ * language.
  *
  * Set once immediately below (this module is imported synchronously before
  * React renders — see `src/main.tsx`) and again on every `languageChanged`
