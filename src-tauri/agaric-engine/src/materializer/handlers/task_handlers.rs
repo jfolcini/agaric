@@ -897,7 +897,7 @@ async fn run_fts_task(
 ) -> Result<(), AppError> {
     match task {
         MaterializeTask::UpdateFtsBlock { block_id } => {
-            // Load tag/page reference maps scoped to THIS block's own refs and
+            // Load the reference maps scoped to THIS block's own refs and
             // feed them into the `_with_maps` variants (which keep the strip
             // path sync — no DB round-trip inside the regex replace).
             //
@@ -908,7 +908,7 @@ async fn run_fts_task(
             // just those rows, so a debounced-typing stream no longer re-reads
             // the whole page/tag set per edited block.
             let read_pool_for_maps = read_pool.unwrap_or(pool);
-            let (tag_names, page_titles) =
+            let (tag_names, page_titles, block_titles) =
                 fts::load_ref_maps_for_block(read_pool_for_maps, block_id).await?;
             dispatch_split_or_single(
                 pool,
@@ -920,9 +920,18 @@ async fn run_fts_task(
                         block_id,
                         &tag_names,
                         &page_titles,
+                        &block_titles,
                     )
                 },
-                |p| fts::update_fts_for_block_with_maps(p, block_id, &tag_names, &page_titles),
+                |p| {
+                    fts::update_fts_for_block_with_maps(
+                        p,
+                        block_id,
+                        &tag_names,
+                        &page_titles,
+                        &block_titles,
+                    )
+                },
             )
             .await
         }

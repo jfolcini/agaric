@@ -1,93 +1,153 @@
 {
+  "blockRefTargets": {
+    "01HQREFT00000000000000RT01": "First line\nsecond"
+  },
   "blocks": [
     {
       "content": "hello\nworld",
       "editorFlush": "edit",
+      "fts": "hello\nworld",
       "name": "two lines of prose are one block",
       "rustReads": []
     },
     {
       "content": "hello\nkey:: v",
       "editorFlush": "edit",
+      "fts": "hello\nkey:: v",
       "name": "a second line shaped like a property stays text",
       "rustReads": []
     },
     {
       "content": "first\n- not a bullet",
       "editorFlush": "edit",
+      "fts": "first\n- not a bullet",
       "name": "a second line shaped like a bullet stays text",
       "rustReads": []
     },
     {
       "content": "key:: v",
       "editorFlush": "edit",
+      "fts": "key:: v",
       "name": "a first line shaped like a property stays text",
       "rustReads": []
     },
     {
       "content": "see below\n^01J0000000000000000000ANCH",
       "editorFlush": "edit",
+      "fts": "see below\n^01J0000000000000000000ANCH",
       "name": "a line shaped like an anchor line stays text",
       "rustReads": []
     },
     {
       "content": "line one  \nline two",
       "editorFlush": "edit",
+      "fts": "line one  \nline two",
       "name": "two trailing spaces before a line break keep the line in the block",
       "rustReads": []
     },
     {
       "content": "trailing  ",
       "editorFlush": "edit",
+      "fts": "trailing  ",
       "name": "trailing spaces are kept",
       "rustReads": []
     },
     {
       "content": "```sh\necho hi\n- x\nkey:: v\n```",
       "editorFlush": "edit",
+      "fts": "sh\necho hi\n- x\nkey:: v\n",
       "name": "a fenced block keeps its bullet and property lines as code",
       "rustReads": ["code"]
     },
     {
       "content": "[x] not a task",
       "editorFlush": "edit",
+      "fts": "[x] not a task",
       "name": "text shaped like a checkbox stays text",
       "rustReads": []
     },
     {
       "content": "- [ ] open task",
       "editorFlush": "edit",
+      "fts": "- [ ] open task",
       "name": "text shaped like a task list item stays text",
       "rustReads": []
     },
     {
       "content": "1. not a list",
       "editorFlush": "edit",
+      "fts": "1. not a list",
       "name": "text shaped like an ordered list item stays text",
       "rustReads": []
     },
     {
       "content": "~~~ a`b\necho hi\n~~~",
       "editorFlush": "edit",
+      "fts": "~~~ a`b\necho hi\n~~~",
       "name": "a tilde fence is code, its info string may hold a backtick",
       "rustReads": ["code"]
     },
     {
       "content": "above\n***\nbelow",
       "editorFlush": "edit",
+      "fts": "above\n*\nbelow",
       "name": "a line of stars between lines of text is a thematic break",
       "rustReads": ["rule"]
     },
     {
       "content": "above\n___\nbelow",
       "editorFlush": "edit",
+      "fts": "above\n___\nbelow",
       "name": "a line of underscores between lines of text is a thematic break",
       "rustReads": ["rule"]
     },
     {
       "content": "| a | b |\n|:--|--:|\n| 1 | 2 |",
       "editorFlush": "edit",
+      "fts": "| a | b |\n|:--|--:|\n| 1 | 2 |",
       "name": "a table keeps its column alignment",
+      "rustReads": []
+    },
+    {
+      "content": "arr\\[0\\] is the first",
+      "editorFlush": "edit",
+      "fts": "arr[0] is the first",
+      "name": "an escaped bracket is searched as the bracket",
+      "rustReads": []
+    },
+    {
+      "content": "\\_\\_init\\_\\_ runs",
+      "editorFlush": "edit",
+      "fts": "__init__ runs",
+      "name": "escaped underscores are searched as underscores",
+      "rustReads": []
+    },
+    {
+      "content": "\\*not italic\\* here",
+      "editorFlush": "edit",
+      "fts": "*not italic* here",
+      "name": "an escaped asterisk is literal, not italic",
+      "rustReads": []
+    },
+    {
+      "content": "`a\\_b` stays code",
+      "editorFlush": "edit",
+      "fts": "a\\_b stays code",
+      "name": "code is searched as written",
+      "rustReads": []
+    },
+    {
+      "content": "see ((01HQREFT00000000000000RT01)) here",
+      "editorFlush": "edit",
+      "fts": "see First line here",
+      "name": "a block ref is searched as its target's first line",
+      "rustReads": []
+    },
+    {
+      "content": "see \\((01HQREFT00000000000000RT01)) here",
+      "editorFlush": "edit",
+      "fts": "see ((01HQREFT00000000000000RT01)) here",
+      "name": "an escaped block ref is literal text",
       "rustReads": []
     }
   ],
