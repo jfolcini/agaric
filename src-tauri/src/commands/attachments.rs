@@ -14,6 +14,7 @@ use agaric_core::error::AppError;
 use agaric_core::ulid::{AttachmentId, BlockId};
 use agaric_store::op::OpPayload;
 use agaric_store::op_log;
+use agaric_store::pagination::{Cursor, PageRequest, PageResponse, build_page_response};
 
 use super::*;
 
@@ -833,6 +834,84 @@ pub async fn list_attachments_batch_inner(
     }
 
     Ok(grouped)
+}
+
+/// One page of `block_id`'s attachments, in id order (ULIDs sort by time), for
+/// a caller that cannot take every row at once (#5410).
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — `limit` outside `[1, MAX_PAGE_SIZE]`, or a
+///   malformed cursor
+/// - [`AppError::Database`] — on query failure
+#[instrument(skip(pool), err)]
+pub async fn list_attachments_paged_inner(
+    pool: &SqlitePool,
+    block_id: &BlockId,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageResponse<AttachmentRow>, AppError> {
+    let page = PageRequest::new(cursor, limit)?;
+    let after = page.after.as_ref().map(|c| c.id.as_str());
+    let fetch_limit = page.limit + 1;
+    let block_id_str = block_id.as_str();
+    let rows = sqlx::query_as!(
+        AttachmentRow,
+        "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at, content_hash \
+         FROM attachments \
+         WHERE block_id = ?1 AND (?2 IS NULL OR id > ?2) \
+         ORDER BY id \
+         LIMIT ?3",
+        block_id_str,
+        after,
+        fetch_limit,
+    )
+    .fetch_all(pool)
+    .await?;
+    build_page_response(rows, page.limit, |last| {
+        Cursor::for_id(last.id.as_str().to_owned())
+    })
+}
+
+/// One page of the attachments on `page_id`'s live blocks, the page's own
+/// included, in id order (#5410). A soft-deleted block keeps its attachment
+/// rows until it is purged, so the join on `blocks.deleted_at` is what leaves
+/// them out.
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — `limit` outside `[1, MAX_PAGE_SIZE]`, or a
+///   malformed cursor
+/// - [`AppError::Database`] — on query failure
+#[instrument(skip(pool), err)]
+pub async fn list_page_attachments_inner(
+    pool: &SqlitePool,
+    page_id: &BlockId,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageResponse<AttachmentRow>, AppError> {
+    let page = PageRequest::new(cursor, limit)?;
+    let after = page.after.as_ref().map(|c| c.id.as_str());
+    let fetch_limit = page.limit + 1;
+    let page_id_str = page_id.as_str();
+    let rows = sqlx::query_as!(
+        AttachmentRow,
+        "SELECT a.id, a.block_id, a.mime_type, a.filename, a.size_bytes, a.fs_path, \
+                a.created_at, a.content_hash \
+         FROM attachments a \
+         JOIN blocks b ON b.id = a.block_id \
+         WHERE b.page_id = ?1 AND b.deleted_at IS NULL AND (?2 IS NULL OR a.id > ?2) \
+         ORDER BY a.id \
+         LIMIT ?3",
+        page_id_str,
+        after,
+        fetch_limit,
+    )
+    .fetch_all(pool)
+    .await?;
+    build_page_response(rows, page.limit, |last| {
+        Cursor::for_id(last.id.as_str().to_owned())
+    })
 }
 
 /// Tauri command: add an attachment from raw bytes. Delegates to

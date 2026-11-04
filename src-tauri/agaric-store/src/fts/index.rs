@@ -15,7 +15,7 @@
 //!   — single-block upsert (DELETE then INSERT in one transaction).
 //! - [`reindex_fts_for_ids`] — batch DELETE of the chunk's ids, then a
 //!   multi-row INSERT. Shared by [`reindex_fts_references`] and the
-//!   restore cohort fan-out (#4733).
+//!   delete and restore cohort fan-outs (#4733, #6243).
 //! - [`remove_fts_for_blocks`] — one batched DELETE, for a deleted cohort.
 //! - [`rebuild_fts_index_impl`] / [`rebuild_fts_index_split_impl`] — full
 //!   `DELETE FROM fts_blocks` up front, then chunked INSERTs.
@@ -311,68 +311,109 @@ pub async fn remove_fts_for_blocks<S: AsRef<str>>(
 /// When a tag/page is renamed (edited), the FTS entries for every block that
 /// references it become stale because `strip_for_fts` resolves `#[ULID]` /
 /// `[[ULID]]` tokens to human-readable names, whatever space the target is in.
-/// The referrers come from four seeds:
-///
-/// - `block_tags`: explicit tags;
-/// - `block_links`: same-space `[[ULID]]` links;
-/// - `block_links_unresolved`: `[[ULID]]` tokens `block_links` drops, a
-///   target in another space or not yet arrived (#6242);
-/// - for a tag only, a scan of `blocks.content` for its `#[ULID]` token.
-///   `block_tag_refs` drops a tag in another space and no table keeps that
-///   token (#6242). Every `block_tag_refs` row is such a token, so the scan
-///   subsumes it. A page needs no scan: its tokens are `[[ULID]]`.
-///
-/// ## Performance
-///
-/// The scan reads every row of `blocks` once per reindexed tag. It runs on a
-/// local tag rename (or its undo), where it is the only whole-vault read, and
-/// on a sync import that carries a tag, which already pays a whole-table
-/// `RebuildBlockTagRefsCache`. `bench_reindex_fts_references`
-/// (`benches/interactive_slo.rs`) times it beside that rebuild.
+/// The referrers are those `referrers_of` returns for the block.
 ///
 /// The re-strip is chunked by `reindex_fts_for_ids`, one transaction per
 /// `FTS_REINDEX_CHUNK` ids, so a tag rename touching tens of thousands of
 /// blocks does not hold the writer for seconds.
 #[tracing::instrument(skip_all, err)]
 pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
-    let tag_refs: Vec<String> =
-        sqlx::query_scalar!("SELECT block_id FROM block_tags WHERE tag_id = ?", block_id)
-            .fetch_all(pool)
-            .await?;
-    let link_refs: Vec<String> = sqlx::query_scalar!(
-        "SELECT source_id FROM block_links WHERE target_id = ?",
-        block_id
+    let ids = referrers_of(pool, &serde_json::to_string(&[block_id])?).await?;
+    reindex_fts_for_ids(pool, &ids).await
+}
+
+/// #6243 — the blocks whose stripped text names a page or tag in `cohort`,
+/// for a delete or restore that changes what those names resolve to. Other
+/// members are skipped: strip resolves only tags and pages.
+#[tracing::instrument(skip_all, err)]
+pub async fn page_and_tag_referrers<S: AsRef<str>>(
+    pool: &SqlitePool,
+    cohort: &[S],
+) -> Result<Vec<String>, AppError> {
+    let ids: Vec<&str> = cohort.iter().map(AsRef::as_ref).collect();
+    let targets: String = sqlx::query_scalar!(
+        "SELECT json_group_array(id) AS \"targets!: String\" FROM blocks \
+         WHERE id IN (SELECT value FROM json_each(?)) AND block_type IN ('page', 'tag')",
+        serde_json::to_string(&ids)?
+    )
+    .fetch_one(pool)
+    .await?;
+    if targets == "[]" {
+        return Ok(Vec::new());
+    }
+    referrers_of(pool, &targets).await
+}
+
+/// The blocks that reference any id in `targets_json` (a JSON array), deduped.
+///
+/// - `block_tags`: explicit tags;
+/// - `block_links`: same-space `[[ULID]]` links;
+/// - `block_links_unresolved`: `[[ULID]]` tokens `block_links` drops, a
+///   target in another space, not yet arrived or deleted (#6242);
+/// - for the tags only, a scan of `blocks.content` for their `#[ULID]`
+///   tokens. `block_tag_refs` drops a tag in another space or deleted, and no
+///   table keeps that token (#6242). Every `block_tag_refs` row is such a
+///   token, so the scan subsumes it. A page needs no scan: its tokens are
+///   `[[ULID]]`.
+///
+/// The tag lookup reads rows regardless of `deleted_at`, so a soft-deleted
+/// tag still scans and its mentions re-strip to `""`.
+///
+/// ## Performance
+///
+/// One scan of `blocks` covers every tag in the set. It runs on a local tag
+/// rename (or its undo) and on a delete or restore that takes a tag, where it
+/// is the only whole-vault read, and on a sync import that carries a tag,
+/// which already pays a whole-table `RebuildBlockTagRefsCache`.
+/// `bench_reindex_fts_references` (`benches/interactive_slo.rs`) times it
+/// beside that rebuild.
+async fn referrers_of(pool: &SqlitePool, targets_json: &str) -> Result<Vec<String>, AppError> {
+    let tag_refs: Vec<String> = sqlx::query_scalar!(
+        "SELECT block_id FROM block_tags WHERE tag_id IN (SELECT value FROM json_each(?))",
+        targets_json
     )
     .fetch_all(pool)
     .await?;
-    let unlinked_refs = crate::cache::unresolved_link_sources(pool, block_id).await?;
-    // Read regardless of `deleted_at`: a soft-deleted tag still scans, so its
-    // mentions re-strip to `""`.
-    let block_type: Option<String> =
-        sqlx::query_scalar!("SELECT block_type FROM blocks WHERE id = ?", block_id)
-            .fetch_optional(pool)
-            .await?;
-    let mentions: Vec<String> = if block_type.as_deref() == Some("tag") {
+    let link_refs: Vec<String> = sqlx::query_scalar!(
+        "SELECT source_id FROM block_links WHERE target_id IN (SELECT value FROM json_each(?))",
+        targets_json
+    )
+    .fetch_all(pool)
+    .await?;
+    let unlinked_refs: Vec<String> = sqlx::query_scalar!(
+        "SELECT source_id FROM block_links_unresolved \
+         WHERE target_id IN (SELECT value FROM json_each(?))",
+        targets_json
+    )
+    .fetch_all(pool)
+    .await?;
+    let tags: String = sqlx::query_scalar!(
+        "SELECT json_group_array(id) AS \"tags!: String\" FROM blocks \
+         WHERE id IN (SELECT value FROM json_each(?)) AND block_type = 'tag'",
+        targets_json
+    )
+    .fetch_one(pool)
+    .await?;
+    let mentions: Vec<String> = if tags == "[]" {
+        Vec::new()
+    } else {
         sqlx::query_scalar!(
-            "SELECT id FROM blocks WHERE instr(content, '#[' || ? || ']') > 0",
-            block_id
+            "SELECT id FROM blocks b WHERE EXISTS \
+             (SELECT 1 FROM json_each(?) t WHERE instr(b.content, '#[' || t.value || ']') > 0)",
+            tags
         )
         .fetch_all(pool)
         .await?
-    } else {
-        Vec::new()
     };
 
     let mut seen = std::collections::HashSet::new();
-    let unique_ids: Vec<String> = tag_refs
+    Ok(tag_refs
         .into_iter()
         .chain(link_refs)
         .chain(unlinked_refs)
         .chain(mentions)
         .filter(|bid| seen.insert(bid.clone()))
-        .collect();
-
-    reindex_fts_for_ids(pool, &unique_ids).await
+        .collect())
 }
 
 /// Re-derive the `fts_blocks` rows of `ids` from `blocks`, in chunks.
