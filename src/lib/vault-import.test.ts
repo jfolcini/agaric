@@ -197,6 +197,20 @@ describe('indexVaultFiles / resolveVaultRef', () => {
     // the root, so the basename's tie ships.
     expect(resolveVaultRef('../../img.png', 'notes', index)).toEqual([root, inNotes])
   })
+
+  it('drops a "." segment inside the reference, so the exact path wins over a basename tie', () => {
+    const a = folderFile([new Uint8Array([1])], 'img.png', 'MyVault/a/img.png')
+    const b = folderFile([new Uint8Array([2])], 'img.png', 'MyVault/b/img.png')
+    const index = indexVaultFiles([a, b])
+
+    // Were the "." kept, 'a/./img.png' would miss byPath and ship the tie [a, b].
+    expect(resolveVaultRef('a/./img.png', '', index)).toEqual([a])
+    expect(resolveVaultRef('./img.png', 'b', index)).toEqual([b])
+  })
+
+  // Accepted equivalent (resolveVaultRef `path === null ? undefined : …`, mutation-accepted.tsv):
+  // the guard only narrows `string | null` for the type checker; `byPath.get(null)` is also
+  // undefined because every byPath key is a string.
 })
 
 describe('collectVaultFiles', () => {
