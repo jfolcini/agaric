@@ -126,14 +126,15 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
       'import-folder-input',
       folder,
       {
-        'note.md': Buffer.from(`- ${marker}-caption ![pic](pic.png)\n`),
+        [`${marker}-note.md`]: Buffer.from(`- ${marker}-caption ![pic](pic.png)\n`),
         'pic.png': PNG,
       },
       'Imported “',
     )
 
     await navigateTo('Journal')
-    await openPageTitled(`${folder}/note`)
+    // The picked folder's own name is no part of a title (#6277 decision 8).
+    await openPageTitled(`${marker}-note`)
     const block = blockStaticByMarker(`${marker}-caption`)
     await block.waitForDisplayed({ timeout: NAV_TIMEOUT })
     const id = await block.getAttribute('data-block-id')
@@ -152,7 +153,7 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
       {
         'a/my image.png': PNG,
         'b/my image.png': WIDE_PNG,
-        'b/note.md': Buffer.from(
+        [`b/${marker}-note.md`]: Buffer.from(
           `- ${marker}-angle ![](<my image.png>)\n- ${marker}-escaped ![](my%20image.png)\n`,
         ),
       },
@@ -160,7 +161,7 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     )
 
     await navigateTo('Journal')
-    await openPageTitled(`${folder}/b/note`)
+    await openPageTitled(`b/${marker}-note`)
     for (const ref of ['angle', 'escaped']) {
       const block = blockStaticByMarker(`${marker}-${ref}`)
       await block.waitForDisplayed({ timeout: NAV_TIMEOUT })
@@ -178,12 +179,15 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     await importFolder(
       'import-folder-input',
       folder,
-      { 'note.md': Buffer.from(`- ${marker}-read [paper](paper.pdf)\n`), 'paper.pdf': PDF },
+      {
+        [`${marker}-note.md`]: Buffer.from(`- ${marker}-read [paper](paper.pdf)\n`),
+        'paper.pdf': PDF,
+      },
       'Imported “',
     )
 
     await navigateTo('Journal')
-    await openPageTitled(`${folder}/note`)
+    await openPageTitled(`${marker}-note`)
     await expectFileLinked(`${marker}-read`, 'paper', 'paper.pdf')
   })
 

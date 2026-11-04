@@ -222,6 +222,8 @@ export const common: Record<string, string> = {
   'announce.aliasRemoved': 'Alias removed',
   'announce.aliasFailed': 'Alias update failed',
   'announce.exported': 'Page exported to clipboard',
+  'announce.readAloudStopped': 'Stopped reading aloud',
+  'announce.readAloudFinished': 'Finished reading aloud',
   'announce.exportFailed': 'Export failed',
   'contextMenu.delete': 'Delete',
   'contextMenu.deleteSelected': 'Delete {{count}} selected',
