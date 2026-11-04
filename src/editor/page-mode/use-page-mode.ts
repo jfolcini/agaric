@@ -201,7 +201,7 @@ export function usePageMode(pageId: string): PageModeState {
     if (loading) pending.read = true
     else if (pending.read) {
       placeInBlocks.current = null
-      restoreScrollPlace(pending.place)
+      restoreScrollPlace(pending.place, 'blocks')
     }
   }, [wanted, loading])
 

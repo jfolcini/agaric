@@ -9,7 +9,8 @@
 // The summary and warning list are asserted from the Data tab, then the
 // created page is re-opened from the Pages list after a navigation
 // round-trip, which is the durable read, and its paper title is read back
-// from the page's properties (#6032).
+// from the page's properties, as is the `journal` its biblatex
+// `journaltitle` maps to (#6032).
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -30,10 +31,12 @@ import {
 const FAMILY = runScopedMarker('wdiofam')
 const YEAR = '2024'
 const PAGE_TITLE = `${FAMILY} ${YEAR}`
+const JOURNAL = 'WDIO Journal Title'
 const BIBTEX = [
   `@article{${FAMILY}key,`,
   `  author = {${FAMILY}, Test},`,
   '  title = {WDIO bibliography round trip},',
+  `  journaltitle = {${JOURNAL}},`,
   `  year = {${YEAR}}`,
   '}',
   '@article{,',
@@ -99,5 +102,16 @@ describe('Agaric real-backend bibliography import (#4671) @markdown', () => {
     const paperTitle = $('[aria-label="title value"]')
     await paperTitle.waitForDisplayed({ timeout: NAV_TIMEOUT })
     expect(await paperTitle.getValue()).toBe('WDIO bibliography round trip')
+  })
+
+  it('maps the biblatex journaltitle to the journal property (#6032)', async () => {
+    await navigateTo('Journal')
+    await reopenPageByTitle(PAGE_TITLE)
+    const properties = $('.page-property-table-header')
+    await properties.waitForClickable({ timeout: NAV_TIMEOUT })
+    await properties.click()
+    const journal = $('[aria-label="journal value"]')
+    await journal.waitForDisplayed({ timeout: NAV_TIMEOUT })
+    expect(await journal.getValue()).toBe(JOURNAL)
   })
 })
