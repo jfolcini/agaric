@@ -6020,7 +6020,7 @@ async fn a_copy_into_another_space_pastes_its_foreign_refs_as_their_text_6277() 
     let copied = copy_source(&pool, &[&held], true).await;
     assert_eq!(
         copied,
-        format!("see [[{twin}]] and (({target}))\n\n  under it\n"),
+        format!("see [[{twin}]] and (({target}))\n\n  + under it\n"),
         "the copy writes both refs raw"
     );
 
