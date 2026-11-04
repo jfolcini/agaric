@@ -175,19 +175,15 @@ export type TableCellAlign = 'left' | 'right' | 'center'
  * Every cell of an aligned column carries its column's `align`, as TipTap's
  * table cells store it; the editor's JSON has `null` for an unaligned one.
  */
-export interface TableCellAttrs {
-  readonly align?: TableCellAlign | null
-}
-
 export interface TableCellNode {
   readonly type: 'tableCell'
-  readonly attrs?: TableCellAttrs
+  readonly attrs?: { readonly align?: TableCellAlign | null }
   readonly content?: readonly ParagraphNode[]
 }
 
 export interface TableHeaderNode {
   readonly type: 'tableHeader'
-  readonly attrs?: TableCellAttrs
+  readonly attrs?: { readonly align?: TableCellAlign | null }
   readonly content?: readonly ParagraphNode[]
 }
 
