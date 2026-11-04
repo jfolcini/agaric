@@ -37,6 +37,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { parse } from '@/editor/markdown-serializer'
+import { formatDate } from '@/lib/date-utils'
 import {
   type EnexNote,
   enexNoteToMarkdown,
@@ -1076,5 +1077,219 @@ describe('sanitizeNoteTitleToFilename', () => {
 
   it('falls back to the placeholder for an empty title', () => {
     expect(sanitizeNoteTitleToFilename('   ')).toBe(UNTITLED_PLACEHOLDER)
+  })
+})
+
+// --- #6032: Evernote tasks, note reminders, rules and strikethrough --------
+
+/** Evernote's placeholder for the task group `id`, as Evernote 10 writes it. */
+function taskGroupDiv(id: string): string {
+  return (
+    `<div style="--en-task-group:true; --en-id:${id};--en-content-hash:bfd4;color:#868686">` +
+    '<div style="padding:8px 38px;font-weight:600">Content not supported</div>' +
+    '<div style="padding:2px 6px">This block is a placeholder for Tasks, which has been ' +
+    'officially released on the newest version of Evernote.</div></div>'
+  )
+}
+
+/** One `<task>` element; `extra` holds the optional elements after the required ones. */
+function task(title: string, status: string, weight: string, group: string, extra = ''): string {
+  return `<task>
+      <title>${title}</title>
+      <created>20220520T221209Z</created>
+      <updated>20220520T222015Z</updated>
+      <taskStatus>${status}</taskStatus>
+      <taskFlag>false</taskFlag>
+      <sortWeight>${weight}</sortWeight>
+      <noteLevelID>${title}-id</noteLevelID>
+      <taskGroupNoteLevelID>${group}</taskGroupNoteLevelID>
+      ${extra}
+    </task>`
+}
+
+describe('parseEnex — Evernote tasks (#6032)', () => {
+  it("puts a group's tasks where its placeholder stood, in sortWeight order, as task blocks", () => {
+    const enml = `<p>before</p>${taskGroupDiv('g1')}<p>after</p>`
+    const xml = enex(
+      `<note><title>Things</title><content>${content(enml)}</content>
+        ${task(
+          'Due',
+          'completed',
+          'Q',
+          'g1',
+          // Evernote writes a date-only due date as 23:59:59 in the task's zone.
+          '<dueDate>20220528T215959Z</dueDate><dueDateUIOption>date_only</dueDateUIOption>' +
+            '<timeZone>Europe/Budapest</timeZone><repeatAfterCompletion>false</repeatAfterCompletion>',
+        )}
+        ${task('Simple', 'open', 'C', 'g1')}
+        ${task('Flagged', 'open', 'W', 'g1').replace('<taskFlag>false', '<taskFlag>true')}
+      </note>`,
+    )
+
+    expect(at(parseEnex(xml)).markdown).toBe(
+      'before\n\n' +
+        '- [ ] Simple\n- [x] Due\n  due_date:: 2022-05-28\n- [ ] Flagged\n\n' +
+        'after',
+    )
+  })
+
+  it("dates a due date and a reminder on the day they fall on in the task's own zone", () => {
+    // 03:59:59 UTC on 29 May is the evening of 28 May in Los Angeles, and
+    // 03:00 UTC on 23 May the evening of 22 May.
+    const xml = enex(
+      `<note><title>Zoned</title><content>${content(taskGroupDiv('g'))}</content>
+        ${task(
+          'West',
+          'open',
+          'A',
+          'g',
+          '<dueDate>20220529T035959Z</dueDate><timeZone>America/Los_Angeles</timeZone>' +
+            '<reminder><reminderDate>20220523T030000Z</reminderDate>' +
+            '<timeZone>America/Los_Angeles</timeZone></reminder>',
+        )}
+      </note>`,
+    )
+
+    expect(at(parseEnex(xml)).markdown).toBe(
+      '- [ ] West\n  scheduled_date:: 2022-05-22\n  due_date:: 2022-05-28',
+    )
+  })
+
+  it('dates a task with no zone, or one it cannot read, on the local day', () => {
+    const due = Date.UTC(2022, 4, 29, 3, 59, 59)
+    const remind = Date.UTC(2022, 4, 23, 3, 0, 0)
+    const xml = enex(
+      `<note><title>Local</title><content>${content(taskGroupDiv('g'))}</content>
+        ${task('Bare', 'open', 'A', 'g', '<dueDate>20220529T035959Z</dueDate>')}
+        ${task(
+          'Odd',
+          'open',
+          'B',
+          'g',
+          '<dueDate>20220529T035959Z</dueDate><timeZone>Mars/Olympus</timeZone>' +
+            '<reminder><reminderDate>20220523T030000Z</reminderDate></reminder>',
+        )}
+        ${task('Garbled', 'open', 'C', 'g', '<dueDate>soon</dueDate>')}
+      </note>`,
+    )
+
+    const dueDay = formatDate(new Date(due))
+    expect(at(parseEnex(xml)).markdown).toBe(
+      `- [ ] Bare\n  due_date:: ${dueDay}\n` +
+        `- [ ] Odd\n  scheduled_date:: ${formatDate(new Date(remind))}\n  due_date:: ${dueDay}\n` +
+        '- [ ] Garbled',
+    )
+  })
+
+  it('puts tasks whose group has no placeholder after the body, and drops a placeholder with none', () => {
+    const enml = `<p>body</p>${taskGroupDiv('empty')}<p>end</p>`
+    const xml = enex(
+      `<note><title>Loose</title><content>${content(enml)}</content>
+        ${task('Second', 'open', 'B', 'lost')}
+        ${task('Other', 'completed', 'A', 'elsewhere')}
+        ${task('First', 'open', 'A', 'lost')}
+      </note>`,
+      `<note><title>No body</title>${task('Only', 'open', 'A', 'g')}</note>`,
+    )
+
+    expect(parseEnex(xml).map((n) => n.markdown)).toEqual([
+      'body\n\nend\n\n- [x] Other\n\n- [ ] First\n- [ ] Second',
+      '- [ ] Only',
+    ])
+  })
+
+  it("reads a note's title and dates, not a task's, when the note has none of its own", () => {
+    const xml = enex(
+      `<note><content>${content('<p>body</p>')}</content>${task('Task title', 'open', 'A', 'g')}</note>`,
+    )
+
+    const note = at(parseEnex(xml))
+    expect(note.title).toBe(UNTITLED_PLACEHOLDER)
+    expect(note.createdMs).toBeNull()
+    expect(note.updatedMs).toBeNull()
+  })
+})
+
+describe('parseEnex — note reminders (#6032)', () => {
+  /** A note whose `<note-attributes>` hold `attributes`. */
+  function reminderNote(title: string, attributes: string): string {
+    return `<note><title>${title}</title><content>${content('<p>body</p>')}</content>
+        <note-attributes>
+          ${attributes}
+        </note-attributes>
+      </note>`
+  }
+
+  it('opens a note with a reminder with a task block named after the note', () => {
+    const at12 = Date.UTC(2024, 4, 1, 12, 0, 0)
+    const xml = enex(
+      reminderNote(
+        'Call',
+        '<reminder-order>1</reminder-order><reminder-time>20240501T120000Z</reminder-time>',
+      ),
+      reminderNote(
+        'Called',
+        '<reminder-order>2</reminder-order><reminder-time>20240501T120000Z</reminder-time>' +
+          '<reminder-done-time>20240502T080000Z</reminder-done-time>',
+      ),
+      reminderNote('Pinned', '<reminder-order>3</reminder-order>'),
+      reminderNote('Plain', '<author>me</author>'),
+    )
+
+    const day = formatDate(new Date(at12))
+    expect(parseEnex(xml).map((n) => n.markdown)).toEqual([
+      `- [ ] Call\n  due_date:: ${day}\n\nbody`,
+      `- [x] Called\n  due_date:: ${day}\n\nbody`,
+      '- [ ] Pinned\n\nbody',
+      'body',
+    ])
+  })
+
+  it('composes the reminder task as the first block after the front matter and tags', () => {
+    const xml = enex(
+      `<note><title>Call</title><content>${content('<p>body</p>')}</content><tag>work</tag>
+        <note-attributes><reminder-order>1</reminder-order></note-attributes></note>`,
+    )
+
+    expect(enexNoteToMarkdown(at(parseEnex(xml)))).toBe(
+      '---\nsource: evernote\n---\n\n#work\n\n- [ ] Call\n\nbody\n',
+    )
+  })
+})
+
+describe('parseEnex — rules and strikethrough Agaric reads (#6032)', () => {
+  it('writes a horizontal rule as ---, the only break the importer reads, after the front matter', () => {
+    const xml = enex(
+      `<note><title>T</title><content>${content('<hr/><p>a</p><hr/><p>b</p>')}</content></note>`,
+    )
+
+    const note = at(parseEnex(xml))
+    expect(note.markdown).toBe('---\n\na\n\n---\n\nb')
+    // The front matter closes before the body's rule opens.
+    expect(enexNoteToMarkdown(note)).toBe('---\nsource: evernote\n---\n\n---\n\na\n\n---\n\nb\n')
+  })
+
+  it('writes struck text between double tildes, which the editor reads as a strike', () => {
+    const enml = '<p><s>one</s> <del>two</del> <strike>three</strike></p>'
+    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
+
+    const markdown = at(parseEnex(xml)).markdown
+    expect(markdown).toBe('~~one~~ ~~two~~ ~~three~~')
+    const strike = (text: string) => ({ type: 'text', text, marks: [{ type: 'strike' }] })
+    expect(parse(markdown)).toEqual({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            strike('one'),
+            { type: 'text', text: ' ' },
+            strike('two'),
+            { type: 'text', text: ' ' },
+            strike('three'),
+          ],
+        },
+      ],
+    })
   })
 })
