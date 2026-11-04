@@ -1,4 +1,4 @@
-# Session 3363 — Import reads Logseq STARTED, Org blocks and YAML alias:/tag: (#6033 S3)
+# Session 3376 — Import reads Logseq STARTED, Org blocks and YAML alias:/tag: (#6033 S3)
 
 Set out to build #6033 S3, three one-place import gaps: Logseq's `STARTED` keyword stayed text, a `#+BEGIN_NOTE … #+END_NOTE` block (and the other admonitions, and `#+BEGIN_QUOTE`) imported as literal lines, and Obsidian's older singular `alias:` / `tag:` front-matter keys became text properties.
 
