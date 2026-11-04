@@ -1385,6 +1385,7 @@ fn code_span_end(bytes: &[u8], start: usize) -> Option<usize> {
         }
     }
     None
+}
 
 /// The Logseq admonitions (`#+BEGIN_NOTE` … `#+END_NOTE`) an import reads as
 /// callouts of their kind.
@@ -8752,6 +8753,8 @@ mod tests_foreign_inline_6033 {
         ] {
             assert_eq!(normalized(text), text, "{text:?}");
         }
+    }
+}
 
 /// Logseq's and Org's `#+BEGIN_X` … `#+END_X` blocks in a block's text, read
 /// into Agaric's callout and quote.
