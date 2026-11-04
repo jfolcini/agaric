@@ -5,6 +5,12 @@ import { axe } from 'vitest-axe'
 
 import { t } from '@/lib/i18n'
 
+const mockUseIsTouch = vi.hoisted(() => vi.fn(() => false))
+
+vi.mock('@/hooks/useIsTouch', () => ({
+  useIsTouch: mockUseIsTouch,
+}))
+
 vi.mock('lucide-react', () => ({
   Calendar: (props: { size: number; className?: string }) => (
     <svg
@@ -243,7 +249,10 @@ describe('dueDateColor', () => {
 describe('TaskCheckbox', () => {
   it('renders empty style for null state', () => {
     const { container } = render(<TaskCheckbox state={null} />)
-    expect(container.querySelector('.task-checkbox-empty')).toBeInTheDocument()
+    const empty = container.querySelector('.task-checkbox-empty')
+    expect(empty).toBeInTheDocument()
+    expect(empty?.className).toContain('border-muted-foreground/40')
+    expect(empty?.className).not.toContain('border-transparent')
   })
 
   it('renders empty style for undefined state', () => {
@@ -344,7 +353,7 @@ describe('BlockInlineControls', () => {
   })
 
   it('renders task marker button', () => {
-    renderControls(makeProps())
+    renderControls(makeProps({ todoState: 'TODO' }))
     expect(screen.getByTestId('task-marker')).toBeInTheDocument()
   })
 
@@ -377,14 +386,14 @@ describe('BlockInlineControls', () => {
   })
 
   it('main container has narrow-viewport wrapping layout classes', () => {
-    const { container } = renderControls(makeProps())
+    const { container } = renderControls(makeProps({ todoState: 'TODO' }))
     const inlineControls = container.querySelector('.inline-controls') as HTMLElement
     expect(inlineControls.className).toContain('max-sm:w-auto')
     expect(inlineControls.className).toContain('max-sm:flex-shrink')
   })
 
   it('task marker uses max-sm: classes instead of [@media(pointer:coarse)]', () => {
-    renderControls(makeProps())
+    renderControls(makeProps({ todoState: 'TODO' }))
     const taskMarker = screen.getByTestId('task-marker')
     expect(taskMarker.className).not.toContain('[@media(pointer:coarse)]')
     expect(taskMarker.className).toContain('max-sm:')
@@ -1082,23 +1091,31 @@ describe('BlockInlineControls focus retention (#1498)', () => {
   })
 })
 
-/* ── Fix 5/6: empty-checkbox gating + multiselect suppression ───────── */
+/* ── A plain line's checkbox room + multiselect suppression ───────── */
 
-describe('BlockInlineControls empty-checkbox gating (Fix 5)', () => {
+describe('BlockInlineControls on a plain line', () => {
   beforeEach(() => {
     useBlockStore.setState({ selectedBlockIds: [] })
   })
   afterEach(() => {
     useBlockStore.setState({ selectedBlockIds: [] })
+    mockUseIsTouch.mockReturnValue(false)
   })
 
-  it('empty (no todo state) checkbox is hidden at rest (opacity-0)', () => {
-    renderControls(makeProps({ todoState: null }))
-    const taskMarker = screen.getByTestId('task-marker')
-    expect(taskMarker.className).toContain('opacity-0')
-    // …but revealed on row hover / focus-within / .block-active.
-    expect(taskMarker.className).toContain('group-hover:opacity-100')
-    expect(taskMarker.className).toContain('[.block-active_&]:opacity-100')
+  it('renders nothing on a fine pointer, so the text keeps no room for a checkbox', () => {
+    for (const todoState of [null, undefined]) {
+      const { container, unmount } = renderControls(makeProps({ todoState }))
+      expect(container.querySelector('.inline-controls')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('task-marker')).not.toBeInTheDocument()
+      unmount()
+    }
+  })
+
+  it('keeps its empty box on touch, with no checkbox in it', () => {
+    mockUseIsTouch.mockReturnValue(true)
+    const { container } = renderControls(makeProps({ todoState: null }))
+    expect(container.querySelector('.inline-controls')).toBeInTheDocument()
+    expect(screen.queryByTestId('task-marker')).not.toBeInTheDocument()
   })
 
   it('a block WITH a todo state keeps its checkbox always visible (no opacity-0)', () => {
@@ -1108,14 +1125,6 @@ describe('BlockInlineControls empty-checkbox gating (Fix 5)', () => {
       expect(taskMarker.className).not.toContain('opacity-0')
       unmount()
     }
-  })
-
-  it('empty checkbox still cycles task state on click (behavior intact)', async () => {
-    const user = userEvent.setup()
-    const onToggle = vi.fn()
-    renderControls(makeProps({ todoState: null, onToggleTodo: onToggle }))
-    await user.click(screen.getByTestId('task-marker'))
-    expect(onToggle).toHaveBeenCalledWith('BLOCK_1')
   })
 })
 
