@@ -80,6 +80,7 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
             };
         }
 
+        crate::mirror::on_sync_event(&self.0, &event);
         crate::main_thread::emit(&self.0, event_name, event);
     }
 }

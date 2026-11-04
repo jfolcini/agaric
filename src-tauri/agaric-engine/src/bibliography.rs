@@ -76,8 +76,9 @@ pub struct BibEntry {
     /// BibTeX `abstract` / CSL `abstract`. Named `abstract_text` because
     /// `abstract` is a reserved Rust keyword.
     pub abstract_text: Option<String>,
-    /// The first author is one literal name (a wholly braced BibTeX name or
-    /// a CSL `literal`), so its family is the whole name.
+    /// The first author is one literal name (a wholly braced BibTeX name, a
+    /// CSL `literal`, or a CSL `family` with no `given`), so its family is the
+    /// whole name.
     first_author_literal: bool,
 }
 
@@ -98,11 +99,11 @@ impl BibEntry {
     }
 
     /// Family name of the FIRST author, for the "{family} {year}" citation
-    /// display name. A literal name (`{World Health Organization}`, CSL
-    /// `literal`) is its own family; `Family, Given` forms take the text
-    /// before the first comma (so multi-word families like
-    /// `de la Cruz, Maria` survive); `Given Family` forms take the last
-    /// whitespace-separated token.
+    /// display name. A literal name (`{World Health Organization}`, a CSL
+    /// `literal`, or a CSL `family` with no `given`) is its own family;
+    /// `Family, Given` forms take the text before the first comma (so
+    /// multi-word families like `de la Cruz, Maria` survive); `Given Family`
+    /// forms take the last whitespace-separated token.
     pub fn first_author_family(&self) -> Option<String> {
         let first = self.authors.first()?;
         let family = match first.split_once(',') {
@@ -1091,7 +1092,9 @@ fn push_csl_authors(authors: &serde_json::Value, entry: &mut BibEntry, warnings:
                         continue;
                     }
                     ("", "", lit) => (lit.to_string(), true),
-                    (family_name, "", _) => (family_name.to_string(), false),
+                    // A CSL `family` is the whole family name, so a family-only
+                    // author (an institution) is one name, as a `literal` is.
+                    (family_name, "", _) => (family_name.to_string(), true),
                     ("", given_name, _) => (given_name.to_string(), false),
                     (family_name, given_name, _) => (format!("{family_name}, {given_name}"), false),
                 };
@@ -1644,6 +1647,21 @@ mod tests {
             Some("World Health Organization")
         );
         assert_eq!(out.entries[1].first_author_family().as_deref(), Some("Doe"));
+    }
+
+    #[test]
+    fn csl_family_only_first_author_is_its_whole_family_6032() {
+        let src = r#"[{"id": "k", "author": [{"family": "World Health Organization"}]},
+            {"id": "k2", "author": [{"family": "de la Cruz"}]}]"#;
+        let out = parse_csl_json(src).unwrap();
+        assert_eq!(
+            out.entries[0].first_author_family().as_deref(),
+            Some("World Health Organization")
+        );
+        assert_eq!(
+            out.entries[1].first_author_family().as_deref(),
+            Some("de la Cruz")
+        );
     }
 
     // -- CSL-JSON ---------------------------------------------------------------
