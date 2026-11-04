@@ -33,9 +33,10 @@ If you click the Sync button before any device is paired, the **NoPeersDialog** 
   - Red: last attempt failed (toast offers *Retry*).
   - Strikethrough WiFi: offline.
 - **"Last synced N ago"** in the Sync icon's tooltip, with the state.
-- **Settings › Sync & devices**, at the top once a device is paired: the overall sync state, the last successful sync, and the peer count. To retry, use the device list's *Sync all* or a device's *Sync now*.
+- **Settings › Sync & devices**, at the top (below any sync changes that could not be applied) once a device is paired: the overall sync state, the last successful sync, and the peer count. To retry, use the device list's *Sync all* or a device's *Sync now*.
 - **Per-peer progress** in the device's row while a sync is running: sync messages sent and received, then the attachment transfer with files and bytes done of total and a progress bar; the row clears when the sync ends (#5842). It shows for syncs this device starts (*Sync now*, *Sync all*, and its own periodic sync), not for a session the other device dialled in. While it shows, the row offers *Cancel sync* (#5739).
 - **Retry toast** per peer on failure — partial failures don't blow up the whole batch.
+- **Sync changes that could not be applied**, first in Settings › Sync & devices, shown whether or not a device is paired and hidden when there are none (#6057): each row names the space, when the change first arrived, its size, and why it would not merge. Read-only for now: there is no retry.
 - **Quarantine warning** at startup, only on the start that moved changes from another device to quarantine because they still could not be applied after repeated restarts: it says how many and stays until dismissed. Its *Review* opens Settings › Sync & devices. Later starts stay quiet, since a quarantined change cannot be deleted (#6057).
 
 ## How sync runs
@@ -98,4 +99,5 @@ In **DeviceManagement** you can per-peer:
 - **Pairing session is 5 minutes.** If the timer expires, restart from the first device.
 - **The Sync button does the minimum.** It triggers what's already due; if you've just edited something, the auto-sync may have already fired by the time you click.
 - **Unpairing only takes effect on the device you do it from.** There is no message telling the other device it has been unpaired — that device keeps its half of the pairing and keeps trying to sync, and every attempt is refused. It notices on its own within a minute or two and its entry for you turns into a **Pairing lost** state that says to pair again; until then it may still show a recent sync time. To be rid of a pairing on both sides, unpair on both, or pair again to revive it.
+- **A change that will not merge is kept, not dropped.** An incoming change that still has not applied after `QUARANTINE_AFTER_BOOTS` restarts, because its payload is truncated or corrupt or it waits on a change its sender never delivers, stops being retried and is listed under *Sync changes that could not be applied*. Its bytes stay on the device, but its content is not in your notes, and unpairing does not clear it.
 - **Unpaired by mistake?** Pair again from either device. The new pairing replaces the previously remembered identity via TOFU, and clears the *Pairing lost* state on the device that was left behind.

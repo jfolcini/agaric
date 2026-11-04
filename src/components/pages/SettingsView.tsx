@@ -14,6 +14,7 @@ import { useTranslation } from 'react-i18next'
 
 import { StatusPanel, SyncStatusCard } from '@/components/agenda/StatusPanel'
 import { DeviceManagement } from '@/components/peers/DeviceManagement'
+import { QuarantinedSyncCard } from '@/components/peers/QuarantinedSyncCard'
 import { PropertyDefinitionsList } from '@/components/properties/PropertyDefinitionsList'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { AgentAccessTab } from '@/components/settings/AgentAccessTab'
@@ -310,6 +311,7 @@ export function SettingsView(): React.ReactElement {
 
           {activeTab === 'sync' && (
             <div className="space-y-6">
+              <QuarantinedSyncCard />
               <SyncStatusCard />
               <DeviceManagement />
             </div>

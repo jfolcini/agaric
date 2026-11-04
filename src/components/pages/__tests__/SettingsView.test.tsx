@@ -155,7 +155,10 @@ beforeEach(() => {
   // The Notifications tab renders the real NotificationsTab, which loads its
   // preferences on mount (#4554).
   vi.mocked(invoke).mockImplementation(
-    mockInvokeCommands({ get_reminder_settings: () => ({ enabled: false, time: '09:00' }) }),
+    mockInvokeCommands({
+      get_reminder_settings: () => ({ enabled: false, time: '09:00' }),
+      list_quarantined_sync_slots: () => ({ slots: [], total: 0 }),
+    }),
   )
 })
 
@@ -499,6 +502,45 @@ describe('SettingsView', () => {
       status.compareDocumentPosition(panel.getByTestId('device-management')) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+
+  // #6057 — the quarantine card leads the tab and sits outside SyncStatusCard,
+  // which hides when nothing is paired.
+  it('Sync tab shows quarantined sync changes first, outside the sync status card', async () => {
+    vi.mocked(invoke).mockImplementation(
+      mockInvokeCommands({
+        list_quarantined_sync_slots: () => ({
+          slots: [
+            {
+              id: 1,
+              inbox_id: 1,
+              space_id: 'SPACE_PERSONAL',
+              byte_len: 64,
+              declared_end_vv: '[]',
+              last_reason: 'replay failed',
+              unresolved_boots: 5,
+              first_seen_at_ms: Date.now(),
+              quarantined_at_ms: Date.now(),
+            },
+          ],
+          total: 1,
+        }),
+      }),
+    )
+    const user = userEvent.setup()
+    render(<SettingsView />)
+
+    await user.click(screen.getByRole('tab', { name: t('settings.tabSync') }))
+
+    const panel = within(screen.getByTestId('settings-panel-sync'))
+    const card = await panel.findByRole('region', {
+      name: t('sync.quarantineTitle', { count: 1 }),
+    })
+    const status = panel.getByTestId('sync-status-card')
+    expect(status.contains(card)).toBe(false)
+    expect(card.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    )
   })
 
   // #5269 — the former Status view is a Settings tab. #5360 — the tab is App
