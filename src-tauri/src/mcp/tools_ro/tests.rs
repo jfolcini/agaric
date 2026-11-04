@@ -4244,7 +4244,22 @@ async fn resolve_lists_the_pages_a_name_ties_between_5397() {
     let (tools, mat, _dir) = mk_tools().await;
     let space = mk_space(&tools.pool, "S").await;
     let a = mk_named(&tools, &mat, &space, "page", "Dup").await;
-    let b = mk_named(&tools, &mat, &space, "page", "DUP").await;
+    // A create of `DUP` resolves to `Dup` (#6278): the tie sync or old data
+    // leaves is seeded below the name check.
+    let b = create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "DUP".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap()
+    .id
+    .into_string();
+    crate::commands::tests::common::assign_to_space(&tools.pool, &b, &space).await;
     settle(&mat).await;
 
     let result = tools

@@ -13,10 +13,16 @@
  */
 
 import type { AppError } from '@/lib/bindings'
-import { normalizeTagName } from '@/lib/name-tokens'
+import { nameKey } from '@/lib/name-tokens'
 import { foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { deleteCohort, nextCohortMarker, restoreCohort } from '@/lib/tauri-mock/cohort'
-import { indexLinks, linkedTargets, relinkRestored } from '@/lib/tauri-mock/link-index'
+import {
+  indexLinks,
+  linkedTargets,
+  ownerSpaceOf,
+  relinkRestored,
+} from '@/lib/tauri-mock/link-index'
+import { pageNameHolder, pageNameRefusal, rejectTakenPageNames } from '@/lib/tauri-mock/page-names'
 import { forwardPropertyKey, revertPropertyKeyOp, rowOf } from '@/lib/tauri-mock/property-keys'
 import { fitToDeclaredType } from '@/lib/tauri-mock/property-type-change'
 import { type MockOpLogEntry, opLog, spacePropertyDefs } from '@/lib/tauri-mock/seed'
@@ -251,9 +257,8 @@ function revertPropertyMap(
   // #6099 — the revert of a move is a move, refused as the move is when its
   // name is taken where it lands. A trashed block holds no name.
   if (key === 'space' && b && !b['deleted_at']) {
-    const content = (b['content'] as string | null | undefined) ?? null
     const lands = (fromValue?.['value_ref'] as string | null | undefined) ?? null
-    rejectTakenName(blocks, b, content, lands)
+    rejectTakenNames(blocks, b, lands)
   }
 
   // #5057 — `space` is the `blocks.space_id` column, not a property row. The
@@ -338,15 +343,18 @@ function revertPageAlias(
     pageAliases.set(pageId, others)
     return
   }
-  for (const [owner, held] of pageAliases) {
-    if (owner !== pageId && held.some((h) => foldAsciiUppercase(h) === folded)) {
-      const message = `alias '${alias}' is already used by another page`
-      throw Object.assign(new Error(message), {
-        kind: 'validation',
-        code: 'DuplicatePageAlias',
-        message,
-      }) as Error & AppError
-    }
+  const spaceId = ownerSpaceOf(page)
+  const heldElsewhere = [...pageAliases].some(
+    ([owner, held]) => owner !== pageId && held.some((h) => foldAsciiUppercase(h) === folded),
+  )
+  // #6278 — or another live page of the space holds it as a title or alias.
+  if (heldElsewhere || (spaceId !== null && pageNameHolder(alias, spaceId, pageId))) {
+    const message = `alias '${alias}' is already used by another page`
+    throw Object.assign(new Error(message), {
+      kind: 'validation',
+      code: 'DuplicatePageAlias',
+      message,
+    }) as Error & AppError
   }
   pageAliases.set(pageId, [...others, alias])
 }
@@ -422,8 +430,9 @@ function revertLifecycleCohort(opType: string, blocks: Blocks, blockId: string):
 /**
  * #6051 — refuse a revert that would name page or tag `b` `name` in `spaceId`
  * (its own space unless a move's revert takes it elsewhere) while another live
- * page or tag there holds that name, as a rename is refused. Mock twin of
- * `reject_duplicate_name` (`src-tauri/src/commands/blocks/crud.rs`).
+ * page or tag there holds that name under `nameKey`, a page's by title or alias
+ * (#6278), as a rename is refused. Mock twin of `reject_duplicate_name`
+ * (`src-tauri/src/commands/blocks/crud.rs`).
  */
 function rejectTakenName(
   blocks: Blocks,
@@ -433,26 +442,44 @@ function rejectTakenName(
 ): void {
   const kind = b['block_type']
   if ((kind !== 'page' && kind !== 'tag') || spaceId === null || name === null) return
-  const identity = (s: string): string => (kind === 'tag' ? normalizeTagName(s) : s)
+  if (kind === 'page') {
+    const holder = pageNameHolder(name, spaceId, b['id'] as string)
+    if (holder) throw pageNameRefusal(holder, name)
+    return
+  }
   const taken = [...blocks.values()].some(
     (other) =>
       other !== b &&
-      other['block_type'] === kind &&
+      other['block_type'] === 'tag' &&
       !other['deleted_at'] &&
       other['space_id'] === spaceId &&
       typeof other['content'] === 'string' &&
-      identity(other['content']) === identity(name),
+      nameKey(other['content']) === nameKey(name),
   )
   if (!taken) return
-  const message =
-    kind === 'tag'
-      ? `a tag named '${name}' already exists in this space`
-      : `a page titled '${name}' already exists in this space`
+  const message = `a tag named '${name}' already exists in this space`
   throw Object.assign(new Error(message), {
     kind: 'validation' as const,
     code: 'DuplicatePageTitle' as const,
     message,
   })
+}
+
+/**
+ * {@link rejectTakenName} for `b` the revert of a move or a delete brings into
+ * `spaceId`, and for each alias a page brings with it: the per-block check of
+ * `reject_taken_names`.
+ */
+function rejectTakenNames(
+  blocks: Blocks,
+  b: BlockRow,
+  spaceId: string | null = (b['space_id'] as string | null | undefined) ?? null,
+): void {
+  if (b['block_type'] === 'page' && spaceId !== null) {
+    rejectTakenPageNames(b, spaceId)
+    return
+  }
+  rejectTakenName(blocks, b, (b['content'] as string | null | undefined) ?? null, spaceId)
 }
 
 /**
@@ -467,10 +494,7 @@ function restoreRefusingTakenNames(blocks: Blocks, blockId: string): void {
     (id) => deletedBefore.get(id) && !blocks.get(id)?.['deleted_at'],
   )
   try {
-    for (const id of restored) {
-      const b = blocks.get(id) as Record<string, unknown>
-      rejectTakenName(blocks, b, (b['content'] as string | null | undefined) ?? null)
-    }
+    for (const id of restored) rejectTakenNames(blocks, blocks.get(id) as Record<string, unknown>)
   } catch (err) {
     for (const [id, deletedAt] of deletedBefore) {
       const b = blocks.get(id)

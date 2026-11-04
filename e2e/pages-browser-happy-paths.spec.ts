@@ -185,3 +185,35 @@ test('renaming a page in its header onto an existing title is refused and keeps 
   await grid(page).getByText('Projects', { exact: true }).click()
   await expect(title).toHaveText('Projects')
 })
+
+// #6278 — a title is one name in any case: another spelling of a taken title
+// is refused the same way.
+test('renaming a page in its header onto another case of a taken title is refused @pages', async ({
+  page,
+}) => {
+  const title = page.locator('[aria-label="Page title"]')
+  await grid(page).getByText('Projects', { exact: true }).click()
+  await expect(title).toHaveText('Projects')
+
+  await title.fill('MEETINGS')
+  await title.press('Enter')
+  await expect(
+    page
+      .locator('[data-sonner-toast]')
+      .getByText('A page with this title already exists in this space', { exact: true }),
+  ).toBeVisible()
+  await expect(title).toHaveText('Projects')
+  await expect
+    .poll(() => getConsoleErrors(page))
+    .toEqual([expect.stringContaining('Failed to rename page')])
+  clearConsoleErrors(page)
+
+  await openPagesView(page)
+  await expect(flatPageTitles(page)).toHaveText([
+    'Getting Started',
+    'Meeting Notes Template',
+    'Meetings',
+    'Projects',
+    'Quick Notes',
+  ])
+})

@@ -3200,7 +3200,14 @@ async fn append_block_takes_its_parent_page_by_name_5397() {
     let (tools, mat, pool, space, _dir) = mk_tools().await;
     let page = mk_page(&pool, &mat, &space, "Project X").await;
     let dup_a = mk_page(&pool, &mat, &space, "Dup").await;
-    let dup_b = mk_page(&pool, &mat, &space, "DUP").await;
+    // A create of `DUP` resolves to `Dup` (#6278): the tie sync or old data
+    // leaves is seeded below the name check.
+    let dup_b = create_block_inner(&pool, DEV, &mat, "page".into(), "DUP".into(), None, None)
+        .await
+        .unwrap()
+        .id
+        .into_string();
+    crate::commands::tests::common::assign_to_space(&pool, &dup_b, &space).await;
     settle(&mat).await;
 
     let result = tools

@@ -3178,7 +3178,7 @@ async fn apply_page_source_reads_a_ref_value_as_an_id_or_a_title() {
     let page = dup_page(&pool, &mat, "Refs").await;
     let project = dup_page(&pool, &mat, "Project").await;
     dup_page(&pool, &mat, "Twin").await;
-    dup_page(&pool, &mat, "twin").await;
+    dup_twin_page(&pool, &mat, "twin").await;
     create_test_property_def(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();
@@ -4868,6 +4868,17 @@ pub(super) async fn dup_page(pool: &SqlitePool, mat: &Materializer, title: &str)
         .unwrap()
 }
 
+/// A second page whose title is another spelling of a [`dup_page`]'s. A create
+/// resolves to that page (#6278), so the tie sync or old data leaves is seeded
+/// below the name check, as a legacy duplicate is.
+pub(super) async fn dup_twin_page(pool: &SqlitePool, mat: &Materializer, title: &str) -> BlockId {
+    let page = create_block_inner(pool, DEV, mat, "page".into(), title.into(), None, None)
+        .await
+        .unwrap();
+    assign_to_space(pool, page.id.as_str(), TEST_SPACE_ID).await;
+    page.id
+}
+
 /// A content block appended under `parent`.
 pub(super) async fn dup_child(
     pool: &SqlitePool,
@@ -6511,7 +6522,7 @@ async fn import_leaves_a_link_whose_pipe_reading_ties_as_text() {
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     dup_page(&pool, &mat, "X | Y").await;
-    dup_page(&pool, &mat, "x | y").await;
+    dup_twin_page(&pool, &mat, "x | y").await;
     settle(&mat).await;
 
     let result = import_file(
@@ -11585,7 +11596,7 @@ async fn import_resolves_a_name_by_exact_title_then_case_then_alias_then_creates
         .await
         .unwrap();
     let foo = dup_page(&pool, &mat, "Foo").await;
-    dup_page(&pool, &mat, "foo").await;
+    dup_twin_page(&pool, &mat, "foo").await;
     settle(&mat).await;
 
     let result = import_file(

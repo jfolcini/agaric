@@ -2,8 +2,9 @@
  * usePageCreation — the create handler behind the New page dialog.
  *
  * `createPage(name)` creates a page in the active space and returns it, or
- * the page that already carries `name` exactly (`create_page_in_space`
- * resolves an existing title to that page). A blank name picks the first free
+ * the page that already carries `name` in any case or normal form
+ * (`create_page_in_space` resolves an existing title to that page, #6278),
+ * under its own title. A blank name picks the first free
  * `Untitled N`. A failure is mapped to a message in `createError` (a
  * duplicate-name conflict is user-actionable, anything else is not) and
  * `createPage` returns `null`, so the caller can keep its form open.
@@ -17,10 +18,12 @@ import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { announce } from '@/lib/announcer'
-import { isConflict, unwrap } from '@/lib/app-error'
+import { isConflict, unwrap, validationCode } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notifyPageAdded } from '@/lib/name-change-bus'
+import { nameKey } from '@/lib/name-tokens'
+import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { untitledTitle } from '@/lib/untitled-page'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -61,13 +64,16 @@ export function usePageCreation(): UsePageCreationResult {
       try {
         // #4723 — `create_page_in_space` RESOLVES an existing title to that
         // page instead of creating one, so read the space's titles first: a
-        // blank name needs a free `Untitled N`, and an exact title is opened.
+        // blank name needs a free `Untitled N`, and a taken title is opened.
         const spacePages = unwrap(
           await commands.listAllPagesInSpace({ kind: 'active', space_id: activeSpaceId }, null),
         )
         const name = rawName.trim() || untitledTitle(spacePages.map((page) => page.content))
-        const existing = spacePages.find((page) => page.content === name)
-        if (existing) return { id: existing.id, title: name }
+        // #6278 — under the key the backend resolves by, opened as titled.
+        const existing = spacePages.find(
+          (page) => page.content !== null && nameKey(page.content) === nameKey(name),
+        )
+        if (existing) return { id: existing.id, title: existing.content ?? name }
         const id = unwrap(await commands.createPageInSpace(null, name, activeSpaceId))
         // #4338 — publish so a warm `[[` picker cache offers the page at once.
         notifyPageAdded(id, name, activeSpaceId)
@@ -76,8 +82,11 @@ export function usePageCreation(): UsePageCreationResult {
         return { id, title: name }
       } catch (error) {
         logger.warn('usePageCreation', 'create page failed', { name: rawName }, error)
+        // #6278 — another page's alias refuses the create.
+        const duplicate =
+          isConflict(error) || validationCode(error) === ValidationCode.DuplicatePageTitle
         setCreateError(
-          isConflict(error)
+          duplicate
             ? t('pageBrowser.duplicateName')
             : t('pageBrowser.createFailed', { error: String(error) }),
         )

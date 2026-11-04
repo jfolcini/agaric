@@ -28,7 +28,7 @@ use tracing::instrument;
 use crate::commands::{create_block_in_tx, set_property_in_tx};
 use crate::db::{CommandTx, ReadPool, WriteCtx};
 use crate::materializer::Materializer;
-use agaric_core::error::AppError;
+use agaric_core::error::{AppError, ValidationCode};
 use agaric_core::ulid::BlockId;
 use agaric_engine::apply::loro_apply::hydrate_space_block_into_own_engine;
 use agaric_store::space::SpaceId;
@@ -189,9 +189,11 @@ pub(crate) async fn require_live_space_in_tx(
 /// happens inside the transaction so the validation is TOCTOU-safe
 /// against a concurrent delete of the target space.
 ///
-/// A live page in `space_id` already titled `content` is returned as-is
-/// (nothing created, no op appended): page titles are unique per space
-/// (#4723).
+/// A live page in `space_id` already titled `content` under
+/// [`name_key`](agaric_core::tag_norm::name_key) (trim, case, NFC) is
+/// returned as-is (nothing created, no op appended): page titles are unique
+/// per space (#4723, #6278). A `content` another page holds as an alias is
+/// refused.
 ///
 /// A `content` in `YYYY-MM-DD` form names a journal day, so the space's
 /// journal template is copied under the new page in the same transaction
@@ -204,6 +206,8 @@ pub(crate) async fn require_live_space_in_tx(
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `space_id` does not refer to a live space block.
+/// - [`AppError::Validation`] coded [`ValidationCode::DuplicatePageTitle`] —
+///   another page of the space holds `content` as an alias.
 /// - [`AppError::NotFound`] — `parent_id` does not refer to a live block.
 /// - Other [`AppError`] variants propagated from
 ///   [`create_block_in_tx`] / [`set_property_in_tx`].
@@ -243,10 +247,16 @@ pub async fn create_page_in_space_inner(
 
     // #4723 — a title is unique among live pages of one space, and a caller
     // asking for an existing title (`[[name]]`) means that page: resolve to
-    // it, create nothing, append nothing.
-    if let Some(existing) = find_live_page_by_title(&mut tx, &space_id, &content, None).await? {
-        tx.commit_without_dispatch().await?;
-        return Ok(BlockId::from_trusted(&existing));
+    // it, create nothing, append nothing. Another page's alias is refused
+    // instead: a caller that stamps the page it gets back (a template) would
+    // stamp a page it never named.
+    match find_live_page_by_name(&mut tx, &space_id, &content, None).await? {
+        Some(PageNameHolder::Title(existing)) => {
+            tx.commit_without_dispatch().await?;
+            return Ok(BlockId::from_trusted(&existing));
+        }
+        Some(holder) => return Err(holder.refusal(&content)),
+        None => {}
     }
 
     // #5395 — a page titled as a date IS that day's journal page (the journal
@@ -345,30 +355,128 @@ async fn require_parent_in_space_in_tx(
     }
 }
 
-/// The live page in `space_id` titled exactly `title` (the comparison
-/// `resolve_or_create_journal_page` uses), skipping `exclude_id` so a rename
-/// does not collide with the page being renamed (#4723).
-pub(crate) async fn find_live_page_by_title(
+/// How a live page holds a name in its space (#6278), with the page's id.
+pub(crate) enum PageNameHolder {
+    Title(String),
+    Alias(String),
+}
+
+impl PageNameHolder {
+    pub(crate) fn into_id(self) -> String {
+        match self {
+            Self::Title(id) | Self::Alias(id) => id,
+        }
+    }
+
+    /// The refusal of a page titled `title` while this page holds the name.
+    pub(crate) fn refusal(&self, title: &str) -> AppError {
+        let message = match self {
+            Self::Title(_) => format!("a page titled '{title}' already exists in this space"),
+            Self::Alias(_) => format!("a page in this space has the alias '{title}'"),
+        };
+        AppError::validation_coded(ValidationCode::DuplicatePageTitle, message)
+    }
+}
+
+/// Every name the live pages of one space hold, titles and aliases, each with
+/// its [`name_key`](agaric_core::tag_norm::name_key) (#6278). SQLite cannot
+/// apply the fold, so they are all read and folded here, each list as one
+/// `json_group_array` row: sqlx hands rows over one at a time, which at 10K
+/// pages costs tens of milliseconds a single row does not
+/// (`page_name_check_cost_at_10k_pages`).
+pub(crate) struct SpacePageNames {
+    titles: Vec<PageName>,
+    aliases: Vec<PageName>,
+}
+
+struct PageName {
+    page_id: String,
+    name: String,
+    key: String,
+}
+
+impl SpacePageNames {
+    pub(crate) async fn read(
+        conn: &mut sqlx::SqliteConnection,
+        space_id: &str,
+    ) -> Result<Self, AppError> {
+        let titles = sqlx::query_scalar!(
+            r#"SELECT json_group_array(json_array(id, content)) AS "titles!: String"
+               FROM blocks
+               WHERE block_type = 'page'
+                 AND deleted_at IS NULL
+                 AND content IS NOT NULL
+                 AND space_id = ?1"#,
+            space_id,
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        let aliases = sqlx::query_scalar!(
+            r#"SELECT json_group_array(json_array(a.page_id, a.alias)) AS "aliases!: String"
+               FROM page_aliases a
+               JOIN blocks b ON b.id = a.page_id
+               WHERE b.block_type = 'page'
+                 AND b.deleted_at IS NULL
+                 AND b.space_id = ?1"#,
+            space_id,
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        let folded = |pairs: &str| -> Result<Vec<PageName>, AppError> {
+            let pairs: Vec<(String, String)> = serde_json::from_str(pairs)?;
+            Ok(pairs
+                .into_iter()
+                .map(|(page_id, name)| PageName {
+                    key: agaric_core::tag_norm::name_key(&name),
+                    page_id,
+                    name,
+                })
+                .collect())
+        };
+        Ok(Self {
+            titles: folded(&titles)?,
+            aliases: folded(&aliases)?,
+        })
+    }
+
+    /// The page other than `exclude_id` that holds `name`, as its title before
+    /// as an alias, the smallest id first. A rename excludes the page it
+    /// renames, so it may respell its own title (#4723).
+    pub(crate) fn holder(&self, name: &str, exclude_id: Option<&str>) -> Option<PageNameHolder> {
+        let key = agaric_core::tag_norm::name_key(name);
+        let holder = |names: &[PageName]| {
+            names
+                .iter()
+                .filter(|held| held.key == key && Some(held.page_id.as_str()) != exclude_id)
+                .map(|held| held.page_id.clone())
+                .min()
+        };
+        holder(&self.titles)
+            .map(PageNameHolder::Title)
+            .or_else(|| holder(&self.aliases).map(PageNameHolder::Alias))
+    }
+
+    /// The aliases `page_id` holds, as written.
+    pub(crate) fn aliases_of(&self, page_id: &str) -> Vec<String> {
+        self.aliases
+            .iter()
+            .filter(|held| held.page_id == page_id)
+            .map(|held| held.name.clone())
+            .collect()
+    }
+}
+
+/// The live page of `space_id` other than `exclude_id` that holds `name`
+/// ([`SpacePageNames::holder`]).
+pub(crate) async fn find_live_page_by_name(
     conn: &mut sqlx::SqliteConnection,
     space_id: &str,
-    title: &str,
+    name: &str,
     exclude_id: Option<&str>,
-) -> Result<Option<String>, AppError> {
-    let id = sqlx::query_scalar!(
-        r#"SELECT id as "id!: String" FROM blocks
-           WHERE block_type = 'page'
-             AND deleted_at IS NULL
-             AND content = ?
-             AND space_id = ?
-             AND id IS NOT ?
-           LIMIT 1"#,
-        title,
-        space_id,
-        exclude_id,
-    )
-    .fetch_optional(conn)
-    .await?;
-    Ok(id)
+) -> Result<Option<PageNameHolder>, AppError> {
+    Ok(SpacePageNames::read(conn, space_id)
+        .await?
+        .holder(name, exclude_id))
 }
 
 /// Tauri command wrapper around [`create_page_in_space_inner`].
