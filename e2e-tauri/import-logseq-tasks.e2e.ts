@@ -26,6 +26,7 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
+  importMarkdownPage,
   navigateTo,
   reopenPageByTitle,
   runScopedMarker,
@@ -42,29 +43,9 @@ const MARKDOWN = [
   '',
 ].join('\n')
 
-/**
- * Import `markdown` as the page `title` through the Data tab's file input and
- * reopen the page from a fresh backend read (#6033).
- */
+/** Import `markdown` as the page `title` and reopen it from a fresh backend read (#6033). */
 async function importAndReopen(title: string, markdown: string): Promise<void> {
-  await navigateTo('Settings')
-  const dataTab = $('#settings-tab-data')
-  await dataTab.waitForClickable({ timeout: NAV_TIMEOUT })
-  await dataTab.click()
-  await $('[data-testid="settings-panel-data"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
-  const file = path.join(mkdtempSync(path.join(os.tmpdir(), 'wdio-logseq-')), `${title}.md`)
-  writeFileSync(file, markdown)
-  const input = $('[data-testid="import-file-input"]')
-  await input.waitForExist({ timeout: ACTION_TIMEOUT })
-  await browser.execute(() => {
-    document.querySelector('[data-testid="import-file-input"]')?.classList.remove('hidden')
-  })
-  await input.addValue(file)
-  const result = $('[data-testid="import-result"]')
-  await browser.waitUntil(async () => (await result.getText()).includes(`Imported “${title}”`), {
-    timeout: ACTION_TIMEOUT,
-    timeoutMsg: 'import result never named the imported page',
-  })
+  await importMarkdownPage(title, markdown)
   await navigateTo('Journal')
   await reopenPageByTitle(title)
 }

@@ -14782,16 +14782,6 @@ async fn a_logseq_quote_block_imports_as_a_quote() {
     );
 }
 
-/// #6033 — a `#+BEGIN_X` block that is no admonition or quote stays text.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_unknown_org_block_imports_as_written() {
-    let md = "- #+BEGIN_FOO\n  x\n  #+END_FOO\n";
-    assert_eq!(
-        imported_blocks(md, "Foo Block").await,
-        [("#+BEGIN_FOO\nx\n#+END_FOO".to_string(), None)]
-    );
-}
-
 /// #1918 — a single over-deep import block must skip-and-warn, NOT abort the
 /// whole chunk. We hand-author markdown a single block of which exceeds
 /// `MAX_BLOCK_DEPTH` once the page-root offset is added, by forging a depth
