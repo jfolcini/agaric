@@ -788,10 +788,10 @@ export function todoBlock(title: string, task: TaskBlock): string {
  * unset (`0`) or unreadable: `formatDate` throws on an invalid date, which
  * would fail the whole file.
  */
-export function localDate(ms: number, timeZone: string | null = null): string | null {
+export function localDate(ms: number, timeZone = ''): string | null {
   const date = new Date(ms)
   if (!(ms > 0) || Number.isNaN(date.getTime())) return null
-  if (timeZone !== null) {
+  if (timeZone.length > 0) {
     try {
       const parts = new Intl.DateTimeFormat('en-US', {
         timeZone,
@@ -811,7 +811,7 @@ export function localDate(ms: number, timeZone: string | null = null): string | 
 /** The day an Evernote timestamp falls on in `timeZone` (else local), or null. */
 function enexDay(raw: string, timeZone = ''): string | null {
   const ms = parseEnexTimestamp(raw)
-  return ms === null ? null : localDate(ms, timeZone.length > 0 ? timeZone : null)
+  return ms === null ? null : localDate(ms, timeZone)
 }
 
 /**
@@ -826,7 +826,7 @@ function readTaskGroups(noteEl: Element): Map<string, string> {
       done: childText(task, 'taskStatus') === 'completed',
       scheduledDate: enexDay(
         childText(task, 'reminder > reminderDate'),
-        childText(task, 'reminder > timeZone'),
+        childText(task, 'reminder > timeZone') || childText(task, 'timeZone'),
       ),
       dueDate: enexDay(childText(task, 'dueDate'), childText(task, 'timeZone')),
     }),

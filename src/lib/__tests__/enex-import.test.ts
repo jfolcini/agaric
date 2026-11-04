@@ -1208,6 +1208,36 @@ describe('parseEnex — Evernote tasks (#6032)', () => {
     expect(note.createdMs).toBeNull()
     expect(note.updatedMs).toBeNull()
   })
+
+  it('puts each task group of a note where its own placeholder stood', () => {
+    const enml = `${taskGroupDiv('g1')}<p>between</p>${taskGroupDiv('g2')}`
+    const xml = enex(
+      `<note><title>Two</title><content>${content(enml)}</content>
+        ${task('Second', 'open', 'B', 'g2')}
+        ${task('First', 'open', 'A', 'g1')}
+      </note>`,
+    )
+
+    expect(at(parseEnex(xml)).markdown).toBe('- [ ] First\n\nbetween\n\n- [ ] Second')
+  })
+
+  it("dates a reminder with no zone of its own in the task's zone", () => {
+    // 03:00 UTC on 23 May is the evening of 22 May in Los Angeles.
+    const xml = enex(
+      `<note><title>Zoned</title><content>${content(taskGroupDiv('g'))}</content>
+        ${task(
+          'West',
+          'open',
+          'A',
+          'g',
+          '<timeZone>America/Los_Angeles</timeZone>' +
+            '<reminder><reminderDate>20220523T030000Z</reminderDate></reminder>',
+        )}
+      </note>`,
+    )
+
+    expect(at(parseEnex(xml)).markdown).toBe('- [ ] West\n  scheduled_date:: 2022-05-22')
+  })
 })
 
 describe('parseEnex — note reminders (#6032)', () => {
@@ -1242,6 +1272,19 @@ describe('parseEnex — note reminders (#6032)', () => {
       `- [x] Called\n  due_date:: ${day}\n\nbody`,
       '- [ ] Pinned\n\nbody',
       'body',
+    ])
+  })
+
+  it('opens a note with a reminder time or a done time but no order with a task block', () => {
+    const xml = enex(
+      reminderNote('Timed', '<reminder-time>20240501T120000Z</reminder-time>'),
+      reminderNote('Done', '<reminder-done-time>20240502T080000Z</reminder-done-time>'),
+    )
+
+    const day = formatDate(new Date(Date.UTC(2024, 4, 1, 12, 0, 0)))
+    expect(parseEnex(xml).map((n) => n.markdown)).toEqual([
+      `- [ ] Timed\n  due_date:: ${day}\n\nbody`,
+      '- [x] Done\n\nbody',
     ])
   })
 
