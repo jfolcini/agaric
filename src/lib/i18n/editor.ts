@@ -47,6 +47,9 @@ export const editor: Record<string, string> = {
   // #5364 — inline audio player.
   'attachment.loadingAudio': 'Loading audio…',
   'attachment.audioLabel': 'Audio {{filename}}',
+  // #5410 — a recording's transcript, whose timestamps seek its player.
+  'attachment.transcript': 'Transcript',
+  'attachment.seekTo': 'Seek to {{time}}',
   // #5364 — the /voice recorder dialog.
   'voiceNote.title': 'Record a voice note',
   'voiceNote.description': 'Records from your microphone and attaches the audio to this block.',
