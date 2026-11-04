@@ -377,20 +377,23 @@ export function parseTable(
 }
 
 /**
- * A row shape ONLY `serializeTable`'s own separator ever takes: `---` in
- * every populated cell — 3 OR MORE bare dashes, no colons, no shorter form.
- * Deliberately narrower than `DELIMITER_CELL` / `isSeparatorRow`'s full GFM
- * delimiter grammar (colons, `-`, `--` all qualify there): a genuine data
- * cell can legally hold `--` or `:-` and nothing escapes it on serialize, so
- * treating those shapes as a split signal here — with no header context to
- * disambiguate, unlike row 1 — would misfire on real content. A bare 3+-dash
- * cell has no such escape hatch in OUR OWN output: `serializeParagraph`'s
- * horizontal-rule guard (`^-{3,}$`, table cells go through it too) escapes a
- * genuine one to `\---` — including a cell whose text has surrounding
- * whitespace (`"--- "`), because `serializeTable` trims the cell at the NODE
- * level, via `canonicalCellParagraphs`, BEFORE `serializeParagraph` ever sees
- * it; the `.trim()` on the emitted string is only a finisher for the
- * multi-paragraph seam (pinned in `markdown-roundtrip-fidelity.test.ts`).
+ * A row shape `serializeTable`'s own separator takes: `---` in every
+ * populated cell — 3 OR MORE dashes, with the column's alignment colons
+ * (`:---`, `---:`, `:---:`, #6277), no shorter form. Deliberately narrower
+ * than `DELIMITER_CELL` / `isSeparatorRow`'s full GFM delimiter grammar (`-`,
+ * `--`, `:-` all qualify there): a genuine data cell can legally hold `--` or
+ * `:-` and nothing escapes it on serialize, so treating those shapes as a
+ * split signal here — with no header context to disambiguate, unlike row 1 —
+ * would misfire on real content. A bare 3+-dash cell has no such escape
+ * hatch in OUR OWN output: `serializeParagraph`'s horizontal-rule guard
+ * (`^-{3,}$`, table cells go through it too) escapes a genuine one to `\---`
+ * — including a cell whose text has surrounding whitespace (`"--- "`),
+ * because `serializeTable` trims the cell at the NODE level, via
+ * `canonicalCellParagraphs`, BEFORE `serializeParagraph` ever sees it; the
+ * `.trim()` on the emitted string is only a finisher for the multi-paragraph
+ * seam (pinned in `markdown-roundtrip-fidelity.test.ts`). An aligned form is
+ * not escaped in a data cell, so for it only the width disagreement
+ * `splitTableRuns` requires decides.
  *
  * NECESSARY, NOT SUFFICIENT. That guarantee covers our own re-serialized
  * output only. FOREIGN markdown escapes nothing, so an unescaped bare-dash
@@ -398,7 +401,7 @@ export function parseTable(
  * placeholder) — which is why `splitTableRuns` requires a second, decidable
  * condition on top of this shape test.
  */
-const ABSORBED_TABLE_SEPARATOR_CELL = /^-{3,}$/
+const ABSORBED_TABLE_SEPARATOR_CELL = /^:?-{3,}:?$/
 
 function looksLikeAbsorbedTableSeparator(cells: readonly string[]): boolean {
   const written = cells.filter((cell) => cell !== '')
