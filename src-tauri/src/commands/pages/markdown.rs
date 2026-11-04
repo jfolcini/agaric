@@ -980,6 +980,9 @@ enum PageRead {
     Buffer,
     /// A duplicate, which writes every id raw: nothing more.
     Duplicate,
+    /// The mirror's file: the buffer's reads and the blocks something
+    /// addresses, which alone carry an anchor.
+    File,
 }
 
 /// The renderings of a page's block tree. In every one a task's state is a
@@ -1021,12 +1024,10 @@ impl RenderMode {
     }
 }
 
-/// Whether the mirror's file writes block `id` with its `^ID` (#6277
-/// decision 6). Every block for now, as the buffer does. When #6277 A3 lands,
-/// this is `data.addressed_blocks.contains(id)`, with `load_page_export_data`
-/// loading `addressed_blocks` for [`get_page_file_inner`]'s read too.
-fn file_anchors(_data: &PageExportData, _id: &str) -> bool {
-    true
+/// Whether the mirror's file writes block `id` with its `^ID`: only when
+/// something addresses it (#6277 decision 6).
+fn file_anchors(data: &PageExportData, id: &str) -> bool {
+    data.addressed_blocks.contains(id)
 }
 
 /// A page as the Markdown mirror writes its file (#5363): the text, and for
@@ -2625,7 +2626,7 @@ pub async fn get_page_buffer_inner(
 pub async fn get_page_file_inner(pool: &SqlitePool, page_id: &str) -> Result<PageFile, AppError> {
     BlockId::from_string(page_id)?;
     let mut tx = pool.begin().await?;
-    let data = load_page_export_data(&mut tx, page_id, PageRead::Buffer).await?;
+    let data = load_page_export_data(&mut tx, page_id, PageRead::File).await?;
     tx.commit().await?;
     Ok(render_page_file(&data))
 }
@@ -3571,7 +3572,7 @@ async fn load_page_export_data(
         HashMap::new()
     };
     let mut refs = resolve_references(conn, page_id, &descendants).await?;
-    if export {
+    if export || read == PageRead::File {
         refs.addressed_blocks
             .extend(load_addressed_blocks(conn, &descendants).await?);
     }
@@ -3591,7 +3592,7 @@ async fn load_page_export_data(
     } else {
         (Vec::new(), Vec::new())
     };
-    let name_snapshot = if read == PageRead::Buffer {
+    let name_snapshot = if matches!(read, PageRead::Buffer | PageRead::File) {
         load_name_snapshot(conn, &page.id, &descendants, &refs.page_titles).await?
     } else {
         NameSnapshot::default()

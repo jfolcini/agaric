@@ -261,10 +261,74 @@ proptest! {
             .filter(|&line| file.line_ids[line - 1].is_some())
             .collect();
         prop_assert_eq!(id_lines, starts, "text:\n{}", file.text);
-        for block in blocks.iter().filter(|block| block.block_anchor.is_some()) {
+        // A `^word` that is no block id is content, as `anchor_free` reads it.
+        let anchored = blocks.iter().filter(|block| {
+            block.block_anchor.as_deref().is_some_and(|word| BlockId::from_string(word).is_ok())
+        });
+        for block in anchored {
             let line = block.line.expect("a block has a line");
             prop_assert_eq!(&file.line_ids[line - 1], &block.block_anchor, "text:\n{}", file.text);
         }
+    }
+
+    /// The mirror's file anchors exactly the addressed blocks (#6277 decision
+    /// 6), and with its anchors taken out it is the buffer's text with the
+    /// buffer's ids on the same lines, so a save reads the file as it reads
+    /// the buffer (#5363).
+    #[test]
+    fn a_file_without_its_anchors_is_the_buffer_by_its_line_ids(
+        (forest, addressed) in arb_document_forest().prop_flat_map(|forest| {
+            let n = forest.len();
+            (Just(forest), prop::collection::vec(any::<bool>(), n))
+        })
+    ) {
+        // An unaddressed block of plain words, which never needs an anchor.
+        let (mut forest, mut addressed) = (forest, addressed);
+        forest.push(plain(0, "plain words"));
+        addressed.push(false);
+        let (mut data, expected) = build_page(&forest);
+        data.addressed_blocks = expected
+            .iter()
+            .zip(&addressed)
+            .filter(|(_, is)| **is)
+            .map(|(block, _)| block.2.clone())
+            .collect();
+        let file = render_page_file(&data);
+        // An unaddressed block is written as a block copy writes it, with an
+        // anchor only when it would read back as other content; one of plain
+        // words never needs one.
+        for ((_, content, id, _), is) in expected.iter().zip(&addressed) {
+            let anchored = file.text.contains(&format!("^{id}"));
+            let plain = !content.trim().is_empty()
+                && content.chars().all(|c| c.is_alphanumeric() || c == ' ');
+            if *is || plain {
+                prop_assert_eq!(anchored, *is, "{} in:\n{}", id, file.text);
+            }
+        }
+        let (buffer_text, buffer_ids) = anchor_free(&render_page_document(&data).0);
+        let (file_text, _) = anchor_free(&file.text);
+        let own_anchor_lines: HashSet<String> =
+            expected.iter().map(|(_, _, id, _)| format!("^{id}")).collect();
+        let file_ids: Vec<Option<String>> = file
+            .text
+            .split('\n')
+            .zip(&file.line_ids)
+            .filter(|(line, _)| !own_anchor_lines.contains(line.trim()))
+            .map(|(_, id)| id.clone())
+            .collect();
+        let read = |text: &str, ids: &[Option<String>]| -> Vec<_> {
+            read_by_ids(text, ids)
+                .blocks
+                .into_iter()
+                .map(|block| (block.depth, block.content, block.properties, block.block_anchor))
+                .collect()
+        };
+        prop_assert_eq!(
+            read(&file_text, &file_ids),
+            read(&buffer_text, &buffer_ids),
+            "file:\n{}",
+            file.text
+        );
     }
 
     /// Render → read → render writes the same bytes.

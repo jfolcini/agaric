@@ -214,6 +214,21 @@ async fn a_page_is_written_as_its_file_render_with_the_ids_of_its_lines() {
     );
 }
 
+/// Only a block something addresses carries its `^ID` in the file (#6277
+/// decision 6): here one a block of another page refers to.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_anchors_the_block_another_page_refers_to_and_no_other() {
+    let mut fx = Fx::new().await;
+    let (_, blocks) = fx.page("Alpha", &["target", "plain"]).await;
+    fx.page("Beta", &[&format!("see (({}))", blocks[0])]).await;
+
+    fx.tick().await;
+
+    let file = fx.read(ALPHA).expect("Alpha is written");
+    assert!(file.contains(&format!("target ^{}", blocks[0])), "{file}");
+    assert!(!file.contains(&format!("^{}", blocks[1])), "{file}");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_unchanged_page_writes_nothing() {
     let mut fx = Fx::new().await;

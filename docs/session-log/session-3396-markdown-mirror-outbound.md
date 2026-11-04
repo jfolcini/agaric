@@ -8,13 +8,13 @@ Decisions worth knowing later:
 - **Rename order.** A rename removes the old file, and only if it still equals the newest shadow, before writing the new one. Otherwise a case-only rename on a case-insensitive file system would delete the file it had just written.
 - **Never overwrite.** A file that matches neither the newest shadow nor the render is never overwritten or removed. It is listed as diverged and retried every tick, so restoring it clears the listing.
 - **Pausing.** A missing folder or marker, or a marker naming another device, pauses the mirror. The marker is checked again before each page write, so a drive unplugged mid-pass leaves nothing on the system disk.
-- **Anchors.** `file_anchors` in `markdown.rs` is the one switch for decision 6. It anchors every block until #6277 A3 (#6306) lands its `addressed_blocks`.
+- **Anchors.** `file_anchors` in `markdown.rs` writes `^ID` only on a block in A3's `addressed_blocks` (#6306), which the file read (`PageRead::File`) loads. Any other block is written the way a block copy writes it: it gets an anchor only when its text would otherwise read back as something else, such as an open fence or a trailing `^word`. Without its anchors, the file reads back as the buffer does, under the same line ids.
 - **Paths** are ported from `export-graph.ts` into `mirror/paths.rs`. Collisions are folded with `normalize_tag_name`, and colliding names are disambiguated in id order. The ZIP keeps its TS copy; the maintainer was asked about this (Q-paths).
 
 The widened Document proptest found that a page property holding `\r` makes Edit as Markdown refuse every save of that page. Filed as #6325; the generator leaves `\r` out of front-matter values until it is fixed.
 
 What ran:
-- `cargo nextest run -p agaric --lib` over `mirror::`, `commands::pages::markdown` and `ts_bindings_up_to_date`: 134 passed.
+- `cargo nextest run -p agaric --lib` over `mirror::`, `commands::pages::markdown` and `ts_bindings_up_to_date`: 136 passed.
 - `cargo clippy --workspace --all-targets -- -D warnings`; `SQLX_OFFLINE=true cargo check --workspace --all-targets`.
 - The settings and tauri-mock vitests: 1986 passed.
 - `npm run typecheck` and `npm run lint`.
