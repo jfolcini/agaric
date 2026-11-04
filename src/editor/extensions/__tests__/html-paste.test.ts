@@ -831,6 +831,7 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
     ['a ref by id', '[[01ARZ3NDEKTSV4RRFFQ69G5FAV]]'],
     ['a name in inline code', '`[[Fresh page]]`'],
     ['a list line after text, which the block path would renumber', '3. see [[Fresh page]]'],
+    ['a list line after a blank line', '\n3. see [[Fresh page]]'],
     ['a task line, which TaskPaste owns', '- [ ] see [[Fresh page]]'],
   ])('leaves one line holding %s off the block path', async (_name, text) => {
     editor = await buildEditor(HELLO_WORLD)

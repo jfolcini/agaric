@@ -435,11 +435,9 @@ function insertInlineMarkdown(view: EditorView, markdown: string): void {
 /**
  * Paste one line of plain text as inline markdown at the caret (#5160 N11),
  * so a line reads the same as it does pasted as a block: marks, links, images,
- * math and refs; a line naming a page goes to the block path instead (#6033),
- * but in a table or a list, where its name stays text. Plain text, a task line
- * and a bare URL are left to the default paste, `TaskPaste` and
- * `ExternalLink`, and so is a line whose nodes this editor's schema cannot
- * hold.
+ * math and refs. Plain text, a task line and a bare URL are left to the
+ * default paste, `TaskPaste` and `ExternalLink`, and so is a line whose nodes
+ * this editor's schema cannot hold.
  */
 function pasteOneLine(view: EditorView, text: string): boolean {
   const line = text.split(/\r?\n/).find((l) => l.trim() !== '')
