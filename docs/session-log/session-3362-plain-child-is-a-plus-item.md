@@ -1,4 +1,4 @@
-# Session 3337 — a plain child is a `+` item; tabs follow tab stops
+# Session 3362 — a plain child is a `+` item; tabs follow tab stops
 
 #6277 D1 (decision 2). The Document writer (Rust `DocumentLayout::place`, TS `DocumentLayout.place`) wrote a plain child of a plain parent as an indented bare line. CommonMark tools read two or more plain levels as an indented code block, so Obsidian, GitHub and GitLab showed deep outlines from a block copy or an Edit as Markdown text as `<pre>`. A plain block with any parent is now a `+ ` item. Its column doesn't move, because a bare parent's child column equals the marker's width. The reader already read this form. The "parent was marked" flag had no other use and went.
 
