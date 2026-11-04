@@ -214,7 +214,7 @@ export function ImportSection(): React.ReactElement {
       const units: ImportUnit[] = []
       for (const file of fileArray) {
         try {
-          units.push(...enexNotesToUnits(parseEnex(await file.text())))
+          units.push(...enexNotesToUnits(parseEnex(await file.text()), file.name))
         } catch (err) {
           logger.error(
             'DataSettingsTab',
