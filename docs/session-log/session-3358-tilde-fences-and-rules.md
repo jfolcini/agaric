@@ -1,4 +1,4 @@
-# Session 3347 — The editor reads every fence and rule Rust reads (#6033 S2, #6277 C1)
+# Session 3358 — The editor reads every fence and rule Rust reads (#6033 S2, #6277 C1)
 
 Set out to build #6033 S2 (= #6277 C1). Rust's grammar reads `~~~` fences and `***` / `___` thematic breaks; the editor's parser read backtick fences and `-{3,}` only, so imported or Edit-as-Markdown content Rust stores as code or a rule showed as text, and the first edit escaped it into text for good (`\~\~\~`).
 
