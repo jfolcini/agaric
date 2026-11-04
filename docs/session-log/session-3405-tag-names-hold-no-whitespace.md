@@ -1,4 +1,4 @@
-# Session 3392 — A tag name holds no whitespace (#6278 I4)
+# Session 3405 — A tag name holds no whitespace (#6278 I4)
 
 Item I4 of #6278. The maintainer decided (2026-11-04) that tag names may no longer contain whitespace, that `#[[…]]` still reads, and that an imported or pasted `#[[multi word]]` naming no tag creates `multi-word` with a warning.
 
