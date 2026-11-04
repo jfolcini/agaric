@@ -1282,11 +1282,10 @@ fn parse_import(content: &str, keep_refs: bool) -> ParseOutput {
     //
     // The fence may appear in two positions:
     //   1. At the very top of the file (the conventional Markdown / Logseq
-    //      frontmatter position), or
-    //   2. Immediately after a leading `# Heading` line — the exact shape
-    //      Agaric's own export emits (`# Title\n\n---\n…\n---\n\n`). Without
-    //      this case Agaric's export would NOT round-trip, defeating the
-    //      whole point of #1432.
+    //      frontmatter position, and Agaric's own export's since #6277 A1), or
+    //   2. Immediately after a leading `# Heading` line — the shape Agaric's
+    //      older exports wrote (`# Title\n\n---\n…\n---\n\n`), which keep
+    //      importing.
     // In case 2 the heading line is preserved in `body` (it becomes a
     // depth-0 content block exactly as before); only the fenced block is
     // excised. An unclosed `---` is treated as plain content (no
@@ -1629,17 +1628,31 @@ pub fn verbatim_block(content: String, depth: usize) -> ParsedBlock {
     }
 }
 
-/// `content` less a leading `# {title}` line: Agaric's own export writes the
-/// page title as one, and an import derives the title from the file name, so
-/// the line would come back as a block repeating it (#5160 S6). Any other
-/// first line is kept.
-pub fn strip_title_heading<'a>(content: &'a str, title: &str) -> &'a str {
-    let (first, rest) = content.split_once('\n').unwrap_or((content, ""));
+/// `content` less its `# {title}` line, the first line or the first after a
+/// leading front matter: Agaric's own export writes the page title as one,
+/// after the front matter (#6277 A1) or, in an older export, before it, and an
+/// import derives the title from the file name, so the line would come back as
+/// a block repeating it (#5160 S6). Any other line is kept.
+pub fn strip_title_heading<'a>(content: &'a str, title: &str) -> std::borrow::Cow<'a, str> {
+    let (front, body) = content.split_at(front_matter_fence(content).map_or(0, |(_, end)| end));
+    let body = if front.is_empty() {
+        body
+    } else {
+        body.trim_start_matches(['\r', '\n'])
+    };
+    let (first, rest) = body.split_once('\n').unwrap_or((body, ""));
     let heading = first.strip_suffix('\r').unwrap_or(first);
     match heading.strip_prefix("# ") {
         // The blank lines after it go too, so frontmatter is still leading.
-        Some(text) if text.trim() == title => rest.trim_start_matches(['\r', '\n']),
-        _ => content,
+        Some(text) if text.trim() == title => {
+            let rest = rest.trim_start_matches(['\r', '\n']);
+            if front.is_empty() {
+                rest.into()
+            } else {
+                format!("{front}{rest}").into()
+            }
+        }
+        _ => content.into(),
     }
 }
 
@@ -2368,14 +2381,11 @@ impl<'a> Scan<'a> {
     /// Attach a `key:: value` body property to the block that indentation says
     /// owns it. Reserved keys and properties with no owning block are dropped
     /// and counted ([`Scan::property_line`] hands an import such a line, never
-    /// a source buffer). A source buffer's value may be quoted
-    /// ([`read_source_property_value`]).
+    /// a source buffer). The value may be quoted, as every writer quotes one
+    /// its line cannot carry ([`read_source_property_value`], #6277 A2).
     fn attach_property(&mut self, key: &str, value: &str, indent: usize) {
         let key = key.trim().to_string();
-        let value = match self.mode {
-            ParseMode::Import => value.trim().to_string(),
-            ParseMode::Document => read_source_property_value(value),
-        };
+        let value = read_source_property_value(value);
         // #1568: a reserved body property is dropped, never written, and the
         // surrounding good content imports, as the frontmatter path does.
         if is_reserved_line_key(&key) {
@@ -2675,7 +2685,7 @@ fn clamp_block_depths(blocks: &mut [ParsedBlock]) -> usize {
 /// `list_items` (#2829 — real item boundaries for sequence-valued keys) and
 /// `warnings` are appended in place. Two fence positions are accepted (see
 /// the call site): the very top of the file, or immediately after a single
-/// leading `# Heading` line (Agaric's own export shape). In the latter case
+/// leading `# Heading` line (Agaric's older export shape). In the latter case
 /// the heading line is left in the returned body. An unterminated fence is
 /// treated as plain content (returns the input unchanged, no properties).
 fn strip_frontmatter<'a>(
@@ -2707,7 +2717,7 @@ fn strip_frontmatter<'a>(
     }
 
     // Case 2: a single leading `# Heading` line, then (optionally blank
-    // lines) the fence — Agaric's export shape. Find the heading line, scan
+    // lines) the fence — Agaric's older export shape. Find the heading line, scan
     // past blank lines, and if a fence opens there, excise it while keeping
     // the heading line + any following body.
     if normalized.starts_with("# ") {
@@ -2725,8 +2735,8 @@ fn strip_frontmatter<'a>(
             // frontmatter. Excising that pair as "frontmatter" would silently
             // delete content. We only treat the fenced block as frontmatter if
             // it yields at least one valid `key: value` pair — the exact shape
-            // Agaric's own export always emits when it writes frontmatter (it
-            // never emits an empty fence). A `---…---` pair containing no
+            // Agaric's older exports emitted when they wrote frontmatter (they
+            // never emitted an empty fence). A `---…---` pair containing no
             // scalar pairs is left in place as content.
             let mut scratch_fm: Vec<(String, String)> = Vec::new();
             let mut scratch_list_items: std::collections::HashMap<String, Vec<String>> =
@@ -3451,8 +3461,8 @@ fn split_property_line(line: &str) -> Option<(&str, &str)> {
     is_property_key(key.trim()).then_some((key, value))
 }
 
-/// A `key:: value` line's value as a source buffer reads it (#5160 X5): one
-/// in double quotes is a JSON string, as a YAML double-quoted scalar is, so a
+/// A `key:: value` line's value as every reader reads it (#5160 X5, #6277
+/// A2): one in double quotes is a JSON string, as a YAML double-quoted scalar is, so a
 /// line break or surrounding whitespace fits on the line; anything else is its
 /// trimmed text.
 fn read_source_property_value(raw: &str) -> String {
@@ -3465,7 +3475,7 @@ fn read_source_property_value(raw: &str) -> String {
     value.to_string()
 }
 
-/// `value` as a source buffer's `key:: value` line writes it, to read back as
+/// `value` as every writer's `key:: value` line writes it, to read back as
 /// itself: as it is, or as a JSON string when it holds a line break,
 /// surrounding whitespace, or text that reads as a quoted value (#5160 X5).
 pub fn write_source_property_value(value: &str) -> String {
@@ -4165,8 +4175,8 @@ bare line (({UUID_B})) too"
         );
     }
 
-    /// #1917 — the inverse: a real `# Title` + frontmatter fence (the Agaric
-    /// export shape, with at least one `key: value`) IS still excised and
+    /// #1917 — the inverse: a real `# Title` + frontmatter fence (the older
+    /// Agaric export shape, with at least one `key: value`) IS still excised and
     /// parsed.
     #[test]
     fn import_real_frontmatter_after_heading_still_parsed_1917() {
@@ -4627,7 +4637,7 @@ bare line (({UUID_B})) too"
     // ------------------------------------------------------------------
 
     /// The fence may appear immediately after a leading `# Heading` line
-    /// (Agaric's own export shape). The heading must survive in the body and
+    /// (Agaric's older export shape). The heading must survive in the body and
     /// the fenced scalars must be parsed out.
     #[test]
     fn strip_frontmatter_after_heading_excises_fence_keeps_heading_1432() {
@@ -6145,7 +6155,8 @@ mod tests_source_outline_5140 {
     /// break, surrounding whitespace, or text that reads as a quoted value) is
     /// written as a JSON string; any other value, backslashes and all, as it
     /// is. Either way it reads back as itself, from the buffer and from a
-    /// paste. An import reads no quotes.
+    /// paste. An import reads the quotes too, as the export writes them
+    /// (#6277 A2).
     #[test]
     fn a_property_value_reads_back_as_it_was_written() {
         for (value, written) in [
@@ -6175,7 +6186,7 @@ mod tests_source_outline_5140 {
         let imported = parse_logseq_markdown("- a\n  key:: \"quoted\"\n");
         assert_eq!(
             imported.blocks[0].properties,
-            [("key".into(), "\"quoted\"".into())]
+            [("key".into(), "quoted".into())]
         );
     }
 
@@ -7858,7 +7869,7 @@ mod tests_line_probes_5160 {
     #[test]
     fn a_leading_title_heading_equal_to_the_derived_title_is_dropped() {
         let md = "# Trip\n\n---\nstatus: planning\n---\n\n- a\n";
-        let out = parse_logseq_markdown(strip_title_heading(md, "Trip"));
+        let out = parse_logseq_markdown(&strip_title_heading(md, "Trip"));
         let contents: Vec<&str> = out.blocks.iter().map(|b| b.content.as_str()).collect();
         assert_eq!(contents, ["a"]);
         assert_eq!(out.blocks[0].depth, 0);

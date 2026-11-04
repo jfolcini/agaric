@@ -11116,6 +11116,71 @@ async fn export_aliases_tags_and_properties_coexist_1433() {
     );
 }
 
+/// #6277 A1 — the export opens with its front matter, the only place Obsidian
+/// reads properties, and the `# Title` after it re-imports as no block: the
+/// import names the page after its file. Export → import → export is a
+/// fixpoint.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_writes_front_matter_first_and_reimports_without_a_heading_6277() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    async fn import_and_export(
+        pool: &SqlitePool,
+        mat: &Materializer,
+        dir: &std::path::Path,
+        md: &str,
+    ) -> (Vec<String>, String) {
+        import_markdown_inner(
+            pool,
+            DEV,
+            mat,
+            dir,
+            md.into(),
+            Some("Front6277.md".into()),
+            TEST_SPACE_ID.into(),
+            None,
+        )
+        .await
+        .unwrap();
+        settle(mat).await;
+        // The newest page of that title: an import never adopts an existing
+        // page.
+        let page_id: String = sqlx::query_scalar(
+            "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Front6277' \
+             ORDER BY id DESC LIMIT 1",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        let contents: Vec<String> = sqlx::query_scalar(
+            "SELECT content FROM blocks WHERE page_id = ? AND id != page_id \
+             AND deleted_at IS NULL ORDER BY content",
+        )
+        .bind(&page_id)
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        (
+            contents,
+            export_page_markdown_inner(pool, &page_id).await.unwrap(),
+        )
+    }
+
+    let expected = "---\nstatus: active\n---\n\n# Front6277\n\n- a block\n";
+    let input = "---\nstatus: active\n---\n\n- a block\n";
+    let (_, md) = import_and_export(&pool, &mat, dir.path(), input).await;
+    assert_eq!(md, expected, "front matter at byte 0, the title after it");
+
+    let (contents, again) = import_and_export(&pool, &mat, dir.path(), &md).await;
+    assert_eq!(contents, ["a block"], "the title line is no block");
+    assert_eq!(again, expected, "the export is a fixpoint");
+
+    mat.shutdown();
+}
+
 // ======================================================================
 // #1446 Part B — import wiki-link resolution + folder → namespace
 // ======================================================================
