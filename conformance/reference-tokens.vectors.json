@@ -238,6 +238,78 @@
       }
     ]
   },
+  "nameKeyCases": [
+    {
+      "name": "an ASCII capital folds",
+      "input": "Foo",
+      "key": "foo"
+    },
+    {
+      "name": "ASCII edge whitespace trims",
+      "input": "  Weekly Review\t",
+      "key": "weekly review"
+    },
+    {
+      "name": "a trailing no-break space trims",
+      "input": "Caf\u00e9\u00a0",
+      "key": "caf\u00e9"
+    },
+    {
+      "name": "U+0085 at either edge trims, as Rust's trim does and JS trim() does not",
+      "input": "\u0085Notes\u0085",
+      "key": "notes"
+    },
+    {
+      "name": "U+FEFF is not whitespace: JS trim() strips it, the key keeps it",
+      "input": "\ufeffNotes",
+      "key": "\ufeffnotes"
+    },
+    {
+      "name": "an NFD spelling composes",
+      "input": "CAFE\u0301",
+      "key": "caf\u00e9"
+    },
+    {
+      "name": "dotted capital I lowercases to i and a combining dot",
+      "input": "\u0130stanbul",
+      "key": "i\u0307stanbul"
+    },
+    {
+      "name": "a Greek capital sigma at a word end folds to final sigma",
+      "input": "\u039f\u0394\u039f\u03a3",
+      "key": "\u03bf\u03b4\u03bf\u03c2"
+    },
+    {
+      "name": "capital sharp s folds to sharp s",
+      "input": "STRA\u1e9eE",
+      "key": "stra\u00dfe"
+    },
+    {
+      "name": "the Kelvin sign folds to k",
+      "input": "\u212aelvin",
+      "key": "kelvin"
+    },
+    {
+      "name": "the Angstrom sign folds to a with ring",
+      "input": "\u212bngstr\u00f6m",
+      "key": "\u00e5ngstr\u00f6m"
+    },
+    {
+      "name": "a lowercase that composes only after lowercasing",
+      "input": "Y\u030a",
+      "key": "\u1e99"
+    },
+    {
+      "name": "a singleton decomposition",
+      "input": "\u0340",
+      "key": "\u0300"
+    },
+    {
+      "name": "a titlecase digraph folds to its lowercase",
+      "input": "\u01c5ungla",
+      "key": "\u01c6ungla"
+    }
+  ],
   "codeFenceCases": [
     {
       "name": "a tilde fence is a fence (#5160 S5): the tag inside is literal",
