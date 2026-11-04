@@ -6,7 +6,7 @@
  *  - #3938: the FTS candidate set was `matchesSearchFolded` over RAW
  *    `blocks.content`. The backend matches a trigram index over
  *    `fts_blocks.stripped` — `strip_for_fts_with_maps`'s output
- *    (`src-tauri/agaric-store/src/fts/strip.rs:114-163`) — and its tokenizer
+ *    (`strip_for_fts_with_maps` in `src-tauri/agaric-store/src/fts/strip.rs`) — and its tokenizer
  *    (`tokenize = 'trigram case_sensitive 0'`, migration `0006`) folds CASE
  *    ONLY. So the mock both over-matched (diacritic-insensitively, which the
  *    index cannot do) and under-matched (blind to markup-hidden terms and to
@@ -84,10 +84,11 @@ function ids(res: SearchResponse): string[] {
 // #3938 — `strip_for_fts_with_maps`, step by step
 // ---------------------------------------------------------------------------
 
-describe('stripForFts — models strip_for_fts_with_maps (strip.rs:114-163)', () => {
+describe('stripForFts — models strip_for_fts_with_maps', () => {
   beforeEach(clearMock)
 
-  // Step 1 — `strip_inline_markup` (strip.rs:63-83), all five delimiters.
+  // Step 1 — the four `strip_inline_markup` delimiters, and code, which the
+  // shown-span mask takes first.
   it.each([
     ['**bold**', 'bold'],
     ['*italic*', 'italic'],
@@ -124,7 +125,7 @@ describe('stripForFts — models strip_for_fts_with_maps (strip.rs:114-163)', ()
     expect(stripForFts(`see [[${PAGE}|the plan]] and [[${PAGE}]]`)).toBe('see the plan and My Page')
   })
 
-  // `cap_indexed_text` (strip.rs:179-195). Unreachable through any fixture —
+  // `cap_indexed_text`. Unreachable through any fixture —
   // asserted through the export, like `approximateFtsRank`'s two guard
   // branches, because an omission a comment merely NAMES still diverges
   // silently the day a fixture grows past it.
@@ -156,8 +157,7 @@ describe('stripForFts — models strip_for_fts_with_maps (strip.rs:114-163)', ()
     })
   })
 
-  // Steps 2 + 3 — reference resolution through the `load_ref_maps` maps
-  // (strip.rs:125-138 / 210-236).
+  // Steps 2 + 3 — reference resolution through the `load_ref_maps` maps.
   describe('reference resolution', () => {
     const PAGE = id('REFPAGE')
     const TAG = id('REFTAG')
@@ -192,21 +192,16 @@ describe('stripForFts — models strip_for_fts_with_maps (strip.rs:114-163)', ()
     })
   })
 
-  // Step 4 — unescape then NFC (strip.rs:141-162).
-  it('unescapes the four backslash sequences', () => {
+  // Step 1 — decode escapes outside code (#6277 B3).
+  it('decodes escaped punctuation', () => {
     // Unpaired delimiters, so the markup pass finds nothing and this isolates
     // the unescape. Input: `a \* b \~ c \= d \` e`.
     expect(stripForFts('a \\* b \\~ c \\= d \\` e')).toBe('a * b ~ c = d ` e')
   })
 
-  // The unescape runs AFTER the markup pass, not before (strip.rs:122 then
-  // :141) — an ordering with an observable consequence, so it is pinned rather
-  // than left to the reader of the two line numbers. Escaped delimiters that
-  // happen to PAIR are still eaten as markup, backslashes and all; unescaping
-  // first would turn `\*a\*` into `*a*` and then strip it to `a`.
-  it('strips markup BEFORE unescaping, as the backend does', () => {
-    expect(stripForFts('\\*a\\*')).toBe('\\a\\')
-    expect(stripForFts('\\*a\\*')).not.toBe('a')
+  // An escaped delimiter that happens to PAIR is still literal (#6277 B3).
+  it('decodes an escape before the markup pass, so an escaped delimiter is literal', () => {
+    expect(stripForFts('\\*a\\*')).toBe('*a*')
   })
 
   it('NFC-normalises the result', () => {

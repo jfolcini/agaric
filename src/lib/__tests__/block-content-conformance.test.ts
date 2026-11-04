@@ -8,7 +8,9 @@
  * one plain edit: the flush acts only on what the edit added, never on the
  * shape the block was loaded with (D2). And the editor's parse reads each
  * content into the code blocks and thematic breaks Rust's grammar reads there
- * (`rustReads`, which Rust authors), in the same order (#6033).
+ * (`rustReads`, which Rust authors), in the same order (#6033). The mock's
+ * search strip indexes each content as Rust does (`fts`, which Rust authors,
+ * #6277 B3), with `blockRefTargets` as the blocks a `((ULID))` names.
  */
 
 import { readFileSync } from 'node:fs'
@@ -21,6 +23,9 @@ import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { parse } from '@/editor/markdown-parse'
 import { processCheckboxSyntax } from '@/lib/block-utils'
 import { TASK_STATE_TO_MARKER, TASK_STATES, type TodoState } from '@/lib/task-states'
+import { clearMock } from '@/lib/tauri-mock/__tests__/mock-store-helpers'
+import { stripForFts } from '@/lib/tauri-mock/handlers/search'
+import { blocks, makeBlock } from '@/lib/tauri-mock/seed'
 import { runUnmountFlush, type UnmountFlushResult } from '@/stores/unmount-flush'
 
 interface StoredBlock {
@@ -28,6 +33,7 @@ interface StoredBlock {
   content: string
   editorFlush: UnmountFlushResult['kind']
   rustReads: ('code' | 'rule')[]
+  fts: string
 }
 
 interface TaskMarker {
@@ -37,6 +43,7 @@ interface TaskMarker {
 }
 
 interface Vectors {
+  blockRefTargets: Record<string, string>
   blocks: StoredBlock[]
   taskMarkers: TaskMarker[]
 }
@@ -93,6 +100,17 @@ describe('stored block content vectors (#5160)', () => {
         node.type === 'codeBlock' ? ['code'] : node.type === 'horizontalRule' ? ['rule'] : [],
       )
       expect(reads).toEqual(row.rustReads)
+    },
+  )
+
+  it.each(vectors.blocks.map((row) => [row.name, row] as const))(
+    'the mock indexes %s as Rust does',
+    (_name, row) => {
+      clearMock()
+      for (const [id, content] of Object.entries(vectors.blockRefTargets)) {
+        blocks.set(id, makeBlock(id, 'content', content, null, 0))
+      }
+      expect(stripForFts(row.content)).toBe(row.fts)
     },
   )
 
