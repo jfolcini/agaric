@@ -5,9 +5,19 @@
  * page's length. jsdom lays nothing out: here each block's box is its place
  * among the blocks shown, `HEIGHT` apart, and the scroller is `SCREEN` tall.
  *
- * Equivalent mutant, accepted: `this.frame = 0` on the editor's destroy
- * dropped. With the scroll listener and the resize observer gone nothing asks
- * for a frame again; the reset is what lets a test see either left behind.
+ * Equivalent mutants, accepted:
+ * - `this.frame = 0` on the editor's destroy dropped. With the scroll listener
+ *   and the resize observer gone nothing asks for a frame again; the reset is
+ *   what lets a test see either left behind.
+ * - `watched.has(dom)` → `false` in `observe`: adding a watched block to
+ *   `watched` and the observer again changes neither.
+ * - The `?.` on the observer in `observe` and `pick`: both run only once
+ *   `start` has made it.
+ * - `near.has(dom)` → `false` in `pick`: a block the pick keeps is unobserved
+ *   and observed again, which leaves the same blocks watched.
+ * - `at < hi` → `true` or `<=` before `found = at` in `firstReaching`: `at`
+ *   reaches `hi` only past hidden blocks, and every block from `hi` to the one
+ *   found is hidden, which `pick` skips.
  */
 
 import { act, fireEvent, render } from '@testing-library/react'
@@ -24,6 +34,7 @@ import {
   idMinter,
   openPage,
   PAGE,
+  posIn,
   type Row,
 } from '@/editor/page-mode/__tests__/page-mode-fixtures'
 import {
@@ -254,5 +265,55 @@ describe('the controls gate on a long page', () => {
     resize(document.documentElement)
     runFrame()
     expect(watched()).toEqual(idsFrom(1, 57))
+  })
+
+  it('asks for no frame before the editor is in the page, and once it is watches a block left waiting alone', () => {
+    const editor = openPage(
+      rowsOf(2),
+      idMinter(),
+      undefined,
+      listSource(new PageLists({}, [], () => false)),
+      new FakeTasks(),
+    )
+    expect(frames.pending()).toBe(0)
+    // The caret placed in the first block mounts its controls before the editor is in the page.
+    act(() => {
+      editor.commands.setTextSelection(posIn(editor, 0, 1))
+    })
+
+    const store = createPageBlockStore(PAGE)
+    const view = render(
+      <PageBlockContext.Provider value={store}>
+        <div data-testid="scroller" style={{ overflowY: 'auto' }}>
+          <EditorContent editor={editor} />
+        </div>
+      </PageBlockContext.Provider>,
+    )
+    teardown = () => {
+      view.unmount()
+      editor.destroy()
+    }
+    runFrame()
+    expect(watched()).toEqual([blockId(1)])
+  })
+
+  it('measures the two screens from the scroller, wherever it sits in the viewport', () => {
+    // The scroller, and the blocks in it, 100px down the viewport.
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element,
+    ) {
+      const at = laidOut.call(this)
+      return at.height === 0 ? at : box(at.top + 100, at.height)
+    })
+    mount(300)
+    expect(watched()).toEqual(idsFrom(1, 30))
+  })
+
+  it('picks on a page that ends in blocks a collapsed block hides', () => {
+    const { container, getByTestId } = mount(40)
+    for (let i = 20; i < 40; i += 1) blockEl(container, blockId(i)).classList.add(HIDDEN_CLASS)
+
+    scrollTo(getByTestId('scroller'), 0)
+    expect(watched()).toEqual(idsFrom(1, 19))
   })
 })
