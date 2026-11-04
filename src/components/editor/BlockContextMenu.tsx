@@ -46,7 +46,12 @@ import {
   shortcutHint,
 } from '@/components/editor/block-context-menu/hints'
 import { renderItem as renderMenuItem } from '@/components/editor/block-context-menu/menu-row'
-import type { BlockContextMenuProps, MenuItem } from '@/components/editor/block-context-menu/types'
+import { useReadAloudRow } from '@/components/editor/block-context-menu/read-aloud-row'
+import type {
+  BlockContextMenuProps,
+  BlockMenuRowId,
+  MenuItem,
+} from '@/components/editor/block-context-menu/types'
 import { CALLOUT_CONFIG, CALLOUT_TYPES } from '@/components/RichContentRenderer/context'
 import { MenuSheet } from '@/components/ui/menu-sheet'
 import { useIsMobile } from '@/hooks/useIsMobile'
@@ -117,6 +122,8 @@ interface MenuGroupContext {
   setMoveArrangeOpen: React.Dispatch<React.SetStateAction<boolean>>
   moveArrangeGroupId: string
   actionIds: BlockContextMenuProps['actionIds']
+  /** The *Read aloud* row, or `null` where it is not offered. */
+  readAloudRow: MenuItem | null
 }
 
 /** Group 1: the (single or bulk) Delete row. */
@@ -685,6 +692,12 @@ function buildTurnIntoGroup(ctx: MenuGroupContext): MenuItem[] {
   ]
 }
 
+/** Whether `actionIds` lets `id` show; *Read aloud* shows only where no row list is given. */
+function isRowOffered(id: BlockMenuRowId, actionIds: BlockContextMenuProps['actionIds']): boolean {
+  if (actionIds === undefined) return true
+  return id !== 'readAloud' && actionIds.has(id)
+}
+
 /**
  * Assemble + filter the ordered menu groups. PURE — all reactive inputs arrive
  * via `ctx`. #217 A1 — order for calm scannability and mis-click safety:
@@ -698,6 +711,7 @@ function buildMenuGroups(ctx: MenuGroupContext): MenuItem[][] {
     buildTurnIntoGroup(ctx),
     buildMoveGroup(ctx),
     buildCollapseGroup(ctx),
+    ctx.readAloudRow === null ? [] : [ctx.readAloudRow],
     buildHistoryGroup(ctx),
     buildDeleteGroup(ctx),
   ]
@@ -708,8 +722,7 @@ function buildMenuGroups(ctx: MenuGroupContext): MenuItem[][] {
       .map((group) =>
         group.filter(
           (item) =>
-            (item.action !== undefined || item.active) &&
-            (ctx.actionIds === undefined || ctx.actionIds.has(item.id)),
+            (item.action !== undefined || item.active) && isRowOffered(item.id, ctx.actionIds),
         ),
       )
       .filter((group) => group.length > 0)
@@ -925,6 +938,7 @@ export function BlockContextMenu({
   const bulkIds =
     ownedSelectedIds.length > 1 && ownedSelectedIds.includes(blockId) ? ownedSelectedIds : null
   const isBulk = bulkIds !== null
+  const readAloudRow = useReadAloudRow(blockId, bulkIds, blocks, onClose)
 
   const handleAction = useCallback(
     (action: ((blockId: string) => void | Promise<void>) | undefined) => {
@@ -1013,6 +1027,7 @@ export function BlockContextMenu({
     setMoveArrangeOpen,
     moveArrangeGroupId,
     actionIds,
+    readAloudRow,
   })
 
   // Only actionable items participate in keyboard roving focus; the active

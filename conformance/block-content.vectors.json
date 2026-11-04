@@ -54,6 +54,11 @@
       "name": "text shaped like an ordered list item stays text",
       "content": "1. not a list",
       "editorFlush": "edit"
+    },
+    {
+      "name": "a table keeps its column alignment",
+      "content": "| a | b |\n|:--|--:|\n| 1 | 2 |",
+      "editorFlush": "edit"
     }
   ],
   "taskMarkers": [

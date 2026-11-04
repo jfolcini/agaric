@@ -9,6 +9,7 @@
  * built-in definition shows a lock and offers no action.
  */
 
+import { skipToken, useQuery } from '@tanstack/react-query'
 import { HelpCircle, Lock, Plus, Search, Settings2, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -45,7 +46,9 @@ import { commands } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { PROPERTY_DEFS_QUERY_ROOT } from '@/lib/property-caches'
 import { formatPropertyName, selectOptionsJson, VALUE_TYPES } from '@/lib/property-utils'
+import { queryClient } from '@/lib/query-client'
 import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
@@ -68,9 +71,21 @@ export function PropertyDefinitionsList(): React.ReactElement {
   const [loadError, setLoadError] = useState(false)
   const [searchFilter, setSearchFilter] = useState('')
   // Live blocks holding a value and the values that don't fit, per key; null while loading or
-  // after a failure, which show no count.
-  const [usage, setUsage] = useState<ReadonlyMap<string, PropertyUsage> | null>(null)
-  const usageSeq = useRef(0)
+  // after a failure, which show no count. Under the definitions' root, so an Undo pressed after
+  // this list was left and reopened reaches it through `invalidatePropertyCaches`.
+  const { data: usage = null } = useQuery(
+    {
+      queryKey: [PROPERTY_DEFS_QUERY_ROOT, 'usage', spaceId],
+      queryFn: spaceId === null ? skipToken : () => loadUsage(spaceId),
+      // A write in the editor invalidates nothing here: opening the list reads the counts again.
+      refetchOnMount: 'always',
+    },
+    queryClient,
+  )
+  const refreshUsage = useCallback(
+    () => void queryClient.invalidateQueries({ queryKey: [PROPERTY_DEFS_QUERY_ROOT, 'usage'] }),
+    [],
+  )
 
   // Create form state
   const [newKey, setNewKey] = useState('')
@@ -106,29 +121,11 @@ export function PropertyDefinitionsList(): React.ReactElement {
     setLoading(false)
   }, [spaceId, t])
 
-  const loadUsage = useCallback(async () => {
-    const seq = ++usageSeq.current
-    setUsage(null)
-    if (spaceId === null) return
-    try {
-      const rows = unwrap(await commands.countPropertyUsage(spaceId))
-      if (seq === usageSeq.current) setUsage(new Map(rows.map((row) => [row.key, row])))
-    } catch (error) {
-      logger.warn('PropertyDefinitionsList', 'count_property_usage failed', { spaceId }, error)
-    }
-  }, [spaceId])
-
-  useEffect(() => {
-    // `loadUsage` logs its own failure; never rejects.
-    // oxlint-disable-next-line react/set-state-in-effect -- kicks off the `count_property_usage` IPC load; `loadUsage` clears the stale counts before that await, which no render-time derivation can replace
-    void loadUsage()
-  }, [loadUsage])
-
   // What an Undo changed, read again: both loads report their own failure.
   const reload = useCallback(() => {
     void loadDefinitions()
-    void loadUsage()
-  }, [loadDefinitions, loadUsage])
+    refreshUsage()
+  }, [loadDefinitions, refreshUsage])
 
   useEffect(() => {
     // `loadDefinitions` reports its own failure (reportIpcError); never rejects.
@@ -147,7 +144,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
       setNewType('text')
       setNewOptions('')
       notifyDefinitionWrite(t('propertiesView.created'), def.op_refs, reload)
-      void loadUsage()
+      refreshUsage()
     } catch (error) {
       // See loadDefinitions above — unified error reporting, but this one
       // keeps the backend's REASON (#4399). `create_property_def` refuses to
@@ -162,7 +159,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
       reportIpcErrorWithReason('PropertyDefinitionsList', 'property.errorCreate', error, t, { key })
     }
     setIsCreating(false)
-  }, [spaceId, newKey, newType, newOptionsJson, t, loadUsage, reload])
+  }, [spaceId, newKey, newType, newOptionsJson, t, refreshUsage, reload])
 
   const handleDelete = useCallback(
     async (key: string) => {
@@ -172,7 +169,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
         setDefinitions((prev) => prev.filter((d) => d.key !== key))
         setDeleteTarget(null)
         notifyDefinitionWrite(t('propertiesView.deleted'), op_refs, reload)
-        void loadUsage()
+        refreshUsage()
       } catch (error) {
         // The backend refuses a definition a block still uses, with a count that takes in
         // trashed blocks; the badge's does not, so beside a badge the refusal says why they differ.
@@ -191,7 +188,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
         }
       }
     },
-    [spaceId, t, loadUsage, usage, reload],
+    [spaceId, t, refreshUsage, usage, reload],
   )
 
   const handleConfirmDelete = useCallback(() => {
@@ -470,4 +467,14 @@ export function PropertyDefinitionsList(): React.ReactElement {
       />
     </div>
   )
+}
+
+async function loadUsage(spaceId: string): Promise<ReadonlyMap<string, PropertyUsage>> {
+  try {
+    const rows = unwrap(await commands.countPropertyUsage(spaceId))
+    return new Map(rows.map((row) => [row.key, row]))
+  } catch (error) {
+    logger.warn('PropertyDefinitionsList', 'count_property_usage failed', { spaceId }, error)
+    throw error
+  }
 }

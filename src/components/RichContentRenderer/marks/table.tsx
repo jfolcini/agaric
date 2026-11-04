@@ -4,11 +4,20 @@ import type { RenderContext } from '@/components/RichContentRenderer/context'
 import { renderInlineContent } from '@/components/RichContentRenderer/marks/inline'
 import type {
   ParagraphNode,
+  TableCellAlign,
   TableCellNode,
   TableHeaderNode,
   TableNode,
   TableRowNode,
 } from '@/editor/types'
+import { cn } from '@/lib/utils'
+
+/** A GFM column alignment (#6277), as the editor's cells draw it with `text-align`. */
+const ALIGN_CLASS: Record<TableCellAlign, string> = {
+  left: 'text-left',
+  right: 'text-right',
+  center: 'text-center',
+}
 
 /**
  * Render a markdown table block in VIEW (read) mode.
@@ -60,16 +69,26 @@ export function renderTableBlock(
         {cells.map((cell, c) => {
           const cellKey = `${rowKey}-${c}`
           const children = renderCellChildren(cell, cellKey)
+          const align = cell.attrs?.align
           return cell.type === 'tableHeader' ? (
             <th
               key={cellKey}
               scope="col"
-              className="border border-border bg-muted/60 px-3 py-1.5 text-left text-sm font-medium align-top"
+              className={cn(
+                'border border-border bg-muted/60 px-3 py-1.5 text-sm font-medium align-top',
+                ALIGN_CLASS[align ?? 'left'],
+              )}
             >
               {children}
             </th>
           ) : (
-            <td key={cellKey} className="border border-border px-3 py-1.5 text-sm align-top">
+            <td
+              key={cellKey}
+              className={cn(
+                'border border-border px-3 py-1.5 text-sm align-top',
+                align && ALIGN_CLASS[align],
+              )}
+            >
               {children}
             </td>
           )

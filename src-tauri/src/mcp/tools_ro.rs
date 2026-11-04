@@ -1160,7 +1160,7 @@ fn tool_desc_get_page_markdown() -> ToolDescription {
              a `# Title` line, YAML front matter with the page's aliases, tags and properties, \
              then the blocks as append_markdown reads them: each a paragraph, a `- ` bullet, \
              a `1. ` numbered item or a `- [ ]` task (`[/]` doing, `[x]` done, `[-]` \
-             cancelled), a child indented under its parent, a plain block under a list block \
+             cancelled), a child indented under its parent, a plain block under another block \
              written as a `+ ` item, and properties as indented `key:: value` lines. \
              Links, tags and ref-typed values are written as names, \
              for reading; a name can be ambiguous, so write links by ULID (`[[ULID]]`, \

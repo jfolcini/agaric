@@ -676,7 +676,7 @@ function App() {
              * height: there the slot inside the scroller serves instead, and
              * the header scrolls away with the content.
              */}
-            <ViewHeaderOutletSlot className="border-b border-border/40 px-4 md:px-6 md:pointer-fine:px-16 py-3 space-y-2" />
+            <ViewHeaderOutletSlot className="border-b border-border/40 px-4 md:px-6 py-3 space-y-2" />
             <ScrollArea
               viewportRef={setMainContentViewport}
               className="flex-1"
@@ -685,16 +685,12 @@ function App() {
               // under the iPhone home indicator / Android gesture bar.
               // `scroll-pb-[env(…)]` extends the scroll end so keyboard
               // scroll-into-view stops short of the inset as well.
-              // `md:pointer-fine:px-16`, here and on the outlet above, is room
-              // for the block tree's control lane, which hangs left of the text
-              // column on desktop (`BlockListRenderer`); the right side matches
-              // so a centred column sits at the pane's centre.
               // Where `QuickCaptureFab` shows, it floats 1rem up and is 3.5rem
               // tall; 6rem keeps the last control clear of it (the `md:` copy
               // outranks `md:p-6`). Graph's canvas fills the viewport instead
               // and runs under the button, its zoom controls on the far side.
               viewportClassName={cn(
-                'p-4 md:p-6 md:pointer-fine:px-16 focus-ring-visible pb-[calc(1rem+var(--safe-area-bottom))] md:pb-[calc(1.5rem+var(--safe-area-bottom))] scroll-pb-[var(--safe-area-bottom)]',
+                'p-4 md:p-6 focus-ring-visible pb-[calc(1rem+var(--safe-area-bottom))] md:pb-[calc(1.5rem+var(--safe-area-bottom))] scroll-pb-[var(--safe-area-bottom)]',
                 shouldShowMobileChrome &&
                   currentView !== 'graph' &&
                   'pb-[calc(6rem+var(--safe-area-bottom))] md:pb-[calc(6rem+var(--safe-area-bottom))]',

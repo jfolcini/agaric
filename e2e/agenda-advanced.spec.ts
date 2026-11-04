@@ -206,9 +206,11 @@ test.describe('Task state changes in agenda @journal', () => {
   })
 
   test('context menu Set as TODO sets task state on a plain block', async ({ page }) => {
-    // BLOCK_DAILY_1 has no todo_state — its checkbox is task-checkbox-empty.
-    // Right-click to open context menu and set it as TODO.
+    // BLOCK_DAILY_1 has no todo_state, so no checkbox.
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    await expect(firstBlock).toBeVisible()
+    await expect(firstBlock.getByTestId('task-marker')).toHaveCount(0)
+    // Right-click to open context menu and set it as TODO.
     await firstBlock.click({ button: 'right' })
 
     const menu = page.locator('[role="menu"]')

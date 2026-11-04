@@ -119,6 +119,7 @@ import type { PageTaskActions } from '@/editor/page-mode/page-tasks'
 import { PageToolbar } from '@/editor/page-mode/page-toolbar'
 import { PageBlockMenu } from '@/editor/page-mode/PageBlockMenu'
 import { PageBubbleMenus } from '@/editor/page-mode/PageBubbleMenus'
+import { PageFooterHint } from '@/editor/page-mode/PageFooterHint'
 import { applyRemote } from '@/editor/page-mode/remote-patch'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { blockIdOf } from '@/editor/token-ids'
@@ -182,6 +183,8 @@ export interface PageModeEditorProps {
   onNavigateToPage?: NavigateToPageFn | undefined
   /** Where to open: on block mode's caret, scrolled as block mode was. */
   opening?: PageModeOpening | null | undefined
+  /** Called once the page is drawn, its caret and scroll place set, or once opening failed. */
+  onShown?: (() => void) | undefined
   /** Edit as Markdown, from the footer; no link without it. */
   onEditSource?: (() => void) | undefined
   ref?: React.Ref<PageModeEditorHandle>
@@ -201,6 +204,7 @@ export function PageModeEditor({
   onNavigateToPage,
   opening,
   onEditSource,
+  onShown,
   ref,
 }: PageModeEditorProps): React.ReactElement {
   const pageStore = usePageBlockStoreApi()
@@ -209,6 +213,8 @@ export function PageModeEditor({
     properties: Record<string, PropertyRow[]>
     attachments: Record<string, AttachmentRow[]>
   } | null>(null)
+  // Whoever holds block mode's tree up while page mode opens lets it go: nothing will show.
+  const failed = useEffectEvent(() => onShown?.())
 
   useEffect(() => {
     let cancelled = false
@@ -234,6 +240,7 @@ export function PageModeEditor({
     open().catch((err: unknown) => {
       logger.error('PageModeEditor', 'Failed to open page mode', { pageId }, err)
       notify.error(t('error.loadBlocksFailed'))
+      failed()
     })
     return () => {
       cancelled = true
@@ -251,6 +258,7 @@ export function PageModeEditor({
       onNavigateToPage={onNavigateToPage}
       opening={opening ?? null}
       onEditSource={onEditSource}
+      onShown={onShown}
       ref={ref}
     />
   )
@@ -370,6 +378,7 @@ interface PageModeDocumentProps {
   onNavigateToPage?: NavigateToPageFn | undefined
   opening: PageModeOpening | null
   onEditSource?: (() => void) | undefined
+  onShown?: (() => void) | undefined
   ref?: React.Ref<PageModeEditorHandle> | undefined
 }
 
@@ -382,6 +391,7 @@ function PageModeDocument({
   onNavigateToPage,
   opening,
   onEditSource,
+  onShown,
   ref,
 }: PageModeDocumentProps): React.ReactElement {
   const { t: translate } = useTranslation()
@@ -595,6 +605,7 @@ function PageModeDocument({
   // The session reads these as they are when it needs them, not as it was built with.
   const blocked = useEffectEvent((blocker: PageModeBlocker) => onBlocked(blocker))
   const openedOn = useEffectEvent(() => opening)
+  const shown = useEffectEvent(() => onShown?.())
   const cycleTask = useEffectEvent((id: string) => handleToggleTodo(id))
   const cyclePriority = useEffectEvent((id: string) => handleTogglePriority(id))
   const openDatePicker = useEffectEvent((id: string, mode: 'due' | 'schedule') =>
@@ -981,7 +992,8 @@ function PageModeDocument({
       useBlockStore.getState().setFocused(null)
     // A new or empty page takes typing at once, as block mode focuses the block it creates on one.
     else if (blocks.length <= 1 && !blocks[0]?.content) editor.commands.focus('start')
-    if (place !== null) restoreScrollPlace(place)
+    if (place !== null) restoreScrollPlace(place, 'page')
+    shown()
 
     return () => {
       unsubscribe()
@@ -1076,7 +1088,7 @@ function PageModeDocument({
           />
         </BlockResolversProvider>
         <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-2 text-xs text-muted-foreground">
-          <p>{t('pageMode.footerHint')}</p>
+          <PageFooterHint />
           {onEditSource !== undefined && (
             <Button variant="link" size="xs" className="px-0" onClick={onEditSource}>
               <FileCode aria-hidden="true" />

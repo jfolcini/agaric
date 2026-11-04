@@ -39,6 +39,7 @@ import {
   isNotionPick,
   jexNotesToUnits,
   mdFilesToUnits,
+  restoreSpaceFile,
   skippedFiles,
 } from '@/lib/vault-import'
 import { useSpaceStore } from '@/stores/space'
@@ -129,7 +130,9 @@ export function ImportSection(): React.ReactElement {
       )
       const vaultIndex = isVaultImport ? indexVaultFiles(fileArray) : null
       const notion = isNotionPick(fileArray)
-      const units = mdFilesToUnits(fileArray, vaultIndex, notion)
+      // An export's definitions exist before its first note imports (#6277 decision 8).
+      const restored = await restoreSpaceFile(fileArray, activeSpaceId)
+      const units = mdFilesToUnits(fileArray, vaultIndex, notion, restored.titles)
       // A file that is no note and no attachment is said, not dropped (#6032).
       const skippedWarnings = (attached: ReadonlySet<string>): string[] => {
         const skipped = skippedFiles(fileArray, notion, attached)
@@ -149,6 +152,7 @@ export function ImportSection(): React.ReactElement {
         units,
         notes: false,
         loggerFailLabel: 'file import failed',
+        initialWarnings: restored.warnings,
         finalWarnings: skippedWarnings,
       })
 

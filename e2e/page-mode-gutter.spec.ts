@@ -198,7 +198,8 @@ test.describe('page mode gutter (#5691) @editor @pages', () => {
       if (at === null) throw new Error('no box')
       return { ...at, right: at.x + at.width, middle: at.y + at.height / 2 }
     }
-    const frame = await box(page.locator('[data-page-mode-surface]'))
+    // The bordered frame around the toolbar, the text and the footer.
+    const frame = await box(page.locator('[data-page-mode-surface]').locator('..'))
     const text = (id: string | undefined) => box(block(page, id).locator('.page-block-content'))
 
     await block(page, ids[0]).hover()
