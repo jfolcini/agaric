@@ -17,13 +17,21 @@
 //!     the parenthesised `@type(...)` form is skip-and-warn);
 //!   * field values delimited by balanced braces (`{...}`, one outer layer
 //!     stripped, nesting-aware), double quotes (`"..."`), or a bare number;
-//!   * mapped fields: `title`, `author` (split on top-level ` and `), `year`
-//!     (integer), `doi`, `url`, `journal`, `abstract` — every other field is
-//!     ignored with one per-entry warning listing the ignored names;
+//!   * mapped fields: `title`, `author` (split on top-level ` and `; a wholly
+//!     braced name such as `{World Health Organization}` is one name whose
+//!     family is the whole name), `year` (integer), biblatex `date` (its
+//!     leading four-digit year, when there is no `year`), `doi`, `url`,
+//!     `journal` (else biblatex `journaltitle`, else `booktitle`),
+//!     `abstract` — every other field is ignored with one per-entry warning
+//!     listing the ignored names;
 //!   * LaTeX decoding of ONLY `\{`, `\}`, `\&`, `\%`, `--`/`---` (en/em
-//!     dash), and common pure-ASCII accent forms (`\'e`, `{\"o}`, `\c{c}`,
-//!     `\ss`, `\o`, `\ae`, `\aa`, …) — any other `\command` is kept literal
-//!     with one warning per entry.
+//!     dash), `~` (a plain space), unescaped `{` / `}` (dropped: they only
+//!     protect case), the accent commands `\'`, `` \` ``, `\^`, `\"`, `\~`,
+//!     `\=`, `\.`, `\u`, `\v`, `\H`, `\c`, `\k`, `\r`, `\d`, `\b` over any
+//!     letter or the dotless `\i` / `\j` (`\'e`, `\'{\i}`, `\v{c}`, `\v c`;
+//!     the field is NFC-normalised), and `\ss`, `\o`, `\ae`, `\aa`, `\l` —
+//!     any other `\command` is kept literal, with its braced argument, and
+//!     one warning per entry.
 //!
 //! Explicitly REJECTED shapes are parse-and-warn (skipped, never crash):
 //! `@comment` / `@preamble` / `@string` directives (NO macro expansion), bare
@@ -62,11 +70,15 @@ pub struct BibEntry {
     pub year: Option<i64>,
     pub doi: Option<String>,
     pub url: Option<String>,
-    /// BibTeX `journal` / CSL `container-title`.
+    /// BibTeX `journal` (else `journaltitle`, else `booktitle`) / CSL
+    /// `container-title`.
     pub journal: Option<String>,
     /// BibTeX `abstract` / CSL `abstract`. Named `abstract_text` because
     /// `abstract` is a reserved Rust keyword.
     pub abstract_text: Option<String>,
+    /// The first author is one literal name (a wholly braced BibTeX name or
+    /// a CSL `literal`), so its family is the whole name.
+    first_author_literal: bool,
 }
 
 impl BibEntry {
@@ -81,16 +93,20 @@ impl BibEntry {
             url: None,
             journal: None,
             abstract_text: None,
+            first_author_literal: false,
         }
     }
 
     /// Family name of the FIRST author, for the "{family} {year}" citation
-    /// display name. `Family, Given` forms take the text before the first
-    /// comma (so multi-word families like `de la Cruz, Maria` survive);
-    /// `Given Family` forms take the last whitespace-separated token.
+    /// display name. A literal name (`{World Health Organization}`, CSL
+    /// `literal`) is its own family; `Family, Given` forms take the text
+    /// before the first comma (so multi-word families like
+    /// `de la Cruz, Maria` survive); `Given Family` forms take the last
+    /// whitespace-separated token.
     pub fn first_author_family(&self) -> Option<String> {
         let first = self.authors.first()?;
         let family = match first.split_once(',') {
+            _ if self.first_author_literal => first.trim(),
             Some((family, _given)) => family.trim(),
             None => first.split_whitespace().last().unwrap_or(""),
         };
@@ -544,6 +560,7 @@ fn scan_entry_fields(
             entry,
             &fname,
             &raw_value,
+            &seen_fields,
             &mut ignored_fields,
             &mut latex_kept_literal,
             warnings,
@@ -667,18 +684,45 @@ fn skip_entry_remainder(
 }
 
 /// Route one supported BibTeX field into the entry (decoding LaTeX), or
-/// record it as ignored.
+/// record it as ignored. `seen_fields` (this field included) keeps the
+/// `journal` > `journaltitle` > `booktitle` and `year` > `date` precedence
+/// independent of field order.
 fn apply_bibtex_field(
     entry: &mut BibEntry,
     fname: &str,
     raw_value: &str,
+    seen_fields: &std::collections::HashSet<String>,
     ignored_fields: &mut Vec<String>,
     latex_kept_literal: &mut bool,
     warnings: &mut Vec<String>,
 ) {
     match fname {
         "title" => entry.title = Some(decode_latex(raw_value, latex_kept_literal)),
-        "author" => entry.authors = split_bibtex_authors(raw_value, latex_kept_literal),
+        "author" => {
+            entry.authors = split_bibtex_authors(raw_value, latex_kept_literal);
+            entry.first_author_literal = first_author_is_braced(raw_value);
+        }
+        "date" if entry.year.is_none() => {
+            let decoded = decode_latex(raw_value, latex_kept_literal);
+            match leading_year(decoded.trim()) {
+                Some(y) => entry.year = Some(y),
+                None => warnings.push(format!(
+                    "entry '{}': date '{}' has no leading four-digit year; ignored",
+                    entry.citation_key,
+                    decoded.trim()
+                )),
+            }
+        }
+        "journaltitle" if !seen_fields.contains("journal") => {
+            entry.journal = Some(decode_latex(raw_value, latex_kept_literal));
+        }
+        "booktitle"
+            if !seen_fields.contains("journal") && !seen_fields.contains("journaltitle") =>
+        {
+            entry.journal = Some(decode_latex(raw_value, latex_kept_literal));
+        }
+        // Outranked by a `year` / `journal` the entry also has.
+        "date" | "journaltitle" | "booktitle" => {}
         "year" => {
             let decoded = decode_latex(raw_value, latex_kept_literal);
             match decoded.trim().parse::<i64>() {
@@ -779,20 +823,69 @@ fn split_bibtex_authors(raw: &str, latex_kept_literal: &mut bool) -> Vec<String>
         .collect()
 }
 
+/// Whether the first name of a raw `author` value is wholly braced
+/// (`{World Health Organization}`): one literal name, not `Given Family`.
+fn first_author_is_braced(raw: &str) -> bool {
+    let raw = raw.trim_start();
+    if !raw.starts_with('{') {
+        return false;
+    }
+    let mut depth = 0usize;
+    let mut chars = raw.char_indices();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '\\' => {
+                chars.next();
+            }
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    let rest = &raw[i + 1..];
+                    let next = rest.trim_start();
+                    let and_follows = rest.starts_with(char::is_whitespace)
+                        && next.get(..3).is_some_and(|w| w.eq_ignore_ascii_case("and"))
+                        && next[3..].chars().next().is_none_or(char::is_whitespace);
+                    return next.is_empty() || and_follows;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The leading four-digit year of a biblatex `date` (`2024-03-01`,
+/// `2024/2025`, `2024`).
+fn leading_year(date: &str) -> Option<i64> {
+    let year = date.get(..4)?;
+    let delimited = !date[4..].starts_with(|c: char| c.is_ascii_digit());
+    if delimited && year.bytes().all(|b| b.is_ascii_digit()) {
+        year.parse().ok()
+    } else {
+        None
+    }
+}
+
 // ---------------------------------------------------------------------------
 // LaTeX subset decoding
 // ---------------------------------------------------------------------------
 
 /// Decode the documented LaTeX subset (module docs): `\{ \} \& \%`, en/em
-/// dashes, and common pure-ASCII accent forms. Anything else that looks like
-/// LaTeX (`\command`) is kept literal and flips `had_unknown` so the caller
-/// can warn once per entry.
+/// dashes, `~`, case-protection braces, and the accent commands. Anything
+/// else that looks like LaTeX (`\command`) is kept literal, with its braced
+/// argument, and flips `had_unknown` so the caller can warn once per entry.
 fn decode_latex(s: &str, had_unknown: &mut bool) -> String {
     let chars: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len());
+    // Per open `{`: whether it opens an unknown command's argument, which is
+    // kept literal with its `}`.
+    let mut kept_braces: Vec<bool> = Vec::new();
+    let mut after_unknown = false;
     let mut i = 0usize;
     while i < chars.len() {
         let c = chars[i];
+        let mut unknown = false;
         match c {
             '-' => {
                 let mut j = i;
@@ -811,132 +904,146 @@ fn decode_latex(s: &str, had_unknown: &mut bool) -> String {
                 i = j;
             }
             '\\' => {
-                if let Some((decoded, consumed)) = decode_latex_escape(&chars[i..]) {
-                    out.push(decoded);
+                if let Some(consumed) = decode_latex_escape(&chars[i..], &mut out) {
                     i += consumed;
                 } else {
                     *had_unknown = true;
-                    out.push('\\');
-                    i += 1;
+                    unknown = true;
+                    let rest = &chars[i + 1..];
+                    let name_len = match rest.first() {
+                        Some(n) if n.is_ascii_alphabetic() => {
+                            rest.iter().take_while(|c| c.is_ascii_alphabetic()).count()
+                        }
+                        Some(_) => 1,
+                        None => 0,
+                    };
+                    out.extend(&chars[i..=i + name_len]);
+                    i += 1 + name_len;
                 }
             }
             '{' => {
-                // Braced accent group `{\'e}` / `{\ss}` — decode; any other
-                // brace (e.g. case protection `{DNA}`) is kept literal.
-                if chars.get(i + 1) == Some(&'\\')
-                    && let Some((decoded, consumed)) = decode_latex_escape(&chars[i + 1..])
-                    && chars.get(i + 1 + consumed) == Some(&'}')
-                {
-                    out.push(decoded);
-                    i += consumed + 2;
-                } else {
+                kept_braces.push(after_unknown);
+                if after_unknown {
                     out.push('{');
-                    i += 1;
                 }
+                i += 1;
+            }
+            '}' => {
+                if kept_braces.pop() == Some(true) {
+                    out.push('}');
+                }
+                i += 1;
+            }
+            '~' => {
+                out.push(' ');
+                i += 1;
             }
             _ => {
                 out.push(c);
                 i += 1;
             }
         }
+        after_unknown = unknown;
     }
-    out
+    agaric_core::text_utils::nfc_normalise(&out)
 }
 
-/// Decode one escape starting at `\` (slice[0]). Returns the decoded char
-/// and the number of chars consumed, or `None` when the command is outside
-/// the supported subset.
-fn decode_latex_escape(slice: &[char]) -> Option<(char, usize)> {
+/// Decode one escape starting at `\` (slice[0]) into `out`. Returns the
+/// number of chars consumed, or `None` when the command is outside the
+/// supported subset.
+fn decode_latex_escape(slice: &[char], out: &mut String) -> Option<usize> {
     let next = *slice.get(1)?;
     // Literal escapes.
     if matches!(next, '{' | '}' | '&' | '%') {
-        return Some((next, 2));
+        out.push(next);
+        return Some(2);
     }
-    // Accent marks: \'e, \'{e}, \`e, \^e, \"o, \~n (and capitals).
-    if matches!(next, '\'' | '`' | '^' | '"' | '~') {
-        if let Some(&arg) = slice.get(2)
-            && arg.is_ascii_alphabetic()
-            && let Some(decoded) = accented(next, arg)
-        {
-            return Some((decoded, 3));
-        }
-        if slice.get(2) == Some(&'{')
-            && let Some(&arg) = slice.get(3)
-            && slice.get(4) == Some(&'}')
-            && let Some(decoded) = accented(next, arg)
-        {
-            return Some((decoded, 5));
-        }
+    let word_len = slice[1..]
+        .iter()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .count();
+    // Accent marks: `\'e`, `\'{\i}`, and the letter marks `\v{c}`, `\v c`.
+    if word_len <= 1
+        && let Some(mark) = combining_mark(next)
+    {
+        let gap = if word_len == 1 {
+            slice[2..].iter().take_while(|c| c.is_whitespace()).count()
+        } else {
+            0
+        };
+        let at = 2 + gap;
+        let (base, len) = accent_base(&slice[at..])?;
+        out.push(base);
+        out.push(mark);
+        return Some(at + len);
+    }
+    if word_len == 0 {
         return None;
     }
-    // Word commands: \ss, \o, \O, \ae, \AE, \aa, \AA, and \c{c} (cedilla).
-    if next.is_ascii_alphabetic() {
-        let word: String = slice[1..]
-            .iter()
-            .take_while(|c| c.is_ascii_alphabetic())
-            .collect();
-        let word_len = word.chars().count();
-        // Cedilla: \c{c} / \c{C}.
-        if word == "c"
-            && slice.get(2) == Some(&'{')
-            && slice.get(4) == Some(&'}')
-            && let Some(&arg) = slice.get(3)
-        {
-            let decoded = match arg {
-                'c' => 'ç',
-                'C' => 'Ç',
-                _ => return None,
-            };
-            return Some((decoded, 5));
-        }
-        let decoded = match word.as_str() {
-            "ss" => 'ß',
-            "o" => 'ø',
-            "O" => 'Ø',
-            "ae" => 'æ',
-            "AE" => 'Æ',
-            "aa" => 'å',
-            "AA" => 'Å',
-            "l" => 'ł',
-            "L" => 'Ł',
-            _ => return None,
-        };
-        // The command must be delimited (end of input, `{}`, whitespace, or
-        // any non-letter) — `\oderint` is NOT `\o` + `derint`.
-        match slice.get(1 + word_len) {
-            None => Some((decoded, 1 + word_len)),
-            Some(c) if !c.is_ascii_alphabetic() => {
-                // A following `{}` is an explicit delimiter — consume it.
-                if *c == '{' && slice.get(2 + word_len) == Some(&'}') {
-                    Some((decoded, 3 + word_len))
-                } else {
-                    Some((decoded, 1 + word_len))
-                }
-            }
-            Some(_) => None,
-        }
+    let word: String = slice[1..=word_len].iter().collect();
+    let decoded = match word.as_str() {
+        "ss" => 'ß',
+        "o" => 'ø',
+        "O" => 'Ø',
+        "ae" => 'æ',
+        "AE" => 'Æ',
+        "aa" => 'å',
+        "AA" => 'Å',
+        "l" => 'ł',
+        "L" => 'Ł',
+        _ => return None,
+    };
+    out.push(decoded);
+    // A following `{}` is an explicit delimiter — consume it.
+    if slice.get(1 + word_len) == Some(&'{') && slice.get(2 + word_len) == Some(&'}') {
+        Some(3 + word_len)
     } else {
-        None
+        Some(1 + word_len)
     }
 }
 
-/// Pure-ASCII accent lookup: mark × base letter → precomposed char.
-fn accented(mark: char, base: char) -> Option<char> {
-    let table: &[(char, &str, &str)] = &[
-        ('\'', "aeiouyAEIOUYcnsz", "áéíóúýÁÉÍÓÚÝćńśź"),
-        ('`', "aeiouAEIOU", "àèìòùÀÈÌÒÙ"),
-        ('^', "aeiouAEIOU", "âêîôûÂÊÎÔÛ"),
-        ('"', "aeiouyAEIOU", "äëïöüÿÄËÏÖÜ"),
-        ('~', "anoANO", "ãñõÃÑÕ"),
-    ];
-    for (m, bases, decoded) in table {
-        if *m == mark
-            && let Some(idx) = bases.chars().position(|b| b == base)
+/// The Unicode combining character for a LaTeX accent command's mark.
+fn combining_mark(mark: char) -> Option<char> {
+    Some(match mark {
+        '\'' => '\u{301}',
+        '`' => '\u{300}',
+        '^' => '\u{302}',
+        '"' => '\u{308}',
+        '~' => '\u{303}',
+        '=' => '\u{304}',
+        '.' => '\u{307}',
+        'u' => '\u{306}',
+        'v' => '\u{30C}',
+        'H' => '\u{30B}',
+        'c' => '\u{327}',
+        'k' => '\u{328}',
+        'r' => '\u{30A}',
+        'd' => '\u{323}',
+        'b' => '\u{331}',
+        _ => return None,
+    })
+}
+
+/// An accent's base letter (`e`, `{e}`, `\i`, `{\i}`) and the chars it
+/// spans. The dotless `\i` / `\j` take the accent in place of their dot, so
+/// they are based on `i` / `j`.
+fn accent_base(rest: &[char]) -> Option<(char, usize)> {
+    let bare = |s: &[char]| match s {
+        ['\\', dotless @ ('i' | 'j'), tail @ ..]
+            if !tail.first().is_some_and(char::is_ascii_alphabetic) =>
         {
-            return decoded.chars().nth(idx);
+            Some((*dotless, 2))
         }
+        [letter, ..] if letter.is_alphabetic() => Some((*letter, 1)),
+        _ => None,
+    };
+    match rest {
+        ['{', inner @ ..] => {
+            let (base, len) = bare(inner)?;
+            (inner.get(len) == Some(&'}')).then_some((base, len + 2))
+        }
+        _ => bare(rest),
     }
-    None
 }
 
 // ---------------------------------------------------------------------------
@@ -958,43 +1065,43 @@ const CSL_KNOWN_KEYS: &[&str] = &[
 ];
 
 /// Render the CSL `author` elements (`{family, given}` or `{literal}`) into
-/// `out`, in source order.
-fn push_csl_authors(
-    authors: &serde_json::Value,
-    citation_key: &str,
-    out: &mut Vec<String>,
-    warnings: &mut Vec<String>,
-) {
+/// `entry.authors`, in source order.
+fn push_csl_authors(authors: &serde_json::Value, entry: &mut BibEntry, warnings: &mut Vec<String>) {
     match authors.as_array() {
         Some(list) => {
             for author in list {
                 let Some(a) = author.as_object() else {
                     warnings.push(format!(
-                        "entry '{citation_key}': author element is not an object; skipped"
+                        "entry '{}': author element is not an object; skipped",
+                        entry.citation_key
                     ));
                     continue;
                 };
                 let family = a.get("family").and_then(|v| v.as_str()).unwrap_or("");
                 let given = a.get("given").and_then(|v| v.as_str()).unwrap_or("");
                 let literal = a.get("literal").and_then(|v| v.as_str()).unwrap_or("");
-                let display = match (family.trim(), given.trim(), literal.trim()) {
+                let (display, is_literal) = match (family.trim(), given.trim(), literal.trim()) {
                     ("", "", "") => {
                         warnings.push(format!(
-                            "entry '{citation_key}': author with no family/given/literal \
-                             name; skipped"
+                            "entry '{}': author with no family/given/literal name; skipped",
+                            entry.citation_key
                         ));
                         continue;
                     }
-                    ("", "", lit) => lit.to_string(),
-                    (family_name, "", _) => family_name.to_string(),
-                    ("", given_name, _) => given_name.to_string(),
-                    (family_name, given_name, _) => format!("{family_name}, {given_name}"),
+                    ("", "", lit) => (lit.to_string(), true),
+                    (family_name, "", _) => (family_name.to_string(), false),
+                    ("", given_name, _) => (given_name.to_string(), false),
+                    (family_name, given_name, _) => (format!("{family_name}, {given_name}"), false),
                 };
-                out.push(display);
+                if entry.authors.is_empty() {
+                    entry.first_author_literal = is_literal;
+                }
+                entry.authors.push(display);
             }
         }
         None => warnings.push(format!(
-            "entry '{citation_key}': 'author' is not an array; ignored"
+            "entry '{}': 'author' is not an array; ignored",
+            entry.citation_key
         )),
     }
 }
@@ -1049,7 +1156,7 @@ fn csl_entry(
 
     // author: [{family, given} | {literal}]
     if let Some(authors) = obj.get("author") {
-        push_csl_authors(authors, &citation_key, &mut entry.authors, warnings);
+        push_csl_authors(authors, &mut entry, warnings);
     }
 
     // issued.date-parts[0][0] → year (number or numeric string).
@@ -1181,7 +1288,7 @@ mod tests {
         assert_eq!(e.entry_type, "article");
         assert_eq!(
             e.title.as_deref(),
-            Some("A {Nested} Study of \u{2014} Things")
+            Some("A Nested Study of \u{2014} Things")
         );
         assert_eq!(e.authors, vec!["Doe, Jane", "Smith, John"]);
         assert_eq!(e.year, Some(2020));
@@ -1359,7 +1466,7 @@ mod tests {
         );
         assert_eq!(
             authors,
-            vec!["{Smith and Sons}", "Doe, Jane", "van Beethoven, Ludwig"]
+            vec!["Smith and Sons", "Doe, Jane", "van Beethoven, Ludwig"]
         );
     }
 
@@ -1399,10 +1506,137 @@ mod tests {
         let (out, unknown) = decode(r"\textbf{Bold} \alpha");
         assert!(unknown, "unknown commands must be flagged");
         assert_eq!(out, r"\textbf{Bold} \alpha");
-        // Case-protection braces stay literal without flagging.
+        // Case-protection braces are dropped without flagging.
         let (out, unknown) = decode("{DNA} sequencing");
         assert!(!unknown);
-        assert_eq!(out, "{DNA} sequencing");
+        assert_eq!(out, "DNA sequencing");
+    }
+
+    #[test]
+    fn latex_drops_case_braces_and_maps_tilde_to_space_6032() {
+        assert_eq!(
+            decode("The {DNA} of {B}ayesian Models"),
+            ("The DNA of Bayesian Models".into(), false)
+        );
+        assert_eq!(decode(r"\{x\} Knuth~D."), ("{x} Knuth D.".into(), false));
+    }
+
+    #[test]
+    fn latex_decodes_every_accent_mark_over_any_base_6032() {
+        let cases = [
+            (r"\'e", "é"),
+            (r"\'{e}", "é"),
+            (r"\'w", "ẃ"),
+            (r"Nov\'{\i}", "Noví"),
+            (r"\'\i", "í"),
+            (r"\^{\j}", "ĵ"),
+            (r"\`a", "à"),
+            (r#"\"y"#, "ÿ"),
+            (r"\~n", "ñ"),
+            (r"\=a", "ā"),
+            (r"\.z", "ż"),
+            (r"\u{g}", "ğ"),
+            (r"\v{c}", "č"),
+            (r"\v c", "č"),
+            (r"\v{C}asopis", "Časopis"),
+            (r"\H{o}", "ő"),
+            (r"\c{s}", "ş"),
+            (r"\k{a}", "ą"),
+            (r"\r{a}", "å"),
+            (r"\d{s}", "ṣ"),
+            (r"\b{b}", "ḇ"),
+        ];
+        for (src, want) in cases {
+            assert_eq!(decode(src), (want.into(), false), "decoding {src}");
+            assert_eq!(
+                decode(src).0,
+                agaric_core::text_utils::nfc_normalise(want),
+                "{src} must decode to NFC"
+            );
+        }
+    }
+
+    #[test]
+    fn bibtex_venue_and_year_precedence_is_field_order_independent_6032() {
+        let venue = ["journal = {J}", "journaltitle = {JT}", "booktitle = {B}"];
+        let orders: [[usize; 3]; 6] = [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ];
+        for order in orders {
+            for skip_journal in [false, true] {
+                let fields: Vec<&str> = order
+                    .iter()
+                    .filter(|i| !(skip_journal && **i == 0))
+                    .map(|i| venue[*i])
+                    .collect();
+                let src = format!("@incollection{{k, {}}}", fields.join(", "));
+                let out = parse_bibtex(&src).unwrap();
+                let want = if skip_journal { "JT" } else { "J" };
+                assert_eq!(out.entries[0].journal.as_deref(), Some(want), "{src}");
+                assert!(out.warnings.is_empty(), "{src}: {:?}", out.warnings);
+            }
+        }
+        let out = parse_bibtex("@inproceedings{k, booktitle = {B}}").unwrap();
+        assert_eq!(
+            out.entries[0].journal.as_deref(),
+            Some("B"),
+            "booktitle alone"
+        );
+        for src in [
+            "@book{k, year = {2020}, date = {2024-03-01}}",
+            "@book{k, date = {2024-03-01}, year = {2020}}",
+        ] {
+            let out = parse_bibtex(src).unwrap();
+            assert_eq!(out.entries[0].year, Some(2020), "year must win: {src}");
+            assert!(out.warnings.is_empty(), "{src}: {:?}", out.warnings);
+        }
+        for date in ["2024-03-01", "2024/2025", "2024"] {
+            let out = parse_bibtex(&format!("@book{{k, date = {{{date}}}}}")).unwrap();
+            assert_eq!(out.entries[0].year, Some(2024), "date {date}");
+            assert!(out.warnings.is_empty(), "{date}: {:?}", out.warnings);
+        }
+        let out = parse_bibtex("@book{k, date = {March 2024}}").unwrap();
+        assert_eq!(out.entries[0].year, None, "a non-leading year is ignored");
+        assert_eq!(
+            out.warnings,
+            vec!["entry 'k': date 'March 2024' has no leading four-digit year; ignored"],
+            "a bad date warns like a bad year"
+        );
+    }
+
+    #[test]
+    fn bibtex_wholly_braced_first_author_is_one_family_6032() {
+        let src = "@misc{k, author = {{World Health Organization} and Doe, Jane}}";
+        let out = parse_bibtex(src).unwrap();
+        let e = &out.entries[0];
+        assert_eq!(e.authors, vec!["World Health Organization", "Doe, Jane"]);
+        assert_eq!(
+            e.first_author_family().as_deref(),
+            Some("World Health Organization")
+        );
+        // Braces inside a name protect case only: the last token is the family.
+        let out = parse_bibtex("@misc{k, author = {{A} {B}}}").unwrap();
+        assert_eq!(out.entries[0].authors, vec!["A B"]);
+        assert_eq!(out.entries[0].first_author_family().as_deref(), Some("B"));
+    }
+
+    #[test]
+    fn csl_literal_first_author_is_one_family_6032() {
+        let src = r#"[{"id": "k", "author": [{"literal": "World Health Organization"},
+            {"family": "Doe", "given": "Jane"}]},
+            {"id": "k2", "author": [{"family": "Doe", "given": "Jane"},
+            {"literal": "The Consortium"}]}]"#;
+        let out = parse_csl_json(src).unwrap();
+        assert_eq!(
+            out.entries[0].first_author_family().as_deref(),
+            Some("World Health Organization")
+        );
+        assert_eq!(out.entries[1].first_author_family().as_deref(), Some("Doe"));
     }
 
     // -- CSL-JSON ---------------------------------------------------------------
