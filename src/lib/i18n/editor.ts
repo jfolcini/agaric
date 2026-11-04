@@ -229,6 +229,9 @@ export const editor: Record<string, string> = {
   'editor.brokenLinkUndoStale':
     'The page changed after the removal, so it can no longer be undone here',
   'editor.brokenRefTooltip': 'Broken ref — target block deleted',
+  // #6033 — a footnote reference `[^label]`, shown as its number on the page.
+  'editor.footnoteLink': 'Footnote {{number}}',
+  'editor.footnoteMissing': 'No block on this page defines this footnote',
   'attachments.loadFailed': 'Failed to load attachments',
   'attachments.deleteFailed': 'Failed to delete attachment',
   'attachments.renameFailed': 'Failed to rename attachment',
