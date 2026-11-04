@@ -57,6 +57,13 @@ pub async fn refresh_caches_for_recovered_drafts(
                 block_id: std::sync::Arc::clone(&block_id),
             })
             .await?;
+        // A recovered draft of a page, tag or block-ref target renames what
+        // its referrers index (#6277 B3).
+        materializer
+            .enqueue_background(MaterializeTask::ReindexFtsReferences {
+                block_id: std::sync::Arc::clone(&block_id),
+            })
+            .await?;
         materializer
             .enqueue_background(MaterializeTask::ReindexBlockLinks { block_id })
             .await?;

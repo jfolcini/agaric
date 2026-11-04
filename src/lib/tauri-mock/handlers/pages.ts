@@ -1302,6 +1302,28 @@ const PAGES_PRIMITIVE_TYPES: ReadonlySet<string> = new Set([
   'HasNoInboundLinks',
 ])
 
+/**
+ * `content`'s lines less a `# Title` equal to `title`, the first line or the
+ * first after a leading front matter, and the blank lines after it, so front
+ * matter is still leading, as the backend's `strip_title_heading` does (#5160
+ * S6, #6277 A1).
+ */
+function stripTitleHeading(content: string, title: string): string[] {
+  const lines = content.split('\n')
+  const close = lines[0]?.startsWith('---')
+    ? lines.findIndex((line, i) => i > 0 && line.startsWith('---'))
+    : -1
+  const isBlank = (i: number): boolean => lines[i] !== undefined && /^\r?$/.test(lines[i])
+  let at = close + 1
+  while (close >= 0 && isBlank(at)) at += 1
+  const first = lines[at]?.replace(/\r$/, '') ?? ''
+  if (first.startsWith('# ') && first.slice(2).trim() === title) {
+    lines.splice(at, 1)
+    while (isBlank(at)) lines.splice(at, 1)
+  }
+  return lines
+}
+
 export const pagesHandlers = {
   // Indexed lookup for a single date-formatted journal page in
   // the active space. Real backend implementation: a SELECT on
@@ -2041,15 +2063,7 @@ export const pagesHandlers = {
       .filter((seg) => seg.length > 0)
       .join('/')
     const pageTitle = namespaceTitle.length > 0 ? namespaceTitle : 'Imported Page'
-    // A leading `# Title` equal to the derived title is dropped, and the blank
-    // lines after it, so front matter is still leading, as the backend's
-    // `strip_title_heading` does (#5160 S6).
-    const lines = content.split('\n')
-    const first = lines[0]?.replace(/\r$/, '') ?? ''
-    if (first.startsWith('# ') && first.slice(2).trim() === pageTitle) {
-      lines.shift()
-      while (lines[0] !== undefined && /^\r?$/.test(lines[0])) lines.shift()
-    }
+    const lines = stripTitleHeading(content, pageTitle)
 
     // Faithful-but-simple property count: the real importer pulls properties
     // from YAML frontmatter and inline `key:: value` lines. We don't reproduce
