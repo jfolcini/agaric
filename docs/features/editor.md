@@ -154,6 +154,8 @@ The page reads as a document in a frame, as GitLab's rich text editor shows one:
 - **PDF attachments** open in the **PdfViewerDialog**.
 - **A link to an attachment** in a block's text, `[label](attachment:<id>)` as an import writes a linked file or an embedded one that is not an image, shows with a paperclip; clicking it (Ctrl/Cmd+Click while editing) downloads the file.
 - **Audio attachments** play inline. `/voice` records a voice note from the microphone and attaches it to the block; recording stops on its own just before the 50 MB attachment limit.
+- **A recording** is a block's audio with its `<name>.transcript.md` and `<name>.summary.md` attachments (suffixes in any case). The block shows the player first, then the summary open, then the transcript closed, then its other attachments. A block with one audio pairs any transcript and summary with it; a block with several pairs them by name (`rec.ogg` with `rec.transcript.md`); a block with no audio shows them as plain Markdown previews. An audio the webview cannot play shows as its file chip, so it can still be downloaded.
+- **A transcript seeks its recording.** A paragraph (paragraphs are separated by a blank line) that starts with `[h:mm:ss]` or `[mm:ss]` and a space, such as `[00:12] **Bob:** Hi.`, is a segment: hours are one or more digits, minutes and seconds two digits below 60. Its timestamp is a button that moves the player there, and while the transcript is open the segment under the playhead is marked. Any other paragraph, and any other bracket, is plain Markdown; a transcript with no timestamps reads as plain Markdown, with no seek buttons.
 - Files render with type-specific icons (PDF, Word, Excel, image, generic).
 
 ## Drafts (autosave)

@@ -132,6 +132,28 @@ test.describe('the journal’s daily view in page mode (#5691) @journal @editor'
     expect((await backendTexts(page))[1]).toBe('Review project milestones typed here')
   })
 
+  test('a week’s day heading opens that day, whose Page switch puts it in page mode', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    await page.getByRole('tab', { name: 'Weekly view' }).click()
+    await page
+      .locator('section', { hasText: '(Today)' })
+      .getByRole('button', { name: /^Go to daily view for / })
+      .click()
+
+    await expect(page.getByRole('tab', { name: 'Daily view' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    await page
+      .getByRole('radiogroup', { name: 'Editing mode' })
+      .getByRole('radio', { name: 'Page' })
+      .click()
+    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(SEEDED_BLOCKS)
+    await expect(page.locator(`${DAY} li[data-block-id]`)).toHaveCount(0)
+  })
+
   test('Ctrl+E switches the day to page mode and back, keeping the caret and the block at the top', async ({
     page,
   }) => {
