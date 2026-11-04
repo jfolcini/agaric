@@ -81,7 +81,7 @@
 //     `[role="tab"]` buttons (Ctrl+T opens one), `[aria-label="Search blocks"]`,
 //     `[data-testid="search-results-count"]` reading "No results",
 //     `[data-testid="search-result-row-<id>"]`, `#journal-tab-daily` /
-//     `#journal-tab-weekly`, and a DaySection's "Open <date> in editor".
+//     `#journal-tab-weekly`, and a DaySection's "Delete page".
 //   - `[data-testid="suggestion-item"]`     an item of the open `/` / `[[` /
 //     `#` / `::` picker (SuggestionList.tsx), `aria-selected` on the one Enter
 //     picks; the create item's id is `suggestion-__create__`.

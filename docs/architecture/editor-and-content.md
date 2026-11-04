@@ -41,7 +41,7 @@ The `RovingEditorHandle` indirection (`src/editor/use-roving-editor.ts`) decoupl
 Five inline pickers share one mechanism (`src/editor/extensions/picker-plugin.ts` + `SuggestionList`): `BlockLinkPicker` (`[[`), `TagPicker` (`@`), `BlockRefPicker` (`((`), `SlashMenu` (`/`), `PropertyPicker` (`::`). Each is a TipTap extension that:
 
 1. Registers an InputRule on the trigger character.
-2. Mounts `SuggestionList` (a Floating-UI–positioned popup) via `ReactRenderer`.
+2. Mounts `SuggestionList` via `ReactRenderer` in a popup placed by `suggestion-placement.ts`, anchored to the trigger.
 3. On select, inserts a node at the captured `insertPos`.
 
 **Capture before await.** Every picker captures `insertPos = editor.state.selection.from` BEFORE its async IPC call. After the await, if `insertPos > editor.state.doc.content.size` (the doc shrank), it falls back to inserting at the current cursor. This is the documented contract; missing the guard is a classic stale-position bug.

@@ -14,15 +14,13 @@
  * 10. Calls onAddBlock when empty-state CTA clicked
  * 11. Calls onAddBlock when compact add button clicked
  * 12. Shows AddBlockButton when pageId exists
- * 13. "Open in editor" button calls onNavigateToPage
- * 14. hideHeading + pageId shows "Open in page editor" link
- * 15. Renders DuePanel, LinkedReferences, DonePanel in daily mode
- * 16. Does NOT render DuePanel/DonePanel in weekly mode
- * 17. Agenda count badges shown in weekly/monthly mode
- * 18. Backlink count badge shown in weekly/monthly mode
- * 19. Count badge click calls goToDateAndPanel
- * 20. Count badge caps at 99+
- * 21. A11y audit passes (axe)
+ * 13. Renders DuePanel, LinkedReferences, DonePanel in daily mode
+ * 14. Does NOT render DuePanel/DonePanel in weekly mode
+ * 15. Agenda count badges shown in weekly/monthly mode
+ * 16. Backlink count badge shown in weekly/monthly mode
+ * 17. Count badge click calls goToDateAndPanel
+ * 18. Count badge caps at 99+
+ * 19. A11y audit passes (axe)
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -396,46 +394,7 @@ describe('DaySection', () => {
     expect(onAddBlock).toHaveBeenCalledWith('2025-06-15')
   })
 
-  // 13. "Open in editor" button calls onNavigateToPage
-  it('"Open in editor" button calls onNavigateToPage', async () => {
-    const user = userEvent.setup()
-    const onNavigate = vi.fn()
-    const entry = makeDayEntry({ pageId: 'PAGE_1', dateStr: '2025-06-15' })
-
-    render(
-      <DaySection entry={entry} mode="weekly" onAddBlock={noop} onNavigateToPage={onNavigate} />,
-    )
-
-    const openBtn = screen.getByRole('button', { name: /Open 2025-06-15 in editor/ })
-    await user.click(openBtn)
-
-    expect(onNavigate).toHaveBeenCalledWith('PAGE_1', '2025-06-15')
-  })
-
-  // 14. hideHeading + pageId shows "Open in page editor" link
-  it('hideHeading + pageId shows "Open in page editor" link', async () => {
-    const user = userEvent.setup()
-    const onNavigate = vi.fn()
-    const entry = makeDayEntry({ pageId: 'PAGE_1', dateStr: '2025-06-15' })
-
-    render(
-      <DaySection
-        entry={entry}
-        mode="daily"
-        hideHeading
-        onAddBlock={noop}
-        onNavigateToPage={onNavigate}
-      />,
-    )
-
-    const openBtn = screen.getByRole('button', { name: /Open 2025-06-15 in editor/ })
-    expect(screen.getByText('Open in page editor')).toBeInTheDocument()
-    await user.click(openBtn)
-
-    expect(onNavigate).toHaveBeenCalledWith('PAGE_1', '2025-06-15')
-  })
-
-  // 15. Renders DuePanel, LinkedReferences, DonePanel in daily mode
+  // 13. Renders DuePanel, LinkedReferences, DonePanel in daily mode
   it('renders DuePanel, LinkedReferences, DonePanel in daily mode', () => {
     const entry = makeDayEntry({ pageId: 'PAGE_1', dateStr: '2025-06-15' })
 
@@ -489,7 +448,7 @@ describe('DaySection', () => {
     expect(stack).toContainElement(screen.getByTestId('done-panel'))
   })
 
-  // 16. Does NOT render DuePanel/DonePanel in weekly mode
+  // 14. Does NOT render DuePanel/DonePanel in weekly mode
   it('does NOT render DuePanel/DonePanel in weekly mode', () => {
     const entry = makeDayEntry({ pageId: 'PAGE_1' })
 
@@ -500,7 +459,7 @@ describe('DaySection', () => {
     expect(screen.queryByTestId('linked-references')).not.toBeInTheDocument()
   })
 
-  // 17. Agenda count badges shown in weekly/monthly mode
+  // 15. Agenda count badges shown in weekly/monthly mode
   it('renders agenda count badges in weekly mode', () => {
     const entry = makeDayEntry({ dateStr: '2025-06-15', displayDate: 'Sun, Jun 15, 2025' })
     const agendaCountsBySource = {
@@ -547,7 +506,7 @@ describe('DaySection', () => {
     expect(screen.getByLabelText('1 Due item, click to view')).toBeInTheDocument()
   })
 
-  // 18. Backlink count badge shown in weekly/monthly mode
+  // 16. Backlink count badge shown in weekly/monthly mode
   it('renders backlink count badge in weekly mode', () => {
     const entry = makeDayEntry({
       pageId: 'PAGE_1',
@@ -584,7 +543,7 @@ describe('DaySection', () => {
     expect(screen.getByLabelText('1 reference, click to view')).toBeInTheDocument()
   })
 
-  // 19. Count badge click calls goToDateAndPanel
+  // 17. Count badge click calls goToDateAndPanel
   it('count badge click calls goToDateAndPanel', async () => {
     const user = userEvent.setup()
     const goToDateAndPanelSpy = vi.fn()
@@ -636,7 +595,7 @@ describe('DaySection', () => {
     expect(goToDateAndPanelSpy).toHaveBeenCalledWith(entry.date, 'references')
   })
 
-  // 20. Count badge caps at 99+
+  // 18. Count badge caps at 99+
   it('count badge caps at 99+', () => {
     const entry = makeDayEntry({ dateStr: '2025-06-15', displayDate: 'Sun, Jun 15, 2025' })
     const agendaCountsBySource = {
@@ -671,7 +630,7 @@ describe('DaySection', () => {
     expect(screen.getByText(/99\+/)).toBeInTheDocument()
   })
 
-  // 21. section has correct aria-label
+  // 19. section has correct aria-label
   it('section has correct aria-label', () => {
     const entry = makeDayEntry({ displayDate: 'Sun, Jun 15, 2025' })
 
@@ -682,16 +641,7 @@ describe('DaySection', () => {
     ).toBeInTheDocument()
   })
 
-  // 22. Does not render "open in editor" button without onNavigateToPage
-  it('does not show "Open in editor" without onNavigateToPage', () => {
-    const entry = makeDayEntry({ pageId: 'PAGE_1', dateStr: '2025-06-15' })
-
-    render(<DaySection entry={entry} mode="weekly" onAddBlock={noop} />)
-
-    expect(screen.queryByRole('button', { name: /Open.*in editor/ })).not.toBeInTheDocument()
-  })
-
-  // 23. Does not render count badges in daily mode
+  // 20. Does not render count badges in daily mode
   it('does not render count badges in daily mode', () => {
     const entry = makeDayEntry({ dateStr: '2025-06-15' })
     const agendaCountsBySource = {
@@ -710,7 +660,7 @@ describe('DaySection', () => {
     expect(screen.queryByLabelText(/items, click to view/)).not.toBeInTheDocument()
   })
 
-  // 24. Does not render count badges in agenda mode
+  // 21. Does not render count badges in agenda mode
   it('does not render count badges in agenda mode', () => {
     const entry = makeDayEntry({ dateStr: '2025-06-15' })
     const agendaCountsBySource = {
@@ -729,7 +679,7 @@ describe('DaySection', () => {
     expect(screen.queryByLabelText(/items, click to view/)).not.toBeInTheDocument()
   })
 
-  // 25. Today highlight: isToday applies strengthened highlight classes
+  // 22. Today highlight: isToday applies strengthened highlight classes
   it('applies strengthened highlight classes when isToday is true', () => {
     const today = new Date()
     const entry = makeDayEntry({
@@ -746,7 +696,7 @@ describe('DaySection', () => {
     expect(section.className).not.toContain('border-accent')
   })
 
-  // 26. Non-today: does NOT have highlight classes
+  // 23. Non-today: does NOT have highlight classes
   it('does NOT apply highlight classes when isToday is false', () => {
     const entry = makeDayEntry({
       date: new Date(2025, 5, 15),
@@ -762,8 +712,8 @@ describe('DaySection', () => {
     expect(section.className).not.toContain('border-accent')
   })
 
-  // 27. heading row uses flex-wrap so badges + open-in-editor
-  // button don't run off the right edge on narrow phones.
+  // 24. heading row uses flex-wrap so badges + page actions
+  // don't run off the right edge on narrow phones.
   it('heading row uses flex-wrap to prevent overflow on phones', () => {
     const entry = makeDayEntry({ displayDate: 'Sun, Jun 15, 2025' })
 
