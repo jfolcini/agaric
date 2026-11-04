@@ -21,6 +21,7 @@ import { MENU_ITEM_CLASS } from '@/components/pages/PageHeaderMenu'
 import { Button } from '@/components/ui/button'
 import { MenuSheet } from '@/components/ui/menu-sheet'
 import { SheetTrigger } from '@/components/ui/sheet'
+import { ModeSwap } from '@/editor/page-mode/ModeSwap'
 import { PageModeSlot } from '@/editor/page-mode/PageModeSlot'
 import { useEditModeShortcut, usePageMode } from '@/editor/page-mode/use-page-mode'
 import { useIsMobile } from '@/hooks/useIsMobile'
@@ -105,23 +106,28 @@ export function DayPageEditor({
           )}
         </div>
       </div>
-      {pageMode.wanted ? (
-        <PageModeSlot
-          pageId={pageId}
-          ready
-          onBlocked={pageMode.onBlocked}
-          editorRef={pageMode.editorRef}
-          opening={pageMode.opening}
-          onNavigateToPage={onNavigateToPage}
-        />
-      ) : (
-        <>
-          <BlockTree parentId={pageId} onNavigateToPage={onNavigateToPage} autoCreateFirstBlock />
-          <div className="mt-1">
-            <AddBlockButton onClick={onAddBlock} />
-          </div>
-        </>
-      )}
+      <ModeSwap
+        pageId={pageId}
+        pageMode={pageMode.wanted}
+        page={
+          <PageModeSlot
+            pageId={pageId}
+            ready
+            onBlocked={pageMode.onBlocked}
+            editorRef={pageMode.editorRef}
+            opening={pageMode.opening}
+            onNavigateToPage={onNavigateToPage}
+          />
+        }
+        blocks={
+          <>
+            <BlockTree parentId={pageId} onNavigateToPage={onNavigateToPage} autoCreateFirstBlock />
+            <div className="mt-1">
+              <AddBlockButton onClick={onAddBlock} />
+            </div>
+          </>
+        }
+      />
     </div>
   )
 }

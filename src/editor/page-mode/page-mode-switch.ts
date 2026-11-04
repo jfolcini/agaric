@@ -26,13 +26,11 @@ export interface PageModeOpening {
   place: ScrollPlace | null
 }
 
-/** Both modes' rows of the page, a page view's or the journal day's: page mode's blocks, block mode's tree rows. */
-const ROWS = [
-  '.page-editor [data-page-block-id]',
-  '.page-editor li[data-block-id]',
-  '.journal-day-page [data-page-block-id]',
-  '.journal-day-page li[data-block-id]',
-].join(', ')
+/** Each mode's rows of the page, a page view's or the journal day's: page mode's blocks, block mode's tree rows. */
+const ROWS = {
+  page: '.page-editor [data-page-block-id], .journal-day-page [data-page-block-id]',
+  blocks: '.page-editor li[data-block-id], .journal-day-page li[data-block-id]',
+} as const
 
 function rowId(row: Element): string | null {
   return row.getAttribute('data-page-block-id') ?? row.getAttribute('data-block-id')
@@ -44,7 +42,7 @@ const scroller = (): HTMLElement | null => document.getElementById('main-content
 export function scrollPlace(): ScrollPlace | null {
   const at = scroller()?.getBoundingClientRect().top
   if (at === undefined) return null
-  for (const row of document.querySelectorAll(ROWS)) {
+  for (const row of document.querySelectorAll(`${ROWS.page}, ${ROWS.blocks}`)) {
     const box = row.getBoundingClientRect()
     const blockId = rowId(row)
     if (box.bottom > at && blockId !== null) return { blockId, top: box.top - at }
@@ -52,10 +50,13 @@ export function scrollPlace(): ScrollPlace | null {
   return null
 }
 
-/** Scroll the page so `place`'s block starts where it did; nothing if it is not drawn. */
-export function restoreScrollPlace(place: ScrollPlace): void {
+/**
+ * Scroll the page so `place`'s block, as `mode` draws it, starts where it did; nothing if it is
+ * not drawn. Block mode's tree may still be on screen as page mode opens (`ModeSwap`).
+ */
+export function restoreScrollPlace(place: ScrollPlace, mode: keyof typeof ROWS): void {
   const box = scroller()
-  const row = [...document.querySelectorAll(ROWS)].find((el) => rowId(el) === place.blockId)
+  const row = [...document.querySelectorAll(ROWS[mode])].find((el) => rowId(el) === place.blockId)
   if (box === null || row === undefined) return
   box.scrollTop += row.getBoundingClientRect().top - box.getBoundingClientRect().top - place.top
 }
