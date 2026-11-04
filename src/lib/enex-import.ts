@@ -36,6 +36,12 @@
  * (`- [ ]`/`- [x]`) instead of a bullet wrapping a task. See
  * {@link transformEnmlDom} and {@link enmlToMarkdown}.
  *
+ * TASKS AND REMINDERS (#6032): Evernote 10 writes each task as a `<task>`
+ * child of the `<note>`, and in the body only a placeholder `<div>` for its
+ * task group. The group's tasks replace that placeholder as task blocks (see
+ * {@link placeTaskGroups}); an older note reminder opens the note with a task
+ * block named after it, as a Joplin to-do does (see {@link reminderTask}).
+ *
  * DEFERRED (separate follow-up): Joplin `.jex` import.
  *
  * ACCEPTED MUTATION GAPS (#4815). The mutants still surviving here are
@@ -59,7 +65,7 @@
 import TurndownService from 'turndown'
 import { gfm } from 'turndown-plugin-gfm'
 
-import { scanNameTokens } from '@/lib/name-tokens'
+import { formatDate } from '@/lib/date-utils'
 
 /**
  * One decoded, referenced `<resource>` attachment for a note (#2513). Only
@@ -86,7 +92,10 @@ export interface EnexAttachment {
 export interface EnexNote {
   /** Note title; defaults to {@link UNTITLED_PLACEHOLDER} when empty/absent. */
   title: string
-  /** The ENML body converted to Markdown (no frontmatter, no tag tokens). */
+  /**
+   * The note's reminder task, then its ENML body converted to Markdown with its
+   * Evernote tasks in place (no frontmatter).
+   */
   markdown: string
   /** Tag names as authored in Evernote (may contain spaces). */
   tags: string[]
@@ -156,6 +165,10 @@ const CRYPT_SENTINEL = '\uE004'
 /** The callout emitted where an undecryptable `<en-crypt>` block stood. */
 const CRYPT_PLACEHOLDER =
   '> [!warning] Encrypted content was omitted during import (Evernote en-crypt block).'
+// Delimiters for an indexed task-group sentinel, `\uE005<index>\uE006`: the
+// group's task blocks hold `[` and a leading `-`, which Turndown would escape.
+const TASK_GROUP_SENTINEL_OPEN = '\uE005'
+const TASK_GROUP_SENTINEL_CLOSE = '\uE006'
 
 /**
  * Build the Turndown instance that converts ENML, and a Joplin HTML note, to
@@ -170,8 +183,18 @@ export function createHtmlTurndown(): TurndownService {
     headingStyle: 'atx',
     codeBlockStyle: 'fenced',
     bulletListMarker: '-',
+    // The importer reads a rule only when every character is the same, so
+    // Turndown's `* * *` would land as a list item.
+    hr: '---',
   })
   td.use(gfm)
+  // The plugin writes `~x~`, and the editor strikes only `~~x~~`. Added after
+  // the plugin, so it wins.
+  td.addRule('strikethrough', {
+    // The tag-name filter type omits the obsolete `<strike>`.
+    filter: (node) => ['del', 's', 'strike'].includes(node.nodeName.toLowerCase()),
+    replacement: (text) => `~~${text}~~`,
+  })
   // A pipe-table row is one line, and Evernote wraps each cell's text in
   // `<div>`s, whose line breaks would end the row mid-cell; a `|` in the text
   // would open a column, and so would one after an odd backslash run, which
@@ -567,6 +590,7 @@ function enmlToMarkdown(
   enml: string,
   resources: Map<string, ResourceEntry>,
   used: EnexAttachment[],
+  taskGroups: Map<string, string>,
 ): string {
   const trimmed = enml.trim()
   if (trimmed.length === 0) return ''
@@ -587,6 +611,7 @@ function enmlToMarkdown(
   // starting contents cannot be observed (#4815).
   const mediaRefs: string[] = []
   transformEnmlDom(imported, resources, used, mediaRefs)
+  const taskRefs = placeTaskGroups(imported, taskGroups)
   const bodyHtml = imported.innerHTML
 
   const markdown = td.turndown(bodyHtml)
@@ -597,6 +622,10 @@ function enmlToMarkdown(
       .replace(
         new RegExp(`${MEDIA_SENTINEL_OPEN}(\\d+)${MEDIA_SENTINEL_CLOSE}`, 'g'),
         (_match, index: string) => mediaRefs[Number(index)] ?? '',
+      )
+      .replace(
+        new RegExp(`${TASK_GROUP_SENTINEL_OPEN}(\\d+)${TASK_GROUP_SENTINEL_CLOSE}`, 'g'),
+        (_match, index: string) => taskRefs[Number(index)] ?? '',
       )
       .replace(new RegExp(CRYPT_SENTINEL, 'g'), CRYPT_PLACEHOLDER)
       // `<en-todo>` at the START of an `<li>` is a NATIVE task item, not a
@@ -612,6 +641,31 @@ function enmlToMarkdown(
       .replace(new RegExp(TODO_UNCHECKED_SENTINEL, 'g'), '- [ ] ')
       .trim()
   )
+}
+
+/**
+ * Swap each Evernote task-group placeholder under `root` for an indexed
+ * sentinel standing for its group's task blocks, taking that group out of
+ * `taskGroups` so the caller places only the rest. The placeholder's own text
+ * tells an older Evernote that tasks are unsupported, so a group with no tasks
+ * leaves nothing. Returns the task blocks, by sentinel index.
+ */
+function placeTaskGroups(root: Element, taskGroups: Map<string, string>): string[] {
+  const refs: string[] = []
+  for (const div of Array.from(root.querySelectorAll('div[style*="--en-task-group"]'))) {
+    const id = /--en-id:\s*([^;]+)/.exec(div.getAttribute('style') ?? '')?.[1]?.trim() ?? ''
+    const blocks = taskGroups.get(id)
+    if (blocks === undefined) {
+      div.remove()
+      continue
+    }
+    taskGroups.delete(id)
+    const block = root.ownerDocument.createElement('p')
+    block.append(`${TASK_GROUP_SENTINEL_OPEN}${refs.length}${TASK_GROUP_SENTINEL_CLOSE}`)
+    div.replaceWith(block)
+    refs.push(blocks)
+  }
+  return refs
 }
 
 /**
@@ -670,7 +724,9 @@ export function parseEnex(xmlText: string): EnexNote[] {
   const td = createHtmlTurndown()
   const noteEls = Array.from(doc.querySelectorAll('note'))
   return noteEls.map((noteEl) => {
-    const rawTitle = noteEl.querySelector('title')?.textContent?.trim() ?? ''
+    // Each `<task>` holds its own `title`, `created` and `updated`, so the
+    // note's are read as direct children.
+    const rawTitle = childText(noteEl, 'title')
     const title = rawTitle.length > 0 ? rawTitle : UNTITLED_PLACEHOLDER
 
     // Decode+index this note's `<resource>` attachments by MD5 (#2513) before
@@ -680,35 +736,124 @@ export function parseEnex(xmlText: string): EnexNote[] {
     const attachments: EnexAttachment[] = []
 
     // `<content>` holds the ENML as CDATA text — `textContent` unwraps it.
-    const enml = noteEl.querySelector('content')?.textContent ?? ''
-    const markdown = enmlToMarkdown(td, enml, resources, attachments)
+    const enml = noteEl.querySelector(':scope > content')?.textContent ?? ''
+    const taskGroups = readTaskGroups(noteEl)
+    const body = enmlToMarkdown(td, enml, resources, attachments, taskGroups)
+    // Tasks whose placeholder the body lacks go after it.
+    const markdown = [reminderTask(noteEl, title), body, ...taskGroups.values()]
+      .filter((section) => section.length > 0)
+      .join('\n\n')
 
-    const tags = Array.from(noteEl.querySelectorAll('tag'))
+    const tags = Array.from(noteEl.querySelectorAll(':scope > tag'))
       .map((el) => el.textContent?.trim() ?? '')
       .filter((tag) => tag.length > 0)
 
-    const createdMs = parseEnexTimestamp(noteEl.querySelector('created')?.textContent)
-    const updatedMs = parseEnexTimestamp(noteEl.querySelector('updated')?.textContent)
-    const rawSourceUrl = noteEl.querySelector('note-attributes > source-url')?.textContent.trim()
-    const sourceUrl = rawSourceUrl !== undefined && rawSourceUrl.length > 0 ? rawSourceUrl : null
+    const createdMs = parseEnexTimestamp(childText(noteEl, 'created'))
+    const updatedMs = parseEnexTimestamp(childText(noteEl, 'updated'))
+    const rawSourceUrl = childText(noteEl, 'note-attributes > source-url')
+    const sourceUrl = rawSourceUrl.length > 0 ? rawSourceUrl : null
 
     return { title, markdown, tags, createdMs, updatedMs, sourceUrl, attachments }
   })
 }
 
+/** The trimmed text of the element at `path` below `parent`'s own children, or `''`. */
+function childText(parent: Element, path: string): string {
+  return parent.querySelector(`:scope > ${path}`)?.textContent?.trim() ?? ''
+}
+
+/** A task block's checkbox state and the days it is scheduled and due. */
+export interface TaskBlock {
+  done: boolean
+  scheduledDate: string | null
+  dueDate: string | null
+}
+
 /**
- * Render one Evernote tag as an inline tag token the markdown importer
- * understands (#1924/#1950): `#tag` when the importer reads that bare form back
- * as this whole tag, else `#[[…]]`, so `Multi Word`, `C++`, `v1.2`, `Q&A` and
- * the all-digit `2024` each survive as one tag instead of being cut short or
- * left as text. The rule is the export's (`tagText` in
- * `source-buffer-pickers.ts`, #5160 N8).
+ * A task block as Markdown: the title behind the checkbox the importer reads
+ * as its state, and its days as `scheduled_date::` / `due_date::` lines, the
+ * form a Markdown export writes a task in.
  */
-function tagToToken(tag: string): string {
-  const name = tag.trim().replace(/\s+/g, ' ')
-  const bare = `#${name}`
-  const [token] = scanNameTokens(bare)
-  return token?.kind === 'tag' && token.name === name ? bare : `#[[${name}]]`
+export function todoBlock(title: string, task: TaskBlock): string {
+  const lines = [`- [${task.done ? 'x' : ' '}] ${title}`]
+  if (task.scheduledDate !== null) lines.push(`  scheduled_date:: ${task.scheduledDate}`)
+  if (task.dueDate !== null) lines.push(`  due_date:: ${task.dueDate}`)
+  return lines.join('\n')
+}
+
+/**
+ * An epoch-ms instant as the `YYYY-MM-DD` it falls on in `timeZone`, or in
+ * local time when there is none or the runtime does not know it; null when
+ * unset (`0`) or unreadable: `formatDate` throws on an invalid date, which
+ * would fail the whole file.
+ */
+export function localDate(ms: number, timeZone = ''): string | null {
+  const date = new Date(ms)
+  if (!(ms > 0) || Number.isNaN(date.getTime())) return null
+  if (timeZone.length > 0) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).formatToParts(date)
+      const part = (type: string) => parts.find((p) => p.type === type)?.value
+      return `${part('year')}-${part('month')}-${part('day')}`
+    } catch {
+      // An unknown zone throws a RangeError: fall through to the local day.
+    }
+  }
+  return formatDate(date)
+}
+
+/** The day an Evernote timestamp falls on in `timeZone` (else local), or null. */
+function enexDay(raw: string, timeZone = ''): string | null {
+  const ms = parseEnexTimestamp(raw)
+  return ms === null ? null : localDate(ms, timeZone)
+}
+
+/**
+ * A note's Evernote tasks as task blocks, by task group, each group's in
+ * `sortWeight` order. A task's flag and recurrence are not read.
+ */
+function readTaskGroups(noteEl: Element): Map<string, string> {
+  const tasks = Array.from(noteEl.querySelectorAll(':scope > task')).map((task) => ({
+    group: childText(task, 'taskGroupNoteLevelID'),
+    weight: childText(task, 'sortWeight'),
+    block: todoBlock(childText(task, 'title'), {
+      done: childText(task, 'taskStatus') === 'completed',
+      scheduledDate: enexDay(
+        childText(task, 'reminder > reminderDate'),
+        childText(task, 'reminder > timeZone') || childText(task, 'timeZone'),
+      ),
+      dueDate: enexDay(childText(task, 'dueDate'), childText(task, 'timeZone')),
+    }),
+  }))
+  // Evernote orders tasks by comparing the weight strings, not by locale.
+  tasks.sort((a, b) => (a.weight < b.weight ? -1 : a.weight > b.weight ? 1 : 0))
+  const groups = new Map<string, string[]>()
+  for (const { group, block } of tasks) groups.set(group, [...(groups.get(group) ?? []), block])
+  return new Map(Array.from(groups, ([group, blocks]) => [group, blocks.join('\n')]))
+}
+
+/**
+ * The task block a note with an older Evernote reminder opens with, named
+ * after the note: done once the reminder is, due on the reminder's local day.
+ * `''` for a note with no reminder.
+ */
+function reminderTask(noteEl: Element, title: string): string {
+  const attribute = (name: string) => childText(noteEl, `note-attributes > ${name}`)
+  const time = attribute('reminder-time')
+  const doneTime = attribute('reminder-done-time')
+  if (time.length === 0 && doneTime.length === 0 && attribute('reminder-order').length === 0) {
+    return ''
+  }
+  return todoBlock(title, {
+    done: doneTime.length > 0,
+    scheduledDate: null,
+    dueDate: enexDay(time),
+  })
 }
 
 /**
@@ -742,11 +887,13 @@ export function sanitizeNoteTitleToFilename(title: string): string {
  * Compose the final Markdown handed to `importMarkdown` for a note:
  *
  *   1. a YAML frontmatter block (`created` / `updated` as ISO strings and
- *      `source-url` when known, plus `source: evernote`) — applied by the
- *      importer as page properties (#1432),
- *   2. the note's tags as inline `#tag` / `#[[Multi Word]]` tokens on one
- *      line (omitted when there are none),
- *   3. the converted ENML body.
+ *      `source-url` when known, the note's `tags`, plus `source: evernote`) —
+ *      applied by the importer as page properties (#1432) and page tags,
+ *   2. the converted ENML body.
+ *
+ * The tags are written as `jexNoteToMarkdown` writes Joplin's, so `C++` or
+ * `2024` is one tag; a pretty-printed `<tag>`'s line breaks would end the
+ * item, so whitespace collapses.
  */
 export function enexNoteToMarkdown(note: EnexNote): string {
   const frontmatter: string[] = ['---']
@@ -759,14 +906,13 @@ export function enexNoteToMarkdown(note: EnexNote): string {
   if (note.sourceUrl !== null) {
     frontmatter.push(`source-url: "${note.sourceUrl}"`)
   }
+  if (note.tags.length > 0) {
+    frontmatter.push('tags:', ...note.tags.map((tag) => `  - "${tag.trim().replace(/\s+/g, ' ')}"`))
+  }
   frontmatter.push('source: evernote')
   frontmatter.push('---')
 
   const sections: string[] = [frontmatter.join('\n')]
-
-  if (note.tags.length > 0) {
-    sections.push(note.tags.map(tagToToken).join(' '))
-  }
 
   if (note.markdown.length > 0) {
     sections.push(note.markdown)

@@ -607,9 +607,6 @@ export const common: Record<string, string> = {
   'searchSheet.recentSearchesTitle': 'Recent searches',
   'searchSheet.recentSearchesClear': 'Clear',
   'searchSheet.recentSearchRunLabel': 'Search again for “{{term}}”',
-  // #132 — voice dictation mic button.
-  'searchSheet.voiceStart': 'Search by voice',
-  'searchSheet.voiceStop': 'Stop voice search',
   // #2943 — dnd-kit screen-reader announcements for block drag-and-drop.
   // `DndContext`'s `accessibility` prop wires these in place of dnd-kit's
   // default announcements, which read the raw block ULID. `{{block}}` /

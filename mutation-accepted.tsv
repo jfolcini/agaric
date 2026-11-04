@@ -66,34 +66,45 @@ frontend	src/editor/page-mode/page-gutter.ts	StringLiteral	29	1	block.setAttribu
 frontend	src/editor/page-mode/page-gutter.ts	StringLiteral	35	1	this.view.dom.removeEventListener('mousedown', this.pressLane, true)
 # #6108 page-gutter: a leave listener left on after destroy() hides a frame already out of the document
 frontend	src/editor/page-mode/page-gutter.ts	StringLiteral	35	1	this.view.dom.removeEventListener('pointerleave', this.leave)
-frontend	src/editor/page-mode/page-lists.ts	ArrayDeclaration	30	1	const items: OutlineItem[] = []
 frontend	src/editor/page-mode/page-lists.ts	ArrowFunction	19	1	const sameItems = (a: readonly OutlineItem[], b: readonly OutlineItem[]): boolean =>
-frontend	src/editor/page-mode/page-lists.ts	ArrowFunction	34	1	a.length === b.length && a.every((item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth)
 frontend	src/editor/page-mode/page-lists.ts	CallExpression	21	1	if (set.size === 0) this.listeners.delete(id)
-frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	1	1	a.length === b.length && a.every((item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth)
 frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	26	1	if (pickerOpen(state) || id === null) return false
-frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	47	1	a.length === b.length && a.every((item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth)
 frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (id !== null) ids.add(id)
-frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (id === null || source.lists.styleOf(id) === 'none') return false
 frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (made !== undefined) source.setStyle(made, style)
 frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (next.state.doc !== previous.doc) source.lists.layout(next.state.doc)
 frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (sameItems(items, this.items)) return
 frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (set.size === 0) this.listeners.delete(id)
-frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (style !== 'none') next.set(id, listMarkerText(style, ordinals.get(id)))
 frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (style !== 'none') this.read.set(id, style)
 frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (written === 'none') this.read.delete(id)
-frontend	src/editor/page-mode/page-lists.ts	EqualityOperator	47	1	a.length === b.length && a.every((item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth)
-frontend	src/editor/page-mode/page-lists.ts	EqualityOperator	71	1	a.length === b.length && a.every((item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth)
-frontend	src/editor/page-mode/page-lists.ts	OptionalChaining	59	1	a.length === b.length && a.every((item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth)
-frontend	src/editor/page-mode/page-lists.ts	OptionalChaining	86	1	a.length === b.length && a.every((item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth)
 frontend	src/editor/page-mode/page-lists.ts	Regex	14	1	return [rule(/^\s*[-+*]\s([^[\n])$/, 'bullet'), rule(/^\d+\.\s(.)$/, 'ordered')]
 frontend	src/editor/page-mode/page-lists.ts	Regex	54	1	return [rule(/^\s*[-+*]\s([^[\n])$/, 'bullet'), rule(/^\d+\.\s(.)$/, 'ordered')]
-frontend	src/editor/page-mode/page-lists.ts	StringLiteral	15	1	if (style !== 'none') next.set(id, listMarkerText(style, ordinals.get(id)))
 frontend	src/editor/page-mode/page-lists.ts	StringLiteral	15	1	if (style !== 'none') this.read.set(id, style)
 frontend	src/editor/page-mode/page-lists.ts	StringLiteral	17	1	if (written === 'none') this.read.delete(id)
 frontend	src/editor/page-mode/page-lists.ts	StringLiteral	33	1	state.tr.insertText(match[1] ?? '', range.from, range.to)
-frontend	src/editor/page-mode/page-lists.ts	StringLiteral	59	1	doc.forEach((node) => items.push({ id: blockIdOf(node) ?? '', depth: depthOf(node) }))
 frontend	src/editor/page-mode/page-lists.ts	StringLiteral	7	1	name: 'pageListKeys',
+frontend	src/editor/page-mode/page-lists.ts	ArrowFunction	13	1	addStorage: () => ({ depth: 0 }),
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	1	1	id !== null &&
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	15	1	const style = id === null ? undefined : due.get(id)
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	23	1	if (start === null || end === null) return -1
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (id !== null && due.has(id) && docShowsListMarker(node)) was.add(id)
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (id === null || source.lists.shownStyleOf(id) === 'none') return false
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (id === null || style === undefined || was.has(id) || this.styleOf(id) !== 'none') return
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (item.marked === this.items[at]?.marked) return
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (oldId !== null) was.set(oldId, docShowsListMarker(old))
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (shown === null) {
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (start === null || end === null) return -1
+frontend	src/editor/page-mode/page-lists.ts	LogicalOperator	5	1	if (id !== null && due.has(id) && docShowsListMarker(node)) was.add(id)
+frontend	src/editor/page-mode/page-lists.ts	LogicalOperator	5	1	if (start === null || end === null) return -1
+frontend	src/editor/page-mode/page-lists.ts	ObjectLiteral	20	1	addStorage: () => ({ depth: 0 }),
+frontend	src/editor/page-mode/page-lists.ts	OptionalChaining	21	1	if (item.marked === this.items[at]?.marked) return
+frontend	src/editor/page-mode/page-lists.ts	ArrowFunction	1	1	(item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth && item.marked === b[i]?.marked,
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	1	1	a.length === b.length &&
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	14	1	(item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth && item.marked === b[i]?.marked,
+frontend	src/editor/page-mode/page-lists.ts	OptionalChaining	26	1	(item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth && item.marked === b[i]?.marked,
+frontend	src/editor/page-mode/page-lists.ts	OptionalChaining	53	1	(item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth && item.marked === b[i]?.marked,
+frontend	src/editor/page-mode/page-lists.ts	OptionalChaining	84	1	(item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth && item.marked === b[i]?.marked,
+frontend	src/editor/page-mode/page-lists.ts	StringLiteral	24	1	id: blockIdOf(node) ?? '',
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (id === null || lists.styleOf(id) === 'none' || docShowsListMarker(node)) return
 frontend	src/editor/page-mode/page-properties.ts	BooleanLiteral	30	1	if (text === written) return true
 frontend	src/editor/page-mode/page-properties.ts	BooleanLiteral	8	1	return true
 frontend	src/editor/page-mode/page-properties.ts	ConditionalExpression	5	1	if (shown.length > 0) this.shown.set(id, shown)
@@ -127,7 +138,7 @@ frontend	src/editor/page-mode/page-tasks.ts	ArrayDeclaration	28	1	attachments: i
 # #5964 page-tasks: commitPageTask's edit callback resolves `true` only into what commitCheckboxState returns, which commitPageTask discards; the store, the API calls and the checkbox are the same either way
 frontend	src/editor/page-mode/page-tasks.ts	BooleanLiteral	31	1	if (text === markdown) return true
 # #5964 page-tasks: the same callback's closing `return true` (after `markdown = text`), equivalent for the same reason: commitPageTask discards what commitCheckboxState returns
-frontend	src/editor/page-mode/page-tasks.ts	BooleanLiteral	8	9	return true
+frontend	src/editor/page-mode/page-tasks.ts	BooleanLiteral	8	10	return true
 frontend	src/editor/page-mode/page-tasks.ts	CallExpression	1	1	this.waiting.delete(dom)
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	1	1	node.type !== this.node.type ||
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	13	1	properties: id === null ? [] : this.tasks.propertiesOf(id),
@@ -140,7 +151,6 @@ frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (id ===
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (id === null || state === null) {
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (id === null || text === null) {
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (id !== null) this.shown.add(id)
-frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (id === null) this.unsubscribeMarker = () => {}
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (saved === undefined || node === null || task === null) {
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	2	if (this.renderer !== null) return
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	53	1	if (typeof IntersectionObserver === 'undefined' || (id !== null && this.shown.has(id))) {
@@ -148,6 +158,18 @@ frontend	src/editor/page-mode/page-tasks.ts	LogicalOperator	5	1	if (saved === un
 frontend	src/editor/page-mode/page-tasks.ts	OptionalChaining	1	1	this.checkbox?.destroy()
 frontend	src/editor/page-mode/page-tasks.ts	OptionalChaining	5	1	if (first?.type.name !== 'paragraph') return null
 frontend	src/editor/page-mode/page-tasks.ts	StringLiteral	7	1	name: 'pageTaskKeys',
+# #5964 page-tasks: the gate's `observe` guard made false adds a watched block to `watched` and the observer again, which changes neither
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (this.watched.has(dom)) return
+# #5964 page-tasks: the `?.` on the observer in `observe` and `pick`: both run only once `start` has made it
+frontend	src/editor/page-mode/page-tasks.ts	OptionalChaining	1	1	this.observer?.observe(dom)
+frontend	src/editor/page-mode/page-tasks.ts	OptionalChaining	1	2	this.observer?.unobserve(dom)
+# #5964 page-tasks: `near.has(dom)` made false in `pick` unobserves and observes again a block the pick keeps, which leaves the same blocks watched
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (near.has(dom)) continue
+# #5964 page-tasks: `at < hi` made true or `<=` in firstReaching: `at` reaches `hi` only past hidden blocks, every block from `hi` to the one found is hidden, and `pick` skips hidden blocks
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (at < hi) found = at
+frontend	src/editor/page-mode/page-tasks.ts	EqualityOperator	5	1	if (at < hi) found = at
+# #5964 page-tasks: the view's `id === null` for its list marker: a block's view never holds a null id, as the id rules mint one in the transaction that makes the block
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	26	1	this.unsubscribeMarker = id === null ? () => {} : this.followMarker(id)
 # #5966 token-ids: `id === null` made false lets an id-less block whose tokens a cut took put null in `taken`; idsAfter reads `taken` only for a block whose own id is not null
 frontend	src/editor/token-ids.ts	ConditionalExpression	5	1	if (id === null || !goneAt(mapping, start) || !goneAt(mapping, tokens.last(node, offset))) {
 # #5966 token-ids: `kept !== null` made true sends an id-less block to the arm that pushes `kept`, null, as the else arm does; the null it adds to `held` is read only by later id-less blocks, which push null either way. The key also covers the whole condition made true or false at this column, which the Enter and undo-after-a-peer tests kill today
@@ -369,3 +391,5 @@ frontend	src/lib/jex-import.ts	StringLiteral	21	1	(props['tag_id'] ?? '').toLowe
 frontend	src/lib/jex-import.ts	StringLiteral	37	1	const noteId = (props['note_id'] ?? '').toLowerCase()
 # #4816 jex-import: every tag id is lowercased as it is read, so the stand-in 'Stryker was here' (capital S) names no tag and flatMap yields nothing, as [] does
 frontend	src/lib/jex-import.ts	ArrayDeclaration	41	1	const tags = (noteTagIds.get(raw.id) ?? []).flatMap((id) => tagTitles.get(id) ?? [])
+# #3766 vault-import: the null guard only narrows the type; every byPath key is a string, so byPath.get(null) is undefined too
+frontend	src/lib/vault-import.ts	ConditionalExpression	14	1	const file = path === null ? undefined : index.byPath.get(path)

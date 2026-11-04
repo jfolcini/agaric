@@ -29,10 +29,9 @@ describe('useLanguage', () => {
     const { result } = renderHook(() => useLanguage())
     // Phase 1 ships 42 of 3,056 keys. `'system'` would put a device set to
     // `es` into `<html lang="es">` over a ~99% English UI — the exact
-    // mis-announcement `applyDocumentLang` exists to prevent — and hand
-    // `SpeechRecognition.lang = 'es'` to someone dictating English, for a
-    // user who never opened Settings and never saw the help text explaining
-    // the gap. Flip this to `'system'` when a second catalog is substantially
+    // mis-announcement `applyDocumentLang` exists to prevent, for a user who
+    // never opened Settings and never saw the help text explaining the
+    // gap. Flip this to `'system'` when a second catalog is substantially
     // translated, and change this test in the same commit.
     expect(result.current.language).toBe('en')
   })
@@ -67,8 +66,7 @@ describe('useLanguage', () => {
     // pinned by `locales.test.ts`, which asserts the bundle synchronously
     // on `setLocale`'s own resolution.
     expect(i18n.t('error.generic')).toBe('Algo ha salido mal')
-    // …and the DOM attribute the screen reader and `useVoiceInput` read
-    // followed along.
+    // …and the DOM attribute the screen reader reads followed along.
     expect(document.documentElement.lang).toBe('es')
   })
 
