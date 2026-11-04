@@ -343,7 +343,7 @@ const ESCAPED_SIGNIFIER = /\\(?=[📅⏳✅🔁🔺⏫🔼🔽⏬🛫➕❌🆔�
  * is text, and the `\` goes (#6277 D3). With none read, the line is kept as
  * written, less those escapes.
  */
-function splitTaskFields(
+export function splitTaskFields(
   line: string,
   done: boolean,
 ): { text: string; fields: Array<[string, string]>; unread: number } {

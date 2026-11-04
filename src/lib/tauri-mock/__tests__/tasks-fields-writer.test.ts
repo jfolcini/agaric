@@ -6,7 +6,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import type { PageBuffer } from '@/lib/bindings'
+import type { PageBuffer, PageSourceReport } from '@/lib/bindings'
 import { clearMock, id, setSpace } from '@/lib/tauri-mock/__tests__/mock-store-helpers'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, makeBlock, properties } from '@/lib/tauri-mock/seed'
@@ -40,5 +40,26 @@ describe('the mock writing a task line (#6277 D3)', () => {
     expect(text).toBe(
       '- [x] ship ✅ 2026-10-03\n- [ ] water\n  repeat:: +1w\n  repeat-until:: 2026-12-31\n',
     )
+  })
+
+  it('keeps a `✅` date typed on a task ticked in the same save, and a done date its `✅` was taken off', () => {
+    task('ship', 'TODO', {})
+    task('shop', 'DONE', { completed_at: { value_date: '2026-10-03' } })
+    const buffer = dispatch('get_page_buffer', { pageId: PAGE }) as PageBuffer
+    const edited = buffer.text
+      .replace('- [ ] ship', '- [x] ship ✅ 2026-10-02')
+      .replace(' ✅ 2026-10-03', '')
+
+    dispatch('apply_page_source', {
+      pageId: PAGE,
+      source: edited,
+      baseSource: buffer.source,
+      merge: false,
+      lineIds: buffer.line_ids,
+    }) as PageSourceReport
+
+    const completed = (label: string) =>
+      properties.get(id(label))?.get('completed_at')?.['value_date']
+    expect([completed('ship'), completed('shop')]).toEqual(['2026-10-02', '2026-10-03'])
   })
 })

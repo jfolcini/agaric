@@ -2567,7 +2567,7 @@ export function taskLineOf(row: Record<string, unknown>, checkbox: boolean): Tas
     const value = held?.get(key)
     if (value === undefined) return null
     const text = value['value_date'] ?? value['value_text'] ?? value['value_num']
-    return text == null ? '' : String(text)
+    return typeof text === 'string' || typeof text === 'number' ? String(text) : ''
   }
   const bounded = prop('repeat-until') !== null || prop('repeat-count') !== null
   const done = row['todo_state'] === 'DONE'

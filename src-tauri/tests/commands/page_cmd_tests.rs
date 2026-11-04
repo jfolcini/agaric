@@ -7521,6 +7521,75 @@ async fn paste_into_a_block_keeps_a_done_tasks_completion_date() {
     );
 }
 
+/// #6277 D2 — a paste says which Tasks signifiers it kept as text, and a done
+/// task it creates after the first keeps its `✅` date as well.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_reports_unread_tasks_signifiers_and_keeps_every_done_date() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let anchor = dup_child(&pool, &mat, &page, "").await;
+    settle(&mat).await;
+
+    let resp = paste_into(
+        &pool,
+        &mat,
+        &anchor,
+        "- [ ] call ⏳ tomorrow\n- [x] ship ✅ 2026-10-03",
+        ("", ""),
+    )
+    .await;
+
+    assert_eq!(
+        resp.inner.warnings,
+        ["1 Tasks signifier(s) could not be read and were kept as text"]
+    );
+    let children = dup_children(&pool, &page).await;
+    let texts: Vec<&str> = children
+        .iter()
+        .map(|(_, content)| content.as_str())
+        .collect();
+    assert_eq!(texts, ["call ⏳ tomorrow", "ship"]);
+    let ship = BlockId::from_string(children[1].0.clone()).unwrap();
+    assert_eq!(dup_stamps(&pool, &ship).await, ["completed_at=2026-10-03"]);
+}
+
+/// #6277 D3 — a copy of a done task is done on the day its original was, not on
+/// the day it was copied.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_keeps_a_done_tasks_completion_date() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Plan").await;
+    let original = dup_child(&pool, &mat, &page, "ship").await;
+    sqlx::query("UPDATE blocks SET todo_state = 'DONE' WHERE id = ?")
+        .bind(original.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_date) \
+         VALUES (?, 'completed_at', '2026-10-03')",
+    )
+    .bind(original.as_str())
+    .execute(&pool)
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let copy = duplicate(&pool, &mat, &original).await;
+
+    assert_eq!(copy.len(), 1);
+    assert_eq!(
+        dup_storage(&pool, &copy[0].id).await[0],
+        r#"columns todo=Some("DONE") priority=None scheduled=None due=None"#
+    );
+    assert_eq!(
+        dup_stamps(&pool, &copy[0].id).await,
+        ["completed_at=2026-10-03"]
+    );
+}
+
 /// A paste that reads as one block edits the anchor and creates nothing: the
 /// block is joined between the two halves of the text.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

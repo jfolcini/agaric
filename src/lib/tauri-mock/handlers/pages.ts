@@ -999,7 +999,9 @@ function planMarkWrites(
     .filter((key) => !wants.has(key) && holds.has(key))
     .toSorted(compareUtf8Bytes)
   const set = changed.filter(([key]) => key !== 'todo_state')
-  const deleted = dropped.filter((key) => key !== 'todo_state')
+  // A `✅` taken off a done task's line deletes nothing: its `completed_at` goes with the
+  // task state (`PropertyChanges::between`).
+  const deleted = dropped.filter((key) => key !== 'todo_state' && key !== 'completed_at')
   const state = changed.find(([key]) => key === 'todo_state')
   const todoState = state ? { to: state[1] } : dropped.includes('todo_state') ? { to: null } : null
   const restyled = set.some(([key]) => key === 'listStyle')
@@ -1112,21 +1114,20 @@ const COLUMN_WRITERS: ReadonlyMap<string, (blockId: string, value: string | null
 function writeMarks(id: string, writes: MarkWrites): OpRefs {
   const spaceId = definitionSpaceOf(id)
   const start = opLog.length
+  const write = ([key, value]: [string, string]): void => {
+    const column = COLUMN_WRITERS.get(key)
+    if (column === undefined) {
+      propertiesHandlers.set_property({ blockId: id, key, value: lineColumns(spaceId, key, value) })
+    } else {
+      column(id, value)
+    }
+  }
   withoutEvents(() => {
     for (const key of writes.deleted) propertiesHandlers.delete_property({ blockId: id, key })
-    for (const [key, value] of writes.set) {
-      const column = COLUMN_WRITERS.get(key)
-      if (column === undefined) {
-        propertiesHandlers.set_property({
-          blockId: id,
-          key,
-          value: lineColumns(spaceId, key, value),
-        })
-      } else {
-        column(id, value)
-      }
-    }
+    writes.set.filter(([key]) => key !== 'completed_at').forEach(write)
     if (writes.todoState !== null) COLUMN_WRITERS.get('todo_state')?.(id, writes.todoState.to)
+    // A `✅` date goes after the task state, whose move into DONE stamps today (`write_properties`).
+    writes.set.filter(([key]) => key === 'completed_at').forEach(write)
   })
   return opLog.slice(start).map(({ device_id, seq }) => ({ device_id, seq }))
 }

@@ -16,6 +16,7 @@ import {
   cycleTaskAt,
   type SourceBlock,
   setBlockProperty,
+  turnInto,
 } from '@/editor/source-buffer-blocks'
 import { parseDocument } from '@/editor/source-buffer-document'
 
@@ -89,6 +90,38 @@ describe('a task line’s Tasks fields (#6277 D2)', () => {
 
     expect(readLines(ed.state.doc).text).toBe(`${TASK}\n  priority:: A`)
     expect(blockProperty(ed.state.doc, block(ed), 'priority')).toBe('A')
+  })
+
+  it('go with the task: to `key::` lines when it loses its checkbox, and a done date only while done', () => {
+    const cancelled = build('- [-] a ⏫ 📅 2026-10-05')
+    cycleTaskAt(0)(cancelled.state, cancelled.view.dispatch)
+    expect(readLines(cancelled.state.doc).text).toBe('a\n  priority:: 1\n  due_date:: 2026-10-05')
+    editor?.destroy()
+
+    const listed = build('- [ ] a ⏫ 📅 2026-10-05')
+    turnInto(block(listed), 'numbered-list')(listed.state, listed.view.dispatch)
+    expect(readLines(listed.state.doc).text).toBe('1. a\n   priority:: 1\n   due_date:: 2026-10-05')
+    editor?.destroy()
+
+    const done = build('- [x] a ✅ 2026-10-03 📅 2026-10-05')
+    cycleTaskAt(0)(done.state, done.view.dispatch)
+    expect(readLines(done.state.doc).text).toBe('- [-] a 📅 2026-10-05')
+  })
+
+  it('stay on the fence line of a task turned into code', () => {
+    const ed = build('- [ ] a ⏫ 📅 2026-10-05')
+
+    turnInto(block(ed), 'code')(ed.state, ed.view.dispatch)
+
+    const { text } = readLines(ed.state.doc)
+    const [read] = parseDocument(text, [A, null, null]).blocks
+    expect({ content: read?.content, properties: read?.properties }).toEqual({
+      content: '```\na\n```',
+      properties: [
+        ['priority', '1'],
+        ['due_date', '2026-10-05'],
+      ],
+    })
   })
 
   it('stays text in page mode’s paste', () => {
