@@ -3,14 +3,15 @@
 # classic branch-protection's "required status checks"; this repo uses a
 # ruleset instead, so we assert the set of *rule types* enforced on `main`.
 #
-# Expected ruleset shape (sorted). The merge queue tests each group's merged
-# result, so it replaces the strict up-to-date-branch flag, which is false:
-#   ["deletion", "merge_queue", "non_fast_forward", "pull_request",
-#    "required_linear_history", "required_signatures", "required_status_checks"]
+# Expected ruleset shape (sorted). A personal-account repo has no merge queue;
+# the strict up-to-date-branch flag is off, and a PR whose files changed on
+# `main` since its merge base merges `main` in before it merges:
+#   ["deletion", "non_fast_forward", "pull_request", "required_linear_history",
+#    "required_signatures", "required_status_checks"]
 #
 # Beyond rule types, the job also asserts the required status-check
 # CONTEXTS (`dco`, `e2e-tauri-gate`, `validate / validate-all`), the strict
-# up-to-date-branch flag (off under the merge queue), and the `pull_request` rule's four review parameters —
+# up-to-date-branch flag (off), and the `pull_request` rule's four review parameters —
 # type-only asserting passed even after a context removal, and passes with
 # every review toggle off.
 #
@@ -46,7 +47,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          EXPECTED='["deletion","merge_queue","non_fast_forward","pull_request","required_linear_history","required_signatures","required_status_checks"]'
+          EXPECTED='["deletion","non_fast_forward","pull_request","required_linear_history","required_signatures","required_status_checks"]'
           # Required status-check CONTEXTS + the strict (up-to-date-branch)
           # flag are asserted too (#819 (1), pairs with #805): asserting
           # rule TYPES alone would still pass after someone removed
@@ -89,7 +90,7 @@ jobs:
           fi
 
           if [ "${ACTUAL_STRICT}" = "false" ]; then
-            echo "OK: strict_required_status_checks_policy is false (the merge queue tests the merged result)"
+            echo "OK: strict_required_status_checks_policy is false"
           else
             failed=1
             echo "ERROR: strict_required_status_checks_policy drifted (expected false, got ${ACTUAL_STRICT})." >&2
@@ -97,10 +98,10 @@ jobs:
 
           # The `pull_request` rule's parameters are the whole review gate
           # (`docs/architecture/ci-and-tooling.md` § Asymmetric
-          # branch-protection convention): one approving review, stale
-          # reviews dismissed on push, last-push approval, every thread
-          # resolved. Rule-type equality passes with all four toggled off.
-          EXPECTED_PR='{"dismiss_stale_reviews_on_push":true,"require_last_push_approval":true,"required_approving_review_count":1,"required_review_thread_resolution":true}'
+          # branch-protection convention): no approving review required (the
+          # reviewer app's approval never counted, so own PRs needed the admin
+          # bypass), stale reviews dismissed on push, every thread resolved.
+          EXPECTED_PR='{"dismiss_stale_reviews_on_push":true,"require_last_push_approval":false,"required_approving_review_count":0,"required_review_thread_resolution":true}'
           ACTUAL_PR="$(jq -c '[.[] | select(.type == "pull_request") | .parameters | {dismiss_stale_reviews_on_push, require_last_push_approval, required_approving_review_count, required_review_thread_resolution}] | first' <<<"${RULES}")"
           if [ "${ACTUAL_PR}" = "${EXPECTED_PR}" ]; then
             echo "OK: pull_request rule parameters match: ${EXPECTED_PR}"
