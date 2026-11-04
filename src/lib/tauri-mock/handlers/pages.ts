@@ -362,10 +362,10 @@ function refusedAt(line: number | undefined, message: string): Error {
 /**
  * DELIBERATE APPROXIMATION of `import::read_page_properties` (#5160 S8): the
  * YAML front matter a buffer opens with, as `key: value` lines, `aliases:` and
- * `tags:` as `[a, b]` lists split on every comma, one layer of quotes
- * stripped. A line that is none of these, a key only the app sets and a key
- * written twice refuse the save by their line, as does a `---` nothing
- * closes. No Logseq `key::` lines, block scalars or block sequences. Returns
+ * `tags:` (or `alias:` and `tag:`) as `[a, b]` lists split on every comma, one
+ * layer of quotes stripped. A line that is none of these, a key only the app
+ * sets and a key written twice refuse the save by their line, as does a `---`
+ * nothing closes. No Logseq `key::` lines, block scalars or block sequences. Returns
  * the front matter, each key's line, and the buffer with its lines left blank,
  * so a block after it names its line in the buffer (#5160 X3).
  */
@@ -386,7 +386,9 @@ function readFrontMatter(source: string): {
     const text = (rows[at] ?? '').trim()
     if (text === '' || text.startsWith('#')) continue
     const colon = text.indexOf(':')
-    const key = colon < 0 ? '' : text.slice(0, colon).trim()
+    const typed = colon < 0 ? '' : text.slice(0, colon).trim()
+    // Obsidian's older singular keys name the page's aliases and tags (`parse_entry_line`).
+    const key = typed === 'alias' ? 'aliases' : typed === 'tag' ? 'tags' : typed
     const refuse = (why: string) => refusedAt(at + 1, why)
     if (!isInlinePropertyKey(key)) throw refuse(`\`${text}\` is not a \`key: value\` line`)
     if (FOLDED_RESERVED_KEYS.has(foldPropertyKey(key))) {
