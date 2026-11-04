@@ -923,6 +923,43 @@ describe('TemplatesView', () => {
       expect(commands).not.toContain('set_property')
     })
 
+    // #6278 — another case or a trailing space is the same name, which the
+    // create would resolve to the ordinary page.
+    it('refuses to create when the space holds the title in another spelling', async () => {
+      const user = userEvent.setup()
+      const mockedToastError = vi.mocked(toast.error)
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_all_pages_in_space') {
+          return [
+            {
+              id: 'P_EXISTING',
+              content: 'My Template ',
+              todo_state: null,
+              priority: null,
+              due_date: null,
+              scheduled_date: null,
+            },
+          ]
+        }
+        return emptyPage
+      })
+
+      render(<TemplatesView />)
+
+      const input = await screen.findByPlaceholderText('New template name...')
+      await user.type(input, 'my template')
+      await user.click(screen.getByRole('button', { name: /create template/i }))
+
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith(
+          'A page titled "my template" already exists in this space',
+        )
+      })
+      const commands = mockedInvoke.mock.calls.map(([cmd]) => cmd)
+      expect(commands).not.toContain('create_page_in_space')
+      expect(commands).not.toContain('set_property')
+    })
+
     // #4338 — a template IS a page: `list_all_pages_in_space`, the query that
     // fills the `[[` picker's cache, has no template filter, so a warm cache
     // that lacks this row is simply wrong about the space.

@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT json_group_array(json_array(a.page_id, a.alias)) AS \"aliases!: String\"\n               FROM page_aliases a\n               JOIN blocks b ON b.id = a.page_id\n               WHERE b.block_type = 'page'\n                 AND b.deleted_at IS NULL\n                 AND b.space_id = ?1",
+  "describe": {
+    "columns": [
+      {
+        "name": "aliases!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "609e9f34a498a3661d7cc241b46954535d0096e085685d19f71c3fc2de1974ed"
+}

@@ -27,6 +27,7 @@ mod history_cmd_tests;
 mod list_pages_with_metadata_tests;
 mod mcp_agents_tests;
 mod metadata_filter_tests;
+mod name_key_tests;
 mod page_alias_ops_tests;
 mod page_cmd_tests;
 mod page_front_matter_tests;
