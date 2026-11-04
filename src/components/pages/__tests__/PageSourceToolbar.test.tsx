@@ -454,9 +454,10 @@ describe('the block menu', () => {
     await user.click(within(menu).getByRole('menuitem', { name: menuRow(t('contextMenu.indent')) }))
 
     const at = lines(ed).findIndex(([, id]) => id === GS3)
+    // A plain child is a `+` item, its lines at its text's column (decision 2, #6277).
     expect(lines(ed).slice(at, at + 2)).toEqual([
-      ['  Create new blocks', GS3],
-      ['     by pressing Enter at the end of any block.', null],
+      ['  + Create new blocks', GS3],
+      ['       by pressing Enter at the end of any block.', null],
     ])
     await saveAndClose(onClose)
     const saved = store.getState().blocksById.get(GS3)

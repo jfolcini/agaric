@@ -6,7 +6,12 @@
   },
   "1244012": {
     "active": true,
-    "notes": "GHSA-g3hv-75wg-m249 - minimatch globparts DoS (moderate). The fix, 11.0.1, cleared the 7-day release-age gate on 2026-11-04, but the 10.x consumers (@stryker-mutator/core, mocha, readdir-glob, glob 13) declare ^10 and license-checker's glob 7 pins minimatch 3. Dev-only (`npm ls minimatch --omit=dev` is empty), expanding only the repo's own globs. Take 11.0.1 for any consumer that declares it, and drop this entry once nothing below it remains.",
+    "notes": "GHSA-g3hv-75wg-m249 - minimatch globparts DoS (moderate), affected range >=7.0.0 <11.0.1. npm serves this GHSA under either 1244012 or 1244623 depending on the moment, so both keys stay until the waiver is dropped. The fix, 11.0.1, cleared the 7-day release-age gate on 2026-11-04, but the 10.x consumers (@stryker-mutator/core, mocha, readdir-glob) declare ^10 or ~10 even in their latest releases. Dev-only (`npm ls minimatch --omit=dev` is empty), expanding only the repo's own globs. Take 11.0.1 for any consumer that declares it, and drop this entry once nothing below it remains.",
+    "expiry": "2026-11-12"
+  },
+  "1244623": {
+    "active": true,
+    "notes": "GHSA-g3hv-75wg-m249 - minimatch globparts DoS (moderate), affected range >=7.0.0 <11.0.1. npm serves this GHSA under either 1244012 or 1244623 depending on the moment, so both keys stay until the waiver is dropped. The fix, 11.0.1, cleared the 7-day release-age gate on 2026-11-04, but the 10.x consumers (@stryker-mutator/core, mocha, readdir-glob) declare ^10 or ~10 even in their latest releases. Dev-only (`npm ls minimatch --omit=dev` is empty), expanding only the repo's own globs. Take 11.0.1 for any consumer that declares it, and drop this entry once nothing below it remains.",
     "expiry": "2026-11-12"
   }
 }

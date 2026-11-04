@@ -5,6 +5,8 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  /* A bare `transition-*` runs at the Animations setting's speed (see the token utilities). */
+  --default-transition-duration: var(--duration-normal);
   /* `max-w-reading`: about 80 characters of block text per line (#5332). */
   --container-reading: 46rem;
   --color-background: var(--background);
@@ -1480,9 +1482,9 @@
 .ProseMirror blockquote[data-callout-type] {
   border-left-width: 3px;
   border-left-style: solid;
-  /* Default to the `note` palette so an unknown callout type degrades to the
-   * same look as the view-mode fallback (CALLOUT_CONFIG[t] ?? note); the
-   * per-type rules below override these for the known types. */
+  /* The `note` palette, which the per-style rules below override. Each rule
+   * keys on `data-callout-style`, the style the type maps to
+   * (`calloutStyle`, src/lib/callout-style.ts), as the view mode does. */
   border-left-color: var(--alert-note-border);
   background-color: var(--alert-note);
   padding: 0.5rem 1rem; /* py-2 px-4 — matches view-mode pl-4 py-2 */
@@ -1507,39 +1509,39 @@
   user-select: none;
 }
 
-.ProseMirror blockquote[data-callout-type='info'] {
+.ProseMirror blockquote[data-callout-style='info'] {
   border-left-color: var(--alert-info-border);
   background-color: var(--alert-info);
 }
-.ProseMirror blockquote[data-callout-type='info']::before {
+.ProseMirror blockquote[data-callout-style='info']::before {
   color: var(--alert-info-foreground);
 }
-.ProseMirror blockquote[data-callout-type='warning'] {
+.ProseMirror blockquote[data-callout-style='warning'] {
   border-left-color: var(--alert-warning-border);
   background-color: var(--alert-warning);
 }
-.ProseMirror blockquote[data-callout-type='warning']::before {
+.ProseMirror blockquote[data-callout-style='warning']::before {
   color: var(--alert-warning-foreground);
 }
-.ProseMirror blockquote[data-callout-type='tip'] {
+.ProseMirror blockquote[data-callout-style='tip'] {
   border-left-color: var(--alert-tip-border);
   background-color: var(--alert-tip);
 }
-.ProseMirror blockquote[data-callout-type='tip']::before {
+.ProseMirror blockquote[data-callout-style='tip']::before {
   color: var(--alert-tip-foreground);
 }
-.ProseMirror blockquote[data-callout-type='error'] {
+.ProseMirror blockquote[data-callout-style='error'] {
   border-left-color: var(--alert-error-border);
   background-color: var(--alert-error);
 }
-.ProseMirror blockquote[data-callout-type='error']::before {
+.ProseMirror blockquote[data-callout-style='error']::before {
   color: var(--alert-error-foreground);
 }
-.ProseMirror blockquote[data-callout-type='note'] {
+.ProseMirror blockquote[data-callout-style='note'] {
   border-left-color: var(--alert-note-border);
   background-color: var(--alert-note);
 }
-.ProseMirror blockquote[data-callout-type='note']::before {
+.ProseMirror blockquote[data-callout-style='note']::before {
   color: var(--alert-note-foreground);
 }
 
@@ -1713,6 +1715,23 @@
   @apply bg-highlight rounded px-0.5;
 }
 
+/* #5745 — the block *Read aloud* is speaking: the highlight token, tinted under the text.
+   It changes no layout and does not animate, so reduced motion needs nothing. A faint tint is
+   what more contrast asks to avoid, and forced colours drop it, so both get an outline. */
+.sortable-block[data-reading] {
+  @apply rounded-sm bg-highlight/35;
+}
+@media (prefers-contrast: more) {
+  .sortable-block[data-reading] {
+    outline: 2px solid currentColor;
+  }
+}
+@media (forced-colors: active) {
+  .sortable-block[data-reading] {
+    outline: 2px solid Highlight;
+  }
+}
+
 /* Placeholder text (via TipTap Placeholder extension).
 
    The stock TipTap recipe for this pseudo-element is `float: left; height: 0`,
@@ -1795,6 +1814,19 @@
 :is(.block-link-chip, .tag-ref-chip, .block-ref-chip)
   + :is(.block-link-chip, .tag-ref-chip, .block-ref-chip) {
   margin-left: 0.25em;
+}
+
+/* #6033 — a footnote reference `[^label]`, its number on the page as a
+   superscript; muted when no block of the page defines its label. A definition
+   block's `[^label]:` prefix is the same number, as a small marker. */
+.footnote-ref {
+  @apply font-semibold text-foreground;
+}
+.footnote-ref-missing {
+  @apply font-normal text-muted-foreground;
+}
+.footnote-definition {
+  @apply mr-1 font-semibold text-muted-foreground;
 }
 
 /* Page links — [[ULID]] rendered as the page title. Underlined running text,
@@ -2533,20 +2565,37 @@
   pointer-events: none;
 }
 
-/* ── Animation/transition token utilities ──────────────────── */
+/* ── Animation/transition token utilities ──────────────────── *
+ * Each also sets `--tw-duration`, which times tw-animate-css's `animate-in` / `animate-out` (the
+ * Radix overlays' entry and exit). Without a duration class those take `--duration-normal`, and a
+ * bare `transition-*` takes it through `--default-transition-duration`: Tailwind's and
+ * tw-animate's fixed 150ms would ignore Settings › Appearance › Animations. */
+@layer base {
+  /* The classes come with a variant too (`data-[state=open]:animate-in`). */
+  [class*='animate-in'],
+  [class*='animate-out'] {
+    --tw-duration: var(--duration-normal);
+  }
+}
+
 @utility duration-fast {
+  --tw-duration: var(--duration-fast);
   transition-duration: var(--duration-fast);
 }
 @utility duration-normal {
+  --tw-duration: var(--duration-normal);
   transition-duration: var(--duration-normal);
 }
 @utility duration-moderate {
+  --tw-duration: var(--duration-moderate);
   transition-duration: var(--duration-moderate);
 }
 @utility duration-slow {
+  --tw-duration: var(--duration-slow);
   transition-duration: var(--duration-slow);
 }
 @utility duration-slower {
+  --tw-duration: var(--duration-slower);
   transition-duration: var(--duration-slower);
 }
 @utility ease-smooth {

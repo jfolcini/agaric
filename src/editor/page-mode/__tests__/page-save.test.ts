@@ -106,6 +106,22 @@ describe('what a save writes', () => {
     expect(backend.live()[20]).toEqual([blockId(21), 0, 'xblock 20'])
   })
 
+  it('keeps the column alignment of a table edited in a cell (#6277)', async () => {
+    const delimiter = '| :--- | ---: | :---: | --- |'
+    const { ed, backend, save } = open([
+      [A, 0, `| a | b | c | d |\n${delimiter}\n| tae | 2 | 3 | 4 |`],
+    ])
+    let typo = -1
+    ed.state.doc.descendants((node, pos) => {
+      if (node.text === 'tae') typo = pos
+    })
+    ed.commands.insertContentAt({ from: typo + 1, to: typo + 3 }, 'ea')
+
+    await save()
+
+    expect(backend.live()).toEqual([[A, 0, `| a | b | c | d |\n${delimiter}\n| tea | 2 | 3 | 4 |`]])
+  })
+
   it('keeps a block whose write failed unsaved, so the next save writes it', async () => {
     const { ed, backend, save } = open([[A, 0, 'foo']])
     caret(ed, 0, 3)

@@ -16,6 +16,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  aligned,
   blockRef,
   bold,
   boldItalic,
@@ -411,6 +412,24 @@ describe('finding 12: adjacent sibling blockquotes/tables merge (pinned canonica
     expect(md).toBe('| a | b |\n| --- | --- |\n| x | y |\n| c |\n| --- |\n| z |')
     expect(parse(md)).toEqual(d)
     expect(serialize(parse(md))).toBe(md)
+  })
+
+  // #6277: the second table's delimiter carries its alignment (`:---`), and
+  // the width change still splits it off rather than merging a ragged table.
+  it('a width change splits off a second table whose delimiter is aligned', () => {
+    const d = doc(
+      table(
+        tableRow(tableHeader(paragraph(text('a'))), tableHeader(paragraph(text('b')))),
+        tableRow(tableCell(paragraph(text('x'))), tableCell(paragraph(text('y')))),
+      ),
+      table(
+        tableRow(aligned('right', tableHeader(paragraph(text('c'))))),
+        tableRow(aligned('right', tableCell(paragraph(text('z'))))),
+      ),
+    )
+    const md = serialize(d)
+    expect(md).toBe('| a | b |\n| --- | --- |\n| x | y |\n| c |\n| ---: |\n| z |')
+    expect(parse(md)).toEqual(d)
   })
 
   it('three tables of alternating widths split at every boundary, not just the first', () => {
