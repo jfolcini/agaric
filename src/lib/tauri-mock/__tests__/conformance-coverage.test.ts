@@ -236,7 +236,7 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
     'write is the `pending_pairing` key in app_settings, and no command on the IPC surface ' +
     'reads that key on either stack, so no query step can observe the clear',
 
-  // ── Sync storage no command writes ──
+  // ── Sync storage no command can seed ──
   readmit_quarantined_sync_slot:
     'fixture candidate (#6057): needs a `seed.loro_sync_quarantine` section on both stacks ' +
     'and a query projection for non-block rows; until then `sync_cmd_tests.rs` pins the backend, ' +

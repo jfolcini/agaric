@@ -106,7 +106,4 @@ describe('Agaric real-backend retry of a quarantined sync delta (#6057) @sync @s
     expect(row).toContain('replay failed')
     expect(row).not.toContain(SEEDED_REASON)
   })
-
-  // Slice 3 of #6057 (the startup toast on the start that quarantined a delta)
-  // adds its test here, seeding through the same `restartApp` hook.
 })
