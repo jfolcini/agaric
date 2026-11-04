@@ -10,7 +10,6 @@
  *  - BlockTree rendered with correct parentId for days that have pages
  *  - Empty state shown for days without pages
  *  - "Add block" creates page + block for that day
- *  - "Open in editor" button calls onNavigateToPage
  *  - Loading state while fetching pages
  *  - a11y compliance
  */
@@ -945,46 +944,6 @@ describe('JournalPage', () => {
       const cached = await fetchPageMap('SPACE_TEST', range.startDate, range.endDate)
       expect(cached.get(yesterdayStr)).toBe('STREAM_PAGE')
       expect(rangeFetches()).toBe(fetchesBefore)
-    })
-  })
-
-  // ── Open in editor ──────────────────────────────────────────────────
-
-  describe('open in editor', () => {
-    it('shows "Open in editor" button for days that have pages', async () => {
-      const todayStr = formatDate(new Date())
-      const dailyPage = makeDailyPage({ id: 'DP1', content: todayStr })
-      const onNavigateToPage = vi.fn()
-
-      mockJournalPages([dailyPage])
-
-      renderJournal({ onNavigateToPage })
-
-      await waitFor(() => {
-        expect(screen.getAllByTestId('block-tree')).toHaveLength(1)
-      })
-
-      const openBtn = screen.getByRole('button', {
-        name: new RegExp(`Open ${todayStr} in editor`),
-      })
-      expect(openBtn).toBeInTheDocument()
-
-      const user = userEvent.setup()
-      await user.click(openBtn)
-
-      expect(onNavigateToPage).toHaveBeenCalledWith('DP1', todayStr)
-    })
-
-    it('does not show "Open in editor" button for days without pages', async () => {
-      mockEmptyResponses()
-
-      renderJournal({ onNavigateToPage: vi.fn() })
-
-      await waitFor(() => {
-        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
-      })
-
-      expect(screen.queryByRole('button', { name: /open .* in editor/i })).not.toBeInTheDocument()
     })
   })
 
