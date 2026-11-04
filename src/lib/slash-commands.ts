@@ -5,8 +5,9 @@
  * editor extensions, and other components can consume the metadata without
  * pulling in the hook's state machine and Tauri IPC surface.
  *
- * Any new slash command should be added to one of these arrays (or a new one
- * of the same shape) and wired into `searchSlashCommands`.
+ * Any new slash command goes in one of these arrays; a new array joins
+ * `SLASH_COMMAND_FAMILIES`, so the menu searches it and the reference drawer
+ * lists it.
  */
 
 import {
@@ -674,6 +675,25 @@ export const TURN_INTO_COMMANDS: PickerItem[] = TURN_INTO_OPTIONS.map((o) => ({
   icon: o.icon,
 }))
 
+/** The commands a typed query surfaces beside `SLASH_COMMANDS`, in menu order. */
+const SLASH_COMMAND_FAMILIES: readonly (readonly PickerItem[])[] = [
+  PRIORITY_COMMANDS,
+  HEADING_COMMANDS,
+  REPEAT_COMMANDS,
+  REPEAT_END_COMMANDS,
+  EFFORT_COMMANDS,
+  ASSIGNEE_COMMANDS,
+  LOCATION_COMMANDS,
+  CALLOUT_COMMANDS,
+]
+
+/** Every command the menu can offer: the reference drawer lists these. */
+export const ALL_SLASH_COMMANDS: readonly PickerItem[] = [
+  ...SLASH_COMMANDS,
+  ...SLASH_COMMAND_FAMILIES.flat(),
+  ...TURN_INTO_COMMANDS,
+]
+
 /** `recents` is the slash MRU (`getRecentCommands(RECENT_SLASH_PREFIX)`), shown on an empty query. */
 export function searchSlashCommands(
   query: string,
@@ -690,14 +710,6 @@ export function searchSlashCommands(
     const recentBand = recentSlashCommands(recents)
     return recentBand.length > 0 ? [...recentBand, ...baseResults] : baseResults
   }
-  const priorityResults = matchSorter(PRIORITY_COMMANDS, q, { keys: ['label'] })
-  const headingResults = matchSorter(HEADING_COMMANDS, q, { keys: ['label'] })
-  const repeatResults = matchSorter(REPEAT_COMMANDS, q, { keys: ['label'] })
-  const repeatEndResults = matchSorter(REPEAT_END_COMMANDS, q, { keys: ['label'] })
-  const effortResults = matchSorter(EFFORT_COMMANDS, q, { keys: ['label'] })
-  const assigneeResults = matchSorter(ASSIGNEE_COMMANDS, q, { keys: ['label'] })
-  const locationResults = matchSorter(LOCATION_COMMANDS, q, { keys: ['label'] })
-  const calloutResults = matchSorter(CALLOUT_COMMANDS, q, { keys: ['label'] })
   // #264 — `/turn` surfaces the block-type conversion options inline. The
   // parent `turn` entry lives in SLASH_COMMANDS (baseResults); the expanded
   // `turn-*` options are merged here so typing `/turn` lists every target type.
@@ -711,14 +723,7 @@ export function searchSlashCommands(
 
   return [
     ...baseResults,
-    ...priorityResults,
-    ...headingResults,
-    ...repeatResults,
-    ...repeatEndResults,
-    ...effortResults,
-    ...assigneeResults,
-    ...locationResults,
-    ...calloutResults,
+    ...SLASH_COMMAND_FAMILIES.flatMap((family) => matchSorter(family, q, { keys: ['label'] })),
     ...turnIntoResults,
   ]
 }

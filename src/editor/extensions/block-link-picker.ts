@@ -15,10 +15,11 @@
  *
  * Typed as `![[` (Obsidian's embed syntax) in an otherwise empty paragraph,
  * the same popup writes the pick as the embed `{{embed [[ULID]]}}` rather
- * than as a link.
+ * than as a link, and so does a whole `![[text]]` typed there (#6033).
  */
 
 import { type Content, type Editor, Extension, InputRule } from '@tiptap/core'
+import type { Node as PMNode } from '@tiptap/pm/model'
 import { PluginKey } from '@tiptap/pm/state'
 
 import {
@@ -27,6 +28,7 @@ import {
   resolveAndInsertPickerToken,
 } from '@/editor/extensions/picker-plugin'
 import { storableLinkLabel } from '@/editor/markdown-common'
+import { PAGE_BLOCK } from '@/editor/page-mode/page-block-name'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { EMBED_TOKEN_PREFIX } from '@/lib/embed-token'
 import { t } from '@/lib/i18n'
@@ -146,6 +148,30 @@ function pageEmbedContent(id: string): Content {
   ]
 }
 
+/**
+ * Whether the `!` at `bang` before a `[[` link typed up to `to` makes it an
+ * embed: only when the embed will be its block's whole content, the one place
+ * an embed renders, which is the whole text of a plain paragraph alone in the
+ * block (block mode's doc, a page block in page mode). Elsewhere (`Hello![[`,
+ * `\![[`, a heading, quote, list item, task or second paragraph) the `!` stays
+ * text before a link. An embed keeps no label, which `{{embed [[ULID]]}}` has
+ * no room for.
+ */
+function embedsAt(doc: PMNode, bang: number, to: number): boolean {
+  if (doc.textBetween(bang, bang + 1) !== '!') return false
+  const $bang = doc.resolve(bang)
+  const paragraph = $bang.parent
+  const block = $bang.node($bang.depth - 1)
+  return (
+    paragraph.type.name === 'paragraph' &&
+    paragraph.attrs['todoState'] == null &&
+    (block.type.name === 'doc' || block.type.name === PAGE_BLOCK) &&
+    block.childCount === 1 &&
+    $bang.parentOffset === 0 &&
+    to === $bang.end()
+  )
+}
+
 /** The link body typed after the popup's `[[` trigger over `range`, or `null` when unreadable. */
 function typedBodyAt(editor: Editor, range: { from: number; to: number }): string | null {
   try {
@@ -221,20 +247,24 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
     const editor = this.editor
     return [
       // Match [[text]] — auto-resolve to a block link on typing the closing ]]
-      // — unless a `#` makes it the tag `#[[text]]` (#5160 N7).
+      // — unless a `#` makes it the tag `#[[text]]` (#5160 N7). A `!` before
+      // it is matched too, to make the link an embed where `embedsAt` holds.
       new InputRule({
-        find: /(?<!#)\[\[([^\]]+)\]\]$/,
+        find: /(?<!#)!?\[\[([^\]]+)\]\]$/,
         handler: ({ state, range, match }) => {
           const body = match[1] ?? ''
           const link = parseTypedLink(body)
           if (!link) return
 
+          const bang = match[0].startsWith('!')
+          const embed = bang && embedsAt(state.doc, range.from, range.to)
           // Capture the insertion position *before* deletion so the async
           // callback inserts at the correct spot even if the cursor moves.
-          const insertPos = range.from
+          // A `!` that makes no embed stays text before the link.
+          const insertPos = bang && !embed ? range.from + 1 : range.from
 
           // Delete the [[text]] range immediately so the raw text doesn't linger
-          state.tr.delete(range.from, range.to)
+          state.tr.delete(insertPos, range.to)
 
           // The first of the body's readings that names a page wins, with that
           // reading's label; a tie leaves the text as typed; with none, the
@@ -244,7 +274,7 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
           void resolveAndInsertPickerToken({
             editor,
             text: link.base,
-            typed: match[0],
+            typed: match[0].slice(insertPos - range.from),
             insertPos,
             items: async () => {
               for (const reading of linkBodyReadings(body)) {
@@ -256,7 +286,9 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
             },
             matchItem: () => found,
             tokenFor: (id, item) =>
-              blockLinkNode(id, label, item ? (item.title ?? item.label) : link.base),
+              embed
+                ? pageEmbedContent(id)
+                : blockLinkNode(id, label, item ? (item.title ?? item.label) : link.base),
             onCreate: extensionOptions.onCreate,
             loggerComponent: 'BlockLinkPicker',
             errorMessage: 'Failed to resolve block link via input rule, falling back to plain text',
@@ -286,15 +318,8 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
           const item = props as PickerItem
           const body = typedBodyAt(editor, range)
           const typed = body === null ? null : parseTypedLink(body)
-          // `![[` embeds only when the embed will be its paragraph's whole text,
-          // the one place an embed renders; elsewhere (`Hello![[`, `\![[`) the
-          // `!` stays text before a link. An embed takes the `!` with it and
-          // keeps no label, which `{{embed [[ULID]]}}` has no room for.
-          const { doc } = editor.state
-          const embed =
-            doc.textBetween(range.from - 1, range.from) === '!' &&
-            doc.resolve(range.from - 1).parentOffset === 0 &&
-            range.to === doc.resolve(range.to).end()
+          // An embed takes the `!` with it.
+          const embed = embedsAt(editor.state.doc, range.from - 1, range.to)
           const replaced = embed ? { from: range.from - 1, to: range.to } : range
           if (item.isCreate && extensionOptions.onCreate) {
             // Shared create path: deletes the trigger range synchronously
