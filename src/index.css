@@ -1713,6 +1713,23 @@
   @apply bg-highlight rounded px-0.5;
 }
 
+/* #5745 — the block *Read aloud* is speaking: the highlight token, tinted under the text.
+   It changes no layout and does not animate, so reduced motion needs nothing. A faint tint is
+   what more contrast asks to avoid, and forced colours drop it, so both get an outline. */
+.sortable-block[data-reading] {
+  @apply rounded-sm bg-highlight/35;
+}
+@media (prefers-contrast: more) {
+  .sortable-block[data-reading] {
+    outline: 2px solid currentColor;
+  }
+}
+@media (forced-colors: active) {
+  .sortable-block[data-reading] {
+    outline: 2px solid Highlight;
+  }
+}
+
 /* Placeholder text (via TipTap Placeholder extension).
 
    The stock TipTap recipe for this pseudo-element is `float: left; height: 0`,

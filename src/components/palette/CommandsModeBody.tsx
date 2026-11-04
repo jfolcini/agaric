@@ -11,6 +11,7 @@ import type { useTranslation } from 'react-i18next'
 import { CommandEmpty, CommandGroup, CommandItem } from '@/components/ui/command'
 import { Kbd } from '@/components/ui/kbd'
 import { PALETTE_COMMANDS, type PaletteCommandSpec } from '@/hooks/palette-commands'
+import { useIsReadingAloud, useReadAloudSupported } from '@/hooks/useReadAloud'
 import { formatChordTokens } from '@/lib/keyboard-config/format-chord'
 import { getShortcutKeys } from '@/lib/keyboard-config/storage'
 import { addRecentCommand, getRecentCommands } from '@/stores/recent-commands'
@@ -79,13 +80,17 @@ export function CommandsModeBody({
   // mounting the palette body. Here we adapt each spec into the
   // shape the rest of the body expects: a flat `label` (resolved via
   // `t()`) + a 0-arg `run` closed over `onClose` / `onEscalate`.
-  type RenderedCommand = Omit<PaletteCommandSpec, 'labelKey' | 'run'> & {
+  type RenderedCommand = Omit<PaletteCommandSpec, 'labelKey' | 'run' | 'requires'> & {
     label: string
     run: () => void
   }
+  const speech = useReadAloudSupported()
+  const reading = useIsReadingAloud()
   const commands: ReadonlyArray<RenderedCommand> = useMemo(
     () =>
-      PALETTE_COMMANDS.map((c) => {
+      PALETTE_COMMANDS.filter(
+        (c) => c.requires === undefined || (c.requires === 'speech' ? speech : reading),
+      ).map((c) => {
         const rendered: RenderedCommand = {
           id: c.id,
           category: c.category,
@@ -96,7 +101,7 @@ export function CommandsModeBody({
         if (c.shortcutId !== undefined) rendered.shortcutId = c.shortcutId
         return rendered
       }),
-    [t, onEscalate, onClose],
+    [t, onEscalate, onClose, speech, reading],
   )
 
   const filtered = useMemo(
