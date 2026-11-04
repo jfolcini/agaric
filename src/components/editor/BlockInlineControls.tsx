@@ -305,14 +305,14 @@ export function BlockCollapseControl({
   )
 }
 
-/** The per-block task checkbox (suppressed in multi-select mode by the caller). */
+/** A task's checkbox (suppressed in multi-select mode by the caller). */
 function TaskMarkerButton({
   blockId,
   todoState,
   onToggleTodo,
 }: {
   blockId: string
-  todoState?: (string | null) | undefined
+  todoState: string
   onToggleTodo?: ((blockId: string) => void) | undefined
 }): React.ReactElement {
   const { t } = useTranslation()
@@ -321,21 +321,7 @@ function TaskMarkerButton({
       <TooltipTrigger asChild>
         <button
           type="button"
-          className={cn(
-            'task-marker flex-shrink-0 p-0.5 transition-opacity focus-ring-visible active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center',
-            // Fix 5: a block with NO todo_state renders the EMPTY checkbox,
-            // which is a pure affordance ("set a task here"), not meaningful
-            // state. Showing it on every row at rest clutters the whole tree,
-            // so gate it behind the same per-block hover/active contract as
-            // the gutter buttons — hidden at rest, revealed only when the
-            // block is hovered / focus-within / `.block-active`. A block that
-            // DOES carry a todo_state keeps its checkbox always visible (the
-            // TODO/DOING/DONE/CANCELLED glyph IS meaningful state). On coarse
-            // pointers there is no hover and the long-press menu owns setting
-            // task state, so the empty checkbox stays hidden at rest there too.
-            !todoState &&
-              'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100 [.block-active_&]:opacity-100',
-          )}
+          className="task-marker flex-shrink-0 p-0.5 focus-ring-visible active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
           data-testid="task-marker"
           // #1498: keep editor focus on click (see collapse-toggle note).
           onMouseDown={(e) => e.preventDefault()}
@@ -343,13 +329,13 @@ function TaskMarkerButton({
             e.stopPropagation()
             onToggleTodo?.(blockId)
           }}
-          aria-label={todoState ? t('block.taskCycle', { state: todoState }) : t('block.setTodo')}
+          aria-label={t('block.taskCycle', { state: todoState })}
         >
           <TaskCheckbox state={todoState} />
         </button>
       </TooltipTrigger>
       <TooltipContent side="bottom" sideOffset={4}>
-        {todoState ? t('block.todoCycleTip', { state: todoState }) : t('block.setTodoTip')}
+        {t('block.todoCycleTip', { state: todoState })}
       </TooltipContent>
     </Tooltip>
   )
@@ -536,7 +522,7 @@ function AttachmentBadge({
  * multi-select mode by the caller).
  */
 export const BlockInlineControls = React.memo(
-  ({ blockId, todoState, onToggleTodo }: BlockInlineControlsProps): React.ReactElement => {
+  ({ blockId, todoState, onToggleTodo }: BlockInlineControlsProps): React.ReactElement | null => {
     // Fix 6 / #994 — when a multi-selection is active the row enters "select"
     // mode. We suppress ONLY the task checkbox here (it doubles as an action
     // target that would be ambiguous against the selection-scoped gutter
@@ -549,26 +535,25 @@ export const BlockInlineControls = React.memo(
     const hasSelection = useBlockStore((s) => s.selectedBlockIds.length > 0)
     const isTouch = useIsTouch()
 
-    // The empty (no-state) task marker reveals on hover, but `touch-target`
-    // reserves a 44px slot on coarse pointers even at `opacity-0` — dead space
-    // left of every block's text on phones (there is no hover to reveal it, and
-    // tasks are set via the long-press menu / slash command). So on touch we
-    // render the marker ONLY when the block actually has a task state; desktop
-    // keeps the hover-to-add affordance.
-    const showTaskMarker = !hasSelection && (!isTouch || !!todoState)
+    // Only a task has a checkbox, so a plain line keeps no room for one: a
+    // task is set by `/todo`, Ctrl+Enter or the block menu. On touch the empty
+    // box stays, as the row gap after it lines a plain line's text up with the
+    // heading (`BlockListRenderer`).
+    const task = !hasSelection && todoState ? todoState : null
+    if (task === null && !isTouch) return null
 
     return (
       <div
         className={cn(
-          // `min-h-8` is one text line box, so the checkbox centres on the
-          // first line of a wrapped block (#5332).
-          'inline-controls flex items-center flex-shrink-0 gap-1 min-h-8 max-sm:flex-shrink max-sm:w-auto max-sm:gap-x-1',
+          // `min-h-block-line` is the first text line box, so the checkbox
+          // centres on the first line of a wrapped block (#5332).
+          'inline-controls flex items-center flex-shrink-0 gap-1 min-h-block-line max-sm:flex-shrink max-sm:w-auto max-sm:gap-x-1',
         )}
       >
         {/* Fix 6: in multiselect mode the task checkbox is suppressed on every
           row (only the gutter select checkbox shows). */}
-        {showTaskMarker && (
-          <TaskMarkerButton blockId={blockId} todoState={todoState} onToggleTodo={onToggleTodo} />
+        {task !== null && (
+          <TaskMarkerButton blockId={blockId} todoState={task} onToggleTodo={onToggleTodo} />
         )}
       </div>
     )

@@ -1,12 +1,9 @@
 import type React from 'react'
-import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { fetchAndCacheLinks } from '@/components/block-tree/use-block-link-resolve'
 import { PropertyChip } from '@/components/properties/PropertyChip'
+import { useRefTitle } from '@/components/properties/useRefTitle'
 import type { InlineProperty } from '@/hooks/useExtraBlockProperties'
-import { useResolveStore } from '@/stores/resolve'
-import { useSpaceStore } from '@/stores/space'
 
 interface InlinePropertyChipProps {
   blockId: string
@@ -87,20 +84,7 @@ function RefPropertyChip({
   unfit?: boolean | undefined
 }): React.ReactElement {
   const { t } = useTranslation()
-  const title = useResolveStore((s) => s.resolveTitle(targetId))
-  // The boot preload caches the active space's pages and tags, so a ref to a
-  // block, to another space's page or to an evicted entry is asked for the way
-  // a `[[link]]` chip's target is.
-  const cached = useResolveStore((s) => s.has(targetId))
-  useEffect(() => {
-    if (cached) return
-    const spaceId = useSpaceStore.getState().currentSpaceId
-    void fetchAndCacheLinks(
-      new Set([targetId]),
-      spaceId,
-      () => useSpaceStore.getState().currentSpaceId !== spaceId,
-    )
-  }, [targetId, cached])
+  const title = useRefTitle(targetId) ?? ''
   return (
     <PropertyChip
       propKey={propKey}

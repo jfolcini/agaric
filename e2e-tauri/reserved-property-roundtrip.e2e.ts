@@ -9,21 +9,13 @@
 // reserved property is stored/reprojected, so only a live-backend spec guards
 // it.
 //
-// Interaction: the per-block task checkbox is the `[data-testid="task-marker"]`
-// button (BlockInlineControls.tsx `TaskMarkerButton`). Its `onClick` calls
-// `onToggleTodo` -> `handleToggleTodo`, which cycles null -> 'TODO' (TASK_CYCLE
-// in use-block-properties.ts) and persists via `setTodoStateCmd`. Its
-// aria-label flips from `block.setTodo` ("Set as TODO") to
-// `block.taskCycle` ("Task: {{state}}. Click to cycle.") once a state is set —
-// giving a text signal to assert on without depending on a glyph.
-//
-// Selector note (load-bearing): at rest a state-less task-marker is
-// `opacity-0` — but, UNLIKE the gutter controls, it has NO `pointer-events-none`
-// (BlockInlineControls.tsx line ~367 vs BlockGutterControls.tsx line ~42), and
-// WebDriver's displayedness algorithm ignores opacity. So the resting checkbox
-// is genuinely clickable; no hover/focus dance is required. Once a state is
-// set the checkbox becomes permanently visible (`[.block-active_&]` aside), so
-// the post-navigation assertion is stable.
+// Interaction: the block menu's "Set as TODO" calls `onToggleTodo` ->
+// `handleToggleTodo`, which cycles null -> 'TODO' (TASK_CYCLE in
+// use-block-properties.ts) and persists via `setTodoStateCmd`. Only a block
+// with a todo state has a task checkbox, `[data-testid="task-marker"]`
+// (BlockInlineControls.tsx `TaskMarkerButton`), named `block.taskCycle`
+// ("Task: {{state}}. Click to cycle.") — a text signal to assert on without
+// depending on a glyph.
 //
 // A ref property added from the drawer used to send `set_property` with every
 // value field null, which the backend refuses (`validate_set_property`), so
@@ -41,6 +33,7 @@ import {
   blockStaticByMarker,
   chooseSelectOption,
   navigateTo,
+  openContextMenu,
   openPropertyDrawer,
   openNewPage,
   openSettingsTab,
@@ -110,21 +103,17 @@ describe('Agaric real-backend block-property round-trips (#3085, #5862) @editor'
     // matcher (only the element matchers — `toBeDisplayed` &c. — are async).
     expect(blockId).toBeTruthy()
 
-    const row = $(`[data-block-id="${blockId}"]`)
-    const taskMarker = row.$('[data-testid="task-marker"]')
-    await taskMarker.waitForExist({ timeout: ACTION_TIMEOUT })
-
-    // 3. Toggle the todo state (null -> TODO) and confirm it took: the button's
-    //    aria-label switches to the "Task: <state>. Click to cycle." form.
-    //    Hover the marker first: a state-less task-marker renders `opacity-0` at
-    //    rest and only reaches `opacity-100` under the block's `group-hover`
-    //    (BlockInlineControls.tsx). WebDriver can click an opacity-0 element, but
-    //    moving the pointer onto it first makes it genuinely visible before the
-    //    click — a cheap robustness margin for the one-shot weekly CI run.
-    await taskMarker.moveTo()
-    await taskMarker.click()
+    // 3. Set the todo state (null -> TODO) from the block menu and confirm it
+    //    took: the block gains a checkbox named "Task: <state>. Click to cycle.".
+    await openContextMenu($(`[data-testid="sortable-block"][data-block-id="${blockId}"]`))
+    const setTodo = $('[role="menu"]').$('[role="menuitem"]*=Set as TODO')
+    await setTodo.waitForClickable({ timeout: ACTION_TIMEOUT })
+    await setTodo.click()
+    const taskMarker = $(`[data-block-id="${blockId}"]`).$('[data-testid="task-marker"]')
     await browser.waitUntil(
-      async () => ((await taskMarker.getAttribute('aria-label')) ?? '').startsWith('Task:'),
+      async () =>
+        (await taskMarker.isExisting()) &&
+        ((await taskMarker.getAttribute('aria-label')) ?? '').startsWith('Task:'),
       {
         timeout: ACTION_TIMEOUT,
         timeoutMsg: 'task-marker aria-label never reflected a set todo state',

@@ -1519,6 +1519,52 @@ describe("PropertyRowEditor values that don't fit", () => {
     expect(onSave).toHaveBeenCalledWith('alpha')
   })
 
+  it('gives a number equal to an option its own item, and choosing the option saves it', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('rank', { value_num: 1 })}
+        def={makeDef('rank', 'select', '["1"]')}
+        onSave={onSave}
+      />,
+    )
+
+    const select = screen.getByLabelText(
+      t('pageProperty.valueLabel', { key: 'rank' }),
+    ) as HTMLSelectElement
+    expect(Array.from(select.options).map((o) => o.value)).toEqual(['__none__', '__unfit__', '1'])
+    expect(select.value).toBe('__unfit__')
+
+    // By element: the disabled item's label is "1" too.
+    await user.selectOptions(select, select.options[2] as HTMLOptionElement)
+    expect(onSave).toHaveBeenCalledWith('1')
+  })
+
+  it("names a ref under a number key by its target's title", async () => {
+    const { useResolveStore, keyFor } = await import('@/stores/resolve')
+    useResolveStore.setState({
+      cache: new Map([
+        [
+          keyFor('SPACE_TEST', 'TARGET_PAGE'),
+          { title: 'My Target', deleted: false, resolved: true },
+        ],
+      ]),
+      version: 1,
+    })
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('effort', { value_ref: 'TARGET_PAGE' })}
+        def={makeDef('effort', 'number')}
+        onSave={vi.fn()}
+      />,
+    )
+
+    expect(mark('effort', 'My Target')).toBeInTheDocument()
+  })
+
   it('marks no option that fits, and adds no item for it', () => {
     render(
       <PropertyRowEditor
