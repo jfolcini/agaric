@@ -1,4 +1,4 @@
-# Session 3425 — Obsidian Tasks fields, read and written on task lines
+# Session 3439 — Obsidian Tasks fields, read and written on task lines
 
 #6277 D2 and D3 (decision 4), one PR. They ship together because D2 alone opened a data-loss window: a task whose stored text already ended in `📅 2026-01-01` read that date as a field in both the base and the edited buffer, so an Edit as Markdown save of that block dropped the text and stored no field. D3's escape closes it, pinned by `a_tasks_own_signifier_text_survives_an_edit_of_its_block`.
 
