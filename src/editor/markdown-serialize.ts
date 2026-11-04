@@ -730,6 +730,9 @@ function serializeInlineChild(
   if (child.type === 'block_ref') {
     return serializeInlineAtom(`((${child.attrs.id}))`, activeMarks)
   }
+  if (child.type === 'footnote_ref') {
+    return serializeInlineAtom(`[^${child.attrs.label}]`, activeMarks)
+  }
   // Inline math (#1437): emit the LaTeX wrapped in `$…$`, sanitized so the
   // emitted token always re-parses as the same math span (edge whitespace,
   // interior `$` and a dangling `\` would otherwise truncate or degrade the
@@ -829,7 +832,7 @@ function serializeInlineNodes(
     // `escapeText` decides per NODE, so meaning-changing char pairs that only
     // exist across the join are defused here — see joinInlinePieces.
     result = joinInlinePieces(result, piece, prevTail)
-    if (piece !== '') prevTail = child.type === 'math_inline' ? 'math' : 'text'
+    if (piece !== '') prevTail = SEAM_TAIL[child.type] ?? 'text'
   }
 
   // Close any remaining open marks — through the seam guard too: a node-final
@@ -848,9 +851,17 @@ function serializeInlineNodes(
  *  - `'url'`  — it is a bare-URL autolink emission whose trailing chars belong
  *    to the href; gluing is handled by the #2385 revalidation loop, never by
  *    escaping into the href;
+ *  - `'footnote'` — it ends with a footnote reference, which a following `(`
+ *    would turn into a link's text on reparse (#6033);
  *  - `'text'` — anything else: a trailing unescaped `$` is a literal dollar.
  */
-type SeamTail = 'text' | 'math' | 'url'
+type SeamTail = 'text' | 'math' | 'url' | 'footnote'
+
+/** The seam tail an inline atom's emission leaves, where it is not `'text'`. */
+const SEAM_TAIL: Partial<Record<InlineNode['type'], SeamTail>> = {
+  math_inline: 'math',
+  footnote_ref: 'footnote',
+}
 
 /**
  * Append `piece` to `result`, defusing cross-piece seams that would change
@@ -864,7 +875,9 @@ type SeamTail = 'text' | 'math' | 'url'
  *    close a bogus math span (#1437) — the `$` is escaped;
  *  - a math atom's closing `$` + a digit-leading piece would un-math the atom
  *    on reparse (currency closer rule) — the digit is escaped instead (`\5`
- *    decodes back to `5`).
+ *    decodes back to `5`);
+ *  - a footnote reference + a `(`-leading piece would reparse as a link whose
+ *    text is the reference's `^label` (#6033) — the `(` is escaped.
  *
  * A `!`/`$` already part of an escape (odd backslash run before it) is left
  * untouched.
@@ -878,6 +891,7 @@ function joinInlinePieces(result: string, piece: string, prevTail: SeamTail): st
   if (prevTail === 'math' && first >= '0' && first <= '9') {
     return `${result}\\${piece}`
   }
+  if (prevTail === 'footnote' && first === '(') return `${result}\\${piece}`
   if (
     prevTail === 'text' &&
     endsWithUnescapedDollar(result) &&
