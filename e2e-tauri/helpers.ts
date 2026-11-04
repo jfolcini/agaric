@@ -877,6 +877,24 @@ function appPids(): number[] {
     .map(Number)
 }
 
+/** The `AGARIC_DATA_DIR` in a `/proc/<pid>/environ` dump, or `null` when it has none. */
+export function dataDirFromEnviron(environ: string): string | null {
+  const entry = environ.split('\0').find((e) => e.startsWith('AGARIC_DATA_DIR='))
+  return entry === undefined ? null : entry.slice('AGARIC_DATA_DIR='.length)
+}
+
+/**
+ * The running app's vault directory. wdio.conf.ts keeps the sandbox path to
+ * itself, so it is read from the app's environment, as `reapSessionApp` does.
+ */
+export function appVaultDir(): string {
+  const [pid] = appPids()
+  if (pid === undefined) throw new Error('no app is running, so there is no vault to find')
+  const dir = dataDirFromEnviron(readFileSync(`/proc/${pid}/environ`, 'latin1'))
+  if (dir === null) throw new Error(`the app (pid ${pid}) was started without AGARIC_DATA_DIR`)
+  return dir
+}
+
 /**
  * End the app and open it again on the same vault: the app process ends and a
  * new one opens it, so nothing the webview held survives.
@@ -890,8 +908,14 @@ function appPids(): number[] {
  * `'close'` ends the session and lets the app shut down; `'kill'` sends the
  * app SIGKILL first, so it gets no chance to save anything on the way out
  * (a crash, or the OS killing it).
+ *
+ * `beforeOpen` runs while no app is running, so it can write the vault's files
+ * (`appVaultDir`) for state no command creates.
  */
-export async function restartApp(how: 'close' | 'kill' = 'close'): Promise<void> {
+export async function restartApp(
+  how: 'close' | 'kill' = 'close',
+  beforeOpen?: () => void,
+): Promise<void> {
   if (how === 'kill') {
     for (const pid of appPids()) process.kill(pid, 'SIGKILL')
   } else {
@@ -902,6 +926,7 @@ export async function restartApp(how: 'close' | 'kill' = 'close'): Promise<void>
     interval: 200,
     timeoutMsg: `the app (pid ${appPids().join(', ')}) outlived its session`,
   })
+  beforeOpen?.()
   // A killed app's session is deleted here; the error that answers is suppressed.
   await browser.reloadSession()
   await waitForAppReady()

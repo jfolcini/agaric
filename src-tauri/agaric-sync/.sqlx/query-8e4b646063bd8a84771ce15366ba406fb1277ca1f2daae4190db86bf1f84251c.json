@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "INSERT INTO loro_sync_inbox\n             (space_id, bytes, purged_ids, created_at, unresolved_boots)\n           VALUES (?, ?, ?, ?, 0)\n           RETURNING id as \"id!: i64\"",
+  "query": "INSERT INTO loro_sync_inbox\n             (space_id, bytes, purged_ids, created_at, unresolved_boots)\n           VALUES (?, ?, ?, ?, ?)\n           RETURNING id as \"id!: i64\"",
   "describe": {
     "columns": [
       {
@@ -16,11 +16,11 @@
       }
     ],
     "parameters": {
-      "Right": 4
+      "Right": 5
     },
     "nullable": [
       false
     ]
   },
-  "hash": "9532a9840050332865ee73bb7608b10e965c3a8dd8fcf0fe81f58f2fdd6eb763"
+  "hash": "8e4b646063bd8a84771ce15366ba406fb1277ca1f2daae4190db86bf1f84251c"
 }

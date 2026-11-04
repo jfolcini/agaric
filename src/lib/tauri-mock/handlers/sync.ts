@@ -309,6 +309,14 @@ export const syncHandlers = {
     return { slots, total: syncQuarantine.size }
   },
 
+  // Mirrors `readmit_quarantined_sync_slot_inner` (#6057): the row leaves the
+  // quarantine (the mock models no inbox, so the next boot's retry is the real
+  // backend's), and an unknown id is NotFound.
+  readmit_quarantined_sync_slot: (args) => {
+    const id = (args as { id: number }).id
+    if (!syncQuarantine.delete(id)) throw notFoundRejection(`quarantined sync slot ${id}`)
+  },
+
   // ---------------------------------------------------------------------------
   // Task properties (todo/priority/due/scheduled)
   // ---------------------------------------------------------------------------
@@ -453,6 +461,7 @@ export const syncHandlers = {
   | 'get_sync_relay_settings'
   | 'set_sync_relay_settings'
   | 'list_quarantined_sync_slots'
+  | 'readmit_quarantined_sync_slot'
   | 'update_peer_name'
   | 'set_peer_address'
   | 'get_mcp_status'
