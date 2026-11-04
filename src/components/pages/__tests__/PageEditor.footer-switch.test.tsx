@@ -135,7 +135,7 @@ describe('page mode footer: Edit as Markdown', () => {
     })
     const link = footerLink()
     expect(link).not.toBeNull()
-    expect(link?.closest('div')).toHaveTextContent(t('pageMode.footerHint'))
+    expect(link?.closest('div')).toHaveTextContent(t('pageMode.footerHint.markdown'))
     expect(await axe(container)).toHaveNoViolations()
 
     fireEvent.click(link as HTMLElement)
@@ -154,7 +154,9 @@ describe('page mode footer: Edit as Markdown', () => {
     )
     await editorIn(container)
 
-    expect(screen.getByText(t('pageMode.footerHint'))).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: t('pageMode.footerHint.markdown') }),
+    ).toBeInTheDocument()
     expect(footerLink()).toBeNull()
   })
 })
