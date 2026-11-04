@@ -1482,9 +1482,9 @@
 .ProseMirror blockquote[data-callout-type] {
   border-left-width: 3px;
   border-left-style: solid;
-  /* Default to the `note` palette so an unknown callout type degrades to the
-   * same look as the view-mode fallback (CALLOUT_CONFIG[t] ?? note); the
-   * per-type rules below override these for the known types. */
+  /* The `note` palette, which the per-style rules below override. Each rule
+   * keys on `data-callout-style`, the style the type maps to
+   * (`calloutStyle`, src/lib/callout-style.ts), as the view mode does. */
   border-left-color: var(--alert-note-border);
   background-color: var(--alert-note);
   padding: 0.5rem 1rem; /* py-2 px-4 — matches view-mode pl-4 py-2 */
@@ -1509,39 +1509,39 @@
   user-select: none;
 }
 
-.ProseMirror blockquote[data-callout-type='info'] {
+.ProseMirror blockquote[data-callout-style='info'] {
   border-left-color: var(--alert-info-border);
   background-color: var(--alert-info);
 }
-.ProseMirror blockquote[data-callout-type='info']::before {
+.ProseMirror blockquote[data-callout-style='info']::before {
   color: var(--alert-info-foreground);
 }
-.ProseMirror blockquote[data-callout-type='warning'] {
+.ProseMirror blockquote[data-callout-style='warning'] {
   border-left-color: var(--alert-warning-border);
   background-color: var(--alert-warning);
 }
-.ProseMirror blockquote[data-callout-type='warning']::before {
+.ProseMirror blockquote[data-callout-style='warning']::before {
   color: var(--alert-warning-foreground);
 }
-.ProseMirror blockquote[data-callout-type='tip'] {
+.ProseMirror blockquote[data-callout-style='tip'] {
   border-left-color: var(--alert-tip-border);
   background-color: var(--alert-tip);
 }
-.ProseMirror blockquote[data-callout-type='tip']::before {
+.ProseMirror blockquote[data-callout-style='tip']::before {
   color: var(--alert-tip-foreground);
 }
-.ProseMirror blockquote[data-callout-type='error'] {
+.ProseMirror blockquote[data-callout-style='error'] {
   border-left-color: var(--alert-error-border);
   background-color: var(--alert-error);
 }
-.ProseMirror blockquote[data-callout-type='error']::before {
+.ProseMirror blockquote[data-callout-style='error']::before {
   color: var(--alert-error-foreground);
 }
-.ProseMirror blockquote[data-callout-type='note'] {
+.ProseMirror blockquote[data-callout-style='note'] {
   border-left-color: var(--alert-note-border);
   background-color: var(--alert-note);
 }
-.ProseMirror blockquote[data-callout-type='note']::before {
+.ProseMirror blockquote[data-callout-style='note']::before {
   color: var(--alert-note-foreground);
 }
 
