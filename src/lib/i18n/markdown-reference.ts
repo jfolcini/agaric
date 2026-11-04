@@ -86,6 +86,12 @@ export const markdownReference: Record<string, string> = {
   'markdownReference.blockEmbed.title': 'Block embed',
   'markdownReference.blockEmbed.description':
     'Shows a block and its children inside an otherwise empty block.',
+  'markdownReference.footnote.title': 'Footnote',
+  'markdownReference.footnote.description':
+    'Shows a footnote number: 1, 2, 3 in the order the labels first appear on the page. Clicking it goes to the note.',
+  'markdownReference.footnoteDefinition.title': 'Footnote text',
+  'markdownReference.footnoteDefinition.description':
+    'At the start of a block, makes the block the footnote’s text, marked with its number.',
 
   'markdownReference.taskTodo.title': 'To do',
   'markdownReference.taskTodo.description': 'At the start of a block, makes it a task to do.',
