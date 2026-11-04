@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id!\",\n                  substr(content, 1, instr(content || char(10), char(10)) - 1)\n                      AS \"first_line!: String\"\n           FROM blocks\n           WHERE id IN (SELECT value FROM json_each(?)) AND content IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "first_line!: String",
+        "ordinal": 1,
+        "type_info": "Null",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "ad9c3f52086c006c39262bca9adb7cecbc5a35f4a5c00b12b41170cac9972fd6"
+}

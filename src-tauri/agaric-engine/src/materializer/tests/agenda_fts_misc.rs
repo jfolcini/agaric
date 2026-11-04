@@ -1249,6 +1249,87 @@ async fn inbound_tag_rename_reindexes_the_tagged_blocks_5241() {
 }
 
 // ======================================================================
+// #6277 B3 — a `((ULID))` indexes as its target's first line, so an edit to
+// the target re-strips the blocks that reference it, locally and from a peer.
+// ======================================================================
+
+/// A target block, and a note that references it, both indexed.
+async fn seed_block_ref(mat: &Materializer, pool: &SqlitePool, target: &str, note: &str) {
+    insert_block_direct(pool, target, "content", "Plan first\nbody").await;
+    insert_block_direct(pool, note, "content", &format!("see (({target}))")).await;
+    drive_inbound_sync_fan_out(mat, &[target, note]).await;
+    assert_eq!(
+        stripped_fts_text(pool, note).await,
+        "see Plan first",
+        "precondition: the note is indexed under the target's first line"
+    );
+}
+
+async fn edit_first_line(pool: &SqlitePool, target: &str) {
+    sqlx::query("UPDATE blocks SET content = 'Goal first\nbody' WHERE id = ?")
+        .bind(target)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// A local edit takes the `Some("content")` fan-out `edit_block_inner` passes
+/// for a content block.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn editing_a_block_ref_target_re_strips_the_ref_6277() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let target = "01AAAAAAAAAAAAAAAAAATR6277";
+    let note = "01AAAAAAAAAAAAAAAAAANT6277";
+    seed_block_ref(&mat, &pool, target, note).await;
+
+    edit_first_line(&pool, target).await;
+    drive_edit_block_fan_out(&pool, target, Some("content")).await;
+
+    assert_eq!(stripped_fts_text(&pool, note).await, "see Goal first");
+    mat.shutdown();
+}
+
+/// A peer's edit reaches this device through the inbound-sync fan-out.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inbound_block_ref_target_edit_re_strips_the_ref_6277() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let target = "01AAAAAAAAAAAAAAAAAATS6277";
+    let note = "01AAAAAAAAAAAAAAAAAANS6277";
+    seed_block_ref(&mat, &pool, target, note).await;
+
+    edit_first_line(&pool, target).await;
+    drive_inbound_sync_fan_out(&mat, &[target]).await;
+
+    assert_eq!(stripped_fts_text(&pool, note).await, "see Goal first");
+    mat.shutdown();
+}
+
+/// A note that arrives before its target has only a `block_links_unresolved`
+/// edge; the target's arrival must still re-strip it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_arriving_block_ref_target_re_strips_the_ref_6277() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let target = "01AAAAAAAAAAAAAAAAAATU6277";
+    let note = "01AAAAAAAAAAAAAAAAAANU6277";
+    insert_block_direct(&pool, note, "content", &format!("see (({target}))")).await;
+    drive_inbound_sync_fan_out(&mat, &[note]).await;
+    assert_eq!(
+        stripped_fts_text(&pool, note).await,
+        "see ",
+        "precondition: a missing target strips to nothing"
+    );
+
+    insert_block_direct(&pool, target, "content", "Plan first\nbody").await;
+    drive_inbound_sync_fan_out(&mat, &[target]).await;
+
+    assert_eq!(stripped_fts_text(&pool, note).await, "see Plan first");
+    mat.shutdown();
+}
+
+// ======================================================================
 // #4733 — the delete/restore cohort must move OUT OF and BACK INTO
 // `fts_blocks` as a whole, not one seed at a time.
 // ======================================================================
