@@ -178,9 +178,12 @@ test.describe('Read aloud @attachments @editor @pages @search', () => {
     const [gs1] = await blockIds(page)
     await readBlockAloud(page, gs1 as string)
     await expect.poll(() => spoken(page)).toEqual([GS_1])
+    const firstToast = await readingToast(page).elementHandle()
 
     await runPaletteCommand(page, 'read-page-aloud')
     await expect.poll(() => spoken(page)).toEqual([GS_1, PAGE])
+    // The first reading's toast animates out while the second's mounts; count once it has left.
+    await expect.poll(() => firstToast?.evaluate((el) => el.isConnected)).toBe(false)
     await expect(readingToast(page)).toHaveCount(1)
     await expect(readingToast(page)).toBeVisible()
     await finishUtterance(page)
