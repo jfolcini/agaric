@@ -257,8 +257,8 @@ jobs:
         # toolchains this job never uses BEFORE the SDK/NDK install and the
         # builds. The preinstalled Android NDKs are removed too — `setup-android`
         # below reinstalls the single pinned NDK this build needs. ~20-25 GB
-        # recovered. The
-        # "Disk usage" step at the end of the job prints `df` when it fails.
+        # recovered. The "Disk usage" step at the end of the job prints `df`
+        # when it fails.
         run: |
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /opt/ghc /usr/local/.ghcup
