@@ -1763,6 +1763,14 @@ pub async fn project_dropped_refs(
 /// tag has no row yet, as when the tag's space is imported after the holder's,
 /// and nothing else revisits the holder. It only adds. Returns the blocks it
 /// gave a row, each once.
+///
+/// An edge is not checked against the space SQL places its block in. A block
+/// moved to another space can stay live in its old doc for the rest of a
+/// session. If its tag was removed in the new doc, and the same import brings
+/// a new tag block, the old doc's edge comes back. It stays until the block's
+/// tags are next re-projected. Closing that needs the holder's SQL space
+/// carried with each edge, as [`reproject_key_values`] does. The sequence is
+/// rare and the stray tag is transient, so the trade was not made.
 pub async fn project_dropped_tags(
     conn: &mut SqliteConnection,
     edges: &[(String, String)],
