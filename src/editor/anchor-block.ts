@@ -20,7 +20,7 @@ const SPACE_RUN = /\p{White_Space}+/u
 
 /** `obsidian_heading_text`: the text of `content`'s first line when it is an ATX heading. */
 function headingText(content: string): string | undefined {
-  const line = (content.split('\n')[0] ?? '').replace(/\r$/, '')
+  const line = content.split('\n')[0] ?? ''
   const heading = /^#{1,6}[ \t](.*)$/su.exec(line.replace(/^\p{White_Space}+/u, ''))
   const text = heading?.[1]?.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '')
   return text === '' ? undefined : text

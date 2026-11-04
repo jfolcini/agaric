@@ -10,7 +10,7 @@ import { blurEditors, expect, ipc, openPage, reopenPage, test, waitForBoot } fro
  * navigating away and back.
  *
  * The page "Target" is made per test: `# First`, `intro`, `## Second`.
- * "Quick Notes" (seed) hosts the block-mode edits.
+ * "Quick Notes" (seed) hosts the block-mode edits; "Target" hosts its own `[[#Second]]`.
  */
 
 const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
@@ -50,9 +50,9 @@ async function blockContent(page: Page, blockId: string): Promise<string | null>
   return (await ipc<{ content: string | null }>(page, 'get_block', { blockId })).content
 }
 
-/** Open "Quick Notes", add a block, type `text` into it, leave it, and return its id. */
-async function typeIntoNewBlock(page: Page, text: string): Promise<string> {
-  await openPage(page, 'Quick Notes')
+/** Open page `host`, add a block, type `text` into it, leave it, and return its id. */
+async function typeIntoNewBlock(page: Page, text: string, host = 'Quick Notes'): Promise<string> {
+  await openPage(page, host)
   await page.getByRole('button', { name: 'Add block' }).click()
   const editing = page.locator('[data-testid="sortable-block"]:has([data-testid="block-editor"])')
   const blockId = (await editing.getAttribute('data-block-id')) as string
@@ -89,6 +89,15 @@ test.describe('a typed `[[Page#Heading]]` keeps its anchor (#6033) @editor @page
     await reopenPage(page, 'Quick Notes')
     await expect(host.getByTestId('embed-container')).toContainText('Second')
     await expect.poll(() => blockContent(page, blockId)).toBe(embed)
+  })
+
+  test('in block mode, `[[#Second]]` refs the heading block of its own page', async ({ page }) => {
+    const second = await makeTarget(page)
+    const blockId = await typeIntoNewBlock(page, '[[#Second]]', 'Target')
+
+    await expect.poll(() => blockContent(page, blockId)).toBe(`((${second}))`)
+    await reopenPage(page, 'Target')
+    await expect.poll(() => blockContent(page, blockId)).toBe(`((${second}))`)
   })
 
   test('in page mode, `[[Target#Second]]` refs the heading block', async ({ page }) => {
