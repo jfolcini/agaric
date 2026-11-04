@@ -1,4 +1,4 @@
-# Session 3349 — CI merge queue
+# Session 3374 — CI merge queue
 
 Merges had stalled: the ruleset required branches to be up to date, so every
 merge sent every other PR behind and its re-run queued behind 30+ Actions

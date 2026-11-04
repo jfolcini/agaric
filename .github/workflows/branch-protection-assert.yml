@@ -51,7 +51,7 @@ jobs:
           # flag are asserted too (#819 (1), pairs with #805): asserting
           # rule TYPES alone would still pass after someone removed
           # `validate-all` from the required contexts or flipped strict
-          # — exactly the silent-weakening drift this job exists to
+          # back on — exactly the silent-weakening drift this job exists to
           # catch. The context is the check run's full name: `ci.yml`'s
           # `validate` job calls `_validate.yml`, so it posts
           # `validate / validate-all`, and a bare `validate-all` never
