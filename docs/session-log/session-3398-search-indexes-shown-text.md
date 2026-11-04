@@ -35,5 +35,10 @@ construct.
 Ran: the B3 Rust, vitest and Playwright tests, each red first; the
 mutations in the PR body; the full workspace nextest and vitest (reviewer);
 clippy; prek. The `e2e-tauri` spec has not run here (no tauri-driver), so
-CI's lane is its first run. The Rust-authored `fts` field on
-`block-content.vectors.json` waits for #6304.
+CI's lane is its first run.
+
+After #6304 merged, `block-content.vectors.json` rows gained an `fts` field.
+Rust authors it with `CONFORMANCE_UPDATE=1`, as it authors `rustReads`, and
+the mock's `stripForFts` must match it. A shared `blockRefTargets` map
+resolves block refs on both sides. Shown red by reverting the mock strip
+(six rows) and by hand-editing one `fts` value (the Rust drift check).
