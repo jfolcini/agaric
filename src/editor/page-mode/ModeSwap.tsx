@@ -49,7 +49,7 @@ export function ModeSwap({
       {(!pageMode || holding) && (
         <div
           ref={holding ? hold : undefined}
-          className={holding ? 'pointer-events-none absolute inset-x-0 top-0 z-10' : undefined}
+          className={holding ? 'absolute inset-x-0 top-0 z-10' : undefined}
           inert={holding || undefined}
           aria-hidden={holding || undefined}
           data-testid={holding ? 'mode-swap-outgoing' : undefined}

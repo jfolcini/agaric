@@ -148,6 +148,16 @@ test.describe('switching modes is seamless (#5691) @editor @pages', () => {
     await page.keyboard.press('Enter')
     await expect(page.locator('[aria-label="Page title"]')).toHaveText(TITLE)
 
+    // Block mode's tree and its Add block button keep the page's gap, wrapped for the switch.
+    const gap = await page
+      .getByRole('button', { name: 'Add block', exact: true })
+      .evaluate((button) => {
+        const wrap = button.parentElement as HTMLElement
+        const above = wrap.previousElementSibling as HTMLElement
+        return wrap.getBoundingClientRect().top - above.getBoundingClientRect().bottom
+      })
+    expect(gap).toBe(12)
+
     // Scrolled partway down, editing a block in the middle of the screen.
     const id = ids[16] as string
     const row = page.locator(`li[data-block-id="${id}"]`)

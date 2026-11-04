@@ -429,7 +429,8 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
               />
             }
             blocks={
-              <>
+              // The page's own gap between the tree's parts and the Add block button.
+              <div className="flex flex-col gap-3">
                 {/* Block tree — loads children of pageId. */}
                 <BlockTree
                   parentId={pageId}
@@ -444,7 +445,7 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
                 <div>
                   <AddBlockButton onClick={handleAddBlock} />
                 </div>
-              </>
+              </div>
             }
           />
         )
