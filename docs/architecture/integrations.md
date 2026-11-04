@@ -26,10 +26,12 @@ Agents are device-local rows of `mcp_agents` (migration 0125): a name, a mode, t
 
 One socket, one marker file (`mcp-enabled`):
 
-- **Read-only agents**: list pages, get page, read a page as Markdown, search, get block, list backlinks, list tags, list property definitions, get agenda, fetch journal page by date, list spaces.
+- **Read-only agents**: list pages, get page, read a page as Markdown, search, get block, list backlinks, list tags, list property definitions, get agenda, fetch journal page by date, list spaces, list attachments.
 - **Read-write agents**: append block, update block content, set property, add tag, create page, delete block, …, then every read-only tool.
 
 `list_spaces` returns `{ id, name, is_default }` for every space the agent may use; it is the discovery surface for the `space_id` every tool but `list_spaces` requires. Wire names live as `TOOL_*` constants in `src-tauri/src/mcp/registry.rs`; the authoritative advertised and dispatched sets are `list_tool_descriptions()` and the `call_tool()` match arms in `tools_ro.rs` / `tools_rw.rs`.
+
+`ReadOnlyTools::new` and `ReadWriteTools::new` take the app data directory, which `spawn_mcp_task` passes from the same `app_paths` seam attachment writes use: `list_attachments` returns each attachment's `fs_path` joined to it, an absolute path the agent reads the file from.
 
 ### `ToolRegistry` trait
 

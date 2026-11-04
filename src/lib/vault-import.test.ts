@@ -757,6 +757,114 @@ describe('Org files (#6032)', () => {
 
     expect(await orgContent(text.join('\n'))).toBe('Owner:: Ann\n:Space: Room 4\nIntro.\n')
   })
+
+  const TARGET_ID = '5f2c0000-0000-4000-8000-000000000001'
+  const FILE_ID = '5f2c0000-0000-4000-8000-000000000002'
+  const LOST_ID = '5f2c0000-0000-4000-8000-000000000003'
+
+  it('#6032 N4 — escapes a link to a heading, a custom id or an unknown id, so it names no page', async () => {
+    const text = `* See [[*Budget]], [[*Budget][the budget]], [[#custom-id]] and [[id:${LOST_ID}]]`
+
+    expect(await orgContent(text)).toBe(
+      `- See \\[[*Budget]], \\[[*Budget][the budget]], \\[[#custom-id]] and \\[[id:${LOST_ID}]]\n`,
+    )
+  })
+
+  it('#6032 N4 — links an `id:` to the headline or the file of the pick holding that `:ID:`', async () => {
+    const roam = [
+      ':PROPERTIES:',
+      `:ID: ${FILE_ID}`,
+      ':END:',
+      '#+TITLE: Roam Notes',
+      '* Target',
+      '  :PROPERTIES:',
+      `  :ID: ${TARGET_ID}`,
+      '  :END:',
+      '* Custom',
+      '  :PROPERTIES:',
+      '  :ID: custom-1',
+      '  :END:',
+    ].join('\n')
+    const links = [
+      `* See [[id:${TARGET_ID}][the target]] and [[id:${TARGET_ID}]]`,
+      `* Back to [[id:${FILE_ID}][notes]] and [[id:${FILE_ID}]]`,
+      `* Lost [[id:${LOST_ID}]] and [[id:custom-1]]`,
+    ].join('\n')
+
+    const [, linked] = await loadAll([
+      folderFile([roam], 'roam.org', 'Vault/roam.org', ''),
+      folderFile([links], 'links.org', 'Vault/links.org', ''),
+    ])
+
+    expect(linked?.content).toBe(
+      [
+        `- See ((${TARGET_ID})) and ((${TARGET_ID}))`,
+        '- Back to [[Vault/Roam Notes|notes]] and [[Vault/Roam Notes]]',
+        `- Lost \\[[id:${LOST_ID}]] and \\[[id:custom-1]]`,
+        '',
+      ].join('\n'),
+    )
+  })
+
+  it('#6032 N7 — reads the keywords of `#+TODO` lines as task states, open before the `|`, leaving those the importer reads', async () => {
+    const text = [
+      '#+TODO: TODO NEXT(n) NOW DOING WAIT(w@/!) | DONE(d) CANCELED(c)',
+      '#+SEQ_TODO: IDEA | DROPPED',
+      '#+TYP_TODO: Fred Sara',
+      '* NEXT Call Bob',
+      '* NOW Write',
+      '* WAIT [#A] Reply',
+      '* DOING Draft',
+      '* CANCELED Trip',
+      '* DROPPED Old idea',
+      '* IDEA New one',
+      '* Fred Review',
+      '* Sara Report',
+      '* NEXTSTEP stays text',
+    ]
+
+    expect(await orgContent(text.join('\n'))).toBe(
+      [
+        '- TODO Call Bob',
+        '- NOW Write',
+        '- WAIT [#A] Reply',
+        '- DOING Draft',
+        '- CANCELED Trip',
+        '- DONE Old idea',
+        '- TODO New one',
+        '- TODO Review',
+        '- DONE Report',
+        '- NEXTSTEP stays text',
+        '',
+      ].join('\n'),
+    )
+  })
+
+  it('#6032 N7 — makes `#+FILETAGS` the page tags and headline tags block tags', async () => {
+    const text = [
+      '#+FILETAGS: :work:@home:',
+      '#+FILETAGS: :2024:',
+      '* TODO Call Bob   :errand:@phone:',
+      '* :solo:',
+      '* At 10:30: no tags',
+    ]
+
+    expect(await orgContent(text.join('\n'))).toBe(
+      [
+        'tags:: work, @home, 2024',
+        '- TODO Call Bob #[[errand]] #[[@phone]]',
+        '- #[[solo]]',
+        '- At 10:30: no tags',
+        '',
+      ].join('\n'),
+    )
+  })
+
+  it('#6032 N7 — keeps a headline tag whole in NFD, its accent a combining mark', async () => {
+    const nfd = 'cafe\u0301'
+
+    expect(await orgContent(`* Visit :${nfd}:`)).toBe(`- Visit #[[${nfd}]]\n`)
+  })
 })
 
 describe('enexNotesToUnits', () => {
