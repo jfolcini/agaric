@@ -23,7 +23,7 @@ export interface MarkdownReferenceEntry {
   group: MarkdownReferenceGroup
   /** What the user types, shown verbatim. */
   typed: string
-  /** The Markdown the block stores, when a picker or input rule turns `typed` into something else. */
+  /** The Markdown the block stores, when it is not `typed`: a picker's id, a code block's lines. */
   stored?: string
   /**
    * The editor schema types the stored form produces: a mark or node name, or
@@ -56,47 +56,26 @@ export const MARKDOWN_REFERENCE: readonly MarkdownReferenceEntry[] = [
   { id: 'bullet-list', group: 'blocks', typed: '- Item', covers: ['bulletList'] },
   { id: 'numbered-list', group: 'blocks', typed: '1. Item', covers: ['orderedList'] },
   { id: 'quote', group: 'blocks', typed: '> Quote', covers: ['blockquote'] },
+  { id: 'callout', group: 'blocks', typed: '> [!NOTE] Title', covers: ['blockquote.calloutType'] },
   {
-    id: 'callout-note',
+    id: 'code-block',
     group: 'blocks',
-    typed: '> [!NOTE] Title\n> Text',
-    covers: ['blockquote.calloutType'],
+    typed: '```',
+    stored: '```\ncode\n```',
+    covers: ['codeBlock'],
   },
-  {
-    id: 'callout-info',
-    group: 'blocks',
-    typed: '> [!INFO] Title',
-    covers: ['blockquote.calloutType'],
-  },
-  {
-    id: 'callout-tip',
-    group: 'blocks',
-    typed: '> [!TIP] Title',
-    covers: ['blockquote.calloutType'],
-  },
-  {
-    id: 'callout-warning',
-    group: 'blocks',
-    typed: '> [!WARNING] Title',
-    covers: ['blockquote.calloutType'],
-  },
-  {
-    id: 'callout-error',
-    group: 'blocks',
-    typed: '> [!ERROR] Title',
-    covers: ['blockquote.calloutType'],
-  },
-  { id: 'code-block', group: 'blocks', typed: '```\ncode\n```', covers: ['codeBlock'] },
   {
     id: 'code-language',
     group: 'blocks',
-    typed: '```js\nconst x = 1\n```',
+    typed: '```js',
+    stored: '```js\nconst x = 1\n```',
     covers: ['codeBlock.language'],
   },
   {
     id: 'diagram',
     group: 'blocks',
-    typed: '```mermaid\ngraph TD\n  A --> B\n```',
+    typed: '```mermaid',
+    stored: '```mermaid\ngraph TD\n  A --> B\n```',
     covers: ['codeBlock.language'],
   },
   {
@@ -185,14 +164,14 @@ export const MARKDOWN_REFERENCE: readonly MarkdownReferenceEntry[] = [
   {
     id: 'block-property',
     group: 'properties',
-    typed: 'status:: draft',
+    typed: 'author:: Ana',
     covers: [],
     readBy: 'property',
   },
   {
     id: 'page-properties',
     group: 'properties',
-    typed: '---\nstatus: draft\n---',
+    typed: '---\nauthor: Ana\n---',
     covers: [],
     readBy: 'frontMatter',
   },

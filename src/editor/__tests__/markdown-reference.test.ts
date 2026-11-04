@@ -136,15 +136,14 @@ describe('the Markdown reference', () => {
 
   it('documents every task state and callout type', () => {
     const states = new Set<unknown>()
-    const callouts = new Set<unknown>()
     for (const entry of blockParsed) {
       for (const block of parse(storedOf(entry)).content ?? []) {
         if (block.type === 'paragraph') states.add(block.attrs?.todoState)
-        if (block.type === 'blockquote') callouts.add(block.attrs?.calloutType)
       }
     }
     expect(TASK_STATES.filter((state) => !states.has(state))).toEqual([])
-    expect(CALLOUT_TYPES.filter((type) => !callouts.has(type))).toEqual([])
+    const callout = markdownReference[markdownReferenceKey('callout', 'description')] ?? ''
+    expect(CALLOUT_TYPES.filter((type) => !callout.includes(type.toUpperCase()))).toEqual([])
   })
 
   it('has an English title and description for every entry, a heading for every group, and no other strings', () => {

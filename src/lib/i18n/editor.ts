@@ -144,7 +144,7 @@ export const editor: Record<string, string> = {
   'slashCommand.description.table': 'Insert a table.',
   'slashCommand.description.numberedList': 'Make the block a numbered list item.',
   'slashCommand.description.bulletList': 'Make the block a bulleted list item.',
-  'slashCommand.description.divider': 'Insert a horizontal line.',
+  'slashCommand.description.divider': 'Replace the block with a horizontal line.',
   'slashCommand.description.turn': 'Type /turn to change the block’s type.',
   'slashCommand.description.duplicate': 'Copy the block and everything under it.',
   'slashCommand.description.query': 'Insert a live list of matching blocks.',

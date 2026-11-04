@@ -78,7 +78,13 @@ export function ReferenceSheet({
     .filter((section) => section.entries.length > 0)
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) setFilter('')
+        onOpenChange(next)
+      }}
+    >
       <SheetContent
         side={isTouch && isMobile ? 'bottom' : 'right'}
         data-editor-portal=""

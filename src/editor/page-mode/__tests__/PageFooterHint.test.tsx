@@ -57,4 +57,19 @@ describe('PageFooterHint', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(editor).toHaveFocus()
   })
+
+  it('opens again with the filter cleared', async () => {
+    const user = userEvent.setup()
+    render(<PageFooterHint />)
+    const opener = screen.getByRole('button', { name: t('pageMode.footerHint.commands') })
+    const filterLabel = t('referenceSheet.commands.filter')
+
+    await user.click(opener)
+    await user.type(await screen.findByRole('textbox', { name: filterLabel }), 'zzzz')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await user.click(opener)
+
+    expect(await screen.findByRole('textbox', { name: filterLabel })).toHaveValue('')
+  })
 })
