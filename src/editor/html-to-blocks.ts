@@ -37,6 +37,8 @@
  */
 
 import { isValidHttpUrl } from '@/editor/extensions/external-link'
+import { tableDelimiterCell } from '@/editor/markdown-common'
+import type { TableCellAlign } from '@/editor/types'
 
 /**
  * Converts one element's INLINE content to single-line Agaric markdown
@@ -88,6 +90,16 @@ function escapeTableCell(s: string): string {
   return squashWhitespace(s).replace(/\\/g, '\\\\').replace(/\|/g, '\\|')
 }
 
+/** A cell's column alignment (#6277), from `text-align` or the legacy `align` attribute. */
+function cellAlign(cell: Element): TableCellAlign | null {
+  const value = (
+    (cell as HTMLElement).style?.textAlign ||
+    cell.getAttribute('align') ||
+    ''
+  ).toLowerCase()
+  return value === 'left' || value === 'right' || value === 'center' ? value : null
+}
+
 /**
  * Emit a GFM pipe table block from a `<table>` (Phase 2). One `OutlineBlock`
  * whose content is the multi-line ` | a | b |\n| --- | --- |\n| 1 | 2 | ` form
@@ -104,9 +116,12 @@ function walkTable(
 ): void {
   const rows = Array.from(table.querySelectorAll('tr'))
   const matrix: string[][] = []
+  // A column's alignment is its first cell's that has one, as `serializeTable` reads it.
+  const aligns: (TableCellAlign | null)[] = []
   for (const row of rows) {
     const cells = Array.from(row.children).filter((c) => c.tagName === 'TD' || c.tagName === 'TH')
     if (cells.length === 0) continue
+    for (const [i, cell] of cells.entries()) aligns[i] ??= cellAlign(cell)
     matrix.push(cells.map((c) => escapeTableCell(inline(c))))
   }
   if (matrix.length === 0) return
@@ -117,7 +132,9 @@ function walkTable(
     return `| ${padded.join(' | ')} |`
   }
   const lines: string[] = [toRow(matrix[0] as string[])]
-  lines.push(`| ${Array.from({ length: columnCount }, () => '---').join(' | ')} |`)
+  lines.push(
+    `| ${Array.from({ length: columnCount }, (_, i) => tableDelimiterCell(aligns[i])).join(' | ')} |`,
+  )
   for (let r = 1; r < matrix.length; r++) lines.push(toRow(matrix[r] as string[]))
 
   out.push({ content: lines.join('\n'), depth })
