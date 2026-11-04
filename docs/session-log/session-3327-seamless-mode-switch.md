@@ -1,4 +1,4 @@
-# Session 3324 — a switch to page mode draws no blank frame
+# Session 3327 — a switch to page mode draws no blank frame
 
 The maintainer saw the page redraw when switching between block mode and page mode. Measured on the mock (Chromium, a 36-block page of headings, tasks, nested rows and long paragraphs, scrolled partway, a block focused): Blocks → Page unmounted block mode's tree at once, and page mode showed a skeleton while it read the page and built its editor, about 80 ms warm and 400 ms on the session's first switch (lazy chunk). The scroll fell to 0 under the short skeleton, then jumped back. Page → Blocks drew no empty frame. Layout-shift entries summed to 0 both ways: CLS ignores content that unmounts and remounts, so it cannot see this redraw.
 
