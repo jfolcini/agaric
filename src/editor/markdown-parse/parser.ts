@@ -1433,6 +1433,29 @@ export function scanExternalLinkToken(st: InlineState): boolean {
   return true
 }
 
+/**
+ * Footnote reference (#6033): `[^label]`, the label one or more characters
+ * other than whitespace, `[`, `]` and `\`: a `[` or a trailing `\` would pair the
+ * reference's bracket with a later `]` as a link's text, so the reference would
+ * not read back as written. Runs after `scanExternalLinkToken`, so
+ * `[^x](url)` stays the link it also is; the serializer escapes a `(` written
+ * right after a reference. A literal `\[^1\]` never reaches here: `scanEscape`
+ * runs first.
+ */
+const FOOTNOTE_REF_RE = /\[\^([^\s[\]\\]+)\]/y
+
+function scanFootnoteRef(st: InlineState): boolean {
+  const s = st.scanner
+  if (peek(s) !== '[' || peek(s, 1) !== '^') return false
+  FOOTNOTE_REF_RE.lastIndex = s.pos
+  const match = FOOTNOTE_REF_RE.exec(s.src)
+  if (!match) return false
+  flushBuf(st, currentMarks(st))
+  st.nodes.push({ type: 'footnote_ref', attrs: { label: match[1] as string } })
+  s.pos += match[0].length
+  return true
+}
+
 /** Push a `[url](url)` link node (text === href) at the current cursor. */
 function pushAutolink(st: InlineState, url: string): void {
   flushBuf(st, currentMarks(st))
@@ -1774,6 +1797,7 @@ export function parseLine(line: string, depth = 0): InlineNode[] {
     if (scanTokenRef(st)) continue
     if (scanImage(st)) continue
     if (scanExternalLinkToken(st)) continue
+    if (scanFootnoteRef(st)) continue
     if (scanAutolink(st)) continue
     if (scanBold(st)) continue
     if (scanStrike(st)) continue

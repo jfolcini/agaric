@@ -32,6 +32,7 @@ import {
   bulletList,
   codeBlock,
   doc,
+  footnoteRef,
   hardBreak,
   heading,
   horizontalRule,
@@ -584,6 +585,15 @@ const FIXPOINT_SEEDS: readonly DocNode[] = [
   doc(paragraph(text('a'), hardBreak(), text('---\u00A0'))),
   doc(codeBlock('~~~\nx\n~~~')),
   doc(paragraph(text('a')), horizontalRule(), paragraph(text('b'))),
+  // #6033: a footnote reference, the literal text that reads as one, definition
+  // blocks, a reference inside bold, and a `(` after a reference, which would
+  // otherwise read as a link.
+  doc(paragraph(footnoteRef('1'))),
+  doc(paragraph(text('[^1]'))),
+  doc(paragraph(footnoteRef('a-b'), text(': x'))),
+  doc(paragraph(bold('a '), footnoteRef('1'), bold(' b'))),
+  doc(paragraph(footnoteRef('note'), text(': see '), bold('this'), text(' and [^1]'))),
+  doc(paragraph(footnoteRef('1'), text('(x)'))),
   // #6277: a header-only aligned table, whose delimiter is all it has after the header.
   doc(table(tableRow(aligned('right', tableHeader(paragraph(text('a'))))))),
 ]
@@ -1053,6 +1063,47 @@ describe('property (#4052): a leading tab parses as the columns it occupies', ()
         expect(serialize(parse(md1))).toBe(md1)
       }),
       { numRuns: NESTING_NUM_RUNS },
+    )
+  })
+})
+
+// -- #6033: footnote references among any inline nodes ------------------------
+
+/** A footnote label: anything but whitespace, `[`, `]` and `\`, here the chars that mean something nearby. */
+const arbFootnoteLabel: fc.Arbitrary<string> = fc
+  .array(fc.constantFrom(...'ab1-_*`($|!^'.split('')), { minLength: 1, maxLength: 4 })
+  .map((chars) => chars.join(''))
+
+const arbInlineWithFootnotes: fc.Arbitrary<InlineNode[]> = fc
+  .array(
+    fc.oneof(
+      { weight: 4, arbitrary: arbInlineNode },
+      { weight: 2, arbitrary: arbFootnoteLabel.map((label) => footnoteRef(label)) },
+    ),
+    { minLength: 1, maxLength: 5 },
+  )
+  .map(mergeAdjacentSameMarkText)
+
+const arbFootnoteBlock: fc.Arbitrary<BlockLevelNode> = fc.oneof(
+  arbInlineWithFootnotes.map((content) => paragraph(...content)),
+  arbInlineWithFootnotes.map((content) => table(tableRow(tableHeader(paragraph(...content))))),
+  arbInlineWithFootnotes.map((content) => bulletList(listItem(paragraph(...content)))),
+)
+
+describe('property (#6033): footnote references round-trip among any inline nodes', () => {
+  it('the first serialize is byte-identical after a reparse', () => {
+    fc.assert(
+      fc.property(
+        fc
+          .array(arbFootnoteBlock, { minLength: 1, maxLength: 2 })
+          .map((content): DocNode => ({ type: 'doc', content }))
+          .filter((d) => !hasGreedyAdjacency(d)),
+        (d) => {
+          const md1 = serialize(d)
+          expect(serialize(parse(md1))).toBe(md1)
+        },
+      ),
+      { numRuns: NUM_RUNS },
     )
   })
 })
