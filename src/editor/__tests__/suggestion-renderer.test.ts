@@ -19,11 +19,7 @@ vi.mock('@tiptap/react', () => ({
 }))
 
 vi.mock('@floating-ui/dom', () => ({
-  computePosition: vi.fn().mockResolvedValue({ x: 0, y: 0 }),
-  flip: vi.fn(() => ({})),
-  shift: vi.fn(() => ({})),
-  offset: vi.fn(() => ({})),
-  size: vi.fn((opts) => ({ __middleware: 'size', opts })),
+  autoUpdate: vi.fn(() => vi.fn()),
 }))
 
 vi.mock('@/lib/keyboard-config', () => ({
@@ -189,379 +185,244 @@ describe('createSuggestionRenderer', () => {
 })
 
 describe('positioning', () => {
-  afterEach(() => {
-    // Clean up popup elements
-    for (const el of document.querySelectorAll('.suggestion-popup')) {
-      el.remove()
+  const VIEW_W = 1000
+  const VIEW_H = 800
+
+  /** An editor whose `coordsAtPos(pos)` reads from `coords`, so a test can move the text. */
+  function editorWith(coords: (pos: number) => { left: number; top: number; bottom: number }) {
+    const dom = document.createElement('div')
+    return { view: { dom, coordsAtPos: vi.fn(coords) } }
+  }
+
+  function props(editor: unknown, overrides: Record<string, unknown> = {}): any {
+    return {
+      items: [],
+      command: vi.fn(),
+      clientRect: null,
+      editor,
+      query: '',
+      range: { from: 10, to: 12 },
+      text: '[[',
+      decorationNode: null,
+      loading: true,
+      ...overrides,
     }
+  }
+
+  /** The `update` callback the renderer handed to `autoUpdate`: what a scroll or resize runs. */
+  async function layoutChange(): Promise<void> {
+    const { autoUpdate } = await import('@floating-ui/dom')
+    const update = vi.mocked(autoUpdate).mock.calls.at(-1)?.[2]
+    if (!update) throw new Error('autoUpdate was not wired')
+    update()
+  }
+
+  function popupEl(): HTMLElement {
+    return document.querySelector('.suggestion-popup') as HTMLElement
+  }
+
+  beforeEach(() => {
+    Object.defineProperty(document.documentElement, 'clientWidth', {
+      configurable: true,
+      value: VIEW_W,
+    })
+    Object.defineProperty(document.documentElement, 'clientHeight', {
+      configurable: true,
+      value: VIEW_H,
+    })
   })
 
-  it('starts popup off-screen to avoid flash at (0,0)', () => {
+  afterEach(() => {
+    for (const el of document.querySelectorAll('.suggestion-popup')) el.remove()
+    Reflect.deleteProperty(document.documentElement, 'clientWidth')
+    Reflect.deleteProperty(document.documentElement, 'clientHeight')
+    vi.restoreAllMocks()
+  })
+
+  it('anchors to the trigger, not the caret, below the line', () => {
     const renderer = createSuggestionRenderer()
-    const mockRect = { left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }
+    renderer.onStart(props(editorWith((pos) => ({ left: pos * 10, top: 80, bottom: 100 }))))
 
-    renderer.onStart({
-      items: [],
-      command: vi.fn(),
-      clientRect: () => mockRect as DOMRect,
-      editor: {} as any,
-      query: '',
-      range: { from: 0, to: 1 },
-      text: '/',
-      decorationNode: null,
-    } as any)
-
-    const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeInTheDocument()
-    // Before positioning settles, popup should be off-screen
+    const popup = popupEl()
     expect(popup.style.position).toBe('fixed')
-    expect(popup.style.left).toBe('-9999px')
-    expect(popup.style.top).toBe('-9999px')
     expect(popup.style.zIndex).toBe('50')
-
+    // range.from = 10 → left 100, not range.to = 12 → 120.
+    expect(popup.style.left).toBe('100px')
+    expect(popup.style.top).toBe('104px')
+    expect(popup.style.bottom).toBe('')
     renderer.onExit()
   })
 
-  it('positions popup using computePosition result', async () => {
-    const { computePosition } = await import('@floating-ui/dom')
-    const mockedComputePosition = vi.mocked(computePosition)
-    mockedComputePosition.mockResolvedValueOnce({
-      x: 50,
-      y: 104,
-      placement: 'bottom-start',
-      strategy: 'absolute',
-      middlewareData: {},
-    })
-
+  it('does not move on a keystroke, only on a layout change', async () => {
+    let lineTop = 80
+    const editor = editorWith((pos) => ({ left: pos * 10, top: lineTop, bottom: lineTop + 20 }))
     const renderer = createSuggestionRenderer()
-    const mockRect = { left: 50, right: 70, top: 80, bottom: 100, width: 20, height: 20 }
+    renderer.onStart(props(editor))
+    const popup = popupEl()
+    expect(popup.style.top).toBe('104px')
 
-    renderer.onStart({
-      items: [],
-      command: vi.fn(),
-      clientRect: () => mockRect as DOMRect,
-      editor: {} as any,
-      query: '',
-      range: { from: 0, to: 2 },
-      text: '[[',
-      decorationNode: null,
-    } as any)
+    lineTop = 300
+    renderer.onUpdate(props(editor, { query: 'abc', range: { from: 10, to: 15 }, loading: false }))
+    expect(popup.style.top).toBe('104px')
 
-    const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeInTheDocument()
-
-    await vi.waitFor(() => {
-      expect(popup.style.left).toBe('50px')
-      expect(popup.style.top).toBe('104px')
-    })
-
+    await layoutChange()
+    expect(popup.style.top).toBe('324px')
     renderer.onExit()
   })
 
-  it('sets position fixed and zIndex 50', async () => {
+  it('opens above when there is no room below, pinning its bottom edge, and stays above', async () => {
+    let lineTop = 740
+    const editor = editorWith(() => ({ left: 100, top: lineTop, bottom: lineTop + 20 }))
     const renderer = createSuggestionRenderer()
-    const mockRect = { left: 100, right: 101, top: 80, bottom: 100, width: 1, height: 20 }
+    renderer.onStart(props(editor))
+    const popup = popupEl()
+    // Bottom edge 4px above the line's top (740) → 800 - 736.
+    expect(popup.style.top).toBe('')
+    expect(popup.style.bottom).toBe('64px')
+    expect(popup.style.maxHeight).toBe('728px')
 
-    renderer.onStart({
-      items: [],
-      command: vi.fn(),
-      clientRect: () => mockRect as DOMRect,
-      editor: {} as any,
-      query: '',
-      range: { from: 0, to: 1 },
-      text: '@',
-      decorationNode: null,
-    } as any)
-
-    const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeInTheDocument()
-
-    await vi.waitFor(() => {
-      expect(popup.style.position).toBe('fixed')
-      expect(popup.style.zIndex).toBe('50')
-    })
-
+    // Scrolled to where below would have room: the side holds.
+    lineTop = 400
+    await layoutChange()
+    expect(popup.style.bottom).toBe('404px')
+    expect(popup.style.top).toBe('')
     renderer.onExit()
   })
 
-  it('calls computePosition with bottom-start placement and middleware', async () => {
-    const { computePosition, offset, flip, shift } = await import('@floating-ui/dom')
-    const mockedComputePosition = vi.mocked(computePosition)
-    mockedComputePosition.mockResolvedValueOnce({
-      x: 100,
-      y: 104,
-      placement: 'bottom-start',
-      strategy: 'absolute',
-      middlewareData: {},
-    })
-
+  it('sits below the lowest line when the query wraps', () => {
+    const editor = editorWith((pos) =>
+      pos === 10 ? { left: 900, top: 80, bottom: 100 } : { left: 20, top: 100, bottom: 120 },
+    )
     const renderer = createSuggestionRenderer()
-    const mockRect = { left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }
-
-    renderer.onStart({
-      items: [],
-      command: vi.fn(),
-      clientRect: () => mockRect as DOMRect,
-      editor: {} as any,
-      query: '',
-      range: { from: 0, to: 2 },
-      text: '[[',
-      decorationNode: null,
-    } as any)
-
-    await vi.waitFor(() => {
-      expect(mockedComputePosition).toHaveBeenCalled()
-    })
-
-    const calls = mockedComputePosition.mock.calls
-    const lastCall = calls.at(-1)
-    expect(lastCall?.[2]).toEqual({
-      placement: 'bottom-start',
-      middleware: [offset(4), flip({ padding: 8 }), shift({ padding: 8 })],
-    })
-
+    renderer.onStart(props(editor))
+    expect(popupEl().style.top).toBe('124px')
     renderer.onExit()
   })
 
-  it('cleans up popup on onExit', () => {
-    const renderer = createSuggestionRenderer()
-    const mockRect = { left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }
-
-    renderer.onStart({
-      items: [],
-      command: vi.fn(),
-      clientRect: () => mockRect as DOMRect,
-      editor: {} as any,
-      query: '',
-      range: { from: 0, to: 2 },
-      text: '[[',
-      decorationNode: null,
-    } as any)
-
-    expect(document.querySelector('.suggestion-popup')).toBeInTheDocument()
-    renderer.onExit()
-    expect(document.querySelector('.suggestion-popup')).toBeNull()
-  })
-
-  it('updates position on onUpdate', async () => {
-    const { computePosition } = await import('@floating-ui/dom')
-    const mockedComputePosition = vi.mocked(computePosition)
-    mockedComputePosition.mockResolvedValueOnce({
-      x: 50,
-      y: 104,
-      placement: 'bottom-start',
-      strategy: 'absolute',
-      middlewareData: {},
-    })
-
-    const renderer = createSuggestionRenderer()
-    const mockRect1 = { left: 50, right: 70, top: 80, bottom: 100, width: 20, height: 20 }
-
-    renderer.onStart({
-      items: [],
-      command: vi.fn(),
-      clientRect: () => mockRect1 as DOMRect,
-      editor: {} as any,
-      query: '',
-      range: { from: 0, to: 2 },
-      text: '[[',
-      decorationNode: null,
-    } as any)
-
-    const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    await vi.waitFor(() => {
-      expect(popup.style.left).toBe('50px')
-    })
-
-    // Update with new position
-    mockedComputePosition.mockResolvedValueOnce({
-      x: 200,
-      y: 104,
-      placement: 'bottom-start',
-      strategy: 'absolute',
-      middlewareData: {},
-    })
-
-    const mockRect2 = { left: 200, right: 220, top: 80, bottom: 100, width: 20, height: 20 }
-    renderer.onUpdate({
-      items: [],
-      command: vi.fn(),
-      clientRect: () => mockRect2 as DOMRect,
-      editor: {} as any,
-      query: 'a',
-      range: { from: 0, to: 3 },
-      text: '[[a',
-      decorationNode: null,
-    } as any)
-
-    await vi.waitFor(() => {
-      expect(popup.style.left).toBe('200px')
-    })
-
-    renderer.onExit()
-  })
-
-  it('does not throw when clientRect returns null', () => {
-    const renderer = createSuggestionRenderer()
-
-    expect(() => {
-      renderer.onStart({
-        items: [],
-        command: vi.fn(),
-        clientRect: () => null,
-        editor: {} as any,
-        query: '',
-        range: { from: 0, to: 1 },
-        text: '@',
-        decorationNode: null,
-      } as any)
-    }).not.toThrow()
-
-    // Popup is created but stays at off-screen position (updatePosition early return)
-    const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeInTheDocument()
-    expect(popup.style.position).toBe('fixed')
-    expect(popup.style.left).toBe('-9999px')
-
-    renderer.onExit()
-  })
-
-  it('positions popup at cursor coordinates when editor view is available', async () => {
-    const { computePosition } = await import('@floating-ui/dom')
-    const mockedComputePosition = vi.mocked(computePosition)
-    mockedComputePosition.mockResolvedValueOnce({
-      x: 150,
-      y: 104,
-      placement: 'bottom-start',
-      strategy: 'absolute',
-      middlewareData: {},
-    })
-
-    const renderer = createSuggestionRenderer()
-    const coordsAtPos = vi.fn().mockReturnValue({ left: 150, right: 151, top: 80, bottom: 100 })
-    const mockEditor = { view: { coordsAtPos } }
-
-    renderer.onStart({
-      items: [],
-      command: vi.fn(),
-      clientRect: () =>
-        ({ left: 50, right: 70, top: 80, bottom: 100, width: 20, height: 20 }) as DOMRect,
-      editor: mockEditor as any,
-      query: 'verylongtagname',
-      range: { from: 0, to: 16 },
-      text: '@verylongtagname',
-      decorationNode: null,
-    } as any)
-
-    const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeInTheDocument()
-    // Should use coordsAtPos result (150), NOT clientRect left/right (50/70)
-
-    await vi.waitFor(() => {
-      expect(coordsAtPos).toHaveBeenCalledWith(16)
-      expect(popup.style.left).toBe('150px')
-      expect(popup.style.top).toBe('104px')
-    })
-
-    renderer.onExit()
-  })
-
-  it('falls back to clientRect when coordsAtPos fails', async () => {
-    const { computePosition } = await import('@floating-ui/dom')
-    const mockedComputePosition = vi.mocked(computePosition)
-    mockedComputePosition.mockResolvedValueOnce({
-      x: 50,
-      y: 104,
-      placement: 'bottom-start',
-      strategy: 'absolute',
-      middlewareData: {},
-    })
-
-    const renderer = createSuggestionRenderer()
-    const coordsAtPos = vi.fn().mockImplementation(() => {
+  it('falls back to the plugin rect when coordsAtPos throws', () => {
+    const editor = editorWith(() => {
       throw new Error('Position out of range')
     })
-    const mockEditor = { view: { coordsAtPos } }
-    const mockRect = { left: 50, right: 70, top: 80, bottom: 100, width: 20, height: 20 }
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(
+      props(editor, { clientRect: () => ({ left: 50, top: 80, bottom: 100 }) as DOMRect }),
+    )
+    expect(popupEl().style.left).toBe('50px')
+    expect(popupEl().style.top).toBe('104px')
+    renderer.onExit()
+  })
 
-    renderer.onStart({
+  it('stays off-screen when nothing can be measured', () => {
+    const renderer = createSuggestionRenderer()
+    expect(() => renderer.onStart(props({}))).not.toThrow()
+    expect(popupEl().style.left).toBe('-9999px')
+    expect(popupEl().style.top).toBe('-9999px')
+    renderer.onExit()
+  })
+
+  it('caps the height at 60vh with a 16px edge on coarse pointers', () => {
+    vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query: string) => ({ matches: query === '(pointer: coarse)' }) as MediaQueryList,
+    )
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(props(editorWith(() => ({ left: 0, top: 80, bottom: 100 }))))
+    const popup = popupEl()
+    expect(popup.style.left).toBe('16px')
+    expect(popup.style.maxHeight).toBe(`${window.innerHeight * 0.6}px`)
+    expect(popup.style.overflowY).toBe('auto')
+    renderer.onExit()
+  })
+
+  it('caps the height at the room left below on fine pointers', () => {
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(props(editorWith(() => ({ left: 0, top: 80, bottom: 100 }))))
+    const popup = popupEl()
+    expect(popup.style.left).toBe('8px')
+    expect(popup.style.maxHeight).toBe('688px')
+    renderer.onExit()
+  })
+
+  it('stops layout tracking on onExit and on Escape', async () => {
+    const { autoUpdate } = await import('@floating-ui/dom')
+    const stops: Array<ReturnType<typeof vi.fn>> = []
+    vi.mocked(autoUpdate).mockImplementation(() => {
+      const stop = vi.fn()
+      stops.push(stop)
+      return stop
+    })
+    const editor = editorWith(() => ({ left: 0, top: 80, bottom: 100 }))
+
+    const first = createSuggestionRenderer()
+    first.onStart(props(editor))
+    first.onExit()
+
+    const second = createSuggestionRenderer()
+    second.onStart(props(editor))
+    second.onKeyDown({ event: new KeyboardEvent('keydown', { key: 'Escape' }) } as any)
+
+    expect(stops).toHaveLength(2)
+    expect(stops.map((stop) => stop.mock.calls.length)).toEqual([1, 1])
+  })
+})
+
+describe('results while the next ones load', () => {
+  const A = { id: 'A', label: 'Alpha' }
+
+  function props(overrides: Record<string, unknown>): any {
+    return {
       items: [],
       command: vi.fn(),
-      clientRect: () => mockRect as DOMRect,
-      editor: mockEditor as any,
+      clientRect: null,
+      editor: {},
       query: '',
       range: { from: 0, to: 2 },
       text: '[[',
       decorationNode: null,
-    } as any)
+      loading: true,
+      ...overrides,
+    }
+  }
 
+  function lastRenderedItems(): unknown {
+    const instance = mockReactRenderer.mock.instances.at(-1) as any
+    return instance.updateProps.mock.calls.at(-1)?.[0].items
+  }
+
+  afterEach(() => {
+    for (const el of document.querySelectorAll('.suggestion-popup')) el.remove()
+  })
+
+  it('stays hidden until the first results, then reveals once', () => {
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(props({}))
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeInTheDocument()
+    expect(popup.style.visibility).toBe('hidden')
+    expect(popup.dataset['open']).toBeUndefined()
 
-    await vi.waitFor(() => {
-      expect(popup.style.left).toBe('50px')
-    })
+    renderer.onUpdate(props({ loading: true }))
+    expect(popup.style.visibility).toBe('hidden')
 
+    renderer.onUpdate(props({ items: [A], loading: false }))
+    expect(popup.style.visibility).toBe('')
+    expect(popup.dataset['open']).toBe('')
     renderer.onExit()
   })
 
-  it('passes virtual element to computePosition for all trigger types', async () => {
-    const { computePosition } = await import('@floating-ui/dom')
-    const mockedComputePosition = vi.mocked(computePosition)
-    mockedComputePosition.mockResolvedValueOnce({
-      x: 80,
-      y: 104,
-      placement: 'bottom-start',
-      strategy: 'absolute',
-      middlewareData: {},
-    })
-
+  it('keeps showing the previous results while the plugin fetches, then swaps', () => {
+    const B = { id: 'B', label: 'Beta' }
     const renderer = createSuggestionRenderer()
-    const mockRect = { left: 80, right: 100, top: 80, bottom: 100, width: 20, height: 20 }
+    renderer.onStart(props({}))
+    renderer.onUpdate(props({ items: [A], loading: false }))
 
-    renderer.onStart({
-      items: [],
-      command: vi.fn(),
-      clientRect: () => mockRect as DOMRect,
-      editor: {} as any,
-      query: '',
-      range: { from: 0, to: 2 },
-      text: '((',
-      decorationNode: null,
-    } as any)
+    renderer.onUpdate(props({ query: 'b', items: [], loading: true }))
+    expect(lastRenderedItems()).toEqual([A])
 
-    const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeInTheDocument()
+    renderer.onUpdate(props({ query: 'b', items: [B], loading: false }))
+    expect(lastRenderedItems()).toEqual([B])
 
-    await vi.waitFor(() => {
-      expect(popup.style.left).toBe('80px')
-    })
-
-    renderer.onExit()
-  })
-
-  it('handles null props gracefully when both coordsAtPos and clientRect are unavailable', () => {
-    const renderer = createSuggestionRenderer()
-
-    expect(() => {
-      renderer.onStart({
-        items: [],
-        command: vi.fn(),
-        clientRect: null,
-        editor: {} as any,
-        query: '',
-        range: { from: 0, to: 1 },
-        text: '@',
-        decorationNode: null,
-      } as any)
-    }).not.toThrow()
-
-    // Popup is created but stays at off-screen position (updatePosition early return)
-    const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeInTheDocument()
-    expect(popup.style.position).toBe('fixed')
-    expect(popup.style.left).toBe('-9999px')
-
+    // A settled empty result is shown as empty.
+    renderer.onUpdate(props({ query: 'bz', items: [], loading: false }))
+    expect(lastRenderedItems()).toEqual([])
     renderer.onExit()
   })
 })
@@ -1001,374 +862,6 @@ describe('outside-click deferred registration', () => {
     // Outside click should still work after the rapid cycle
     document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
     expect(document.querySelector('.suggestion-popup')).toBeNull()
-  })
-})
-
-describe('viewport handling on coarse pointers', () => {
-  function makeProps(): any {
-    return {
-      items: [],
-      command: vi.fn(),
-      clientRect: () =>
-        ({ left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }) as DOMRect,
-      editor: {} as any,
-      query: '',
-      range: { from: 0, to: 1 },
-      text: '/',
-      decorationNode: null,
-    }
-  }
-
-  let matchMediaSpy: MockInstance | null = null
-
-  function stubCoarsePointer(coarse: boolean) {
-    matchMediaSpy = vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => {
-      const matches = query === '(pointer: coarse)' && coarse
-      return {
-        matches,
-        media: query,
-        onchange: null,
-        addListener: vi.fn(),
-        removeListener: vi.fn(),
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-        dispatchEvent: vi.fn(),
-      } as unknown as MediaQueryList
-    })
-  }
-
-  afterEach(() => {
-    matchMediaSpy?.mockRestore()
-    matchMediaSpy = null
-    for (const el of document.querySelectorAll('.suggestion-popup')) {
-      el.remove()
-    }
-  })
-
-  it('uses 8px padding and no size() middleware on desktop (fine pointer)', async () => {
-    stubCoarsePointer(false)
-
-    const { computePosition, flip, shift, size: sizeMw } = await import('@floating-ui/dom')
-    const mockedFlip = vi.mocked(flip)
-    const mockedShift = vi.mocked(shift)
-    const mockedSize = vi.mocked(sizeMw)
-    mockedFlip.mockClear()
-    mockedShift.mockClear()
-    mockedSize.mockClear()
-    vi.mocked(computePosition).mockResolvedValueOnce({
-      x: 100,
-      y: 104,
-      placement: 'bottom-start',
-      strategy: 'absolute',
-      middlewareData: {},
-    })
-
-    const renderer = createSuggestionRenderer()
-    renderer.onStart(makeProps())
-
-    await vi.waitFor(() => {
-      expect(vi.mocked(computePosition)).toHaveBeenCalled()
-    })
-
-    expect(mockedFlip).toHaveBeenCalledWith({ padding: 8 })
-    expect(mockedShift).toHaveBeenCalledWith({ padding: 8 })
-    expect(mockedSize).not.toHaveBeenCalled()
-
-    renderer.onExit()
-  })
-
-  it('uses 16px padding on coarse (touch) pointer viewports', async () => {
-    stubCoarsePointer(true)
-
-    const { computePosition, flip, shift } = await import('@floating-ui/dom')
-    const mockedFlip = vi.mocked(flip)
-    const mockedShift = vi.mocked(shift)
-    mockedFlip.mockClear()
-    mockedShift.mockClear()
-    vi.mocked(computePosition).mockResolvedValueOnce({
-      x: 100,
-      y: 104,
-      placement: 'bottom-start',
-      strategy: 'absolute',
-      middlewareData: {},
-    })
-
-    const renderer = createSuggestionRenderer()
-    renderer.onStart(makeProps())
-
-    await vi.waitFor(() => {
-      expect(vi.mocked(computePosition)).toHaveBeenCalled()
-    })
-
-    expect(mockedFlip).toHaveBeenCalledWith({ padding: 16 })
-    expect(mockedShift).toHaveBeenCalledWith({ padding: 16 })
-
-    renderer.onExit()
-  })
-
-  it('adds size() middleware with availableHeight cap on coarse pointer', async () => {
-    stubCoarsePointer(true)
-
-    const { computePosition, size: sizeMw } = await import('@floating-ui/dom')
-    const mockedSize = vi.mocked(sizeMw)
-    mockedSize.mockClear()
-    vi.mocked(computePosition).mockResolvedValueOnce({
-      x: 100,
-      y: 104,
-      placement: 'bottom-start',
-      strategy: 'absolute',
-      middlewareData: {},
-    })
-
-    const renderer = createSuggestionRenderer()
-    renderer.onStart(makeProps())
-
-    await vi.waitFor(() => {
-      expect(vi.mocked(computePosition)).toHaveBeenCalled()
-    })
-
-    expect(mockedSize).toHaveBeenCalledTimes(1)
-    const callArg = mockedSize.mock.calls[0]?.[0]
-    expect(callArg).toMatchObject({ padding: 16 })
-    expect(typeof (callArg as { apply?: unknown }).apply).toBe('function')
-
-    renderer.onExit()
-  })
-
-  it('size().apply caps maxHeight at min(availableHeight, 60vh)', async () => {
-    stubCoarsePointer(true)
-
-    const { computePosition, size: sizeMw } = await import('@floating-ui/dom')
-    const mockedSize = vi.mocked(sizeMw)
-    mockedSize.mockClear()
-    vi.mocked(computePosition).mockResolvedValueOnce({
-      x: 100,
-      y: 104,
-      placement: 'bottom-start',
-      strategy: 'absolute',
-      middlewareData: {},
-    })
-
-    // Lock viewport for deterministic vh calculation
-    Object.defineProperty(window, 'innerHeight', {
-      configurable: true,
-      writable: true,
-      value: 800,
-    })
-
-    const renderer = createSuggestionRenderer()
-    renderer.onStart(makeProps())
-
-    await vi.waitFor(() => {
-      expect(mockedSize).toHaveBeenCalled()
-    })
-
-    const apply = (mockedSize.mock.calls[0]?.[0] as { apply: (a: unknown) => void } | undefined)
-      ?.apply
-    const fakeFloating = document.createElement('div')
-
-    // Case 1: availableHeight (300) < cap (480 = 800 * 0.6) → use 300
-    apply?.({
-      availableHeight: 300,
-      availableWidth: 100,
-      elements: { floating: fakeFloating, reference: fakeFloating, domReference: null },
-    })
-    expect(fakeFloating.style.maxHeight).toBe('300px')
-    expect(fakeFloating.style.overflowY).toBe('auto')
-
-    // Case 2: availableHeight (1000) > cap (480) → use 480
-    apply?.({
-      availableHeight: 1000,
-      availableWidth: 100,
-      elements: { floating: fakeFloating, reference: fakeFloating, domReference: null },
-    })
-    expect(fakeFloating.style.maxHeight).toBe('480px')
-
-    renderer.onExit()
-  })
-})
-
-// ===========================================================================
-// Coalesce per-frame `updatePosition` calls so burst typing
-// doesn't run `computePosition` once per keystroke.
-// ===========================================================================
-
-describe('onUpdate rAF coalescing', () => {
-  function makeProps(query = ''): any {
-    return {
-      items: [],
-      command: vi.fn(),
-      clientRect: () =>
-        ({ left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }) as DOMRect,
-      editor: {} as any,
-      query,
-      range: { from: 0, to: 1 + query.length },
-      text: `/${query}`,
-      decorationNode: null,
-    }
-  }
-
-  // Map from rAF id → pending callback. Using a Map (instead of an
-  // array indexed by `id - 1`) keeps `cancelAnimationFrame` correct
-  // across `flushRaf()` cycles — flushing re-creates the array and
-  // would otherwise shift indices, breaking later cancellation.
-  let rafQueue: Map<number, FrameRequestCallback>
-  let rafIdCounter: number
-  let originalRaf: typeof requestAnimationFrame
-  let cancelSpy: ReturnType<typeof vi.fn>
-
-  beforeEach(() => {
-    rafQueue = new Map()
-    rafIdCounter = 1
-    originalRaf = window.requestAnimationFrame
-    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
-      const id = rafIdCounter++
-      rafQueue.set(id, cb)
-      return id
-    })
-    cancelSpy = vi.fn((id: number) => {
-      rafQueue.delete(id)
-    })
-    vi.stubGlobal('cancelAnimationFrame', cancelSpy)
-  })
-
-  afterEach(() => {
-    vi.stubGlobal('requestAnimationFrame', originalRaf)
-    for (const el of document.querySelectorAll('.suggestion-popup')) {
-      el.remove()
-    }
-  })
-
-  // Snapshot for tests that need to assert "rAF was scheduled".
-  const pendingFrameCount = () => rafQueue.size
-
-  function flushRaf() {
-    let safety = 10
-    while (rafQueue.size > 0 && safety-- > 0) {
-      const batch = Array.from(rafQueue.values())
-      rafQueue.clear()
-      for (const cb of batch) cb(0)
-    }
-  }
-
-  /**
-   * Drain the in-flight `onStart` updatePosition microtasks so the
-   * initial computePosition call settles before the rAF-coalescing tests
-   * exercise `onUpdate`. Without this, the onStart-triggered
-   * `computePosition` lands AFTER `mockClear()` and pollutes the
-   * subsequent assertions.
-   */
-  async function settleOnStart(
-    mockedComputePosition: ReturnType<
-      typeof vi.mocked<typeof import('@floating-ui/dom').computePosition>
-    >,
-  ) {
-    flushRaf()
-    await vi.waitFor(() => {
-      expect(mockedComputePosition).toHaveBeenCalled()
-    })
-    mockedComputePosition.mockClear()
-    cancelSpy.mockClear()
-  }
-
-  it('three onUpdate calls within the same frame collapse to one computePosition', async () => {
-    const { computePosition } = await import('@floating-ui/dom')
-    const mockedComputePosition = vi.mocked(computePosition)
-    mockedComputePosition.mockResolvedValue({
-      x: 0,
-      y: 0,
-      placement: 'bottom-start',
-      strategy: 'absolute',
-      middlewareData: {},
-    })
-
-    const renderer = createSuggestionRenderer()
-    renderer.onStart(makeProps())
-    await settleOnStart(mockedComputePosition)
-
-    // Fire three rapid onUpdate calls within the same frame.
-    renderer.onUpdate(makeProps('a'))
-    renderer.onUpdate(makeProps('ab'))
-    renderer.onUpdate(makeProps('abc'))
-
-    // Before any frame fires, computePosition has not been called.
-    expect(mockedComputePosition).not.toHaveBeenCalled()
-
-    // Each new onUpdate should have cancelled the prior pending frame
-    // — three calls means two cancellations.
-    expect(cancelSpy.mock.calls.length).toBeGreaterThanOrEqual(2)
-
-    // Flush all pending frames; only the last scheduled callback survived
-    // the cancellations and runs.
-    flushRaf()
-
-    await vi.waitFor(() => {
-      expect(mockedComputePosition).toHaveBeenCalledTimes(1)
-    })
-
-    renderer.onExit()
-  })
-
-  it('cancels pending position frame on onExit so the rAF callback never runs', async () => {
-    const { computePosition } = await import('@floating-ui/dom')
-    const mockedComputePosition = vi.mocked(computePosition)
-    mockedComputePosition.mockResolvedValue({
-      x: 0,
-      y: 0,
-      placement: 'bottom-start',
-      strategy: 'absolute',
-      middlewareData: {},
-    })
-
-    const renderer = createSuggestionRenderer()
-    renderer.onStart(makeProps())
-    await settleOnStart(mockedComputePosition)
-
-    // Schedule a position update, then immediately tear down. The
-    // pending frame must be cancelled.
-    renderer.onUpdate(makeProps('a'))
-    expect(pendingFrameCount()).toBeGreaterThan(0)
-
-    renderer.onExit()
-    expect(cancelSpy).toHaveBeenCalled()
-
-    // Flushing now is a no-op; computePosition is never called.
-    flushRaf()
-    await Promise.resolve()
-    await Promise.resolve()
-    expect(mockedComputePosition).not.toHaveBeenCalled()
-  })
-
-  it('cancels pending position frame on Escape so the rAF callback never runs', async () => {
-    const { computePosition } = await import('@floating-ui/dom')
-    const mockedComputePosition = vi.mocked(computePosition)
-    mockedComputePosition.mockResolvedValue({
-      x: 0,
-      y: 0,
-      placement: 'bottom-start',
-      strategy: 'absolute',
-      middlewareData: {},
-    })
-
-    const renderer = createSuggestionRenderer()
-    renderer.onStart(makeProps())
-    await settleOnStart(mockedComputePosition)
-
-    renderer.onUpdate(makeProps('a'))
-    expect(pendingFrameCount()).toBeGreaterThan(0)
-
-    const handled = renderer.onKeyDown({
-      event: new KeyboardEvent('keydown', { key: 'Escape' }),
-      view: {} as never,
-      range: { from: 0, to: 0 },
-    })
-    expect(handled).toBe(true)
-    expect(cancelSpy).toHaveBeenCalled()
-
-    flushRaf()
-    await Promise.resolve()
-    await Promise.resolve()
-    expect(mockedComputePosition).not.toHaveBeenCalled()
   })
 })
 
