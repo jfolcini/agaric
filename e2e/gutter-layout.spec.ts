@@ -2,18 +2,23 @@
  * A block's gutter on desktop, laid out alike in block mode and page mode
  * against the mock backend: a line's text lands at one x in both modes, at
  * every font size; a plain line reserves no room for a task's checkbox; the
- * grip, the chevron and a task's checkbox sit inside the mode's box; hovering
- * a row moves no text; and `/todo`, Ctrl+Enter and the block menu each still
- * make a plain line a task, read back from the backend.
+ * grip, the chevron and a task's checkbox sit inside the mode's box, the grip's
+ * glyph `SLACK` px clear of its edge; hovering a row moves no text; a child's
+ * text starts one indent step past its parent's, a task's included, and moves
+ * as its parent becomes a task or stops being one; on a phone, where neither
+ * mode moves a task's children, a child starts where a plain block's would; and
+ * `/todo`, Ctrl+Enter and the block menu each still make a plain line a task,
+ * read back from the backend.
  */
 
-import type { Locator, Page } from '@playwright/test'
+import { devices, type Locator, type Page } from '@playwright/test'
 
 import {
   activeMenu,
   expect,
   focusBlockById,
   ipc,
+  openPageMobile,
   test,
   typeSlashCommand,
   waitForBoot,
@@ -24,6 +29,8 @@ const EDITOR = '[data-testid="page-mode-editor"]'
 /** The space between a task's checkbox and its text column (`gap-1`), and the text box's own inset (`px-3`). */
 const GAP = 4
 const INSET = 12
+/** How far the grip's glyph sits inside the box, at least. */
+const SLACK = 6
 
 type Row = [depth: number, text: string, todo?: 'TODO']
 
@@ -161,6 +168,50 @@ async function textXs(
   return out
 }
 
+/** A task with a plain child and grandchild, and a plain block with the same. */
+const NESTED: readonly Row[] = [
+  [0, 'a task', 'TODO'],
+  [1, 'its plain child'],
+  [2, 'its grandchild'],
+  [0, 'a plain block'],
+  [1, 'its own child'],
+  [2, 'its own grandchild'],
+]
+/** Each row's parent in `NESTED`, by index. */
+const PARENT: ReadonlyMap<number, number> = new Map([
+  [1, 0],
+  [2, 1],
+  [4, 3],
+  [5, 4],
+])
+
+/** `--indent-width`, in px. */
+function indentStep(page: Page): Promise<number> {
+  return page.evaluate(() =>
+    Number.parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue('--indent-width'),
+    ),
+  )
+}
+
+/** Each child's text starts one indent step past its parent's. */
+async function expectIndented(
+  text: (index: number) => Locator,
+  step: number,
+  what: string,
+): Promise<(index: number) => number> {
+  const xs: number[] = []
+  for (let i = 0; i < NESTED.length; i += 1) xs.push(await textX(text(i)))
+  const x = (index: number): number => xs[index] ?? Number.NaN
+  for (const [child, parent] of PARENT) {
+    expect(
+      x(child) - x(parent),
+      `${what}: "${NESTED[child]?.[1]}" vs "${NESTED[parent]?.[1]}"`,
+    ).toBeCloseTo(step, 0)
+  }
+  return x
+}
+
 for (const size of ['small', 'medium', 'large'] as const) {
   test.describe(`gutter layout, font size ${size} @editor @pages`, () => {
     test.use({ viewport: { width: 1280, height: 800 } })
@@ -196,6 +247,10 @@ for (const size of ['small', 'medium', 'large'] as const) {
           blockXs[name],
         )
         expectInside(await box(grip), column, `${name}: grip`)
+        expect(
+          (await box(grip.locator('svg'))).x - column.x,
+          `${name}: grip glyph inside the column`,
+        ).toBeGreaterThanOrEqual(SLACK)
         if (HAS_CHEVRON.has(name)) {
           expectInside(await box(row.getByTestId('collapse-toggle')), column, `${name}: chevron`)
         }
@@ -232,6 +287,10 @@ for (const size of ['small', 'medium', 'large'] as const) {
           pageXs[name],
         )
         expectInside(await box(grip), frame, `${name}: page grip`)
+        expect(
+          (await box(grip.locator('svg'))).x - frame.x,
+          `${name}: page grip glyph inside the frame`,
+        ).toBeGreaterThanOrEqual(SLACK)
         if (HAS_CHEVRON.has(name)) {
           const chevron = at.locator(
             ':scope > .page-block-gutter > [data-testid="collapse-toggle"]',
@@ -249,8 +308,111 @@ for (const size of ['small', 'medium', 'large'] as const) {
         }
       }
     })
+
+    test("a child's text starts one indent step past its parent's, a task's too, and follows its parent's task state", async ({
+      page,
+    }) => {
+      const { ids } = await seed(page, `Indent ${size}`, NESTED)
+      await open(page, `Indent ${size}`)
+      await mode(page, 'Blocks')
+      const step = await indentStep(page)
+      expect(step, '--indent-width').toBe(24)
+      // The edited row's text is its editor's.
+      const blockAt = (i: number) =>
+        blockRow(page, ids[i]).locator('[data-testid="block-static"], .ProseMirror').first()
+      const blockXs = await expectIndented(blockAt, step, 'block mode')
+
+      // The plain block becomes a task: its text moves past the checkbox, and its
+      // children's with it, measured as they redraw.
+      const shift = blockXs(0) - blockXs(3)
+      await focusBlockById(page, ids[3] as string)
+      await page.keyboard.press('Control+Enter')
+      await expect(blockRow(page, ids[3]).getByTestId('task-checkbox-todo')).toBeVisible()
+      await expect
+        .poll(() => textX(blockAt(4)), 'block mode: child under the new task')
+        .toBeCloseTo(blockXs(4) + shift, 0)
+      await expectIndented(blockAt, step, 'block mode, both tasks')
+      // And back: four more cycles take the task off.
+      for (let k = 0; k < 4; k += 1) await page.keyboard.press('Control+Enter')
+      await expect(blockRow(page, ids[3]).getByTestId('task-marker')).toHaveCount(0)
+      await expect
+        .poll(() => textX(blockAt(4)), 'block mode: child, task off')
+        .toBeCloseTo(blockXs(4), 0)
+      await expectIndented(blockAt, step, 'block mode, task off')
+
+      await mode(page, 'Page')
+      await expect(pageCheckbox(page, ids[0])).toBeVisible()
+      const pageAt = (i: number) => pageText(page, ids[i])
+      const pageXs = await expectIndented(pageAt, step, 'page mode')
+      for (let i = 0; i < NESTED.length; i += 1) {
+        expect(
+          Math.abs(pageXs(i) - blockXs(i)),
+          `"${NESTED[i]?.[1]}": page x vs block x`,
+        ).toBeLessThanOrEqual(1)
+      }
+      await caretAtEnd(page, 3)
+      await page.keyboard.press('Control+Enter')
+      await expect(pageCheckbox(page, ids[3])).toBeVisible()
+      await expect
+        .poll(() => textX(pageAt(4)), 'page mode: child under the new task')
+        .toBeCloseTo(pageXs(4) + shift, 0)
+      await expectIndented(pageAt, step, 'page mode, both tasks')
+      for (let k = 0; k < 4; k += 1) await page.keyboard.press('Control+Enter')
+      await expect(pageBlock(page, ids[3]).getByTestId('task-marker')).toHaveCount(0)
+      await expect
+        .poll(() => textX(pageAt(4)), 'page mode: child, task off')
+        .toBeCloseTo(pageXs(4), 0)
+      await expectIndented(pageAt, step, 'page mode, task off')
+    })
   })
 }
+
+test.describe('gutter layout on a phone @editor @pages @mobile', () => {
+  const iPhone13 = devices['iPhone 13']
+  test.use({
+    viewport: iPhone13.viewport,
+    hasTouch: iPhone13.hasTouch,
+    isMobile: iPhone13.isMobile,
+    deviceScaleFactor: iPhone13.deviceScaleFactor,
+    userAgent: iPhone13.userAgent,
+  })
+
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test("a task's children start where a plain block's would, in both modes", async ({ page }) => {
+    const { ids } = await seed(page, 'Indent phone', NESTED)
+    await openPageMobile(page, 'Indent phone')
+    const step = await indentStep(page)
+    expect(step, '--indent-width').toBe(12)
+    await expect(blockText(page, ids[5])).toBeVisible()
+    // A phone's column cannot spare a checkbox per nested task (`--block-tree-task-shift`).
+    const expectLikePlain = async (text: (index: number) => Locator, what: string) => {
+      const x = async (i: number) => textX(text(i))
+      expect((await x(4)) - (await x(3)), `${what}: plain child vs plain block`).toBeCloseTo(
+        step,
+        0,
+      )
+      expect(await x(1), `${what}: a task's child vs a plain block's`).toBeCloseTo(await x(4), 0)
+      expect(await x(2), `${what}: a task's grandchild vs a plain block's`).toBeCloseTo(
+        await x(5),
+        0,
+      )
+    }
+    await expectLikePlain((i) => blockText(page, ids[i]), 'phone block mode')
+
+    await page.getByRole('button', { name: 'Page actions', exact: true }).tap()
+    await page.getByRole('menuitem', { name: 'Edit as page', exact: true }).tap()
+    await expect(pageCheckbox(page, ids[0])).toBeVisible()
+    await expectLikePlain((i) => pageText(page, ids[i]), 'phone page mode')
+    // Page mode's phone checkbox sits in the lane.
+    expect(await textX(pageText(page, ids[0])), 'phone page mode: task vs plain').toBeCloseTo(
+      await textX(pageText(page, ids[3])),
+      0,
+    )
+  })
+})
 
 test.describe('gutter layout: setting a task @editor @pages', () => {
   test.use({ viewport: { width: 1280, height: 800 } })

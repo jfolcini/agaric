@@ -460,6 +460,23 @@ describe('WelcomeModal', () => {
       ).toHaveLength(1)
     })
 
+    // #6278 — a page titled in another case is the same name, and the create
+    // would resolve to it, so it is reused as an exact title is.
+    it('reuses a page whose title is another spelling of a sample title', async () => {
+      const user = userEvent.setup()
+      const { pages } = installSampleIpcMock()
+      const title = i18n.t('welcome.sampleGettingStartedTitle')
+      pages.push({ id: 'mine', content: `${title.toLowerCase()} ` })
+
+      render(<WelcomeModal />)
+      await user.click(screen.getByRole('button', { name: 'Create sample pages' }))
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.success)).toHaveBeenCalledWith(i18n.t('welcome.samplePagesCreated'))
+      })
+      expect(createdPageTitles()).toEqual([i18n.t('welcome.sampleQuickTipsTitle')])
+    })
+
     // #4338 — `ensureSamplePage` is a module-level function with no hook
     // context, so the bus is its only route to a picker cache. Usually there
     // is none to update (first boot), but Settings → "Show the welcome tour
