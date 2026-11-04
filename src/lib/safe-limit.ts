@@ -46,6 +46,7 @@
  *     `listTagsByPrefix`,
  *     `listBacklinks` & friends → 200  (`PageRequest::new`)
  *   - `listProjectedAgenda`     → 500  (`list_projected_agenda_inner`)
+ *   - `listQuarantinedSyncSlots` → 100 (`list_quarantined_sync_slots_inner`)
  *
  * IPCs that return a bounded set (no pagination) — e.g.
  * `listAllPagesInSpace`, `listAllTagsInSpace`, `countTrash`,
@@ -103,6 +104,9 @@ export const LIST_PAGES_WITH_METADATA_MAX = 100
 
 /** Backend cap for `list_projected_agenda_inner`. */
 export const LIST_PROJECTED_AGENDA_MAX = 500
+
+/** Backend cap for `list_quarantined_sync_slots_inner` (a flat lookup, not paginated). */
+export const LIST_QUARANTINED_SYNC_SLOTS_MAX = 100
 
 /**
  * Build a {@link SafeLimit} from a runtime `number`, validating that

@@ -5789,7 +5789,7 @@ async fn permanently_stuck_slot_is_quarantined_and_stops_being_retried_3226() {
     );
 
     // …and the stuck blob is discoverable without reading logs.
-    let listed = quarantine::list_quarantined_slots(&pool)
+    let listed = quarantine::list_quarantined_slots(&pool, 100)
         .await
         .expect("list_quarantined_slots");
     assert_eq!(listed.len(), 1, "the stuck blob must be listed");
@@ -5848,7 +5848,7 @@ async fn quarantining_preserves_the_blob_bytes_verbatim_535_3226() {
             .expect("replay_sync_inbox");
     }
 
-    let listed = quarantine::list_quarantined_slots(&pool)
+    let listed = quarantine::list_quarantined_slots(&pool, 100)
         .await
         .expect("list_quarantined_slots");
     assert_eq!(listed.len(), 1, "precondition: the slot was quarantined");
@@ -5904,7 +5904,7 @@ async fn readmitted_quarantined_blob_projects_on_the_next_boot_3226() {
             .await
             .expect("note_unresolved_slot");
     }
-    let listed = quarantine::list_quarantined_slots(&pool)
+    let listed = quarantine::list_quarantined_slots(&pool, 100)
         .await
         .expect("list");
     assert_eq!(listed.len(), 1, "precondition: quarantined");

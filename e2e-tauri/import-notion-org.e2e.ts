@@ -5,8 +5,8 @@
 // The frontend rewrites each into Markdown the importer reads
 // (`src/lib/notion-import.ts`, `src/lib/org-import.ts`); what that Markdown
 // stores is the backend's: a Notion `Key: value` line as a page property, a
-// link to `Notes%20<id>.md` resolved to the page `Notes` imports as
-// (`rewrite_relative_md_links`), and an Org headline's TODO keyword,
+// link to `Notes%20<id>.md` or to `reading.txt` resolved to the page that file
+// imports as (`rewrite_relative_md_links`), and an Org headline's TODO keyword,
 // SCHEDULED line, drawer property and depth. The mock models none of these
 // (`import_markdown` in src/lib/tauri-mock/handlers/pages.ts), so only this
 // lane can show them failing; e2e/import-export.spec.ts covers the titles.
@@ -109,5 +109,32 @@ describe('Agaric real-backend Notion, Org and text folder import (#6032) @markdo
     expect(await scheduled.getAttribute('aria-label')).toContain('Oct 1, 2031')
     const owner = task.$(`[data-testid="property-chip"]*=${marker}-alice`)
     await owner.waitForExist({ timeout: ACTION_TIMEOUT })
+  })
+
+  it('links a Markdown link to a sibling .txt note to the page it imports as', async () => {
+    await waitForAppReady()
+    const marker = runScopedMarker('wdio-6032-txt')
+    const folder = `${marker}-vault`
+    await importFolder(
+      'import-folder-input',
+      folder,
+      {
+        'a.md': Buffer.from(`- ${marker}-link [r](reading.txt)\n`),
+        'reading.txt': Buffer.from(`- ${marker}-text\n`),
+      },
+      'Imported “2 files”',
+    )
+
+    await navigateTo('Journal')
+    await navigateTo('Pages')
+    await openPageTitled(`${folder}/a`)
+    const chip = (await rowOf(`${marker}-link`)).$('[data-testid="block-link-chip"]')
+    await browser.waitUntil(
+      async () => (await chip.getAttribute('title')) === `${folder}/reading`,
+      {
+        timeout: NAV_TIMEOUT,
+        timeoutMsg: 'the link to reading.txt never resolved to the page reading',
+      },
+    )
   })
 })

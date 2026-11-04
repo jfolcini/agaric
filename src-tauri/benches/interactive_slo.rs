@@ -87,8 +87,11 @@ use agaric_lib::commands::{
 };
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
-use agaric_store::cache::{rebuild_projected_agenda_cache, rebuild_tags_cache};
-use agaric_store::fts::rebuild_fts_index;
+use agaric_store::cache::{
+    rebuild_block_tag_refs_cache, rebuild_projected_agenda_cache, rebuild_tags_cache,
+    reindex_block_links,
+};
+use agaric_store::fts::{rebuild_fts_index, reindex_fts_references};
 use agaric_store::op::OpRef;
 use agaric_store::pagination::{BlockRow, MAX_BATCH_BLOCK_IDS, PageResponse};
 use agaric_store::search_types::SearchScope;
@@ -4525,6 +4528,191 @@ fn bench_sweep_deferred_purges(c: &mut Criterion) {
     report_measurement_only(TEN_K, &acc_10k);
 }
 
+#[derive(Clone, Copy)]
+enum MentionProbe {
+    Tag,
+    Page,
+    TagRefsRebuild,
+}
+
+const MENTION_TAG: &str = "01BENCHTAG0000000000000001";
+const MENTION_PAGE: &str = "01BENCHPAGE000000000000001";
+const MENTION_SPACE: &str = "01BENCHSPACE20000000000001";
+const MENTION_NOTES: usize = 10;
+
+async fn run_mention_probe(pool: &SqlitePool, probe: MentionProbe) {
+    match probe {
+        MentionProbe::Tag => reindex_fts_references(pool, MENTION_TAG).await.unwrap(),
+        MentionProbe::Page => reindex_fts_references(pool, MENTION_PAGE).await.unwrap(),
+        MentionProbe::TagRefsRebuild => rebuild_block_tag_refs_cache(pool).await.unwrap(),
+    }
+}
+
+async fn seed_mention_fixture(pool: &SqlitePool) -> Vec<String> {
+    seed_blocks_bulk(pool, FIXTURE_SIZE).await;
+    assign_all_to_slo_space(pool).await;
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?1, 'page', 'Other', ?1)",
+    )
+    .bind(MENTION_SPACE)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+        .bind(MENTION_SPACE)
+        .execute(pool)
+        .await
+        .unwrap();
+    for (id, block_type, content) in [
+        (MENTION_TAG, "tag", "mention-tag"),
+        (MENTION_PAGE, "page", "mention-page"),
+    ] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id, space_id) \
+             VALUES (?1, ?2, ?3, CASE WHEN ?2 = 'page' THEN ?1 END, ?4)",
+        )
+        .bind(id)
+        .bind(block_type)
+        .bind(content)
+        .bind(SLO_SPACE_ID)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    let mut notes = Vec::new();
+    for i in 0..MENTION_NOTES {
+        let id = format!("01BENCHN0TE{i:015}");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, page_id, space_id) \
+             VALUES (?, 'content', ?, ?3, ?3, ?3)",
+        )
+        .bind(&id)
+        .bind(format!("mentions #[{MENTION_TAG}] and [[{MENTION_PAGE}]]"))
+        .bind(MENTION_SPACE)
+        .execute(pool)
+        .await
+        .unwrap();
+        reindex_block_links(pool, &id).await.unwrap();
+        notes.push(id);
+    }
+    rebuild_block_tag_refs_cache(pool).await.unwrap();
+    rebuild_fts_index(pool).await.unwrap();
+    notes
+}
+
+/// #6242 — the tag-mention reindex: `MENTION_NOTES` notes in a second space
+/// mention one tag and one page in `SLO_SPACE_ID`, so neither
+/// `block_tag_refs` nor `block_links` holds their edge. `Tag` pays the
+/// content scan, `Page` the same re-strips through `block_links_unresolved`,
+/// and `TagRefsRebuild` is the whole-table read a tag-carrying sync import
+/// already pays (#6209). Read the scan (`Tag` − `Page`) against that rebuild,
+/// not as an absolute: the fixture's content is shorter than a real vault's.
+fn bench_reindex_fts_references(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_reindex_fts_references"));
+    let notes = rt.block_on(seed_mention_fixture(&pool));
+
+    let count = |sql: &'static str, id: &str| -> i64 {
+        rt.block_on(async {
+            sqlx::query_scalar(sql)
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        })
+    };
+    assert_eq!(
+        (
+            count(
+                "SELECT COUNT(*) FROM block_tag_refs WHERE tag_id = ?",
+                MENTION_TAG
+            ),
+            count(
+                "SELECT COUNT(*) FROM block_links WHERE target_id = ?",
+                MENTION_PAGE
+            ),
+            count(
+                "SELECT COUNT(*) FROM block_links_unresolved WHERE target_id = ?",
+                MENTION_PAGE
+            ),
+        ),
+        (0, 0, MENTION_NOTES as i64),
+        "reindex_fts_references @ 100K: every mention crosses spaces, so no cache edge holds it"
+    );
+    let hits = |needle: &str| -> Vec<String> {
+        rt.block_on(async {
+            let mut ids: Vec<String> =
+                sqlx::query_scalar("SELECT block_id FROM fts_blocks WHERE fts_blocks MATCH ?")
+                    .bind(format!("\"{needle}\""))
+                    .fetch_all(&pool)
+                    .await
+                    .unwrap();
+            ids.sort();
+            ids
+        })
+    };
+    for (id, renamed, probe) in [
+        (MENTION_TAG, "renamed-tag", MentionProbe::Tag),
+        (MENTION_PAGE, "renamed-page", MentionProbe::Page),
+    ] {
+        rt.block_on(async {
+            sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
+                .bind(renamed)
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            run_mention_probe(&pool, probe).await;
+        });
+        assert_eq!(
+            hits(renamed),
+            notes,
+            "reindex_fts_references @ 100K: one reindex re-strips every mention of {id}"
+        );
+    }
+
+    let probes = [
+        (
+            "reindex_fts_references (tag, 10 cross-space mentions) @ 100K",
+            "reindex_fts_references_tag_100k",
+            MentionProbe::Tag,
+        ),
+        (
+            "reindex_fts_references (page, 10 cross-space mentions) @ 100K",
+            "reindex_fts_references_page_100k",
+            MentionProbe::Page,
+        ),
+        (
+            "rebuild_block_tag_refs_cache (no change) @ 100K",
+            "rebuild_block_tag_refs_cache_100k",
+            MentionProbe::TagRefsRebuild,
+        ),
+    ];
+    let pool_ref = &pool;
+    let accs = probes.map(|_| Acc::new());
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    for ((_, id, probe), acc) in probes.into_iter().zip(&accs) {
+        group.bench_function(id, |b| {
+            b.to_async(&rt).iter_custom(|iters| async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    run_mention_probe(pool_ref, probe).await;
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            });
+        });
+    }
+    group.finish();
+
+    for ((command, _, _), acc) in probes.into_iter().zip(&accs) {
+        report_measurement_only(command, acc);
+    }
+}
+
 /// #5426 — `query_by_property` on `todo_state = 'TODO'`, which half of 100K
 /// blocks carry. PROBLEM TIER, report-only: equality reads its value index and
 /// sorts every match before the LIMIT, where an id-order walk stops after one
@@ -5696,6 +5884,8 @@ criterion_group!(
     bench_search_blocks_under_tag,
     // #5712 — what a completed pull's session-end sweep costs; no budget yet.
     bench_sweep_deferred_purges,
+    // #6242 — the tag mention scan beside the work its sync import already pays; no budget yet.
+    bench_reindex_fts_references,
     // #5402 — the MCP read paths.
     mcp_reads::bench_mcp_get_page_markdown,
     mcp_reads::bench_mcp_get_journal,

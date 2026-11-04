@@ -232,6 +232,8 @@ macro_rules! agaric_commands {
             // #4549 — the opt-in internet fallback (relay) preference.
             $crate::commands::sync_cmds::get_sync_relay_settings,
             $crate::commands::sync_cmds::set_sync_relay_settings,
+            // #6057 — the sync deltas the boot replay quarantined (#3226).
+            $crate::commands::sync_cmds::list_quarantined_sync_slots,
             // Batch count commands (#604)
             $crate::commands::agenda::count_agenda_batch_by_source,
             $crate::commands::queries::count_backlinks_batch,
