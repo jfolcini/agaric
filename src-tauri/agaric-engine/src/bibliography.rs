@@ -76,8 +76,9 @@ pub struct BibEntry {
     /// BibTeX `abstract` / CSL `abstract`. Named `abstract_text` because
     /// `abstract` is a reserved Rust keyword.
     pub abstract_text: Option<String>,
-    /// The first author is one literal name (a wholly braced BibTeX name or
-    /// a CSL `literal`), so its family is the whole name.
+    /// The first author is one literal name (a wholly braced BibTeX name, a
+    /// CSL `literal`, or a CSL `family` with no `given`), so its family is the
+    /// whole name.
     first_author_literal: bool,
 }
 
@@ -99,10 +100,10 @@ impl BibEntry {
 
     /// Family name of the FIRST author, for the "{family} {year}" citation
     /// display name. A literal name (`{World Health Organization}`, a CSL
-    /// `literal`, or a CSL `family` with no `given`) is its own family; `Family, Given` forms take the text
-    /// before the first comma (so multi-word families like
-    /// `de la Cruz, Maria` survive); `Given Family` forms take the last
-    /// whitespace-separated token.
+    /// `literal`, or a CSL `family` with no `given`) is its own family;
+    /// `Family, Given` forms take the text before the first comma (so
+    /// multi-word families like `de la Cruz, Maria` survive); `Given Family`
+    /// forms take the last whitespace-separated token.
     pub fn first_author_family(&self) -> Option<String> {
         let first = self.authors.first()?;
         let family = match first.split_once(',') {
