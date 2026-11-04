@@ -1,4 +1,4 @@
-# Session 3316 — BibTeX braces, accents and biblatex fields decode on import
+# Session 3333 — BibTeX braces, accents and biblatex fields decode on import
 
 #6032 batch A, on the maintainer's Q7 answers (2026-11-04). The BibTeX
 importer kept case-protection braces and `~` literally with no warning, ignored
