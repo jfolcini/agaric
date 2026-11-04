@@ -7,7 +7,7 @@
  * page mode; the multi-day views mount a `BlockTree` per day.
  */
 
-import { Calendar as CalendarIcon, ExternalLink, Plus } from 'lucide-react'
+import { Calendar as CalendarIcon, Plus } from 'lucide-react'
 import type React from 'react'
 import { memo, useCallback, useEffect, useEffectEvent, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -280,30 +280,18 @@ function DaySectionInner({
     }
   }, [isWindowControlled, hasEntered])
 
-  // In daily mode (heading hidden), still the "open in editor" link and the
-  // page's star and delete, on the row the day page's Blocks | Page switch (on a
-  // phone, its *Page actions* menu) ends.
+  // In daily mode (heading hidden), the page's star and delete still sit on the
+  // row the day page's Blocks | Page switch (on a phone, its *Page actions*
+  // menu) ends.
   const dailyActions =
-    hideHeading && entry.pageId && onNavigateToPage ? (
-      <>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-muted-foreground"
-          aria-label={`Open ${entry.dateStr} in editor`}
-          onClick={() => onNavigateToPage(entry.pageId as string, entry.dateStr)}
-        >
-          <ExternalLink className="mr-1" />
-          {t('journal.openInEditor')}
-        </Button>
-        <PageQuickActions
-          pageId={entry.pageId}
-          title={entry.displayDate}
-          variant="journal"
-          deleting={isDeletingThisDay}
-          onDeleteRequest={handleRequestDayDelete}
-        />
-      </>
+    hideHeading && entry.pageId ? (
+      <PageQuickActions
+        pageId={entry.pageId}
+        title={entry.displayDate}
+        variant="journal"
+        deleting={isDeletingThisDay}
+        onDeleteRequest={handleRequestDayDelete}
+      />
     ) : null
 
   return (
@@ -394,18 +382,7 @@ function DaySectionInner({
               )}
             </>
           )}
-          {entry.pageId && onNavigateToPage && (
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label={t('journal.openInEditorLabel', { date: entry.dateStr })}
-              onClick={() => onNavigateToPage(entry.pageId as string, entry.dateStr)}
-            >
-              <ExternalLink />
-            </Button>
-          )}
-          {/*  Part A — star + delete affordance next to the
-              "open in editor" button. Guarded on `entry.pageId` so the
+          {/*  Part A — star + delete. Guarded on `entry.pageId` so the
               auto-create placeholder day (no note yet) doesn't show
               destructive controls. Hover-reveal on desktop, always-
               visible on touch (handled inside PageQuickActions). */}

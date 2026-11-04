@@ -407,12 +407,14 @@ fn expand_journal_template_variables(content: &str, day: NaiveDate, time: NaiveT
 /// Format `at` with a date-fns pattern, the tokens the Templates view's
 /// examples and the `/template` path's tests use, each mapped to its chrono
 /// twin: `yyyy` / `YYYY` and `yy` (year), `MMMM`, `MMM`, `MM` and `M` (month
-/// name, short name, padded and plain number), `dd` / `DD` and `d` (day),
-/// `EEEE` and `E`–`EEE` (weekday name and short name), `HH` / `H`, `hh` / `h`
+/// name, short name, padded and plain number), `dd` / `DD` and `d` / `D`
+/// (day), `do` / `Do` (ordinal day, `4th`), `EEEE` / `dddd` and `E`–`EEE` /
+/// `ddd` (weekday name and short name), `HH` / `H`, `hh` / `h`
 /// (24- and 12-hour), `mm` / `m`, `ss` / `s` and `a` (AM/PM). Text in single
-/// quotes and any other non-letter is literal, as in date-fns. `None` for a
-/// run of letters that is none of these: the caller then takes the default
-/// form rather than guessing.
+/// quotes and any other non-letter is literal, as in date-fns. The capital
+/// spellings are Moment's, an Obsidian template's, so `D` is the day of the
+/// month, not date-fns's day of the year. `None` for a run of letters that is
+/// none of these: the caller then takes the default form rather than guessing.
 fn format_date_fns(at: chrono::NaiveDateTime, pattern: &str) -> Option<String> {
     let mut spec = String::with_capacity(pattern.len() * 2);
     let mut chars = pattern.chars().peekable();
@@ -443,6 +445,18 @@ fn format_date_fns(at: chrono::NaiveDateTime, pattern: &str) -> Option<String> {
             chars.next();
             run += 1;
         }
+        if matches!(c, 'd' | 'D') && run == 1 && chars.next_if_eq(&'o').is_some() {
+            let day = at.day();
+            let suffix = match (day % 10, day % 100) {
+                (_, 11..=13) => "th",
+                (1, _) => "st",
+                (2, _) => "nd",
+                (3, _) => "rd",
+                _ => "th",
+            };
+            spec.push_str(&format!("{day}{suffix}"));
+            continue;
+        }
         spec.push_str(match (c, run) {
             ('y' | 'Y', 4) => "%Y",
             ('y', 2) => "%y",
@@ -451,9 +465,9 @@ fn format_date_fns(at: chrono::NaiveDateTime, pattern: &str) -> Option<String> {
             ('M', 2) => "%m",
             ('M', 1) => "%-m",
             ('d' | 'D', 2) => "%d",
-            ('d', 1) => "%-d",
-            ('E', 4) => "%A",
-            ('E', 1..=3) => "%a",
+            ('d' | 'D', 1) => "%-d",
+            ('d' | 'E', 4) => "%A",
+            ('d', 3) | ('E', 1..=3) => "%a",
             ('H', 2) => "%H",
             ('H', 1) => "%-H",
             ('h', 2) => "%I",
@@ -2032,6 +2046,10 @@ mod tests {
             "2031/01/02 Jan 2, 2031"
         );
         assert_eq!(expand("<% weekday:EEE %> <% month:MM %>"), "Thu 01");
+        // #6277 — the Moment day tokens an Obsidian template uses.
+        assert_eq!(expand("<% today:dddd|ddd|D %>"), "Thursday|Thu|2");
+        assert_eq!(expand("{{date:dddd, MMMM Do}}"), "Thursday, January 2nd");
+        assert_eq!(expand("<% today:'Do D' Do %>"), "Do D 2nd");
         // Quoted text is literal, as is any non-letter; `%` cannot reach chrono.
         assert_eq!(
             expand("<% today:'Week of' d 'o''clock' 100% '5%' %>"),
@@ -2052,5 +2070,30 @@ mod tests {
             expand("<% isoweek:yyyy %> <% page title:d %>"),
             "1 2031-01-02"
         );
+    }
+
+    #[test]
+    fn journal_template_ordinal_day_takes_its_english_suffix() {
+        let time = NaiveTime::from_hms_opt(9, 5, 0).unwrap();
+        for (day, ordinal) in [
+            (1, "1st"),
+            (2, "2nd"),
+            (3, "3rd"),
+            (4, "4th"),
+            (11, "11th"),
+            (12, "12th"),
+            (13, "13th"),
+            (21, "21st"),
+            (22, "22nd"),
+            (23, "23rd"),
+            (31, "31st"),
+        ] {
+            let at = NaiveDate::from_ymd_opt(2031, 1, day).unwrap();
+            assert_eq!(
+                expand_journal_template_variables("{{date:Do}}|{{date:do}}", at, time),
+                format!("{ordinal}|{ordinal}"),
+                "day {day}"
+            );
+        }
     }
 }

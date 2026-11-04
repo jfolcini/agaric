@@ -1852,6 +1852,31 @@ describe('BlockPropertyEditor', () => {
       })
     })
 
+    it('keeps the side it opened on, and its opened height above the chip', async () => {
+      vi.mocked(computePosition).mockResolvedValueOnce({
+        ...defaultComputePositionResult(),
+        placement: 'top-start',
+      })
+      render(
+        <BlockPropertyEditor {...makeProps({ editingProp: { key: 'effort', value: '2h' } })} />,
+      )
+      const popup = screen.getByRole('dialog')
+      await waitFor(() => {
+        expect(popup.style.minHeight).toBe(`${popup.offsetHeight}px`)
+      })
+      vi.mocked(computePosition).mockClear()
+      vi.mocked(flip).mockClear()
+      fireEvent(window, new Event('resize'))
+      await waitFor(() => {
+        expect(computePosition).toHaveBeenCalledWith(
+          expect.any(HTMLElement),
+          expect.any(HTMLElement),
+          expect.objectContaining({ placement: 'top-start' }),
+        )
+      })
+      expect(flip).not.toHaveBeenCalled()
+    })
+
     it('cleans up the portal when editingProp returns to null', () => {
       const { rerender } = render(
         <BlockPropertyEditor {...makeProps({ editingProp: { key: 'effort', value: '2h' } })} />,

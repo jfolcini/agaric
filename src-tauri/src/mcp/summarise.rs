@@ -44,11 +44,11 @@ use super::registry::{
     TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_BATCH, TOOL_BLOCK_HISTORY,
     TOOL_CAPTURE, TOOL_CREATE_PAGE, TOOL_CREATE_TAG, TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY,
     TOOL_EDIT_PAGE_MARKDOWN, TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_JOURNAL, TOOL_GET_PAGE,
-    TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS, TOOL_LIST_JOURNAL,
-    TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_LIST_TRASH,
-    TOOL_MOVE_BLOCKS, TOOL_MOVE_PAGE_TO_SPACE, TOOL_PAGE_HISTORY, TOOL_QUERY, TOOL_REMOVE_TAG,
-    TOOL_RESOLVE, TOOL_RESTORE_BLOCK, TOOL_SEARCH, TOOL_SET_PAGE_ALIASES, TOOL_SET_PROPERTY,
-    TOOL_UNDO, TOOL_UPDATE_BLOCK_CONTENT,
+    TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_ATTACHMENTS, TOOL_LIST_BACKLINKS,
+    TOOL_LIST_JOURNAL, TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS,
+    TOOL_LIST_TRASH, TOOL_MOVE_BLOCKS, TOOL_MOVE_PAGE_TO_SPACE, TOOL_PAGE_HISTORY, TOOL_QUERY,
+    TOOL_REMOVE_TAG, TOOL_RESOLVE, TOOL_RESTORE_BLOCK, TOOL_SEARCH, TOOL_SET_PAGE_ALIASES,
+    TOOL_SET_PROPERTY, TOOL_UNDO, TOOL_UPDATE_BLOCK_CONTENT,
 };
 
 /// Number of leading characters of a ULID we expose in summary strings.
@@ -119,6 +119,7 @@ pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
         TOOL_LIST_TRASH => summarise_list_trash(args, result),
         TOOL_RESOLVE => summarise_resolve(args, result),
         TOOL_QUERY => summarise_query(args, result),
+        TOOL_LIST_ATTACHMENTS => summarise_list_attachments(args, result),
         // ---- read-write (tools_rw) ----
         TOOL_APPEND_BLOCK => summarise_append_block(args, result),
         TOOL_APPEND_MARKDOWN => summarise_append_markdown(args, result),
@@ -270,6 +271,24 @@ pub fn summarise_list_trash(_args: &Value, result: &Value) -> String {
         "list_trash — {n} {}{suffix}",
         if n == 1 { "block" } else { "blocks" }
     )
+}
+
+/// `list_attachments — N attachment(s) on <id-prefix>` (`(more)` if
+/// `has_more`) (#5410). Never the filenames, which are user text.
+pub fn summarise_list_attachments(args: &Value, result: &Value) -> String {
+    let prefix = ["block_id", "page_id"]
+        .into_iter()
+        .map(|key| id_arg_prefix(args, key))
+        .find(|prefix| !prefix.is_empty())
+        .unwrap_or_default();
+    let n = array_len(result, "items").unwrap_or(0);
+    let noun = if n == 1 { "attachment" } else { "attachments" };
+    let suffix = if has_more(result) { " (more)" } else { "" };
+    if prefix.is_empty() {
+        format!("list_attachments — {n} {noun}{suffix}")
+    } else {
+        format!("list_attachments — {n} {noun} on {prefix}{suffix}")
+    }
 }
 
 /// `resolve — N name(s), M matched` (#5397). Never the names, which are page
@@ -775,6 +794,7 @@ mod tests {
         "SECRET_TAG_NAME",
         "SECRET_QUERY",
         "SECRET_ALIAS",
+        "SECRET_FILENAME",
     ];
 
     /// Checks each secret's first [`ULID_PREFIX_LEN`] characters: a name
@@ -1502,6 +1522,22 @@ mod tests {
     }
 
     #[test]
+    fn list_attachments_counts_items_on_the_target_5410() {
+        const BLOCK: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        const PAGE: &str = "01BX5ZZKBKACTAV9WEVGEMMVRZ";
+        let one =
+            json!({ "items": [{ "id": BLOCK, "filename": "SECRET_FILENAME" }], "has_more": true });
+        let s = summarise_list_attachments(&json!({ "block_id": BLOCK }), &one);
+        assert_eq!(s, "list_attachments — 1 attachment on 01ARZ3ND (more)");
+        assert_no_secrets(&s);
+        let two = json!({ "items": [{}, {}], "has_more": false });
+        let s = summarise_list_attachments(&json!({ "page_id": PAGE }), &two);
+        assert_eq!(s, "list_attachments — 2 attachments on 01BX5ZZK");
+        let s = summarise_list_attachments(&json!({ "page_id": "SECRET_TITLE" }), &two);
+        assert_eq!(s, "list_attachments — 2 attachments");
+    }
+
+    #[test]
     fn list_trash_counts_items_and_flags_more() {
         let result = json!({ "items": [{ "content": "SECRET_BLOCK_CONTENT" }], "has_more": true });
         let s = summarise_list_trash(&json!({}), &result);
@@ -1655,6 +1691,8 @@ mod tests {
                 "origin": "agent:test",
                 "before": "SECRET_TEXT_VALUE",
                 "after": "SECRET_BLOCK_CONTENT",
+                // #5410 — `list_attachments` rows carry the filename.
+                "filename": "SECRET_FILENAME",
             }],
             // #5400 — `undo` returns what it reverted.
             "undone": [{

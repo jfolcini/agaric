@@ -21,7 +21,7 @@ Adjacent rejections that already have homes:
 
 - **CodeMirror** — line-cell model doesn't fit a block outliner. ProseMirror via TipTap models a tree natively.
 - **`prosemirror-markdown`** — doesn't round-trip the locked-mark set (inline `[[ULID]]` / `#[ULID]` / `((ULID))` nodes, custom callouts). The custom serializer is FE-only, property-tested for round-trip identity and idempotence.
-- **Radix Popover for the suggestion popup** — Floating-UI gives us viewport-aware positioning + middleware (`flip / shift / offset / size`) that we'd rebuild on top of Radix.
+- **Radix Popover for the suggestion popup** — Radix's popper re-flips and re-measures as the list changes, so the popup would move while the user types. `suggestion-placement.ts` picks the side once at open and pins the edge beside the line; Floating-UI's `autoUpdate` re-places it only on scroll and resize.
 
 ## Data model & storage
 

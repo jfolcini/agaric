@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT json_group_array(id) AS \"tags!: String\" FROM blocks WHERE id IN (SELECT value FROM json_each(?)) AND block_type = 'tag'",
+  "describe": {
+    "columns": [
+      {
+        "name": "tags!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "247603c16f1ee417ebe1c0930f83f147fa272bfc53fb643e994276c95181f110"
+}
