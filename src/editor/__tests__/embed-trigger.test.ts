@@ -270,3 +270,60 @@ describe('a typed whole `![[Name]]` in page mode (#6033)', () => {
     expect(markdownOf(editor.state.doc.child(0))).toBe(`{{embed [[${PAGE}]]}}`)
   })
 })
+
+/**
+ * Where the embed would not be its block's whole content, the one place it
+ * renders, `![[` links instead, typed or picked. Each block's markdown ends in
+ * a stand-in `x`, deleted before typing, that keeps its container from parsing away.
+ */
+const NOT_ALONE: Array<[string, string]> = [
+  ['a heading', '# x'],
+  ['a quote', '> x'],
+  ['a task', '- [ ] x'],
+  ['a list item', '- a\n- x'],
+  ['a second paragraph', 'Hello\n\nx'],
+]
+
+/** Delete the stand-in `x` before the caret. */
+function dropStandIn(editor: Editor) {
+  const { from } = editor.state.selection
+  editor.commands.deleteRange({ from: from - 1, to: from })
+}
+
+describe('`![[` where the embed would not be the whole block, in block mode', () => {
+  it.each(NOT_ALONE)('typed whole in %s keeps the `!` and links the page', async (_, md) => {
+    const handle = await blockMode(md)
+    dropStandIn(handle.editor as Editor)
+    await typeResolved(handle.editor as Editor, '![[Project]]')
+
+    expect(handle.unmount()).toBe(`${md.slice(0, -1)}\\![[${PAGE}]]`)
+  })
+
+  it.each(NOT_ALONE)('picked in %s keeps the `!` and links the page', async (_, md) => {
+    const handle = await blockMode(md)
+    dropStandIn(handle.editor as Editor)
+    type(handle.editor as Editor, '![[Proj')
+    ;(await pickerFor('Proj')).command(PROJECT)
+
+    expect(handle.unmount()).toBe(`${md.slice(0, -1)}\\![[${PAGE}]]`)
+  })
+})
+
+describe('`![[` where the embed would not be the whole block, in page mode', () => {
+  it.each(NOT_ALONE)('typed whole in %s keeps the `!` and links the page', async (_, md) => {
+    const editor = pageMode(md)
+    dropStandIn(editor)
+    await typeResolved(editor, '![[Project]]')
+
+    expect(markdownOf(editor.state.doc.child(0))).toBe(`${md.slice(0, -1)}\\![[${PAGE}]]`)
+  })
+
+  it.each(NOT_ALONE)('picked in %s keeps the `!` and links the page', async (_, md) => {
+    const editor = pageMode(md)
+    dropStandIn(editor)
+    type(editor, '![[Proj')
+    ;(await pickerFor('Proj')).command(PROJECT)
+
+    expect(markdownOf(editor.state.doc.child(0))).toBe(`${md.slice(0, -1)}\\![[${PAGE}]]`)
+  })
+})

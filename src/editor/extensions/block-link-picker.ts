@@ -28,6 +28,7 @@ import {
   resolveAndInsertPickerToken,
 } from '@/editor/extensions/picker-plugin'
 import { storableLinkLabel } from '@/editor/markdown-common'
+import { PAGE_BLOCK } from '@/editor/page-mode/page-block-name'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { EMBED_TOKEN_PREFIX } from '@/lib/embed-token'
 import { t } from '@/lib/i18n'
@@ -149,15 +150,25 @@ function pageEmbedContent(id: string): Content {
 
 /**
  * Whether the `!` at `bang` before a `[[` link typed up to `to` makes it an
- * embed: only when the embed will be its paragraph's whole text, the one place
- * an embed renders. Elsewhere (`Hello![[`, `\![[`) the `!` stays text before
- * a link. An embed keeps no label, which `{{embed [[ULID]]}}` has no room for.
+ * embed: only when the embed will be its block's whole content, the one place
+ * an embed renders, which is the whole text of a plain paragraph alone in the
+ * block (block mode's doc, a page block in page mode). Elsewhere (`Hello![[`,
+ * `\![[`, a heading, quote, list item, task or second paragraph) the `!` stays
+ * text before a link. An embed keeps no label, which `{{embed [[ULID]]}}` has
+ * no room for.
  */
 function embedsAt(doc: PMNode, bang: number, to: number): boolean {
+  if (doc.textBetween(bang, bang + 1) !== '!') return false
+  const $bang = doc.resolve(bang)
+  const paragraph = $bang.parent
+  const block = $bang.node($bang.depth - 1)
   return (
-    doc.textBetween(bang, bang + 1) === '!' &&
-    doc.resolve(bang).parentOffset === 0 &&
-    to === doc.resolve(to).end()
+    paragraph.type.name === 'paragraph' &&
+    paragraph.attrs['todoState'] == null &&
+    (block.type.name === 'doc' || block.type.name === PAGE_BLOCK) &&
+    block.childCount === 1 &&
+    $bang.parentOffset === 0 &&
+    to === $bang.end()
   )
 }
 
