@@ -1,18 +1,25 @@
 /**
  * Suggestion popup renderer factory.
  *
- * Creates a floating popup that positions itself below the trigger
- * character using clientRect from the Suggestion plugin. Uses
+ * Creates one floating popup per open picker, anchored to the trigger and
+ * kept still while the query grows (`suggestion-placement.ts`). Uses
  * ReactRenderer from @tiptap/react to render outside the main tree.
  */
 
-import { computePosition, flip, offset, shift, size } from '@floating-ui/dom'
+import { autoUpdate } from '@floating-ui/dom'
 import type { Editor } from '@tiptap/core'
 import type { PluginKey } from '@tiptap/pm/state'
 import { ReactRenderer } from '@tiptap/react'
 import type { SuggestionKeyDownProps, SuggestionProps } from '@tiptap/suggestion'
 
 import {
+  chooseSuggestionSide,
+  placeSuggestionPopup,
+  type SuggestionAnchor,
+  type SuggestionSide,
+} from '@/editor/suggestion-placement'
+import {
+  type PickerItem,
   SUGGESTION_LISTBOX_ID,
   SuggestionList,
   type SuggestionListRef,
@@ -72,84 +79,80 @@ function closeCombobox(dom: HTMLElement): void {
 }
 
 /**
- * Mobile / touch viewports get a larger flip+shift padding (16px) plus a
- * `size()` middleware that caps the popup height at 60vh. Desktop keeps the
- * Original 8px padding and natural sizing. Detection is via
- * `(pointer: coarse)` so it matches the rest of the design system's
- * touch-target rules.
+ * Coarse pointers get a wider edge padding and a 60vh height cap, matching
+ * the design system's touch rules.
  */
 const DESKTOP_PADDING = 8
 const COARSE_PADDING = 16
 const COARSE_MAX_HEIGHT_RATIO = 0.6
+const GAP = 4
+/** The list's own cap (`max-h` in `SuggestionList`) plus its footer and border. */
+const PREFERRED_HEIGHT = 340
 
-async function updatePosition(
-  el: HTMLElement,
-  props: {
-    editor: Editor
-    range: { from: number; to: number }
-    clientRect?: (() => DOMRect | null) | null
-  },
-): Promise<void> {
-  if (!el) return
+interface AnchorProps {
+  editor: Editor
+  range: { from: number; to: number }
+  clientRect?: (() => DOMRect | null) | null
+}
 
-  // Wait for the editor view to flush its DOM update so coordsAtPos returns fresh values
-  await new Promise((resolve) => requestAnimationFrame(resolve))
-
-  // Try cursor position first (more accurate — follows the end of typed text)
-  let rect: DOMRect | null = null
+/**
+ * The trigger's left edge, and the lines from the trigger to the caret: the
+ * popup sits beside those lines, so typing never moves it sideways and a query
+ * that wraps pushes it clear of the new line.
+ */
+function anchorFor(props: AnchorProps): SuggestionAnchor | null {
   try {
-    const coords = props.editor.view.coordsAtPos(props.range.to)
-    if (coords) {
-      rect = new DOMRect(coords.left, coords.top, 1, coords.bottom - coords.top)
+    const from = props.editor.view.coordsAtPos(props.range.from)
+    const to = props.editor.view.coordsAtPos(props.range.to)
+    return {
+      left: from.left,
+      top: Math.min(from.top, to.top),
+      bottom: Math.max(from.bottom, to.bottom),
     }
   } catch {
     logger.debug('SuggestionRenderer', 'coordsAtPos fallback to clientRect')
   }
+  // The plugin's rect is its decoration, which spans the trigger and query.
+  const rect = props.clientRect?.()
+  return rect ? { left: rect.left, top: rect.top, bottom: rect.bottom } : null
+}
 
-  // Fallback to trigger clientRect
-  if (!rect && props.clientRect) {
-    rect = props.clientRect()
-  }
+/** The part of the viewport a fixed popup can use: above an on-screen keyboard. */
+function usableViewport(): { width: number; height: number } {
+  const { clientWidth, clientHeight } = document.documentElement
+  const vv = window.visualViewport
+  const height = vv ? Math.min(clientHeight, vv.offsetTop + vv.height) : clientHeight
+  return { width: clientWidth, height }
+}
 
-  if (!rect) return
+function isCoarsePointer(): boolean {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches
+}
 
-  const virtualEl = {
-    getBoundingClientRect: () => rect,
-  }
-
-  // Mobile/touch viewports get a larger padding so popups don't clip near
-  // the bottom of narrow viewports, plus a `size()` middleware that caps
-  // The popup at 60vh. Desktop behavior is unchanged.
-  const isCoarsePointer =
-    typeof window !== 'undefined' &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(pointer: coarse)').matches
-  const padding = isCoarsePointer ? COARSE_PADDING : DESKTOP_PADDING
-  const middleware = [offset(4), flip({ padding }), shift({ padding })]
-  if (isCoarsePointer) {
-    middleware.push(
-      size({
-        padding,
-        apply({ availableHeight, elements }) {
-          const cap = window.innerHeight * COARSE_MAX_HEIGHT_RATIO
-          const maxH = Math.max(0, Math.min(availableHeight, cap))
-          Object.assign(elements.floating.style, {
-            maxHeight: `${maxH}px`,
-            overflowY: 'auto',
-          })
-        },
-      }),
-    )
-  }
-
-  const { x, y } = await computePosition(virtualEl, el, {
-    placement: 'bottom-start',
-    middleware,
+/**
+ * Place `el` beside `anchor` on `side`. Below, its top edge is pinned; above,
+ * its bottom edge (CSS `bottom`), so results growing or shrinking never move
+ * the edge next to the line.
+ */
+function placePopup(el: HTMLElement, anchor: SuggestionAnchor, side: SuggestionSide): void {
+  const coarse = isCoarsePointer()
+  const viewport = usableViewport()
+  const placed = placeSuggestionPopup({
+    anchor,
+    side,
+    viewport,
+    popupWidth: el.offsetWidth,
+    gap: GAP,
+    padding: coarse ? COARSE_PADDING : DESKTOP_PADDING,
   })
-
-  // Shared helper applies coordinates; `position: 'fixed'` and
-  // `zIndex: '50'` are set during initial popup creation in `onStart`.
-  applySafePosition(el, { x, y })
+  const cap = coarse ? window.innerHeight * COARSE_MAX_HEIGHT_RATIO : Infinity
+  Object.assign(el.style, {
+    left: `${placed.left}px`,
+    top: side === 'below' ? `${placed.edge}px` : '',
+    bottom: side === 'above' ? `${document.documentElement.clientHeight - placed.edge}px` : '',
+    maxHeight: `${Math.min(placed.maxHeight, cap)}px`,
+    overflowY: 'auto',
+  })
 }
 
 /**
@@ -177,12 +180,30 @@ export function createSuggestionRenderer(
   let outsideClickHandler: ((e: PointerEvent) => void) | null = null
   let editorRef: Editor | null = null
   let deferredRegistrationId: number | null = null
-  // Pending rAF id used to coalesce `onUpdate` position
-  // recomputes. The popup must track the cursor, but if the user types
-  // multiple characters within a single frame we only need one
-  // `computePosition` per frame. Cancelled in every teardown path so the
-  // rAF callback never runs against a destroyed popup.
-  let pendingPositionFrame: number | null = null
+  // One open picker: the latest props anchor it, its side is fixed at the
+  // first placement, and the last fetched items stay on screen while the
+  // plugin fetches the next ones (it sends `items: []` with `loading`).
+  let latest: AnchorProps | null = null
+  let side: SuggestionSide | null = null
+  let shownItems: PickerItem[] = []
+  let stopAutoUpdate: (() => void) | null = null
+
+  /** Re-place beside the trigger's lines on the side chosen at open; idempotent while they stay put. */
+  function reposition() {
+    if (!popup || !latest) return
+    const anchor = anchorFor(latest)
+    if (!anchor) return
+    const padding = isCoarsePointer() ? COARSE_PADDING : DESKTOP_PADDING
+    side ??= chooseSuggestionSide(anchor, usableViewport().height, PREFERRED_HEIGHT, GAP, padding)
+    placePopup(popup, anchor, side)
+  }
+
+  /** Show the popup once it has results; plays the entry animation once. */
+  function reveal() {
+    if (!popup) return
+    popup.style.visibility = ''
+    popup.dataset['open'] = ''
+  }
 
   /**
    * #1102 — restore the contenteditable's resting `role="textbox"` and drop the
@@ -199,10 +220,8 @@ export function createSuggestionRenderer(
       cancelAnimationFrame(deferredRegistrationId)
       deferredRegistrationId = null
     }
-    if (pendingPositionFrame !== null) {
-      cancelAnimationFrame(pendingPositionFrame)
-      pendingPositionFrame = null
-    }
+    stopAutoUpdate?.()
+    stopAutoUpdate = null
     if (outsideClickHandler) {
       document.removeEventListener('pointerdown', outsideClickHandler, true)
       outsideClickHandler = null
@@ -267,6 +286,9 @@ export function createSuggestionRenderer(
     const popupToRemove = popup
     renderer = null
     popup = null
+    latest = null
+    side = null
+    shownItems = []
     if (!dispatchExit) editorRef = null
 
     rendererToDestroy?.destroy()
@@ -317,22 +339,24 @@ export function createSuggestionRenderer(
       popup.setAttribute('data-editor-portal', '')
       popup.setAttribute('role', 'region')
       popup.setAttribute('aria-label', label ?? t('editor.suggestion.fallback'))
-      // Start off-screen to avoid flash at (0,0) before positioning settles.
-      // Shared helper for the off-screen fallback.
+      // Off-screen and hidden until placed and given its first results, so
+      // it never shows at (0,0) or as a "no results" flash.
       Object.assign(popup.style, {
         position: 'fixed',
         zIndex: '50',
+        visibility: 'hidden',
       })
       applySafePosition(popup, null)
       document.body.append(popup)
       popup.append(renderer.element)
-      const popupRef = popup
-      updatePosition(popup, props).catch((err: unknown) => {
-        logger.warn('SuggestionRenderer', 'Position update failed', { label }, err)
-        // Keep popup off-screen on failure rather than at the
-        // last computed coordinates, which would orphan it mid-page.
-        applySafePosition(popupRef, null)
-      })
+      latest = props
+      shownItems = props.items
+      if (!props.loading) reveal()
+      reposition()
+      const editorDom = props.editor?.view?.dom
+      if (editorDom instanceof HTMLElement) {
+        stopAutoUpdate = autoUpdate(editorDom, popup, reposition)
+      }
 
       // Dismiss popup on outside click (capture phase, like BlockContextMenu).
       // Defer listener registration by one frame to avoid catching pointer events
@@ -363,28 +387,18 @@ export function createSuggestionRenderer(
         )
         return
       }
-      renderer.updateProps(props)
-      if (!popup) return
-      // Coalesce per-frame so burst typing (>1 keystroke per
-      // frame) collapses to a single `computePosition` call. Cancel any
-      // previously-scheduled frame before scheduling a new one.
-      if (pendingPositionFrame !== null) {
-        cancelAnimationFrame(pendingPositionFrame)
+      latest = props
+      // The trigger stays put while the query grows, so this moves the popup
+      // only when the query wraps the trigger onto another line without the
+      // editor resizing, which `autoUpdate` would miss.
+      reposition()
+      if (props.loading) {
+        renderer.updateProps({ ...props, items: shownItems })
+        return
       }
-      const popupRef = popup
-      pendingPositionFrame = requestAnimationFrame(() => {
-        pendingPositionFrame = null
-        // The popup may have been destroyed between scheduling and now
-        // (teardown paths null `popup` and call `cancelAnimationFrame`,
-        // but defend against any stragglers).
-        if (!popup) return
-        updatePosition(popupRef, props).catch((err: unknown) => {
-          logger.warn('SuggestionRenderer', 'Position update failed', { label }, err)
-          // Keep popup off-screen on failure rather than at the
-          // last computed coordinates, which would orphan it mid-page.
-          applySafePosition(popupRef, null)
-        })
-      })
+      shownItems = props.items
+      renderer.updateProps(props)
+      reveal()
     },
 
     onKeyDown({ event }: SuggestionKeyDownProps) {

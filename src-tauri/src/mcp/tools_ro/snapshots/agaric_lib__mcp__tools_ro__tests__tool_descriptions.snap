@@ -36,7 +36,7 @@ expression: wire
       - space_id
     type: object
   name: list_pages
-- description: "Fetch a page and a paginated slice of its non-conflict subtree (grandchildren included). `page` also carries `properties` (every property row, raw), `tags` (tag ULIDs; `list_tags` names them) and `aliases`; the children are plain rows. A slice whose content passes 65536 bytes stops early with `truncated: true`; pass `next_cursor` as `cursor` to read on."
+- description: "Fetch a page and a paginated slice of its non-conflict subtree (grandchildren included). `page` also carries `properties` (every property row, raw), `tags` (tag ULIDs; `list_tags` names them) and `aliases`; the children are plain rows. `page` and each child with files attached carry `attachments`, one { id, filename, mime_type } each (`list_attachments` has their paths). A slice whose content passes 65536 bytes stops early with `truncated: true`; pass `next_cursor` as `cursor` to read on."
   inputSchema:
     additionalProperties: false
     properties:
@@ -169,7 +169,7 @@ expression: wire
       - space_id
     type: object
   name: search
-- description: "Fetch a single block by ULID. Returns the BlockRow plus `properties` (every property row, raw), `tags` (tag ULIDs; `list_tags` names them) and, for a page, `aliases`; soft-deleted (tombstoned) blocks are excluded."
+- description: "Fetch a single block by ULID. Returns the BlockRow plus `properties` (every property row, raw), `tags` (tag ULIDs; `list_tags` names them), for a page `aliases`, and, when it has files attached, `attachments`: one { id, filename, mime_type } each (`list_attachments` has their paths). Soft-deleted (tombstoned) blocks are excluded."
   inputSchema:
     additionalProperties: false
     properties:
@@ -468,3 +468,28 @@ expression: wire
       - where
     type: object
   name: query
+- description: "List the files attached to one block (`block_id`), or to a page and every live block on it (`page_id`); pass exactly one. Oldest first, cursor paginated. Each row is { id, block_id, filename, mime_type, size_bytes, created_at (epoch ms), path }: `path` is the file's absolute path on this device, to read it from. Never edit the file in place: identical files share one copy on disk, and an edit breaks the hash stored for it. To replace a file, attach a new one."
+  inputSchema:
+    additionalProperties: false
+    properties:
+      block_id:
+        description: ULID of the block whose files to list.
+        type: string
+      cursor:
+        description: Opaque pagination cursor from a prior response.
+        type: string
+      limit:
+        description: Max attachments per response (capped at 100).
+        maximum: 100
+        minimum: 1
+        type: integer
+      page_id:
+        description: "ULID of the page, or its title or alias, whose files and its blocks' files to list."
+        type: string
+      space_id:
+        description: ULID of the space the block or page belongs to. A target in another space is rejected with a Validation error.
+        type: string
+    required:
+      - space_id
+    type: object
+  name: list_attachments

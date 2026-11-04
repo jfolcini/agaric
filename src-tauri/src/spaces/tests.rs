@@ -3351,3 +3351,64 @@ async fn a_moved_notes_tag_mention_follows_the_tags_rename_6242() {
     .await;
     fx.mat_a.shutdown();
 }
+
+/// #6243: deleting a page or tag drops its name from the notes that mention
+/// it, and restoring it gives the name back: locally on A, and on B through
+/// sync, which heals through `changed_page_and_tag_ids` (#5241).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_deleted_and_restored_target_leaves_no_stale_mention_on_either_device_6243() {
+    use crate::commands::{delete_block_inner, restore_block_inner};
+    use crate::materializer::Materializer;
+
+    let fx = mention_fixture(true).await;
+    let [holder_space, target_space] = [&fx.spaces[0], &fx.spaces[1]];
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_b = Materializer::new(pool_b.clone());
+    super::bootstrap::bootstrap_spaces(&pool_b, "device-B", &mat_b)
+        .await
+        .unwrap();
+    for space in [target_space, holder_space] {
+        sync_space_a_to_b_settled(&fx.pool_a, &fx.mat_a, space, &pool_b, &mat_b).await;
+    }
+
+    let mut stamps = Vec::new();
+    for id in [&fx.page, &fx.tag] {
+        let resp = delete_block_inner(&fx.pool_a, "device-A", &fx.mat_a, id.clone())
+            .await
+            .unwrap();
+        stamps.push(resp.deleted_at);
+    }
+    fx.mat_a.flush_background().await.unwrap();
+    sync_space_a_to_b_settled(&fx.pool_a, &fx.mat_a, target_space, &pool_b, &mat_b).await;
+    for (label, pool, mat) in [("B", &pool_b, &mat_b), ("A", &fx.pool_a, &fx.mat_a)] {
+        for (note, name) in [(&fx.page_note, "Target"), (&fx.tag_note, "urgent")] {
+            assert!(
+                !fts_hits(pool, name)
+                    .await
+                    .contains(&note.as_str().to_owned()),
+                "deleted, on {label}: searching {name:?} no longer finds the note"
+            );
+        }
+        assert_eq!(
+            fts_drift(pool, mat).await,
+            Vec::<String>::new(),
+            "deleted, on {label}"
+        );
+    }
+
+    for (id, deleted_at) in [&fx.page, &fx.tag].into_iter().zip(stamps) {
+        restore_block_inner(&fx.pool_a, "device-A", &fx.mat_a, id.clone(), deleted_at)
+            .await
+            .unwrap();
+    }
+    fx.mat_a.flush_background().await.unwrap();
+    sync_space_a_to_b_settled(&fx.pool_a, &fx.mat_a, target_space, &pool_b, &mat_b).await;
+    for (label, pool, mat) in [
+        ("restored, on B", &pool_b, &mat_b),
+        ("restored, on A", &fx.pool_a, &fx.mat_a),
+    ] {
+        assert_notes_indexed(label, pool, mat, &fx, ["Target", "urgent"], None).await;
+    }
+    mat_b.shutdown();
+    fx.mat_a.shutdown();
+}

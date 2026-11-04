@@ -80,10 +80,10 @@ use agaric_lib::commands::{
     delete_block_inner, export_page_markdown_inner, filtered_blocks_query_inner,
     get_batch_properties_inner, get_block_inner, get_properties_inner,
     list_all_tags_in_space_inner, list_attachments_batch_inner, list_backlinks_grouped_inner,
-    list_blocks_inner, list_journal_pages_in_range_inner, list_page_links_inner,
-    list_projected_agenda_inner, list_unlinked_references_inner, load_page_subtree_inner,
-    preview_property_type_change_inner, preview_space_move_inner, query_by_property_inner,
-    restore_block_inner, revert_ops_inner, search_blocks_inner,
+    list_blocks_inner, list_journal_pages_in_range_inner, list_page_attachments_inner,
+    list_page_links_inner, list_projected_agenda_inner, list_unlinked_references_inner,
+    load_page_subtree_inner, preview_property_type_change_inner, preview_space_move_inner,
+    query_by_property_inner, restore_block_inner, revert_ops_inner, search_blocks_inner,
 };
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
@@ -2211,6 +2211,54 @@ fn bench_page_mode_reads_at_cap(c: &mut Criterion) {
 /// The size the maintainer weighs raising the cap to.
 fn bench_page_mode_reads_at_twice_cap(c: &mut Criterion) {
     time_page_mode_reads(c, 2 * PAGE_MODE_BLOCK_CAP);
+}
+
+/// #5410 — MCP `list_attachments` by `page_id`: the first page of the
+/// attachments on a [`PAGE_MODE_BLOCK_CAP`]-block page in the 100K vault, at
+/// the tool's cap. Measurement only: no budget until `bench-slo` has measured
+/// it.
+fn bench_list_page_attachments(c: &mut Criterion) {
+    const CMD: &str = "list_page_attachments @ 1000-block page in 100K";
+    const LIMIT: i64 = 100;
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_list_page_attachments"));
+    rt.block_on(seed_page_mode_page(&pool, PAGE_MODE_BLOCK_CAP));
+    let page_id = agaric_core::ulid::BlockId::from_trusted(PAGE_MODE_PAGE_ID);
+    let observed = rt
+        .block_on(list_page_attachments_inner(
+            &pool,
+            &page_id,
+            None,
+            Some(LIMIT),
+        ))
+        .unwrap();
+    assert_eq!(
+        observed.items.len(),
+        PAGE_MODE_BLOCK_CAP.div_ceil(PAGE_MODE_ATTACHMENT_EVERY),
+        "{CMD}: untimed probe must list every seeded attachment"
+    );
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let (pool_ref, page_ref, acc_ref) = (&pool, &page_id, &acc);
+    group.bench_function("list_page_attachments_1000_page_in_100k", |b| {
+        b.to_async(&rt).iter_custom(|iters| async move {
+            let start = Instant::now();
+            for _ in 0..iters {
+                list_page_attachments_inner(pool_ref, page_ref, None, Some(LIMIT))
+                    .await
+                    .unwrap();
+            }
+            let elapsed = start.elapsed();
+            acc_ref.record(elapsed, iters);
+            elapsed
+        });
+    });
+    group.finish();
+
+    report_measurement_only(CMD, &acc);
 }
 
 /// `list_pages_with_metadata` — the pages view's first page over 10K pages /
@@ -5590,7 +5638,13 @@ mod mcp_reads {
         let pool = rt.block_on(fresh_pool(&dir, name));
         rt.block_on(seed(&pool));
         let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
-        let tools = ReadOnlyTools::new(pool.clone(), pool.clone(), materializer, "slo".into());
+        let tools = ReadOnlyTools::new(
+            pool.clone(),
+            pool.clone(),
+            materializer,
+            "slo".into(),
+            dir.path().to_path_buf(),
+        );
         (dir, pool, Rc::new(tools))
     }
 
@@ -5808,6 +5862,8 @@ criterion_group!(
     // #5691 — page mode's batch reads at its cap and at twice it; no budget yet.
     bench_page_mode_reads_at_cap,
     bench_page_mode_reads_at_twice_cap,
+    // #5410 — MCP `list_attachments` by page; no budget yet.
+    bench_list_page_attachments,
     bench_preview_space_move,
     // #5841 S0 — the Settings › Properties usage badges; no budget yet.
     bench_count_property_usage,
