@@ -1107,6 +1107,12 @@ export const commands = {
 	 *  this module's command convention (see module doc comment).
 	 */
 	isFlatpak: () => typedError<boolean, AppError>(__TAURI_INVOKE("is_flatpak")),
+	/**  Tauri command: open the OS folder dialog; `None` when cancelled. Stores nothing. */
+	pickMirrorFolder: () => typedError<string | null, AppError>(__TAURI_INVOKE("pick_mirror_folder")),
+	/**  Tauri command: set this device's Markdown mirror folder; `None` turns the mirror off. */
+	setMirrorFolder: (path: string | null) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_folder", { path })),
+	/**  Tauri command: the Markdown mirror's status on this device. */
+	getMirrorStatus: () => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("get_mirror_status")),
 };
 
 /* Types */
@@ -2816,6 +2822,29 @@ export type MdnsStatus = {
 	 *  `disabled` is `false`.
 	 */
 	reason: string | null,
+};
+
+/**  A mirrored file that failed to write. */
+export type MirrorFailure = {
+	page_id: string,
+	path: string,
+	message: string,
+};
+
+/**  A mirrored file changed outside Agaric, so the mirror does not overwrite it. */
+export type MirrorFile = {
+	page_id: string,
+	path: string,
+};
+
+/**  The Markdown mirror's status on this device. */
+export type MirrorStatus = {
+	supported: boolean,
+	folder: string | null,
+	paused: string | null,
+	diverged: MirrorFile[],
+	failed: MirrorFailure[],
+	last_pass_ms: number | null,
 };
 
 export type MoveResponse = {

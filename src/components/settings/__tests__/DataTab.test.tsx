@@ -116,8 +116,21 @@ beforeEach(() => {
     availableSpaces: [DEFAULT_TEST_SPACE],
     isReady: true,
   })
-  // A run that imported a page refills the resolve store (#5740).
-  stubInvoke(vi.mocked(invoke), { batch_resolve: () => [], list_all_tags_in_space: () => [] })
+  // A run that imported a page refills the resolve store (#5740). The mirror
+  // card loads its status on mount (#5363); unsupported keeps it out of these
+  // tests, which `MirrorSection.test.tsx` covers.
+  stubInvoke(vi.mocked(invoke), {
+    batch_resolve: () => [],
+    list_all_tags_in_space: () => [],
+    get_mirror_status: () => ({
+      supported: false,
+      folder: null,
+      paused: null,
+      diverged: [],
+      failed: [],
+      last_pass_ms: null,
+    }),
+  })
 })
 
 describe('DataTab', () => {
