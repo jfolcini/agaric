@@ -1327,14 +1327,13 @@ async fn sync_space_a_to_b_settled(
     space: &str,
     pool_b: &SqlitePool,
     mat_b: &crate::materializer::Materializer,
-) -> Vec<BlockId> {
+) {
     let changed = sync_space_a_to_b(pool_a, mat_a, space, pool_b, mat_b).await;
     mat_b
         .enqueue_inbound_sync_rebuilds(&changed, &[])
         .await
         .unwrap();
     mat_b.flush_inbound_rebuilds().await.unwrap();
-    changed
 }
 
 async fn deleted_at_of(pool: &SqlitePool, block_id: &str) -> Option<i64> {
@@ -3060,14 +3059,11 @@ async fn a_peers_new_page_takes_its_newest_blocks_time_6048() {
 
 /// The ids of the blocks whose indexed text matches `needle`.
 async fn fts_hits(pool: &SqlitePool, needle: &str) -> Vec<String> {
-    let mut ids: Vec<String> =
-        sqlx::query_scalar("SELECT block_id FROM fts_blocks WHERE fts_blocks MATCH ?")
-            .bind(format!("\"{needle}\""))
-            .fetch_all(pool)
-            .await
-            .unwrap();
-    ids.sort();
-    ids
+    sqlx::query_scalar("SELECT block_id FROM fts_blocks WHERE fts_blocks MATCH ?")
+        .bind(format!("\"{needle}\""))
+        .fetch_all(pool)
+        .await
+        .unwrap()
 }
 
 /// The blocks Settings › Integrity check reports with a stale index row.
@@ -3195,26 +3191,29 @@ async fn mention_fixture(move_targets: bool) -> MentionFixture {
     }
 }
 
-/// Assert `pool`'s index finds the page note under `page_names[0]` and the
-/// tag note under `tag_names[0]`, neither under the name after it (the
-/// target's previous name), and that Integrity check reports no stale row.
+/// Assert `pool`'s index finds the page note and the tag note under their
+/// targets' `current` names (`[page, tag]`) and not under the `previous`
+/// ones, and that Integrity check reports no stale row.
 async fn assert_notes_indexed(
     label: &str,
     pool: &SqlitePool,
     mat: &crate::materializer::Materializer,
     fx: &MentionFixture,
-    page_names: &[&str],
-    tag_names: &[&str],
+    current: [&str; 2],
+    previous: Option<[&str; 2]>,
 ) {
-    for (note, names) in [(&fx.page_note, page_names), (&fx.tag_note, tag_names)] {
-        let note = note.as_str().to_owned();
-        for (i, name) in names.iter().enumerate() {
-            assert_eq!(
-                fts_hits(pool, name).await.contains(&note),
-                i == 0,
-                "{label}: searching {name:?} finds the note mentioning it only under its current name"
-            );
-        }
+    let notes = [&fx.page_note, &fx.tag_note].map(|n| n.as_str().to_owned());
+    for (note, name) in notes.iter().zip(current) {
+        assert!(
+            fts_hits(pool, name).await.contains(note),
+            "{label}: searching {name:?} finds the note mentioning it"
+        );
+    }
+    for (note, name) in notes.iter().zip(previous.into_iter().flatten()) {
+        assert!(
+            !fts_hits(pool, name).await.contains(note),
+            "{label}: searching the previous name {name:?} no longer finds the note"
+        );
     }
     assert_eq!(
         fts_drift(pool, mat).await,
@@ -3258,7 +3257,7 @@ async fn a_cross_space_mention_is_searchable_whichever_space_arrives_first_6242(
         for space in order {
             sync_space_a_to_b_settled(&fx.pool_a, &fx.mat_a, space, &pool_b, &mat_b).await;
         }
-        assert_notes_indexed(label, &pool_b, &mat_b, &fx, &["Target"], &["urgent"]).await;
+        assert_notes_indexed(label, &pool_b, &mat_b, &fx, ["Target", "urgent"], None).await;
         mat_b.shutdown();
     }
     fx.mat_a.shutdown();
@@ -3282,26 +3281,24 @@ async fn a_cross_space_mention_follows_its_targets_rename_6242() {
 
     rename_targets(&fx.pool_a, "device-A", &fx.mat_a, &fx, "Goal", "critical").await;
     sync_space_a_to_b_settled(&fx.pool_a, &fx.mat_a, target_space, &pool_b, &mat_b).await;
-    let (page_names, tag_names) = (["Goal", "Target"], ["critical", "urgent"]);
     assert_notes_indexed(
         "renamed on A",
         &pool_b,
         &mat_b,
         &fx,
-        &page_names,
-        &tag_names,
+        ["Goal", "critical"],
+        Some(["Target", "urgent"]),
     )
     .await;
 
     rename_targets(&pool_b, "device-B", &mat_b, &fx, "Aim", "blocker").await;
-    let (page_names, tag_names) = (["Aim", "Goal"], ["blocker", "critical"]);
     assert_notes_indexed(
         "renamed on B",
         &pool_b,
         &mat_b,
         &fx,
-        &page_names,
-        &tag_names,
+        ["Aim", "blocker"],
+        Some(["Goal", "critical"]),
     )
     .await;
     mat_b.shutdown();
@@ -3343,14 +3340,13 @@ async fn a_moved_notes_tag_mention_follows_the_tags_rename_6242() {
     );
 
     rename_targets(&fx.pool_a, "device-A", &fx.mat_a, &fx, "Goal", "critical").await;
-    let (page_names, tag_names) = (["Goal", "Target"], ["critical", "urgent"]);
     assert_notes_indexed(
         "moved, then renamed",
         &fx.pool_a,
         &fx.mat_a,
         &fx,
-        &page_names,
-        &tag_names,
+        ["Goal", "critical"],
+        Some(["Target", "urgent"]),
     )
     .await;
     fx.mat_a.shutdown();

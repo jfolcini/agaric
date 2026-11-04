@@ -313,7 +313,7 @@ pub async fn remove_fts_for_blocks<S: AsRef<str>>(
 /// `[[ULID]]` tokens to human-readable names, whatever space the target is in.
 /// The referrers come from four seeds:
 ///
-/// - `block_tags`: explicit tags, which are not in content;
+/// - `block_tags`: explicit tags;
 /// - `block_links`: same-space `[[ULID]]` links;
 /// - `block_links_unresolved`: `[[ULID]]` tokens `block_links` drops, a
 ///   target in another space or not yet arrived (#6242);
@@ -324,9 +324,10 @@ pub async fn remove_fts_for_blocks<S: AsRef<str>>(
 ///
 /// ## Performance
 ///
-/// The scan reads every row of `blocks` once per reindexed tag; it runs only
-/// on a tag rename or a sync import that carries a tag, which already pays a
-/// whole-table `RebuildBlockTagRefsCache`. `bench_reindex_fts_references`
+/// The scan reads every row of `blocks` once per reindexed tag. It runs on a
+/// local tag rename (or its undo), where it is the only whole-vault read, and
+/// on a sync import that carries a tag, which already pays a whole-table
+/// `RebuildBlockTagRefsCache`. `bench_reindex_fts_references`
 /// (`benches/interactive_slo.rs`) times it beside that rebuild.
 ///
 /// The re-strip is chunked by `reindex_fts_for_ids`, one transaction per

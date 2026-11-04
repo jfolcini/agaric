@@ -2982,10 +2982,9 @@ async fn reindex_fts_references_batch_50_blocks() {
 
 // ── reindex_fts_references must pick up inline-only referencing blocks ──
 //
-// Before a block whose only link to a tag was an inline
-// `#[ULID]` reference (no explicit `block_tags` row, no `block_links`
-// row) would be missed by `reindex_fts_references`. After the change,
-// `block_tag_refs` is a third source that must be unioned in.
+// A block whose only link to a tag is an inline `#[ULID]` reference (no
+// explicit `block_tags` row, no `block_links` row) is reached through the
+// content scan.
 
 #[tokio::test]
 async fn reindex_fts_references_updates_inline_only_referencing_block() {
@@ -2995,8 +2994,8 @@ async fn reindex_fts_references_updates_inline_only_referencing_block() {
     let blk_id = "01HQBLKINLINE0000000000001";
 
     // Tag block + content block with an inline `#[ULID]` ref and no
-    // `block_tags`, `block_links` or `block_tag_refs` row: the cache drops a
-    // tag in another space, so the only path is the content token (#6242).
+    // `block_tags`, `block_links` or `block_tag_refs` row, as when the tag is
+    // in another space: the only path is the content token (#6242).
     insert_block(&pool, tag_id, "tag", "meeting", None, Some(1)).await;
     insert_block(
         &pool,
@@ -3095,9 +3094,8 @@ async fn reindex_fts_references_updates_inline_only_referencing_block() {
 
 // ── reindex_fts_references must chunk large rename targets ──
 //
-// Before `reindex_fts_references` opened one transaction for the
-// entire union of `block_tags` ∪ `block_links` ∪ `block_tag_refs` and
-// streamed every INSERT through it. Renaming a popular tag with tens
+// Before `reindex_fts_references` opened one transaction for every
+// referencing block and streamed every INSERT through it. Renaming a popular tag with tens
 // of thousands of references would hold the SQLite writer for many
 // seconds, blocking every other writer. The reindex now runs in
 // chunks of `FTS_REINDEX_CHUNK` ids per transaction.
@@ -7929,7 +7927,7 @@ async fn reindex_fts_references_reaches_an_unlinked_page_mention_6242() {
 async fn reindex_fts_references_scans_content_only_for_a_tag_6242() {
     let (pool, _dir) = test_pool().await;
     let page_id = "01HQPAGESCAN00000000000001";
-    let holder_id = "01HQH0LDERSCAN00000000001";
+    let holder_id = "01HQH0LDERSCAN000000000001";
 
     insert_block(&pool, page_id, "page", "Roadmap", None, Some(1)).await;
     insert_block(
@@ -7952,5 +7950,43 @@ async fn reindex_fts_references_scans_content_only_for_a_tag_6242() {
     assert_eq!(
         fts_stripped(&pool, holder_id).await.as_deref(),
         Some("sentinel")
+    );
+}
+
+/// A soft-deleted tag still scans, so a mention re-strips to `""`, the
+/// truth for a deleted target: a remote tag delete reaches the reindex
+/// with no liveness filter (#5241).
+#[tokio::test]
+async fn reindex_fts_references_strips_a_deleted_tags_name_6242() {
+    let (pool, _dir) = test_pool().await;
+    let tag_id = "01HQTAGDELETED000000000001";
+    let holder_id = "01HQH0LDERDELETED000000001";
+
+    insert_block(&pool, tag_id, "tag", "meeting", None, Some(1)).await;
+    insert_block(
+        &pool,
+        holder_id,
+        "content",
+        &format!("notes #[{tag_id}]"),
+        None,
+        Some(2),
+    )
+    .await;
+    update_fts_for_block(&pool, holder_id).await.unwrap();
+    assert_eq!(
+        fts_stripped(&pool, holder_id).await.as_deref(),
+        Some("notes meeting")
+    );
+
+    sqlx::query("UPDATE blocks SET deleted_at = 1 WHERE id = ?")
+        .bind(tag_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    reindex_fts_references(&pool, tag_id).await.unwrap();
+
+    assert_eq!(
+        fts_stripped(&pool, holder_id).await.as_deref(),
+        Some("notes ")
     );
 }

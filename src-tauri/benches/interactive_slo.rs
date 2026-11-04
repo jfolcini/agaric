@@ -4480,13 +4480,6 @@ fn bench_sweep_deferred_purges(c: &mut Criterion) {
     report_measurement_only(TEN_K, &acc_10k);
 }
 
-/// #6242 — the tag-mention reindex: K notes in a second space mention one
-/// tag and one page in `SLO_SPACE_ID`, so neither `block_tag_refs` nor
-/// `block_links` holds their edge. `tag` pays the content scan, `page` the
-/// same re-strips through `block_links_unresolved`, and `tag_refs_rebuild`
-/// is the whole-table read a tag-carrying sync import already pays (#6209).
-/// Read the scan (tag − page) against that rebuild, not as an absolute: the
-/// fixture's content is shorter than a real vault's.
 #[derive(Clone, Copy)]
 enum MentionProbe {
     Tag,
@@ -4559,6 +4552,13 @@ async fn seed_mention_fixture(pool: &SqlitePool) -> Vec<String> {
     notes
 }
 
+/// #6242 — the tag-mention reindex: `MENTION_NOTES` notes in a second space
+/// mention one tag and one page in `SLO_SPACE_ID`, so neither
+/// `block_tag_refs` nor `block_links` holds their edge. `Tag` pays the
+/// content scan, `Page` the same re-strips through `block_links_unresolved`,
+/// and `TagRefsRebuild` is the whole-table read a tag-carrying sync import
+/// already pays (#6209). Read the scan (`Tag` − `Page`) against that rebuild,
+/// not as an absolute: the fixture's content is shorter than a real vault's.
 fn bench_reindex_fts_references(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();

@@ -27,3 +27,11 @@ planted row and the comment saying the reindex never scans content.
 the page reindex, and the `block_tag_refs` rebuild a tag-carrying import
 already pays. The rule, fixed in advance: if the scan (tag − page) costs more
 than that rebuild, or more than 200 ms, build the plan's §8 index instead.
+
+Ran: the targeted nextest filter `test(6242) | test(reindex_fts_references) |
+test(fts_index_reports)`, red on `main` for the new tests, plus four
+mutations of `index.rs` (revert, drop scan, drop unresolved seed, tag gate
+always true), each red on the predicted tests. The reviewer also ran a
+654-test FTS, sync and oracle filter. `cargo clippy --workspace
+--all-targets` is clean. The bench is verified by branch dispatches of
+`bench-smoke` and `bench-slo`, recorded on the PR.
