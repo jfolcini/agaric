@@ -22,6 +22,7 @@ import {
   clipboardText,
   ctrlClick,
   enterBlankSibling,
+  invoke,
   navigateTo,
   openNewPage,
   reopenPageByTitle,
@@ -135,16 +136,17 @@ describe('Agaric real-backend block clipboard (#5140 Phase 3b) @editor', () => {
     // The sidebar click blurs and commits the code block.
     await reopenTheNewPage()
 
-    // PARENT becomes a TODO through its task checkbox.
+    // PARENT becomes a TODO; the page re-read shows its checkbox.
     const parentId = await $(`[data-testid="sortable-block"]*=${PARENT}`).getAttribute(
       'data-block-id',
     )
+    await invoke('set_todo_state', { blockId: parentId, state: 'TODO' })
+    await reopenTheNewPage()
     const taskMarker = $(`li[data-block-id="${parentId}"]`).$('[data-testid="task-marker"]')
-    await taskMarker.moveTo()
-    await taskMarker.click()
     await browser.waitUntil(
-      // `Set as TODO` until a state is stored, then `Task: TODO. Click to cycle.`
-      async () => ((await taskMarker.getAttribute('aria-label')) ?? '').startsWith('Task: TODO'),
+      async () =>
+        (await taskMarker.isExisting()) &&
+        ((await taskMarker.getAttribute('aria-label')) ?? '').startsWith('Task: TODO'),
       { timeout: ACTION_TIMEOUT, timeoutMsg: 'the parent never became a TODO' },
     )
 
