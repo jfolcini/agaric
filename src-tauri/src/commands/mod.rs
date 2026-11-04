@@ -67,6 +67,7 @@ pub mod queries;
 pub mod reconciliation;
 pub mod recovery;
 pub mod spaces;
+pub mod speech;
 pub mod sync_cmds;
 pub mod tags;
 

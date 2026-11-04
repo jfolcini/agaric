@@ -241,6 +241,7 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   ingest_otel_spans: 'no persistent state — telemetry export',
   set_trace_sampling: 'no persistent state — runtime tracing toggle',
   notify_task: 'no persistent state — OS notification side effect',
+  speech_status: 'no persistent state — reports which speech engine this build has',
   mcp_set_enabled: 'no persistent domain state — MCP server runtime toggle',
   mcp_disconnect_all: 'no persistent domain state — MCP transport reset',
 }
@@ -493,6 +494,7 @@ const NO_DOMAIN_STATE_MUTATING: ReadonlySet<string> = new Set([
   'ingest_otel_spans',
   'set_trace_sampling',
   'notify_task',
+  'speech_status',
   'mcp_set_enabled',
   'mcp_disconnect_all',
 ])

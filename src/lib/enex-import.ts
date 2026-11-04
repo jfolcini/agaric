@@ -66,7 +66,6 @@ import TurndownService from 'turndown'
 import { gfm } from 'turndown-plugin-gfm'
 
 import { formatDate } from '@/lib/date-utils'
-import { scanNameTokens } from '@/lib/name-tokens'
 
 /**
  * One decoded, referenced `<resource>` attachment for a note (#2513). Only
@@ -95,7 +94,7 @@ export interface EnexNote {
   title: string
   /**
    * The note's reminder task, then its ENML body converted to Markdown with its
-   * Evernote tasks in place (no frontmatter, no tag tokens).
+   * Evernote tasks in place (no frontmatter).
    */
   markdown: string
   /** Tag names as authored in Evernote (may contain spaces). */
@@ -858,21 +857,6 @@ function reminderTask(noteEl: Element, title: string): string {
 }
 
 /**
- * Render one Evernote tag as an inline tag token the markdown importer
- * understands (#1924/#1950): `#tag` when the importer reads that bare form back
- * as this whole tag, else `#[[…]]`, so `Multi Word`, `C++`, `v1.2`, `Q&A` and
- * the all-digit `2024` each survive as one tag instead of being cut short or
- * left as text. The rule is the export's (`tagText` in
- * `source-buffer-pickers.ts`, #5160 N8).
- */
-function tagToToken(tag: string): string {
-  const name = tag.trim().replace(/\s+/g, ' ')
-  const bare = `#${name}`
-  const [token] = scanNameTokens(bare)
-  return token?.kind === 'tag' && token.name === name ? bare : `#[[${name}]]`
-}
-
-/**
  * The look-alike for each character a page name splits into namespace levels on:
  * `/`, and `\`, which the backend reads as `/` (#6032).
  */
@@ -903,11 +887,13 @@ export function sanitizeNoteTitleToFilename(title: string): string {
  * Compose the final Markdown handed to `importMarkdown` for a note:
  *
  *   1. a YAML frontmatter block (`created` / `updated` as ISO strings and
- *      `source-url` when known, plus `source: evernote`) — applied by the
- *      importer as page properties (#1432),
- *   2. the note's tags as inline `#tag` / `#[[Multi Word]]` tokens on one
- *      line (omitted when there are none),
- *   3. the converted ENML body.
+ *      `source-url` when known, the note's `tags`, plus `source: evernote`) —
+ *      applied by the importer as page properties (#1432) and page tags,
+ *   2. the converted ENML body.
+ *
+ * The tags are written as `jexNoteToMarkdown` writes Joplin's, so `C++` or
+ * `2024` is one tag; a pretty-printed `<tag>`'s line breaks would end the
+ * item, so whitespace collapses.
  */
 export function enexNoteToMarkdown(note: EnexNote): string {
   const frontmatter: string[] = ['---']
@@ -920,14 +906,13 @@ export function enexNoteToMarkdown(note: EnexNote): string {
   if (note.sourceUrl !== null) {
     frontmatter.push(`source-url: "${note.sourceUrl}"`)
   }
+  if (note.tags.length > 0) {
+    frontmatter.push('tags:', ...note.tags.map((tag) => `  - "${tag.trim().replace(/\s+/g, ' ')}"`))
+  }
   frontmatter.push('source: evernote')
   frontmatter.push('---')
 
   const sections: string[] = [frontmatter.join('\n')]
-
-  if (note.tags.length > 0) {
-    sections.push(note.tags.map(tagToToken).join(' '))
-  }
 
   if (note.markdown.length > 0) {
     sections.push(note.markdown)
