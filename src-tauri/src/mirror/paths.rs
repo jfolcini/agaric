@@ -3,7 +3,7 @@
 //!
 //! A port of the ZIP export's mapping (`src/lib/export-graph.ts`), which gives
 //! a clean title the same path, plus what a folder kept in step on disk needs:
-//! control characters replaced, a segment cut to [`MAX_SEGMENT_BYTES`], and
+//! control characters replaced, a segment cut to `MAX_SEGMENT_BYTES`, and
 //! collisions found as APFS and NTFS compare names, case-insensitively and
 //! under NFC, then settled in id order, so a page keeps its name from one pass
 //! to the next.
@@ -28,7 +28,7 @@ fn is_illegal(c: char) -> bool {
 }
 
 /// `segment` as one file or folder name: trimmed, its illegal characters
-/// replaced by `_`, cut to [`MAX_SEGMENT_BYTES`] on a char boundary, its
+/// replaced by `_`, cut to `MAX_SEGMENT_BYTES` on a char boundary, its
 /// trailing dots and spaces removed (Windows drops them, and a segment of dots
 /// alone would climb out of its folder), a Windows device name escaped with
 /// `_` (`CON` → `CON_`, `con.txt` → `con_.txt`), and `Untitled` when nothing is
@@ -93,7 +93,7 @@ fn fold(path: &str) -> String {
     agaric_core::tag_norm::normalize_tag_name(path)
 }
 
-/// Each `(id, name)` owner's name, made distinct under [`fold`]. In id order,
+/// Each `(id, name)` owner's name, made distinct under `fold`. In id order,
 /// a name already taken gets `_` and its owner's first 8 id characters, and a
 /// counter after that while it is still taken, so the lowest id of a colliding
 /// set keeps the bare name.
@@ -127,7 +127,7 @@ pub struct PageEntry {
 }
 
 /// Each page's file below the mirror's folder, `/`-separated:
-/// `<space folder>/<title path>.md`, distinct under [`fold`] within a space,
+/// `<space folder>/<title path>.md`, distinct under `fold` within a space,
 /// as the space folders are among themselves. `spaces` are `(id, name)`; a
 /// page whose space is not among them gets no file.
 pub fn layout(spaces: &[(String, String)], pages: &[PageEntry]) -> HashMap<String, String> {

@@ -118,7 +118,7 @@ impl PageState {
     }
 
     /// Record `shadow` as written at `path`, keeping the last
-    /// [`SHADOWS_KEPT`] texts.
+    /// `SHADOWS_KEPT` texts.
     pub fn record(&mut self, path: String, shadow: Shadow) {
         self.path = path;
         if self.newest() != Some(&shadow) {

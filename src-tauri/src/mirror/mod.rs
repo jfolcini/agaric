@@ -2,12 +2,12 @@
 //! space written to a folder the user picks, as `<space>/<title>.md`, in the
 //! form [`get_page_file_inner`] renders, on desktop.
 //!
-//! One task polls every [`TICK`]. It writes the pages this device's own ops
+//! One task polls every `TICK`. It writes the pages this device's own ops
 //! touched since its watermark, an `op_log` `seq` (never a timestamp: a
 //! peer's op carries its own), the pages a sync reported, and the pages whose
 //! path or title changed, with the pages linking to them. A full pass over
 //! every page runs at start, when the folder is set, when the mirror resumes,
-//! after a sync that names no pages, and every [`BACKSTOP`], and catches what
+//! after a sync that names no pages, and every `BACKSTOP`, and catches what
 //! the dirty set cannot see: a purge, a tag's rename. The task reads through
 //! the reader pool and takes no write connection.
 //!
