@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, block_type FROM blocks WHERE id IN (SELECT value FROM json_each(?)) AND block_type IN ('page', 'tag')",
+  "query": "SELECT id, block_type FROM blocks b WHERE id IN (SELECT value FROM json_each(?)) AND (block_type IN ('page', 'tag') OR EXISTS (SELECT 1 FROM block_links WHERE target_id = b.id) OR EXISTS (SELECT 1 FROM block_links_unresolved WHERE target_id = b.id))",
   "describe": {
     "columns": [
       {
@@ -34,5 +34,5 @@
       false
     ]
   },
-  "hash": "b344597b248eba6c6989072d45612e7c9af336ef01b59333ded8d9bbd99e4cb0"
+  "hash": "ddf42c864fe66ab10b5b0d17623861b86ae4c662f95b19e930d8629c5917917b"
 }

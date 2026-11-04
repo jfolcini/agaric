@@ -678,7 +678,7 @@ fn a_name_inside_code_stays_raw() {
 /// `conformance/block-content.vectors.json`: stored block content and the
 /// meaning Rust and the block editor must agree on. This side reads each
 /// content through the buffer as one block with that content and no
-/// properties, and authors each row's `rustReads`
+/// properties, and authors each row's `rustReads` and `fts`
 /// ([`the_block_content_vectors_carry_what_rust_reads`]);
 /// `block-content-conformance.test.ts` runs the editor's save flush over the
 /// same rows and parses each content into the same code blocks and rules.
@@ -736,8 +736,30 @@ fn rust_reads(content: &str) -> Vec<&'static str> {
         .collect()
 }
 
-/// Each stored block row carries `rustReads`, which Rust authors
-/// (`CONFORMANCE_UPDATE=1` writes it) and the editor's parse asserts.
+/// The text the search index holds for `content` (#6277 B3), with each
+/// `blockRefTargets` id resolving to its target's first line.
+fn fts_text(content: &str, block_ref_targets: &serde_json::Value) -> String {
+    let block_titles = block_ref_targets
+        .as_object()
+        .expect("`blockRefTargets` maps an id to its content")
+        .iter()
+        .map(|(id, target)| {
+            let first_line = target.as_str().unwrap_or_default().lines().next();
+            (id.clone(), first_line.unwrap_or_default().to_owned())
+        })
+        .collect();
+    agaric_store::fts::strip::strip_for_fts_with_maps(
+        "vector",
+        content,
+        &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
+        &block_titles,
+    )
+}
+
+/// Each stored block row carries `rustReads` and `fts`, which Rust authors
+/// (`CONFORMANCE_UPDATE=1` writes them); the editor's parse asserts the
+/// first and the mock's search strip the second.
 #[test]
 fn the_block_content_vectors_carry_what_rust_reads() {
     let written: serde_json::Value = serde_json::from_str(
@@ -745,12 +767,17 @@ fn the_block_content_vectors_carry_what_rust_reads() {
     )
     .expect("the block-content vectors are JSON");
     let mut authored = written.clone();
+    let block_ref_targets = written["blockRefTargets"].clone();
     for row in authored["blocks"]
         .as_array_mut()
         .expect("the vectors hold `blocks`")
     {
-        let content = row["content"].as_str().expect("a row has `content`");
-        row["rustReads"] = serde_json::json!(rust_reads(content));
+        let content = row["content"]
+            .as_str()
+            .expect("a row has `content`")
+            .to_owned();
+        row["rustReads"] = serde_json::json!(rust_reads(&content));
+        row["fts"] = serde_json::json!(fts_text(&content, &block_ref_targets));
     }
     if std::env::var("CONFORMANCE_UPDATE").as_deref() == Ok("1") {
         let mut out = serde_json::to_string_pretty(&authored).expect("vectors serialise");
@@ -760,7 +787,7 @@ fn the_block_content_vectors_carry_what_rust_reads() {
     }
     assert_eq!(
         written, authored,
-        "`rustReads` drifted from Rust's reading: re-author with CONFORMANCE_UPDATE=1"
+        "`rustReads` or `fts` drifted from Rust's reading: re-author with CONFORMANCE_UPDATE=1"
     );
 }
 
