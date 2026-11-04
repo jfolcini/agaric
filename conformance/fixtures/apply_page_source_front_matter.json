@@ -1,10 +1,10 @@
 {
-  "description": "#5160 S8 — the page's own properties, aliases and tags head its Edit as Markdown buffer as the export's YAML front matter, and `apply_page_source` writes what the front matter changed: a changed or new key is set, a key left out deleted, the alias list replaced and a tag added or removed; a line no property reads from, a value its definition refuses and an unclosed `---` refuse the save. The buffer is the text `get_page_buffer` gives (#5160 A), its front matter kept as text carrying no id. Covers only what the tauri mock models: text values and plain list items, which both stacks render byte for byte (the keys sorted, `drop` seeded after `stage` so the order is the render's). Each successful step's `baseSource` is the page's source after the step before it. Seed: S1 (Home) > S2 (alpha), tagged S3 (work), alias `Home base`, `stage: open` (a select of open/done) and `drop: me`; S4 is the tag `idea`; both tags sit under S5 (Tags), since a root seed block's `page_id` differs between the two seed loaders. Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "description": "#5160 S8 — the page's own properties, aliases and tags head its Edit as Markdown buffer as the export's YAML front matter, and `apply_page_source` writes what the front matter changed: a changed or new key is set, a key left out deleted, the alias list replaced and a tag added or removed; a line no property reads from, a value its definition refuses and an unclosed `---` refuse the save. The buffer is the text `get_page_buffer` gives (#5160 A), its front matter kept as text carrying no id. Covers only what the tauri mock models: text values and plain list items, which both stacks render byte for byte (the keys sorted, `drop` seeded after `stage` so the order is the render's). Each successful step's `baseSource` is the page's source after the step before it. Seed: S1 (Home) > S2 (alpha), tagged S3 (work), alias `Home base`, `stage: open` (a select of open/done) and `drop: me`; S4 is the tag `idea`; both tags sit under S5 (Tags), since a root seed block's `page_id` differs between the two seed loaders. Obsidian's singular `alias:` and `tag:` (#6033) name the alias list and the tags. Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [
       {
         "block_id": "B1",
-        "tag_id": "B5"
+        "tag_id": "B4"
       }
     ],
     "blocks": [
@@ -75,7 +75,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 12,
+      "count": 15,
       "ops": [
         {
           "key": "stage",
@@ -117,6 +117,15 @@
         {
           "key": "stage",
           "op_type": "set_property"
+        },
+        {
+          "op_type": "add_page_alias"
+        },
+        {
+          "op_type": "remove_tag"
+        },
+        {
+          "op_type": "add_tag"
         }
       ]
     },
@@ -178,6 +187,12 @@
       "error": null,
       "name": "writes_the_front_matter_and_a_block",
       "returns": ["apply_page_source#created=0#edited=1#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "singular_alias_and_tag_are_the_aliases_and_tags",
+      "returns": ["apply_page_source#created=0#edited=0#deleted=0"]
     }
   ],
   "expected_queries": [
@@ -186,7 +201,7 @@
       "error": null,
       "has_more": null,
       "name": "aliases_after_the_save",
-      "rows": ["HQ"],
+      "rows": ["Atlas", "HQ"],
       "total_count": null
     },
     {
@@ -196,8 +211,8 @@
       "name": "the_buffer_after_the_saves",
       "rows": [
         "line#text=---",
-        "line#text=aliases: [HQ]",
-        "line#text=tags: [idea]",
+        "line#text=aliases: [Atlas, HQ]",
+        "line#text=tags: [work]",
         "line#text=owner: ann",
         "line#text=stage: open",
         "line#text=---",
@@ -314,6 +329,19 @@
       "comment": "`stage` and alpha's line both changed: one save sets the property and edits the block.",
       "name": "writes_the_front_matter_and_a_block",
       "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: open\n---\n\nalpha, by line ^000000000000000000000000S2\n",
+        "lineIds": [null, null, null, null, null, null, null, "000000000000000000000000S2", null],
+        "merge": false,
+        "pageId": "S1",
+        "source": "---\nalias: [HQ, Atlas]\ntag: [work]\nowner: ann\nstage: open\n---\n\nalpha, by line\n"
+      },
+      "command": "apply_page_source",
+      "comment": "#6033 — Obsidian's singular `alias:` and `tag:` are the alias list and the tags, not text properties: `Atlas` is added and `idea` swapped back for `work`.",
+      "name": "singular_alias_and_tag_are_the_aliases_and_tags",
+      "via": "command"
     }
   ],
   "queries": [
@@ -322,7 +350,7 @@
         "pageId": "S1"
       },
       "command": "get_page_aliases",
-      "comment": "`HQ` alone: the front matter's alias list replaced `Home base`, and `page_aliases` is outside the snapshot, so this read observes it.",
+      "comment": "`HQ` and `Atlas`: the front matter's alias list replaced `Home base`, then the singular `alias:` added `Atlas`, and `page_aliases` is outside the snapshot, so this read observes it.",
       "name": "aliases_after_the_save"
     },
     {
