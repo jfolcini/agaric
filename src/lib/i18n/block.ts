@@ -63,9 +63,7 @@ export const block: Record<string, string> = {
   // their action instead of the destructive delete backdrop (or no cue at all).
   'block.swipe.indentHint': 'Indent',
   'block.swipe.outdentHint': 'Outdent',
-  'block.setTodo': 'Set as TODO',
   'block.taskCycle': 'Task: {{state}}. Click to cycle.',
-  'block.setTodoTip': 'Set as TODO (Ctrl+Enter)',
   'block.todoCycleTip': '{{state}} (Ctrl+Enter to cycle)',
   'block.priorityCycle': 'Priority {{level}}. Click to cycle.',
   'block.priorityTip': 'Priority {{level}} (click to cycle)',

@@ -23,6 +23,7 @@ import { PageMetadataBar } from '@/components/pages/PageMetadataBar'
 import { PageSourceEditor } from '@/components/pages/PageSourceEditor'
 import { PagesTreeSection } from '@/components/pages/PagesTreeSection'
 import { TaggedItemsSection } from '@/components/pages/TaggedItemsSection'
+import { ModeSwap } from '@/editor/page-mode/ModeSwap'
 import { PageModeSlot } from '@/editor/page-mode/PageModeSlot'
 import { usePageMode } from '@/editor/page-mode/use-page-mode'
 import { unwrap } from '@/lib/app-error'
@@ -411,34 +412,42 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
           onSwitchToPage={handleSwitchToPage}
           pageModeBlocked={pageMode.blocked}
         />
-      ) : pageMode.wanted && isTagPage !== true ? (
-        <PageModeSlot
-          pageId={pageId}
-          ready={isTagPage === false}
-          onBlocked={pageMode.onBlocked}
-          editorRef={pageMode.editorRef}
-          opening={pageMode.opening}
-          onNavigateToPage={onNavigateToPage}
-          onEditSource={handleEditSource}
-        />
       ) : (
         isTagPage !== true && (
-          <>
-            {/* Block tree — loads children of pageId. */}
-            <BlockTree
-              parentId={pageId}
-              autoCreateFirstBlock={isTagPage === false}
-              onNavigateToPage={onNavigateToPage}
-              onRevealSettled={handleRevealSettled}
-              revealNonce={revealNonce}
-              onZoomChange={handleZoomChange}
-            />
+          <ModeSwap
+            pageId={pageId}
+            pageMode={pageMode.wanted}
+            page={
+              <PageModeSlot
+                pageId={pageId}
+                ready={isTagPage === false}
+                onBlocked={pageMode.onBlocked}
+                editorRef={pageMode.editorRef}
+                opening={pageMode.opening}
+                onNavigateToPage={onNavigateToPage}
+                onEditSource={handleEditSource}
+              />
+            }
+            blocks={
+              // The page's own gap between the tree's parts and the Add block button.
+              <div className="flex flex-col gap-3">
+                {/* Block tree — loads children of pageId. */}
+                <BlockTree
+                  parentId={pageId}
+                  autoCreateFirstBlock={isTagPage === false}
+                  onNavigateToPage={onNavigateToPage}
+                  onRevealSettled={handleRevealSettled}
+                  revealNonce={revealNonce}
+                  onZoomChange={handleZoomChange}
+                />
 
-            {/* Add block button — directly beneath the last block */}
-            <div>
-              <AddBlockButton onClick={handleAddBlock} />
-            </div>
-          </>
+                {/* Add block button — directly beneath the last block */}
+                <div>
+                  <AddBlockButton onClick={handleAddBlock} />
+                </div>
+              </div>
+            }
+          />
         )
       )}
 

@@ -1007,6 +1007,19 @@
   }
 }
 
+/* A block's leading controls on a fine pointer, in block mode's row
+ * (`SortableBlock`) and page mode's gutter alike, so a line's text lands at one
+ * x in both. The lane just fits the grip (a 1em glyph and `p-0.5`), its
+ * `gap-0.5` and the chevron (`w-5`); a task's checkbox (`task-marker`, built as
+ * the grip) follows it; the gap separates each from the next; the inset is the
+ * text box's own `px-3` (`.ProseMirror`, `StaticBlock`). */
+:root {
+  --block-lane: calc(var(--agaric-font-size, 1rem) + 1.625rem);
+  --block-checkbox: calc(var(--agaric-font-size, 1rem) + 0.25rem);
+  --block-gap: 0.25rem;
+  --block-inset: 0.75rem;
+}
+
 /* ── Responsive typography scale ───────────────────────────── */
 @media (max-width: 640px) {
   :root {
@@ -1142,6 +1155,62 @@
   font-size: var(--agaric-font-size, 1rem);
 }
 
+/* The first line box of a block's text, on which its grip, chevron and
+   checkbox centre in both editing modes (`min-h-block-line`): the text's line
+   (`.ProseMirror`'s and `.block-static`'s 1.5), or a leading heading's, whose
+   sizes are `.ProseMirror h1`… and `HEADING_CLASSES`. */
+:root {
+  --block-first-line: calc(var(--agaric-font-size, 1rem) * 1.5);
+}
+:is(
+  .sortable-block:has(:is(.block-static, .ProseMirror) > h1:first-child),
+  [data-page-block]:has(> .page-block-content > h1:first-child)
+) {
+  --block-first-line: calc(var(--text-xl) * var(--text-xl--line-height));
+  @variant sm {
+    --block-first-line: calc(var(--text-2xl) * var(--text-2xl--line-height));
+  }
+}
+:is(
+  .sortable-block:has(:is(.block-static, .ProseMirror) > h2:first-child),
+  [data-page-block]:has(> .page-block-content > h2:first-child)
+) {
+  --block-first-line: calc(var(--text-lg) * var(--text-lg--line-height));
+  @variant sm {
+    --block-first-line: calc(var(--text-xl) * var(--text-xl--line-height));
+  }
+}
+:is(
+  .sortable-block:has(:is(.block-static, .ProseMirror) > h3:first-child),
+  [data-page-block]:has(> .page-block-content > h3:first-child)
+) {
+  --block-first-line: calc(var(--text-base) * var(--text-base--line-height));
+  @variant sm {
+    --block-first-line: calc(var(--text-lg) * var(--text-lg--line-height));
+  }
+}
+:is(
+  .sortable-block:has(:is(.block-static, .ProseMirror) > h4:first-child),
+  [data-page-block]:has(> .page-block-content > h4:first-child)
+) {
+  --block-first-line: calc(var(--text-sm) * var(--text-sm--line-height));
+  @variant sm {
+    --block-first-line: calc(var(--text-base) * var(--text-base--line-height));
+  }
+}
+:is(
+  .sortable-block:has(:is(.block-static, .ProseMirror) > h5:first-child),
+  [data-page-block]:has(> .page-block-content > h5:first-child)
+) {
+  --block-first-line: calc(var(--text-sm) * var(--text-sm--line-height));
+}
+:is(
+  .sortable-block:has(:is(.block-static, .ProseMirror) > h6:first-child),
+  [data-page-block]:has(> .page-block-content > h6:first-child)
+) {
+  --block-first-line: calc(var(--text-xs) * var(--text-xs--line-height));
+}
+
 /* Match static block padding and min-height so text doesn't jump on focus/blur.
    On touch a shorter editor made a tap that blurred it grow the block, and the
    rows below slid from under the finger before the release. */
@@ -1179,10 +1248,13 @@
    editor lays one out (decision of 2026-10-28): no box per block and no mark on
    the one the cursor is in, a document's spacing between blocks, and the indent
    per depth (`PageBlock` sets it as a margin). The text sits in a frame
-   (`PageModeEditor`), inset past the lane (`::before` below) that holds a
-   block's checkbox, chevron and grip. */
+   (`PageModeEditor`) where block mode's sits in the page column: past the lane
+   (`::before` below) that holds a block's chevron and grip, the gap and the
+   inset, less the frame's border. A task's checkbox and its gap push its text
+   further in, as block mode's row does. */
 .ProseMirror.page-mode-editor {
-  @apply py-3 pr-4 pl-20;
+  @apply py-3 pr-4;
+  padding-left: calc(var(--block-lane) + var(--block-gap) + var(--block-inset) - 1px);
   min-height: 0;
 }
 .page-mode-editor [data-page-block] {
@@ -1209,14 +1281,17 @@
   margin-top: 0;
 }
 /* A task's checkbox (`page-tasks.ts`) sits left of the text, centred on its
-   first line: its box is a line and a half (`min-h-8`) tall. */
+   first line: its box (`min-h-block-line`) counts block mode's `py-1`, which
+   page mode's text lacks, so it starts that much (`-top-1`) above the text. */
 .page-mode-editor .page-block-controls {
-  @apply absolute -top-1 right-full mr-1 select-none;
+  @apply absolute -top-1 -left-(--block-inset) select-none;
 }
-/* A block's chevron (`page-gutter.ts`) sits left of the checkbox's slot, on the
-   first line. */
+.page-mode-editor [data-page-block][data-todo-state] {
+  padding-left: calc(var(--block-checkbox) + var(--block-gap));
+}
+/* A block's chevron (`page-gutter.ts`) ends the lane, on the first line. */
 .page-mode-editor .page-block-gutter {
-  @apply absolute -top-1 right-full mr-7 flex min-h-8 min-w-12 items-center justify-end gap-0.5 select-none;
+  @apply absolute -top-1 right-full mr-[calc(var(--block-gap)+var(--block-inset))] flex min-h-block-line min-w-(--block-lane) items-center justify-end gap-0.5 select-none;
 }
 /* The editor's one grip (`page-gutter.ts`), outside its text, placed at the top
    left corner of the block under the pointer and moved from there into that
@@ -1224,11 +1299,11 @@
    chevron (`w-5`) and the gutter's gap, when the block has one. The text's
    font size, as the lane's. */
 .page-grip {
-  @apply absolute -mt-1 -ml-7 flex min-h-8 -translate-x-full items-center select-none;
+  @apply absolute -mt-1 -ml-[calc(var(--block-gap)+var(--block-inset))] flex min-h-block-line -translate-x-full items-center select-none;
   font-size: var(--agaric-font-size, 1rem);
 }
 .page-grip[data-chevron] {
-  @apply -ml-12.5;
+  @apply -ml-[calc(var(--block-gap)+var(--block-inset)+1.375rem)];
 }
 /* Its block's chevron stays shown while the pointer is on the grip, outside the
    block, as it is while the pointer is on the block. */
@@ -1239,7 +1314,7 @@
    pointing anywhere in it puts the grip there and shows the chevron. */
 .page-mode-editor [data-page-block]::before {
   content: '';
-  @apply absolute bottom-0 right-full w-19;
+  @apply absolute bottom-0 right-full w-[calc(var(--block-lane)+var(--block-gap)+var(--block-inset))];
   top: calc(-1 * var(--page-block-gap, 0px));
 }
 /* On a phone (`PageModeEditor`) the lane is as narrow as the chevron and the
@@ -1253,7 +1328,10 @@
   @apply min-h-0 min-w-0 touch-hit-area;
 }
 .page-mode-phone .page-block-controls {
-  @apply mr-3;
+  @apply left-auto right-full mr-3;
+}
+.page-mode-phone [data-page-block][data-todo-state] {
+  @apply pl-0;
 }
 .page-mode-phone .page-block-gutter {
   @apply mr-9 min-w-0;
@@ -2322,6 +2400,13 @@
   &:focus-visible {
     @apply outline-2 outline-ring;
   }
+}
+
+/* A gutter control's slot: the first line box of a block's text
+   (`--block-first-line`) and the `py-1` around it (`.ProseMirror`,
+   `.block-static`), so a control centred in it centres on that line. */
+@utility min-h-block-line {
+  min-height: calc(var(--block-first-line) + 0.5rem);
 }
 
 /* Explicit block selection (StaticBlock / EditableBlock multi-select). */
