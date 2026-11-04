@@ -174,6 +174,21 @@ test.describe('Read aloud @attachments @editor @pages @search', () => {
     expect(await cancels(page)).toBe(1)
   })
 
+  test('a reading started during another one keeps its toast and reads on', async ({ page }) => {
+    const [gs1] = await blockIds(page)
+    await readBlockAloud(page, gs1 as string)
+    await expect.poll(() => spoken(page)).toEqual([GS_1])
+
+    await runPaletteCommand(page, 'read-page-aloud')
+    await expect.poll(() => spoken(page)).toEqual([GS_1, PAGE])
+    await expect(readingToast(page)).toHaveCount(1)
+    await expect(readingToast(page)).toBeVisible()
+    await finishUtterance(page)
+    await expect.poll(() => spoken(page)).toEqual([GS_1, PAGE, GS_1])
+    await expect(row(page, gs1 as string)).toHaveAttribute('data-reading', '')
+    await expect(readingToast(page)).toBeVisible()
+  })
+
   test('navigating away ends the reading', async ({ page }) => {
     await runPaletteCommand(page, 'read-page-aloud')
     await expect.poll(() => spoken(page)).toEqual([PAGE])

@@ -73,13 +73,15 @@ describe('a reading', () => {
     startReading(UTTERANCES.slice(2), PAGE)
     expect(vi.mocked(toast)).toHaveBeenCalledWith(
       t('readAloud.reading'),
-      expect.objectContaining({ id: 'read-aloud', duration: Number.POSITIVE_INFINITY }),
+      expect.objectContaining({ duration: Number.POSITIVE_INFINITY }),
     )
+    const id = (vi.mocked(toast).mock.lastCall?.[1] as { id: string } | undefined)?.id
+    expect(id).toMatch(/^read-aloud-/)
     expect(vi.mocked(announce)).not.toHaveBeenCalled()
 
     speech.endCurrent()
     expect(vi.mocked(announce)).toHaveBeenLastCalledWith(t('announce.readAloudFinished'))
-    expect(vi.mocked(toast.dismiss)).toHaveBeenCalledWith('read-aloud')
+    expect(vi.mocked(toast.dismiss)).toHaveBeenCalledWith(id)
   })
 
   it('stops from the toast’s Stop action', () => {
@@ -150,6 +152,19 @@ describe('stopping', () => {
     // The first reading's cut utterance does not advance the second.
     speech.spoken[0]?.end()
     expect(speech.spoken).toHaveLength(2)
+  })
+
+  it('gives the replacing reading its own toast, which the old toast closing cannot end', () => {
+    startReading(UTTERANCES, PAGE)
+    const first = vi.mocked(toast).mock.lastCall?.[1] as { id: string; onDismiss: () => void }
+    startReading([{ blockId: 'C', text: 'other' }], PAGE)
+    const second = vi.mocked(toast).mock.lastCall?.[1] as { id: string }
+    expect(second.id).not.toBe(first.id)
+    expect(vi.mocked(toast.dismiss)).toHaveBeenCalledWith(first.id)
+    // Sonner fires the dismissed toast's `onDismiss` after the second reading has started.
+    first.onDismiss()
+    expect(getReadAloudSnapshot()).toMatchObject({ reading: true, currentBlockId: 'C' })
+    expect(speech.cancel).toHaveBeenCalledTimes(1)
   })
 })
 

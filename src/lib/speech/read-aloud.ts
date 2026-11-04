@@ -37,6 +37,11 @@ interface Reading {
   readonly owner: object
   /** Held while it speaks: Chromium drops an utterance nothing references, and its `end` with it. */
   utterance: SpeechSynthesisUtterance | null
+  /**
+   * Its own toast: sonner keeps a dismissed id marked for deletion, so a replacing reading that
+   * reused the id would lose its toast, and the old toast's `onDismiss` would end it.
+   */
+  readonly toastId: string
 }
 
 /** The engine errors that mean the webview has no voice to speak with. */
@@ -46,7 +51,7 @@ const NO_VOICE_ERRORS: ReadonlySet<string> = new Set([
   'voice-unavailable',
 ])
 
-const TOAST_ID = 'read-aloud'
+let readings = 0
 
 let snapshot: ReadAloudSnapshot = { supported: false, reading: false, currentBlockId: null }
 let active: Reading | null = null
@@ -93,14 +98,23 @@ export function startReading(utterances: readonly SpokenUtterance[], owner: obje
     return
   }
   if (active !== null) finish(active, null)
-  const reading: Reading = { queue: [...utterances], owner, utterance: null }
+  readings += 1
+  const reading: Reading = {
+    queue: [...utterances],
+    owner,
+    utterance: null,
+    toastId: `read-aloud-${readings}`,
+  }
   active = reading
+  const stopThis = () => {
+    if (active === reading) finish(reading, 'announce.readAloudStopped')
+  }
   notify(t('readAloud.reading'), {
-    id: TOAST_ID,
+    id: reading.toastId,
     duration: Number.POSITIVE_INFINITY,
-    action: { label: t('readAloud.stop'), onClick: () => stopReading() },
+    action: { label: t('readAloud.stop'), onClick: stopThis },
     // The Toaster's close button would otherwise hide the toast and leave the reading going.
-    onDismiss: () => stopReading(),
+    onDismiss: stopThis,
     classNames: { actionButton: 'touch-hit-area' },
   })
   speakNext(reading)
@@ -143,7 +157,7 @@ function finish(reading: Reading, announcement: string | null): void {
   reading.queue.length = 0
   reading.utterance = null
   window.speechSynthesis.cancel()
-  notify.dismiss(TOAST_ID)
+  notify.dismiss(reading.toastId)
   publish({ reading: false, currentBlockId: null })
   if (announcement !== null) announce(t(announcement))
 }
