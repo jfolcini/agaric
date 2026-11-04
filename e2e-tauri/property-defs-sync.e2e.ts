@@ -20,6 +20,8 @@
 import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
+  clickUncovered,
+  confirmDialog,
   expectAbsent,
   invoke,
   navigateTo,
@@ -202,12 +204,10 @@ describe('Agaric real-backend property definitions sync (#5841) @settings @sync'
       options: null,
     })
     await reopenProperties()
-    const remove = $(deleteButton(UNDONE_KEY))
-    await remove.waitForClickable({ timeout: NAV_TIMEOUT })
-    await remove.click()
-    const confirm = $('[role="alertdialog"]').$('button=Delete')
-    await confirm.waitForClickable({ timeout: ACTION_TIMEOUT })
-    await confirm.click()
+    // The pull above leaves a "Synced" toast in the corner under this last row's Delete, and a
+    // toast that expands or expires there takes a WebDriver click meant for the button.
+    await clickUncovered($(deleteButton(UNDONE_KEY)), `the Delete button of ${UNDONE_KEY}`)
+    await confirmDialog('Delete')
     // The toast says the backend deleted it; Undo before the toast times out.
     await waitForToast('Property definition deleted')
     const undo = $(

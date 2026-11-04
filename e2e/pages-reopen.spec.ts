@@ -100,7 +100,7 @@ test('returning to Pages after setting a TODO shows the new badge @pages', async
   await focusBlock(page, 0)
   await page.keyboard.press('Control+Enter')
   const firstBlock = page.locator('[data-testid="sortable-block"]').first()
-  await expect(firstBlock.locator('[data-testid="task-checkbox-empty"]')).toBeHidden()
+  await expect(firstBlock.locator('[data-testid="task-checkbox-todo"]')).toBeVisible()
   await page.keyboard.press('Escape')
   await returnToPages(page)
 
