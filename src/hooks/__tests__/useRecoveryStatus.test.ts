@@ -5,10 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   RECOVERY_DEGRADED_EVENT,
   RECOVERY_DEGRADED_TOAST_ID,
+  SYNC_QUARANTINED_TOAST_ID,
   showRecoveryDegradedBanner,
+  showSyncQuarantinedToast,
   useRecoveryStatus,
 } from '@/hooks/useRecoveryStatus'
 import type { RecoveryStatus } from '@/lib/bindings'
+import { useNavigationStore } from '@/stores/navigation'
 
 // -- Hoisted mocks ------------------------------------------------------------
 
@@ -174,5 +177,51 @@ describe('useRecoveryStatus — browser mode', () => {
       writable: true,
       configurable: true,
     })
+  })
+})
+
+describe('useRecoveryStatus — sync quarantine this boot (#6057)', () => {
+  const QUARANTINED: RecoveryStatus = { ...HEALTHY, sync_quarantined_this_boot: 2 }
+
+  it('shows a persistent warning with the count when the boot quarantined deltas', async () => {
+    mockGetRecoveryStatus.mockResolvedValue(ok(QUARANTINED))
+    renderHook(() => useRecoveryStatus())
+    await waitFor(() => expect(toast.warning).toHaveBeenCalledTimes(1))
+    const [message, opts] = vi.mocked(toast.warning).mock.calls[0] ?? []
+    expect(message).toBe(
+      '2 changes from another device could not be applied. They have been kept, not lost.',
+    )
+    expect(opts).toMatchObject({
+      id: SYNC_QUARANTINED_TOAST_ID,
+      duration: Number.POSITIVE_INFINITY,
+      action: { label: 'Review' },
+    })
+  })
+
+  it('shows nothing when the boot quarantined nothing', async () => {
+    mockGetRecoveryStatus.mockResolvedValue(ok(HEALTHY))
+    renderHook(() => useRecoveryStatus())
+    await waitFor(() => expect(mockGetRecoveryStatus).toHaveBeenCalledTimes(1))
+    expect(toast.warning).not.toHaveBeenCalled()
+  })
+
+  it('Review opens Settings on the Sync & devices tab', () => {
+    useNavigationStore.setState({ currentView: 'journal', pendingSettingsTab: null })
+    showSyncQuarantinedToast(QUARANTINED)
+    const opts = vi.mocked(toast.warning).mock.calls[0]?.[1] as
+      | { action?: { onClick?: () => void } }
+      | undefined
+    opts?.action?.onClick?.()
+    const nav = useNavigationStore.getState()
+    expect(nav.currentView).toBe('settings')
+    expect(nav.pendingSettingsTab).toBe('sync')
+  })
+
+  it('a second call reuses the fixed id, distinct from the degraded banner', () => {
+    showSyncQuarantinedToast(QUARANTINED)
+    showSyncQuarantinedToast(QUARANTINED)
+    const ids = vi.mocked(toast.warning).mock.calls.map(([, opts]) => opts?.id)
+    expect(ids).toEqual([SYNC_QUARANTINED_TOAST_ID, SYNC_QUARANTINED_TOAST_ID])
+    expect(SYNC_QUARANTINED_TOAST_ID).not.toBe(RECOVERY_DEGRADED_TOAST_ID)
   })
 })

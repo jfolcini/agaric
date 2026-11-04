@@ -36,6 +36,7 @@ If you click the Sync button before any device is paired, the **NoPeersDialog** 
 - **Settings › Sync & devices**, at the top once a device is paired: the overall sync state, the last successful sync, and the peer count. To retry, use the device list's *Sync all* or a device's *Sync now*.
 - **Per-peer progress** in the device's row while a sync is running: sync messages sent and received, then the attachment transfer with files and bytes done of total and a progress bar; the row clears when the sync ends (#5842). It shows for syncs this device starts (*Sync now*, *Sync all*, and its own periodic sync), not for a session the other device dialled in. While it shows, the row offers *Cancel sync* (#5739).
 - **Retry toast** per peer on failure — partial failures don't blow up the whole batch.
+- **Quarantine warning** at startup, only on the start that moved changes from another device to quarantine because they still could not be applied after repeated restarts: it says how many and stays until dismissed. Its *Review* opens Settings › Sync & devices. Later starts stay quiet, since a quarantined change cannot be deleted (#6057).
 
 ## How sync runs
 

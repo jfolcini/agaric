@@ -21,6 +21,11 @@ export const common: Record<string, string> = {
   // canonical — but a restart usually re-runs recovery cleanly).
   'boot.recoveryDegradedBody':
     'A startup recovery step did not finish, so recent edits may not appear yet. Your data is safe — restarting Agaric usually fixes this. Avoid making large edits until it is resolved.',
+  // #6057: shown only on the boot that moved inbound sync deltas to quarantine.
+  'boot.syncQuarantinedBody_one':
+    '{{count}} change from another device could not be applied. It has been kept, not lost.',
+  'boot.syncQuarantinedBody_other':
+    '{{count}} changes from another device could not be applied. They have been kept, not lost.',
   // #2921 — generic fallback shown on the BootGate error screen when
   // `refreshAvailableSpaces()` hard-fails during boot (no prior snapshot)
   // and the caught value carries no readable message of its own.
@@ -102,6 +107,7 @@ export const common: Record<string, string> = {
   'action.undo': 'Undo',
   'action.redo': 'Redo',
   'action.retry': 'Retry',
+  'action.review': 'Review',
   'action.reload': 'Reload',
   'action.loadMore': 'Load more',
   'action.loading': 'Loading\u2026',

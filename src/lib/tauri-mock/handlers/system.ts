@@ -52,7 +52,11 @@ export const systemHandlers = {
 
   // #1255 — boot-recovery status. The mock represents a clean dev boot, so
   // replay never fails: always report a healthy (non-degraded) status.
-  get_recovery_status: () => ({ degraded: false, replay_errors: [] }),
+  get_recovery_status: () => ({
+    degraded: false,
+    replay_errors: [],
+    sync_quarantined_this_boot: 0,
+  }),
 
   // ---------------------------------------------------------------------------
   // Peer address
