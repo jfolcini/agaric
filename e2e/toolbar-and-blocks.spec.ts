@@ -514,21 +514,26 @@ test.describe('Block interactions @editor', () => {
   test('clicking checkbox cycles task state', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
-    // Initially the block has no task state -- empty checkbox
+    // Only a task has a checkbox: make the first block one.
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     const taskMarker = firstBlock.locator('[data-testid="task-marker"]')
-
-    // First click: none -> TODO
-    await taskMarker.click()
+    await expect(taskMarker).toHaveCount(0)
+    const id = await firstBlock.getAttribute('data-block-id')
+    await ipc(page, 'set_todo_state', { blockId: id, state: 'TODO' })
+    await reopenPage(page, 'Getting Started')
     await expect(firstBlock.locator('[data-testid="task-checkbox-todo"]')).toBeVisible()
 
-    // Second click: TODO -> DOING
+    // First click: TODO -> DOING
     await taskMarker.click()
     await expect(firstBlock.locator('[data-testid="task-checkbox-doing"]')).toBeVisible()
 
-    // Third click: DOING -> DONE
+    // Second click: DOING -> DONE
     await taskMarker.click()
     await expect(firstBlock.locator('[data-testid="task-checkbox-done"]')).toBeVisible()
+
+    // Third click: DONE -> CANCELLED
+    await taskMarker.click()
+    await expect(firstBlock.locator('[data-testid="task-checkbox-cancelled"]')).toBeVisible()
   })
 
   test('marking a weekly task DONE makes its next occurrence a week later, which stays', async ({
@@ -665,21 +670,16 @@ test.describe('Block interactions @editor', () => {
     // Focus the first block to enter edit mode
     await focusBlock(page)
 
-    // The first sortable block before Ctrl+Enter should have the empty checkbox
+    // A plain block has no checkbox before Ctrl+Enter
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
-    await expect(firstBlock.locator('[data-testid="task-checkbox-empty"]')).toBeVisible()
+    await expect(firstBlock.locator('[data-testid="task-marker"]')).toHaveCount(0)
 
     // Press Ctrl+Enter to cycle task state: none -> TODO
     await page.keyboard.down('Control')
     await page.keyboard.press('Enter')
     await page.keyboard.up('Control')
 
-    // The empty checkbox should disappear — the task state has changed
-    // (could be TODO or DOING depending on whether both editor-level and
-    // document-level handlers fire)
-    await expect(firstBlock.locator('[data-testid="task-checkbox-empty"]')).not.toBeVisible({
-      timeout: 5000,
-    })
+    await expect(firstBlock.locator('[data-testid="task-checkbox-todo"]')).toBeVisible()
   })
 })
 
