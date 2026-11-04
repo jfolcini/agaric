@@ -17,9 +17,10 @@
  * where it starts the block, our own copy of one block — takes the same route
  * as `{ kind: 'text', … }`, so the backend reads it as the Edit as Markdown
  * buffer is read (#6190) instead of ProseMirror escaping its markers into
- * literal paragraphs. Any other single line, a list line after text too, is
- * read as inline markdown at the caret (#5160 N11); a lone task line stays
- * with `TaskPaste` and a bare URL with `ExternalLink`.
+ * literal paragraphs, and so does one line naming a page, as only that route
+ * resolves the name (#6033). Any other single line, a list line after text
+ * too, is read as inline markdown at the caret (#5160 N11); a lone task line
+ * stays with `TaskPaste` and a bare URL with `ExternalLink`.
  *
  * Both routes splice like a text editor (#5160 D4): the payload carries the
  * block's text before and after the selection, so the first pasted block joins
@@ -60,6 +61,7 @@ import { parse, parseLine, serialize } from '@/editor/markdown-serializer'
 import type { DocNode } from '@/editor/types'
 import type { PasteInput, PasteSplice } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
+import { scanNameTokens } from '@/lib/name-tokens'
 import { dispatchBlockCommand } from '@/stores/block-command-bus'
 import { useBlockStore } from '@/stores/blocks'
 
@@ -285,6 +287,17 @@ function isBlockPaste(text: string, view?: EditorView): boolean {
   return pastedTaskParagraph(text) === null
 }
 
+/**
+ * One line naming a page (`[[Name]]`, `[[Name|label]]`, `[label]([[Name]])`):
+ * only the block path resolves the name (#6033). A `#tag` needs no route, as
+ * the save makes it a tag, and a list line stays inline for the reason
+ * `isBlockPaste` gives.
+ */
+function namesPage(text: string): boolean {
+  const line = text.trim()
+  return !LIST_LINE_RE.test(line) && scanNameTokens(line).some((token) => token.kind === 'page')
+}
+
 /** Serialize a ProseMirror doc to the block's markdown. */
 function toMarkdown(doc: PMNode): string {
   return serialize(doc.toJSON() as DocNode, notifyUnknownNodeTypeToast)
@@ -503,8 +516,11 @@ export const HtmlPaste = Extension.create({
 
             if (!body) {
               // No usable HTML → text worth reading as blocks goes to the
-              // block-paste path, and one line is read inline at the caret.
-              if (!isBlockPaste(plainText, view)) return pasteOneLine(view, plainText)
+              // block-paste path, and one line is read inline at the caret,
+              // unless it names a page outside a table or a list.
+              if (!isBlockPaste(plainText, view) && (inside || !namesPage(plainText))) {
+                return pasteOneLine(view, plainText)
+              }
               dispatchPasteBlocks(view, { kind: 'text', text: plainText }, plainText, targetBlockId)
               return true
             }
