@@ -1,0 +1,11 @@
+# Session 3376 — Import reads Logseq STARTED, Org blocks and YAML alias:/tag: (#6033 S3)
+
+Set out to build #6033 S3, three one-place import gaps: Logseq's `STARTED` keyword stayed text, a `#+BEGIN_NOTE … #+END_NOTE` block (and the other admonitions, and `#+BEGIN_QUOTE`) imported as literal lines, and Obsidian's older singular `alias:` / `tag:` front-matter keys became text properties.
+
+**What shipped.** `("STARTED", "DOING")` joins `TASK_KEYWORDS`, so export escapes `STARTED x` through the same table. New `rewrite_org_blocks` in `agaric-engine/src/import.rs`, called per block from `parse_import_payload`, turns NOTE, TIP, IMPORTANT, CAUTION, WARNING and PINNED blocks into `> [!X]` callouts and QUOTE into a `>` quote (case-insensitive, skipping code fences; any other kind or an unclosed block stays as written). `.org` files gain the same, since `org-import.ts` passes those blocks through. `FrontMatterScan::parse_entry_line` folds `alias` → `aliases` and `tag` → `tags`, so import and Edit as Markdown both read them; the mock's `readFrontMatter` mirrors it and `apply_page_source_front_matter.json` gained an op.
+
+**For #6277 E1 and E3.** The Org-block rewrite is one loop in `parse_import_payload`, a one-line `if` under `LogseqOrg`; `STARTED` lives in the shared `TASK_KEYWORDS` table, so scoping it means splitting the table.
+
+**Trades.** A user property literally named `alias` or `tag` now re-imports as aliases or tags, as Logseq's `alias::` already did; a page holding both real aliases and such a property gets a "written twice" refusal in Edit as Markdown until the line is deleted. One existing test fixture (`parse_frontmatter_quoted_value_is_unquoted_1432`) moved its key from `alias:` to `nickname:`, since its subject is quoting.
+
+**Tests.** Unit tables for the rewrite, PCTs for each form, a front-matter PCT, an Edit as Markdown case, a mock vitest and the conformance op, plus two new `e2e-tauri/import-logseq-tasks.e2e.ts` cases (CI). The fixture regeneration also reformatted four unrelated fixtures; those were reverted. Gates: filtered nextest (662), clippy, `SQLX_OFFLINE` check, mock and lib vitest, typecheck (app and e2e-tauri), lint, manual-stage hooks and the page-source and import Playwright specs.
