@@ -85,6 +85,11 @@ describe('logseqGraph journal links', () => {
     )
   })
 
+  it("reads an older graph's `:date-formatter` when it has no title format", () => {
+    const edn = '{:date-formatter "EEEE, dd.MM.yyyy"}'
+    expect(logseqGraph(edn, paths).rewrite('[[Wednesday, 21.10.2026]]')).toBe('[[2026-10-21]]')
+  })
+
   it('leaves journal links as written, with one warning, for a format it cannot write', () => {
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     vi.spyOn(console, 'warn').mockImplementation(() => {})

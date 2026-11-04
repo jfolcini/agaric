@@ -6,9 +6,9 @@
  * format), and a name's other reserved characters are percent-encoded
  * (`What%3F.md`). A journal is `journals/<day>.md` in the graph's
  * `:journal/file-name-format` and is linked by its title in
- * `:journal/page-title-format` (`[[Oct 21st, 2026]]`), while Agaric's journal
- * page for a day is titled `YYYY-MM-DD`. Both formats are date-fns patterns
- * as Logseq writes them.
+ * `:journal/page-title-format`, or an older graph's `:date-formatter`
+ * (`[[Oct 21st, 2026]]`), while Agaric's journal page for a day is titled
+ * `YYYY-MM-DD`. Both formats are date-fns patterns as Logseq writes them.
  */
 
 import { format, isValid, parse } from 'date-fns'
@@ -111,7 +111,10 @@ export interface LogseqGraph {
  */
 export function logseqGraph(edn: string | null, paths: readonly string[]): LogseqGraph {
   const fileFormat = setting(edn ?? '', 'journal/file-name-format') ?? 'yyyy_MM_dd'
-  const titleFormat = setting(edn ?? '', 'journal/page-title-format') ?? 'MMM do, yyyy'
+  const titleFormat =
+    setting(edn ?? '', 'journal/page-title-format') ??
+    setting(edn ?? '', 'date-formatter') ??
+    'MMM do, yyyy'
   const legacy = edn !== null && !/^[ \t{,]*:file\/name-format[ \t]+:triple-lowbar\b/m.test(edn)
   const days: Date[] = []
   const titles = paths.map((path) => {

@@ -325,9 +325,10 @@ interface NamedNotes {
 }
 
 /**
- * Name a pick's `notes`. A Logseq graph's pages and journals are titled as
- * Logseq titles them (#6033), and keyed by the whole title, since a Logseq
- * link names one; any other note by its file stem, as Obsidian links it.
+ * Name a pick's `notes`, each keyed by its file stem as Obsidian links it. A
+ * Logseq graph's pages and journals are titled as Logseq titles them (#6033),
+ * and only one outside a namespace is keyed, since a Logseq link names a
+ * whole title.
  */
 async function nameNotes(
   files: readonly File[],
@@ -348,7 +349,10 @@ async function nameNotes(
   })
   const notesByName = new Map<string, string[]>()
   for (const path of paths) {
-    const name = (graph === null ? basename(path) : path).slice(0, -'.md'.length).toLowerCase()
+    // The backend matches a shipped note by its leaf name: beside `[[a/b]]`,
+    // a shipped `a/b` would turn `[[b]]` into `a/b`.
+    if (graph !== null && path.includes('/')) continue
+    const name = basename(path).slice(0, -'.md'.length).toLowerCase()
     notesByName.set(name, [...(notesByName.get(name) ?? []), path])
   }
   return { paths, notesByName, graph }

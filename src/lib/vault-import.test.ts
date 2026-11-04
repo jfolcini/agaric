@@ -794,12 +794,14 @@ describe('Logseq graph (#6033)', () => {
     ])
   })
 
-  it('ships the notes a link names by their whole titles, never by a namespace leaf', async () => {
-    const files = graph()
-    const [namespaced, , leaf] = mdFilesToUnits(files, indexVaultFiles(files), false)
+  it('ships the notes a link names by their whole titles, never a namespaced one', async () => {
+    const both = folderFile(['- [[A/B]] and [[b]]'], 'c.md', 'Graph/pages/c.md')
+    const files = [...graph(), both]
+    const [namespaced, , leaf, , c] = mdFilesToUnits(files, indexVaultFiles(files), false)
 
-    expect((await namespaced?.load())?.vaultNotes).toEqual(['2026-10-21.md', 'a/b.md'])
+    expect((await namespaced?.load())?.vaultNotes).toEqual(['2026-10-21.md'])
     expect((await leaf?.load())?.vaultNotes).toEqual([])
+    expect((await c?.load())?.vaultNotes).toEqual([])
   })
 
   it('reads a pick with `pages/` and `journals/` but no config as a graph of the defaults', async () => {
