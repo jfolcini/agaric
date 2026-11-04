@@ -119,6 +119,7 @@ import type { PageTaskActions } from '@/editor/page-mode/page-tasks'
 import { PageToolbar } from '@/editor/page-mode/page-toolbar'
 import { PageBlockMenu } from '@/editor/page-mode/PageBlockMenu'
 import { PageBubbleMenus } from '@/editor/page-mode/PageBubbleMenus'
+import { PageFooterHint } from '@/editor/page-mode/PageFooterHint'
 import { applyRemote } from '@/editor/page-mode/remote-patch'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { blockIdOf } from '@/editor/token-ids'
@@ -1076,7 +1077,7 @@ function PageModeDocument({
           />
         </BlockResolversProvider>
         <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-2 text-xs text-muted-foreground">
-          <p>{t('pageMode.footerHint')}</p>
+          <PageFooterHint />
           {onEditSource !== undefined && (
             <Button variant="link" size="xs" className="px-0" onClick={onEditSource}>
               <FileCode aria-hidden="true" />
