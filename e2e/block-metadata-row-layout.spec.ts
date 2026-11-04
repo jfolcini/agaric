@@ -3,10 +3,10 @@
  * at every width, the leading controls (task checkbox, drag handle) sit on the
  * FIRST line of a wrapped block, and the page editor and the journal's block
  * views are capped at the 46rem reading width, centred in the content pane, with
- * their header actions ending at the column's edge (#5354). Item 7: on desktop
- * the control lane hangs in the margin, so a depth-0 checkbox lines up with the
- * heading above the tree. This is geometry, which happy-dom cannot measure, so
- * it asserts real layout boxes.
+ * their header actions ending at the column's edge (#5354). On desktop a
+ * depth-0 row's control lane starts in the column, where the heading above the
+ * tree does. This is geometry, which happy-dom cannot measure, so it asserts
+ * real layout boxes.
  */
 
 import { devices, type Locator, type Page } from '@playwright/test'
@@ -79,17 +79,13 @@ function textLeft(el: Locator): Promise<number> {
  * reaches into the pane: a grip against the rail turns a near miss into a
  * sidebar resize.
  */
-async function expectCheckboxUnderHeading(page: Page, heading: Locator) {
+async function expectLaneUnderHeading(page: Page, heading: Locator) {
   const todo = page.getByTestId('task-checkbox-todo')
   const row = page.locator('li[aria-level="1"]').filter({ has: todo }).first()
   await expect(row.getByTestId('task-checkbox-todo')).toBeVisible()
   await expect(heading).toBeVisible()
-  const offset = (await box(row.getByTestId('task-checkbox-todo'))).x - (await textLeft(heading))
-  expect(Math.abs(offset), 'checkbox vs heading text, px').toBeLessThanOrEqual(1)
-
-  const lane = await box(row.locator('.block-control-lane'))
-  const rail = await box(page.locator('[data-sidebar="rail"]'))
-  expect(lane.x, 'lane left vs the sidebar rail right, px').toBeGreaterThan(rail.x + rail.width)
+  const offset = (await box(row.locator('.block-control-lane'))).x - (await textLeft(heading))
+  expect(Math.abs(offset), 'lane vs heading text, px').toBeLessThanOrEqual(1)
 }
 
 const taskRow = (page: Page) => page.locator('[data-testid="sortable-block"]', { hasText: TASK })
@@ -254,20 +250,20 @@ test.describe('Reading width, desktop (#5332, #5354) @editor @mobile', () => {
   }
 })
 
-test.describe('Control lane hangs in the margin, desktop (#5332) @editor @mobile', () => {
+test.describe('Control lane stays in the column, desktop (#5332) @editor @mobile', () => {
   test.use({ viewport: { width: 1440, height: 900 } })
 
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
 
-  test('a depth-0 checkbox lines up with the page title', async ({ page }) => {
+  test('a depth-0 lane starts under the page title', async ({ page }) => {
     await openPage(page, PAGE)
-    await expectCheckboxUnderHeading(page, page.getByRole('textbox', { name: 'Page title' }))
+    await expectLaneUnderHeading(page, page.getByRole('textbox', { name: 'Page title' }))
   })
 
-  test('a depth-0 checkbox lines up with the journal day heading', async ({ page }) => {
+  test('a depth-0 lane starts under the journal day heading', async ({ page }) => {
     await page.getByRole('tab', { name: 'Daily view' }).click()
-    await expectCheckboxUnderHeading(page, page.getByRole('heading', { level: 1 }))
+    await expectLaneUnderHeading(page, page.getByRole('heading', { level: 1 }))
   })
 })
