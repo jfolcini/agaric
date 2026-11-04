@@ -1,14 +1,15 @@
 // ---------------------------------------------------------------------------
 // Real-backend import of an Obsidian vault (#5740).
 //
-// A vault is a folder pick: each note imports as the page `<vault>/<note>`,
-// shipping the bytes of the attachments it embeds (`ingest_attachments` in
+// A vault is a folder pick: each note imports as the page `<note>`, the
+// vault folder's own name no part of it (#6277 decision 8), shipping the
+// bytes of the attachments it embeds (`ingest_attachments` in
 // commands/pages/markdown.rs) and the paths of the notes its `[[Name]]` links
 // name, which the backend writes with those notes' titles
 // (`rewrite_vault_wikilinks`). Only this lane holds the stored bytes, the
 // resolved link and the materialized tag, so each is asserted after a
-// navigation round-trip: the link chip opens the vault's note and no page of
-// the bare name exists, `[[über]]` names `Über.md` (the backend folds note
+// navigation round-trip: the link chip opens the vault's note and no title
+// carries the vault's name, `[[über]]` names `Über.md` (the backend folds note
 // names in full Unicode, as the frontend does), the tag chip reads its name,
 // the front-matter property is set, the embed renders from the stored bytes,
 // the image is an attachment only, never a page, and `![[topic]]`, Obsidian's
@@ -92,13 +93,13 @@ describe('Agaric real-backend Obsidian vault import (#5740) @markdown', () => {
 
     await navigateTo('Journal')
     await navigateTo('Pages')
-    await pageEntryTitled(`${vault}/${topic}`).waitForDisplayed({ timeout: NAV_TIMEOUT })
-    await expectAbsent(`span[title="${topic}"]`, `a page titled ${topic}`)
-    await pageEntryTitled(`${vault}/Über`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await pageEntryTitled(topic).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await expectAbsent(`span[title="${vault}/${topic}"]`, "a page titled with the vault's name")
+    await pageEntryTitled('Über').waitForDisplayed({ timeout: NAV_TIMEOUT })
     await expectAbsent('span[title="über"]', 'a page titled über')
-    await expectAbsent(`span[title="${vault}/pic.png"]`, 'a page made of the image')
+    await expectAbsent('span[title="pic.png"]', 'a page made of the image')
 
-    await openPageTitled(`${vault}/${home}`)
+    await openPageTitled(home)
     const links = await blockId(`${marker}-links`)
     const tag = $(`li[data-block-id="${links}"] [data-testid="tag-ref-chip"]`)
     await tag.waitForExist({ timeout: NAV_TIMEOUT })
@@ -144,7 +145,7 @@ describe('Agaric real-backend Obsidian vault import (#5740) @markdown', () => {
     const umlaut = $(
       `li[data-block-id="${await blockId(`${marker}-umlaut`)}"] [data-testid="block-link-chip"]`,
     )
-    await browser.waitUntil(async () => (await umlaut.getAttribute('title')) === `${vault}/Über`, {
+    await browser.waitUntil(async () => (await umlaut.getAttribute('title')) === 'Über', {
       timeout: NAV_TIMEOUT,
       timeoutMsg: '[[über]] never resolved to Über.md',
     })
@@ -158,15 +159,12 @@ describe('Agaric real-backend Obsidian vault import (#5740) @markdown', () => {
 
     // The link names the vault's note, and opens it.
     const chip = $(`li[data-block-id="${links}"] [data-testid="block-link-chip"]`)
-    await browser.waitUntil(
-      async () => (await chip.getAttribute('title')) === `${vault}/${topic}`,
-      {
-        timeout: NAV_TIMEOUT,
-        timeoutMsg: 'the wikilink never resolved to the vault note it names',
-      },
-    )
+    await browser.waitUntil(async () => (await chip.getAttribute('title')) === topic, {
+      timeout: NAV_TIMEOUT,
+      timeoutMsg: 'the wikilink never resolved to the vault note it names',
+    })
     await chip.click()
-    await expectPageOpen(`${vault}/${topic}`)
+    await expectPageOpen(topic)
     await blockStaticByMarker(`${marker}-body`).waitForDisplayed({ timeout: NAV_TIMEOUT })
   })
 })

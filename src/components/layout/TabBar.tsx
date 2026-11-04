@@ -283,7 +283,7 @@ export function TabBar(): React.ReactElement | null {
     // chrome stack aligns vertically. The hairline is drawn twice, under the
     // caret and on the tablist, because each tab overlaps the tablist's own.
     <div className="flex min-w-0 bg-muted/30">
-      <div className="flex shrink-0 border-b border-border pl-4 md:pl-6 md:pointer-fine:pl-16 pt-1">
+      <div className="flex shrink-0 border-b border-border pl-4 md:pl-6 pt-1">
         <TabSwitcher
           tabs={tabs}
           activeTabIndex={activeTabIndex}

@@ -4194,9 +4194,11 @@ fn parse_import_payload(
     } else {
         import::parse_logseq_markdown(text)
     };
-    // A folder import (its path has a folder) links its notes by relative path
-    // (#5160 N10); a lone file has no vault to be relative to.
-    if let Some(dir) = page_title.rsplit_once('/').map(|(dir, _)| dir) {
+    // A folder import links its notes by relative path (#5160 N10); a lone
+    // file has no vault to be relative to. The title is the note's path below
+    // the picked folder (#6277 decision 8), so a top-level note's folder is "".
+    if vault_notes.is_some() {
+        let dir = page_title.rsplit_once('/').map_or("", |(dir, _)| dir);
         for block in parse_output.blocks.iter_mut().filter(|b| !b.is_code) {
             block.content = rewrite_relative_md_links(&block.content, dir);
         }
@@ -4313,11 +4315,11 @@ fn rewrite_relative_md_links(content: &str, dir: &str) -> String {
 }
 
 /// The page title a relative note link's `path` (its destination before any
-/// `#fragment`) imports as, resolved against `dir`, whose first folder is the
-/// vault's: `Other%20note.md` from `vault/notes` is `vault/notes/Other note`,
-/// and `../Top.txt` is `vault/Top`. An Org file is named by its file name,
-/// not its `#+TITLE`. `None` for a URL with a scheme (`mailto:a@b.org`), an
-/// absolute path, a file that is no note or a path that climbs out of the vault.
+/// `#fragment`) imports as, resolved against `dir`, the linking note's folder
+/// below the vault root: `Other%20note.md` from `notes` is `notes/Other note`,
+/// and `../Top.txt` is `Top`. An Org file is named by its file name, not its
+/// `#+TITLE`. `None` for a URL with a scheme (`mailto:a@b.org`), an absolute
+/// path, a file that is no note or a path that climbs out of the vault.
 fn relative_md_link_title(path: &str, dir: &str) -> Option<String> {
     let path = percent_decode(path).replace('\\', "/");
     let (stem, extension) = path.rsplit_once('.')?;
@@ -4325,9 +4327,8 @@ fn relative_md_link_title(path: &str, dir: &str) -> Option<String> {
     if import::URL_SCHEME_RE.is_match(&path) || path.starts_with('/') || !names_note {
         return None;
     }
-    let (vault, dir) = dir.split_once('/').unwrap_or((dir, ""));
     let path = import::resolve_vault_path(dir, stem)?;
-    Some(folder_path_to_namespace_title(&format!("{vault}/{path}"))).filter(|t| !t.is_empty())
+    Some(folder_path_to_namespace_title(&path)).filter(|t| !t.is_empty())
 }
 
 /// #128 / #1932 / #1934 — announce the import before the transaction opens.
@@ -7060,12 +7061,11 @@ async fn ingest_attachments(
     if pending_attachments.is_empty() {
         return;
     }
-    // The note's folder within the vault: its title's path, less the picked
-    // folder that leads it and the note's own name.
+    // The note's folder within the vault: its title's path below the picked
+    // folder (#6277 decision 8), less the note's own name.
     let note_dir = ctx
         .page_title
-        .split_once('/')
-        .and_then(|(_vault, path)| path.rsplit_once('/'))
+        .rsplit_once('/')
         .map_or("", |(dir, _name)| dir)
         .to_string();
     // #2724 — count how many INGEST ATTEMPTS will read each vault file so a
@@ -7992,35 +7992,34 @@ mod tests {
         assert_eq!(percent_decode("Other%20note.md"), "Other note.md");
         assert_eq!(percent_decode("caf%C3%A9 %zz%2"), "café %zz%2");
         assert_eq!(
-            relative_md_link_title("Other%20note.md", "vault").as_deref(),
-            Some("vault/Other note")
+            relative_md_link_title("Other%20note.md", "notes").as_deref(),
+            Some("notes/Other note")
         );
         assert_eq!(
             relative_md_link_title("sub/Other note.MD", "").as_deref(),
             Some("sub/Other note")
         );
         assert_eq!(
-            relative_md_link_title("../Top.md", "vault/notes").as_deref(),
-            Some("vault/Top")
+            relative_md_link_title("../Top.md", "notes").as_deref(),
+            Some("Top")
         );
         assert_eq!(
-            relative_md_link_title("../../Top.md", "vault/a/b").as_deref(),
-            Some("vault/Top")
+            relative_md_link_title("../../Top.md", "a/b").as_deref(),
+            Some("Top")
         );
-        assert_eq!(
-            relative_md_link_title("../../Out.md", "vault/a"),
-            None,
-            "the vault's root is its first folder"
-        );
-        for dest in [
-            "../Out.md",
-            "../../Out.md",
-            "https://x.dev/a.md",
-            "/abs.md",
-            "img.png",
-            "a.md/",
+        for (dest, dir) in [
+            ("../Out.md", ""),
+            ("../../Out.md", "a"),
+            ("https://x.dev/a.md", ""),
+            ("/abs.md", ""),
+            ("img.png", ""),
+            ("a.md/", ""),
         ] {
-            assert_eq!(relative_md_link_title(dest, "vault"), None, "{dest}");
+            assert_eq!(
+                relative_md_link_title(dest, dir),
+                None,
+                "{dest} from {dir:?}"
+            );
         }
         assert_eq!(
             rewrite_relative_md_links(

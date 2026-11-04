@@ -5,8 +5,8 @@
 // path (agaric-engine/src/reverse/) is only proven here. Ctrl+Z reaches
 // `useUndoShortcuts` only in the page editor with NO block focused, so the
 // page comes from the sidebar's "New Page" and the reversed action is the
-// task checkbox — one `set_todo_state` IPC, whose effect is readable straight
-// off the checkbox's `aria-label`.
+// block menu's "Set as TODO" — one `set_todo_state` IPC, whose effect is
+// readable straight off whether the block shows a task checkbox.
 //
 // TIMING IS LOAD-BEARING, and is why the block is committed by navigating
 // away rather than with Enter+Escape. `handleToggleTodo` records an undo entry
@@ -32,6 +32,7 @@ import {
   NAV_TIMEOUT,
   blockStaticByMarker,
   navigateTo,
+  openContextMenu,
   openNewPage,
   reopenPageByTitle,
   runScopedMarker,
@@ -42,28 +43,23 @@ import {
 
 const MARKER = runScopedMarker('wdio-undo-todo')
 
-/** Resolve the marked block's task checkbox through its row wrapper. */
-async function taskMarker() {
+/** The marked block's id. */
+async function blockId(): Promise<string | null> {
   const staticBlock = blockStaticByMarker(MARKER)
   await staticBlock.waitForDisplayed({ timeout: NAV_TIMEOUT })
-  const blockId = await staticBlock.getAttribute('data-block-id')
-  const marker = $(`[data-block-id="${blockId}"]`).$('[data-testid="task-marker"]')
-  await marker.waitForExist({ timeout: NAV_TIMEOUT })
-  return marker
+  return staticBlock.getAttribute('data-block-id')
 }
 
 /**
- * Wait until the checkbox's aria-label reports (or stops reporting) a set
- * todo state. `block.setTodo` ("Set as TODO") is the state-less label;
- * `block.taskCycle` ("Task: {{state}}. Click to cycle.") replaces it once a
- * state is stored (BlockInlineControls `TaskMarkerButton`).
+ * Wait until the marked block shows a task checkbox, which only a block with a
+ * stored todo state has (BlockInlineControls), or shows none.
  */
 async function expectTodoState(set: boolean, what: string): Promise<void> {
-  const marker = await taskMarker()
-  await browser.waitUntil(
-    async () => ((await marker.getAttribute('aria-label')) ?? '').startsWith('Task:') === set,
-    { timeout: NAV_TIMEOUT, timeoutMsg: what },
-  )
+  const checkbox = `[data-block-id="${await blockId()}"] [data-testid="task-marker"]`
+  await browser.waitUntil(async () => (await $(checkbox).isExisting()) === set, {
+    timeout: NAV_TIMEOUT,
+    timeoutMsg: what,
+  })
 }
 
 /** Re-open the page the sidebar's "New Page" created, with nothing focused. */
@@ -85,10 +81,12 @@ describe('Agaric real-backend undo (#4671) @editor', () => {
     await navigateTo('Journal')
     await reopenTheNewPage()
 
-    const marker = await taskMarker()
-    await marker.moveTo()
-    await marker.click()
-    await expectTodoState(true, 'the task checkbox never reported a set todo state')
+    // The block menu's "Set as TODO" runs the checkbox's own toggle.
+    await openContextMenu($(`[data-testid="sortable-block"][data-block-id="${await blockId()}"]`))
+    const setTodo = $('[role="menu"]').$('[role="menuitem"]*=Set as TODO')
+    await setTodo.waitForClickable({ timeout: ACTION_TIMEOUT })
+    await setTodo.click()
+    await expectTodoState(true, 'the block menu never set a todo state')
 
     await browser.keys(['Control', 'z'])
     await waitForToast('Undid property change')
