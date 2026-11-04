@@ -28,6 +28,8 @@ use agaric_sync::sync_events::{
     BlocksChangedEvent, EVENT_BLOCKS_CHANGED, EVENT_PROPERTY_CHANGED, PropertyChangedEvent,
 };
 
+use crate::repair::name_collisions::{EVENT_PAGES_RENAMED, PageRenamed};
+
 /// Trait-object seam between the MCP RW tool handlers and the Tauri event bus.
 ///
 /// Implementations MUST be infallible from the caller's perspective (log,
@@ -40,6 +42,11 @@ pub trait ViewChangeEmitter: Send + Sync {
     /// Emit [`EVENT_PROPERTY_CHANGED`] with the same `{ block_id, changed_keys }`
     /// payload local property writes emit.
     fn emit_property_changed(&self, block_id: String, changed_keys: Vec<String>);
+
+    /// Emit [`EVENT_PAGES_RENAMED`] for the pages this device's collision pass
+    /// renamed after a sync (#6278). No MCP tool renames for a collision, so
+    /// only the post-sync sink overrides the no-op.
+    fn emit_pages_renamed(&self, _renamed: Vec<PageRenamed>) {}
 }
 
 /// Blanket impl so `Arc<T>` / `Arc<dyn ViewChangeEmitter>` both satisfy the
@@ -50,6 +57,9 @@ impl<T: ViewChangeEmitter + ?Sized> ViewChangeEmitter for Arc<T> {
     }
     fn emit_property_changed(&self, block_id: String, changed_keys: Vec<String>) {
         (**self).emit_property_changed(block_id, changed_keys);
+    }
+    fn emit_pages_renamed(&self, renamed: Vec<PageRenamed>) {
+        (**self).emit_pages_renamed(renamed);
     }
 }
 
@@ -103,6 +113,10 @@ impl<R: tauri::Runtime> ViewChangeEmitter for TauriViewChangeEmitter<R> {
             },
         );
     }
+
+    fn emit_pages_renamed(&self, renamed: Vec<PageRenamed>) {
+        crate::main_thread::emit(&self.handle, EVENT_PAGES_RENAMED, renamed);
+    }
 }
 
 /// Test-only recording emitter. Captures every emitted event so the RW tool
@@ -114,6 +128,8 @@ pub struct RecordingViewChangeEmitter {
     pub blocks_changed: std::sync::Mutex<Vec<Vec<String>>>,
     /// Every `block:properties-changed` emission, in order — `(block_id, changed_keys)`.
     pub property_changed: std::sync::Mutex<Vec<(String, Vec<String>)>>,
+    /// Every `pages:renamed` emission, in order.
+    pub pages_renamed: std::sync::Mutex<Vec<Vec<PageRenamed>>>,
 }
 
 #[cfg(test)]
@@ -137,6 +153,14 @@ impl RecordingViewChangeEmitter {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
+
+    /// Snapshot of every `pages:renamed` payload emitted so far.
+    pub fn pages_renamed(&self) -> Vec<Vec<PageRenamed>> {
+        self.pages_renamed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
 }
 
 #[cfg(test)]
@@ -152,6 +176,12 @@ impl ViewChangeEmitter for RecordingViewChangeEmitter {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push((block_id, changed_keys));
+    }
+    fn emit_pages_renamed(&self, renamed: Vec<PageRenamed>) {
+        self.pages_renamed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(renamed);
     }
 }
 

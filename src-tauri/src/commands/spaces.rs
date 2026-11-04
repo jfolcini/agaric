@@ -463,6 +463,27 @@ impl SpacePageNames {
             .map(|held| held.name.clone())
             .collect()
     }
+
+    /// Every title several live pages share under `name_key`, as `(page_id,
+    /// title)` in id order, so the holder comes first (#6278).
+    pub(crate) fn title_ties(&self) -> Vec<Vec<(String, String)>> {
+        let mut by_key: std::collections::BTreeMap<&str, Vec<(String, String)>> =
+            std::collections::BTreeMap::new();
+        for held in &self.titles {
+            by_key
+                .entry(held.key.as_str())
+                .or_default()
+                .push((held.page_id.clone(), held.name.clone()));
+        }
+        by_key
+            .into_values()
+            .filter(|pages| pages.len() > 1)
+            .map(|mut pages| {
+                pages.sort_unstable();
+                pages
+            })
+            .collect()
+    }
 }
 
 /// The live page of `space_id` other than `exclude_id` that holds `name`

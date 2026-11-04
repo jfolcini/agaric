@@ -62,6 +62,14 @@ impl LoroEngine {
     pub fn contains_block(&self, block_id: &str) -> bool {
         self.node_for(block_id).is_some()
     }
+    /// Whether this doc's own peer minted `block_id`'s node, i.e. this device
+    /// created the block (#6278): a node's `TreeID` carries the peer that made
+    /// it, and every engine on the write path is built with this device's peer
+    /// (`LoroEngine::with_peer_id_epoch`). `false` for a block the doc lacks.
+    pub fn created_here(&self, block_id: &str) -> bool {
+        self.node_for(block_id)
+            .is_some_and(|node| node.peer == self.doc.peer_id())
+    }
     /// Lean, content-only companion to [`Self::read_block`] for the edit
     /// hot path (#2200).
     ///

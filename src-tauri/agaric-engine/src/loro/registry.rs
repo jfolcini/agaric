@@ -435,6 +435,15 @@ impl LoroEngineRegistry {
         )
     }
 
+    /// Whether this device created `block_id` in `space_id`'s engine
+    /// ([`LoroEngine::created_here`]), `false` for a space with no engine,
+    /// read as [`Self::loro_vv`] reads: without creating an engine or marking
+    /// the space dirty. The caller must hold no engine guard.
+    pub fn created_here(&self, space_id: &SpaceId, block_id: &str) -> bool {
+        let shared = { self.inner.lock().get(space_id).map(Arc::clone) };
+        shared.is_some_and(|shared| shared.lock().created_here(block_id))
+    }
+
     /// All [`SpaceId`]s currently registered, in arbitrary order.
     ///
     /// Used by the sync orchestrator to enumerate which spaces to

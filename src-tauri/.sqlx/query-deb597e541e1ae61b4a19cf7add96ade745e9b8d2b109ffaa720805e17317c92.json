@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT bt.block_id AS \"block_id!: String\"\n           FROM block_tags bt\n           JOIN blocks b ON b.id = bt.block_id\n           WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND bt.block_id > ?2\n           ORDER BY bt.block_id\n           LIMIT ?3",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_tags",
+            "name": "block_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "deb597e541e1ae61b4a19cf7add96ade745e9b8d2b109ffaa720805e17317c92"
+}
