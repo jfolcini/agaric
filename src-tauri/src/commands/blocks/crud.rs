@@ -290,8 +290,8 @@ pub async fn create_block_inner_with_space(
 ///
 /// A live tag in `space_id` already named `content` is returned as-is
 /// (nothing created, no op appended, `client_id` unused): tag names are
-/// unique per space, under the same identity the cache and the engine key
-/// tags by, trimmed (#5236, #6278; mirrors the page-title rule of #4723).
+/// unique per space under `name_key` (#5236, #6278; mirrors the page-title
+/// rule of #4723).
 ///
 /// Unlike the page helper there is no parent/child cross-space check: manually
 /// created tags are top-level (`parent_id = None`). `parent_id` / `index` are
@@ -325,13 +325,15 @@ async fn create_tag_in_space_inner(
     // #5236 — the header's "Create" and the `#name` input rule both land
     // here, each trusting its own picker cache; the backend is the one place
     // that sees both. An existing live same-name tag in the space (the
-    // smallest-id one under `normalize_tag_name`, the identity the cache and
-    // the engine key tags by) IS the answer: resolve to it, create nothing,
-    // append nothing. The name is looked up trimmed (`name_key`, #6278), as a
-    // rename compares it.
-    let existing = crate::commands::pages::markdown::snapshot_tags_by_norm(&mut tx, &space_id)
+    // smallest-id one under `name_key`, the key a rename compares by, #6278)
+    // IS the answer: resolve to it, create nothing, append nothing.
+    let key = agaric_core::tag_norm::name_key(&content);
+    let existing = space_tag_names(&mut tx, &space_id)
         .await?
-        .remove(&agaric_core::tag_norm::name_key(&content));
+        .into_iter()
+        .filter(|(_, held)| *held == key)
+        .map(|(id, _)| id)
+        .min();
     if let Some(existing) = existing {
         tx.commit_without_dispatch().await?;
         return get_active_block_inner(pool, BlockId::from_trusted(&existing)).await;

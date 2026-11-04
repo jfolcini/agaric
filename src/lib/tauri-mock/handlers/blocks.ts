@@ -14,7 +14,7 @@ import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64
 import type { PasteInput, PasteSplice } from '@/lib/bindings'
 import { INLINE_PROPERTY_RESERVED_KEYS } from '@/lib/inline-property-parse'
 import { LIST_STYLE_KEY } from '@/lib/list-style'
-import { nameKey, normalizeTagName } from '@/lib/name-tokens'
+import { nameKey } from '@/lib/name-tokens'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import type { TodoState } from '@/lib/task-states'
 import { TASK_STATE_TO_MARKER, taskStateFromMarker } from '@/lib/task-states'
@@ -1077,9 +1077,8 @@ export const blocksHandlers = {
     }
     // #5236 — a live tag already named `content` in the space is the answer:
     // its own row back, nothing created, no op appended. The match is the
-    // engine's normalized identity (`snapshot_tags_by_norm`), smallest id
-    // first, so a case variant resolves too; the name is looked up trimmed
-    // (`name_key`, #6278).
+    // name key (`create_tag_in_space_inner`, #6278), smallest id first, so a
+    // case variant or a padded spelling resolves too.
     if (blockType === 'tag') {
       const wanted = nameKey((a['content'] as string) ?? '')
       const existing = [...blocks.values()]
@@ -1089,7 +1088,7 @@ export const blocksHandlers = {
             !b['deleted_at'] &&
             b['space_id'] === spaceId &&
             b['content'] != null &&
-            normalizeTagName(b['content'] as string) === wanted,
+            nameKey(b['content'] as string) === wanted,
         )
         .toSorted((x, y) => compareUtf8Bytes(x['id'] as string, y['id'] as string))[0]
       if (existing) {

@@ -64,7 +64,7 @@ pub fn normalize_tag_name(name: &str) -> String {
 /// A uniqueness check folds every name of a space, so the fold takes the
 /// short way to that key: ASCII lowercases alone, and lowercasing keeps
 /// canonical equivalence, so one NFC pass after it suffices, skipped for text
-/// already in NFC. 10K titles fold in milliseconds instead of tens of them.
+/// already in NFC.
 pub fn name_key(name: &str) -> String {
     use unicode_normalization::{IsNormalized, is_nfc_quick};
     let name = name.trim();

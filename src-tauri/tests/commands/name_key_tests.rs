@@ -393,12 +393,13 @@ async fn undo_of_a_rename_onto_another_spelling_of_a_title_is_refused() {
     assert_eq!(v.ops().await, ops, "no op was appended");
 }
 
-/// A tag name compares trimmed too: a create resolves to the tag, a rename
-/// onto it is refused.
+/// A tag name compares trimmed too, whichever spelling the tag was stored
+/// under: a create resolves to the tag, a rename onto it is refused.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_tag_name_is_one_name_with_its_padded_spelling() {
     let v = vault().await;
     let work = v.tag("work").await;
+    let padded = v.tag(" Padded ").await;
     let other = v.tag("other").await;
     let ops = v.ops().await;
 
@@ -407,19 +408,26 @@ async fn a_tag_name_is_one_name_with_its_padded_spelling() {
         work.id,
         "the padded name is `work`"
     );
-    assert_eq!(v.ops().await, ops, "no op was appended");
-    assert_refused(
-        v.rename(&other.id, "Work ").await,
-        ValidationCode::DuplicatePageTitle,
-        "`work` is taken",
+    assert_eq!(
+        v.tag("padded").await.id,
+        padded.id,
+        "`padded` is the stored ` Padded `"
     );
+    assert_eq!(v.ops().await, ops, "no op was appended");
+    for name in ["Work ", " PADDED"] {
+        assert_refused(
+            v.rename(&other.id, name).await,
+            ValidationCode::DuplicatePageTitle,
+            &format!("{name:?} is taken"),
+        );
+    }
 }
 
 /// Measurement (#6278): what the name check costs a page rename and a page
-/// create in a space of 10,000 pages, some holding aliases. Each is timed
+/// create in a space of `PAGES` pages, some holding aliases. Each is timed
 /// against the same command on a block that pays no name check: a content
-/// edit, and a content block's create. Then a batch restore of 50 pages, which
-/// checks them all. Prints the times; asserts nothing about them.
+/// edit, and a content block's create. Then a batch restore of `BATCH` pages,
+/// which checks them all. Prints the times; asserts nothing about them.
 ///
 /// `cargo nextest run --workspace --run-ignored=only -E 'test(page_name_check_cost_at_10k_pages)' --no-capture`
 #[ignore = "measurement: seeds 10k pages"]

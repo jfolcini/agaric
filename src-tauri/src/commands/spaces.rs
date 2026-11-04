@@ -381,9 +381,8 @@ impl PageNameHolder {
 /// Every name the live pages of one space hold, titles and aliases, each with
 /// its [`name_key`](agaric_core::tag_norm::name_key) (#6278). SQLite cannot
 /// apply the fold, so they are all read and folded here, each list as one
-/// `json_group_array` row: sqlx hands rows over one at a time, which at 10K
-/// pages costs tens of milliseconds a single row does not
-/// (`page_name_check_cost_at_10k_pages`).
+/// `json_group_array` row because sqlx hands rows over one at a time
+/// (`page_name_check_cost_at_10k_pages` measures the check).
 pub(crate) struct SpacePageNames {
     titles: Vec<PageName>,
     aliases: Vec<PageName>,
