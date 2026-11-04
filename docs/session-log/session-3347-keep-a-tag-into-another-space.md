@@ -1,0 +1,18 @@
+# Session 3347 — keep a tag into another space whichever space syncs first
+
+#6236's tag half; its ref half is session 3246 (#6241). A tag edge from a block in one space to a tag in another was dropped by the FK guard in `reproject_block_tags_from_engine` when the holder's space was imported before the tag's. On a fresh pairing that order is random, since the sender walks a `HashMap`. Nothing revisited the edge. Engine-first recovery dropped it whenever the tag's space sorted later. `reconcile_all` reported it as `engine.block_tags.row`.
+
+- `project_dropped_tags` (agaric-engine projection): one add-only `INSERT OR IGNORE … json_each … RETURNING` over the engines' edges. An edge gets its row only when both its block and its tag have one. It returns each healed block once.
+- `LoroEngine::read_tag_edges` and `LoroEngineRegistry::tag_edges` read the edges.
+- The import runs the pass only when a `block_type = 'tag'` block gets its first row. That is the `NewRows.tag` gate, asked before Pass A, beside `any` for refs. `project_pass_refs` became `project_pass_dropped`. Healed holders join the changed set for the cache fan-out and are added to the inheritance roots, because the import's tag scope names the tag it brought, not them.
+- Recovery runs the same pass after its ref pass. A tag map that doesn't read is logged and skipped, and recovery arms the retry marker, as its ref and property passes do. A `?` there would fail every boot. No engine write makes a map that doesn't read, so that arm has no test.
+- The #5712 gap test's tuple moves from `(true, false, false)` to `(true, false, true)`. The old doc still holds the tag, so it now comes back; the link stays lost. Gate M1 (the `tag` gate forced false) reddens exactly that flip, so the flip is load-bearing.
+- No e2e-tauri spec: the sender's space order is random, so a spec couldn't be shown red on demand. The Rust test runs both orders through the real commands and `apply_remote`.
+
+**Review.** It found one defect. `read_tag_edges` read the tag map of every block in a doc, including blocks the doc no longer holds. A tag added on one device while another device moves the block to a new space leaves such a map in the old doc. The heal then wrote a `block_tags` row that the oracle reported as drift. The read now skips blocks the doc doesn't hold. `read_tag_edges_skips_a_block_the_doc_no_longer_holds_6236` pins it with a real two-peer merge.
+
+Reds shown at the predicted assertions: the gate forced false, `&[]` as the inheritance roots, the recovery pass skipped, `INSERT OR IGNORE` as `INSERT`, and the new filter removed. Two mutants survive by design. Recovery's log-and-skip arm can't be reached. Widening the gate from `tag` to `any` only runs the pass more often, so it changes cost, not outcome. `tags_cache` is unaffected, because its usage counts only blocks in the tag's own space.
+
+One narrow case is left open, with a comment on `project_dropped_tags`. A block moved to another space can stay live in its old doc for the rest of a session. If a tag is removed in the new doc and the same import brings a new tag block, the old doc's edge re-adds the tag until the block's tags are next re-projected. Closing it needs the holder's SQL space carried with each edge, as `reproject_key_values` does. That was judged too much for a rare, transient stray tag.
+
+**Suites:** in the review container, the 39 targeted nextest tests and prek in both stages. On a quiet container after merging `main`: clippy, the `SQLX_OFFLINE` check, `cargo-doc-links`, `cargo test --doc` and the full `cargo nextest run --workspace` in both partitions.

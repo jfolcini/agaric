@@ -579,6 +579,25 @@ const FIXPOINT_SEEDS: readonly DocNode[] = [
   doc(paragraph(text('^^b'), hardBreak(), text('  ^^c^^'))),
   doc(paragraph(text('^^'), bold('x'), text('^^'))),
   doc(table(tableRow(tableHeader(paragraph(text('^^a^^')))))),
+  // #6033: a callout's `-` / `+` fold marker follows its type, which may be
+  // hyphenated, and a title opening with `-` after the space stays title text.
+  doc({
+    type: 'blockquote',
+    attrs: { calloutType: 'faq', calloutFold: '-' },
+    content: [paragraph(text('t'))],
+  }),
+  doc({
+    type: 'blockquote',
+    attrs: { calloutType: 'my-type', calloutFold: '+' },
+    content: [paragraph(text('t'))],
+  }),
+  doc({
+    type: 'blockquote',
+    attrs: { calloutType: 'faq', calloutFold: '-' },
+    content: [paragraph(text('Why?'), hardBreak(), text('Because.'))],
+  }),
+  doc({ type: 'blockquote', attrs: { calloutType: 'faq', calloutFold: '-' } }),
+  doc({ type: 'blockquote', attrs: { calloutType: 'note' }, content: [paragraph(text('-x'))] }),
   // #6033: a footnote reference, the literal text that reads as one, definition
   // blocks, a reference inside bold, and a `(` after a reference, which would
   // otherwise read as a link.
