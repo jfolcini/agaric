@@ -31,6 +31,7 @@ import {
   resolveAndInsertPickerToken,
 } from '@/editor/extensions/picker-plugin'
 import type { PickerItem } from '@/editor/SuggestionList'
+import { foldForSearch } from '@/lib/fold-for-search'
 import { t } from '@/lib/i18n'
 import { scanNameTokens } from '@/lib/name-tokens'
 
@@ -103,7 +104,8 @@ function tagPicker(
     items: (query) => options.items(query),
     command: ({ editor, range, props }) => {
       const item = props as PickerItem
-      if (item.isCreate && options.onCreate) {
+      const { onCreate } = options
+      if (item.isCreate && onCreate) {
         // The row can be the previous fetch's while the next one loads, so the
         // name is what is typed now, normalised as `use-block-resolve` does.
         const typed = editor.state.doc
@@ -118,7 +120,17 @@ function tagPicker(
           editor,
           range,
           label: typed || item.label,
-          onCreate: options.onCreate,
+          // A stale row's name was not checked against the tags; link one the
+          // typed name already is instead of creating a twin.
+          onCreate:
+            typed === item.label || !typed
+              ? onCreate
+              : async (name) => {
+                  const existing = (await options.items(name)).find(
+                    (i) => !i.isCreate && foldForSearch(i.label) === foldForSearch(name),
+                  )
+                  return existing ? existing.id : onCreate(name)
+                },
           tokenFor: (id) => ({ type: 'tag_ref', attrs: { id } }),
           loggerComponent: 'AtTagPicker',
           errorMessage: 'Failed to create tag',
