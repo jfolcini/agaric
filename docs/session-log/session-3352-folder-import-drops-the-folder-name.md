@@ -1,4 +1,4 @@
-# Session 3337 — a folder import drops the picked folder's name
+# Session 3352 — a folder import drops the picked folder's name
 
 #6277 G1 (decision 8). A folder pick's `webkitRelativePath` starts with the picked folder's name, and `importPath` sent it whole, so every folder import titled its pages `<folder>/Title`: a restored ZIP export, an Obsidian vault and a Notion export alike. A restore therefore lost every journal day (`get_journal_page_by_date` matches the bare date), kept the `# Title` line the export writes (it no longer matched the page title) and sent a namespaced link to an empty twin.
 
