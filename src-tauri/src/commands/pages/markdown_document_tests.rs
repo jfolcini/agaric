@@ -269,6 +269,89 @@ proptest! {
         check_read_back(&md, &import::parse_pasted_text(&md), &as_document(expected), false)?;
     }
 
+    /// The mirror's file has one id entry per line, a block's on the line it
+    /// reads back as starting on, its anchor's id where it has one (#5363).
+    #[test]
+    fn a_files_line_ids_are_where_its_blocks_start(forest in arb_document_forest()) {
+        let (data, _) = build_page(&forest);
+        let file = render_page_file(&data);
+        prop_assert_eq!(file.line_ids.len(), file.text.split('\n').count(), "text:\n{}", file.text);
+        let blocks = import::parse_document_outline(&file.text).blocks;
+        let starts: Vec<usize> = blocks.iter().filter_map(|block| block.line).collect();
+        let id_lines: Vec<usize> = (1..=file.line_ids.len())
+            .filter(|&line| file.line_ids[line - 1].is_some())
+            .collect();
+        prop_assert_eq!(id_lines, starts, "text:\n{}", file.text);
+        // A `^word` that is no block id is content, as `anchor_free` reads it.
+        let anchored = blocks.iter().filter(|block| {
+            block.block_anchor.as_deref().is_some_and(|word| BlockId::from_string(word).is_ok())
+        });
+        for block in anchored {
+            let line = block.line.expect("a block has a line");
+            prop_assert_eq!(&file.line_ids[line - 1], &block.block_anchor, "text:\n{}", file.text);
+        }
+    }
+
+    /// The mirror's file anchors exactly the addressed blocks (#6277 decision
+    /// 6), and with its anchors taken out it is the buffer's text with the
+    /// buffer's ids on the same lines, so a save reads the file as it reads
+    /// the buffer (#5363).
+    #[test]
+    fn a_file_without_its_anchors_is_the_buffer_by_its_line_ids(
+        (forest, addressed) in arb_document_forest().prop_flat_map(|forest| {
+            let n = forest.len();
+            (Just(forest), prop::collection::vec(any::<bool>(), n))
+        })
+    ) {
+        // An unaddressed block of plain words, which never needs an anchor.
+        let (mut forest, mut addressed) = (forest, addressed);
+        forest.push(plain(0, "plain words"));
+        addressed.push(false);
+        let (mut data, expected) = build_page(&forest);
+        data.addressed_blocks = expected
+            .iter()
+            .zip(&addressed)
+            .filter(|(_, is)| **is)
+            .map(|(block, _)| block.2.clone())
+            .collect();
+        let file = render_page_file(&data);
+        // An unaddressed block is written as a block copy writes it, with an
+        // anchor only when it would read back as other content; one of plain
+        // words never needs one.
+        for ((_, content, id, _), is) in expected.iter().zip(&addressed) {
+            let anchored = file.text.contains(&format!("^{id}"));
+            let plain = !content.trim().is_empty()
+                && content.chars().all(|c| c.is_alphanumeric() || c == ' ');
+            if *is || plain {
+                prop_assert_eq!(anchored, *is, "{} in:\n{}", id, file.text);
+            }
+        }
+        let (buffer_text, buffer_ids) = anchor_free(&render_page_document(&data).0);
+        let (file_text, _) = anchor_free(&file.text);
+        let own_anchor_lines: HashSet<String> =
+            expected.iter().map(|(_, _, id, _)| format!("^{id}")).collect();
+        let file_ids: Vec<Option<String>> = file
+            .text
+            .split('\n')
+            .zip(&file.line_ids)
+            .filter(|(line, _)| !own_anchor_lines.contains(line.trim()))
+            .map(|(_, id)| id.clone())
+            .collect();
+        let read = |text: &str, ids: &[Option<String>]| -> Vec<_> {
+            read_by_ids(text, ids)
+                .blocks
+                .into_iter()
+                .map(|block| (block.depth, block.content, block.properties, block.block_anchor))
+                .collect()
+        };
+        prop_assert_eq!(
+            read(&file_text, &file_ids),
+            read(&buffer_text, &buffer_ids),
+            "file:\n{}",
+            file.text
+        );
+    }
+
     /// Render → read → render writes the same bytes.
     #[test]
     fn a_document_renders_its_own_reading_as_the_same_text(forest in arb_document_forest()) {
@@ -818,6 +901,32 @@ fn each_hard_case_is_written_as_its_row_and_read_back() {
             .and_then(|()| check_read_back(&text, &read.blocks, &as_document(expected), true));
         assert!(result.is_ok(), "{name}: {result:?}");
     }
+}
+
+/// The mirror's file writes a task's fields as Tasks signifiers, escaped where
+/// the task's own text would read as one, as the buffer does (#6277 decision
+/// 4), and an addressed task's `^ID` after them (decision 6).
+#[test]
+fn a_file_writes_a_tasks_fields_as_signifiers() {
+    let rows: Vec<_> = document_rows()
+        .into_iter()
+        .filter(|(name, ..)| name.starts_with("#6277 D3"))
+        .collect();
+    assert_eq!(rows.len(), 3);
+    for (name, forest, written) in rows {
+        let (data, _) = build_page(&forest);
+        assert_eq!(render_page_file(&data).text, written, "{name}");
+    }
+    let (mut data, expected) = build_page(&[BlockSpec {
+        due_date: Some("2026-10-05".into()),
+        ..task(0, "go ⏫", "TODO")
+    }]);
+    let id = expected[0].2.clone();
+    data.addressed_blocks.insert(id.clone());
+    assert_eq!(
+        render_page_file(&data).text,
+        format!("- [ ] go \\⏫ 📅 2026-10-05 ^{id}\n")
+    );
 }
 
 /// `conformance/document-lines.vectors.json`: each row as the tree it reads
