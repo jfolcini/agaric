@@ -18,6 +18,9 @@ use agaric_sync::pairing::{PairingSession, ScannedPeerCandidate, lock_pairing_st
 use agaric_sync::sync_events::{
     BindExposureStatus, BindExposureStatusState, MdnsStatus, MdnsStatusState, OsNetworkBlockStatus,
 };
+use agaric_sync::sync_protocol::loro_sync_quarantine::{
+    QuarantinedSlot, count_quarantined_slots, list_quarantined_slots,
+};
 use agaric_sync::sync_scheduler::SyncScheduler;
 
 use super::*;
@@ -114,6 +117,41 @@ fn validate_host_port(address: &str) -> Result<(), AppError> {
         return Err(invalid());
     }
     Ok(())
+}
+
+/// The most rows [`list_quarantined_sync_slots_inner`] returns in one call. The
+/// quarantine holds a handful of rows by design, so this is a flat lookup, not a
+/// paginated list; `total` still counts every row.
+const MAX_QUARANTINED_SYNC_SLOTS: i64 = 100;
+
+/// Quarantined Loro sync deltas (#6057): the listed rows plus the full count.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+pub struct QuarantinedSlotList {
+    /// Newest first, at most the requested `limit`.
+    pub slots: Vec<QuarantinedSlot>,
+    /// Every quarantined row, including those past `limit`.
+    pub total: u64,
+}
+
+/// List the sync deltas the boot replay gave up on and moved to
+/// `loro_sync_quarantine` (#3226), across every space.
+///
+/// Returns [`AppError::Validation`] when `limit` is outside
+/// `[1, MAX_QUARANTINED_SYNC_SLOTS]`.
+#[instrument(skip(pool), err)]
+pub async fn list_quarantined_sync_slots_inner(
+    pool: &SqlitePool,
+    limit: i64,
+) -> Result<QuarantinedSlotList, AppError> {
+    if !(1..=MAX_QUARANTINED_SYNC_SLOTS).contains(&limit) {
+        return Err(AppError::validation(format!(
+            "list_quarantined_sync_slots limit must be in [1, {MAX_QUARANTINED_SYNC_SLOTS}]; got {limit}"
+        )));
+    }
+    Ok(QuarantinedSlotList {
+        slots: list_quarantined_slots(pool, limit).await?,
+        total: count_quarantined_slots(pool).await?,
+    })
 }
 
 /// `app_settings` key: `'1'` when the opt-in internet fallback is on (#4549),
@@ -636,6 +674,19 @@ pub async fn get_sync_relay_settings(
     pool: State<'_, ReadPool>,
 ) -> Result<SyncRelaySettings, AppError> {
     get_sync_relay_settings_inner(&pool.0)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: list quarantined sync deltas (#6057). Delegates to
+/// [`list_quarantined_sync_slots_inner`].
+#[tauri::command]
+#[specta::specta]
+pub async fn list_quarantined_sync_slots(
+    pool: State<'_, ReadPool>,
+    limit: i64,
+) -> Result<QuarantinedSlotList, AppError> {
+    list_quarantined_sync_slots_inner(&pool.0, limit)
         .await
         .map_err(sanitize_internal_error)
 }

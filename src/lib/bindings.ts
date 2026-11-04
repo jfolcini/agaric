@@ -643,6 +643,11 @@ export const commands = {
 	 *  nothing ever writes it.
 	 */
 	getOsNetworkBlockStatus: () => typedError<OsNetworkBlockStatus, AppError>(__TAURI_INVOKE("get_os_network_block_status")),
+	/**
+	 *  Tauri command: list quarantined sync deltas (#6057). Delegates to
+	 *  [`list_quarantined_sync_slots_inner`].
+	 */
+	listQuarantinedSyncSlots: (limit: number) => typedError<QuarantinedSlotList, AppError>(__TAURI_INVOKE("list_quarantined_sync_slots", { limit })),
 	/**  Tauri command: read the device-local sync relay preference (#4549). */
 	getSyncRelaySettings: () => typedError<SyncRelaySettings, AppError>(__TAURI_INVOKE("get_sync_relay_settings")),
 	/**  Tauri command: persist the device-local sync relay preference (#4549). */
@@ -3608,6 +3613,50 @@ export type PropertyValueForm = "text" | "number" | "date" | "ref" | "boolean";
 export type PurgeResponse = {
 	block_id: string,
 	purged_count: number,
+};
+
+/**
+ *  One row of `loro_sync_quarantine`, as surfaced to diagnostics.
+ * 
+ *  Deliberately carries `byte_len` rather than `bytes`: the point of the listing
+ *  is "what is stuck, since when, and why", and a diagnostics call must not
+ *  materialize multi-MB payloads. The bytes are still there — see
+ *  [`read_quarantined_bytes`].
+ */
+export type QuarantinedSlot = {
+	/**  `loro_sync_quarantine.id`. */
+	id: number,
+	/**
+	 *  The `loro_sync_inbox.id` this was moved from (provenance / log
+	 *  correlation only — that row no longer exists).
+	 */
+	inbox_id: number,
+	space_id: string,
+	/**
+	 *  Size of the preserved blob in bytes. Non-zero for every row: the move is
+	 *  a straight `INSERT … SELECT` of the inbox row's `bytes`.
+	 */
+	byte_len: number,
+	/**
+	 *  JSON array of `[peer_id, counter]` pairs — the frontier the blob
+	 *  declared. `[]` for a blob that declared nothing or would not decode.
+	 */
+	declared_end_vv: string,
+	/**  The last observed reason the slot did not clear. */
+	last_reason: string,
+	/**  How many boot replays observed it unresolved before the move. */
+	unresolved_boots: number,
+	/**  When the blob was first durably admitted (the inbox row's `created_at`). */
+	first_seen_at_ms: number,
+	quarantined_at_ms: number,
+};
+
+/**  Quarantined Loro sync deltas (#6057): the listed rows plus the full count. */
+export type QuarantinedSlotList = {
+	/**  Newest first, at most the requested `limit`. */
+	slots: QuarantinedSlot[],
+	/**  Every quarantined row, including those past `limit`. */
+	total: number,
 };
 
 /**

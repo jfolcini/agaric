@@ -230,6 +230,7 @@ macro_rules! agaric_commands {
             // block gets no event however early it subscribes.
             $crate::commands::sync_cmds::get_os_network_block_status,
             // #4549 — the opt-in internet fallback (relay) preference.
+            $crate::commands::sync_cmds::list_quarantined_sync_slots,
             $crate::commands::sync_cmds::get_sync_relay_settings,
             $crate::commands::sync_cmds::set_sync_relay_settings,
             // Batch count commands (#604)
