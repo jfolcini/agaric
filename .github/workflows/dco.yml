@@ -14,7 +14,7 @@
 #     summary on the run page so a contributor can fix in one re-push.
 #
 # Maintainer direct pushes to main are unaffected: this workflow runs
-# only on the `pull_request` trigger and the maintainer-bypass actor on
+# only on the `pull_request` and `merge_group` triggers and the maintainer-bypass actor on
 # the branch ruleset means direct-pushed commits don't enter this code
 # path. Required-status-checks for PRs is updated separately to include
 # `dco` so the gate is enforced server-side.
@@ -23,6 +23,8 @@ name: DCO
 on:
   pull_request:
     branches: [main]
+  # `dco` is a required context, so the merge queue needs it to report.
+  merge_group:
 
 permissions:
   contents: read
@@ -33,7 +35,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
+      # The queue admits a PR only once its `dco` passed on the PR's head, and
+      # the group's squash commit is GitHub's, carrying no sign-off of its own.
+      - name: Merge group (every PR commit already passed dco)
+        if: github.event_name == 'merge_group'
+        run: echo "Merge group, so each queued PR already passed dco on its own commits."
       - name: Verify Signed-off-by on every PR commit
+        if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
