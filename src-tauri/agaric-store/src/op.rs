@@ -355,6 +355,9 @@ pub enum RewriteReason {
     /// Values of a key its definition does not take were replaced by ones it
     /// does (#6206).
     ConvertUnfit,
+    /// Values of a key its definition does not take were moved to another
+    /// key, on the same blocks, where they fit (#6206).
+    MoveUnfit,
 }
 
 /// One definition a `rewrite_properties` op writes: `def` replaces `prior`,
@@ -1677,6 +1680,44 @@ mod tests {
         let back: OpPayload = serde_json::from_value(json.clone()).unwrap();
         assert_eq!(back, payload, "round trip");
         insta::assert_yaml_snapshot!("op_payload_json_rewrite_properties_convert_unfit", json);
+    }
+
+    /// #6206: moving a key's values that don't fit to another key is a
+    /// `rewrite_properties` whose reason is `move_unfit`: no definition write,
+    /// and per block the value removed under its key, then written under the
+    /// other.
+    #[test]
+    fn rewrite_properties_move_unfit_round_trips_6206() {
+        let payload = OpPayload::RewriteProperties(RewritePropertiesPayload {
+            space_id: BlockId::from_string(TEST_BID).unwrap(),
+            reason: RewriteReason::MoveUnfit,
+            defs: Vec::new(),
+            values: vec![
+                PropertyValueWrite {
+                    block_id: BlockId::from_string(TEST_PID).unwrap(),
+                    key: "when".into(),
+                    value: None,
+                    prior: Some(PropertyValueFields {
+                        value_num: Some(5.0),
+                        ..Default::default()
+                    }),
+                },
+                PropertyValueWrite {
+                    block_id: BlockId::from_string(TEST_PID).unwrap(),
+                    key: "notes".into(),
+                    value: Some(PropertyValueFields {
+                        value_text: Some("5".into()),
+                        ..Default::default()
+                    }),
+                    prior: None,
+                },
+            ],
+        });
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["reason"], "move_unfit", "the reason's wire name");
+        let back: OpPayload = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(back, payload, "round trip");
+        insta::assert_yaml_snapshot!("op_payload_json_rewrite_properties_move_unfit", json);
     }
 
     // -----------------------------------------------------------------------

@@ -35,7 +35,7 @@ import { computeListOrdinals } from '@/lib/list-ordinals'
 import { contentShowsListMarker, type ListStyle } from '@/lib/list-style'
 import { computeSiblingAriaProps } from '@/lib/outline-aria'
 import type { FlatBlock, Projection } from '@/lib/tree-utils'
-import { SENTINEL_ID } from '@/lib/tree-utils'
+import { countTasksAtOrAbove, SENTINEL_ID } from '@/lib/tree-utils'
 import { cn } from '@/lib/utils'
 
 /**
@@ -239,6 +239,14 @@ export function BlockListRenderer({
   if (!dragStoreRef.current) dragStoreRef.current = new DragStateStore()
   const dragStore = dragStoreRef.current
 
+  // A row starts past the checkbox of each task above it: its parent's count.
+  const tasksAtOrAbove = useMemo(
+    () => countTasksAtOrAbove(visibleItems, (block) => block.todo_state != null),
+    [visibleItems],
+  )
+  const tasksUnder = (parentId: string | null): number =>
+    parentId === null ? 0 : (tasksAtOrAbove.get(parentId) ?? 0)
+
   // Apply the new drag state DURING render so rows rendering in this same pass
   // (newly mounted, or any already re-rendering) read the fresh snapshot, then
   // notify the changed-but-memoized rows in a layout effect. Splitting it this
@@ -246,7 +254,13 @@ export function BlockListRenderer({
   // fire before `useSyncExternalStore`'s subscription is registered, losing the
   // first notify. `applyState` is idempotent for unchanged inputs.
   // oxlint-disable-next-line react/refs -- publishing the drag snapshot DURING render is deliberate (#1267): rows rendering in this same pass must read it, and `applyState` is idempotent — see the note above and #4406
-  dragStore.applyState({ projected, activeId, overId, dropAfter })
+  dragStore.applyState({
+    projected,
+    activeId,
+    overId,
+    dropAfter,
+    projectedTasks: tasksUnder(projected?.parentId ?? null),
+  })
   useLayoutEffect(() => {
     dragStore.notifyPending()
   })
@@ -384,6 +398,7 @@ export function BlockListRenderer({
                       siblingSetsize={aria?.setsize}
                       siblingPosinset={aria?.posinset}
                       properties={blockProperties[block.id]}
+                      tasksAbove={tasksUnder(block.parent_id)}
                     />
                   )
                 })}
@@ -413,8 +428,9 @@ export function BlockListRenderer({
  * a drag is in progress. They make the 20px `DEAD_ZONE_PX` (the horizontal
  * slop before an indent level changes — see `tree-utils.getProjection`) read
  * as a deliberate snap-to-grid rather than laggy tracking, and teach the
- * indent width. Aligned to `--indent-width` so they sit exactly where each
- * depth's content begins (`SortableBlock` pads by `--indent-width * depth`).
+ * indent width. Aligned to `--indent-width`, where each depth's content begins
+ * (`SortableBlock` pads by `--indent-width * depth`) under no task; a row under
+ * a task starts a checkbox further in, so there they only approximate it.
  * Decorative: `aria-hidden`, `pointer-events-none`, painted behind the rows.
  *
  * #993 — resting guides stay faint (`w-px bg-primary/15`); the single line at

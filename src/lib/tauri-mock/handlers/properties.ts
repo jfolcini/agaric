@@ -13,6 +13,7 @@ import type {
   PropertyMergeCounts,
   PropertyTypeChangeCounts,
   PropertyUnfitCounts,
+  UnfitMoveCounts,
   UnfitValueReplacement,
 } from '@/lib/bindings'
 import { EVENT_PROPERTY_CHANGED } from '@/lib/block-event-names'
@@ -61,6 +62,8 @@ import {
   addUnfitValuesToOptions,
   convertUnfitPropertyValues,
   distinctUnfitValues,
+  moveUnfitPropertyValues,
+  previewUnfitPropertyMove,
   removeUnfitPropertyValues,
   unfitCounts,
   unfitValues,
@@ -1171,6 +1174,25 @@ export const propertiesHandlers = {
     )
   },
 
+  preview_unfit_property_move: (args) => {
+    const a = args as Record<string, unknown>
+    return previewUnfitPropertyMove(
+      a['spaceId'] as string,
+      a['key'] as string,
+      a['intoKey'] as string,
+    )
+  },
+
+  move_unfit_property_values: (args) => {
+    const a = args as Record<string, unknown>
+    return moveUnfitPropertyValues(
+      a['spaceId'] as string,
+      a['key'] as string,
+      a['intoKey'] as string,
+      a['acknowledged'] as UnfitMoveCounts,
+    )
+  },
+
   // ---------------------------------------------------------------------------
   // Peer name update
   // ---------------------------------------------------------------------------
@@ -1268,6 +1290,8 @@ export const propertiesHandlers = {
   | 'add_unfit_values_to_options'
   | 'list_distinct_unfit_property_values'
   | 'convert_unfit_property_values'
+  | 'preview_unfit_property_move'
+  | 'move_unfit_property_values'
   | 'list_projected_agenda'
   | 'notify_task'
   | 'get_reminder_settings'

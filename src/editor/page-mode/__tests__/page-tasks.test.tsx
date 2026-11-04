@@ -745,6 +745,54 @@ describe('the view follows its block', () => {
   })
 })
 
+describe('the indent past the tasks above', () => {
+  const tasksAbove = (el: HTMLElement) => el.style.getPropertyValue('--tasks-above')
+
+  it('follows a task set above a block, and a block indented under a task or out of it', () => {
+    const tasks = new FakeTasks()
+    tasks.setBlock(A, { todo_state: 'TODO' })
+    const rows: Row[] = [
+      [A, 0, 'task'],
+      [B, 0, 'two'],
+      [C, 1, 'three'],
+    ]
+    const lists = new PageLists(
+      {},
+      rows.map(([id, depth]) => ({ id, depth })),
+      (id) => tasks.blockOf(id)?.todo_state != null,
+    )
+    // As `PageModeEditor` wires it.
+    const unsubscribe = tasks.subscribe(() => lists.tasksChanged())
+    const { container, editor, unmount } = mountNodeViews(rows, tasks, lists)
+    teardown = () => {
+      unsubscribe()
+      unmount()
+      editor.destroy()
+    }
+    const drawn = () => [A, B, C].map((id) => tasksAbove(blockEl(container, id)))
+    expect(drawn()).toEqual(['0', '0', '0'])
+    // The margin counts it, as block mode's row does.
+    expect(blockEl(container, C).style.marginLeft).toBe(
+      'calc(var(--indent-width) * 1 + var(--block-task-shift) * var(--tasks-above, 0))',
+    )
+
+    act(() => caret(editor, 1, 0))
+    expect(pressIn(editor, 'Tab')).toBe(true)
+    expect(drawn()).toEqual(['0', '1', '1'])
+
+    act(() => tasks.setBlock(B, { todo_state: 'TODO' }))
+    expect(drawn()).toEqual(['0', '1', '2'])
+
+    act(() => tasks.setBlock(A, { todo_state: null }))
+    expect(drawn()).toEqual(['0', '0', '1'])
+
+    act(() => caret(editor, 1, 0))
+    expect(pressIn(editor, 'Tab', { shiftKey: true })).toBe(true)
+    act(() => tasks.setBlock(A, { todo_state: 'TODO' }))
+    expect(drawn()).toEqual(['0', '0', '1'])
+  })
+})
+
 describe('the list marker', () => {
   function mountList(rows: readonly Row[], styles: Record<string, PropertyRow[]>) {
     const lists = new PageLists(
