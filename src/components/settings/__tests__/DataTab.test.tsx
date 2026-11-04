@@ -213,7 +213,7 @@ describe('DataTab', () => {
     })
 
     // `importMarkdown` takes `(content, filename,
-    // spaceId, onProgress?)`. Assert the active space's ULID flows
+    // spaceId, dialect, onProgress?)`. Assert the active space's ULID flows
     // through so the backend can stamp `space = ?spaceId` on the imported
     // page. #128 added the 4th `onProgress` callback arg — assert it is a
     // function so the per-block progress channel is always wired up.
@@ -222,6 +222,7 @@ describe('DataTab', () => {
         '# Hello',
         'test.md',
         DEFAULT_TEST_SPACE.id,
+        'Markdown',
         expect.any(Function),
         // #1925 — a single-file (non-folder) import has no sibling assets, so
         // `vaultFiles` is null (documented limitation; only the folder picker
@@ -331,6 +332,7 @@ describe('DataTab', () => {
         _content: string,
         _filename: string,
         _spaceId: string,
+        _dialect: string,
         onProgress?: (u: {
           kind: string
           blocks_total?: number
@@ -1097,6 +1099,7 @@ describe('DataTab', () => {
         _c: string,
         _f: string,
         _s: string,
+        _d: string,
         onProgress?: (u: { kind: string; blocks_total?: number; blocks_done?: number }) => void,
       ) => {
         onProgress?.({ kind: 'started', blocks_total: 3 })
@@ -1271,6 +1274,7 @@ describe('DataTab', () => {
         // mapping; the folder's own name is no part of it (#6277 decision 8).
         'Note.md',
         DEFAULT_TEST_SPACE.id,
+        'Markdown',
         expect.any(Function),
         // No attachment refs in the content ⇒ null vaultFiles payload.
         null,
@@ -1575,7 +1579,7 @@ describe('DataTab', () => {
       })
 
       await waitFor(() => expect(mockImportMarkdown).toHaveBeenCalled())
-      const vaultFiles = mockImportMarkdown.mock.calls[0]?.[4] as Array<{
+      const vaultFiles = mockImportMarkdown.mock.calls[0]?.[5] as Array<{
         path: string
         bytes: number[]
       }> | null
@@ -1602,7 +1606,7 @@ describe('DataTab', () => {
 
       await waitFor(() => expect(mockImportMarkdown).toHaveBeenCalled())
       // No refs resolved ⇒ null payload (backend warns about the missing file).
-      expect(mockImportMarkdown.mock.calls[0]?.[4]).toBeNull()
+      expect(mockImportMarkdown.mock.calls[0]?.[5]).toBeNull()
     })
 
     // #6032 — a folder pick's other files were dropped with no word.
@@ -1652,7 +1656,7 @@ describe('DataTab', () => {
       await waitFor(() => {
         expect(screen.getByTestId('import-warnings-heading')).toHaveTextContent('2 warnings')
       })
-      expect(mockImportMarkdown.mock.calls[0]?.[4]).toEqual([
+      expect(mockImportMarkdown.mock.calls[0]?.[5]).toEqual([
         { path: 'data.csv', bytes: [97, 44, 98] },
       ])
       expect(screen.getAllByTestId('import-warning-item').map((item) => item.textContent)).toEqual([
@@ -1759,6 +1763,39 @@ describe('DataTab', () => {
       })
     })
 
+    it('sends LogseqOrg for a Logseq graph and an Org file, Markdown otherwise (#6277 E1)', async () => {
+      mockImportMarkdown.mockResolvedValue(okResult)
+
+      render(<DataTab />)
+      const folderInput = screen.getByTestId('import-folder-input') as HTMLInputElement
+      const graph = [
+        folderFile(['{}'], 'config.edn', 'Graph/logseq/config.edn', 'text/plain'),
+        folderFile(['- a'], 'a.md', 'Graph/pages/a.md'),
+      ]
+      Object.defineProperty(folderInput, 'files', { value: graph })
+      await act(async () => {
+        folderInput.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+      await waitFor(() => expect(mockImportMarkdown).toHaveBeenCalledTimes(1))
+
+      const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+      const files = [
+        new File(['* Task'], 'tasks.org', { type: 'text/plain' }),
+        new File(['- b'], 'plain.md', { type: 'text/markdown' }),
+      ]
+      Object.defineProperty(fileInput, 'files', { value: files })
+      await act(async () => {
+        fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+      await waitFor(() => expect(mockImportMarkdown).toHaveBeenCalledTimes(3))
+
+      expect(mockImportMarkdown.mock.calls.map((call) => [call[1], call[3]])).toEqual([
+        ['a.md', 'LogseqOrg'],
+        ['tasks.md', 'LogseqOrg'],
+        ['plain.md', 'Markdown'],
+      ])
+    })
+
     it('lets the files picker choose every note format a folder imports', () => {
       render(<DataTab />)
       expect(screen.getByTestId('import-file-input')).toHaveAttribute(
@@ -1781,7 +1818,7 @@ describe('DataTab', () => {
       })
 
       await waitFor(() => expect(mockImportMarkdown).toHaveBeenCalled())
-      expect(mockImportMarkdown.mock.calls[0]?.[4]).toBeNull()
+      expect(mockImportMarkdown.mock.calls[0]?.[5]).toBeNull()
     })
   })
 
@@ -1847,8 +1884,8 @@ describe('DataTab', () => {
 
       // First call: filename derived from the note title, converted markdown,
       // active space, a progress callback, and no vault files (undefined).
-      const [content0, filename0, spaceId0, onProgress0, vaultFiles0] = mockImportMarkdown.mock
-        .calls[0] as [string, string, string, unknown, unknown]
+      const [content0, filename0, spaceId0, , onProgress0, vaultFiles0] = mockImportMarkdown.mock
+        .calls[0] as [string, string, string, string, unknown, unknown]
       expect(filename0).toBe('export/Alpha.md')
       expect(spaceId0).toBe(DEFAULT_TEST_SPACE.id)
       expect(typeof onProgress0).toBe('function')
@@ -1965,7 +2002,8 @@ describe('DataTab', () => {
       })
 
       await waitFor(() => expect(mockImportMarkdown).toHaveBeenCalled())
-      const [content0, , , , vaultFiles0] = mockImportMarkdown.mock.calls[0] as [
+      const [content0, , , , , vaultFiles0] = mockImportMarkdown.mock.calls[0] as [
+        string,
         string,
         string,
         string,
@@ -2093,8 +2131,15 @@ describe('DataTab', () => {
       await importJex(noteWithResourceJex(), 'notes.jex')
 
       await waitFor(() => expect(mockImportMarkdown).toHaveBeenCalledTimes(1))
-      const [content0, filename0, spaceId0, onProgress0, vaultFiles0] = mockImportMarkdown.mock
-        .calls[0] as [string, string, string, unknown, Array<{ path: string; bytes: number[] }>]
+      const [content0, filename0, spaceId0, , onProgress0, vaultFiles0] = mockImportMarkdown.mock
+        .calls[0] as [
+        string,
+        string,
+        string,
+        string,
+        unknown,
+        Array<{ path: string; bytes: number[] }>,
+      ]
       expect(filename0).toBe('Picture Note.md')
       expect(spaceId0).toBe(DEFAULT_TEST_SPACE.id)
       expect(typeof onProgress0).toBe('function')
@@ -2144,7 +2189,8 @@ describe('DataTab', () => {
       await importJex(jex, 'files.jex')
 
       await waitFor(() => expect(mockImportMarkdown).toHaveBeenCalledTimes(1))
-      const [content0, , , , vaultFiles0] = mockImportMarkdown.mock.calls[0] as [
+      const [content0, , , , , vaultFiles0] = mockImportMarkdown.mock.calls[0] as [
+        string,
         string,
         string,
         string,

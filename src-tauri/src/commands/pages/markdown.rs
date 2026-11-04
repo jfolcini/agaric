@@ -19,7 +19,8 @@ use agaric_core::error::AppError;
 use agaric_core::ulid::{BlockId, PageId};
 use agaric_engine::import;
 use agaric_engine::import::{
-    ImportAnchor, ImportProgressUpdate, ImportResult, VaultFile, is_escaped, percent_decode,
+    ImportAnchor, ImportDialect, ImportProgressUpdate, ImportResult, VaultFile, is_escaped,
+    percent_decode,
 };
 use agaric_store::pagination::{BlockRow, Cursor, NULL_POSITION_SENTINEL, PageRequest};
 use agaric_store::space::SpaceId;
@@ -3900,6 +3901,7 @@ pub async fn import_markdown_inner(
         content,
         filename,
         space_id,
+        ImportDialect::Markdown,
         vault_files,
         None,
         None,
@@ -4013,6 +4015,7 @@ pub async fn import_markdown_with_progress(
     content: String,
     filename: Option<String>,
     space_id: String,
+    dialect: ImportDialect,
     // #1925 — referenced sibling files' bytes. `None`/empty ⇒ no attachment
     // ingest (exact pre-#1925 behaviour).
     vault_files: Option<Vec<VaultFile>>,
@@ -4043,6 +4046,7 @@ pub async fn import_markdown_with_progress(
         &page_title,
         blocks_total,
         &space_id,
+        dialect,
         parse_output.warnings.len(),
     );
 
@@ -4343,6 +4347,7 @@ fn announce_import_start(
     page_title: &str,
     blocks_total: u64,
     space_id: &str,
+    dialect: ImportDialect,
     parse_warnings: usize,
 ) {
     let span = tracing::Span::current();
@@ -4352,6 +4357,7 @@ fn announce_import_start(
         page = %page_title,
         blocks_total,
         space = %space_id,
+        ?dialect,
         parse_warnings,
         "import: starting markdown import"
     );
@@ -7273,11 +7279,14 @@ pub struct VaultImport {
 /// best-effort, so a dropped channel never aborts the import.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn import_markdown(
     app: tauri::AppHandle,
     content: String,
     filename: Option<String>,
     space_id: SpaceId,
+    // Which reading the source is for (#6277 E1).
+    dialect: ImportDialect,
     // `None`/omitted ⇒ no attachment ingest and no note names (a plain pick).
     vault: Option<VaultImport>,
     progress: tauri::ipc::Channel<ImportProgressUpdate>,
@@ -7301,6 +7310,7 @@ pub async fn import_markdown(
         content,
         filename,
         space_id.into_string(),
+        dialect,
         vault_files,
         vault_notes,
         Some(&crate::main_thread::UiChannel::new(app, progress)),

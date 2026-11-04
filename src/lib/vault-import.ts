@@ -16,7 +16,7 @@
  */
 
 import { isAppError, unwrap } from '@/lib/app-error'
-import { type VaultFile, commands } from '@/lib/bindings'
+import { type ImportDialect, type VaultFile, commands } from '@/lib/bindings'
 import { type EnexNote, enexNoteToMarkdown, sanitizeNoteTitleToFilename } from '@/lib/enex-import'
 import { t } from '@/lib/i18n'
 import { NOTE_EXTENSIONS, scanAttachmentRefs } from '@/lib/import-attachments'
@@ -329,8 +329,9 @@ export function inferBibliographyFormat(filename: string): BibliographyFormat | 
  * - `bytes` is added to the cumulative byte counter regardless of whether the
  *   unit imports successfully (the user waited on it either way).
  * - `load()` yields the IPC payload lazily: `content`, the `path` passed as the
- *   `importMarkdown` filename (namespace mapping), any sibling `vaultFiles`, and
- *   the `vaultNotes` its `[[Name]]` links may name.
+ *   `importMarkdown` filename (namespace mapping), the `dialect` the source is
+ *   read as, any sibling `vaultFiles`, and the `vaultNotes` its `[[Name]]`
+ *   links may name.
  *   For `.md` this reads the `File` (and collects vault siblings) on demand, so
  *   a cancel between files avoids reading later files; for note-based formats
  *   the content is already composed and `load` just returns it.
@@ -341,6 +342,7 @@ export interface ImportUnit {
   load: () => Promise<{
     content: string
     path: string
+    dialect: ImportDialect
     vaultFiles: VaultFile[] | null
     vaultNotes: string[] | null
   }>
@@ -560,7 +562,8 @@ export function mdFilesToUnits(
       const vaultFiles =
         vaultIndex == null ? null : await collectVaultFiles(content, noteDir, vaultIndex)
       const vaultNotes = vaultIndex == null ? null : linkedNotePaths(content, notesByName)
-      return { content, path, vaultFiles, vaultNotes }
+      const dialect = logseq || extension === '.org' ? 'LogseqOrg' : 'Markdown'
+      return { content, path, dialect, vaultFiles, vaultNotes }
     },
   }))
 }
@@ -610,6 +613,7 @@ export function enexNotesToUnits(notes: EnexNote[], fileName: string): ImportUni
         Promise.resolve({
           content,
           path: name,
+          dialect: 'Markdown',
           vaultFiles: attachmentsToVaultFiles(note.attachments),
           vaultNotes: null,
         }),
@@ -643,6 +647,7 @@ export function jexNotesToUnits(notes: JexNote[]): ImportUnit[] {
         Promise.resolve({
           content,
           path: name,
+          dialect: 'Markdown',
           vaultFiles: attachmentsToVaultFiles(note.attachments),
           vaultNotes: null,
         }),

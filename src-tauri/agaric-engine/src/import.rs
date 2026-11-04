@@ -717,6 +717,16 @@ pub enum ImportProgressUpdate {
 // `tauri` dependency (orphan rule: the trait is app-local there). See
 // `src-tauri/src/import.rs`.
 
+/// Which reading a file import's source is for (#6277 E1), as its front end
+/// tells: a Logseq graph or an `.org` file is `LogseqOrg`, everything else
+/// `Markdown`. Both read the same today; it is the seam the `Markdown` reader
+/// switches on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Type)]
+pub enum ImportDialect {
+    Markdown,
+    LogseqOrg,
+}
+
 /// A single referenced sibling file carried over IPC for an attachment-aware
 /// import (#1925).
 ///
