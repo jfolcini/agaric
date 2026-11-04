@@ -53,7 +53,6 @@ import {
   type BlockInlineControlsProps,
 } from '@/components/editor/BlockInlineControls'
 import { StaticBlock, type StaticBlockProps } from '@/components/editor/StaticBlock'
-import { docShowsListMarker } from '@/editor/extensions/list-marker-decoration'
 import { serialize } from '@/editor/markdown-serializer'
 import { isCurrentBlock } from '@/editor/page-mode/page-block-focus'
 import { foldIn, HIDDEN_CLASS, toggleFold } from '@/editor/page-mode/page-collapse'
@@ -186,7 +185,7 @@ class ControlsGate {
 
   /** The observer, once the editor is in the page: its scroller is the root. */
   private start(): boolean {
-    // `EditorContent` builds the node views again once it is.
+    // `EditorContent` builds the node views again once it is, and each new one watches itself.
     const host = this.editor.options.element
     if (!(host instanceof HTMLElement) || !host.isConnected) return false
     const root = scrollParentY(host)
@@ -197,9 +196,8 @@ class ControlsGate {
       },
       { root, rootMargin: '100% 0px' },
     )
-    for (const waiting of this.waiting.keys()) this.observe(waiting)
     const scroller = root ?? window
-    scroller.addEventListener('scroll', this.schedule, { passive: true })
+    scroller.addEventListener('scroll', this.schedule)
     // The blocks move, or the viewport changes, without a scroll.
     const resized = new ResizeObserver(this.schedule)
     resized.observe(this.editor.view.dom)
@@ -401,10 +399,10 @@ class PageBlockView implements NodeView {
     this.gate.watch(this.dom, id, () => this.reveal())
   }
 
-  /** The marker the block shows: its list style's, while its text opens with a paragraph. */
+  /** The marker its list draws for the block: none while its text opens with no paragraph. */
   private listMarker(): string {
     const id = blockIdOf(this.node)
-    return id === null || !docShowsListMarker(this.node) ? '' : this.lists.markerOf(id)
+    return id === null ? '' : this.lists.markerOf(id)
   }
 
   /** Block mode's list marker, before the text on its first line; none for a plain block. */
@@ -424,7 +422,7 @@ class PageBlockView implements NodeView {
       this.marker.setAttribute('data-testid', 'list-marker')
       this.dom.insertBefore(this.marker, this.contentDOM)
     }
-    if (this.marker.textContent !== text) this.marker.textContent = text
+    this.marker.textContent = text
   }
 
   /** Mount the controls, and from now on every control the block gains. */
@@ -569,7 +567,6 @@ class PageBlockView implements NodeView {
     }
     this.node = node
     this.gutter.show(foldIn(decorations))
-    this.showMarker(this.listMarker())
     if (!isCurrentBlock(decorations)) this.showRendered(renderedText(node))
     return true
   }

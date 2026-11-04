@@ -10,9 +10,10 @@
  *
  * Equivalent mutants, accepted:
  * - Every `id === null` test in the view (`watch` and its reveal, the
- *   constructor, `show`, `showState`, `showRendered`, `showMetadata`), and the
- *   `?.` on a checkbox only a null id leaves unset: a block's view never holds
- *   a null id, as the id rules mint one in the transaction that makes the block.
+ *   constructor, `listMarker`, `show`, `showState`, `showRendered`,
+ *   `showMetadata`), and the `?.` on a checkbox only a null id leaves unset: a
+ *   block's view never holds a null id, as the id rules mint one in the
+ *   transaction that makes the block.
  * - The keys extension's name: nothing looks it up.
  * - `waiting.delete` in `unwatch`, and `mount`'s `renderer !== null` guard:
  *   either alone mounts a view's controls once.
