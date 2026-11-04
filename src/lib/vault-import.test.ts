@@ -945,6 +945,50 @@ describe('Org files (#6032)', () => {
   })
 })
 
+describe('Logseq graph (#6033)', () => {
+  const graph = () => [
+    folderFile(
+      ['{:journal/page-title-format "MMM do, yyyy"\n :file/name-format :triple-lowbar}'],
+      'config.edn',
+      'Graph/logseq/config.edn',
+      '',
+    ),
+    folderFile(['- old'], '2026.md', 'Graph/logseq/bak/pages/a___b/2026.md'),
+    folderFile(['- see [[Oct 21st, 2026]] [[A/B]]'], 'a___b.md', 'Graph/pages/a___b.md'),
+    folderFile(['title:: Real/Title\n\n- q'], 'What%3F.md', 'Graph/pages/What%3F.md'),
+    folderFile(['- why [[b]]'], 'Why%3F.md', 'Graph/pages/Why%3F.md'),
+    folderFile(['- day'], '2026_10_21.md', 'Graph/journals/2026_10_21.md'),
+  ]
+
+  it("titles pages and journals as Logseq does, skipping the graph's own folder", async () => {
+    expect(await loadAll(graph())).toEqual([
+      { path: 'a/b.md', content: '- see [[2026-10-21]] [[A/B]]' },
+      { path: 'Real/Title.md', content: 'title:: Real/Title\n\n- q' },
+      { path: 'Why?.md', content: '- why [[b]]' },
+      { path: '2026-10-21.md', content: '- day' },
+    ])
+  })
+
+  it('ships the notes a link names by their whole titles, never a namespaced one', async () => {
+    const both = folderFile(['- [[A/B]] and [[b]]'], 'c.md', 'Graph/pages/c.md')
+    const files = [...graph(), both]
+    const [namespaced, , leaf, , c] = mdFilesToUnits(files, indexVaultFiles(files), false)
+
+    expect((await namespaced?.load())?.vaultNotes).toEqual(['2026-10-21.md'])
+    expect((await leaf?.load())?.vaultNotes).toEqual([])
+    expect((await c?.load())?.vaultNotes).toEqual([])
+  })
+
+  it('reads a pick with `pages/` and `journals/` but no config as a graph of the defaults', async () => {
+    expect((await loadAll(graph().slice(2))).map((l) => l.path)).toEqual([
+      'a/b.md',
+      'Real/Title.md',
+      'Why?.md',
+      '2026-10-21.md',
+    ])
+  })
+})
+
 describe('enexNotesToUnits', () => {
   const note = (title: string, attachments: EnexNote['attachments'] = []): EnexNote => ({
     title,
