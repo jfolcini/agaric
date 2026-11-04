@@ -204,6 +204,12 @@ export function BlockPropertyEditor({
       return
     }
 
+    // The side is chosen at open. Re-flipping as the ref picker's filtered
+    // list shrinks would move its search input under the user's typing; above
+    // the chip, the opened height is kept so neither edge moves.
+    let placement: 'bottom-start' | 'top-start' | null = null
+    popup.style.minHeight = ''
+
     const update = () => {
       if (!anchor.isConnected || !popup.isConnected) {
         logger.warn('BlockPropertyEditor', 'anchor unmounted while value popup open', {
@@ -214,10 +220,18 @@ export function BlockPropertyEditor({
         return
       }
       computePosition(anchor, popup, {
-        placement: 'bottom-start',
-        middleware: [offset(4), flip({ padding: 8 }), shift({ padding: 8 })],
+        placement: placement ?? 'bottom-start',
+        middleware: [
+          offset(4),
+          ...(placement ? [] : [flip({ padding: 8 })]),
+          shift({ padding: 8 }),
+        ],
       })
-        .then(({ x, y }) => {
+        .then(({ x, y, placement: chosen }) => {
+          if (placement === null) {
+            placement = chosen.startsWith('top') ? 'top-start' : 'bottom-start'
+            if (placement === 'top-start') popup.style.minHeight = `${popup.offsetHeight}px`
+          }
           applySafePosition(popup, { x, y })
         })
         .catch((err: unknown) => {
