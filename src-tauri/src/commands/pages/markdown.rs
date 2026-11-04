@@ -993,7 +993,7 @@ enum PageRead {
 /// which `import::parse_document_outline` reads back as exactly this tree: a
 /// plain block is its own paragraph, a list block carries its marker and a
 /// task is `- [ ] x`, which has no list style (D3); a blank line separates
-/// blocks but neighbouring list lines (D1), a plain block under a list block
+/// blocks but neighbouring list lines (D1), a plain block under another block
 /// is a `+` item and a line holding only `\` an empty line (D4). Every block
 /// carries its `^ID`, and ids stay raw unless a name reads back to the same
 /// id. Duplicate, journal templates and the MCP page tools write and read it
@@ -1207,11 +1207,11 @@ fn render_block(
 }
 
 /// Where a Document buffer's walk stands (#5691): for each open depth, the
-/// column its block's children are written at and whether that block is
-/// written with a marker, and whether the block before was.
+/// column its block's children are written at, and whether the block before
+/// opens with a marker.
 #[derive(Default)]
 struct DocumentLayout {
-    open: Vec<(usize, bool)>,
+    open: Vec<usize>,
     previous_marked: Option<bool>,
 }
 
@@ -1221,10 +1221,11 @@ impl DocumentLayout {
     /// (D1), and return its indent, its marker and the indent of its property
     /// lines and children. A block with a task state in the checkbox alphabet
     /// is a task, whatever its `list_marker` (D3), and one with another state
-    /// has no marker. A plain block is bare, but a `+` item where a bare line
-    /// would not read back as its own block: under a block written with a
-    /// marker, whose indented lines continue it (D4), and opening the buffer
-    /// with `---`, which would open front matter.
+    /// has no marker. A plain block is bare at the top, but a `+` item under
+    /// any block, where an indented bare line would continue a list block (D4)
+    /// and read as code to other tools past four columns (decision 2, #6277),
+    /// and where it opens the buffer with `---`, which would open front matter.
+    /// A bare parent's children sit two columns in, the `+ ` marker's width.
     fn place(
         &mut self,
         output: &mut String,
@@ -1233,7 +1234,8 @@ impl DocumentLayout {
         list_marker: String,
     ) -> (String, String, String) {
         self.open.truncate(depth);
-        let (column, under_marker) = self.open.last().copied().unwrap_or((0, false));
+        let parent = self.open.last().copied();
+        let column = parent.unwrap_or(0);
         let opens_rule = output.is_empty()
             && block
                 .content
@@ -1242,7 +1244,7 @@ impl DocumentLayout {
         let marker = match block.todo_state.as_deref() {
             Some(state) if import::task_marker_for(state).is_some() => "- ".to_string(),
             None if !list_marker.is_empty() => list_marker,
-            _ if under_marker || opens_rule => "+ ".to_string(),
+            _ if parent.is_some() || opens_rule => "+ ".to_string(),
             _ => String::new(),
         };
         let marked = !marker.is_empty();
@@ -1254,7 +1256,7 @@ impl DocumentLayout {
         }
         self.previous_marked = Some(marked);
         let child = column + if marked { marker.len() } else { 2 };
-        self.open.push((child, marked));
+        self.open.push(child);
         (" ".repeat(column), marker, " ".repeat(child))
     }
 }
@@ -8604,7 +8606,8 @@ mod tests {
         }
 
         /// The title, the front matter, every id as its name, the nesting,
-        /// and a `^ID` on every block.
+        /// a plain child a `+` item (decision 2, #6277), and a `^ID` on every
+        /// block.
         #[test]
         fn every_ref_is_a_name_and_every_block_has_its_id() {
             let mut data = page_data(vec![
@@ -8626,7 +8629,7 @@ mod tests {
                 render_page_for_agent(&data),
                 format!(
                     "# Title\n\n---\naliases: [Plan B]\ntags: [work]\nstatus: active\n\
-                     project: Project Alpha\n---\n\nplan #work ^{PARENT}\n\n  \
+                     project: Project Alpha\n---\n\nplan #work ^{PARENT}\n\n  + \
                      see [[Linked Page]] ^{CHILD}\n    owner:: Ada\n"
                 )
             );

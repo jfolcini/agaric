@@ -165,6 +165,9 @@ function inlineNodeText(node: InlineNode, ctx: SpeakContext): string {
     case 'block_ref': {
       return resolvedBlockTitle(node.attrs.id, resolvers) ?? t('readAloud.missingBlock')
     }
+    case 'footnote_ref': {
+      return ''
+    }
   }
 }
 

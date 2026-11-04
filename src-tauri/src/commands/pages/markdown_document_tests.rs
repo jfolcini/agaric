@@ -89,10 +89,11 @@ fn arb_document_block() -> impl Strategy<Value = BlockSpec> {
 /// A forest of [`arb_document_block`]s led by one of the dialect's hard shapes
 /// (§ g.4): a plain block under a list block, which only `+` carries (D4), a
 /// first block opening with `---` and a second one, whose line would close the
-/// front matter the first opened, or an empty plain block, which only `\`
-/// carries (D4).
+/// front matter the first opened, an empty plain block, which only `\`
+/// carries (D4), or a plain block under a plain block, a `+` item too
+/// (decision 2, #6277).
 fn arb_document_forest() -> impl Strategy<Value = Vec<BlockSpec>> {
-    let lead = (arb_block(), arb_block(), 0..3, "-{3,4}[a-z ]{0,3}").prop_map(
+    let lead = (arb_block(), arb_block(), 0..4, "-{3,4}[a-z ]{0,3}").prop_map(
         |(parent, child, shape, rule)| {
             let child = BlockSpec {
                 level: 0,
@@ -119,10 +120,19 @@ fn arb_document_forest() -> impl Strategy<Value = Vec<BlockSpec>> {
                         ..child
                     },
                 ],
-                _ => vec![BlockSpec {
+                2 => vec![BlockSpec {
                     content: String::new(),
                     ..child
                 }],
+                _ => vec![
+                    BlockSpec {
+                        level: 0,
+                        list_style: None,
+                        todo_state: None,
+                        ..parent
+                    },
+                    BlockSpec { level: 1, ..child },
+                ],
             }
         },
     );
@@ -358,9 +368,9 @@ fn document_rows() -> Vec<(&'static str, Vec<BlockSpec>, &'static str)> {
             "text\n",
         ),
         (
-            "2: a heading owns nothing; its child is indented after a blank line",
+            "2: a heading owns nothing; its child is a `+` item after a blank line (decision 2, #6277)",
             vec![plain(0, "## Findings"), plain(1, "**Bold** text")],
-            "## Findings\n\n  **Bold** text\n",
+            "## Findings\n\n  + **Bold** text\n",
         ),
         (
             "3: a list block carries its marker, numbered by position; a task is `- [ ]`",
@@ -419,13 +429,13 @@ fn document_rows() -> Vec<(&'static str, Vec<BlockSpec>, &'static str)> {
             "| a | b |\n| - | - |\n\n> a\n> b\n",
         ),
         (
-            "7: a paragraph under a paragraph is indented after a blank line",
+            "7: a paragraph under a paragraph is a `+` item after a blank line (decision 2, #6277)",
             vec![
                 plain(0, "parent"),
                 plain(1, "child"),
                 plain(2, "grandchild"),
             ],
-            "parent\n\n  child\n\n    grandchild\n",
+            "parent\n\n  + child\n    + grandchild\n",
         ),
         (
             "8: a list under a paragraph is indented after a blank line",
@@ -604,8 +614,8 @@ fn document_rows() -> Vec<(&'static str, Vec<BlockSpec>, &'static str)> {
 
 /// Text typed with no blank line between blocks (D1 as amended): each text and
 /// the tree it reads as. A heading, a fence or a thematic break starts a block
-/// of its own wherever it stands, under a list item's text too, and a list
-/// item still interrupts a paragraph.
+/// of its own wherever it stands, under a list item's text too, a list item
+/// still interrupts a paragraph, and a tab reaches the next multiple of four.
 fn typed_rows() -> Vec<(&'static str, &'static str, Vec<BlockSpec>)> {
     vec![
         (
@@ -644,6 +654,11 @@ fn typed_rows() -> Vec<(&'static str, &'static str, Vec<BlockSpec>)> {
             "a list item still interrupts a paragraph",
             "para\n- a",
             vec![plain(0, "para"), styled(0, "a", "bullet")],
+        ),
+        (
+            "a tab reaches the next tab stop, so a tab-indented numbered list nests (decision 2, #6277)",
+            "1. a\n\t1. b",
+            vec![styled(0, "a", "ordered"), styled(1, "b", "ordered")],
         ),
     ]
 }
