@@ -119,12 +119,52 @@ fn validate_new_attachment(
     // F-11 validation: MIME type allow-list.
     if !is_mime_allowed(mime_type) {
         return Err(AppError::validation(format!(
-            "MIME type '{mime_type}' is not allowed; permitted: image/*, application/pdf, text/*, \
-             application/json, application/zip, application/x-tar"
+            "MIME type '{mime_type}' is not allowed; permitted: {}",
+            ALLOWED_MIME_PATTERNS.join(", ")
         )));
     }
 
     validate_attachment_filename(filename)
+}
+
+/// The MIME type of each file extension an attachment taken by path may have
+/// (#5410), within [`ALLOWED_MIME_PATTERNS`].
+pub(crate) const ATTACHMENT_EXTENSIONS: &[(&str, &str)] = &[
+    ("png", "image/png"),
+    ("jpg", "image/jpeg"),
+    ("jpeg", "image/jpeg"),
+    ("gif", "image/gif"),
+    ("webp", "image/webp"),
+    ("avif", "image/avif"),
+    ("svg", "image/svg+xml"),
+    ("bmp", "image/bmp"),
+    ("ico", "image/x-icon"),
+    ("ogg", "audio/ogg"),
+    ("oga", "audio/ogg"),
+    ("opus", "audio/ogg"),
+    ("mp3", "audio/mpeg"),
+    ("m4a", "audio/mp4"),
+    ("aac", "audio/aac"),
+    ("wav", "audio/wav"),
+    ("webm", "audio/webm"),
+    ("flac", "audio/flac"),
+    ("pdf", "application/pdf"),
+    ("md", "text/markdown"),
+    ("markdown", "text/markdown"),
+    ("txt", "text/plain"),
+    ("csv", "text/csv"),
+    ("json", "application/json"),
+    ("zip", "application/zip"),
+    ("tar", "application/x-tar"),
+];
+
+/// The MIME type of `extension` (no dot, any case), or `None` for one no
+/// attachment may have.
+pub(crate) fn mime_for_extension(extension: &str) -> Option<&'static str> {
+    ATTACHMENT_EXTENSIONS
+        .iter()
+        .find(|(known, _)| known.eq_ignore_ascii_case(extension))
+        .map(|(_, mime)| *mime)
 }
 
 /// Persist metadata for bytes already written at a backend-generated path.
@@ -1060,4 +1100,40 @@ pub async fn list_attachments_batch(
     list_attachments_batch_inner(&pool.0, block_ids)
         .await
         .map_err(sanitize_internal_error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mime_for_extension_reads_the_extension_in_any_case_5410() {
+        assert_eq!(mime_for_extension("opus"), Some("audio/ogg"));
+        assert_eq!(mime_for_extension("M4A"), Some("audio/mp4"));
+        assert_eq!(mime_for_extension("Md"), Some("text/markdown"));
+        assert_eq!(mime_for_extension("exe"), None, "not an attachment type");
+        assert_eq!(mime_for_extension("mp4"), None, "video is not allowed");
+        assert_eq!(mime_for_extension(""), None, "no extension, no type");
+    }
+
+    #[test]
+    fn every_attachment_extension_names_an_allowed_type_5410() {
+        for (extension, mime) in ATTACHMENT_EXTENSIONS {
+            assert!(
+                is_mime_allowed(mime),
+                "`.{extension}` maps to {mime}, which the allow-list refuses"
+            );
+        }
+    }
+
+    #[test]
+    fn a_refused_type_is_told_every_allowed_pattern_5410() {
+        let err = validate_new_attachment("clip.mp4", "video/mp4", 1).unwrap_err();
+        for pattern in ALLOWED_MIME_PATTERNS {
+            assert!(
+                matches!(&err, AppError::Validation { message, .. } if message.contains(pattern)),
+                "the refusal lists `{pattern}`: {err:?}"
+            );
+        }
+    }
 }

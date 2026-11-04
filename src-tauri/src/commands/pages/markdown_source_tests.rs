@@ -89,6 +89,22 @@ fn arb_ref_id() -> impl Strategy<Value = &'static str> {
     proptest::sample::select(&REF_IDS[..])
 }
 
+/// Words outside ASCII (#5363): decomposed (NFD) accents, emoji with a skin
+/// tone and a joiner, and right-to-left scripts.
+const UNICODE_WORDS: [&str; 7] = [
+    "cafe\u{301}",
+    "Ma\u{308}rchen",
+    "🙂",
+    "👩🏽\u{200d}💻",
+    "שלום",
+    "مرحبا",
+    "漢字",
+];
+
+fn arb_unicode_word() -> impl Strategy<Value = String> {
+    proptest::sample::select(&UNICODE_WORDS[..]).prop_map(str::to_owned)
+}
+
 /// One word of prose. No backtick, so a fence only ever comes from
 /// [`arb_fence`].
 fn arb_word() -> impl Strategy<Value = String> {
@@ -99,6 +115,7 @@ fn arb_word() -> impl Strategy<Value = String> {
         arb_ref_id().prop_map(|id| format!("#[{id}]")),
         arb_ref_id().prop_map(|id| format!("(({id}))")),
         "\\^[a-z0-9]{1,4}",
+        arb_unicode_word(),
     ]
 }
 

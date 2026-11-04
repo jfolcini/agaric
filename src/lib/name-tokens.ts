@@ -79,6 +79,13 @@ export function isTagName(name: string): boolean {
  */
 const trimWhiteSpace = (s: string): string => s.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '')
 
+/**
+ * `agaric_core::tag_norm::name_key` (#6278): trimmed, lowercased, NFC. Two
+ * names of one space are one name when their keys are equal: page titles and
+ * aliases, and tag names. Pinned to Rust by the `nameKeyCases` vectors.
+ */
+export const nameKey = (name: string): string => trimWhiteSpace(name).toLowerCase().normalize('NFC')
+
 /** A link body read as a page name, with the label the rest of it shows. */
 export interface LinkReading {
   name: string

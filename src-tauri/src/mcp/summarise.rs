@@ -41,14 +41,15 @@ use agaric_core::ulid::BlockId;
 use serde_json::Value;
 
 use super::registry::{
-    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_BATCH, TOOL_BLOCK_HISTORY,
-    TOOL_CAPTURE, TOOL_CREATE_PAGE, TOOL_CREATE_TAG, TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY,
-    TOOL_EDIT_PAGE_MARKDOWN, TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_JOURNAL, TOOL_GET_PAGE,
-    TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_ATTACHMENTS, TOOL_LIST_BACKLINKS,
-    TOOL_LIST_JOURNAL, TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS,
-    TOOL_LIST_TRASH, TOOL_MOVE_BLOCKS, TOOL_MOVE_PAGE_TO_SPACE, TOOL_PAGE_HISTORY, TOOL_QUERY,
-    TOOL_REMOVE_TAG, TOOL_RESOLVE, TOOL_RESTORE_BLOCK, TOOL_SEARCH, TOOL_SET_PAGE_ALIASES,
-    TOOL_SET_PROPERTY, TOOL_UNDO, TOOL_UPDATE_BLOCK_CONTENT,
+    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_ATTACH_FILE, TOOL_BATCH,
+    TOOL_BLOCK_HISTORY, TOOL_CAPTURE, TOOL_CREATE_PAGE, TOOL_CREATE_TAG, TOOL_DELETE_BLOCK,
+    TOOL_DELETE_PROPERTY, TOOL_EDIT_PAGE_MARKDOWN, TOOL_GET_AGENDA, TOOL_GET_BLOCK,
+    TOOL_GET_JOURNAL, TOOL_GET_PAGE, TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE,
+    TOOL_LIST_ATTACHMENTS, TOOL_LIST_BACKLINKS, TOOL_LIST_JOURNAL, TOOL_LIST_PAGES,
+    TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_LIST_TRASH, TOOL_MOVE_BLOCKS,
+    TOOL_MOVE_PAGE_TO_SPACE, TOOL_PAGE_HISTORY, TOOL_QUERY, TOOL_REMOVE_TAG, TOOL_RESOLVE,
+    TOOL_RESTORE_BLOCK, TOOL_SEARCH, TOOL_SET_PAGE_ALIASES, TOOL_SET_PROPERTY, TOOL_UNDO,
+    TOOL_UPDATE_BLOCK_CONTENT,
 };
 
 /// Number of leading characters of a ULID we expose in summary strings.
@@ -139,6 +140,7 @@ pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
         TOOL_BATCH => summarise_batch(args, result),
         TOOL_EDIT_PAGE_MARKDOWN => summarise_edit_page_markdown(args, result),
         TOOL_SET_PAGE_ALIASES => summarise_set_page_aliases(args, result),
+        TOOL_ATTACH_FILE => summarise_attach_file(args, result),
         // Defensive default — keeps the activity feed working when
         // someone adds a new tool without a summariser. This is the
         // pre-existing behaviour for every entry. The privacy
@@ -662,6 +664,22 @@ pub fn summarise_set_page_aliases(_args: &Value, result: &Value) -> String {
     }
 }
 
+/// `attach_file — <mime type>, N bytes on <block-prefix>` (#5410). Never the
+/// filename or the path, which are user text.
+pub fn summarise_attach_file(_args: &Value, result: &Value) -> String {
+    let mime = str_field(result, "mime_type").unwrap_or("file");
+    let size = result
+        .get("size_bytes")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let block = ulid_prefix(str_field(result, "block_id").unwrap_or(""));
+    if block.is_empty() {
+        format!("attach_file — {mime}, {size} bytes")
+    } else {
+        format!("attach_file — {mime}, {size} bytes on {block}")
+    }
+}
+
 /// `undo — reverted N op(s)`.
 pub fn summarise_undo(_args: &Value, result: &Value) -> String {
     let n = array_len(result, "undone").unwrap_or(0);
@@ -795,6 +813,7 @@ mod tests {
         "SECRET_QUERY",
         "SECRET_ALIAS",
         "SECRET_FILENAME",
+        "SECRET_PATH",
     ];
 
     /// Checks each secret's first [`ULID_PREFIX_LEN`] characters: a name
@@ -1576,6 +1595,22 @@ mod tests {
     }
 
     #[test]
+    fn attach_file_names_the_type_and_size_not_the_file_5410() {
+        let args = json!({ "path": "/home/SECRET_PATH/a.ogg", "filename": "SECRET_FILENAME" });
+        let result = json!({
+            "id": ULID_A,
+            "block_id": ULID_B,
+            "filename": "SECRET_FILENAME",
+            "mime_type": "audio/ogg",
+            "size_bytes": 1234,
+            "path": "/vault/SECRET_PATH",
+        });
+        let s = summarise(TOOL_ATTACH_FILE, &args, &result);
+        assert_eq!(s, "attach_file — audio/ogg, 1234 bytes on 01HZTEST");
+        assert_no_secrets(&s);
+    }
+
+    #[test]
     fn undo_counts_reverted_ops() {
         let one = json!({ "undone": [{ "reversed_op_type": "create_block" }] });
         assert_eq!(
@@ -1670,6 +1705,9 @@ mod tests {
             "to": "2025-01-31",
             // #5398 — `query`'s predicates carry user text.
             "where": { "type": "Leaf", "primitive": { "type": "Tag", "tag": "SECRET_TAG_NAME" } },
+            // #5410 — `attach_file` names a file on this device.
+            "path": "/home/SECRET_PATH/a.ogg",
+            "filename": "SECRET_FILENAME",
         });
 
         // Per-tool result shapes. Some summarisers expect a result
@@ -1744,6 +1782,11 @@ mod tests {
             "tag_id": ULID_TAG,
             "moves": [{ "block_id": ULID_A, "new_parent_id": ULID_B, "new_position": 0 }],
             "deleted_at": "2025-01-01",
+            // #5410 — `attach_file` returns the attachment, with its name and path.
+            "filename": "SECRET_FILENAME",
+            "mime_type": "audio/ogg",
+            "size_bytes": 4,
+            "path": "/vault/SECRET_PATH",
         });
         let result_tags = json!([
             { "tag_id": ULID_TAG, "name": "SECRET_TAG_NAME", "usage_count": 1, "updated_at": "x" }

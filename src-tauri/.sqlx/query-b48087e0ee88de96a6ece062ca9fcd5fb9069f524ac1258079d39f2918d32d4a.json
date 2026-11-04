@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT DISTINCT s.page_id AS \"page_id!: String\"\n                 FROM block_links l JOIN blocks s ON s.id = l.source_id\n                WHERE l.target_id IN (SELECT value FROM json_each(?1))\n                  AND s.deleted_at IS NULL AND s.page_id IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "page_id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "page_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "b48087e0ee88de96a6ece062ca9fcd5fb9069f524ac1258079d39f2918d32d4a"
+}
