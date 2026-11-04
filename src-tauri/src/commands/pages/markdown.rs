@@ -4280,13 +4280,13 @@ fn rewrite_relative_md_links(content: &str, dir: &str) -> String {
 /// `#fragment`) imports as, resolved against `dir`, whose first folder is the
 /// vault's: `Other%20note.md` from `vault/notes` is `vault/notes/Other note`,
 /// and `../Top.txt` is `vault/Top`. An Org file is named by its file name,
-/// not its `#+TITLE`. `None` for a URL, an absolute path, a file that is no
-/// note or a path that climbs out of the vault.
+/// not its `#+TITLE`. `None` for a URL with a scheme (`mailto:a@b.org`), an
+/// absolute path, a file that is no note or a path that climbs out of the vault.
 fn relative_md_link_title(path: &str, dir: &str) -> Option<String> {
     let path = percent_decode(path).replace('\\', "/");
     let (stem, extension) = path.rsplit_once('.')?;
     let names_note = import::NOTE_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str());
-    if path.contains("://") || path.starts_with('/') || !names_note {
+    if import::URL_SCHEME_RE.is_match(&path) || path.starts_with('/') || !names_note {
         return None;
     }
     let (vault, dir) = dir.split_once('/').unwrap_or((dir, ""));
@@ -8009,6 +8009,11 @@ mod tests {
         }
         assert_eq!(relative_md_link_title("r.pdf", "v"), None);
         assert_eq!(relative_md_link_title("noext", "v"), None);
+        assert_eq!(
+            relative_md_link_title("mailto:jane@example.org", "v"),
+            None,
+            "a mail address at an .org domain is no note"
+        );
         assert_eq!(
             rewrite_relative_md_links(
                 "[t](r.txt) [h](O.md#My%20Heading) [b](O.md#^id) [v/O](O.md#H) [e](O.md#) \

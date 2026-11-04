@@ -889,7 +889,7 @@ fn is_skippable_attachment_ref(reference: &str) -> bool {
 pub const NOTE_EXTENSIONS: [&str; 5] = ["md", "markdown", "mdx", "txt", "org"];
 
 /// URL scheme at the start of a link destination (`mailto:`, `ftp:`).
-static URL_SCHEME_RE: LazyLock<Regex> =
+pub static URL_SCHEME_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[A-Za-z][A-Za-z0-9+.-]*:").expect("invalid url-scheme regex"));
 
 /// Whether a link to the decoded `destination` may name a file the import
