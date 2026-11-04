@@ -299,12 +299,14 @@ export function skippedFiles(
 /**
  * The filename `importMarkdown` gets for a note, ending in `.md`, the only
  * extension the backend takes off a title. #1446 Part B — a folder/vault pick
- * carries `webkitRelativePath`, so the backend maps `a/b/API.md` → namespace
- * `a/b/API`. A plain file pick has an empty `webkitRelativePath`, so fall
- * back to the basename. A Notion export's ids leave every segment.
+ * carries `webkitRelativePath`, whose path below the picked folder the backend
+ * maps `a/b/API.md` → namespace `a/b/API`; the picked folder's own name is no
+ * part of any title, so a restored export titles its pages as they were
+ * (#6277 decision 8). A plain file pick has an empty `webkitRelativePath`, so
+ * fall back to the basename. A Notion export's ids leave every segment.
  */
 function importPath(file: File, extension: string, notion: boolean): string {
-  const path = file.webkitRelativePath || file.name
+  const path = vaultRelativePath(file.webkitRelativePath) || file.name
   const md = `${path.slice(0, path.length - extension.length)}.md`
   return notion ? stripNotionIds(md) : md
 }

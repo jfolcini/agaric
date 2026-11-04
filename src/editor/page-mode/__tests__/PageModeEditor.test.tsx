@@ -1093,6 +1093,31 @@ describe('PageModeEditor', () => {
     },
   )
 
+  // `ModeSwap` holds block mode's tree on screen until page mode says it shows the page.
+  it('says it shows the page once its editor holds it, and not before', async () => {
+    const { pageId } = seedPage(['first', 'second'])
+    const onShown = vi.fn()
+    const { container } = renderPageMode(pageId, { onShown })
+    expect(onShown).not.toHaveBeenCalled()
+    const editor = await editorIn(container)
+    expect(editor.state.doc.childCount).toBe(2)
+    expect(onShown).toHaveBeenCalledTimes(1)
+  })
+
+  it('a page that fails to open lets block mode’s tree go too, not hold it up for good', async () => {
+    const { pageId } = seedPage(['first'])
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'get_batch_properties') throw new Error('database locked')
+      return dispatch(cmd, args)
+    })
+    const onShown = vi.fn()
+    renderPageMode(pageId, { onShown })
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('error.loadBlocksFailed'))
+    })
+    expect(onShown).toHaveBeenCalledTimes(1)
+  })
+
   it('a reload whose read fails leaves the document as it was, writes no peer’s change back over, and the next reload brings it in', async () => {
     const { pageId, ids } = seedPage(['first', 'second'])
     const { container, store, handle } = renderPageMode(pageId)

@@ -6374,21 +6374,19 @@ async fn import_markdown_stores_link_labels_from_every_form() {
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
     agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
-    import_markdown_inner(
+    // A folder-relative link is read only on a folder import (#6277 G1).
+    import_folder(
         &pool,
-        DEV,
         &mat,
         _dir.path(),
-        "- [[vault/Other|see other]] [label]([[vault/Other]]) [see here](Other.md) \
-         [[vault/Other|vault/Other]]"
-            .into(),
-        Some("vault/Note.md".into()),
-        TEST_SPACE_ID.into(),
-        None,
+        &[(
+            "vault/Note.md",
+            "- [[vault/Other|see other]] [label]([[vault/Other]]) [see here](Other.md) \
+             [[vault/Other|vault/Other]]",
+        )],
+        &[],
     )
-    .await
-    .unwrap();
-    settle(&mat).await;
+    .await;
 
     let others: Vec<String> = sqlx::query_scalar(
         "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'vault/Other' \
@@ -11876,7 +11874,7 @@ async fn import_reads_a_relative_md_link_as_a_page_link_on_a_folder_import() {
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
     let md = "- folder [x](Other%20note.md) [y](../Top.md) [z](https://x.dev/a.md) [w](pic.png)";
 
-    import_file(&pool, &mat, dir.path(), "vault/notes/A.md", md).await;
+    import_folder(&pool, &mat, dir.path(), &[("vault/notes/A.md", md)], &[]).await;
     let other = pages_titled(&pool, "vault/notes/Other note").await;
     let top = pages_titled(&pool, "vault/Top").await;
     assert_eq!((other.len(), top.len()), (1, 1));
@@ -11897,6 +11895,30 @@ async fn import_reads_a_relative_md_link_as_a_page_link_on_a_folder_import() {
     assert_eq!(
         pages_titled(&pool, "Other note").await,
         Vec::<String>::new()
+    );
+    mat.shutdown();
+}
+
+/// #6277 G1 — a note at the root of the picked folder is titled by its file
+/// name alone, and its relative links resolve from that root.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_folder_import_reads_a_root_notes_relative_link() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    import_folder(
+        &pool,
+        &mat,
+        dir.path(),
+        &[("A.md", "- root [x](sub/Other%20note.md)")],
+        &[],
+    )
+    .await;
+    let other = pages_titled(&pool, "sub/Other note").await;
+    assert_eq!(other.len(), 1);
+    assert_eq!(pages_titled(&pool, "A").await.len(), 1);
+    assert_eq!(
+        block_starting(&pool, "root").await,
+        format!("root [[{}|x]]", other[0])
     );
     mat.shutdown();
 }
@@ -14626,7 +14648,7 @@ async fn import_reads_logseq_task_syntax_into_the_task_columns() {
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
     let md = "- TODO [#A] Write the report\n  SCHEDULED: <2026-10-01 Thu +1w>\n\
               - NOW [#C] Review PR 4412\n  DEADLINE: <2026-10-05 Mon>\n\
-              - DONE Book the room\n  SCHEDULED: <2026-10-01 Thu -2d>\n\
+              - DONE Book the room\n  SCHEDULED: <2026-10-01 Thu +1h>\n\
               - Plain text\n";
 
     let result = import_markdown_inner(
@@ -14661,7 +14683,7 @@ async fn import_reads_logseq_task_syntax_into_the_task_columns() {
         [
             "Write the report",
             "Review PR 4412",
-            "Book the room\nSCHEDULED: <2026-10-01 Thu -2d>",
+            "Book the room\nSCHEDULED: <2026-10-01 Thu +1h>",
             "Plain text",
         ]
     );
@@ -14718,6 +14740,57 @@ async fn import_maps_an_org_priority_letter_to_its_level() {
     .await
     .unwrap();
     assert_eq!(priority.as_deref(), Some("2"));
+    mat.shutdown();
+}
+
+/// #6032 N6 — an Org planning line keeps its date past a warning period or
+/// delay (`-3d`, `--3d`) and a non-English day name (`jeu.`, `周四`); each
+/// warning period dropped is reported.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_keeps_an_org_planning_date_past_a_warning_period_or_a_foreign_day() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let md = "- TODO a\n  DEADLINE: <2026-10-01 Thu -3d>\n\
+              - TODO b\n  SCHEDULED: <2026-10-02 Fri --3d>\n\
+              - TODO c\n  DEADLINE: <2026-10-03 jeu.>\n\
+              - TODO d\n  DEADLINE: <2026-10-04 周四>\n";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md.into(),
+        Some("Echeances.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        result.warnings,
+        ["2 SCHEDULED/DEADLINE warning period(s) or delay(s) were dropped; their dates were kept"]
+    );
+    let rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT b.content, b.scheduled_date, b.due_date FROM blocks b \
+         JOIN blocks p ON p.id = b.parent_id \
+         WHERE p.content = 'Echeances' AND b.deleted_at IS NULL ORDER BY b.position",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let date = |d: &str| Some(d.to_string());
+    assert_eq!(
+        rows,
+        [
+            ("a".to_string(), None, date("2026-10-01")),
+            ("b".to_string(), date("2026-10-02"), None),
+            ("c".to_string(), None, date("2026-10-03")),
+            ("d".to_string(), None, date("2026-10-04")),
+        ]
+    );
     mat.shutdown();
 }
 
@@ -16021,7 +16094,7 @@ async fn import_attaches_the_image_beside_the_note_6032() {
         &mat,
         app_data_dir,
         "- see ![](image.png)\n- and ![](b/image.png)".into(),
-        Some("Vault/b/note.md".into()),
+        Some("b/note.md".into()),
         TEST_SPACE_ID.into(),
         Some(vault),
     )

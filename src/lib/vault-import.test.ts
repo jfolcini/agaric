@@ -304,8 +304,9 @@ describe('mdFilesToUnits', () => {
     const [unit] = mdFilesToUnits([md], index, false)
 
     const loaded = await unit?.load()
-    // #1446 — the folder-relative path drives the namespace mapping.
-    expect(loaded?.path).toBe('MyVault/note.md')
+    // #1446 — the path below the picked folder drives the namespace mapping;
+    // the folder's own name is no part of the title (#6277 decision 8).
+    expect(loaded?.path).toBe('note.md')
     expect(loaded?.vaultFiles).toHaveLength(1)
     expect(loaded?.vaultFiles?.[0]?.path).toBe('assets/diagram.png')
     expect(loaded?.vaultFiles?.[0]?.bytes).toEqual([9, 9])
@@ -360,11 +361,7 @@ describe('mdFilesToUnits', () => {
 
     const [homeUnit, topicUnit] = mdFilesToUnits(files, indexVaultFiles(files), false)
 
-    expect((await homeUnit?.load())?.vaultNotes).toEqual([
-      'Vault/sub/topic.md',
-      'Vault/twin.md',
-      'Vault/a/twin.md',
-    ])
+    expect((await homeUnit?.load())?.vaultNotes).toEqual(['sub/topic.md', 'twin.md', 'a/twin.md'])
     expect((await topicUnit?.load())?.vaultNotes).toEqual([])
   })
 
@@ -376,8 +373,8 @@ describe('mdFilesToUnits', () => {
 
     const [plainUnit, paddedUnit] = mdFilesToUnits(files, indexVaultFiles(files), false)
 
-    expect((await plainUnit?.load())?.vaultNotes).toEqual(['Vault/Note.md'])
-    expect((await paddedUnit?.load())?.vaultNotes).toEqual(['Vault/Note.md'])
+    expect((await plainUnit?.load())?.vaultNotes).toEqual(['Note.md'])
+    expect((await paddedUnit?.load())?.vaultNotes).toEqual(['Note.md'])
   })
 
   it('ships no note paths on a plain pick, whose links already name its titles', async () => {
@@ -412,9 +409,9 @@ describe('folder picks of other note formats (#6032)', () => {
     ]
 
     expect(await loadAll(files)).toEqual([
-      { path: 'Vault/one.md', content: '- one' },
-      { path: 'Vault/two.md', content: '- two' },
-      { path: 'Vault/sub/three.md', content: '- three' },
+      { path: 'one.md', content: '- one' },
+      { path: 'two.md', content: '- two' },
+      { path: 'sub/three.md', content: '- three' },
     ])
   })
 
@@ -503,13 +500,9 @@ describe('Notion export (#6032)', () => {
   it('titles each page without its id, and its links, `%20`-encoded or in a folder, name those titles', async () => {
     const [plan, other, sub] = await loadAll(notionFiles())
 
-    expect([plan?.path, other?.path, sub?.path]).toEqual([
-      'Export/Plan.md',
-      'Export/Other.md',
-      'Export/Plan/Sub.md',
-    ])
+    expect([plan?.path, other?.path, sub?.path]).toEqual(['Plan.md', 'Other.md', 'Plan/Sub.md'])
     // The backend resolves `Other.md` and `Plan/Sub.md` against the folder of
-    // `Export/Plan` to the pages `Export/Other` and `Export/Plan/Sub`.
+    // `Plan` to the pages `Other` and `Plan/Sub`.
     expect(plan?.content).toContain(
       `See [Other](Other.md), [Sub](Plan/Sub.md) and ![pic](Plan%20${PLAN}/pic.png).`,
     )
@@ -615,11 +608,7 @@ describe('Notion export (#6032)', () => {
 
     const loaded = await loadAll(files)
 
-    expect(loaded.map((l) => l.path)).toEqual([
-      'Export/Plan.md',
-      'Export/Other.md',
-      'Export/Plan/Sub.md',
-    ])
+    expect(loaded.map((l) => l.path)).toEqual(['Plan.md', 'Other.md', 'Plan/Sub.md'])
   })
 
   it('keeps a text note of the export as written, reading only its Markdown pages as Notion', async () => {
@@ -630,7 +619,7 @@ describe('Notion export (#6032)', () => {
 
     const loaded = await loadAll(files)
 
-    expect(loaded[3]).toEqual({ path: 'Export/readme.md', content: '# readme\n\nStatus: draft' })
+    expect(loaded[3]).toEqual({ path: 'readme.md', content: '# readme\n\nStatus: draft' })
   })
 
   it('leaves a plain folder alone when only some names end in an id', async () => {
@@ -644,7 +633,7 @@ describe('Notion export (#6032)', () => {
 
     const loaded = await loadAll(files)
 
-    expect(loaded.map((l) => l.path)).toEqual(['Vault/a.md', 'Vault/b.md', `Vault/Odd ${PLAN}.md`])
+    expect(loaded.map((l) => l.path)).toEqual(['a.md', 'b.md', `Odd ${PLAN}.md`])
     expect(loaded[0]?.content).toBe(aside)
     expect(skippedFiles(files, isNotionPick(files), new Set())).toEqual({ other: 1, databases: 0 })
   })
@@ -717,7 +706,7 @@ describe('Org files (#6032)', () => {
 
     const loaded = await loadAll([titled, untitled])
 
-    expect(loaded.map((l) => l.path)).toEqual(['Vault/sub/Org Tasks.md', 'Vault/loose.md'])
+    expect(loaded.map((l) => l.path)).toEqual(['sub/Org Tasks.md', 'loose.md'])
   })
 
   it('titles the page by its file name when its `#+TITLE` is empty', async () => {
@@ -725,7 +714,7 @@ describe('Org files (#6032)', () => {
       folderFile(['#+TITLE:\n* A\n'], 'bare.org', 'Vault/bare.org', ''),
     ])
 
-    expect(loaded.map((l) => l.path)).toEqual(['Vault/bare.md'])
+    expect(loaded.map((l) => l.path)).toEqual(['bare.md'])
   })
 
   it('#6032 — keeps a / in a `#+TITLE` as a look-alike, so the page stays in its folder', async () => {
@@ -733,7 +722,7 @@ describe('Org files (#6032)', () => {
 
     const loaded = await loadAll([titled])
 
-    expect(loaded.map((l) => l.path)).toEqual(['Vault/TCP∕IP.md'])
+    expect(loaded.map((l) => l.path)).toEqual(['TCP∕IP.md'])
   })
 
   const orgContent = async (text: string): Promise<string | undefined> =>
@@ -810,7 +799,7 @@ describe('Org files (#6032)', () => {
     expect(linked?.content).toBe(
       [
         `- See ((${TARGET_ID})) and ((${TARGET_ID}))`,
-        '- Back to [[Vault/Roam Notes|notes]] and [[Vault/Roam Notes]]',
+        '- Back to [[Roam Notes|notes]] and [[Roam Notes]]',
         `- Lost \\[[id:${LOST_ID}]] and \\[[id:custom-1]]`,
         '',
       ].join('\n'),

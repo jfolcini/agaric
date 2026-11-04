@@ -376,13 +376,15 @@ test.describe('Folder import of Notion, Org and text files @markdown', () => {
       .locator('[data-slot="sidebar"]')
       .getByRole('button', { name: 'Pages', exact: true })
       .click()
-    for (const title of ['Export/Plan', 'Export/Notes', 'Export/Org Tasks', 'Export/reading']) {
+    // The picked folder's own name is no part of a title (#6277 decision 8).
+    for (const title of ['Plan', 'Notes', 'Org Tasks', 'reading']) {
       await expect(page.locator(`span[title="${title}"]`)).toBeVisible()
     }
-    await expect(page.locator(`span[title="Export/Plan ${id}"]`)).toHaveCount(0)
+    await expect(page.locator(`span[title="Plan ${id}"]`)).toHaveCount(0)
+    await expect(page.locator('span[title="Export/Plan"]')).toHaveCount(0)
 
-    await page.locator('span[title="Export/Plan"]').click()
-    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Export/Plan')
+    await page.locator('span[title="Plan"]').click()
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Plan')
     await expect(page.getByTestId('callout-block')).toContainText('Mind the deadline.')
   })
 })
