@@ -8,7 +8,7 @@ Companion to `docs/UI-MAP.md § Editor surfaces` (what the user sees) and `docs/
 Block content is stored as Markdown-flavoured plain text. The full grammar is parsed by the FE serializer (round-tripped to ProseMirror, then back). Key rules:
 
 - One block = one top-level Markdown construct (paragraph, heading, list item, code block, etc.). Multi-block markdown pasted into one block triggers an auto-split on blur.
-- Inline marks are a **locked set**: bold, italic, code, strike, highlight, external-link, inline-block-link (`[[ULID]]`), tag-ref (`#[ULID]`), block-ref (`((ULID))`). New marks are deliberate additions to the serializer + grammar.
+- Inline marks are a **locked set**: bold, italic, code, strike, highlight, external-link, inline-block-link (`[[ULID]]`), tag-ref (`#[ULID]`), block-ref (`((ULID))`), footnote-ref (`[^label]`). New marks are deliberate additions to the serializer + grammar.
 - Code blocks carry a `language` attribute (one of a curated set; matching common usage).
 - Callouts use a `> [!type]` fenced shape (tip / note / info / warning / error).
 
