@@ -2919,26 +2919,6 @@ async fn fts_fixture() -> (sqlx::SqlitePool, TempDir) {
     .await;
     fts_insert(&pool, FTS_EMPTY, "content", None, Some(FTS_PAGE)).await;
 
-    // The inline-reference edge a real vault carries. `reindex_fts_references`
-    // — production's propagation arm — finds referencing blocks through
-    // `block_tags`, `block_links` and `block_tag_refs`, NEVER by scanning
-    // content for `#[ULID]` tokens. Without this row the rename below
-    // propagates to nothing, which is a property of the maintainer, not of the
-    // fixture.
-    //
-    // It also names this artefact's one external dependency plainly:
-    // `fts_blocks` freshness after a rename is only as correct as
-    // `block_tag_refs`, and THAT artefact is not yet oracle-covered (blocked on
-    // #4679). A missing edge there is a stale FTS row here that no diff in this
-    // module attributes to its real cause.
-    // dynamic-sql: test-only fixture seed (not a production query path).
-    sqlx::query("INSERT INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)")
-        .bind(FTS_TAGGER)
-        .bind(FTS_TAG)
-        .execute(&pool)
-        .await
-        .expect("seed the inline tag-ref edge");
-
     (pool, dir)
 }
 

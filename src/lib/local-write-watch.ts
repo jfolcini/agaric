@@ -46,9 +46,9 @@ export function isReadOnlyCommand(command: string): boolean {
 
 /**
  * Writes that change no note and fire without the user editing one (logging,
- * tracing, link previews, the periodic sync, reminders, the draft flush on
- * every window hide, the stamp on every page open); counting them would
- * refetch the Pages list on every return. Synced changes arrive through
+ * tracing, link previews, the periodic sync, reminders, read aloud, the draft
+ * flush on every window hide, the stamp on every page open); counting them
+ * would refetch the Pages list on every return. Synced changes arrive through
  * `useSyncEvents` instead, the typing a draft holds is already committed by
  * `useDebouncedContentCommit`'s `edit_block`, whose debounce is shorter than
  * the draft's, and the Pages list refetches its "Last opened" sort itself.
@@ -61,6 +61,7 @@ const NON_NOTE_WRITES: ReadonlySet<string> = new Set<string>([
   'notify_task',
   'flush_all_drafts',
   'record_page_open',
+  'speech_status',
 ])
 
 type CommandTable = Record<string, (...args: never[]) => Promise<unknown>>

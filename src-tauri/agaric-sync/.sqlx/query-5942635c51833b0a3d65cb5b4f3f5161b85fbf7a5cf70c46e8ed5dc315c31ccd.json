@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id as \"id!: i64\", inbox_id, space_id,\n                  LENGTH(bytes) as \"byte_len!: i64\",\n                  declared_end_vv, last_reason, unresolved_boots,\n                  first_seen_at_ms, quarantined_at_ms\n           FROM loro_sync_quarantine\n           ORDER BY quarantined_at_ms DESC, id DESC",
+  "query": "SELECT id as \"id!: i64\", inbox_id, space_id,\n                  LENGTH(bytes) as \"byte_len!: i64\",\n                  declared_end_vv, last_reason, unresolved_boots,\n                  first_seen_at_ms, quarantined_at_ms\n           FROM loro_sync_quarantine\n           ORDER BY quarantined_at_ms DESC, id DESC\n           LIMIT ?",
   "describe": {
     "columns": [
       {
@@ -99,7 +99,7 @@
       }
     ],
     "parameters": {
-      "Right": 0
+      "Right": 1
     },
     "nullable": [
       false,
@@ -113,5 +113,5 @@
       false
     ]
   },
-  "hash": "74534c831cef1d79600cc3435b86ec12bbf245eb480e1d5aabc0cc15faca0755"
+  "hash": "5942635c51833b0a3d65cb5b4f3f5161b85fbf7a5cf70c46e8ed5dc315c31ccd"
 }

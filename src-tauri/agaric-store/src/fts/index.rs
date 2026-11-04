@@ -310,56 +310,65 @@ pub async fn remove_fts_for_blocks<S: AsRef<str>>(
 ///
 /// When a tag/page is renamed (edited), the FTS entries for every block that
 /// references it become stale because `strip_for_fts` resolves `#[ULID]` /
-/// `[[ULID]]` tokens to human-readable names. This function finds all
-/// referencing blocks and re-runs FTS indexing for each.
+/// `[[ULID]]` tokens to human-readable names, whatever space the target is in.
+/// The referrers come from four seeds:
+///
+/// - `block_tags`: explicit tags;
+/// - `block_links`: same-space `[[ULID]]` links;
+/// - `block_links_unresolved`: `[[ULID]]` tokens `block_links` drops, a
+///   target in another space or not yet arrived (#6242);
+/// - for a tag only, a scan of `blocks.content` for its `#[ULID]` token.
+///   `block_tag_refs` drops a tag in another space and no table keeps that
+///   token (#6242). Every `block_tag_refs` row is such a token, so the scan
+///   subsumes it. A page needs no scan: its tokens are `[[ULID]]`.
 ///
 /// ## Performance
 ///
-/// Pre-loads tag/page name maps once (2 queries), then uses `json_each()` to
-/// batch the SELECT and DELETE into single queries per chunk. Only the INSERT
-/// remains per-row (because `strip_for_fts_with_maps` processes each block
-/// differently).
+/// The scan reads every row of `blocks` once per reindexed tag. It runs on a
+/// local tag rename (or its undo), where it is the only whole-vault read, and
+/// on a sync import that carries a tag, which already pays a whole-table
+/// `RebuildBlockTagRefsCache`. `bench_reindex_fts_references`
+/// (`benches/interactive_slo.rs`) times it beside that rebuild.
 ///
-/// The work is split into chunks of `FTS_REINDEX_CHUNK` ids with a
-/// fresh transaction per chunk so a tag-rename touching tens of thousands of
-/// blocks does not hold a single writer transaction for many seconds. Chunks
-/// commit independently — partial failure of a later chunk leaves earlier
-/// chunks committed, which is acceptable since `fts_blocks` is an
-/// eventually-consistent cache (the next `update_fts_for_block` /
-/// `rebuild_fts_index` reconciles any stale rows).
+/// The re-strip is chunked by `reindex_fts_for_ids`, one transaction per
+/// `FTS_REINDEX_CHUNK` ids, so a tag rename touching tens of thousands of
+/// blocks does not hold the writer for seconds.
 #[tracing::instrument(skip_all, err)]
 pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
-    // Find blocks referencing this ID via block_tags (for explicit tags)
     let tag_refs: Vec<String> =
         sqlx::query_scalar!("SELECT block_id FROM block_tags WHERE tag_id = ?", block_id)
             .fetch_all(pool)
             .await?;
-
-    // Find blocks referencing this ID via block_links (for pages)
     let link_refs: Vec<String> = sqlx::query_scalar!(
         "SELECT source_id FROM block_links WHERE target_id = ?",
         block_id
     )
     .fetch_all(pool)
     .await?;
+    let unlinked_refs = crate::cache::unresolved_link_sources(pool, block_id).await?;
+    // Read regardless of `deleted_at`: a soft-deleted tag still scans, so its
+    // mentions re-strip to `""`.
+    let block_type: Option<String> =
+        sqlx::query_scalar!("SELECT block_type FROM blocks WHERE id = ?", block_id)
+            .fetch_optional(pool)
+            .await?;
+    let mentions: Vec<String> = if block_type.as_deref() == Some("tag") {
+        sqlx::query_scalar!(
+            "SELECT id FROM blocks WHERE instr(content, '#[' || ? || ']') > 0",
+            block_id
+        )
+        .fetch_all(pool)
+        .await?
+    } else {
+        Vec::new()
+    };
 
-    // Find blocks whose content contains an inline `#[ULID]`
-    // reference to this tag. Without this, a block that only references
-    // the renamed tag inline (no explicit block_tags row, no block_links
-    // row) would keep the stale resolved name in its FTS entry.
-    let inline_tag_refs: Vec<String> = sqlx::query_scalar!(
-        "SELECT source_id FROM block_tag_refs WHERE tag_id = ?",
-        block_id
-    )
-    .fetch_all(pool)
-    .await?;
-
-    // Collect unique block IDs
     let mut seen = std::collections::HashSet::new();
     let unique_ids: Vec<String> = tag_refs
         .into_iter()
         .chain(link_refs)
-        .chain(inline_tag_refs)
+        .chain(unlinked_refs)
+        .chain(mentions)
         .filter(|bid| seen.insert(bid.clone()))
         .collect();
 

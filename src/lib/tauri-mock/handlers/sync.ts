@@ -27,7 +27,11 @@ import {
   mcpEnabled,
   pairingPeerReveal,
   peerRefs,
+  syncQuarantine,
 } from '@/lib/tauri-mock/seed'
+
+/** `MAX_QUARANTINED_SYNC_SLOTS` in `commands/sync_cmds.rs`. */
+const MAX_QUARANTINED_SYNC_SLOTS = 100
 
 /** #4549 — the `app_settings` key `get_sync_relay_settings_inner` reads; `'1'` = on. */
 const INTERNET_RELAY_KEY = 'sync.internet_relay'
@@ -289,6 +293,22 @@ export const syncHandlers = {
     return undefined
   },
 
+  // Mirrors `list_quarantined_sync_slots_inner` (#6057): a validated limit,
+  // `ORDER BY quarantined_at_ms DESC, id DESC LIMIT ?`, and `total` over every
+  // row. Copies, as the wire delivers.
+  list_quarantined_sync_slots: (args) => {
+    const limit = (args as { limit: number }).limit
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_QUARANTINED_SYNC_SLOTS) {
+      throw validationRejection(
+        `list_quarantined_sync_slots limit must be in [1, ${MAX_QUARANTINED_SYNC_SLOTS}]; got ${limit}`,
+      )
+    }
+    const slots = Array.from(syncQuarantine.values(), (row) => ({ ...row }))
+      .toSorted((a, b) => b.quarantined_at_ms - a.quarantined_at_ms || b.id - a.id)
+      .slice(0, limit)
+    return { slots, total: syncQuarantine.size }
+  },
+
   // ---------------------------------------------------------------------------
   // Task properties (todo/priority/due/scheduled)
   // ---------------------------------------------------------------------------
@@ -432,6 +452,7 @@ export const syncHandlers = {
   | 'get_os_network_block_status'
   | 'get_sync_relay_settings'
   | 'set_sync_relay_settings'
+  | 'list_quarantined_sync_slots'
   | 'update_peer_name'
   | 'set_peer_address'
   | 'get_mcp_status'

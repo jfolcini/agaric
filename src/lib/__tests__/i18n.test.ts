@@ -72,9 +72,8 @@ describe('i18n initialisation', () => {
 // TRACKING behaviour: the attribute follows whatever `i18n.language`
 // resolves to across a `changeLanguage` round trip, for ANY tag, whether or
 // not a catalog for it happens to be loaded. That is deliberately stronger
-// than asserting the two shipped locales — the attribute feeds
-// `SpeechRecognition.lang` in `useVoiceInput`, which cares about the tag,
-// not about whether the UI strings arrived.
+// than asserting the two shipped locales — assistive tech cares about the
+// tag, not about whether the UI strings arrived.
 describe('document.documentElement.lang tracking (#4555)', () => {
   afterEach(async () => {
     // i18next is a shared singleton across this whole test file — restore

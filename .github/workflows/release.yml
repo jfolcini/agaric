@@ -1821,17 +1821,16 @@ jobs:
         # toolchains this job never uses BEFORE the SDK/NDK install and build.
         # The preinstalled Android NDKs are removed too — `setup-android` below
         # reinstalls the single pinned NDK this release needs. ~20-25 GB
-        # recovered; `|| true` means only a missing cleanup target does not fail
-        # the release.
+        # recovered.
         run: |
           set -x
           df -h /
-          sudo rm -rf /usr/share/dotnet || true
-          sudo rm -rf /opt/ghc /usr/local/.ghcup || true
-          sudo rm -rf /usr/local/share/powershell || true
-          sudo rm -rf /usr/local/share/chromium || true
-          sudo rm -rf /usr/local/lib/android/sdk/ndk || true
-          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc /usr/local/.ghcup
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/local/share/chromium
+          sudo rm -rf /usr/local/lib/android/sdk/ndk
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
           sudo docker image prune --all --force || true
           df -h /
 

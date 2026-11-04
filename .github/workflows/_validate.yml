@@ -581,6 +581,7 @@ jobs:
           scripts/session-log-guards.test.mjs
           scripts/e2e-related.test.mjs
           scripts/android-launch-smoke.test.mjs
+          scripts/render-mutation-summary.test.mjs
           || { cat "$RUNNER_TEMP/node-test.log"; exit 1; }
 
       - name: Verify npm package provenance signatures
@@ -613,7 +614,7 @@ jobs:
       # cargo (sqruff/typos/taplo run standalone binaries), and all must run on
       # every non-docs PR — so they are installed regardless of the backend flag.
       - name: Install prek + non-Rust lint tools via prebuilt binaries
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           # sqruff pinned: unpinned resolves to latest via cargo-binstall's
           # from-source fallback, and sqruff >=0.39 requires rustc 1.96 while
@@ -655,7 +656,7 @@ jobs:
         # tag bump or a tool-version pin change. cargo-nextest lives on
         # the cargo-tests job (the only consumer); this job needs the
         # lint/audit set.
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: cargo-deny,cargo-machete,cargo-audit
 
@@ -1154,7 +1155,7 @@ jobs:
         # Only the tools the reduced doc-hook set needs — no cargo-deny /
         # sqruff / zizmor / taplo / cargo-audit (those gate code, which a
         # docs-only diff does not touch).
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           # prek/typos-cli pinned (#3742) — must match `pinned_version_for`
           # in scripts/setup-hooks.sh and the other tool: lists in this repo.
@@ -1584,6 +1585,20 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Free up runner disk space
+        # The coverage-instrumented test build filled the runner's disk and the
+        # job died mid-test with "No space left on device" (#6262, #6272). Drop
+        # preinstalled toolchains this job never uses before the build, as
+        # ci.yml's android-build does.
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc /usr/local/.ghcup
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/local/share/chromium
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force >/dev/null || true
+
       - name: Prepare apt (free dpkg lock, bound downloads)
         uses: ./.github/actions/prepare-apt
 
@@ -1637,7 +1652,7 @@ jobs:
           toolchain: 1.95.0
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri
           cache-bin: 'true'
@@ -1675,7 +1690,7 @@ jobs:
         # don't have to swap runners. Output is lcov (industry standard,
         # consumable by Codecov / coveralls / VSCode coverage gutters) plus
         # a JSON summary the step below renders as a markdown table.
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: cargo-nextest,cargo-llvm-cov
 
@@ -1901,7 +1916,7 @@ jobs:
       - name: Install cargo-nextest via prebuilt binary (PEND-39 C1)
         # nextest is the test runner for the UDS smoke test below. Prebuilt
         # binary via taiki-e/install-action keeps cold-cache cost tiny.
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: cargo-nextest
 

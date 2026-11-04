@@ -22,6 +22,7 @@ import {
   addMockAgendaItems,
   addMockAttachment,
   addMockAttachmentWithBytes,
+  addMockQuarantinedSlot,
   seedBlocks,
 } from '@/lib/tauri-mock/seed'
 
@@ -107,6 +108,9 @@ export function setupMock(): void {
 
   // Expose bulk agenda-item seeding to E2E tests (#548 virtualization spec).
   w['__addMockAgendaItems'] = addMockAgendaItems
+
+  // #6057 — seed a quarantined sync delta; no command creates one.
+  w['__addMockQuarantinedSlot'] = addMockQuarantinedSlot
 
   // #2683 — expose a way for E2E tests to fire a backend event. Goes
   // through the REAL `@tauri-apps/api/event` `emit()`, so it exercises the

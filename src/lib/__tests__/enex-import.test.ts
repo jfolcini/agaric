@@ -2,8 +2,8 @@
  * Tests for the frontend-only Evernote `.enex` importer (#1282).
  *
  * Covers: title/tags/date extraction, ENML→Markdown conversion (headings,
- * lists, bold, links, `<pre>`), `<en-todo>` → task markers, multi-word tag →
- * `#[[…]]`, malformed XML throwing, multiple notes, empty-title placeholder,
+ * lists, bold, links, `<pre>`), `<en-todo>` → task markers, tags → front
+ * matter `tags:`, malformed XML throwing, multiple notes, empty-title placeholder,
  * timestamp epoch parsing (incl. null), and `<resource>`/`<en-media>`
  * attachment ingestion (#2513): base64 decode + MD5 hash-match + `en-media` →
  * `![](path)` rewrite, dangling-hash graceful fallback, and orphan resources.
@@ -30,13 +30,14 @@
  * What reached the backend wrong (#6032): ENML an XML parse rejects (named
  * entities, malformed markup) read as HTML; a file-name with a space or `)`
  * renamed so the backend's image grammar matches it; header-less and empty
- * tables; tags the bare `#tag` form would cut short; and the web clip's
- * source URL.
+ * tables; tags written as a tags-only block instead of the page's tags;
+ * notes from two files sharing a title; and the web clip's source URL.
  */
 
 import { describe, expect, it } from 'vitest'
 
 import { parse } from '@/editor/markdown-serializer'
+import { formatDate } from '@/lib/date-utils'
 import {
   type EnexNote,
   enexNoteToMarkdown,
@@ -45,7 +46,7 @@ import {
   UNTITLED_PLACEHOLDER,
 } from '@/lib/enex-import'
 import { scanAttachmentRefs } from '@/lib/import-attachments'
-import { scanNameTokens } from '@/lib/name-tokens'
+import { enexNotesToUnits } from '@/lib/vault-import'
 
 /** Index into a parsed-note array with a runtime guard (no non-null assertions). */
 function at(notes: EnexNote[], index = 0): EnexNote {
@@ -969,9 +970,9 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
 
 describe('enexNoteToMarkdown', () => {
   // The composed document is what the markdown importer parses, so it is
-  // asserted whole: a frontmatter block that does not close, a tag line glued
-  // to the body, or a missing blank line between them all change what the
-  // importer makes of the note.
+  // asserted whole: a frontmatter block that does not close, a tag item outside
+  // it, or a missing blank line before the body all change what the importer
+  // makes of the note.
   it('emits frontmatter with ISO created/updated, source-url and source, tags, then body', () => {
     const md = enexNoteToMarkdown({
       title: 'T',
@@ -988,10 +989,11 @@ describe('enexNoteToMarkdown', () => {
         'created: "2021-01-02T03:04:05.000Z"\n' +
         'updated: "2022-03-04T05:06:07.000Z"\n' +
         'source-url: "https://example.com/a?b=1&c=2"\n' +
+        'tags:\n' +
+        '  - "work"\n' +
+        '  - "Multi Word"\n' +
         'source: evernote\n' +
         '---\n' +
-        '\n' +
-        '#work #[[Multi Word]]\n' +
         '\n' +
         '# Body\n\ntext\n',
     )
@@ -1025,10 +1027,10 @@ describe('enexNoteToMarkdown', () => {
     expect(md).toBe('---\nsource: evernote\n---\n')
   })
 
-  it('renders each tag as one token, whatever whitespace it carries', () => {
+  it('writes each tag as one front-matter item, whatever whitespace it carries', () => {
     // Evernote tag names are free text and a pretty-printed <tag> keeps its
-    // line breaks. A token with whitespace left in it truncates at the first
-    // space, so the note lands under the wrong tag — or none.
+    // line breaks. A line break left in a tag ends its YAML item, so the note
+    // lands under the wrong tag — or none.
     const md = enexNoteToMarkdown({
       title: 'T',
       markdown: 'body',
@@ -1039,28 +1041,9 @@ describe('enexNoteToMarkdown', () => {
       attachments: [],
     })
 
-    expect(md).toBe('---\nsource: evernote\n---\n\n#work #[[Multi Word]] #padded\n\nbody\n')
-  })
-
-  it('brackets every tag whose bare form the importer would cut short or read as text', () => {
-    // `#C++` reads as the tag `C`, `#v1.2` as `v1`, `#Q&A` as `Q`, and the
-    // all-digit `#2024` as no tag at all. A plain, nested or accented name
-    // stays bare.
-    const tags = ['C++', 'v1.2', 'Q&A', '2024', 'work', 'area/sub', 'caf\u00E9']
-    const md = enexNoteToMarkdown({
-      title: 'T',
-      markdown: '',
-      tags,
-      createdMs: null,
-      updatedMs: null,
-      sourceUrl: null,
-      attachments: [],
-    })
-
-    const tagLine = md.split('\n')[4] ?? ''
-    expect(tagLine).toBe('#[[C++]] #[[v1.2]] #[[Q&A]] #[[2024]] #work #area/sub #caf\u00E9')
-    // The names the backend's tag scan (mirrored by `scanNameTokens`) stores.
-    expect(scanNameTokens(tagLine).map((t) => t.name)).toEqual(tags)
+    expect(md).toBe(
+      '---\ntags:\n  - "work"\n  - "Multi Word"\n  - "padded"\nsource: evernote\n---\n\nbody\n',
+    )
   })
 })
 
@@ -1076,5 +1059,289 @@ describe('sanitizeNoteTitleToFilename', () => {
 
   it('falls back to the placeholder for an empty title', () => {
     expect(sanitizeNoteTitleToFilename('   ')).toBe(UNTITLED_PLACEHOLDER)
+  })
+})
+
+// --- #6032: Evernote tasks, note reminders, rules and strikethrough --------
+
+/** Evernote's placeholder for the task group `id`, as Evernote 10 writes it. */
+function taskGroupDiv(id: string): string {
+  return (
+    `<div style="--en-task-group:true; --en-id:${id};--en-content-hash:bfd4;color:#868686">` +
+    '<div style="padding:8px 38px;font-weight:600">Content not supported</div>' +
+    '<div style="padding:2px 6px">This block is a placeholder for Tasks, which has been ' +
+    'officially released on the newest version of Evernote.</div></div>'
+  )
+}
+
+/** One `<task>` element; `extra` holds the optional elements after the required ones. */
+function task(title: string, status: string, weight: string, group: string, extra = ''): string {
+  return `<task>
+      <title>${title}</title>
+      <created>20220520T221209Z</created>
+      <updated>20220520T222015Z</updated>
+      <taskStatus>${status}</taskStatus>
+      <taskFlag>false</taskFlag>
+      <sortWeight>${weight}</sortWeight>
+      <noteLevelID>${title}-id</noteLevelID>
+      <taskGroupNoteLevelID>${group}</taskGroupNoteLevelID>
+      ${extra}
+    </task>`
+}
+
+describe('parseEnex — Evernote tasks (#6032)', () => {
+  it("puts a group's tasks where its placeholder stood, in sortWeight order, as task blocks", () => {
+    const enml = `<p>before</p>${taskGroupDiv('g1')}<p>after</p>`
+    const xml = enex(
+      `<note><title>Things</title><content>${content(enml)}</content>
+        ${task(
+          'Due',
+          'completed',
+          'Q',
+          'g1',
+          // Evernote writes a date-only due date as 23:59:59 in the task's zone.
+          '<dueDate>20220528T215959Z</dueDate><dueDateUIOption>date_only</dueDateUIOption>' +
+            '<timeZone>Europe/Budapest</timeZone><repeatAfterCompletion>false</repeatAfterCompletion>',
+        )}
+        ${task('Simple', 'open', 'C', 'g1')}
+        ${task('Flagged', 'open', 'W', 'g1').replace('<taskFlag>false', '<taskFlag>true')}
+      </note>`,
+    )
+
+    expect(at(parseEnex(xml)).markdown).toBe(
+      'before\n\n' +
+        '- [ ] Simple\n- [x] Due\n  due_date:: 2022-05-28\n- [ ] Flagged\n\n' +
+        'after',
+    )
+  })
+
+  it("dates a due date and a reminder on the day they fall on in the task's own zone", () => {
+    // 03:59:59 UTC on 29 May is the evening of 28 May in Los Angeles, and
+    // 03:00 UTC on 23 May the evening of 22 May.
+    const xml = enex(
+      `<note><title>Zoned</title><content>${content(taskGroupDiv('g'))}</content>
+        ${task(
+          'West',
+          'open',
+          'A',
+          'g',
+          '<dueDate>20220529T035959Z</dueDate><timeZone>America/Los_Angeles</timeZone>' +
+            '<reminder><reminderDate>20220523T030000Z</reminderDate>' +
+            '<timeZone>America/Los_Angeles</timeZone></reminder>',
+        )}
+      </note>`,
+    )
+
+    expect(at(parseEnex(xml)).markdown).toBe(
+      '- [ ] West\n  scheduled_date:: 2022-05-22\n  due_date:: 2022-05-28',
+    )
+  })
+
+  it('dates a task with no zone, or one it cannot read, on the local day', () => {
+    const due = Date.UTC(2022, 4, 29, 3, 59, 59)
+    const remind = Date.UTC(2022, 4, 23, 3, 0, 0)
+    const xml = enex(
+      `<note><title>Local</title><content>${content(taskGroupDiv('g'))}</content>
+        ${task('Bare', 'open', 'A', 'g', '<dueDate>20220529T035959Z</dueDate>')}
+        ${task(
+          'Odd',
+          'open',
+          'B',
+          'g',
+          '<dueDate>20220529T035959Z</dueDate><timeZone>Mars/Olympus</timeZone>' +
+            '<reminder><reminderDate>20220523T030000Z</reminderDate></reminder>',
+        )}
+        ${task('Garbled', 'open', 'C', 'g', '<dueDate>soon</dueDate>')}
+      </note>`,
+    )
+
+    const dueDay = formatDate(new Date(due))
+    expect(at(parseEnex(xml)).markdown).toBe(
+      `- [ ] Bare\n  due_date:: ${dueDay}\n` +
+        `- [ ] Odd\n  scheduled_date:: ${formatDate(new Date(remind))}\n  due_date:: ${dueDay}\n` +
+        '- [ ] Garbled',
+    )
+  })
+
+  it('puts tasks whose group has no placeholder after the body, and drops a placeholder with none', () => {
+    const enml = `<p>body</p>${taskGroupDiv('empty')}<p>end</p>`
+    const xml = enex(
+      `<note><title>Loose</title><content>${content(enml)}</content>
+        ${task('Second', 'open', 'B', 'lost')}
+        ${task('Other', 'completed', 'A', 'elsewhere')}
+        ${task('First', 'open', 'A', 'lost')}
+      </note>`,
+      `<note><title>No body</title>${task('Only', 'open', 'A', 'g')}</note>`,
+    )
+
+    expect(parseEnex(xml).map((n) => n.markdown)).toEqual([
+      'body\n\nend\n\n- [x] Other\n\n- [ ] First\n- [ ] Second',
+      '- [ ] Only',
+    ])
+  })
+
+  it("reads a note's title and dates, not a task's, when the note has none of its own", () => {
+    const xml = enex(
+      `<note><content>${content('<p>body</p>')}</content>${task('Task title', 'open', 'A', 'g')}</note>`,
+    )
+
+    const note = at(parseEnex(xml))
+    expect(note.title).toBe(UNTITLED_PLACEHOLDER)
+    expect(note.createdMs).toBeNull()
+    expect(note.updatedMs).toBeNull()
+  })
+
+  it('puts each task group of a note where its own placeholder stood', () => {
+    const enml = `${taskGroupDiv('g1')}<p>between</p>${taskGroupDiv('g2')}`
+    const xml = enex(
+      `<note><title>Two</title><content>${content(enml)}</content>
+        ${task('Second', 'open', 'B', 'g2')}
+        ${task('First', 'open', 'A', 'g1')}
+      </note>`,
+    )
+
+    expect(at(parseEnex(xml)).markdown).toBe('- [ ] First\n\nbetween\n\n- [ ] Second')
+  })
+
+  it("dates a reminder with no zone of its own in the task's zone", () => {
+    // 03:00 UTC on 23 May is the evening of 22 May in Los Angeles.
+    const xml = enex(
+      `<note><title>Zoned</title><content>${content(taskGroupDiv('g'))}</content>
+        ${task(
+          'West',
+          'open',
+          'A',
+          'g',
+          '<timeZone>America/Los_Angeles</timeZone>' +
+            '<reminder><reminderDate>20220523T030000Z</reminderDate></reminder>',
+        )}
+      </note>`,
+    )
+
+    expect(at(parseEnex(xml)).markdown).toBe('- [ ] West\n  scheduled_date:: 2022-05-22')
+  })
+})
+
+describe('parseEnex — note reminders (#6032)', () => {
+  /** A note whose `<note-attributes>` hold `attributes`. */
+  function reminderNote(title: string, attributes: string): string {
+    return `<note><title>${title}</title><content>${content('<p>body</p>')}</content>
+        <note-attributes>
+          ${attributes}
+        </note-attributes>
+      </note>`
+  }
+
+  it('opens a note with a reminder with a task block named after the note', () => {
+    const at12 = Date.UTC(2024, 4, 1, 12, 0, 0)
+    const xml = enex(
+      reminderNote(
+        'Call',
+        '<reminder-order>1</reminder-order><reminder-time>20240501T120000Z</reminder-time>',
+      ),
+      reminderNote(
+        'Called',
+        '<reminder-order>2</reminder-order><reminder-time>20240501T120000Z</reminder-time>' +
+          '<reminder-done-time>20240502T080000Z</reminder-done-time>',
+      ),
+      reminderNote('Pinned', '<reminder-order>3</reminder-order>'),
+      reminderNote('Plain', '<author>me</author>'),
+    )
+
+    const day = formatDate(new Date(at12))
+    expect(parseEnex(xml).map((n) => n.markdown)).toEqual([
+      `- [ ] Call\n  due_date:: ${day}\n\nbody`,
+      `- [x] Called\n  due_date:: ${day}\n\nbody`,
+      '- [ ] Pinned\n\nbody',
+      'body',
+    ])
+  })
+
+  it('opens a note with a reminder time or a done time but no order with a task block', () => {
+    const xml = enex(
+      reminderNote('Timed', '<reminder-time>20240501T120000Z</reminder-time>'),
+      reminderNote('Done', '<reminder-done-time>20240502T080000Z</reminder-done-time>'),
+    )
+
+    const day = formatDate(new Date(Date.UTC(2024, 4, 1, 12, 0, 0)))
+    expect(parseEnex(xml).map((n) => n.markdown)).toEqual([
+      `- [ ] Timed\n  due_date:: ${day}\n\nbody`,
+      '- [x] Done\n\nbody',
+    ])
+  })
+
+  it('composes the reminder task as the first block after the front matter and tags', () => {
+    const xml = enex(
+      `<note><title>Call</title><content>${content('<p>body</p>')}</content><tag>work</tag>
+        <note-attributes><reminder-order>1</reminder-order></note-attributes></note>`,
+    )
+
+    expect(enexNoteToMarkdown(at(parseEnex(xml)))).toBe(
+      '---\ntags:\n  - "work"\nsource: evernote\n---\n\n- [ ] Call\n\nbody\n',
+    )
+  })
+})
+
+describe('parseEnex — rules and strikethrough Agaric reads (#6032)', () => {
+  it('writes a horizontal rule as ---, the only break the importer reads, after the front matter', () => {
+    const xml = enex(
+      `<note><title>T</title><content>${content('<hr/><p>a</p><hr/><p>b</p>')}</content></note>`,
+    )
+
+    const note = at(parseEnex(xml))
+    expect(note.markdown).toBe('---\n\na\n\n---\n\nb')
+    // The front matter closes before the body's rule opens.
+    expect(enexNoteToMarkdown(note)).toBe('---\nsource: evernote\n---\n\n---\n\na\n\n---\n\nb\n')
+  })
+
+  it('writes struck text between double tildes, which the editor reads as a strike', () => {
+    const enml = '<p><s>one</s> <del>two</del> <strike>three</strike></p>'
+    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
+
+    const markdown = at(parseEnex(xml)).markdown
+    expect(markdown).toBe('~~one~~ ~~two~~ ~~three~~')
+    const strike = (text: string) => ({ type: 'text', text, marks: [{ type: 'strike' }] })
+    expect(parse(markdown)).toEqual({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            strike('one'),
+            { type: 'text', text: ' ' },
+            strike('two'),
+            { type: 'text', text: ' ' },
+            strike('three'),
+          ],
+        },
+      ],
+    })
+  })
+})
+
+describe('Evernote notebooks (#6032)', () => {
+  const note = (title: string): EnexNote => ({
+    title,
+    markdown: 'body',
+    tags: [],
+    createdMs: null,
+    updatedMs: null,
+    sourceUrl: null,
+    attachments: [],
+  })
+
+  it('titles each note under its file name, so two files holding "Meeting" import as two pages', async () => {
+    const [work] = enexNotesToUnits([note('Meeting')], 'Work.enex')
+    const [home] = enexNotesToUnits([note('Meeting')], 'Home.ENEX')
+
+    expect(work?.name).toBe('Work/Meeting.md')
+    expect((await work?.load())?.path).toBe('Work/Meeting.md')
+    expect(home?.name).toBe('Home/Meeting.md')
+  })
+
+  it('keeps a separator in the file name as a look-alike, so the name is one namespace level', () => {
+    const [unit] = enexNotesToUnits([note('TCP/IP')], 'Q3\\Q4.enex')
+
+    expect(unit?.name).toBe('Q3⧵Q4/TCP∕IP.md')
   })
 })

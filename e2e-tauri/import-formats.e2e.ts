@@ -6,11 +6,11 @@
 // note: a folder pick ships the bytes of the files a note references, which
 // the backend stores as attachments and rewrites the refs to
 // (`ingest_attachments` in commands/pages/markdown.rs); `.enex` and `.jex` are
-// unpacked in the webview (`parseEnex`, `parseJex`), a Joplin note's title
-// prefixed with its notebook path. The mock keeps attachment refs as literal
-// text and models only a subset of the backend's titles and blocks (its
-// `import_markdown` in tauri-mock/handlers/pages.ts), so every case asserts
-// what a page shows after a navigation round-trip.
+// unpacked in the webview (`parseEnex`, `parseJex`), a note's title prefixed
+// with its Joplin notebook path or its `.enex` file name. The mock keeps
+// attachment refs as literal text and models only a subset of the backend's
+// titles and blocks (its `import_markdown` in tauri-mock/handlers/pages.ts), so
+// every case asserts what a page shows after a navigation round-trip.
 //
 // `.enex` and `.jex` are picked as the other import specs pick their files:
 // WebDriver's Element Send Keys on the Data tab's hidden `<input type="file">`.
@@ -207,13 +207,13 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
       `<note><title>${title}</title><content><![CDATA[${enml}]]></content>${resource}</note>`,
       '</en-export>',
     ].join('\n')
-    await importFile('import-enex-input', 'export.enex', enex, `Imported “${title}”`)
+    await importFile('import-enex-input', 'export.enex', enex, `Imported “export/${title}”`)
 
     await navigateTo('Journal')
     await navigateTo('Pages')
-    await $(`span[title="${title}"]`).waitForDisplayed({ timeout: NAV_TIMEOUT })
-    expect(await $$(`span[title="${title}"]`).length).toBe(1)
-    await openPageTitled(title)
+    await $(`span[title="export/${title}"]`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    expect(await $$(`span[title="export/${title}"]`).length).toBe(1)
+    await openPageTitled(`export/${title}`)
     for (const block of ['first', 'second', 'item']) {
       await blockStaticByMarker(`${marker}-${block}`).waitForDisplayed({ timeout: NAV_TIMEOUT })
     }
@@ -222,6 +222,79 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     const id = await caption.getAttribute('data-block-id')
     if (id === null) throw new Error('the caption block has no data-block-id')
     await expectImageRendered(id, 'after the round trip')
+  })
+
+  it('#6032 — imports an Evernote task as a task block with its due date, in place of its placeholder', async () => {
+    await waitForAppReady()
+    const marker = runScopedMarker('wdio-enex-task')
+    const title = `${marker}-note`
+    // Evernote 10 writes a task as a `<task>` beside the body, and in the body
+    // only this placeholder for its task group.
+    const placeholder =
+      '<div style="--en-task-group:true; --en-id:group-1;color:#868686">' +
+      '<div>Content not supported</div><div>This block is a placeholder for Tasks.</div></div>'
+    const enml = `<en-note><div>${marker}-before</div>${placeholder}<div>${marker}-after</div></en-note>`
+    const task =
+      `<task><title>${marker}-todo</title><taskStatus>open</taskStatus><taskFlag>false</taskFlag>` +
+      '<sortWeight>A</sortWeight><noteLevelID>task-1</noteLevelID>' +
+      '<taskGroupNoteLevelID>group-1</taskGroupNoteLevelID>' +
+      // Midday on 1 Oct 2031 in the task's zone.
+      '<dueDate>20311001T120000Z</dueDate><timeZone>Europe/Budapest</timeZone></task>'
+    const enex = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<en-export>',
+      `<note><title>${title}</title><content><![CDATA[${enml}]]></content>${task}</note>`,
+      '</en-export>',
+    ].join('\n')
+    await importFile('import-enex-input', 'export.enex', enex, `Imported “export/${title}”`)
+
+    await navigateTo('Journal')
+    await openPageTitled(`export/${title}`)
+    await blockStaticByMarker(`${marker}-after`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    const block = blockStaticByMarker(`${marker}-todo`)
+    await block.waitForDisplayed({ timeout: NAV_TIMEOUT })
+    const id = await block.getAttribute('data-block-id')
+    const row = $(`li[data-block-id="${id}"]`)
+    const taskMarker = row.$('[data-testid="task-marker"]')
+    await taskMarker.waitForExist({ timeout: ACTION_TIMEOUT })
+    await browser.waitUntil(
+      async () => ((await taskMarker.getAttribute('aria-label')) ?? '').startsWith('Task: TODO'),
+      { timeout: ACTION_TIMEOUT, timeoutMsg: 'the imported task never showed the TODO state' },
+    )
+    const due = row.$('.due-date-chip')
+    await due.waitForExist({ timeout: ACTION_TIMEOUT })
+    expect(await due.getAttribute('aria-label')).toContain('Oct 1, 2031')
+    await expectAbsent(
+      '[data-testid="block-static"]*=Content not supported',
+      "the task group's placeholder text",
+    )
+  })
+
+  it('#6032 — imports an .enex note under its file name, its tag a page tag and no block of tags', async () => {
+    await waitForAppReady()
+    const marker = runScopedMarker('wdio-enex-tag')
+    const stem = `${marker}-Work`
+    const title = `${stem}/${marker}-Meeting`
+    const tag = `${marker}-tag`
+    const enml = `<en-note><div>${marker}-body</div></en-note>`
+    const enex = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<en-export>',
+      `<note><title>${marker}-Meeting</title><content><![CDATA[${enml}]]></content>` +
+        `<tag>${tag}</tag></note>`,
+      '</en-export>',
+    ].join('\n')
+    await importFile('import-enex-input', `${stem}.enex`, enex, `Imported “${title}”`)
+
+    await navigateTo('Journal')
+    await openPageTitled(title)
+    await blockStaticByMarker(`${marker}-body`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    // The tag is the page's tag (PageTagSection's chip), not a block's.
+    await $(`[aria-label="Remove tag ${tag}"]`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await expectAbsent(
+      '[data-testid="block-static"] [data-testid="tag-ref-chip"]',
+      "a block holding the note's tags",
+    )
   })
 
   it('imports a .jex with each note a page titled by its notebook path, a to-do a task, a tag a page tag', async () => {
@@ -330,7 +403,7 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
   it('imports an .enex note titled with a / as one page, the / a look-alike', async () => {
     await waitForAppReady()
     const marker = runScopedMarker('wdio-enex-slash')
-    const title = `${marker}-TCP∕IP`
+    const title = `export/${marker}-TCP∕IP`
     const enml = `<en-note><div>${marker}-body</div></en-note>`
     const enex = [
       '<?xml version="1.0" encoding="UTF-8"?>',
@@ -343,7 +416,10 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     await navigateTo('Journal')
     await navigateTo('Pages')
     await pageEntryTitled(title).waitForDisplayed({ timeout: NAV_TIMEOUT })
-    await expectAbsent(`span[title="${marker}-TCP/IP"]`, 'the page IP under the namespace TCP')
+    await expectAbsent(
+      `span[title="export/${marker}-TCP/IP"]`,
+      'the page IP under the namespace TCP',
+    )
     await openPageTitled(title)
     await blockStaticByMarker(`${marker}-body`).waitForDisplayed({ timeout: NAV_TIMEOUT })
   })

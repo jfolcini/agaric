@@ -11901,6 +11901,73 @@ async fn import_reads_a_relative_md_link_as_a_page_link_on_a_folder_import() {
     mat.shutdown();
 }
 
+/// #6032 — on a folder import a relative link to a note of any of its
+/// extensions, written `<…>` or with a title, is a page link; a `#Heading` or
+/// `#^id` fragment names the block, its label dropped as a ref's is; and a
+/// percent-encoded `%23` is part of the file name, not a fragment.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_reads_a_link_to_any_note_extension_or_anchor_as_a_page_link() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let a = "- sib [t](reading.txt) [m](Doc.markdown) [x](Comp.mdx) [o](tasks.org) \
+             [a](<Other note.md>) [q](Other.md \"T\") [c](C%23%20Notes.md)\n\
+             - [h](Other.md#Heading) [b](Other.md#^pid)\n";
+    let other = "# Heading\n\nUnder it. ^pid\n";
+    let warnings = import_folder(
+        &pool,
+        &mat,
+        dir.path(),
+        &[
+            ("vault/notes/C# Notes.md", "- c body"),
+            ("vault/notes/A.md", a),
+            ("vault/notes/Other.md", other),
+        ],
+        &[],
+    )
+    .await;
+
+    let mut pages = Vec::new();
+    for title in [
+        "vault/notes/reading",
+        "vault/notes/Doc",
+        "vault/notes/Comp",
+        "vault/notes/tasks",
+        "vault/notes/Other note",
+        "vault/notes/Other",
+        "vault/notes/C# Notes",
+    ] {
+        pages.push(pages_titled(&pool, title).await.join(","));
+    }
+    let [reading, doc, comp, tasks, other_note, other_id, c_sharp] =
+        <[String; 7]>::try_from(pages).unwrap();
+    assert_eq!(
+        block_starting(&pool, "sib").await,
+        format!(
+            "sib [[{reading}|t]] [[{doc}|m]] [[{comp}|x]] [[{tasks}|o]] \
+             [[{other_note}|a]] [[{other_id}|q]] [[{c_sharp}|c]]"
+        )
+    );
+    let other_page = BlockId::from_trusted(&other_id);
+    let heading = &dup_children(&pool, &other_page).await[0].0;
+    let pid = &children_of(&pool, &other_page, "# Heading").await[0].0;
+    assert_eq!(
+        block_starting(&pool, "((").await,
+        format!("(({heading})) (({pid}))")
+    );
+    for id in [reading, doc, comp, tasks, other_note, c_sharp] {
+        assert_eq!(id.len(), 26, "one page, by its ULID: {id:?}");
+    }
+    assert_eq!(
+        warnings,
+        ["2 link label(s) were dropped: a block reference carries no label"]
+    );
+    assert_eq!(
+        pages_titled(&pool, "vault/notes/C").await,
+        Vec::<String>::new()
+    );
+    mat.shutdown();
+}
+
 /// #5740 — on a folder import a bare `[[Name]]` names the vault's note of that
 /// file name wherever it sits, as Obsidian reads it, in either file order: one
 /// `vault/sub/topic` holding its blocks, linked from `home`, and no `topic`

@@ -243,6 +243,15 @@ export const sync: Record<string, string> = {
   'sync.noPeersBody': 'Sync requires at least one paired device. Open sync settings to pair one.',
   'sync.noPeersCta': 'Open sync settings',
   'sync.noPeersCancel': 'Cancel',
+  // #6057 — deltas the boot replay gave up on (`loro_sync_quarantine`). The
+  // bytes are kept, so the copy says "not applied", never "lost".
+  'sync.quarantineTitle_one': '{{count}} sync change could not be applied',
+  'sync.quarantineTitle_other': '{{count}} sync changes could not be applied',
+  'sync.quarantineBody':
+    'These changes arrived from another device, but Agaric could not merge them after several restarts and has stopped retrying. They are kept on this device; their content is not in your notes.',
+  'sync.quarantineListLabel': 'Sync changes that could not be applied',
+  'sync.quarantineRowMeta': 'First seen {{when}} · {{size}}',
+  'sync.quarantineLoadFailed': 'Could not check for sync changes that failed to apply',
   'device.deviceNameLabel': 'Device name',
   'pairing.inProgress': 'Pairing in progress...',
   'device.editAddressTitle': 'Peer address',
