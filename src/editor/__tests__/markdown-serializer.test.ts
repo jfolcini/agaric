@@ -2,6 +2,7 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  aligned,
   blockLink,
   blockquote,
   bold,
@@ -351,6 +352,46 @@ describe('serialize', () => {
 
     it('serializes empty table', () => {
       expect(serialize(doc(table()))).toBe('')
+    })
+
+    it("writes each column's alignment back into the delimiter row (#6277)", () => {
+      expect(
+        serialize(
+          doc(
+            table(
+              tableRow(
+                aligned('left', tableHeader(paragraph(text('a')))),
+                aligned('right', tableHeader(paragraph(text('b')))),
+                aligned('center', tableHeader(paragraph(text('c')))),
+                tableHeader(paragraph(text('d'))),
+              ),
+              tableRow(
+                aligned('left', tableCell(paragraph(text('1')))),
+                aligned('right', tableCell(paragraph(text('2')))),
+                aligned('center', tableCell(paragraph(text('3')))),
+                tableCell(paragraph(text('4'))),
+              ),
+            ),
+          ),
+        ),
+      ).toBe('| a | b | c | d |\n| :--- | ---: | :---: | --- |\n| 1 | 2 | 3 | 4 |')
+    })
+
+    it('keeps a column alignment when a row is added above the header (#6277)', () => {
+      // The editor's "add row above" inserts cells that carry no alignment.
+      expect(
+        serialize(
+          doc(
+            table(
+              tableRow(tableCell(paragraph()), tableCell(paragraph())),
+              tableRow(
+                tableHeader(paragraph(text('a'))),
+                aligned('right', tableHeader(paragraph(text('b')))),
+              ),
+            ),
+          ),
+        ),
+      ).toBe('|  |  |\n| --- | ---: |\n| a | b |')
     })
 
     it('serializes table cell with pipe character', () => {

@@ -47,7 +47,7 @@ export function ExportSection(): React.ReactElement {
       // #2965 — `exportGraphAsZip` no longer silently swallows per-page /
       // per-attachment failures behind an unconditional success: surface a
       // warning (with a details ledger already written into the ZIP as
-      // `export-report.txt`) whenever anything was dropped, and keep the
+      // `.agaric/export-report.txt`) whenever anything was dropped, and keep the
       // plain success toast for the happy (0-skipped) path unchanged.
       if (skippedPages > 0 || skippedAttachments > 0) {
         const details = [

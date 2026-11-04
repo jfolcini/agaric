@@ -24,7 +24,9 @@ import type React from 'react'
 import { useMemo, useRef } from 'react'
 
 import { renderRichContent } from '@/components/RichContentRenderer'
+import { pageFootnotes } from '@/editor/footnotes'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
+import { usePageBlockStoreOptional } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
 
 export interface UseRichContentCallbacks {
@@ -86,6 +88,12 @@ export function useRichContent(
   // them would invalidate the memo on every parent render and defeat the
   // optimization.
   const resolveVersion = useResolveStore((s) => s.version)
+  // #6033 — the page's footnote numbering, worked out once per page; only a
+  // block that can hold a footnote reads it, so no other block re-renders when
+  // the page's blocks change.
+  const footnotes = usePageBlockStoreOptional((s) =>
+    content.includes('[^') ? pageFootnotes(s.blocks) : undefined,
+  )
   const canRemoveBrokenLink = onRemoveBrokenLink !== undefined
   return useMemo(
     () =>
@@ -101,9 +109,10 @@ export function useRichContent(
             onRemoveBrokenLink: canRemoveBrokenLink
               ? (next: string) => onRemoveBrokenLinkRef.current?.(next)
               : undefined,
+            footnotes,
           })
         : null,
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolve* callbacks captured via refs (intentional perf optimization — see comment above); resolveVersion drives recomputation on cache updates
-    [content, onNavigate, canRemoveBrokenLink, resolveVersion],
+    [content, onNavigate, canRemoveBrokenLink, resolveVersion, footnotes],
   )
 }

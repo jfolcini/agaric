@@ -32,8 +32,8 @@ import {
 } from '@/lib/backlink-sort'
 import type { BacklinkSort, PropertyDefinition } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
+import { listAllPropertyDefs } from '@/lib/property-save-utils'
 import { queryClient } from '@/lib/query-client'
-import { listAllPropertyDefs } from '@/stores/inline-property-commit'
 import { useSpaceStore } from '@/stores/space'
 
 export interface FilterSortControlsProps {
