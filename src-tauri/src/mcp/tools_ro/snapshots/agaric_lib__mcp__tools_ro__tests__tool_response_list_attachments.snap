@@ -1,0 +1,14 @@
+---
+source: src/mcp/tools_ro/tests.rs
+expression: result
+---
+has_more: false
+items:
+  - block_id: "[ULID]"
+    created_at: "[TIMESTAMP]"
+    filename: cover.png
+    id: "[ULID]"
+    mime_type: image/png
+    path: "[PATH]"
+    size_bytes: 3
+next_cursor: ~

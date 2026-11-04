@@ -1128,6 +1128,7 @@ mod tests {
             pool.clone(),
             materializer,
             "test-mcp-dev".to_string(),
+            dir.path().to_path_buf(),
         ));
         let agent = agent_in(&pool, AGENT_NAME).await;
 
@@ -1463,6 +1464,7 @@ mod tests {
             pool.clone(),
             mat.clone(),
             DEV.into(),
+            std::env::temp_dir(),
         );
         let ring = Arc::new(std::sync::Mutex::new(ActivityRing::new()));
         let activity_ctx = ActivityContext::new(ring.clone(), Arc::new(RecordingEmitter::new()));
@@ -1599,6 +1601,7 @@ mod tests {
             pool.clone(),
             mat.clone(),
             DEV.into(),
+            std::env::temp_dir(),
         );
         let ring = Arc::new(std::sync::Mutex::new(ActivityRing::new()));
         let activity_ctx = ActivityContext::new(ring.clone(), Arc::new(RecordingEmitter::new()));

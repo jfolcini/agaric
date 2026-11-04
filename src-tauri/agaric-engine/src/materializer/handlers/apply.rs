@@ -429,6 +429,9 @@ pub async fn reindex_restored_cohort_links(
 /// Same call sites, call shape and infallible / log-only contract as
 /// [`reindex_restored_cohort_links`]: the delete has committed, and a leftover
 /// row is the pre-#4733 state, which the next rebuild reconciles.
+///
+/// #6243: the blocks that mention a page or tag in the cohort are re-stripped
+/// too, so a deleted target's name leaves their index text.
 pub async fn remove_deleted_cohort_fts<S: AsRef<str>>(pool: &SqlitePool, cohort: &[S]) {
     if let Err(e) = agaric_store::fts::remove_fts_for_blocks(pool, cohort).await {
         tracing::warn!(
@@ -437,6 +440,31 @@ pub async fn remove_deleted_cohort_fts<S: AsRef<str>>(pool: &SqlitePool, cohort:
             "#4733: FTS removal for a deleted cohort failed; the rows stay until the next rebuild"
         );
     }
+    let referrers = cohort_referrers(pool, cohort).await;
+    if let Err(e) = agaric_store::fts::reindex_fts_for_ids(pool, &referrers).await {
+        tracing::warn!(
+            referrers = referrers.len(),
+            error = %e,
+            "#6243: FTS reindex of a deleted cohort's mentions failed; they keep the deleted \
+             names until the next rebuild"
+        );
+    }
+}
+
+/// #6243 — the blocks that mention a page or tag in `cohort`; empty, and
+/// logged, if the lookup fails (the callers are log-only).
+async fn cohort_referrers<S: AsRef<str>>(pool: &SqlitePool, cohort: &[S]) -> Vec<String> {
+    agaric_store::fts::page_and_tag_referrers(pool, cohort)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(
+                cohort_len = cohort.len(),
+                error = %e,
+                "#6243: looking up a cohort's mentions failed; they keep stale names until the \
+                 next rebuild"
+            );
+            Vec::new()
+        })
 }
 
 /// #4733 — re-index the `fts_blocks` rows of every id whose membership a
@@ -450,16 +478,18 @@ pub async fn remove_deleted_cohort_fts<S: AsRef<str>>(pool: &SqlitePool, cohort:
 /// first line. And one direction is not assumed — `reindex_fts_for_ids`
 /// re-derives membership per id, so a live id gains a fresh row and a
 /// tombstoned one loses the row it had, which is what lets the sweep and the
-/// un-sweep share a call. One pass, so the tag/page reference maps are loaded
-/// once rather than per member. Infallible / log-only, like its link
-/// counterpart.
+/// un-sweep share a call. The blocks that mention a page or tag in the
+/// cohort join the pass (#6243), so a restored target's name comes back to
+/// them. One pass, so the tag/page reference maps are loaded once rather than
+/// per member. Infallible / log-only, like its link counterpart.
 pub async fn reindex_restored_cohort_fts<S: AsRef<str>>(pool: &SqlitePool, cohort: &[S]) {
-    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let referrers = cohort_referrers(pool, cohort).await;
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let ids: Vec<String> = cohort
         .iter()
-        .map(AsRef::as_ref)
-        .filter(|id| seen.insert(id))
-        .map(str::to_owned)
+        .map(|id| id.as_ref().to_owned())
+        .chain(referrers)
+        .filter(|id| seen.insert(id.clone()))
         .collect();
     if let Err(e) = agaric_store::fts::reindex_fts_for_ids(pool, &ids).await {
         tracing::warn!(
