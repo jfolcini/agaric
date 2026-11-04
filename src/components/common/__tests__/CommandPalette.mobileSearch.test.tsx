@@ -87,7 +87,7 @@ describe('#3336 mobile command palette shell', () => {
     openPalette()
 
     const palette = screen.getByTestId('command-palette')
-    expect(palette).toHaveClass('bottom-0', 'inset-x-0', 'flex', 'flex-col', 'p-0')
+    expect(palette).toHaveClass('bottom-0', 'inset-x-0', 'flex', 'flex-col', 'p-0', 'h-dvh')
     // The mobile shell must inherit the sheet's height cap rather than the
     // desktop-only `max-h-[80dvh]`, so a tall result list gets a bounded
     // scroll region instead of pushing the input off-screen.
@@ -113,7 +113,7 @@ describe('#3336 mobile command palette shell', () => {
       'flex',
       'flex-col',
       'p-0',
-      'top-[50%]',
+      'top-[12dvh]',
       'left-[50%]',
     )
     expect(palette).not.toHaveClass('bottom-0')

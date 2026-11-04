@@ -42,6 +42,7 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
 
 import { AttachmentRenderer } from '@/components/attachments/AttachmentRenderer'
 import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 
 const mockedSetProperty = mockSetProperty
 
@@ -689,6 +690,99 @@ describe('AttachmentRenderer', () => {
       await findPlayer(container)
       expect(await axe(container)).toHaveNoViolations()
     })
+
+    it('falls back to the download chip, and warns, when the player cannot play the file', async () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      try {
+        const { container } = render(<AttachmentRenderer {...baseProps} attachments={[audio()]} />)
+        const player = await findPlayer(container)
+
+        fireEvent.error(player)
+        const mediaError = player.error
+
+        expect(
+          await screen.findByRole('button', {
+            name: t('attachment.openFile', { filename: 'voice-note.webm' }),
+          }),
+        ).toBeInTheDocument()
+        expect(container.querySelector('audio')).toBeNull()
+        expect(warn).toHaveBeenCalledWith(
+          'AttachmentAudio',
+          'player cannot play the audio',
+          { id: 'att-audio', mimeType: 'audio/webm' },
+          mediaError,
+        )
+      } finally {
+        warn.mockRestore()
+      }
+    })
+  })
+
+  describe('recording layout (#5364)', () => {
+    const files = {
+      audio: makeAttachment({ id: 'att-rec', filename: 'rec.ogg', mime_type: 'audio/ogg' }),
+      summary: makeAttachment({
+        id: 'att-sum',
+        filename: 'rec.summary.md',
+        mime_type: 'text/markdown',
+      }),
+      transcript: makeAttachment({
+        id: 'att-tr',
+        filename: 'rec.transcript.md',
+        mime_type: 'text/markdown',
+      }),
+      other: makeAttachment({
+        id: 'att-pdf',
+        filename: 'slides.pdf',
+        mime_type: 'application/pdf',
+      }),
+    }
+    type Part = keyof typeof files
+
+    /** Which file each child of the attachment section shows, in order. */
+    function layoutOf(container: HTMLElement): Part[] {
+      const section = container.querySelector('[data-testid="attachment-section"]') as HTMLElement
+      return Array.from(section.children).map((child) => {
+        const part = (Object.keys(files) as Part[]).find((key) =>
+          child.outerHTML.includes(files[key].filename),
+        )
+        if (!part) throw new Error(`unrecognised attachment child: ${child.outerHTML}`)
+        return part
+      })
+    }
+
+    it.each([
+      { stored: ['audio'], layout: ['audio'] },
+      { stored: ['other', 'audio'], layout: ['audio', 'other'] },
+      { stored: ['summary', 'audio'], layout: ['audio', 'summary'] },
+      { stored: ['transcript', 'audio'], layout: ['audio', 'transcript'] },
+      { stored: ['transcript', 'summary', 'audio'], layout: ['audio', 'summary', 'transcript'] },
+      { stored: ['other', 'summary', 'audio'], layout: ['audio', 'summary', 'other'] },
+      { stored: ['other', 'transcript', 'audio'], layout: ['audio', 'transcript', 'other'] },
+      {
+        stored: ['transcript', 'other', 'summary', 'audio'],
+        layout: ['audio', 'summary', 'transcript', 'other'],
+      },
+    ] as Array<{ stored: Part[]; layout: Part[] }>)(
+      'lays out $stored as $layout: player, summary open, transcript closed, then the rest',
+      async ({ stored, layout }) => {
+        mockedReadAttachment.mockResolvedValue(new TextEncoder().encode('# Heard'))
+        const { container } = render(
+          <AttachmentRenderer {...baseProps} attachments={stored.map((part) => files[part])} />,
+        )
+        await waitFor(() => expect(container.querySelector('audio')).not.toBeNull())
+        if (stored.includes('summary')) await screen.findByTestId('markdown-attachment-body')
+
+        expect(layoutOf(container)).toEqual(layout)
+        if (stored.includes('transcript')) {
+          expect(screen.getByRole('button', { name: t('attachment.transcript') })).toHaveAttribute(
+            'aria-expanded',
+            'false',
+          )
+        }
+        expect(await axe(container)).toHaveNoViolations()
+      },
+    )
   })
 
   it('has no a11y violations with file attachments', async () => {

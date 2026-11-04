@@ -88,6 +88,7 @@ const ALLOWLIST = new Map([
     'mod.rs:is_flatpak',
     'trivial /.flatpak-info exists() check; no fallible work worth a span (#2974)',
   ],
+  ['speech.rs:speech_status', 'returns a cfg-picked constant (#5745)'],
 
   // ── Instrumented via a cross-module helper the in-file resolver can't see ──
   [
