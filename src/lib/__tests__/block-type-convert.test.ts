@@ -339,6 +339,20 @@ describe('#4072: `[!x](…)` is a link, not a callout marker', () => {
   })
 })
 
+describe('a tilde fence is code, as the parser reads it (#6033)', () => {
+  it('detects a `~~~` fence as code', () => {
+    expect(detectBlockType('~~~js\nlet x\n~~~')).toBe('code')
+  })
+
+  it('unwraps a tilde fence, closed by a tilde run at least as long', () => {
+    expect(convertBlockContent('~~~~js\n~~~\n```\n~~~~~', 'paragraph')).toBe('~~~\n```')
+  })
+
+  it('leaves a tilde-fenced block as it is when turned into code', () => {
+    expect(convertBlockContent('~~~\nx\n~~~', 'code')).toBe('~~~\nx\n~~~')
+  })
+})
+
 // -- #6033: fold markers and hyphenated types, as the parser reads them -------
 describe('#6033: a callout with a fold marker or a hyphenated type', () => {
   it('is detected as a callout', () => {

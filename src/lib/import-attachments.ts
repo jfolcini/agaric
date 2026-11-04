@@ -25,6 +25,8 @@
  * either detector shows there.
  */
 
+import { closesFence, documentFenceOpener, type FenceRun } from '@/editor/source-buffer-document'
+
 /**
  * Obsidian embed `![[file.png]]` — group 1 is the inner ref (path or basename:
  * any run of chars that is neither `]`, `|`, nor newline; the optional `|alt`
@@ -173,44 +175,35 @@ function inlineCodeSpans(content: string): Array<[number, number]> {
 }
 
 /**
- * Strip the leading `- ` bullet marker (if any) before testing for a fence
- * delimiter — mirrors the backend's `fence_probe` (`- ```rust` is a fenced
- * bullet). Tabs are normalized to spaces first (the parser does the same), but
- * for fence detection we only need the trimmed-start text.
- */
-function isFenceDelim(trimmedStart: string): boolean {
-  const probe = trimmedStart.startsWith('- ') ? trimmedStart.slice(2) : trimmedStart
-  return probe.startsWith('```')
-}
-
-/**
- * Lines that fall inside (or open/close) a ```` ``` ````-fenced code region.
+ * Lines that fall inside (or open/close) a fenced code region.
  *
- * Mirrors the MINIMAL `#1924` fence tracking in `parse_logseq_markdown`: a line
- * whose trimmed-start text (after optionally stripping a `- ` bullet) begins
- * with three backticks is a fence delimiter and toggles `in_fence`; the
- * delimiter line itself and every line strictly inside the fence are code. The
- * backend SKIPS such (`is_code`) blocks entirely before running
- * `detect_attachment_refs`, so we drop those lines here before scanning.
+ * Mirrors the fence tracking in `parse_logseq_markdown`: a line whose text,
+ * past one list marker and checkbox ({@link documentFenceOpener}; the
+ * backend's `fence_opener` reads past several), opens a backtick or tilde
+ * fence starts a code region, which a run of the same character at least as
+ * long closes ({@link closesFence}); the delimiter lines and every line
+ * between them are code. The backend SKIPS such (`is_code`)
+ * blocks entirely before running `detect_attachment_refs`, so we drop those
+ * lines here before scanning.
  *
  * Returns the markdown with all code-region lines removed (replaced by empty
- * lines so nothing else shifts). This is a deliberately single-fence-char
- * heuristic, identical to the backend's (tilde fences / language-hint / indent
- * nuances are out of scope on both sides).
+ * lines so nothing else shifts).
  */
 function blankFencedCodeLines(markdown: string): string {
   // Normalize EOL + tabs the same way the backend parser does before its
   // line-based pass, so indentation/fence detection agrees.
   const normalized = markdown.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\t/g, '  ')
   const lines = normalized.split('\n')
-  let inFence = false
+  let fence: FenceRun | null = null
   const out: string[] = []
   for (const line of lines) {
-    const trimmedStart = line.replace(/^\s+/, '')
-    const fenceDelim = isFenceDelim(trimmedStart)
-    const lineIsCode = inFence || fenceDelim
-    if (fenceDelim) inFence = !inFence
-    out.push(lineIsCode ? '' : line)
+    if (fence !== null) {
+      if (closesFence(line, fence)) fence = null
+      out.push('')
+      continue
+    }
+    fence = documentFenceOpener(line)
+    out.push(fence === null ? line : '')
   }
   return out.join('\n')
 }
@@ -231,7 +224,7 @@ function blankFencedCodeLines(markdown: string): string {
  *   - absolute / protocol-relative URLs and `data:` URIs,
  *   - already-canonical `attachment:<id>` refs,
  *   - a link to a `#fragment`, to a URL with a scheme (`mailto:`) or to a note,
- *   - any ref inside a ```` ``` ````-fenced code block,
+ *   - any ref inside a fenced code block (backticks or tildes),
  *   - any ref inside an inline-code span (`` `...` ``).
  *
  * @returns the distinct referenced paths/filenames, in first-seen order: what

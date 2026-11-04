@@ -1858,7 +1858,7 @@ fn heading_level(trimmed: &str) -> Option<usize> {
 
 /// A thematic break: three or more `-`, `*` or `_` and nothing else. It ends a
 /// lazy continuation, as a heading or a fence does.
-fn is_thematic_break(trimmed: &str) -> bool {
+pub fn is_thematic_break(trimmed: &str) -> bool {
     let line = trimmed.trim_end();
     line.len() >= 3
         && line.bytes().next().is_some_and(|first| {
