@@ -538,20 +538,14 @@ fn data_with_names(
     .into_iter()
     .map(|(id, name)| (id.to_string(), name.to_string()))
     .collect();
-    let exact = pages
-        .iter()
-        .map(|(title, ids)| {
-            (
-                title.to_string(),
-                ids.iter().map(ToString::to_string).collect(),
-            )
-        })
-        .collect();
+    let mut matches = LinkMatches::default();
+    for (title, ids) in pages {
+        for id in *ids {
+            LinkMatches::push(&mut matches.exact, title.to_string(), id.to_string());
+        }
+    }
     data.name_snapshot = NameSnapshot {
-        pages: LinkMatches {
-            exact,
-            ..LinkMatches::default()
-        },
+        pages: matches,
         tag_id_by_norm: tags
             .iter()
             .map(|(norm, id)| (norm.to_string(), id.to_string()))
@@ -573,11 +567,21 @@ fn a_name_that_reads_back_to_its_id_is_written() {
     );
 }
 
+/// A title two pages share names the lowest id (#6278): a link to that page
+/// is written as the title, and one to the other page stays raw.
 #[test]
-fn a_title_two_pages_share_stays_raw() {
-    let content = format!("see [[{PROJECT}]]");
-    let md = source_with_names(&content, &[("Project", &[PROJECT, OTHER_PROJECT])], &[]);
-    assert_eq!(md, format!("{content} ^{BLOCK}\n"));
+fn a_title_two_pages_share_names_the_lowest_id() {
+    let pages: &[(&str, &[&str])] = &[("Project", &[OTHER_PROJECT, PROJECT])];
+    let held = format!("see [[{PROJECT}]]");
+    assert_eq!(
+        source_with_names(&held, pages, &[]),
+        format!("see [[Project]] ^{BLOCK}\n")
+    );
+    let twin = format!("see [[{OTHER_PROJECT}]]");
+    let mut data = data_with_names(&twin, pages, &[]);
+    data.page_titles
+        .insert(OTHER_PROJECT.into(), "Project".into());
+    assert_eq!(render_page_document(&data).0, format!("{twin} ^{BLOCK}\n"));
 }
 
 /// The linked page is in another space, and this space has its own page of

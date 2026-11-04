@@ -290,7 +290,7 @@ fn ref_name(value: &str) -> &str {
 /// What each of `names` refers to (#5160 D11): a block id is the live block,
 /// unless it is in a space other than `space_id`; anything else is the title
 /// of a page in `space_id` by the link rule (exact, then case-insensitive,
-/// then alias, never a tie).
+/// then alias; where several pages match, the lowest id, #6278).
 async fn resolve_ref_values(
     conn: &mut sqlx::SqliteConnection,
     space_id: Option<&str>,
@@ -333,11 +333,10 @@ async fn resolve_ref_values(
         _ => LinkMatches::default(),
     };
     for title in titles {
-        let outcome = match matches.find(&title) {
-            Some(LinkMatch::Unique(id)) => Ok(id),
-            Some(LinkMatch::Ambiguous) => Err(format!("more than one page is titled '{title}'")),
-            None => Err(format!("no page is titled '{title}' in this space")),
-        };
+        let outcome = matches
+            .find(&title)
+            .map(str::to_owned)
+            .ok_or_else(|| format!("no page is titled '{title}' in this space"));
         resolved.insert(title, outcome);
     }
     Ok(resolved)

@@ -242,11 +242,11 @@ describe('BlockLinkPicker input rule — alias disambiguation', () => {
   })
 })
 
-// #5160 N4 — two pages differing only by case, neither spelled as typed: the
-// name is ambiguous, so the typed `[[FOO]]` stays exactly as typed (brackets
-// included), as paste, import and Source keep it.
-describe('BlockLinkPicker input rule — ambiguous name', () => {
-  it('re-inserts the typed [[FOO]] when two pages tie by case', async () => {
+// #6278 — two pages differing only by case, neither spelled as typed: the
+// lowest id holds the name, so the typed `[[FOO]]` links it, as paste, import
+// and Source do.
+describe('BlockLinkPicker input rule — a name two pages share', () => {
+  it('links the lowest id when two pages tie by case', async () => {
     const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
     const chainProxy: Record<string, unknown> = {
       focus: () => chainProxy,
@@ -283,7 +283,9 @@ describe('BlockLinkPicker input rule — ambiguous name', () => {
     })
 
     await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
-    expect(insertContentAtCalls).toEqual([{ pos: 5, content: '[[FOO]]' }])
+    expect(insertContentAtCalls).toEqual([
+      { pos: 5, content: { type: 'block_link', attrs: { id: 'PAGE_LOWER' } } },
+    ])
     expect(onCreate).not.toHaveBeenCalled()
   })
 })
@@ -554,7 +556,7 @@ describe('BlockLinkPicker stale-insertPos guard ()', () => {
     expect(insertContentAtCalls).toEqual([])
   })
 
-  it('an ambiguous [[FOO]] racing a stale offset comes back with its brackets', async () => {
+  it('an unmatched [[FOO]] with no create racing a stale offset comes back with its brackets', async () => {
     const insertContentCalls: unknown[] = []
     const chainProxy: Record<string, unknown> = {
       focus: () => chainProxy,
@@ -569,12 +571,7 @@ describe('BlockLinkPicker stale-insertPos guard ()', () => {
       chain: () => chainProxy,
       state: { doc: { content: { size: 5 } } },
     } as unknown
-    const ext = BlockLinkPicker.configure({
-      items: vi.fn().mockResolvedValue([
-        { id: 'PAGE_UPPER', label: 'Foo', title: 'Foo' },
-        { id: 'PAGE_LOWER', label: 'foo', title: 'foo' },
-      ]),
-    })
+    const ext = BlockLinkPicker.configure({ items: vi.fn().mockResolvedValue([]) })
     const rules = (
       ext.config.addInputRules as unknown as (
         ...args: unknown[]
@@ -1181,7 +1178,7 @@ describe('BlockLinkPicker input rule — labels and anchors (#5160 D9, N6)', () 
     expect(onCreate).not.toHaveBeenCalled()
   })
 
-  it('[[X | y]] stays text when its whole title ties by case, creating nothing (D10)', async () => {
+  it('[[X | y|see]] links the lowest id its whole title ties on by case, creating nothing (D10)', async () => {
     const onCreate = vi.fn<OnCreate>()
     const { insertContentAtCalls } = run(
       ['[[X | y|see]]', 'X | y|see'],
@@ -1193,7 +1190,10 @@ describe('BlockLinkPicker input rule — labels and anchors (#5160 D9, N6)', () 
       onCreate,
     )
     await vi.waitFor(() => expect(insertContentAtCalls.length).toBe(1))
-    expect(insertContentAtCalls[0]?.content).toBe('[[X | y|see]]')
+    expect(insertContentAtCalls[0]?.content).toEqual({
+      type: 'block_link',
+      attrs: { id: 'XY', label: 'see' },
+    })
     expect(onCreate).not.toHaveBeenCalled()
   })
 

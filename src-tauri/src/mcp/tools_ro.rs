@@ -90,9 +90,7 @@ use super::registry::{
     ToolRegistry,
 };
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
-use crate::commands::pages::markdown::{
-    NameMatch, get_page_buffer_inner, match_page_names, match_tag_names,
-};
+use crate::commands::pages::markdown::{get_page_buffer_inner, match_page_names, match_tag_names};
 use crate::commands::pages::metadata::{
     ListPagesWithMetadataFilter, PageSort, PageWithMetadataRow, list_pages_with_metadata_inner,
 };
@@ -738,11 +736,11 @@ fn tool_desc_resolve() -> ToolDescription {
     ToolDescription {
         name: TOOL_RESOLVE.to_string(),
         description: "Look up page and tag names in a space, many in one call, as a written \
-             `[[Name]]` / `#name` is matched: a page by exact title, else by one \
-             case-insensitive title, else by alias; a tag by name, ignoring case. Each name \
-             answers `page_id` and `tag_id`, null when nothing matches; a name several pages \
-             share answers `page_candidates` instead. Tools that take a page or tag id take \
-             its name too, so this is only for ids up front."
+             `[[Name]]` / `#name` is matched: a page by exact title, else by \
+             case-insensitive title, else by alias, the lowest id where several pages match; \
+             a tag by name, ignoring case. Each name answers `page_id` and `tag_id`, null \
+             when nothing matches. Tools that take a page or tag id take its name too, so \
+             this is only for ids up front."
             .to_string(),
         input_schema: json!({
             "type": "object",
@@ -1163,7 +1161,8 @@ fn tool_desc_get_page_markdown() -> ToolDescription {
              cancelled), a child indented under its parent, a plain block under a list block \
              written as a `+ ` item, and properties as indented `key:: value` lines. \
              Links, tags and ref-typed values are written as names, \
-             for reading; a name can be ambiguous, so write links by ULID (`[[ULID]]`, \
+             for reading; a name several pages share reads back as the one with the lowest \
+             id, so write links by ULID (`[[ULID]]`, \
              `#[ULID]`). Each block ends with `^ULID`, the block_id update_block_content takes. \
              Past {RESPONSE_BYTES_CAP} bytes the Markdown stops at a block with \
              `truncated: true`; pass `next_cursor` as `cursor` for the rest, which carries on \
@@ -2240,15 +2239,7 @@ impl AttachmentListRow {
 struct ResolvedName {
     name: String,
     page_id: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    page_candidates: Vec<PageCandidate>,
     tag_id: Option<String>,
-}
-
-#[derive(Serialize)]
-struct PageCandidate {
-    id: String,
-    title: String,
 }
 
 async fn handle_resolve(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
@@ -2263,27 +2254,10 @@ async fn handle_resolve(pool: &SqlitePool, args: Value) -> Result<Value, AppErro
         .into_iter()
         .zip(pages)
         .zip(tags)
-        .map(|((name, page), tag)| {
-            let (page_id, page_candidates) = match page {
-                NameMatch::Id(id) => (Some(id), Vec::new()),
-                NameMatch::Tie(ties) => (
-                    None,
-                    ties.into_iter()
-                        .map(|(id, title)| PageCandidate { id, title })
-                        .collect(),
-                ),
-                NameMatch::Unknown => (None, Vec::new()),
-            };
-            let tag_id = match tag {
-                NameMatch::Id(id) => Some(id),
-                NameMatch::Tie(_) | NameMatch::Unknown => None,
-            };
-            ResolvedName {
-                name,
-                page_id,
-                page_candidates,
-                tag_id,
-            }
+        .map(|((name, page_id), tag_id)| ResolvedName {
+            name,
+            page_id,
+            tag_id,
         })
         .collect();
     to_tool_result(&answers)

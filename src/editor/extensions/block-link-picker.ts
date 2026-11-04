@@ -30,7 +30,8 @@ import { storableLinkLabel } from '@/editor/markdown-common'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { EMBED_TOKEN_PREFIX } from '@/lib/embed-token'
 import { t } from '@/lib/i18n'
-import { linkBodyReadings, normalizeTagName } from '@/lib/name-tokens'
+import { linkBodyReadings, nameKey } from '@/lib/name-tokens'
+import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 
 export const blockLinkPickerPluginKey = new PluginKey('blockLinkPicker')
 
@@ -51,28 +52,25 @@ declare module '@tiptap/core' {
 
 /**
  * The page `[[text]]` names among `items`, by the one rule the backend applies
- * (#5160 N4): the exact full title, else the unique title that folds to `text`
- * (`normalizeTagName`: NFC, case-insensitive), else the unique alias whose
- * `aliasText` folds to it, else `undefined`, which creates the page. Two pages a
- * title matches alike, exactly or folded, are never guessed: `null` leaves the
- * text as typed. Titles are compared whole, namespace included (`item.title`),
- * so typing an existing namespaced title creates no twin; prefix-only alias hits
- * (`[[my]]` for alias `my-alias`) never resolve.
+ * (#5160 N4): the exact full title, else the title whose `nameKey` (trimmed,
+ * case-insensitive, NFC) is `text`'s, else the alias whose `aliasText` keys so,
+ * else `undefined`, which creates the page; where several pages match, the
+ * lowest id (#6278). Titles are compared whole, namespace included
+ * (`item.title`), so typing an existing namespaced title creates no twin;
+ * prefix-only alias hits (`[[my]]` for alias `my-alias`) never resolve.
  */
-export function matchBlockLinkItem(
-  items: PickerItem[],
-  text: string,
-): PickerItem | undefined | null {
+export function matchBlockLinkItem(items: PickerItem[], text: string): PickerItem | undefined {
   const pages = items.filter((item) => !item.isCreate && !item.isAlias)
-  const unique = (found: PickerItem[]) => (found.length > 1 ? null : found[0])
-  const exact = unique(pages.filter((item) => (item.title ?? item.label) === text))
-  if (exact !== undefined) return exact
-  const key = normalizeTagName(text)
-  const folded = unique(pages.filter((item) => normalizeTagName(item.title ?? item.label) === key))
-  if (folded !== undefined) return folded
-  return items.find(
-    (item) =>
-      !item.isCreate && item.aliasText !== undefined && normalizeTagName(item.aliasText) === key,
+  const lowest = (found: PickerItem[]) => found.toSorted((a, b) => compareUtf8Bytes(a.id, b.id))[0]
+  const key = nameKey(text)
+  return (
+    lowest(pages.filter((item) => (item.title ?? item.label) === text)) ??
+    lowest(pages.filter((item) => nameKey(item.title ?? item.label) === key)) ??
+    lowest(
+      items.filter(
+        (item) => !item.isCreate && item.aliasText !== undefined && nameKey(item.aliasText) === key,
+      ),
+    )
   )
 }
 
@@ -165,7 +163,7 @@ function typedBodyAt(editor: Editor, range: { from: number; to: number }): strin
 async function findTypedName(
   options: BlockLinkPickerOptions,
   name: string,
-): Promise<PickerItem | null | undefined> {
+): Promise<PickerItem | undefined> {
   const whole = matchBlockLinkItem(await options.items(name), name)
   const base = anchorBase(name)
   if (whole !== undefined || base === '') return whole
@@ -237,9 +235,8 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
           state.tr.delete(range.from, range.to)
 
           // The first of the body's readings that names a page wins, with that
-          // reading's label; a tie leaves the text as typed; with none, the
-          // first-`|` split creates its base.
-          let found: PickerItem | null | undefined
+          // reading's label; with none, the first-`|` split creates its base.
+          let found: PickerItem | undefined
           let label: string | undefined
           void resolveAndInsertPickerToken({
             editor,

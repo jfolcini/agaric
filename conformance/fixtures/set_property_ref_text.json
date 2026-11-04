@@ -1,5 +1,5 @@
 {
-  "description": "#5160 D11 — a text value under a `ref` definition, through `set_property` itself (`via: \"command\"`): the block editor commits a typed `reviewer:: Alice` line this way, and `set_property_inner` reads the text as the block it names — a live block id, `[[Title]]`, or a page title in the block's space by the link rule (exact title, then a unique case-insensitive one, then a unique alias). The replay leg appends a payload and never sees this. Each accepted step writes its own ref-declared key, so the snapshot pins every resolution: `reviewer` by title, `approver` by block id, `watcher` by a bracketed title in another case. The two refusals leave `reviewer` as it was: a title two pages tie on (`twin` and `TWIN` for `Twin`, never guessed) and a title no page has. Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "description": "#5160 D11 — a text value under a `ref` definition, through `set_property` itself (`via: \"command\"`): the block editor commits a typed `reviewer:: Alice` line this way, and `set_property_inner` reads the text as the block it names — a live block id, `[[Title]]`, or a page title in the block's space by the link rule (exact title, then a case-insensitive one, then an alias; where several pages match, the lowest id, #6278). The replay leg appends a payload and never sees this. Each accepted step writes its own ref-declared key, so the snapshot pins every resolution: `reviewer` by title, `approver` by block id, `watcher` by a bracketed title in another case, `owner` by a title two pages tie on (`twin` and `TWIN` for `Twin`, the lower id). The refusal leaves `reviewer` as it was: a title no page has. Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -70,7 +70,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 3,
+      "count": 4,
       "ops": [
         {
           "key": "reviewer",
@@ -83,6 +83,10 @@
         {
           "key": "watcher",
           "op_type": "set_property"
+        },
+        {
+          "key": "owner",
+          "op_type": "set_property"
         }
       ]
     },
@@ -92,6 +96,12 @@
         "block_id": "B2",
         "key": "approver",
         "value": "B1",
+        "value_type": "Ref"
+      },
+      {
+        "block_id": "B2",
+        "key": "owner",
+        "value": "B4",
         "value_type": "Ref"
       },
       {
@@ -132,9 +142,10 @@
     },
     {
       "code": null,
-      "error": "validation",
-      "name": "ref_tie_rejects",
-      "returns": []
+      "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"owner\"]"],
+      "name": "ref_tie_names_the_lowest_id",
+      "returns": ["B2"]
     },
     {
       "code": null,
@@ -187,15 +198,14 @@
     {
       "args": {
         "blockId": "S2",
-        "key": "reviewer",
+        "key": "owner",
         "value": {
           "value_text": "Twin"
         }
       },
       "command": "set_property",
-      "comment": "No page is titled exactly `Twin` and two fold to it: a tie is refused, never guessed.",
-      "expect_error": "validation",
-      "name": "ref_tie_rejects",
+      "comment": "No page is titled exactly `Twin` and two fold to it: the lower id, `twin`, holds the name (#6278).",
+      "name": "ref_tie_names_the_lowest_id",
       "via": "command"
     },
     {
@@ -255,6 +265,11 @@
     "property_defs": [
       {
         "key": "approver",
+        "options": null,
+        "value_type": "ref"
+      },
+      {
+        "key": "owner",
         "options": null,
         "value_type": "ref"
       },

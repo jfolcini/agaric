@@ -91,6 +91,14 @@ describe('PageSourcePreview', () => {
     expect(screen.getByTestId('block-link-chip')).toHaveTextContent('Über')
   })
 
+  it('shows a name two pages share as the page with the lowest id, as the save links it (#6278)', () => {
+    useResolveStore.getState().set('01J000000000000000000TWIN2', 'Twin', false, true)
+    useResolveStore.getState().set('01J000000000000000000TWIN1', 'twin', false, true)
+    render(<PageSourcePreview lines={{ text: '- see [[TWIN]]', lineIds: [BLOCK] }} />)
+
+    expect(screen.getByTestId('block-link-chip')).toHaveTextContent('twin')
+  })
+
   it('reads the buffer as the save does: a heading owns nothing, the line under it is a block, an indented paragraph a child', () => {
     render(
       <PageSourcePreview

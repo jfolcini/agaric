@@ -25,6 +25,7 @@ import { frontMatterProperties, readBlocks } from '@/editor/source-buffer-blocks
 import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import { contentShowsListMarker, shownListStyle } from '@/lib/list-style'
 import { linkBodyReadings, normalizeTagName, scanNameTokens } from '@/lib/name-tokens'
+import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -80,7 +81,11 @@ function newNameId({ ids, titles }: NewNames, name: string): string {
   return id
 }
 
-/** Titles the resolve cache holds in the active space, exact first, then folded as a tag name is. */
+/**
+ * Titles the resolve cache holds in the active space, exact first, then folded
+ * as a tag name is; the lowest id where several share one, as the save links
+ * it (#6278).
+ */
 function useTitleIds(): (name: string) => string | null {
   const cache = useResolveStore((s) => s.cache)
   const version = useResolveStore((s) => s.version)
@@ -89,12 +94,15 @@ function useTitleIds(): (name: string) => string | null {
     const prefix = `${spaceId ?? '__global__'}::`
     const exact = new Map<string, string>()
     const folded = new Map<string, string>()
+    const hold = (map: Map<string, string>, name: string, id: string) => {
+      const held = map.get(name)
+      if (held === undefined || compareUtf8Bytes(id, held) < 0) map.set(name, id)
+    }
     for (const [key, entry] of cache) {
       if (!key.startsWith(prefix) || entry.deleted) continue
       const id = key.slice(prefix.length)
-      if (!exact.has(entry.title)) exact.set(entry.title, id)
-      const fold = normalizeTagName(entry.title)
-      if (!folded.has(fold)) folded.set(fold, id)
+      hold(exact, entry.title, id)
+      hold(folded, normalizeTagName(entry.title), id)
     }
     return (name: string) => exact.get(name) ?? folded.get(normalizeTagName(name)) ?? null
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- the cache Map is mutated in place; `version` is what changes when it does.

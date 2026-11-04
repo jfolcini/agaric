@@ -95,6 +95,59 @@
       "title": "a\u29f5b",
       "link": "a\\b",
       "resolves": false
+    },
+    {
+      "name": "#6278 a title's edge whitespace is no part of its name",
+      "title": "Weekly Review ",
+      "link": "weekly review",
+      "resolves": true
+    }
+  ],
+  "pageTieCases": [
+    {
+      "name": "#6278 two pages of one title: the lowest id holds it",
+      "pages": [
+        { "id": "01ARZ3NDEKTSV4RRFFQ69G5FB0", "title": "Foo" },
+        { "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "title": "Foo" }
+      ],
+      "link": "Foo",
+      "holder": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    },
+    {
+      "name": "#6278 two titles a case apart: a third spelling names the lowest id",
+      "pages": [
+        { "id": "01ARZ3NDEKTSV4RRFFQ69G5FB0", "title": "Foo" },
+        { "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "title": "foo" }
+      ],
+      "link": "FOO",
+      "holder": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    },
+    {
+      "name": "#6278 the exact title still wins before the fold, whatever its id",
+      "pages": [
+        { "id": "01ARZ3NDEKTSV4RRFFQ69G5FB0", "title": "Foo" },
+        { "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "title": "foo" }
+      ],
+      "link": "Foo",
+      "holder": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+    },
+    {
+      "name": "#6278 an NFC and an NFD title: the lowest id holds the name",
+      "pages": [
+        { "id": "01ARZ3NDEKTSV4RRFFQ69G5FB0", "title": "Caf\u00e9" },
+        { "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "title": "Cafe\u0301" }
+      ],
+      "link": "caf\u00e9",
+      "holder": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    },
+    {
+      "name": "#6278 two pages holding one alias in two cases: the lowest id holds it",
+      "pages": [
+        { "id": "01ARZ3NDEKTSV4RRFFQ69G5FB0", "title": "Roadmap", "aliases": ["\u00dcber"] },
+        { "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "title": "Plan", "aliases": ["\u00fcber"] }
+      ],
+      "link": "\u00dcBER",
+      "holder": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
     }
   ],
   "nameKeyCases": [

@@ -3245,6 +3245,8 @@ async fn append_block_takes_its_parent_page_by_name_5397() {
     assert_eq!(result["parent_id"], page.as_str());
     assert!(result.get("warnings").is_none(), "no warnings, no key");
 
+    // A tie links its lowest id (#6278), in content as in an argument.
+    let holder = dup_a.as_str().min(dup_b.as_str());
     let result = tools
         .call_tool(
             "append_block",
@@ -3252,28 +3254,19 @@ async fn append_block_takes_its_parent_page_by_name_5397() {
             &test_ctx_agent(),
         )
         .await
-        .expect("a tie in content is kept as text");
-    assert_eq!(result["content"], "see [[dup]]");
-    assert_eq!(
-        result["warnings"],
-        json!(["wiki-link '[[dup]]' matches multiple pages in this space; left as plain text"]),
-    );
+        .expect("a tie in content links the lowest id");
+    assert_eq!(result["content"], format!("see [[{holder}]]"));
+    assert!(result.get("warnings").is_none(), "no warnings, no key");
 
-    let err = tools
+    let result = tools
         .call_tool(
             "append_block",
             json!({"parent_id": "dup", "content": "x", "space_id": space}),
             &test_ctx_agent(),
         )
         .await
-        .expect_err("a tie must be refused");
-    let message = err.to_string();
-    assert!(
-        matches!(err, AppError::Validation { .. })
-            && message.contains(&format!("{dup_a} (Dup)"))
-            && message.contains(&format!("{dup_b} (DUP)")),
-        "the error names each candidate with its id, got {message}"
-    );
+        .expect("a tie names the lowest id");
+    assert_eq!(result["parent_id"], holder);
 
     let err = tools
         .call_tool(
@@ -3284,8 +3277,13 @@ async fn append_block_takes_its_parent_page_by_name_5397() {
         .await
         .expect_err("an unknown name must be refused");
     assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
-    assert!(child_contents(&pool, &dup_a).await.is_empty());
-    assert!(child_contents(&pool, &dup_b).await.is_empty());
+    let other = if holder == dup_a.as_str() {
+        dup_b.as_str()
+    } else {
+        dup_a.as_str()
+    };
+    assert_eq!(child_contents(&pool, holder).await, ["x"]);
+    assert!(child_contents(&pool, other).await.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

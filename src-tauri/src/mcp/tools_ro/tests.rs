@@ -4251,8 +4251,10 @@ async fn resolve_matches_a_title_in_any_case_an_alias_and_a_tag_5397() {
     assert_eq!(result[3]["name"], " Work ", "each answer echoes its name");
 }
 
+/// A name pages share answers the lowest id, as a pasted `[[Name]]` links it
+/// (#6278).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn resolve_lists_the_pages_a_name_ties_between_5397() {
+async fn resolve_answers_a_shared_name_with_its_lowest_id_6278() {
     let (tools, mat, _dir) = mk_tools().await;
     let space = mk_space(&tools.pool, "S").await;
     let a = mk_named(&tools, &mat, &space, "page", "Dup").await;
@@ -4282,18 +4284,14 @@ async fn resolve_lists_the_pages_a_name_ties_between_5397() {
         )
         .await
         .expect("happy path");
+    let holder = a.as_str().min(b.as_str());
     assert_eq!(
         result,
         json!([
-            {
-                "name": "dup",
-                "page_id": null,
-                "page_candidates": [{ "id": a, "title": "Dup" }, { "id": b, "title": "DUP" }],
-                "tag_id": null,
-            },
+            { "name": "dup", "page_id": holder, "tag_id": null },
             { "name": "Dup", "page_id": a, "tag_id": null },
         ]),
-        "a case tie lists both; the exact title wins it",
+        "a case tie answers the lowest id; the exact title wins it",
     );
 
     let err = tools
