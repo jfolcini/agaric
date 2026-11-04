@@ -50,13 +50,15 @@
  * OUT OF SCOPE (still open on #2513): advanced ENML fidelity (part 3).
  */
 
-import { formatDate } from '@/lib/date-utils'
 import {
   createHtmlTurndown,
   escapeTitleSeparators,
+  localDate,
   prepareTablesForGfm,
   sanitizeNoteTitleToFilename,
   sanitizeResourceName,
+  type TaskBlock,
+  todoBlock,
   UNTITLED_PLACEHOLDER,
 } from '@/lib/enex-import'
 import { NOTE_EXTENSIONS } from '@/lib/import-attachments'
@@ -379,7 +381,7 @@ interface RawNote {
   createdMs: number | null
   updatedMs: number | null
   /** The task block a to-do opens with, or null for a plain note. */
-  todo: { done: boolean; dueDate: string | null } | null
+  todo: TaskBlock | null
 }
 
 /** Tar members split into decoded item `.md` texts and resource binaries. */
@@ -452,6 +454,7 @@ function classifyItems(itemTexts: string[]): ClassifiedItems {
           props['is_todo'] === '1'
             ? {
                 done: Number(props['todo_completed']) > 0,
+                scheduledDate: null,
                 dueDate: localDate(Number(props['todo_due'])),
               }
             : null,
@@ -476,16 +479,6 @@ function classifyItems(itemTexts: string[]): ClassifiedItems {
     // Settings, revisions, … — known but not imported.
   }
   return { rawNotes, folders, resourceMetas, tagTitles, noteTagIds, skipped }
-}
-
-/**
- * An epoch-ms `todo_due` as a local `YYYY-MM-DD`, or null when unset (`0`) or
- * unreadable: `formatDate` throws on an invalid date, which would fail the
- * whole archive.
- */
-function localDate(ms: number): string | null {
-  const date = new Date(ms)
-  return ms > 0 && !Number.isNaN(date.getTime()) ? formatDate(date) : null
 }
 
 /**
@@ -548,16 +541,6 @@ function rewriteNoteBody(
     },
   )
   return { markdown, attachments }
-}
-
-/**
- * The task block a to-do note opens with: the note's title behind the
- * checkbox the importer reads as its state, and its due date as the
- * `due_date::` line, the form a Markdown export writes a task in.
- */
-function todoBlock(title: string, todo: NonNullable<RawNote['todo']>): string {
-  const task = `- [${todo.done ? 'x' : ' '}] ${title}`
-  return todo.dueDate === null ? task : `${task}\n  due_date:: ${todo.dueDate}`
 }
 
 /**
