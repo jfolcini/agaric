@@ -170,6 +170,11 @@ describe('parseInlineProperties', () => {
     ])
   })
 
+  it('skips lines inside a tilde fence, closed only by a tilde run at least as long (#6033)', () => {
+    const content = '~~~~\nx:: y\n~~~\n```\nstatus:: active\n~~~~\nafter:: yes'
+    expect(parseInlineProperties(content)).toEqual([{ key: 'after', value: 'yes', lineIndex: 6 }])
+  })
+
   it('skips lines inside fenced code blocks', () => {
     const content = '```\nstatus:: active\n```'
     expect(parseInlineProperties(content)).toEqual([])
