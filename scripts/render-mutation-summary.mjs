@@ -38,23 +38,34 @@
 // unexpected throw still flushes whatever the table had. `main()` exits 0
 // unconditionally.
 //
+// ─── Accepted-equivalent mutants ─────────────────────────────────────────
+//
+// A mutant recorded in `mutation-accepted.tsv` is proven unkillable, so it is
+// left out of the counts, the score and the survivor list, as the weekly filer
+// leaves it out of the tracking issue. Otherwise every PR touching the module
+// lists it as a test gap again. An unreadable file subtracts nothing, and the
+// summary says why.
+//
 // Usage:
 //   node scripts/render-mutation-summary.mjs [--reports-dir <dir>] [--title <md>]
 //
 // Exit: 0 always (see above), except 2 for bad usage.
 
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import process from 'node:process'
+
+import { frontendKey, parseAcceptedFile } from './lib/mutation-accepted.mjs'
 
 export const DEFAULT_REPORTS_DIR = 'reports/mutation'
 const DEFAULT_TITLE = '## StrykerJS mutation testing (frontend, #886)'
+const DEFAULT_ACCEPTED_PATH = resolve(import.meta.dirname, '..', 'mutation-accepted.tsv')
 
 /**
  * Reads one module's `mutation.json` into counts plus a survivor list.
  * Returns a row whose `state` is `'ok'`, `'no report'` or `'unreadable'`.
  */
-function readModule(reportsDir, mod) {
+function readModule(reportsDir, mod, accepted) {
   const jsonPath = join(reportsDir, mod, 'mutation.json')
   if (!existsSync(jsonPath)) return { mod, state: 'no report', survivors: [] }
 
@@ -65,10 +76,19 @@ function readModule(reportsDir, mod) {
     return { mod, state: 'unreadable', survivors: [], error: err.message }
   }
 
-  const counts = { killed: 0, timeout: 0, survived: 0, noCov: 0, errors: 0 }
+  const counts = { killed: 0, timeout: 0, survived: 0, noCov: 0, errors: 0, accepted: 0 }
   const survivors = []
   for (const [file, entry] of Object.entries(report.files ?? {})) {
+    const lines = typeof entry?.source === 'string' ? entry.source.split('\n') : []
+    const isAccepted = (mutant) => {
+      const { line, column } = mutant.location?.start ?? {}
+      return accepted.has(frontendKey(file, mutant.mutatorName, lines, line, column))
+    }
     for (const mutant of entry?.mutants ?? []) {
+      if ((mutant.status === 'Survived' || mutant.status === 'NoCoverage') && isAccepted(mutant)) {
+        counts.accepted++
+        continue
+      }
       switch (mutant.status) {
         case 'Killed': {
           counts.killed++
@@ -115,11 +135,11 @@ function readModule(reportsDir, mod) {
  * Exported so the ordering rule — the substance of #3350's readability half —
  * can be asserted on directly instead of by grepping rendered Markdown.
  */
-export function analyzeReportTree(reportsDir) {
+export function analyzeReportTree(reportsDir, accepted = new Set()) {
   if (!existsSync(reportsDir)) return null
   const rows = readdirSync(reportsDir)
     .toSorted()
-    .map((mod) => readModule(reportsDir, mod))
+    .map((mod) => readModule(reportsDir, mod, accepted))
 
   // "No data" outranks any survivor count.
   const rank = (r) => (r.state === 'ok' ? 1 : 0)
@@ -139,12 +159,20 @@ export function analyzeReportTree(reportsDir) {
 export function renderMutationSummary({
   reportsDir = DEFAULT_REPORTS_DIR,
   title = DEFAULT_TITLE,
+  acceptedPath = DEFAULT_ACCEPTED_PATH,
 } = {}) {
   const lines = [title, '']
   const unreadable = []
 
   const render = () => {
-    const rows = analyzeReportTree(reportsDir)
+    let accepted = new Set()
+    let acceptedError
+    try {
+      accepted = parseAcceptedFile(readFileSync(acceptedPath, 'utf8'), acceptedPath)
+    } catch (err) {
+      acceptedError = err.message
+    }
+    const rows = analyzeReportTree(reportsDir, accepted)
     if (rows === null) {
       lines.push('_No reports produced (Stryker crashed before writing JSON) — see the job log._')
       return
@@ -156,7 +184,7 @@ export function renderMutationSummary({
     lines.push('| Module | Score (covered) | Killed | Timeout | Survived | No cov | Errors |')
     lines.push('|---|--:|--:|--:|--:|--:|--:|')
 
-    const totals = { killed: 0, timeout: 0, survived: 0, noCov: 0, errors: 0 }
+    const totals = { killed: 0, timeout: 0, survived: 0, noCov: 0, errors: 0, accepted: 0 }
     for (const r of rows) {
       if (r.state !== 'ok') {
         lines.push(`| ${r.mod} | _${r.state}_ | | | | | |`)
@@ -183,6 +211,17 @@ export function renderMutationSummary({
     lines.push(
       `| **All mutated modules** | **${totalScore.toFixed(1)}%** | ${totals.killed} | ${totals.timeout} | ${totals.survived} | ${totals.noCov} | ${totals.errors} |`,
     )
+    if (acceptedError !== undefined) {
+      lines.push(
+        '',
+        `_\`mutation-accepted.tsv\` could not be read (${acceptedError}), so no accepted-equivalent mutant is left out._`,
+      )
+    } else if (totals.accepted > 0) {
+      lines.push(
+        '',
+        `_${totals.accepted} accepted-equivalent mutant(s) in \`mutation-accepted.tsv\` are left out of these counts._`,
+      )
+    }
 
     const withSurvivors = rows.filter((r) => r.survivors.length > 0)
     if (withSurvivors.length === 0) {

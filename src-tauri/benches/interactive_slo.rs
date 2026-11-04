@@ -5411,13 +5411,18 @@ mod mcp_reads {
             .unwrap()
     }
 
-    /// Lines that start a block in a page's Markdown.
-    fn bullets(result: &Value) -> usize {
+    /// Blocks in a page read: the Document dialect the MCP page tools render
+    /// (#6190) ends every block with its `^ID`, on its last line.
+    fn anchored_blocks(result: &Value) -> usize {
         result["markdown"]
             .as_str()
             .unwrap()
             .lines()
-            .filter(|line| line.starts_with("- "))
+            .filter(|line| {
+                line.split_whitespace()
+                    .next_back()
+                    .is_some_and(|word| word.starts_with('^'))
+            })
             .count()
     }
 
@@ -5473,7 +5478,7 @@ mod mcp_reads {
             "mcp get_page_markdown @ 100K: untimed probe must read the fixture page"
         );
         assert_eq!(
-            bullets(&observed),
+            anchored_blocks(&observed),
             PAGE_CHILDREN,
             "mcp get_page_markdown @ 100K: untimed probe must read every fixture block"
         );
@@ -5500,7 +5505,7 @@ mod mcp_reads {
             "mcp get_journal @ 100K: untimed probe must find the fixture day"
         );
         assert_eq!(
-            bullets(&observed),
+            anchored_blocks(&observed),
             JOURNAL_CHILDREN,
             "mcp get_journal @ 100K: untimed probe must read every block of the day"
         );

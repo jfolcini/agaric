@@ -8,7 +8,7 @@
  * English UI, and the failure is logged rather than swallowed. A
  * half-switched app — `i18n.language === 'es'` with no `es` bundle, so every
  * string silently falls back and `document.documentElement.lang` lies to
- * `useVoiceInput` — is the outcome this prevents.
+ * assistive tech — is the outcome this prevents.
  *
  * The mock fails on demand rather than always, because "the rejection is
  * not memoized" is only observable across a load that FAILS and then one

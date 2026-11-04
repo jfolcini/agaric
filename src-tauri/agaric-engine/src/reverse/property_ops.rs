@@ -900,6 +900,74 @@ mod option_walk_tests {
         );
     }
 
+    #[test]
+    fn a_rewrites_reverse_swaps_every_def_and_value_write_5841() {
+        let OpPayload::RewriteProperties(merge) = merge_phase_into_area() else {
+            unreachable!("merge_phase_into_area is a rewrite")
+        };
+        let record = OpRecord {
+            device_id: DEV.into(),
+            seq: 1,
+            parent_seqs: None,
+            hash: String::new(),
+            op_type: "rewrite_properties".into(),
+            payload: serde_json::to_string(&merge).unwrap(),
+            created_at: 1,
+            block_id: None,
+        };
+        let a = || {
+            Some(PropertyValueFields {
+                value_text: Some("a".into()),
+                ..Default::default()
+            })
+        };
+        assert_eq!(
+            reverse_rewrite_properties(&record).unwrap(),
+            OpPayload::RewriteProperties(RewritePropertiesPayload {
+                space_id: BlockId::from_trusted(SPACE),
+                reason: agaric_store::op::RewriteReason::Merge,
+                defs: vec![PropertyDefWrite {
+                    key: "phase".into(),
+                    def: Some(PropertyDefState {
+                        value_type: "select".into(),
+                        options: None,
+                    }),
+                    prior: None,
+                }],
+                values: vec![
+                    PropertyValueWrite {
+                        block_id: BlockId::from_trusted(BLOCK),
+                        key: "phase".into(),
+                        value: a(),
+                        prior: None,
+                    },
+                    PropertyValueWrite {
+                        block_id: BlockId::from_trusted(BLOCK),
+                        key: "area".into(),
+                        value: None,
+                        prior: a(),
+                    },
+                ],
+            })
+        );
+    }
+
+    /// A rename is its own inverse on its two names: a walk on its target
+    /// moves to its source, and a walk on neither stays.
+    #[tokio::test]
+    async fn a_key_walks_back_through_a_rename_onto_it_and_past_others_5841() {
+        assert_eq!(
+            walk(vec![key_rename("phase", "stage")], "stage", "a").await,
+            kv("phase", "a"),
+            "a rename onto the key"
+        );
+        assert_eq!(
+            walk(vec![key_rename("phase", "area")], "stage", "a").await,
+            kv("stage", "a"),
+            "another key's rename"
+        );
+    }
+
     #[tokio::test]
     async fn a_value_follows_an_option_rename_of_its_key_only_5841() {
         assert_eq!(

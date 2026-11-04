@@ -341,6 +341,12 @@ export const MODULES = {
     src: 'src/editor/page-mode/page-attachments.ts',
     tests: ['src/editor/page-mode/__tests__/page-attachments.test.tsx'],
   },
+  // The text Read aloud speaks (#5745): a survivor is an id read out, part of
+  // a note never read, or an utterance too long for Android to take.
+  'spoken-text': {
+    src: 'src/lib/speech/spoken-text.ts',
+    tests: ['src/lib/speech/__tests__/spoken-text.test.ts'],
+  },
 }
 
 /**

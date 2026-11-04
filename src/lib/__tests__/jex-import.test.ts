@@ -1326,3 +1326,18 @@ describe('parseJex Joplin fidelity (#6032)', () => {
     expect(scanAttachmentRefs(note.markdown)).toEqual(['pic.png'])
   })
 })
+
+describe('parseJex HTML note rules and strikethrough (#6032)', () => {
+  it("writes an HTML note's rule as --- and its struck text between double tildes", () => {
+    const body = '<hr><p>a <s>gone</s> <del>cut</del></p><hr><p>b</p>'
+    const { notes } = parseJex(
+      buildTar([noteMember('b8'.repeat(16), 'Ruled', body, { markup_language: '2' })]),
+    )
+    const note = noteTitled(notes, 'Ruled')
+    expect(note.markdown).toBe('---\n\na ~~gone~~ ~~cut~~\n\n---\n\nb')
+    // The front matter closes before the body's rule opens.
+    expect(jexNoteToMarkdown(note)).toBe(
+      '---\nsource: joplin\n---\n\n---\n\na ~~gone~~ ~~cut~~\n\n---\n\nb\n',
+    )
+  })
+})
