@@ -627,7 +627,7 @@ fn unescape_task_signifiers(text: &str) -> String {
 
 /// The Tasks signifier a task's `key` and `value` are written as (#6277 D3),
 /// in [`TASK_SIGNIFIER_KEYS`]' order, or `None` when it would not read back
-/// as that value ([`task_field`]), which keeps its `key::` line.
+/// as that value (`task_field`), which keeps its `key::` line.
 pub fn task_signifier(key: &str, value: &str, done: bool) -> Option<String> {
     let written = match key {
         "priority" => {
