@@ -31,9 +31,9 @@ mod tests;
 
 // Re-export public API
 pub use index::{
-    fts_optimize, rebuild_fts_index, rebuild_fts_index_split, reindex_fts_for_ids,
-    reindex_fts_references, remove_fts_for_block, remove_fts_for_blocks, update_fts_for_block,
-    update_fts_for_block_split, update_fts_for_block_split_with_maps,
+    fts_optimize, page_and_tag_referrers, rebuild_fts_index, rebuild_fts_index_split,
+    reindex_fts_for_ids, reindex_fts_references, remove_fts_for_block, remove_fts_for_blocks,
+    update_fts_for_block, update_fts_for_block_split, update_fts_for_block_split_with_maps,
     update_fts_for_block_with_maps,
 };
 pub use search::search_fts;

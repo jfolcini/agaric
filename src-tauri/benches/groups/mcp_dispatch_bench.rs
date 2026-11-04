@@ -117,6 +117,7 @@ fn bench_mcp_dispatch(c: &mut Criterion) {
         pool.clone(),
         materializer.clone(),
         "bench".into(),
+        dir.path().to_path_buf(),
     );
     let agent = rt
         .block_on(insert_agent(

@@ -323,16 +323,6 @@ describe('JournalPage — Delete page empties the day (#5358)', () => {
     mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
   })
 
-  function renderJournalWithEditorLink() {
-    // Daily mode shows the page quick actions only beside "Open in editor".
-    return render(
-      <>
-        <JournalControls />
-        <JournalPage onNavigateToPage={vi.fn()} />
-      </>,
-    )
-  }
-
   function todaySection(): HTMLElement {
     const section = document.getElementById(`journal-${todayStr}`)
     if (!section) throw new Error(`no day section for ${todayStr}`)
@@ -368,7 +358,7 @@ describe('JournalPage — Delete page empties the day (#5358)', () => {
 
   it('empties a day whose page existed before the journal opened', async () => {
     const user = userEvent.setup()
-    renderJournalWithEditorLink()
+    renderJournal()
     expect(
       await within(await waitFor(todaySection)).findByTestId(
         `sortable-block-${SEED_IDS.BLOCK_DAILY_1}`,
@@ -386,7 +376,7 @@ describe('JournalPage — Delete page empties the day (#5358)', () => {
       const user = userEvent.setup()
       unwrap(await commands.deleteBlock(SEED_IDS.PAGE_DAILY))
       useJournalStore.setState({ mode })
-      renderJournalWithEditorLink()
+      renderJournal()
       const day = await waitFor(todaySection)
       if (mode === 'daily') {
         // Today's page is auto-created on arrival, seeded with one block.
@@ -406,7 +396,7 @@ describe('JournalPage — Delete page empties the day (#5358)', () => {
   it('lets the create shortcut start the day again after its auto-created page is deleted', async () => {
     const user = userEvent.setup()
     unwrap(await commands.deleteBlock(SEED_IDS.PAGE_DAILY))
-    renderJournalWithEditorLink()
+    renderJournal()
     const day = await waitFor(todaySection)
     await waitFor(() => {
       expect(day.querySelector('[data-testid^="sortable-block-"]')).not.toBeNull()

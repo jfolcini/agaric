@@ -104,13 +104,20 @@ function tagPicker(
     command: ({ editor, range, props }) => {
       const item = props as PickerItem
       if (item.isCreate && options.onCreate) {
+        // The row can be the previous fetch's while the next one loads, so the
+        // name is what is typed now, normalised as `use-block-resolve` does.
+        const typed = editor.state.doc
+          .textBetween(range.from, range.to, undefined, '\uFFFC')
+          .slice(trigger.char.length)
+          .replace(/\]+$/, '')
+          .trim()
         // Shared create path: deletes the trigger range synchronously
         // (closing the popup and the double-create window) and tracks
         // the insertion offset across the async create IPC.
         createPickerTokenFromCommand({
           editor,
           range,
-          label: item.label,
+          label: typed || item.label,
           onCreate: options.onCreate,
           tokenFor: (id) => ({ type: 'tag_ref', attrs: { id } }),
           loggerComponent: 'AtTagPicker',
