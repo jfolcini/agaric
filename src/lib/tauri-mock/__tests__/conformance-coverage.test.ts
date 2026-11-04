@@ -392,6 +392,12 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
     'selected by an `op_log` `(historical_created_at, historical_seq)` point — an op ' +
     'coordinate each stack generates independently, not fixture-expressible',
 
+  // ── Sync storage no command writes ──
+  list_quarantined_sync_slots:
+    'fixture candidate (#6057): needs a `seed.loro_sync_quarantine` section on both stacks ' +
+    'and a query projection for non-block rows; until then `sync_cmd_tests.rs` pins the backend ' +
+    'and `quarantined-sync-slots.test.ts` the mock',
+
   // ── Process / environment / telemetry status (no domain state) ──
   collect_bug_report_metadata: 'no domain state — host + build metadata',
   read_logs_for_report: 'no domain state — reads the on-disk log files',
@@ -604,7 +610,7 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = []
  * `spaces_lifecycle.json`'s `create_space` — which is what the #5056 check
  * below predicted would happen.
  */
-const NOT_YET_PINNED_READ: readonly string[] = []
+const NOT_YET_PINNED_READ: readonly string[] = ['list_quarantined_sync_slots']
 
 /**
  * #5056 — the check that makes the read-leg classification falsifiable instead

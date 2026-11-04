@@ -1585,6 +1585,20 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Free up runner disk space
+        # The coverage-instrumented test build filled the runner's disk and the
+        # job died mid-test with "No space left on device" (#6262, #6272). Drop
+        # preinstalled toolchains this job never uses before the build, as
+        # ci.yml's android-build does; `|| true` so a missing path never fails.
+        run: |
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc /usr/local/.ghcup || true
+          sudo rm -rf /usr/local/share/powershell || true
+          sudo rm -rf /usr/local/share/chromium || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune --all --force >/dev/null || true
+
       - name: Prepare apt (free dpkg lock, bound downloads)
         uses: ./.github/actions/prepare-apt
 

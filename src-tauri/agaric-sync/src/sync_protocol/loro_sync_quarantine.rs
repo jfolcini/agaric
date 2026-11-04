@@ -48,6 +48,7 @@
 //! that reaches N has genuinely failed N boots in a row.
 
 use serde::{Deserialize, Serialize};
+use specta::Type;
 use sqlx::SqlitePool;
 
 use agaric_core::error::AppError;
@@ -112,7 +113,7 @@ pub enum SlotDisposition {
 /// is "what is stuck, since when, and why", and a diagnostics call must not
 /// materialize multi-MB payloads. The bytes are still there — see
 /// [`read_quarantined_bytes`].
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Type)]
 pub struct QuarantinedSlot {
     /// `loro_sync_quarantine.id`.
     pub id: i64,
@@ -237,19 +238,26 @@ pub async fn note_unresolved_slot(
     Ok(SlotDisposition::Quarantined { unresolved_boots })
 }
 
-/// Every quarantined blob, newest first. The diagnostics read surface.
+/// The `limit` newest quarantined blobs, newest first. The diagnostics read
+/// surface behind Settings › Sync & devices.
 ///
 /// This is what makes a stuck blob discoverable without reading logs: it names
 /// the space, when the payload was first admitted, how many boots it survived,
-/// and the last reason it would not settle.
-pub async fn list_quarantined_slots(pool: &SqlitePool) -> Result<Vec<QuarantinedSlot>, AppError> {
+/// and the last reason it would not settle. The caller validates `limit`; pair
+/// it with [`count_quarantined_slots`] for a total that stays true past it.
+pub async fn list_quarantined_slots(
+    pool: &SqlitePool,
+    limit: i64,
+) -> Result<Vec<QuarantinedSlot>, AppError> {
     let rows = sqlx::query!(
         r#"SELECT id as "id!: i64", inbox_id, space_id,
                   LENGTH(bytes) as "byte_len!: i64",
                   declared_end_vv, last_reason, unresolved_boots,
                   first_seen_at_ms, quarantined_at_ms
            FROM loro_sync_quarantine
-           ORDER BY quarantined_at_ms DESC, id DESC"#,
+           ORDER BY quarantined_at_ms DESC, id DESC
+           LIMIT ?"#,
+        limit,
     )
     .fetch_all(pool)
     .await?;

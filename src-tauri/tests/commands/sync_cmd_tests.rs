@@ -1145,3 +1145,130 @@ async fn set_peer_address_rejects_unknown_peer() {
         "unknown peer should return NotFound error"
     );
 }
+
+// ======================================================================
+// Sync — list_quarantined_sync_slots (#6057)
+// ======================================================================
+
+use agaric_sync::sync_protocol::loro_sync_quarantine::{
+    QUARANTINE_AFTER_BOOTS, SlotDisposition, note_unresolved_slot,
+};
+
+/// Admit one inbox slot and spend its whole boot budget through the boot walk's
+/// own accounting, so it lands in `loro_sync_quarantine` the production way.
+async fn quarantine_slot(pool: &SqlitePool, space_id: &str, bytes: &[u8], created_at: i64) -> i64 {
+    let inbox_id: i64 = sqlx::query_scalar(
+        "INSERT INTO loro_sync_inbox (space_id, bytes, created_at) VALUES (?, ?, ?) RETURNING id",
+    )
+    .bind(space_id)
+    .bind(bytes)
+    .bind(created_at)
+    .fetch_one(pool)
+    .await
+    .expect("seed inbox slot");
+    let mut last = SlotDisposition::Gone;
+    for _ in 0..QUARANTINE_AFTER_BOOTS {
+        last = note_unresolved_slot(pool, inbox_id, &[], &format!("stuck in {space_id}"))
+            .await
+            .expect("note_unresolved_slot");
+    }
+    assert_eq!(
+        last,
+        SlotDisposition::Quarantined {
+            unresolved_boots: QUARANTINE_AFTER_BOOTS
+        },
+        "precondition: the slot spent its budget and moved"
+    );
+    inbox_id
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_quarantined_sync_slots_returns_newest_first_with_every_field() {
+    let (pool, _dir) = test_pool().await;
+    let before = agaric_store::db::now_ms();
+    // `created_at` out of quarantine order, so neither insertion order nor a
+    // `first_seen` sort passes for the real one.
+    let first = quarantine_slot(&pool, "SPACE_A", &[1; 10], 3_000).await;
+    let second = quarantine_slot(&pool, "SPACE_B", &[2; 20], 1_000).await;
+    let third = quarantine_slot(&pool, "SPACE_C", &[3; 30], 2_000).await;
+    let after = agaric_store::db::now_ms();
+
+    let list = list_quarantined_sync_slots_inner(&pool, 100).await.unwrap();
+
+    assert_eq!(list.total, 3, "total counts every quarantined row");
+    let got: Vec<(i64, &str, i64, i64, &str, i64, &str)> = list
+        .slots
+        .iter()
+        .map(|s| {
+            (
+                s.inbox_id,
+                s.space_id.as_str(),
+                s.byte_len,
+                s.first_seen_at_ms,
+                s.last_reason.as_str(),
+                s.unresolved_boots,
+                s.declared_end_vv.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            (third, "SPACE_C", 30, 2_000, "stuck in SPACE_C", 5, "[]"),
+            (second, "SPACE_B", 20, 1_000, "stuck in SPACE_B", 5, "[]"),
+            (first, "SPACE_A", 10, 3_000, "stuck in SPACE_A", 5, "[]"),
+        ],
+        "newest quarantine first, each row carrying its own provenance"
+    );
+    for slot in &list.slots {
+        assert!(
+            (before..=after).contains(&slot.quarantined_at_ms),
+            "quarantined_at_ms {} is stamped at the move, within [{before}, {after}]",
+            slot.quarantined_at_ms
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_quarantined_sync_slots_caps_the_rows_but_not_the_total() {
+    let (pool, _dir) = test_pool().await;
+    quarantine_slot(&pool, "SPACE_A", &[1; 4], 1_000).await;
+    let second = quarantine_slot(&pool, "SPACE_B", &[2; 4], 2_000).await;
+    let third = quarantine_slot(&pool, "SPACE_C", &[3; 4], 3_000).await;
+
+    let list = list_quarantined_sync_slots_inner(&pool, 2).await.unwrap();
+
+    let inbox_ids: Vec<i64> = list.slots.iter().map(|s| s.inbox_id).collect();
+    assert_eq!(
+        inbox_ids,
+        vec![third, second],
+        "limit 2 returns the two newest rows"
+    );
+    assert_eq!(list.total, 3, "total still counts the row past the limit");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_quarantined_sync_slots_rejects_an_out_of_range_limit() {
+    let (pool, _dir) = test_pool().await;
+    for limit in [0, 101] {
+        let result = list_quarantined_sync_slots_inner(&pool, limit).await;
+        assert!(
+            matches!(result, Err(AppError::Validation { .. })),
+            "limit {limit} must be rejected as Validation, not clamped; got {result:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_quarantined_sync_slots_is_empty_on_a_fresh_db() {
+    let (pool, _dir) = test_pool().await;
+    let list = list_quarantined_sync_slots_inner(&pool, 100).await.unwrap();
+    assert_eq!(
+        list,
+        QuarantinedSlotList {
+            slots: vec![],
+            total: 0
+        },
+        "nothing quarantined lists nothing and counts zero"
+    );
+}
