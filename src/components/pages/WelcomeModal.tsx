@@ -12,6 +12,7 @@ import { commands } from '@/lib/bindings'
 import { createBlock } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { notifyPageAdded } from '@/lib/name-change-bus'
+import { nameKey } from '@/lib/name-tokens'
 import { notify } from '@/lib/notify'
 // #754 — the onboarding flag helpers live in `@/lib/onboarding` (outside
 // this lazy chunk) so the App shell can gate-mount the modal without
@@ -72,7 +73,8 @@ const QUICK_TIPS_BODY_KEYS = [
  * removing blocks the user may have already edited is a worse failure mode
  * than a partially-filled page that the next retry completes.
  *
- * Matching is by exact title within the active space (the sample titles are
+ * Matching is by title within the active space under `nameKey`, the key
+ * `create_page_in_space` resolves a title by (#6278; the sample titles are
  * fixed i18n strings), and body blocks are matched by exact content so a
  * retry after a mid-sequence failure appends only the parts that never
  * landed. Blocks the user edited no longer match, so they are re-added
@@ -86,7 +88,9 @@ async function ensureSamplePage(
   bodyKeys: ReadonlyArray<string>,
 ): Promise<string> {
   const title = t(titleKey)
-  const existing = existingPages.find((page) => page.content === title)
+  const existing = existingPages.find(
+    (page) => page.content !== null && nameKey(page.content) === nameKey(title),
+  )
 
   let pageId: string
   if (existing) {
