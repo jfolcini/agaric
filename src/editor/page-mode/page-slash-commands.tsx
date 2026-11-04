@@ -35,6 +35,7 @@ import type { StoreApi } from 'zustand'
 
 import type { UseBlockDatePickerReturn } from '@/components/block-tree/use-block-date-picker'
 import {
+  isSlashCommandOffered,
   runSlashCommand,
   searchSlashMenu,
   useSlashHandlers,
@@ -49,6 +50,7 @@ import { parse, serialize } from '@/editor/markdown-serializer'
 import { blockDocJson } from '@/editor/page-mode/page-document'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { blockIdOf } from '@/editor/token-ids'
+import { ALL_SLASH_COMMANDS } from '@/lib/slash-commands'
 import type { PageBlockState } from '@/stores/page-blocks'
 
 const BlockTablePicker = lazy(() =>
@@ -62,6 +64,13 @@ const NOT_IN_PAGE_MODE = new Set(['duplicate', 'template'])
 /** Block mode's menu for `query`, less what page mode does not offer. */
 export function searchPageSlashCommands(query: string): PickerItem[] {
   return searchSlashMenu(query).filter((command) => !NOT_IN_PAGE_MODE.has(command.id))
+}
+
+/** Every command page mode's menu can offer on this device, for its reference drawer. */
+export function pageSlashCommandCatalog(): PickerItem[] {
+  return ALL_SLASH_COMMANDS.filter(
+    (command) => !NOT_IN_PAGE_MODE.has(command.id) && isSlashCommandOffered(command),
+  )
 }
 
 const AT_ONCE = new Set([

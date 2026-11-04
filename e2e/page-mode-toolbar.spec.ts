@@ -169,7 +169,7 @@ test.describe('page mode toolbar (#5691) @editor @pages', () => {
     await select(page, 0, 0)
     await pressButton(page, 'Format')
     await page
-      .getByRole('toolbar', { name: 'Format' })
+      .getByRole('toolbar', { name: 'Format', exact: true })
       .getByRole('button', { name: 'Bold' })
       .click()
     await expect.poll(async () => (await contents(page, pageId))[0]).toBe('**alpha**')
