@@ -7,6 +7,7 @@
 
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { Profiler } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
@@ -103,6 +104,16 @@ describe('footnotes in the static view (#6033)', () => {
     expect(onNavigate).toHaveBeenLastCalledWith('DB')
   })
 
+  it('Space follows a reference as Enter does', async () => {
+    const user = userEvent.setup()
+    const { onNavigate } = renderPage()
+    within(row('B1'))
+      .getByRole('link', { name: t('editor.footnoteLink', { number: 1 }) })
+      .focus()
+    await user.keyboard(' ')
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith('DB')
+  })
+
   it('mutes a reference whose label nothing defines, with a tooltip', async () => {
     const user = userEvent.setup()
     const { onNavigate } = renderPage()
@@ -119,6 +130,55 @@ describe('footnotes in the static view (#6033)', () => {
     const { container } = render(<>{renderRichContent('see [^note]', {})}</>)
     expect(container).toHaveTextContent(/^see note$/)
     expect(container.querySelector('sup.footnote-ref')).toHaveTextContent('note')
+  })
+
+  it('gives a reference that can be followed the focus ring and the touch hit area of a small control', () => {
+    renderPage()
+    const link = within(row('B1')).getByRole('link', {
+      name: t('editor.footnoteLink', { number: 2 }),
+    })
+    expect(link).toHaveClass('focus-ring-visible', 'touch-hit-area')
+    const missing = within(row('B2')).getAllByTestId('footnote-ref')[1] as HTMLElement
+    expect(missing).toHaveAttribute('tabindex', '0')
+    expect(missing).toHaveClass('focus-ring-visible')
+  })
+
+  it('re-renders only the blocks that can hold a footnote when the page’s blocks change', () => {
+    const commits = { plain: 0, noted: 0 }
+    function Probe({ content }: { content: string }) {
+      return <div>{useRichContent(content, {})}</div>
+    }
+    const blocks = [
+      makeBlock({ id: 'P', content: 'plain text' }),
+      makeBlock({ id: 'N', content: 'noted[^a]' }),
+    ]
+    const store = createPageBlockStore('PAGE')
+    store.setState({ blocks, blocksById: new Map(blocks.map((b) => [b.id, b])) })
+    render(
+      <PageBlockContext.Provider value={store}>
+        <Profiler
+          id="plain"
+          onRender={() => {
+            commits.plain += 1
+          }}
+        >
+          <Probe content="plain text" />
+        </Profiler>
+        <Profiler
+          id="noted"
+          onRender={() => {
+            commits.noted += 1
+          }}
+        >
+          <Probe content="noted[^a]" />
+        </Profiler>
+      </PageBlockContext.Provider>,
+    )
+    const before = { ...commits }
+    const more = [...blocks, makeBlock({ id: 'M', content: 'another block' })]
+    act(() => store.setState({ blocks: more, blocksById: new Map(more.map((b) => [b.id, b])) }))
+    expect(commits.plain).toBe(before.plain)
+    expect(commits.noted).toBe(before.noted + 1)
   })
 
   it('has no a11y violations', async () => {

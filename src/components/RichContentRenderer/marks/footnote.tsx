@@ -33,7 +33,10 @@ export function renderFootnoteRef(
       <Tooltip key={key}>
         <TooltipTrigger asChild>
           <sup
-            className="footnote-ref footnote-ref-missing"
+            className={cn(
+              'footnote-ref footnote-ref-missing',
+              ctx.interactive === true && 'focus-ring-visible',
+            )}
             data-testid="footnote-ref"
             {...(ctx.interactive === true ? { tabIndex: 0 } : {})}
           >
@@ -54,7 +57,10 @@ export function renderFootnoteRef(
   return (
     <sup
       key={key}
-      className={cn('footnote-ref', onNavigate !== undefined && 'cursor-pointer')}
+      className={cn(
+        'footnote-ref',
+        onNavigate !== undefined && 'cursor-pointer focus-ring-visible touch-hit-area',
+      )}
       data-testid="footnote-ref"
       {...(onNavigate === undefined
         ? {}
