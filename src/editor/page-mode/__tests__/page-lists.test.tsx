@@ -4,12 +4,16 @@
  * draws, and, through `PageModeEditor`, a style write the backend refuses.
  *
  * Equivalent mutants, accepted:
- * - `sameItems` made always false, its `?.` dropped, and `layout`'s return on
- *   it or on a block whose marker did not change, or the plugin's `doc !==
- *   previous.doc`, dropped: each only spares a redraw, and a redraw over the
- *   same blocks changes no marker and tells no listener. `b[i]` is read only
- *   past the length check, and `this.items[at]` only once `items` holds the
- *   blocks of the document `differsInside` compared.
+ * - `sameItems`, its length check or its `every` callback made always false
+ *   (their `true` arms share those keys and are killed), its `?.` dropped,
+ *   and `layout`'s return on it or on a block whose marker did not change, or
+ *   the plugin's `doc !== previous.doc`, dropped: each only spares a redraw,
+ *   and a redraw over the same blocks changes no marker and tells no
+ *   listener: every other change a redraw reads redraws already (a style
+ *   given or read, and a task state, through `PageModeEditor`'s page-store
+ *   subscription to `tasksChanged`). `b[i]` is read only past the length
+ *   check, and `this.items[at]` only once `items` holds the blocks of the
+ *   document `differsInside` compared.
  * - `differsInside`'s `start === null` or `end === null` alone, or the two
  *   joined by `&&`: with the child counts alike, the two are null together.
  * - `leftTheirList` building the old document's markers again for each block,
@@ -22,14 +26,16 @@
  * - `id === null` (`idsIn`, `leftTheirList`, `undone`, Enter, Backspace, the
  *   input rule), and `made !== undefined` → `true`: every page block has an id,
  *   a split makes exactly one new one, and `styleOf(null)` is `'none'`.
+ * - The `''` id `itemOf` gives a block with none (TipTap's empty document; the
+ *   id rules name any block a change makes before the view sees it): no block
+ *   stores a style under it, or under any other text in its place.
  * - The storage's starting depth: the undo depth is never below 0, so a start
  *   of 0 or of none compares alike.
  * - The extension's name: nothing looks it up.
  * - `$` dropped from either rule's pattern: TipTap applies a rule only where
  *   its match ends at the text typed.
  *
- * Not reached: the `''` id of a block with none, and the `?? ''` after a
- * group that always matches.
+ * Not reached: the `?? ''` after a group that always matches.
  */
 
 import type { InvokeArgs } from '@tauri-apps/api/core'
@@ -37,6 +43,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { act } from '@testing-library/react'
 import type { Editor } from '@tiptap/core'
 import { closeHistory, undoDepth } from '@tiptap/pm/history'
+import { Fragment } from '@tiptap/pm/model'
 import { AllSelection, NodeSelection } from '@tiptap/pm/state'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -262,6 +269,26 @@ describe('PageLists', () => {
 
     expect([A, B, C].map((id) => lists.markerOf(id))).toEqual(['1.', '', '1.'])
     expect(onB).not.toHaveBeenCalled()
+  })
+
+  it('a block with no id, as TipTap’s empty document holds, breaks a numbered run as a plain one', () => {
+    const lists = new PageLists(
+      { [A]: style('ordered'), [C]: style('ordered') },
+      flat(A, C),
+      () => false,
+    )
+    const editor = openPage([
+      [A, 0, 'one'],
+      [C, 0, 'three'],
+    ])
+    teardown = () => editor.destroy()
+    const { doc } = editor.state
+    const first = doc.child(0)
+    const unnamed = first.type.create({ blockId: null, depth: 0 }, first.content)
+
+    lists.layout(doc.copy(Fragment.from([first, unnamed, doc.child(1)])))
+
+    expect([lists.markerOf(A), lists.markerOf(C)]).toEqual(['1.', '1.'])
   })
 
   it('blocks that all stop showing a marker at once show none', () => {

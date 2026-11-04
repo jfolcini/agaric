@@ -66,7 +66,6 @@ frontend	src/editor/page-mode/page-gutter.ts	StringLiteral	29	1	block.setAttribu
 frontend	src/editor/page-mode/page-gutter.ts	StringLiteral	35	1	this.view.dom.removeEventListener('mousedown', this.pressLane, true)
 # #6108 page-gutter: a leave listener left on after destroy() hides a frame already out of the document
 frontend	src/editor/page-mode/page-gutter.ts	StringLiteral	35	1	this.view.dom.removeEventListener('pointerleave', this.leave)
-frontend	src/editor/page-mode/page-lists.ts	ArrayDeclaration	30	1	const items: OutlineItem[] = []
 frontend	src/editor/page-mode/page-lists.ts	ArrowFunction	19	1	const sameItems = (a: readonly OutlineItem[], b: readonly OutlineItem[]): boolean =>
 frontend	src/editor/page-mode/page-lists.ts	CallExpression	21	1	if (set.size === 0) this.listeners.delete(id)
 frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	26	1	if (pickerOpen(state) || id === null) return false
@@ -75,12 +74,10 @@ frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (made !
 frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (next.state.doc !== previous.doc) source.lists.layout(next.state.doc)
 frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (sameItems(items, this.items)) return
 frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (set.size === 0) this.listeners.delete(id)
-frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (style !== 'none') next.set(id, listMarkerText(style, ordinals.get(id)))
 frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (style !== 'none') this.read.set(id, style)
 frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (written === 'none') this.read.delete(id)
 frontend	src/editor/page-mode/page-lists.ts	Regex	14	1	return [rule(/^\s*[-+*]\s([^[\n])$/, 'bullet'), rule(/^\d+\.\s(.)$/, 'ordered')]
 frontend	src/editor/page-mode/page-lists.ts	Regex	54	1	return [rule(/^\s*[-+*]\s([^[\n])$/, 'bullet'), rule(/^\d+\.\s(.)$/, 'ordered')]
-frontend	src/editor/page-mode/page-lists.ts	StringLiteral	15	1	if (style !== 'none') next.set(id, listMarkerText(style, ordinals.get(id)))
 frontend	src/editor/page-mode/page-lists.ts	StringLiteral	15	1	if (style !== 'none') this.read.set(id, style)
 frontend	src/editor/page-mode/page-lists.ts	StringLiteral	17	1	if (written === 'none') this.read.delete(id)
 frontend	src/editor/page-mode/page-lists.ts	StringLiteral	33	1	state.tr.insertText(match[1] ?? '', range.from, range.to)
@@ -100,6 +97,13 @@ frontend	src/editor/page-mode/page-lists.ts	LogicalOperator	5	1	if (id !== null 
 frontend	src/editor/page-mode/page-lists.ts	LogicalOperator	5	1	if (start === null || end === null) return -1
 frontend	src/editor/page-mode/page-lists.ts	ObjectLiteral	20	1	addStorage: () => ({ depth: 0 }),
 frontend	src/editor/page-mode/page-lists.ts	OptionalChaining	21	1	if (item.marked === this.items[at]?.marked) return
+frontend	src/editor/page-mode/page-lists.ts	ArrowFunction	1	1	(item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth && item.marked === b[i]?.marked,
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	1	1	a.length === b.length &&
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	14	1	(item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth && item.marked === b[i]?.marked,
+frontend	src/editor/page-mode/page-lists.ts	OptionalChaining	26	1	(item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth && item.marked === b[i]?.marked,
+frontend	src/editor/page-mode/page-lists.ts	OptionalChaining	53	1	(item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth && item.marked === b[i]?.marked,
+frontend	src/editor/page-mode/page-lists.ts	OptionalChaining	84	1	(item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth && item.marked === b[i]?.marked,
+frontend	src/editor/page-mode/page-lists.ts	StringLiteral	24	1	id: blockIdOf(node) ?? '',
 frontend	src/editor/page-mode/page-properties.ts	BooleanLiteral	30	1	if (text === written) return true
 frontend	src/editor/page-mode/page-properties.ts	BooleanLiteral	8	1	return true
 frontend	src/editor/page-mode/page-properties.ts	ConditionalExpression	5	1	if (shown.length > 0) this.shown.set(id, shown)
