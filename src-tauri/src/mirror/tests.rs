@@ -134,7 +134,8 @@ impl Fx {
         Some(serde_json::from_slice(&bytes).unwrap())
     }
 
-    /// Deliver `event` through the app's sync sink, as a sync does.
+    /// Deliver a completed sync naming `changed_page_ids` through the app's
+    /// sync sink, as a sync does.
     fn sync(&self, changed_page_ids: Vec<String>, changed_blocks: Option<usize>) {
         let app = tauri::test::mock_app();
         app.manage(self.state.clone());
@@ -551,4 +552,152 @@ fn a_state_keeps_the_last_three_texts_written_once_each() {
         state.record(ALPHA.to_owned(), shadow(n));
     }
     assert_eq!(state.shadows, vec![shadow(2), shadow(3), shadow(4)]);
+}
+
+#[test]
+fn write_atomic_leaves_the_target_alone_when_it_cannot_finish() {
+    let dir = TempDir::new().unwrap();
+    let blocked = dir.path().join("blocked.md");
+    std::fs::create_dir(&blocked).unwrap();
+    std::fs::write(blocked.join("inside"), "kept").unwrap();
+    let tmp = dir.path().join(".blocked.md.agaric-tmp");
+
+    assert!(
+        store::write_atomic(&blocked, b"new").is_err(),
+        "the rename fails"
+    );
+    assert!(!tmp.exists(), "the temporary file is removed");
+    assert_eq!(
+        std::fs::read_to_string(blocked.join("inside")).unwrap(),
+        "kept"
+    );
+
+    let file = dir.path().join("file.md");
+    std::fs::write(&file, "old").unwrap();
+    std::fs::create_dir_all(dir.path().join(".file.md.agaric-tmp/x")).unwrap();
+    assert!(
+        store::write_atomic(&file, b"new").is_err(),
+        "no temporary file"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "old",
+        "the target is untouched until the new bytes are whole"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_that_cannot_be_written_records_no_shadow() {
+    let mut fx = Fx::new().await;
+    let (page, blocks) = fx.page("Alpha", &["hello"]).await;
+    fx.tick().await;
+    let before = fx.saved_state(&page);
+
+    std::fs::create_dir_all(fx.root.join("TestSpace/.Alpha.md.agaric-tmp/x")).unwrap();
+    fx.edit(&blocks[0], "changed").await;
+    fx.tick().await;
+
+    assert_eq!(fx.saved_state(&page), before, "the state is unchanged");
+    let failed = fx.status().await.failed;
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert_eq!(failed[0].page_id, page);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_state_that_cannot_be_saved_is_saved_on_the_next_tick() {
+    let mut fx = Fx::new().await;
+    let (page, blocks) = fx.page("Alpha", &["hello"]).await;
+    fx.tick().await;
+    let state_file = fx.data.join(format!("mirror/state/{page}.json"));
+    std::fs::remove_file(&state_file).unwrap();
+    std::fs::create_dir_all(state_file.join("x")).unwrap();
+
+    fx.edit(&blocks[0], "changed").await;
+    fx.tick().await;
+    assert_eq!(fx.status().await.failed.len(), 1, "the save failed");
+
+    std::fs::remove_dir_all(&state_file).unwrap();
+    fx.tick().await;
+    let render = fx.render(&page).await;
+    assert_eq!(
+        fx.saved_state(&page)
+            .and_then(|s| s.newest().map(|s| s.text.clone())),
+        Some(render),
+        "the text on disk is recorded once the state can be saved"
+    );
+    assert!(fx.status().await.failed.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_marker_naming_another_device_pauses_the_mirror() {
+    let mut fx = Fx::new().await;
+    let (_, blocks) = fx.page("Alpha", &["hello"]).await;
+    fx.tick().await;
+    let written = fx.read(ALPHA);
+
+    store::write_marker(&fx.root, "another-device").unwrap();
+    fx.edit(&blocks[0], "changed").await;
+    fx.page("Beta", &["two"]).await;
+    fx.tick().await;
+
+    assert_eq!(fx.read(ALPHA), written, "nothing is written");
+    assert_eq!(fx.read(BETA), None, "nor created");
+    let status = fx.status().await;
+    assert!(
+        status
+            .paused
+            .as_ref()
+            .is_some_and(|why| why.contains("another device")),
+        "{status:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_deleted_page_whose_file_was_edited_keeps_its_file_as_diverged() {
+    let mut fx = Fx::new().await;
+    let (page, _) = fx.page("Alpha", &["hello"]).await;
+    fx.tick().await;
+    std::fs::write(fx.root.join(ALPHA), "edited outside\n").unwrap();
+
+    delete_block_inner(&fx.pool, DEV, &fx.mat, BlockId::from_trusted(&page))
+        .await
+        .unwrap();
+    fx.tick().await;
+
+    assert_eq!(fx.read(ALPHA).as_deref(), Some("edited outside\n"));
+    assert_eq!(fx.status().await.diverged, diverged(&page, ALPHA));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_diverged_file_restored_to_what_was_written_is_written_again() {
+    let mut fx = Fx::new().await;
+    let (page, blocks) = fx.page("Alpha", &["hello"]).await;
+    fx.tick().await;
+    let written = fx.read(ALPHA).unwrap();
+    std::fs::write(fx.root.join(ALPHA), "edited outside\n").unwrap();
+    fx.edit(&blocks[0], "edited inside").await;
+    fx.tick().await;
+    assert_eq!(fx.status().await.diverged, diverged(&page, ALPHA));
+
+    std::fs::write(fx.root.join(ALPHA), &written).unwrap();
+    fx.tick().await;
+
+    assert_eq!(fx.read(ALPHA), Some(fx.render(&page).await));
+    assert!(fx.status().await.diverged.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_marker_lost_mid_pass_stops_it_before_any_folder_is_created() {
+    let mut fx = Fx::new().await;
+    fx.page("Alpha", &["hello"]).await;
+    settle(&fx.mat).await;
+    std::fs::remove_file(fx.root.join(store::MARKER_NAME)).unwrap();
+
+    // The tick checked the marker; it goes before the pass writes.
+    let root = fx.root.clone();
+    fx.mirror.pass(&root, true, HashSet::new()).await.unwrap();
+
+    assert!(!fx.root.join("TestSpace").exists(), "no folder is created");
+    assert!(fx.status().await.paused.is_some(), "the mirror is paused");
+    assert!(fx.mirror.full_due, "and resumes with a full pass");
 }

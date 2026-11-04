@@ -153,8 +153,7 @@ impl FrontSpec {
     }
 }
 
-/// A page property's value: a block property's, but for a `\r`, which the
-/// front matter writes raw and the save then reads as a line break.
+/// A page property's value: a block property's, but with no `\r` (#6325).
 fn arb_front_value() -> impl Strategy<Value = (String, bool)> {
     arb_property_value().prop_filter("no carriage return", |(value, _)| !value.contains('\r'))
 }

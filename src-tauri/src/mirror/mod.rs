@@ -88,6 +88,9 @@ struct Inner {
     synced: HashSet<String>,
     full_pass: bool,
     paused: Option<String>,
+    /// Why the task could not start, until it does: no [`MirrorState::restart`]
+    /// clears it.
+    start_error: Option<String>,
     diverged: BTreeMap<String, String>,
     failed: BTreeMap<String, (String, String)>,
     last_pass_ms: Option<i64>,
@@ -141,7 +144,11 @@ impl MirrorState {
         MirrorStatus {
             supported: cfg!(desktop),
             folder,
-            paused: inner.paused.clone().filter(|_| on),
+            paused: inner
+                .start_error
+                .clone()
+                .or_else(|| inner.paused.clone())
+                .filter(|_| on),
             diverged: inner
                 .diverged
                 .iter()
@@ -175,6 +182,23 @@ impl MirrorState {
         self.lock().paused = reason;
     }
 
+    fn set_start_error(&self, reason: Option<String>) {
+        self.lock().start_error = reason;
+    }
+
+    /// The pages listed as diverged or failed, written again each tick: the
+    /// guard in [`Mirror::try_write_page`] keeps a diverged file until it is
+    /// what Agaric wrote, and a failed write may succeed now.
+    fn retried(&self) -> Vec<String> {
+        let inner = self.lock();
+        inner
+            .diverged
+            .keys()
+            .chain(inner.failed.keys())
+            .cloned()
+            .collect()
+    }
+
     fn page_ok(&self, page_id: &str) {
         let mut inner = self.lock();
         inner.diverged.remove(page_id);
@@ -191,7 +215,9 @@ impl MirrorState {
         let mut inner = self.lock();
         inner.diverged.remove(page_id);
         let failure = (path.to_owned(), error.to_string());
-        inner.failed.insert(page_id.to_owned(), failure);
+        if inner.failed.insert(page_id.to_owned(), failure).is_none() {
+            tracing::warn!(page_id, error = %error, "the Markdown mirror cannot write a page");
+        }
     }
 
     fn passed(&self, full: bool, pages: &HashSet<String>) {
@@ -279,16 +305,26 @@ pub fn check_folder(folder: &Path, device_id: &str, app_data_dir: &Path) -> Resu
 /// Run the mirror's task on Tauri's runtime for the life of the app.
 pub fn spawn(pool: SqlitePool, device_id: String, state: MirrorState) {
     tauri::async_runtime::spawn(async move {
-        let mut mirror = match Mirror::open(pool, device_id, state.clone()).await {
-            Ok(mirror) => mirror,
-            Err(e) => {
-                tracing::error!(error = %e, "the Markdown mirror could not start");
-                state.set_paused(Some(format!("the mirror could not start: {e}")));
-                return;
-            }
-        };
+        let mut mirror = None;
         loop {
             tokio::time::sleep(TICK).await;
+            let mirror = match &mut mirror {
+                Some(mirror) => mirror,
+                None => match Mirror::open(pool.clone(), device_id.clone(), state.clone()).await {
+                    Ok(opened) => {
+                        state.set_start_error(None);
+                        mirror.insert(opened)
+                    }
+                    Err(e) => {
+                        let why = format!("the mirror could not start: {e}");
+                        if state.lock().start_error.as_ref() != Some(&why) {
+                            tracing::error!(error = %e, "the Markdown mirror could not start");
+                        }
+                        state.set_start_error(Some(why));
+                        continue;
+                    }
+                },
+            };
             if let Err(e) = mirror.tick().await {
                 tracing::warn!(error = %e, "Markdown mirror pass failed");
             }
@@ -348,12 +384,12 @@ impl Mirror {
     ///
     /// # Errors
     ///
-    /// A read of the database fails. A page that cannot be written is listed
-    /// as failed instead.
+    /// A read of the database fails; one after the dirty pages were taken
+    /// makes the next tick a full pass. A page that cannot be written is
+    /// listed as failed instead.
     pub async fn tick(&mut self) -> Result<(), AppError> {
-        let touched = self.touched_since_watermark().await?;
-        let (synced, full_requested) = self.state.take_synced();
-        self.full_due |= full_requested;
+        // Off or paused, the watermark stays put: the pass that resumes is a
+        // full one.
         let Some(folder) = store::folder(&self.pool).await? else {
             self.state.set_paused(None);
             self.full_due = true;
@@ -367,13 +403,21 @@ impl Mirror {
             self.full_due = true;
             return Ok(());
         }
+        let touched = self.touched_since_watermark().await?;
+        let (mut dirty, full_requested) = self.state.take_synced();
+        self.full_due |= full_requested;
+        dirty.extend(self.state.retried());
         let full = self.full_due || self.last_full.is_none_or(|at| at.elapsed() >= BACKSTOP);
-        if !full && touched.is_none() && synced.is_empty() {
+        if !full && touched.is_none() && dirty.is_empty() {
             return Ok(());
         }
-        let mut dirty = synced;
         dirty.extend(touched.unwrap_or_default());
-        self.pass(&root, full, dirty).await
+        let passed = self.pass(&root, full, dirty).await;
+        if passed.is_err() {
+            // The watermark moved and the synced pages were taken.
+            self.full_due = true;
+        }
+        passed
     }
 
     /// The pages this device's ops since the watermark touched, the source
@@ -435,8 +479,10 @@ impl Mirror {
         for id in &dirty {
             if let Some((path, _)) = layout.get(id)
                 && !frozen.contains(id)
+                && !self.write_page(root, id, path).await
             {
-                self.write_page(root, id, path).await;
+                self.full_due = true;
+                return Ok(());
             }
         }
         self.layout = layout;
@@ -542,28 +588,36 @@ impl Mirror {
         }
     }
 
-    async fn write_page(&mut self, root: &Path, page_id: &str, path: &str) {
+    /// Write the page and list it by the outcome; `false` when the mirror
+    /// paused, which ends the pass.
+    async fn write_page(&mut self, root: &Path, page_id: &str, path: &str) -> bool {
         match self.try_write_page(root, page_id, path).await {
-            Ok(true) => self.state.page_ok(page_id),
-            Ok(false) => self.state.page_diverged(page_id, path),
+            Ok(Wrote::Done) => self.state.page_ok(page_id),
+            Ok(Wrote::Diverged) => self.state.page_diverged(page_id, path),
+            Ok(Wrote::Paused(why)) => {
+                self.state.set_paused(Some(why));
+                return false;
+            }
             Err(e) => self.state.page_failed(page_id, path, &e),
         }
+        true
     }
 
     /// Write the page's render at `path`, unless a file there differs from
-    /// both the render and the text last written at `path`: then return
-    /// `false` and leave it. A file that already holds the render is adopted.
-    /// The file is written before the state, so a crash between the two
-    /// leaves a file the next pass adopts.
+    /// both the render and the text last written at `path`: then leave it. A
+    /// file that already holds the render is adopted. Nothing is created
+    /// unless the folder still holds this device's marker, which a drive
+    /// unmounted mid-pass does not. The file is written before the state, so
+    /// a crash between the two leaves a file the next pass adopts.
     async fn try_write_page(
         &mut self,
         root: &Path,
         page_id: &str,
         path: &str,
-    ) -> Result<bool, AppError> {
+    ) -> Result<Wrote, AppError> {
         let file = match get_page_file_inner(&self.pool, page_id).await {
             Ok(file) => file,
-            Err(AppError::NotFound(_)) => return Ok(true),
+            Err(AppError::NotFound(_)) => return Ok(Wrote::Done),
             Err(e) => return Err(e),
         };
         let target = root.join(path);
@@ -572,9 +626,12 @@ impl Mirror {
         match store::read_optional(&target)? {
             Some(bytes) if bytes == file.text.as_bytes() => {}
             Some(bytes) if newest.is_none_or(|shadow| shadow.text.as_bytes() != bytes) => {
-                return Ok(false);
+                return Ok(Wrote::Diverged);
             }
             _ => {
+                if let Some(why) = pause_reason(root, &self.device_id) {
+                    return Ok(Wrote::Paused(why));
+                }
                 create_folders_below(root, path)?;
                 store::write_atomic(&target, file.text.as_bytes())?;
             }
@@ -584,19 +641,30 @@ impl Mirror {
             line_ids: file.line_ids,
         };
         if newest == Some(&shadow) {
-            return Ok(true);
+            return Ok(Wrote::Done);
         }
-        let state = self
+        let mut state = self
             .pages
-            .entry(page_id.to_owned())
-            .or_insert_with(|| PageState {
+            .get(page_id)
+            .cloned()
+            .unwrap_or_else(|| PageState {
                 path: path.to_owned(),
                 shadows: Vec::new(),
             });
         state.record(path.to_owned(), shadow);
-        self.store.save(page_id, state)?;
-        Ok(true)
+        // Saved first, so a failed save leaves memory with the disk's state.
+        self.store.save(page_id, &state)?;
+        self.pages.insert(page_id.to_owned(), state);
+        Ok(Wrote::Done)
     }
+}
+
+/// How [`Mirror::try_write_page`] left a page.
+enum Wrote {
+    Done,
+    Diverged,
+    /// The folder lost its marker; nothing was written.
+    Paused(String),
 }
 
 /// This device's last op `seq`, `0` before its first.
@@ -609,8 +677,8 @@ async fn own_head(pool: &SqlitePool, device_id: &str) -> Result<i64, AppError> {
     .await?)
 }
 
-/// Create the folders `path`'s file sits in, one at a time below `root`, so
-/// a folder that vanished mid-pass is never created again.
+/// Create the folders `path`'s file sits in, one at a time below `root` and
+/// never `root` itself, so a vanished mirror folder makes the first fail.
 fn create_folders_below(root: &Path, path: &str) -> std::io::Result<()> {
     let mut folder = root.to_path_buf();
     for part in Path::new(path)

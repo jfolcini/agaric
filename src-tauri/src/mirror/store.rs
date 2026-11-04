@@ -158,7 +158,6 @@ impl StateDir {
                 .file_name()
                 .and_then(std::ffi::OsStr::to_str)
                 .and_then(|n| n.strip_suffix(".json"))
-                .filter(|n| !n.starts_with('.'))
             else {
                 continue;
             };
@@ -170,7 +169,7 @@ impl StateDir {
                     states.insert(page_id.to_owned(), state);
                 }
                 Err(e) => {
-                    tracing::warn!(path = %path.display(), error = %e, "unreadable mirror state")
+                    tracing::warn!(path = %path.display(), error = %e, "unreadable mirror state");
                 }
             }
         }
