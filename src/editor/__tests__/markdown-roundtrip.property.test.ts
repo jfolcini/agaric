@@ -731,6 +731,18 @@ describe('#6277 a table keeps its GFM column alignment', () => {
   })
 })
 
+describe('#6277 C3 an edit writes back the stored form', () => {
+  it.each([
+    ['a heading that starts with an ordinal', '### 1. Clean up'],
+    ['a heading that starts with a dash', '### - x'],
+    ['a heading that starts with a plus', '### + x'],
+    ['a heading that starts with a quote marker', '### > x'],
+    ['a heading that starts with a hash', '## # x'],
+  ])('%s', (_name, md) => {
+    expect(serialize(parse(md))).toBe(md)
+  })
+})
+
 // -- #4053: the exclusion predicate itself ------------------------------------
 /**
  * An exclusion that silently stops covering what it names is the expensive
