@@ -104,6 +104,7 @@ frontend	src/editor/page-mode/page-lists.ts	OptionalChaining	26	1	(item, i) => i
 frontend	src/editor/page-mode/page-lists.ts	OptionalChaining	53	1	(item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth && item.marked === b[i]?.marked,
 frontend	src/editor/page-mode/page-lists.ts	OptionalChaining	84	1	(item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth && item.marked === b[i]?.marked,
 frontend	src/editor/page-mode/page-lists.ts	StringLiteral	24	1	id: blockIdOf(node) ?? '',
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (id === null || lists.styleOf(id) === 'none' || docShowsListMarker(node)) return
 frontend	src/editor/page-mode/page-properties.ts	BooleanLiteral	30	1	if (text === written) return true
 frontend	src/editor/page-mode/page-properties.ts	BooleanLiteral	8	1	return true
 frontend	src/editor/page-mode/page-properties.ts	ConditionalExpression	5	1	if (shown.length > 0) this.shown.set(id, shown)
