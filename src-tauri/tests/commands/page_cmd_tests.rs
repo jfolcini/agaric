@@ -3670,9 +3670,10 @@ async fn apply_page_source_deleting_a_parent_keeps_its_outdented_child() {
     let gone = dup_child(&pool, &mat, &parent, "gone with it").await;
     settle(&mat).await;
     let base = page_source(&pool, &page).await;
+    // A plain child is a `+` item (decision 2, #6277).
     assert_eq!(
         base,
-        format!("parent ^{parent}\n\n  child ^{child}\n\n  gone with it ^{gone}\n"),
+        format!("parent ^{parent}\n\n  + child ^{child}\n  + gone with it ^{gone}\n"),
         "seed"
     );
 
@@ -4506,16 +4507,17 @@ async fn get_page_buffer_is_the_source_less_its_anchors_with_ids_beside_it() {
 
     let buffer = get_page_buffer_inner(&pool, page.as_str()).await.unwrap();
 
+    // A plain child is a `+` item (decision 2, #6277).
     assert_eq!(
         buffer.source,
         format!(
-            "two\nlines ^note ^{a}\n\n  child ^{b}\n\n```sh\necho hi\n```\n^{c}\n  lang:: sh\n"
+            "two\nlines ^note ^{a}\n\n  + child ^{b}\n\n```sh\necho hi\n```\n^{c}\n  lang:: sh\n"
         ),
         "seed: one anchor at a line's end, one on a line of its own"
     );
     assert_eq!(
         buffer.text,
-        "two\nlines ^note\n\n  child\n\n```sh\necho hi\n```\n  lang:: sh\n"
+        "two\nlines ^note\n\n  + child\n\n```sh\necho hi\n```\n  lang:: sh\n"
     );
     let id = |block: &BlockId| Some(block.as_str().to_owned());
     assert_eq!(
@@ -5882,8 +5884,9 @@ async fn get_blocks_source_writes_each_root_once_in_document_order() {
 
     let md = copy_source(&pool, &[&c, &a1x, &a, &a1], true).await;
 
+    // A plain child is a `+` item (decision 2, #6277).
     assert_eq!(
-        md, "a\n\n  a1\n\n    a1x\n\n  a2\n\nc\n",
+        md, "a\n\n  + a1\n    + a1x\n  + a2\n\nc\n",
         "a block under another selected block travels with it, and roots follow the page"
     );
 }

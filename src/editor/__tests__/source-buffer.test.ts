@@ -329,7 +329,8 @@ describe('Enter', () => {
         [1, 'foo', B],
         [1, 'bar', null],
       ])
-      expect(ed.state.selection.from).toBe(at(ed, 4, 2))
+      // The sibling is a `+` item, its text past the marker (decision 2, #6277).
+      expect(ed.state.selection.from).toBe(at(ed, 4, 4))
     })
 
     it('on a further line of its text', () => {
@@ -416,12 +417,13 @@ describe('Enter', () => {
       ])
     })
 
+    // A plain child's sibling is a `+` item (decision 2, #6277).
     it.each([
-      ['a top-level heading', '', '## foo bar'],
-      ['a child heading', '  ', '### foo bar'],
+      ['a top-level heading', '', '', '## foo bar'],
+      ['a child heading', '  ', '  + ', '### foo bar'],
     ])(
       'in the middle of %s’s text, the text moved a heading of its level, as page mode’s Enter keeps it',
-      (_kind, indent, heading) => {
+      (_kind, indent, siblingIndent, heading) => {
         const ed = build([
           ['a', A],
           ['', null],
@@ -435,7 +437,7 @@ describe('Enter', () => {
         expect(lines(ed).slice(2)).toEqual([
           [`${indent}${level} foo`, B],
           ['', null],
-          [`${indent}${level} bar`, null],
+          [`${siblingIndent}${level} bar`, null],
         ])
       },
     )
