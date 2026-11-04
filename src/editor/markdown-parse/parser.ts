@@ -69,6 +69,9 @@ import type {
   OrderedListNode,
   ParagraphNode,
   PMMark,
+  TableCellAlign,
+  TableCellNode,
+  TableHeaderNode,
   TableNode,
   TableRowNode,
   TextNode,
@@ -378,20 +381,23 @@ export function parseTable(
 }
 
 /**
- * A row shape ONLY `serializeTable`'s own separator ever takes: `---` in
- * every populated cell — 3 OR MORE bare dashes, no colons, no shorter form.
- * Deliberately narrower than `DELIMITER_CELL` / `isSeparatorRow`'s full GFM
- * delimiter grammar (colons, `-`, `--` all qualify there): a genuine data
- * cell can legally hold `--` or `:-` and nothing escapes it on serialize, so
- * treating those shapes as a split signal here — with no header context to
- * disambiguate, unlike row 1 — would misfire on real content. A bare 3+-dash
- * cell has no such escape hatch in OUR OWN output: `serializeParagraph`'s
- * horizontal-rule guard (`isThematicBreak`, table cells go through it too) escapes a
- * genuine one to `\---` — including a cell whose text has surrounding
- * whitespace (`"--- "`), because `serializeTable` trims the cell at the NODE
- * level, via `canonicalCellParagraphs`, BEFORE `serializeParagraph` ever sees
- * it; the `.trim()` on the emitted string is only a finisher for the
- * multi-paragraph seam (pinned in `markdown-roundtrip-fidelity.test.ts`).
+ * A row shape `serializeTable`'s own separator takes: `---` in every
+ * populated cell — 3 OR MORE dashes, with the column's alignment colons
+ * (`:---`, `---:`, `:---:`, #6277), no shorter form. Deliberately narrower
+ * than `DELIMITER_CELL` / `isSeparatorRow`'s full GFM delimiter grammar (`-`,
+ * `--`, `:-` all qualify there): a genuine data cell can legally hold `--` or
+ * `:-` and nothing escapes it on serialize, so treating those shapes as a
+ * split signal here — with no header context to disambiguate, unlike row 1 —
+ * would misfire on real content. A bare 3+-dash cell has no such escape
+ * hatch in OUR OWN output: `serializeParagraph`'s horizontal-rule guard
+ * (`isThematicBreak`, table cells go through it too) escapes a genuine one to `\---`
+ * — including a cell whose text has surrounding whitespace (`"--- "`),
+ * because `serializeTable` trims the cell at the NODE level, via
+ * `canonicalCellParagraphs`, BEFORE `serializeParagraph` ever sees it; the
+ * `.trim()` on the emitted string is only a finisher for the multi-paragraph
+ * seam (pinned in `markdown-roundtrip-fidelity.test.ts`). An aligned form is
+ * not escaped in a data cell, so for it only the width disagreement
+ * `splitTableRuns` requires decides.
  *
  * NECESSARY, NOT SUFFICIENT. That guarantee covers our own re-serialized
  * output only. FOREIGN markdown escapes nothing, so an unescaped bare-dash
@@ -399,7 +405,7 @@ export function parseTable(
  * placeholder) — which is why `splitTableRuns` requires a second, decidable
  * condition on top of this shape test.
  */
-const ABSORBED_TABLE_SEPARATOR_CELL = /^-{3,}$/
+const ABSORBED_TABLE_SEPARATOR_CELL = /^:?-{3,}:?$/
 
 function looksLikeAbsorbedTableSeparator(cells: readonly string[]): boolean {
   const written = cells.filter((cell) => cell !== '')
@@ -615,28 +621,41 @@ function isSeparatorRow(cells: readonly string[], hasFollowingRows: boolean): bo
   return !written.every((cell) => AMBIGUOUS_DELIMITER_CELL.test(cell))
 }
 
+/** The column alignment a delimiter cell writes (#6277): `:--` left, `--:` right, `:-:` center. */
+function delimiterAlign(cell: string): TableCellAlign | null {
+  const left = cell.startsWith(':')
+  const right = cell.endsWith(':')
+  if (left && right) return 'center'
+  if (left) return 'left'
+  return right ? 'right' : null
+}
+
 function buildTableRows(tableLines: readonly string[], depth: number): TableRowNode[] {
+  // Split ONCE, then both classify and build from that one array, so the
+  // cells a row is built from cannot disagree with the cells it was judged
+  // by — structurally, not by convention.
+  const cellRows = tableLines.map(rowCells)
+  // GFM's delimiter row is POSITIONAL, not content-based: only the row
+  // immediately after the header (index 1) can ever be a separator. The
+  // previous code applied the dash/colon heuristic to EVERY row, so a
+  // legitimate DATA row made entirely of dashes/colons (`| - | - |`)
+  // anywhere else in the table was silently swallowed on reparse (#3274).
+  // At index 1 the row is disambiguated by `isSeparatorRow` (#4003).
+  const delimiter = cellRows[1]
+  const hasDelimiter = delimiter !== undefined && isSeparatorRow(delimiter, cellRows.length > 2)
+  const aligns = hasDelimiter ? delimiter.map(delimiterAlign) : []
   const rows: TableRowNode[] = []
-  for (let r = 0; r < tableLines.length; r++) {
-    const tableLine = tableLines[r] as string
-    // Split ONCE, then both classify and build from that one array, so the
-    // cells a row is built from cannot disagree with the cells it was judged
-    // by — structurally, not by convention.
-    const rawCells = rowCells(tableLine)
-    // GFM's delimiter row is POSITIONAL, not content-based: only the row
-    // immediately after the header (r === 1) can ever be a separator. The
-    // previous code applied the dash/colon heuristic to EVERY row, so a
-    // legitimate DATA row made entirely of dashes/colons (`| - | - |`)
-    // anywhere else in the table was silently swallowed on reparse (#3274).
-    // At index 1 the row is disambiguated by `isSeparatorRow` (#4003).
-    if (r === 1 && isSeparatorRow(rawCells, tableLines.length > 2)) continue
+  for (let r = 0; r < cellRows.length; r++) {
+    if (r === 1 && hasDelimiter) continue
     // Only the `\|` → `|` unescape is applied on top of that split, and only
     // here: it runs BEFORE parseLine so pipes inside inline code spans and link
     // URLs (which bypass scanEscape) are restored too, while the delimiter test
     // wants the raw text (an escaped pipe is not a dash either way).
-    const cellTexts = rawCells.map((c) => c.replace(/\\\|/g, '|'))
+    const cellTexts = (cellRows[r] as string[]).map((c) => c.replace(/\\\|/g, '|'))
     const isHeader = r === 0
-    const cells = cellTexts.map((cellText) => buildTableCell(cellText, isHeader, depth))
+    const cells = cellTexts.map((cellText, c) =>
+      buildTableCell(cellText, isHeader, aligns[c] ?? null, depth),
+    )
     rows.push({ type: 'tableRow', content: cells })
   }
   return rows
@@ -645,14 +664,14 @@ function buildTableRows(tableLines: readonly string[], depth: number): TableRowN
 function buildTableCell(
   cellText: string,
   isHeader: boolean,
+  align: TableCellAlign | null,
   depth: number,
-):
-  | { type: 'tableHeader'; content: ParagraphNode[] }
-  | { type: 'tableCell'; content: ParagraphNode[] } {
+): TableHeaderNode | TableCellNode {
   const content: ParagraphNode[] = cellText
     ? [{ type: 'paragraph', content: parseLine(cellText, depth) }]
     : []
-  return isHeader ? { type: 'tableHeader', content } : { type: 'tableCell', content }
+  const type = isHeader ? 'tableHeader' : 'tableCell'
+  return align ? { type, attrs: { align }, content } : { type, content }
 }
 
 /**

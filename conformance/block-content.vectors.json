@@ -83,6 +83,12 @@
       "editorFlush": "edit",
       "name": "a line of underscores between lines of text is a thematic break",
       "rustReads": ["rule"]
+    },
+    {
+      "content": "| a | b |\n|:--|--:|\n| 1 | 2 |",
+      "editorFlush": "edit",
+      "name": "a table keeps its column alignment",
+      "rustReads": []
     }
   ],
   "taskMarkers": [

@@ -19,7 +19,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { stubInvoke } from '@/__tests__/helpers/invoke'
+import { type TypedInvokeHandlers, stubInvoke } from '@/__tests__/helpers/invoke'
 import { DataTab } from '@/components/settings/DataTab'
 import type { SpaceRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
@@ -1267,8 +1267,9 @@ describe('DataTab', () => {
     await waitFor(() => {
       expect(mockImportMarkdown).toHaveBeenCalledWith(
         '# Note',
-        // #1446 — the folder-relative path drives the namespace mapping.
-        'MyVault/Note.md',
+        // #1446 — the path below the picked folder drives the namespace
+        // mapping; the folder's own name is no part of it (#6277 decision 8).
+        'Note.md',
         DEFAULT_TEST_SPACE.id,
         expect.any(Function),
         // No attachment refs in the content ⇒ null vaultFiles payload.
@@ -1658,6 +1659,104 @@ describe('DataTab', () => {
         t('data.importFolderSkipped', { count: 1 }),
         'a note warning',
       ])
+    })
+
+    // #6277 decision 8 — an unzipped export carries what its files cannot.
+    describe("an export's space file", () => {
+      const space = {
+        propertyDefinitions: [
+          { key: 'effort', value_type: 'number', options: null },
+          { key: 'context', value_type: 'text', options: null },
+        ],
+        titles: { 'a_b.md': 'a:b' },
+      }
+      const exportFiles = (): File[] => [
+        folderFile(['- body'], 'a_b.md', 'Export/a_b.md'),
+        folderFile(
+          ['report'],
+          'export-report.txt',
+          'Export/.agaric/export-report.txt',
+          'text/plain',
+        ),
+        folderFile(['- other'], 'Plain.md', 'Export/Plain.md'),
+        folderFile([JSON.stringify(space)], 'space.json', 'Export/.agaric/space.json', ''),
+      ]
+      const stubDefs = (create: NonNullable<TypedInvokeHandlers['create_property_def']>) => {
+        stubInvoke(vi.mocked(invoke), {
+          batch_resolve: () => [],
+          list_all_tags_in_space: () => [],
+          list_property_defs: () => ({
+            items: [
+              {
+                key: 'context',
+                value_type: 'text',
+                options: null,
+                created_at: '2026-01-01T00:00:00.000Z',
+                builtin: false,
+              },
+            ],
+            next_cursor: null,
+            has_more: false,
+            total_count: null,
+          }),
+          create_property_def: create,
+        })
+      }
+
+      it('creates the definitions the space lacks before the first note, titles as recorded, and imports no `.agaric/` note', async () => {
+        const order: string[] = []
+        stubDefs((args) => {
+          order.push(`define ${String(args['key'])} as ${String(args['valueType'])}`)
+          return {
+            key: args['key'] as string,
+            value_type: args['valueType'] as string,
+            options: null,
+            created_at: '2026-01-01T00:00:00.000Z',
+            builtin: false,
+            op_refs: [],
+          }
+        })
+        mockImportMarkdown.mockImplementation((_content: string, path: string) => {
+          order.push(`import ${path}`)
+          return Promise.resolve(okResult)
+        })
+
+        render(<DataTab />)
+        const folderInput = screen.getByTestId('import-folder-input') as HTMLInputElement
+        Object.defineProperty(folderInput, 'files', { value: exportFiles() })
+        await act(async () => {
+          folderInput.dispatchEvent(new Event('change', { bubbles: true }))
+        })
+
+        await waitFor(() => expect(screen.getByTestId('import-result')).toBeInTheDocument())
+        expect(order).toEqual(['define effort as number', 'import a:b.md', 'import Plain.md'])
+        expect(screen.queryByTestId('import-warnings-heading')).toBeNull()
+      })
+
+      it('says which definition it could not restore, logs it, and still imports the notes', async () => {
+        stubDefs(() => Promise.reject(new Error('unknown value_type')))
+        mockImportMarkdown.mockResolvedValue(okResult)
+
+        render(<DataTab />)
+        const folderInput = screen.getByTestId('import-folder-input') as HTMLInputElement
+        Object.defineProperty(folderInput, 'files', { value: exportFiles() })
+        await act(async () => {
+          folderInput.dispatchEvent(new Event('change', { bubbles: true }))
+        })
+
+        await waitFor(() => expect(mockImportMarkdown).toHaveBeenCalledTimes(2))
+        expect(
+          await screen.findByText(
+            t('data.importPropertyDefFailed', { key: 'effort', reason: 'unknown value_type' }),
+          ),
+        ).toBeInTheDocument()
+        expect(mockLoggerWarn).toHaveBeenCalledWith(
+          'vault-import',
+          'property definition restore failed',
+          { key: 'effort' },
+          new Error('unknown value_type'),
+        )
+      })
     })
 
     it('lets the files picker choose every note format a folder imports', () => {

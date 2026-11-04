@@ -33,6 +33,7 @@ import { notify } from '@/lib/notify'
 import { INTERACTIONS, traceInteraction } from '@/lib/observability'
 import { consumePrefetchedPageSubtree } from '@/lib/prefetch-page-subtree'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
+import { stopReading } from '@/lib/speech/read-aloud'
 import { buildFlatTree } from '@/lib/tree-utils'
 import { useBlockStore } from '@/stores/blocks'
 import { buildBlocksById, reuseUnchangedBlocks } from '@/stores/page-blocks-map'
@@ -809,7 +810,11 @@ export function PageBlockStoreProvider({
   // in the deps adds no extra runs.
   useEffect(() => {
     registerPageStore(pageId, store)
-    return () => unregisterPageStore(pageId, store)
+    return () => {
+      unregisterPageStore(pageId, store)
+      // A reading of this page ends with it, as on leaving it: views mount one at a time (#5745).
+      stopReading(store)
+    }
     // oxlint-disable-next-line react/refs -- `store` is the lazily-initialised `storeRef.current.store` above, so the dep array inherits that render read; the value is stable for a given `pageId`; see #4406
   }, [pageId, store])
 
