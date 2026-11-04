@@ -21,6 +21,7 @@
 import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
+  invoke,
   navigateTo,
   openNewPage,
   openPageSource,
@@ -130,10 +131,12 @@ describe('Agaric real-backend due date in the agenda (#5365) @journal', () => {
     taskId = (await $(TASK_ROW).getAttribute('data-block-id')) ?? ''
     if (taskId === '') throw new Error('the task block has no data-block-id')
 
-    const checkbox = $(`[data-block-id="${taskId}"] [data-testid="task-marker"]`)
-    await checkbox.waitForExist({ timeout: ACTION_TIMEOUT })
-    await checkbox.moveTo()
-    await checkbox.click()
+    // A TODO; the page re-read shows its checkbox.
+    await invoke('set_todo_state', { blockId: taskId, state: 'TODO' })
+    await reopenTheNewPage()
+    await $(`[data-block-id="${taskId}"] [data-testid="task-marker"]`).waitForExist({
+      timeout: NAV_TIMEOUT,
+    })
     await browser.waitUntil(async () => ((await taskLabel()) ?? '').startsWith('Task: TODO.'), {
       timeout: ACTION_TIMEOUT,
       timeoutMsg: 'the task checkbox never reported TODO',
