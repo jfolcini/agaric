@@ -1,16 +1,16 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT source_id FROM block_tag_refs WHERE tag_id = ?",
+  "query": "SELECT id FROM blocks WHERE instr(content, '#[' || ? || ']') > 0",
   "describe": {
     "columns": [
       {
-        "name": "source_id",
+        "name": "id",
         "ordinal": 0,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "block_tag_refs",
-            "name": "source_id"
+            "table": "blocks",
+            "name": "id"
           }
         }
       }
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "86ce6140ea525aacc7e9f5f554af91dd49c4866802755fa50ffd0aa2b04bb518"
+  "hash": "5c28755712f02203e4e93c4942aa81afbc10c0a19e41e097280c2c63c83a0a1a"
 }
