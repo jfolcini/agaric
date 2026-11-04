@@ -56,6 +56,7 @@ import { codeHighlightPlugin } from '@/editor/extensions/code-highlight'
 import { EmojiPicker, emojiPickerPluginKey } from '@/editor/extensions/emoji-picker'
 import { ExternalLink } from '@/editor/extensions/external-link'
 import { withFlankingShortcuts } from '@/editor/extensions/flanking-marks'
+import { FootnoteRef } from '@/editor/extensions/footnote'
 import { HtmlPaste } from '@/editor/extensions/html-paste'
 import { Image } from '@/editor/extensions/image'
 import { KeyEndsFocusReset } from '@/editor/extensions/key-ends-focus-reset'
@@ -78,6 +79,7 @@ import { TagRef } from '@/editor/extensions/tag-ref'
 import { TaskParagraph } from '@/editor/extensions/task-paragraph'
 import { TaskPaste } from '@/editor/extensions/task-paste'
 import { Underline } from '@/editor/extensions/underline'
+import { type FootnoteNumbering, NO_FOOTNOTES } from '@/editor/footnotes'
 import { notifyUnknownNodeTypeToast } from '@/editor/markdown-serialize-toast'
 import { parse, serialize } from '@/editor/markdown-serializer'
 import { cleanupOrphanedPopups } from '@/editor/suggestion-renderer'
@@ -587,6 +589,8 @@ export interface ContentExtensionOptions {
   findAnchor?: BlockLinkPickerOptions['findAnchor']
   /** `- ` and `1. ` start a list, on which block mode's list-style and checkbox rules build. */
   listInputRules: boolean
+  /** The footnote numbering of the page; by default read from page mode's document (#6033). */
+  footnotes?: ((doc: PMNode) => FootnoteNumbering) | undefined
 }
 
 /**
@@ -643,6 +647,11 @@ export function contentExtensions(o: ContentExtensionOptions) {
     MathBlock,
     // #1434 — markdown `![alt](url)` image (inline atom, broken-image fallback).
     Image,
+    // #6033 — a `[^label]` footnote reference, numbered by the page.
+    FootnoteRef.configure({
+      ...(o.footnotes === undefined ? {} : { footnotes: o.footnotes }),
+      onNavigate: o.onNavigate,
+    }),
   ]
   const chips: Extensions = [
     TagRef.configure({
@@ -745,6 +754,8 @@ export interface RovingEditorOptions {
   resolveBlockStatus?: ((id: string) => 'active' | 'deleted') | undefined
   /** Whether a tag is active or deleted; a deleted tag is broken. */
   resolveTagStatus?: ((id: string) => 'active' | 'deleted') | undefined
+  /** The footnote numbering of the page the block is on (#6033). */
+  footnotes?: (() => FootnoteNumbering) | undefined
 }
 
 /** Options for {@link RovingEditorHandle.mount}. */
@@ -925,6 +936,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   const searchPagesRef = useRef(searchPages)
   const searchSlashCommandsRef = useRef(searchSlashCommands)
   const searchPropertyKeysRef = useRef(searchPropertyKeys)
+  const footnotesRef = useRef(options.footnotes)
   // Written in a dependency-array-less layout effect (not during render): the
   // mirrors refresh on EVERY commit, before paint and before any passive effect
   // or user event, so the extension closures below always read current values.
@@ -948,6 +960,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     searchPagesRef.current = searchPages
     searchSlashCommandsRef.current = searchSlashCommands
     searchPropertyKeysRef.current = searchPropertyKeys
+    footnotesRef.current = options.footnotes
   })
 
   // #726 — build the extensions array EXACTLY ONCE and keep its identity stable
@@ -987,6 +1000,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       findAnchor: (pageId: string | undefined, anchor: string) =>
         findAnchorRef.current?.(pageId, anchor) ?? Promise.resolve(undefined),
       listInputRules: true,
+      footnotes: () => footnotesRef.current?.() ?? NO_FOOTNOTES,
     })
     return [
       Document,

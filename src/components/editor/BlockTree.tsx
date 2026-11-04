@@ -79,6 +79,7 @@ import { useLazyRovingEditor } from '@/components/editor/useLazyRovingEditor'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getActiveEditor, setActiveEditor } from '@/editor/active-editor'
 import { findAnchorBlock } from '@/editor/anchor-block'
+import { pageFootnotes } from '@/editor/footnotes'
 import { INERT_BLOCK_KEYBOARD_CALLBACKS, useBlockKeyboard } from '@/editor/use-block-keyboard'
 import { useEditorEventDispatch } from '@/editor/use-editor-event-dispatch'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
@@ -635,6 +636,7 @@ export function BlockTree({
     searchPropertyKeys,
     onPropertySelect: dispatch.thunks.propertySelect,
     placeholder: editorPlaceholder,
+    footnotes: () => pageFootnotes(pageStore.getState().blocks),
   })
 
   // (#752) `rovingEditorRef` is synced in the consolidated ref-sync layout
