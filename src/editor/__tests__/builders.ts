@@ -24,6 +24,7 @@ import type {
   OrderedListNode,
   ParagraphNode,
   PMMark,
+  TableCellAlign,
   TableCellNode,
   TableHeaderNode,
   TableNode,
@@ -149,6 +150,14 @@ export function tableHeader(...paragraphs: ParagraphNode[]): TableHeaderNode {
 export function tableCell(...paragraphs: ParagraphNode[]): TableCellNode {
   if (paragraphs.length === 0) return { type: 'tableCell' }
   return { type: 'tableCell', content: paragraphs }
+}
+
+/** `cell` with its column's GFM alignment. */
+export function aligned<C extends TableCellNode | TableHeaderNode>(
+  align: TableCellAlign,
+  cell: C,
+): C {
+  return { ...cell, attrs: { align } }
 }
 
 export function doc(...blocks: BlockLevelNode[]): DocNode {

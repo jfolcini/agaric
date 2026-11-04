@@ -28,6 +28,7 @@ import {
   LIST_NEST_INDENT,
   runFlank,
   scanBareUrl,
+  tableDelimiterCell,
   ULID_RE,
   underscoreNeedsEscape,
   WORD_CHAR_RE,
@@ -1342,7 +1343,10 @@ function serializeTable(node: TableNode, onUnknownNode?: (type: string) => void)
   if (serializedRows.length === 0) return ''
 
   const header = `| ${serializedRows[0]?.join(' | ')} |`
-  const separator = `| ${serializedRows[0]?.map(() => '---').join(' | ')} |`
+  // The parser gives a column's alignment to every one of its cells, and a
+  // row the editor adds carries none, even one added above the header.
+  const columnAlign = (c: number) => rows.map((row) => row.content?.[c]?.attrs?.align).find(Boolean)
+  const separator = `| ${serializedRows[0]?.map((_, c) => tableDelimiterCell(columnAlign(c))).join(' | ')} |`
   const dataRows = serializedRows.slice(1).map((row) => `| ${row.join(' | ')} |`)
 
   return [header, separator, ...dataRows].join('\n')

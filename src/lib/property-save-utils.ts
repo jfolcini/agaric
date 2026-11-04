@@ -6,7 +6,7 @@
  */
 
 import { unwrap } from '@/lib/app-error'
-import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
+import type { PageResponse, PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { getTodayString } from '@/lib/date-utils'
 import { PRIORITY_LEVELS } from '@/lib/priority-levels'
@@ -404,4 +404,18 @@ export async function handleDeleteProperty(
 ): Promise<void> {
   unwrap(await commands.deleteProperty(blockId, key))
   onRefresh()
+}
+
+/** Every property definition of `spaceId` (#5841), page by page. */
+export async function listAllPropertyDefs(spaceId: string): Promise<PropertyDefinition[]> {
+  const defs: PropertyDefinition[] = []
+  let cursor: string | null = null
+  do {
+    const page: PageResponse<PropertyDefinition> = unwrap(
+      await commands.listPropertyDefs(spaceId, cursor, null),
+    )
+    defs.push(...page.items)
+    cursor = page.has_more ? page.next_cursor : null
+  } while (cursor !== null)
+  return defs
 }

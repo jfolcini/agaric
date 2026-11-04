@@ -24,6 +24,7 @@ import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
 import {
+  aligned,
   allStoredText,
   blockRef,
   blockquote,
@@ -55,6 +56,7 @@ import type {
   MathBlockNode,
   ParagraphNode,
   PMMark,
+  TableCellAlign,
   TableNode,
   TodoState,
 } from '@/editor/types'
@@ -320,22 +322,32 @@ const arbTable: fc.Arbitrary<TableNode> = fc
   .tuple(fc.integer({ min: 1, max: 2 }), fc.integer({ min: 1, max: 2 }))
   .chain(([rows, cols]) =>
     fc
-      .array(
+      .tuple(
         fc.array(
-          arbInlineContent.map((content) => ({ type: 'paragraph' as const, content })),
-          { minLength: cols, maxLength: cols },
+          fc.array(
+            arbInlineContent.map((content) => ({ type: 'paragraph' as const, content })),
+            { minLength: cols, maxLength: cols },
+          ),
+          { minLength: rows, maxLength: rows },
         ),
-        { minLength: rows, maxLength: rows },
+        // #6277 — a column's alignment sits on every one of its cells.
+        fc.array(fc.constantFrom<TableCellAlign | null>(null, 'left', 'right', 'center'), {
+          minLength: cols,
+          maxLength: cols,
+        }),
       )
-      .map((rowCells) => ({
+      .map(([rowCells, aligns]) => ({
         type: 'table' as const,
         content: rowCells.map((cells, r) => ({
           type: 'tableRow' as const,
-          content: cells.map((p) =>
-            r === 0
-              ? { type: 'tableHeader' as const, content: [p] }
-              : { type: 'tableCell' as const, content: [p] },
-          ),
+          content: cells.map((p, c) => {
+            const cell =
+              r === 0
+                ? { type: 'tableHeader' as const, content: [p] }
+                : { type: 'tableCell' as const, content: [p] }
+            const align = aligns[c]
+            return align ? aligned(align, cell) : cell
+          }),
         })),
       })),
   )
@@ -569,6 +581,8 @@ const FIXPOINT_SEEDS: readonly DocNode[] = [
   doc(paragraph(bold('a '), footnoteRef('1'), bold(' b'))),
   doc(paragraph(footnoteRef('note'), text(': see '), bold('this'), text(' and [^1]'))),
   doc(paragraph(footnoteRef('1'), text('(x)'))),
+  // #6277: a header-only aligned table, whose delimiter is all it has after the header.
+  doc(table(tableRow(aligned('right', tableHeader(paragraph(text('a'))))))),
 ]
 
 /** Shapes that normalize (string changes once) before becoming stable. */
@@ -658,6 +672,31 @@ describe('property: structural round-trip for the fixed audit shapes', () => {
       expect(serialize(parse(md))).toBe(md)
     },
   )
+})
+
+describe('#6277 a table keeps its GFM column alignment', () => {
+  const ALIGNED = '| a | b | c | d |\n| :--- | ---: | :---: | --- |\n| 1 | 2 | 3 | 4 |'
+
+  it('a stored aligned table re-serializes byte-identically', () => {
+    expect(serialize(parse(ALIGNED))).toBe(ALIGNED)
+  })
+
+  it('the short delimiter forms converge on the canonical one in one pass', () => {
+    expect(serialize(parse('| a | b | c | d |\n|:-|-:|:-:|-|\n| 1 | 2 | 3 | 4 |'))).toBe(ALIGNED)
+  })
+
+  it('an aligned table doc reads back as itself', () => {
+    const d = doc(
+      table(
+        tableRow(
+          aligned('left', tableHeader(paragraph(text('a')))),
+          tableHeader(paragraph(text('b'))),
+        ),
+        tableRow(aligned('left', tableCell(paragraph(text('1')))), tableCell(paragraph(text('2')))),
+      ),
+    )
+    expect(parse(serialize(d))).toEqual(d)
+  })
 })
 
 // -- #4053: the exclusion predicate itself ------------------------------------

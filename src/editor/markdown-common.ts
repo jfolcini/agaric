@@ -6,6 +6,8 @@
  * canonical home — without forcing either half to import the other.
  */
 
+import type { TableCellAlign } from '@/editor/types'
+
 /** Word char per CommonMark flanking (Unicode letters + numbers). */
 export const WORD_CHAR_RE = /[\p{L}\p{N}]/u
 const WS_RE = /\s/
@@ -132,6 +134,16 @@ export function storableLinkLabel(label: string | undefined): string | undefined
  * serialize→parse→serialize drifted from one space to two.
  */
 export const LIST_NEST_INDENT = '  '
+
+/**
+ * A GFM delimiter cell for a column aligned `align` (#6277); an unaligned
+ * column keeps the bare `---` every table was written with before.
+ */
+export function tableDelimiterCell(align: TableCellAlign | null | undefined): string {
+  if (align === 'left') return ':---'
+  if (align === 'right') return '---:'
+  return align === 'center' ? ':---:' : '---'
+}
 
 /**
  * Tab stop width for indentation (CommonMark §2.2). A tab does not stand for a
