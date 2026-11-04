@@ -93,6 +93,7 @@ async fn list_tools_advertises_the_rw_tools() {
         "batch",
         "edit_page_markdown",
         "set_page_aliases",
+        "attach_file",
     ];
     expected.extend(ro.iter().map(|d| d.name.as_str()));
     assert_eq!(
@@ -3256,7 +3257,14 @@ async fn append_block_takes_its_parent_page_by_name_5397() {
     let (tools, mat, pool, space, _dir) = mk_tools().await;
     let page = mk_page(&pool, &mat, &space, "Project X").await;
     let dup_a = mk_page(&pool, &mat, &space, "Dup").await;
-    let dup_b = mk_page(&pool, &mat, &space, "DUP").await;
+    // A create of `DUP` resolves to `Dup` (#6278): the tie sync or old data
+    // leaves is seeded below the name check.
+    let dup_b = create_block_inner(&pool, DEV, &mat, "page".into(), "DUP".into(), None, None)
+        .await
+        .unwrap()
+        .id
+        .into_string();
+    crate::commands::tests::common::assign_to_space(&pool, &dup_b, &space).await;
     settle(&mat).await;
 
     let result = tools
@@ -3609,6 +3617,18 @@ async fn each_write_tool_opens_one_command_transaction_5402() {
     )
     .await;
     opened.push(("edit_page_markdown", n));
+    let outside = TempDir::new().unwrap();
+    let (_, n) = command_txs_of(
+        &tools,
+        "attach_file",
+        json!({
+            "space_id": space,
+            "block_id": page,
+            "path": source_file(&outside, "a.txt", b"a"),
+        }),
+    )
+    .await;
+    opened.push(("attach_file", n));
 
     assert_eq!(
         opened,
@@ -3627,6 +3647,7 @@ async fn each_write_tool_opens_one_command_transaction_5402() {
             ("move_page_to_space", 1),
             ("batch", 1),
             ("edit_page_markdown", 1),
+            ("attach_file", 1),
         ],
         "each write opens one transaction, its space check inside it"
     );
@@ -4570,4 +4591,394 @@ async fn set_page_aliases_alias_held_by_another_page_rejected_5378() {
     assert_eq!(op_count(&pool).await, before, "nothing was written");
     assert_eq!(aliases_of(&pool, &page).await, ["mine"]);
     assert_eq!(aliases_of(&pool, &other).await, ["taken"]);
+}
+
+// -------------------------------------------------------------------
+// attach_file (#5410)
+// -------------------------------------------------------------------
+
+/// `bytes` as the file `name` in `dir`, outside the vault, and its absolute
+/// path.
+fn source_file(dir: &TempDir, name: &str, bytes: &[u8]) -> String {
+    let path = dir.path().join(name);
+    std::fs::write(&path, bytes).unwrap();
+    path.to_str().unwrap().to_owned()
+}
+
+/// The files in the vault's `attachments/` directory.
+fn stored_files(vault: &TempDir) -> Vec<PathBuf> {
+    match std::fs::read_dir(vault.path().join("attachments")) {
+        Ok(entries) => entries.map(|entry| entry.unwrap().path()).collect(),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(err) => panic!("reading the attachments directory: {err}"),
+    }
+}
+
+async fn attachment_count(pool: &SqlitePool, block_id: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE block_id = ?")
+        .bind(block_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// `attach_file` of `args` refused as a Validation naming `problem`, with
+/// nothing stored for its block.
+async fn assert_attach_refused(
+    tools: &ReadWriteTools,
+    pool: &SqlitePool,
+    vault: &TempDir,
+    args: Value,
+    problem: &str,
+) {
+    let block = args["block_id"].as_str().unwrap().to_owned();
+    let err = tools
+        .call_tool("attach_file", args.clone(), &test_ctx_agent())
+        .await
+        .expect_err("the file must be refused");
+    assert!(
+        matches!(&err, AppError::Validation { message, .. } if message.contains(problem)),
+        "{args} must be refused naming `{problem}`, got {err:?}"
+    );
+    assert_eq!(
+        stored_files(vault),
+        Vec::<PathBuf>::new(),
+        "a refused attach stores no bytes"
+    );
+    assert_eq!(
+        attachment_count(pool, &block).await,
+        0,
+        "a refused attach adds no row"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attach_file_copies_the_file_onto_the_block_5410() {
+    let (tools, mat, pool, space, emitter, vault) = mk_tools_recording().await;
+    let page = mk_page(&pool, &mat, &space, "Recordings").await;
+    let block = mk_child_of(&pool, &mat, &page, "standup").await;
+    settle(&mat).await;
+    let outside = TempDir::new().unwrap();
+    let bytes = b"OggS not really opus";
+    let path = source_file(&outside, "standup.ogg", bytes);
+
+    let row = tools
+        .call_tool(
+            "attach_file",
+            json!({ "space_id": space, "block_id": block, "path": path }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("a regular file under the cap is attached");
+
+    assert_eq!(row["block_id"], block, "attached to the block named");
+    assert_eq!(
+        row["filename"], "standup.ogg",
+        "the filename defaults to the path's"
+    );
+    assert_eq!(row["mime_type"], "audio/ogg", "the type is the extension's");
+    assert_eq!(row["size_bytes"], bytes.len(), "the size is the file's");
+    let stored = PathBuf::from(row["path"].as_str().expect("the row has its path"));
+    assert!(
+        stored.starts_with(vault.path()),
+        "the copy is in the vault: {}",
+        stored.display()
+    );
+    assert_eq!(
+        std::fs::read(&stored).unwrap(),
+        bytes,
+        "the bytes stored are the file's"
+    );
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        bytes,
+        "the original is untouched"
+    );
+    let rows = crate::commands::list_attachments_inner(&pool, BlockId::from_trusted(&block))
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1, "the block has one attachment");
+    assert_eq!(
+        rows[0].id.as_str(),
+        row["id"].as_str().unwrap(),
+        "the row returned is the row stored"
+    );
+    assert_eq!(
+        emitter.blocks_changed(),
+        vec![vec![page]],
+        "the block's page reloads"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attach_file_takes_a_transcript_as_markdown_5410() {
+    let (tools, mat, pool, space, _vault) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "standup")
+        .await
+        .id
+        .into_string();
+    settle(&mat).await;
+    let outside = TempDir::new().unwrap();
+    let transcript = source_file(&outside, "standup.transcript.md", b"[00:01] hi\n");
+    let summary = source_file(&outside, "notes.txt", b"We agreed.\n");
+
+    let row = tools
+        .call_tool(
+            "attach_file",
+            json!({ "space_id": space, "block_id": block, "path": transcript }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("a transcript is attached");
+    assert_eq!(row["filename"], "standup.transcript.md");
+    assert_eq!(row["mime_type"], "text/markdown", "`.md` is Markdown");
+
+    let row = tools
+        .call_tool(
+            "attach_file",
+            json!({
+                "space_id": space,
+                "block_id": block,
+                "path": summary,
+                "filename": "standup.summary.md",
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("a summary is attached under the name given");
+    assert_eq!(row["filename"], "standup.summary.md", "`filename` is kept");
+    assert_eq!(
+        row["mime_type"], "text/markdown",
+        "the type is the stored name's"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attach_file_over_the_cap_is_refused_before_it_is_read_5410() {
+    let (tools, mat, pool, space, vault) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "long")
+        .await
+        .id
+        .into_string();
+    settle(&mat).await;
+    let outside = TempDir::new().unwrap();
+    let path = outside.path().join("long.ogg");
+    // Sparse: the length is set and no byte is written.
+    std::fs::File::create(&path)
+        .unwrap()
+        .set_len(crate::commands::MAX_ATTACHMENT_SIZE.unsigned_abs() + 1)
+        .unwrap();
+
+    // Only the size on disk, read before the bytes, says this.
+    assert_attach_refused(
+        &tools,
+        &pool,
+        &vault,
+        json!({ "space_id": space, "block_id": block, "path": path }),
+        "over the 50 MB attachment cap",
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attach_file_of_an_unknown_type_is_refused_5410() {
+    let (tools, mat, pool, space, vault) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "files")
+        .await
+        .id
+        .into_string();
+    settle(&mat).await;
+    let outside = TempDir::new().unwrap();
+    for (name, problem) in [
+        ("setup.exe", "'exe'"),
+        ("clip.mp4", "'mp4'"),
+        ("README", "no extension"),
+    ] {
+        let path = source_file(&outside, name, b"bytes");
+        assert_attach_refused(
+            &tools,
+            &pool,
+            &vault,
+            json!({ "space_id": space, "block_id": block, "path": path }),
+            problem,
+        )
+        .await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attach_file_refuses_a_directory_a_missing_file_and_a_relative_path_5410() {
+    let (tools, mat, pool, space, vault) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "files")
+        .await
+        .id
+        .into_string();
+    settle(&mat).await;
+    let outside = TempDir::new().unwrap();
+    let folder = outside.path().join("folder.ogg");
+    std::fs::create_dir(&folder).unwrap();
+    for (path, problem) in [
+        (folder, "is a directory"),
+        (outside.path().join("gone.ogg"), "does not exist"),
+        (PathBuf::from("standup.ogg"), "is not an absolute path"),
+    ] {
+        assert_attach_refused(
+            &tools,
+            &pool,
+            &vault,
+            json!({ "space_id": space, "block_id": block, "path": path }),
+            problem,
+        )
+        .await;
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attach_file_refuses_a_symlink_and_a_socket_5410() {
+    let (tools, mat, pool, space, vault) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "files")
+        .await
+        .id
+        .into_string();
+    settle(&mat).await;
+    let outside = TempDir::new().unwrap();
+    let real = source_file(&outside, "real.ogg", b"OggS");
+    let link = outside.path().join("link.ogg");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let socket = outside.path().join("socket.ogg");
+    let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+
+    for (path, problem) in [
+        (link, "is a symbolic link"),
+        (socket, "is not a regular file"),
+    ] {
+        assert_attach_refused(
+            &tools,
+            &pool,
+            &vault,
+            json!({ "space_id": space, "block_id": block, "path": path }),
+            problem,
+        )
+        .await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attach_file_twice_with_the_same_bytes_shares_one_blob_5410() {
+    let (tools, mat, pool, space, _vault) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "takes")
+        .await
+        .id
+        .into_string();
+    settle(&mat).await;
+    let outside = TempDir::new().unwrap();
+    let bytes = b"the same take";
+    let mut rows = Vec::new();
+    for name in ["take-1.ogg", "take-2.ogg"] {
+        let path = source_file(&outside, name, bytes);
+        rows.push(
+            tools
+                .call_tool(
+                    "attach_file",
+                    json!({ "space_id": space, "block_id": block, "path": path }),
+                    &test_ctx_agent(),
+                )
+                .await
+                .expect("each copy is attached"),
+        );
+    }
+
+    assert_ne!(rows[0]["id"], rows[1]["id"], "two attachments");
+    assert_eq!(rows[0]["path"], rows[1]["path"], "both name one file");
+    let hash = blake3::hash(bytes).to_hex().to_string();
+    let blobs: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM attachment_blobs WHERE content_hash = ?")
+            .bind(&hash)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(blobs, 1, "identical bytes are one blob");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attach_file_is_the_agents_op_and_undo_takes_it_back_5410() {
+    use agaric_store::task_locals::{LAST_APPEND, take_appends};
+    use std::cell::RefCell;
+
+    let (tools, mat, pool, space, _vault) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "oops")
+        .await
+        .id
+        .into_string();
+    settle(&mat).await;
+    let outside = TempDir::new().unwrap();
+    let path = source_file(&outside, "oops.mp3", b"ID3 not really mp3");
+
+    let refs = LAST_APPEND
+        .scope(RefCell::new(Vec::new()), async {
+            tools
+                .call_tool(
+                    "attach_file",
+                    json!({ "space_id": space, "block_id": block, "path": path }),
+                    &test_ctx_agent(),
+                )
+                .await
+                .expect("attached");
+            take_appends()
+        })
+        .await;
+    assert_eq!(refs.len(), 1, "one op: {refs:?}");
+    let (op_type, origin): (String, String) =
+        sqlx::query_as("SELECT op_type, origin FROM op_log WHERE device_id = ? AND seq = ?")
+            .bind(&refs[0].device_id)
+            .bind(refs[0].seq)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(op_type, "add_attachment");
+    assert_eq!(origin, "agent:test-agent", "the op is the agent's");
+    assert_eq!(attachment_count(&pool, &block).await, 1);
+
+    tools
+        .call_tool(
+            "undo",
+            json!({ "op_refs": refs, "space_id": space }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("the agent undoes its own attach");
+    assert_eq!(
+        attachment_count(&pool, &block).await,
+        0,
+        "undo removes the attachment"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attach_file_to_a_block_of_another_space_is_refused_and_stores_nothing_5410() {
+    let (tools, mat, pool, space, vault) = mk_tools().await;
+    let other = mk_space(&pool, "other").await;
+    let page = mk_page(&pool, &mat, &other, "Theirs").await;
+    let block = mk_child_of(&pool, &mat, &page, "theirs").await;
+    settle(&mat).await;
+    let outside = TempDir::new().unwrap();
+    let path = source_file(&outside, "mine.ogg", b"OggS");
+
+    assert_attach_refused(
+        &tools,
+        &pool,
+        &vault,
+        json!({ "space_id": space, "block_id": block, "path": path }),
+        "belongs to space",
+    )
+    .await;
+}
+
+#[test]
+fn attach_file_reads_the_type_of_a_name_with_stray_spaces_5410() {
+    assert_eq!(
+        super::attachment_mime_type(" call.ogg ").expect("a padded name keeps its type"),
+        "audio/ogg"
+    );
 }

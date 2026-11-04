@@ -28,6 +28,7 @@ import { isIsoDate } from '@/lib/search-query/is-iso-date'
 import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { definitionSpaceOf, linksTo, ownerSpaceOf } from '@/lib/tauri-mock/link-index'
 import { type MockLinkEdge, linkTokenRe, scanLinkTargets } from '@/lib/tauri-mock/link-scan'
+import { pageNameHolder, pageNameRefusal } from '@/lib/tauri-mock/page-names'
 import { forwardPropertyKey, propertyKeyReversePayload } from '@/lib/tauri-mock/property-keys'
 import { isValidRepeatRuleMock } from '@/lib/tauri-mock/recurrence'
 import {
@@ -78,20 +79,14 @@ export function readActiveSpaceScope(cmd: string, args: Record<string, unknown>)
 }
 
 /**
- * #4723 — the live `page` in `spaceId` titled exactly `content`, skipping
- * `excludeId` (the page being renamed). Mock twin of the backend's
- * `find_live_page_by_title`.
+ * The live `page` in `spaceId` titled exactly `content`: the journal's day
+ * lookup (`resolve_or_create_journal_page`).
  */
-export function findLivePageByTitle(
-  content: string | null,
-  spaceId: string | null,
-  excludeId?: string,
-): string | null {
+export function findLivePageByTitle(content: string | null, spaceId: string | null): string | null {
   for (const b of blocks.values()) {
-    const id = b['id'] as string
-    if (b['block_type'] !== 'page' || b['deleted_at'] || id === excludeId) continue
+    if (b['block_type'] !== 'page' || b['deleted_at']) continue
     if (b['content'] !== content || ownerSpaceOf(b) !== spaceId) continue
-    return id
+    return b['id'] as string
   }
   return null
 }
@@ -122,8 +117,9 @@ export function nextDenseRank(parentId: string | null, spaceId: string | null): 
 
 /**
  * Mirror of `create_page_in_space_inner`: a page in `spaceId` titled
- * `content`, its `space` stamped in the same step. An existing title resolves
- * to that page (#4723). A date title names a journal day, so the page is born
+ * `content`, its `space` stamped in the same step. An existing title under
+ * `nameKey` resolves to that page (#4723, #6278); another page's alias is
+ * refused. A date title names a journal day, so the page is born
  * with the space's journal template ({@link copyJournalTemplateBlocks},
  * #5395), as the backend does for the journal view, Quick Capture and the MCP
  * `journal_for_date` tool alike. Returns the page id.
@@ -133,8 +129,9 @@ export function createPageInSpace(
   content: string | null,
   spaceId: string | null,
 ): string {
-  const existing = findLivePageByTitle(content, spaceId)
-  if (existing !== null) return existing
+  const holder = content === null || spaceId === null ? null : pageNameHolder(content, spaceId)
+  if (holder?.by === 'title') return holder.id
+  if (holder) throw pageNameRefusal(holder, content ?? '')
   const id = fakeId()
   const position = nextDenseRank(parentId, spaceId)
   const row = {

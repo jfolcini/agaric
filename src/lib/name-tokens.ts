@@ -80,6 +80,13 @@ export function isTagName(name: string): boolean {
 const trimWhiteSpace = (s: string): string => s.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '')
 
 /**
+ * `agaric_core::tag_norm::name_key` (#6278): trimmed, lowercased, NFC. Two
+ * names of one space are one name when their keys are equal: page titles and
+ * aliases, and tag names. Pinned to Rust by the `nameKeyCases` vectors.
+ */
+export const nameKey = (name: string): string => trimWhiteSpace(name).toLowerCase().normalize('NFC')
+
+/**
  * The name a new tag takes for `name` (#6278 I4): the ends trimmed and each
  * whitespace run a `-`, since a tag name holds no whitespace. Rust's
  * `inbound_tag_spelling` (`markdown.rs`) spells a new tag the same way.

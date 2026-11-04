@@ -290,9 +290,8 @@ pub async fn create_block_inner_with_space(
 ///
 /// A live tag in `space_id` already named `content` is returned as-is
 /// (nothing created, no op appended, `client_id` unused): tag names are
-/// unique per space, under the same identity the cache and the engine key
-/// tags by (#5236; mirrors the page-title rule of #4723). Any other name
-/// holding whitespace is refused (#6278 I4).
+/// unique per space under `name_key` (#5236, #6278; mirrors the page-title
+/// rule of #4723). Any other name holding whitespace is refused (#6278 I4).
 ///
 /// Unlike the page helper there is no parent/child cross-space check: manually
 /// created tags are top-level (`parent_id = None`). `parent_id` / `index` are
@@ -326,12 +325,15 @@ async fn create_tag_in_space_inner(
     // #5236 — the header's "Create" and the `#name` input rule both land
     // here, each trusting its own picker cache; the backend is the one place
     // that sees both. An existing live same-name tag in the space (the
-    // smallest-id one under `normalize_tag_name`, the identity the cache and
-    // the engine key tags by) IS the answer: resolve to it, create nothing,
-    // append nothing.
-    let existing = crate::commands::pages::markdown::snapshot_tags_by_norm(&mut tx, &space_id)
+    // smallest-id one under `name_key`, the key a rename compares by, #6278)
+    // IS the answer: resolve to it, create nothing, append nothing.
+    let key = agaric_core::tag_norm::name_key(&content);
+    let existing = space_tag_names(&mut tx, &space_id)
         .await?
-        .remove(&agaric_core::tag_norm::normalize_tag_name(&content));
+        .into_iter()
+        .filter(|(_, held)| *held == key)
+        .map(|(id, _)| id)
+        .min();
     if let Some(existing) = existing {
         tx.commit_without_dispatch().await?;
         return get_active_block_inner(pool, BlockId::from_trusted(&existing)).await;
@@ -559,11 +561,12 @@ pub(crate) async fn edit_block_in_tx(
     })
 }
 
-/// #4723 — page titles are unique per space: renaming a page to a title
-/// another live page of its space carries is refused with
+/// #4723 — page titles are unique per space under `name_key` (trim, case,
+/// NFC; #6278): renaming a page to a title another live page of its space
+/// holds, as its title or an alias, is refused with
 /// [`ValidationCode::DuplicatePageTitle`]. The page itself is excluded, so a
-/// rename to its own title (or of one of two pre-existing duplicates to a
-/// fresh title) goes through.
+/// rename that respells its own title (or of one of two pre-existing
+/// duplicates to a fresh title) goes through.
 async fn reject_duplicate_page_title(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,
@@ -580,23 +583,21 @@ async fn reject_duplicate_page_title(
     let Some(space_id) = space_id else {
         return Ok(());
     };
-    let clash =
-        crate::commands::spaces::find_live_page_by_title(conn, &space_id, to_text, Some(block_id))
+    let holder =
+        crate::commands::spaces::find_live_page_by_name(conn, &space_id, to_text, Some(block_id))
             .await?;
-    if clash.is_some() {
-        return Err(AppError::validation_coded(
-            ValidationCode::DuplicatePageTitle,
-            format!("a page titled '{to_text}' already exists in this space"),
-        ));
+    match holder {
+        Some(holder) => Err(holder.refusal(to_text)),
+        None => Ok(()),
     }
-    Ok(())
 }
 
-/// #5281 — tag names are unique per space under `normalize_tag_name`, the
-/// identity `tags_cache` keeps ONE row per: a second live tag holding a name
-/// vanishes from every tag surface while its blocks keep the chip. Refused
-/// with [`ValidationCode::DuplicatePageTitle`] — a tag opens as a page, and
-/// its name is that page's title. The tag itself is excluded, as for pages.
+/// #5281 — tag names are unique per space under `name_key` (#6278: the
+/// trimmed `normalize_tag_name`, the identity `tags_cache` keeps ONE row per):
+/// a second live tag holding a name vanishes from every tag surface while its
+/// blocks keep the chip. Refused with [`ValidationCode::DuplicatePageTitle`] —
+/// a tag opens as a page, and its name is that page's title. The tag itself
+/// is excluded, as for pages.
 async fn reject_duplicate_tag_name(
     conn: &mut sqlx::SqliteConnection,
     tag_id: &str,
@@ -611,20 +612,36 @@ async fn reject_duplicate_tag_name(
     let Some(space_id) = space_id else {
         return Ok(());
     };
-    let other_names = sqlx::query_scalar!(
-        r#"SELECT content AS "content!" FROM blocks
+    reject_tag_name_among(&space_tag_names(conn, &space_id).await?, tag_id, name)
+}
+
+/// Every live tag of `space_id`, as `(id, name_key)`.
+async fn space_tag_names(
+    conn: &mut sqlx::SqliteConnection,
+    space_id: &str,
+) -> Result<Vec<(String, String)>, AppError> {
+    let tags = sqlx::query!(
+        r#"SELECT id AS "id!", content AS "content!" FROM blocks
            WHERE block_type = 'tag' AND deleted_at IS NULL AND content IS NOT NULL
-             AND space_id = ?1 AND id != ?2"#,
+             AND space_id = ?1"#,
         space_id,
-        tag_id
     )
     .fetch_all(&mut *conn)
     .await?;
-    let norm = agaric_core::tag_norm::normalize_tag_name(name);
-    if other_names
-        .iter()
-        .any(|other| agaric_core::tag_norm::normalize_tag_name(other) == norm)
-    {
+    Ok(tags
+        .into_iter()
+        .map(|tag| (tag.id, agaric_core::tag_norm::name_key(&tag.content)))
+        .collect())
+}
+
+/// Refuse naming tag `tag_id` `name` when another of `tags` holds it.
+fn reject_tag_name_among(
+    tags: &[(String, String)],
+    tag_id: &str,
+    name: &str,
+) -> Result<(), AppError> {
+    let key = agaric_core::tag_norm::name_key(name);
+    if tags.iter().any(|(id, held)| id != tag_id && *held == key) {
         return Err(AppError::validation_coded(
             ValidationCode::DuplicatePageTitle,
             format!("a tag named '{name}' already exists in this space"),
@@ -663,24 +680,56 @@ pub(crate) async fn reject_duplicate_name(
     }
 }
 
-/// [`reject_duplicate_name`] for every page and tag among `blocks`, run after
-/// the writes of a restore, an undo or a move into a space, so two names one
-/// batch brings into a space see each other (#5281, #6051, #6099).
+/// [`reject_duplicate_name`] for every page and tag among `blocks`, and for
+/// each alias such a page brings (#6278), run after the writes of a restore,
+/// an undo or a move into a space, so two names one batch brings into a space
+/// see each other (#5281, #6051, #6099). Each space's names are read once for
+/// the batch.
 pub(crate) async fn reject_taken_names(
     conn: &mut sqlx::SqliteConnection,
     blocks: &[impl serde::Serialize],
 ) -> Result<(), AppError> {
+    use std::collections::hash_map::{Entry, HashMap};
     let blocks_json = serde_json::to_string(blocks)?;
     let named = sqlx::query!(
-        r#"SELECT b.id AS "id!", b.block_type, b.content AS "content!" FROM json_each(?1) je
+        r#"SELECT b.id AS "id!", b.block_type, b.content AS "content!", b.space_id
+           FROM json_each(?1) je
            JOIN blocks b ON b.id = je.value
            WHERE b.block_type IN ('page', 'tag') AND b.content IS NOT NULL"#,
         blocks_json
     )
     .fetch_all(&mut *conn)
     .await?;
+    let mut page_names = HashMap::new();
+    let mut tag_names = HashMap::new();
     for block in named {
-        reject_duplicate_name(conn, &block.block_type, &block.id, &block.content).await?;
+        // A block with no space (pre-#3081 leftovers) has no namespace to clash in.
+        let Some(space_id) = block.space_id else {
+            continue;
+        };
+        if block.block_type == "tag" {
+            let tags = match tag_names.entry(space_id) {
+                Entry::Occupied(held) => held.into_mut(),
+                Entry::Vacant(slot) => {
+                    let tags = space_tag_names(conn, slot.key()).await?;
+                    slot.insert(tags)
+                }
+            };
+            reject_tag_name_among(tags, &block.id, &block.content)?;
+            continue;
+        }
+        let names = match page_names.entry(space_id) {
+            Entry::Occupied(held) => held.into_mut(),
+            Entry::Vacant(slot) => {
+                let names = crate::commands::spaces::SpacePageNames::read(conn, slot.key()).await?;
+                slot.insert(names)
+            }
+        };
+        for name in std::iter::once(block.content).chain(names.aliases_of(&block.id)) {
+            if let Some(holder) = names.holder(&name, Some(&block.id)) {
+                return Err(holder.refusal(&name));
+            }
+        }
     }
     Ok(())
 }

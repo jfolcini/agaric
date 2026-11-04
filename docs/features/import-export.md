@@ -79,6 +79,16 @@ Two rows: **Export this space** and **Export all spaces** (the whole vault, one 
 - A folder import makes no page of a file under `.agaric/`.
 - If any page or attachment couldn't be exported, the ZIP gains an `.agaric/export-report.txt` listing exactly what was skipped, and the toast says so rather than reporting a clean success.
 
+### Markdown mirror (Settings → Data)
+
+Off by default, desktop only, and set per device: *Choose folder…* turns it on and *Turn off* stops it.
+
+- Every page in every space is written as a `.md` file under the chosen folder, one folder per space with the namespace hierarchy as subfolders, and kept up to date as pages change.
+- Each file holds the page's *Edit as Markdown* buffer: its front matter, then its blocks, each carrying its block id.
+- The folder must be empty or one this device's mirror created. A folder another device mirrors to, a non-empty folder Agaric did not create, and the app's own data folder are refused, with the reason shown.
+- A file edited outside Agaric is not overwritten. Settings lists it under *Changed outside Agaric; not overwritten*, with any file that could not be written.
+- The mirror only writes: edits made to the files are not read back into Agaric yet.
+
 ## Pitfalls to know
 
 - **Imports don't merge by ULID.** Two devices that each import the same Markdown set end up with two parallel pages. Sync converges them via CRDT, but the page titles will collide. Plan imports on one device, then sync.

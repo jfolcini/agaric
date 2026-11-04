@@ -14,7 +14,7 @@ import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64
 import type { PasteInput, PasteSplice } from '@/lib/bindings'
 import { INLINE_PROPERTY_RESERVED_KEYS } from '@/lib/inline-property-parse'
 import { LIST_STYLE_KEY } from '@/lib/list-style'
-import { normalizeTagName } from '@/lib/name-tokens'
+import { nameKey } from '@/lib/name-tokens'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import type { TodoState } from '@/lib/task-states'
 import { TASK_STATE_TO_MARKER, taskStateFromMarker } from '@/lib/task-states'
@@ -48,6 +48,7 @@ import {
   readActiveSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
 import { resolveInboundNames } from '@/lib/tauri-mock/names'
+import { pageNameHolder, pageNameRefusal, rejectTakenPageNames } from '@/lib/tauri-mock/page-names'
 import {
   allOrNothing,
   attachmentBytes,
@@ -809,17 +810,17 @@ function pasteRow(
 
 /**
  * #5281 — refuse naming `tagId` `name` when another live tag of its space holds
- * that name under `normalizeTagName`. Mock twin of `reject_duplicate_tag_name`
+ * that name under `nameKey` (#6278). Mock twin of `reject_duplicate_tag_name`
  * (`src-tauri/src/commands/blocks/crud.rs`).
  */
 function rejectDuplicateTagName(tagId: string, name: string): void {
   const spaceId = blocks.get(tagId)?.['space_id'] ?? null
   if (spaceId === null) return
-  const wanted = normalizeTagName(name)
+  const wanted = nameKey(name)
   for (const b of blocks.values()) {
     if (b['block_type'] !== 'tag' || b['deleted_at'] || b['id'] === tagId) continue
     if (b['space_id'] !== spaceId || b['content'] == null) continue
-    if (normalizeTagName(b['content'] as string) !== wanted) continue
+    if (nameKey(b['content'] as string) !== wanted) continue
     throw appErrorRejection({
       kind: 'validation',
       code: 'DuplicatePageTitle',
@@ -843,30 +844,26 @@ function rejectSpacedTagName(name: string): void {
 
 /**
  * #4723 — refuse titling `page` `title` when another live page of its space
- * holds that title. Mock twin of `reject_duplicate_page_title`
- * (`src-tauri/src/commands/blocks/crud.rs`); the page itself is not its own
- * clash.
+ * holds that name, as its title or an alias (#6278). Mock twin of
+ * `reject_duplicate_page_title` (`src-tauri/src/commands/blocks/crud.rs`); the
+ * page itself is not its own clash.
  */
 function rejectDuplicatePageTitle(page: Record<string, unknown>, title: string): void {
   const spaceId = ownerSpaceOf(page)
-  if (spaceId === null || findLivePageByTitle(title, spaceId, page['id'] as string) === null) {
-    return
-  }
-  throw appErrorRejection({
-    kind: 'validation',
-    code: 'DuplicatePageTitle',
-    message: `a page titled '${title}' already exists in this space`,
-  })
+  const holder = spaceId === null ? null : pageNameHolder(title, spaceId, page['id'] as string)
+  if (holder) throw pageNameRefusal(holder, title)
 }
 
 /**
- * The name rule for page or tag `b` under the name and space it holds now.
- * Mock twin of `reject_duplicate_name`.
+ * The name rule for page or tag `b` a restore or a move brings into the space
+ * it holds now: a page's title and its aliases. Mock twin of the per-block
+ * check in `reject_taken_names`.
  */
 function rejectDuplicateName(b: Record<string, unknown>): void {
   if (typeof b['content'] !== 'string') return
   if (b['block_type'] === 'tag') rejectDuplicateTagName(b['id'] as string, b['content'])
-  if (b['block_type'] === 'page') rejectDuplicatePageTitle(b, b['content'])
+  const spaceId = ownerSpaceOf(b)
+  if (b['block_type'] === 'page' && spaceId !== null) rejectTakenPageNames(b, spaceId)
 }
 
 /**
@@ -1093,10 +1090,10 @@ export const blocksHandlers = {
     }
     // #5236 — a live tag already named `content` in the space is the answer:
     // its own row back, nothing created, no op appended. The match is the
-    // engine's normalized identity (`find_live_tag_by_name_in_tx`), smallest
-    // id first, so a case variant resolves too.
+    // name key (`create_tag_in_space_inner`, #6278), smallest id first, so a
+    // case variant or a padded spelling resolves too.
     if (blockType === 'tag') {
-      const wanted = normalizeTagName((a['content'] as string) ?? '')
+      const wanted = nameKey((a['content'] as string) ?? '')
       const existing = [...blocks.values()]
         .filter(
           (b) =>
@@ -1104,7 +1101,7 @@ export const blocksHandlers = {
             !b['deleted_at'] &&
             b['space_id'] === spaceId &&
             b['content'] != null &&
-            normalizeTagName(b['content'] as string) === wanted,
+            nameKey(b['content'] as string) === wanted,
         )
         .toSorted((x, y) => compareUtf8Bytes(x['id'] as string, y['id'] as string))[0]
       if (existing) {

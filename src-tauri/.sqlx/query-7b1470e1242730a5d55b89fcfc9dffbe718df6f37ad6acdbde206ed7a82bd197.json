@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.page_id AS \"page_id!: String\"\n                 FROM op_log o JOIN blocks b ON b.id = o.block_id\n                WHERE o.device_id = ?1 AND o.seq > ?2 AND o.seq <= ?3\n                  AND b.page_id IS NOT NULL\n               UNION\n               SELECT p.page_id\n                 FROM op_log o JOIN blocks p ON p.id = json_extract(o.payload, '$.prior.parent_id')\n                WHERE o.device_id = ?1 AND o.seq > ?2 AND o.seq <= ?3\n                  AND o.op_type = 'move_block' AND p.page_id IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "page_id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "page_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "7b1470e1242730a5d55b89fcfc9dffbe718df6f37ad6acdbde206ed7a82bd197"
+}

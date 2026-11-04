@@ -624,7 +624,7 @@ describe('the list keys and input rules', () => {
       'a - b',
       'x- y',
       'x1. y',
-      '# \\- zTitle',
+      '# - zTitle',
       '\\- bcd',
     ])
     expect(styles(editor, lists)).toEqual(['none', 'none', 'none', 'none', 'none'])
