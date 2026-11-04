@@ -1267,8 +1267,9 @@ describe('DataTab', () => {
     await waitFor(() => {
       expect(mockImportMarkdown).toHaveBeenCalledWith(
         '# Note',
-        // #1446 — the folder-relative path drives the namespace mapping.
-        'MyVault/Note.md',
+        // #1446 — the path below the picked folder drives the namespace
+        // mapping; the folder's own name is no part of it (#6277 decision 8).
+        'Note.md',
         DEFAULT_TEST_SPACE.id,
         expect.any(Function),
         // No attachment refs in the content ⇒ null vaultFiles payload.

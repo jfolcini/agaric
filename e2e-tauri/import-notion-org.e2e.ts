@@ -80,14 +80,16 @@ describe('Agaric real-backend Notion, Org and text folder import (#6032) @markdo
 
     await navigateTo('Journal')
     await navigateTo('Pages')
+    // The picked folder's own name is no part of a title (#6277 decision 8).
     for (const title of ['Notes', orgTitle, 'reading']) {
-      await pageEntryTitled(`${folder}/${title}`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+      await pageEntryTitled(title).waitForDisplayed({ timeout: NAV_TIMEOUT })
     }
-    await expectAbsent(`span[title="${folder}/Plan ${PLAN_ID}"]`, 'a page titled with its id')
+    await expectAbsent(`span[title="Plan ${PLAN_ID}"]`, 'a page titled with its id')
+    await expectAbsent(`span[title="${folder}/Plan"]`, "a page titled with the folder's name")
 
-    await openPageTitled(`${folder}/Plan`)
+    await openPageTitled('Plan')
     const chip = (await rowOf(`${marker}-link`)).$('[data-testid="block-link-chip"]')
-    await browser.waitUntil(async () => (await chip.getAttribute('title')) === `${folder}/Notes`, {
+    await browser.waitUntil(async () => (await chip.getAttribute('title')) === 'Notes', {
       timeout: NAV_TIMEOUT,
       timeoutMsg: 'the link to Notes%20<id>.md never resolved to the page Notes',
     })
@@ -98,7 +100,7 @@ describe('Agaric real-backend Notion, Org and text folder import (#6032) @markdo
     await reviewer.waitForDisplayed({ timeout: NAV_TIMEOUT })
     expect(await reviewer.getValue()).toBe(`${marker}-ann`)
 
-    await openPageTitled(`${folder}/${orgTitle}`)
+    await openPageTitled(orgTitle)
     await expectTaskState(`${marker}-task`, 'TODO')
     await expectTaskState(`${marker}-sub`, 'DONE')
     const task = await rowOf(`${marker}-task`)
@@ -119,18 +121,19 @@ describe('Agaric real-backend Notion, Org and text folder import (#6032) @markdo
       'import-folder-input',
       folder,
       {
-        'a.md': Buffer.from(`- ${marker}-link [r](reading.txt)\n`),
-        'reading.txt': Buffer.from(`- ${marker}-text\n`),
+        // Named apart from the first case's `reading`, whose vault this one shares.
+        [`${marker}-a.md`]: Buffer.from(`- ${marker}-link [r](${marker}-reading.txt)\n`),
+        [`${marker}-reading.txt`]: Buffer.from(`- ${marker}-text\n`),
       },
       'Imported “2 files”',
     )
 
     await navigateTo('Journal')
     await navigateTo('Pages')
-    await openPageTitled(`${folder}/a`)
+    await openPageTitled(`${marker}-a`)
     const chip = (await rowOf(`${marker}-link`)).$('[data-testid="block-link-chip"]')
     await browser.waitUntil(
-      async () => (await chip.getAttribute('title')) === `${folder}/reading`,
+      async () => (await chip.getAttribute('title')) === `${marker}-reading`,
       {
         timeout: NAV_TIMEOUT,
         timeoutMsg: 'the link to reading.txt never resolved to the page reading',

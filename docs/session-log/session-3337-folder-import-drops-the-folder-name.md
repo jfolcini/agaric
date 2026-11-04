@@ -1,0 +1,11 @@
+# Session 3337 — a folder import drops the picked folder's name
+
+#6277 G1 (decision 8). A folder pick's `webkitRelativePath` starts with the picked folder's name, and `importPath` sent it whole, so every folder import titled its pages `<folder>/Title`: a restored ZIP export, an Obsidian vault and a Notion export alike. A restore therefore lost every journal day (`get_journal_page_by_date` matches the bare date), kept the `# Title` line the export writes (it no longer matched the page title) and sent a namespaced link to an empty twin.
+
+`importPath` now sends `vaultRelativePath`, the path below the picked folder, as attachments already did. The backend took "this is a folder note" from a `/` in the title, which a note at the vault root no longer has, so `parse_import_payload` now reads it from `vault_notes.is_some()`, and `relative_md_link_title` resolves against a folder that is already vault-relative instead of splitting a vault segment off it.
+
+Expectations changed by the decision, not by a regression: the folder-path rows of `vault-import.test.ts` and `DataTab.test.tsx`, `e2e/import-export.spec.ts`'s Notion titles, `e2e-tauri/import-obsidian-vault.e2e.ts` and `e2e-tauri/import-notion-org.e2e.ts` (whose second case now names its files apart, since both cases share one vault and their titles no longer differ by folder), and two Rust tests that imported a `vault/…` path as a lone file and now import it as a folder note.
+
+New: `e2e-tauri/import-export-folder.e2e.ts` exports Personal, unzips it in Node, folder-picks it into Work and finds a namespaced title, the link to it opening the page with its block, and the journal day; `a_folder_import_reads_a_root_notes_relative_link` pins the root note's link. The Rust test went red with the old `/` gate restored (no page `sub/Other note`), and the frontend rows red with the old `importPath`.
+
+Ran: vitest over `vault-import.test.ts` and `src/components/settings`; nextest over the import, vault, relative-link and wikilink tests; `just e2e-real` on the new spec, green and red.
