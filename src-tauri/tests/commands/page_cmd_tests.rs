@@ -16043,7 +16043,7 @@ async fn import_attaches_the_image_beside_the_note_6032() {
         &mat,
         app_data_dir,
         "- see ![](image.png)\n- and ![](b/image.png)".into(),
-        Some("Vault/b/note.md".into()),
+        Some("b/note.md".into()),
         TEST_SPACE_ID.into(),
         Some(vault),
     )
