@@ -11,7 +11,7 @@
  * `YYYY-MM-DD`. Both formats are date-fns patterns as Logseq writes them.
  */
 
-import { format, isValid, parse } from 'date-fns'
+import { format, isValid } from 'date-fns'
 
 import { closesFence, documentFenceOpener, type FenceRun } from '@/editor/source-buffer-document'
 import { logger } from '@/lib/logger'
@@ -66,14 +66,47 @@ function percentDecode(stem: string): string {
   })
 }
 
-/** The day a journal's file stem names in `fileFormat`, written back the same, or null. */
+/**
+ * The capture of each token a journal file-name format may hold. Read by hand
+ * because date-fns `parse` pulls its whole parser into the cold-start chunk.
+ */
+const FILE_NAME_TOKENS: Readonly<Record<string, string>> = {
+  yyyy: '(\\d{4})',
+  MM: '(\\d{2})',
+  M: '(\\d{1,2})',
+  dd: '(\\d{2})',
+  d: '(\\d{1,2})',
+}
+
+/** A date-fns pattern's quoted literal (group 1), letter run (its letter, group 2), or other character. */
+const FORMAT_PART_RE = /'((?:[^']|'')*)'?|([A-Za-z])\2*|[^A-Za-z']/g
+
+/**
+ * The day a journal's file stem names in `fileFormat`, written back the same,
+ * or null, as for a format with a token outside `FILE_NAME_TOKENS`.
+ */
 function journalDay(stem: string, fileFormat: string): Date | null {
-  try {
-    const day = parse(stem, fileFormat, new Date(0))
-    return isValid(day) && format(day, fileFormat) === stem ? day : null
-  } catch {
-    return null
+  const letters: string[] = []
+  let pattern = ''
+  for (const [part, quoted, letter] of fileFormat.matchAll(FORMAT_PART_RE)) {
+    if (letter === undefined) {
+      const literal = quoted?.replaceAll("''", "'") ?? part
+      pattern += literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      continue
+    }
+    const capture = FILE_NAME_TOKENS[part]
+    if (capture === undefined) return null
+    letters.push(letter)
+    pattern += capture
   }
+  const match = new RegExp(`^${pattern}$`).exec(stem)
+  if (match === null) return null
+  const field = (letter: string) => {
+    const at = letters.indexOf(letter)
+    return at < 0 ? Number.NaN : Number(match[at + 1])
+  }
+  const day = new Date(field('y'), field('M') - 1, field('d'))
+  return isValid(day) && format(day, fileFormat) === stem ? day : null
 }
 
 /**

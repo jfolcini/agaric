@@ -59,6 +59,17 @@ describe('logseqGraph titles', () => {
     ])
   })
 
+  it('reads a journal file name by its day tokens and literals, else as a page', () => {
+    const quoted = `{:journal/file-name-format "'day' yyyy+M+d"\n :file/name-format :triple-lowbar}`
+    expect(titles(['journals/day 2026+10+2.md', 'journals/day 2026+2+30.md'], quoted)).toEqual([
+      '2026-10-02',
+      'day 2026+2+30',
+    ])
+    const unsupported =
+      '{:journal/file-name-format "yyyy_MMM_dd"\n :file/name-format :triple-lowbar}'
+    expect(titles(['journals/2026_Oct_21.md'], unsupported)).toEqual(['2026_Oct_21'])
+  })
+
   it('reads a `.` as the namespace in a graph of the legacy file-name format', () => {
     expect(titles(['pages/a.b.md', 'pages/a___b.md'], '{:meta/version 1}')).toEqual([
       'a/b',
