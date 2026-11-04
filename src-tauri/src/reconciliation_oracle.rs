@@ -3755,16 +3755,14 @@ async fn read_fts_blocks(pool: &SqlitePool) -> Result<BTreeMap<String, Vec<Strin
 // Artefact 17 — the `spaces` registry (#6207)
 // ---------------------------------------------------------------------------
 
-/// Every `is_space` property row, as `(block_id, value_text)`.
-async fn dump_is_space_flags(pool: &SqlitePool) -> Result<Vec<(String, Option<String>)>, AppError> {
-    let rows =
-        sqlx::query!("SELECT block_id, value_text FROM block_properties WHERE key = 'is_space'")
-            .fetch_all(pool)
-            .await?;
-    Ok(rows
-        .into_iter()
-        .map(|r| (r.block_id, r.value_text))
-        .collect())
+/// Every block carrying `is_space = 'true'`.
+async fn dump_is_space_flags(pool: &SqlitePool) -> Result<BTreeSet<String>, AppError> {
+    let rows = sqlx::query_scalar!(
+        "SELECT block_id FROM block_properties WHERE key = 'is_space' AND value_text = 'true'"
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().collect())
 }
 
 async fn dump_spaces(pool: &SqlitePool) -> Result<BTreeSet<String>, AppError> {
@@ -3793,15 +3791,10 @@ const SPACES_EXTRA_OWNER: &str = "a spaces row leaves only with its block's purg
 /// joined to a live block), so liveness is not consulted; a purged space has
 /// neither.
 fn diff_spaces_registry(
-    flags: &[(String, Option<String>)],
+    flagged: &BTreeSet<String>,
     registry: &BTreeSet<String>,
     out: &mut Vec<Divergence>,
 ) {
-    let flagged: BTreeSet<String> = flags
-        .iter()
-        .filter(|(_, value)| value.as_deref() == Some("true"))
-        .map(|(block_id, _)| block_id.clone())
-        .collect();
     for block_id in flagged.difference(registry) {
         out.push(Divergence {
             artefact: "spaces.row",
@@ -3811,7 +3804,7 @@ fn diff_spaces_registry(
             owner: SPACES_MISSING_OWNER,
         });
     }
-    for block_id in registry.difference(&flagged) {
+    for block_id in registry.difference(flagged) {
         out.push(Divergence {
             artefact: "spaces.row",
             key: block_id.clone(),

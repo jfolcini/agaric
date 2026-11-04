@@ -38,16 +38,20 @@ export interface SelectEditorProps {
 export function SelectEditor({ state, ariaLabel, unfitValue }: SelectEditorProps) {
   const { t } = useTranslation()
   const { localValue, options, handleSelectChange } = state
+  // The number 1 beside the option "1" would give two items one value: the option could not be
+  // picked.
+  const unfitItem = unfitValue !== null && options.includes(unfitValue) ? '__unfit__' : unfitValue
+  const selected = unfitItem !== null && localValue === unfitValue ? unfitItem : localValue
   return (
-    <Select value={localValue || '__none__'} onValueChange={handleSelectChange}>
+    <Select value={selected || '__none__'} onValueChange={handleSelectChange}>
       <SelectTrigger className="w-full" aria-label={ariaLabel}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
         <SelectItem value="__none__">{t('pageProperty.emptyOption')}</SelectItem>
         {/* A Radix Select shows a value no item carries as empty. */}
-        {unfitValue !== null && (
-          <SelectItem value={unfitValue} disabled>
+        {unfitItem !== null && (
+          <SelectItem value={unfitItem} disabled>
             {unfitValue}
           </SelectItem>
         )}
