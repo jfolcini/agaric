@@ -10,8 +10,8 @@
  *   same blocks changes no marker and tells no listener. `b[i]` is read only
  *   past the length check, and `this.items[at]` only once `items` holds the
  *   blocks of the document `differsInside` compared.
- * - `differsInside`'s `start === null` or `end === null` alone: with the child
- *   counts alike, the two are null together.
+ * - `differsInside`'s `start === null` or `end === null` alone, or the two
+ *   joined by `&&`: with the child counts alike, the two are null together.
  * - `leftTheirList` building the old document's markers again for each block,
  *   or `undone` noting them for a block not due: the same answers, built once
  *   or for fewer blocks to spare the work.
@@ -22,9 +22,8 @@
  * - `id === null` (`idsIn`, `leftTheirList`, `undone`, Enter, Backspace, the
  *   input rule), and `made !== undefined` → `true`: every page block has an id,
  *   a split makes exactly one new one, and `styleOf(null)` is `'none'`.
- * - `depth <= this.storage.depth` for an undo: an undo or a redo never leaves
- *   the undo depth where it was. The storage's starting depth: the undo depth
- *   is never below 0, so a start of 0 or of none compares alike.
+ * - The storage's starting depth: the undo depth is never below 0, so a start
+ *   of 0 or of none compares alike.
  * - The extension's name: nothing looks it up.
  * - `$` dropped from either rule's pattern: TipTap applies a rule only where
  *   its match ends at the text typed.
@@ -806,6 +805,45 @@ describe('the list keys and input rules', () => {
 
       expect(texts(editor)).toEqual(['\\# one'])
       expect(lists.styleOf(A)).toBe('none')
+    })
+
+    it('a redo after an undo that changed nothing takes the style off, and its undo gives it back', () => {
+      const { editor, lists } = open(
+        [
+          [A, 0, 'one'],
+          [B, 0, 'two'],
+        ],
+        { [A]: style('bullet') },
+      )
+      caret(editor, 1, 3)
+      typeText(editor, 'x')
+      pause(editor)
+      editor.view.dispatch(
+        editor.state.tr.setNodeMarkup(posIn(editor, 0, 0) - 1, editor.schema.nodes['heading'], {
+          level: 1,
+        }),
+      )
+      pause(editor)
+      editor.commands.undo()
+      expect(lists.styleOf(A)).toBe('bullet')
+      // Another device deletes the block typed in: the undo of that typing has nothing to change.
+      const b = posIn(editor, 1, 0) - 2
+      editor.view.dispatch(
+        editor.state.tr
+          .delete(b, b + editor.state.doc.child(1).nodeSize)
+          .setMeta('addToHistory', false)
+          .setMeta(REMOTE_PATCH, true),
+      )
+      editor.commands.undo()
+      expect(texts(editor)).toEqual(['one'])
+
+      editor.commands.redo()
+      expect(texts(editor)).toEqual(['# one'])
+      expect(lists.styleOf(A)).toBe('none')
+      editor.commands.undo()
+
+      expect(texts(editor)).toEqual(['one'])
+      expect(lists.styleOf(A)).toBe('bullet')
     })
 
     it('a list picked on a heading, undone, and the heading’s own change undone after it, leave no style the block never had', () => {
