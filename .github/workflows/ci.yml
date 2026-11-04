@@ -15,19 +15,14 @@ on:
     tags-ignore: ['**']
   pull_request:
     branches: [main]
-  # The merge queue tests each group's merged result before it lands; this
-  # run reports `validate / validate-all` for it.
-  merge_group:
 
-# PR refs and merge-queue refs cancel a superseded run of the same ref: only
-# the latest head is interesting.
+# PR refs cancel a superseded run of the same ref: only the latest head is
+# interesting.
 #
-# `main` shares one group without cancel. The merge queue tests every merged
-# result before it lands, so the post-merge run is a sanity check, not the
-# gate: a running main run finishes, a newer push replaces the one pending run,
-# and the newest main commit's run covers everything before it. One run per
-# commit (#3672) kept a verdict for every merge but piled main runs up in the
-# runner queue ahead of PR gates.
+# `main` shares one group without cancel: a running main run finishes, a newer
+# push replaces the one pending run, and the newest main commit's run covers
+# everything before it. One run per commit (#3672) kept a verdict for every
+# merge but piled main runs up in the runner queue ahead of PR gates.
 concurrency:
   group: ${{ github.ref == 'refs/heads/main' && 'ci-main' || format('ci-{0}', github.ref) }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -99,9 +94,7 @@ jobs:
   # ---------------------------------------------------------------------------
   build:
     needs: validate
-    # Not a required check, and the post-merge main run builds the bundle:
-    # a merge-group run spends no slot on it.
-    if: github.event_name != 'merge_group' && needs.validate.outputs.desktop == 'true'
+    if: needs.validate.outputs.desktop == 'true'
     # PEND-41 R1 — observed Linux wall-clock 24.3 min (run 25966040732,
     # 2026-05-16, n=1). +50% headroom + round up → 50.
     timeout-minutes: 50
@@ -208,8 +201,7 @@ jobs:
   # ---------------------------------------------------------------------------
   android-build:
     needs: validate
-    # Same as `build`: not required, rebuilt by the post-merge main run.
-    if: github.event_name != 'merge_group' && needs.validate.outputs.android == 'true'
+    if: needs.validate.outputs.android == 'true'
     runs-on: ubuntu-24.04
     # PEND-41 R1 — observed wall-clock 27.8 min (run 25966040732, 2026-05-16,
     # n=1). +50% headroom + round up → 45 min.

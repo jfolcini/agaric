@@ -3,8 +3,9 @@
  * draws for an editor state: the delimiters of bold, italic, strikethrough,
  * highlight, code and external links, and a heading's `#` run; the syntax drawn
  * around a page, tag or block-ref chip (`revealedChipMarkers`); a quote's or
- * callout's `>` run and inline math's `$` (`revealedConstructMarkers`); and a
- * code block's fences and display math's `$$` (`revealedBlockSyntax`). Kept free of ProseMirror
+ * callout's `>` run, inline math's `$` and a footnote reference's `[^` `]`
+ * (`revealedConstructMarkers`); and a code block's fences and display math's
+ * `$$` (`revealedBlockSyntax`). Kept free of ProseMirror
  * values so `useBlockKeyboard`, on the cold-start path (#2939), can ask whether
  * a marker, or a link (`linkAtCaret`), sits beside the caret without loading the editor chunk.
  */
@@ -411,23 +412,31 @@ function linesAtSelection({ selection, doc }: EditorState): ResolvedPos[] {
   return lines
 }
 
+/** What the serializer writes around an inline atom, drawn beside it. */
+const ATOM_SYNTAX: Readonly<Record<string, readonly [open: string, close: string]>> = {
+  math_inline: ['$', '$'],
+  footnote_ref: ['[^', ']'],
+}
+
 /**
- * The syntax of the quotes and callouts the selection is in, and the `$` of
- * inline math selected or beside a caret. Read-only, as a chip's: the editor's
- * own keys act on these constructs (Backspace at a quote's start lifts the
- * line out of it), and the LaTeX is edited in the math's node view.
+ * The syntax of the quotes and callouts the selection is in, and of inline
+ * math or a footnote reference selected or beside a caret. Read-only, as a
+ * chip's: the editor's own keys act on these constructs (Backspace at a quote's
+ * start lifts the line out of it), and the LaTeX is edited in the math's node
+ * view.
  */
 export function revealedConstructMarkers(state: EditorState): ReadOnlyMarker[] {
   if (!isMarkdownRevealEnabled() || spansPageBlocks(state)) return []
-  const math = nodesAtSelection(state.selection).flatMap(({ node, pos }): ReadOnlyMarker[] =>
-    node.type.name === 'math_inline'
-      ? [
-          { pos, text: '$', side: CHIP_OPEN_SIDE },
-          { pos: pos + node.nodeSize, text: '$', side: CHIP_CLOSE_SIDE },
+  const atoms = nodesAtSelection(state.selection).flatMap(({ node, pos }): ReadOnlyMarker[] => {
+    const syntax = ATOM_SYNTAX[node.type.name]
+    return syntax === undefined
+      ? []
+      : [
+          { pos, text: syntax[0], side: CHIP_OPEN_SIDE },
+          { pos: pos + node.nodeSize, text: syntax[1], side: CHIP_CLOSE_SIDE },
         ]
-      : [],
-  )
-  return [...linesAtSelection(state).flatMap(lineMarkers), ...math]
+  })
+  return [...linesAtSelection(state).flatMap(lineMarkers), ...atoms]
 }
 
 /** The fences of the code blocks the selection is in, and the `$$` of selected display math. */

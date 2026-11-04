@@ -72,6 +72,10 @@ describe('spokenUtterances — inline content', () => {
     expect(spoken('area is $\\pi r^2$ here')).toBe('area is formula here')
   })
 
+  it('reads a footnote reference as nothing', () => {
+    expect(spoken('Claim[^a] holds.')).toBe('Claim holds.')
+  })
+
   it('keeps a hard break as a line break', () => {
     expect(spoken('first\nsecond')).toBe('first\nsecond')
   })

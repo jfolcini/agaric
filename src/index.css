@@ -5,6 +5,8 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  /* A bare `transition-*` runs at the Animations setting's speed (see the token utilities). */
+  --default-transition-duration: var(--duration-normal);
   /* `max-w-reading`: about 80 characters of block text per line (#5332). */
   --container-reading: 46rem;
   --color-background: var(--background);
@@ -1814,6 +1816,19 @@
   margin-left: 0.25em;
 }
 
+/* #6033 — a footnote reference `[^label]`, its number on the page as a
+   superscript; muted when no block of the page defines its label. A definition
+   block's `[^label]:` prefix is the same number, as a small marker. */
+.footnote-ref {
+  @apply font-semibold text-foreground;
+}
+.footnote-ref-missing {
+  @apply font-normal text-muted-foreground;
+}
+.footnote-definition {
+  @apply mr-1 font-semibold text-muted-foreground;
+}
+
 /* Page links — [[ULID]] rendered as the page title. Underlined running text,
    like `.external-link`: a filled chip read as a button (#5332). */
 .block-link-chip {
@@ -2550,20 +2565,37 @@
   pointer-events: none;
 }
 
-/* ── Animation/transition token utilities ──────────────────── */
+/* ── Animation/transition token utilities ──────────────────── *
+ * Each also sets `--tw-duration`, which times tw-animate-css's `animate-in` / `animate-out` (the
+ * Radix overlays' entry and exit). Without a duration class those take `--duration-normal`, and a
+ * bare `transition-*` takes it through `--default-transition-duration`: Tailwind's and
+ * tw-animate's fixed 150ms would ignore Settings › Appearance › Animations. */
+@layer base {
+  /* The classes come with a variant too (`data-[state=open]:animate-in`). */
+  [class*='animate-in'],
+  [class*='animate-out'] {
+    --tw-duration: var(--duration-normal);
+  }
+}
+
 @utility duration-fast {
+  --tw-duration: var(--duration-fast);
   transition-duration: var(--duration-fast);
 }
 @utility duration-normal {
+  --tw-duration: var(--duration-normal);
   transition-duration: var(--duration-normal);
 }
 @utility duration-moderate {
+  --tw-duration: var(--duration-moderate);
   transition-duration: var(--duration-moderate);
 }
 @utility duration-slow {
+  --tw-duration: var(--duration-slow);
   transition-duration: var(--duration-slow);
 }
 @utility duration-slower {
+  --tw-duration: var(--duration-slower);
   transition-duration: var(--duration-slower);
 }
 @utility ease-smooth {

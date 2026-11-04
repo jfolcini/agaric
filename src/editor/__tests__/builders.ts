@@ -14,6 +14,7 @@ import type {
   BulletListNode,
   CodeBlockNode,
   DocNode,
+  FootnoteRefNode,
   HardBreakNode,
   HeadingNode,
   HorizontalRuleNode,
@@ -23,6 +24,7 @@ import type {
   OrderedListNode,
   ParagraphNode,
   PMMark,
+  TableCellAlign,
   TableCellNode,
   TableHeaderNode,
   TableNode,
@@ -90,6 +92,10 @@ export function mathInline(latex: string): MathInlineNode {
   return { type: 'math_inline', attrs: { latex } }
 }
 
+export function footnoteRef(label: string): FootnoteRefNode {
+  return { type: 'footnote_ref', attrs: { label } }
+}
+
 export function paragraph(...nodes: InlineNode[]): ParagraphNode {
   if (nodes.length === 0) return { type: 'paragraph' }
   return { type: 'paragraph', content: nodes }
@@ -144,6 +150,14 @@ export function tableHeader(...paragraphs: ParagraphNode[]): TableHeaderNode {
 export function tableCell(...paragraphs: ParagraphNode[]): TableCellNode {
   if (paragraphs.length === 0) return { type: 'tableCell' }
   return { type: 'tableCell', content: paragraphs }
+}
+
+/** `cell` with its column's GFM alignment. */
+export function aligned<C extends TableCellNode | TableHeaderNode>(
+  align: TableCellAlign,
+  cell: C,
+): C {
+  return { ...cell, attrs: { align } }
 }
 
 export function doc(...blocks: BlockLevelNode[]): DocNode {

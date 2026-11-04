@@ -12,8 +12,8 @@ import { skipToken, useQuery } from '@tanstack/react-query'
 import type { PropertyDefinition } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { propertyDefsQueryKey } from '@/lib/property-caches'
+import { listAllPropertyDefs } from '@/lib/property-save-utils'
 import { queryClient } from '@/lib/query-client'
-import { listAllPropertyDefs } from '@/stores/inline-property-commit'
 import { useSpaceStore } from '@/stores/space'
 
 async function loadDefs(spaceId: string): Promise<PropertyDefinition[]> {
