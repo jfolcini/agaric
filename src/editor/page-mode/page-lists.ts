@@ -19,7 +19,8 @@
  *
  * A task is a list kind too (#5691 D3): a block holding a task state shows its
  * checkbox and no marker, whatever style it stores, and is numbered and keyed
- * as a plain block (`shownStyleOf`).
+ * as a plain block (`shownStyleOf`). The blocks under it start past its
+ * checkbox, as its text does (`tasksOf`).
  *
  * Ctrl+Z here is the editor's history, which gives back text only. A style a
  * block's leaving its list took off comes back with the undo of that change
@@ -41,7 +42,7 @@ import type { PropertyRow } from '@/lib/bindings'
 import { listMarkerText } from '@/lib/list-marker-glyph'
 import { computeListOrdinals } from '@/lib/list-ordinals'
 import { type ListStyle, listStyleFromRows, shownListStyle } from '@/lib/list-style'
-import type { FlatBlock } from '@/lib/tree-utils'
+import { countTasksAtOrAbove, type FlatBlock } from '@/lib/tree-utils'
 
 /** A block in the page's order, and whether it shows a list marker (`docShowsListMarker`). */
 type OutlineItem = Pick<FlatBlock, 'id' | 'depth'> & { marked: boolean }
@@ -84,6 +85,7 @@ export class PageLists {
   /** The document `items` were taken from; none before the first `layout`. */
   private laidOut: PMNode | null = null
   private markers = new Map<string, string>()
+  private tasksAbove = new Map<string, number>()
   private readonly listeners = new Map<string, Set<() => void>>()
   /** The style each block last left its list with, and the editor's undo depth just after. */
   private readonly left = new Map<string, { style: ListStyle; depth: number }>()
@@ -116,7 +118,7 @@ export class PageLists {
     return shownListStyle(this.styleOf(id), this.isTask(id))
   }
 
-  /** A block's task state may have changed: its marker and the numbering follow. */
+  /** A block's task state may have changed: its marker, the numbering and the blocks under it follow. */
   tasksChanged(): void {
     this.redraw()
   }
@@ -124,6 +126,11 @@ export class PageLists {
   /** The marker block `id` shows: `•`, `N.`, or nothing. */
   markerOf(id: string): string {
     return this.markers.get(id) ?? ''
+  }
+
+  /** How many of block `id`'s ancestors are tasks: its text starts past that many checkboxes. */
+  tasksOf(id: string): number {
+    return this.tasksAbove.get(id) ?? 0
   }
 
   /** Hold the styles a read of the page found. */
@@ -222,7 +229,7 @@ export class PageLists {
     return back
   }
 
-  /** Call `listener` when the marker block `id` shows changes. */
+  /** Call `listener` when the marker block `id` shows, or the tasks above it, change. */
   subscribe(id: string, listener: () => void): () => void {
     let set = this.listeners.get(id)
     if (set === undefined) {
@@ -236,7 +243,7 @@ export class PageLists {
     }
   }
 
-  /** Work the markers out again, and tell the blocks whose marker changed. */
+  /** Work the markers and the tasks above out again, and tell the blocks where either changed. */
   private redraw(): void {
     // A block that shows no marker breaks a run of numbered siblings, as a plain one does.
     const unmarked = new Set(this.items.filter((item) => !item.marked).map((item) => item.id))
@@ -247,11 +254,18 @@ export class PageLists {
       const style = styleOf(id)
       if (style !== 'none') next.set(id, listMarkerText(style, ordinals.get(id)))
     }
-    const changed = [...next]
-      .filter(([id, text]) => this.markers.get(id) !== text)
-      .map(([id]) => id)
-    for (const id of this.markers.keys()) if (!next.has(id)) changed.push(id)
+    const changed = new Set(
+      [...next].filter(([id, text]) => this.markers.get(id) !== text).map(([id]) => id),
+    )
+    for (const id of this.markers.keys()) if (!next.has(id)) changed.add(id)
     this.markers = next
+    const above = countTasksAtOrAbove(this.items, ({ id }) => this.isTask(id))
+    for (const [id, count] of above) {
+      const tasksAbove = count - (this.isTask(id) ? 1 : 0)
+      if (tasksAbove !== this.tasksOf(id)) changed.add(id)
+      above.set(id, tasksAbove)
+    }
+    this.tasksAbove = above
     for (const id of changed) for (const listener of this.listeners.get(id) ?? []) listener()
   }
 }

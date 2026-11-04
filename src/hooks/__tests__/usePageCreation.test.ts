@@ -76,6 +76,40 @@ describe('usePageCreation', () => {
     expect(created).toEqual({ id: 'OLD', title: 'My Page' })
   })
 
+  // #6278 — another case or a trailing space is the same name: the page opens
+  // under its own title, not the one typed.
+  it('returns the page whose title is another spelling of the name, under its title', async () => {
+    mockedListPages.mockResolvedValue([{ id: 'OLD', content: 'My Page' }])
+
+    const { created } = await create('my page ')
+
+    expect(mockedCreate).not.toHaveBeenCalled()
+    expect(created).toEqual({ id: 'OLD', title: 'My Page' })
+  })
+
+  it('names a blank create past an Untitled page of another spelling', async () => {
+    mockedListPages.mockResolvedValue([{ id: 'OLD', content: 'untitled' }])
+    mockedCreate.mockResolvedValue('NEW_ID_0000000000000000000')
+
+    await create('')
+
+    expect(mockedCreate).toHaveBeenCalledWith(null, 'Untitled 2', 'SPACE_A')
+  })
+
+  // #6278 — another page's alias refuses the create.
+  it('maps a name another page holds to the duplicate-name message', async () => {
+    mockedCreate.mockRejectedValue({
+      kind: 'validation',
+      code: 'DuplicatePageTitle',
+      message: "a page in this space has the alias 'Roadmap'",
+    })
+
+    const { result, created } = await create('Roadmap')
+
+    expect(created).toBeNull()
+    expect(result.current.createError).toBe(t('pageBrowser.duplicateName'))
+  })
+
   // #4338 — the bus is the dialog's only route to a warm `[[` picker cache.
   it("publishes an 'added' event so the picker cache learns the new page", async () => {
     mockedCreate.mockResolvedValue('NEW_ID_0000000000000000009')
