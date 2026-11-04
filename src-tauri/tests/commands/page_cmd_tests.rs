@@ -14626,7 +14626,7 @@ async fn import_reads_logseq_task_syntax_into_the_task_columns() {
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
     let md = "- TODO [#A] Write the report\n  SCHEDULED: <2026-10-01 Thu +1w>\n\
               - NOW [#C] Review PR 4412\n  DEADLINE: <2026-10-05 Mon>\n\
-              - DONE Book the room\n  SCHEDULED: <2026-10-01 Thu -2d>\n\
+              - DONE Book the room\n  SCHEDULED: <2026-10-01 Thu +1h>\n\
               - Plain text\n";
 
     let result = import_markdown_inner(
@@ -14661,7 +14661,7 @@ async fn import_reads_logseq_task_syntax_into_the_task_columns() {
         [
             "Write the report",
             "Review PR 4412",
-            "Book the room\nSCHEDULED: <2026-10-01 Thu -2d>",
+            "Book the room\nSCHEDULED: <2026-10-01 Thu +1h>",
             "Plain text",
         ]
     );
@@ -14718,6 +14718,48 @@ async fn import_maps_an_org_priority_letter_to_its_level() {
     .await
     .unwrap();
     assert_eq!(priority.as_deref(), Some("2"));
+    mat.shutdown();
+}
+
+/// #6032 N6 — an Org deadline with a non-English day name and a warning
+/// period keeps its date in `due_date`; the warning period is reported.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_keeps_an_org_deadline_with_a_foreign_day_and_a_warning_period() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- TODO Rendre le rapport\n  DEADLINE: <2026-10-01 jeu. -3d>\n".into(),
+        Some("Echeances.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        result.warnings,
+        ["1 SCHEDULED/DEADLINE warning period(s) or delay(s) were dropped; their dates were kept"]
+    );
+    let row: (String, Option<String>) = sqlx::query_as(
+        "SELECT b.content, b.due_date FROM blocks b JOIN blocks p ON p.id = b.parent_id \
+         WHERE p.content = 'Echeances' AND b.deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        row,
+        (
+            "Rendre le rapport".to_string(),
+            Some("2026-10-01".to_string())
+        )
+    );
     mat.shutdown();
 }
 
