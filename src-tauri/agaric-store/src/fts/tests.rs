@@ -8058,6 +8058,10 @@ fn strip_with_ref_target(content: &str) -> String {
 #[test]
 fn strip_indexes_the_text_the_editor_shows_6277() {
     let t = REF_TARGET;
+    // Every char `isEscapableChar` names, written out so the strip's own set
+    // cannot define the expectation.
+    let escapable = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~0123456789 \t";
+    let escaped: String = escapable.chars().map(|c| format!("\\{c}")).collect();
     let cases: Vec<(String, String)> = [
         // Every escape `isEscapableChar` decodes, left to right.
         (r"arr\[0\]", "arr[0]"),
@@ -8072,18 +8076,21 @@ fn strip_indexes_the_text_the_editor_shows_6277() {
         // An escaped delimiter is literal, not markup or code.
         (r"\*a\*", "*a*"),
         (r"\`a\`", "`a`"),
-        // Code is raw: no escape, markup or reference inside, across lines
-        // too; an unclosed run leaves the rest of its line literal.
+        // Code is raw: no escape, markup or reference inside. A code span
+        // closes on its own line, a fence on any; an unclosed run leaves the
+        // rest of its line literal.
         (r"`a\_b`", r"a\_b"),
         ("``a`b``", "a`b"),
         ("```\n*a* \\* x\n```", "\n*a* \\* x\n"),
         ("a `b \\* c\nd \\* e", "a `b \\* c\nd * e"),
+        ("Use `foo\nbar` here", "Use `foo\nbar` here"),
         // Text shaped like the strip's own placeholder stays text.
         ("\u{E002}0\u{E003} `x`", "\u{E002}0\u{E003} x"),
     ]
     .into_iter()
     .map(|(input, expected)| (input.to_owned(), expected.to_owned()))
     .chain([
+        (escaped, escapable.to_owned()),
         // A block ref is its target's first line; a missing target is empty.
         (format!("see (({t}))"), "see First line".to_owned()),
         (

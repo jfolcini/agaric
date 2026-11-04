@@ -221,7 +221,7 @@ fn mask_shown_spans(
                 .chars()
                 .next()
                 .filter(|&next| is_escapable(next))
-                .map(|next| (next.to_string(), 2)),
+                .map(|next| (next.to_string(), 1 + next.len_utf8())),
             '(' => BLOCK_REF_AT_RE.captures(rest).map(|caps| {
                 let title = block_titles.get(&caps[1]).cloned().unwrap_or_default();
                 (title, caps[0].len())
@@ -245,14 +245,17 @@ fn mask_shown_spans(
 }
 
 /// The code a backtick run at the start of `rest` opens, and the bytes it
-/// takes, as `scanCodeSpan` reads it: the next run of exactly as many
-/// backticks closes it, across lines too, so a fence is one span. With no
-/// closer, the rest of the line is literal, backticks included.
+/// takes, as the editor reads it: the next run of exactly as many backticks
+/// closes it, on the same line for a code span (`scanCodeSpan` sees one
+/// line) and on any later line for a fence of three or more. With no closer,
+/// the rest of the line is literal, backticks included.
 fn code_span(rest: &str) -> (String, usize) {
     let run_at = |at: usize| rest[at..].len() - rest[at..].trim_start_matches('`').len();
     let open = run_at(0);
+    let line_end = rest.find('\n').unwrap_or(rest.len());
+    let limit = if open >= 3 { rest.len() } else { line_end };
     let mut at = open;
-    while let Some(found) = rest[at..].find('`') {
+    while let Some(found) = rest[at..limit].find('`') {
         let close_at = at + found;
         let close = run_at(close_at);
         if close == open {
@@ -260,7 +263,6 @@ fn code_span(rest: &str) -> (String, usize) {
         }
         at = close_at + close;
     }
-    let line_end = rest.find('\n').unwrap_or(rest.len());
     (rest[..line_end].to_owned(), line_end)
 }
 

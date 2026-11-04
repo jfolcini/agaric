@@ -87,7 +87,8 @@ function ids(res: SearchResponse): string[] {
 describe('stripForFts — models strip_for_fts_with_maps', () => {
   beforeEach(clearMock)
 
-  // Step 1 — `strip_inline_markup`, all five delimiters.
+  // Step 1 — the four `strip_inline_markup` delimiters, and code, which the
+  // shown-span mask takes first.
   it.each([
     ['**bold**', 'bold'],
     ['*italic*', 'italic'],

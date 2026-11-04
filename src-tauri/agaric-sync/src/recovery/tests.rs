@@ -1997,6 +1997,44 @@ async fn refresh_caches_for_recovered_drafts_updates_fts_for_recovered_blocks() 
     );
 }
 
+/// #6277 B3: a recovered draft of a block-ref target re-strips the block
+/// that references it, which indexes the target's first line.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn refresh_caches_for_recovered_drafts_re_strips_a_block_refs_referrer_6277() {
+    use super::refresh_caches_for_recovered_drafts;
+    use agaric_engine::materializer::Materializer;
+
+    let (pool, _dir) = test_pool().await;
+    let device_id = "test-device";
+    let target = "BLOCK000000000000000000061";
+    let referrer = "BLOCK000000000000000000062";
+    insert_test_block(&pool, target, "old title").await;
+    insert_test_block(&pool, referrer, &format!("see (({target}))")).await;
+    agaric_store::cache::reindex_block_links(&pool, referrer)
+        .await
+        .unwrap();
+    agaric_store::fts::update_fts_for_block(&pool, referrer)
+        .await
+        .unwrap();
+    save_draft(&pool, device_id, target, "pineapple title")
+        .await
+        .unwrap();
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
+    assert_eq!(report.drafts_recovered, vec![target.to_owned()], "seed");
+
+    let materializer = Materializer::new(pool.clone());
+    refresh_caches_for_recovered_drafts(&pool, &materializer, &report.drafts_recovered)
+        .await
+        .unwrap();
+
+    let stripped: String = sqlx::query_scalar("SELECT stripped FROM fts_blocks WHERE block_id = ?")
+        .bind(referrer)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stripped, "see pineapple title");
+}
+
 /// `refresh_caches_for_recovered_drafts` on an empty list must be a
 /// cheap no-op — it must not block waiting on a barrier the materializer
 /// never processes (which would deadlock boot when no drafts were

@@ -180,8 +180,9 @@ function piece(pieces: string[], shown: string): string {
 }
 
 /** `code_span` (`strip.rs`): the code a backtick run at `at` opens and the
- *  index after it. The next run of exactly as many backticks closes it, across
- *  lines too; with none, the rest of the line is literal, backticks included. */
+ *  index after it. The next run of exactly as many backticks closes it, on the
+ *  same line for a code span and on any later line for a fence of three or
+ *  more; with none, the rest of the line is literal, backticks included. */
 function codeSpan(src: string, at: number): [string, number] {
   const runAt = (i: number): number => {
     let n = 0
@@ -189,14 +190,19 @@ function codeSpan(src: string, at: number): [string, number] {
     return n
   }
   const open = runAt(at)
+  const lineEnd = src.indexOf('\n', at)
+  const end = lineEnd === -1 ? src.length : lineEnd
+  const limit = open >= 3 ? src.length : end
   let i = at + open
-  for (let found = src.indexOf('`', i); found !== -1; found = src.indexOf('`', i)) {
+  for (
+    let found = src.indexOf('`', i);
+    found !== -1 && found < limit;
+    found = src.indexOf('`', i)
+  ) {
     const close = runAt(found)
     if (close === open) return [src.slice(at + open, found), found + close]
     i = found + close
   }
-  const lineEnd = src.indexOf('\n', at)
-  const end = lineEnd === -1 ? src.length : lineEnd
   return [src.slice(at, end), end]
 }
 

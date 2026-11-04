@@ -18,6 +18,8 @@ const PAGE = '01HQPAGE00000000000000PG01'
 /** Text shaped like the strip's own placeholder for piece 0. */
 const PLACEHOLDER_SHAPED = '\uE002' + '0\uE003'
 
+const ESCAPABLE = '!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~0123456789 \t'
+
 describe('stripForFts — the text the editor shows (#6277 B3)', () => {
   beforeEach(() => {
     clearMock()
@@ -35,12 +37,21 @@ describe('stripForFts — the text the editor shows (#6277 B3)', () => {
     // An escaped delimiter is literal, not markup or code.
     ['\\*a\\*', '*a*'],
     ['\\`a\\`', '`a`'],
-    // Code is raw: no escape, markup or reference inside, across lines too;
-    // an unclosed run leaves the rest of its line literal.
+    // Code is raw: no escape, markup or reference inside. A code span closes
+    // on its own line, a fence on any; an unclosed run leaves the rest of its
+    // line literal.
     ['`a\\_b`', 'a\\_b'],
     ['``a`b``', 'a`b'],
     ['```\n*a* \\* x\n```', '\n*a* \\* x\n'],
     ['a `b \\* c\nd \\* e', 'a `b \\* c\nd * e'],
+    ['Use `foo\nbar` here', 'Use `foo\nbar` here'],
+    // Every char `isEscapableChar` names, written out.
+    [
+      ESCAPABLE.split('')
+        .map((c) => `\\${c}`)
+        .join(''),
+      ESCAPABLE,
+    ],
     [`${PLACEHOLDER_SHAPED} \`x\``, `${PLACEHOLDER_SHAPED} x`],
     // A block ref is its target's first line; a missing target is empty.
     [`see ((${T}))`, 'see First line'],

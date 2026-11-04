@@ -34,6 +34,7 @@ const OLD = 'quartz'
 const NEW = 'violet'
 const EDITED = runScopedMarker('wdio-edited-word')
 const KEPT = runScopedMarker('wdio-kept-word')
+
 describe('Agaric real-backend search after an edit (#5366) @editor @search', () => {
   it('finds an edited block by its new word and not by its old one', async () => {
     await waitForAppReady()
