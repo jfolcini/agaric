@@ -148,13 +148,17 @@ describe('Agaric real-backend restore of an export by folder import (#6277 G1) @
       { spaceId: spaceId('Work'), cursor: null, limit: null },
     )
     expect(defs.items.find((def) => def.key === KEY)?.value_type).toBe('number')
-    const restored = await invoke<[string, string | null] | null>('resolve_page_by_alias', {
-      alias: colon,
-      scope: work,
-    })
-    if (restored === null) throw new Error(`no page ${colon} in Work`)
+    const pages = await invoke<{ id: string; content: string | null }[]>(
+      'list_all_pages_in_space',
+      {
+        scope: work,
+        tagIds: null,
+      },
+    )
+    const restored = pages.find((page) => page.content === colon)
+    if (restored === undefined) throw new Error(`no page ${colon} in Work`)
     const properties = await invoke<{ key: string; value_num: number | null }[]>('get_properties', {
-      blockId: restored[0],
+      blockId: restored.id,
     })
     expect(properties.find((row) => row.key === KEY)?.value_num).toBe(42)
   })

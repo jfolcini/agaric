@@ -306,8 +306,6 @@ describe('exportGraphAsZip', () => {
     // The implicit directory entries are pinned too: they are what makes the
     // extra `Untitled/` level (i.e. the NOT-dropped empty segment) visible.
     expect(Object.keys(unzipped.files).toSorted()).toEqual([
-      '.agaric/',
-      '.agaric/space.json',
       'Untitled/',
       'Untitled/etc/',
       'Untitled/etc/x.md',
@@ -1151,6 +1149,8 @@ describe('the space file and the title line (#6277 decision 8)', () => {
       list_all_pages_in_space: () => [
         makePageHeading({ id: 'P1', content: 'a:b' }),
         makePageHeading({ id: 'P2', content: 'Project/API' }),
+        // No path reads back as this title, so recording it would retitle nothing.
+        makePageHeading({ id: 'P3', content: 'Q1 / Q2' }),
       ],
       export_page_markdown: () => '- body\n',
     })

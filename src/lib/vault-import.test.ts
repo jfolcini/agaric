@@ -416,15 +416,15 @@ describe('restoring an export', () => {
     expect(loaded[1]?.vaultNotes).toEqual(['a:b.md'])
   })
 
-  it('imports no note under a hidden folder: not the export report, nor any other', () => {
+  it('imports no note under `.agaric/`, and every page the export filed under a leading dot', () => {
     const files = [
       folderFile(['report'], 'export-report.txt', 'Export/.agaric/export-report.txt', 'text/plain'),
-      folderFile(['x'], 'workspace.md', 'Export/.obsidian/workspace.md'),
-      folderFile(['x'], 'old.md', 'Export/notes/.trash/old.md'),
-      folderFile(['x'], 'kept.md', 'Export/notes/kept.md'),
+      folderFile(['x'], '.NET.md', 'Export/.NET.md'),
+      folderFile(['x'], 'Core.md', 'Export/.NET/Core.md'),
     ]
     expect(mdFilesToUnits(files, indexVaultFiles(files), false).map((unit) => unit.name)).toEqual([
-      'kept.md',
+      '.NET.md',
+      'Core.md',
     ])
   })
 

@@ -29,7 +29,7 @@ const ILLEGAL_SEGMENT_CHARS_RE = /[\\:*?"<>|]/g
  */
 const ASSETS_DIR = 'assets'
 
-/** Where the skip ledger goes, at the ZIP root: a folder import skips hidden folders. */
+/** Where the skip ledger goes, at the ZIP root: a folder import makes no page under `.agaric/`. */
 const EXPORT_REPORT_PATH = '.agaric/export-report.txt'
 
 /**
@@ -342,7 +342,10 @@ async function exportSpacePagesIntoZip(
     // clash at extraction on case-insensitive filesystems) via `disambiguate`
     // (#1490/#2723 — see its doc comment for the suffix/counter scheme).
     const zipPath = disambiguate(titleToZipPath(title), page.id, seen)
-    if (pathTitle(`${zipPath}.md`) !== title) titles[`${zipPath}.md`] = title
+    // The import titles a page from a path, so a title no path reads back as
+    // (`a\b`, `Q1 / Q2`) is left to its sanitised file name.
+    const recordable = pathTitle(`${title}.md`) === title
+    if (recordable && pathTitle(`${zipPath}.md`) !== title) titles[`${zipPath}.md`] = title
 
     // #1490 / #2961 — rewrite `attachment:<id>` refs (both inline image links
     // AND block-scoped file links) to portable asset paths, emitting the

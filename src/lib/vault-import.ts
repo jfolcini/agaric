@@ -77,11 +77,15 @@ export function pathTitle(path: string): string {
     .join('/')
 }
 
-/** A path with a segment that starts with `.` (`.obsidian/`, `.agaric/`, `.DS_Store`). */
-const HIDDEN_PATH_RE = /(?:^|\/)\./
+/**
+ * The folder an export keeps, below a space's folder, what its files cannot
+ * carry (#6277 decision 8). Only it is skipped, not every hidden folder: the
+ * export files a `.NET` page as `.NET.md`.
+ */
+const AGARIC_DIR = '.agaric/'
 
-/** Where an export keeps, below a space's folder, what its files cannot carry (#6277 decision 8). */
-export const SPACE_FILE_PATH = '.agaric/space.json'
+/** The space file in {@link AGARIC_DIR}. */
+export const SPACE_FILE_PATH = `${AGARIC_DIR}space.json`
 
 /**
  * The contents of {@link SPACE_FILE_PATH}: the space's own property
@@ -387,7 +391,7 @@ export function skippedFiles(
   for (const file of files) {
     const path = file.webkitRelativePath || file.name
     if (noteExtension(file.name) !== null || ATTACHMENT_RE.test(file.name)) continue
-    if (HIDDEN_PATH_RE.test(path) || attached.has(vaultRelativePath(path))) continue
+    if (/(?:^|\/)\./.test(path) || attached.has(vaultRelativePath(path))) continue
     if (notion && file.name.toLowerCase().endsWith('.csv')) {
       databases.add(path.replace(/_all\.csv$/i, '.csv'))
     } else other++
@@ -417,7 +421,7 @@ function retitle(path: string, title: string): string {
 
 /**
  * Folder/vault/file producer: one unit per note, a file with one of the
- * {@link NOTE_EXTENSIONS} outside any hidden folder, so a folder pick's other
+ * {@link NOTE_EXTENSIONS} outside {@link AGARIC_DIR}, so a folder pick's other
  * files are attachments only (#5740). Content is read lazily inside `load` (so
  * a cancel avoids reading not-yet-reached files), `path` is the folder-relative
  * path for the #1446 namespace mapping (basename fallback for a plain pick),
@@ -435,7 +439,7 @@ export function mdFilesToUnits(
   const notes = files.flatMap((file) => {
     const extension = noteExtension(file.name)
     const relative = vaultRelativePath(file.webkitRelativePath)
-    if (extension === null || HIDDEN_PATH_RE.test(relative)) return []
+    if (extension === null || relative.startsWith(AGARIC_DIR)) return []
     const title = titles.get(relative)
     const path = title === undefined ? importPath(file, extension, notion) : `${title}.md`
     return [{ file, extension, path }]
