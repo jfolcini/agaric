@@ -411,8 +411,8 @@ describe('Agaric real-backend refresh of open views after a sync (#5365) @sync',
     await waitInOpenView(
       async () => {
         seen = await textOf(day)
-        const open = await $(day).$(`button[aria-label="Open ${date} in editor"]`).isExisting()
-        return open && !seen.includes('No blocks for')
+        const hasPage = await $(day).$('button[aria-label="Delete page"]').isExisting()
+        return hasPage && !seen.includes('No blocks for')
       },
       () => `the open week still shows ${date} without its page: ${seen}`,
     )

@@ -267,6 +267,50 @@ describe('AtTagPicker suggestion command chain', () => {
     vi.doUnmock('@tiptap/suggestion')
     vi.resetModules()
   })
+
+  it('creates the tag as typed now when Enter picks a create row from the previous fetch', async () => {
+    let capturedCommand:
+      | ((ctx: { editor: unknown; range: { from: number; to: number }; props: unknown }) => void)
+      | undefined
+    vi.resetModules()
+    vi.doMock('@tiptap/suggestion', () => ({
+      Suggestion: (opts: Record<string, unknown>) => {
+        capturedCommand = opts['command'] as typeof capturedCommand
+        return { key: opts['pluginKey'] }
+      },
+    }))
+    const mod = await import('@/editor/extensions/at-tag-picker')
+    const onCreate = vi.fn().mockResolvedValue('NEW_TAG_ULID')
+    const ext = mod.AtTagPicker.configure({ items: () => [], onCreate })
+    ;(ext.config.addProseMirrorPlugins as (...args: unknown[]) => unknown).call({
+      editor: {} as unknown,
+      options: ext.options,
+    })
+    const chainProxy: Record<string, unknown> = {
+      focus: () => chainProxy,
+      deleteRange: () => chainProxy,
+      insertContentAt: () => chainProxy,
+      run: () => true,
+    }
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: { doc: { textBetween: () => '@newtag' } },
+      on: vi.fn(),
+      off: vi.fn(),
+      isDestroyed: false,
+    }
+
+    capturedCommand?.({
+      editor: mockEditor,
+      range: { from: 9, to: 16 },
+      props: { id: '__create__', label: 'newta', isCreate: true },
+    })
+
+    await vi.waitFor(() => expect(onCreate).toHaveBeenCalledWith('newtag'))
+
+    vi.doUnmock('@tiptap/suggestion')
+    vi.resetModules()
+  })
 })
 
 // ── Integration: real editor doc state after the picker chain ──

@@ -57,6 +57,7 @@
 //! If an agent needs one of these, the user runs it from the UI.
 
 use std::future::Future;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::Deserialize;
@@ -325,6 +326,7 @@ impl ReadWriteTools {
         read_pool: SqlitePool,
         materializer: Materializer,
         device_id: String,
+        app_data_dir: PathBuf,
     ) -> Self {
         Self {
             reads: ReadOnlyTools::new(
@@ -332,6 +334,7 @@ impl ReadWriteTools {
                 pool.clone(),
                 materializer.clone(),
                 device_id.clone(),
+                app_data_dir,
             ),
             pool,
             materializer,

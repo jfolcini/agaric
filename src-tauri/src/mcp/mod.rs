@@ -79,6 +79,9 @@ macro_rules! read_tools_primer {
          Long reads: `get_page`, `list_backlinks` and `get_page_markdown` stop at a \
          size budget with `truncated: true`; pass `next_cursor` back as `cursor` to \
          read on.\n\
+         Attachments: `get_block` and `get_page` list a block's files under \
+         `attachments`; `list_attachments` gives each file's absolute `path` to read it \
+         from. Never edit one in place: attach a new file instead.\n\
          Names: in a tool that takes `space_id`, a page or tag argument that is not \
          a ULID is a page's title or alias, or a tag's name, in that space; \
          `resolve` looks many up at once.\n\
@@ -882,6 +885,7 @@ pub fn spawn_mcp_task<R: tauri::Runtime>(
         write_pool.clone(),
         materializer.clone(),
         device_id.clone(),
+        app_data_dir.to_path_buf(),
     )
     .with_view_emitter(view_emitter.clone());
     let read_write = tools_rw::ReadWriteTools::new(
@@ -889,6 +893,7 @@ pub fn spawn_mcp_task<R: tauri::Runtime>(
         read_pool.clone(),
         materializer,
         device_id,
+        app_data_dir.to_path_buf(),
     )
     .with_view_emitter(view_emitter);
     let server = server::McpServer {

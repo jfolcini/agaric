@@ -28,6 +28,7 @@
 //! | `list_journal` | [`list_journal_days_inner`] | #5396 — the days in `[from, to]` with their block counts. Cursor paginated. |
 //! | `list_trash` | [`list_trash_inner`] | Deleted blocks of one space (deletion roots), newest first. Cursor paginated. `space_id` required. |
 //! | `query` | [`compile_and_run`] | #5398 — the advanced-query engine over one space: a `FilterExpr` tree, sort, group, aggregate. Rows add the page title and the properties the query reads. Cursor paginated. `space_id` required. |
+//! | `list_attachments` | [`list_attachments_paged_inner`], or [`list_page_attachments_inner`] for `page_id` | #5410 — one block's files, or a page's and its live blocks', each with its absolute `path` under the app data dir. Cursor paginated on the attachment id. `space_id` required; a target in another space is rejected. `get_block` and `get_page` carry `{ id, filename, mime_type }` entries per block. |
 //!
 //! # Actor scoping
 //!
@@ -69,6 +70,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -82,9 +84,10 @@ use super::handler_utils::{
 };
 use super::registry::{
     TOOL_BLOCK_HISTORY, TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_JOURNAL, TOOL_GET_PAGE,
-    TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS, TOOL_LIST_JOURNAL,
-    TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_LIST_TRASH,
-    TOOL_PAGE_HISTORY, TOOL_QUERY, TOOL_RESOLVE, TOOL_SEARCH, ToolDescription, ToolRegistry,
+    TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_ATTACHMENTS, TOOL_LIST_BACKLINKS,
+    TOOL_LIST_JOURNAL, TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS,
+    TOOL_LIST_TRASH, TOOL_PAGE_HISTORY, TOOL_QUERY, TOOL_RESOLVE, TOOL_SEARCH, ToolDescription,
+    ToolRegistry,
 };
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
 use crate::commands::pages::markdown::{
@@ -94,13 +97,14 @@ use crate::commands::pages::metadata::{
     ListPagesWithMetadataFilter, PageSort, PageWithMetadataRow, list_pages_with_metadata_inner,
 };
 use crate::commands::{
-    PropertyRow, agenda_range_inner, batch_resolve_inner, get_active_block_inner,
+    AttachmentRow, PropertyRow, agenda_range_inner, batch_resolve_inner, get_active_block_inner,
     get_batch_properties_inner, get_block_history_inner, get_journal_page_by_date_inner,
     get_page_aliases_inner, get_page_for_agent_inner, get_page_for_agent_paged_inner,
-    get_page_inner, get_properties_inner, journal_for_date_inner, list_backlinks_grouped_inner,
-    list_journal_days_inner, list_page_history_inner, list_property_defs_inner,
-    list_spaces_registry_inner, list_tags_for_block_inner, list_tags_inner, list_trash_inner,
-    search_blocks_inner,
+    get_page_inner, get_properties_inner, journal_for_date_inner, list_attachments_batch_inner,
+    list_attachments_inner, list_attachments_paged_inner, list_backlinks_grouped_inner,
+    list_journal_days_inner, list_page_attachments_inner, list_page_history_inner,
+    list_property_defs_inner, list_spaces_registry_inner, list_tags_for_block_inner,
+    list_tags_inner, list_trash_inner, search_blocks_inner,
 };
 use crate::db::validate_block_in_space;
 use crate::materializer::Materializer;
@@ -118,6 +122,7 @@ use agaric_store::query::{
 use agaric_store::search_types::{SearchBlockRow, SearchScope};
 use agaric_store::space::{SpaceId, SpaceScope};
 use agaric_store::task_locals::ActorContext;
+use agaric_sync::sync_files::validate_attachment_fs_path;
 
 // ---------------------------------------------------------------------------
 // Caps — enforced at the tool boundary (decision)
@@ -366,6 +371,21 @@ struct GetPageMarkdownArgs {
     editable: bool,
 }
 
+/// Exactly one of `block_id` and `page_id`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ListAttachmentsArgs {
+    space_id: String,
+    #[serde(default)]
+    block_id: Option<String>,
+    #[serde(default)]
+    page_id: Option<String>,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ListTrashArgs {
@@ -564,6 +584,9 @@ pub struct ReadOnlyTools {
     /// write only through `blocks:changed`. Defaults to a no-op, as on
     /// `ReadWriteTools`.
     view_emitter: Arc<dyn ViewChangeEmitter>,
+    /// The directory attachment `fs_path`s are relative to, so
+    /// `list_attachments` can hand an agent each file's absolute path.
+    app_data_dir: PathBuf,
 }
 
 impl ReadOnlyTools {
@@ -577,11 +600,13 @@ impl ReadOnlyTools {
     ///   Pool sets `PRAGMA query_only = ON`. (.)
     /// - `materializer` carries its own writer-pool handle internally;
     ///   passed through unchanged.
+    /// - `app_data_dir` is the directory `notes.db` and `attachments/` live in.
     pub fn new(
         pool: SqlitePool,
         writer_pool: SqlitePool,
         materializer: Materializer,
         device_id: String,
+        app_data_dir: PathBuf,
     ) -> Self {
         Self {
             pool,
@@ -589,6 +614,7 @@ impl ReadOnlyTools {
             materializer,
             device_id,
             view_emitter: Arc::new(NoopViewChangeEmitter),
+            app_data_dir,
         }
     }
 
@@ -627,6 +653,7 @@ pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
         tool_desc_list_trash(),
         tool_desc_resolve(),
         tool_desc_query(),
+        tool_desc_list_attachments(),
     ]
 }
 
@@ -653,6 +680,7 @@ impl ToolRegistry for ReadOnlyTools {
         let materializer = self.materializer.clone();
         let device_id = self.device_id.clone();
         let view_emitter = self.view_emitter.clone();
+        let app_data_dir = self.app_data_dir.clone();
         scoped_dispatch(ctx, name, move |name| async move {
             match name.as_str() {
                 TOOL_LIST_PAGES => handle_list_pages(&pool, args).await,
@@ -695,6 +723,7 @@ impl ToolRegistry for ReadOnlyTools {
                 TOOL_LIST_TRASH => handle_list_trash(&pool, args).await,
                 TOOL_RESOLVE => handle_resolve(&pool, args).await,
                 TOOL_QUERY => handle_query(&pool, args).await,
+                TOOL_LIST_ATTACHMENTS => handle_list_attachments(&pool, &app_data_dir, args).await,
                 other => Err(unknown_tool_error(other)),
             }
         })
@@ -779,6 +808,8 @@ fn tool_desc_get_page() -> ToolDescription {
             "Fetch a page and a paginated slice of its non-conflict subtree (grandchildren \
                  included). `page` also carries `properties` (every property row, raw), `tags` \
                  (tag ULIDs; `list_tags` names them) and `aliases`; the children are plain rows. \
+                 `page` and each child with files attached carry `attachments`, one \
+                 {{ id, filename, mime_type }} each (`list_attachments` has their paths). \
                  A slice whose content passes {RESPONSE_BYTES_CAP} bytes stops early with \
                  `truncated: true`; pass `next_cursor` as `cursor` to read on."
         ),
@@ -932,8 +963,10 @@ fn tool_desc_get_block() -> ToolDescription {
     ToolDescription {
         name: TOOL_GET_BLOCK.to_string(),
         description: "Fetch a single block by ULID. Returns the BlockRow plus `properties` (every \
-             property row, raw), `tags` (tag ULIDs; `list_tags` names them) and, for a page, \
-             `aliases`; soft-deleted (tombstoned) blocks are excluded."
+             property row, raw), `tags` (tag ULIDs; `list_tags` names them), for a page \
+             `aliases`, and, when it has files attached, `attachments`: one { id, filename, \
+             mime_type } each (`list_attachments` has their paths). Soft-deleted \
+             (tombstoned) blocks are excluded."
             .to_string(),
         input_schema: json!({
             "type": "object",
@@ -1349,6 +1382,42 @@ fn tool_desc_list_trash() -> ToolDescription {
     }
 }
 
+fn tool_desc_list_attachments() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_LIST_ATTACHMENTS.to_string(),
+        description: "List the files attached to one block (`block_id`), or to a page and every \
+             live block on it (`page_id`); pass exactly one. Oldest first, cursor paginated. \
+             Each row is { id, block_id, filename, mime_type, size_bytes, created_at (epoch \
+             ms), path }: `path` is the file's absolute path on this device, to read it from. \
+             Never edit the file in place: identical files share one copy on disk, and an edit \
+             breaks the hash stored for it. To replace a file, attach a new one."
+            .to_string(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["space_id"],
+            "properties": {
+                "space_id": {
+                    "type": "string",
+                    "description": "ULID of the space the block or page belongs to. A target in another space is rejected with a Validation error.",
+                },
+                "block_id": { "type": "string", "description": "ULID of the block whose files to list." },
+                "page_id": {
+                    "type": "string",
+                    "description": "ULID of the page, or its title or alias, whose files and its blocks' files to list.",
+                },
+                "cursor": { "type": "string", "description": "Opaque pagination cursor from a prior response." },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": LIST_RESULT_CAP,
+                    "description": format!("Max attachments per response (capped at {LIST_RESULT_CAP})."),
+                },
+            },
+        }),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Handler implementations
 //
@@ -1444,11 +1513,56 @@ async fn handle_get_page(pool: &SqlitePool, args: Value) -> Result<Value, AppErr
         resp.next_cursor = cut_at;
         resp.has_more = true;
     }
-    let page = with_metadata(pool, resp.page.clone()).await?;
+    let ids = std::iter::once(&resp.page)
+        .chain(&resp.children)
+        .map(|row| row.id.clone())
+        .collect();
+    let mut attachments = list_attachments_batch_inner(pool, ids).await?;
+    let page_attachments = attachments
+        .remove(resp.page.id.as_str())
+        .unwrap_or_default();
+    let page = with_metadata(pool, resp.page.clone(), page_attachments).await?;
+    let children: Vec<ChildRow<'_>> = resp
+        .children
+        .iter()
+        .map(|block| ChildRow {
+            block,
+            attachments: entries(attachments.remove(block.id.as_str()).unwrap_or_default()),
+        })
+        .collect();
     let mut result = to_tool_result(&resp)?;
     result["page"] = to_tool_result(&page)?;
+    result["children"] = to_tool_result(&children)?;
     result["truncated"] = json!(truncated);
     Ok(result)
+}
+
+/// A `get_page` child: its row and its attachment entries (#5410).
+#[derive(Serialize)]
+struct ChildRow<'a> {
+    #[serde(flatten)]
+    block: &'a BlockRow,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    attachments: Vec<AttachmentEntry>,
+}
+
+/// An attachment as `get_block` and `get_page` show it on its block (#5410):
+/// enough to know it is there; `list_attachments` has the rest.
+#[derive(Serialize)]
+struct AttachmentEntry {
+    id: String,
+    filename: String,
+    mime_type: String,
+}
+
+fn entries(rows: Vec<AttachmentRow>) -> Vec<AttachmentEntry> {
+    rows.into_iter()
+        .map(|row| AttachmentEntry {
+            id: row.id.into_string(),
+            filename: row.filename,
+            mime_type: row.mime_type,
+        })
+        .collect()
 }
 
 /// How many of `sizes`, from the first, fit in [`RESPONSE_BYTES_CAP`]
@@ -1493,9 +1607,15 @@ struct BlockWithMetadata {
     tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     aliases: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    attachments: Vec<AttachmentEntry>,
 }
 
-async fn with_metadata(pool: &SqlitePool, block: BlockRow) -> Result<BlockWithMetadata, AppError> {
+async fn with_metadata(
+    pool: &SqlitePool,
+    block: BlockRow,
+    attachments: Vec<AttachmentRow>,
+) -> Result<BlockWithMetadata, AppError> {
     let properties = get_properties_inner(pool, block.id.clone()).await?;
     let tags = list_tags_for_block_inner(pool, block.id.clone()).await?;
     let aliases = if block.block_type == "page" {
@@ -1508,6 +1628,7 @@ async fn with_metadata(pool: &SqlitePool, block: BlockRow) -> Result<BlockWithMe
         properties,
         tags,
         aliases,
+        attachments: entries(attachments),
     })
 }
 
@@ -1792,7 +1913,8 @@ async fn handle_get_block(pool: &SqlitePool, args: Value) -> Result<Value, AppEr
     let block = get_active_block_inner(pool, block_id.into()).await?;
     // A page's title is its own `content`.
     let page_id = block.page_id.clone().filter(|_| block.block_type != "page");
-    let mut result = to_tool_result(&with_metadata(pool, block).await?)?;
+    let attachments = list_attachments_inner(pool, block.id.clone()).await?;
+    let mut result = to_tool_result(&with_metadata(pool, block, attachments).await?)?;
     if let Some(page_id) = page_id {
         let titles = page_titles(pool, std::iter::once(page_id.as_str()), &space_id).await?;
         if let Some(Some(title)) = titles.get(page_id.as_str()) {
@@ -2031,6 +2153,86 @@ async fn handle_list_trash(pool: &SqlitePool, args: Value) -> Result<Value, AppE
     let space_id = SpaceId::from_string(args.space_id)?;
     let resp = list_trash_inner(pool, args.cursor, limit, space_id.as_str().to_owned()).await?;
     to_tool_result(&resp)
+}
+
+async fn handle_list_attachments(
+    pool: &SqlitePool,
+    app_data_dir: &Path,
+    args: Value,
+) -> Result<Value, AppError> {
+    let args: ListAttachmentsArgs = parse_args(TOOL_LIST_ATTACHMENTS, args)?;
+    let limit = validate_limit(TOOL_LIST_ATTACHMENTS, args.limit, LIST_RESULT_CAP)?;
+    let space_id = SpaceId::from_string(args.space_id)?;
+    let resp = match (args.block_id, args.page_id) {
+        (Some(block_id), None) => {
+            let block_id = BlockId::from_string(block_id)?;
+            validate_block_in_space(pool, block_id.as_str(), space_id.as_str()).await?;
+            get_active_block_inner(pool, block_id.clone()).await?;
+            list_attachments_paged_inner(pool, &block_id, args.cursor, limit).await?
+        }
+        (None, Some(page_id)) => {
+            let page_id = resolve_id_arg(
+                pool,
+                TOOL_LIST_ATTACHMENTS,
+                "page_id",
+                &page_id,
+                Named::Page,
+                space_id.as_str(),
+            )
+            .await?;
+            validate_block_in_space(pool, &page_id, space_id.as_str()).await?;
+            let page = get_active_block_inner(pool, BlockId::from_trusted(&page_id)).await?;
+            if page.block_type != "page" {
+                return Err(AppError::validation(format!(
+                    "tool `{TOOL_LIST_ATTACHMENTS}`: block '{page_id}' is a {} block, not a page",
+                    page.block_type
+                )));
+            }
+            list_page_attachments_inner(pool, &page.id, args.cursor, limit).await?
+        }
+        _ => {
+            return Err(AppError::validation(format!(
+                "tool `{TOOL_LIST_ATTACHMENTS}`: pass exactly one of `block_id` and `page_id`"
+            )));
+        }
+    };
+    let items = resp
+        .items
+        .into_iter()
+        .map(|row| AttachmentListRow::new(app_data_dir, row))
+        .collect::<Result<Vec<_>, _>>()?;
+    to_tool_result(&json!({
+        "items": items,
+        "next_cursor": resp.next_cursor,
+        "has_more": resp.has_more,
+    }))
+}
+
+/// One `list_attachments` row: the attachment and the absolute path its file
+/// is read from.
+#[derive(Serialize)]
+struct AttachmentListRow {
+    id: String,
+    block_id: String,
+    filename: String,
+    mime_type: String,
+    size_bytes: i64,
+    created_at: i64,
+    path: PathBuf,
+}
+
+impl AttachmentListRow {
+    fn new(app_data_dir: &Path, row: AttachmentRow) -> Result<Self, AppError> {
+        Ok(Self {
+            path: validate_attachment_fs_path(app_data_dir, &row.fs_path)?,
+            id: row.id.into_string(),
+            block_id: row.block_id.into_string(),
+            filename: row.filename,
+            mime_type: row.mime_type,
+            size_bytes: row.size_bytes,
+            created_at: row.created_at,
+        })
+    }
 }
 
 /// One name as `resolve` answers it.
@@ -2504,6 +2706,7 @@ mod tests_m82 {
             pools.write.clone(),
             mat.clone(),
             DEV.to_string(),
+            dir.path().to_path_buf(),
         );
         (tools, mat, dir)
     }
@@ -2645,8 +2848,13 @@ mod tests_m82 {
         .await
         .unwrap();
         mat_combined.flush_background().await.unwrap();
-        let tools_combined =
-            ReadOnlyTools::new(combined.clone(), combined, mat_combined, DEV.to_string());
+        let tools_combined = ReadOnlyTools::new(
+            combined.clone(),
+            combined,
+            mat_combined,
+            DEV.to_string(),
+            combined_dir.path().to_path_buf(),
+        );
 
         let combined_resp = tools_combined
             .call_tool(
@@ -2783,7 +2991,13 @@ mod tests_2719 {
     /// separately by `tests_m82`; these tests are only about the window
     /// gate, so a single combined pool keeps the fixture minimal.
     async fn mk_tools(pool: &SqlitePool, mat: &Materializer) -> ReadOnlyTools {
-        ReadOnlyTools::new(pool.clone(), pool.clone(), mat.clone(), DEV.to_string())
+        ReadOnlyTools::new(
+            pool.clone(),
+            pool.clone(),
+            mat.clone(),
+            DEV.to_string(),
+            std::env::temp_dir(),
+        )
     }
 
     async fn mk_space(pool: &SqlitePool, mat: &Materializer, name: &str) -> String {

@@ -147,7 +147,9 @@ export function SearchSheet(): React.ReactElement | null {
         // Deliberately lower than SheetContent's shared viewport-minus-2rem
         // cap: 90dvh keeps the page partially visible for the in-page
         // highlight pipeline, including while the iOS keyboard is open.
-        className="max-h-[90dvh]"
+        // All pages fills that cap, so the palette input stays where it
+        // opened instead of riding the sheet's top edge as results narrow.
+        className={mode === 'all-pages' ? 'h-[90dvh] max-h-[90dvh]' : 'max-h-[90dvh]'}
         // Suppress Radix's default first-focus — both embedded
         // surfaces auto-focus their own inputs.
         onOpenAutoFocus={(e: Event) => e.preventDefault()}
