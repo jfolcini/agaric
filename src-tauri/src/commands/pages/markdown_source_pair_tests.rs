@@ -7,6 +7,8 @@ use proptest::prelude::*;
 
 use super::*;
 
+type Page = Vec<(String, usize, bool)>;
+
 fn id(n: usize) -> String {
     format!("01J00000000000000000000{n:03}")
 }
@@ -35,7 +37,7 @@ fn paired(base: &[(String, usize, bool)], edited: &[(String, usize, bool)]) -> V
     (0..edited.len()).map(|i| out[2 * i].clone()).collect()
 }
 
-fn blocks(spec: &[(&str, usize, bool)]) -> Vec<(String, usize, bool)> {
+fn blocks(spec: &[(&str, usize, bool)]) -> Page {
     spec.iter()
         .map(|&(text, n, anchored)| (text.to_owned(), n, anchored))
         .collect()
@@ -153,7 +155,7 @@ fn an_anchored_id_is_kept_and_not_paired_again() {
 
 /// Up to 12 blocks, each a paragraph or a `- ` item, with unique words, some
 /// anchored.
-fn arb_page() -> impl Strategy<Value = Vec<(String, usize, bool)>> {
+fn arb_page() -> impl Strategy<Value = Page> {
     prop::collection::vec((any::<bool>(), any::<bool>()), 0..12).prop_map(|kinds| {
         kinds
             .into_iter()
@@ -168,7 +170,7 @@ fn arb_page() -> impl Strategy<Value = Vec<(String, usize, bool)>> {
 
 /// `page` with some blocks edited in place: an edited unanchored block's text
 /// is new, so only its place says which block it was.
-fn arb_edited() -> impl Strategy<Value = (Vec<(String, usize, bool)>, Vec<(String, usize, bool)>)> {
+fn arb_edited() -> impl Strategy<Value = (Page, Page)> {
     arb_page().prop_flat_map(|page| {
         let n = page.len();
         (Just(page), prop::collection::vec(any::<bool>(), n)).prop_map(|(page, edits)| {
@@ -189,7 +191,7 @@ fn arb_edited() -> impl Strategy<Value = (Vec<(String, usize, bool)>, Vec<(Strin
     })
 }
 
-fn arb_moved() -> impl Strategy<Value = (Vec<(String, usize, bool)>, Vec<(String, usize, bool)>)> {
+fn arb_moved() -> impl Strategy<Value = (Page, Page)> {
     arb_page().prop_flat_map(|page| {
         let moved = Just(page.clone()).prop_shuffle();
         (Just(page), moved)
@@ -197,8 +199,7 @@ fn arb_moved() -> impl Strategy<Value = (Vec<(String, usize, bool)>, Vec<(String
 }
 
 /// Any change: blocks dropped, edited, added and reordered.
-fn arb_changed() -> impl Strategy<Value = (Vec<(String, usize, bool)>, Vec<(String, usize, bool)>)>
-{
+fn arb_changed() -> impl Strategy<Value = (Page, Page)> {
     arb_page().prop_flat_map(|page| {
         let n = page.len();
         (
@@ -207,7 +208,7 @@ fn arb_changed() -> impl Strategy<Value = (Vec<(String, usize, bool)>, Vec<(Stri
             prop::collection::vec(0..20_usize, 0..4),
         )
             .prop_flat_map(|(page, fates, added)| {
-                let mut edited: Vec<(String, usize, bool)> = page
+                let mut edited: Page = page
                     .iter()
                     .zip(fates)
                     .filter_map(|((text, n, anchored), (fate, copy))| match fate {
