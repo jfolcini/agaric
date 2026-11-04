@@ -155,7 +155,10 @@ beforeEach(() => {
   // The Notifications tab renders the real NotificationsTab, which loads its
   // preferences on mount (#4554).
   vi.mocked(invoke).mockImplementation(
-    mockInvokeCommands({ get_reminder_settings: () => ({ enabled: false, time: '09:00' }) }),
+    mockInvokeCommands({
+      get_reminder_settings: () => ({ enabled: false, time: '09:00' }),
+      list_quarantined_sync_slots: () => ({ slots: [], total: 0 }),
+    }),
   )
 })
 
