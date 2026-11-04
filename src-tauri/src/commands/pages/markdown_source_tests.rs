@@ -824,3 +824,49 @@ fn the_checkbox_alphabet_vector_is_read_by_the_buffer_and_import() {
         }
     }
 }
+
+proptest! {
+    /// A block property's value, a ref's as its title, reads back from the
+    /// export as an import reads it and from the agent's read as a paste
+    /// reads it: one with a line break or surrounding spaces is quoted, or its
+    /// later lines would become blocks of their own (#6277 A2).
+    #[test]
+    fn a_property_value_survives_the_export_and_the_agent_read(
+        properties in prop::collection::btree_map(arb_property_key(), arb_property_value(), 1..=3)
+    ) {
+        let spec = BlockSpec {
+            level: 0,
+            content: "block".into(),
+            todo_state: None,
+            priority: None,
+            scheduled_date: None,
+            due_date: None,
+            list_style: None,
+            properties,
+        };
+        let (data, _) = build_page(std::slice::from_ref(&spec));
+        let expected: BTreeMap<String, String> = spec
+            .properties
+            .iter()
+            .map(|(key, (value, is_ref))| {
+                let value = if *is_ref { &data.ref_titles[value] } else { value };
+                (key.clone(), value.clone())
+            })
+            .collect();
+        let export = render_page_markdown(PAGE, &data);
+        let agent = render_page_for_agent(&data);
+        let agent_blocks = agent.strip_prefix("# Title\n\n").expect("the title, then the blocks");
+        for (md, parsed) in [
+            (
+                &export,
+                import::parse_logseq_markdown(&import::strip_title_heading(&export, "Title")).blocks,
+            ),
+            (&agent, import::parse_pasted_text(agent_blocks)),
+        ] {
+            let blocks: Vec<&str> = parsed.iter().map(|block| block.content.as_str()).collect();
+            prop_assert_eq!(blocks, ["block"], "md:\n{}", md);
+            let read_back: BTreeMap<String, String> = parsed[0].properties.iter().cloned().collect();
+            prop_assert_eq!(&read_back, &expected, "md:\n{}", md);
+        }
+    }
+}

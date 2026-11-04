@@ -45,6 +45,7 @@ mod tests {
         let state = RecoveryStatusState(std::sync::Mutex::new(RecoveryStatus {
             degraded: true,
             replay_errors: vec!["replay aborted: boom".to_string()],
+            sync_quarantined_this_boot: 0,
         }));
         let got = state.0.lock().unwrap().clone();
         assert!(got.degraded);
