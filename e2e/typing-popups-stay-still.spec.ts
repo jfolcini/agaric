@@ -61,6 +61,19 @@ test.describe('Typing into a popup keeps its input still @editor', () => {
       options: null,
     })
     await openPage(page, 'Getting Started')
+    // The real backend answers after the popup's first placement, which sees
+    // only a plain input; the mock answers before it unless delayed.
+    await page.evaluate(() => {
+      const internals = (window as unknown as { __TAURI_INTERNALS__: Record<string, unknown> })
+        .__TAURI_INTERNALS__
+      const invoke = internals['invoke'] as (cmd: string, ...rest: unknown[]) => Promise<unknown>
+      internals['invoke'] = async (cmd: string, ...rest: unknown[]) => {
+        if (cmd === 'get_property_def' || cmd === 'list_blocks') {
+          await new Promise((resolve) => setTimeout(resolve, 50))
+        }
+        return invoke(cmd, ...rest)
+      }
+    })
     const chip = page.getByText('x', { exact: true }).last()
     const box = await chip.boundingBox()
     const viewport = page.viewportSize()
@@ -74,8 +87,10 @@ test.describe('Typing into a popup keeps its input still @editor', () => {
     const picker = page.getByTestId('ref-picker')
     const input = page.getByTestId('ref-search-input')
     await expect(input).toBeFocused()
+    await expect(picker.getByRole('button').first()).toBeVisible()
     const opened = (await input.boundingBox())?.y ?? Number.NaN
-    expect(((await picker.boundingBox())?.y ?? 0) + 1).toBeLessThan(box.y)
+    const pickerBox = await picker.boundingBox()
+    expect((pickerBox?.y ?? Number.NaN) + (pickerBox?.height ?? 0)).toBeLessThan(box.y)
     const tops = await topsWhileTyping(
       page,
       input,

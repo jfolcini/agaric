@@ -204,9 +204,11 @@ export function BlockPropertyEditor({
       return
     }
 
-    // The side is chosen at open. Re-flipping as the ref picker's filtered
-    // list shrinks would move its search input under the user's typing; above
-    // the chip, the opened height is kept so neither edge moves.
+    // The side is chosen once the content has loaded (the popup opens as a
+    // plain input and grows as the definition and ref pages arrive, re-running
+    // this effect). Re-flipping as the ref picker's filtered list shrinks would
+    // move its search input under the user's typing; above the chip, the
+    // loaded height is kept so neither edge moves.
     let placement: 'bottom-start' | 'top-start' | null = null
     popup.style.minHeight = ''
 
@@ -248,7 +250,7 @@ export function BlockPropertyEditor({
     }
 
     return autoUpdate(anchor, popup, update)
-  }, [editingProp])
+  }, [editingProp, selectOptions, isRefProp, refPages])
 
   // ── Outside-click for the value popup ──────────────────────────────────
   useEffect(() => {
