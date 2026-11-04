@@ -58,6 +58,7 @@ import type { InlineProperty } from '@/hooks/useExtraBlockProperties'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { usePropertyDefForEdit } from '@/hooks/usePropertyDefForEdit'
+import { useIsBlockBeingRead } from '@/hooks/useReadAloud'
 import { useRescheduleDragSourceEnabled } from '@/hooks/useRescheduleDragSource'
 import { performActivePageUndo } from '@/hooks/useUndoShortcuts'
 import { detectBlockType } from '@/lib/block-type-convert'
@@ -320,9 +321,9 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
   return (
     <div
       className={cn(
-        // `items-start` + the controls' `min-h-8` (one text line box: `py-1` +
-        // 24px line) keep the leading controls on the FIRST text line (#5332).
-        'flex items-start gap-1 w-full max-sm:flex-wrap max-sm:gap-x-1 max-sm:gap-y-1.5 min-w-0',
+        // `items-start` + the controls' `min-h-block-line` (the first text
+        // line box) keep the leading controls on the FIRST text line (#5332).
+        'flex items-start gap-(--block-gap) w-full max-sm:flex-wrap max-sm:gap-x-1 max-sm:gap-y-1.5 min-w-0',
         // #1347: token-driven transition (respects prefers-reduced-motion).
         isSliding && 'swipe-content-sliding',
       )}
@@ -342,7 +343,7 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
       {isTouchDevice ? (
         <BlockGutterControls blockId={blockId} isSelected={isSelected} onSelect={onSelect} />
       ) : (
-        <div className="block-control-lane relative z-10 flex flex-shrink-0 items-center justify-end gap-0.5 min-h-8 min-w-12">
+        <div className="block-control-lane relative z-10 flex flex-shrink-0 items-center justify-end gap-0.5 min-h-block-line min-w-(--block-lane)">
           <BlockGutterControls
             blockId={blockId}
             dragAttributes={attributes}
@@ -684,6 +685,7 @@ function SortableBlockInner({
     useBlockTouchLongPress({ openContextMenu: openContextMenuClaimingGesture, isDraggingRef })
 
   const isTouchDevice = useIsTouch()
+  const isBeingRead = useIsBlockBeingRead(blockId)
   // #1349: stable id for the sr-only swipe-gesture description (per block).
   const swipeRowDescId = `swipe-row-desc-${blockId}`
 
@@ -747,6 +749,8 @@ function SortableBlockInner({
       style={style}
       data-block-id={blockId}
       data-testid="sortable-block"
+      // #5745 — the block *Read aloud* is speaking (`index.css`).
+      data-reading={isBeingRead ? '' : undefined}
       // #2770 — native HTML5 reschedule-drag source (WeeklyView only, see
       // `rescheduleDragEnabled` above). `undefined` rather than `false` when
       // disabled so this never overrides an ancestor's own `draggable`

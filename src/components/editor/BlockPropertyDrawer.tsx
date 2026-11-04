@@ -18,6 +18,7 @@ import { AddPropertyPopover } from '@/components/properties/AddPropertyPopover'
 import { BuiltinDateFields } from '@/components/properties/BuiltinDateFields'
 import { PropertyField } from '@/components/properties/PropertyField'
 import { PropertyRowEditor } from '@/components/properties/PropertyRowEditor'
+import { useRefTitle } from '@/components/properties/useRefTitle'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import {
   Sheet,
@@ -388,38 +389,17 @@ export function BlockPropertyDrawer({
                     />
                   )
                 }
-                const Icon = BUILTIN_PROPERTY_ICONS[prop.key]
-                const label = Icon ? formatPropertyName(prop.key) : prop.key
-                const value =
-                  prop.value_text ??
-                  prop.value_date ??
-                  (prop.value_num != null
-                    ? String(prop.value_num)
-                    : prop.value_bool != null
-                      ? String(prop.value_bool === 1)
-                      : '')
-                const unfit = isUnfit(prop.key, valueForm(prop), prop.value_text, def)
                 return (
-                  <PropertyField
+                  <ValueField
                     key={prop.key}
-                    propKey={prop.key}
-                    icon={Icon}
-                    label={label}
-                    value={value}
-                    unfit={unfit}
-                    ariaLabel={t('property.valueLabel', { key: prop.key })}
-                    testId={`property-value-input-${prop.key}`}
-                    onSave={(v) => {
-                      // Saving the untouched value back would refuse it, or rewrite it to fit.
-                      if (unfit && v === value) return
-                      void handleSaveField(prop.key, v, propType)
-                    }}
+                    prop={prop}
+                    unfit={isUnfit(prop.key, valueForm(prop), prop.value_text, def)}
+                    onSave={(v) => void handleSaveField(prop.key, v, propType)}
                     onRemove={
                       !SYSTEM_MANAGED_PROPERTY_KEYS.has(prop.key)
                         ? () => handleRemove(prop.key)
                         : undefined
                     }
-                    removeAriaLabel={t('property.delete')}
                   />
                 )
               })
@@ -436,5 +416,49 @@ export function BlockPropertyDrawer({
         </SheetBody>
       </SheetContent>
     </Sheet>
+  )
+}
+
+interface ValueFieldProps {
+  prop: PropertyRow
+  unfit: boolean
+  onSave: (value: string) => void
+  onRemove: (() => void) | undefined
+}
+
+/** A property's value as text; a ref shows its target's title. */
+function ValueField({ prop, unfit, onSave, onRemove }: ValueFieldProps): React.ReactElement {
+  const { t } = useTranslation()
+  const refTitle = useRefTitle(prop.value_ref)
+  const Icon = BUILTIN_PROPERTY_ICONS[prop.key]
+  const value =
+    refTitle ??
+    prop.value_text ??
+    prop.value_date ??
+    (prop.value_num != null
+      ? String(prop.value_num)
+      : prop.value_bool != null
+        ? String(prop.value_bool === 1)
+        : '')
+  return (
+    <PropertyField
+      // The input reads `value` once: a title resolved later must remount it.
+      key={refTitle ?? ''}
+      propKey={prop.key}
+      icon={Icon}
+      label={Icon ? formatPropertyName(prop.key) : prop.key}
+      value={value}
+      unfit={unfit}
+      ariaLabel={t('property.valueLabel', { key: prop.key })}
+      testId={`property-value-input-${prop.key}`}
+      onSave={(v) => {
+        // Saving the untouched value back would refuse it, rewrite it to fit, or write a ref's
+        // title as text.
+        if ((unfit || refTitle !== null) && v === value) return
+        onSave(v)
+      }}
+      onRemove={onRemove}
+      removeAriaLabel={t('property.delete')}
+    />
   )
 }
