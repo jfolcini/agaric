@@ -398,12 +398,15 @@ class PageBlockView implements NodeView {
   }
 
   /**
-   * Draw block `id`'s marker, and again each time its list changes it. The list
-   * reads the document, so a block whose text stops opening with a paragraph
-   * loses its marker the same way.
+   * Draw block `id`'s marker and its indent past the tasks above it, and again
+   * each time its list changes either. The list reads the document, so a block
+   * whose text stops opening with a paragraph loses its marker the same way.
    */
   private followMarker(id: string): () => void {
-    const draw = (): void => this.showMarker(this.lists.markerOf(id))
+    const draw = (): void => {
+      this.showMarker(this.lists.markerOf(id))
+      this.dom.style.setProperty('--tasks-above', String(this.lists.tasksOf(id)))
+    }
     draw()
     return this.lists.subscribe(id, draw)
   }
