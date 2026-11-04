@@ -15,6 +15,7 @@
  */
 
 import { Extension } from '@tiptap/core'
+import type { Node as PMNode } from '@tiptap/pm/model'
 import { type EditorState, Plugin } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 
@@ -96,6 +97,19 @@ export function dropTarget(
   )
   if (projection.maxDepth < projection.minDepth) return null
   return { slot, depth: projection.depth }
+}
+
+/**
+ * The block a drop goes under: the nearest before its slot one level up, past
+ * the dragged blocks, from `from` to the end of what is under it; none at the top.
+ */
+function dropParent(doc: PMNode, drop: Drop, from: number): number | null {
+  if (drop.depth === 0) return null
+  const end = subtreeEnd(doc, from)
+  for (let i = drop.slot - 1; i >= 0; i -= 1) {
+    if ((i < from || i >= end) && depthOf(doc.child(i)) === drop.depth - 1) return i
+  }
+  return null
 }
 
 /** The block at `index`'s element. */
@@ -226,10 +240,16 @@ class DragController {
       edge = blockDom(view, last)?.getBoundingClientRect().bottom
     }
     const box = view.dom.getBoundingClientRect()
+    // One indent step past the text of the block it goes under, a task's text included.
+    const parent = dropParent(doc, drop, from)
+    const parentText =
+      parent === null ? null : blockDom(view, parent)?.querySelector(':scope > .page-block-content')
     const left =
-      box.left +
-      Number.parseFloat(getComputedStyle(view.dom).paddingLeft) +
-      drop.depth * this.indentWidth
+      parentText == null
+        ? box.left +
+          Number.parseFloat(getComputedStyle(view.dom).paddingLeft) +
+          drop.depth * this.indentWidth
+        : parentText.getBoundingClientRect().left + this.indentWidth
     bar.style.left = `${left}px`
     bar.style.width = `${Math.max(0, box.right - left)}px`
     bar.style.top = `${(edge ?? box.top) - 2.5}px`
