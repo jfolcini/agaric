@@ -11,13 +11,17 @@
  *
  * The stateful progress/summary bookkeeping lives in the
  * `useImportRunner` hook, which consumes the {@link ImportUnit}s produced here.
+ * {@link restoreSpaceFile} is the one step here that writes: an export's space
+ * file must land before its first note.
  */
 
-import { isAppError } from '@/lib/app-error'
-import type { VaultFile } from '@/lib/bindings'
+import { isAppError, unwrap } from '@/lib/app-error'
+import { type VaultFile, commands } from '@/lib/bindings'
 import { type EnexNote, enexNoteToMarkdown, sanitizeNoteTitleToFilename } from '@/lib/enex-import'
+import { t } from '@/lib/i18n'
 import { NOTE_EXTENSIONS, scanAttachmentRefs } from '@/lib/import-attachments'
 import { type JexNote, jexNoteToMarkdown } from '@/lib/jex-import'
+import { logger } from '@/lib/logger'
 import {
   isLogseqAppFile,
   isLogseqGraph,
@@ -28,6 +32,7 @@ import {
 } from '@/lib/logseq-import'
 import { isNotionExport, notionToMarkdown, stripNotionIds } from '@/lib/notion-import'
 import { type OrgIdTargets, orgToMarkdown } from '@/lib/org-import'
+import { listAllPropertyDefs } from '@/lib/property-save-utils'
 
 /**
  * Source format accepted by the `import_bibliography` command (#1454).
@@ -65,6 +70,112 @@ export function vaultRelativePath(webkitRelativePath: string | undefined): strin
   const slashed = (webkitRelativePath ?? '').replace(/\\/g, '/').replace(/^\.\//, '')
   // No slash ⇒ a top-level file with no folder prefix; `indexOf` is -1 and it is kept as-is.
   return slashed.slice(slashed.indexOf('/') + 1)
+}
+
+/**
+ * The page title the backend gives a note filed at `path`: no `.md`, each
+ * segment trimmed, empty ones dropped. Mirrors `folder_path_to_namespace_title`.
+ */
+export function pathTitle(path: string): string {
+  return (path.endsWith('.md') ? path.slice(0, -'.md'.length) : path)
+    .replace(/\\/g, '/')
+    .split('/')
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0)
+    .join('/')
+}
+
+/**
+ * The folder an export keeps, below a space's folder, what its files cannot
+ * carry (#6277 decision 8). Only it is skipped, not every hidden folder: the
+ * export files a `.NET` page as `.NET.md`.
+ */
+const AGARIC_DIR = '.agaric/'
+
+/** The space file in {@link AGARIC_DIR}. */
+export const SPACE_FILE_PATH = `${AGARIC_DIR}space.json`
+
+/**
+ * The contents of {@link SPACE_FILE_PATH}: the space's own property
+ * definitions, and the title of each file whose path does not read back as it
+ * ({@link pathTitle}), keyed by that path.
+ */
+export interface SpaceFile {
+  propertyDefinitions: { key: string; value_type: string; options: string | null }[]
+  titles: Record<string, string>
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** `text` as a {@link SpaceFile}, or a thrown `TypeError` when it is not one. */
+function parseSpaceFile(text: string): SpaceFile {
+  const value: unknown = JSON.parse(text)
+  if (!isRecord(value) || !Array.isArray(value['propertyDefinitions'])) {
+    throw new TypeError('not a space file')
+  }
+  const propertyDefinitions = value['propertyDefinitions'].map((def: unknown) => {
+    if (
+      !isRecord(def) ||
+      typeof def['key'] !== 'string' ||
+      typeof def['value_type'] !== 'string' ||
+      (def['options'] !== null && typeof def['options'] !== 'string')
+    ) {
+      throw new TypeError('not a property definition')
+    }
+    return { key: def['key'], value_type: def['value_type'], options: def['options'] }
+  })
+  const titles = value['titles']
+  if (!isRecord(titles) || !Object.values(titles).every((title) => typeof title === 'string')) {
+    throw new TypeError('not a space file')
+  }
+  return { propertyDefinitions, titles: titles as Record<string, string> }
+}
+
+/**
+ * Restore a folder pick's {@link SPACE_FILE_PATH} into `spaceId`: create each
+ * definition the space lacks (one it has is left alone), so the notes' typed
+ * values land typed, and answer the recorded titles by path. Each failure is
+ * logged and answered as a warning; the notes import either way.
+ */
+export async function restoreSpaceFile(
+  files: readonly File[],
+  spaceId: string,
+): Promise<{ titles: ReadonlyMap<string, string>; warnings: string[] }> {
+  const file = files.find(
+    (f) =>
+      f.webkitRelativePath !== '' && vaultRelativePath(f.webkitRelativePath) === SPACE_FILE_PATH,
+  )
+  if (file === undefined) return { titles: new Map(), warnings: [] }
+  let space: SpaceFile
+  try {
+    space = parseSpaceFile(await file.text())
+  } catch (err) {
+    logger.warn('vault-import', 'space file unreadable', undefined, err)
+    return {
+      titles: new Map(),
+      warnings: [t('data.importSpaceFileFailed', { reason: importErrorReason(err) })],
+    }
+  }
+  const warnings: string[] = []
+  try {
+    const existing = new Set((await listAllPropertyDefs(spaceId)).map((def) => def.key))
+    for (const def of space.propertyDefinitions.filter(({ key }) => !existing.has(key))) {
+      try {
+        unwrap(await commands.createPropertyDef(spaceId, def.key, def.value_type, def.options))
+      } catch (err) {
+        logger.warn('vault-import', 'property definition restore failed', { key: def.key }, err)
+        warnings.push(
+          t('data.importPropertyDefFailed', { key: def.key, reason: importErrorReason(err) }),
+        )
+      }
+    }
+  } catch (err) {
+    logger.warn('vault-import', 'property definitions unreadable', undefined, err)
+    warnings.push(t('data.importSpaceFileFailed', { reason: importErrorReason(err) }))
+  }
+  return { titles: new Map(Object.entries(space.titles)), warnings }
 }
 
 /** Final path segment (basename) of a `/`-separated path. */
@@ -382,29 +493,33 @@ async function orgIdTargets(
 
 /**
  * Folder/vault/file producer: one unit per note, a file with one of the
- * {@link NOTE_EXTENSIONS}, so a folder pick's other files are attachments
- * only (#5740). Content is read lazily inside `load` (so a cancel avoids
- * reading not-yet-reached files), `path` is the folder-relative path for the
- * #1446 namespace mapping (basename fallback for a plain pick), and vault
- * siblings and the notes a file links are collected only when a `vaultIndex`
- * is present. An Org file is converted, a Notion export's pages lose the
- * ids in their names and links (#6032), and a Logseq graph's pages and
- * journals take Logseq's titles, its own `logseq/` folder left out (#6033).
- * An Org file's `id:` links resolve through the `:ID:`s of every Org file of
- * the pick, by the paths they import as, which the first Org file loaded
- * reads.
+ * {@link NOTE_EXTENSIONS} outside {@link AGARIC_DIR}, so a folder pick's other
+ * files are attachments only (#5740). Content is read lazily inside `load` (so
+ * a cancel avoids reading not-yet-reached files), `path` is the folder-relative
+ * path for the #1446 namespace mapping (basename fallback for a plain pick),
+ * or the title `titles` records for it (#6277 decision 8), and vault siblings
+ * and the notes a file links are collected only when a `vaultIndex` is
+ * present. An Org file is converted, a Notion export's pages lose the ids in
+ * their names and links (#6032), and a Logseq graph's pages and journals take
+ * Logseq's titles, its own `logseq/` folder left out (#6033). An Org file's
+ * `id:` links resolve through the `:ID:`s of every Org file of the pick, by
+ * the paths they import as, which the first Org file loaded reads.
  */
 export function mdFilesToUnits(
   files: File[],
   vaultIndex: VaultIndex | null,
   notion: boolean,
+  titles: ReadonlyMap<string, string> = new Map(),
 ): ImportUnit[] {
   const logseq = isLogseqGraph(files.map((file) => vaultRelativePath(file.webkitRelativePath)))
   const notes = files.flatMap((file) => {
     const extension = noteExtension(file.name)
-    if (extension === null) return []
-    if (logseq && isLogseqAppFile(vaultRelativePath(file.webkitRelativePath))) return []
-    return [{ file, extension, path: importPath(file, extension, notion) }]
+    const relative = vaultRelativePath(file.webkitRelativePath)
+    if (extension === null || relative.startsWith(AGARIC_DIR)) return []
+    if (logseq && isLogseqAppFile(relative)) return []
+    const title = titles.get(relative)
+    const path = title === undefined ? importPath(file, extension, notion) : `${title}.md`
+    return [{ file, extension, path }]
   })
   // A Logseq graph's titles wait on its `config.edn`, read once, on the first load.
   let named: Promise<NamedNotes> | undefined

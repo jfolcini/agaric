@@ -167,8 +167,8 @@ jobs:
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
           PUSH_AFTER: ${{ github.sha }}
         run: bash scripts/classify-changes.sh >> "$GITHUB_OUTPUT"
@@ -751,12 +751,12 @@ jobs:
         # a non-PR event or an unresolvable diff counts as "changed".
         env:
           EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           changed=true
-          if { [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "merge_group" ]; } \
+          if [ "$EVENT_NAME" = "pull_request" ] \
             && files=$(git diff --name-only "$PR_BASE_SHA...$PR_HEAD_SHA"); then
             if ! grep -qE '(^|/)(Cargo\.(toml|lock)|package(-lock)?\.json|deny\.toml|audit\.toml|\.nsprc)$' <<<"$files"; then
               changed=false
@@ -929,14 +929,10 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           PUSH_BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
-          if [ "$EVENT_NAME" = "merge_group" ]; then
-            # HEAD is the group's merge commit on top of this exact base.
-            base="$MERGE_GROUP_BASE_SHA"
-          elif [ "$EVENT_NAME" = "pull_request" ]; then
+          if [ "$EVENT_NAME" = "pull_request" ]; then
             # NOT `github.event.pull_request.base.sha` (#4544). That is the
             # base tip as of the TRIGGERING EVENT, and HEAD here is
             # `refs/pull/N/merge`, which GitHub regenerates against main's

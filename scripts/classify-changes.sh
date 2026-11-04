@@ -10,10 +10,9 @@
 # Prints `key=value` lines on stdout, for `>> "$GITHUB_OUTPUT"`; the log goes
 # to stderr.
 #
-# Event env: EVENT_NAME; PR_BASE_SHA and PR_HEAD_SHA on `pull_request` and
-# `merge_group` (the group's `base_sha` / `head_sha`), PUSH_BEFORE and
-# PUSH_AFTER on anything else. A caller that leaves PUSH_BEFORE unset gets the
-# full set on every other event.
+# Event env: EVENT_NAME; PR_BASE_SHA and PR_HEAD_SHA on `pull_request`,
+# PUSH_BEFORE and PUSH_AFTER on anything else. A caller that leaves
+# PUSH_BEFORE unset gets the full set on every non-PR event.
 #
 # FAIL-CLOSED: every path where the diff cannot be computed (no base, an
 # unreachable base, a failing `git diff`, an empty diff) emits the full set,
@@ -84,7 +83,7 @@ elif [ "$#" -ne 0 ]; then
   echo "usage: $0 [--stdin]" >&2
   exit 2
 else
-  if [ "${EVENT_NAME:-}" = "pull_request" ] || [ "${EVENT_NAME:-}" = "merge_group" ]; then
+  if [ "${EVENT_NAME:-}" = "pull_request" ]; then
     base="${PR_BASE_SHA:-}"
     head="${PR_HEAD_SHA:-}"
   else

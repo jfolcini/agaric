@@ -110,10 +110,15 @@ export async function runSlashCommand(
   }
 }
 
-/** The slash menu for `query`: the catalog, with recent commands on an empty query, less `/voice` where nothing can record. */
+/** Whether this device offers `command`: `/voice` only where something can record. */
+export function isSlashCommandOffered(command: PickerItem): boolean {
+  return command.id !== 'voice' || canRecordVoiceNote()
+}
+
+/** The slash menu for `query`: the catalog, with recent commands on an empty query, less what this device does not offer. */
 export function searchSlashMenu(query: string): PickerItem[] {
   return searchSlashCommands(query, getRecentCommands(RECENT_SLASH_PREFIX)).filter(
-    (command) => command.id !== 'voice' || canRecordVoiceNote(),
+    isSlashCommandOffered,
   )
 }
 
