@@ -58,4 +58,37 @@ describe('CalloutBlockquote', () => {
     expect(editor.getHTML()).not.toContain('data-callout-type')
     expect(editor.getJSON().content?.[0]?.attrs?.['calloutType'] ?? null).toBeNull()
   })
+
+  it('keeps calloutFold through render and getJSON (#6033)', () => {
+    editor = makeEditor({
+      type: 'doc',
+      content: [
+        {
+          type: 'blockquote',
+          attrs: { calloutType: 'faq', calloutFold: '-' },
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Why?' }] }],
+        },
+      ],
+    })
+    expect(editor.getHTML()).toContain('data-callout-fold="-"')
+    expect(editor.getJSON().content?.[0]?.attrs?.['calloutFold']).toBe('-')
+  })
+
+  it('reads a `+` or `-` fold from HTML and drops any other value (#6033)', () => {
+    editor = makeEditor(
+      '<blockquote data-callout-type="faq" data-callout-fold="+"><p>a</p></blockquote>',
+    )
+    expect(editor.getJSON().content?.[0]?.attrs?.['calloutFold']).toBe('+')
+    editor.destroy()
+    editor = makeEditor(
+      '<blockquote data-callout-type="faq" data-callout-fold="x"><p>a</p></blockquote>',
+    )
+    expect(editor.getJSON().content?.[0]?.attrs?.['calloutFold']).toBeNull()
+  })
+
+  it('names the style an alias maps to for the editor CSS, keeping the type (#6033)', () => {
+    editor = makeEditor('<blockquote data-callout-type="faq"><p>a</p></blockquote>')
+    expect(editor.getHTML()).toContain('data-callout-type="faq"')
+    expect(editor.getHTML()).toContain('data-callout-style="warning"')
+  })
 })
