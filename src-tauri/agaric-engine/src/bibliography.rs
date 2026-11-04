@@ -30,7 +30,7 @@
 //!     `\=`, `\.`, `\u`, `\v`, `\H`, `\c`, `\k`, `\r`, `\d`, `\b` over any
 //!     letter or the dotless `\i` / `\j` (`\'e`, `\'{\i}`, `\v{c}`, `\v c`;
 //!     the field is NFC-normalised), and `\ss`, `\o`, `\ae`, `\aa`, `\l` —
-//!     any other `\command` is kept literal, with its braced argument, and
+//!     any other `\command` is kept literal, with its braced arguments, and
 //!     one warning per entry.
 //!
 //! Explicitly REJECTED shapes are parse-and-warn (skipped, never crash):
@@ -874,7 +874,7 @@ fn leading_year(date: &str) -> Option<i64> {
 /// Decode the documented LaTeX subset (module docs): `\{ \} \& \%`, en/em
 /// dashes, `~`, case-protection braces, and the accent commands. Anything
 /// else that looks like LaTeX (`\command`) is kept literal, with its braced
-/// argument, and flips `had_unknown` so the caller can warn once per entry.
+/// arguments, and flips `had_unknown` so the caller can warn once per entry.
 fn decode_latex(s: &str, had_unknown: &mut bool) -> String {
     let chars: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len());
@@ -931,6 +931,8 @@ fn decode_latex(s: &str, had_unknown: &mut bool) -> String {
             '}' => {
                 if kept_braces.pop() == Some(true) {
                     out.push('}');
+                    // A second argument (`\href{url}{text}`) is kept too.
+                    unknown = true;
                 }
                 i += 1;
             }
@@ -1519,6 +1521,11 @@ mod tests {
             ("The DNA of Bayesian Models".into(), false)
         );
         assert_eq!(decode(r"\{x\} Knuth~D."), ("{x} Knuth D.".into(), false));
+        assert_eq!(
+            decode(r"\href{u}{t} {B}"),
+            (r"\href{u}{t} B".into(), true),
+            "every argument of an unknown command keeps its braces"
+        );
     }
 
     #[test]
