@@ -56,6 +56,8 @@ async function measure(page: Page, state: string): Promise<Dot> {
       // The dot's colour at its centre, the page's at the corner.
       const ink = at(cx, cy)
       const background = at(0, 0)
+      // A box not yet painted reads as the page: say so, not "off centre".
+      if (distance(background, ink) === 0) throw new Error('no checkbox painted')
       const cover = (x: number, y: number, from: number[]): number =>
         Math.min(1, Math.max(0, 1 - distance(at(x, y), ink) / distance(from, ink)))
       // The ring's outer edges along the centre row and column, to a sub-pixel.
@@ -92,6 +94,7 @@ async function measure(page: Page, state: string): Promise<Dot> {
           columns.set(x, (columns.get(x) ?? 0) + c)
         }
       }
+      if (mass === 0) throw new Error('no dot inside the ring')
       const dotWidth = Math.max(...rows.values())
       const dotHeight = Math.max(...columns.values())
       return {
@@ -141,11 +144,14 @@ for (const ratio of [1, 1.25, 1.5, 2]) {
           await page.keyboard.press('Enter')
           await expect(page.locator('[aria-label="Page title"]')).toHaveText('Dots')
           await page.mouse.move(0, 0)
-          const dot = await measure(page, 'doing')
-          const what = JSON.stringify(dot)
-          expect(Math.abs(dot.dx), what).toBeLessThanOrEqual(0.5)
-          expect(Math.abs(dot.dy), what).toBeLessThanOrEqual(0.5)
-          expect(Math.abs(dot.width - dot.height), what).toBeLessThanOrEqual(1)
+          // Retried while the box has not been painted; an off-centre dot never becomes centred.
+          await expect(async () => {
+            const dot = await measure(page, 'doing')
+            const what = JSON.stringify(dot)
+            expect(Math.abs(dot.dx), what).toBeLessThanOrEqual(0.5)
+            expect(Math.abs(dot.dy), what).toBeLessThanOrEqual(0.5)
+            expect(Math.abs(dot.width - dot.height), what).toBeLessThanOrEqual(1)
+          }).toPass({ timeout: 10_000 })
         })
       }
     })
