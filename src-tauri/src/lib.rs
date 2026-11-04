@@ -258,6 +258,8 @@ macro_rules! agaric_commands {
             // Task reminders (#4554)
             $crate::commands::notifier::get_reminder_settings,
             $crate::commands::notifier::set_reminder_settings,
+            // Read aloud (#5745)
+            $crate::commands::speech::speech_status,
             // Logseq/Markdown import (#660)
             $crate::commands::pages::import_markdown,
             // The end of a folder import: links between its notes.

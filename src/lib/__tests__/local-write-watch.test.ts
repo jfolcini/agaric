@@ -71,6 +71,7 @@ describe('watchLocalWrites', () => {
       'fetchLinkMetadata',
       'startSync',
       'recordPageOpen',
+      'speechStatus',
     ] as const) {
       expect(wrapped).not.toContain(notAWrite)
     }

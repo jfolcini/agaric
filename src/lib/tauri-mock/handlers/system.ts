@@ -60,6 +60,9 @@ export const systemHandlers = {
 
   log_frontend: returnNull,
 
+  // Read aloud (#5745): the Chromium mock stands in for Linux, which has no engine.
+  speech_status: () => 'Unsupported',
+
   // ---------------------------------------------------------------------------
   // Bug report
   // ---------------------------------------------------------------------------
@@ -109,6 +112,7 @@ export const systemHandlers = {
   | 'is_flatpak'
   | 'get_recovery_status'
   | 'log_frontend'
+  | 'speech_status'
   | 'collect_bug_report_metadata'
   | 'read_logs_for_report'
   | 'compute_reconciliation_report'
