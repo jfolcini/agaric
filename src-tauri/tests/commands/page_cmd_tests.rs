@@ -15101,6 +15101,67 @@ async fn import_keeps_an_org_planning_date_past_a_warning_period_or_a_foreign_da
     mat.shutdown();
 }
 
+/// The content and `todo_state` of each block `md` imports as, in order, on the
+/// page `title`.
+async fn imported_blocks(md: &str, title: &str) -> Vec<(String, Option<String>)> {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md.into(),
+        Some(format!("{title}.md")),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let rows = sqlx::query_as(
+        "SELECT b.content, b.todo_state FROM blocks b JOIN blocks p ON p.id = b.parent_id \
+         WHERE p.content = ? AND b.deleted_at IS NULL ORDER BY b.position",
+    )
+    .bind(title)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    mat.shutdown();
+    rows
+}
+
+/// #6033 — Logseq's `STARTED` keyword is a DOING task.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_reads_a_logseq_started_task_as_doing() {
+    assert_eq!(
+        imported_blocks("- STARTED Write the report\n", "Started").await,
+        [("Write the report".to_string(), Some("DOING".to_string()))]
+    );
+}
+
+/// #6033 — a Logseq `#+BEGIN_NOTE` block is a note callout.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_logseq_note_block_imports_as_a_note_callout() {
+    let md = "- #+BEGIN_NOTE\n  Mind the gap\n  #+END_NOTE\n";
+    assert_eq!(
+        imported_blocks(md, "Note Block").await,
+        [("> [!NOTE]\n> Mind the gap".to_string(), None)]
+    );
+}
+
+/// #6033 — a Logseq `#+BEGIN_QUOTE` block is a quote; the text before it stays.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_logseq_quote_block_imports_as_a_quote() {
+    let md = "- Hamlet said:\n  #+BEGIN_QUOTE\n  To be\n  #+END_QUOTE\n";
+    assert_eq!(
+        imported_blocks(md, "Quote Block").await,
+        [("Hamlet said:\n> To be".to_string(), None)]
+    );
+}
+
 /// #1918 — a single over-deep import block must skip-and-warn, NOT abort the
 /// whole chunk. We hand-author markdown a single block of which exceeds
 /// `MAX_BLOCK_DEPTH` once the page-root offset is added, by forging a depth

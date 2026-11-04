@@ -528,3 +528,51 @@ async fn apply_page_source_by_line_ids_names_lines_below_the_front_matter() {
         ["line 9: a copy of the block on line 7; saved as a new block"]
     );
 }
+
+/// #6033 — Obsidian's older singular keys: an imported file's `alias:` is the
+/// page's aliases and its `tag:` the page's tags, in either list form, and
+/// neither is a text property.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_yaml_alias_and_tag_are_the_pages_aliases_and_tags() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let md = "---\nalias: [Atlas, HQ]\ntag:\n  - project\n---\n- body\n";
+
+    import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md.into(),
+        Some("Singular.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let page: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE content = 'Singular' AND block_type = 'page'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let page = BlockId::from_string(page).unwrap();
+    assert_eq!(
+        get_page_aliases_inner(&pool, page.as_str()).await.unwrap(),
+        ["Atlas", "HQ"]
+    );
+    assert_eq!(page_tags(&pool, &page).await, ["project"]);
+    let keys: Vec<String> = sqlx::query_scalar(
+        "SELECT key FROM block_properties WHERE block_id = ? AND key IN ('alias', 'tag')",
+    )
+    .bind(page.as_str())
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(keys, Vec::<String>::new(), "no text property");
+    mat.shutdown();
+}

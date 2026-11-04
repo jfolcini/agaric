@@ -47,11 +47,7 @@ import {
 } from '@/components/editor/block-context-menu/hints'
 import { renderItem as renderMenuItem } from '@/components/editor/block-context-menu/menu-row'
 import { useReadAloudRow } from '@/components/editor/block-context-menu/read-aloud-row'
-import type {
-  BlockContextMenuProps,
-  BlockMenuRowId,
-  MenuItem,
-} from '@/components/editor/block-context-menu/types'
+import type { BlockContextMenuProps, MenuItem } from '@/components/editor/block-context-menu/types'
 import { CALLOUT_CONFIG, CALLOUT_TYPES } from '@/components/RichContentRenderer/context'
 import { MenuSheet } from '@/components/ui/menu-sheet'
 import { useIsMobile } from '@/hooks/useIsMobile'
@@ -692,12 +688,6 @@ function buildTurnIntoGroup(ctx: MenuGroupContext): MenuItem[] {
   ]
 }
 
-/** Whether `actionIds` lets `id` show; *Read aloud* shows only where no row list is given. */
-function isRowOffered(id: BlockMenuRowId, actionIds: BlockContextMenuProps['actionIds']): boolean {
-  if (actionIds === undefined) return true
-  return id !== 'readAloud' && actionIds.has(id)
-}
-
 /**
  * Assemble + filter the ordered menu groups. PURE — all reactive inputs arrive
  * via `ctx`. #217 A1 — order for calm scannability and mis-click safety:
@@ -722,7 +712,9 @@ function buildMenuGroups(ctx: MenuGroupContext): MenuItem[][] {
       .map((group) =>
         group.filter(
           (item) =>
-            (item.action !== undefined || item.active) && isRowOffered(item.id, ctx.actionIds),
+            (item.action !== undefined || item.active) &&
+            // The *Read aloud* row arrives `null` wherever `actionIds` names the rows.
+            (ctx.actionIds === undefined || item.id === 'readAloud' || ctx.actionIds.has(item.id)),
         ),
       )
       .filter((group) => group.length > 0)
@@ -1027,7 +1019,8 @@ export function BlockContextMenu({
     setMoveArrangeOpen,
     moveArrangeGroupId,
     actionIds,
-    readAloudRow,
+    // Menus that name their rows by `actionIds` (page mode's, the buffer's) do not offer it.
+    readAloudRow: actionIds === undefined ? readAloudRow : null,
   })
 
   // Only actionable items participate in keyboard roving focus; the active
