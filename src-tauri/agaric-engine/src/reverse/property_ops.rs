@@ -82,11 +82,11 @@ pub fn reverse_rewrite_properties(record: &OpRecord) -> Result<OpPayload, AppErr
 /// and must not land on the value the rename moves there (a rename is its own
 /// inverse on its two names). A rewrite moves the block's value out of `key`
 /// when it removes it there and writes the block a value under another key: a
-/// merge's moved value, or the undo of one. A merge moves a
-/// value in only where the block held none, so a value moved into `key` is
-/// another key's, and its moving out again (the merge's undo) leaves `key`
-/// where it is. A value the merge dropped stays under its key, and so does one
-/// an undo brought back.
+/// merge's moved value, a value that doesn't fit moved to another key (#6206),
+/// or the undo of either. Both move a value in only where the block held none,
+/// so a value moved into `key` is another key's, and its moving out again (the
+/// undo) leaves `key` where it is. A value a merge dropped or a move left
+/// stays under its key, and so does one an undo brought back.
 ///
 /// An option rename maps `old_option` to `new_option` only: no block held
 /// `new_option` before it, so a value equal to it is an older, different one.
