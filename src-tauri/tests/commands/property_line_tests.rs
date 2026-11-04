@@ -7,8 +7,8 @@
 use crate::prelude::*;
 
 use super::page_cmd_tests::{
-    counts, dup_child, dup_children, dup_page, dup_storage, page_source, paste_text, save_source,
-    with,
+    counts, dup_child, dup_children, dup_page, dup_storage, dup_twin_page, page_source, paste_text,
+    save_source, with,
 };
 
 /// A value [`set`] writes, in the column its type takes.
@@ -510,7 +510,7 @@ async fn import_markdown_resolves_a_ref_value_by_title() {
     let mat = Materializer::new(pool.clone());
     let alice = dup_page(&pool, &mat, "Alice").await;
     dup_page(&pool, &mat, "Twin").await;
-    dup_page(&pool, &mat, "twin").await;
+    dup_twin_page(&pool, &mat, "twin").await;
     create_test_property_def(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();
@@ -552,7 +552,7 @@ async fn set_property_reads_a_ref_value_typed_as_text() {
     let page = dup_page(&pool, &mat, "Typed").await;
     let alice = dup_page(&pool, &mat, "Alice").await;
     dup_page(&pool, &mat, "Twin").await;
-    dup_page(&pool, &mat, "twin").await;
+    dup_twin_page(&pool, &mat, "twin").await;
     create_test_property_def(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();
@@ -609,7 +609,7 @@ async fn a_refused_ref_value_is_inert_text() {
     let mat = Materializer::new(pool.clone());
     let page = dup_page(&pool, &mat, "Paste").await;
     dup_page(&pool, &mat, "Twin").await;
-    dup_page(&pool, &mat, "twin").await;
+    dup_twin_page(&pool, &mat, "twin").await;
     create_test_property_def(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();

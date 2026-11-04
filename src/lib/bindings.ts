@@ -724,6 +724,9 @@ export const commands = {
 	 *  A `time` that is not `HH:MM` surfaces as [`AppError::Validation`].
 	 */
 	setReminderSettings: (settings: ReminderSettings) => typedError<null, AppError>(__TAURI_INVOKE("set_reminder_settings", { settings })),
+	pickMirrorFolder: () => typedError<string | null, AppError>(__TAURI_INVOKE("pick_mirror_folder")),
+	setMirrorFolder: (path: string | null) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_folder", { path })),
+	getMirrorStatus: () => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("get_mirror_status")),
 	speechStatus: () => typedError<SpeechStatus, AppError>(__TAURI_INVOKE("speech_status")),
 	/**
 	 *  Tauri command: import a Logseq-style markdown file as a page with
@@ -2827,6 +2830,37 @@ export type MdnsStatus = {
 	 *  `disabled` is `false`.
 	 */
 	reason: string | null,
+};
+
+/**  A page whose file could not be written, and why. */
+export type MirrorFailure = {
+	page_id: string,
+	path: string,
+	message: string,
+};
+
+/**  A page's file, by its path below the mirror's folder, `/`-separated. */
+export type MirrorFile = {
+	page_id: string,
+	path: string,
+};
+
+/**  What the mirror is doing (#5363). */
+export type MirrorStatus = {
+	/**  `false` where the mirror does not run, on mobile. */
+	supported: boolean,
+	/**  The folder pages are written to; `None` when the mirror is off. */
+	folder: string | null,
+	/**  Why nothing is written while the folder is set, if nothing is. */
+	paused: string | null,
+	/**
+	 *  Files changed outside Agaric, which it leaves alone: their pages are
+	 *  not written until the file is what Agaric last wrote again.
+	 */
+	diverged: MirrorFile[],
+	failed: MirrorFailure[],
+	/**  When the last pass ended, in ms since the epoch. */
+	last_pass_ms: number | null,
 };
 
 export type MoveResponse = {
