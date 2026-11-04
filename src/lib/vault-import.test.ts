@@ -207,10 +207,6 @@ describe('indexVaultFiles / resolveVaultRef', () => {
     expect(resolveVaultRef('a/./img.png', '', index)).toEqual([a])
     expect(resolveVaultRef('./img.png', 'b', index)).toEqual([b])
   })
-
-  // Accepted equivalent (resolveVaultRef `path === null ? undefined : …`, mutation-accepted.tsv):
-  // the guard only narrows `string | null` for the type checker; `byPath.get(null)` is also
-  // undefined because every byPath key is a string.
 })
 
 describe('collectVaultFiles', () => {
