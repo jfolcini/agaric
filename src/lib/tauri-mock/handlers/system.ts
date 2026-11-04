@@ -9,8 +9,25 @@
  * store.
  */
 
+import type { MirrorStatus } from '@/lib/bindings'
 import { type TypedHandlers, returnNull } from '@/lib/tauri-mock/handlers/shared'
-import { blocks } from '@/lib/tauri-mock/seed'
+import { appSettings, blocks } from '@/lib/tauri-mock/seed'
+
+/** The `app_settings` key the backend keeps this device's mirror folder under (#5363). */
+const MIRROR_FOLDER_KEY = 'mirror.folder'
+/** What the mock's folder dialog answers: there is no OS dialog to drive. */
+const MOCK_MIRROR_FOLDER = '/home/mock/Agaric mirror'
+
+function mirrorStatus(): MirrorStatus {
+  return {
+    supported: true,
+    folder: appSettings.get(MIRROR_FOLDER_KEY) ?? null,
+    paused: null,
+    diverged: [],
+    failed: [],
+    last_pass_ms: null,
+  }
+}
 
 export const systemHandlers = {
   // #2110 M3b — OpenTelemetry frontend-span ingest. Off by default; the frontend
@@ -101,6 +118,17 @@ export const systemHandlers = {
     }
   },
 
+  // #5363 — the Markdown mirror. The mock has no disk: the folder is only the
+  // `app_settings` row, so nothing is validated, written or ever diverges.
+  pick_mirror_folder: () => MOCK_MIRROR_FOLDER,
+  set_mirror_folder: (args) => {
+    const path = (args as { path?: unknown }).path
+    if (typeof path === 'string') appSettings.set(MIRROR_FOLDER_KEY, path)
+    else appSettings.delete(MIRROR_FOLDER_KEY)
+    return mirrorStatus()
+  },
+  get_mirror_status: mirrorStatus,
+
   // ---------------------------------------------------------------------------
   // Op log compaction commands
   // ---------------------------------------------------------------------------
@@ -116,4 +144,7 @@ export const systemHandlers = {
   | 'collect_bug_report_metadata'
   | 'read_logs_for_report'
   | 'compute_reconciliation_report'
+  | 'pick_mirror_folder'
+  | 'set_mirror_folder'
+  | 'get_mirror_status'
 >
