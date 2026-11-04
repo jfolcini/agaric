@@ -482,6 +482,18 @@ impl LoroEngineRegistry {
         claims
     }
 
+    /// Every registered engine's tag edges ([`LoroEngine::read_tag_edges`]):
+    /// every engine, since a holder's doc is not the doc that brought its tag.
+    /// Creates no engine and marks no space dirty (#6236). The caller must hold
+    /// no engine guard.
+    pub fn tag_edges(&self) -> Result<Vec<(String, String)>, AppError> {
+        self.probe_engines(|engine| Some(engine.read_tag_edges()))
+            .into_iter()
+            .map(|(_, edges)| edges)
+            .collect::<Result<Vec<_>, _>>()
+            .map(|per_space| per_space.into_iter().flatten().collect())
+    }
+
     /// `probe`'s answer from every registered engine that has one, locking
     /// each engine in turn with the map lock already released.
     fn probe_engines<T>(&self, probe: impl Fn(&LoroEngine) -> Option<T>) -> Vec<(SpaceId, T)> {
@@ -978,6 +990,44 @@ mod tests {
             "a space with no engine holds nothing"
         );
         assert_eq!(r.len(), 1, "the read creates no engine");
+    }
+
+    /// #6236 — every registered engine's tag edges, and none from a registry
+    /// with no engine, which the read does not create.
+    #[test]
+    fn tag_edges_reads_every_registered_engine_and_creates_none_6236() {
+        let r = LoroEngineRegistry::new();
+        assert_eq!(
+            r.tag_edges().expect("read no engine"),
+            Vec::new(),
+            "a registry with no engine holds no edge"
+        );
+        assert_eq!(r.len(), 0, "the read creates no engine");
+        for (space, holder, tag) in [
+            (SPACE_A, "HOLDER-A", "TAG-1"),
+            (SPACE_B, "HOLDER-B", "TAG-2"),
+        ] {
+            let mut g = r
+                .for_space(&SpaceId::from_trusted(space), "device-1")
+                .expect("space");
+            let engine = g.engine_mut();
+            engine
+                .apply_create_block(holder, "content", "h", None, 0)
+                .expect("create");
+            engine.apply_add_tag(holder, tag).expect("tag");
+        }
+
+        let mut edges = r.tag_edges().expect("read both engines");
+        edges.sort_unstable();
+        assert_eq!(
+            edges,
+            vec![
+                ("HOLDER-A".to_owned(), "TAG-1".to_owned()),
+                ("HOLDER-B".to_owned(), "TAG-2".to_owned()),
+            ],
+            "the edges of both engines"
+        );
+        assert_eq!(r.len(), 2, "the read creates no engine");
     }
 
     /// #5712 — of the inbound syncs in flight, only the last to leave is told

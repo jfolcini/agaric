@@ -17,6 +17,7 @@ vi.mock('@/lib/logger', () => ({
 }))
 
 import {
+  aligned,
   allStoredText,
   blockquote,
   bold,
@@ -39,6 +40,7 @@ import {
 } from '@/editor/__tests__/builders'
 import { parse } from '@/editor/markdown-parse'
 import { serialize } from '@/editor/markdown-serialize'
+import type { DocNode } from '@/editor/types'
 import { logger } from '@/lib/logger'
 
 describe('parse — depth-limit truncation (FE-L-7)', () => {
@@ -485,8 +487,14 @@ describe('parse — an ambiguous dash-only row 1 in foreign markdown (#4003)', (
     expect(parse('| Name | Value |\n| :- | -: |\n| a | b |')).toEqual(
       doc(
         table(
-          tableRow(tableHeader(paragraph(text('Name'))), tableHeader(paragraph(text('Value')))),
-          tableRow(tableCell(paragraph(text('a'))), tableCell(paragraph(text('b')))),
+          tableRow(
+            aligned('left', tableHeader(paragraph(text('Name')))),
+            aligned('right', tableHeader(paragraph(text('Value')))),
+          ),
+          tableRow(
+            aligned('left', tableCell(paragraph(text('a')))),
+            aligned('right', tableCell(paragraph(text('b')))),
+          ),
         ),
       ),
     )
@@ -506,6 +514,11 @@ describe('parse — an ambiguous dash-only row 1 in foreign markdown (#4003)', (
 // and any colon-carrying form stay delimiters even in a two-line table.
 describe('parse — the delimiter/data boundary at table row 1', () => {
   const HEADER = '| Name | Value |'
+  /** Which row is the delimiter, not the alignment it writes (pinned under #6277). */
+  const unaligned = (d: DocNode): DocNode =>
+    JSON.parse(
+      JSON.stringify(d, (key: string, value: unknown) => (key === 'attrs' ? undefined : value)),
+    )
   const headerRow = () =>
     tableRow(tableHeader(paragraph(text('Name'))), tableHeader(paragraph(text('Value'))))
   const dataRow = (a: string, b: string) =>
@@ -529,14 +542,14 @@ describe('parse — the delimiter/data boundary at table row 1', () => {
   it.each(UNAMBIGUOUS_DELIMITERS)(
     'row 1 (%s) is the delimiter even with NO rows following',
     (_shape, delimiter) => {
-      expect(parse(`${HEADER}\n${delimiter}`)).toEqual(doc(table(headerRow())))
+      expect(unaligned(parse(`${HEADER}\n${delimiter}`))).toEqual(doc(table(headerRow())))
     },
   )
 
   it.each([...UNAMBIGUOUS_DELIMITERS, ['1 dash', '| - | - |'] as [string, string]])(
     'row 1 (%s) is the delimiter when a data row FOLLOWS',
     (_shape, delimiter) => {
-      expect(parse(`${HEADER}\n${delimiter}\n| a | b |`)).toEqual(
+      expect(unaligned(parse(`${HEADER}\n${delimiter}\n| a | b |`))).toEqual(
         doc(table(headerRow(), dataRow('a', 'b'))),
       )
     },
@@ -576,14 +589,14 @@ describe('parse — the delimiter/data boundary at table row 1', () => {
   it.each(SHORT_DELIMITERS)(
     'row 1 (%s) is a malformed DELIMITER, not a junk data row, with NO rows following',
     (_shape, delimiter) => {
-      expect(parse(`${HEADER}\n${delimiter}`)).toEqual(doc(table(headerRow())))
+      expect(unaligned(parse(`${HEADER}\n${delimiter}`))).toEqual(doc(table(headerRow())))
     },
   )
 
   it.each(SHORT_DELIMITERS)(
     'row 1 (%s) is a malformed DELIMITER, not a junk data row, when a data row FOLLOWS',
     (_shape, delimiter) => {
-      expect(parse(`${HEADER}\n${delimiter}\n| a | b |`)).toEqual(
+      expect(unaligned(parse(`${HEADER}\n${delimiter}\n| a | b |`))).toEqual(
         doc(table(headerRow(), dataRow('a', 'b'))),
       )
     },
@@ -696,7 +709,7 @@ describe('parse — CRLF line endings (#4051)', () => {
   it('a lone CR in a callout title is preserved, not truncated away', () => {
     // `CALLOUT_RE` is the one production that is not anchored at the end, so a
     // `.`-matched title there does not merely fail to match on a lone CR — it
-    // matches the PREFIX, and `extractCalloutType` overwrites the quote line
+    // matches the PREFIX, and `extractCallout` overwrites the quote line
     // with that prefix, silently dropping everything from the CR onward. Its
     // title matcher is `[^\n]` for that reason, and the separator after `]` is
     // a space/tab rather than `\s` so it cannot swallow a leading CR either.
@@ -850,5 +863,80 @@ describe('parse — tab-indented lists (#4052)', () => {
   it('a tab-indented heading is not a heading — its production is at column 0', () => {
     expect(parse('\t# h')).toEqual(doc(paragraph(text('    # h'))))
     expect(parse('# h')).toEqual(doc(heading(1, text('h'))))
+  })
+})
+
+// -- #6033: callout fold markers and hyphenated types ---------------------------
+
+describe('parse — callout fold markers and hyphenated types (#6033)', () => {
+  it.each([
+    ['-', '> [!faq]- Why?'],
+    ['+', '> [!faq]+ Why?'],
+  ] as const)('reads `%s` after `]` as the fold, not as title text', (fold, md) => {
+    expect(parse(md)).toEqual(
+      doc({
+        type: 'blockquote',
+        attrs: { calloutType: 'faq', calloutFold: fold },
+        content: [paragraph(text('Why?'))],
+      }),
+    )
+  })
+
+  it("keeps a folded callout's body line in its title paragraph, after a hard break", () => {
+    // The renderer shows the text before the first hard break as the title.
+    expect(parse('> [!FAQ]- Why?\n> Because.')).toEqual(
+      doc({
+        type: 'blockquote',
+        attrs: { calloutType: 'faq', calloutFold: '-' },
+        content: [paragraph(text('Why?'), hardBreak(), text('Because.'))],
+      }),
+    )
+  })
+
+  it('reads a folded callout with no title', () => {
+    expect(parse('> [!faq]-')).toEqual(
+      doc({
+        type: 'blockquote',
+        attrs: { calloutType: 'faq', calloutFold: '-' },
+        content: [paragraph()],
+      }),
+    )
+  })
+
+  it('reads a hyphenated custom type', () => {
+    expect(parse('> [!my-type] t')).toEqual(doc(callout('my-type', paragraph(text('t')))))
+  })
+
+  it('a `-` after the separating space is title text, not a fold', () => {
+    expect(parse('> [!note] -x')).toEqual(doc(callout('note', paragraph(text('-x')))))
+  })
+
+  it('serializes the fold back after the type', () => {
+    expect(serialize(parse('> [!faq]- Why?\n> Because.'))).toBe('> [!FAQ]- Why?\n> Because.')
+    expect(serialize(parse('> [!my-type]+ t'))).toBe('> [!MY-TYPE]+ t')
+    expect(serialize(parse('> [!faq]-'))).toBe('> [!FAQ]-')
+  })
+})
+
+describe('parse — GFM column alignment from the delimiter row (#6277)', () => {
+  it('gives every cell of a column the alignment its delimiter cell writes', () => {
+    expect(parse('| a | b | c | d |\n|:--|--:|:-:|---|\n| 1 | 2 | 3 | 4 |')).toEqual(
+      doc(
+        table(
+          tableRow(
+            aligned('left', tableHeader(paragraph(text('a')))),
+            aligned('right', tableHeader(paragraph(text('b')))),
+            aligned('center', tableHeader(paragraph(text('c')))),
+            tableHeader(paragraph(text('d'))),
+          ),
+          tableRow(
+            aligned('left', tableCell(paragraph(text('1')))),
+            aligned('right', tableCell(paragraph(text('2')))),
+            aligned('center', tableCell(paragraph(text('3')))),
+            tableCell(paragraph(text('4'))),
+          ),
+        ),
+      ),
+    )
   })
 })

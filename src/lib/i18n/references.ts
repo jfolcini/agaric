@@ -538,6 +538,8 @@ export const references: Record<string, string> = {
   'palette.cmdNavigateBack': 'Go back',
   'palette.cmdNavigateForward': 'Go forward',
   'palette.cmdExportPageMarkdown': 'Export page as Markdown',
+  'palette.cmdReadPageAloud': 'Read page aloud',
+  'palette.cmdStopReading': 'Stop reading aloud',
   'palette.noActivePage': 'No page is open to export',
   'palette.cmdKeyboardShortcuts': 'Keyboard shortcuts',
   'palette.commandsEmpty': 'No commands match — clear the input to see all.',

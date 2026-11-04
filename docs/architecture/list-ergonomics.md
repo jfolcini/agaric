@@ -265,17 +265,18 @@ decides:
   CR is a line ending and splits the block. The TS parser keeps it as content
   (rule 5). So `a\rb` is two blocks imported from disk and one paragraph holding
   a CR once stored.
-- **Tabs are kept, and a tab is one level** — the grammar stores tabs as
-  written (a fence keeps its blank lines and tabs verbatim, #5168). Depth is not
-  arithmetic on the indentation but the stack of open blocks: a new block nests
-  under the innermost open block whose content column it reaches (`Scan::pop_to`,
-  `Open::owns_from`), so `- a` / four-space `- b` / eight-space `- c` is depths
-  0, 1, 2, and so is the same outline indented by one tab per level.
-  `indent_columns` counts a tab as two columns, one level, on the way in, and
-  `dedent` spends it the same way when a continuation line is folded into its
-  block, so a tab up to the content column is indentation and a tab past it
-  stays in the text. A tab after a marker — `-\t`, `#\t`, `key::\t` — is the
-  marker's space in every mode.
+- **Tabs are kept, and a tab reaches the next tab stop** — the grammar stores
+  tabs as written (a fence keeps its blank lines and tabs verbatim, #5168).
+  Depth is not arithmetic on the indentation but the stack of open blocks: a new
+  block nests under the innermost open block whose content column it reaches
+  (`Scan::pop_to`, `Open::owns_from`), so `- a` / four-space `- b` / eight-space
+  `- c` is depths 0, 1, 2, and so is the same outline indented by one tab per
+  level. `indent_columns` advances a tab to the next multiple of four columns on
+  the way in, as CommonMark's tab stops do, so `1. a` / tab `1. b` nests too
+  (decision 2, #6277), and `dedent` spends it the same way when a continuation
+  line is folded into its block, so a tab that starts before the content column
+  is indentation and a tab past it stays in the text. A tab after a marker —
+  `-\t`, `#\t`, `key::\t` — is the marker's space in every mode.
 
 The two agree on the common case — a single leading tab is one level under both
 — but not beyond it. `- p` followed by `\t\t- deep` is a **child block of
@@ -288,10 +289,11 @@ indent). A mixed space-then-tab indent diverges the same way. The TS parser meet
 such a shape only in a block's stored content, since the grammar has already
 split a file or a paste into blocks.
 
-Nothing pins the divergence — no conformance vector covers markdown tab or CR
-handling — and neither behaviour is obviously the wrong one to pick: the
-grammar's one-tab-one-level reading matches Logseq's on-disk convention, while
-the parser's column arithmetic matches CommonMark. Reconciling them is a
+Nothing pins the divergence — the document-lines vectors pin the grammar's tab
+stops, not the TS parser's, and no vector covers CR handling — and neither
+behaviour is obviously the wrong one to pick: the grammar's nesting under the
+innermost open block matches Logseq's on-disk convention, while the parser's
+column arithmetic matches CommonMark. Reconciling them is a
 decision about which convention owns the on-disk format, deliberately **not**
 made here.
 
