@@ -273,7 +273,6 @@ test.describe('gutter layout: setting a task @editor @pages', () => {
     await open(page, 'Tasks blocks')
     await mode(page, 'Blocks')
 
-    // First, while no block is edited: with one in edit, this right click opened no menu.
     await blockText(page, ids[2]).click({ button: 'right' })
     await activeMenu(page).getByRole('menuitem', { name: 'Set as TODO' }).click()
     await expect.poll(() => todo(page, ids[2])).toBe('TODO')

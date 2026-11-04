@@ -1,8 +1,8 @@
 /**
  * Page mode's gutter (#5691): block mode's grip and chevron
  * (`BlockGutterControls`, `BlockCollapseControl`), where block mode's control
- * lane sits, left of the checkbox slot and on the first line, the chevron
- * nearer the text, as plain DOM with block mode's classes, labels and glyphs.
+ * lane sits, left of a task's checkbox or a plain line's text and on the first
+ * line, the chevron nearer the text, as plain DOM with block mode's classes, labels and glyphs.
  *
  * A block with blocks under it draws its chevron in its node view, outside its
  * editable text (`PageGutter`); the chevron collapses the block

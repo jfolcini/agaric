@@ -358,7 +358,7 @@ test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () =>
       },
       { selector: EDITOR, id: task },
     )
-    // A phone's `pl-14` (`index.css`), not the `pl-20` the controls' boxes took side by side.
+    // A phone's `pl-14` (`index.css`), not the desktop lane the controls' boxes take side by side.
     expect(lane.offset).toBeLessThan(60)
     expect(lane.hits).toEqual(['chevron', 'chevron', 'chevron', 'checkbox', 'checkbox', 'text'])
   })
