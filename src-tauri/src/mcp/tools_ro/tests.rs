@@ -3533,7 +3533,7 @@ async fn get_block_without_properties_tags_or_aliases_returns_empty_arrays_5377(
 // #5375 — `get_page_markdown`
 // -------------------------------------------------------------------
 
-/// The page as an agent reads it: the title, the front matter, a link as the
+/// The page as an agent reads it: the front matter, the title, a link as the
 /// linked page's title, and the block's `^ID`. The id is accepted in lower
 /// case and echoed canonical, and the activity summary has the id prefix and
 /// the line count, never the text.
@@ -3594,7 +3594,7 @@ async fn get_page_markdown_happy_path_5375() {
     assert_eq!(
         result["markdown"],
         format!(
-            "# Plan\n\n---\naliases: [Plan B]\n---\n\nsee [[Other]] ^{}\n",
+            "---\naliases: [Plan B]\n---\n\n# Plan\n\nsee [[Other]] ^{}\n",
             child.id.as_str()
         )
     );
