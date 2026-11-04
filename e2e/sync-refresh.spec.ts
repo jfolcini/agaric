@@ -152,10 +152,10 @@ test.describe('page lists after a peer creates or renames pages (#5258) @sync', 
     })
     await peerSyncComplete(page, [dayPageId], 2)
 
-    // The day now resolves to the peer's page: its "open in editor" control
-    // appears and the empty-day state, whose "Add block" ran the create-page
-    // path (journal template included) against the existing page, is gone.
-    await expect(day.getByRole('button', { name: `Open ${dateStr} in editor` })).toBeVisible()
+    // The day now resolves to the peer's page: its delete control appears and
+    // the empty-day state, whose "Add block" ran the create-page path (journal
+    // template included) against the existing page, is gone.
+    await expect(day.getByRole('button', { name: 'Delete page' })).toBeVisible()
     await expect(day.getByText('No blocks for', { exact: false })).toHaveCount(0)
   })
 })

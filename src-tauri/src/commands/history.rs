@@ -802,8 +802,7 @@ impl ReverseCohortFanout {
     /// Run the repair. POST-COMMIT and infallible / log-only, the same
     /// contract as the command sites' fan-outs: the reverse has committed, and
     /// a row left wrong is the pre-#4733 state, which the next rebuild
-    /// reconciles. Both helpers return immediately on an empty list, so the
-    /// non-cascade arms cost nothing.
+    /// reconciles.
     pub async fn apply(&self, pool: &sqlx::SqlitePool) {
         // #5252: links first, as `handlers::apply` orders the same pair.
         // `restored` already carries the ancestor chain, so the second set

@@ -352,3 +352,86 @@ test.describe('/attach through the file chooser @attachments', () => {
     await expectOnlyALaterAllowedAttachLands(page)
   })
 })
+
+// ===========================================================================
+// 6. A transcript seeks its recording
+// ===========================================================================
+
+interface MockRecordingWindow extends Window {
+  __addMockAttachment?: (
+    blockId: string,
+    filename: string,
+    mimeType: string,
+    sizeBytes: number,
+    content: string,
+  ) => Record<string, unknown>
+  __addMockAttachmentWithBytes?: (
+    blockId: string,
+    filename: string,
+    mimeType: string,
+    bytes: number[],
+  ) => Record<string, unknown>
+}
+
+/** `seconds` of 8 kHz, 8-bit mono silence as a WAV file, which Chromium plays. */
+function silentWav(seconds: number): number[] {
+  const samples = 8000 * seconds
+  const header = Buffer.alloc(44)
+  header.write('RIFF', 0)
+  header.writeUInt32LE(36 + samples, 4)
+  header.write('WAVEfmt ', 8)
+  header.writeUInt32LE(16, 16)
+  header.writeUInt16LE(1, 20) // PCM
+  header.writeUInt16LE(1, 22) // one channel
+  header.writeUInt32LE(8000, 24) // sample rate
+  header.writeUInt32LE(8000, 28) // byte rate
+  header.writeUInt16LE(1, 32) // block align
+  header.writeUInt16LE(8, 34) // bits per sample
+  header.write('data', 36)
+  header.writeUInt32LE(samples, 40)
+  return [...header, ...Array.from({ length: samples }, () => 128)]
+}
+
+const STANDUP_TRANSCRIPT = '[00:00] **Alice:** Morning.\n\n[00:12] **Bob:** Hi.'
+
+test.describe('A transcript seeks its recording @attachments', () => {
+  test('a timestamp moves the player there and marks its segment current, after reopening too', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    await page.evaluate(
+      ({ blockId, wav, transcript }) => {
+        const w = window as unknown as MockRecordingWindow
+        w.__addMockAttachment?.(blockId, 'standup.transcript.md', 'text/markdown', 0, transcript)
+        w.__addMockAttachmentWithBytes?.(blockId, 'standup.wav', 'audio/wav', wav)
+      },
+      { blockId: BLOCK_GS_1, wav: silentWav(20), transcript: STANDUP_TRANSCRIPT },
+    )
+
+    const seekFromTranscript = async () => {
+      const section = page.getByTestId('attachment-section')
+      const player = section.getByLabel('Audio standup.wav')
+      // The player comes first, though the transcript was attached before it.
+      await expect(section.locator(':scope > *').first()).toHaveAttribute(
+        'aria-label',
+        'Audio standup.wav',
+      )
+      const toggle = section.getByRole('button', { name: 'Transcript', exact: true })
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+      await toggle.click()
+
+      await section.getByRole('button', { name: 'Seek to 00:12', exact: true }).click()
+
+      await expect.poll(() => player.evaluate((el: HTMLAudioElement) => el.currentTime)).toBe(12)
+      await expect(
+        section.locator('[data-testid="transcript-segment"][aria-current="true"]'),
+      ).toHaveText('00:12Bob: Hi.')
+    }
+
+    await openPage(page, 'Getting Started')
+    await seekFromTranscript()
+
+    await reopenPage(page, 'Getting Started')
+    await seekFromTranscript()
+  })
+})

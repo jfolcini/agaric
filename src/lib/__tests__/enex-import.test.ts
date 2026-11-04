@@ -2,8 +2,8 @@
  * Tests for the frontend-only Evernote `.enex` importer (#1282).
  *
  * Covers: title/tags/date extraction, ENML→Markdown conversion (headings,
- * lists, bold, links, `<pre>`), `<en-todo>` → task markers, multi-word tag →
- * `#[[…]]`, malformed XML throwing, multiple notes, empty-title placeholder,
+ * lists, bold, links, `<pre>`), `<en-todo>` → task markers, tags → front
+ * matter `tags:`, malformed XML throwing, multiple notes, empty-title placeholder,
  * timestamp epoch parsing (incl. null), and `<resource>`/`<en-media>`
  * attachment ingestion (#2513): base64 decode + MD5 hash-match + `en-media` →
  * `![](path)` rewrite, dangling-hash graceful fallback, and orphan resources.
@@ -30,8 +30,8 @@
  * What reached the backend wrong (#6032): ENML an XML parse rejects (named
  * entities, malformed markup) read as HTML; a file-name with a space or `)`
  * renamed so the backend's image grammar matches it; header-less and empty
- * tables; tags the bare `#tag` form would cut short; and the web clip's
- * source URL.
+ * tables; tags written as a tags-only block instead of the page's tags;
+ * notes from two files sharing a title; and the web clip's source URL.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -46,7 +46,7 @@ import {
   UNTITLED_PLACEHOLDER,
 } from '@/lib/enex-import'
 import { scanAttachmentRefs } from '@/lib/import-attachments'
-import { scanNameTokens } from '@/lib/name-tokens'
+import { enexNotesToUnits } from '@/lib/vault-import'
 
 /** Index into a parsed-note array with a runtime guard (no non-null assertions). */
 function at(notes: EnexNote[], index = 0): EnexNote {
@@ -970,9 +970,9 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
 
 describe('enexNoteToMarkdown', () => {
   // The composed document is what the markdown importer parses, so it is
-  // asserted whole: a frontmatter block that does not close, a tag line glued
-  // to the body, or a missing blank line between them all change what the
-  // importer makes of the note.
+  // asserted whole: a frontmatter block that does not close, a tag item outside
+  // it, or a missing blank line before the body all change what the importer
+  // makes of the note.
   it('emits frontmatter with ISO created/updated, source-url and source, tags, then body', () => {
     const md = enexNoteToMarkdown({
       title: 'T',
@@ -989,10 +989,11 @@ describe('enexNoteToMarkdown', () => {
         'created: "2021-01-02T03:04:05.000Z"\n' +
         'updated: "2022-03-04T05:06:07.000Z"\n' +
         'source-url: "https://example.com/a?b=1&c=2"\n' +
+        'tags:\n' +
+        '  - "work"\n' +
+        '  - "Multi Word"\n' +
         'source: evernote\n' +
         '---\n' +
-        '\n' +
-        '#work #[[Multi Word]]\n' +
         '\n' +
         '# Body\n\ntext\n',
     )
@@ -1026,10 +1027,10 @@ describe('enexNoteToMarkdown', () => {
     expect(md).toBe('---\nsource: evernote\n---\n')
   })
 
-  it('renders each tag as one token, whatever whitespace it carries', () => {
+  it('writes each tag as one front-matter item, whatever whitespace it carries', () => {
     // Evernote tag names are free text and a pretty-printed <tag> keeps its
-    // line breaks. A token with whitespace left in it truncates at the first
-    // space, so the note lands under the wrong tag — or none.
+    // line breaks. A line break left in a tag ends its YAML item, so the note
+    // lands under the wrong tag — or none.
     const md = enexNoteToMarkdown({
       title: 'T',
       markdown: 'body',
@@ -1040,28 +1041,9 @@ describe('enexNoteToMarkdown', () => {
       attachments: [],
     })
 
-    expect(md).toBe('---\nsource: evernote\n---\n\n#work #[[Multi Word]] #padded\n\nbody\n')
-  })
-
-  it('brackets every tag whose bare form the importer would cut short or read as text', () => {
-    // `#C++` reads as the tag `C`, `#v1.2` as `v1`, `#Q&A` as `Q`, and the
-    // all-digit `#2024` as no tag at all. A plain, nested or accented name
-    // stays bare.
-    const tags = ['C++', 'v1.2', 'Q&A', '2024', 'work', 'area/sub', 'caf\u00E9']
-    const md = enexNoteToMarkdown({
-      title: 'T',
-      markdown: '',
-      tags,
-      createdMs: null,
-      updatedMs: null,
-      sourceUrl: null,
-      attachments: [],
-    })
-
-    const tagLine = md.split('\n')[4] ?? ''
-    expect(tagLine).toBe('#[[C++]] #[[v1.2]] #[[Q&A]] #[[2024]] #work #area/sub #caf\u00E9')
-    // The names the backend's tag scan (mirrored by `scanNameTokens`) stores.
-    expect(scanNameTokens(tagLine).map((t) => t.name)).toEqual(tags)
+    expect(md).toBe(
+      '---\ntags:\n  - "work"\n  - "Multi Word"\n  - "padded"\nsource: evernote\n---\n\nbody\n',
+    )
   })
 })
 
@@ -1295,7 +1277,7 @@ describe('parseEnex — note reminders (#6032)', () => {
     )
 
     expect(enexNoteToMarkdown(at(parseEnex(xml)))).toBe(
-      '---\nsource: evernote\n---\n\n#work\n\n- [ ] Call\n\nbody\n',
+      '---\ntags:\n  - "work"\nsource: evernote\n---\n\n- [ ] Call\n\nbody\n',
     )
   })
 })
@@ -1334,5 +1316,32 @@ describe('parseEnex — rules and strikethrough Agaric reads (#6032)', () => {
         },
       ],
     })
+  })
+})
+
+describe('Evernote notebooks (#6032)', () => {
+  const note = (title: string): EnexNote => ({
+    title,
+    markdown: 'body',
+    tags: [],
+    createdMs: null,
+    updatedMs: null,
+    sourceUrl: null,
+    attachments: [],
+  })
+
+  it('titles each note under its file name, so two files holding "Meeting" import as two pages', async () => {
+    const [work] = enexNotesToUnits([note('Meeting')], 'Work.enex')
+    const [home] = enexNotesToUnits([note('Meeting')], 'Home.ENEX')
+
+    expect(work?.name).toBe('Work/Meeting.md')
+    expect((await work?.load())?.path).toBe('Work/Meeting.md')
+    expect(home?.name).toBe('Home/Meeting.md')
+  })
+
+  it('keeps a separator in the file name as a look-alike, so the name is one namespace level', () => {
+    const [unit] = enexNotesToUnits([note('TCP/IP')], 'Q3\\Q4.enex')
+
+    expect(unit?.name).toBe('Q3⧵Q4/TCP∕IP.md')
   })
 })

@@ -1063,6 +1063,10 @@ mod merge;
 #[path = "markdown_source_front_matter.rs"]
 mod front_matter;
 
+#[path = "markdown_source_pair.rs"]
+mod pair;
+pub use pair::pair_unanchored_lines;
+
 #[cfg(test)]
 mod tests {
     use agaric_engine::import::line_soup::arb_document;

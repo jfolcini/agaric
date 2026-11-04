@@ -74,6 +74,7 @@ pub(crate) const TOOL_LIST_JOURNAL: &str = "list_journal";
 pub(crate) const TOOL_LIST_TRASH: &str = "list_trash";
 pub(crate) const TOOL_RESOLVE: &str = "resolve";
 pub(crate) const TOOL_QUERY: &str = "query";
+pub(crate) const TOOL_LIST_ATTACHMENTS: &str = "list_attachments";
 
 // Read-write tool names (`tools_rw.rs`).
 pub(crate) const TOOL_APPEND_BLOCK: &str = "append_block";

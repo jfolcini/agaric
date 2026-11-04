@@ -801,6 +801,59 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
 
     expect(dispatchBlockCommand).toHaveBeenCalledTimes(1)
   })
+
+  // #6033 — only the block path resolves a page name, so one line naming a
+  // page goes there, spliced at the caret.
+  it.each([
+    ['a [[Name]] link', 'see [[Fresh page]] now'],
+    ['a labelled [[Name|label]] link', '[[Fresh page|label]]'],
+    ['a Logseq [label]([[Name]]) link', '[alias]([[Fresh page]])'],
+    ['a [[Name]] link with blank lines around it', '\n see [[Fresh page]]\n\n'],
+  ])('routes one line holding %s as text, spliced at the caret', async (_name, text) => {
+    mockFocusedBlockId = 'BLOCK_A'
+    editor = await buildEditor(HELLO_WORLD)
+    editor.commands.setTextSelection(7)
+
+    expect(paste(editor, text)).toBe(true)
+
+    expect(dispatchBlockCommand).toHaveBeenCalledTimes(1)
+    expect(dispatchBlockCommand).toHaveBeenCalledWith('PASTE_BLOCKS', {
+      input: { kind: 'text', text },
+      targetBlockId: 'BLOCK_A',
+      splice: { before: 'Hello ', after: 'world' },
+      asText: expect.any(String),
+    })
+    expect(editor.state.doc.textContent).toBe('Hello world')
+  })
+
+  it.each([
+    ['a #tag, which the save makes a tag', 'see #fresh'],
+    ['a ref by id', '[[01ARZ3NDEKTSV4RRFFQ69G5FAV]]'],
+    ['a name in inline code', '`[[Fresh page]]`'],
+    ['a list line after text, which the block path would renumber', '3. see [[Fresh page]]'],
+    ['a list line after a blank line', '\n3. see [[Fresh page]]'],
+    ['a task line, which TaskPaste owns', '- [ ] see [[Fresh page]]'],
+  ])('leaves one line holding %s off the block path', async (_name, text) => {
+    editor = await buildEditor(HELLO_WORLD)
+    editor.commands.setTextSelection(7)
+
+    paste(editor, text)
+
+    expect(dispatchBlockCommand).not.toHaveBeenCalled()
+  })
+
+  // Inside a table or a list the splice would cut it in two (item 13).
+  it.each([
+    ['a table cell', () => TABLE_DOC],
+    ['a list item', () => LIST_DOC],
+  ])('leaves one line naming a page in %s off the block path', async (_name, doc) => {
+    editor = await buildEditor(doc())
+    editor.commands.setTextSelection(endOf(editor, 'one'))
+
+    paste(editor, ' see [[Fresh page]]')
+
+    expect(dispatchBlockCommand).not.toHaveBeenCalled()
+  })
 })
 
 describe('handlePaste — one pasted line is read as inline markdown (#5160 N11)', () => {
