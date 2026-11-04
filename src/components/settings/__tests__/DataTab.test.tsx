@@ -1713,6 +1713,14 @@ describe('DataTab', () => {
             total_count: null,
           }),
           create_property_def: create,
+          get_mirror_status: () => ({
+            supported: false,
+            folder: null,
+            paused: null,
+            diverged: [],
+            failed: [],
+            last_pass_ms: null,
+          }),
         })
       }
 
