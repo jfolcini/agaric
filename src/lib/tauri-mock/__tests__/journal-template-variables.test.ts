@@ -43,6 +43,18 @@ describe('expandJournalTemplateVariables', () => {
     )
   })
 
+  it('reads the Moment day tokens an Obsidian template uses', () => {
+    expect(expandJournalTemplateVariables('<% today:dddd, MMMM Do %>|{{date:ddd D}}', DAY)).toBe(
+      'Thursday, January 2nd|Thu 2',
+    )
+    const ordinals = ['01', '02', '03', '04', '11', '12', '13', '21', '22', '23', '31']
+      .map((d) => expandJournalTemplateVariables('{{date:Do}}/{{date:do}}', `2031-01-${d}`))
+      .join(' ')
+    expect(ordinals).toBe(
+      '1st/1st 2nd/2nd 3rd/3rd 4th/4th 11th/11th 12th/12th 13th/13th 21st/21st 22nd/22nd 23rd/23rd 31st/31st',
+    )
+  })
+
   it('gives the default form for a format it does not know, and leaves a non-variable', () => {
     expect(
       expandJournalTemplateVariables("<% today:yyyyy %> <% time:x %> <% today:'open %>", DAY),

@@ -19,11 +19,11 @@ import {
   type SuggestionSide,
 } from '@/editor/suggestion-placement'
 import {
+  type PickerItem,
   SUGGESTION_LISTBOX_ID,
   SuggestionList,
   type SuggestionListRef,
 } from '@/editor/SuggestionList'
-import type { PickerItem } from '@/editor/SuggestionList'
 import { applySafePosition } from '@/lib/floating-position'
 import { t } from '@/lib/i18n'
 import { getShortcutKeys } from '@/lib/keyboard-config'
