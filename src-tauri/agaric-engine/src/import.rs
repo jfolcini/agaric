@@ -1261,7 +1261,7 @@ pub fn parse_vault_markdown(content: &str) -> ParseOutput {
 
 /// `text` less a leading byte order mark, which some editors and clients
 /// write: left in, it is text, and front matter after it is not read (#6277).
-pub fn without_bom(text: &str) -> &str {
+fn without_bom(text: &str) -> &str {
     text.strip_prefix('\u{feff}').unwrap_or(text)
 }
 
