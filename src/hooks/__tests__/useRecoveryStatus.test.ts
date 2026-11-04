@@ -222,11 +222,13 @@ describe('useRecoveryStatus — sync quarantine this boot (#6057)', () => {
     expect(nav.pendingSettingsTab).toBe('sync')
   })
 
-  it('a second call reuses the fixed id, distinct from the degraded banner', () => {
-    showSyncQuarantinedToast(QUARANTINED)
-    showSyncQuarantinedToast(QUARANTINED)
+  it('a degraded boot that also quarantined shows both warnings, each under its own id', async () => {
+    mockGetRecoveryStatus.mockResolvedValue(ok({ ...DEGRADED, sync_quarantined_this_boot: 2 }))
+    renderHook(() => useRecoveryStatus())
+    await waitFor(() => expect(toast.warning).toHaveBeenCalledTimes(2))
     const ids = vi.mocked(toast.warning).mock.calls.map(([, opts]) => opts?.id)
-    expect(ids).toEqual([SYNC_QUARANTINED_TOAST_ID, SYNC_QUARANTINED_TOAST_ID])
-    expect(SYNC_QUARANTINED_TOAST_ID).not.toBe(RECOVERY_DEGRADED_TOAST_ID)
+    expect(ids).toEqual([RECOVERY_DEGRADED_TOAST_ID, SYNC_QUARANTINED_TOAST_ID])
+    // A shared id would make sonner replace the degraded banner.
+    expect(new Set(ids).size).toBe(2)
   })
 })
