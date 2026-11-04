@@ -1,0 +1,9 @@
+# Session 3372 — the property-definition Undo spec clicks past a leftover sync toast
+
+Set out to fix the intermittent failure of `e2e-tauri/property-defs-sync.e2e.ts` › "brings a deleted definition back with Undo on its toast" (#5841), which failed on #6293 (no `alertdialog` after the Delete click) and #6301 ("element click intercepted" on the same click), two PRs that never reach it.
+
+Cause, from both runs' logs, screenshots and app logs: the previous test pulls the peer's write, and the app raises "Synced 2 changes from device" in the bottom-right corner. In the lane's 1024×768 window the toast stack sits just under the last row of Settings › Properties, which is the definition this test deletes. On #6301 the toast is still on screen in the failure screenshot and took the click. On #6293 the click fell about four seconds after the last sync completed, as that toast expired, and a toast on its way out keeps a hit area beyond its box (`dismissToasts`'s comment in `helpers.ts`). The click reached the toast, not the button, and no dialog opened. Toasts stacking in a corner is ordinary app behaviour, so the app has no race to fix; the spec clicked a covered button.
+
+Shipped: the Delete click goes through the existing `clickUncovered`, which closes the toasts and runs the hit test and the click in one script, and fails with what covers the centre. The confirm goes through the existing `confirmDialog`, which waits for the dialog itself instead of a chained `$` that timed out as "Can't call $ … element wasn't found". No helper added.
+
+Ran: `npm run typecheck:e2e-tauri`, `npx vitest run e2e-tauri`, oxlint and oxfmt on the spec. tauri-driver does not run in this container, and the Playwright mock has no sync peer to raise the toast. The proof is the PR's `e2e-tauri` lane, which runs only this spec.
