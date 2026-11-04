@@ -2569,7 +2569,9 @@
 }
 
 /* ── Suggestion popup animation ────────────────────────────── */
-.suggestion-list {
+/* Once, when the popup is revealed: its contents swap between the list and the
+   empty state as the query changes, and must not replay it. */
+.suggestion-popup[data-open] > * {
   animation: suggestion-appear var(--duration-fast) var(--ease-out);
 }
 
