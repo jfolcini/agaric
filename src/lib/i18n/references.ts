@@ -183,6 +183,7 @@ export const references: Record<string, string> = {
   'tags.loadFailed': 'Failed to load tags',
   'tags.nameTooLong': 'Tag name must be under 100 characters',
   'tags.duplicateName': 'A tag with that name already exists.',
+  'tags.nameHasWhitespace': "A tag name can't contain spaces. Use - instead, as in deep-work.",
   'tags.renameSuccess': 'Tag renamed successfully.',
   'tags.renameFailed': 'Failed to rename tag',
   'tags.renameTitle': 'Rename tag',

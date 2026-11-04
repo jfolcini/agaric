@@ -829,6 +829,19 @@ function rejectDuplicateTagName(tagId: string, name: string): void {
 }
 
 /**
+ * #6278 I4 — refuse a new tag name holding whitespace. Mock twin of
+ * `reject_spaced_tag_name` (`src-tauri/src/commands/blocks/crud.rs`).
+ */
+function rejectSpacedTagName(name: string): void {
+  if (!/\p{White_Space}/u.test(name)) return
+  throw appErrorRejection({
+    kind: 'validation',
+    code: 'TagNameWhitespace',
+    message: `the tag name '${name}' holds whitespace; use '-' instead`,
+  })
+}
+
+/**
  * #4723 — refuse titling `page` `title` when another live page of its space
  * holds that title. Mock twin of `reject_duplicate_page_title`
  * (`src-tauri/src/commands/blocks/crud.rs`); the page itself is not its own
@@ -1101,6 +1114,7 @@ export const blocksHandlers = {
           op_refs: [] as { device_id: string; seq: number }[],
         }
       }
+      rejectSpacedTagName((a['content'] as string) ?? '')
     }
     // `resolve_block_id_in_tx`: a client id already in `blocks`, live or not.
     if (clientId != null && blocks.has(clientId)) {
@@ -1444,7 +1458,10 @@ export const blocksHandlers = {
       throw notFoundRejection(`block '${blockId}' (not found or deleted)`)
     }
     if (b['block_type'] === 'page') rejectDuplicatePageTitle(b, a['toText'] as string)
-    if (b['block_type'] === 'tag') rejectDuplicateTagName(blockId, a['toText'] as string)
+    if (b['block_type'] === 'tag') {
+      rejectSpacedTagName(a['toText'] as string)
+      rejectDuplicateTagName(blockId, a['toText'] as string)
+    }
     rejectCrossSpaceTokens(definitionSpaceOf(blockId), a['toText'] as string, blockId)
     const oldContent = b['content'] as string | null
     const linked = linkedTargets(b)

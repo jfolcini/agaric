@@ -26,6 +26,7 @@ import {
 } from '@/__tests__/helpers/invoke'
 import { useBlockTags } from '@/hooks/useBlockTags'
 import { getGraphStructureKey } from '@/lib/graph-structure-events'
+import { t } from '@/lib/i18n'
 import type { NameChange } from '@/lib/name-change-bus'
 import { invalidateNameCaches, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
@@ -844,6 +845,33 @@ describe('useBlockTags handleCreateTag', () => {
     })
 
     expect(mockedToastError).toHaveBeenCalledWith('Failed to create tag')
+  })
+
+  // #6278 I4 — the coded refusal of a name holding whitespace says to use `-`.
+  it('shows the use-a-dash toast when the backend refuses a name holding whitespace', async () => {
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_all_tags_in_space: () => [],
+      list_tags_for_block: () => [],
+      create_block: () =>
+        Promise.reject({
+          kind: 'validation',
+          code: 'TagNameWhitespace',
+          message: "the tag name 'deep work' holds whitespace; use '-' instead",
+        }),
+    })
+
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    await act(async () => {
+      await result.current.handleCreateTag('deep work')
+    })
+
+    expect(mockedToastError).toHaveBeenCalledExactlyOnceWith(t('tags.nameHasWhitespace'))
   })
 
   it('does not update allTags or resolveStore when createBlock fails', async () => {

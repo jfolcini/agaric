@@ -1136,6 +1136,182 @@ async fn restore_tag_without_a_live_namesake_succeeds_5281() {
     assert!(!is_deleted(&pool, &batched).await);
 }
 
+// ----------------------------------------------------------------------
+// #6278 I4 — a new tag name holds no whitespace: a create or a rename onto
+// one is refused with `TagNameWhitespace`, and a tag named before the rule
+// keeps resolving, restoring and undoing under its name.
+// ----------------------------------------------------------------------
+
+fn assert_spaced_tag_name_refusal<T: std::fmt::Debug>(result: Result<T, AppError>, name: &str) {
+    let err = result.expect_err("a tag name holding whitespace must be refused");
+    assert_eq!(
+        err.validation_code(),
+        Some(agaric_core::error::ValidationCode::TagNameWhitespace),
+        "refusal of {name:?} must carry the TagNameWhitespace code; got: {err:?}"
+    );
+}
+
+/// A tag named `name` in `space_ulid` as one from before the rule: made by
+/// the plain create, which runs no name rule, and stamped into the space.
+async fn tag_named_before_the_rule(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    name: &str,
+    space_ulid: &str,
+) -> BlockId {
+    let tag = create_block_inner(pool, DEV, mat, "tag".into(), name.into(), None, None)
+        .await
+        .expect("create the tag");
+    assign_to_space(pool, tag.id.as_str(), space_ulid).await;
+    settle(mat).await;
+    tag.id
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_tag_refuses_a_name_holding_whitespace_6278() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let ops_before = count_ops(&pool).await;
+
+    for name in ["deep work", "deep\twork", "deep\u{a0}work", "deep "] {
+        let result = create_block_inner_with_space(
+            &pool,
+            DEV,
+            &mat,
+            "tag".into(),
+            name.into(),
+            None,
+            None,
+            &SpaceScope::Active(SpaceId::from_trusted(personal)),
+            None,
+        )
+        .await;
+        assert_spaced_tag_name_refusal(result, name);
+        assert_eq!(
+            live_tags_named(&pool, name).await,
+            Vec::new(),
+            "a refused create makes no tag named {name:?}"
+        );
+    }
+    assert_eq!(
+        count_ops(&pool).await,
+        ops_before,
+        "a refusal appends no op"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_block_refuses_a_tag_rename_holding_whitespace_6278() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let notes = create_tag(&pool, &mat, "notes", personal).await;
+    settle(&mat).await;
+    let ops_before = count_ops(&pool).await;
+
+    let result = edit_block_inner(&pool, DEV, &mat, notes.id.clone(), "deep work".into()).await;
+    assert_eq!(
+        result.as_ref().err().map(ToString::to_string).as_deref(),
+        Some("Validation error: the tag name 'deep work' holds whitespace; use '-' instead")
+    );
+    assert_spaced_tag_name_refusal(result, "deep work");
+
+    assert_eq!(
+        page_content(&pool, &notes.id).await.as_deref(),
+        Some("notes")
+    );
+    assert_eq!(
+        count_ops(&pool).await,
+        ops_before,
+        "a refusal appends no op"
+    );
+}
+
+/// A create of an existing spaced tag's name, in any case, is that tag, and
+/// its owner can rename it to the dashed form.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_tag_named_before_the_rule_still_resolves_and_renames_6278() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let old = tag_named_before_the_rule(&pool, &mat, "multi word", personal).await;
+
+    let resolved = create_tag(&pool, &mat, "Multi Word", personal).await;
+    assert_eq!(resolved.id, old, "the create resolves to the existing tag");
+    assert_eq!(
+        live_tags_named(&pool, "Multi Word").await,
+        vec![(old.to_string(), Some(personal.to_owned()))],
+        "and creates none"
+    );
+
+    edit_block_inner(&pool, DEV, &mat, old.clone(), "multi-word".into())
+        .await
+        .expect("a spaced tag may be renamed to a name without whitespace");
+    assert_eq!(
+        page_content(&pool, &old).await.as_deref(),
+        Some("multi-word")
+    );
+}
+
+/// The rule is a create's and a rename's: an undo and a restore bring a tag's
+/// own earlier name back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_tag_named_before_the_rule_undoes_and_restores_6278() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let old = tag_named_before_the_rule(&pool, &mat, "multi word", personal).await;
+    edit_block_inner(&pool, DEV, &mat, old.clone(), "multi-word".into())
+        .await
+        .expect("rename to the dashed form");
+    settle(&mat).await;
+    let rename = sqlx::query_scalar::<_, i64>(
+        "SELECT seq FROM op_log WHERE op_type = 'edit_block' ORDER BY seq DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    revert_ops_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![agaric_store::op::OpRef {
+            device_id: DEV.into(),
+            seq: rename,
+        }],
+    )
+    .await
+    .expect("an undo brings the spaced name back");
+    assert_eq!(
+        page_content(&pool, &old).await.as_deref(),
+        Some("multi word")
+    );
+
+    settle(&mat).await;
+    let deleted = delete_block_inner(&pool, DEV, &mat, old.clone())
+        .await
+        .expect("delete the tag");
+    settle(&mat).await;
+    restore_block_inner(&pool, DEV, &mat, old.clone(), deleted.deleted_at)
+        .await
+        .expect("a restore brings the spaced tag back");
+    assert!(!is_deleted(&pool, &old).await, "the tag is live again");
+}
+
 /// A page in `space_ulid` titled `title`, soft-deleted; returns it and its
 /// `deleted_at` (the restore ref).
 async fn trashed_page(

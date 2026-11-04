@@ -229,7 +229,7 @@ describe('a #name saved as text becomes the tag (#5160 follow-up 7a)', () => {
     expect(result.kind).toBe('tag')
     expect(edit).toHaveBeenCalledExactlyOnceWith('BLOCK', 'see #project and #[[deep work]] now')
     await expect(result.outcome).resolves.toBe(true)
-    expect(created).toEqual(['deep work'])
+    expect(created).toEqual(['deep-work'])
     expect(edit).toHaveBeenLastCalledWith('BLOCK', 'see #[TAG_PROJECT] and #[NEW_1] now')
     expect(edit).toHaveBeenCalledTimes(2)
   })

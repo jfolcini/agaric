@@ -495,6 +495,42 @@ describe('PageHeader duplicate-title rename (#4723)', () => {
   })
 })
 
+describe('PageHeader tag rename holding whitespace (#6278 I4)', () => {
+  // A tag opens as a page, its name the title; a name holding whitespace is
+  // refused coded, and the toast says to use `-`.
+  it('shows the use-a-dash toast and restores the previous name', async () => {
+    const user = userEvent.setup()
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'edit_block') {
+        const rejection: AppError = {
+          kind: 'validation',
+          code: 'TagNameWhitespace',
+          message: "the tag name 'deep work' holds whitespace; use '-' instead",
+        }
+        throw rejection
+      }
+      if (cmd === 'get_page_aliases') return []
+      return null
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="deep-work" />)
+
+    const titleEl = screen.getByRole('textbox', { name: /page title/i })
+    await user.clear(titleEl)
+    await user.type(titleEl, 'deep work')
+    await user.tab()
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(t('tags.nameHasWhitespace'))
+    })
+    expect(mockedToastError).not.toHaveBeenCalledWith(t('pageHeader.renameFailed'))
+    expect(titleEl).toHaveTextContent('deep-work')
+  })
+})
+
 describe('PageHeader tag management', () => {
   it('add tag via picker', async () => {
     const user = userEvent.setup()

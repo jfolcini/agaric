@@ -291,7 +291,8 @@ pub async fn create_block_inner_with_space(
 /// A live tag in `space_id` already named `content` is returned as-is
 /// (nothing created, no op appended, `client_id` unused): tag names are
 /// unique per space, under the same identity the cache and the engine key
-/// tags by (#5236; mirrors the page-title rule of #4723).
+/// tags by (#5236; mirrors the page-title rule of #4723). Any other name
+/// holding whitespace is refused (#6278 I4).
 ///
 /// Unlike the page helper there is no parent/child cross-space check: manually
 /// created tags are top-level (`parent_id = None`). `parent_id` / `index` are
@@ -335,6 +336,7 @@ async fn create_tag_in_space_inner(
         tx.commit_without_dispatch().await?;
         return get_active_block_inner(pool, BlockId::from_trusted(&existing)).await;
     }
+    reject_spaced_tag_name(&content)?;
 
     // 2. Create the tag block (`CreateBlock` op + materialized row).
     let (block, tag_op_record) = create_block_in_tx(
@@ -459,6 +461,9 @@ pub(crate) async fn edit_block_in_tx(
 
     let existing = existing
         .ok_or_else(|| AppError::NotFound(format!("block '{block_id}' (not found or deleted)")))?;
+    if existing.block_type == "tag" {
+        reject_spaced_tag_name(&to_text)?;
+    }
     reject_duplicate_name(tx, &existing.block_type, &block_id, &to_text).await?;
     let block_type = existing.block_type;
     let parent_id = existing.parent_id;
@@ -623,6 +628,20 @@ async fn reject_duplicate_tag_name(
         return Err(AppError::validation_coded(
             ValidationCode::DuplicatePageTitle,
             format!("a tag named '{name}' already exists in this space"),
+        ));
+    }
+    Ok(())
+}
+
+/// #6278 I4 — a new tag name holds no whitespace, which Obsidian's `#tag`
+/// cannot spell. A create and a rename run it; a restore, an undo and an
+/// incoming op do not, so a tag named before the rule keeps its name until it
+/// is renamed.
+fn reject_spaced_tag_name(name: &str) -> Result<(), AppError> {
+    if name.chars().any(char::is_whitespace) {
+        return Err(AppError::validation_coded(
+            ValidationCode::TagNameWhitespace,
+            format!("the tag name '{name}' holds whitespace; use '-' instead"),
         ));
     }
     Ok(())

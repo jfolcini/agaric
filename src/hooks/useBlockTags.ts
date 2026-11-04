@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 
-import { unwrap } from '@/lib/app-error'
+import { unwrap, validationCode } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notifyTagAdded, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
+import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { requireActiveScope } from '@/lib/space-scope'
 import { usePageBlockStoreApi } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
@@ -231,7 +232,9 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
         tagId = resp.id
       } catch (error) {
         logger.error('useBlockTags', 'Failed to create tag', { blockId, name: trimmed }, error)
-        notify.error(i18n.t('tags.createFailed'))
+        // #6278 I4 — a name holding whitespace is the user's to fix.
+        const spaced = validationCode(error) === ValidationCode.TagNameWhitespace
+        notify.error(i18n.t(spaced ? 'tags.nameHasWhitespace' : 'tags.createFailed'))
         return
       }
       // #5236 — the backend answers a name that already exists with that
