@@ -111,6 +111,8 @@ export const block: Record<string, string> = {
   'callout.tip': 'Tip',
   'callout.error': 'Error',
   'callout.note': 'Note',
+  'callout.collapse': 'Collapse {{name}} callout',
+  'callout.expand': 'Expand {{name}} callout',
   'status.peerAddress': 'Address',
   'status.peerAddressNotSet': 'No address',
   'status.editAddress': 'Edit',
