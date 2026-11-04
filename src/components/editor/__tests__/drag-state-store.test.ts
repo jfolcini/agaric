@@ -41,11 +41,13 @@ describe('deriveRowDragState (truth table)', () => {
       activeId: 'A',
       overId: 'B',
       dropAfter: true,
+      projectedTasks: 1,
     }
     expect(deriveRowDragState('A', state)).toEqual({
       isActiveDragRow: true,
-      // B3 (#217): the active row previews the projected depth.
+      // B3 (#217): the active row previews the projected depth, and the tasks above it there.
       projectedDepthOverride: 2,
+      projectedTasksOverride: 1,
       // #923/#991: the indicator + tint never render on the active row.
       showDropIndicator: false,
       dropAfter: false,
@@ -63,6 +65,8 @@ describe('deriveRowDragState (truth table)', () => {
     expect(deriveRowDragState('B', state)).toEqual({
       isActiveDragRow: false,
       projectedDepthOverride: 3,
+      // No count given: no task above.
+      projectedTasksOverride: 0,
       showDropIndicator: true,
       dropAfter: true,
       dropIndicatorDepth: 3,
@@ -77,11 +81,13 @@ describe('deriveRowDragState (truth table)', () => {
       activeId: 'A',
       overId: 'B',
       dropAfter: true,
+      projectedTasks: 2,
     }
     const bystander = deriveRowDragState('C', state)
     expect(bystander).toEqual({
       isActiveDragRow: false,
       projectedDepthOverride: null,
+      projectedTasksOverride: null,
       showDropIndicator: false,
       dropAfter: false,
       dropIndicatorDepth: 0,
@@ -142,6 +148,21 @@ describe('DragStateStore.applyState change accounting', () => {
     expect(
       store.applyState({ projected: null, activeId: 'A', overId: null, dropAfter: false }),
     ).toBe(false)
+  })
+
+  it('counts a change of the tasks above the projection alone as a change', () => {
+    const store = new DragStateStore()
+    const over = (projectedTasks: number): DragState => ({
+      projected: projectionAtDepth(1),
+      activeId: 'A',
+      overId: 'B',
+      dropAfter: false,
+      projectedTasks,
+    })
+    store.applyState(over(0))
+    expect(store.getRowSnapshot('B').projectedTasksOverride).toBe(0)
+    expect(store.applyState(over(1))).toBe(true)
+    expect(store.getRowSnapshot('B').projectedTasksOverride).toBe(1)
   })
 
   it('recomputes only cached (mounted) rows, notifying just those subscribers', () => {
