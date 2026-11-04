@@ -221,6 +221,6 @@ describe('Agaric real-backend export (#5740) @markdown', () => {
     expect(page).toContain(`- ${marker}![${filename}](../${asset})`)
     expect(page).not.toContain('attachment:')
     // The report lists what an export skipped; a clean export has none.
-    expect(names).not.toContain('export-report.txt')
+    expect(names).not.toContain('.agaric/export-report.txt')
   })
 })

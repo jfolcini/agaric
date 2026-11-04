@@ -17,6 +17,7 @@ vi.mock('@/lib/logger', () => ({
 }))
 
 import {
+  aligned,
   allStoredText,
   blockquote,
   bold,
@@ -39,6 +40,7 @@ import {
 } from '@/editor/__tests__/builders'
 import { parse } from '@/editor/markdown-parse'
 import { serialize } from '@/editor/markdown-serialize'
+import type { DocNode } from '@/editor/types'
 import { logger } from '@/lib/logger'
 
 describe('parse — depth-limit truncation (FE-L-7)', () => {
@@ -485,8 +487,14 @@ describe('parse — an ambiguous dash-only row 1 in foreign markdown (#4003)', (
     expect(parse('| Name | Value |\n| :- | -: |\n| a | b |')).toEqual(
       doc(
         table(
-          tableRow(tableHeader(paragraph(text('Name'))), tableHeader(paragraph(text('Value')))),
-          tableRow(tableCell(paragraph(text('a'))), tableCell(paragraph(text('b')))),
+          tableRow(
+            aligned('left', tableHeader(paragraph(text('Name')))),
+            aligned('right', tableHeader(paragraph(text('Value')))),
+          ),
+          tableRow(
+            aligned('left', tableCell(paragraph(text('a')))),
+            aligned('right', tableCell(paragraph(text('b')))),
+          ),
         ),
       ),
     )
@@ -506,6 +514,11 @@ describe('parse — an ambiguous dash-only row 1 in foreign markdown (#4003)', (
 // and any colon-carrying form stay delimiters even in a two-line table.
 describe('parse — the delimiter/data boundary at table row 1', () => {
   const HEADER = '| Name | Value |'
+  /** Which row is the delimiter, not the alignment it writes (pinned under #6277). */
+  const unaligned = (d: DocNode): DocNode =>
+    JSON.parse(
+      JSON.stringify(d, (key: string, value: unknown) => (key === 'attrs' ? undefined : value)),
+    )
   const headerRow = () =>
     tableRow(tableHeader(paragraph(text('Name'))), tableHeader(paragraph(text('Value'))))
   const dataRow = (a: string, b: string) =>
@@ -529,14 +542,14 @@ describe('parse — the delimiter/data boundary at table row 1', () => {
   it.each(UNAMBIGUOUS_DELIMITERS)(
     'row 1 (%s) is the delimiter even with NO rows following',
     (_shape, delimiter) => {
-      expect(parse(`${HEADER}\n${delimiter}`)).toEqual(doc(table(headerRow())))
+      expect(unaligned(parse(`${HEADER}\n${delimiter}`))).toEqual(doc(table(headerRow())))
     },
   )
 
   it.each([...UNAMBIGUOUS_DELIMITERS, ['1 dash', '| - | - |'] as [string, string]])(
     'row 1 (%s) is the delimiter when a data row FOLLOWS',
     (_shape, delimiter) => {
-      expect(parse(`${HEADER}\n${delimiter}\n| a | b |`)).toEqual(
+      expect(unaligned(parse(`${HEADER}\n${delimiter}\n| a | b |`))).toEqual(
         doc(table(headerRow(), dataRow('a', 'b'))),
       )
     },
@@ -576,14 +589,14 @@ describe('parse — the delimiter/data boundary at table row 1', () => {
   it.each(SHORT_DELIMITERS)(
     'row 1 (%s) is a malformed DELIMITER, not a junk data row, with NO rows following',
     (_shape, delimiter) => {
-      expect(parse(`${HEADER}\n${delimiter}`)).toEqual(doc(table(headerRow())))
+      expect(unaligned(parse(`${HEADER}\n${delimiter}`))).toEqual(doc(table(headerRow())))
     },
   )
 
   it.each(SHORT_DELIMITERS)(
     'row 1 (%s) is a malformed DELIMITER, not a junk data row, when a data row FOLLOWS',
     (_shape, delimiter) => {
-      expect(parse(`${HEADER}\n${delimiter}\n| a | b |`)).toEqual(
+      expect(unaligned(parse(`${HEADER}\n${delimiter}\n| a | b |`))).toEqual(
         doc(table(headerRow(), dataRow('a', 'b'))),
       )
     },
@@ -902,5 +915,28 @@ describe('parse — callout fold markers and hyphenated types (#6033)', () => {
     expect(serialize(parse('> [!faq]- Why?\n> Because.'))).toBe('> [!FAQ]- Why?\n> Because.')
     expect(serialize(parse('> [!my-type]+ t'))).toBe('> [!MY-TYPE]+ t')
     expect(serialize(parse('> [!faq]-'))).toBe('> [!FAQ]-')
+  })
+})
+
+describe('parse — GFM column alignment from the delimiter row (#6277)', () => {
+  it('gives every cell of a column the alignment its delimiter cell writes', () => {
+    expect(parse('| a | b | c | d |\n|:--|--:|:-:|---|\n| 1 | 2 | 3 | 4 |')).toEqual(
+      doc(
+        table(
+          tableRow(
+            aligned('left', tableHeader(paragraph(text('a')))),
+            aligned('right', tableHeader(paragraph(text('b')))),
+            aligned('center', tableHeader(paragraph(text('c')))),
+            tableHeader(paragraph(text('d'))),
+          ),
+          tableRow(
+            aligned('left', tableCell(paragraph(text('1')))),
+            aligned('right', tableCell(paragraph(text('2')))),
+            aligned('center', tableCell(paragraph(text('3')))),
+            tableCell(paragraph(text('4'))),
+          ),
+        ),
+      ),
+    )
   })
 })
