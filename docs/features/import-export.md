@@ -71,10 +71,12 @@ In the **PageHeaderMenu** kebab → *Export as Markdown* (or `Ctrl+Shift+E`).
 
 Two rows: **Export this space** and **Export all spaces** (the whole vault, one top-level folder per space, with same-named spaces disambiguated).
 
-- One Markdown file per page, with the namespace hierarchy mirrored as folders.
+- One Markdown file per page, with the namespace hierarchy mirrored as folders. The path names the page, so the file has no `# Title` line.
 - Each file carries the same YAML front-matter as per-page export.
 - Attachments — inline images and block-scoped files alike — are written into an `assets/` folder and the Markdown links are rewritten to relative paths, so they resolve in other tools, and a folder import of the unzipped export attaches them again.
-- If any page or attachment couldn't be exported, the ZIP gains an `export-report.txt` listing exactly what was skipped, and the toast says so rather than reporting a clean success.
+- What a file cannot carry goes in the space's `.agaric/space.json` (each space folder has its own in *Export all spaces*): the space's property definitions (key, type, options), and the title of each page whose file name could not spell it (`a:b` is filed as `a_b.md`; a duplicate title gets a suffix). A folder import of the unzipped space folder reads it first: it creates each definition the space lacks before any page imports, so number, date, select and ref values come back typed, and titles those files as recorded. A definition it cannot create is a warning in the import summary.
+- A folder import makes no page of a file under `.agaric/`.
+- If any page or attachment couldn't be exported, the ZIP gains an `.agaric/export-report.txt` listing exactly what was skipped, and the toast says so rather than reporting a clean success.
 
 ## Pitfalls to know
 

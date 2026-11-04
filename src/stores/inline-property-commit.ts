@@ -43,7 +43,7 @@
  */
 
 import { unwrap } from '@/lib/app-error'
-import type { OpRef, PageResponse, PropertyDefinition } from '@/lib/bindings'
+import type { OpRef, PropertyDefinition } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import {
@@ -57,6 +57,7 @@ import { logger } from '@/lib/logger'
 import { notifyTagAdded } from '@/lib/name-change-bus'
 import { dashedTagName, type TagToken } from '@/lib/name-tokens'
 import { notify } from '@/lib/notify'
+import { listAllPropertyDefs } from '@/lib/property-save-utils'
 import { invalidRepeatRuleMessage, reloadIfRepeating } from '@/lib/repeat-utils'
 import { requireActiveScope } from '@/lib/space-scope'
 import type { TodoState } from '@/lib/task-states'
@@ -85,20 +86,6 @@ export interface PageBlockStoreLike {
 
 /** Per-block flush sequence tokens — see the module docstring. */
 const flushSeqByBlock = new Map<string, number>()
-
-/** Every property definition of `spaceId` (#5841), page by page. */
-export async function listAllPropertyDefs(spaceId: string): Promise<PropertyDefinition[]> {
-  const defs: PropertyDefinition[] = []
-  let cursor: string | null = null
-  do {
-    const page: PageResponse<PropertyDefinition> = unwrap(
-      await commands.listPropertyDefs(spaceId, cursor, null),
-    )
-    defs.push(...page.items)
-    cursor = page.has_more ? page.next_cursor : null
-  } while (cursor !== null)
-  return defs
-}
 
 /**
  * The key a typed `key:: value` line names and its definition in `spaceId`
