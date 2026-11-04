@@ -1849,18 +1849,18 @@ describe('DataTab', () => {
       // active space, a progress callback, and no vault files (undefined).
       const [content0, filename0, spaceId0, onProgress0, vaultFiles0] = mockImportMarkdown.mock
         .calls[0] as [string, string, string, unknown, unknown]
-      expect(filename0).toBe('Alpha.md')
+      expect(filename0).toBe('export/Alpha.md')
       expect(spaceId0).toBe(DEFAULT_TEST_SPACE.id)
       expect(typeof onProgress0).toBe('function')
       // #2513 — a note with no `<en-media>` attachments ships null vaultFiles
       // (consistent with the single-file `.md` path).
       expect(vaultFiles0).toBeNull()
-      // Frontmatter + tag token + converted body all present.
+      // Frontmatter + tag item + converted body all present.
       expect(content0).toContain('source: evernote')
-      expect(content0).toContain('#[[Multi Word]]')
+      expect(content0).toContain('  - "Multi Word"')
       expect(content0).toContain('# A')
 
-      expect(mockImportMarkdown.mock.calls[1]?.[1]).toBe('Beta.md')
+      expect(mockImportMarkdown.mock.calls[1]?.[1]).toBe('export/Beta.md')
     })
 
     it('aggregates block counts across notes and shows a success result', async () => {

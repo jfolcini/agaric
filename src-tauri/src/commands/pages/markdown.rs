@@ -7025,12 +7025,11 @@ async fn ingest_attachments(
     if pending_attachments.is_empty() {
         return;
     }
-    // The note's folder within the vault: its title's path, less the picked
-    // folder that leads it and the note's own name.
+    // The note's folder within the vault: its title's path below the picked
+    // folder (#6277 decision 8), less the note's own name.
     let note_dir = ctx
         .page_title
-        .split_once('/')
-        .and_then(|(_vault, path)| path.rsplit_once('/'))
+        .rsplit_once('/')
         .map_or("", |(dir, _name)| dir)
         .to_string();
     // #2724 — count how many INGEST ATTEMPTS will read each vault file so a

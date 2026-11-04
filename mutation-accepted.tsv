@@ -138,7 +138,7 @@ frontend	src/editor/page-mode/page-tasks.ts	ArrayDeclaration	28	1	attachments: i
 # #5964 page-tasks: commitPageTask's edit callback resolves `true` only into what commitCheckboxState returns, which commitPageTask discards; the store, the API calls and the checkbox are the same either way
 frontend	src/editor/page-mode/page-tasks.ts	BooleanLiteral	31	1	if (text === markdown) return true
 # #5964 page-tasks: the same callback's closing `return true` (after `markdown = text`), equivalent for the same reason: commitPageTask discards what commitCheckboxState returns
-frontend	src/editor/page-mode/page-tasks.ts	BooleanLiteral	8	9	return true
+frontend	src/editor/page-mode/page-tasks.ts	BooleanLiteral	8	10	return true
 frontend	src/editor/page-mode/page-tasks.ts	CallExpression	1	1	this.waiting.delete(dom)
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	1	1	node.type !== this.node.type ||
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	13	1	properties: id === null ? [] : this.tasks.propertiesOf(id),
@@ -151,7 +151,6 @@ frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (id ===
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (id === null || state === null) {
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (id === null || text === null) {
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (id !== null) this.shown.add(id)
-frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (id === null) this.unsubscribeMarker = () => {}
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (saved === undefined || node === null || task === null) {
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	2	if (this.renderer !== null) return
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	53	1	if (typeof IntersectionObserver === 'undefined' || (id !== null && this.shown.has(id))) {
@@ -159,6 +158,18 @@ frontend	src/editor/page-mode/page-tasks.ts	LogicalOperator	5	1	if (saved === un
 frontend	src/editor/page-mode/page-tasks.ts	OptionalChaining	1	1	this.checkbox?.destroy()
 frontend	src/editor/page-mode/page-tasks.ts	OptionalChaining	5	1	if (first?.type.name !== 'paragraph') return null
 frontend	src/editor/page-mode/page-tasks.ts	StringLiteral	7	1	name: 'pageTaskKeys',
+# #5964 page-tasks: the gate's `observe` guard made false adds a watched block to `watched` and the observer again, which changes neither
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (this.watched.has(dom)) return
+# #5964 page-tasks: the `?.` on the observer in `observe` and `pick`: both run only once `start` has made it
+frontend	src/editor/page-mode/page-tasks.ts	OptionalChaining	1	1	this.observer?.observe(dom)
+frontend	src/editor/page-mode/page-tasks.ts	OptionalChaining	1	2	this.observer?.unobserve(dom)
+# #5964 page-tasks: `near.has(dom)` made false in `pick` unobserves and observes again a block the pick keeps, which leaves the same blocks watched
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (near.has(dom)) continue
+# #5964 page-tasks: `at < hi` made true or `<=` in firstReaching: `at` reaches `hi` only past hidden blocks, every block from `hi` to the one found is hidden, and `pick` skips hidden blocks
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (at < hi) found = at
+frontend	src/editor/page-mode/page-tasks.ts	EqualityOperator	5	1	if (at < hi) found = at
+# #5964 page-tasks: the view's `id === null` for its list marker: a block's view never holds a null id, as the id rules mint one in the transaction that makes the block
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	26	1	this.unsubscribeMarker = id === null ? () => {} : this.followMarker(id)
 # #5966 token-ids: `id === null` made false lets an id-less block whose tokens a cut took put null in `taken`; idsAfter reads `taken` only for a block whose own id is not null
 frontend	src/editor/token-ids.ts	ConditionalExpression	5	1	if (id === null || !goneAt(mapping, start) || !goneAt(mapping, tokens.last(node, offset))) {
 # #5966 token-ids: `kept !== null` made true sends an id-less block to the arm that pushes `kept`, null, as the else arm does; the null it adds to `held` is read only by later id-less blocks, which push null either way. The key also covers the whole condition made true or false at this column, which the Enter and undo-after-a-peer tests kill today

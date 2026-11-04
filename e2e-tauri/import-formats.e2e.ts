@@ -6,11 +6,11 @@
 // note: a folder pick ships the bytes of the files a note references, which
 // the backend stores as attachments and rewrites the refs to
 // (`ingest_attachments` in commands/pages/markdown.rs); `.enex` and `.jex` are
-// unpacked in the webview (`parseEnex`, `parseJex`), a Joplin note's title
-// prefixed with its notebook path. The mock keeps attachment refs as literal
-// text and models only a subset of the backend's titles and blocks (its
-// `import_markdown` in tauri-mock/handlers/pages.ts), so every case asserts
-// what a page shows after a navigation round-trip.
+// unpacked in the webview (`parseEnex`, `parseJex`), a note's title prefixed
+// with its Joplin notebook path or its `.enex` file name. The mock keeps
+// attachment refs as literal text and models only a subset of the backend's
+// titles and blocks (its `import_markdown` in tauri-mock/handlers/pages.ts), so
+// every case asserts what a page shows after a navigation round-trip.
 //
 // `.enex` and `.jex` are picked as the other import specs pick their files:
 // WebDriver's Element Send Keys on the Data tab's hidden `<input type="file">`.
@@ -126,14 +126,15 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
       'import-folder-input',
       folder,
       {
-        'note.md': Buffer.from(`- ${marker}-caption ![pic](pic.png)\n`),
+        [`${marker}-note.md`]: Buffer.from(`- ${marker}-caption ![pic](pic.png)\n`),
         'pic.png': PNG,
       },
       'Imported “',
     )
 
     await navigateTo('Journal')
-    await openPageTitled(`${folder}/note`)
+    // The picked folder's own name is no part of a title (#6277 decision 8).
+    await openPageTitled(`${marker}-note`)
     const block = blockStaticByMarker(`${marker}-caption`)
     await block.waitForDisplayed({ timeout: NAV_TIMEOUT })
     const id = await block.getAttribute('data-block-id')
@@ -152,7 +153,7 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
       {
         'a/my image.png': PNG,
         'b/my image.png': WIDE_PNG,
-        'b/note.md': Buffer.from(
+        [`b/${marker}-note.md`]: Buffer.from(
           `- ${marker}-angle ![](<my image.png>)\n- ${marker}-escaped ![](my%20image.png)\n`,
         ),
       },
@@ -160,7 +161,7 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     )
 
     await navigateTo('Journal')
-    await openPageTitled(`${folder}/b/note`)
+    await openPageTitled(`b/${marker}-note`)
     for (const ref of ['angle', 'escaped']) {
       const block = blockStaticByMarker(`${marker}-${ref}`)
       await block.waitForDisplayed({ timeout: NAV_TIMEOUT })
@@ -178,12 +179,15 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     await importFolder(
       'import-folder-input',
       folder,
-      { 'note.md': Buffer.from(`- ${marker}-read [paper](paper.pdf)\n`), 'paper.pdf': PDF },
+      {
+        [`${marker}-note.md`]: Buffer.from(`- ${marker}-read [paper](paper.pdf)\n`),
+        'paper.pdf': PDF,
+      },
       'Imported “',
     )
 
     await navigateTo('Journal')
-    await openPageTitled(`${folder}/note`)
+    await openPageTitled(`${marker}-note`)
     await expectFileLinked(`${marker}-read`, 'paper', 'paper.pdf')
   })
 
@@ -207,13 +211,13 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
       `<note><title>${title}</title><content><![CDATA[${enml}]]></content>${resource}</note>`,
       '</en-export>',
     ].join('\n')
-    await importFile('import-enex-input', 'export.enex', enex, `Imported “${title}”`)
+    await importFile('import-enex-input', 'export.enex', enex, `Imported “export/${title}”`)
 
     await navigateTo('Journal')
     await navigateTo('Pages')
-    await $(`span[title="${title}"]`).waitForDisplayed({ timeout: NAV_TIMEOUT })
-    expect(await $$(`span[title="${title}"]`).length).toBe(1)
-    await openPageTitled(title)
+    await $(`span[title="export/${title}"]`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    expect(await $$(`span[title="export/${title}"]`).length).toBe(1)
+    await openPageTitled(`export/${title}`)
     for (const block of ['first', 'second', 'item']) {
       await blockStaticByMarker(`${marker}-${block}`).waitForDisplayed({ timeout: NAV_TIMEOUT })
     }
@@ -246,10 +250,10 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
       `<note><title>${title}</title><content><![CDATA[${enml}]]></content>${task}</note>`,
       '</en-export>',
     ].join('\n')
-    await importFile('import-enex-input', 'export.enex', enex, `Imported “${title}”`)
+    await importFile('import-enex-input', 'export.enex', enex, `Imported “export/${title}”`)
 
     await navigateTo('Journal')
-    await openPageTitled(title)
+    await openPageTitled(`export/${title}`)
     await blockStaticByMarker(`${marker}-after`).waitForDisplayed({ timeout: NAV_TIMEOUT })
     const block = blockStaticByMarker(`${marker}-todo`)
     await block.waitForDisplayed({ timeout: NAV_TIMEOUT })
@@ -267,6 +271,33 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     await expectAbsent(
       '[data-testid="block-static"]*=Content not supported',
       "the task group's placeholder text",
+    )
+  })
+
+  it('#6032 — imports an .enex note under its file name, its tag a page tag and no block of tags', async () => {
+    await waitForAppReady()
+    const marker = runScopedMarker('wdio-enex-tag')
+    const stem = `${marker}-Work`
+    const title = `${stem}/${marker}-Meeting`
+    const tag = `${marker}-tag`
+    const enml = `<en-note><div>${marker}-body</div></en-note>`
+    const enex = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<en-export>',
+      `<note><title>${marker}-Meeting</title><content><![CDATA[${enml}]]></content>` +
+        `<tag>${tag}</tag></note>`,
+      '</en-export>',
+    ].join('\n')
+    await importFile('import-enex-input', `${stem}.enex`, enex, `Imported “${title}”`)
+
+    await navigateTo('Journal')
+    await openPageTitled(title)
+    await blockStaticByMarker(`${marker}-body`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    // The tag is the page's tag (PageTagSection's chip), not a block's.
+    await $(`[aria-label="Remove tag ${tag}"]`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await expectAbsent(
+      '[data-testid="block-static"] [data-testid="tag-ref-chip"]',
+      "a block holding the note's tags",
     )
   })
 
@@ -376,7 +407,7 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
   it('imports an .enex note titled with a / as one page, the / a look-alike', async () => {
     await waitForAppReady()
     const marker = runScopedMarker('wdio-enex-slash')
-    const title = `${marker}-TCP∕IP`
+    const title = `export/${marker}-TCP∕IP`
     const enml = `<en-note><div>${marker}-body</div></en-note>`
     const enex = [
       '<?xml version="1.0" encoding="UTF-8"?>',
@@ -389,7 +420,10 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     await navigateTo('Journal')
     await navigateTo('Pages')
     await pageEntryTitled(title).waitForDisplayed({ timeout: NAV_TIMEOUT })
-    await expectAbsent(`span[title="${marker}-TCP/IP"]`, 'the page IP under the namespace TCP')
+    await expectAbsent(
+      `span[title="export/${marker}-TCP/IP"]`,
+      'the page IP under the namespace TCP',
+    )
     await openPageTitled(title)
     await blockStaticByMarker(`${marker}-body`).waitForDisplayed({ timeout: NAV_TIMEOUT })
   })

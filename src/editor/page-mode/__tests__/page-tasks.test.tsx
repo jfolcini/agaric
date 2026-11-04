@@ -808,6 +808,37 @@ describe('the list marker', () => {
     expect(markerIn(container, B)?.textContent).toBe('1.')
   })
 
+  it('a block whose text stops opening with a paragraph loses its marker in place, and has it back once it opens with one', () => {
+    const { container, editor } = mountList(
+      [
+        [A, 0, 'one'],
+        [B, 0, 'two'],
+      ],
+      { [A]: listStyle('bullet'), [B]: listStyle('bullet') },
+    )
+    const block = blockEl(container, A)
+    // As a change brought in from elsewhere, which leaves the style as it is.
+    const retype = (type: string, attrs?: Record<string, unknown>) =>
+      act(() => {
+        editor.view.dispatch(
+          editor.state.tr
+            .setNodeMarkup(posIn(editor, 0, 0) - 1, editor.schema.nodes[type], attrs)
+            .setMeta(REMOTE_PATCH, true),
+        )
+      })
+
+    retype('heading', { level: 1 })
+    expect(blockEl(container, A)).toBe(block)
+    expect(markerIn(container, A)).toBeNull()
+    expect(blockEl(container, A)).not.toHaveAttribute('data-list-item')
+    expect(markerIn(container, B)?.textContent).toBe('•')
+
+    retype('paragraph')
+    expect(blockEl(container, A)).toBe(block)
+    expect(markerIn(container, A)?.textContent).toBe('•')
+    expect(blockEl(container, A)).toHaveAttribute('data-list-item')
+  })
+
   it('marks a list block, and only one, as a list item, which the CSS sets closer than a paragraph', () => {
     const { container, lists } = mountList(
       [

@@ -496,7 +496,10 @@ function attachmentsToVaultFiles(
  * markdown is produced eagerly (so `bytes` reflects its length, matching the
  * pre-refactor `unit.content.length` byte accounting), and any decoded
  * `<en-media>` attachments ship as `vaultFiles` through the SAME plumbing the
- * folder import uses (#2513). Note filenames use the Evernote title sanitizer.
+ * folder import uses (#2513). A note is titled `<file stem>/<title>`, as a
+ * Joplin note is by its notebook path: an `.enex` names no notebook, so its
+ * file name does, and two files' "Meeting"s stay two pages. The stem and the
+ * title each go through the Evernote title sanitizer, so each is one level.
  *
  * #2899 — the `Uint8Array` → `number[]` conversion happens inside `load()`,
  * NOT here, so a large `.enex` doesn't materialize every note's attachment
@@ -505,9 +508,10 @@ function attachmentsToVaultFiles(
  * `Uint8Array`s from `parseEnex`) are captured by the closure and converted
  * only when this unit's `load()` runs, right before its `invoke`.
  */
-export function enexNotesToUnits(notes: EnexNote[]): ImportUnit[] {
+export function enexNotesToUnits(notes: EnexNote[], fileName: string): ImportUnit[] {
+  const notebook = sanitizeNoteTitleToFilename(fileName.replace(/\.enex$/i, ''))
   return notes.map((note) => {
-    const name = `${sanitizeNoteTitleToFilename(note.title)}.md`
+    const name = `${notebook}/${sanitizeNoteTitleToFilename(note.title)}.md`
     const content = enexNoteToMarkdown(note)
     return {
       name,
