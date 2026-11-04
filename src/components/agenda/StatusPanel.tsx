@@ -12,9 +12,8 @@
  *
  * SyncStatusCard — the overall sync state, at the top of Settings › Sync &
  * devices (below any quarantined sync changes, #6057) once a device is paired
- * (#5629). Status only: the device list below
- * owns every sync action. It lives here because it shares the metric-card
- * helpers.
+ * (#5629). Status only: the device list below owns every sync action. It
+ * lives here because it shares the metric-card helpers.
  */
 
 import type { TFunction } from 'i18next'

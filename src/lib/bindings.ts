@@ -643,15 +643,15 @@ export const commands = {
 	 *  nothing ever writes it.
 	 */
 	getOsNetworkBlockStatus: () => typedError<OsNetworkBlockStatus, AppError>(__TAURI_INVOKE("get_os_network_block_status")),
+	/**  Tauri command: read the device-local sync relay preference (#4549). */
+	getSyncRelaySettings: () => typedError<SyncRelaySettings, AppError>(__TAURI_INVOKE("get_sync_relay_settings")),
+	/**  Tauri command: persist the device-local sync relay preference (#4549). */
+	setSyncRelaySettings: (settings: SyncRelaySettings) => typedError<null, AppError>(__TAURI_INVOKE("set_sync_relay_settings", { settings })),
 	/**
 	 *  Tauri command: list quarantined sync deltas (#6057). Delegates to
 	 *  [`list_quarantined_sync_slots_inner`].
 	 */
 	listQuarantinedSyncSlots: (limit: number) => typedError<QuarantinedSlotList, AppError>(__TAURI_INVOKE("list_quarantined_sync_slots", { limit })),
-	/**  Tauri command: read the device-local sync relay preference (#4549). */
-	getSyncRelaySettings: () => typedError<SyncRelaySettings, AppError>(__TAURI_INVOKE("get_sync_relay_settings")),
-	/**  Tauri command: persist the device-local sync relay preference (#4549). */
-	setSyncRelaySettings: (settings: SyncRelaySettings) => typedError<null, AppError>(__TAURI_INVOKE("set_sync_relay_settings", { settings })),
 	/**  Tauri command: batch-count agenda items per (date, source). Delegates to [`count_agenda_batch_by_source_inner`]. */
 	countAgendaBatchBySource: (dates: string[], scope: SpaceScope) => typedError<{ [key in string]: { [key in string]: number } }, AppError>(__TAURI_INVOKE("count_agenda_batch_by_source", { dates, scope })),
 	/**  Tauri command: batch-count backlinks per target page. Delegates to [`count_backlinks_batch_inner`]. */

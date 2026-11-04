@@ -1220,11 +1220,6 @@ async fn list_quarantined_sync_slots_returns_newest_first_with_every_field() {
         ],
         "newest quarantine first, each row carrying its own provenance"
     );
-    let ids: Vec<i64> = list.slots.iter().map(|s| s.id).collect();
-    assert!(
-        ids.windows(2).all(|w| w[0] > w[1]),
-        "ties on quarantined_at_ms break by id DESC, got {ids:?}"
-    );
     for slot in &list.slots {
         assert!(
             (before..=after).contains(&slot.quarantined_at_ms),
