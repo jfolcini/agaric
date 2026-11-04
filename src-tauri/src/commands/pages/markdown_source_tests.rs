@@ -53,7 +53,7 @@ pub(super) fn page_data(descendants: Vec<BlockRow>) -> PageExportData {
         tag_names: HashMap::new(),
         page_titles: HashMap::new(),
         block_ref_replacement: HashMap::new(),
-        same_page_ref_targets: HashSet::new(),
+        addressed_blocks: HashSet::new(),
         descendant_properties: HashMap::new(),
         list_styles: HashMap::new(),
         ref_titles: HashMap::new(),
