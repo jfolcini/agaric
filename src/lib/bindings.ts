@@ -652,6 +652,11 @@ export const commands = {
 	 *  [`list_quarantined_sync_slots_inner`].
 	 */
 	listQuarantinedSyncSlots: (limit: number) => typedError<QuarantinedSlotList, AppError>(__TAURI_INVOKE("list_quarantined_sync_slots", { limit })),
+	/**
+	 *  Tauri command: retry a quarantined sync delta at the next start (#6057).
+	 *  Delegates to [`readmit_quarantined_sync_slot_inner`].
+	 */
+	readmitQuarantinedSyncSlot: (id: number) => typedError<null, AppError>(__TAURI_INVOKE("readmit_quarantined_sync_slot", { id })),
 	/**  Tauri command: batch-count agenda items per (date, source). Delegates to [`count_agenda_batch_by_source_inner`]. */
 	countAgendaBatchBySource: (dates: string[], scope: SpaceScope) => typedError<{ [key in string]: { [key in string]: number } }, AppError>(__TAURI_INVOKE("count_agenda_batch_by_source", { dates, scope })),
 	/**  Tauri command: batch-count backlinks per target page. Delegates to [`count_backlinks_batch_inner`]. */

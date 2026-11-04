@@ -69,4 +69,24 @@ test.describe('Quarantined sync changes @sync @settings', () => {
     )
     expect(overflow).toBe(0)
   })
+
+  test('Retry takes the change off the list until the next start', async ({ page }) => {
+    await waitForBoot(page)
+    await seedQuarantinedSlot(page)
+    await openSyncSettings(page)
+    await expectQuarantinedRow(page)
+
+    await page.getByRole('button', { name: 'Retry the sync change for Personal' }).click()
+
+    const toast = page.locator('[data-sonner-toast]').filter({
+      hasText: 'Will try again the next time Agaric starts',
+    })
+    await expect(toast).toBeVisible()
+    await expect(toast.getByRole('button', { name: 'Restart now' })).toBeVisible()
+    await expect(page.getByTestId('quarantined-sync-card')).toHaveCount(0)
+
+    await navigateToView(page, 'Journal')
+    await openSyncSettings(page)
+    await expect(page.getByTestId('quarantined-sync-card')).toHaveCount(0)
+  })
 })

@@ -236,6 +236,13 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
     'write is the `pending_pairing` key in app_settings, and no command on the IPC surface ' +
     'reads that key on either stack, so no query step can observe the clear',
 
+  // ── Sync storage no command writes ──
+  readmit_quarantined_sync_slot:
+    'fixture candidate (#6057): needs a `seed.loro_sync_quarantine` section on both stacks ' +
+    'and a query projection for non-block rows; until then `sync_cmd_tests.rs` pins the backend, ' +
+    '`quarantined-sync-slots.test.ts` the mock, and the e2e-tauri sync-quarantine spec the boot ' +
+    'that retries it',
+
   // ── Observability / runtime toggles (no persistent domain state) ──
   log_frontend: 'no persistent state — forwards a frontend log line',
   ingest_otel_spans: 'no persistent state — telemetry export',
@@ -597,7 +604,7 @@ const PINNING_BLOCKED_MUTATING: ReadonlySet<string> = new Set([
  * ratchet exists to make visible. Both directions now name the command in the
  * diff — pin one and delete its line here, waive one and add it.
  */
-const NOT_YET_PINNED_MUTATING: readonly string[] = []
+const NOT_YET_PINNED_MUTATING: readonly string[] = ['readmit_quarantined_sync_slot']
 
 /**
  * The read leg's debt. A waiver belongs here when the snapshot or the query
