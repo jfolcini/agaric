@@ -9,6 +9,12 @@
  * shape the block was loaded with (D2). And the editor's parse reads each
  * content into the code blocks and thematic breaks Rust's grammar reads there
  * (`rustReads`, which Rust authors), in the same order (#6033).
+ *
+ * The stored form is the editor's form (#6277 C3): the editor writes back each
+ * row, and each import-corpus block in `corpusBlocks` (which Rust authors), as
+ * it was stored, or as its reviewed `editorCanonical` where the editor
+ * normalises a source form without losing anything. A `knownLoss` row names
+ * the issue of a loss the editor still has, and stays red until it is fixed.
  */
 
 import { readFileSync } from 'node:fs'
@@ -18,14 +24,19 @@ import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
-import { parse } from '@/editor/markdown-parse'
+import { parse, serialize } from '@/editor/markdown-serializer'
 import { processCheckboxSyntax } from '@/lib/block-utils'
 import { TASK_STATE_TO_MARKER, TASK_STATES, type TodoState } from '@/lib/task-states'
 import { runUnmountFlush, type UnmountFlushResult } from '@/stores/unmount-flush'
 
-interface StoredBlock {
+interface StoredForm {
   name: string
   content: string
+  editorCanonical?: string
+  knownLoss?: string
+}
+
+interface StoredBlock extends StoredForm {
   editorFlush: UnmountFlushResult['kind']
   rustReads: ('code' | 'rule')[]
 }
@@ -38,6 +49,7 @@ interface TaskMarker {
 
 interface Vectors {
   blocks: StoredBlock[]
+  corpusBlocks: StoredForm[]
   taskMarkers: TaskMarker[]
 }
 
@@ -95,6 +107,19 @@ describe('stored block content vectors (#5160)', () => {
       expect(reads).toEqual(row.rustReads)
     },
   )
+
+  it.each([...vectors.blocks, ...vectors.corpusBlocks].map((row) => [row.name, row] as const))(
+    'the editor writes %s back as it was stored',
+    (_name, row) => {
+      const written = serialize(parse(row.content))
+      if (row.knownLoss === undefined) expect(written).toBe(row.editorCanonical ?? row.content)
+      else expect(written, `fixed ${row.knownLoss}? drop knownLoss`).not.toBe(row.content)
+    },
+  )
+
+  it('the import corpus has blocks', () => {
+    expect(vectors.corpusBlocks.length).toBeGreaterThan(0)
+  })
 
   it.each(vectors.taskMarkers.map((row) => [row.marker, row] as const))(
     'the checkbox [%s] means what it means in Rust',
