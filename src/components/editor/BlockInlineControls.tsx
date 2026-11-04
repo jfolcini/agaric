@@ -547,9 +547,9 @@ export const BlockInlineControls = React.memo(
     return (
       <div
         className={cn(
-          // `min-h-8` is one text line box, so the checkbox centres on the
-          // first line of a wrapped block (#5332).
-          'inline-controls flex items-center flex-shrink-0 gap-1 min-h-8 max-sm:flex-shrink max-sm:w-auto max-sm:gap-x-1',
+          // `min-h-block-line` is the first text line box, so the checkbox
+          // centres on the first line of a wrapped block (#5332).
+          'inline-controls flex items-center flex-shrink-0 gap-1 min-h-block-line max-sm:flex-shrink max-sm:w-auto max-sm:gap-x-1',
         )}
       >
         {/* Fix 6: in multiselect mode the task checkbox is suppressed on every

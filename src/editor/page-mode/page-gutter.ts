@@ -271,6 +271,11 @@ export class PageGrip {
         'data-chevron',
         block.querySelector(':scope > .page-block-gutter') !== null,
       )
+      // Outside the block, it takes the block's first line box: a heading's is taller.
+      element.style.setProperty(
+        '--block-first-line',
+        getComputedStyle(block).getPropertyValue('--block-first-line'),
+      )
       element.hidden = false
     }
     // The editor is mounted: the pointer is on it.
