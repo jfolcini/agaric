@@ -29,6 +29,7 @@
 //! | `batch` | the `_in_tx` halves of the tools it names | #5399 — `append_block`, `update_block_content`, `set_property`, `add_tag`, `remove_tag`, `move_blocks` and `delete_block` calls in one transaction: one activity entry, one undo, nothing written when one is refused. |
 //! | `edit_page_markdown` | [`apply_page_source_inner`] | #5399 — the page's Markdown as `get_page_markdown` with `editable` reads it, edited, saved as the app's Edit as Markdown saves it. A stale `base` is refused. |
 //! | `set_page_aliases` | [`set_page_aliases_inner`] | Replaces the page's whole alias list in one transaction. An alias another page holds is refused, nothing written. |
+//! | `attach_file` | [`add_attachment_with_bytes_inner`] | #5410 — copies the regular file at an absolute `path` onto a block, as the app attaches a file: size cap, type allow-list, dedup, undo, sync. The type is the extension's. A symlink, a directory or a file over the cap is refused before it is read. |
 //!
 //! Every `tools_ro` tool follows the write tools, served by the
 //! [`ReadOnlyTools`] this registry holds (#5379).
@@ -57,7 +58,7 @@
 //! If an agent needs one of these, the user runs it from the UI.
 
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::Deserialize;
@@ -70,14 +71,15 @@ use super::handler_utils::{
     with_space_guard,
 };
 use super::registry::{
-    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_BATCH, TOOL_CAPTURE,
-    TOOL_CREATE_PAGE, TOOL_CREATE_TAG, TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY,
+    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_ATTACH_FILE, TOOL_BATCH,
+    TOOL_CAPTURE, TOOL_CREATE_PAGE, TOOL_CREATE_TAG, TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY,
     TOOL_EDIT_PAGE_MARKDOWN, TOOL_MOVE_BLOCKS, TOOL_MOVE_PAGE_TO_SPACE, TOOL_REMOVE_TAG,
     TOOL_RESTORE_BLOCK, TOOL_SET_PAGE_ALIASES, TOOL_SET_PROPERTY, TOOL_UNDO,
     TOOL_UPDATE_BLOCK_CONTENT, ToolDescription, ToolRegistry,
 };
-use super::tools_ro::{self, ReadOnlyTools};
+use super::tools_ro::{self, AttachmentListRow, ReadOnlyTools};
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
+use crate::commands::attachments::{ATTACHMENT_EXTENSIONS, mime_for_extension};
 use crate::commands::blocks::crud::{DeleteInTx, delete_block_in_tx, dispatch_deletes};
 use crate::commands::blocks::move_ops::move_blocks_batch_in_tx;
 use crate::commands::blocks::space_move::describe_losses;
@@ -88,12 +90,12 @@ use crate::commands::pages::markdown::{
 use crate::commands::properties::set_property_inner_in_tx;
 use crate::commands::tags::{add_tag_in_tx, remove_tag_inner_in_tx};
 use crate::commands::{
-    DeletePropertyResponse, DeleteResponse, MovedBlocks, PropertyLoss, SourceSaveFlags,
-    TagResponse, add_tag_inner, append_markdown_inner, capture_to_journal_inner,
-    create_block_inner_with_space, delete_block_inner, delete_property_inner,
-    get_active_block_inner, move_blocks_batch_inner, move_blocks_to_space_inner,
-    preview_space_move_inner, remove_tag_inner, restore_block_inner, revert_ops_inner,
-    set_page_aliases_inner, set_property_inner,
+    DeletePropertyResponse, DeleteResponse, MAX_ATTACHMENT_SIZE, MovedBlocks, PropertyLoss,
+    SourceSaveFlags, TagResponse, add_attachment_with_bytes_inner, add_tag_inner,
+    append_markdown_inner, capture_to_journal_inner, create_block_inner_with_space,
+    delete_block_inner, delete_property_inner, get_active_block_inner, move_blocks_batch_inner,
+    move_blocks_to_space_inner, preview_space_move_inner, remove_tag_inner, restore_block_inner,
+    revert_ops_inner, set_page_aliases_inner, set_property_inner,
 };
 use crate::db::{CommandTx, validate_block_in_space};
 use crate::materializer::Materializer;
@@ -288,6 +290,16 @@ struct SetPageAliasesArgs {
     space_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AttachFileArgs {
+    space_id: String,
+    block_id: String,
+    path: String,
+    #[serde(default)]
+    filename: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // ReadWriteTools
 // ---------------------------------------------------------------------------
@@ -311,6 +323,8 @@ pub struct ReadWriteTools {
     /// Defaults to [`NoopViewChangeEmitter`] (headless / test path); production
     /// swaps in the Tauri emitter via [`with_view_emitter`](Self::with_view_emitter).
     view_emitter: Arc<dyn ViewChangeEmitter>,
+    /// Where `attach_file` stores the bytes it copies in.
+    app_data_dir: PathBuf,
 }
 
 impl ReadWriteTools {
@@ -334,12 +348,13 @@ impl ReadWriteTools {
                 pool.clone(),
                 materializer.clone(),
                 device_id.clone(),
-                app_data_dir,
+                app_data_dir.clone(),
             ),
             pool,
             materializer,
             device_id,
             view_emitter: Arc::new(NoopViewChangeEmitter),
+            app_data_dir,
         }
     }
 
@@ -376,6 +391,7 @@ pub(crate) fn write_tool_descriptions() -> Vec<ToolDescription> {
         tool_desc_batch(),
         tool_desc_edit_page_markdown(),
         tool_desc_set_page_aliases(),
+        tool_desc_attach_file(),
     ]
 }
 
@@ -410,6 +426,7 @@ impl ToolRegistry for ReadWriteTools {
         let materializer = self.materializer.clone();
         let device_id = self.device_id.clone();
         let emitter = self.view_emitter.clone();
+        let app_data_dir = self.app_data_dir.clone();
         scoped_dispatch(ctx, name, move |name| async move {
             let emitter: &dyn ViewChangeEmitter = emitter.as_ref();
             match name.as_str() {
@@ -464,6 +481,10 @@ impl ToolRegistry for ReadWriteTools {
                 }
                 TOOL_SET_PAGE_ALIASES => {
                     handle_set_page_aliases(&pool, &materializer, &device_id, emitter, args).await
+                }
+                TOOL_ATTACH_FILE => {
+                    let dir = app_data_dir.as_path();
+                    handle_attach_file(&pool, &materializer, &device_id, dir, emitter, args).await
                 }
                 // Every read tool, and the unknown-tool error (#5379).
                 other => reads.call_tool(other, args, &read_ctx).await,
@@ -1014,6 +1035,52 @@ fn tool_desc_edit_page_markdown() -> ToolDescription {
             },
         }),
     }
+}
+
+/// [`MAX_ATTACHMENT_SIZE`] in the megabytes an agent is told.
+const MAX_ATTACHMENT_MB: i64 = MAX_ATTACHMENT_SIZE / (1024 * 1024);
+
+fn tool_desc_attach_file() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_ATTACH_FILE.to_string(),
+        description: format!(
+            "Attach a file on this device to a block, as attaching it in the app does: the \
+             file is copied into the vault, which syncs it to the user's other devices, and \
+             the original is not touched. Returns the attachment as list_attachments lists \
+             it; `undo` with the `op_refs` takes it back. The file must be a regular file, \
+             not a directory or a symbolic link, of at most {MAX_ATTACHMENT_MB} MB. Its type \
+             is its name's extension, one of: {}. A file whose bytes are already attached is \
+             stored once. A recording's transcript is a Markdown file named after it with \
+             `.transcript.md` (`call.transcript.md` for `call.ogg`), its summary one with \
+             `.summary.md`, each attached to the recording's block. A transcript has one \
+             paragraph per segment, `[hh:mm:ss] **Speaker:** text` (`[mm:ss]` works too, \
+             the speaker is optional); the app seeks the recording from its timestamps.",
+            known_extensions(),
+        ),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["space_id", "block_id", "path"],
+            "properties": {
+                "space_id": {
+                    "type": "string",
+                    "description": "ULID of the space the agent is operating in. The attach is rejected with a Validation error if `block_id`'s owning page lives in a different space.",
+                },
+                "block_id": { "type": "string", "description": "ULID of the block to attach the file to." },
+                "path": { "type": "string", "description": "Absolute path of the file on this device." },
+                "filename": {
+                    "type": "string",
+                    "description": "The attachment's name, its extension giving its type. Defaults to the file name of `path`.",
+                },
+            },
+        }),
+    }
+}
+
+/// The extensions an attached file may have, for an agent to read.
+fn known_extensions() -> String {
+    let extensions: Vec<&str> = ATTACHMENT_EXTENSIONS.iter().map(|(ext, _)| *ext).collect();
+    extensions.join(", ")
 }
 
 // ---------------------------------------------------------------------------
@@ -1598,6 +1665,123 @@ async fn handle_set_page_aliases(
         set_page_aliases_inner(pool, device_id, materializer, &page_id, args.aliases).await?;
     emit_blocks_changed_for(pool, emitter, BlockId::from_trusted(&page_id)).await;
     to_tool_result(&json!({ "page_id": page_id, "aliases": aliases }))
+}
+
+/// Copies the file in through the app's attachment write, so the size cap, the
+/// type allow-list, dedup, undo and sync treat it as a file attached in the
+/// app. That write stores the bytes before its transaction opens and removes
+/// them when the transaction refuses the block.
+async fn handle_attach_file(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    device_id: &str,
+    app_data_dir: &Path,
+    emitter: &dyn ViewChangeEmitter,
+    args: Value,
+) -> Result<Value, AppError> {
+    let args: AttachFileArgs = parse_args(TOOL_ATTACH_FILE, args)?;
+    let space_id = SpaceId::from_string(args.space_id)?;
+    let block_id = BlockId::from_string(args.block_id)?;
+    let path = PathBuf::from(args.path);
+    check_source_file(&path).await?;
+    let filename = match args.filename {
+        Some(filename) => filename,
+        None => source_file_name(&path)?,
+    };
+    let mime_type = attachment_mime_type(&filename)?;
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| source_refused(&path, &format!("could not be read: {e}")))?;
+    let row = with_space_guard(
+        space_id.as_str(),
+        vec![block_id.as_str().to_owned()],
+        add_attachment_with_bytes_inner(
+            pool,
+            device_id,
+            materializer,
+            app_data_dir,
+            block_id.clone(),
+            filename,
+            mime_type.to_owned(),
+            bytes,
+        ),
+    )
+    .await?;
+    emit_blocks_changed_for(pool, emitter, block_id).await;
+    to_tool_result(&AttachmentListRow::new(app_data_dir, row)?)
+}
+
+/// `attach_file`'s `path` refused, naming its `problem`.
+fn source_refused(path: &Path, problem: &str) -> AppError {
+    AppError::validation(format!(
+        "tool `{TOOL_ATTACH_FILE}`: `path` '{}' {problem}",
+        path.display()
+    ))
+}
+
+/// Refuses `path`, from its metadata and before a byte is read, unless it is
+/// absolute and names a regular file within the attachment cap. A symlink is
+/// refused, not followed, so what is copied is the file the path names.
+async fn check_source_file(path: &Path) -> Result<(), AppError> {
+    if !path.is_absolute() {
+        return Err(source_refused(path, "is not an absolute path"));
+    }
+    let metadata = tokio::fs::symlink_metadata(path).await.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            source_refused(path, "does not exist")
+        } else {
+            source_refused(path, &format!("could not be read: {e}"))
+        }
+    })?;
+    let kind = metadata.file_type();
+    if kind.is_symlink() {
+        return Err(source_refused(
+            path,
+            "is a symbolic link; pass the path of the file it points to",
+        ));
+    }
+    if kind.is_dir() {
+        return Err(source_refused(path, "is a directory, not a file"));
+    }
+    // A pipe or a device has no end to read to.
+    if !kind.is_file() {
+        return Err(source_refused(path, "is not a regular file"));
+    }
+    if metadata.len() > MAX_ATTACHMENT_SIZE.unsigned_abs() {
+        return Err(source_refused(
+            path,
+            &format!(
+                "is {} bytes, over the {MAX_ATTACHMENT_MB} MB attachment cap",
+                metadata.len()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// The file name of `path`: the attachment's name when the agent gives none.
+fn source_file_name(path: &Path) -> Result<String, AppError> {
+    path.file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .map(str::to_owned)
+        .ok_or_else(|| source_refused(path, "has no UTF-8 file name; pass `filename`"))
+}
+
+/// The MIME type of `filename`'s extension, refused naming the extension when
+/// no attachment may have it.
+fn attachment_mime_type(filename: &str) -> Result<&'static str, AppError> {
+    let extension = filename.trim().rsplit_once('.').map_or("", |(_, ext)| ext);
+    mime_for_extension(extension).ok_or_else(|| {
+        let what = if extension.is_empty() {
+            format!("'{filename}' has no extension")
+        } else {
+            format!("the extension '{extension}' of '{filename}' is not an attachment type")
+        };
+        AppError::validation(format!(
+            "tool `{TOOL_ATTACH_FILE}`: {what}; an attachment's extension is one of: {}",
+            known_extensions()
+        ))
+    })
 }
 
 /// Reverts through the same inner as the Activity feed's Undo, so the revert
