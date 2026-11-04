@@ -3,6 +3,9 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { AttachmentAudio, useRecordingPlayer } from '@/components/attachments/AttachmentAudio'
+import { groupRecording } from '@/components/attachments/recording-attachments'
+import { TranscriptAttachment } from '@/components/attachments/TranscriptAttachment'
 import {
   type ImageAlignment,
   ImageResizeToolbar,
@@ -574,111 +577,6 @@ function AttachmentFileChip({
   )
 }
 
-/** A swipe on the block row deletes it; scrubbing the seek bar must not count as one. */
-function stopTouchPropagation(e: React.TouchEvent): void {
-  e.stopPropagation()
-}
-
-/**
- * Chromium's `MediaRecorder` (Android, Windows) writes WebM with no Duration
- * element, so `duration` stays `Infinity` and the controls show no length
- * until the note has played to the end. A seek past the end makes the element
- * scan for the last frame and report the real duration; the playhead then goes
- * back to the start. A seek plays nothing. Module-level so the ref callback is
- * stable: React attaches it once per element and runs the cleanup on unmount.
- */
-function resolveUnknownDuration(audio: HTMLAudioElement): () => void {
-  const controller = new AbortController()
-  const { signal } = controller
-  const rewindOnceKnown = () => {
-    if (!Number.isFinite(audio.duration)) return
-    audio.removeEventListener('durationchange', rewindOnceKnown)
-    audio.currentTime = 0
-  }
-  audio.addEventListener(
-    'loadedmetadata',
-    () => {
-      if (Number.isFinite(audio.duration)) return
-      audio.addEventListener('durationchange', rewindOnceKnown, { signal })
-      audio.currentTime = Number.MAX_SAFE_INTEGER
-    },
-    { signal },
-  )
-  return () => controller.abort()
-}
-
-/**
- * Inline `<audio controls>` player for an `audio/*` attachment (#5364). Same
- * viewport-gated byte read and blob-URL lifecycle as `AttachmentImage`; on a
- * failed read it falls back to the file chip so the recording stays
- * downloadable.
- */
-function AttachmentAudio({
-  att,
-  onPdfOpen,
-}: {
-  att: Attachment
-  onPdfOpen: (url: string, filename: string, attachmentId: string) => void
-}): React.ReactElement {
-  const { t } = useTranslation()
-  const [url, setUrl] = useState<string | null>(null)
-  const [error, setError] = useState(false)
-  const [inView, viewGateRef] = useEnteredViewport<HTMLSpanElement>()
-
-  useEffect(() => {
-    if (!inView) return
-    let cancelled = false
-    let objectUrl: string | null = null
-    readAttachment(att.id)
-      .then((bytes) => {
-        if (cancelled) return
-        objectUrl = URL.createObjectURL(bytesToBlob(bytes, att.mime_type))
-        setUrl(objectUrl)
-      })
-      .catch((err) => {
-        if (cancelled) return
-        logger.warn('AttachmentRenderer', 'read audio bytes failed', { id: att.id }, err)
-        setError(true)
-      })
-    return () => {
-      cancelled = true
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
-    }
-  }, [att.id, att.mime_type, inView])
-
-  if (error) return <AttachmentFileChip att={att} onPdfOpen={onPdfOpen} />
-
-  if (!url) {
-    return (
-      <span
-        ref={viewGateRef}
-        className="text-xs text-muted-foreground"
-        data-testid="attachment-audio-loading"
-      >
-        {t('attachment.loadingAudio')}
-      </span>
-    )
-  }
-
-  return (
-    // `auto`, not `metadata`: the bytes are already in memory, and under
-    // `metadata` WebKitGTK reports an Ogg Opus note's duration from however much
-    // it happened to read, often a fraction of it (#5730).
-    // oxlint-disable-next-line jsx-a11y/media-has-caption -- a voice note has no caption track yet; its transcript is a later slice of #5364
-    <audio
-      ref={resolveUnknownDuration}
-      controls
-      preload="auto"
-      src={url}
-      aria-label={t('attachment.audioLabel', { filename: att.filename })}
-      className="max-w-full"
-      onTouchStart={stopTouchPropagation}
-      onTouchMove={stopTouchPropagation}
-      onTouchEnd={stopTouchPropagation}
-    />
-  )
-}
-
 /**
  * Inline rich-text preview for a `.md` / text attachment (#1451). Lazily reads
  * the attachment bytes over IPC (viewport-gated, mirroring `AttachmentImage`),
@@ -886,6 +784,12 @@ export function AttachmentRenderer({
     [onLightboxOpen, buildImageSet, altFor, captionForLightbox],
   )
 
+  // A recording lays out its player first, then its summary open, then its
+  // transcript closed, then everything else in stored order (#5364).
+  const recording = useMemo(() => groupRecording(attachments), [attachments])
+  const player = useRecordingPlayer()
+  const chip = (att: Attachment) => <AttachmentFileChip att={att} onPdfOpen={onPdfOpen} />
+
   if (attachments.length === 0) return null
 
   return (
@@ -895,7 +799,30 @@ export function AttachmentRenderer({
       data-testid="attachment-section"
       data-alignment={imageAlignment}
     >
-      {attachments.map((att) => {
+      {recording.audio && (
+        <AttachmentAudio
+          key={recording.audio.id}
+          att={recording.audio}
+          player={player}
+          fallback={chip(recording.audio)}
+        />
+      )}
+      {recording.summary && (
+        <MarkdownAttachment
+          key={recording.summary.id}
+          att={recording.summary}
+          onPdfOpen={onPdfOpen}
+        />
+      )}
+      {recording.transcript && (
+        <TranscriptAttachment
+          key={recording.transcript.id}
+          att={recording.transcript}
+          player={player}
+          fallback={chip(recording.transcript)}
+        />
+      )}
+      {recording.rest.map((att) => {
         if (att.mime_type.startsWith('image/')) {
           return (
             <AttachmentImage
@@ -916,7 +843,7 @@ export function AttachmentRenderer({
           )
         }
         if (att.mime_type.startsWith('audio/')) {
-          return <AttachmentAudio key={att.id} att={att} onPdfOpen={onPdfOpen} />
+          return <AttachmentAudio key={att.id} att={att} fallback={chip(att)} />
         }
         // #1451: render `.md` / text attachments as an inline rich-text
         // preview (reusing `renderRichContent`) instead of a download-only chip.

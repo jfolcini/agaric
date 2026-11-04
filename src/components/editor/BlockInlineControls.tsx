@@ -81,6 +81,19 @@ interface CheckboxStyle {
   icon?: React.ReactNode
 }
 
+/**
+ * A state's dot: a circle at the centre of the box's inner square, drawn as an
+ * SVG that fills it, so it stays round and centred at any font size and pixel
+ * ratio, where a box sized in `em` is snapped to whole pixels off centre.
+ */
+function TaskDot({ className }: { className: string }) {
+  return (
+    <svg viewBox="0 0 12 12" className={cn('size-full', className)} aria-hidden="true">
+      <circle cx="6" cy="6" r="3" fill="currentColor" />
+    </svg>
+  )
+}
+
 const EMPTY_STYLE: CheckboxStyle = {
   className: 'task-checkbox-empty border-muted-foreground/40 transition-colors',
   testId: 'task-checkbox-empty',
@@ -96,7 +109,7 @@ const TASK_CHECKBOX_STYLES: Record<string, CheckboxStyle> = {
     className:
       'task-checkbox-doing border-task-doing bg-task-doing/20 flex items-center justify-center',
     testId: 'task-checkbox-doing',
-    icon: <div className="size-[0.375em] rounded-sm bg-task-doing" />,
+    icon: <TaskDot className="text-task-doing" />,
   },
   CANCELLED: {
     // CANCELLED is visually "closed but not completed" — muted grey with an X glyph.
@@ -112,7 +125,7 @@ const TASK_CHECKBOX_STYLES: Record<string, CheckboxStyle> = {
   _custom: {
     className:
       'task-checkbox-custom border-task-custom bg-task-custom/20 flex items-center justify-center',
-    icon: <div className="size-[0.375em] rounded-full bg-task-custom" />,
+    icon: <TaskDot className="text-task-custom" />,
   },
   _empty: EMPTY_STYLE,
 }
@@ -532,9 +545,9 @@ export const BlockInlineControls = React.memo(
     return (
       <div
         className={cn(
-          // `min-h-8` is one text line box, so the checkbox centres on the
-          // first line of a wrapped block (#5332).
-          'inline-controls flex items-center flex-shrink-0 gap-1 min-h-8 max-sm:flex-shrink max-sm:w-auto max-sm:gap-x-1',
+          // `min-h-block-line` is the first text line box, so the checkbox
+          // centres on the first line of a wrapped block (#5332).
+          'inline-controls flex items-center flex-shrink-0 gap-1 min-h-block-line max-sm:flex-shrink max-sm:w-auto max-sm:gap-x-1',
         )}
       >
         {/* Fix 6: in multiselect mode the task checkbox is suppressed on every
