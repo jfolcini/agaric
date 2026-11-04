@@ -1525,6 +1525,14 @@ describe('MarkdownReveal for quotes, callouts, code blocks and math (#5691)', ()
     expect(undoDepth(ed.state)).toBe(0)
   })
 
+  it('shows a folded callout’s fold marker after its type (#6033)', () => {
+    const ed = createEditor('> [!faq]- Why?\n>\n> Because.', constructs)
+    const stored = markdown(ed)
+    ed.commands.setTextSelection(at(ed, 'Why?') + 1)
+    expect(syntax(ed)).toEqual(['> [!FAQ]- '])
+    expect(markdown(ed)).toBe(stored)
+  })
+
   it('shows the syntax of every line a range selects, as it does every heading’s # run', () => {
     const ed = createEditor(`${QUOTES}\n\n${CODE}`, constructs)
     ed.commands.setTextSelection({ from: at(ed, 'first') + 1, to: at(ed, 'deep') + 1 })
