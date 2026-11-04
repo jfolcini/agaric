@@ -120,6 +120,12 @@ export const VERIFIED_PAIRS = [
     evidence:
       '#5786 bumped it; `npx oxlint --type-aware` with OXLINT_TSGOLINT_PATH at 7.0.2004 and at 7.0.2003 gave identical findings (68 over the whole tree), and both flagged await-thenable, no-floating-promises, only-throw-error and require-await in a canary',
   },
+  {
+    typescript: '7.0.2',
+    tsgolint: '7.0.2005',
+    evidence:
+      '#6257 bumped it; `npx oxlint --type-aware` with OXLINT_TSGOLINT_PATH at 7.0.2005 and at 7.0.2004 gave identical findings (64 over the whole tree), and both flagged await-thenable, no-floating-promises, only-throw-error and require-await in a canary',
+  },
 ]
 
 /** Thrown when the guard cannot reach a verdict at all (exit 3, never 2). */
