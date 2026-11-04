@@ -76,6 +76,13 @@ describe('parseTranscript', () => {
     ])
   })
 
+  it('drops blank paragraphs and all the space after a timestamp', () => {
+    expect(parseTranscript('\n\n[00:01]     **A:** hi\n\n \n\n[00:02]\tbye\n\n')).toEqual([
+      { start: 1, label: '00:01', markdown: '**A:** hi' },
+      { start: 2, label: '00:02', markdown: 'bye' },
+    ])
+  })
+
   it('is null for text with no timestamped paragraph', () => {
     expect(parseTranscript('')).toBeNull()
     expect(parseTranscript('# Notes\n\nNo times here.')).toBeNull()

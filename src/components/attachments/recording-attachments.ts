@@ -1,10 +1,5 @@
-/**
- * The file-name suffixes that mark a recording's transcript and summary
- * (#5364). Read case-insensitively. The frontend only groups by them; S4 of
- * #5410/#5364 makes Rust (`add_meeting_inner`) the owner of the rule that
- * names the files.
- */
-export const RECORDING_SUFFIXES = { transcript: '.transcript.md', summary: '.summary.md' } as const
+/** The file-name suffixes of a recording's transcript and summary (#5364), read in any case. */
+const RECORDING_SUFFIXES = { transcript: '.transcript.md', summary: '.summary.md' } as const
 
 interface NamedAttachment {
   filename: string

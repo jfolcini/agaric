@@ -347,6 +347,17 @@ export const MODULES = {
     src: 'src/lib/speech/spoken-text.ts',
     tests: ['src/lib/speech/__tests__/spoken-text.test.ts'],
   },
+  // A recording's transcript (#5410): a survivor is a timestamp that seeks to
+  // the wrong time, a segment marked current that is not playing, or a
+  // transcript paired with the wrong audio.
+  transcript: {
+    src: 'src/components/attachments/transcript.ts',
+    tests: ['src/components/attachments/__tests__/transcript.test.ts'],
+  },
+  'recording-attachments': {
+    src: 'src/components/attachments/recording-attachments.ts',
+    tests: ['src/components/attachments/__tests__/recording-attachments.test.ts'],
+  },
 }
 
 /**

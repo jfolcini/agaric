@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { groupRecording, RECORDING_SUFFIXES } from '@/components/attachments/recording-attachments'
+import { groupRecording } from '@/components/attachments/recording-attachments'
 
 const file = (filename: string, mime_type: string) => ({ filename, mime_type })
 const audio = (filename: string) => file(filename, 'audio/ogg')
@@ -13,10 +13,6 @@ const image = file('photo.png', 'image/png')
 const pdf = file('slides.pdf', 'application/pdf')
 
 describe('groupRecording', () => {
-  it('names the suffixes the layout reads', () => {
-    expect(RECORDING_SUFFIXES).toEqual({ transcript: '.transcript.md', summary: '.summary.md' })
-  })
-
   it.each([
     { name: 'audio alone', input: [rec], expected: { audio: rec, rest: [] } },
     {
@@ -103,5 +99,15 @@ describe('groupRecording', () => {
   it('pairs nothing among several audios when no stem matches', () => {
     const input = [audio('a.ogg'), audio('b.ogg'), transcript, summary]
     expect(groupRecording(input)).toEqual({ rest: input })
+  })
+
+  it('takes a whole extensionless audio name as its stem', () => {
+    const bare = audio('standup')
+    const bareTranscript = markdown('standup.transcript.md')
+    expect(groupRecording([audio('a.ogg'), bare, bareTranscript])).toEqual({
+      audio: bare,
+      transcript: bareTranscript,
+      rest: [audio('a.ogg')],
+    })
   })
 })
