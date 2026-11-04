@@ -71,6 +71,13 @@ import { useUndoStore } from '@/stores/undo'
 /** Pixels of left padding per depth level. */
 export const INDENT_WIDTH = 24
 
+/** A row's indent: a step per depth, and a task's checkbox per task above it. */
+function rowIndent(depth: number, tasksAbove = 0): string | undefined {
+  return depth > 0
+    ? `calc(var(--indent-width) * ${depth} + var(--block-task-shift) * ${tasksAbove})`
+    : undefined
+}
+
 /**
  * The mobile swipe-gesture affordances (delete backdrop, indent/outdent
  * accents) plus the sr-only gesture description. Extracted to a pure
@@ -474,6 +481,8 @@ interface SortableBlockProps {
   isFocused: boolean
   /** Depth in the block tree (0 = root level). */
   depth?: number | undefined
+  /** How many of its ancestors are tasks: its text starts past that many checkboxes. */
+  tasksAbove?: number | undefined
   rovingEditor: RovingEditorHandle
   /** Whether this block has children in the tree. */
   hasChildren?: boolean | undefined
@@ -498,6 +507,7 @@ function SortableBlockInner({
   content,
   isFocused,
   depth = 0,
+  tasksAbove,
   rovingEditor,
   hasChildren = false,
   isCollapsed = false,
@@ -737,7 +747,7 @@ function SortableBlockInner({
     // Fade the source row hard during drag so it reads as a "lifted"
     // placeholder rather than competing with the new position.
     opacity: isDragging ? 0.35 : 1,
-    paddingLeft: depth > 0 ? `calc(var(--indent-width) * ${depth})` : undefined,
+    paddingLeft: rowIndent(depth, tasksAbove),
   }
 
   return (

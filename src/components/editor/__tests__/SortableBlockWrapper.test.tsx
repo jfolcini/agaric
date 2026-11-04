@@ -283,7 +283,9 @@ describe('SortableBlockWrapper', () => {
 
     const indicators = container.querySelectorAll('.drop-indicator')
     expect(indicators).toHaveLength(1)
-    expect((indicators[0] as HTMLElement).style.marginLeft).toBe('calc(var(--indent-width) * 2)')
+    expect((indicators[0] as HTMLElement).style.marginLeft).toBe(
+      'calc(var(--indent-width) * 2 + var(--block-task-shift) * 0)',
+    )
   })
 
   it('renders the drop indicator ABOVE the row when dropAfter is false (#923)', () => {
@@ -339,7 +341,27 @@ describe('SortableBlockWrapper', () => {
     )
 
     const indicator = container.querySelector('.drop-indicator') as HTMLElement
-    expect(indicator.style.marginLeft).toBe('calc(var(--indent-width) * 2)')
+    expect(indicator.style.marginLeft).toBe(
+      'calc(var(--indent-width) * 2 + var(--block-task-shift) * 0)',
+    )
+  })
+
+  it("indents the indicator past the tasks above the projection, not the over-row's own", () => {
+    const { container } = renderInList(
+      makeProps({
+        block: makeBlock({ id: 'BLK001', depth: 2 }),
+        tasksAbove: 2,
+        activeId: 'BLK999',
+        overId: 'BLK001',
+        projected: { depth: 1, parentId: null, maxDepth: 3, minDepth: 0 },
+      }),
+    )
+
+    const indicator = container.querySelector('.drop-indicator') as HTMLElement
+    expect(indicator.style.marginLeft).toBe(
+      'calc(var(--indent-width) * 1 + var(--block-task-shift) * 0)',
+    )
+    expect(sortableBlockProps[0]?.['tasksAbove']).toBe(0)
   })
 
   it('does not render drop indicator when this block is the active drag target', () => {
@@ -478,6 +500,13 @@ describe('SortableBlockWrapper', () => {
 
     expect(sortableBlockProps).toHaveLength(1)
     expect(sortableBlockProps[0]?.['depth']).toBe(1)
+  })
+
+  it('passes the tasks above the row on when it is not being dragged', () => {
+    renderInList(makeProps({ block: makeBlock({ id: 'BLK001', depth: 2 }), tasksAbove: 2 }))
+
+    expect(sortableBlockProps).toHaveLength(1)
+    expect(sortableBlockProps[0]?.['tasksAbove']).toBe(2)
   })
 
   it('uses block.depth when this block is not being dragged', () => {

@@ -22,8 +22,8 @@ import { t } from '@/lib/i18n'
 
 // Mock SortableBlock
 vi.mock('@/components/editor/SortableBlock', () => ({
-  SortableBlock: (props: { blockId: string }) => (
-    <div data-testid={`sortable-block-${props.blockId}`}>
+  SortableBlock: (props: { blockId: string; tasksAbove?: number }) => (
+    <div data-testid={`sortable-block-${props.blockId}`} data-tasks-above={props.tasksAbove}>
       SortableBlock
       <span data-type="block-link" data-id={`LINK_${props.blockId}`}>
         link
@@ -384,6 +384,36 @@ describe('BlockListRenderer', () => {
       expect(guide.className).toContain('w-px')
       expect(guide.className).toContain('bg-primary/15')
     }
+  })
+
+  it('gives each row the tasks above it, and the dragged and over rows those above the projection', () => {
+    const blocks = [
+      makeBlock({ id: 'A', depth: 0, todo_state: 'TODO' }),
+      makeBlock({ id: 'B', depth: 1, parent_id: 'A' }),
+      makeBlock({ id: 'C', depth: 2, parent_id: 'B', todo_state: 'DONE' }),
+      makeBlock({ id: 'D', depth: 0 }),
+      makeBlock({ id: 'E', depth: 1, parent_id: 'D' }),
+    ]
+    const tasksAbove = (id: string) =>
+      screen.getByTestId(`sortable-block-${id}`).getAttribute('data-tasks-above')
+    const { rerender } = render(
+      <BlockListRenderer {...makeProps({ visibleItems: blocks, blocks })} />,
+    )
+    expect(['A', 'B', 'C', 'D', 'E'].map(tasksAbove)).toEqual(['0', '1', '1', '0', '0'])
+
+    // E dragged over D, to land under C: two tasks above it there.
+    rerender(
+      <BlockListRenderer
+        {...makeProps({
+          visibleItems: blocks,
+          blocks,
+          activeId: 'E',
+          overId: 'D',
+          projected: { depth: 3, parentId: 'C', maxDepth: 3, minDepth: 0 },
+        })}
+      />,
+    )
+    expect(['A', 'B', 'C', 'D', 'E'].map(tasksAbove)).toEqual(['0', '1', '1', '2', '2'])
   })
 
   it('leaves all indent guides faint when there is no projection (#993)', () => {

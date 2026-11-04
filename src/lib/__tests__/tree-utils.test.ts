@@ -21,6 +21,7 @@ import {
   buildIndexById,
   computeDropIndex,
   computeSelectionRoots,
+  countTasksAtOrAbove,
   DEAD_ZONE_PX,
   type FlatBlock,
   getDragDescendants,
@@ -213,6 +214,38 @@ describe('buildFlatTree', () => {
 })
 
 // ── getDragDescendants ───────────────────────────────────────────────────
+
+describe('countTasksAtOrAbove', () => {
+  const tasks = new Set(['T', 'TC'])
+  const isTask = ({ id }: { id: string }) => tasks.has(id)
+
+  it('counts each block and the tasks above it, in one depth-first pass', () => {
+    const items = [
+      { id: 'T', depth: 0 },
+      { id: 'C', depth: 1 },
+      { id: 'TC', depth: 2 },
+      { id: 'G', depth: 3 },
+      { id: 'C2', depth: 1 },
+      { id: 'P', depth: 0 },
+      { id: 'PC', depth: 1 },
+    ]
+    expect(Object.fromEntries(countTasksAtOrAbove(items, isTask))).toEqual({
+      T: 1,
+      C: 1,
+      TC: 2,
+      G: 2,
+      // A sibling after a deeper task counts only its own parent's.
+      C2: 1,
+      // A plain root after a task's subtree starts again from nothing.
+      P: 0,
+      PC: 0,
+    })
+  })
+
+  it('counts nothing for no blocks', () => {
+    expect(countTasksAtOrAbove([], isTask).size).toBe(0)
+  })
+})
 
 describe('getDragDescendants', () => {
   const items: FlatBlock[] = [

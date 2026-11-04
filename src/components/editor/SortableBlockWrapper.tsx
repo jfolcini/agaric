@@ -93,6 +93,8 @@ export interface SortableBlockWrapperProps {
   siblingPosinset: number | undefined
   /** Custom block properties to render as inline chips. */
   properties: InlineProperty[] | undefined
+  /** How many of the block's ancestors are tasks (`countTasksAtOrAbove`). */
+  tasksAbove?: number | undefined
 }
 
 function SortableBlockWrapperInner({
@@ -113,6 +115,7 @@ function SortableBlockWrapperInner({
   siblingSetsize,
   siblingPosinset,
   properties,
+  tasksAbove = 0,
 }: SortableBlockWrapperProps): React.ReactElement {
   // #1267 — read ONLY this row's drag-derived state via a per-id external-store
   // subscription (the `DragStateStore` published by BlockListRenderer). A bare
@@ -122,13 +125,18 @@ function SortableBlockWrapperInner({
   // per-move-fresh `projected` reference. When no provider is mounted
   // (standalone unit renders), this derives from the DnD props below, keeping
   // the prior contract. See `drag-state-store.ts` / `useRowDragState`.
-  const { projectedDepthOverride, showDropIndicator, dropAfter, dropIndicatorDepth } =
-    useRowDragState(block.id, {
-      projected,
-      activeId,
-      overId,
-      dropAfter: dropAfterProp,
-    })
+  const {
+    projectedDepthOverride,
+    projectedTasksOverride,
+    showDropIndicator,
+    dropAfter,
+    dropIndicatorDepth,
+  } = useRowDragState(block.id, {
+    projected,
+    activeId,
+    overId,
+    dropAfter: dropAfterProp,
+  })
 
   // B3 (#217) — drag depth preview. While a drag is in progress the dragged
   // source row used to keep its *original* depth, so only the drop indicator
@@ -139,6 +147,7 @@ function SortableBlockWrapperInner({
   // The over-target row also previews projected depth so the row under the
   // cursor shows the incoming indent.
   const projectedDepth = projectedDepthOverride ?? block.depth
+  const projectedTasks = projectedTasksOverride ?? tasksAbove
 
   // Per-id memoized ref callback — same function identity across
   // renders for a given block.id, and unobserves the exact element
@@ -186,7 +195,7 @@ function SortableBlockWrapperInner({
     <div
       className="drop-indicator h-[5px] bg-ring rounded-full ring-2 ring-ring/20"
       style={{
-        marginLeft: `calc(var(--indent-width) * ${dropIndicatorDepth})`,
+        marginLeft: `calc(var(--indent-width) * ${dropIndicatorDepth} + var(--block-task-shift) * ${projectedTasks})`,
       }}
     />
   ) : null
@@ -267,6 +276,7 @@ function SortableBlockWrapperInner({
           content={block.content ?? ''}
           isFocused={isFocused}
           depth={projectedDepth}
+          tasksAbove={projectedTasks}
           rovingEditor={rovingEditor}
           hasChildren={hasChildren}
           isCollapsed={isCollapsed}
