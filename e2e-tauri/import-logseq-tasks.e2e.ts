@@ -8,7 +8,9 @@
 // (agaric-engine/src/import.rs) reads the keyword, the cookie and the planning
 // line into `todo_state`, `priority` and `scheduled_date`, the import command
 // maps `[#A]` onto the priority definition's first option, and the page editor
-// shows the three from the stored row AFTER a navigation round-trip.
+// shows the three from the stored row AFTER a navigation round-trip. The
+// mock reads neither Logseq's `STARTED` keyword nor a `#+BEGIN_NOTE` block
+// (#6033), which `import::rewrite_org_blocks` writes as a `> [!NOTE]` callout.
 //
 // The file is picked through the Data tab's hidden `<input type="file">`, as
 // `import-markdown-nesting.e2e.ts` does.
@@ -24,6 +26,7 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
+  importMarkdownPage,
   navigateTo,
   reopenPageByTitle,
   runScopedMarker,
@@ -39,6 +42,13 @@ const MARKDOWN = [
   `- ${MARKER}-plain`,
   '',
 ].join('\n')
+
+/** Import `markdown` as the page `title` and reopen it from a fresh backend read (#6033). */
+async function importAndReopen(title: string, markdown: string): Promise<void> {
+  await importMarkdownPage(title, markdown)
+  await navigateTo('Journal')
+  await reopenPageByTitle(title)
+}
 
 describe('Agaric real-backend Logseq task import (#5160 D7) @markdown', () => {
   it('imports `TODO [#A]` with a SCHEDULED line as a TODO with a priority and a scheduled date', async () => {
@@ -100,5 +110,32 @@ describe('Agaric real-backend Logseq task import (#5160 D7) @markdown', () => {
     const chip = row.$('.scheduled-chip')
     await chip.waitForExist({ timeout: ACTION_TIMEOUT })
     expect(await chip.getAttribute('aria-label')).toContain('Oct 1, 2031')
+  })
+
+  it('imports a Logseq `STARTED` task as a DOING task (#6033)', async () => {
+    await waitForAppReady()
+    await importAndReopen(`${MARKER}-started`, `- STARTED ${MARKER}-started-task\n`)
+    const task = blockStaticByMarker(`${MARKER}-started-task`)
+    await task.waitForDisplayed({ timeout: NAV_TIMEOUT })
+    expect(await task.getText()).not.toContain('STARTED')
+    const taskId = await task.getAttribute('data-block-id')
+    const taskMarker = $(`li[data-block-id="${taskId}"]`).$('[data-testid="task-marker"]')
+    await taskMarker.waitForExist({ timeout: ACTION_TIMEOUT })
+    await browser.waitUntil(
+      async () => ((await taskMarker.getAttribute('aria-label')) ?? '').startsWith('Task: DOING'),
+      { timeout: ACTION_TIMEOUT, timeoutMsg: 'the imported task never showed the DOING state' },
+    )
+  })
+
+  it('imports a Logseq `#+BEGIN_NOTE` block as a note callout (#6033)', async () => {
+    await waitForAppReady()
+    const md = `- #+BEGIN_NOTE\n  ${MARKER}-note-body\n  #+END_NOTE\n`
+    await importAndReopen(`${MARKER}-note`, md)
+    const block = blockStaticByMarker(`${MARKER}-note-body`)
+    await block.waitForDisplayed({ timeout: NAV_TIMEOUT })
+    expect(await block.getText()).not.toContain('#+BEGIN_NOTE')
+    const callout = block.$('[data-testid="callout-block"]')
+    await callout.waitForExist({ timeout: ACTION_TIMEOUT })
+    expect(await callout.getAttribute('data-callout-type')).toBe('note')
   })
 })

@@ -4251,6 +4251,10 @@ fn parse_import_payload(
     } else {
         import::parse_logseq_markdown(&text)
     };
+    // Every block, code too: the rewrite skips the lines of its code fences.
+    for block in &mut parse_output.blocks {
+        block.content = import::rewrite_org_blocks(&block.content);
+    }
     // A folder import links its notes by relative path (#5160 N10); a lone
     // file has no vault to be relative to. The title is the note's path below
     // the picked folder (#6277 decision 8), so a top-level note's folder is "".
