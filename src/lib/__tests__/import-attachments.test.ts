@@ -49,6 +49,11 @@ describe('scanAttachmentRefs', () => {
     expect(scanAttachmentRefs(md)).toEqual(['keep.png'])
   })
 
+  it('skips refs inside a tilde fence, closed only by a tilde run at least as long (#6033)', () => {
+    const md = ['~~~~', '![[skip.png]]', '~~~', '```', '![[skip2.png]]', '~~~~', '![[keep.png]]']
+    expect(scanAttachmentRefs(md.join('\n'))).toEqual(['keep.png'])
+  })
+
   it('returns nothing for empty / ref-free markdown', () => {
     expect(scanAttachmentRefs('')).toEqual([])
     expect(scanAttachmentRefs('# Just a heading\n\n- a bullet')).toEqual([])
