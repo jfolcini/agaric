@@ -129,7 +129,8 @@ impl agents::McpAgentMode {
                  that name, creating it when none matches.\n\
                  Files: `attach_file` copies a file on this device onto a block, by its \
                  absolute `path`. A recording's transcript and summary are Markdown files \
-                 attached to its block as `<name>.transcript.md` and `<name>.summary.md`.\n",
+                 attached to its block as `<name>.transcript.md` and `<name>.summary.md`; \
+                 a transcript has one paragraph per segment, `[hh:mm:ss] **Speaker:** text`.\n",
             ),
         }
     }

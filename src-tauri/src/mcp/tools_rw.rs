@@ -1052,7 +1052,9 @@ fn tool_desc_attach_file() -> ToolDescription {
              is its name's extension, one of: {}. A file whose bytes are already attached is \
              stored once. A recording's transcript is a Markdown file named after it with \
              `.transcript.md` (`call.transcript.md` for `call.ogg`), its summary one with \
-             `.summary.md`, each attached to the recording's block.",
+             `.summary.md`, each attached to the recording's block. A transcript has one \
+             paragraph per segment, `[hh:mm:ss] **Speaker:** text` (`[mm:ss]` works too, \
+             the speaker is optional); the app seeks the recording from its timestamps.",
             known_extensions(),
         ),
         input_schema: json!({
@@ -1768,7 +1770,7 @@ fn source_file_name(path: &Path) -> Result<String, AppError> {
 /// The MIME type of `filename`'s extension, refused naming the extension when
 /// no attachment may have it.
 fn attachment_mime_type(filename: &str) -> Result<&'static str, AppError> {
-    let extension = filename.rsplit_once('.').map_or("", |(_, ext)| ext);
+    let extension = filename.trim().rsplit_once('.').map_or("", |(_, ext)| ext);
     mime_for_extension(extension).ok_or_else(|| {
         let what = if extension.is_empty() {
             format!("'{filename}' has no extension")

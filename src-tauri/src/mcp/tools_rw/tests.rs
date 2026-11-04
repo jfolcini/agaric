@@ -4935,3 +4935,11 @@ async fn attach_file_to_a_block_of_another_space_is_refused_and_stores_nothing_5
     )
     .await;
 }
+
+#[test]
+fn attach_file_reads_the_type_of_a_name_with_stray_spaces_5410() {
+    assert_eq!(
+        super::attachment_mime_type(" call.ogg ").expect("a padded name keeps its type"),
+        "audio/ogg"
+    );
+}
