@@ -489,9 +489,9 @@ fn parse_planning_line(line: &str, dropped: &mut usize) -> Option<Vec<(String, S
 }
 
 /// The inside of an Org timestamp, `2026-10-01 Thu 10:00 +1w`: its date, and
-/// its repeater when Agaric's repeat rule can express it. The day name, any
-/// token with no digit in whatever language (`Thu`, `jeu.`, `周四`), and a time
-/// are dropped; a warning period or delay (`-3d`, `--3d`) is dropped too and
+/// its repeater when Agaric's repeat rule can express it. A token with no
+/// digit, the day name in any language (`Thu`, `jeu.`, `周四`), and a time are
+/// dropped; a warning period or delay (`-3d`, `--3d`) is dropped too and
 /// counted into `dropped`. Anything else, such as a repeater the rule cannot
 /// express, makes the stamp unreadable.
 fn parse_org_timestamp(stamp: &str, dropped: &mut usize) -> Option<(String, Option<String>)> {
@@ -524,7 +524,7 @@ fn is_org_warning_period(token: &str) -> bool {
         .strip_prefix("--")
         .or_else(|| token.strip_prefix('-'))
         .and_then(|rest| rest.strip_suffix(['h', 'd', 'w', 'm', 'y']))
-        .is_some_and(|count| !count.is_empty() && count.chars().all(|c| c.is_ascii_digit()))
+        .is_some_and(|count| count.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// An Org time, `10:00`, or time range, `10:00-11:30`.
@@ -7584,13 +7584,15 @@ mod tests_task_syntax_5160 {
     /// A planning line the grammar cannot read in full stays text, with one
     /// warning for all of them: an unparseable date, a repeater the repeat
     /// rule cannot express, two repeaters that differ, a `CLOSED:` entry, and
-    /// a bare keyword. A line that does not open with `SCHEDULED:` or
-    /// `DEADLINE:` and a `<` timestamp, and a planning-shaped paragraph of its
-    /// own, are text with no warning.
+    /// a bare keyword; a warning period on such a line adds no warning of its
+    /// own. A line that does not open with `SCHEDULED:` or `DEADLINE:` and a
+    /// `<` timestamp, and a planning-shaped paragraph of its own, are text
+    /// with no warning.
     #[test]
     fn an_unreadable_planning_line_stays_text_with_a_warning() {
         let lines = [
             "SCHEDULED: <2026-13-01 Thu>",
+            "SCHEDULED: <2026-10-01 Thu -2d +1h>",
             "DEADLINE: <2026-10-01 Thu +1h>",
             "SCHEDULED: <2026-10-01 Thu +1w> DEADLINE: <2026-10-02 Fri +2w>",
             "SCHEDULED: <2026-10-01 Thu> CLOSED: [2026-10-01 Thu 10:00]",
@@ -7638,12 +7640,13 @@ mod tests_task_syntax_5160 {
 
     /// Logseq writes `SCHEDULED:` and `DEADLINE:` on lines of their own: a
     /// block repeats one way, so a second line whose repeater is not the
-    /// block's stays text with the warning, as the pair on one line does, and
-    /// the same repeater twice is read.
+    /// block's stays text with the warning alone, its warning period
+    /// uncounted, as the pair on one line does, and the same repeater twice is
+    /// read.
     #[test]
     fn a_second_planning_line_with_another_repeater_stays_text() {
         let out = parse_logseq_markdown(
-            "- TODO a\n  SCHEDULED: <2026-10-01 Thu +1w>\n  DEADLINE: <2026-10-02 Fri +2w>\n\
+            "- TODO a\n  SCHEDULED: <2026-10-01 Thu +1w>\n  DEADLINE: <2026-10-02 Fri +2w -1d>\n\
              - TODO b\n  SCHEDULED: <2026-10-01 Thu +1w>\n  DEADLINE: <2026-10-02 Fri +1w>\n",
         );
         let property = |block: &ParsedBlock, key: &str| -> Vec<String> {
@@ -7657,7 +7660,7 @@ mod tests_task_syntax_5160 {
         let [a, b] = &out.blocks[..] else {
             panic!("{:?}", out.blocks);
         };
-        assert_eq!(a.content, "a\nDEADLINE: <2026-10-02 Fri +2w>");
+        assert_eq!(a.content, "a\nDEADLINE: <2026-10-02 Fri +2w -1d>");
         assert_eq!(property(a, "repeat"), ["+1w"]);
         assert_eq!(property(a, "due_date"), Vec::<String>::new());
         assert_eq!(b.content, "b");
