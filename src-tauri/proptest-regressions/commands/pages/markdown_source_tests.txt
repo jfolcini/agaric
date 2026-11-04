@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 7e8c6e0ba73a6502e2b8543a47dbcbc8533382fa9fbc02b0a8b8cd4546d6f548 # shrinks to properties = {"a": ("\t", false)}
