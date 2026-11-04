@@ -15,7 +15,7 @@
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
 
-import { readFileSync, statSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 
 import {
@@ -75,8 +75,9 @@ describe('Agaric real-backend MCP attach_file plays in the app (#5410) @attachme
         expect(row.block_id).toBe(block.id)
         expect(row.filename).toBe(file)
         expect(row.mime_type).toBe(mime)
-        expect(row.size_bytes).toBe(statSync(source).size)
-        if (!readFileSync(row.path).equals(readFileSync(source))) {
+        const bytes = readFileSync(source)
+        expect(row.size_bytes).toBe(bytes.length)
+        if (!readFileSync(row.path).equals(bytes)) {
           throw new Error(`${file}: the stored copy at ${row.path} is not the file's bytes`)
         }
       }
