@@ -1084,7 +1084,7 @@ pass_filenames = false
 # `mutants.toml` the globs, and `check-mutants-scope.mjs` the glob semantics —
 # a change to any of the three moves the derived cap while the hook that
 # checks it stays Skipped.
-files = '^(scripts/(check-main-module-detection|file-mutation-survivors|check-mutants-scope)\.mjs|stryker\.modules\.mjs|src-tauri/\.cargo/mutants\.toml)$'
+files = '^(scripts/(check-main-module-detection|file-mutation-survivors|check-mutants-scope|lib/mutation-accepted)\.mjs|stryker\.modules\.mjs|src-tauri/\.cargo/mutants\.toml)$'
 stages = ["manual"]
 
 # persist-hooks (#3352, split out of #3323): `pageBrowserFilters.ts` shipped

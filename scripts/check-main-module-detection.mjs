@@ -697,6 +697,11 @@ function runSymlinkSelfTest(tmp, ok, fail) {
   mkdirSync(spaced, { recursive: true })
   const copied = path.join(spaced, 'file-mutation-survivors.mjs')
   cpSync(path.join(ROOT, 'scripts', 'file-mutation-survivors.mjs'), copied)
+  // The one module the filer imports statically, or the copy cannot load.
+  cpSync(
+    path.join(ROOT, 'scripts', 'lib', 'mutation-accepted.mjs'),
+    path.join(spaced, 'lib', 'mutation-accepted.mjs'),
+  )
   const viaSpace = spawnSync(process.execPath, [copied, '--self-test'], { encoding: 'utf8' })
   if (viaSpace.status === 0 && viaSpace.stdout.includes('self-test: all assertions passed')) {
     ok('a script whose path contains a space actually runs (#3373)')

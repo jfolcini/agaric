@@ -22,6 +22,12 @@ renderer, and the first went red again with only survivors subtracted. Rendering
 page-lists builder's real scoped report with its TSV left out all 6 recorded
 survivors.
 
+The entry-point guard's self-test runs a copy of the filer from a path
+with a space in it. It now copies `lib/mutation-accepted.mjs` beside the
+filer, because the copy could not load without it. That hook's `files`
+pattern now includes the module too.
+
 Ran: `node --test scripts/render-mutation-summary.test.mjs`,
+`prek run --hook-stage manual --all-files`,
 `node scripts/file-mutation-survivors.mjs --self-test`, oxlint and oxfmt on
 the scripts.
