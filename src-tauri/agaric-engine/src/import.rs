@@ -1079,7 +1079,7 @@ const ORG_ADMONITIONS: [&str; 6] = ["NOTE", "TIP", "IMPORTANT", "CAUTION", "WARN
 
 /// `content`, a block's text, with each Logseq/Org `#+BEGIN_X` … `#+END_X`
 /// block outside a code fence in Agaric's form: an admonition
-/// ([`ORG_ADMONITIONS`]) as a `> [!X]` callout and `QUOTE` as a `>` quote,
+/// (`ORG_ADMONITIONS`) as a `> [!X]` callout and `QUOTE` as a `>` quote,
 /// each line of its body quoted. The keyword and the kind are read ignoring
 /// case, as Org reads them. Any other kind, source and example blocks
 /// included, and a block with no `#+END_X` stay as written.
