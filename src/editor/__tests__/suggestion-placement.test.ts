@@ -57,14 +57,4 @@ describe('placeSuggestionPopup', () => {
         ?.maxHeight,
     ).toBe(0)
   })
-
-  it('returns null for an anchor with no finite coordinates', () => {
-    expect(
-      placeSuggestionPopup({
-        ...base,
-        anchor: { left: Number.NaN, top: 0, bottom: 20 },
-        side: 'below',
-      }),
-    ).toBeNull()
-  })
 })

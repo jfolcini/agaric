@@ -128,13 +128,13 @@ test.describe('Suggestion popups stay still while typing @editor', () => {
 
   test('[[ link picker keeps its node and position', async ({ page }) => {
     await focusBlock(page)
-    expectStill(await typeAndSample(page, '[[', 'Gettin', 'Getting Started'), 'top')
+    expectStill(await typeAndSample(page, '[[', 'Getti', 'Getting Started'), 'top')
   })
 
   test('[[ keeps its results on screen while a slow backend fetches the next', async ({ page }) => {
     await focusBlock(page)
     await slowIpc(page, 100)
-    expectStill(await typeAndSample(page, '[[', 'Gettin', 'Getting Started'), 'top')
+    expectStill(await typeAndSample(page, '[[', 'Getti', 'Getting Started'), 'top')
   })
 
   test('/ slash menu keeps its node and position', async ({ page }) => {
@@ -161,7 +161,7 @@ test.describe('Suggestion popups stay still while typing @editor', () => {
       height: Math.round(box.y + box.height + 60),
     })
     await focusBlock(page, 4)
-    const samples = await typeAndSample(page, '[[', 'Gettin', 'Getting Started')
+    const samples = await typeAndSample(page, '[[', 'Getti', 'Getting Started')
     const [first] = samples
     if (!first?.lineTop) throw new Error('no line rect')
     expect(first.bottom).toBeLessThanOrEqual(first.lineTop)

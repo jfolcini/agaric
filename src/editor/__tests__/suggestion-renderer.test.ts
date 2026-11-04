@@ -33,8 +33,8 @@ vi.mock('@/lib/keyboard-config', () => ({
   }),
 }))
 
-// Mock requestAnimationFrame to execute synchronously so updatePosition
-// doesn't leak callbacks across tests.
+// Mock requestAnimationFrame to execute synchronously so the deferred
+// outside-click registration doesn't leak callbacks across tests.
 vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
   cb(0)
   return 0
@@ -253,20 +253,30 @@ describe('positioning', () => {
     renderer.onExit()
   })
 
-  it('does not move on a keystroke, only on a layout change', async () => {
+  it('follows the trigger when the query wraps it onto the next line', () => {
     let lineTop = 80
-    const editor = editorWith((pos) => ({ left: pos * 10, top: lineTop, bottom: lineTop + 20 }))
+    const editor = editorWith(() => ({ left: 900, top: lineTop, bottom: lineTop + 20 }))
     const renderer = createSuggestionRenderer()
     renderer.onStart(props(editor))
     const popup = popupEl()
     expect(popup.style.top).toBe('104px')
 
-    lineTop = 300
-    renderer.onUpdate(props(editor, { query: 'abc', range: { from: 10, to: 15 }, loading: false }))
-    expect(popup.style.top).toBe('104px')
+    // The trigger word no longer fits its line and moves under it, but the
+    // editor keeps its height, so no `autoUpdate` callback fires.
+    lineTop = 100
+    renderer.onUpdate(props(editor, { query: 'abc', range: { from: 10, to: 15 }, loading: true }))
+    expect(popup.style.top).toBe('124px')
+    renderer.onExit()
+  })
 
+  it('re-places on a layout change', async () => {
+    let lineTop = 80
+    const editor = editorWith(() => ({ left: 100, top: lineTop, bottom: lineTop + 20 }))
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(props(editor))
+    lineTop = 300
     await layoutChange()
-    expect(popup.style.top).toBe('324px')
+    expect(popupEl().style.top).toBe('324px')
     renderer.onExit()
   })
 

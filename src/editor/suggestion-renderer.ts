@@ -145,11 +145,6 @@ function placePopup(el: HTMLElement, anchor: SuggestionAnchor, side: SuggestionS
     gap: GAP,
     padding: coarse ? COARSE_PADDING : DESKTOP_PADDING,
   })
-  if (!placed) {
-    el.style.bottom = ''
-    applySafePosition(el, null)
-    return
-  }
   const cap = coarse ? window.innerHeight * COARSE_MAX_HEIGHT_RATIO : Infinity
   Object.assign(el.style, {
     left: `${placed.left}px`,
@@ -193,7 +188,7 @@ export function createSuggestionRenderer(
   let shownItems: PickerItem[] = []
   let stopAutoUpdate: (() => void) | null = null
 
-  /** Re-place for a layout change (scroll, resize, the editor moving), not per keystroke. */
+  /** Re-place beside the trigger's lines on the side chosen at open; idempotent while they stay put. */
   function reposition() {
     if (!popup || !latest) return
     const anchor = anchorFor(latest)
@@ -205,7 +200,7 @@ export function createSuggestionRenderer(
 
   /** Show the popup once it has results; plays the entry animation once. */
   function reveal() {
-    if (!popup || popup.dataset['open'] !== undefined) return
+    if (!popup) return
     popup.style.visibility = ''
     popup.dataset['open'] = ''
   }
@@ -393,6 +388,10 @@ export function createSuggestionRenderer(
         return
       }
       latest = props
+      // The trigger stays put while the query grows, so this moves the popup
+      // only when the query wraps the trigger onto another line without the
+      // editor resizing, which `autoUpdate` would miss.
+      reposition()
       if (props.loading) {
         renderer.updateProps({ ...props, items: shownItems })
         return

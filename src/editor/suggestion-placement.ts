@@ -49,7 +49,6 @@ export function chooseSuggestionSide(
   return below >= wantedHeight || below >= above ? 'below' : 'above'
 }
 
-/** `null` when the anchor has no finite coordinates (an unmeasurable view). */
 export function placeSuggestionPopup({
   anchor,
   side,
@@ -57,8 +56,7 @@ export function placeSuggestionPopup({
   popupWidth,
   gap,
   padding,
-}: SuggestionPlacementInput): SuggestionPlacement | null {
-  if (![anchor.left, anchor.top, anchor.bottom].every(Number.isFinite)) return null
+}: SuggestionPlacementInput): SuggestionPlacement {
   const rightmost = viewport.width - popupWidth - padding
   const left = Math.max(padding, Math.min(anchor.left, rightmost))
   if (side === 'below') {
