@@ -1166,11 +1166,10 @@ function serializeMathBlock(node: MathBlockNode): string {
 }
 
 function serializeBlockquote(node: BlockquoteNode, onUnknownNode?: (type: string) => void): string {
+  const type = node.attrs?.calloutType
+  const prefix = type ? `[!${type.toUpperCase()}]${node.attrs?.calloutFold ?? ''}` : ''
   if (!node.content || node.content.length === 0) {
-    if (node.attrs?.calloutType) {
-      return `> [!${node.attrs.calloutType.toUpperCase()}]`
-    }
-    return '> '
+    return prefix ? `> ${prefix}` : '> '
   }
   // Recursively serialize each child block (via the shared block dispatch so
   // the grammar is enumerated in one place, #2219), then prefix every line
@@ -1178,8 +1177,7 @@ function serializeBlockquote(node: BlockquoteNode, onUnknownNode?: (type: string
   const inner = joinBlocks(node.content, serializeBlockSequence(node.content, onUnknownNode))
   const lines = inner.split('\n')
   // Prepend [!TYPE] prefix to the first line when calloutType is set
-  if (node.attrs?.calloutType) {
-    const prefix = `[!${node.attrs.calloutType.toUpperCase()}]`
+  if (prefix) {
     lines[0] = lines[0] ? `${prefix} ${lines[0]}` : prefix
   }
   return lines.map((line) => `> ${line}`).join('\n')

@@ -2682,6 +2682,98 @@ mod op_coverage_tests {
         assert!(tags.is_empty());
     }
 
+    /// #6236 — each tagged block's edges, and none for a block whose tags
+    /// were all removed.
+    #[test]
+    fn read_tag_edges_lists_each_tagged_blocks_edges_6236() {
+        const UNTAGGED: &str = "01HZ00000000000000000000EF";
+        let mut engine = engine_with_block(BLOCK_A);
+        engine
+            .apply_create_block(BLOCK_B, "content", "", None, 1)
+            .expect("create B");
+        engine
+            .apply_create_block(UNTAGGED, "content", "", None, 2)
+            .expect("create UNTAGGED");
+        engine.apply_add_tag(BLOCK_A, TAG_X).expect("add X to A");
+        engine.apply_add_tag(BLOCK_A, TAG_Y).expect("add Y to A");
+        engine.apply_add_tag(BLOCK_B, TAG_Y).expect("add Y to B");
+        engine
+            .apply_add_tag(UNTAGGED, TAG_X)
+            .expect("add X to UNTAGGED");
+        engine
+            .apply_remove_tag(UNTAGGED, TAG_X)
+            .expect("remove X from UNTAGGED");
+
+        let mut edges = engine.read_tag_edges().expect("read edges");
+        edges.sort_unstable();
+        assert_eq!(
+            edges,
+            vec![
+                (BLOCK_A.to_owned(), TAG_X.to_owned()),
+                (BLOCK_A.to_owned(), TAG_Y.to_owned()),
+                (BLOCK_B.to_owned(), TAG_Y.to_owned()),
+            ],
+            "every edge the tag maps hold, and none for UNTAGGED"
+        );
+    }
+
+    /// #6236 — a tag map kept for a block the doc no longer holds gives no
+    /// edge. A tag added on one device while another moves the block to a new
+    /// space leaves that map in the old doc, since the move's prune found none
+    /// to delete; the doc that holds the block has its tags.
+    #[test]
+    fn read_tag_edges_skips_a_block_the_doc_no_longer_holds_6236() {
+        let mut old_doc = LoroEngine::with_peer_id("DEV-OLD").expect("old doc");
+        for (block, position) in [(BLOCK_A, 0), (BLOCK_B, 1)] {
+            old_doc
+                .apply_create_block(block, "content", "", None, position)
+                .expect("create");
+        }
+        old_doc.apply_add_tag(BLOCK_B, TAG_Y).expect("tag B");
+        let mut tagger = LoroEngine::with_peer_id("DEV-TAGGER").expect("tagger");
+        tagger
+            .import(&old_doc.export_snapshot().expect("export"))
+            .expect("the tagger sees both blocks");
+        old_doc
+            .apply_purge_block(BLOCK_A)
+            .expect("the move prunes A");
+        tagger.apply_add_tag(BLOCK_A, TAG_X).expect("tag A");
+        old_doc
+            .import(&tagger.export_snapshot().expect("export"))
+            .expect("the docs merge");
+
+        assert_eq!(
+            (
+                old_doc.contains_block(BLOCK_A),
+                old_doc.read_tags(BLOCK_A).expect("read A's tags"),
+            ),
+            (false, vec![TAG_X.to_owned()]),
+            "precondition: the merge leaves a tag map for a block the doc no longer holds"
+        );
+        assert_eq!(
+            old_doc.read_tag_edges().expect("read edges"),
+            vec![(BLOCK_B.to_owned(), TAG_Y.to_owned())],
+            "B's edge, and none from A's map"
+        );
+    }
+
+    /// #6236 — a tag slot that does not read fails the read.
+    #[test]
+    fn read_tag_edges_fails_on_a_slot_that_does_not_read_6236() {
+        let engine = engine_with_block(BLOCK_A);
+        engine
+            .doc
+            .get_map(super::BLOCK_TAGS_ROOT)
+            .insert(BLOCK_A, "not a container")
+            .expect("write a scalar slot");
+
+        let result = engine.read_tag_edges();
+        assert!(
+            matches!(result, Err(agaric_core::error::AppError::Validation { .. })),
+            "the slot's error is the read's, got {result:?}"
+        );
+    }
+
     // ── RemoveTag ─────────────────────────────────────────────────────
 
     #[test]
