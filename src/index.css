@@ -1149,34 +1149,52 @@
 :root {
   --block-first-line: calc(var(--agaric-font-size, 1rem) * 1.5);
 }
-:is(.sortable-block:has(:is(.block-static, .ProseMirror) > h1:first-child), [data-page-block]:has(> .page-block-content > h1:first-child)) {
+:is(
+  .sortable-block:has(:is(.block-static, .ProseMirror) > h1:first-child),
+  [data-page-block]:has(> .page-block-content > h1:first-child)
+) {
   --block-first-line: calc(var(--text-xl) * var(--text-xl--line-height));
   @variant sm {
     --block-first-line: calc(var(--text-2xl) * var(--text-2xl--line-height));
   }
 }
-:is(.sortable-block:has(:is(.block-static, .ProseMirror) > h2:first-child), [data-page-block]:has(> .page-block-content > h2:first-child)) {
+:is(
+  .sortable-block:has(:is(.block-static, .ProseMirror) > h2:first-child),
+  [data-page-block]:has(> .page-block-content > h2:first-child)
+) {
   --block-first-line: calc(var(--text-lg) * var(--text-lg--line-height));
   @variant sm {
     --block-first-line: calc(var(--text-xl) * var(--text-xl--line-height));
   }
 }
-:is(.sortable-block:has(:is(.block-static, .ProseMirror) > h3:first-child), [data-page-block]:has(> .page-block-content > h3:first-child)) {
+:is(
+  .sortable-block:has(:is(.block-static, .ProseMirror) > h3:first-child),
+  [data-page-block]:has(> .page-block-content > h3:first-child)
+) {
   --block-first-line: calc(var(--text-base) * var(--text-base--line-height));
   @variant sm {
     --block-first-line: calc(var(--text-lg) * var(--text-lg--line-height));
   }
 }
-:is(.sortable-block:has(:is(.block-static, .ProseMirror) > h4:first-child), [data-page-block]:has(> .page-block-content > h4:first-child)) {
+:is(
+  .sortable-block:has(:is(.block-static, .ProseMirror) > h4:first-child),
+  [data-page-block]:has(> .page-block-content > h4:first-child)
+) {
   --block-first-line: calc(var(--text-sm) * var(--text-sm--line-height));
   @variant sm {
     --block-first-line: calc(var(--text-base) * var(--text-base--line-height));
   }
 }
-:is(.sortable-block:has(:is(.block-static, .ProseMirror) > h5:first-child), [data-page-block]:has(> .page-block-content > h5:first-child)) {
+:is(
+  .sortable-block:has(:is(.block-static, .ProseMirror) > h5:first-child),
+  [data-page-block]:has(> .page-block-content > h5:first-child)
+) {
   --block-first-line: calc(var(--text-sm) * var(--text-sm--line-height));
 }
-:is(.sortable-block:has(:is(.block-static, .ProseMirror) > h6:first-child), [data-page-block]:has(> .page-block-content > h6:first-child)) {
+:is(
+  .sortable-block:has(:is(.block-static, .ProseMirror) > h6:first-child),
+  [data-page-block]:has(> .page-block-content > h6:first-child)
+) {
   --block-first-line: calc(var(--text-xs) * var(--text-xs--line-height));
 }
 
@@ -2346,13 +2364,14 @@
   }
 }
 
-/* Explicit block selection (StaticBlock / EditableBlock multi-select). */
 /* A gutter control's slot: the first line box of a block's text
    (`--block-first-line`) and the `py-1` around it (`.ProseMirror`,
    `.block-static`), so a control centred in it centres on that line. */
 @utility min-h-block-line {
   min-height: calc(var(--block-first-line) + 0.5rem);
 }
+
+/* Explicit block selection (StaticBlock / EditableBlock multi-select). */
 @utility block-selected {
   @apply ring-2 ring-inset ring-ring bg-ring/15;
 }

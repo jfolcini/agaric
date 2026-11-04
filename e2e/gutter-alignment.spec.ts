@@ -2,7 +2,7 @@
  * A block's gutter controls (grip, chevron, task checkbox) centre on the first
  * line of its text, in page mode and in block mode, at every font-size setting,
  * on a task whose text is a page link (with the cursor in it, showing its
- * source, and without), a plain block with blocks under it, and a heading.
+ * source, and without), a plain block with blocks under it, and headings.
  *
  * Block mode's row with the cursor in it is left out: its toolbar sits above
  * the text, inside the block's box, and the controls centre on the box.
@@ -20,6 +20,8 @@ interface Rows {
   unfocused: string
   plain: string
   heading: string
+  h1: string
+  h6: string
 }
 
 async function seed(page: Page, title: string): Promise<Rows> {
@@ -49,10 +51,14 @@ async function seed(page: Page, title: string): Promise<Rows> {
   await create(plain, 'child')
   const heading = await create(pageId, '## Heading parent')
   await create(heading, 'child')
+  const h1 = await create(pageId, '# Heading one')
+  await create(h1, 'child')
+  const h6 = await create(pageId, '###### Heading six')
+  await create(h6, 'child')
   for (const blockId of [focused, unfocused]) {
     await ipc(page, 'set_todo_state', { blockId, state: 'TODO' })
   }
-  return { focused, unfocused, plain, heading }
+  return { focused, unfocused, plain, heading, h1, h6 }
 }
 
 async function open(page: Page, title: string): Promise<void> {
@@ -121,11 +127,13 @@ for (const size of ['small', 'medium', 'large'] as const) {
       await open(page, `Gutter ${size}`)
       const row = (id: string) =>
         page.locator(`[data-testid="sortable-block"][data-block-id="${id}"]`)
-      await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(6)
+      await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(10)
       const cases = [
         [rows.unfocused, ['grip', 'checkbox']],
         [rows.plain, ['grip', 'chevron', 'checkbox']],
         [rows.heading, ['grip', 'chevron', 'checkbox']],
+        [rows.h1, ['grip', 'chevron', 'checkbox']],
+        [rows.h6, ['grip', 'chevron', 'checkbox']],
       ] as const
       for (const [id, controls] of cases) {
         await row(id).hover()
@@ -141,7 +149,7 @@ for (const size of ['small', 'medium', 'large'] as const) {
         .getByRole('radio', { name: 'Page' })
         .click()
       const row = (id: string) => page.locator(`${EDITOR} [data-page-block-id="${id}"]`)
-      await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(6)
+      await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(10)
       // Into the first block's link, which shows its source.
       await page.evaluate((selector) => {
         const { editor } = document.querySelector(selector) as HTMLElement & {
@@ -156,6 +164,8 @@ for (const size of ['small', 'medium', 'large'] as const) {
         [rows.unfocused, ['grip', 'checkbox']],
         [rows.plain, ['grip', 'chevron']],
         [rows.heading, ['grip', 'chevron']],
+        [rows.h1, ['grip', 'chevron']],
+        [rows.h6, ['grip', 'chevron']],
       ] as const
       for (const [id, controls] of cases) {
         await row(id).hover()

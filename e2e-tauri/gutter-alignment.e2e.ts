@@ -13,13 +13,15 @@ import { ACTION_TIMEOUT, invoke, openPageTitled, runScopedMarker, waitForAppRead
 import { PAGE_MODE, chooseEditMode, pageModeCaret } from './page-mode'
 
 const TITLE = runScopedMarker('wdio-gutter-align')
-const ROWS = 6
+const ROWS = 10
 
 interface Rows {
   focused: string
   unfocused: string
   plain: string
   heading: string
+  h1: string
+  h6: string
 }
 
 async function seed(): Promise<Rows> {
@@ -52,10 +54,14 @@ async function seed(): Promise<Rows> {
   await create(plain, 'child')
   const heading = await create(pageId, '## Heading parent')
   await create(heading, 'child')
+  const h1 = await create(pageId, '# Heading one')
+  await create(h1, 'child')
+  const h6 = await create(pageId, '###### Heading six')
+  await create(h6, 'child')
   for (const blockId of [focused, unfocused]) {
     await invoke('set_todo_state', { blockId, state: 'TODO' })
   }
-  return { focused, unfocused, plain, heading }
+  return { focused, unfocused, plain, heading, h1, h6 }
 }
 
 function setFontSize(size: string): Promise<void> {
@@ -127,10 +133,13 @@ function expectCentred(
 describe('gutter controls centre on the first line of the text @editor @pages', () => {
   let rows: Rows
 
-  it('in block mode, at the medium and large font sizes', async () => {
+  before(async () => {
     await waitForAppReady()
     rows = await seed()
     await openPageTitled(TITLE)
+  })
+
+  it('in block mode, at the medium and large font sizes', async () => {
     await chooseEditMode('Blocks')
     await browser.waitUntil(
       async () => (await $$('[data-testid="sortable-block"]').getElements()).length === ROWS,
@@ -140,6 +149,8 @@ describe('gutter controls centre on the first line of the text @editor @pages', 
       [rows.unfocused, ['grip', 'checkbox']],
       [rows.plain, ['grip', 'chevron', 'checkbox']],
       [rows.heading, ['grip', 'chevron', 'checkbox']],
+      [rows.h1, ['grip', 'chevron', 'checkbox']],
+      [rows.h6, ['grip', 'chevron', 'checkbox']],
     ] as const
     for (const size of ['16px', '18px']) {
       await setFontSize(size)
@@ -164,6 +175,8 @@ describe('gutter controls centre on the first line of the text @editor @pages', 
       [rows.unfocused, ['grip', 'checkbox']],
       [rows.plain, ['grip', 'chevron']],
       [rows.heading, ['grip', 'chevron']],
+      [rows.h1, ['grip', 'chevron']],
+      [rows.h6, ['grip', 'chevron']],
     ] as const
     for (const size of ['16px', '18px']) {
       await setFontSize(size)

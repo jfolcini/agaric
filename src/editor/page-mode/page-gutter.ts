@@ -271,7 +271,7 @@ export class PageGrip {
         'data-chevron',
         block.querySelector(':scope > .page-block-gutter') !== null,
       )
-      // Outside the block, it takes the block's first line box: a heading's is taller.
+      // Outside the block, it takes the block's first line box: a heading's differs.
       element.style.setProperty(
         '--block-first-line',
         getComputedStyle(block).getPropertyValue('--block-first-line'),
