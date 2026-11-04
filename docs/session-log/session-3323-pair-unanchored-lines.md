@@ -1,4 +1,4 @@
-# Session 3319 — pair unanchored lines
+# Session 3323 — pair unanchored lines
 
 #6277 G4: `pair_unanchored_lines`, beside `apply_page_source_inner`. Decision 6
 writes a `^ID` anchor only on a block something addresses, so a file edited
