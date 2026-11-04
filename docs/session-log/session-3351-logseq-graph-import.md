@@ -1,4 +1,4 @@
-# Session 3346 — A Logseq graph folder imports with its names and journals (#6033 S8)
+# Session 3351 — A Logseq graph folder imports with its names and journals (#6033 S8)
 
 Set out to build #6033 S8. A Logseq graph picked as a folder titled every page `graph/pages/X`, left `a___b` and `%3F` in titles, imported journals as pages named `2026_10_21` and left `[[Oct 21st, 2026]]` links pointing at empty pages; `logseq/bak/` copies imported as duplicates.
 
