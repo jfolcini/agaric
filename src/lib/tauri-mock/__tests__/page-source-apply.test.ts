@@ -843,6 +843,19 @@ describe('tauri-mock apply_page_source front matter (#5160 S8)', () => {
     expect(report.names_created.map((row) => row.content)).toEqual(['idea'])
   })
 
+  it('reads the singular `alias:` and `tag:` as the aliases and tags (#6033)', () => {
+    const report = apply(
+      source()
+        .replace('aliases: [Home base]', 'alias: [HQ]')
+        .replace('tags: [work]', 'tag: [idea]'),
+    )
+
+    expect(report).toMatchObject({ properties_set: 0 })
+    expect(pageAliases.get(PAGE)).toEqual(['HQ'])
+    expect(pageTags()).toEqual(['idea'])
+    expect(pageKeys()).toEqual({ stage: 'open', template: 'x' })
+  })
+
   it('refuses unreadable front matter or a refused value by its line, writing nothing', () => {
     const typed = (line: string) => source().replace('stage: open\n', `stage: open\n${line}\n`)
 

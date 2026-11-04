@@ -373,7 +373,7 @@ fn split_block_task_marker(text: &str) -> (Option<&'static str>, &str) {
 /// The Logseq and Org task keywords an import reads at the start of a bullet's
 /// text (#5160 D7), and the `todo_state` each stands for. Typing, paste and
 /// Edit as Markdown keep them as words.
-const TASK_KEYWORDS: [(&str, &str); 11] = [
+const TASK_KEYWORDS: [(&str, &str); 12] = [
     ("TODO", "TODO"),
     ("LATER", "TODO"),
     ("WAITING", "TODO"),
@@ -381,6 +381,7 @@ const TASK_KEYWORDS: [(&str, &str); 11] = [
     ("DOING", "DOING"),
     ("NOW", "DOING"),
     ("IN-PROGRESS", "DOING"),
+    ("STARTED", "DOING"),
     ("DONE", "DONE"),
     ("CANCELLED", "CANCELLED"),
     ("CANCELED", "CANCELLED"),
@@ -1384,6 +1385,73 @@ fn code_span_end(bytes: &[u8], start: usize) -> Option<usize> {
         }
     }
     None
+
+/// The Logseq admonitions (`#+BEGIN_NOTE` … `#+END_NOTE`) an import reads as
+/// callouts of their kind.
+const ORG_ADMONITIONS: [&str; 6] = ["NOTE", "TIP", "IMPORTANT", "CAUTION", "WARNING", "PINNED"];
+
+/// `content`, a block's text, with each Logseq/Org `#+BEGIN_X` … `#+END_X`
+/// block outside a code fence in Agaric's form: an admonition
+/// (`ORG_ADMONITIONS`) as a `> [!X]` callout and `QUOTE` as a `>` quote,
+/// each line of its body quoted. The keyword and the kind are read ignoring
+/// case, as Org reads them. Any other kind, source and example blocks
+/// included, and a block with no `#+END_X` stay as written.
+pub fn rewrite_org_blocks(content: &str) -> String {
+    if !content.contains("#+") {
+        return content.to_string();
+    }
+    let lines: Vec<&str> = content.split('\n').collect();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    let mut fence: Option<FenceRun> = None;
+    let mut at = 0;
+    while at < lines.len() {
+        let line = lines[at];
+        at += 1;
+        if let Some(run) = fence {
+            if closes_fence(line, run) {
+                fence = None;
+            }
+        } else if let Some(run) = fence_run(line.trim_start()) {
+            fence = Some(run);
+        } else if let Some((kind, marker)) = org_block_kind(line) {
+            let end = format!("#+END_{kind}");
+            let close = lines[at..]
+                .iter()
+                .position(|l| l.trim().eq_ignore_ascii_case(&end));
+            if let Some(close) = close {
+                out.extend(marker);
+                let body = &lines[at..at + close];
+                out.extend(body.iter().map(|l| {
+                    if l.is_empty() {
+                        ">".to_string()
+                    } else {
+                        format!("> {l}")
+                    }
+                }));
+                at += close + 1;
+                continue;
+            }
+        }
+        out.push(line.to_string());
+    }
+    out.join("\n")
+}
+
+/// The kind of the `#+BEGIN_X` line `line` is, as written, when an import
+/// reads it, and the callout marker line it opens with, if any.
+fn org_block_kind(line: &str) -> Option<(&str, Option<String>)> {
+    let trimmed = line.trim();
+    let kind = trimmed
+        .get(..8)
+        .filter(|begin| begin.eq_ignore_ascii_case("#+BEGIN_"))
+        .map(|_| &trimmed[8..])?;
+    let upper = kind.to_ascii_uppercase();
+    if upper == "QUOTE" {
+        return Some((kind, None));
+    }
+    ORG_ADMONITIONS
+        .contains(&upper.as_str())
+        .then(|| (kind, Some(format!("> [!{upper}]"))))
 }
 
 /// `%XX` escapes decoded to their bytes, read as UTF-8; anything else, and a
@@ -3410,7 +3478,12 @@ impl<'a> FrontmatterScan<'a> {
             self.note_unread(format!("`{line}` is not a `key: value` line"));
             return;
         };
-        let key = key_raw.trim();
+        // Obsidian's older singular keys name the page's aliases and tags.
+        let key = match key_raw.trim() {
+            "alias" => "aliases",
+            "tag" => "tags",
+            key => key,
+        };
         if !is_property_key(key) {
             self.skipped_invalid += 1;
             self.note_unread(format!("`{line}` is not a `key: value` line"));
@@ -5060,7 +5133,7 @@ bare line (({UUID_B})) too"
         let mut list_items: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
         let pairs = parse_frontmatter(
-            "title: \"Quoted Value\"\nalias: 'single quoted'",
+            "title: \"Quoted Value\"\nnickname: 'single quoted'",
             &mut list_items,
             &mut warns,
         );
@@ -5068,7 +5141,7 @@ bare line (({UUID_B})) too"
             pairs,
             vec![
                 ("title".to_string(), "Quoted Value".to_string()),
-                ("alias".to_string(), "single quoted".to_string()),
+                ("nickname".to_string(), "single quoted".to_string()),
             ],
             "a single layer of matching quotes must be stripped; got {pairs:?}"
         );
@@ -7907,6 +7980,19 @@ mod tests_task_syntax_5160 {
         }
     }
 
+    /// Logseq's `STARTED` is DOING, and an export escapes a block whose text
+    /// opens with it, so the escaped word reads back as text.
+    #[test]
+    fn a_logseq_started_task_is_doing() {
+        let block = &parse_logseq_markdown("- STARTED write the report").blocks[0];
+        assert_eq!(property(block, "todo_state"), Some("DOING"));
+        assert_eq!(block.content, "write the report");
+        assert!(super::needs_task_syntax_escape("STARTED x"));
+        let block = &parse_logseq_markdown("- \\STARTED x").blocks[0];
+        assert_eq!(property(block, "todo_state"), None);
+        assert_eq!(block.content, "STARTED x");
+    }
+
     /// Anything else stays text: a lowercase or glued keyword, one not at the
     /// start of the first line, a checkbox's own text, and an unknown cookie.
     #[test]
@@ -8666,6 +8752,55 @@ mod tests_foreign_inline_6033 {
         ] {
             assert_eq!(normalized(text), text, "{text:?}");
         }
+
+/// Logseq's and Org's `#+BEGIN_X` … `#+END_X` blocks in a block's text, read
+/// into Agaric's callout and quote.
+#[cfg(test)]
+mod tests_org_blocks {
+    use super::rewrite_org_blocks;
+
+    /// Each Logseq admonition is a callout of its kind, in Org's lowercase too.
+    #[test]
+    fn an_admonition_is_a_callout_of_its_kind() {
+        for kind in ["NOTE", "TIP", "IMPORTANT", "CAUTION", "WARNING", "PINNED"] {
+            let block = format!("#+BEGIN_{kind}\nfirst\nsecond\n#+END_{kind}");
+            let callout = format!("> [!{kind}]\n> first\n> second");
+            assert_eq!(rewrite_org_blocks(&block), callout, "{block:?}");
+        }
+        assert_eq!(
+            rewrite_org_blocks("#+begin_tip\nx\n#+end_tip"),
+            "> [!TIP]\n> x"
+        );
+    }
+
+    /// A quote is a plain quote; the text around it stays as it was.
+    #[test]
+    fn a_quote_block_is_a_quote() {
+        assert_eq!(
+            rewrite_org_blocks("said:\n#+BEGIN_QUOTE\nTo be\n\nor not\n#+END_QUOTE\nafter"),
+            "said:\n> To be\n>\n> or not\nafter"
+        );
+    }
+
+    /// Any other kind, code included, a block left open, and one inside a code
+    /// fence stay as written; one after the fence closes is read.
+    #[test]
+    fn other_blocks_stay_as_written() {
+        for block in [
+            "#+BEGIN_FOO\nx\n#+END_FOO",
+            "#+BEGIN_SRC rust\nlet x = 1;\n#+END_SRC",
+            "#+BEGIN_EXAMPLE\nx\n#+END_EXAMPLE",
+            "#+BEGIN_NOTE\nnever closed",
+            "#+BEGIN_NOTE\nx\n#+END_TIP",
+            "```\n#+BEGIN_NOTE\nx\n#+END_NOTE\n```",
+            "#+BEGIN_NOTEX\nx\n#+END_NOTEX",
+        ] {
+            assert_eq!(rewrite_org_blocks(block), block, "{block:?}");
+        }
+        assert_eq!(
+            rewrite_org_blocks("```\ncode\n```\n#+BEGIN_NOTE\nx\n#+END_NOTE"),
+            "```\ncode\n```\n> [!NOTE]\n> x"
+        );
     }
 }
 
