@@ -22,6 +22,7 @@ import {
   blockStaticByMarker,
   enterBlankSibling,
   expectAbsent,
+  invoke,
   navigateTo,
   openNewPage,
   reopenPageByTitle,
@@ -108,14 +109,7 @@ describe('Agaric real-backend Advanced Query saved views (#5738) @search', () =>
     const task = blockStaticByMarker(TASK)
     await task.waitForDisplayed({ timeout: NAV_TIMEOUT })
     const id = await task.getAttribute('data-block-id')
-    const checkbox = $(`[data-block-id="${id}"]`).$('[data-testid="task-marker"]')
-    await checkbox.waitForExist({ timeout: NAV_TIMEOUT })
-    await checkbox.moveTo()
-    await checkbox.click()
-    await browser.waitUntil(
-      async () => ((await checkbox.getAttribute('aria-label')) ?? '').startsWith('Task:'),
-      { timeout: ACTION_TIMEOUT, timeoutMsg: 'the task checkbox never set a todo state' },
-    )
+    await invoke('set_todo_state', { blockId: id, state: 'TODO' })
   })
 
   it('lists a saved view after a round trip, and Load restores its tree and results', async () => {
