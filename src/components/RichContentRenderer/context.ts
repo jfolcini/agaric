@@ -7,6 +7,7 @@
 import { AlertTriangle, Info, Lightbulb, StickyNote, XCircle } from 'lucide-react'
 import type React from 'react'
 
+import type { FootnoteNumbering } from '@/editor/footnotes'
 import type { BlockLinkNode } from '@/editor/types'
 
 /** Render-time context shared across block and inline sub-renderers. */
@@ -29,6 +30,8 @@ export interface RenderContext {
   readonly anchorRefId?: string | undefined
   /** Preview mode (#1533): nothing that breaks a clamped one-line row. */
   readonly inline?: boolean | undefined
+  /** The numbering of the page the content is on (#6033); unset, a footnote shows its label. */
+  readonly footnotes?: FootnoteNumbering | undefined
 }
 
 export const HEADING_CLASSES: Record<number, string> = {

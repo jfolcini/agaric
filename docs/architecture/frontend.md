@@ -161,7 +161,7 @@ Consume via `usePreference` (which wraps `useLocalStoragePreference`) or the pur
 
 ## Reduced motion + a11y
 
-See `docs/UX.md § Accessibility` for the canonical rule. Frontend specifics: hooks that drive motion (`useScrollToFocus`, `useAutoScrollOnDrag`, `useKeyboardNavigableList`) check `prefers-reduced-motion` and skip the smooth path. Roving tabindex is used in `SearchablePopover`, `RecentPagesStrip`, `TabBar` — exactly one `tabindex=0` per group, arrows move it.
+See `docs/UX.md § Accessibility` for the canonical rule. Frontend specifics: hooks that drive motion (`useScrollToFocus`, `useAutoScrollOnDrag`, `useKeyboardNavigableList`) check `prefers-reduced-motion` and skip the smooth path. Roving tabindex is used in `TabBar` — exactly one `tabindex=0` per group, arrows move it.
 
 ## Rewriting user prose (matchers built from runtime strings)
 

@@ -167,14 +167,13 @@ function headOf(buffer: Parsed, i: number): string {
   return buffer.texts[(buffer.spans[i] as SourceBlock).line] as string
 }
 
-/** The columns and markers of the blocks a block at `depth` written in place of block `at` is under. */
-function ancestors(buffer: Parsed, at: number, depth: number) {
-  const open: Array<{ column: number; marked: boolean }> = []
+/** The child columns of the blocks a block at `depth` written in place of block `at` is under. */
+function ancestors(buffer: Parsed, at: number, depth: number): number[] {
+  const open: number[] = []
   let want = depth - 1
   for (let i = at - 1; i >= 0 && want >= 0; i -= 1) {
     if ((buffer.blocks[i] as DocumentBlock).depth !== want) continue
-    const layout = lineLayout(headOf(buffer, i))
-    open[want] = { column: layout.childColumn, marked: layout.marked }
+    open[want] = lineLayout(headOf(buffer, i)).childColumn
     want -= 1
   }
   return open
@@ -201,7 +200,7 @@ function listMarkerOf(listStyle: DocumentBlock['listStyle'], run: number): strin
 /**
  * What a new block right after line `index` opens with, a sibling of the block
  * that line is in, as the writer places it: at that block's column, with its
- * list style numbered on, or as a `+` item under a list block (D4); and
+ * list style numbered on, or as a `+` item under another block (D4); and
  * whether a blank line goes before it. A task's sibling is plain, as page
  * mode's Enter makes it. Text split off a heading (`splitsText`) stays a
  * heading of its level, as page mode's Enter keeps it; past its end the

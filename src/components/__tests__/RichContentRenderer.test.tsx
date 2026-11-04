@@ -261,6 +261,22 @@ describe('RichContentRenderer', () => {
     expect(firstRowCells?.[1]?.textContent).toBe('30')
   })
 
+  it('aligns every cell of a column as its delimiter cell says (#6277)', () => {
+    const md = '| L | R | C | N |\n| :--- | ---: | :---: | --- |\n| 1 | 2 | 3 | 4 |'
+    const { container } = render(renderRichContent(md, {}))
+    const columns = (selector: string) =>
+      Array.from(container.querySelectorAll(selector), (cell) =>
+        ['text-left', 'text-right', 'text-center'].filter((c) => cell.classList.contains(c)),
+      )
+    expect(columns('thead th')).toEqual([
+      ['text-left'],
+      ['text-right'],
+      ['text-center'],
+      ['text-left'],
+    ])
+    expect(columns('tbody td')).toEqual([['text-left'], ['text-right'], ['text-center'], []])
+  })
+
   it('renders inline marks and tags inside table cells', () => {
     const md = `| Col |\n| --- |\n| **bold** #[${TAG_ID}] |`
     const { container } = render(

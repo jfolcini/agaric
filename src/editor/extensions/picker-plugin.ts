@@ -182,7 +182,7 @@ export interface ResolveAndInsertPickerTokenOptions {
    * Builds the TipTap content descriptor for the resolved id; `item` is the
    * matched picker item, absent on the create path.
    */
-  tokenFor: (id: string, item?: PickerItem) => Record<string, unknown>
+  tokenFor: (id: string, item?: PickerItem) => Content
   /** Optional "no match, create new" branch — returns the new resolved id. */
   onCreate?: ((text: string) => Promise<string>) | undefined
   /** Component name passed to `logger.warn` (e.g. `'BlockLinkPicker'`). */

@@ -385,8 +385,8 @@ reachable from the browser, and a token-scoped REST API landed on master after 2
 | **What Logseq import drops** | — | Import is per file: a `((uuid))` to a block in the **same** file resolves via `id::`; one to another file is stripped with a warning (`parse_logseq_markdown` in `src-tauri/agaric-engine/src/import.rs`). `journals/` is not treated as journal dates; blocks past depth 19 dropped; `config.edn`, `{{query}}`, `{{embed}}`, whiteboards dropped | Gap |
 | Import merge | N/A | **No merge**: importing one corpus on two synced devices duplicates pages | Gap |
 | Import from Roam | Native JSON | **Absent** | Gap |
-| Markdown export | Full graph | **"Export All"** (space) and **"Export all spaces"** ZIPs with `assets/` and `export-report.txt` (`src/lib/export-graph.ts`). Per-page `Ctrl+Shift+E` **copies to the clipboard**, with attachments as filename stand-ins, not a file | Better |
-| **What export drops** | Files are the format | History, trash, **property definitions**, saved queries, tag colours, space settings, keyboard map, sync state; built client-side with JSZip, so a large vault sits in memory | Partial |
+| Markdown export | Full graph | **"Export All"** (space) and **"Export all spaces"** ZIPs with `assets/` and `.agaric/export-report.txt` (`src/lib/export-graph.ts`). Per-page `Ctrl+Shift+E` **copies to the clipboard**, with attachments as filename stand-ins, not a file | Better |
+| **What export drops** | Files are the format | History, trash, saved queries, tag colours, space settings, keyboard map, sync state; built client-side with JSZip, so a large vault sits in memory | Partial |
 | JSON / EDN / OPML export | OG: EDN, JSON, OPML, Roam JSON, HTML, Markdown. 2.0: SQLite, SQLite+assets zip, **Build EDN** (block, page or full schema) | **None** | Gap |
 | HTML publishing | OG: read-only SPA. **2.0: Logseq Publish** (paid, password-protectable, self-hostable); 2.0.2 excludes private pages (#13691) | **Absent** | Gap |
 

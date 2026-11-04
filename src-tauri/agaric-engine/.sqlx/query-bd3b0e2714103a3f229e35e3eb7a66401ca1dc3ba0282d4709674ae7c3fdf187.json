@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO block_tags (block_id, tag_id)\n           SELECT json_extract(je.value, '$[0]'), json_extract(je.value, '$[1]')\n           FROM json_each(?1) je\n           WHERE EXISTS (SELECT 1 FROM blocks WHERE id = json_extract(je.value, '$[0]'))\n             AND EXISTS (SELECT 1 FROM blocks WHERE id = json_extract(je.value, '$[1]'))\n           RETURNING block_id AS \"block_id!: String\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_tags",
+            "name": "block_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "bd3b0e2714103a3f229e35e3eb7a66401ca1dc3ba0282d4709674ae7c3fdf187"
+}

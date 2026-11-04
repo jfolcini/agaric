@@ -3,6 +3,7 @@ import type React from 'react'
 import type { RenderContext } from '@/components/RichContentRenderer/context'
 import { renderBlockLink } from '@/components/RichContentRenderer/marks/blockLink'
 import { renderBlockRef } from '@/components/RichContentRenderer/marks/blockRef'
+import { renderFootnoteRef } from '@/components/RichContentRenderer/marks/footnote'
 import { renderHardBreak } from '@/components/RichContentRenderer/marks/hardBreak'
 import { renderImage } from '@/components/RichContentRenderer/marks/image'
 import { renderMathInline } from '@/components/RichContentRenderer/marks/math'
@@ -40,6 +41,9 @@ function renderInlineNode(
     }
     case 'image': {
       return renderImage(node, key, ctx)
+    }
+    case 'footnote_ref': {
+      return renderFootnoteRef(node, key, ctx)
     }
     default: {
       return null

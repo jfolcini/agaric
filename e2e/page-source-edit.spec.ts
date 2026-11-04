@@ -571,7 +571,8 @@ test.describe('Edit as Markdown (#5140 Phase 4b) @editor @pages @markdown @mobil
 
     await expect(editor).toBeFocused()
     const indented = await bufferLines(editor)
-    expect(indented[second]?.[0]).toMatch(/^ {2}Use the sidebar/)
+    // A plain child is a `+` item (decision 2, #6277).
+    expect(indented[second]?.[0]).toMatch(/^ {2}\+ Use the sidebar/)
     expect(indented[second]?.[1]).toBe(GS2)
     await editor.press('ControlOrMeta+s')
     await expect(sourceEditor(page)).toHaveCount(0)
@@ -783,14 +784,14 @@ test.describe('Edit as Markdown writes a page line by line (#5691) @editor @page
     await caretAtEnd(page, editor, 'Child note')
     await page.keyboard.press('Enter')
     await page.keyboard.type('Sibling note')
+    // A plain child is a `+` item, its sibling one more with no blank line (decision 2, #6277).
     await expect
-      .poll(async () => (await bufferLines(editor)).slice(0, 5))
+      .poll(async () => (await bufferLines(editor)).slice(0, 4))
       .toEqual([
         ['Parent note', parent],
         ['', null],
-        ['  Child note', child],
-        ['', null],
-        ['  Sibling note', null],
+        ['  + Child note', child],
+        ['  + Sibling note', null],
       ])
     await editor.press('ControlOrMeta+s')
     await expect(sourceEditor(page)).toHaveCount(0)
