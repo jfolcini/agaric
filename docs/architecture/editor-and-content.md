@@ -9,7 +9,7 @@ Block content is stored as Markdown-flavoured plain text. The full grammar is pa
 
 - One block = one top-level Markdown construct (paragraph, heading, list item, code block, etc.). Multi-block markdown pasted into one block triggers an auto-split on blur.
 - Inline marks are a **locked set**: bold, italic, code, strike, highlight, external-link, inline-block-link (`[[ULID]]`), tag-ref (`#[ULID]`), block-ref (`((ULID))`), footnote-ref (`[^label]`). New marks are deliberate additions to the serializer + grammar.
-- Code blocks carry a `language` attribute (one of a curated set; matching common usage).
+- Code blocks carry a `language` attribute (one of a curated set; matching common usage). The parser reads a fence of backticks or tildes, and a thematic break of three or more `-`, `*` or `_`, as Rust's grammar does (#6033); the serializer writes backtick fences and `---`.
 - Callouts use a `> [!type]` fenced shape (tip / note / info / warning / error).
 
 ## Custom serializer
