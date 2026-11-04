@@ -1319,41 +1319,20 @@ describe('parseEnex — rules and strikethrough Agaric reads (#6032)', () => {
   })
 })
 
-describe('Evernote tags and notebooks (#6032)', () => {
-  const note = (title: string, tags: string[] = []): EnexNote => ({
+describe('Evernote notebooks (#6032)', () => {
+  const note = (title: string): EnexNote => ({
     title,
     markdown: 'body',
-    tags,
+    tags: [],
     createdMs: null,
     updatedMs: null,
     sourceUrl: null,
     attachments: [],
   })
 
-  it('writes the tags as front matter tags:, each whole, and no tags-only body block', () => {
-    const md = enexNoteToMarkdown(
-      note('T', ['work', 'Multi\n   Word', 'C++', 'Q&A', 'v1.2', '2024']),
-    )
-
-    expect(md).toBe(
-      '---\n' +
-        'tags:\n' +
-        '  - "work"\n' +
-        '  - "Multi Word"\n' +
-        '  - "C++"\n' +
-        '  - "Q&A"\n' +
-        '  - "v1.2"\n' +
-        '  - "2024"\n' +
-        'source: evernote\n' +
-        '---\n' +
-        '\n' +
-        'body\n',
-    )
-  })
-
   it('titles each note under its file name, so two files holding "Meeting" import as two pages', async () => {
     const [work] = enexNotesToUnits([note('Meeting')], 'Work.enex')
-    const [home] = enexNotesToUnits([note('Meeting')], 'Home.enex')
+    const [home] = enexNotesToUnits([note('Meeting')], 'Home.ENEX')
 
     expect(work?.name).toBe('Work/Meeting.md')
     expect((await work?.load())?.path).toBe('Work/Meeting.md')

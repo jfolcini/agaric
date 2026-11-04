@@ -94,7 +94,7 @@ export interface EnexNote {
   title: string
   /**
    * The note's reminder task, then its ENML body converted to Markdown with its
-   * Evernote tasks in place (no frontmatter, no tag tokens).
+   * Evernote tasks in place (no frontmatter).
    */
   markdown: string
   /** Tag names as authored in Evernote (may contain spaces). */
