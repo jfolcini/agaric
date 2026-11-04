@@ -6,8 +6,9 @@
 import type { Editor } from '@tiptap/core'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { blockId, openPage, posIn } from '@/editor/page-mode/__tests__/page-mode-fixtures'
-import { changedBlocks, PAGE_BLOCK } from '@/editor/page-mode/page-document'
+import { parse } from '@/editor/markdown-parse'
+import { blockId, openPage, posIn, type Row } from '@/editor/page-mode/__tests__/page-mode-fixtures'
+import { blockDocJson, changedBlocks, PAGE_BLOCK } from '@/editor/page-mode/page-document'
 
 const A = blockId(1)
 const B = blockId(2)
@@ -56,5 +57,27 @@ describe('changedBlocks', () => {
     const tr = ed.state.tr.delete(start, start + ed.state.doc.child(1).nodeSize)
 
     expect([...changedBlocks(tr.doc, tr.mapping.maps)]).toEqual([])
+  })
+})
+
+describe('a page block read from stored content (#6033)', () => {
+  it('holds a tilde fence as code and a `***` or `___` line as a rule, as block mode does', () => {
+    const rows: Row[] = [
+      [A, 0, '~~~js\nlet x\n~~~'],
+      [B, 0, 'a\n***\nb'],
+      [C, 0, '___'],
+    ]
+    editor = openPage(rows)
+    const types: string[][] = []
+    editor.state.doc.forEach((block) => {
+      types.push(blockDocJson(block).content?.map((node) => node.type) ?? [])
+    })
+    const blockModeTypes = rows.map(([, , content]) => parse(content).content?.map((n) => n.type))
+    expect(types).toEqual(blockModeTypes)
+    expect(types).toEqual([
+      ['codeBlock'],
+      ['paragraph', 'horizontalRule', 'paragraph'],
+      ['horizontalRule'],
+    ])
   })
 })

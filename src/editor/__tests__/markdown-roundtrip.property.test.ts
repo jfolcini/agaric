@@ -29,9 +29,11 @@ import {
   blockquote,
   bold,
   bulletList,
+  codeBlock,
   doc,
   hardBreak,
   heading,
+  horizontalRule,
   listItem,
   mathInline,
   paragraph,
@@ -559,6 +561,17 @@ const FIXPOINT_SEEDS: readonly DocNode[] = [
   doc(paragraph(text('a'), hardBreak(), hardBreak(), text('b'))),
   doc(blockquote(paragraph(text('a')), paragraph(text('b')))),
   doc(bulletList(listItem(paragraph(text('p')), paragraph(text('a')), paragraph(text('b'))))),
+  // #6033: a `~~~` fence and a `***` / `___` rule are blocks, so a paragraph
+  // of that text, a dash run trailing whitespace, and code holding a tilde
+  // fence must come back as written.
+  doc(paragraph(text('~~~'))),
+  doc(paragraph(text('a'), hardBreak(), text('~~~js'))),
+  doc(paragraph(text('***'))),
+  doc(paragraph(text('___'))),
+  doc(paragraph(text('--- '))),
+  doc(paragraph(text('a'), hardBreak(), text('---\u00A0'))),
+  doc(codeBlock('~~~\nx\n~~~')),
+  doc(paragraph(text('a')), horizontalRule(), paragraph(text('b'))),
 ]
 
 /** Shapes that normalize (string changes once) before becoming stable. */
