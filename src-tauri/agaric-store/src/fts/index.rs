@@ -15,7 +15,7 @@
 //!   — single-block upsert (DELETE then INSERT in one transaction).
 //! - [`reindex_fts_for_ids`] — batch DELETE of the chunk's ids, then a
 //!   multi-row INSERT. Shared by [`reindex_fts_references`] and the
-//!   restore cohort fan-out (#4733).
+//!   delete and restore cohort fan-outs (#4733, #6243).
 //! - [`remove_fts_for_blocks`] — one batched DELETE, for a deleted cohort.
 //! - [`rebuild_fts_index_impl`] / [`rebuild_fts_index_split_impl`] — full
 //!   `DELETE FROM fts_blocks` up front, then chunked INSERTs.
@@ -311,7 +311,7 @@ pub async fn remove_fts_for_blocks<S: AsRef<str>>(
 /// When a tag/page is renamed (edited), the FTS entries for every block that
 /// references it become stale because `strip_for_fts` resolves `#[ULID]` /
 /// `[[ULID]]` tokens to human-readable names, whatever space the target is in.
-/// The referrers are [`referrers_of`] the block.
+/// The referrers are those `referrers_of` returns for the block.
 ///
 /// The re-strip is chunked by `reindex_fts_for_ids`, one transaction per
 /// `FTS_REINDEX_CHUNK` ids, so a tag rename touching tens of thousands of

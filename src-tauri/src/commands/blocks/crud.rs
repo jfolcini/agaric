@@ -4109,18 +4109,55 @@ mod saturation_probe_tests {
         mat.shutdown();
     }
 
+    /// One batch carrying both targets: the cohort helpers look up every
+    /// page and tag in the cohort, not only the first.
+    #[tokio::test]
+    async fn a_batch_delete_and_restore_all_re_strip_every_targets_mentions_6243() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        seed_mentions(&pool).await;
+
+        delete_blocks_by_ids_inner(
+            &pool,
+            DEV,
+            &mat,
+            vec![
+                BlockId::from_trusted(MENTION_PAGE),
+                BlockId::from_trusted(MENTION_TAG),
+            ],
+        )
+        .await
+        .unwrap();
+        mat.flush().await.unwrap();
+        assert_eq!(
+            mention_texts(&pool).await,
+            texts("", ""),
+            "after the batch delete"
+        );
+
+        for id in [PAGE_NOTE, TAG_NOTE] {
+            agaric_store::fts::update_fts_for_block(&pool, id)
+                .await
+                .unwrap();
+        }
+        restore_all_deleted_inner(&pool, DEV, &mat).await.unwrap();
+        mat.flush().await.unwrap();
+        assert_eq!(
+            mention_texts(&pool).await,
+            texts("Roadmap", "urgent"),
+            "after restoring the whole trash"
+        );
+        mat.shutdown();
+    }
+
     #[tokio::test]
     async fn restoring_a_page_or_tag_gives_its_name_back_to_its_mentions_6243() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
         seed_mentions(&pool).await;
         let stamps = delete_targets(&pool, &mat).await;
-        // An edit while the targets are deleted re-strips the notes with `""`
-        // and moves the page link to the unresolved table.
+        // An edit while the targets are deleted re-strips the notes with `""`.
         for id in [PAGE_NOTE, TAG_NOTE] {
-            agaric_store::cache::reindex_block_links(&pool, id)
-                .await
-                .unwrap();
             agaric_store::fts::update_fts_for_block(&pool, id)
                 .await
                 .unwrap();
