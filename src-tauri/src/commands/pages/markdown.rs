@@ -4230,52 +4230,65 @@ fn rewrite_vault_wikilinks(content: &str, notes: &HashMap<String, String>) -> St
         .into_owned()
 }
 
-/// A markdown link `[text](dest)`: group 1 the text, group 2 the destination.
-static MD_LINK_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r"\[([^\]\n]*)\]\(([^)\s\n]+)\)").expect("invalid markdown link regex")
-});
-
-/// `content` with each link to a relative `.md` file, percent-decoded and
-/// resolved against `dir` (the linking file's folder), written as a
-/// `[[title]]` link to the page that file imports as (#5160 N10), with the
-/// link text as its label when it is not that title (D9). External links,
-/// links to other file types, images and links in code are untouched.
+/// `content` with each link to a relative note, a file of one of the
+/// [`import::NOTE_EXTENSIONS`] resolved against `dir` (the linking file's
+/// folder), written as a `[[title]]` link to the page that file imports as
+/// (#5160 N10), with the link text as its label when it is not that title
+/// (D9). A `#Heading` or `#^id` fragment is kept as the link's anchor. A `<…>`
+/// or titled destination reads as a bare one. External links, links to other
+/// file types, images and links in code or escaped are untouched.
 fn rewrite_relative_md_links(content: &str, dir: &str) -> String {
     if !content.contains("](") {
         return content.to_string();
     }
     let code_spans = import::inline_code_spans(content);
-    MD_LINK_RE
-        .replace_all(content, |caps: &regex::Captures<'_>| {
-            let m = caps.get(0).expect("group 0 always present");
-            let whole = m.as_str();
-            if is_in_span(m.start(), &code_spans) || content[..m.start()].ends_with('!') {
-                return whole.to_string();
-            }
-            match relative_md_link_title(&caps[2], dir) {
-                Some(title) => match caps[1].trim() {
-                    "" => format!("[[{title}]]"),
-                    text if text == title => format!("[[{title}]]"),
-                    text => format!("[[{title}|{text}]]"),
-                },
-                None => whole.to_string(),
-            }
-        })
-        .into_owned()
+    let mut out = String::with_capacity(content.len());
+    let mut copied = 0;
+    for token in import::markdown_link_tokens(content) {
+        if token.is_image
+            || is_in_span(token.start, &code_spans)
+            || is_escaped(content, token.start)
+        {
+            continue;
+        }
+        // Split before decoding: a `%23` is a `#` of the file's name.
+        let (path, anchor) = match token.destination.split_once('#') {
+            Some((path, anchor)) => (path, Some(percent_decode(anchor))),
+            None => (token.destination, None),
+        };
+        let Some(title) = relative_md_link_title(path, dir) else {
+            continue;
+        };
+        let target = match anchor.filter(|anchor| !anchor.is_empty()) {
+            Some(anchor) => format!("{title}#{anchor}"),
+            None => title.clone(),
+        };
+        let link = match token.text.trim() {
+            "" => format!("[[{target}]]"),
+            text if text == title => format!("[[{target}]]"),
+            text => format!("[[{target}|{text}]]"),
+        };
+        out.push_str(&content[copied..token.start]);
+        out.push_str(&link);
+        copied = token.end;
+    }
+    out.push_str(&content[copied..]);
+    out
 }
 
-/// The page title a relative `.md` link destination imports as, resolved
-/// against `dir`, whose first folder is the vault's: `Other%20note.md` from
-/// `vault/notes` is `vault/notes/Other note`, and `../Top.md` is `vault/Top`.
-/// `None` for a URL, an absolute path, another file type or a path that climbs
-/// out of the vault.
-fn relative_md_link_title(dest: &str, dir: &str) -> Option<String> {
-    let dest = percent_decode(dest).replace('\\', "/");
-    if dest.contains("://") || dest.starts_with('/') || !dest.to_ascii_lowercase().ends_with(".md")
-    {
+/// The page title a relative note link's `path` (its destination before any
+/// `#fragment`) imports as, resolved against `dir`, whose first folder is the
+/// vault's: `Other%20note.md` from `vault/notes` is `vault/notes/Other note`,
+/// and `../Top.txt` is `vault/Top`. An Org file is named by its file name,
+/// not its `#+TITLE`. `None` for a URL, an absolute path, a file that is no
+/// note or a path that climbs out of the vault.
+fn relative_md_link_title(path: &str, dir: &str) -> Option<String> {
+    let path = percent_decode(path).replace('\\', "/");
+    let (stem, extension) = path.rsplit_once('.')?;
+    let names_note = import::NOTE_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str());
+    if path.contains("://") || path.starts_with('/') || !names_note {
         return None;
     }
-    let stem = &dest[..dest.len() - ".md".len()];
     let (vault, dir) = dir.split_once('/').unwrap_or((dir, ""));
     let path = import::resolve_vault_path(dir, stem)?;
     Some(folder_path_to_namespace_title(&format!("{vault}/{path}"))).filter(|t| !t.is_empty())
@@ -7980,6 +7993,32 @@ mod tests {
             ),
             "[[v/Other|t]] ![i](pic.md) `[c](Code.md)` [w](https://x/a.md) [[v/A]] [[v/A]]",
             "the link text is the label unless empty or the title (#5160 D9)"
+        );
+    }
+
+    /// #6032 — a link to a note of any extension, `<…>` or titled, is a page
+    /// link; its `#fragment`, split off before decoding, is its anchor.
+    #[test]
+    fn a_relative_link_to_any_note_extension_keeps_its_anchor() {
+        for dest in ["r.txt", "r.MARKDOWN", "r.mdx", "r.Org"] {
+            assert_eq!(
+                relative_md_link_title(dest, "v").as_deref(),
+                Some("v/r"),
+                "{dest}"
+            );
+        }
+        assert_eq!(relative_md_link_title("r.pdf", "v"), None);
+        assert_eq!(relative_md_link_title("noext", "v"), None);
+        assert_eq!(
+            rewrite_relative_md_links(
+                "[t](r.txt) [h](O.md#My%20Heading) [b](O.md#^id) [v/O](O.md#H) [e](O.md#) \
+                 [a](<Other note.md> 'T') [q](O.md \"T\") [c](C%23%20Notes.md) [s](#own) \
+                 \\[x](O.md) ![i](p.txt)",
+                "v"
+            ),
+            "[[v/r|t]] [[v/O#My Heading|h]] [[v/O#^id|b]] [[v/O#H]] [[v/O|e]] \
+             [[v/Other note|a]] [[v/O|q]] [[v/C# Notes|c]] [s](#own) \
+             \\[x](O.md) ![i](p.txt)"
         );
     }
 

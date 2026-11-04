@@ -829,6 +829,48 @@ fn link_destination(rest: &str) -> Option<(&str, usize)> {
     Some((destination, at + close.end()))
 }
 
+/// A markdown image `![alt](destination)` or link `[text](destination)` of a
+/// text, as [`markdown_link_tokens`] reads it.
+pub struct MarkdownLinkToken<'a> {
+    /// The byte range of the whole token.
+    pub start: usize,
+    pub end: usize,
+    pub is_image: bool,
+    /// The alt text of an image, the label of a link.
+    pub text: &'a str,
+    /// The raw destination, neither trimmed nor percent-decoded.
+    pub destination: &'a str,
+}
+
+/// Every markdown image and link of `content`, in source order, read by
+/// [`MARKDOWN_LINK_OPEN_RE`] and [`link_destination`]. Tokens in code and
+/// escaped ones are included: what skips them is the caller's to say.
+pub fn markdown_link_tokens(content: &str) -> impl Iterator<Item = MarkdownLinkToken<'_>> {
+    let mut from = 0;
+    std::iter::from_fn(move || {
+        while let Some(cap) = MARKDOWN_LINK_OPEN_RE.captures_at(content, from) {
+            let open = cap.get(0).expect("group 0 present");
+            from = open.end();
+            let Some((destination, len)) = link_destination(&content[from..]) else {
+                continue;
+            };
+            from += len;
+            let (is_image, text) = match cap.get(1) {
+                Some(alt) => (true, alt),
+                None => (false, cap.get(2).expect("group 2 present")),
+            };
+            return Some(MarkdownLinkToken {
+                start: open.start(),
+                end: from,
+                is_image,
+                text: text.as_str(),
+                destination,
+            });
+        }
+        None
+    })
+}
+
 /// `true` when `reference` is one this import must NOT try to ingest as a vault
 /// attachment (#1925): an absolute URL (`http://`, `https://`, `data:`), a
 /// protocol-relative `//host` URL, or an already-canonical `attachment:<id>`
@@ -844,7 +886,7 @@ fn is_skippable_attachment_ref(reference: &str) -> bool {
 
 /// The extensions a folder import reads as notes (`NOTE_EXTENSIONS` in
 /// `src/lib/import-attachments.ts`): a link to one is a page link.
-const NOTE_EXTENSIONS: [&str; 5] = ["md", "markdown", "mdx", "txt", "org"];
+pub const NOTE_EXTENSIONS: [&str; 5] = ["md", "markdown", "mdx", "txt", "org"];
 
 /// URL scheme at the start of a link destination (`mailto:`, `ftp:`).
 static URL_SCHEME_RE: LazyLock<Regex> =
@@ -928,31 +970,22 @@ pub fn detect_attachment_refs(content: &str, code_spans: &[(usize, usize)]) -> V
     }
 
     // Standard markdown images and links.
-    let mut from = 0;
-    while let Some(cap) = MARKDOWN_LINK_OPEN_RE.captures_at(content, from) {
-        let open = cap.get(0).expect("group 0 present");
-        from = open.end();
-        let Some((destination, len)) = link_destination(&content[from..]) else {
-            continue;
-        };
-        from += len;
-        if in_code(open.start()) {
+    for token in markdown_link_tokens(content) {
+        if in_code(token.start) {
             continue;
         }
-        let url = destination.trim();
+        let url = token.destination.trim();
         if url.is_empty() || is_skippable_attachment_ref(url) {
             continue;
         }
         let original_ref = percent_decode(url);
-        let alt = match (cap.get(1), cap.get(2)) {
-            (Some(alt), _) => alt,
-            (None, Some(label)) if links_a_file(&original_ref) => label,
-            _ => continue,
-        };
+        if !token.is_image && !links_a_file(&original_ref) {
+            continue;
+        }
         refs.push(AttachmentRef {
-            alt: alt.as_str().to_string(),
+            alt: token.text.to_string(),
             original_ref,
-            full_match: content[open.start()..from].to_string(),
+            full_match: content[token.start..token.end].to_string(),
         });
     }
 
