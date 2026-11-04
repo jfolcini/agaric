@@ -5,7 +5,7 @@
  *
  * Composition wiring: the Import card (all import affordances + the shared
  * import-runner state machine) lives in {@link ImportSection}, the Export
- * card in {@link ExportSection}. The pure import logic lives in
+ * card in {@link ExportSection}, the Markdown mirror in {@link MirrorSection}. The pure import logic lives in
  * `@/lib/vault-import` and the shared runner in `./useImportRunner`.
  */
 
@@ -15,6 +15,7 @@ import { useTranslation } from 'react-i18next'
 
 import { ExportSection } from '@/components/settings/ExportSection'
 import { ImportSection } from '@/components/settings/ImportSection'
+import { MirrorSection } from '@/components/settings/MirrorSection'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { SettingRow } from '@/components/ui/setting-row'
@@ -28,6 +29,7 @@ export function DataTab(): React.ReactElement {
     <div className="data-settings-tab space-y-6">
       <ImportSection />
       <ExportSection />
+      <MirrorSection />
       {/* HistoryView is a full-page view: it portals its filter bar into the
           shell header and takes Space / Enter / arrows on `document`, so the
           row opens it rather than hosting it. */}
