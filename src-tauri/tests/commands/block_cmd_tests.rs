@@ -1219,13 +1219,15 @@ async fn edit_block_refuses_a_tag_rename_holding_whitespace_6278() {
     let result = edit_block_inner(&pool, DEV, &mat, notes.id.clone(), "deep work".into()).await;
     assert_eq!(
         result.as_ref().err().map(ToString::to_string).as_deref(),
-        Some("Validation error: the tag name 'deep work' holds whitespace; use '-' instead")
+        Some("Validation error: the tag name 'deep work' holds whitespace; use '-' instead"),
+        "the refusal suggests `-`"
     );
     assert_spaced_tag_name_refusal(result, "deep work");
 
     assert_eq!(
         page_content(&pool, &notes.id).await.as_deref(),
-        Some("notes")
+        Some("notes"),
+        "a refused rename keeps the name"
     );
     assert_eq!(
         count_ops(&pool).await,
@@ -1259,7 +1261,8 @@ async fn a_tag_named_before_the_rule_still_resolves_and_renames_6278() {
         .expect("a spaced tag may be renamed to a name without whitespace");
     assert_eq!(
         page_content(&pool, &old).await.as_deref(),
-        Some("multi-word")
+        Some("multi-word"),
+        "the rename to the dashed form lands"
     );
 }
 
@@ -1298,7 +1301,8 @@ async fn a_tag_named_before_the_rule_undoes_and_restores_6278() {
     .expect("an undo brings the spaced name back");
     assert_eq!(
         page_content(&pool, &old).await.as_deref(),
-        Some("multi word")
+        Some("multi word"),
+        "the undo brings the spaced name back"
     );
 
     settle(&mat).await;

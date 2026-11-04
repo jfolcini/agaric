@@ -2,11 +2,13 @@ import type { Page } from '@playwright/test'
 
 import {
   activeDialog,
+  activePopover,
   clearConsoleErrors,
   expect,
   getConsoleErrors,
   ipc,
   navigateToView,
+  openPage,
   test,
   waitForBoot,
 } from './helpers'
@@ -15,7 +17,8 @@ import {
  * #6278 I4: a new tag name holds no whitespace, which Obsidian's `#tag` cannot
  * spell. Creating or renaming a tag to one in the Tags view is refused with a
  * toast that says to use `-`, and nothing is written: re-read from the mock
- * backend after navigating away and back.
+ * backend after navigating away and back. A picker's Create row offers the
+ * dashed name instead, and creates it.
  */
 
 const MESSAGE = "A tag name can't contain spaces. Use - instead, as in deep-work."
@@ -71,5 +74,25 @@ test.describe('A tag name holds no whitespace (#6278 I4) @pages', () => {
     await reopenTags(page)
     await expect(page.getByTestId('tag-item-idea')).toBeVisible()
     expect(await tagNames(page)).toEqual(['idea', 'personal', 'work'])
+  })
+})
+
+test.describe('A picker names the tag it creates (#6278 I4) @pages', () => {
+  test('the page header offers `deep-work` for `deep work`, creating and applying it', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    await openPage(page, 'Getting Started')
+    await page.getByRole('button', { name: 'Page actions', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Add tag', exact: true }).click()
+    await activePopover(page).getByLabel('Search tags').fill('deep work')
+    await activePopover(page).getByRole('button', { name: 'Create "deep-work"' }).click()
+
+    await expect(
+      page.getByRole('button', { name: 'Remove tag deep-work', exact: true }),
+    ).toBeVisible()
+    await navigateToView(page, 'Tags')
+    await expect(page.getByTestId('tag-item-deep-work')).toBeVisible()
+    expect(await tagNames(page)).toEqual(['deep-work', 'idea', 'personal', 'work'])
   })
 })

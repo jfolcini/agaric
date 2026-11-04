@@ -14002,7 +14002,11 @@ async fn import_dashes_a_multi_word_tag_naming_no_tag_6278() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(content, format!("a #[{}] here", dashed[0]));
+    assert_eq!(
+        content,
+        format!("a #[{}] here", dashed[0]),
+        "the block links the tag it created"
+    );
 
     let page_tags: Vec<String> = sqlx::query_scalar(
         "SELECT t.content FROM block_tags bt JOIN blocks t ON t.id = bt.tag_id \

@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 
-import { unwrap, validationCode } from '@/lib/app-error'
+import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notifyTagAdded, subscribeToNameChanges } from '@/lib/name-change-bus'
+import { dashedTagName } from '@/lib/name-tokens'
 import { notify } from '@/lib/notify'
-import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { requireActiveScope } from '@/lib/space-scope'
 import { usePageBlockStoreApi } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
@@ -206,7 +206,9 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
 
   const handleCreateTag = useCallback(
     async (name: string) => {
-      const trimmed = name.trim()
+      // #6278 I4 — a new tag name holds no whitespace; the picker's Create row
+      // shows this name.
+      const trimmed = dashedTagName(name)
       if (!trimmed) return
       // #3081 — create the tag ATOMICALLY space-scoped (thread the active
       // spaceId) so the backend stamps `blocks.space_id` in the same
@@ -232,9 +234,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
         tagId = resp.id
       } catch (error) {
         logger.error('useBlockTags', 'Failed to create tag', { blockId, name: trimmed }, error)
-        // #6278 I4 — a name holding whitespace is the user's to fix.
-        const spaced = validationCode(error) === ValidationCode.TagNameWhitespace
-        notify.error(i18n.t(spaced ? 'tags.nameHasWhitespace' : 'tags.createFailed'))
+        notify.error(i18n.t('tags.createFailed'))
         return
       }
       // #5236 — the backend answers a name that already exists with that

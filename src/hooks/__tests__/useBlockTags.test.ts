@@ -26,7 +26,6 @@ import {
 } from '@/__tests__/helpers/invoke'
 import { useBlockTags } from '@/hooks/useBlockTags'
 import { getGraphStructureKey } from '@/lib/graph-structure-events'
-import { t } from '@/lib/i18n'
 import type { NameChange } from '@/lib/name-change-bus'
 import { invalidateNameCaches, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
@@ -847,18 +846,21 @@ describe('useBlockTags handleCreateTag', () => {
     expect(mockedToastError).toHaveBeenCalledWith('Failed to create tag')
   })
 
-  // #6278 I4 — the coded refusal of a name holding whitespace says to use `-`.
-  it('shows the use-a-dash toast when the backend refuses a name holding whitespace', async () => {
+  // #6278 I4 — a new tag name holds no whitespace: the picker's Create row
+  // names `deep-work`, and that is the tag created and applied.
+  it('creates and applies the dashed name for a name holding whitespace', async () => {
+    const createdBlock = makeBlock({
+      id: 'NEW_TAG_DASHED',
+      block_type: 'tag' as const,
+      content: 'deep-work',
+      page_id: null,
+    })
     stubInvoke({
       list_inherited_tags_for_block: () => [],
       list_all_tags_in_space: () => [],
       list_tags_for_block: () => [],
-      create_block: () =>
-        Promise.reject({
-          kind: 'validation',
-          code: 'TagNameWhitespace',
-          message: "the tag name 'deep work' holds whitespace; use '-' instead",
-        }),
+      create_block: () => withOps(createdBlock),
+      add_tag: () => ({ block_id: 'BLOCK_1', tag_id: 'NEW_TAG_DASHED', op_refs: [] }),
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -868,10 +870,20 @@ describe('useBlockTags handleCreateTag', () => {
     })
 
     await act(async () => {
-      await result.current.handleCreateTag('deep work')
+      await result.current.handleCreateTag(' deep   work ')
     })
 
-    expect(mockedToastError).toHaveBeenCalledExactlyOnceWith(t('tags.nameHasWhitespace'))
+    expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+      blockType: 'tag',
+      content: 'deep-work',
+      parentId: null,
+      index: null,
+      scope: { kind: 'active', space_id: 'SPACE_1' },
+      blockId: null,
+    })
+    expect(result.current.allTags).toEqual([{ id: 'NEW_TAG_DASHED', name: 'deep-work' }])
+    expect(result.current.appliedTagIds.has('NEW_TAG_DASHED')).toBe(true)
+    expect(mockedToastError).not.toHaveBeenCalled()
   })
 
   it('does not update allTags or resolveStore when createBlock fails', async () => {

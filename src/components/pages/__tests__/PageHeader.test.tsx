@@ -662,6 +662,34 @@ describe('PageHeader tag management', () => {
     })
   })
 
+  // #6278 I4 — typing `deep work` offers `Create "deep-work"`, and that is the
+  // tag created, not one the backend would refuse.
+  it('creates the dashed tag for a name typed with a space', async () => {
+    const user = userEvent.setup()
+    setupTagMock([])
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText('Add tag'))
+    await user.type(await screen.findByLabelText('Search tags'), 'deep work')
+
+    await user.click(await screen.findByText('Create "deep-work"'))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+        blockType: 'tag',
+        content: 'deep-work',
+        parentId: null,
+        index: null,
+        scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+        blockId: null,
+      })
+    })
+    expect(mockedToastError).not.toHaveBeenCalledWith(t('tags.nameHasWhitespace'))
+    expect(mockedToastError).not.toHaveBeenCalledWith(t('tags.createFailed'))
+  })
+
   it('search filters available tags', async () => {
     const user = userEvent.setup()
     setupTagMock([])

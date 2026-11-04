@@ -16,7 +16,7 @@ Tags are first-class entities — each tag is a record with its own page in the 
 - **Tag colour**: assign a colour in the Tags view; the chip uses it everywhere on **that device**. Colours are stored locally and are not synced, so the same tag can look different on your phone and your laptop.
 - **Usage count**: the Tags view shows how many blocks carry each tag.
 - **Rename**: edit the title in the Tags view → tag page header. Inline chips store only the tag's ULID and resolve the display name at render time, so every chip picks the new name up immediately.
-- **No whitespace in a new name**: creating or renaming a tag to a name holding a space is refused with a message to use `-` (`deep-work`), since Obsidian's `#tag` ends at a space. An imported or pasted `#[[multi word]]` naming no tag becomes `multi-word`, and the import or paste names it in its warnings. A tag named with a space before this rule keeps working, `#[[…]]` still reads it, and the export writes it as `#[[name]]` until it is renamed.
+- **No whitespace in a new name**: creating a tag in the Tags view, or renaming one there or by its page title, to a name holding a space is refused with a message to use `-` (`deep-work`), since Obsidian's `#tag` ends at a space; a picker's *Create* row (`@`, `#`, the page header's) offers the dashed name instead. An imported or pasted `#[[multi word]]` naming no tag becomes `multi-word`, and the import or paste names it in its warnings. A tag named with a space before this rule keeps working, `#[[…]]` still reads it, and the export writes it as `#[[name]]` until it is renamed.
 
 ## Boolean tag queries
 

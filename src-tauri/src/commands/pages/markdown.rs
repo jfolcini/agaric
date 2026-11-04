@@ -5581,17 +5581,15 @@ pub(crate) async fn snapshot_tags_by_norm(
 }
 
 /// The spelling an inbound tag `token` (`#[[multi word]]`, a front-matter
-/// item) is stored under (#6278 I4): as written when this pass or the space
-/// already holds that name, as a tag named before the rule may; else with each
-/// whitespace run a `-`, named in `warnings`, since a new tag name holds none.
+/// item) is stored under (#6278 I4): as written when the space already holds
+/// that name, as a tag named before the rule may; else with each whitespace
+/// run a `-`, named in `warnings`, since a new tag name holds none.
 fn inbound_tag_spelling(
     token: &str,
-    resolved: &HashMap<String, String>,
     existing: &HashMap<String, String>,
     warnings: &mut Vec<String>,
 ) -> String {
-    let norm = agaric_core::tag_norm::normalize_tag_name(token);
-    if resolved.contains_key(&norm) || existing.contains_key(&norm) {
+    if existing.contains_key(&agaric_core::tag_norm::normalize_tag_name(token)) {
         return token.to_owned();
     }
     let dashed = token.split_whitespace().collect::<Vec<_>>().join("-");
@@ -5668,12 +5666,7 @@ async fn resolve_tag_names(
     let mut resolved_tag_tokens: HashMap<String, String> = HashMap::new();
     let existing_tag_by_norm = snapshot_tags_by_norm(&mut tx, space_id).await?;
     for token_name in tag_token_names {
-        let name = inbound_tag_spelling(
-            &token_name,
-            &resolved_tag_norm,
-            &existing_tag_by_norm,
-            ctx.warnings,
-        );
+        let name = inbound_tag_spelling(&token_name, &existing_tag_by_norm, ctx.warnings);
         let norm = agaric_core::tag_norm::normalize_tag_name(&name);
 
         // Already resolved/created in this pass (case/dedup convergence).
@@ -5826,12 +5819,7 @@ async fn resolve_or_create_frontmatter_tag(
     resolved_tag_norm: &mut HashMap<String, String>,
     existing_tag_by_norm: &HashMap<String, String>,
 ) -> Result<Option<String>, AppError> {
-    let tag_name = inbound_tag_spelling(
-        tag_name,
-        resolved_tag_norm,
-        existing_tag_by_norm,
-        &mut ctx.warnings,
-    );
+    let tag_name = inbound_tag_spelling(tag_name, existing_tag_by_norm, &mut ctx.warnings);
     let norm = agaric_core::tag_norm::normalize_tag_name(&tag_name);
     if let Some(id) = resolved_tag_norm.get(&norm) {
         return Ok(Some(id.clone()));

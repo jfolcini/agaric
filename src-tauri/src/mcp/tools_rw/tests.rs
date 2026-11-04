@@ -2354,6 +2354,38 @@ async fn create_tag_creates_in_space_and_reuses_the_name() {
     );
 }
 
+/// #6278 I4 — an agent's tag name holds no whitespace either: the call is
+/// refused with the reason that suggests `-`, and nothing is created or sent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_tag_refuses_a_name_holding_whitespace_6278() {
+    let (tools, _mat, pool, space, emitter, _dir) = mk_tools_recording().await;
+
+    let err = tools
+        .call_tool(
+            "create_tag",
+            json!({"name": "deep work", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("a name holding whitespace is refused");
+
+    assert_eq!(
+        err.validation_code(),
+        Some(agaric_core::error::ValidationCode::TagNameWhitespace),
+        "got {err:?}"
+    );
+    assert!(err.to_string().contains("use '-' instead"), "got {err}");
+    let tags: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE block_type = 'tag'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(tags, 0, "no tag was created");
+    assert!(
+        emitter.blocks_changed().is_empty(),
+        "a refused create tells no view"
+    );
+}
+
 /// The space's tag names as `list_all_tags_in_space` reads them at the moment
 /// `blocks:changed` goes out: what a `#` picker refilling on that event gets.
 struct TagNamesAtEmit {
