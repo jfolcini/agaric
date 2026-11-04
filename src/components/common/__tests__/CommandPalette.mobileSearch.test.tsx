@@ -1,18 +1,16 @@
 /**
  * #899 mobile-search polish — PaletteBody wiring tests.
  *
- * Covers the two features that live inside the all-pages palette body:
+ * Covers the feature that lives inside the all-pages palette body:
  *  - #131 recent search terms in the empty state (mobile only).
- *  - #132 voice dictation mic button (feature-detected, mobile only).
  *
- * Both are gated on `useIsMobile()`; the hook is mocked so each test
- * pins the viewport explicitly. The Web Speech API is mocked via a fake
- * window constructor.
+ * It is gated on `useIsMobile()`; the hook is mocked so each test
+ * pins the viewport explicitly.
  */
 
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CommandPalette } from '@/components/common/CommandPalette'
 import { useNavigationStore } from '@/stores/navigation'
@@ -47,49 +45,10 @@ function emptyPartition(): PartitionedResp['pages'] {
   return { items: [], next_cursor: null, has_more: false, total_count: null }
 }
 
-// ── Fake Web Speech API ──────────────────────────────────────────────
-class FakeRecognition {
-  lang = ''
-  continuous = false
-  interimResults = false
-  maxAlternatives = 0
-  onresult: ((e: SpeechRecognitionEvent) => void) | null = null
-  onerror: ((e: SpeechRecognitionErrorEvent) => void) | null = null
-  onend: ((e: Event) => void) | null = null
-  onstart: ((e: Event) => void) | null = null
-  start = vi.fn()
-  stop = vi.fn()
-  abort = vi.fn()
-  emitResult(transcript: string): void {
-    this.onresult?.({
-      resultIndex: 0,
-      results: {
-        length: 1,
-        item: () => ({}) as SpeechRecognitionResult,
-        0: {
-          length: 1,
-          isFinal: true,
-          item: () => ({ transcript, confidence: 1 }),
-          0: { transcript, confidence: 1 },
-        },
-      },
-    } as unknown as SpeechRecognitionEvent)
-  }
-}
-
-let lastRecognition: FakeRecognition | null = null
-function MakeRecognition(this: FakeRecognition): FakeRecognition {
-  lastRecognition = new FakeRecognition()
-  return lastRecognition
-}
-
 beforeEach(() => {
   vi.clearAllMocks()
   mockedUseIsMobile.mockReturnValue(true)
   localStorage.clear()
-  lastRecognition = null
-  delete window.SpeechRecognition
-  delete window.webkitSpeechRecognition
   useCommandPaletteStore.setState({
     open: false,
     mode: 'search',
@@ -114,11 +73,6 @@ beforeEach(() => {
     has_more: false,
     total_count: null,
   })
-})
-
-afterEach(() => {
-  delete window.SpeechRecognition
-  delete window.webkitSpeechRecognition
 })
 
 function openPalette(): void {
@@ -216,45 +170,5 @@ describe('#131 recent searches (empty state)', () => {
     const escalate = await screen.findByTestId('palette-escalation-footer')
     await user.click(escalate)
     expect(getRecentSearches()).toContain('committed')
-  })
-})
-
-describe('#132 voice input', () => {
-  it('hides the mic button when the Web Speech API is unavailable', () => {
-    render(<CommandPalette />)
-    openPalette()
-    expect(screen.queryByTestId('palette-voice-button')).not.toBeInTheDocument()
-  })
-
-  it('shows the mic button when SpeechRecognition is available on mobile', () => {
-    window.SpeechRecognition = MakeRecognition as unknown as SpeechRecognitionConstructor
-    render(<CommandPalette />)
-    openPalette()
-    expect(screen.getByTestId('palette-voice-button')).toBeInTheDocument()
-  })
-
-  it('hides the mic button on desktop even when SpeechRecognition exists', () => {
-    mockedUseIsMobile.mockReturnValue(false)
-    window.SpeechRecognition = MakeRecognition as unknown as SpeechRecognitionConstructor
-    render(<CommandPalette />)
-    openPalette()
-    expect(screen.queryByTestId('palette-voice-button')).not.toBeInTheDocument()
-  })
-
-  it('starts recognition and fills the query from a transcript', async () => {
-    window.SpeechRecognition = MakeRecognition as unknown as SpeechRecognitionConstructor
-    render(<CommandPalette />)
-    openPalette()
-    const mic = screen.getByTestId('palette-voice-button')
-    act(() => {
-      fireEvent.click(mic)
-    })
-    expect(lastRecognition?.start).toHaveBeenCalled()
-    act(() => {
-      lastRecognition?.emitResult('dictated query')
-    })
-    await waitFor(() => {
-      expect(useCommandPaletteStore.getState().query).toBe('dictated query')
-    })
   })
 })

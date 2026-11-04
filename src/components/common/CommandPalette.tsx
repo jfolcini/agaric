@@ -36,7 +36,7 @@
  * `components/palette/ranking`.
  */
 
-import { FilePlus2, Mic } from 'lucide-react'
+import { FilePlus2 } from 'lucide-react'
 import type React from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -86,7 +86,6 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { useOpenInBackgroundTab } from '@/hooks/useOpenInBackgroundTab'
 import { usePagePrefetchIntent } from '@/hooks/usePagePrefetchIntent'
 import { useStarredPages } from '@/hooks/useStarredPages'
-import { useVoiceInput } from '@/hooks/useVoiceInput'
 import { isCancellation } from '@/lib/app-error'
 import type { SearchBlockRow } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
@@ -520,18 +519,6 @@ export function PaletteBody({
     setRecentSearches([])
   }
 
-  // #132 — voice dictation. `supported` gates whether the mic button
-  // renders at all (hidden on iOS Safari / jsdom / any UA without the
-  // Web Speech API). On a result we fill the query and run it through
-  // the same path a keystroke takes.
-  const voice = useVoiceInput({
-    onResult: (transcript) => {
-      handleInputChange(transcript)
-      inputRef.current?.focus()
-    },
-  })
-  const showVoiceButton = isMobile && voice.supported
-
   // A new tab opens behind the active one, as a Ctrl+click on a link does; mobile shows no tabs.
   function openedBehind(
     pageId: string,
@@ -928,27 +915,7 @@ export function PaletteBody({
           aria-label={t('palette.inputLabel')}
           data-testid="command-palette-input"
           onKeyDown={handleListKeyDown}
-          className={cn(showVoiceButton && 'pr-10')}
         />
-        {/* #132 — voice dictation mic. Hidden entirely when the Web
-            Speech API is unavailable (no dead control). Toggles
-            start/stop; `aria-pressed` reflects the live listening
-            state for SR users. */}
-        {showVoiceButton && (
-          <button
-            type="button"
-            onClick={() => (voice.listening ? voice.stop() : voice.start())}
-            aria-pressed={voice.listening}
-            aria-label={voice.listening ? t('searchSheet.voiceStop') : t('searchSheet.voiceStart')}
-            data-testid="palette-voice-button"
-            className={cn(
-              'absolute right-2 top-1/2 -translate-y-1/2 inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/60 focus-ring-visible',
-              voice.listening && 'text-destructive motion-safe:animate-pulse',
-            )}
-          >
-            <Mic aria-hidden className="size-4" />
-          </button>
-        )}
         {/* visible loading affordance during the
             debounce → IPC window. The shimmer is purely decorative
             (`aria-hidden`); SR users get the assistive announcement

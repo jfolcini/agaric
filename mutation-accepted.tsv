@@ -369,3 +369,5 @@ frontend	src/lib/jex-import.ts	StringLiteral	21	1	(props['tag_id'] ?? '').toLowe
 frontend	src/lib/jex-import.ts	StringLiteral	37	1	const noteId = (props['note_id'] ?? '').toLowerCase()
 # #4816 jex-import: every tag id is lowercased as it is read, so the stand-in 'Stryker was here' (capital S) names no tag and flatMap yields nothing, as [] does
 frontend	src/lib/jex-import.ts	ArrayDeclaration	41	1	const tags = (noteTagIds.get(raw.id) ?? []).flatMap((id) => tagTitles.get(id) ?? [])
+# #3766 vault-import: the null guard only narrows the type; every byPath key is a string, so byPath.get(null) is undefined too
+frontend	src/lib/vault-import.ts	ConditionalExpression	14	1	const file = path === null ? undefined : index.byPath.get(path)
