@@ -1098,7 +1098,7 @@ async fn project_engine_dropped_refs(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     engines: &std::collections::HashMap<&str, agaric_engine::loro::engine::LoroEngine>,
 ) -> Result<bool, agaric_core::error::AppError> {
-    let unread = std::sync::atomic::AtomicBool::new(false);
+    let unread = std::cell::Cell::new(false);
     agaric_engine::loro::projection::project_dropped_refs(tx, |space, key| {
         let Some(engine) = engines.get(space) else {
             return Ok(Vec::new());
@@ -1110,12 +1110,12 @@ async fn project_engine_dropped_refs(
                 "recovery (#6236): the space's property holders do not read; its dropped refs \
                  stay dropped"
             );
-            unread.store(true, std::sync::atomic::Ordering::Relaxed);
+            unread.set(true);
             Vec::new()
         }))
     })
     .await?;
-    Ok(!unread.load(std::sync::atomic::Ordering::Relaxed))
+    Ok(!unread.get())
 }
 
 /// [`reproject_blocks_from_engine`]'s tag pass (#6236), beside its ref pass
