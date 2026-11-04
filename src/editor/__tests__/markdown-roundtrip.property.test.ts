@@ -1017,9 +1017,9 @@ describe('property (#4052): a leading tab parses as the columns it occupies', ()
 
 // -- #6033: footnote references among any inline nodes ------------------------
 
-/** A footnote label: anything but whitespace and `]`, here the chars that mean something nearby. */
+/** A footnote label: anything but whitespace, `[`, `]` and `\`, here the chars that mean something nearby. */
 const arbFootnoteLabel: fc.Arbitrary<string> = fc
-  .array(fc.constantFrom(...'ab1-_*`(\\[$|!^'.split('')), { minLength: 1, maxLength: 4 })
+  .array(fc.constantFrom(...'ab1-_*`($|!^'.split('')), { minLength: 1, maxLength: 4 })
   .map((chars) => chars.join(''))
 
 const arbInlineWithFootnotes: fc.Arbitrary<InlineNode[]> = fc

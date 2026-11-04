@@ -36,6 +36,15 @@ describe('parse reads a footnote reference', () => {
     expect(parse(markdown)).toEqual(doc(paragraph(text(shown))))
   })
 
+  // A `[` or a `\` in a label would pair the reference's bracket with a later `]`
+  // (a code span's, say) as link text, so such a reference would not read back as written.
+  it.each([
+    ['a `[` in the label', '[^a[b]', '[^a[b]'],
+    ['a `\\` in the label', '[^a\\b]', '[^a\\b]'],
+  ])('keeps %s as text', (_case, markdown, shown) => {
+    expect(parse(markdown)).toEqual(doc(paragraph(text(shown))))
+  })
+
   it('keeps a reference inside a code span as code', () => {
     expect(parse('`[^1]`')).toEqual(doc(paragraph(text('[^1]', [{ type: 'code' }]))))
   })

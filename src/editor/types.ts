@@ -83,7 +83,7 @@ export interface HardBreakNode {
 
 /**
  * A footnote reference `[^label]` (#6033): the label is one or more characters
- * other than whitespace and `]`. A block whose text starts `[^label]: ` defines
+ * other than whitespace, `[`, `]` and `\`. A block whose text starts `[^label]: ` defines
  * it (`definedLabel`).
  */
 export interface FootnoteRefNode {

@@ -75,7 +75,7 @@ function sameNumbering(a: FootnoteNumbering, b: FootnoteNumbering): boolean {
 }
 
 /** The text before the caret a typed `]` closes into a reference: `[^label`. */
-const TYPED_REF = /\[\^([^\s\]\uFFFC]+)$/
+const TYPED_REF = /\[\^([^\s[\]\\\uFFFC]+)$/
 
 /**
  * `[^label]` typed converts on its `]`: the `]` goes in as typed text, then

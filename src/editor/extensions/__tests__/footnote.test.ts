@@ -136,6 +136,15 @@ describe('typing a footnote reference (#6033)', () => {
     expect(ed.state.doc.textContent).toBe('x [^a b]')
   })
 
+  it.each([
+    ['a `[`', ' [^a[b]', 'x [^a[b]'],
+    ['a `\\`', ' [^a\\b]', 'x [^a\\b]'],
+  ])('stays text with %s in the label', (_case, typed, text) => {
+    const ed = blockEditor('x')
+    typeText(ed, typed)
+    expect(ed.state.doc.textContent).toBe(text)
+  })
+
   it('stays text inside inline code', () => {
     const ed = blockEditor('`a`')
     typeText(ed, '[^1]')

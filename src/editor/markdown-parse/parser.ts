@@ -1410,12 +1410,14 @@ export function scanExternalLinkToken(st: InlineState): boolean {
 
 /**
  * Footnote reference (#6033): `[^label]`, the label one or more characters
- * other than whitespace and `]`. Runs after `scanExternalLinkToken`, so
+ * other than whitespace, `[`, `]` and `\`: a `[` or a trailing `\` would pair the
+ * reference's bracket with a later `]` as a link's text, so the reference would
+ * not read back as written. Runs after `scanExternalLinkToken`, so
  * `[^x](url)` stays the link it also is; the serializer escapes a `(` written
  * right after a reference. A literal `\[^1\]` never reaches here: `scanEscape`
  * runs first.
  */
-const FOOTNOTE_REF_RE = /\[\^([^\s\]]+)\]/y
+const FOOTNOTE_REF_RE = /\[\^([^\s[\]\\]+)\]/y
 
 function scanFootnoteRef(st: InlineState): boolean {
   const s = st.scanner
