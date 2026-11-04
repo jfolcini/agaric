@@ -1816,6 +1816,19 @@
   margin-left: 0.25em;
 }
 
+/* #6033 — a footnote reference `[^label]`, its number on the page as a
+   superscript; muted when no block of the page defines its label. A definition
+   block's `[^label]:` prefix is the same number, as a small marker. */
+.footnote-ref {
+  @apply font-semibold text-foreground;
+}
+.footnote-ref-missing {
+  @apply font-normal text-muted-foreground;
+}
+.footnote-definition {
+  @apply mr-1 font-semibold text-muted-foreground;
+}
+
 /* Page links — [[ULID]] rendered as the page title. Underlined running text,
    like `.external-link`: a filled chip read as a button (#5332). */
 .block-link-chip {
