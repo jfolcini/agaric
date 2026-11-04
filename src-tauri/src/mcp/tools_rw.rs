@@ -517,7 +517,10 @@ fn tool_desc_append_markdown() -> ToolDescription {
              exactly as a paste in the app lands it: list items nest by indentation, a `- ` or \
              `* ` item is a bulleted block, `1. ` a numbered one and `+ ` a plain one, a blank \
              line separates paragraphs, a heading and a fenced code block are blocks of their \
-             own, a `- [ ]` checkbox is a task, and `key:: value` lines are properties. A \
+             own, a `- [ ]` checkbox is a task, whose Obsidian Tasks fields at the end of its \
+             line (`📅 YYYY-MM-DD` due, `⏳ YYYY-MM-DD` scheduled, `⏫`/`🔼`/`🔽` priority, \
+             `🔁 every …` repeat, a done task's `✅ YYYY-MM-DD`) are its fields, and `key:: value` \
+             lines are properties. A \
              `[[Name]]` or `#name` that matches no page or tag in the parent's space creates that \
              page or tag there. A call that would write more than {} operations is refused; split \
              it.",

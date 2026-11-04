@@ -562,3 +562,96 @@ fn a_pages_own_document_with_every_kind_of_block_appends_no_op() {
         assert_eq!((report.properties_set, report.properties_deleted), (0, 0));
     });
 }
+
+/// #6277 D2 — Tasks signifiers typed at the end of a task's line are saved as
+/// the fields a typed task keeps: its dates, priority and rule, and a done
+/// task's `completed_at`, the `✅` date and not the day of the save. One that
+/// cannot be read stays in the text, with a warning.
+#[test]
+fn tasks_signifiers_typed_on_a_task_line_save_as_its_fields() {
+    Runtime::new().unwrap().block_on(async {
+        let fx = fixture().await;
+        let task = |content: &str| BlockSpec {
+            level: 0,
+            content: content.to_string(),
+            todo_state: Some("TODO".to_string()),
+            priority: None,
+            scheduled_date: None,
+            due_date: None,
+            list_style: None,
+            properties: BTreeMap::new(),
+        };
+        let forest = [task("plan"), task("ship"), task("call")];
+        let ids = create_forest(&fx, &forest).await;
+        write_metadata(&fx.pool, &ids, &forest).await;
+        let buffer = get_page_buffer_inner(&fx.pool, &fx.page).await.unwrap();
+        assert_eq!(buffer.text, "- [ ] plan\n- [ ] ship\n- [ ] call\n");
+
+        let edited = buffer
+            .text
+            .replacen(
+                "- [ ] plan",
+                "- [ ] plan ⏫ 🔁 every week ⏳ 2026-10-01 📅 2026-10-05",
+                1,
+            )
+            .replacen("- [ ] ship", "- [x] ship ✅ 2026-10-03", 1)
+            .replacen("- [ ] call", "- [ ] call 📅 2026-13-01", 1);
+        let report = save(&fx, (edited, buffer.line_ids.clone()), &buffer.source).await;
+
+        assert_eq!(
+            report.warnings,
+            ["1 Tasks signifier(s) could not be read and were kept as text"]
+        );
+        type Row = (
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        );
+        let row = |id: &String| {
+            sqlx::query_as::<_, Row>(
+                "SELECT content, todo_state, priority, scheduled_date, due_date FROM blocks \
+                 WHERE id = ?",
+            )
+            .bind(id.clone())
+            .fetch_one(&fx.pool)
+        };
+        let some = |s: &str| Some(s.to_string());
+        assert_eq!(
+            row(&ids[0]).await.unwrap(),
+            (
+                "plan".into(),
+                some("TODO"),
+                some("1"),
+                some("2026-10-01"),
+                some("2026-10-05")
+            )
+        );
+        assert_eq!(
+            row(&ids[1]).await.unwrap(),
+            ("ship".into(), some("DONE"), None, None, None)
+        );
+        assert_eq!(
+            row(&ids[2]).await.unwrap(),
+            ("call 📅 2026-13-01".into(), some("TODO"), None, None, None)
+        );
+        let property = |id: &String, key: &'static str| {
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT COALESCE(value_text, value_date) FROM block_properties \
+                 WHERE block_id = ? AND key = ?",
+            )
+            .bind(id.clone())
+            .bind(key)
+            .fetch_optional(&fx.pool)
+        };
+        assert_eq!(
+            property(&ids[0], "repeat").await.unwrap(),
+            Some(some("+1w"))
+        );
+        assert_eq!(
+            property(&ids[1], "completed_at").await.unwrap(),
+            Some(some("2026-10-03"))
+        );
+    });
+}

@@ -562,7 +562,61 @@ fn typed_rows() -> Vec<(&'static str, &'static str, Vec<BlockSpec>)> {
             "para\n- a",
             vec![plain(0, "para"), styled(0, "a", "bullet")],
         ),
+        (
+            "#6277 D2: a task line's Tasks fields are its dates, priority and recurrence",
+            "- [ ] a ⏫ 🔁 every 2 weeks ⏳ 2026-10-01 📅 2026-10-05\n",
+            vec![BlockSpec {
+                priority: Some("1".into()),
+                scheduled_date: Some("2026-10-01".into()),
+                due_date: Some("2026-10-05".into()),
+                properties: repeat("+2w"),
+                ..task(0, "a", "TODO")
+            }],
+        ),
+        (
+            "#6277 D2: each priority signifier is a level, `when done` the `.+` rule, and a \
+             property line after them wins",
+            "- [ ] b 🔺\n- [ ] c 🔼 🔁 every day when done\n- [/] d 🔽\n- [-] e ⏬\n  priority:: 2\n",
+            vec![
+                BlockSpec {
+                    priority: Some("1".into()),
+                    ..task(0, "b", "TODO")
+                },
+                BlockSpec {
+                    priority: Some("2".into()),
+                    properties: repeat(".+1d"),
+                    ..task(0, "c", "TODO")
+                },
+                BlockSpec {
+                    priority: Some("3".into()),
+                    ..task(0, "d", "DOING")
+                },
+                BlockSpec {
+                    priority: Some("2".into()),
+                    ..task(0, "e", "CANCELLED")
+                },
+            ],
+        ),
+        (
+            "#6277 D2: a signifier that does not parse, one with no field, `✅` on an open task \
+             and any signifier off a task line stay text",
+            "- [ ] f 📅 2026-02-30 🛫 2026-10-01 ⏳ 2026-10-02\n- [ ] g ✅ 2026-10-03\n\
+             - h 📅 2026-10-05\n",
+            vec![
+                BlockSpec {
+                    scheduled_date: Some("2026-10-02".into()),
+                    ..task(0, "f 📅 2026-02-30 🛫 2026-10-01", "TODO")
+                },
+                task(0, "g ✅ 2026-10-03", "TODO"),
+                styled(0, "h 📅 2026-10-05", "bullet"),
+            ],
+        ),
     ]
+}
+
+/// A `repeat` rule as a block's property.
+fn repeat(rule: &str) -> BTreeMap<String, (String, bool)> {
+    BTreeMap::from([("repeat".to_string(), (rule.to_string(), false))])
 }
 
 /// Text pasted from outside (#6190): each text and the tree a paste reads it
@@ -614,6 +668,30 @@ fn pasted_rows() -> Vec<(&'static str, &'static str, Vec<BlockSpec>)> {
             "a trailing `^word` that is no block id is text, and a block id, in either case, is not",
             "a ^word\n\nb ^01J0000000000000000000000B\n\nc ^01j0000000000000000000000c\n",
             vec![plain(0, "a ^word"), plain(0, "b"), plain(0, "c")],
+        ),
+        (
+            "#6277 D2: a done task's `✅` is its `completed_at`, and the fields sit before a \
+             trailing `^word`",
+            "- [x] a ✅ 2026-10-03 📅 2026-10-01\n- [ ] b 📅 2026-10-05 ^word\n\
+             - [ ] c ⏳ 2026-10-02 ^01J0000000000000000000000B\n",
+            vec![
+                BlockSpec {
+                    due_date: Some("2026-10-01".into()),
+                    properties: BTreeMap::from([(
+                        "completed_at".to_string(),
+                        ("2026-10-03".to_string(), false),
+                    )]),
+                    ..task(0, "a", "DONE")
+                },
+                BlockSpec {
+                    due_date: Some("2026-10-05".into()),
+                    ..task(0, "b ^word", "TODO")
+                },
+                BlockSpec {
+                    scheduled_date: Some("2026-10-02".into()),
+                    ..task(0, "c", "TODO")
+                },
+            ],
         ),
     ]
 }

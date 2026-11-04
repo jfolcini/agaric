@@ -7471,6 +7471,29 @@ async fn paste_blocks_splices_the_document_into_the_anchors_text() {
     }
 }
 
+/// #6277 D2 — a done task pasted into an empty block makes it that task, its
+/// `✅` date its `completed_at`, not the day of the paste.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_into_a_block_keeps_a_done_tasks_completion_date() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let anchor = dup_child(&pool, &mat, &page, "").await;
+    settle(&mat).await;
+
+    let resp = paste_into(&pool, &mat, &anchor, "- [x] ship ✅ 2026-10-03", ("", "")).await;
+
+    assert_eq!(resp.inner.warnings, Vec::<String>::new());
+    assert_eq!(
+        dup_children(&pool, &page).await,
+        vec![(anchor.to_string(), "ship".to_owned())]
+    );
+    assert_eq!(
+        dup_stamps(&pool, &anchor).await,
+        ["completed_at=2026-10-03"]
+    );
+}
+
 /// A paste that reads as one block edits the anchor and creates nothing: the
 /// block is joined between the two halves of the text.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -14719,6 +14742,119 @@ async fn import_maps_an_org_priority_letter_to_its_level() {
     .unwrap();
     assert_eq!(priority.as_deref(), Some("2"));
     mat.shutdown();
+}
+
+/// #6277 D2 — each Obsidian Tasks signifier at the end of a task line lands
+/// where a typed task keeps that field: `📅` / `⏳` in the date columns, the
+/// priority emoji as their level, `🔁 every …` in `repeat`, and a done task's
+/// `✅` in `completed_at`. One that cannot be read stays text, counted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_reads_each_tasks_signifier_into_its_field() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let todo = |priority: &str, scheduled: &str, due: &str| {
+        format!("columns todo=Some(\"TODO\") priority={priority} scheduled={scheduled} due={due}")
+    };
+    let repeat =
+        |rule: &str| format!("repeat text=Some(\"{rule}\") num=None date=None ref=None bool=None");
+    let (none, one, two, three) = ("None", "Some(\"1\")", "Some(\"2\")", "Some(\"3\")");
+    let date = |d: &str| format!("Some(\"{d}\")");
+    let rows: Vec<(&str, &str, Vec<String>, Vec<&str>)> = vec![
+        (
+            "📅 2026-10-05",
+            "a",
+            vec![todo(none, none, &date("2026-10-05"))],
+            vec![],
+        ),
+        (
+            "⏳ 2026-10-01",
+            "a",
+            vec![todo(none, &date("2026-10-01"), none)],
+            vec![],
+        ),
+        ("🔺", "a", vec![todo(one, none, none)], vec![]),
+        ("⏫", "a", vec![todo(one, none, none)], vec![]),
+        ("🔼", "a", vec![todo(two, none, none)], vec![]),
+        ("🔽", "a", vec![todo(three, none, none)], vec![]),
+        ("⏬", "a", vec![todo(three, none, none)], vec![]),
+        (
+            "🔁 every 2 weeks",
+            "a",
+            vec![todo(none, none, none), repeat("+2w")],
+            vec![],
+        ),
+        (
+            "🔁 every month when done",
+            "a",
+            vec![todo(none, none, none), repeat(".+1m")],
+            vec![],
+        ),
+        (
+            "📅 someday 🛫 2026-10-01",
+            "a 📅 someday 🛫 2026-10-01",
+            vec![todo(none, none, none)],
+            vec!["2 Tasks signifier(s) could not be read and were kept as text"],
+        ),
+    ];
+    for (n, (fields, content, storage, warnings)) in rows.into_iter().enumerate() {
+        let md = format!("- [ ] a {fields}\n");
+        let read = import_one_task(&pool, &mat, &format!("Tasks {n}"), &md).await;
+        let warnings = warnings.into_iter().map(String::from).collect();
+        assert_eq!(
+            read,
+            (content.into(), storage, vec![], warnings),
+            "{fields}"
+        );
+    }
+    let done = import_one_task(&pool, &mat, "Done", "- [x] a ✅ 2026-10-03\n").await;
+    assert_eq!(
+        done,
+        (
+            "a".into(),
+            vec!["columns todo=Some(\"DONE\") priority=None scheduled=None due=None".into()],
+            vec!["completed_at=2026-10-03".into()],
+            vec![],
+        )
+    );
+    mat.shutdown();
+}
+
+/// Import `md` as the page `title`, and read its one block back: its content,
+/// columns and properties ([`dup_storage`]) and task stamps, and the import's
+/// warnings.
+async fn import_one_task(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    title: &str,
+    md: &str,
+) -> (String, Vec<String>, Vec<String>, Vec<String>) {
+    let dir = tempfile::TempDir::new().unwrap();
+    let result = import_markdown_inner(
+        pool,
+        DEV,
+        mat,
+        dir.path(),
+        md.into(),
+        Some(format!("{title}.md")),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(mat).await;
+    let (id, content): (String, String) = sqlx::query_as(
+        "SELECT b.id, b.content FROM blocks b JOIN blocks p ON p.id = b.parent_id \
+         WHERE p.content = ? AND b.deleted_at IS NULL",
+    )
+    .bind(title)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let id = BlockId::from_string(id).unwrap();
+    let (storage, stamps) = (dup_storage(pool, &id).await, dup_stamps(pool, &id).await);
+    (content, storage, stamps, result.warnings)
 }
 
 /// #1918 — a single over-deep import block must skip-and-warn, NOT abort the

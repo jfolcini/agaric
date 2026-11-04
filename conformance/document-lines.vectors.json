@@ -1,7 +1,10 @@
 {
   "cases": [
     {
-      "lineIds": ["01J00000000000000000000000", null],
+      "lineIds": [
+        "01J00000000000000000000000",
+        null
+      ],
       "name": "1: a plain block is its own line",
       "text": "text\n",
       "tree": [
@@ -14,7 +17,12 @@
       ]
     },
     {
-      "lineIds": ["01J00000000000000000000000", null, "01J00000000000000000000001", null],
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        "01J00000000000000000000001",
+        null
+      ],
       "name": "2: a heading owns nothing; its child is indented after a blank line",
       "text": "## Findings\n\n  **Bold** text\n",
       "tree": [
@@ -114,7 +122,11 @@
       ]
     },
     {
-      "lineIds": ["01J00000000000000000000000", "01J00000000000000000000001", null],
+      "lineIds": [
+        "01J00000000000000000000000",
+        "01J00000000000000000000001",
+        null
+      ],
       "name": "3: a task with a list style is a task, which ends a numbered run (D3)",
       "text": "- [ ] a\n1. b\n",
       "tree": [
@@ -274,7 +286,15 @@
       ]
     },
     {
-      "lineIds": ["01J00000000000000000000000", null, null, null, null, null, null],
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
       "name": "5: a fence keeps its blank lines and its markup, and the lines after it continue it",
       "text": "```sh\necho\n\n- x\n```\nafter\n",
       "tree": [
@@ -631,7 +651,11 @@
       ]
     },
     {
-      "lineIds": ["01J00000000000000000000000", "01J00000000000000000000001", null],
+      "lineIds": [
+        "01J00000000000000000000000",
+        "01J00000000000000000000001",
+        null
+      ],
       "name": "13: a checkbox opening a list block's or a `+` item's text is escaped",
       "text": "- \\[ ] x\n  + \\[x] y\n",
       "tree": [
@@ -652,7 +676,12 @@
       ]
     },
     {
-      "lineIds": ["01J00000000000000000000000", null, "01J00000000000000000000001", null],
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        "01J00000000000000000000001",
+        null
+      ],
       "name": "13: a first block opening with `---` is a `+` item, not front matter",
       "text": "+ ---\n\n---\n",
       "tree": [
@@ -740,7 +769,10 @@
       ]
     },
     {
-      "lineIds": ["01J00000000000000000000000", null],
+      "lineIds": [
+        "01J00000000000000000000000",
+        null
+      ],
       "name": "19: a list style on a heading keeps its marker",
       "text": "- ## x\n",
       "tree": [
@@ -755,7 +787,12 @@
       ]
     },
     {
-      "lineIds": ["01J00000000000000000000000", null, "01J00000000000000000000001", null],
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        "01J00000000000000000000001",
+        null
+      ],
       "name": "D1: a paragraph and the heading under it are two blocks",
       "text": "para\n\n## Heading\n",
       "tree": [
@@ -774,7 +811,12 @@
       ]
     },
     {
-      "lineIds": ["01J00000000000000000000000", null, "01J00000000000000000000001", null],
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        "01J00000000000000000000001",
+        null
+      ],
       "name": "D1: a heading is a block of one line, and the text under it the next block",
       "text": "## Heading\n\ntext\n",
       "tree": [
@@ -851,7 +893,11 @@
       ]
     },
     {
-      "lineIds": ["01J00000000000000000000000", null, null],
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        null
+      ],
       "name": "D1: a heading line in a paragraph's text is escaped",
       "text": "para\n\\## x\n",
       "tree": [
@@ -864,7 +910,13 @@
       ]
     },
     {
-      "lineIds": ["01J00000000000000000000000", null, null, null, null],
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        null,
+        null,
+        null
+      ],
       "name": "D1: a fence line in a paragraph's text is escaped, so no line after it is code",
       "text": "intro:\n\\```sh\n\\- x\n\\```\n",
       "tree": [
@@ -877,7 +929,12 @@
       ]
     },
     {
-      "lineIds": ["01J00000000000000000000000", null, null, null],
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        null,
+        null
+      ],
       "name": "D1: a thematic break in a paragraph's text is escaped, not read as a setext underline",
       "text": "para\n\\---\n\\***\n",
       "tree": [
@@ -890,7 +947,13 @@
       ]
     },
     {
-      "lineIds": ["01J00000000000000000000000", null, null, null, null],
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        null,
+        null,
+        null
+      ],
       "name": "D1: a code block's lines are its own, a heading's and a break's too",
       "text": "```\n## x\n---\n```\n",
       "tree": [
@@ -929,7 +992,12 @@
       ]
     },
     {
-      "lineIds": ["01J00000000000000000000000", null, "01J00000000000000000000001", null],
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        "01J00000000000000000000001",
+        null
+      ],
       "name": "D1: a backslash before a heading or a break opening a bare line is escaped too",
       "text": "\\\\## x\n\n\\\\---\n",
       "tree": [
@@ -948,7 +1016,13 @@
       ]
     },
     {
-      "lineIds": ["01J00000000000000000000000", null, null, null, null],
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        null,
+        null,
+        null
+      ],
       "name": "D1: the escape of a heading, fence or break line in a paragraph's text goes before its indent",
       "text": "para\n\\  ## x\n\\  ```sh\n\\  ---\n",
       "tree": [
@@ -961,7 +1035,13 @@
       ]
     },
     {
-      "lineIds": ["01J00000000000000000000000", null, null, null, null],
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        null,
+        null,
+        null
+      ],
       "name": "D1: a backslash before a heading, a fence or a break in a paragraph's text is escaped again",
       "text": "para\n\\\\## x\n\\\\```sh\n\\\\---\n",
       "tree": [
@@ -1001,7 +1081,11 @@
       ]
     },
     {
-      "lineIds": ["01J00000000000000000000000", null, null],
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        null
+      ],
       "name": "D1: a break followed by a Unicode space is still a break, as the reader trims it",
       "text": "para\n\\--- \n",
       "tree": [
@@ -1157,6 +1241,37 @@
           "properties": {}
         }
       ]
+    },
+    {
+      "name": "#6277 D2: a done task's `✅` is its `completed_at`, and the fields sit before a trailing `^word`",
+      "text": "- [x] a ✅ 2026-10-03 📅 2026-10-01\n- [ ] b 📅 2026-10-05 ^word\n- [ ] c ⏳ 2026-10-02 ^01J0000000000000000000000B\n",
+      "tree": [
+        {
+          "content": "a",
+          "depth": 0,
+          "properties": {
+            "completed_at": "2026-10-03",
+            "due_date": "2026-10-01",
+            "todo_state": "DONE"
+          }
+        },
+        {
+          "content": "b ^word",
+          "depth": 0,
+          "properties": {
+            "due_date": "2026-10-05",
+            "todo_state": "TODO"
+          }
+        },
+        {
+          "content": "c",
+          "depth": 0,
+          "properties": {
+            "scheduled_date": "2026-10-02",
+            "todo_state": "TODO"
+          }
+        }
+      ]
     }
   ],
   "typed": [
@@ -1282,6 +1397,90 @@
         },
         {
           "content": "a",
+          "depth": 0,
+          "properties": {
+            "listStyle": "bullet"
+          }
+        }
+      ]
+    },
+    {
+      "name": "#6277 D2: a task line's Tasks fields are its dates, priority and recurrence",
+      "text": "- [ ] a ⏫ 🔁 every 2 weeks ⏳ 2026-10-01 📅 2026-10-05\n",
+      "tree": [
+        {
+          "content": "a",
+          "depth": 0,
+          "properties": {
+            "due_date": "2026-10-05",
+            "priority": "1",
+            "repeat": "+2w",
+            "scheduled_date": "2026-10-01",
+            "todo_state": "TODO"
+          }
+        }
+      ]
+    },
+    {
+      "name": "#6277 D2: each priority signifier is a level, `when done` the `.+` rule, and a property line after them wins",
+      "text": "- [ ] b 🔺\n- [ ] c 🔼 🔁 every day when done\n- [/] d 🔽\n- [-] e ⏬\n  priority:: 2\n",
+      "tree": [
+        {
+          "content": "b",
+          "depth": 0,
+          "properties": {
+            "priority": "1",
+            "todo_state": "TODO"
+          }
+        },
+        {
+          "content": "c",
+          "depth": 0,
+          "properties": {
+            "priority": "2",
+            "repeat": ".+1d",
+            "todo_state": "TODO"
+          }
+        },
+        {
+          "content": "d",
+          "depth": 0,
+          "properties": {
+            "priority": "3",
+            "todo_state": "DOING"
+          }
+        },
+        {
+          "content": "e",
+          "depth": 0,
+          "properties": {
+            "priority": "2",
+            "todo_state": "CANCELLED"
+          }
+        }
+      ]
+    },
+    {
+      "name": "#6277 D2: a signifier that does not parse, one with no field, `✅` on an open task and any signifier off a task line stay text",
+      "text": "- [ ] f 📅 2026-02-30 🛫 2026-10-01 ⏳ 2026-10-02\n- [ ] g ✅ 2026-10-03\n- h 📅 2026-10-05\n",
+      "tree": [
+        {
+          "content": "f 📅 2026-02-30 🛫 2026-10-01",
+          "depth": 0,
+          "properties": {
+            "scheduled_date": "2026-10-02",
+            "todo_state": "TODO"
+          }
+        },
+        {
+          "content": "g ✅ 2026-10-03",
+          "depth": 0,
+          "properties": {
+            "todo_state": "TODO"
+          }
+        },
+        {
+          "content": "h 📅 2026-10-05",
           "depth": 0,
           "properties": {
             "listStyle": "bullet"

@@ -156,11 +156,16 @@ function written(buffer: Parsed, i: number): Written {
   return {
     from: i,
     depth: block.depth,
-    content: block.content,
+    content: block.contentAsWritten,
     listStyle: block.listStyle,
     todoState: block.todoState,
-    properties: block.propertyLines.map((line) => buffer.texts[line - 1] as string),
+    properties: propertyLinesOf(block).map((line) => buffer.texts[line - 1] as string),
   }
+}
+
+/** The lines of `block`'s `key::` lines: a Tasks field on its own line is in its text. */
+function propertyLinesOf(block: DocumentBlock): number[] {
+  return block.propertyLines.filter((line) => line !== block.line)
 }
 
 function headOf(buffer: Parsed, i: number): string {
@@ -452,7 +457,10 @@ export function blockTaskState(doc: PMNode, block: SourceBlock): TodoState | nul
 
 /** Which of `read`'s property lines is its last `key::` line, as the grammar matches the key; -1 for none. */
 function propertyIndex(read: DocumentBlock, key: string): number {
-  return read.properties.findLastIndex(([typed]) => foldPropertyKey(typed) === foldPropertyKey(key))
+  return read.properties.findLastIndex(
+    ([typed], i) =>
+      read.propertyLines[i] !== read.line && foldPropertyKey(typed) === foldPropertyKey(key),
+  )
 }
 
 /** The value of `block`'s `key::` line, or null. */

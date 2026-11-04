@@ -2779,24 +2779,27 @@ pub struct PastedBlock {
 }
 
 impl PasteInput {
-    /// The blocks the input holds. After text (#5160 D4) the first of an HTML
-    /// paste's blocks is the text it was pasted as, so its `- [ ] ` checkbox
-    /// stays text as a plain item's `- ` does.
-    fn into_blocks(self, after_text: bool) -> Vec<import::ParsedBlock> {
+    /// The blocks the input holds, and the warnings of reading them. After
+    /// text (#5160 D4) the first of an HTML paste's blocks is the text it was
+    /// pasted as, so its `- [ ] ` checkbox stays text as a plain item's `- `
+    /// does.
+    fn into_blocks(self, after_text: bool) -> (Vec<import::ParsedBlock>, Vec<String>) {
         match self {
-            Self::Text { text } => import::parse_pasted_text(&text),
-            Self::Blocks { blocks } => blocks
-                .into_iter()
-                .enumerate()
-                .map(|(at, block)| {
+            Self::Text { text } => {
+                let read = import::read_pasted_text(&text);
+                (read.blocks, read.warnings)
+            }
+            Self::Blocks { blocks } => {
+                let blocks = blocks.into_iter().enumerate().map(|(at, block)| {
                     let depth = block.depth as usize;
                     if at == 0 && after_text {
                         import::verbatim_block(block.content, depth)
                     } else {
                         import::pasted_block(block.content, depth)
                     }
-                })
-                .collect(),
+                });
+                (blocks.collect(), Vec::new())
+            }
         }
     }
 }
@@ -2935,7 +2938,8 @@ pub async fn paste_blocks_inner(
     splice: Option<PasteSplice>,
 ) -> Result<PastedBlocks, AppError> {
     let anchor_id = BlockId::from_string(anchor_block_id.into_string())?;
-    let mut blocks = input.into_blocks(splice.as_ref().is_some_and(|s| !s.before.is_empty()));
+    let (mut blocks, read_warnings) =
+        input.into_blocks(splice.as_ref().is_some_and(|s| !s.before.is_empty()));
     if blocks.is_empty() {
         return Err(AppError::validation("there is nothing to paste".into()));
     }
@@ -2996,7 +3000,7 @@ pub async fn paste_blocks_inner(
     created.extend(pasted);
     Ok(PastedBlocks {
         blocks: created,
-        warnings,
+        warnings: [read_warnings, warnings].concat(),
     })
 }
 
@@ -3053,7 +3057,11 @@ pub(crate) async fn append_markdown_in_tx(
     markdown: &str,
     index: Option<i64>,
 ) -> Result<(CommandTx, PastedBlocks), AppError> {
-    let mut blocks = import::parse_pasted_text(markdown);
+    let import::ParseOutput {
+        mut blocks,
+        warnings: read_warnings,
+        ..
+    } = import::read_pasted_text(markdown);
     if blocks.is_empty() {
         return Err(AppError::validation("there is nothing to append".into()));
     }
@@ -3082,7 +3090,7 @@ pub(crate) async fn append_markdown_in_tx(
         tx,
         PastedBlocks {
             blocks: created,
-            warnings,
+            warnings: [read_warnings, warnings].concat(),
         },
     ))
 }
@@ -3317,7 +3325,8 @@ async fn splice_into_anchor(
         first.content.clone(),
     )
     .await?;
-    apply_block_properties(tx, materializer, device_id, id, &first.properties, lines).await?;
+    let (properties, completed) = completed_at_last(&first.properties);
+    apply_block_properties(tx, materializer, device_id, id, &properties, lines).await?;
     if let Some(state) = parsed_todo_state(first) {
         super::super::properties::write_todo_timestamp_transitions_in_tx(
             tx,
@@ -3329,6 +3338,7 @@ async fn splice_into_anchor(
         )
         .await?;
     }
+    apply_block_properties(tx, materializer, device_id, id, &completed, lines).await?;
     crate::commands::ensure_batch_within_cap("ops", tx.pending_len())?;
     let children = rest.iter().take_while(|b| b.depth > first.depth).count();
     let mut rows = vec![anchor];
@@ -3379,6 +3389,19 @@ async fn resolve_pasted_names(
             rewrite_block_content_for_import(block, &links.page_links, &links.titles, &tag_tokens);
     }
     Ok((tx, names.created))
+}
+
+/// A parsed block's `key`, `value` pairs.
+type Pairs = Vec<(String, String)>;
+
+/// `properties` less their `completed_at`, a Tasks `✅` date (#6277 D2), and
+/// that apart: it is written after the task state's stamps, whose move into
+/// DONE stamps today and would replace it.
+fn completed_at_last(properties: &[(String, String)]) -> (Pairs, Pairs) {
+    properties
+        .iter()
+        .cloned()
+        .partition(|(key, _)| key != "completed_at")
 }
 
 /// The `todo_state` a parsed block carries, from its checkbox or a property
@@ -3433,7 +3456,8 @@ async fn create_parsed_blocks(
         .await?;
         tx.enqueue_background(op);
         let id = row.id.clone().into_string();
-        apply_block_properties(tx, materializer, device_id, &id, &block.properties, lines).await?;
+        let (properties, completed) = completed_at_last(&block.properties);
+        apply_block_properties(tx, materializer, device_id, &id, &properties, lines).await?;
         if let Some(state) = parsed_todo_state(block) {
             super::super::properties::write_todo_timestamp_transitions_in_tx(
                 tx,
@@ -3445,6 +3469,7 @@ async fn create_parsed_blocks(
             )
             .await?;
         }
+        apply_block_properties(tx, materializer, device_id, &id, &completed, lines).await?;
         crate::commands::ensure_batch_within_cap("ops", tx.pending_len())?;
         open.push((block.depth, id));
         created.push(row);

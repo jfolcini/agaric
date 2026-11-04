@@ -35,8 +35,9 @@ pub struct ParsedBlock {
     pub depth: usize,
     /// The block's `key:: value` lines and the properties its markers stand
     /// for: `listStyle`, `todo_state` (a checkbox on every surface, D6; a task
-    /// keyword on import, D7), and on import `priority` as an Org letter
-    /// (`A`–`C`) and the `scheduled_date` / `due_date` / `repeat` of a
+    /// keyword on import, D7), the Tasks fields a checkbox task's line ends
+    /// with on every surface (#6277 D2), and on import `priority` as an Org
+    /// letter (`A`–`C`) and the `scheduled_date` / `due_date` / `repeat` of a
     /// planning line. Later entries win.
     pub properties: Vec<(String, String)>,
     /// #1924 — `true` when the block's source line(s) fell inside a fenced
@@ -518,6 +519,113 @@ fn is_org_time(token: &str) -> bool {
         .all(|time| chrono::NaiveTime::parse_from_str(time, "%H:%M").is_ok())
 }
 
+/// The signifiers of the Obsidian Tasks plugin (#6277 D2). Each starts a
+/// field of a task line; [`task_field`] reads some of them, and the rest
+/// (`🛫`, `➕`, `❌`, `🆔`, `⛔`, `🏁`) stay text.
+const TASK_SIGNIFIERS: [char; 15] = [
+    '📅', '⏳', '✅', '🔁', '🔺', '⏫', '🔼', '🔽', '⏬', '🛫', '➕', '❌', '🆔', '⛔', '🏁',
+];
+
+/// A task line's first line with its Tasks fields read out of it.
+struct TaskFields {
+    text: String,
+    fields: Vec<(String, String)>,
+    /// The signifiers kept in `text`, read as no field.
+    unread: usize,
+}
+
+/// The Tasks fields at the end of a task's first line (#6277 D2), before an
+/// optional ` ^anchor`: each signifier and the text up to the next one is a
+/// field. One [`task_field`] reads leaves the text; any other stays, counted.
+/// With none read, the line is kept exactly as written.
+fn split_task_fields(line: &str, done: bool) -> TaskFields {
+    let anchor_at = OBSIDIAN_BLOCK_ANCHOR_RE
+        .find(line)
+        .map_or(line.len(), |anchor| anchor.start());
+    let (head, anchor) = line.split_at(anchor_at);
+    let starts: Vec<usize> = head
+        .match_indices(TASK_SIGNIFIERS)
+        .map(|(at, _)| at)
+        .collect();
+    let mut kept = vec![head[..starts.first().copied().unwrap_or(head.len())].trim_end()];
+    let mut fields = Vec::new();
+    for (i, &at) in starts.iter().enumerate() {
+        let segment = &head[at..starts.get(i + 1).copied().unwrap_or(head.len())];
+        let mut chars = segment.chars();
+        let signifier = chars.next().expect("a segment starts with its signifier");
+        match task_field(signifier, chars.as_str().trim(), done) {
+            Some((key, value)) => fields.push((key.to_string(), value)),
+            None => kept.push(segment.trim_end()),
+        }
+    }
+    let unread = kept.len() - 1;
+    let text = if fields.is_empty() {
+        line.to_string()
+    } else {
+        kept.retain(|part| !part.is_empty());
+        format!("{}{anchor}", kept.join(" "))
+    };
+    TaskFields {
+        text,
+        fields,
+        unread,
+    }
+}
+
+/// The field a Tasks `signifier` and its `value` give (#6277 D2, #6033 Q10):
+/// `📅` the due date, `⏳` the scheduled date, `✅` a done task's
+/// `completed_at` (only a done task holds one), a priority signifier its
+/// level and `🔁 every …` its `repeat` rule. `None` for any other.
+fn task_field(signifier: char, value: &str, done: bool) -> Option<(&'static str, String)> {
+    let date = |key| {
+        agaric_core::date_validation::is_valid_iso_date(value).then(|| (key, value.to_string()))
+    };
+    let level = |at: usize| {
+        let level = agaric_store::op::PRIORITY_LEVELS[at];
+        value.is_empty().then(|| ("priority", level.to_string()))
+    };
+    match signifier {
+        '📅' => date("due_date"),
+        '⏳' => date("scheduled_date"),
+        '✅' if done => date("completed_at"),
+        '🔺' | '⏫' => level(0),
+        '🔼' => level(1),
+        '🔽' | '⏬' => level(2),
+        '🔁' => tasks_recurrence(value).map(|rule| ("repeat", rule)),
+        _ => None,
+    }
+}
+
+/// The `repeat` rule of a Tasks recurrence: `every day` is `+1d`, `every 3
+/// weeks` `+3w`, and a trailing `when done` makes it the `.+` rule, which
+/// counts from completion. `None` for any rule the plugin has beyond those.
+fn tasks_recurrence(value: &str) -> Option<String> {
+    let mut words: Vec<&str> = value.split_whitespace().collect();
+    let when_done = words.ends_with(&["when", "done"]);
+    if when_done {
+        words.truncate(words.len() - 2);
+    }
+    let (count, unit) = match words.as_slice() {
+        ["every", unit] => ("1", *unit),
+        ["every", count, unit] => (*count, *unit),
+        _ => return None,
+    };
+    if !(1..=9).contains(&count.len()) || !count.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let unit = match unit.strip_suffix('s').unwrap_or(unit) {
+        "day" => 'd',
+        "week" => 'w',
+        "month" => 'm',
+        "year" => 'y',
+        _ => return None,
+    };
+    let rule = format!("{}+{count}{unit}", if when_done { "." } else { "" });
+    agaric_store::recurrence_math::validate_repeat_rule_shape(&rule)
+        .is_ok()
+        .then_some(rule)
+}
+
 /// A source buffer's anchor line: `^` and a ULID, alone on the line.
 static ANCHOR_LINE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\^[0-9A-HJKMNP-TV-Z]{26}$").expect("invalid anchor-line regex"));
@@ -552,6 +660,9 @@ struct BulletBody<'a> {
     /// The `todo_state` of a checkbox after them (D6) or, on import, of a
     /// task keyword (D7).
     todo_state: Option<&'static str>,
+    /// Whether a checkbox was written: only such a task line carries Tasks
+    /// fields (#6277 D2).
+    checkbox: bool,
     /// The `priority` letter of an Org `[#A]` cookie, on import (D7).
     priority: Option<&'static str>,
     text: &'a str,
@@ -578,6 +689,7 @@ fn bullet_body<'a>(marker: &str, text: &'a str, mode: ParseMode) -> BulletBody<'
         return BulletBody {
             list_style,
             todo_state,
+            checkbox: todo_state.is_some(),
             priority: None,
             text,
         };
@@ -587,11 +699,12 @@ fn bullet_body<'a>(marker: &str, text: &'a str, mode: ParseMode) -> BulletBody<'
     } else {
         split_block_list_marker(text)
     };
-    let (todo_state, text) = split_block_task_marker(text);
-    let (todo_state, priority, text) = split_task_syntax(text, todo_state);
+    let (checkbox, text) = split_block_task_marker(text);
+    let (todo_state, priority, text) = split_task_syntax(text, checkbox);
     BulletBody {
         list_style,
         todo_state,
+        checkbox: checkbox.is_some(),
         priority,
         text,
     }
@@ -1588,9 +1701,15 @@ fn read_page_properties(normalized: &str, output: &mut ParseOutput) -> String {
 /// paste (#5160 S3): a README or an LLM answer gives the blocks its headings,
 /// paragraphs, list items and fences are.
 pub fn parse_pasted_text(text: &str) -> Vec<ParsedBlock> {
-    let mut blocks = source_outline(text, ParseMode::Document, true, None).blocks;
-    blocks.iter_mut().for_each(restore_text_anchor);
-    blocks
+    read_pasted_text(text).blocks
+}
+
+/// [`parse_pasted_text`] with the warnings of what it read lossily, such as a
+/// Tasks signifier it kept as text (#6277 D2).
+pub fn read_pasted_text(text: &str) -> ParseOutput {
+    let mut output = source_outline(text, ParseMode::Document, true, None);
+    output.blocks.iter_mut().for_each(restore_text_anchor);
+    output
 }
 
 /// A block HTML paste sends, at `depth`: a checkbox after the list marker on
@@ -1733,6 +1852,9 @@ struct LossyCounts {
     /// #5160 D7 — `SCHEDULED:` / `DEADLINE:` lines an import could not read in
     /// full and kept as text.
     unreadable_planning: usize,
+    /// #6277 D2 — Tasks signifiers on a task line that were read as no field
+    /// and kept as text.
+    unreadable_task_fields: usize,
     /// #5160 D14 — Logseq `:LOGBOOK:` drawers an import dropped.
     logbooks: usize,
     /// #5160 D5 — a source buffer's fences left open and closed before the
@@ -1750,6 +1872,7 @@ impl LossyCounts {
             reserved_property,
             stripped_refs,
             unreadable_planning,
+            unreadable_task_fields,
             logbooks,
             unclosed_fences,
         } = self;
@@ -1780,6 +1903,11 @@ impl LossyCounts {
             warnings.push(format!(
                 "{unreadable_planning} SCHEDULED/DEADLINE line(s) could not be read and were \
                  kept as text"
+            ));
+        }
+        if *unreadable_task_fields > 0 {
+            warnings.push(format!(
+                "{unreadable_task_fields} Tasks signifier(s) could not be read and were kept as text"
             ));
         }
         if *logbooks > 0 {
@@ -2158,12 +2286,12 @@ impl<'a> Scan<'a> {
     /// A bullet: a block under the innermost open block whose text starts at
     /// or left of its marker (S7). The marker(s) become its `listStyle`
     /// (#4552), a checkbox or, on import, a task keyword its `todo_state`, an
-    /// Org `[#A]` its `priority` ([`bullet_body`]), and a fence its text opens
-    /// is its own.
+    /// Org `[#A]` its `priority` ([`bullet_body`]), the Tasks fields a
+    /// checkbox task's line ends with its dates, priority and rule
+    /// ([`split_task_fields`]), and a fence its text opens is its own.
     fn bullet(&mut self, trimmed: &str, indent: usize, len: usize, number: usize) {
         let body = bullet_body(&trimmed[..len], bullet_text(trimmed, len), self.mode);
-        let text = body.text;
-        let properties: Vec<(String, String)> = [
+        let mut properties: Vec<(String, String)> = [
             (LIST_STYLE_KEY, body.list_style),
             ("todo_state", body.todo_state),
             ("priority", body.priority),
@@ -2171,11 +2299,19 @@ impl<'a> Scan<'a> {
         .into_iter()
         .filter_map(|(key, value)| Some((key.to_string(), value?.to_string())))
         .collect();
-        let fence = fence_run(text);
+        let fence = fence_run(body.text);
+        let text = if body.checkbox {
+            let read = split_task_fields(body.text, body.todo_state == Some("DONE"));
+            self.lossy.unreadable_task_fields += read.unread;
+            properties.extend(read.fields);
+            read.text
+        } else {
+            body.text.to_string()
+        };
         self.pop_to(indent, None);
         let content = indent + len + 1;
         self.push_block(
-            text,
+            &text,
             properties,
             fence.is_some(),
             indent,

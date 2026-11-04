@@ -361,6 +361,73 @@ async fn append_markdown_lands_the_outline_at_its_position() {
     assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
 }
 
+/// #6277 D2 — Obsidian Tasks signifiers at the end of a task line are its
+/// fields: a done task's `✅` date is its `completed_at`, not the day of the
+/// append, and one that cannot be read stays text, named in the warnings.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_markdown_reads_a_task_lines_tasks_fields() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let page = mk_page(&pool, &mat, &space, "Page").await;
+    settle(&mat).await;
+
+    let result = tools
+        .call_tool(
+            "append_markdown",
+            json!({
+                "parent_id": page,
+                "markdown": "- [ ] plan ⏫ 📅 2026-10-05 🔁 every 2 days\n\
+                             - [x] ship ✅ 2026-10-03\n- [ ] call ⏳ tomorrow\n",
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("happy path");
+    settle(&mat).await;
+
+    assert_eq!(
+        result["warnings"],
+        json!(["1 Tasks signifier(s) could not be read and were kept as text"])
+    );
+    assert_eq!(
+        child_contents(&pool, &page).await,
+        ["plan", "ship", "call ⏳ tomorrow"]
+    );
+    type Row = (
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let fields: Vec<Row> = sqlx::query_as(
+            "SELECT b.content, b.priority, b.due_date, \
+                    (SELECT value_text FROM block_properties WHERE block_id = b.id AND key = 'repeat'), \
+                    (SELECT value_date FROM block_properties \
+                     WHERE block_id = b.id AND key = 'completed_at') \
+             FROM blocks b WHERE b.parent_id = ? ORDER BY b.position",
+        )
+        .bind(&page)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    let some = |s: &str| Some(s.to_string());
+    assert_eq!(
+        fields,
+        [
+            (
+                "plan".into(),
+                some("1"),
+                some("2026-10-05"),
+                some("+2d"),
+                None
+            ),
+            ("ship".into(), None, None, None, some("2026-10-03")),
+            ("call ⏳ tomorrow".into(), None, None, None, None),
+        ]
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn append_markdown_cross_space_rejected() {
     let (tools, mat, pool, space_a, _dir) = mk_tools().await;

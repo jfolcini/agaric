@@ -1978,7 +1978,8 @@ export const pagesHandlers = {
   // It intentionally does NOT model (and tests MUST NOT rely on the mock for
   // any of these — the Rust tests own the import contract):
   //   - Frontmatter / inline `key:: value` properties beyond a raw COUNT
-  //     (`properties_set`); no property values are stamped onto blocks.
+  //     (`properties_set`); no property values are stamped onto blocks, and a
+  //     task line's Tasks fields stay its text.
   //   - `((block-ref))` stripping, `[[Page#anchor]]` block targets and
   //     Obsidian `![[Note]]` embeds.
   //   - Depth: every content block is emitted flat under the page.
@@ -2080,7 +2081,7 @@ export const pagesHandlers = {
     // `started` (the real backend reports the parser's count up front so the UI
     // can render a determinate bar from the very first event).
     const parsed = parseDocument(lines.join('\n'), null).blocks
-    const parsedLines = parsed.map((block) => block.content)
+    const parsedLines = parsed.map((block) => block.contentAsWritten)
     const blocksTotal = parsedLines.length
 
     emit({ kind: 'started', page_title: pageTitle, blocks_total: blocksTotal })
