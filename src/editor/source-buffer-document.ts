@@ -94,7 +94,7 @@ function headingLevel(trimmed: string): number | null {
 }
 
 /** `is_thematic_break`: three or more `-`, `*` or `_` and nothing else. */
-function isThematicBreak(trimmed: string): boolean {
+export function isThematicBreak(trimmed: string): boolean {
   return /^(?:-{3,}|\*{3,}|_{3,})$/.test(trimmed.replace(TRAILING_WS, ''))
 }
 

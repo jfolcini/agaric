@@ -150,7 +150,7 @@ export const TASK_ITEM_RE = new RegExp(`^${MARKER_INDENT_SRC}[-*] \\[([ xX/-])\\
  *  - A GFM task line (`- [ ] ` / `- [x] ` / `- [/] ` / `- [-] `, either `-`
  *    or `*` marker) is a task (#1435) handled by `parseTask` and must stay out
  *    of the list — `BULLET_TASK_RE` excludes it so it falls through.
- *  - `---` (and longer hyphen runs) is a horizontal rule, handled by
+ *  - `---`, `***` (and longer runs) is a horizontal rule, handled by
  *    `parseHorizontalRule` which runs BEFORE this production in dispatch, so
  *    `- ` here only matches a hyphen FOLLOWED by a space + content.
  *
