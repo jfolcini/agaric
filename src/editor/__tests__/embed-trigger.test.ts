@@ -161,3 +161,89 @@ describe('`![[` in page mode', () => {
     expect(markdownOf(editor.state.doc.child(0))).toBe(`{{embed [[${PAGE}]]}}`)
   })
 })
+
+/** Type `text` and wait for the closing `]]` rule's async lookup to land its block link. */
+async function typeResolved(editor: Editor, text: string) {
+  type(editor, text)
+  await vi.waitFor(() => expect(JSON.stringify(editor.getJSON())).toContain('block_link'))
+}
+
+describe('a typed whole `![[Name]]` in block mode (#6033)', () => {
+  it('alone in its block saves the block as an embed of that page', async () => {
+    const handle = await blockMode()
+    await typeResolved(handle.editor as Editor, '![[Project]]')
+
+    expect(handle.unmount()).toBe(`{{embed [[${PAGE}]]}}`)
+  })
+
+  it('creates a page it does not find and embeds it', async () => {
+    const handle = await blockMode()
+    await typeResolved(handle.editor as Editor, '![[Roadmap]]')
+
+    expect(onCreatePage).toHaveBeenCalledWith('Roadmap')
+    expect(handle.unmount()).toBe(`{{embed [[${CREATED}]]}}`)
+  })
+
+  it('drops a `|label`, which the embed has no room for', async () => {
+    const handle = await blockMode()
+    await typeResolved(handle.editor as Editor, '![[Project|the plan]]')
+
+    expect(handle.unmount()).toBe(`{{embed [[${PAGE}]]}}`)
+  })
+
+  it('embeds the page an anchored body names, dropping the anchor as a typed link does', async () => {
+    const handle = await blockMode()
+    await typeResolved(handle.editor as Editor, '![[Project#Goals]]')
+
+    expect(handle.unmount()).toBe(`{{embed [[${PAGE}]]}}`)
+  })
+
+  it('after other text keeps the `!` and links the page', async () => {
+    const handle = await blockMode('Hello')
+    await typeResolved(handle.editor as Editor, '![[Project]]')
+
+    expect(handle.unmount()).toBe(`Hello\\![[${PAGE}]]`)
+  })
+
+  it('after an escaping backslash keeps the `!` and links the page', async () => {
+    const handle = await blockMode()
+    await typeResolved(handle.editor as Editor, '\\![[Project]]')
+
+    const saved = handle.unmount()
+    expect(parseEmbedToken(saved)).toBeNull()
+    expect(saved).toBe(`\\\\\\![[${PAGE}]]`)
+  })
+
+  it('before other text keeps the `!` and links the page', async () => {
+    const handle = await blockMode('tail')
+    ;(handle.editor as Editor).commands.focus('start')
+    await typeResolved(handle.editor as Editor, '![[Project]]')
+
+    expect(handle.unmount()).toBe(`\\![[${PAGE}]]tail`)
+  })
+
+  it('leaves `[[Name]]` without the `!` a page link', async () => {
+    const handle = await blockMode()
+    await typeResolved(handle.editor as Editor, '[[Project]]')
+
+    expect(handle.unmount()).toBe(`[[${PAGE}]]`)
+  })
+
+  it('one undo brings back the typed text', async () => {
+    const handle = await blockMode()
+    const editor = handle.editor as Editor
+    await typeResolved(editor, '![[Project]]')
+    editor.commands.undo()
+
+    expect(editor.getText()).toBe('![[Project]]')
+  })
+})
+
+describe('a typed whole `![[Name]]` in page mode (#6033)', () => {
+  it('alone in its block makes the block an embed of that page', async () => {
+    const editor = pageMode()
+    await typeResolved(editor, '![[Project]]')
+
+    expect(markdownOf(editor.state.doc.child(0))).toBe(`{{embed [[${PAGE}]]}}`)
+  })
+})
