@@ -144,6 +144,10 @@ export function CommandPalette(): React.ReactElement | null {
           // comfortably without horizontal scrolling. The desktop dialog
           // keeps its narrower 80dvh cap; mobile uses the shared sheet cap.
           !parts.isMobile && 'sm:max-w-2xl max-h-[80dvh]',
+          // The input stays where it opened while results narrow: the dialog
+          // hangs from a fixed top instead of re-centring on its height, and
+          // the sheet keeps its full height instead of shrinking to its rows.
+          parts.isMobile ? 'h-dvh' : 'top-[12dvh] translate-y-0',
         )}
         // Stop the dialog from auto-focusing its close button on open;
         // we want focus on the input.
