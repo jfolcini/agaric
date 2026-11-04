@@ -37,27 +37,28 @@ test.describe('Gutter controls work with the editor open (#1498) @editor', () =>
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     const taskMarker = firstBlock.locator('[data-testid="task-marker"]')
 
-    // GS_1 has no task state; the block is active (editor open) so the empty
-    // checkbox affordance is revealed and hittable.
-    await expect(taskMarker).toBeVisible()
-    await expect(firstBlock.locator('[data-testid="task-checkbox-todo"]')).toHaveCount(0)
+    // GS_1 has no task state, so no checkbox: Ctrl+Enter makes it a task,
+    // the editor still open.
+    await expect(taskMarker).toHaveCount(0)
+    await page.keyboard.press('Control+Enter')
+    await expect(firstBlock.locator('[data-testid="task-checkbox-todo"]')).toBeVisible()
 
     // THE BUG: with the editor focused, this click does NOTHING — the editor
     // blurs first, the block flushes/re-mounts, and the click is swallowed.
     // WITH THE FIX: mousedown is prevented, the editor keeps focus, the click
-    // fires, and the state advances none → TODO
+    // fires, and the state advances TODO → DOING
     // (TASK_CYCLE = [null, TODO, DOING, DONE, CANCELLED]).
     await taskMarker.click()
-    await expect(firstBlock.locator('[data-testid="task-checkbox-todo"]')).toBeVisible()
+    await expect(firstBlock.locator('[data-testid="task-checkbox-doing"]')).toBeVisible()
 
     // The editor is still mounted after the click (no flush/remount): the caret
     // stays in the block. This is the other half of the focus-retention contract.
     await expect(editor).toBeVisible()
 
-    // A second click with the editor STILL focused advances TODO → DOING,
+    // A second click with the editor STILL focused advances DOING → DONE,
     // proving the focus-retention holds across repeated gutter interactions.
     await taskMarker.click()
-    await expect(firstBlock.locator('[data-testid="task-checkbox-doing"]')).toBeVisible()
+    await expect(firstBlock.locator('[data-testid="task-checkbox-done"]')).toBeVisible()
     await expect(editor).toBeVisible()
   })
 

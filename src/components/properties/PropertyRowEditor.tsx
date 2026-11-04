@@ -32,6 +32,7 @@ import {
   usePropertyRowEditor,
 } from '@/components/properties/PropertyRowEditor/usePropertyRowEditor'
 import { UnfitValueMark } from '@/components/properties/UnfitValueMark'
+import { useRefTitle } from '@/components/properties/useRefTitle'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
@@ -87,6 +88,7 @@ export function PropertyRowEditor({
   })
   const valueLabel = t('pageProperty.valueLabel', { key: prop.key })
   const unfit = isUnfit(prop.key, valueForm(prop), prop.value_text, def)
+  const refTitle = useRefTitle(prop.value_ref)
 
   return (
     <div className="property-row flex items-center gap-2 text-sm">
@@ -103,7 +105,7 @@ export function PropertyRowEditor({
           unfit={unfit}
         />
       </div>
-      {unfit && <UnfitValueMark propKey={prop.key} value={bag.currentValue} />}
+      {unfit && <UnfitValueMark propKey={prop.key} value={refTitle ?? bag.currentValue} />}
       {bag.valueType === 'select' && !def?.builtin && (
         <SelectOptionsPopover propKey={prop.key} state={bag.selectOptions} />
       )}
