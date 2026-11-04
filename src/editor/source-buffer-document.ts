@@ -7,9 +7,9 @@
  * and defines none: `conformance/document-lines.vectors.json`, which Rust
  * authors, pins it.
  *
- * Measured as Rust measures: an indent's columns are its UTF-8 bytes plus one
- * per tab (`indent_columns`), and every trim is `char::is_whitespace`'s, which
- * JavaScript's `\s` is not.
+ * Measured as Rust measures: an indent's columns are its UTF-8 bytes, a tab
+ * reaching the next tab stop (`indent_columns`), and every trim is
+ * `char::is_whitespace`'s, which JavaScript's `\s` is not.
  */
 
 import { FOLDED_RESERVED_KEYS, foldPropertyKey } from '@/lib/inline-property-parse'
@@ -225,20 +225,24 @@ export function writeSourcePropertyValue(value: string): string {
 
 const UTF8 = new TextEncoder()
 
-/** `indent_columns`: the indent's UTF-8 bytes, a tab counting twice. */
+/** `past_tab`: the column a tab at `columns` reaches, the next multiple of four. */
+const pastTab = (columns: number): number => columns - (columns % 4) + 4
+
+/** `indent_columns`: the indent's UTF-8 bytes, a tab reaching the next tab stop. */
 function indentColumns(line: string): number {
   const indent = line.slice(0, line.length - trimStart(line).length)
-  return UTF8.encode(indent).length + indent.split('\t').length - 1
+  let columns = 0
+  for (const c of indent) columns = c === '\t' ? pastTab(columns) : columns + UTF8.encode(c).length
+  return columns
 }
 
-/** `dedent`: `line` less up to `width` columns of spaces and tabs. */
+/** `dedent`: `line` less its spaces and tabs that start before column `width`. */
 function dedent(line: string, width: number): string {
   let columns = 0
   let cut = 0
   for (const c of line) {
-    if (c !== ' ' && c !== '\t') break
-    columns += c === ' ' ? 1 : 2
-    if (columns > width) break
+    if (columns >= width || (c !== ' ' && c !== '\t')) break
+    columns = c === ' ' ? columns + 1 : pastTab(columns)
     cut += 1
   }
   return line.slice(cut)
@@ -803,17 +807,14 @@ interface DocumentPlace {
 
 /**
  * `DocumentLayout` (`markdown.rs`): where a Document buffer's walk stands, for
- * each open depth the column its block's children are written at and whether
- * that block is written with a marker, and whether the block before was.
+ * each open depth the column its block's children are written at, and whether
+ * the block before opens with a marker.
  */
 export class DocumentLayout {
-  private readonly open: Array<{ column: number; marked: boolean }>
+  private readonly open: number[]
   private previous: boolean | null
 
-  constructor(
-    open: Array<{ column: number; marked: boolean }> = [],
-    previous: boolean | null = null,
-  ) {
+  constructor(open: number[] = [], previous: boolean | null = null) {
     this.open = open
     this.previous = previous
   }
@@ -828,9 +829,12 @@ export class DocumentLayout {
    * its task state. A blank line goes before it unless it and the block before
    * both open with a marker (D1). A state in the checkbox alphabet makes it a
    * task, `- [ ] `, whatever its list marker (D3), and another state leaves it
-   * none. A plain block is bare, but a `+` item under a block written with a
-   * marker, whose indented lines continue it (D4), and where `opensRule`, a
-   * first block opening the buffer with `---`, which would open front matter.
+   * none. A plain block is bare at the top, but a `+` item under any block,
+   * where an indented bare line would continue a list block (D4) and read as
+   * code to other tools past four columns (decision 2, #6277), and where
+   * `opensRule`, a first block opening the buffer with `---`, which would open
+   * front matter. A bare parent's children sit two columns in, the `+ `
+   * marker's width.
    */
   place(
     depth: number,
@@ -839,17 +843,18 @@ export class DocumentLayout {
     opensRule: boolean,
   ): DocumentPlace {
     if (this.open.length > depth) this.open.length = depth
-    const { column, marked: underMarker } = this.open.at(-1) ?? { column: 0, marked: false }
+    const parent = this.open.at(-1)
+    const column = parent ?? 0
     const checkbox = checkboxOf(todoState)
     let marker = ''
     if (checkbox !== null) marker = '- '
     else if (todoState === null && listMarker !== '') marker = listMarker
-    else if (underMarker || opensRule) marker = '+ '
+    else if (parent !== undefined || opensRule) marker = '+ '
     const marked = marker !== ''
     const blank = this.previous !== null && !(this.previous && marked)
     this.previous = marked
     const child = column + (marked ? marker.length : 2)
-    this.open.push({ column: child, marked })
+    this.open.push(child)
     return {
       blank,
       indent: ' '.repeat(column),

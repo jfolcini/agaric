@@ -3067,7 +3067,8 @@ describe('get_page_buffer', () => {
       deleted_at: '2026-04-15T12:00:00Z',
     })
 
-    expect(source('SRC_PAGE')).toBe('b ^SRC_B\n\na ^SRC_A\n\n  a1 ^SRC_A1\n')
+    // A plain child is a `+` item (decision 2, #6277).
+    expect(source('SRC_PAGE')).toBe('b ^SRC_B\n\na ^SRC_A\n\n  + a1 ^SRC_A1\n')
   })
 
   it('throws for non-existent page', () => {

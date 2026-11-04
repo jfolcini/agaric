@@ -45,6 +45,13 @@ export const BLOCK_MENU_ACTION_IDS = [
 
 export type BlockMenuActionId = (typeof BLOCK_MENU_ACTION_IDS)[number]
 
+/**
+ * A row of the block menu: one of {@link BLOCK_MENU_ACTION_IDS}, or *Read aloud*, which only the
+ * block tree's own menu shows (page mode's and the buffer's menus name their rows by
+ * `actionIds`).
+ */
+export type BlockMenuRowId = BlockMenuActionId | 'readAloud'
+
 export interface BlockContextMenuProps {
   blockId: string
   position: { x: number; y: number }
@@ -113,7 +120,7 @@ export interface BlockContextMenuProps {
 
 export interface MenuItem {
   /** The action the row runs; a Turn into row shares its toggle's. */
-  id: BlockMenuActionId
+  id: BlockMenuRowId
   label: string
   icon: React.ReactNode
   action: (() => void) | undefined

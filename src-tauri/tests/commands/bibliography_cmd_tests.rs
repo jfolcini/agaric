@@ -533,6 +533,106 @@ async fn import_bibliography_entry_without_title_stores_none_6032() {
     mat.shutdown();
 }
 
+/// #6032 — case braces, `~`, accents, biblatex `journaltitle` / `date`,
+/// `booktitle` and a braced corporate author all import as plain text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_bibliography_decodes_biblatex_fields_and_latex_6032() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let src = r"@article{k1, author = {{World Health Organization}},
+  title = {The {DNA} of {B}ayesian Models},
+  journaltitle = {Nov\'{\i} \v{C}asopis}, date = {2024-03-01},
+  abstract = {Knuth~D.}}
+@incollection{k2, author = {Doe, Jane}, title = {Ch}, booktitle = {The Book}, year = 2020}";
+    let result = import_bibliography_inner(
+        &pool,
+        DEV,
+        &mat,
+        src.into(),
+        Some("bibtex".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.pages_created, 2, "warnings: {:?}", result.warnings);
+
+    let who = page_id_by_title(&pool, "World Health Organization 2024")
+        .await
+        .expect("World Health Organization 2024 page");
+    let props = props_of(&pool, &who).await;
+    assert_eq!(
+        props["authors"].value_text.as_deref(),
+        Some("World Health Organization"),
+        "a wholly braced author is one name: {props:?}"
+    );
+    assert_eq!(
+        props["title"].value_text.as_deref(),
+        Some("The DNA of Bayesian Models"),
+        "case braces are dropped"
+    );
+    assert_eq!(
+        props["journal"].value_text.as_deref(),
+        Some("Nov\u{ed} \u{10c}asopis"),
+        "journaltitle maps to journal, accents decoded to NFC"
+    );
+    assert_eq!(props["year"].value_num, Some(2024.0), "date gives the year");
+    assert_eq!(
+        props["abstract"].value_text.as_deref(),
+        Some("Knuth D."),
+        "~ is a plain space"
+    );
+    assert!(
+        !result.warnings.iter().any(|w| w.contains("kept literal")),
+        "every markup here is decoded: {:?}",
+        result.warnings
+    );
+
+    let doe = page_id_by_title(&pool, "Doe 2020")
+        .await
+        .expect("Doe 2020 page");
+    assert_eq!(
+        props_of(&pool, &doe).await["journal"].value_text.as_deref(),
+        Some("The Book"),
+        "booktitle maps to journal"
+    );
+
+    mat.shutdown();
+}
+
+/// #6032 — a CSL `literal` first author is the whole family in the title.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_bibliography_csl_literal_author_titles_page_6032() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let csl = r#"[{"id": "who2023", "author": [{"literal": "World Health Organization"}],
+        "issued": {"date-parts": [[2023]]}}]"#;
+    let result = import_bibliography_inner(
+        &pool,
+        DEV,
+        &mat,
+        csl.into(),
+        Some("csl-json".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.pages_created, 1, "warnings: {:?}", result.warnings);
+    assert!(
+        page_id_by_title(&pool, "World Health Organization 2023")
+            .await
+            .is_some(),
+        "the literal name is the family"
+    );
+
+    mat.shutdown();
+}
+
 // ======================================================================
 // malformed input
 // ======================================================================

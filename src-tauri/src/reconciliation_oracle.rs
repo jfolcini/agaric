@@ -85,7 +85,7 @@
 //! | `block_tag_inherited` (tag inheritance, #5628) | `blocks` — `parent_id`, `deleted_at` — **and** `block_tags` | the in-transaction arms of `tag_inheritance::apply_op_tag_inheritance`, the purge cascades, `loro_sync`'s post-import refresh / `rebuild_all` (the `RebuildTagInheritanceCache` task) — row membership in [`reconcile`], `inherited_from` in [`diff_block_tag_inherited_provenance`] only |
 //! | SQL `blocks` ITSELF against the Loro engine (#5628) | the live engine docs — not a SQL table | the per-op projections in `loro::projection` (`project_*_to_sql`) after every engine apply / the SQL-only fallbacks, which write SQL without the engine — audited by [`reconcile_engine`], NOT by [`reconcile`] |
 //! | SQL `attachments` against the Loro engine (#5608) | the attachment entries the live engine docs' nodes hold | `apply::attachments` (the op path) / `reproject_attachments_from_engine` (imports and recovery) / `repair::attachments` (the boot backfill) — audited by [`reconcile_engine`], NOT by [`reconcile`] |
-//! | SQL `block_tags` and `page_aliases` against the Loro engine (#6207) | each space doc's tag maps and `page_aliases` root, for the blocks both sides hold | `project_add_tag_to_sql` / `project_remove_tag_to_sql` and `project_add_page_alias_to_sql` / `project_remove_page_alias_to_sql` (the op apply arms, the op-log recovery arms) / `reproject_block_tags_from_engine` and `reproject_page_aliases_from_engine` (imports and recovery) / `project_unheld_page_alias_claims` (the hand-off to the next claimant, at a local commit, a sync import and the deferred-purge sweep, #6229) / `repair::page_aliases` (the boot backfill) / the purge cascades — audited by [`reconcile_engine`], NOT by [`reconcile`] |
+//! | SQL `block_tags` and `page_aliases` against the Loro engine (#6207) | each space doc's tag maps and `page_aliases` root, for the blocks both sides hold | `project_add_tag_to_sql` / `project_remove_tag_to_sql` and `project_add_page_alias_to_sql` / `project_remove_page_alias_to_sql` (the op apply arms, the op-log recovery arms) / `reproject_block_tags_from_engine` and `reproject_page_aliases_from_engine` (imports and recovery) / `project_dropped_tags` (a tag the FK guard dropped, once the tag has a row, #6236) / `project_unheld_page_alias_claims` (the hand-off to the next claimant, at a local commit, a sync import and the deferred-purge sweep, #6229) / `repair::page_aliases` (the boot backfill) / the purge cascades — audited by [`reconcile_engine`], NOT by [`reconcile`] |
 //! | SQL `block_properties` and `property_definitions` against the Loro engine (#6206) | each held node's property map, typed by its space's `property_definitions` rows and the built-ins, for the blocks both sides hold; each space doc's `property_definitions` root | `project_set_property_to_sql` / `project_delete_property_to_sql` (the op apply arms, the op-log recovery arms) / `reproject_block_properties_from_engine` (imports and recovery) / `reproject_key_values` and `project_property_value_writes` (retypes and rewrites) / `project_dropped_refs` (a ref the FK guard dropped, once its target has a row, #6236) / the rename projections / the purge cascades; `project_property_def_to_sql` (every definition op, `project_pass_defs`, recovery) / `repair::property_definitions` (the boot backfill) — audited by [`reconcile_engine`], NOT by [`reconcile`] |
 //! | `spaces`, the registry (#6207) | `block_properties` — the `is_space = 'true'` rows, a soft-deleted space's included | the `spaces_register_is_space` trigger (migration 0089), fired by every `is_space` property insert / the FK cascade of a purge (the only removal) — in [`reconcile`] |
 //!
@@ -2284,7 +2284,9 @@ async fn dump_page_aliases(pool: &SqlitePool) -> Result<Vec<(String, String)>, A
 const ENGINE_BLOCK_TAGS_OWNER: &str = "the tag writers in agaric-engine: \
      project_add_tag_to_sql / project_remove_tag_to_sql after the engine apply (the local \
      apply arms, the op-log recovery arms) and the SQL-only fallback that runs them without \
-     the engine, reproject_block_tags_from_engine (sync import, engine-first recovery), and \
+     the engine, reproject_block_tags_from_engine (sync import, engine-first recovery), \
+     project_dropped_tags (a tag the FK guard dropped while the tag had no row, at a sync \
+     import that gives a tag block its row and at the end of engine-first recovery), and \
      the purge cascades: SQL shows one tag set while peers and an engine-first recovery use \
      the engine's";
 
@@ -3755,16 +3757,14 @@ async fn read_fts_blocks(pool: &SqlitePool) -> Result<BTreeMap<String, Vec<Strin
 // Artefact 17 — the `spaces` registry (#6207)
 // ---------------------------------------------------------------------------
 
-/// Every `is_space` property row, as `(block_id, value_text)`.
-async fn dump_is_space_flags(pool: &SqlitePool) -> Result<Vec<(String, Option<String>)>, AppError> {
-    let rows =
-        sqlx::query!("SELECT block_id, value_text FROM block_properties WHERE key = 'is_space'")
-            .fetch_all(pool)
-            .await?;
-    Ok(rows
-        .into_iter()
-        .map(|r| (r.block_id, r.value_text))
-        .collect())
+/// Every block carrying `is_space = 'true'`.
+async fn dump_is_space_flags(pool: &SqlitePool) -> Result<BTreeSet<String>, AppError> {
+    let rows = sqlx::query_scalar!(
+        "SELECT block_id FROM block_properties WHERE key = 'is_space' AND value_text = 'true'"
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().collect())
 }
 
 async fn dump_spaces(pool: &SqlitePool) -> Result<BTreeSet<String>, AppError> {
@@ -3793,15 +3793,10 @@ const SPACES_EXTRA_OWNER: &str = "a spaces row leaves only with its block's purg
 /// joined to a live block), so liveness is not consulted; a purged space has
 /// neither.
 fn diff_spaces_registry(
-    flags: &[(String, Option<String>)],
+    flagged: &BTreeSet<String>,
     registry: &BTreeSet<String>,
     out: &mut Vec<Divergence>,
 ) {
-    let flagged: BTreeSet<String> = flags
-        .iter()
-        .filter(|(_, value)| value.as_deref() == Some("true"))
-        .map(|(block_id, _)| block_id.clone())
-        .collect();
     for block_id in flagged.difference(registry) {
         out.push(Divergence {
             artefact: "spaces.row",
@@ -3811,7 +3806,7 @@ fn diff_spaces_registry(
             owner: SPACES_MISSING_OWNER,
         });
     }
-    for block_id in registry.difference(&flagged) {
+    for block_id in registry.difference(flagged) {
         out.push(Divergence {
             artefact: "spaces.row",
             key: block_id.clone(),

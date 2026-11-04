@@ -15,8 +15,8 @@
     },
     {
       "lineIds": ["01J00000000000000000000000", null, "01J00000000000000000000001", null],
-      "name": "2: a heading owns nothing; its child is indented after a blank line",
-      "text": "## Findings\n\n  **Bold** text\n",
+      "name": "2: a heading owns nothing; its child is a `+` item after a blank line (decision 2, #6277)",
+      "text": "## Findings\n\n  + **Bold** text\n",
       "tree": [
         {
           "content": "## Findings",
@@ -317,12 +317,11 @@
         "01J00000000000000000000000",
         null,
         "01J00000000000000000000001",
-        null,
         "01J00000000000000000000002",
         null
       ],
-      "name": "7: a paragraph under a paragraph is indented after a blank line",
-      "text": "parent\n\n  child\n\n    grandchild\n",
+      "name": "7: a paragraph under a paragraph is a `+` item after a blank line (decision 2, #6277)",
+      "text": "parent\n\n  + child\n    + grandchild\n",
       "tree": [
         {
           "content": "parent",
@@ -1522,6 +1521,26 @@
           "depth": 0,
           "properties": {
             "listStyle": "bullet"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a tab reaches the next tab stop, so a tab-indented numbered list nests (decision 2, #6277)",
+      "text": "1. a\n\t1. b",
+      "tree": [
+        {
+          "content": "a",
+          "depth": 0,
+          "properties": {
+            "listStyle": "ordered"
+          }
+        },
+        {
+          "content": "b",
+          "depth": 1,
+          "properties": {
+            "listStyle": "ordered"
           }
         }
       ]

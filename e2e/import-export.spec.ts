@@ -184,6 +184,8 @@ test.describe('Export all pages as ZIP @markdown', () => {
     const names = Object.keys(zip.files).toSorted()
     expect(names).toEqual(
       [
+        '.agaric/',
+        '.agaric/space.json',
         'Getting Started.md',
         'Meeting Notes Template.md',
         'Meetings.md',
@@ -195,9 +197,17 @@ test.describe('Export all pages as ZIP @markdown', () => {
 
     // Spot-check one entry's content round-trips the same export the
     // per-page "Export as Markdown" flow produces.
+    // The path names the page, so the file drops its `# Title` line, and the
+    // space's typed definitions travel beside it (#6277 decision 8).
     const gettingStarted = await zip.file('Getting Started.md')?.async('string')
-    expect(gettingStarted).toMatch(/^# Getting Started/)
+    expect(gettingStarted).not.toContain('# Getting Started')
     expect(gettingStarted).toContain('- Welcome to Agaric!')
+    const space = JSON.parse((await zip.file('.agaric/space.json')?.async('string')) ?? '{}')
+    expect(space.propertyDefinitions).toContainEqual({
+      key: 'project',
+      value_type: 'select',
+      options: JSON.stringify(['alpha', 'beta', 'gamma']),
+    })
   })
 })
 
@@ -376,13 +386,15 @@ test.describe('Folder import of Notion, Org and text files @markdown', () => {
       .locator('[data-slot="sidebar"]')
       .getByRole('button', { name: 'Pages', exact: true })
       .click()
-    for (const title of ['Export/Plan', 'Export/Notes', 'Export/Org Tasks', 'Export/reading']) {
+    // The picked folder's own name is no part of a title (#6277 decision 8).
+    for (const title of ['Plan', 'Notes', 'Org Tasks', 'reading']) {
       await expect(page.locator(`span[title="${title}"]`)).toBeVisible()
     }
-    await expect(page.locator(`span[title="Export/Plan ${id}"]`)).toHaveCount(0)
+    await expect(page.locator(`span[title="Plan ${id}"]`)).toHaveCount(0)
+    await expect(page.locator('span[title="Export/Plan"]')).toHaveCount(0)
 
-    await page.locator('span[title="Export/Plan"]').click()
-    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Export/Plan')
+    await page.locator('span[title="Plan"]').click()
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Plan')
     await expect(page.getByTestId('callout-block')).toContainText('Mind the deadline.')
   })
 })

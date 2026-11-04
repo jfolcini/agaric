@@ -203,8 +203,8 @@ function pushAnchoredDocumentBlock(
  * depth-first in sibling order, each with its `^ID`. A plain block is its own
  * paragraph, a bullet block `- x`, a numbered one `N. x` by its place in its
  * run, a task `- [ ] x`, which shows no list style (D3); a blank line goes
- * between blocks but neighbouring marked ones (D1). A plain block under a
- * marked one, or opening the buffer with `---`, is a `+` item (D4). Its task
+ * between blocks but neighbouring marked ones (D1). A plain block under
+ * another, or opening the buffer with `---`, is a `+` item (D4). Its task
  * state outside the checkbox alphabet, its priority and dates and its other
  * properties follow as `key:: value` lines at its text's column. Like the
  * backend, a nested page and what is under it are left out; unlike it, no id
