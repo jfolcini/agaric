@@ -6,7 +6,9 @@
  *
  * Here the save flush runs over each block after a typo fix, and must keep it
  * one plain edit: the flush acts only on what the edit added, never on the
- * shape the block was loaded with (D2).
+ * shape the block was loaded with (D2). And the editor's parse reads each
+ * content into the code blocks and thematic breaks Rust's grammar reads there
+ * (`rustReads`, which Rust authors), in the same order (#6033).
  */
 
 import { readFileSync } from 'node:fs'
@@ -16,6 +18,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import { parse } from '@/editor/markdown-parse'
 import { processCheckboxSyntax } from '@/lib/block-utils'
 import { TASK_STATE_TO_MARKER, TASK_STATES, type TodoState } from '@/lib/task-states'
 import { runUnmountFlush, type UnmountFlushResult } from '@/stores/unmount-flush'
@@ -24,6 +27,7 @@ interface StoredBlock {
   name: string
   content: string
   editorFlush: UnmountFlushResult['kind']
+  rustReads: ('code' | 'rule')[]
 }
 
 interface TaskMarker {
@@ -79,6 +83,16 @@ describe('stored block content vectors (#5160)', () => {
       })
       await result.outcome
       expect(result.kind).toBe(row.editorFlush)
+    },
+  )
+
+  it.each(vectors.blocks.map((row) => [row.name, row] as const))(
+    'the editor reads the code blocks and rules Rust reads in %s',
+    (_name, row) => {
+      const reads = (parse(row.content).content ?? []).flatMap((node) =>
+        node.type === 'codeBlock' ? ['code'] : node.type === 'horizontalRule' ? ['rule'] : [],
+      )
+      expect(reads).toEqual(row.rustReads)
     },
   )
 
