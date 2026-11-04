@@ -5733,9 +5733,13 @@ async fn list_attachments_by_block_and_by_page_return_every_field_5410() {
         )
         .await
         .expect("list_attachments by page_id");
+    // Ids made in the same millisecond order by their random part, not by
+    // creation.
+    let mut expected = vec![on_page, on_child, on_grandchild];
+    expected.sort();
     assert_eq!(
         item_ids(&by_page),
-        vec![on_page, on_child, on_grandchild],
+        expected,
         "the page's own and every descendant's, in id order: {by_page}"
     );
     for item in by_page["items"].as_array().unwrap() {
@@ -5810,38 +5814,46 @@ async fn list_attachments_cursor_resumes_without_duplicates_5410() {
     let (tools, mat, _dir) = mk_tools().await;
     let space = mk_space(&tools.pool, "S").await;
     let page = mk_page_in(&tools, &mat, &space).await;
+    let holder = mk_child(&tools, &mat, &page, "five files").await;
     let mut expected = Vec::new();
     for i in 0..5 {
-        let block = mk_child(&tools, &mat, &page, &format!("block {i}")).await;
         let bytes = format!("file {i}");
         let name = format!("f{i}.txt");
-        expected.push(attach(&tools, &mat, &block, &name, "text/plain", bytes.as_bytes()).await);
+        expected.push(attach(&tools, &mat, &holder, &name, "text/plain", bytes.as_bytes()).await);
     }
     settle(&mat).await;
+    expected.sort();
 
-    let mut seen = Vec::new();
-    let mut pages = Vec::new();
-    let mut cursor: Option<String> = None;
-    loop {
-        let mut args = json!({ "space_id": space, "page_id": page, "limit": 2 });
-        if let Some(c) = &cursor {
-            args["cursor"] = json!(c);
+    for target in [json!({ "page_id": page }), json!({ "block_id": holder })] {
+        let mut seen = Vec::new();
+        let mut pages = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let mut args = target.clone();
+            args["space_id"] = json!(space);
+            args["limit"] = json!(2);
+            if let Some(c) = &cursor {
+                args["cursor"] = json!(c);
+            }
+            let result = tools
+                .call_tool("list_attachments", args, &test_ctx())
+                .await
+                .expect("list_attachments page");
+            let ids = item_ids(&result);
+            pages.push(ids.len());
+            seen.extend(ids);
+            if result["has_more"] == false {
+                assert!(result["next_cursor"].is_null(), "{target}: got {result}");
+                break;
+            }
+            cursor = Some(result["next_cursor"].as_str().unwrap().to_owned());
         }
-        let result = tools
-            .call_tool("list_attachments", args, &test_ctx())
-            .await
-            .expect("list_attachments page");
-        let ids = item_ids(&result);
-        pages.push(ids.len());
-        seen.extend(ids);
-        if result["has_more"] == false {
-            assert!(result["next_cursor"].is_null(), "got {result}");
-            break;
-        }
-        cursor = Some(result["next_cursor"].as_str().unwrap().to_owned());
+        assert_eq!(pages, vec![2, 2, 1], "{target}");
+        assert_eq!(
+            seen, expected,
+            "{target}: every attachment once, in id order"
+        );
     }
-    assert_eq!(pages, vec![2, 2, 1]);
-    assert_eq!(seen, expected, "every attachment once, in id order");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
