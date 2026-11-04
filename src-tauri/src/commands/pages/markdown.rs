@@ -1161,18 +1161,17 @@ fn render_block(
     // escape-hatch custom-property case. `descendant_properties` was
     // batch-read once for the whole subtree, so this is a HashMap lookup,
     // not a per-block query. The buffer writes a ref-typed value as its raw
-    // id, which is what the value is, and quotes a value its line cannot
-    // carry as it is (#5160 X5).
+    // id, which is what the value is. Every mode quotes a value its line
+    // cannot carry as it is (#5160 X5, #6277 A2).
     let no_titles = HashMap::new();
-    let (ref_titles, write_value): (_, fn(&str) -> String) = match mode {
-        RenderMode::Export | RenderMode::Agent => (ref_titles, str::to_string),
-        RenderMode::Clipboard | RenderMode::Document | RenderMode::File => {
-            (&no_titles, import::write_source_property_value)
-        }
+    let ref_titles = match mode {
+        RenderMode::Export | RenderMode::Agent => ref_titles,
+        RenderMode::Clipboard | RenderMode::Document | RenderMode::File => &no_titles,
     };
     if let Some(props) = descendant_properties.get(&id) {
         for prop in props {
-            let value = write_value(&frontmatter_row_value(prop, ref_titles));
+            let value =
+                import::write_source_property_value(&frontmatter_row_value(prop, ref_titles));
             output.push_str(&format!("{prop_indent}{}:: {value}\n", prop.key));
         }
     }
@@ -1487,10 +1486,11 @@ fn render_page_attachments(output: &mut String, page_id: &str, data: &PageExport
     // inline image) is skipped here so it isn't double-emitted — it was
     // already rendered inline as part of the `# {title}` line above.
     //
-    // Emitted at depth 0 (no indent), right after frontmatter and before the
-    // descendant bullets: these lines aren't nested under any bullet (the
-    // page has none — its content is the `# Title` heading), so they sit at
-    // the same top level as the first-level descendant bullets below.
+    // Emitted at depth 0 (no indent), right after the front matter and title
+    // and before the descendant bullets: these lines aren't nested under any
+    // bullet (the page has none — its content is the `# Title` heading), so
+    // they sit at the same top level as the first-level descendant bullets
+    // below.
     if let Some(atts) = attachments_by_block.get(page_id) {
         let page_content = page.content.as_deref().unwrap_or("");
         for (att_id, filename) in atts {
@@ -1549,29 +1549,23 @@ fn group_children_by_parent<'a>(
 /// Split out of `export_page_markdown_inner` (#4639); behaviour-preserving,
 /// with the export tests as the oracle.
 fn render_page_markdown(page_id: &str, data: &PageExportData) -> String {
-    let page = &data.page;
     let mut output = String::new();
-
-    // Title
-    //
-    // #2991 — `page.content` is cloned (not moved) here because the page
-    // block's own non-inline attachments (emitted just below, after
-    // frontmatter) need the raw content string for the same inline-token
-    // dedup check the descendant loops use.
-    let title = page
-        .content
-        .clone()
-        .unwrap_or_else(|| "Untitled".to_string());
-    output.push_str(&format!("# {title}\n\n"));
-
-    render_frontmatter(&mut output, data);
+    render_page_head(&mut output, data);
     render_page_attachments(&mut output, page_id, data);
     render_block_tree(&mut output, page_id, data, RenderMode::Export);
     output
 }
 
-/// The page as an MCP agent reads it (#5375): `# Title`, the export's front
-/// matter, then the block tree in [`RenderMode::Agent`].
+/// The front matter, at byte 0 where Obsidian and GitHub read it, then the
+/// `# Title` line (#6277 A1).
+fn render_page_head(output: &mut String, data: &PageExportData) {
+    render_frontmatter(output, data);
+    let title = data.page.content.as_deref().unwrap_or("Untitled");
+    output.push_str(&format!("# {title}\n\n"));
+}
+
+/// The page as an MCP agent reads it (#5375): the export's front matter and
+/// `# Title`, then the block tree in [`RenderMode::Agent`].
 fn render_page_for_agent(data: &PageExportData) -> String {
     render_page_for_agent_spans(data).0
 }
@@ -1579,9 +1573,8 @@ fn render_page_for_agent(data: &PageExportData) -> String {
 /// [`render_page_for_agent`], with each block's id and the byte offset it
 /// starts at, the blank line before it included, in render order.
 fn render_page_for_agent_spans(data: &PageExportData) -> (String, Vec<(String, usize)>) {
-    let title = data.page.content.as_deref().unwrap_or("Untitled");
-    let mut output = format!("# {title}\n\n");
-    render_frontmatter(&mut output, data);
+    let mut output = String::new();
+    render_page_head(&mut output, data);
     let starts = render_block_tree(&mut output, data.page.id.as_str(), data, RenderMode::Agent);
     (output, starts)
 }
@@ -2471,8 +2464,8 @@ async fn load_frontmatter_lists(
 /// Export a page and its full descendant subtree as a Markdown string with
 /// human-readable tag/page references and optional YAML frontmatter.
 ///
-/// 1. Emits `# Page Title`
-/// 2. If the page has properties, emits a `---` YAML frontmatter block
+/// 1. If the page has properties, emits a `---` YAML frontmatter block
+/// 2. Emits `# Page Title`
 /// 3. For each descendant block — direct children **and** transitively
 ///    nested blocks — ordered by `(position, id)` over the keyset,
 ///    resolves `#[ULID]` and `[[ULID]]` references to their human-readable
@@ -4248,15 +4241,15 @@ fn parse_import_payload(
         .map(|f| folder_path_to_namespace_title(&f))
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| "Imported Page".to_string());
-    // Agaric's own export writes the title as a leading `# Title` line, which
-    // would otherwise come back as a block repeating it (#5160 S6). A note of a
+    // Agaric's own export writes the title as a `# Title` line, which would
+    // otherwise come back as a block repeating it (#5160 S6). A note of a
     // folder import keeps its `((uuid))` refs to other notes for
     // `link_import_anchors`.
     let text = import::strip_title_heading(content, &page_title);
     let mut parse_output = if vault_notes.is_some() {
-        import::parse_vault_markdown(text)
+        import::parse_vault_markdown(&text)
     } else {
-        import::parse_logseq_markdown(text)
+        import::parse_logseq_markdown(&text)
     };
     // A folder import links its notes by relative path (#5160 N10); a lone
     // file has no vault to be relative to. The title is the note's path below
@@ -8554,7 +8547,7 @@ mod tests {
                 .collect()
         }
 
-        /// The title, the front matter, every id as its name, the nesting,
+        /// The front matter, the title, every id as its name, the nesting,
         /// a plain child a `+` item (decision 2, #6277), and a `^ID` on every
         /// block.
         #[test]
@@ -8577,8 +8570,8 @@ mod tests {
             assert_eq!(
                 render_page_for_agent(&data),
                 format!(
-                    "# Title\n\n---\naliases: [Plan B]\ntags: [work]\nstatus: active\n\
-                     project: Project Alpha\n---\n\nplan #work ^{PARENT}\n\n  + \
+                    "---\naliases: [Plan B]\ntags: [work]\nstatus: active\n\
+                     project: Project Alpha\n---\n\n# Title\n\nplan #work ^{PARENT}\n\n  + \
                      see [[Linked Page]] ^{CHILD}\n    owner:: Ada\n"
                 )
             );
