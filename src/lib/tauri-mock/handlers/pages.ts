@@ -67,6 +67,7 @@ import {
   resolveRefValue,
   resolveTagNames,
 } from '@/lib/tauri-mock/names'
+import { pageNameHolder } from '@/lib/tauri-mock/page-names'
 import {
   blockTags,
   blocks,
@@ -482,13 +483,19 @@ function wantedAliases(aliases: readonly string[]): string[] {
   return out
 }
 
-/** The page other than `pageId` holding `alias` (`page_aliases.alias` is NOCASE), if any. */
+/**
+ * The page other than `pageId` holding `alias`, if any: as an alias anywhere
+ * (`page_aliases.alias` is NOCASE), or as a title or alias of a live page of
+ * `pageId`'s space under `nameKey` (`alias_holder_other_than`, #6278).
+ */
 function aliasHolder(alias: string, pageId: string): string | null {
   for (const [owner, held] of pageAliases) {
     if (owner === pageId) continue
     if (held.some((h) => foldAsciiUppercase(h) === foldAsciiUppercase(alias))) return owner
   }
-  return null
+  const page = blocks.get(pageId)
+  const spaceId = page ? ownerSpaceOf(page) : null
+  return spaceId === null ? null : (pageNameHolder(alias, spaceId, pageId)?.id ?? null)
 }
 
 /** `require_live_page`: the alias writes probe for a live page block first (#661). */

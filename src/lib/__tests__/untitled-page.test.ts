@@ -25,6 +25,13 @@ describe('untitledTitle', () => {
     expect(untitledTitle(['Untitled 2'])).toBe('Untitled')
   })
 
+  // #6278 — the backend resolves a create to a title of another case or a
+  // trailing space too.
+  it('treats another spelling of a name as taken', () => {
+    expect(untitledTitle(['untitled '])).toBe('Untitled 2')
+    expect(untitledTitle(['UNTITLED', 'untitled 2'])).toBe('Untitled 3')
+  })
+
   it('ignores null titles', () => {
     expect(untitledTitle([null, null])).toBe('Untitled')
     expect(untitledTitle([null, 'Untitled'])).toBe('Untitled 2')

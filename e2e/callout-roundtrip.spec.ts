@@ -4,7 +4,17 @@
  * editor's stock Blockquote dropped `calloutType`), so no `callout-block`
  * rendered after save.
  */
-import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
+import {
+  expect,
+  focusBlock,
+  focusBlockById,
+  ipc,
+  openPage,
+  reopenPage,
+  saveBlock,
+  test,
+  waitForBoot,
+} from './helpers'
 
 test.describe('Callout round-trip (#258) @editor @markdown', () => {
   test.beforeEach(async ({ page }) => {
@@ -36,5 +46,60 @@ test.describe('Callout round-trip (#258) @editor @markdown', () => {
       .locator('[data-testid="callout-block"]')
     await expect(callout).toBeVisible()
     await expect(callout).toContainText('important note')
+  })
+
+  // #6033: a callout's fold marker. Its open/closed state is the reader's,
+  // never stored; the `-` is the block's text and survives an edit.
+  test.describe('a folded callout (#6033)', () => {
+    const PAGE = 'Getting Started'
+    const GS1 = '0000000000000000000BLOCK01'
+    const FOLDED = '> [!FAQ]- Why fold?\n> Because it is long.'
+
+    const calloutOf = (page: import('@playwright/test').Page) =>
+      page.locator(
+        `[data-testid="sortable-block"][data-block-id="${GS1}"] [data-testid="callout-block"]`,
+      )
+
+    test.beforeEach(async ({ page }) => {
+      await ipc(page, 'edit_block', { blockId: GS1, toText: FOLDED })
+      await openPage(page, PAGE)
+    })
+
+    test('shows its title folded and opens on its toggle, without editing the block', async ({
+      page,
+    }) => {
+      const callout = calloutOf(page)
+      await expect(callout).toContainText('Why fold?')
+      await expect(callout).not.toContainText('Because it is long.')
+      const toggle = callout.getByTestId('callout-fold-toggle')
+      await expect(toggle).toHaveAccessibleName('Expand Warning callout')
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+
+      await toggle.click()
+
+      await expect(callout).toContainText('Because it is long.')
+      await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+      await expect(toggle).toHaveAccessibleName('Collapse Warning callout')
+      await expect(page.getByTestId('block-editor')).toHaveCount(0)
+    })
+
+    test('keeps its `-` through an edit, and opens folded again after navigating back', async ({
+      page,
+    }) => {
+      const editor = await focusBlockById(page, GS1)
+      // The edited block shows the callout whole.
+      await expect(editor).toContainText('Because it is long.')
+      await page.keyboard.type(' Edited')
+      await saveBlock(page, 'Escape')
+
+      await reopenPage(page, PAGE)
+      const { content } = await ipc<{ content: string }>(page, 'get_block', { blockId: GS1 })
+      expect(content).toMatch(/^> \[!FAQ\]- Why fold\?/)
+      expect(content).toContain('Edited')
+      await expect(calloutOf(page)).not.toContainText('Because it is long.')
+      await expect(
+        calloutOf(page).getByRole('button', { name: 'Expand Warning callout' }),
+      ).toHaveAttribute('aria-expanded', 'false')
+    })
   })
 })

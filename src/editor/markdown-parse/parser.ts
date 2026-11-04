@@ -54,6 +54,7 @@ import {
   type BlockParseResult,
   unescapeImageAlt,
 } from '@/editor/markdown-parse/vocab'
+import { isThematicBreak } from '@/editor/source-buffer-document'
 import type {
   BlockLevelNode,
   BlockquoteNode,
@@ -179,23 +180,26 @@ function consumeExternalLink(
 // -- Main parser --------------------------------------------------------------
 
 /**
- * Fenced code block. CommonMark variable-length fence: opening fence is a run
- * of 3+ backticks optionally followed by an info string (the language). The
- * info string may not contain backticks (CommonMark §4.5). The closing fence
- * is a line containing only a run of backticks at least as long as the
- * opening, optionally followed by trailing whitespace.
+ * Fenced code block. CommonMark variable-length fence, as Rust's `fence_run`
+ * reads one (#6033): opening fence is a run of 3+ backticks or 3+ tildes
+ * optionally followed by an info string (the language). A backtick fence's
+ * info string may not contain backticks (CommonMark §4.5); a tilde fence's
+ * may. The closing fence is a line containing only a run of the opening
+ * character at least as long as the opening, optionally followed by trailing
+ * whitespace. The serializer writes backtick fences only.
  */
 export function parseCodeBlock(lines: readonly string[], i: number): BlockParseResult | null {
   const line = lines[i] as string
-  // Opening fence: leading run of 3+ backticks, then an info string with no
-  // backticks. Rejects e.g. "x```" (non-backtick before fence) and "``` ```"
-  // (info string containing backticks).
-  const openMatch = line.match(/^(`{3,})([^`]*)$/)
+  // Rejects e.g. "x```" (text before the fence) and "``` ```" (a backtick
+  // fence's info string containing backticks).
+  const openMatch = line.match(/^(`{3,}|~{3,})([^\n]*)$/)
   if (!openMatch) return null
-  const fenceLen = (openMatch[1] as string).length
-  const rawLang = (openMatch[2] as string).trim() || null
+  const fence = openMatch[1] as string
+  const info = openMatch[2] as string
+  if (fence.startsWith('`') && info.includes('`')) return null
+  const rawLang = info.trim() || null
   const language = rawLang && /^[a-zA-Z0-9_+\-#.]+$/.test(rawLang) ? rawLang : null
-  const closeRe = new RegExp(`^\`{${fenceLen},}\\s*$`)
+  const closeRe = new RegExp(`^${fence.charAt(0)}{${fence.length},}\\s*$`)
   const codeLines: string[] = []
   let j = i + 1 // skip opening fence
   while (j < lines.length && !closeRe.test(lines[j] as string)) {
@@ -272,34 +276,37 @@ export function parseBlockquote(
     quoteLines.push(lines[j] === '>' ? '' : (lines[j]?.slice(2) as string))
     j++
   }
-  const calloutType = extractCalloutType(quoteLines)
+  const callout = extractCallout(quoteLines)
   const innerDoc = parse(quoteLines.join('\n'), depth + 1)
-  const block = buildBlockquote(innerDoc.content, calloutType)
+  const block = buildBlockquote(innerDoc.content, callout)
   return { blocks: [block], consumed: j - i }
 }
 
+type CalloutAttrs = NonNullable<BlockquoteNode['attrs']>
+
 /**
- * Detect a `[!TYPE]` callout prefix on the first line of a blockquote. When
- * found, mutates `quoteLines[0]` to strip the prefix and returns the callout
- * type (lowercased). Returns undefined when absent.
+ * Detect a `[!TYPE]` callout prefix, with its optional `-` / `+` fold marker,
+ * on the first line of a blockquote. When found, mutates `quoteLines[0]` to
+ * strip the prefix and returns the callout attrs (type lowercased). Returns
+ * undefined when absent.
  */
-function extractCalloutType(quoteLines: string[]): string | undefined {
+function extractCallout(quoteLines: string[]): CalloutAttrs | undefined {
   const calloutMatch = quoteLines[0]?.match(CALLOUT_RE)
   if (!calloutMatch) return undefined
-  quoteLines[0] = calloutMatch[2] as string
-  return (calloutMatch[1] as string).toLowerCase()
+  quoteLines[0] = calloutMatch[3] as string
+  const calloutType = (calloutMatch[1] as string).toLowerCase()
+  const fold = calloutMatch[2]
+  return fold === '-' || fold === '+' ? { calloutType, calloutFold: fold } : { calloutType }
 }
 
 function buildBlockquote(
   content: readonly BlockLevelNode[] | undefined,
-  calloutType: string | undefined,
+  attrs: CalloutAttrs | undefined,
 ): BlockquoteNode {
   if (!content || content.length === 0) {
-    return calloutType ? { type: 'blockquote', attrs: { calloutType } } : { type: 'blockquote' }
+    return attrs ? { type: 'blockquote', attrs } : { type: 'blockquote' }
   }
-  return calloutType
-    ? { type: 'blockquote', attrs: { calloutType }, content }
-    : { type: 'blockquote', content }
+  return attrs ? { type: 'blockquote', attrs, content } : { type: 'blockquote', content }
 }
 
 /**
@@ -386,7 +393,7 @@ export function parseTable(
  * split signal here — with no header context to disambiguate, unlike row 1 —
  * would misfire on real content. A bare 3+-dash cell has no such escape
  * hatch in OUR OWN output: `serializeParagraph`'s horizontal-rule guard
- * (`^-{3,}$`, table cells go through it too) escapes a genuine one to `\---`
+ * (`isThematicBreak`, table cells go through it too) escapes a genuine one to `\---`
  * — including a cell whose text has surrounding whitespace (`"--- "`),
  * because `serializeTable` trims the cell at the NODE level, via
  * `canonicalCellParagraphs`, BEFORE `serializeParagraph` ever sees it; the
@@ -670,10 +677,12 @@ function buildTableCell(
   return align ? { type, attrs: { align }, content } : { type, content }
 }
 
-/** Horizontal rule: 3+ hyphens on their own line. */
+/**
+ * Horizontal rule: 3+ `-`, `*` or `_` on their own line, as Rust's
+ * `is_thematic_break` reads one (#6033). Anchored at column 0, as headings are.
+ */
 export function parseHorizontalRule(lines: readonly string[], i: number): BlockParseResult | null {
-  const line = lines[i] as string
-  if (!/^-{3,}$/.test(line)) return null
+  if (!isThematicBreak(lines[i] as string)) return null
   const block: HorizontalRuleNode = { type: 'horizontalRule' }
   return { blocks: [block], consumed: 1 }
 }

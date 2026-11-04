@@ -147,7 +147,7 @@ export function NewPageDialog({
         next = toSearchResult(name, matches)
       } catch (err) {
         // A failed lookup must not block creating: the backend still
-        // resolves an exact title to the existing page.
+        // resolves a taken title to the page that holds it.
         logger.warn('NewPageDialog', 'similar-page search failed', { name }, err)
       }
     }

@@ -165,7 +165,11 @@ export interface CodeBlockNode {
 
 export interface BlockquoteNode {
   readonly type: 'blockquote'
-  readonly attrs?: { readonly calloutType?: string }
+  readonly attrs?: {
+    readonly calloutType?: string
+    /** Obsidian's fold marker after `[!TYPE]`: `-` shows folded, `+` foldable and open. */
+    readonly calloutFold?: '+' | '-'
+  }
   readonly content?: readonly BlockLevelNode[]
 }
 

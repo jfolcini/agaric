@@ -33,6 +33,7 @@ import {
   underscoreNeedsEscape,
   WORD_CHAR_RE,
 } from '@/editor/markdown-common'
+import { isThematicBreak } from '@/editor/source-buffer-document'
 import type {
   BlockLevelNode,
   BlockquoteNode,
@@ -154,8 +155,8 @@ function opensBlockRefToken(s: string, i: number): boolean {
 /**
  * Whether the `~`/`=` run `s[start, end)` would parse as a strike or highlight
  * delimiter (#5160 N12): it joins the same char just outside the text, or it
- * is two or more that could flank. Any `~~~` is escaped too, since the import
- * reads one at a line start as a code fence. `x = 5` and `a == b` stay bare.
+ * is two or more that could flank. Any `~~~` is escaped too, since the parser
+ * and the import read one at a line start as a code fence. `x = 5` and `a == b` stay bare.
  */
 function delimiterRunNeedsEscape(
   s: string,
@@ -1090,7 +1091,8 @@ function finishParagraphLine(
  * the blockquote gap). `escapeText` already escapes every literal `*` (so a
  * `* ` bullet marker can never lead a paragraph). Heading, ordered list,
  * bullet list (`- `), blockquote (`> ` or a bare `>`), the all-dashes
- * horizontal rule (`---`) and the `|` table gate are the gaps closed here.
+ * horizontal rule (`---`, trailing whitespace allowed) and the `|` table gate
+ * are the gaps closed here.
  *
  * The two LIST markers are additionally escaped after ANY leading indent,
  * because the parser tolerates up to three spaces before a marker
@@ -1111,15 +1113,16 @@ function finishParagraphLine(
  * so `fitMarksToFlanking` has already moved it past the space (#4156).
  */
 function escapeLeadingBlockMarker(line: string): string {
+  // Horizontal rule (`isThematicBreak`): only a dash run reaches here, a `*`
+  // or `_` one arrives escaped. Escaping the first dash (`\---`) drops out of
+  // the rule; the parser unescapes `\-` back to `-`, so the run survives as
+  // paragraph text.
+  const ruleEscaped = isThematicBreak(line) ? `\\${line}` : line
   return (
-    line
+    ruleEscaped
       .replace(/^( *)(\d+)\. /, '$1$2\\. ')
       .replace(/^(#{1,6})([ \t]|$)/, '\\$1$2')
       .replace(/^( *)- /, '$1\\- ')
-      // Horizontal rule: a line of only 3+ dashes (`/^-{3,}$/`). Escaping the
-      // first dash (`\---`) drops out of the rule pattern; the parser unescapes
-      // `\-` back to `-`, so the run survives as paragraph text.
-      .replace(/^(-{3,})$/, '\\$1')
       // Blockquote: `> ` or a bare `>`. `\>` round-trips to `>` (parser change).
       .replace(/^>( |$)/, '\\>$1')
       // Table: a line starting with `|` is a table row (#5160 N12).
@@ -1166,11 +1169,10 @@ function serializeMathBlock(node: MathBlockNode): string {
 }
 
 function serializeBlockquote(node: BlockquoteNode, onUnknownNode?: (type: string) => void): string {
+  const type = node.attrs?.calloutType
+  const prefix = type ? `[!${type.toUpperCase()}]${node.attrs?.calloutFold ?? ''}` : ''
   if (!node.content || node.content.length === 0) {
-    if (node.attrs?.calloutType) {
-      return `> [!${node.attrs.calloutType.toUpperCase()}]`
-    }
-    return '> '
+    return prefix ? `> ${prefix}` : '> '
   }
   // Recursively serialize each child block (via the shared block dispatch so
   // the grammar is enumerated in one place, #2219), then prefix every line
@@ -1178,8 +1180,7 @@ function serializeBlockquote(node: BlockquoteNode, onUnknownNode?: (type: string
   const inner = joinBlocks(node.content, serializeBlockSequence(node.content, onUnknownNode))
   const lines = inner.split('\n')
   // Prepend [!TYPE] prefix to the first line when calloutType is set
-  if (node.attrs?.calloutType) {
-    const prefix = `[!${node.attrs.calloutType.toUpperCase()}]`
+  if (prefix) {
     lines[0] = lines[0] ? `${prefix} ${lines[0]}` : prefix
   }
   return lines.map((line) => `> ${line}`).join('\n')

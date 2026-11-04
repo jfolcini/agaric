@@ -4,7 +4,7 @@
  * its first line, revealed as the pointer reaches the block (and kept while it walks to
  * them), with no axe violations; a drag by the grip moving its block with the
  * blocks under it, read back from the backend and again after leaving the page
- * and coming back; Escape, or the window losing focus, cancelling a drag; the
+ * and coming back, its drop shown where the block's text then starts; Escape, or the window losing focus, cancelling a drag; the
  * chevron's collapse, which block mode shows too; Enter and Backspace around a
  * collapsed block; and the grip's block menu, with the menu key's at the
  * caret, the keys on a focused chevron left to it, and a press beside the grip
@@ -310,6 +310,37 @@ test.describe('page mode gutter (#5691) @editor @pages', () => {
       ['beta', 0],
       ['beta child', 1],
     ])
+  })
+
+  test("a drag nesting a block under a task shows the drop where the block's text then starts", async ({
+    page,
+  }) => {
+    const { ids } = await seedRows(page, 'Gutter drop task', [
+      [0, 'a task'],
+      [0, 'plain'],
+    ])
+    await ipc(page, 'set_todo_state', { blockId: ids[0], state: 'TODO' })
+    await openInPageMode(page, 'Gutter drop task', 2)
+    const left = async (locator: Locator) => (await locator.boundingBox())?.x ?? Number.NaN
+    const taskText = await left(block(page, ids[0]).locator('.page-block-content'))
+
+    await drag(page, ids[1], await lowerHalf(page, ids[0]), { dx: 72, hold: true })
+    const bar = page.getByTestId('page-drop-indicator')
+    await expect(bar).toBeVisible()
+    const step = await page.evaluate(() =>
+      Number.parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue('--indent-width'),
+      ),
+    )
+    // One indent step past the task's text, as the block's text lands.
+    expect(await left(bar)).toBeCloseTo(taskText + step, 0)
+    await page.mouse.up()
+
+    await expect(block(page, ids[1])).toHaveAttribute('data-depth', '1')
+    expect(await left(block(page, ids[1]).locator('.page-block-content'))).toBeCloseTo(
+      taskText + step,
+      0,
+    )
   })
 
   test('Escape, or the window losing focus, cancels a drag, and the release then moves nothing', async ({

@@ -1011,15 +1011,28 @@
 
 /* A block's leading controls on a fine pointer, in block mode's row
  * (`SortableBlock`) and page mode's gutter alike, so a line's text lands at one
- * x in both. The lane just fits the grip (a 1em glyph and `p-0.5`), its
- * `gap-0.5` and the chevron (`w-5`); a task's checkbox (`task-marker`, built as
- * the grip) follows it; the gap separates each from the next; the inset is the
- * text box's own `px-3` (`.ProseMirror`, `StaticBlock`). */
+ * x in both. The lane fits the grip (a 1em glyph and `p-0.5`), its `gap-0.5`
+ * and the chevron (`w-5`), and keeps 0.25rem clear of the box it starts;
+ * a task's checkbox (`task-marker`, built as the grip) follows it; the gap
+ * separates each from the next; the inset is the text box's own `px-3`
+ * (`.ProseMirror`, `StaticBlock`). A task's text sits the checkbox and its gap
+ * further in, and so does each block under a task, once per task above it
+ * (`countTasksAtOrAbove`): a child starts one indent step past its parent's
+ * text. Block mode on a coarse pointer adds none (`--block-tree-task-shift`): its
+ * plain row keeps the 44 px checkbox's empty box there (`BlockInlineControls`),
+ * and a phone's narrow column cannot spare 56 px per nested task. */
 :root {
-  --block-lane: calc(var(--agaric-font-size, 1rem) + 1.625rem);
+  --block-lane: calc(var(--agaric-font-size, 1rem) + 1.875rem);
   --block-checkbox: calc(var(--agaric-font-size, 1rem) + 0.25rem);
   --block-gap: 0.25rem;
   --block-inset: 0.75rem;
+  --block-task-shift: calc(var(--block-checkbox) + var(--block-gap));
+  --block-tree-task-shift: var(--block-task-shift);
+}
+@media (pointer: coarse) {
+  :root {
+    --block-tree-task-shift: 0px;
+  }
 }
 
 /* ── Responsive typography scale ───────────────────────────── */
@@ -1249,7 +1262,7 @@
 /* Page mode (#5691): the page as one document, laid out as GitLab's rich text
    editor lays one out (decision of 2026-10-28): no box per block and no mark on
    the one the cursor is in, a document's spacing between blocks, and the indent
-   per depth (`PageBlock` sets it as a margin). The text sits in a frame
+   per depth and per task above (`PageBlock` sets it as a margin). The text sits in a frame
    (`PageModeEditor`) where block mode's sits in the page column: past the lane
    (`::before` below) that holds a block's chevron and grip, the gap and the
    inset, less the frame's border. A task's checkbox and its gap push its text
@@ -1289,7 +1302,7 @@
   @apply absolute -top-1 -left-(--block-inset) select-none;
 }
 .page-mode-editor [data-page-block][data-todo-state] {
-  padding-left: calc(var(--block-checkbox) + var(--block-gap));
+  padding-left: var(--block-task-shift);
 }
 /* A block's chevron (`page-gutter.ts`) ends the lane, on the first line. */
 .page-mode-editor .page-block-gutter {
@@ -1322,7 +1335,11 @@
 /* On a phone (`PageModeEditor`) the lane is as narrow as the chevron and the
    checkbox drawn side by side: each reaches 44 px as a hit area
    (`touch-hit-area`) rather than as its box, and the checkbox's stops at the
-   text. */
+   text. The checkbox is in the lane, so a task's text, and its children's, sit
+   where a plain block's do. */
+.page-mode-phone {
+  --block-task-shift: 0px;
+}
 .page-mode-phone > .page-mode-editor {
   @apply pl-14;
 }
@@ -1331,9 +1348,6 @@
 }
 .page-mode-phone .page-block-controls {
   @apply left-auto right-full mr-3;
-}
-.page-mode-phone [data-page-block][data-todo-state] {
-  @apply pl-0;
 }
 .page-mode-phone .page-block-gutter {
   @apply mr-9 min-w-0;
@@ -1482,9 +1496,9 @@
 .ProseMirror blockquote[data-callout-type] {
   border-left-width: 3px;
   border-left-style: solid;
-  /* Default to the `note` palette so an unknown callout type degrades to the
-   * same look as the view-mode fallback (CALLOUT_CONFIG[t] ?? note); the
-   * per-type rules below override these for the known types. */
+  /* The `note` palette, which the per-style rules below override. Each rule
+   * keys on `data-callout-style`, the style the type maps to
+   * (`calloutStyle`, src/lib/callout-style.ts), as the view mode does. */
   border-left-color: var(--alert-note-border);
   background-color: var(--alert-note);
   padding: 0.5rem 1rem; /* py-2 px-4 — matches view-mode pl-4 py-2 */
@@ -1509,39 +1523,39 @@
   user-select: none;
 }
 
-.ProseMirror blockquote[data-callout-type='info'] {
+.ProseMirror blockquote[data-callout-style='info'] {
   border-left-color: var(--alert-info-border);
   background-color: var(--alert-info);
 }
-.ProseMirror blockquote[data-callout-type='info']::before {
+.ProseMirror blockquote[data-callout-style='info']::before {
   color: var(--alert-info-foreground);
 }
-.ProseMirror blockquote[data-callout-type='warning'] {
+.ProseMirror blockquote[data-callout-style='warning'] {
   border-left-color: var(--alert-warning-border);
   background-color: var(--alert-warning);
 }
-.ProseMirror blockquote[data-callout-type='warning']::before {
+.ProseMirror blockquote[data-callout-style='warning']::before {
   color: var(--alert-warning-foreground);
 }
-.ProseMirror blockquote[data-callout-type='tip'] {
+.ProseMirror blockquote[data-callout-style='tip'] {
   border-left-color: var(--alert-tip-border);
   background-color: var(--alert-tip);
 }
-.ProseMirror blockquote[data-callout-type='tip']::before {
+.ProseMirror blockquote[data-callout-style='tip']::before {
   color: var(--alert-tip-foreground);
 }
-.ProseMirror blockquote[data-callout-type='error'] {
+.ProseMirror blockquote[data-callout-style='error'] {
   border-left-color: var(--alert-error-border);
   background-color: var(--alert-error);
 }
-.ProseMirror blockquote[data-callout-type='error']::before {
+.ProseMirror blockquote[data-callout-style='error']::before {
   color: var(--alert-error-foreground);
 }
-.ProseMirror blockquote[data-callout-type='note'] {
+.ProseMirror blockquote[data-callout-style='note'] {
   border-left-color: var(--alert-note-border);
   background-color: var(--alert-note);
 }
-.ProseMirror blockquote[data-callout-type='note']::before {
+.ProseMirror blockquote[data-callout-style='note']::before {
   color: var(--alert-note-foreground);
 }
 
