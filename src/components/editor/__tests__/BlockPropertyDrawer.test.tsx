@@ -1306,6 +1306,51 @@ describe("BlockPropertyDrawer values that don't fit", () => {
     expect(mark('Note', 'true')).toBeInTheDocument()
   })
 
+  it("shows a ref under a number key as its target's title, and an untouched blur writes nothing", async () => {
+    const user = userEvent.setup()
+    setupMock([makeProp('weight', { value_ref: 'WEIGHT_TARGET' })], [makeDef('weight', 'number')], {
+      batch_resolve: () => [
+        { id: 'WEIGHT_TARGET', title: 'My Target', block_type: 'page', deleted: false },
+      ],
+    })
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
+
+    // Asked for: the title is not cached.
+    await waitFor(() =>
+      expect(screen.getByLabelText(t('property.valueLabel', { key: 'weight' }))).toHaveValue(
+        'My Target',
+      ),
+    )
+    expect(mark('Weight', 'My Target')).toBeInTheDocument()
+
+    await user.click(screen.getByLabelText(t('property.valueLabel', { key: 'weight' })))
+    await user.tab()
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
+  })
+
+  it("writes nothing when a text key's ref is blurred untouched", async () => {
+    const user = userEvent.setup()
+    const { useResolveStore, keyFor } = await import('@/stores/resolve')
+    useResolveStore.setState({
+      cache: new Map([
+        [
+          keyFor('SPACE_PERSONAL', 'TARGET_PAGE'),
+          { title: 'My Target', deleted: false, resolved: true },
+        ],
+      ]),
+      version: 1,
+    })
+    setupMock([makeProp('note', { value_ref: 'TARGET_PAGE' })], [makeDef('note')])
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
+
+    const input = await screen.findByLabelText(t('property.valueLabel', { key: 'note' }))
+    expect(input).toHaveValue('My Target')
+
+    await user.click(input)
+    await user.tab()
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
+  })
+
   describe('against the real mock', () => {
     const blockId = SEED_IDS.BLOCK_GS_1
 

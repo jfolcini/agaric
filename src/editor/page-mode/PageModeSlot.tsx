@@ -4,9 +4,10 @@
  */
 
 import type React from 'react'
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, use } from 'react'
 
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
+import { ShownContext } from '@/editor/page-mode/ModeSwap'
 import type { PageModeState } from '@/editor/page-mode/use-page-mode'
 import type { NavigateToPageFn } from '@/lib/block-events'
 
@@ -35,6 +36,7 @@ export function PageModeSlot({
   onNavigateToPage,
   onEditSource,
 }: PageModeSlotProps): React.ReactElement {
+  const onShown = use(ShownContext)
   const loading = <LoadingSkeleton count={3} />
   if (!ready) return loading
   return (
@@ -46,6 +48,7 @@ export function PageModeSlot({
         onNavigateToPage={onNavigateToPage}
         opening={opening}
         onEditSource={onEditSource}
+        onShown={onShown}
         ref={editorRef}
       />
     </Suspense>

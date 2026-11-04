@@ -24,6 +24,17 @@ export const block: Record<string, string> = {
   'readAloud.diagram': 'diagram',
   'readAloud.embed': 'embedded block',
   'readAloud.query': 'query',
+  // #5745 — Read aloud's controls and what it tells you (`read-aloud.ts`, `useReadAloud.ts`).
+  'readAloud.read': 'Read aloud',
+  'readAloud.readSelected': 'Read selected blocks aloud',
+  'readAloud.readSelection': 'Read selection aloud',
+  'readAloud.reading': 'Reading aloud…',
+  'readAloud.stop': 'Stop',
+  'readAloud.nothingToRead': 'There is nothing here to read aloud',
+  'readAloud.noPage': 'Open a page to read it aloud',
+  'readAloud.noVoice':
+    'No voice is available to read aloud. Add one in your system’s speech or text-to-speech settings.',
+  'readAloud.failed': 'Reading aloud stopped: the speech engine reported an error',
   'block.reorder': 'Reorder block (drag or use keyboard)',
   'block.reorderTip': 'Reorder — Ctrl+Shift+↑/↓',
   'block.reorderKeyshortcuts': 'Control+Shift+ArrowUp Control+Shift+ArrowDown',
@@ -52,9 +63,7 @@ export const block: Record<string, string> = {
   // their action instead of the destructive delete backdrop (or no cue at all).
   'block.swipe.indentHint': 'Indent',
   'block.swipe.outdentHint': 'Outdent',
-  'block.setTodo': 'Set as TODO',
   'block.taskCycle': 'Task: {{state}}. Click to cycle.',
-  'block.setTodoTip': 'Set as TODO (Ctrl+Enter)',
   'block.todoCycleTip': '{{state}} (Ctrl+Enter to cycle)',
   'block.priorityCycle': 'Priority {{level}}. Click to cycle.',
   'block.priorityTip': 'Priority {{level}} (click to cycle)',

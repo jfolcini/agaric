@@ -152,3 +152,105 @@ test.describe('the command palette creates a page nothing matches (#5691) @searc
     expect(pages.filter((p) => p.content === 'Zebra migration plan')).toHaveLength(1)
   })
 })
+
+test.describe('typing a whole `![[Name]]` embeds the page (#6033) @editor @pages', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  /** Open "Quick Notes", add a block, type `text` into it, leave it, and return its id. */
+  async function typeIntoNewBlock(page: Page, text: string): Promise<string> {
+    await openPage(page, 'Quick Notes')
+    await page.getByRole('button', { name: 'Add block' }).click()
+    const editing = page.locator('[data-testid="sortable-block"]:has([data-testid="block-editor"])')
+    const blockId = (await editing.getAttribute('data-block-id')) as string
+    await page.keyboard.type(text, { delay: 30 })
+    await expect(editing.locator('[data-testid="block-link-chip"]')).toHaveCount(1)
+    await blurEditors(page)
+    return blockId
+  }
+
+  test('in block mode, an existing page renders as an embed and stays one', async ({ page }) => {
+    const blockId = await typeIntoNewBlock(page, '![[Getting Started]]')
+
+    const host = page.locator(`[data-testid="sortable-block"][data-block-id="${blockId}"]`)
+    await expect(host.getByTestId('embed-container')).toContainText(WELCOME)
+    await expect.poll(() => blockContent(page, blockId)).toBe(EMBED)
+
+    await reopenPage(page, 'Quick Notes')
+    await expect(host.getByTestId('embed-container')).toBeVisible()
+    await expect.poll(() => blockContent(page, blockId)).toBe(EMBED)
+  })
+
+  test('in block mode, a name no page has creates the page and embeds it', async ({ page }) => {
+    const blockId = await typeIntoNewBlock(page, '![[Fresh embed target]]')
+
+    const created = async () => {
+      const pages = await ipc<Array<{ id: string; content: string | null }>>(
+        page,
+        'list_all_pages_in_space',
+        { scope: SCOPE, tagIds: null },
+      )
+      return pages.filter((p) => p.content === 'Fresh embed target').map((p) => p.id)
+    }
+    await expect.poll(created).toHaveLength(1)
+    const [freshId] = await created()
+    await expect.poll(() => blockContent(page, blockId)).toBe(`{{embed [[${freshId}]]}}`)
+
+    await reopenPage(page, 'Quick Notes')
+    await expect(
+      page.locator(`[data-testid="sortable-block"][data-block-id="${blockId}"]`),
+    ).toBeVisible()
+    await expect.poll(() => blockContent(page, blockId)).toBe(`{{embed [[${freshId}]]}}`)
+  })
+
+  test('in page mode, an existing page renders as an embed and stays one', async ({ page }) => {
+    const pageId = await ipc<string>(page, 'create_page_in_space', {
+      parentId: null,
+      content: 'Typed embed host',
+      spaceId: SCOPE.space_id,
+    })
+    const ids: string[] = []
+    for (const content of ['', 'last']) {
+      const row = await ipc<{ id: string }>(page, 'create_block', {
+        blockType: 'content',
+        content,
+        parentId: pageId,
+        index: null,
+        scope: SCOPE,
+      })
+      ids.push(row.id)
+    }
+    await openPage(page, 'Typed embed host')
+    await page
+      .getByRole('radiogroup', { name: 'Editing mode' })
+      .getByRole('radio', { name: 'Page' })
+      .click()
+    const editor = page.locator('[data-testid="page-mode-editor"]')
+    await editor.locator(`[data-page-block-id="${ids[0]}"] .page-block-content`).click()
+    // Keys typed before the editor holds the caret are lost.
+    await expect
+      .poll(() =>
+        page.evaluate((id) => {
+          const anchor = document.getSelection()?.anchorNode
+          const element = anchor instanceof Element ? anchor : anchor?.parentElement
+          return element?.closest(`[data-page-block-id="${id}"]`) != null
+        }, ids[0]),
+      )
+      .toBe(true)
+    await page.keyboard.type('![[Getting Started]]', { delay: 30 })
+    await expect(
+      editor.locator(`[data-page-block-id="${ids[0]}"] [data-testid="block-link-chip"]`),
+    ).toHaveCount(1)
+    // The embed renders once the caret leaves its block.
+    await editor.locator(`[data-page-block-id="${ids[1]}"] .page-block-content`).click()
+
+    await expect(editor.getByTestId('embed-container')).toContainText(WELCOME)
+    await expect.poll(() => blockContent(page, ids[0] as string)).toBe(EMBED)
+
+    await page.keyboard.press('Escape')
+    await reopenPage(page, 'Typed embed host')
+    await expect(page.getByTestId('embed-container')).toContainText(WELCOME)
+    await expect.poll(() => blockContent(page, ids[0] as string)).toBe(EMBED)
+  })
+})

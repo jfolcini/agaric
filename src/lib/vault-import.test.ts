@@ -304,8 +304,9 @@ describe('mdFilesToUnits', () => {
     const [unit] = mdFilesToUnits([md], index, false)
 
     const loaded = await unit?.load()
-    // #1446 — the folder-relative path drives the namespace mapping.
-    expect(loaded?.path).toBe('MyVault/note.md')
+    // #1446 — the path below the picked folder drives the namespace mapping;
+    // the folder's own name is no part of the title (#6277 decision 8).
+    expect(loaded?.path).toBe('note.md')
     expect(loaded?.vaultFiles).toHaveLength(1)
     expect(loaded?.vaultFiles?.[0]?.path).toBe('assets/diagram.png')
     expect(loaded?.vaultFiles?.[0]?.bytes).toEqual([9, 9])
@@ -360,11 +361,7 @@ describe('mdFilesToUnits', () => {
 
     const [homeUnit, topicUnit] = mdFilesToUnits(files, indexVaultFiles(files), false)
 
-    expect((await homeUnit?.load())?.vaultNotes).toEqual([
-      'Vault/sub/topic.md',
-      'Vault/twin.md',
-      'Vault/a/twin.md',
-    ])
+    expect((await homeUnit?.load())?.vaultNotes).toEqual(['sub/topic.md', 'twin.md', 'a/twin.md'])
     expect((await topicUnit?.load())?.vaultNotes).toEqual([])
   })
 
@@ -376,8 +373,8 @@ describe('mdFilesToUnits', () => {
 
     const [plainUnit, paddedUnit] = mdFilesToUnits(files, indexVaultFiles(files), false)
 
-    expect((await plainUnit?.load())?.vaultNotes).toEqual(['Vault/Note.md'])
-    expect((await paddedUnit?.load())?.vaultNotes).toEqual(['Vault/Note.md'])
+    expect((await plainUnit?.load())?.vaultNotes).toEqual(['Note.md'])
+    expect((await paddedUnit?.load())?.vaultNotes).toEqual(['Note.md'])
   })
 
   it('ships no note paths on a plain pick, whose links already name its titles', async () => {
@@ -412,9 +409,9 @@ describe('folder picks of other note formats (#6032)', () => {
     ]
 
     expect(await loadAll(files)).toEqual([
-      { path: 'Vault/one.md', content: '- one' },
-      { path: 'Vault/two.md', content: '- two' },
-      { path: 'Vault/sub/three.md', content: '- three' },
+      { path: 'one.md', content: '- one' },
+      { path: 'two.md', content: '- two' },
+      { path: 'sub/three.md', content: '- three' },
     ])
   })
 
@@ -503,13 +500,9 @@ describe('Notion export (#6032)', () => {
   it('titles each page without its id, and its links, `%20`-encoded or in a folder, name those titles', async () => {
     const [plan, other, sub] = await loadAll(notionFiles())
 
-    expect([plan?.path, other?.path, sub?.path]).toEqual([
-      'Export/Plan.md',
-      'Export/Other.md',
-      'Export/Plan/Sub.md',
-    ])
+    expect([plan?.path, other?.path, sub?.path]).toEqual(['Plan.md', 'Other.md', 'Plan/Sub.md'])
     // The backend resolves `Other.md` and `Plan/Sub.md` against the folder of
-    // `Export/Plan` to the pages `Export/Other` and `Export/Plan/Sub`.
+    // `Plan` to the pages `Other` and `Plan/Sub`.
     expect(plan?.content).toContain(
       `See [Other](Other.md), [Sub](Plan/Sub.md) and ![pic](Plan%20${PLAN}/pic.png).`,
     )
@@ -615,11 +608,7 @@ describe('Notion export (#6032)', () => {
 
     const loaded = await loadAll(files)
 
-    expect(loaded.map((l) => l.path)).toEqual([
-      'Export/Plan.md',
-      'Export/Other.md',
-      'Export/Plan/Sub.md',
-    ])
+    expect(loaded.map((l) => l.path)).toEqual(['Plan.md', 'Other.md', 'Plan/Sub.md'])
   })
 
   it('keeps a text note of the export as written, reading only its Markdown pages as Notion', async () => {
@@ -630,7 +619,7 @@ describe('Notion export (#6032)', () => {
 
     const loaded = await loadAll(files)
 
-    expect(loaded[3]).toEqual({ path: 'Export/readme.md', content: '# readme\n\nStatus: draft' })
+    expect(loaded[3]).toEqual({ path: 'readme.md', content: '# readme\n\nStatus: draft' })
   })
 
   it('leaves a plain folder alone when only some names end in an id', async () => {
@@ -644,7 +633,7 @@ describe('Notion export (#6032)', () => {
 
     const loaded = await loadAll(files)
 
-    expect(loaded.map((l) => l.path)).toEqual(['Vault/a.md', 'Vault/b.md', `Vault/Odd ${PLAN}.md`])
+    expect(loaded.map((l) => l.path)).toEqual(['a.md', 'b.md', `Odd ${PLAN}.md`])
     expect(loaded[0]?.content).toBe(aside)
     expect(skippedFiles(files, isNotionPick(files), new Set())).toEqual({ other: 1, databases: 0 })
   })
@@ -717,7 +706,7 @@ describe('Org files (#6032)', () => {
 
     const loaded = await loadAll([titled, untitled])
 
-    expect(loaded.map((l) => l.path)).toEqual(['Vault/sub/Org Tasks.md', 'Vault/loose.md'])
+    expect(loaded.map((l) => l.path)).toEqual(['sub/Org Tasks.md', 'loose.md'])
   })
 
   it('titles the page by its file name when its `#+TITLE` is empty', async () => {
@@ -725,7 +714,7 @@ describe('Org files (#6032)', () => {
       folderFile(['#+TITLE:\n* A\n'], 'bare.org', 'Vault/bare.org', ''),
     ])
 
-    expect(loaded.map((l) => l.path)).toEqual(['Vault/bare.md'])
+    expect(loaded.map((l) => l.path)).toEqual(['bare.md'])
   })
 
   it('#6032 — keeps a / in a `#+TITLE` as a look-alike, so the page stays in its folder', async () => {
@@ -733,7 +722,7 @@ describe('Org files (#6032)', () => {
 
     const loaded = await loadAll([titled])
 
-    expect(loaded.map((l) => l.path)).toEqual(['Vault/TCP∕IP.md'])
+    expect(loaded.map((l) => l.path)).toEqual(['TCP∕IP.md'])
   })
 
   const orgContent = async (text: string): Promise<string | undefined> =>
@@ -767,6 +756,158 @@ describe('Org files (#6032)', () => {
     const text = [':PROPERTIES:', ':Space: Room 4', ':Owner: Ann', ':END:', 'Intro.']
 
     expect(await orgContent(text.join('\n'))).toBe('Owner:: Ann\n:Space: Room 4\nIntro.\n')
+  })
+
+  const TARGET_ID = '5f2c0000-0000-4000-8000-000000000001'
+  const FILE_ID = '5f2c0000-0000-4000-8000-000000000002'
+  const LOST_ID = '5f2c0000-0000-4000-8000-000000000003'
+
+  it('#6032 N4 — escapes a link to a heading, a custom id or an unknown id, so it names no page', async () => {
+    const text = `* See [[*Budget]], [[*Budget][the budget]], [[#custom-id]] and [[id:${LOST_ID}]]`
+
+    expect(await orgContent(text)).toBe(
+      `- See \\[[*Budget]], \\[[*Budget][the budget]], \\[[#custom-id]] and \\[[id:${LOST_ID}]]\n`,
+    )
+  })
+
+  it('#6032 N4 — links an `id:` to the headline or the file of the pick holding that `:ID:`', async () => {
+    const roam = [
+      ':PROPERTIES:',
+      `:ID: ${FILE_ID}`,
+      ':END:',
+      '#+TITLE: Roam Notes',
+      '* Target',
+      '  :PROPERTIES:',
+      `  :ID: ${TARGET_ID}`,
+      '  :END:',
+      '* Custom',
+      '  :PROPERTIES:',
+      '  :ID: custom-1',
+      '  :END:',
+    ].join('\n')
+    const links = [
+      `* See [[id:${TARGET_ID}][the target]] and [[id:${TARGET_ID}]]`,
+      `* Back to [[id:${FILE_ID}][notes]] and [[id:${FILE_ID}]]`,
+      `* Lost [[id:${LOST_ID}]] and [[id:custom-1]]`,
+    ].join('\n')
+
+    const [, linked] = await loadAll([
+      folderFile([roam], 'roam.org', 'Vault/roam.org', ''),
+      folderFile([links], 'links.org', 'Vault/links.org', ''),
+    ])
+
+    expect(linked?.content).toBe(
+      [
+        `- See ((${TARGET_ID})) and ((${TARGET_ID}))`,
+        '- Back to [[Roam Notes|notes]] and [[Roam Notes]]',
+        `- Lost \\[[id:${LOST_ID}]] and \\[[id:custom-1]]`,
+        '',
+      ].join('\n'),
+    )
+  })
+
+  it('#6032 N7 — reads the keywords of `#+TODO` lines as task states, open before the `|`, leaving those the importer reads', async () => {
+    const text = [
+      '#+TODO: TODO NEXT(n) NOW DOING WAIT(w@/!) | DONE(d) CANCELED(c)',
+      '#+SEQ_TODO: IDEA | DROPPED',
+      '#+TYP_TODO: Fred Sara',
+      '* NEXT Call Bob',
+      '* NOW Write',
+      '* WAIT [#A] Reply',
+      '* DOING Draft',
+      '* CANCELED Trip',
+      '* DROPPED Old idea',
+      '* IDEA New one',
+      '* Fred Review',
+      '* Sara Report',
+      '* NEXTSTEP stays text',
+    ]
+
+    expect(await orgContent(text.join('\n'))).toBe(
+      [
+        '- TODO Call Bob',
+        '- NOW Write',
+        '- WAIT [#A] Reply',
+        '- DOING Draft',
+        '- CANCELED Trip',
+        '- DONE Old idea',
+        '- TODO New one',
+        '- TODO Review',
+        '- DONE Report',
+        '- NEXTSTEP stays text',
+        '',
+      ].join('\n'),
+    )
+  })
+
+  it('#6032 N7 — makes `#+FILETAGS` the page tags and headline tags block tags', async () => {
+    const text = [
+      '#+FILETAGS: :work:@home:',
+      '#+FILETAGS: :2024:',
+      '* TODO Call Bob   :errand:@phone:',
+      '* :solo:',
+      '* At 10:30: no tags',
+    ]
+
+    expect(await orgContent(text.join('\n'))).toBe(
+      [
+        'tags:: work, @home, 2024',
+        '- TODO Call Bob #[[errand]] #[[@phone]]',
+        '- #[[solo]]',
+        '- At 10:30: no tags',
+        '',
+      ].join('\n'),
+    )
+  })
+
+  it('#6032 N7 — keeps a headline tag whole in NFD, its accent a combining mark', async () => {
+    const nfd = 'cafe\u0301'
+
+    expect(await orgContent(`* Visit :${nfd}:`)).toBe(`- Visit #[[${nfd}]]\n`)
+  })
+})
+
+describe('Logseq graph (#6033)', () => {
+  const graph = () => [
+    folderFile(
+      ['{:journal/page-title-format "MMM do, yyyy"\n :file/name-format :triple-lowbar}'],
+      'config.edn',
+      'Graph/logseq/config.edn',
+      '',
+    ),
+    folderFile(['- old'], '2026.md', 'Graph/logseq/bak/pages/a___b/2026.md'),
+    folderFile(['- see [[Oct 21st, 2026]] [[A/B]]'], 'a___b.md', 'Graph/pages/a___b.md'),
+    folderFile(['title:: Real/Title\n\n- q'], 'What%3F.md', 'Graph/pages/What%3F.md'),
+    folderFile(['- why [[b]]'], 'Why%3F.md', 'Graph/pages/Why%3F.md'),
+    folderFile(['- day'], '2026_10_21.md', 'Graph/journals/2026_10_21.md'),
+  ]
+
+  it("titles pages and journals as Logseq does, skipping the graph's own folder", async () => {
+    expect(await loadAll(graph())).toEqual([
+      { path: 'a/b.md', content: '- see [[2026-10-21]] [[A/B]]' },
+      { path: 'Real/Title.md', content: 'title:: Real/Title\n\n- q' },
+      { path: 'Why?.md', content: '- why [[b]]' },
+      { path: '2026-10-21.md', content: '- day' },
+    ])
+  })
+
+  it('ships the notes a link names by their whole titles, never a namespaced one', async () => {
+    const both = folderFile(['- [[A/B]] and [[b]]'], 'c.md', 'Graph/pages/c.md')
+    const files = [...graph(), both]
+    const [namespaced, , leaf, , c] = mdFilesToUnits(files, indexVaultFiles(files), false)
+
+    expect((await namespaced?.load())?.vaultNotes).toEqual(['2026-10-21.md'])
+    expect((await leaf?.load())?.vaultNotes).toEqual([])
+    expect((await c?.load())?.vaultNotes).toEqual([])
+  })
+
+  it('reads a pick with `pages/` and `journals/` but no config as a graph of the defaults', async () => {
+    expect((await loadAll(graph().slice(2))).map((l) => l.path)).toEqual([
+      'a/b.md',
+      'Real/Title.md',
+      'Why?.md',
+      '2026-10-21.md',
+    ])
   })
 })
 
