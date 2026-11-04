@@ -37,10 +37,15 @@ const ok = <T>(data: T) => ({ status: 'ok' as const, data })
 
 // `sonner` is mocked globally via test-setup.ts → src/__tests__/mocks/sonner.ts.
 
-const HEALTHY: RecoveryStatus = { degraded: false, replay_errors: [] }
+const HEALTHY: RecoveryStatus = {
+  degraded: false,
+  replay_errors: [],
+  sync_quarantined_this_boot: 0,
+}
 const DEGRADED: RecoveryStatus = {
   degraded: true,
   replay_errors: ['replay aborted: op_log spans 2 devices'],
+  sync_quarantined_this_boot: 0,
 }
 
 // -- Setup / teardown ---------------------------------------------------------
