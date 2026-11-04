@@ -980,6 +980,9 @@ enum PageRead {
     Buffer,
     /// A duplicate, which writes every id raw: nothing more.
     Duplicate,
+    /// The mirror's file: the buffer's reads and the blocks something
+    /// addresses, which alone carry an anchor.
+    File,
 }
 
 /// The renderings of a page's block tree. In every one a task's state is a
@@ -999,19 +1002,66 @@ enum PageRead {
 /// would not read back without it. `Agent` is the page an MCP agent reads
 /// (#5375): `Document`, every block with its `^ID` so the agent can name the
 /// block it edits next, but with the export's names, which may be ambiguous.
+/// `File` is the Markdown mirror's file (#5363): `Document`, with a `^ID`
+/// only on a block [`file_anchors`] names, and otherwise as the clipboard
+/// writes one.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RenderMode {
     Export,
     Clipboard,
     Agent,
     Document,
+    File,
 }
 
 impl RenderMode {
     /// Whether the rendering is laid out as a Document buffer.
     fn lays_out_document(self) -> bool {
-        matches!(self, Self::Document | Self::Clipboard | Self::Agent)
+        matches!(
+            self,
+            Self::Document | Self::Clipboard | Self::Agent | Self::File
+        )
     }
+}
+
+/// Whether the mirror's file writes block `id` with its `^ID`: only when
+/// something addresses it (#6277 decision 6).
+fn file_anchors(data: &PageExportData, id: &str) -> bool {
+    data.addressed_blocks.contains(id)
+}
+
+/// A page as the Markdown mirror writes its file (#5363): the text, and for
+/// each of its lines the id of the block that starts there, `None` on every
+/// other line, both from one render.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageFile {
+    pub text: String,
+    pub line_ids: Vec<Option<String>>,
+}
+
+/// The page's file: its front matter and block tree in [`RenderMode::File`].
+fn render_page_file(data: &PageExportData) -> PageFile {
+    let mut text = String::new();
+    render_frontmatter(&mut text, data);
+    let starts = render_block_tree(&mut text, data.page.id.as_str(), data, RenderMode::File);
+    let line_ids = block_start_lines(&text, &starts);
+    PageFile { text, line_ids }
+}
+
+/// One entry per line of `text`, each block's id, from `starts`, on the line
+/// the block starts on. A block's offset includes the blank line written
+/// before it, which is never its own first line: a bare empty first line is
+/// written `\`.
+fn block_start_lines(text: &str, starts: &[(String, usize)]) -> Vec<Option<String>> {
+    let mut ids = vec![None; text.split('\n').count()];
+    let (mut line, mut at) = (0, 0);
+    for (id, start) in starts {
+        let start = start + usize::from(text[*start..].starts_with('\n'));
+        line += text[at..start].matches('\n').count();
+        at = start;
+        ids[line] = Some(id.clone());
+    }
+    ids
 }
 
 /// The page's buffer, its front matter and then its block tree in
@@ -1071,7 +1121,7 @@ fn render_block(
             let resolved = export_block_text(content, &id, data);
             push_block_bullet(output, &indent, &list_marker, &task_marker, &resolved, mode);
         }
-        RenderMode::Clipboard | RenderMode::Agent | RenderMode::Document => {
+        RenderMode::Clipboard | RenderMode::Agent | RenderMode::Document | RenderMode::File => {
             push_buffer_bullet(
                 output,
                 block,
@@ -1124,7 +1174,7 @@ fn render_block(
     let no_titles = HashMap::new();
     let ref_titles = match mode {
         RenderMode::Export | RenderMode::Agent => ref_titles,
-        RenderMode::Clipboard | RenderMode::Document => &no_titles,
+        RenderMode::Clipboard | RenderMode::Document | RenderMode::File => &no_titles,
     };
     if let Some(props) = descendant_properties.get(&id) {
         for prop in props {
@@ -1269,11 +1319,17 @@ fn push_buffer_bullet(
         push_anchored_bullet(output, indent, list_marker, task_marker, &named, id);
         return;
     }
-    let push = |output: &mut String, content: &str| match mode {
-        RenderMode::Clipboard => {
+    let anchored = match mode {
+        RenderMode::Clipboard => false,
+        RenderMode::File => file_anchors(data, id),
+        _ => true,
+    };
+    let push = |output: &mut String, content: &str| {
+        if anchored {
+            push_anchored_bullet(output, indent, list_marker, task_marker, content, id)
+        } else {
             push_clipboard_bullet(output, indent, list_marker, task_marker, content, id)
         }
-        _ => push_anchored_bullet(output, indent, list_marker, task_marker, content, id),
     };
     let start = output.len();
     let is_code = push(output, content);
@@ -2555,6 +2611,21 @@ pub async fn get_page_buffer_inner(
     })
 }
 
+/// The page as the Markdown mirror writes its file (#5363), read in one
+/// snapshot as the buffer is, with the names the buffer may write.
+///
+/// # Errors
+///
+/// As [`export_page_markdown_inner`].
+#[instrument(skip(pool), err)]
+pub async fn get_page_file_inner(pool: &SqlitePool, page_id: &str) -> Result<PageFile, AppError> {
+    BlockId::from_string(page_id)?;
+    let mut tx = pool.begin().await?;
+    let data = load_page_export_data(&mut tx, page_id, PageRead::File).await?;
+    tx.commit().await?;
+    Ok(render_page_file(&data))
+}
+
 /// The blocks `block_ids` names as the clipboard carries them (#5140): the
 /// page's buffer in the Document dialect (#6190), which a paste reads back,
 /// for just those blocks, each with its subtree unless `with_children` is
@@ -3496,7 +3567,7 @@ async fn load_page_export_data(
         HashMap::new()
     };
     let mut refs = resolve_references(conn, page_id, &descendants).await?;
-    if export {
+    if export || read == PageRead::File {
         refs.addressed_blocks
             .extend(load_addressed_blocks(conn, &descendants).await?);
     }
@@ -3516,7 +3587,7 @@ async fn load_page_export_data(
     } else {
         (Vec::new(), Vec::new())
     };
-    let name_snapshot = if read == PageRead::Buffer {
+    let name_snapshot = if matches!(read, PageRead::Buffer | PageRead::File) {
         load_name_snapshot(conn, &page.id, &descendants, &refs.page_titles).await?
     } else {
         NameSnapshot::default()
@@ -3697,7 +3768,7 @@ fn push_block_bullet(
 ) -> CodeLines {
     let fence_opener = match mode {
         RenderMode::Export => import::fence_opener,
-        RenderMode::Document | RenderMode::Clipboard | RenderMode::Agent => {
+        RenderMode::Document | RenderMode::Clipboard | RenderMode::Agent | RenderMode::File => {
             import::document_fence_opener
         }
     };
