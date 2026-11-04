@@ -28,7 +28,7 @@ describe('Agaric real-backend journal Delete page (#5358) @pages @journal', () =
     await navigateTo('Journal')
     await addBlockWithMarker(MARKER)
 
-    // The daily view puts the page quick actions beside "Open in editor"
+    // The daily view puts the page quick actions on the day's row
     // (DaySection); the trash button is named by `pageHeader.deletePage`.
     const deletePage = $('button[aria-label="Delete page"]')
     await deletePage.waitForClickable({ timeout: ACTION_TIMEOUT })

@@ -330,13 +330,13 @@ Agaric's strongest domain. Its index advantage now holds against OG only.
 
 ### 12. AI / Agent Integration
 
-Both sides moved. Agaric's MCP became per-agent and grew to 36 tools. Logseq 2.0's MCP became
+Both sides moved. Agaric's MCP became per-agent and grew to 37 tools. Logseq 2.0's MCP became
 reachable from the browser, and a token-scoped REST API landed on master after 2.0.2.
 
 | Capability | Logseq | Agaric | Status |
 | --- | --- | --- | --- |
 | MCP server | **2.0** (desktop Settings → AI, or the CLI): `pretend` dry-run, undo/redo integration; 2.0.2: `/mcp` usable from browser MCP clients (#13312), CLI password login (#13270) | `agaric-mcp` sidecar over one Unix socket / named pipe, owner-only, never TCP, off by default. Each client is an **agent** with a name, mode (RO/RW), space allow-list and token (#5759, `src-tauri/migrations/0125_mcp_agents.sql`); Settings lists, creates and revokes agents (#5710). Tokens sit plaintext in a device-local table | Tie |
-| Tool surface | Search/create/list; 2.0.2 `upsert block --blocks` takes Markdown (#13377). The docs' "editing pages, tags and properties TODO" dates from 2026-04-28; current state unverified | **18 read-only + 18 read-write** (RW serves the RO set): adds page/block history, journal, trash, `resolve`, `query` (#5542), `append_markdown` and `edit_page_markdown` (#5462, #5554), `move_blocks`, `batch`, `undo`, `set_page_aliases` (#5570), `move_page_to_space`; links by name (#5539) | Better |
+| Tool surface | Search/create/list; 2.0.2 `upsert block --blocks` takes Markdown (#13377). The docs' "editing pages, tags and properties TODO" dates from 2026-04-28; current state unverified | **19 read-only + 18 read-write** (RW serves the RO set): adds page/block history, journal, trash, `resolve`, `query` (#5542), `append_markdown` and `edit_page_markdown` (#5462, #5554), `move_blocks`, `batch`, `undo`, `set_page_aliases` (#5570), `move_page_to_space`; links by name (#5539) | Better |
 | Auditability | Undo/redo integration | Every op stamped `agent:<name>`; a 100-entry **in-memory** activity log (`src-tauri/src/mcp/activity.rs`); **the History view does not distinguish agent ops** (`docs/features/views.md`) | Partial |
 | Isolation | Graph-scoped; master-only PATs carry read/write scopes, expiry, revocation (#13019) | Per-agent token, mode and space allow-list, but **"not isolation"** per `docs/features/agent-access.md`: links, history and refusal messages cross spaces; no rate limiting | Partial |
 | Programmable API | Plugin API (`@logseq/libs` 0.3.4) and a local HTTP server (port and method count unverified); RTC semantic REST API with graph-scoped tokens merged 2026-10-10 (#13019), E2EE graphs 10-11 (#13671): **after 2.0.2, in no release** | MCP only | Gap |
@@ -354,7 +354,7 @@ reachable from the browser, and a token-scoped REST API landed on master after 2
 | Pairing fallback | N/A | The QR (v2, #4702) carries the responder's dial address and device id, so a first pair needs no multicast; passphrase-only pairing still does | Done |
 | Remote / internet sync | 2.0 RTC syncs over the internet; the README still calls RTC **alpha** | LAN by default. An **opt-in relay** (#5135, `internet_relay_url` in `src-tauri/agaric-sync/src/transport/endpoint.rs`) carries traffic between peers that have **already discovered each other**; it does not discover | Design choice |
 | Conflict resolution | OG: file-level (fragile). 2.0 RTC: alpha; 2.0.2 keeps property-value replacements together. The July 2026 iOS data-loss incident was not re-verified | **Loro CRDT** per space: `LoroTree`, `LoroText`, `LoroMap`; SQL tree columns are derived. Move/replay ordering fixed (#5711, #5720); purges wait until every space lands (#5712) | Better |
-| **What does not converge** | — | **Attachments now converge**: in the engine, hashed and byte-verified (#5608, #5728). Before 2026-10-17 no attachment ever reached a peer. Still true: the **op log is audit-only across peers**, and the **quarantine is invisible**: `list_quarantined_slots` has no IPC or frontend caller, so the UI still says "synced" | Partial |
+| **What does not converge** | — | **Attachments now converge**: in the engine, hashed and byte-verified (#5608, #5728). Before 2026-10-17 no attachment ever reached a peer. Still true: the **op log is audit-only across peers**, and a **quarantined delta cannot be retried**: Settings › Sync & devices lists it (#6057), but nothing in the UI re-admits it | Partial |
 | Sync direction | Bidirectional | **A session is a pull** (responder → initiator, `docs/architecture/sync-protocol-spec.md`); two-way needs two sessions, which the scheduler runs | Partial |
 | **Multi-device, verified** | Widely used (and widely complained about) | **CI-verified two-way**: `e2e-tauri/sync-two-device.e2e.ts` against a headless peer (`e2e-tauri/sync-peer.ts`) pairs, edits each way, sets a property, moves, makes concurrent edits to one block, sends an image each way, cancels and unpairs; required on `main` via `e2e-tauri-gate` (#5996). **In daily use between Android and Linux, both directions** (maintainer report, 2026-10-21). Unproven: devices on different networks, a restrictive network; there is no iOS | Done (one network) |
 | Sync controls | — | **Cancel** at dial or mid-session (#6026); per-peer **progress** in messages, files and bytes (#5997); a named engine-version mismatch (#5728) | Done |
@@ -430,7 +430,7 @@ Trimmed to claims that survived verification on 2026-10-21.
 | **Conflict resolution** | Loro CRDT: blocks, text, properties, tags, moves and attachments converge without a user-facing conflict | File-level conflicts (OG) or alpha RTC (2.0) |
 | **Spaces** | Per-space journal, tabs, recents, identity, `Alt+1..9`, write-time cross-space enforcement, page move between spaces | One graph per instance |
 | **Editor breadth** | Native Mermaid, KaTeX, 5 callout types, 8 inline pickers, a block-mode toolbar, the Markdown reveal, opt-in page mode, Edit as Markdown, Markdown paste | Mermaid is a plugin; no toolbar; no page-as-document mode |
-| **Agent access** | 36 MCP tools, per-agent tokens, modes and space allow-lists | 2.0's MCP is narrower; its REST API is on master, in no release |
+| **Agent access** | 37 MCP tools, per-agent tokens, modes and space allow-lists | 2.0's MCP is narrower; its REST API is on master, in no release |
 | **ID durability** | ULIDs; renames propagate; export externalizes them and re-import re-internalizes them | UUID v4; OG stores link text |
 | **Supply chain** | SLSA provenance, Scorecard, CodeQL, blocking audits, a threat model, a release gated on a real-backend lane | Standard OSS CI |
 
@@ -440,7 +440,7 @@ Trimmed to claims that survived verification on 2026-10-21.
   helps only peers that have already found each other.
 - Android syncs only in the foreground.
 - There is no backup or restore.
-- A quarantined slot is invisible while the UI says "synced".
+- A quarantined slot is listed in Settings › Sync & devices, but cannot be retried from there.
 - Nobody has shown it working across networks or on a restrictive one.
 
 These five, ranked, open [Part 9](#part-9-what-would-actually-make-agaric-superior).
@@ -481,7 +481,7 @@ collect the benefit, or where its own documentation is wrong. Each carries its 2
 | **Advanced query engine depth** | 10 property operators, 4 value types, 7 group keys, property aggregates | **Fixed for the engine/UI gap** (#4569, #4804). Remaining: bounded group preview, no column picker, no text language |
 | **Saved views** | A saved-view UI and storage | **Partly fixed**: invisible since a space migration until #5828; now per-space `localStorage`, not synced; old views stay invisible |
 | **The notification subsystem** | OS plumbing on three platforms, a settings tab, a permission flow | **Partly fixed**: desktop `due_date` reminders while the app runs (#4806). No Android, catch-up, lead time or `scheduled_date` |
-| **The sync quarantine** | A quarantine table, boot fields `sync_inbox_quarantined` and `sync_inbox_quarantine_pending` | **Still true**: `list_quarantined_slots` has no IPC or frontend caller; the fields reach logs only |
+| **The sync quarantine** | A quarantine table, boot fields `sync_inbox_quarantined` and `sync_inbox_quarantine_pending` | **Partly fixed**: Settings › Sync & devices lists the quarantined slots (#6057); there is no retry, and the boot fields still reach logs only |
 | **i18next** | ~3,056 keys across 13 namespaces (2026-08-30 count) | Two locales, `es` partial (#4555); not re-audited |
 
 ### Documentation that is false
@@ -592,9 +592,9 @@ master), with its beta status called out separately rather than deducted twice.
 | Search | 5 | **7** | **9** | **2.0 +1**: its trigram FTS5 dates from 2024, so 6 was an audit error; plus opt-in semantic search. **Agaric held**: the index edge over 2.0 is gone, but the 12-prefix filter language, 19-field scope and regex in-page find have no 2.0 equivalent |
 | Templates | 7 | 8 | 7 | — (journal templates carry properties; `/template` drops them and is not atomic) |
 | Spaces | 2 | 3 | **9** | — |
-| AI / agent access | 2 | 8 | **9** | **Agaric +1** (36 tools, per-agent tokens, modes and space allow-lists; not isolation). **2.0 held**: the proposed +1 rests on the REST API (#13019), which merged after 2.0.2 and is in no release |
-| Sync / storage | 4 | 5 | **7** | **+2.** Two of the three deductions behind the 5 are gone: two-way sync is CI-verified and in daily Android ↔ Linux use, and QR pairing needs no multicast. Attachments converge, and the snapshot OOM is gone. Not 8: no backup, mDNS-only discovery, foreground-only Android, invisible quarantine |
-| Data integrity | 3 | 4 | **8** | — (integrity check and audits added; invisible quarantine, no backup, late convergence bugs #5608, #5712) |
+| AI / agent access | 2 | 8 | **9** | **Agaric +1** (37 tools, per-agent tokens, modes and space allow-lists; not isolation). **2.0 held**: the proposed +1 rests on the REST API (#13019), which merged after 2.0.2 and is in no release |
+| Sync / storage | 4 | 5 | **7** | **+2.** Two of the three deductions behind the 5 are gone: two-way sync is CI-verified and in daily Android ↔ Linux use, and QR pairing needs no multicast. Attachments converge, and the snapshot OOM is gone. Not 8: no backup, mDNS-only discovery, foreground-only Android, no quarantine retry |
+| Data integrity | 3 | 4 | **8** | — (integrity check and audits added; quarantine listed but not retryable, no backup, late convergence bugs #5608, #5712) |
 | Performance | 3 | 7 | 7 | — (lazy hydration; revert over budget, memory unmeasured) |
 | Import / export | 9 | 8 | 6 | — (better grammar and Logseq fidelity; no structured export, clipboard-only per-page export) |
 | Mobile | 5 | **4** | 5 | **2.0 +1** (native iOS in TestFlight, Android APK in release assets; no store listing) |
@@ -633,8 +633,8 @@ Ranked by how much each one stands between a user and sync that works out of the
    (`docs/architecture/sync-and-network.md`), so a phone catches up only while it is open.
 3. **Backup and restore.** None exists. Agaric stores everything in one opaque file and needs this
    more than Logseq 2.0, which keeps hourly snapshots and the last 12.
-4. **Surface the quarantine.** `list_quarantined_slots` has no caller. A slot that cannot apply
-   disappears while the UI says "synced", which is the worst failure mode for a local-first app.
+4. **Let the user retry the quarantine.** Settings › Sync & devices lists a slot that cannot apply
+   (#6057), so it no longer disappears while the UI says "synced"; nothing in the UI re-admits it.
 5. **Close the proof gap.** Different-network and restrictive-network use is unproven.
 
 ### The 2026-08-30 list, with verdicts
@@ -646,7 +646,7 @@ Ranked by how much each one stands between a user and sync that works out of the
 | 3 | Finish the notification scheduler | Partial | Android, closed-app delivery, catch-up, `scheduled_date` |
 | 4 | Make sync provable | Done (one network) | CI suite required by `e2e-tauri-gate` (#5996) + daily Android ↔ Linux use; the residue is sync item 5 |
 | 5 | Pairing fallback without multicast | Done for QR (#4702) | Passphrase-only pairing still needs multicast |
-| 6 | Surface quarantined slots and op origin | Open | Sync item 4; the History view still does not render `agent:` origin |
+| 6 | Surface quarantined slots and op origin | Partial | Quarantined slots are listed (#6057), not retryable (sync item 4); the History view still does not render `agent:` origin |
 | 7 | Ship backup/restore | Open | Sync item 3 |
 | 8 | Fix template block-property loss and the PDF dangling ref | Partial | Journal templates fixed (#5395); `/template` drops properties; PDF not re-checked |
 | 9 | Block and page embeds | Done, with limits (#4572, #4809) | Task and property UI in embed rows; unlock in page mode |
@@ -655,7 +655,7 @@ Ranked by how much each one stands between a user and sync that works out of the
 | 12 | Make inline queries live | Done (#5316) | — |
 | 13 | Multi-value properties | Open | `PRIMARY KEY (block_id, key)` |
 | 14 | A structured export | Open | JSON or EDN with definitions, history and saved queries |
-| 15 | An answer to bus factor 1 | Open | MCP grew (36 tools, per-agent scoping) but is not a plugin API |
+| 15 | An answer to bus factor 1 | Open | MCP grew (37 tools, per-agent scoping) but is not a plugin API |
 | 16 | Is LAN-only still right? | Partial | Opt-in relay shipped; discovery is still one network: sync item 1 |
 | 17 | Where does the hardening loop end? | Answered for this window | `feat` ~14% of recent commits and Python guards deleted or ported (#5579). The new question is cadence: 14 releases in 54 days, and 0.15.0 crashed on every Android launch before the real-backend release gate (fda49ef52) |
 
@@ -700,7 +700,7 @@ What each revision changed about the one before it.
 | Deadline warning in "Settings → General"; a per-space journal-template override | Settings → Tasks & reminders (#5635); override retired (#5405) |
 | Spaces switch with `Ctrl+1..9` (the 2026-08-30 text before its in-place patch) | `Alt+1..9`; `Ctrl+1..9` switches tabs (#6022) |
 | "Table dimension syntax with a grid picker"; seven inline pickers | `/tableRxC` removed (#5766); eight pickers with `#` (#5205) |
-| MCP: two RO/RW sockets, 17 tools, no auth or per-agent scoping | One socket, per-agent tokens, modes and spaces (#5759); 36 tools |
+| MCP: two RO/RW sockets, 17 tools, no auth or per-agent scoping | One socket, per-agent tokens, modes and spaces (#5759); 37 tools |
 | Two-way sync unverified | CI-verified (#5589, #5604, #5996) and in daily Android ↔ Linux use (maintainer report) |
 | Attachments never converge; snapshots hold the vault in RAM with an ~18 s lock; legacy CBOR catch-up wipes the op log | Converge (#5608, #5728); blob gone (#4693, #4727) |
 | LAN only, "relays cleared" | An opt-in relay (#5135), off by default |
@@ -804,7 +804,7 @@ listed by area, not by rank.
 | Advanced Tables (3.30M) | Pipe tables, size grid, row/column ops in the block-mode toolbar | Partial |
 | Calendar (3.21M) | Journal calendar with content dots | Done |
 | Style Settings (2.79M), Minimal Theme Settings (1.86M) | 6 fixed themes plus auto, no custom CSS | Gap |
-| Copilot (2.77M), Claudian (2.48M): AI agents in the vault | MCP with 36 tools and per-agent tokens; the agent runs outside the app | Partial |
+| Copilot (2.77M), Claudian (2.48M): AI agents in the vault | MCP with 37 tools and per-agent tokens; the agent runs outside the app | Partial |
 | Kanban (2.77M) | None | Gap |
 | Remotely Save (2.32M): sync through cloud storage | Peer-to-peer sync on one network; no cloud target | Design choice |
 | Iconize (2.27M) | None; tag colours and space accents only | Gap |

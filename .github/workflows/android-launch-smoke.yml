@@ -39,12 +39,12 @@ jobs:
         # Same cleanup as `ci.yml`'s `android-build`: the NDK, a cold release
         # `target/` tree and the emulator image share ~14 GB.
         run: |
-          sudo rm -rf /usr/share/dotnet || true
-          sudo rm -rf /opt/ghc /usr/local/.ghcup || true
-          sudo rm -rf /usr/local/share/powershell || true
-          sudo rm -rf /usr/local/share/chromium || true
-          sudo rm -rf /usr/local/lib/android/sdk/ndk || true
-          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc /usr/local/.ghcup
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/local/share/chromium
+          sudo rm -rf /usr/local/lib/android/sdk/ndk
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
           sudo docker image prune --all --force >/dev/null || true
 
       - name: Install Rust toolchain

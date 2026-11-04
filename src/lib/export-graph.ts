@@ -655,6 +655,16 @@ export async function resolveAttachmentRefsForCopy(md: string): Promise<string> 
 }
 
 /**
+ * A page's Markdown as every "copy page" command puts it on the clipboard:
+ * the focused block's pending draft committed first (#2969), then the
+ * `attachment:` refs resolved (#2967).
+ */
+export async function pageMarkdownForCopy(pageId: string): Promise<string> {
+  await flushActiveDraft()
+  return resolveAttachmentRefsForCopy(unwrap(await commands.exportPageMarkdown(pageId)))
+}
+
+/**
  * Trigger a browser download of a Blob.
  */
 export function downloadBlob(blob: Blob, filename: string): void {

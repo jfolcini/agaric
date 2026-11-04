@@ -67,6 +67,7 @@ pub mod queries;
 pub mod reconciliation;
 pub mod recovery;
 pub mod spaces;
+pub mod speech;
 pub mod sync_cmds;
 pub mod tags;
 
@@ -91,8 +92,9 @@ pub use agenda::list_projected_agenda_inner_with_today;
 pub use attachments::{
     add_attachment_with_bytes, add_attachment_with_bytes_inner, delete_attachment,
     delete_attachment_inner, list_attachments, list_attachments_batch,
-    list_attachments_batch_inner, list_attachments_inner, read_attachment, read_attachment_inner,
-    rename_attachment, rename_attachment_inner,
+    list_attachments_batch_inner, list_attachments_inner, list_attachments_paged_inner,
+    list_page_attachments_inner, read_attachment, read_attachment_inner, rename_attachment,
+    rename_attachment_inner,
 };
 pub use blocks::{
     CreateBlockSpec, PropertyLoss, PropertyLossValue, batch_resolve, batch_resolve_inner,
@@ -206,12 +208,13 @@ pub use spaces::{
     create_space_inner, list_spaces, list_spaces_inner, list_spaces_registry_inner,
 };
 pub use sync_cmds::{
-    SyncRelaySettings, cancel_pairing, cancel_pairing_inner, cancel_sync, cancel_sync_inner,
-    confirm_pairing, confirm_pairing_inner, delete_peer_ref, delete_peer_ref_inner,
-    get_bind_exposure_status, get_device_id, get_device_id_inner, get_mdns_status,
-    get_os_network_block_status, get_sync_relay_settings, get_sync_relay_settings_inner,
-    list_peer_refs, list_peer_refs_inner, set_peer_address, set_peer_address_inner,
-    set_sync_relay_settings, set_sync_relay_settings_inner, start_pairing,
+    QuarantinedSlotList, SyncRelaySettings, cancel_pairing, cancel_pairing_inner, cancel_sync,
+    cancel_sync_inner, confirm_pairing, confirm_pairing_inner, delete_peer_ref,
+    delete_peer_ref_inner, get_bind_exposure_status, get_device_id, get_device_id_inner,
+    get_mdns_status, get_os_network_block_status, get_sync_relay_settings,
+    get_sync_relay_settings_inner, list_peer_refs, list_peer_refs_inner,
+    list_quarantined_sync_slots, list_quarantined_sync_slots_inner, set_peer_address,
+    set_peer_address_inner, set_sync_relay_settings, set_sync_relay_settings_inner, start_pairing,
     start_pairing_armed_inner, start_pairing_inner, start_sync, start_sync_inner, update_peer_name,
     update_peer_name_inner,
 };

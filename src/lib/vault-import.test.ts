@@ -207,10 +207,6 @@ describe('indexVaultFiles / resolveVaultRef', () => {
     expect(resolveVaultRef('a/./img.png', '', index)).toEqual([a])
     expect(resolveVaultRef('./img.png', 'b', index)).toEqual([b])
   })
-
-  // Accepted equivalent (resolveVaultRef `path === null ? undefined : …`, mutation-accepted.tsv):
-  // the guard only narrows `string | null` for the type checker; `byPath.get(null)` is also
-  // undefined because every byPath key is a string.
 })
 
 describe('collectVaultFiles', () => {
@@ -788,31 +784,31 @@ describe('enexNotesToUnits', () => {
   it('produces one unit per note, filename from the sanitized title, content from enexNoteToMarkdown', async () => {
     const alpha = note('Alpha')
     const notes = [alpha, note('Beta')]
-    const units = enexNotesToUnits(notes)
+    const units = enexNotesToUnits(notes, 'export.enex')
     expect(units).toHaveLength(2)
 
-    expect(units[0]?.name).toBe('Alpha.md')
+    expect(units[0]?.name).toBe('export/Alpha.md')
     const content0 = enexNoteToMarkdown(alpha)
     expect(units[0]?.bytes).toBe(content0.length)
     const loaded0 = await units[0]?.load()
     expect(loaded0?.content).toBe(content0)
     // Note-based units use the name as the IPC path.
-    expect(loaded0?.path).toBe('Alpha.md')
+    expect(loaded0?.path).toBe('export/Alpha.md')
     // No attachments ⇒ null vaultFiles (consistent with the single-file path).
     expect(loaded0?.vaultFiles).toBeNull()
   })
 
   it('#6032 — names a note titled with a / as one page, the / a look-alike', async () => {
-    const [unit] = enexNotesToUnits([note('TCP/IP')])
-    expect(unit?.name).toBe('TCP∕IP.md')
-    expect((await unit?.load())?.path).toBe('TCP∕IP.md')
+    const [unit] = enexNotesToUnits([note('TCP/IP')], 'export.enex')
+    expect(unit?.name).toBe('export/TCP∕IP.md')
+    expect((await unit?.load())?.path).toBe('export/TCP∕IP.md')
   })
 
   it('ships decoded en-media attachment bytes as vaultFiles', async () => {
     const withMedia = note('Pic', [
       { path: 'pic.png', bytes: new Uint8Array([104, 101, 108, 108, 111]), mime: 'image/png' },
     ])
-    const [unit] = enexNotesToUnits([withMedia])
+    const [unit] = enexNotesToUnits([withMedia], 'export.enex')
     const loaded = await unit?.load()
     expect(loaded?.vaultFiles).toHaveLength(1)
     expect(loaded?.vaultFiles?.[0]?.path).toBe('pic.png')
@@ -820,7 +816,7 @@ describe('enexNotesToUnits', () => {
   })
 
   it('returns an empty list for no notes', () => {
-    expect(enexNotesToUnits([])).toEqual([])
+    expect(enexNotesToUnits([], 'export.enex')).toEqual([])
   })
 
   it('#2899 — converts attachment bytes lazily inside load(), not up front for every note', async () => {
@@ -849,7 +845,7 @@ describe('enexNotesToUnits', () => {
       note('Beta', [makeAttachment('b.png', [4, 5, 6])]),
     ]
 
-    const units = enexNotesToUnits(notes)
+    const units = enexNotesToUnits(notes, 'export.enex')
     // Building the units must not have touched any attachment's bytes yet.
     expect(accessed).toEqual([])
 

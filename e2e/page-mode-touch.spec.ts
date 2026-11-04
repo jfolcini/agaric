@@ -262,13 +262,13 @@ test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () =>
   }) => {
     const row = page.locator('.journal-day-page > div').first()
     const day = page.locator(`.journal-day-page ${EDITOR}`)
-    await expect(row.getByRole('button', { name: /^Open .* in editor$/ })).toBeVisible()
-    // Open in page editor, bookmark, delete and Page actions: every top within a few px.
+    await expect(row.getByRole('button', { name: 'Delete page' })).toBeVisible()
+    // Bookmark, delete and Page actions: every top within a few px.
     const tops = await row
       .locator('button')
       .evaluateAll((buttons) => buttons.map((b) => Math.round(b.getBoundingClientRect().top)))
     expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(4)
-    expect(tops).toHaveLength(4)
+    expect(tops).toHaveLength(3)
     await expect(page.getByRole('radiogroup', { name: 'Editing mode' })).toHaveCount(0)
 
     await pageAction(page, 'Edit as page')

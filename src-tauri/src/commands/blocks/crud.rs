@@ -4072,6 +4072,163 @@ mod saturation_probe_tests {
         mat.shutdown();
     }
 
+    // #6243 — deleting or restoring a page or tag re-strips the blocks that
+    // mention it, so their index text drops the deleted name and gets it back.
+
+    const MENTION_PAGE: &str = "01HQPAGEMENT10N00000000001";
+    const MENTION_TAG: &str = "01HQTAGMENT10N000000000001";
+    const PAGE_NOTE: &str = "01HQN0TEPAGEMENT10N0000001";
+    const TAG_NOTE: &str = "01HQN0TETAGMENT10N00000001";
+
+    /// Page "Roadmap", tag "urgent", and one note mentioning each, linked and
+    /// indexed the way boot does it.
+    async fn seed_mentions(pool: &SqlitePool) {
+        for (id, block_type, content) in [
+            (MENTION_PAGE, "page", "Roadmap".to_owned()),
+            (MENTION_TAG, "tag", "urgent".to_owned()),
+            (PAGE_NOTE, "content", format!("see [[{MENTION_PAGE}]]")),
+            (TAG_NOTE, "content", format!("see #[{MENTION_TAG}]")),
+        ] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, page_id) \
+                 VALUES (?1, ?2, ?3, CASE WHEN ?2 = 'page' THEN ?1 END)",
+            )
+            .bind(id)
+            .bind(block_type)
+            .bind(content)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        agaric_store::cache::reindex_block_links(pool, PAGE_NOTE)
+            .await
+            .unwrap();
+        agaric_store::fts::rebuild_fts_index(pool).await.unwrap();
+    }
+
+    /// The two notes' indexed text, page note first.
+    async fn mention_texts(pool: &SqlitePool) -> Vec<Option<String>> {
+        let mut texts = Vec::new();
+        for id in [PAGE_NOTE, TAG_NOTE] {
+            texts.push(
+                sqlx::query_scalar("SELECT stripped FROM fts_blocks WHERE block_id = ?")
+                    .bind(id)
+                    .fetch_optional(pool)
+                    .await
+                    .unwrap(),
+            );
+        }
+        texts
+    }
+
+    fn texts(page: &str, tag: &str) -> Vec<Option<String>> {
+        vec![Some(format!("see {page}")), Some(format!("see {tag}"))]
+    }
+
+    /// Delete both targets; returns each one's `deleted_at`.
+    async fn delete_targets(pool: &SqlitePool, mat: &Materializer) -> Vec<i64> {
+        let mut stamps = Vec::new();
+        for id in [MENTION_PAGE, MENTION_TAG] {
+            let resp = delete_block_inner(pool, DEV, mat, BlockId::from_trusted(id))
+                .await
+                .unwrap();
+            stamps.push(resp.deleted_at);
+        }
+        mat.flush().await.unwrap();
+        stamps
+    }
+
+    #[tokio::test]
+    async fn deleting_a_page_or_tag_strips_its_name_from_its_mentions_6243() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        seed_mentions(&pool).await;
+        assert_eq!(
+            mention_texts(&pool).await,
+            texts("Roadmap", "urgent"),
+            "seed"
+        );
+
+        delete_targets(&pool, &mat).await;
+
+        assert_eq!(
+            mention_texts(&pool).await,
+            texts("", ""),
+            "a deleted target's name leaves the blocks that mention it"
+        );
+        mat.shutdown();
+    }
+
+    /// One batch carrying both targets: the cohort helpers look up every
+    /// page and tag in the cohort, not only the first.
+    #[tokio::test]
+    async fn a_batch_delete_and_restore_all_re_strip_every_targets_mentions_6243() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        seed_mentions(&pool).await;
+
+        delete_blocks_by_ids_inner(
+            &pool,
+            DEV,
+            &mat,
+            vec![
+                BlockId::from_trusted(MENTION_PAGE),
+                BlockId::from_trusted(MENTION_TAG),
+            ],
+        )
+        .await
+        .unwrap();
+        mat.flush().await.unwrap();
+        assert_eq!(
+            mention_texts(&pool).await,
+            texts("", ""),
+            "after the batch delete"
+        );
+
+        for id in [PAGE_NOTE, TAG_NOTE] {
+            agaric_store::fts::update_fts_for_block(&pool, id)
+                .await
+                .unwrap();
+        }
+        restore_all_deleted_inner(&pool, DEV, &mat).await.unwrap();
+        mat.flush().await.unwrap();
+        assert_eq!(
+            mention_texts(&pool).await,
+            texts("Roadmap", "urgent"),
+            "after restoring the whole trash"
+        );
+        mat.shutdown();
+    }
+
+    #[tokio::test]
+    async fn restoring_a_page_or_tag_gives_its_name_back_to_its_mentions_6243() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        seed_mentions(&pool).await;
+        let stamps = delete_targets(&pool, &mat).await;
+        // An edit while the targets are deleted re-strips the notes with `""`.
+        for id in [PAGE_NOTE, TAG_NOTE] {
+            agaric_store::fts::update_fts_for_block(&pool, id)
+                .await
+                .unwrap();
+        }
+        assert_eq!(mention_texts(&pool).await, texts("", ""), "seed");
+
+        for (id, deleted_at) in [MENTION_PAGE, MENTION_TAG].into_iter().zip(stamps) {
+            restore_block_inner(&pool, DEV, &mat, BlockId::from_trusted(id), deleted_at)
+                .await
+                .unwrap();
+        }
+        mat.flush().await.unwrap();
+
+        assert_eq!(
+            mention_texts(&pool).await,
+            texts("Roadmap", "urgent"),
+            "a restored target's name comes back to the blocks that mention it"
+        );
+        mat.shutdown();
+    }
+
     #[tokio::test]
     async fn restore_all_deleted_inner_re_indexes_the_whole_cohort_4733() {
         let (pool, _dir) = test_pool().await;
