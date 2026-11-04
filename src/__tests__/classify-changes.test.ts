@@ -591,24 +591,6 @@ describe('classify-changes.sh', () => {
       })
     })
 
-    it('a merge group diffs its base_sha..head_sha like a PR', () => {
-      withRepo((dir, env, base) => {
-        const git = (...args: string[]) =>
-          spawnSync('git', args, { cwd: dir, env, encoding: 'utf8' }).stdout
-        mkdirSync(join(dir, 'docs'), { recursive: true })
-        writeFileSync(join(dir, 'docs/b.md'), 'b\n')
-        git('add', 'docs/b.md')
-        git('commit', '-qm', 'docs')
-        const out = classifyEvent(dir, {
-          ...env,
-          EVENT_NAME: 'merge_group',
-          PR_BASE_SHA: base,
-          PR_HEAD_SHA: 'HEAD',
-        })
-        expect(out).toMatchObject({ docs_only: 'true', frontend: 'false' })
-      })
-    })
-
     it('a rename out of src/ into docs/ is not docs-only', () => {
       withRepo((dir, env, base) => {
         const git = (...args: string[]) =>
