@@ -10,15 +10,29 @@
  * `#+TITLE` the page title. Source and example blocks become code fences, so a
  * `*` line in them is no headline; tables and other text come in as written.
  * A `# comment` line, which Org itself never shows, and `CLOSED:` stamps go.
+ *
+ * The file's own vocabulary (#6032 N7): a keyword its `#+TODO` lines declare
+ * opens a headline as a task, `#+FILETAGS` are the page's tags and a
+ * headline's `:tags:` its block's.
  */
 
 import { FOLDED_RESERVED_KEYS, foldPropertyKey } from '@/lib/inline-property-parse'
 
-/** What {@link orgToMarkdown} reads: the `#+TITLE`, if any, and the text. */
+/** What {@link orgToMarkdown} reads: the `#+TITLE`, if any, the text and its ids. */
 export interface OrgPage {
   title: string | null
   markdown: string
+  /** The `:ID:` of a drawer before the first headline, the page's. */
+  fileId: string | null
+  /** The uuid `:ID:`s of headlines: the importer anchors a block by a uuid `id::` only. */
+  headlineIds: string[]
 }
+
+/**
+ * Where an Org `id:` link of a pick leads, by id: `null` for a headline's,
+ * referenced as its block, else the title of the page a file-level id names.
+ */
+export type OrgIdTargets = ReadonlyMap<string, string | null>
 
 const HEADLINE_RE = /^(\*+)[ \t]+(.*)$/
 const TITLE_RE = /^#\+title:\s*(.*)$/i
@@ -32,21 +46,44 @@ const CLOSED_RE = /CLOSED:\s*\[[^\]]*\]\s*/g
 const LINK_RE = /\[\[([^\]\n]+)\](?:\[([^\]\n]+)\])?\]/g
 const URL_RE = /^(?:[a-z][a-z0-9+.-]*:\/\/|mailto:)/i
 const IMAGE_RE = /\.(?:png|jpe?g|gif|webp|svg|bmp|avif)$/i
+const VOCABULARY_RE = /^#\+(?:SEQ_|TYP_)?TODO:(.*)$/i
+const FILETAGS_RE = /^#\+FILETAGS:(.*)$/i
+/** A headline's tags, `:a:b:` closing it, after a space or as its whole text. */
+const HEADLINE_TAGS_RE = /(?:^|[ \t]+):([\p{L}\p{N}\p{M}_@#%:]+):$/u
+/** A comment, or a line {@link orgToMarkdown} reads up front. */
+const DROPPED_LINE_RE = /^#(?:\s|$)|^#\+(?:(?:SEQ_|TYP_)?TODO|FILETAGS):/i
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+/** The keywords the importer reads itself: `TASK_KEYWORDS` in agaric-engine's `import.rs`. */
+const IMPORTER_KEYWORDS: ReadonlySet<string> = new Set([
+  'TODO',
+  'LATER',
+  'WAITING',
+  'WAIT',
+  'DOING',
+  'NOW',
+  'IN-PROGRESS',
+  'DONE',
+  'CANCELLED',
+  'CANCELED',
+  'CANCEL',
+])
 
-export function orgToMarkdown(org: string): OrgPage {
-  let title: string | null = null
-  const out: string[] = []
+export function orgToMarkdown(org: string, targets: OrgIdTargets = new Map()): OrgPage {
+  const page: OrgPage = { title: null, markdown: '', fileId: null, headlineIds: [] }
+  const lines = org.replace(/\r\n?/g, '\n').split('\n')
+  const vocabulary = taskVocabulary(lines)
+  const tags = lines.flatMap((line) => {
+    const filetags = FILETAGS_RE.exec(line.trim())
+    return filetags === null ? [] : (filetags[1] as string).split(/[:\s]+/).filter((t) => t !== '')
+  })
+  const out = tags.length > 0 ? [`tags:: ${tags.join(', ')}`] : []
   let section: string[] = []
   let indent = ''
   const flush = (): void => {
-    out.push(
-      ...sectionToMarkdown(section, indent, (text) => {
-        title ??= text
-      }),
-    )
+    out.push(...sectionToMarkdown(section, indent, page, targets))
     section = []
   }
-  for (const line of org.replace(/\r\n?/g, '\n').split('\n')) {
+  for (const line of lines) {
     const headline = HEADLINE_RE.exec(line)
     if (headline === null) {
       section.push(line)
@@ -54,11 +91,59 @@ export function orgToMarkdown(org: string): OrgPage {
     }
     flush()
     const depth = (headline[1] as string).length
-    out.push(`${'  '.repeat(depth - 1)}- ${orgLinks((headline[2] as string).trimEnd())}`)
+    const text = headlineText((headline[2] as string).trimEnd(), vocabulary, targets)
+    out.push(`${'  '.repeat(depth - 1)}- ${text}`)
     indent = '  '.repeat(depth)
   }
   flush()
-  return { title, markdown: `${out.join('\n')}\n` }
+  page.markdown = `${out.join('\n')}\n`
+  return page
+}
+
+/**
+ * The task keywords of the `#+TODO`, `#+SEQ_TODO` and `#+TYP_TODO` lines, each
+ * as the keyword the importer reads for its state. Those before a `|` are open,
+ * after it done, and without one the last is done, as Org reads them. Agaric's
+ * states are fixed: a keyword the importer reads keeps its state (`NOW` is
+ * DOING), and any other open keyword is TODO and done one DONE.
+ */
+function taskVocabulary(lines: readonly string[]): Map<string, string> {
+  const states = new Map<string, string>()
+  for (const line of lines) {
+    const declared = VOCABULARY_RE.exec(line.trim())
+    if (declared === null) continue
+    const words = (declared[1] as string).split(/\s+/).filter((word) => word !== '')
+    const bar = words.indexOf('|')
+    const firstDone = bar === -1 ? words.length - 1 : bar + 1
+    for (const [i, word] of words.entries()) {
+      if (word === '|') continue
+      // `NEXT(n)` and `WAIT(w@/!)` carry a fast-access key and logging.
+      const keyword = word.replace(/\(.*\)$/, '')
+      if (!IMPORTER_KEYWORDS.has(keyword)) states.set(keyword, i >= firstDone ? 'DONE' : 'TODO')
+    }
+  }
+  return states
+}
+
+/**
+ * A headline's text as its bullet's: a keyword of the file's `vocabulary` as
+ * the one the importer reads, its links as Markdown and its tags as `#[[tag]]`
+ * block tags, a form that keeps `@home` and `2024` whole.
+ */
+function headlineText(
+  text: string,
+  vocabulary: Map<string, string>,
+  targets: OrgIdTargets,
+): string {
+  const tagged = HEADLINE_TAGS_RE.exec(text)
+  let title = tagged === null ? text : text.slice(0, tagged.index)
+  const keyword = title.split(/\s/, 1)[0] as string
+  const state = vocabulary.get(keyword)
+  if (state !== undefined) title = state + title.slice(keyword.length)
+  const tags = (tagged?.[1] ?? '').split(':').filter((tag) => tag !== '')
+  return [orgLinks(title, targets), ...tags.map((tag) => `#[[${tag}]]`)]
+    .filter((part) => part !== '')
+    .join(' ')
 }
 
 /**
@@ -68,7 +153,8 @@ export function orgToMarkdown(org: string): OrgPage {
 function sectionToMarkdown(
   lines: readonly string[],
   indent: string,
-  onTitle: (title: string) => void,
+  page: OrgPage,
+  targets: OrgIdTargets,
 ): string[] {
   const widths = lines.filter((l) => l.trim() !== '').map((l) => l.length - l.trimStart().length)
   const strip = widths.length > 0 ? Math.min(...widths) : 0
@@ -98,7 +184,7 @@ function sectionToMarkdown(
     }
     if (drawer) {
       if (DRAWER_END_RE.test(trimmed)) drawer = false
-      else pushDrawerProperty(trimmed, indent, head, out)
+      else pushDrawerProperty(trimmed, indent, head, out, page)
       continue
     }
     const titleLine = TITLE_RE.exec(trimmed)
@@ -110,7 +196,7 @@ function sectionToMarkdown(
     ) {
       drawer = true
     } else if (titleLine !== null) {
-      onTitle((titleLine[1] as string).trim())
+      page.title ??= (titleLine[1] as string).trim()
     } else if (begin !== null) {
       const kind = (begin[1] as string).toLowerCase()
       block = kind === 'src' || kind === 'example' ? 'fence' : 'text'
@@ -118,13 +204,13 @@ function sectionToMarkdown(
       fence = fenceFor(lines.slice(i + 1))
       const language = kind === 'src' ? (begin[2] as string) : ''
       out.push(indent + (block === 'fence' ? `${fence}${language}` : trimmed))
-    } else if (/^#(?:\s|$)/.test(trimmed)) {
-      // An Org comment.
+    } else if (DROPPED_LINE_RE.test(trimmed)) {
+      // An Org comment, or the file's task keywords or tags, read up front.
     } else if (PLANNING_RE.test(trimmed)) {
       const planning = trimmed.replace(CLOSED_RE, '').trim()
       if (planning !== '') out.push(indent + planning)
     } else {
-      out.push(line === '' ? '' : indent + orgLinks(line))
+      out.push(line === '' ? '' : indent + orgLinks(line, targets))
     }
   }
   if (block === 'fence') out.push(indent + fence)
@@ -135,12 +221,24 @@ function sectionToMarkdown(
  * A drawer's `:key: value` line as `key:: value`: into `head`, the page's
  * properties, before the first headline, else into `out`. A page property the
  * app reserves stays text in `out`, since the import drops it without a word;
- * under a headline the import counts it among the warnings.
+ * under a headline the import counts it among the warnings. An `:ID:` is
+ * also recorded in `page`.
  */
-function pushDrawerProperty(trimmed: string, indent: string, head: string[], out: string[]): void {
+function pushDrawerProperty(
+  trimmed: string,
+  indent: string,
+  head: string[],
+  out: string[],
+  page: OrgPage,
+): void {
   const property = DRAWER_PROPERTY_RE.exec(trimmed)
   if (property === null || (property[2] as string) === '') return
   const key = property[1] as string
+  if (foldPropertyKey(key) === 'id') {
+    const id = property[2] as string
+    if (indent === '') page.fileId ??= id
+    else if (UUID_RE.test(id)) page.headlineIds.push(id)
+  }
   if (indent !== '') out.push(`${indent}${key}:: ${property[2] as string}`)
   else if (FOLDED_RESERVED_KEYS.has(foldPropertyKey(key))) out.push(trimmed)
   else head.push(`${key}:: ${property[2] as string}`)
@@ -161,9 +259,13 @@ function fenceFor(rest: readonly string[]): string {
  * Org links in `text` as Markdown: a URL as `[desc](url)`, a `file:` link as a
  * relative link (to the `.md` page an `.org` file imports as, or an image
  * embed when it has no description), and `[[Page][desc]]` as `[[Page|desc]]`.
- * A link to a heading or an id, and `[[Page]]`, stay as written.
+ * An `id:` link the pick's `targets` hold is a reference to the headline's
+ * block, which carries no description, or a link to the file's page (#6032
+ * N4). Any other `id:` link and a link to a heading or a custom id stay text,
+ * escaped so the importer reads no page name in them; `[[Page]]` stays as
+ * written.
  */
-function orgLinks(text: string): string {
+function orgLinks(text: string, targets: OrgIdTargets): string {
   return text.replace(LINK_RE, (whole, target: string, desc: string | undefined) => {
     if (URL_RE.test(target)) return `[${desc ?? target}](${target})`
     const file = /^file:([^:]+)/i.exec(target)
@@ -173,7 +275,12 @@ function orgLinks(text: string): string {
       if (desc === undefined && IMAGE_RE.test(path)) return `![](${path})`
       return `[${desc ?? name}](${path})`
     }
-    if (desc === undefined || /^[*#]|^\w+:/.test(target)) return whole
+    const id = /^id:(.+)$/.exec(target)?.[1]?.trim()
+    const page = id === undefined ? undefined : targets.get(id)
+    if (page === null) return `((${id}))`
+    if (page !== undefined) return desc === undefined ? `[[${page}]]` : `[[${page}|${desc}]]`
+    if (id !== undefined || /^[*#]/.test(target)) return `\\${whole}`
+    if (desc === undefined || /^\w+:/.test(target)) return whole
     return `[[${target}|${desc}]]`
   })
 }

@@ -19,7 +19,7 @@ import { type EnexNote, enexNoteToMarkdown, sanitizeNoteTitleToFilename } from '
 import { NOTE_EXTENSIONS, scanAttachmentRefs } from '@/lib/import-attachments'
 import { type JexNote, jexNoteToMarkdown } from '@/lib/jex-import'
 import { isNotionExport, notionToMarkdown, stripNotionIds } from '@/lib/notion-import'
-import { orgToMarkdown } from '@/lib/org-import'
+import { type OrgIdTargets, orgToMarkdown } from '@/lib/org-import'
 
 /**
  * Source format accepted by the `import_bibliography` command (#1454).
@@ -301,9 +301,29 @@ function importPath(file: File, extension: string, notion: boolean): string {
   return notion ? stripNotionIds(md) : md
 }
 
-/** `path` with its file name replaced by `title`, as an Org `#+TITLE` names the page. */
-function retitle(path: string, title: string): string {
+/** `path` with its file name replaced by `title`, if any, as an Org `#+TITLE` names the page. */
+function retitle(path: string, title: string | null): string {
+  if (title === null || title === '') return path
   return `${path.slice(0, path.lastIndexOf('/') + 1)}${sanitizeNoteTitleToFilename(title)}.md`
+}
+
+/**
+ * Where each `:ID:` of a pick's Org files leads (#6032 N4): a headline's to
+ * its block, a file's to the page the file imports as, by the title the
+ * backend gives its path.
+ */
+async function orgIdTargets(
+  orgNotes: readonly { file: File; path: string }[],
+): Promise<OrgIdTargets> {
+  const targets = new Map<string, string | null>()
+  for (const { file, path } of orgNotes) {
+    const org = orgToMarkdown(await file.text())
+    for (const id of org.headlineIds) targets.set(id, null)
+    if (org.fileId !== null) {
+      targets.set(org.fileId, retitle(path, org.title).slice(0, -'.md'.length))
+    }
+  }
+  return targets
 }
 
 /**
@@ -314,7 +334,9 @@ function retitle(path: string, title: string): string {
  * #1446 namespace mapping (basename fallback for a plain pick), and vault
  * siblings and the notes a file links are collected only when a `vaultIndex`
  * is present. An Org file is converted, and a Notion export's pages lose the
- * ids in their names and links (#6032).
+ * ids in their names and links (#6032). An Org file's `id:` links resolve
+ * through the `:ID:`s of every Org file of the pick, which the first Org file
+ * loaded reads.
  */
 export function mdFilesToUnits(
   files: File[],
@@ -332,6 +354,7 @@ export function mdFilesToUnits(
     const name = basename(path).slice(0, -'.md'.length).toLowerCase()
     notesByName.set(name, [...(notesByName.get(name) ?? []), path])
   }
+  let orgTargets: Promise<OrgIdTargets> | undefined
   return notes.map(({ file, extension, path: filePath }) => ({
     name: file.name,
     // Count bytes from the file size (known without reading) so a load
@@ -342,9 +365,10 @@ export function mdFilesToUnits(
       let content = text
       let path = filePath
       if (extension === '.org') {
-        const org = orgToMarkdown(text)
+        orgTargets ??= orgIdTargets(notes.filter((note) => note.extension === '.org'))
+        const org = orgToMarkdown(text, await orgTargets)
         content = org.markdown
-        if (org.title !== null && org.title !== '') path = retitle(path, org.title)
+        path = retitle(path, org.title)
       } else if (notion && extension === '.md') {
         content = notionToMarkdown(text, basename(path).slice(0, -'.md'.length))
       }
