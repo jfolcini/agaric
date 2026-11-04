@@ -285,6 +285,15 @@ describe('htmlBodyToOutline — tables (Phase 2)', () => {
     expect((table as unknown as { content?: unknown[] }).content).toHaveLength(3) // header + 2 data rows
   })
 
+  it("keeps each column's cell alignment in the delimiter row (#6277)", () => {
+    const html =
+      '<table><tr><th align="right">H1</th><th style="text-align: center">H2</th><th>H3</th><th>H4</th></tr>' +
+      '<tr><td>a</td><td>b</td><td align="left">c</td><td>d</td></tr></table>'
+    expect(convert(html)[0]?.content).toBe(
+      '| H1 | H2 | H3 | H4 |\n| ---: | :---: | :--- | --- |\n| a | b | c | d |',
+    )
+  })
+
   it('escapes a literal pipe inside a cell so it is not a column boundary', () => {
     const blocks = convert('<table><tr><td>a|b</td><td>c</td></tr></table>')
     expect(blocks[0]?.content).toContain('a\\|b')
