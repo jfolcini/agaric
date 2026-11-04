@@ -562,3 +562,49 @@ fn a_pages_own_document_with_every_kind_of_block_appends_no_op() {
         assert_eq!((report.properties_set, report.properties_deleted), (0, 0));
     });
 }
+
+/// #6033 S4 — a save writes the foreign highlight and math of a block it
+/// rewrites or creates in Agaric's form, and leaves a block it does not touch
+/// as it is, even one holding a `^^` stored before the editor escaped it.
+#[test]
+fn a_save_normalizes_only_the_blocks_it_writes() {
+    Runtime::new().unwrap().block_on(async {
+        let fx = fixture().await;
+        let block = |content: &str| BlockSpec {
+            level: 0,
+            content: content.to_string(),
+            todo_state: None,
+            priority: None,
+            scheduled_date: None,
+            due_date: None,
+            list_style: None,
+            properties: BTreeMap::new(),
+        };
+        let forest = [block("kept ^^x^^"), block("edited ^^y^^")];
+        create_forest(&fx, &forest).await;
+        let buffer = get_page_buffer_inner(&fx.pool, &fx.page).await.unwrap();
+        let text = buffer
+            .text
+            .replacen("edited ^^y^^", r"edited ^^y^^ and \(z\)", 1)
+            + "\nnew \\[\\alpha\\]\n";
+        let mut line_ids = buffer.line_ids.clone();
+        line_ids.extend([None, None]);
+
+        let report = save(&fx, (text, line_ids), &buffer.source).await;
+
+        assert_eq!((report.created, report.edited), (1, 1));
+        let contents: Vec<String> = sqlx::query_scalar(
+            "SELECT content FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+             ORDER BY position, id",
+        )
+        .bind(&fx.page)
+        .fetch_all(&fx.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            contents,
+            ["kept ^^x^^", "edited ==y== and $z$", "new $\\alpha$"],
+            "only the edited and the new block are normalized"
+        );
+    });
+}
