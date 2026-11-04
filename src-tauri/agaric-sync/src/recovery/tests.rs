@@ -1997,6 +1997,44 @@ async fn refresh_caches_for_recovered_drafts_updates_fts_for_recovered_blocks() 
     );
 }
 
+/// #6277 B3: a recovered draft of a block-ref target re-strips the block
+/// that references it, which indexes the target's first line.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn refresh_caches_for_recovered_drafts_re_strips_a_block_refs_referrer_6277() {
+    use super::refresh_caches_for_recovered_drafts;
+    use agaric_engine::materializer::Materializer;
+
+    let (pool, _dir) = test_pool().await;
+    let device_id = "test-device";
+    let target = "BLOCK000000000000000000061";
+    let referrer = "BLOCK000000000000000000062";
+    insert_test_block(&pool, target, "old title").await;
+    insert_test_block(&pool, referrer, &format!("see (({target}))")).await;
+    agaric_store::cache::reindex_block_links(&pool, referrer)
+        .await
+        .unwrap();
+    agaric_store::fts::update_fts_for_block(&pool, referrer)
+        .await
+        .unwrap();
+    save_draft(&pool, device_id, target, "pineapple title")
+        .await
+        .unwrap();
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
+    assert_eq!(report.drafts_recovered, vec![target.to_owned()], "seed");
+
+    let materializer = Materializer::new(pool.clone());
+    refresh_caches_for_recovered_drafts(&pool, &materializer, &report.drafts_recovered)
+        .await
+        .unwrap();
+
+    let stripped: String = sqlx::query_scalar("SELECT stripped FROM fts_blocks WHERE block_id = ?")
+        .bind(referrer)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stripped, "see pineapple title");
+}
+
 /// `refresh_caches_for_recovered_drafts` on an empty list must be a
 /// cheap no-op — it must not block waiting on a barrier the materializer
 /// never processes (which would deadlock boot when no drafts were
@@ -2066,18 +2104,19 @@ async fn cache_refresh_skips_rebuilds_for_content_only_recovery_i_lifecycle_5() 
         .await
         .unwrap();
 
-    // Per-draft we always enqueue UpdateFtsBlock + ReindexBlockLinks (= 2
-    // tasks). The flush barrier adds 1 more. With the I-Lifecycle-5 gate
-    // tripping, RebuildTagsCache + RebuildPagesCache must NOT have been
-    // enqueued, so the total processed is exactly 3 — not 5.
+    // Per-draft we always enqueue UpdateFtsBlock + ReindexFtsReferences +
+    // ReindexBlockLinks (= 3 tasks; the second since #6277 B3). The flush
+    // barrier adds 1 more. With the I-Lifecycle-5 gate tripping,
+    // RebuildTagsCache + RebuildPagesCache must NOT have been enqueued, so
+    // the total processed is exactly 4 — not 6.
     let processed = materializer
         .metrics()
         .bg_processed
         .load(AtomicOrdering::Relaxed);
     assert_eq!(
-        processed, 3,
+        processed, 4,
         "content-only recovery must not enqueue RebuildTagsCache or RebuildPagesCache; \
-         expected 2 per-block tasks + 1 barrier = 3, got {processed}",
+         expected 3 per-block tasks + 1 barrier = 4, got {processed}",
     );
 }
 
@@ -2105,16 +2144,16 @@ async fn cache_refresh_enqueues_rebuilds_when_tag_block_recovered_i_lifecycle_5(
         .await
         .unwrap();
 
-    // Expected: UpdateFtsBlock + ReindexBlockLinks + RebuildTagsCache +
-    // RebuildPagesCache + 1 barrier = 5.
+    // Expected: UpdateFtsBlock + ReindexFtsReferences + ReindexBlockLinks +
+    // RebuildTagsCache + RebuildPagesCache + 1 barrier = 6.
     let processed = materializer
         .metrics()
         .bg_processed
         .load(AtomicOrdering::Relaxed);
     assert_eq!(
-        processed, 5,
+        processed, 6,
         "tag-block recovery must enqueue both RebuildTagsCache and RebuildPagesCache; \
-         expected 2 per-block tasks + 2 rebuilds + 1 barrier = 5, got {processed}",
+         expected 3 per-block tasks + 2 rebuilds + 1 barrier = 6, got {processed}",
     );
 }
 
@@ -2142,16 +2181,16 @@ async fn cache_refresh_enqueues_rebuilds_when_page_block_recovered_i_lifecycle_5
         .await
         .unwrap();
 
-    // Expected: UpdateFtsBlock + ReindexBlockLinks + RebuildTagsCache +
-    // RebuildPagesCache + 1 barrier = 5.
+    // Expected: UpdateFtsBlock + ReindexFtsReferences + ReindexBlockLinks +
+    // RebuildTagsCache + RebuildPagesCache + 1 barrier = 6.
     let processed = materializer
         .metrics()
         .bg_processed
         .load(AtomicOrdering::Relaxed);
     assert_eq!(
-        processed, 5,
+        processed, 6,
         "page-block recovery must enqueue both RebuildTagsCache and RebuildPagesCache; \
-         expected 2 per-block tasks + 2 rebuilds + 1 barrier = 5, got {processed}",
+         expected 3 per-block tasks + 2 rebuilds + 1 barrier = 6, got {processed}",
     );
 }
 

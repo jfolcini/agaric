@@ -78,13 +78,13 @@ export function checkReadAloudSupport(): void {
   supportAsked = true
   if (!('speechSynthesis' in window)) return
   void commands
-    .speechStatus()
+    .getSpeechStatus()
     .then(unwrap)
     .then((status) => {
       if (status === 'Webview') publish({ supported: true })
     })
     .catch((err: unknown) => {
-      logger.warn('read-aloud', 'speech_status failed; Read aloud stays hidden', undefined, err)
+      logger.warn('read-aloud', 'get_speech_status failed; Read aloud stays hidden', undefined, err)
     })
 }
 
