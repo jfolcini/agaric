@@ -1065,9 +1065,9 @@ pub fn rewrite_obsidian_note_embeds(content: &str, names_note: impl Fn(&str) -> 
 /// opener left of it on its line. Math mid-text stays on one line; math holds
 /// no `$`, backtick, `^^` or nested `\(` / `\[`, and a `\[` is math only when
 /// its text holds a LaTeX command, an unescaped `\` before a letter. A closed
-/// span that may not be math is kept whole. Code spans, other fences, `$$`
-/// blocks, a `[[…]]` link's title or label and escaped forms are left as
-/// written.
+/// span that may not be math is kept whole. Code spans, other fences and `$$`
+/// blocks (in a quote too), a `[[…]]` link's title or label and escaped forms
+/// are left as written.
 ///
 /// Agaric's own text never holds these forms: its writer escapes a `^^` that
 /// could pair, doubles a literal `\` and writes the text `[x]` as `\[x\]`,
@@ -1146,25 +1146,45 @@ fn math_fences_as_blocks(content: &str) -> (Vec<&str>, bool) {
 }
 
 /// The block starting at line `i` of `lines` that holds no Markdown: a fence,
-/// through its closing line or to the end, or a `$$` block. Its last line,
-/// and the fence's run when it is a closed fence.
+/// through its closing line or to the end, or a `$$` block, in a quote too
+/// (`> ```sh`). Its last line, and the fence's run when it is a closed fence.
 fn literal_block(lines: &[&str], i: usize) -> Option<(usize, Option<FenceRun>)> {
     let closing = |closes: &dyn Fn(&str) -> bool| {
         lines[i + 1..]
             .iter()
-            .position(|l| closes(l))
+            .position(|l| closes(unquoted(l)))
             .map(|at| i + 1 + at)
     };
-    if let Some(run) = fence_opener(lines[i]) {
+    let first = unquoted(lines[i]);
+    if let Some(run) = fence_opener(first) {
         return Some(match closing(&|l| closes_fence(l, run)) {
             Some(end) => (end, Some(run)),
             None => (lines.len() - 1, None),
         });
     }
-    if lines[i].trim() != "$$" {
+    if first.trim() != "$$" {
         return None;
     }
     closing(&|l| l.trim() == "$$").map(|end| (end, None))
+}
+
+/// `line` past the `>` markers of the quote it is in and a callout's `[!type]`
+/// label, which shares the line of the callout's first block: the editor
+/// writes a code block in a quote with a `> ` before each line.
+fn unquoted(line: &str) -> &str {
+    let mut rest = line.trim_start();
+    let mut quoted = false;
+    while let Some(after) = rest.strip_prefix('>') {
+        rest = after.trim_start();
+        quoted = true;
+    }
+    match rest
+        .strip_prefix("[!")
+        .and_then(|label| label.split_once(']'))
+    {
+        Some((_, after)) if quoted => after.trim_start(),
+        _ => rest,
+    }
 }
 
 /// The `$$` block `content` is when the whole of it is one `\[…\]` holding a
@@ -1328,7 +1348,10 @@ fn holds_latex_command(latex: &str) -> bool {
 }
 
 /// The end of the code span whose backtick run starts at `start` of `bytes`:
-/// past the next run of exactly as many backticks (CommonMark § 6.1).
+/// past the next run of exactly as many backticks (CommonMark § 6.1), as the
+/// editor's `scanCodeSpan` reads one. [`inline_code_spans`] pairs single
+/// backticks, which cuts a span written with a longer run at a backtick inside
+/// it, and so would let this pass rewrite the code.
 fn code_span_end(bytes: &[u8], start: usize) -> Option<usize> {
     let run_at = |at: usize| bytes[at..].iter().take_while(|&&b| b == b'`').count();
     let open = run_at(start);
@@ -5918,8 +5941,8 @@ mod parse_proptest {
     /// Pieces of text as Agaric's writer leaves it (#6033 Q3): a `^` before a
     /// digit, an escaped `^^`, a doubled `\` before a paren or a letter, the
     /// text `[x]` as `\[x\]`, currency, a closed code span, a fence that is not
-    /// math or a link's raw label holding any form. Each is whole escape pairs,
-    /// so no two pieces join into a form.
+    /// math, in a quote too, or a link's raw label holding any form. Each is
+    /// whole escape pairs, so no two pieces join into a form.
     const OWN_PIECES: &[&str] = &[
         "a",
         " ",
@@ -5938,6 +5961,7 @@ mod parse_proptest {
         "==",
         r"`^^x^^ \(y\) \[\alpha\]`",
         "\n```\n^^x^^ \\[\\alpha\\]\n```\n",
+        "\n> [!TIP] ```\n> ^^x^^ \\(y\\) \\[\\alpha\\]\n> ```\n",
         r"[[01HZ00000000000000000BLOCK|a ^^b^^ \(c\)]]",
     ];
 
@@ -5960,6 +5984,8 @@ mod parse_proptest {
         "\n~~~math\n",
         "\n```\n",
         "\n~~~\n",
+        "\n> ```\n",
+        "\n> $$\n",
     ];
 
     fn arb_own_text() -> impl Strategy<Value = String> {
@@ -8462,6 +8488,8 @@ mod tests_foreign_inline_6033 {
                 "Intro ^^a^^\n```math\n\\frac{a}{b}\n```",
                 "Intro ==a==\n$$\n\\frac{a}{b}\n$$",
             ),
+            ("> [!TIP] ^^a^^ \\(x\\)", "> [!TIP] ==a== $x$"),
+            ("> ```sh\n> x\n> ```\n^^a^^", "> ```sh\n> x\n> ```\n==a=="),
         ] {
             assert_eq!(normalized(foreign), agaric, "{foreign:?}");
         }
@@ -8482,8 +8510,10 @@ mod tests_foreign_inline_6033 {
     }
 
     /// Code, a span or a fence that is not math, and a `$$` block keep every
-    /// form they hold. A math fence holding a fence or a `$$` line stays one:
-    /// as a `$$` block, a `$$` line before it would pair with it instead.
+    /// form they hold, in a quote or a callout too, where the editor writes a
+    /// code block with a `> ` before each line. A math fence holding a fence or
+    /// a `$$` line stays one: as a `$$` block, a `$$` line before it would pair
+    /// with it instead.
     #[test]
     fn code_and_math_blocks_are_left_as_written() {
         for text in [
@@ -8492,7 +8522,12 @@ mod tests_foreign_inline_6033 {
             "``a ` ^^b^^``",
             "```\n^^x^^ \\(y\\)\n```",
             "```python\nx\n```",
+            "> ```sh\n> sed 's/\\(a\\)/\\1/' ^^x^^ ^^y^^\n> ```",
+            "> [!TIP] ```python\n> re.compile(r\"\\(\\d+\\)\")\n> ```",
+            ">> ~~~\n>> \\[\\alpha\\]\n>> ~~~",
+            "> ```math\n> x^2 ^^a^^\n> ```",
             "$$\n\\[\\alpha\\] ^^a^^\n$$",
+            "> $$\n> \\[\\alpha\\] ^^a^^\n> $$",
             "```math\nx",
             "```math\n~~~\nx\n```",
             "```math\n$$\n```",

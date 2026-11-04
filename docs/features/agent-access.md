@@ -71,7 +71,7 @@ Several writes at once:
 Names in place of ids:
 
 - Wherever a tool takes a page, tag or parent id (`parent_id`, `page_id`, `tag_id`, `tag_ids`), a value that is not a ULID is a name in the call's `space_id`: a page by exact title, else by its one case-insensitive title, else by alias; a tag by name, ignoring case. A name two pages share is refused with a validation error listing them with their ids, and a name nothing has is refused too. Block ids stay ULIDs: blocks have no names. `get_page` and `get_page_markdown` take ids only.
-- `append_block` and `update_block_content` write a `[[Name]]` or `#name` as the app's paste does: linked by id, creating the page or tag in the space when nothing matches. A name two pages share stays text, and the result lists it under `warnings`. A page's title and a tag's name are kept as written.
+- `append_block` and `update_block_content` write a `[[Name]]` or `#name` as the app's paste does: linked by id, creating the page or tag in the space when nothing matches. A name two pages share stays text, and the result lists it under `warnings`. A page's title and a tag's name are kept as written. Logseq's `^^x^^` highlight and LaTeX's `\(x\)` and `\[x\]` math are written in Agaric's form as a paste writes them ([import-export.md](import-export.md#import-settings--data)).
 - `resolve { names, space_id }` looks up many names in one call and answers each with `page_id` and `tag_id` (null when nothing matches), or `page_candidates` when pages share the name.
 
 The journal in one call:
