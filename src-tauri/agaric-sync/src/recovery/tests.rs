@@ -2104,18 +2104,19 @@ async fn cache_refresh_skips_rebuilds_for_content_only_recovery_i_lifecycle_5() 
         .await
         .unwrap();
 
-    // Per-draft we always enqueue UpdateFtsBlock + ReindexBlockLinks (= 2
-    // tasks). The flush barrier adds 1 more. With the I-Lifecycle-5 gate
-    // tripping, RebuildTagsCache + RebuildPagesCache must NOT have been
-    // enqueued, so the total processed is exactly 3 — not 5.
+    // Per-draft we always enqueue UpdateFtsBlock + ReindexFtsReferences +
+    // ReindexBlockLinks (= 3 tasks; the second since #6277 B3). The flush
+    // barrier adds 1 more. With the I-Lifecycle-5 gate tripping,
+    // RebuildTagsCache + RebuildPagesCache must NOT have been enqueued, so
+    // the total processed is exactly 4 — not 6.
     let processed = materializer
         .metrics()
         .bg_processed
         .load(AtomicOrdering::Relaxed);
     assert_eq!(
-        processed, 3,
+        processed, 4,
         "content-only recovery must not enqueue RebuildTagsCache or RebuildPagesCache; \
-         expected 2 per-block tasks + 1 barrier = 3, got {processed}",
+         expected 3 per-block tasks + 1 barrier = 4, got {processed}",
     );
 }
 
@@ -2143,16 +2144,16 @@ async fn cache_refresh_enqueues_rebuilds_when_tag_block_recovered_i_lifecycle_5(
         .await
         .unwrap();
 
-    // Expected: UpdateFtsBlock + ReindexBlockLinks + RebuildTagsCache +
-    // RebuildPagesCache + 1 barrier = 5.
+    // Expected: UpdateFtsBlock + ReindexFtsReferences + ReindexBlockLinks +
+    // RebuildTagsCache + RebuildPagesCache + 1 barrier = 6.
     let processed = materializer
         .metrics()
         .bg_processed
         .load(AtomicOrdering::Relaxed);
     assert_eq!(
-        processed, 5,
+        processed, 6,
         "tag-block recovery must enqueue both RebuildTagsCache and RebuildPagesCache; \
-         expected 2 per-block tasks + 2 rebuilds + 1 barrier = 5, got {processed}",
+         expected 3 per-block tasks + 2 rebuilds + 1 barrier = 6, got {processed}",
     );
 }
 
@@ -2180,16 +2181,16 @@ async fn cache_refresh_enqueues_rebuilds_when_page_block_recovered_i_lifecycle_5
         .await
         .unwrap();
 
-    // Expected: UpdateFtsBlock + ReindexBlockLinks + RebuildTagsCache +
-    // RebuildPagesCache + 1 barrier = 5.
+    // Expected: UpdateFtsBlock + ReindexFtsReferences + ReindexBlockLinks +
+    // RebuildTagsCache + RebuildPagesCache + 1 barrier = 6.
     let processed = materializer
         .metrics()
         .bg_processed
         .load(AtomicOrdering::Relaxed);
     assert_eq!(
-        processed, 5,
+        processed, 6,
         "page-block recovery must enqueue both RebuildTagsCache and RebuildPagesCache; \
-         expected 2 per-block tasks + 2 rebuilds + 1 barrier = 5, got {processed}",
+         expected 3 per-block tasks + 2 rebuilds + 1 barrier = 6, got {processed}",
     );
 }
 
