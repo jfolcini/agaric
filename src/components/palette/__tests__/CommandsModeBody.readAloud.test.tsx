@@ -26,7 +26,7 @@ import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
 const onClose = vi.fn()
 
 function renderBody(status: () => SpeechStatus | Promise<SpeechStatus>) {
-  vi.mocked(invoke).mockImplementation(mockInvokeCommands({ speech_status: status }))
+  vi.mocked(invoke).mockImplementation(mockInvokeCommands({ get_speech_status: status }))
   return render(
     <Command label={t('palette.dialogTitle')}>
       <CommandList>
@@ -72,7 +72,7 @@ describe('CommandsModeBody — Read aloud', () => {
     }
   })
 
-  it('offers none of them, and logs, when speech_status rejects', async () => {
+  it('offers none of them, and logs, when get_speech_status rejects', async () => {
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     renderBody(() => Promise.reject(new Error('ipc down')))
     await waitFor(() => expect(warn).toHaveBeenCalledTimes(1))
