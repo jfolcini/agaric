@@ -653,7 +653,7 @@ describe('parse', () => {
       expect(parse('==unclosed')).toEqual(doc(paragraph(text('==unclosed'))))
     })
 
-    it('a bare **** is literal: a run between line edges cannot open (#5160 N9)', () => {
+    it('a lone **** in a heading is literal: a run between line edges cannot open (#5160 N9)', () => {
       expect(parse('# ****')).toEqual(doc(heading(1, text('****'))))
     })
 
@@ -1732,7 +1732,7 @@ describe('mark coalescing: nested marks across adjacent text nodes', () => {
     expect(md3).toBe(md1)
   })
 
-  it('a bare **** round-trips as literal stars (#5160 N9: the run cannot open)', () => {
+  it('a lone **** in a heading round-trips as literal stars (#5160 N9: the run cannot open)', () => {
     const md1 = serialize(parse('# ****'))
     expect(md1).toBe('# \\*\\*\\*\\*')
     const md2 = serialize(parse(md1))

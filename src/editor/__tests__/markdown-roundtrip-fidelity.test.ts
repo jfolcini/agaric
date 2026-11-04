@@ -429,7 +429,7 @@ describe('finding 12: adjacent sibling blockquotes/tables merge (pinned canonica
   // never emits a bare `---` cell for genuine data — not even when the cell's
   // text carries surrounding whitespace, which `serializeTable` strips at the
   // NODE level (`canonicalCellParagraphs`) BEFORE `serializeParagraph`'s
-  // `^-{3,}$` horizontal-rule guard runs, not on the emitted string after it.
+  // `isThematicBreak` horizontal-rule guard runs, not on the emitted string after it.
   it('a `--- ` cell (untrimmed) is escaped too — the guard sees the trimmed text', () => {
     const d = doc(
       table(
@@ -452,7 +452,7 @@ describe('finding 12: adjacent sibling blockquotes/tables merge (pinned canonica
   it('a merge is not falsely triggered by a genuine `--` data row (not 3+ dashes)', () => {
     // `--` is a legal GFM delimiter cell shape but NOT the canonical `---`
     // `serializeTable` emits and `serializeParagraph`'s horizontal-rule guard
-    // (`^-{3,}$`) does not escape it — so it is reachable as genuine,
+    // (`isThematicBreak`) does not escape it — so it is reachable as genuine,
     // unescaped data mid-table, and must not be misread as an absorbed
     // second table's separator.
     const d = doc(
