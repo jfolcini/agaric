@@ -6374,21 +6374,19 @@ async fn import_markdown_stores_link_labels_from_every_form() {
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
     agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
-    import_markdown_inner(
+    // A folder-relative link is read only on a folder import (#6277 G1).
+    import_folder(
         &pool,
-        DEV,
         &mat,
         _dir.path(),
-        "- [[vault/Other|see other]] [label]([[vault/Other]]) [see here](Other.md) \
-         [[vault/Other|vault/Other]]"
-            .into(),
-        Some("vault/Note.md".into()),
-        TEST_SPACE_ID.into(),
-        None,
+        &[(
+            "vault/Note.md",
+            "- [[vault/Other|see other]] [label]([[vault/Other]]) [see here](Other.md) \
+             [[vault/Other|vault/Other]]",
+        )],
+        &[],
     )
-    .await
-    .unwrap();
-    settle(&mat).await;
+    .await;
 
     let others: Vec<String> = sqlx::query_scalar(
         "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'vault/Other' \
@@ -11876,7 +11874,7 @@ async fn import_reads_a_relative_md_link_as_a_page_link_on_a_folder_import() {
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
     let md = "- folder [x](Other%20note.md) [y](../Top.md) [z](https://x.dev/a.md) [w](pic.png)";
 
-    import_file(&pool, &mat, dir.path(), "vault/notes/A.md", md).await;
+    import_folder(&pool, &mat, dir.path(), &[("vault/notes/A.md", md)], &[]).await;
     let other = pages_titled(&pool, "vault/notes/Other note").await;
     let top = pages_titled(&pool, "vault/Top").await;
     assert_eq!((other.len(), top.len()), (1, 1));
@@ -11897,6 +11895,30 @@ async fn import_reads_a_relative_md_link_as_a_page_link_on_a_folder_import() {
     assert_eq!(
         pages_titled(&pool, "Other note").await,
         Vec::<String>::new()
+    );
+    mat.shutdown();
+}
+
+/// #6277 G1 — a note at the root of the picked folder is titled by its file
+/// name alone, and its relative links resolve from that root.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_folder_import_reads_a_root_notes_relative_link() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    import_folder(
+        &pool,
+        &mat,
+        dir.path(),
+        &[("A.md", "- root [x](sub/Other%20note.md)")],
+        &[],
+    )
+    .await;
+    let other = pages_titled(&pool, "sub/Other note").await;
+    assert_eq!(other.len(), 1);
+    assert_eq!(pages_titled(&pool, "A").await.len(), 1);
+    assert_eq!(
+        block_starting(&pool, "root").await,
+        format!("root [[{}|x]]", other[0])
     );
     mat.shutdown();
 }
@@ -16133,7 +16155,7 @@ async fn import_attaches_the_image_beside_the_note_6032() {
         &mat,
         app_data_dir,
         "- see ![](image.png)\n- and ![](b/image.png)".into(),
-        Some("Vault/b/note.md".into()),
+        Some("b/note.md".into()),
         TEST_SPACE_ID.into(),
         Some(vault),
     )

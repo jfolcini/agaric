@@ -129,7 +129,7 @@ There is a design system. Use it, extend it, do not bypass it.
 |-------|----------|----------|
 | Design tokens | `src/index.css` | OKLch colors, spacing, semantic status/priority tokens, themes, `prefers-contrast` / `prefers-reduced-motion` |
 | UI primitives | `src/components/ui/` | Radix + CVA wrappers: Button, IconButton, Select, Dialog, Popover, Badge, Input, ScrollArea, Tooltip, Spinner, … |
-| Shared components | `src/components/` (non-page) | EmptyState, LoadingSkeleton, ConfirmDialog, LoadMoreButton, SearchablePopover, RichContentRenderer, … |
+| Shared components | `src/components/` (non-page) | EmptyState, LoadingSkeleton, ConfirmDialog, LoadMoreButton, RichContentRenderer, … |
 | Shared hooks | `src/hooks/` | useListKeyboardNavigation, useDebouncedCallback, usePropertySave, …; paginated lists use TanStack `useInfiniteQuery` with `src/lib/query-client.ts` |
 | Page components | `src/components/` (top level) | JournalPage, PageBrowser, HistoryView, SearchPanel |
 
