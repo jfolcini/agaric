@@ -843,7 +843,7 @@ pub struct MarkdownLinkToken<'a> {
 }
 
 /// Every markdown image and link of `content`, in source order, read by
-/// [`MARKDOWN_LINK_OPEN_RE`] and [`link_destination`]. Tokens in code and
+/// `MARKDOWN_LINK_OPEN_RE` and `link_destination`. Tokens in code and
 /// escaped ones are included: what skips them is the caller's to say.
 pub fn markdown_link_tokens(content: &str) -> impl Iterator<Item = MarkdownLinkToken<'_>> {
     let mut from = 0;
