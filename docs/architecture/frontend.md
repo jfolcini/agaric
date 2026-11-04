@@ -114,7 +114,7 @@ Page membership lives in the native, indexed `blocks.space_id` column (migration
 
 - **Tauri commands.** Every list / agenda / backlink / history command takes a `SpaceScope` naming exactly one space (`{ kind: 'active', space_id }`); there is no unscoped form. Search takes `SearchFilter.scope`, a required `SearchScope`: an explicit list of spaces or every space.
 - **SQL.** The canonical space-filter clause is pinned by `SPACE_FILTER_CANONICAL` constant + a parity test (`space_filter_canonical.rs`) that ensures the same predicate appears at every read site.
-- **Cross-space links.** Three enforcement points: `edit_block`'s content scan, `set_property`'s ref-type validation, `add_tag`'s space check. A `[[ULID]]` to a foreign-space target is rejected at write time AND rendered as a broken-link chip at render time.
+- **Cross-space links.** Three enforcement points: `edit_block`'s content scan, `set_property`'s ref-type validation, `add_tag`'s space check. A `[[ULID]]` to a foreign-space target is rejected at write time AND rendered as a broken-link chip at render time; a paste first writes one as the text its chip shows, with a warning (#6277).
 - **`create_block` IPC tightening.** Pages without a `space_id` are rejected at the IPC boundary. The four legacy FE bypass call sites (JournalPage daily / TemplatesView / WelcomeModal / `useBlockDatePicker`) all route through `createPageInSpace`.
 
 ### Per-space store partitioning

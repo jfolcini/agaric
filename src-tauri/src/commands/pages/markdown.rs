@@ -1585,12 +1585,15 @@ fn agent_markdown_stretch(
 /// goes. Everything else is kept as written, so the parse by id reads the text
 /// back as the blocks the anchors named. What is not an anchor, a `^word` that
 /// is no block id, stays. Public so the command tests can write an edited
-/// buffer as the source it was loaded from, anchors and all.
+/// buffer as the source it was loaded from, anchors and all. CRLF and CR line
+/// ends, as some clients send text, are read as the parser reads them, or a
+/// line keeps its anchor behind a `\r` (#6277 B1); the parser drops a BOM.
 pub fn anchor_free(source: &str) -> (String, Vec<Option<String>>) {
+    let source = source.replace("\r\n", "\n").replace('\r', "\n");
     let mut lines: Vec<(&str, Option<String>)> =
         source.split('\n').map(|line| (line, None)).collect();
     let mut own_lines = HashSet::new();
-    for block in import::parse_document_outline(source).blocks {
+    for block in import::parse_document_outline(&source).blocks {
         let (Some(word), Some(start)) = (block.block_anchor, block.line) else {
             continue;
         };
@@ -1973,32 +1976,44 @@ async fn resolve_tag_and_page_names(
     let mut page_titles: HashMap<String, String> = HashMap::new();
     if !ulid_set.is_empty() {
         let ulids: Vec<String> = ulid_set.into_iter().collect();
-        // sqlx requires `String` (NOT `Vec<String>`) for `json_each(?)`
-        // binds — encode the set as a JSON array text and bind that.
-        let ids_json = serde_json::to_string(&ulids)?;
-        let rows = sqlx::query!(
-            r#"SELECT id, block_type, content FROM blocks
-               WHERE id IN (SELECT value FROM json_each(?1))
-                 AND deleted_at IS NULL"#,
-            ids_json,
-        )
-        .fetch_all(&mut *conn)
-        .await?;
-        for r in rows {
-            match r.block_type.as_str() {
+        for (id, block_type, content) in load_live_blocks(conn, &ulids).await? {
+            match block_type.as_str() {
                 "tag" => {
-                    if let Some(c) = r.content {
-                        tag_names.insert(r.id, c);
+                    if let Some(c) = content {
+                        tag_names.insert(id, c);
                     }
                 }
                 "page" => {
-                    page_titles.insert(r.id, r.content.unwrap_or_else(|| "Untitled".to_string()));
+                    page_titles.insert(id, content.unwrap_or_else(|| "Untitled".to_string()));
                 }
                 _ => {}
             }
         }
     }
     Ok((tag_names, page_titles))
+}
+
+/// The live blocks of `ids`, in one `json_each(?)` query: each one's id,
+/// type and content.
+async fn load_live_blocks(
+    conn: &mut sqlx::SqliteConnection,
+    ids: &[String],
+) -> Result<Vec<(String, String, Option<String>)>, AppError> {
+    // sqlx requires `String` (NOT `Vec<String>`) for `json_each(?)`
+    // binds — encode the set as a JSON array text and bind that.
+    let ids_json = serde_json::to_string(ids)?;
+    let rows = sqlx::query!(
+        r#"SELECT id, block_type, content FROM blocks
+               WHERE id IN (SELECT value FROM json_each(?1))
+                 AND deleted_at IS NULL"#,
+        ids_json,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.id, r.block_type, r.content))
+        .collect())
 }
 
 /// Step 3b: resolve `((ULID))` targets to a roundtrip-safe link, and record
@@ -2896,12 +2911,13 @@ fn pasted_as_text(block: &import::ParsedBlock, starts_line: bool) -> String {
 /// so one undo. Text is read by [`import::parse_pasted_text`]; each of
 /// `blocks` is one block as it comes. A page link or tag written as a name is
 /// resolved in the anchor's space as an import resolves it, creating the page
-/// or tag when no name there matches; ids and block refs stay as written, and
-/// an `^anchor` in the text never pairs with a block. The top-level blocks
-/// land in order right after the anchor among its siblings, each deeper one
-/// under its parsed parent, with its task state, priority, dates, list style
-/// and properties. Returns the pages and tags the names created, then the
-/// pasted blocks in document order.
+/// or tag when no name there matches; ids and block refs stay as written, but
+/// one whose target is in another space is written as the text its chip shows
+/// (#6277 B2), and an `^anchor` in the text never pairs with a block. The
+/// top-level blocks land in order right after the anchor among its siblings,
+/// each deeper one under its parsed parent, with its task state, priority,
+/// dates, list style and properties. Returns the pages and tags the names
+/// created, then the pasted blocks in document order.
 ///
 /// With a `splice`, the paste goes into the anchor's text (#5160 D4). The
 /// anchor becomes the first block, `before` + its content, and keeps its id,
@@ -2916,7 +2932,7 @@ fn pasted_as_text(block: &import::ParsedBlock, starts_line: bool) -> String {
 ///
 /// A property line a definition refuses stays text at the end of its block,
 /// and a name that ties between two pages stays text; the reply's warnings
-/// name each (#5160 D11).
+/// name each (#5160 D11), and count the refs written as text.
 ///
 /// # Errors
 ///
@@ -3349,8 +3365,10 @@ async fn splice_into_anchor(
 
 /// Resolve the page links and tags `blocks` write as names in `anchor`'s
 /// space, creating what no name there matches, and write each block's content
-/// with their ids. Returns the pages and tags created; a name left as text is
-/// named in `warnings`. With no space, every name stays text.
+/// with their ids, once each ref to another space is written as the text it
+/// shows ([`write_foreign_refs_as_text`]). Returns the pages and tags created;
+/// a name left as text is named in `warnings`. With no space, every name stays
+/// text.
 async fn resolve_pasted_names(
     mut tx: CommandTx,
     materializer: &Materializer,
@@ -3362,6 +3380,7 @@ async fn resolve_pasted_names(
     let Some(space) = agaric_store::space::resolve_block_space(&mut **tx, anchor).await? else {
         return Ok((tx, Vec::new()));
     };
+    write_foreign_refs_as_text(&mut tx, &space, anchor, blocks, warnings).await?;
     let mut names = NameCtx {
         materializer,
         device_id,
@@ -3379,6 +3398,64 @@ async fn resolve_pasted_names(
             rewrite_block_content_for_import(block, &links.page_links, &links.titles, &tag_tokens);
     }
     Ok((tx, names.created))
+}
+
+/// Write each raw `[[ULID]]`, `#[ULID]` and `((ULID))` of `blocks` that the
+/// create would refuse, its target being in another space than `space`, as
+/// the text its chip shows (#6277 B2), with one warning counting them: a link
+/// as `[[Title]]` and a tag as `#name`, which the paste then resolves in
+/// `space` as any name, and a block ref as its target's first line. That line
+/// may hold refs of its own, so the pass repeats over what it wrote, each
+/// target written once: a ref met again stays, and the create refuses it.
+async fn write_foreign_refs_as_text(
+    tx: &mut CommandTx,
+    space: &SpaceId,
+    anchor: &BlockId,
+    blocks: &mut [import::ParsedBlock],
+    warnings: &mut Vec<String>,
+) -> Result<(), AppError> {
+    use agaric_store::cross_space_validation::foreign_content_refs;
+    let mut written: HashSet<String> = HashSet::new();
+    loop {
+        let all: Vec<&str> = blocks.iter().map(|block| block.content.as_str()).collect();
+        let ids: Vec<String> = foreign_content_refs(tx, space, &all.join("\n"), anchor.as_str())
+            .await?
+            .into_iter()
+            .map(|(id, _)| id)
+            .filter(|id| !written.contains(id))
+            .collect();
+        if ids.is_empty() {
+            break;
+        }
+        let shown: HashMap<String, String> = load_live_blocks(tx, &ids)
+            .await?
+            .into_iter()
+            .map(|(id, _, content)| {
+                let first = content.as_deref().unwrap_or_default().lines().next();
+                (id, first.unwrap_or_default().to_owned())
+            })
+            .collect();
+        for block in blocks.iter_mut() {
+            let named = humanise_tag_and_page_refs(&block.content, &shown, &shown);
+            block.content = agaric_store::cache::BLOCK_REF_RE
+                .replace_all(&named, |caps: &regex::Captures<'_>| {
+                    shown
+                        .get(&caps[1])
+                        .cloned()
+                        .unwrap_or_else(|| caps[0].to_owned())
+                })
+                .into_owned();
+        }
+        written.extend(ids);
+    }
+    if !written.is_empty() {
+        warnings.push(format!(
+            "{} reference(s) to another space were written as the text they show: \
+             a block cannot reference another space",
+            written.len()
+        ));
+    }
+    Ok(())
 }
 
 /// The `todo_state` a parsed block carries, from its checkbox or a property

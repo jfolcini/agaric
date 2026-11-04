@@ -4357,6 +4357,48 @@ async fn edit_page_markdown_of_an_unchanged_code_block_writes_nothing_6190() {
     assert_eq!(op_count(&pool).await, before, "no op was written: {result}");
 }
 
+/// An unchanged read sent back with CRLF or CR line ends, or opening with a
+/// BOM, as some clients write text, saves as nothing: no block keeps its
+/// ` ^ULID` as text, and the front matter still reads as the page's (#6277 B1).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_page_markdown_of_an_unchanged_crlf_or_bom_read_writes_nothing_6277() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let (page, _) = mk_list_page(&pool, &mat, &space, "P").await;
+    seed_aliases(&pool, &mat, &page, &["alt"]).await;
+    let base = editable_source(&pool, &mat, &page, &space).await;
+    assert!(
+        base.starts_with("---\n"),
+        "the read opens with front matter: {base}"
+    );
+
+    for markdown in [
+        base.replace('\n', "\r\n"),
+        base.replace('\n', "\r"),
+        format!("\u{feff}{base}"),
+    ] {
+        let before = op_count(&pool).await;
+        let result = tools
+            .call_tool(
+                "edit_page_markdown",
+                json!({ "page_id": page, "markdown": markdown, "base": base, "space_id": space }),
+                &test_ctx_agent(),
+            )
+            .await
+            .expect("an unchanged read saves");
+        settle(&mat).await;
+        assert_eq!(
+            op_count(&pool).await,
+            before,
+            "no op was written for {markdown:?}: {result}"
+        );
+    }
+    assert_eq!(
+        aliases_of(&pool, &page).await,
+        ["alt"],
+        "the aliases are kept"
+    );
+}
+
 /// What an agent reads, appended under another page, reads back as the same
 /// blocks with the same list kinds, under new ids (#6190).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
