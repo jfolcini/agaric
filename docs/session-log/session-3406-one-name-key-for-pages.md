@@ -1,4 +1,4 @@
-# Session 3391 — One folded name key for page titles and aliases (#6278 I1)
+# Session 3406 — One folded name key for page titles and aliases (#6278 I1)
 
 Item I1 of #6278: page titles, page aliases and tag names are unique per space under one fold, `agaric_core::tag_norm::name_key` (trim, Unicode lowercase, NFC). The key is compared, never stored; `normalize_tag_name` and `page_alias_key` key Loro maps and are unchanged.
 
