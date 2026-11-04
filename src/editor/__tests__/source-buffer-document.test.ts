@@ -11,11 +11,18 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 
 import { Editor } from '@tiptap/core'
+import MarkdownIt from 'markdown-it'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { linesContent, sourceBufferExtensions } from '@/editor/source-buffer'
 import { type BlockReading, blockAt, readBlocks } from '@/editor/source-buffer-blocks'
-import { type DocumentBlock, parseDocument, parsePastedText } from '@/editor/source-buffer-document'
+import {
+  type DocumentBlock,
+  DocumentLayout,
+  parseDocument,
+  parsePastedText,
+  pushDocumentLines,
+} from '@/editor/source-buffer-document'
 
 interface TreeBlock {
   id?: string
@@ -145,5 +152,26 @@ describe('the block at a line of a Document buffer', () => {
     expect(blockAt(doc, 2)?.line).toBe(1)
     expect(blockAt(doc, 4)).toEqual({ line: 3, end: 5, subtreeEnd: 5, id: B })
     expect(blockAt(doc, 6)).toEqual({ line: 6, end: 7, subtreeEnd: 7, id: C })
+  })
+})
+
+describe('the Document writer', () => {
+  it('writes a chain of plain blocks as an outline other tools nest, not as code (decision 2, #6277)', () => {
+    const layout = new DocumentLayout()
+    const lines: string[] = []
+    for (const [depth, text] of ['a', 'b', 'c'].entries()) {
+      const place = layout.place(depth, '', null, false)
+      if (place.blank) lines.push('')
+      pushDocumentLines(lines, place.indent, place.marker, place.taskMarker, text)
+    }
+
+    const html = new MarkdownIt('commonmark').render(lines.join('\n'))
+
+    expect(html).not.toContain('<pre>')
+    expect(parseDocument(lines.join('\n'), null).blocks.map((b) => [b.depth, b.content])).toEqual([
+      [0, 'a'],
+      [1, 'b'],
+      [2, 'c'],
+    ])
   })
 })
