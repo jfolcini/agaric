@@ -224,6 +224,52 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     await expectImageRendered(id, 'after the round trip')
   })
 
+  it('#6032 — imports an Evernote task as a task block with its due date, in place of its placeholder', async () => {
+    await waitForAppReady()
+    const marker = runScopedMarker('wdio-enex-task')
+    const title = `${marker}-note`
+    // Evernote 10 writes a task as a `<task>` beside the body, and in the body
+    // only this placeholder for its task group.
+    const placeholder =
+      '<div style="--en-task-group:true; --en-id:group-1;color:#868686">' +
+      '<div>Content not supported</div><div>This block is a placeholder for Tasks.</div></div>'
+    const enml = `<en-note><div>${marker}-before</div>${placeholder}<div>${marker}-after</div></en-note>`
+    const task =
+      `<task><title>${marker}-todo</title><taskStatus>open</taskStatus><taskFlag>false</taskFlag>` +
+      '<sortWeight>A</sortWeight><noteLevelID>task-1</noteLevelID>' +
+      '<taskGroupNoteLevelID>group-1</taskGroupNoteLevelID>' +
+      // Midday on 1 Oct 2031 in the task's zone.
+      '<dueDate>20311001T120000Z</dueDate><timeZone>Europe/Budapest</timeZone></task>'
+    const enex = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<en-export>',
+      `<note><title>${title}</title><content><![CDATA[${enml}]]></content>${task}</note>`,
+      '</en-export>',
+    ].join('\n')
+    await importFile('import-enex-input', 'export.enex', enex, `Imported “${title}”`)
+
+    await navigateTo('Journal')
+    await openPageTitled(title)
+    await blockStaticByMarker(`${marker}-after`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    const block = blockStaticByMarker(`${marker}-todo`)
+    await block.waitForDisplayed({ timeout: NAV_TIMEOUT })
+    const id = await block.getAttribute('data-block-id')
+    const row = $(`li[data-block-id="${id}"]`)
+    const taskMarker = row.$('[data-testid="task-marker"]')
+    await taskMarker.waitForExist({ timeout: ACTION_TIMEOUT })
+    await browser.waitUntil(
+      async () => ((await taskMarker.getAttribute('aria-label')) ?? '').startsWith('Task: TODO'),
+      { timeout: ACTION_TIMEOUT, timeoutMsg: 'the imported task never showed the TODO state' },
+    )
+    const due = row.$('.due-date-chip')
+    await due.waitForExist({ timeout: ACTION_TIMEOUT })
+    expect(await due.getAttribute('aria-label')).toContain('Oct 1, 2031')
+    await expectAbsent(
+      '[data-testid="block-static"]*=Content not supported',
+      "the task group's placeholder text",
+    )
+  })
+
   it('imports a .jex with each note a page titled by its notebook path, a to-do a task, a tag a page tag', async () => {
     await waitForAppReady()
     const marker = runScopedMarker('wdio-jex')

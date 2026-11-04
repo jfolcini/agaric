@@ -217,6 +217,8 @@ import {
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
+import { frontendKey, parseAcceptedFile } from './lib/mutation-accepted.mjs'
+
 // One PARENT PER LANE, selected by `--lane`.
 //
 // A single parent spanning both lanes made every partial run dangerous: the
@@ -785,22 +787,6 @@ let defaultAcceptedPath = ACCEPTED_PATH
 // cargo-mutants runs from `src-tauri/`, so its ids name files relative to it.
 const RUST_ROOT = resolve(REPO_ROOT, 'src-tauri')
 
-/**
- * The line-independent identity of a frontend mutant: file, mutator, the
- * trimmed text of its source line, its column relative to that text, and which
- * occurrence of that text it is in the file. `lines` is the file's source and
- * `line` is 1-based. `undefined` when the line cannot be read.
- */
-function frontendKey(file, mutator, lines, line, column) {
-  const raw = lines[line - 1]
-  const text = raw?.trim()
-  if (!text) return undefined
-  const relativeColumn = column - (raw.length - raw.trimStart().length)
-  let occurrence = 1
-  for (let i = 0; i < line - 1; i++) if (lines[i].trim() === text) occurrence++
-  return ['frontend', file, mutator, relativeColumn, occurrence, text].join('\t')
-}
-
 /** id -> rust fingerprint (file, description, trimmed source line) for every id that resolves. */
 function rustKeys(ids, root) {
   const sources = new Map()
@@ -815,30 +801,6 @@ function rustKeys(ids, root) {
     }
     const text = sources.get(file)[Number(line) - 1]?.trim()
     if (text) keys.set(id, ['rust', file, description, text].join('\t'))
-  }
-  return keys
-}
-
-const ACCEPTED_ENTRY_SHAPE = {
-  frontend: /^frontend\t[^\t]+\t[^\t]+\t-?\d+\t[1-9]\d*\t\S/,
-  rust: /^rust\t[^\t]+\t[^\t]+\t\S/,
-}
-
-/**
- * The fingerprints in `mutation-accepted.tsv`. Blank lines and `#` comments are
- * skipped; anything else that is not an entry throws, so a bad paste fails the
- * lane instead of silently suppressing nothing.
- */
-export function parseAcceptedFile(text, where = 'mutation-accepted.tsv') {
-  const keys = new Set()
-  for (const [i, line] of text.split('\n').entries()) {
-    if (line.trim() === '' || line.startsWith('#')) continue
-    const lane = line.split('\t', 1)[0]
-    if (!ACCEPTED_ENTRY_SHAPE[lane]?.test(line) || line !== line.trimEnd())
-      throw new Error(
-        `${where}:${i + 1}: not an accepted-equivalent entry: ${JSON.stringify(line)}`,
-      )
-    keys.add(line)
   }
   return keys
 }
