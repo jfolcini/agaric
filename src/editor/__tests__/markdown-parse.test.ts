@@ -696,7 +696,7 @@ describe('parse — CRLF line endings (#4051)', () => {
   it('a lone CR in a callout title is preserved, not truncated away', () => {
     // `CALLOUT_RE` is the one production that is not anchored at the end, so a
     // `.`-matched title there does not merely fail to match on a lone CR — it
-    // matches the PREFIX, and `extractCalloutType` overwrites the quote line
+    // matches the PREFIX, and `extractCallout` overwrites the quote line
     // with that prefix, silently dropping everything from the CR onward. Its
     // title matcher is `[^\n]` for that reason, and the separator after `]` is
     // a space/tab rather than `\s` so it cannot swallow a leading CR either.

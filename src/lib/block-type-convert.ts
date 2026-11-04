@@ -42,8 +42,8 @@ export type BlockTypeToken =
 const HEADING_RE = /^(#{1,6})\s+/
 // The callout marker, spelled the way the PARSER spells it (`CALLOUT_RE` in
 // `markdown-parse/vocab.ts`): `[!TYPE]` NOT followed by `(`, then its optional
-// `-` / `+` fold marker, stripped with it. That one refused
-// follower is the whole difference between a marker and a link whose visible
+// `-` / `+` fold marker, stripped with it. The refused `(` is the whole
+// difference between a marker and a link whose visible
 // text starts with `!` — `> [!a](https://example.com)a` is a blockquote holding
 // a link, so the Turn-into menu must call it a quote and `stripBlockMarker`
 // must leave it alone; stripping `> [!a]` off it would delete the link (#4072).

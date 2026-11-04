@@ -42,7 +42,7 @@ export const MAX_LINK_SCAN = 10_000
  * Callout prefix on the first line of a blockquote: `[!NOTE] title`. Group 1 is
  * the type (word characters and hyphens, `[!my-type]`), group 2 Obsidian's fold
  * marker (`-` folded, `+` foldable and open, empty for neither), group 3 the
- * remaining title text, which `extractCalloutType` (`./parser`) writes BACK over
+ * remaining title text, which `extractCallout` (`./parser`) writes BACK over
  * the quote line — so what group 3 fails to capture is not merely unmatched, it
  * is DELETED.
  *

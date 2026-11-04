@@ -2,7 +2,7 @@
  * TipTap extension: Blockquote that carries a `calloutType` attribute (#258).
  *
  * The app stores callouts as `> [!TYPE] …` markdown. The parser
- * (`markdown-parse.ts` → `extractCalloutType`) sets `attrs.calloutType` on the
+ * (`markdown-parse/parser.ts` → `extractCallout`) sets `attrs.calloutType` on the
  * blockquote node, and the serializer (`markdown-serialize.ts` →
  * `serializeBlockquote`) emits `[!TYPE]` back from it. But the editor used
  * stock `@tiptap/extension-blockquote`, which has no `calloutType` attribute —
