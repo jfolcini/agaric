@@ -5,7 +5,8 @@
  * grip, the chevron and a task's checkbox sit inside the mode's box, the grip's
  * glyph `SLACK` px clear of its edge; hovering a row moves no text; a child's
  * text starts one indent step past its parent's, a task's included, and moves
- * as its parent becomes a task or stops being one, on a phone too; and
+ * as its parent becomes a task or stops being one; on a phone, where neither
+ * mode moves a task's children, a child starts where a plain block's would; and
  * `/todo`, Ctrl+Enter and the block menu each still make a plain line a task,
  * read back from the backend.
  */
@@ -380,24 +381,36 @@ test.describe('gutter layout on a phone @editor @pages @mobile', () => {
     await waitForBoot(page)
   })
 
-  test("a child's text starts one indent step past its parent's in both modes; page mode keeps a task's text where a plain block's is", async ({
-    page,
-  }) => {
+  test("a task's children start where a plain block's would, in both modes", async ({ page }) => {
     const { ids } = await seed(page, 'Indent phone', NESTED)
     await openPageMobile(page, 'Indent phone')
     const step = await indentStep(page)
     expect(step, '--indent-width').toBe(12)
     await expect(blockText(page, ids[5])).toBeVisible()
-    const blockXs = await expectIndented((i) => blockText(page, ids[i]), step, 'phone block mode')
-    // Block mode draws the checkbox before a task's text.
-    expect(blockXs(0) - blockXs(3), 'phone block mode: task vs plain').toBeGreaterThan(0)
+    // A phone's column cannot spare a checkbox per nested task (`--block-tree-task-shift`).
+    const expectLikePlain = async (text: (index: number) => Locator, what: string) => {
+      const x = async (i: number) => textX(text(i))
+      expect((await x(4)) - (await x(3)), `${what}: plain child vs plain block`).toBeCloseTo(
+        step,
+        0,
+      )
+      expect(await x(1), `${what}: a task's child vs a plain block's`).toBeCloseTo(await x(4), 0)
+      expect(await x(2), `${what}: a task's grandchild vs a plain block's`).toBeCloseTo(
+        await x(5),
+        0,
+      )
+    }
+    await expectLikePlain((i) => blockText(page, ids[i]), 'phone block mode')
 
     await page.getByRole('button', { name: 'Page actions', exact: true }).tap()
     await page.getByRole('menuitem', { name: 'Edit as page', exact: true }).tap()
     await expect(pageCheckbox(page, ids[0])).toBeVisible()
-    const pageXs = await expectIndented((i) => pageText(page, ids[i]), step, 'phone page mode')
+    await expectLikePlain((i) => pageText(page, ids[i]), 'phone page mode')
     // Page mode's phone checkbox sits in the lane.
-    expect(pageXs(0), 'phone page mode: task vs plain').toBe(pageXs(3))
+    expect(await textX(pageText(page, ids[0])), 'phone page mode: task vs plain').toBeCloseTo(
+      await textX(pageText(page, ids[3])),
+      0,
+    )
   })
 })
 

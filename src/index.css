@@ -1016,19 +1016,20 @@
  * (`.ProseMirror`, `StaticBlock`). A task's text sits the checkbox and its gap
  * further in, and so does each block under a task, once per task above it
  * (`countTasksAtOrAbove`): a child starts one indent step past its parent's
- * text. A coarse pointer's checkbox is 44 px wide (`touch-target`), and block
- * mode's plain row keeps its empty box and the gap after it there
- * (`BlockInlineControls`), so a task's text is only the checkbox further in. */
+ * text. Block mode on a coarse pointer adds none (`--block-tree-task-shift`): its
+ * plain row keeps the 44 px checkbox's empty box there (`BlockInlineControls`),
+ * and a phone's narrow column cannot spare 56 px per nested task. */
 :root {
   --block-lane: calc(var(--agaric-font-size, 1rem) + 1.875rem);
   --block-checkbox: calc(var(--agaric-font-size, 1rem) + 0.25rem);
   --block-gap: 0.25rem;
   --block-inset: 0.75rem;
   --block-task-shift: calc(var(--block-checkbox) + var(--block-gap));
+  --block-tree-task-shift: var(--block-task-shift);
 }
 @media (pointer: coarse) {
   :root {
-    --block-task-shift: max(var(--block-checkbox), 44px);
+    --block-tree-task-shift: 0px;
   }
 }
 

@@ -10,10 +10,10 @@ After #6315 made both editing modes lay out the gutter alike, the maintainer loo
 - **Block mode:** `BlockListRenderer` computes the counts per visible row and `SortableBlock` pads by them. A todo-state change rebuilds the rows, so children re-indent live. The drop indicator and the drag previews use the projected parent's count.
 - **Page mode:** `PageLists.redraw` computes the counts and tells a block when its count changes. The node view sets `--tasks-above`, which the margin in `page-document.ts` reads. The drop bar lands at the new parent's text plus one step.
 - `DragIndentGuides` (one x per depth) stays approximate under a task; a comment says so. The drag overlay and embeds draw no checkbox and are unchanged.
-- **Phones:** block mode on touch keeps an empty checkbox box on plain rows, so its task shift is the 44 px checkbox alone, and a task's child now starts one step past the task's text (task 60, child 72). Page mode's phone layout keeps its checkbox in the lane, so its shift is 0 and nothing moves there.
+- **Phones:** unchanged. Block mode on a coarse pointer adds no task shift (`--block-tree-task-shift: 0px`): its plain row keeps the 44 px checkbox's empty box, so each nested task would cost 56 px, and the review showed a five-deep task chain on an iPhone 13 breaking words mid-letter. Page mode's phone layout keeps its checkbox in the lane, so its shift is 0 too. A tablet in page mode keeps main's 24 px task padding.
 
 **Tests.**
-- `e2e/gutter-layout.spec.ts` covers Small, Medium and Large in both modes, plus a phone case. It asserts:
+- `e2e/gutter-layout.spec.ts` covers Small, Medium and Large in both modes, plus a phone case that pins the unchanged phone layout (red with the desktop shift on phones: "a task's child vs a plain block's: expected 28, got 52"). It asserts:
   - the handle's dots sit at least 6 px inside the box;
   - a task's child, a plain block's child, and a grandchild under a task each sit one indent step right of their parent's text;
   - Ctrl+Enter on the parent moves the children, re-measured live;

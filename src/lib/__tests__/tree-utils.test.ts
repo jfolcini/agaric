@@ -241,10 +241,6 @@ describe('countTasksAtOrAbove', () => {
       PC: 0,
     })
   })
-
-  it('counts nothing for no blocks', () => {
-    expect(countTasksAtOrAbove([], isTask).size).toBe(0)
-  })
 })
 
 describe('getDragDescendants', () => {

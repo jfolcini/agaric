@@ -284,7 +284,7 @@ describe('SortableBlockWrapper', () => {
     const indicators = container.querySelectorAll('.drop-indicator')
     expect(indicators).toHaveLength(1)
     expect((indicators[0] as HTMLElement).style.marginLeft).toBe(
-      'calc(var(--indent-width) * 2 + var(--block-task-shift) * 0)',
+      'calc(var(--indent-width) * 2 + var(--block-tree-task-shift) * 0)',
     )
   })
 
@@ -342,7 +342,7 @@ describe('SortableBlockWrapper', () => {
 
     const indicator = container.querySelector('.drop-indicator') as HTMLElement
     expect(indicator.style.marginLeft).toBe(
-      'calc(var(--indent-width) * 2 + var(--block-task-shift) * 0)',
+      'calc(var(--indent-width) * 2 + var(--block-tree-task-shift) * 0)',
     )
   })
 
@@ -359,7 +359,7 @@ describe('SortableBlockWrapper', () => {
 
     const indicator = container.querySelector('.drop-indicator') as HTMLElement
     expect(indicator.style.marginLeft).toBe(
-      'calc(var(--indent-width) * 1 + var(--block-task-shift) * 0)',
+      'calc(var(--indent-width) * 1 + var(--block-tree-task-shift) * 0)',
     )
     expect(sortableBlockProps[0]?.['tasksAbove']).toBe(0)
   })

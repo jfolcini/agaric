@@ -195,7 +195,7 @@ function SortableBlockWrapperInner({
     <div
       className="drop-indicator h-[5px] bg-ring rounded-full ring-2 ring-ring/20"
       style={{
-        marginLeft: `calc(var(--indent-width) * ${dropIndicatorDepth} + var(--block-task-shift) * ${projectedTasks})`,
+        marginLeft: `calc(var(--indent-width) * ${dropIndicatorDepth} + var(--block-tree-task-shift) * ${projectedTasks})`,
       }}
     />
   ) : null
