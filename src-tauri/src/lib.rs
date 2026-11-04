@@ -267,7 +267,7 @@ macro_rules! agaric_commands {
             $crate::commands::mirror::set_mirror_folder,
             $crate::commands::mirror::get_mirror_status,
             // Read aloud (#5745)
-            $crate::commands::speech::speech_status,
+            $crate::commands::speech::get_speech_status,
             // Logseq/Markdown import (#660)
             $crate::commands::pages::import_markdown,
             // The end of a folder import: links between its notes.

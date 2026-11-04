@@ -110,7 +110,7 @@ function blockLines(node: BlockLevelNode, ctx: SpeakContext): string[] {
     case 'orderedList': {
       return (node.content ?? []).flatMap((item, index) => {
         const lines = listItemLines(item, ctx)
-        lines[0] = `${index + 1}. ${lines[0] ?? ''}`
+        if (lines[0]) lines[0] = `${index + 1}. ${lines[0]}`
         return lines
       })
     }

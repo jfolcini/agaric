@@ -23,10 +23,10 @@
  *     `stripForFts` (`handlers/search.ts`), which models
  *     `strip_for_fts_with_maps`'s page-link resolution step. That backend
  *     step is `PAGE_LINK_RE`-scoped on purpose (it substitutes a page's
- *     TITLE; a block ref is not a page and has no title to substitute), so
- *     widening this one too would make a `((ULID))` block ref resolve to a
- *     page's title in the FTS-indexed text — a divergence FROM the backend,
- *     not a fix.
+ *     TITLE; a block ref resolves to its target's first line in a step of
+ *     its own, `maskShownSpans`), so widening this one too would send a
+ *     `((ULID))` block ref through the page-title lookup in the FTS-indexed
+ *     text — a divergence FROM the backend, not a fix.
  *   - {@link ulidLinkTokenRe} — `ULID_LINK_RE`-shaped. `scanLinkTargets` /
  *     `contentLinksTo` / `deriveLinkEdges` use this one: they model
  *     `block_links`, which the real `reindex_block_links_conn`

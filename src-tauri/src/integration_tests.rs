@@ -1488,10 +1488,11 @@ async fn materializer_processes_background_tasks_after_edit() {
     let bg_after = mat.metrics().bg_processed.load(Ordering::Relaxed);
     let bg_delta = bg_after - bg_before;
     // edit_block on a content block dispatches: ReindexBlockLinks + ReindexBlockTagRefs
-    // + UpdateFtsBlock (3 tasks). flush_background() adds 1 Barrier = 4 total.
+    // + ReindexFtsReferences (#6277 B3) + UpdateFtsBlock (4 tasks).
+    // flush_background() adds 1 Barrier = 5 total.
     assert_eq!(
-        bg_delta, 4,
-        "edit_block on content block must dispatch exactly 4 bg tasks (3 tasks + 1 flush barrier), got {bg_delta}"
+        bg_delta, 5,
+        "edit_block on content block must dispatch exactly 5 bg tasks (4 tasks + 1 flush barrier), got {bg_delta}"
     );
 }
 

@@ -1492,6 +1492,52 @@ export async function pickRepeatCommand(label: string): Promise<void> {
   await item.click()
 }
 
+const SEARCH_INPUT = '[aria-label="Search blocks"]'
+
+/**
+ * Replace the search field's text with `query` and submit it. Emptying the
+ * field first drops the query, so the same text asked again is a new ask.
+ */
+async function search(query: string): Promise<void> {
+  await $(SEARCH_INPUT).click()
+  await browser.keys(['Control', 'a'])
+  await browser.keys(['Delete'])
+  await typeInputVerified(SEARCH_INPUT, query)
+  await browser.keys(['Enter'])
+}
+
+/** The block ids of the listed results (SearchResultBlockRow.tsx), read once. */
+function resultIds(): Promise<string[]> {
+  return browser.execute(() =>
+    [...document.querySelectorAll('[data-testid^="search-result-row-"]')].map(
+      (row) => row.getAttribute('data-testid')?.slice('search-result-row-'.length) ?? '',
+    ),
+  )
+}
+
+/** Search `word` until its results satisfy `holds`, asking again each time. */
+export async function waitForResults(
+  word: string,
+  holds: (ids: string[]) => boolean,
+  what: string,
+): Promise<void> {
+  let seen: string[] = []
+  await search(word)
+  await browser
+    .waitUntil(
+      async () => {
+        seen = await resultIds()
+        if (holds(seen)) return true
+        await search(word)
+        return false
+      },
+      { timeout: ACTION_TIMEOUT, interval: 3_000 },
+    )
+    .catch(() => {
+      throw new Error(`${what}; the results held ${JSON.stringify(seen)}`)
+    })
+}
+
 /** Call the real backend as another surface does. */
 export function invoke<T>(cmd: string, args: Record<string, unknown> = {}): Promise<T> {
   return browser.execute(
