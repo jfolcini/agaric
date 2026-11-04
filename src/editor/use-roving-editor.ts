@@ -43,7 +43,11 @@ import {
   hashTagPickerPluginKey,
 } from '@/editor/extensions/at-tag-picker'
 import { BlockLink } from '@/editor/extensions/block-link'
-import { BlockLinkPicker, blockLinkPickerPluginKey } from '@/editor/extensions/block-link-picker'
+import {
+  BlockLinkPicker,
+  type BlockLinkPickerOptions,
+  blockLinkPickerPluginKey,
+} from '@/editor/extensions/block-link-picker'
 import { BlockRef } from '@/editor/extensions/block-ref'
 import { BlockRefPicker, blockRefPickerPluginKey } from '@/editor/extensions/block-ref-picker'
 import { CalloutBlockquote } from '@/editor/extensions/callout-blockquote'
@@ -579,6 +583,8 @@ export interface ContentExtensionOptions {
   searchPages: (query: string) => PickerItem[] | Promise<PickerItem[]>
   onCreatePage: (label: string) => Promise<string>
   searchBlockRefs: (query: string) => PickerItem[] | Promise<PickerItem[]>
+  /** The block a typed `[[Page#anchor]]` names (#6033); none drops the anchor. */
+  findAnchor?: BlockLinkPickerOptions['findAnchor']
   /** `- ` and `1. ` start a list, on which block mode's list-style and checkbox rules build. */
   listInputRules: boolean
 }
@@ -664,7 +670,11 @@ export function contentExtensions(o: ContentExtensionOptions) {
       onNavigate: o.onNavigate,
     }),
     AtTagPicker.configure({ items: o.searchTags, onCreate: o.onCreateTag }),
-    BlockLinkPicker.configure({ items: o.searchPages, onCreate: o.onCreatePage }),
+    BlockLinkPicker.configure({
+      items: o.searchPages,
+      onCreate: o.onCreatePage,
+      findAnchor: o.findAnchor,
+    }),
     BlockRefPicker.configure({ items: o.searchBlockRefs }),
   ]
   return { text, lists, blocks, inline, chips }
@@ -729,6 +739,8 @@ export interface RovingEditorOptions {
   onPropertySelect?: (item: PickerItem) => void
   /** Return blocks matching query (for (( picker). */
   searchBlockRefs?: (query: string) => PickerItem[] | Promise<PickerItem[]>
+  /** The block a typed `[[Page#anchor]]` names (#6033); none drops the anchor. */
+  findAnchor?: BlockLinkPickerOptions['findAnchor']
   /** Whether a linked block is active or deleted; a deleted `[[link]]` is broken. */
   resolveBlockStatus?: ((id: string) => 'active' | 'deleted') | undefined
   /** Whether a tag is active or deleted; a deleted tag is broken. */
@@ -908,6 +920,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   const onCheckboxRef = useRef(onCheckbox)
   const onListStyleRef = useRef(onListStyle)
   const searchBlockRefsRef = useRef(options.searchBlockRefs ?? noBlockRefs)
+  const findAnchorRef = useRef(options.findAnchor)
   const searchTagsRef = useRef(searchTags)
   const searchPagesRef = useRef(searchPages)
   const searchSlashCommandsRef = useRef(searchSlashCommands)
@@ -930,6 +943,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     onCheckboxRef.current = onCheckbox
     onListStyleRef.current = onListStyle
     searchBlockRefsRef.current = options.searchBlockRefs ?? noBlockRefs
+    findAnchorRef.current = options.findAnchor
     searchTagsRef.current = searchTags
     searchPagesRef.current = searchPages
     searchSlashCommandsRef.current = searchSlashCommands
@@ -970,6 +984,8 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
         return fn(label)
       },
       searchBlockRefs: (query: string) => searchBlockRefsRef.current(query),
+      findAnchor: (pageId: string | undefined, anchor: string) =>
+        findAnchorRef.current?.(pageId, anchor) ?? Promise.resolve(undefined),
       listInputRules: true,
     })
     return [

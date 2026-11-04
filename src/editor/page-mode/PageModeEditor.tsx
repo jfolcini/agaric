@@ -84,6 +84,7 @@ import { processFileAttachments } from '@/components/editor/EditableBlock'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { getActiveEditor, setActiveEditor } from '@/editor/active-editor'
+import { findAnchorBlock } from '@/editor/anchor-block'
 import { focusStaysInEditor } from '@/editor/editor-portal'
 import { PageAttachments } from '@/editor/page-mode/page-attachments'
 import { commitPageTyped } from '@/editor/page-mode/page-commit'
@@ -492,6 +493,8 @@ function PageModeDocument({
       onTagClick,
       placeholder: t('pageMode.placeholder'),
       pageId,
+      findAnchor: (anchorPage: string | undefined, anchor: string) =>
+        findAnchorBlock(anchorPage ?? pageId, anchor),
       tasks: {
         blockOf: (id: string) => pageStore.getState().blocksById.get(id),
         propertiesOf: (id: string) => properties.of(id),
