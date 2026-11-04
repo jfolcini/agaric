@@ -1,4 +1,4 @@
-# Session 3333 — Read aloud in the app
+# Session 3343 — Read aloud in the app
 
 Slice S6 of #5745. The maintainer chose (2026-11-04) to ship it assuming the
 webview's `speechSynthesis` works on macOS and Windows, with a Windows user
