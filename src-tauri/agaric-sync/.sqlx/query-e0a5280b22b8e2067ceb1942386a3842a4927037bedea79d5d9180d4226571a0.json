@@ -1,16 +1,16 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT source_id FROM block_links WHERE target_id = ?",
+  "query": "SELECT block_id FROM block_tags WHERE tag_id IN (SELECT value FROM json_each(?))",
   "describe": {
     "columns": [
       {
-        "name": "source_id",
+        "name": "block_id",
         "ordinal": 0,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "block_links",
-            "name": "source_id"
+            "table": "block_tags",
+            "name": "block_id"
           }
         }
       }
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "0769e2e9d3366ebd2657b5e03d3308695f02f91bba0f65fc6e32f7991fddd6cd"
+  "hash": "e0a5280b22b8e2067ceb1942386a3842a4927037bedea79d5d9180d4226571a0"
 }

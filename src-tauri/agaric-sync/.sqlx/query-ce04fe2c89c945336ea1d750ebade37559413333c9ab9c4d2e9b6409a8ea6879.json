@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id FROM blocks WHERE instr(content, '#[' || ? || ']') > 0",
+  "query": "SELECT id FROM blocks b WHERE EXISTS (SELECT 1 FROM json_each(?) t WHERE instr(b.content, '#[' || t.value || ']') > 0)",
   "describe": {
     "columns": [
       {
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "5c28755712f02203e4e93c4942aa81afbc10c0a19e41e097280c2c63c83a0a1a"
+  "hash": "ce04fe2c89c945336ea1d750ebade37559413333c9ab9c4d2e9b6409a8ea6879"
 }
