@@ -37,9 +37,10 @@ pub struct PropertyMergeCounts {
     pub dropped: i64,
 }
 
-/// Refuse a rename, merge or type change of `key`, one the app writes for
-/// itself (`INTERNAL_PROPERTY_KEYS`): moving or converting the template
-/// markers' values, say, would break templates.
+/// Refuse a rename, merge or type change of `key`, or a move of values into
+/// it, when it is one the app writes for itself (`INTERNAL_PROPERTY_KEYS`):
+/// moving or converting the template markers' values, say, would break
+/// templates.
 pub(crate) fn refuse_internal_key(key: &str) -> Result<(), AppError> {
     if is_internal_property_key(key) {
         return Err(AppError::validation(format!(

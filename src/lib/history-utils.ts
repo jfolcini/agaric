@@ -43,18 +43,20 @@ const PROPERTY_KEY_OP_LABELS: Partial<
   },
 }
 
-/** The key of a rewrite's first value write: a removal's or a conversion's, or a move's source. */
-function valuesKey(values: unknown): string | null {
+/**
+ * The key of a rewrite's `at`th value write. The first is a removal's or a
+ * conversion's key, and a move's source.
+ */
+function valuesKey(values: unknown, at = 0): string | null {
   const key = Array.isArray(values)
-    ? (values[0] as Record<string, unknown> | undefined)?.['key']
+    ? (values[at] as Record<string, unknown> | undefined)?.['key']
     : undefined
   return typeof key === 'string' ? key : null
 }
 
 /** `from → into` of a move's first two value writes. */
 function moveLabel(values: unknown): string | null {
-  if (!Array.isArray(values)) return null
-  const [from, into] = [valuesKey(values), valuesKey(values.slice(1))]
+  const [from, into] = [valuesKey(values), valuesKey(values, 1)]
   return from !== null && into !== null ? `${from} → ${into}` : null
 }
 

@@ -13,10 +13,11 @@ import {
 /**
  * #6206 — Settings › Properties counts a key's values that don't fit it and
  * removes them, adds them to a select's options, converts each to a value
- * that fits, or moves them to another property where they fit. The seeded Personal space declares `project` as a select of
- * alpha, beta and gamma, held by two meeting blocks as alpha and beta; editing
- * the options to drop beta leaves the second block's beta not fitting. Each
- * effect is read back after leaving the view and coming back.
+ * that fits, or moves them to another property where they fit. The seeded
+ * Personal space declares `project` as a select of alpha, beta and gamma, held
+ * by two meeting blocks as alpha and beta; editing the options to drop beta
+ * leaves the second block's beta not fitting. Each effect is read back after
+ * leaving the view and coming back.
  */
 
 test.beforeEach(async ({ page }) => {

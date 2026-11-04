@@ -1,5 +1,5 @@
 {
-  "description": "#6206 — `move_unfit_property_values` moves each value of a key that doesn't fit it, the Trash's included, to another key on the same block, where it fits read under that key's type (a number or a boolean becomes its text under a text key), in one `rewrite_properties` with the reason `move_unfit`: per block the value removed under its key, then written under the other. A block that already holds the other key keeps its value where it is, and so does a value that doesn't fit the other key; the move answers what it moved and left, refuses an acknowledgement that differs, and appends nothing when nothing moves. One undo puts every value back as it was held. The target is refused when it is the key itself, built in, the app's own, a ref, or undeclared; `preview_unfit_property_move` counts and refuses as the move does. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "description": "#6206 — `move_unfit_property_values` moves each value of a key that doesn't fit it, the Trash's included, to another key on the same block, where it fits read under that key's type (a number or a boolean becomes its text under a text key), in one `rewrite_properties` with the reason `move_unfit`: per block the value removed under its key, then written under the other. A block that already holds the other key keeps its value where it is and counts as holding it, whether or not the value would fit there; a value that doesn't fit the other key stays too; the move answers what it moved and left, refuses an acknowledgement that differs, and appends nothing when nothing moves. One undo puts every value back as it was held. The target is refused when it is the key itself, built in, the app's own, a ref, or undeclared; `preview_unfit_property_move` counts and refuses as the move does. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -109,7 +109,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 15,
+      "count": 16,
       "ops": [
         {
           "key": "whenx",
@@ -164,6 +164,10 @@
         },
         {
           "op_type": "rewrite_properties"
+        },
+        {
+          "key": "sizex",
+          "op_type": "set_property"
         }
       ]
     },
@@ -204,6 +208,12 @@
         "key": "notesx",
         "value": "kept",
         "value_type": "Text"
+      },
+      {
+        "block_id": "B7",
+        "key": "sizex",
+        "value": 2.0,
+        "value_type": "Num"
       },
       {
         "block_id": "B7",
@@ -317,7 +327,7 @@
       "error": null,
       "has_more": null,
       "name": "preview_into_sizex",
-      "rows": ["unfit_move_counts#moved=0#occupied=0#unfit_there=1"],
+      "rows": ["unfit_move_counts#moved=0#occupied=1#unfit_there=0"],
       "total_count": null
     },
     {
@@ -653,6 +663,17 @@
       "comment": "Only `U`'s soon is left, and `U` holds `notesx`: no op.",
       "name": "nothing_to_move",
       "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S7",
+        "key": "sizex",
+        "value": {
+          "value_num": 2
+        }
+      },
+      "command": "set_property",
+      "comment": "O16 — `U` holds `sizex` too, beside a soon that is no number."
     }
   ],
   "queries": [
@@ -673,7 +694,7 @@
         "spaceId": "$SPACE"
       },
       "command": "preview_unfit_property_move",
-      "comment": "`U`'s soon is no number.",
+      "comment": "`U`'s soon is no number, but `U` holds `sizex`: it counts as set there, not as not fitting.",
       "name": "preview_into_sizex"
     },
     {

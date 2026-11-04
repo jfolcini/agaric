@@ -289,6 +289,21 @@ describe('getPayloadRawContent', () => {
       'rewrite_properties',
       { reason: 'remove_unfit', defs: [], values: [{ block_id: 'B1', key: 3 }] },
     ],
+    ['a move without value writes', 'rewrite_properties', { reason: 'move_unfit', defs: [] }],
+    [
+      'a move with only its removal',
+      'rewrite_properties',
+      { reason: 'move_unfit', defs: [], values: [{ block_id: 'B1', key: 'when' }] },
+    ],
+    [
+      'a move whose removal names no key',
+      'rewrite_properties',
+      {
+        reason: 'move_unfit',
+        defs: [],
+        values: [{ block_id: 'B1' }, { block_id: 'B1', key: 'notes' }],
+      },
+    ],
     [
       'a type change without a def write',
       'rewrite_properties',
