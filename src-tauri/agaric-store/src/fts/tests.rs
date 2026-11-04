@@ -2994,10 +2994,9 @@ async fn reindex_fts_references_updates_inline_only_referencing_block() {
     let tag_id = "01HQTAGINLINE0000000000001";
     let blk_id = "01HQBLKINLINE0000000000001";
 
-    // Tag block + content block with an inline `#[ULID]` ref.
-    // Critically: NO explicit block_tags row and NO block_links row.
-    // The only path from the content block to the tag is through
-    // Block_tag_refs (the cache).
+    // Tag block + content block with an inline `#[ULID]` ref and no
+    // `block_tags`, `block_links` or `block_tag_refs` row: the cache drops a
+    // tag in another space, so the only path is the content token (#6242).
     insert_block(&pool, tag_id, "tag", "meeting", None, Some(1)).await;
     insert_block(
         &pool,
@@ -3008,12 +3007,6 @@ async fn reindex_fts_references_updates_inline_only_referencing_block() {
         Some(2),
     )
     .await;
-    sqlx::query("INSERT INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)")
-        .bind(blk_id)
-        .bind(tag_id)
-        .execute(&pool)
-        .await
-        .unwrap();
 
     // Seed the FTS index so there is an existing row to replace.
     update_fts_for_block(&pool, blk_id).await.unwrap();
@@ -3049,7 +3042,7 @@ async fn reindex_fts_references_updates_inline_only_referencing_block() {
         .unwrap();
 
     // Reindex references — this must pick up the inline-only block
-    // through block_tag_refs (the whole point of this test).
+    // through its content token (the whole point of this test).
     reindex_fts_references(&pool, tag_id).await.unwrap();
 
     // "standup" must now match the block; "meeting" must not.
@@ -7886,5 +7879,78 @@ async fn b2_search_fts_end_to_end_state_due_block_type() {
         ids,
         id_set(&[META_PAGE]),
         "search_fts block_type=page must return only the page row"
+    );
+}
+
+async fn fts_stripped(pool: &SqlitePool, id: &str) -> Option<String> {
+    sqlx::query_scalar("SELECT stripped FROM fts_blocks WHERE block_id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+}
+
+/// A `[[PAGE]]` whose target had no row when the source was linked has no
+/// `block_links` edge, only a `block_links_unresolved` row; the reindex must
+/// reach the source through it once the page arrives (#6242).
+#[tokio::test]
+async fn reindex_fts_references_reaches_an_unlinked_page_mention_6242() {
+    let (pool, _dir) = test_pool().await;
+    let page_id = "01HQPAGEUNLNKD000000000001";
+    let note_id = "01HQN0TEUNLNKD000000000001";
+
+    insert_block(
+        &pool,
+        note_id,
+        "content",
+        &format!("see [[{page_id}]]"),
+        None,
+        Some(1),
+    )
+    .await;
+    crate::cache::reindex_block_links(&pool, note_id)
+        .await
+        .unwrap();
+    update_fts_for_block(&pool, note_id).await.unwrap();
+    assert_eq!(fts_stripped(&pool, note_id).await.as_deref(), Some("see "));
+
+    insert_block(&pool, page_id, "page", "Roadmap", None, Some(2)).await;
+    reindex_fts_references(&pool, page_id).await.unwrap();
+
+    assert_eq!(
+        fts_stripped(&pool, note_id).await.as_deref(),
+        Some("see Roadmap")
+    );
+}
+
+/// The content scan runs for a tag only: a stray `#[PAGE]` token does not
+/// make a page's reindex re-strip its holder.
+#[tokio::test]
+async fn reindex_fts_references_scans_content_only_for_a_tag_6242() {
+    let (pool, _dir) = test_pool().await;
+    let page_id = "01HQPAGESCAN00000000000001";
+    let holder_id = "01HQH0LDERSCAN00000000001";
+
+    insert_block(&pool, page_id, "page", "Roadmap", None, Some(1)).await;
+    insert_block(
+        &pool,
+        holder_id,
+        "content",
+        &format!("stray #[{page_id}]"),
+        None,
+        Some(2),
+    )
+    .await;
+    sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, 'sentinel')")
+        .bind(holder_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    reindex_fts_references(&pool, page_id).await.unwrap();
+
+    assert_eq!(
+        fts_stripped(&pool, holder_id).await.as_deref(),
+        Some("sentinel")
     );
 }

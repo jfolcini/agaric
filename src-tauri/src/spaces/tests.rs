@@ -1319,6 +1319,24 @@ async fn sync_space_a_to_b(
     changed_blocks
 }
 
+/// [`sync_space_a_to_b`], then B's inbound rebuilds, settled before the next
+/// import, the way each sync session's own post-import pass runs.
+async fn sync_space_a_to_b_settled(
+    pool_a: &SqlitePool,
+    mat_a: &crate::materializer::Materializer,
+    space: &str,
+    pool_b: &SqlitePool,
+    mat_b: &crate::materializer::Materializer,
+) -> Vec<BlockId> {
+    let changed = sync_space_a_to_b(pool_a, mat_a, space, pool_b, mat_b).await;
+    mat_b
+        .enqueue_inbound_sync_rebuilds(&changed, &[])
+        .await
+        .unwrap();
+    mat_b.flush_inbound_rebuilds().await.unwrap();
+    changed
+}
+
 async fn deleted_at_of(pool: &SqlitePool, block_id: &str) -> Option<i64> {
     sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
         .bind(block_id)
@@ -3034,4 +3052,306 @@ async fn a_peers_new_page_takes_its_newest_blocks_time_6048() {
     fx.assert_b_last_edited_matches_a(&[&page], "a peer's new page")
         .await;
     fx.shutdown();
+}
+
+// #6242: a mention of a page or tag in another space is indexed by the
+// target's real name, so the incremental FTS path must find the mentioner
+// when the target arrives or is renamed.
+
+/// The ids of the blocks whose indexed text matches `needle`.
+async fn fts_hits(pool: &SqlitePool, needle: &str) -> Vec<String> {
+    let mut ids: Vec<String> =
+        sqlx::query_scalar("SELECT block_id FROM fts_blocks WHERE fts_blocks MATCH ?")
+            .bind(format!("\"{needle}\""))
+            .fetch_all(pool)
+            .await
+            .unwrap();
+    ids.sort();
+    ids
+}
+
+/// The blocks Settings › Integrity check reports with a stale index row.
+async fn fts_drift(pool: &SqlitePool, mat: &crate::materializer::Materializer) -> Vec<String> {
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid date");
+    crate::reconciliation_oracle::reconcile_all(pool, mat.loro_state(), None, today)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|d| d.artefact == "fts_blocks.stripped")
+        .map(|d| d.key)
+        .collect()
+}
+
+struct MentionFixture {
+    pool_a: SqlitePool,
+    _dir_a: TempDir,
+    mat_a: crate::materializer::Materializer,
+    /// `[holder's space, target's space]`.
+    spaces: [String; 2],
+    holder: BlockId,
+    page: BlockId,
+    tag: BlockId,
+    /// `see [[page]]`, and `see #[tag]`: one note per target, because
+    /// re-stripping a note resolves every token in it, so a reindex reaching
+    /// it through one target would hide a miss through the other.
+    page_note: BlockId,
+    tag_note: BlockId,
+}
+
+/// On A: page "Holder" in Projects holds the two notes, and the page
+/// "Target" and the tag "urgent" they mention move to Archive. With
+/// `move_targets` false the targets stay in Projects beside the notes.
+async fn mention_fixture(move_targets: bool) -> MentionFixture {
+    use crate::commands::{
+        create_block_inner, create_block_inner_with_space, create_page_in_space_inner,
+        create_space_inner, move_blocks_to_space_inner,
+    };
+    use crate::materializer::Materializer;
+
+    let (pool_a, dir_a) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+    super::bootstrap::bootstrap_spaces(&pool_a, "device-A", &mat_a)
+        .await
+        .unwrap();
+    let mut spaces = Vec::new();
+    for name in ["Projects", "Archive"] {
+        let space = create_space_inner(&pool_a, "device-A", &mat_a, name.into(), None)
+            .await
+            .unwrap();
+        spaces.push(space.as_str().to_owned());
+    }
+    let spaces: [String; 2] = spaces.try_into().unwrap();
+    let mut pages = Vec::new();
+    for title in ["Holder", "Target"] {
+        let page = create_page_in_space_inner(
+            &pool_a,
+            "device-A",
+            &mat_a,
+            None,
+            title.into(),
+            spaces[0].clone(),
+        )
+        .await
+        .unwrap();
+        pages.push(page);
+    }
+    let [holder, page]: [BlockId; 2] = pages.try_into().unwrap();
+    let tag = create_block_inner_with_space(
+        &pool_a,
+        "device-A",
+        &mat_a,
+        "tag".into(),
+        "urgent".into(),
+        None,
+        None,
+        &agaric_store::space::SpaceScope::Active(agaric_store::space::SpaceId::from_trusted(
+            &spaces[0],
+        )),
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    let mut notes = Vec::new();
+    for content in [format!("see [[{page}]]"), format!("see #[{tag}]")] {
+        let note = create_block_inner(
+            &pool_a,
+            "device-A",
+            &mat_a,
+            "content".into(),
+            content,
+            Some(holder.clone()),
+            None,
+        )
+        .await
+        .unwrap()
+        .id;
+        notes.push(note);
+    }
+    let [page_note, tag_note]: [BlockId; 2] = notes.try_into().unwrap();
+    if move_targets {
+        move_blocks_to_space_inner(
+            &pool_a,
+            "device-A",
+            &mat_a,
+            vec![page.clone(), tag.clone()],
+            spaces[1].clone(),
+            &[],
+        )
+        .await
+        .unwrap();
+    }
+    mat_a.flush_background().await.unwrap();
+    MentionFixture {
+        pool_a,
+        _dir_a: dir_a,
+        mat_a,
+        spaces,
+        holder,
+        page,
+        tag,
+        page_note,
+        tag_note,
+    }
+}
+
+/// Assert `pool`'s index finds the page note under `page_names[0]` and the
+/// tag note under `tag_names[0]`, neither under the name after it (the
+/// target's previous name), and that Integrity check reports no stale row.
+async fn assert_notes_indexed(
+    label: &str,
+    pool: &SqlitePool,
+    mat: &crate::materializer::Materializer,
+    fx: &MentionFixture,
+    page_names: &[&str],
+    tag_names: &[&str],
+) {
+    for (note, names) in [(&fx.page_note, page_names), (&fx.tag_note, tag_names)] {
+        let note = note.as_str().to_owned();
+        for (i, name) in names.iter().enumerate() {
+            assert_eq!(
+                fts_hits(pool, name).await.contains(&note),
+                i == 0,
+                "{label}: searching {name:?} finds the note mentioning it only under its current name"
+            );
+        }
+    }
+    assert_eq!(
+        fts_drift(pool, mat).await,
+        Vec::<String>::new(),
+        "{label}: no stale index row"
+    );
+}
+
+async fn rename_targets(
+    pool: &SqlitePool,
+    device: &str,
+    mat: &crate::materializer::Materializer,
+    fx: &MentionFixture,
+    page_name: &str,
+    tag_name: &str,
+) {
+    for (id, name) in [(&fx.page, page_name), (&fx.tag, tag_name)] {
+        crate::commands::edit_block_inner(pool, device, mat, id.clone(), name.into())
+            .await
+            .unwrap();
+    }
+    mat.flush_background().await.unwrap();
+}
+
+/// Counter-delta shape: none. Every `Materializer` has its own `LoroState`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cross_space_mention_is_searchable_whichever_space_arrives_first_6242() {
+    use crate::materializer::Materializer;
+
+    let fx = mention_fixture(true).await;
+    let [holder_space, target_space] = [&fx.spaces[0], &fx.spaces[1]];
+    for (label, order) in [
+        ("target's space first", [target_space, holder_space]),
+        ("holder's space first", [holder_space, target_space]),
+    ] {
+        let (pool_b, _dir_b) = test_pool().await;
+        let mat_b = Materializer::new(pool_b.clone());
+        super::bootstrap::bootstrap_spaces(&pool_b, "device-B", &mat_b)
+            .await
+            .unwrap();
+        for space in order {
+            sync_space_a_to_b_settled(&fx.pool_a, &fx.mat_a, space, &pool_b, &mat_b).await;
+        }
+        assert_notes_indexed(label, &pool_b, &mat_b, &fx, &["Target"], &["urgent"]).await;
+        mat_b.shutdown();
+    }
+    fx.mat_a.shutdown();
+}
+
+/// Counter-delta shape: none. Every `Materializer` has its own `LoroState`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cross_space_mention_follows_its_targets_rename_6242() {
+    use crate::materializer::Materializer;
+
+    let fx = mention_fixture(true).await;
+    let [holder_space, target_space] = [&fx.spaces[0], &fx.spaces[1]];
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_b = Materializer::new(pool_b.clone());
+    super::bootstrap::bootstrap_spaces(&pool_b, "device-B", &mat_b)
+        .await
+        .unwrap();
+    for space in [target_space, holder_space] {
+        sync_space_a_to_b_settled(&fx.pool_a, &fx.mat_a, space, &pool_b, &mat_b).await;
+    }
+
+    rename_targets(&fx.pool_a, "device-A", &fx.mat_a, &fx, "Goal", "critical").await;
+    sync_space_a_to_b_settled(&fx.pool_a, &fx.mat_a, target_space, &pool_b, &mat_b).await;
+    let (page_names, tag_names) = (["Goal", "Target"], ["critical", "urgent"]);
+    assert_notes_indexed(
+        "renamed on A",
+        &pool_b,
+        &mat_b,
+        &fx,
+        &page_names,
+        &tag_names,
+    )
+    .await;
+
+    rename_targets(&pool_b, "device-B", &mat_b, &fx, "Aim", "blocker").await;
+    let (page_names, tag_names) = (["Aim", "Goal"], ["blocker", "critical"]);
+    assert_notes_indexed(
+        "renamed on B",
+        &pool_b,
+        &mat_b,
+        &fx,
+        &page_names,
+        &tag_names,
+    )
+    .await;
+    mat_b.shutdown();
+    fx.mat_a.shutdown();
+}
+
+/// A note moved away from the tag it mentions loses its `block_tag_refs`
+/// row (#6209); a later rename of the tag must still re-strip it. The page
+/// note is the control: its `block_links` row survives the move.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_moved_notes_tag_mention_follows_the_tags_rename_6242() {
+    use crate::commands::move_blocks_to_space_inner;
+
+    let fx = mention_fixture(false).await;
+    move_blocks_to_space_inner(
+        &fx.pool_a,
+        "device-A",
+        &fx.mat_a,
+        vec![fx.holder.clone()],
+        fx.spaces[1].clone(),
+        &[],
+    )
+    .await
+    .unwrap();
+    fx.mat_a.flush_background().await.unwrap();
+    let edges: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM block_tag_refs WHERE source_id = ?1), \
+                (SELECT COUNT(*) FROM block_links WHERE source_id = ?2)",
+    )
+    .bind(fx.tag_note.as_str())
+    .bind(fx.page_note.as_str())
+    .fetch_one(&fx.pool_a)
+    .await
+    .unwrap();
+    assert_eq!(
+        edges,
+        (0, 1),
+        "the move drops the tag edge and keeps the link edge"
+    );
+
+    rename_targets(&fx.pool_a, "device-A", &fx.mat_a, &fx, "Goal", "critical").await;
+    let (page_names, tag_names) = (["Goal", "Target"], ["critical", "urgent"]);
+    assert_notes_indexed(
+        "moved, then renamed",
+        &fx.pool_a,
+        &fx.mat_a,
+        &fx,
+        &page_names,
+        &tag_names,
+    )
+    .await;
+    fx.mat_a.shutdown();
 }
