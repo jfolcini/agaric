@@ -14,8 +14,8 @@ import {
 /**
  * #6278 — when two live pages of one space share a name, the one with the
  * lowest id (the older page) holds it: a pasted `[[Foo]]` links that page
- * rather than staying text. The assertions read the mock backend after
- * navigating away and back.
+ * rather than staying text, whichever of the two spells the name as typed.
+ * The assertions read the mock backend after navigating away and back.
  */
 
 const PAGE = 'Getting Started'
@@ -38,25 +38,26 @@ async function pagesTitled(page: Page, title: string): Promise<string[]> {
 }
 
 /**
- * Two pages titled `title`: the first made as the app makes one, the second
- * as sync or data from before the name check leaves it, through a raw create
- * that runs no name check. Returns `[older, newer]`.
+ * Two pages of one name, titled `olderTitle` and then `newerTitle`: a file
+ * imported under the title of a page that has content becomes a page of its
+ * own (`create_import_page`), the way a vault comes to hold a name twice below
+ * the name check that `create_block` and `create_page_in_space` apply.
+ * Returns `[older, newer]`.
  */
-async function twoPagesTitled(page: Page, title: string): Promise<[string, string]> {
-  const older = await ipc<string>(page, 'create_page_in_space', {
-    parentId: null,
-    content: title,
-    spaceId: SCOPE.space_id,
-  })
-  const { id: newer } = await ipc<Row>(page, 'create_block', {
-    blockType: 'page',
-    content: title,
-    parentId: null,
-    index: null,
-    scope: SCOPE,
-    blockId: null,
-  })
-  return [older, newer]
+async function twoPagesTitled(
+  page: Page,
+  olderTitle: string,
+  newerTitle: string,
+): Promise<[string, string]> {
+  const importFile = async (title: string): Promise<string> =>
+    (
+      await ipc<{ page_id: string }>(page, 'import_markdown', {
+        content: '- a body',
+        filename: `${title}.md`,
+        spaceId: SCOPE.space_id,
+      })
+    ).page_id
+  return [await importFile(olderTitle), await importFile(newerTitle)]
 }
 
 /** Dispatch a native paste of `text/plain` onto the live editor. */
@@ -70,24 +71,48 @@ async function pasteText(editor: Locator, text: string): Promise<void> {
   }, text)
 }
 
+/** Paste `see [[link]] ` into the middle of the seeded page's first block, then reopen the page. */
+async function pasteLink(page: Page, link: string): Promise<void> {
+  await ipc(page, 'edit_block', { blockId: GS1, toText: 'Hello world' })
+  await openPage(page, PAGE)
+  const editor = await focusBlockById(page, GS1)
+  await selectEditorRange(page, 'Hello '.length, 'Hello '.length)
+  await pasteText(editor, `see [[${link}]] `)
+  await reopenPage(page, PAGE)
+}
+
 test.describe('A name two pages share links the older page (#6278) @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
 
   test('a pasted [[Foo]] links the page with the lowest id', async ({ page }) => {
-    const [older, newer] = await twoPagesTitled(page, 'Foo')
+    const [older, newer] = await twoPagesTitled(page, 'Foo', 'Foo')
     expect(older < newer, `${older} is the older id`).toBe(true)
     expect((await pagesTitled(page, 'Foo')).toSorted()).toEqual([older, newer])
 
-    await ipc(page, 'edit_block', { blockId: GS1, toText: 'Hello world' })
-    await openPage(page, PAGE)
-    const editor = await focusBlockById(page, GS1)
-    await selectEditorRange(page, 'Hello '.length, 'Hello '.length)
-    await pasteText(editor, 'see [[Foo]] ')
+    await pasteLink(page, 'Foo')
 
-    await reopenPage(page, PAGE)
     await expect.poll(() => storedContent(page, GS1)).toBe(`Hello see [[${older}]] world`)
     expect((await pagesTitled(page, 'Foo')).toSorted()).toEqual([older, newer])
+  })
+
+  test('a pasted [[Foo]] links the older foo, the page a create of Foo returns', async ({
+    page,
+  }) => {
+    const [older, newer] = await twoPagesTitled(page, 'foo', 'Foo')
+    expect(older < newer, `${older} is the older id`).toBe(true)
+
+    await pasteLink(page, 'Foo')
+
+    await expect.poll(() => storedContent(page, GS1)).toBe(`Hello see [[${older}]] world`)
+    const created = await ipc<string>(page, 'create_page_in_space', {
+      parentId: null,
+      content: 'Foo',
+      spaceId: SCOPE.space_id,
+    })
+    expect(created, 'a create and a paste of one name meet the same page').toBe(older)
+    expect(await pagesTitled(page, 'Foo')).toEqual([newer])
+    expect(await pagesTitled(page, 'foo')).toEqual([older])
   })
 })

@@ -5,8 +5,8 @@
  * Mirrors `resolve_inbound_page_links` / `resolve_tag_names` in
  * `src-tauri/src/commands/pages/markdown.rs` (#5160 N4):
  *
- *   - a page is the exact title, else the title under `nameKey`, else the
- *     alias under it, else created; where several pages match, the lowest id
+ *   - a page is the title under `nameKey`, else the alias under it, else
+ *     created; where several pages hold the name, the lowest id does
  *     (#6278);
  *   - a `[[Page#anchor]]` token is the page titled `Page#anchor` when one
  *     exists (D10), else its page; the block anchors the backend resolves to
@@ -63,12 +63,14 @@ function livePages(spaceId: string): Row[] {
 /** The lowest of `ids`, the one that holds a name several pages share (#6278). */
 const lowest = (ids: string[]): string | null => ids.toSorted(compareUtf8Bytes)[0] ?? null
 
-/** The title arms of `LinkMatches::find`: the exact title, else the case-folded one. */
+/** `LinkMatches::find`'s title arm: the lowest id of the pages whose `nameKey` is `name`'s. */
 function findTitled(name: string, pages: readonly Row[]): string | null {
   const key = nameKey(name)
-  const titled = (same: (title: string) => boolean): string[] =>
-    pages.filter((p) => same((p['content'] as string | null) ?? '')).map((p) => p['id'] as string)
-  return lowest(titled((t) => t === name)) ?? lowest(titled((t) => nameKey(t) === key))
+  return lowest(
+    pages
+      .filter((p) => nameKey((p['content'] as string | null) ?? '') === key)
+      .map((p) => p['id'] as string),
+  )
 }
 
 /** `LinkMatches::find` over the live pages of the space. */
@@ -105,8 +107,8 @@ function readLinkBody(token: PageToken, pages: readonly Row[]): LinkReading {
 
 /**
  * The page an import of a file titled `title` adopts (#5160 D12): the page of
- * that title, exact or case-folded, the lowest id where several share it
- * (#6278), when it has no live child; never a page matched by alias
+ * that title under `nameKey`, the lowest id where several share it (#6278),
+ * when it has no live child; never a page matched by alias
  * (`create_import_page`); `null` otherwise.
  */
 export function findEmptyPageTitled(title: string, spaceId: string): string | null {

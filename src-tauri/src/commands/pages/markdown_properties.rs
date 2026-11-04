@@ -289,8 +289,8 @@ fn ref_name(value: &str) -> &str {
 
 /// What each of `names` refers to (#5160 D11): a block id is the live block,
 /// unless it is in a space other than `space_id`; anything else is the title
-/// of a page in `space_id` by the link rule (exact, then case-insensitive,
-/// then alias; where several pages match, the lowest id, #6278).
+/// of a page in `space_id` by the link rule (the title under `name_key`, then
+/// an alias; where several pages hold it, the lowest id, #6278).
 async fn resolve_ref_values(
     conn: &mut sqlx::SqliteConnection,
     space_id: Option<&str>,

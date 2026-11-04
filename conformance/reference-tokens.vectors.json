@@ -123,13 +123,13 @@
       "holder": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
     },
     {
-      "name": "#6278 the exact title still wins before the fold, whatever its id",
+      "name": "#6278 a link spelled as the higher id's own title still names the lowest id",
       "pages": [
         { "id": "01ARZ3NDEKTSV4RRFFQ69G5FB0", "title": "Foo" },
         { "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "title": "foo" }
       ],
       "link": "Foo",
-      "holder": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      "holder": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
     },
     {
       "name": "#6278 an NFC and an NFD title: the lowest id holds the name",

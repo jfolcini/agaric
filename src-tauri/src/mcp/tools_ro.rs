@@ -736,11 +736,10 @@ fn tool_desc_resolve() -> ToolDescription {
     ToolDescription {
         name: TOOL_RESOLVE.to_string(),
         description: "Look up page and tag names in a space, many in one call, as a written \
-             `[[Name]]` / `#name` is matched: a page by exact title, else by \
-             case-insensitive title, else by alias, the lowest id where several pages match; \
-             a tag by name, ignoring case. Each name answers `page_id` and `tag_id`, null \
-             when nothing matches. Tools that take a page or tag id take its name too, so \
-             this is only for ids up front."
+             `[[Name]]` / `#name` is matched: a page by title, ignoring case, else by alias, \
+             the lowest id where several pages match; a tag by name, ignoring case. Each \
+             name answers `page_id` and `tag_id`, null when nothing matches. Tools that take \
+             a page or tag id take its name too, so this is only for ids up front."
             .to_string(),
         input_schema: json!({
             "type": "object",

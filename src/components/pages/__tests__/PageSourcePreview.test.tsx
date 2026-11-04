@@ -94,7 +94,7 @@ describe('PageSourcePreview', () => {
   it('shows a name two pages share as the page with the lowest id, as the save links it (#6278)', () => {
     useResolveStore.getState().set('01J000000000000000000TWIN2', 'Twin', false, true)
     useResolveStore.getState().set('01J000000000000000000TWIN1', 'twin', false, true)
-    render(<PageSourcePreview lines={{ text: '- see [[TWIN]]', lineIds: [BLOCK] }} />)
+    render(<PageSourcePreview lines={{ text: '- see [[Twin]]', lineIds: [BLOCK] }} />)
 
     expect(screen.getByTestId('block-link-chip')).toHaveTextContent('twin')
   })

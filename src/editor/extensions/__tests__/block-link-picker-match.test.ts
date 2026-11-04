@@ -1,11 +1,10 @@
 /**
  * #5160 N4 — the `[[text]]` input rule's match over the picker's items, the
  * editor's half of the one resolution rule the backend applies
- * (`LinkMatches::find` in markdown.rs): exact full title, then a
- * case-insensitive title, then an alias, else create; where several pages
- * match, the lowest id (#6278). Before this the rule compared the namespace
- * LEAF, so typing the full title of an existing `Project/Roadmap` created a
- * twin (E10).
+ * (`LinkMatches::find` in markdown.rs): the full title under `nameKey`, then
+ * an alias, else create; where several pages hold the name, the lowest id
+ * (#6278). Before this the rule compared the namespace LEAF, so typing the full
+ * title of an existing `Project/Roadmap` created a twin (E10).
  */
 
 import { readFileSync } from 'node:fs'
@@ -36,10 +35,10 @@ describe('matchBlockLinkItem', () => {
     expect(matchBlockLinkItem(items, 'Roadmap')?.id).toBe('P2')
   })
 
-  it('takes the exact spelling over a case variant, and a unique case variant over nothing', () => {
+  it('matches a case variant, and no page wins the name by being spelled as typed (#6278)', () => {
     const items = [page('P1', 'Foo'), page('P2', 'foo'), page('P3', 'Bar'), create]
     expect(matchBlockLinkItem(items, 'Foo')?.id).toBe('P1')
-    expect(matchBlockLinkItem(items, 'foo')?.id).toBe('P2')
+    expect(matchBlockLinkItem(items, 'foo')?.id).toBe('P1')
     expect(matchBlockLinkItem(items, 'BAR')?.id).toBe('P3')
   })
 

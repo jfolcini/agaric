@@ -52,19 +52,18 @@ declare module '@tiptap/core' {
 
 /**
  * The page `[[text]]` names among `items`, by the one rule the backend applies
- * (#5160 N4): the exact full title, else the title whose `nameKey` (trimmed,
- * case-insensitive, NFC) is `text`'s, else the alias whose `aliasText` keys so,
- * else `undefined`, which creates the page; where several pages match, the
- * lowest id (#6278). Titles are compared whole, namespace included
- * (`item.title`), so typing an existing namespaced title creates no twin;
- * prefix-only alias hits (`[[my]]` for alias `my-alias`) never resolve.
+ * (#5160 N4): the title whose `nameKey` (trimmed, case-insensitive, NFC) is
+ * `text`'s, else the alias whose `aliasText` keys so, else `undefined`, which
+ * creates the page; where several pages hold the name, the lowest id does
+ * (#6278), however `text` is spelled. Titles are compared whole, namespace
+ * included (`item.title`), so typing an existing namespaced title creates no
+ * twin; prefix-only alias hits (`[[my]]` for alias `my-alias`) never resolve.
  */
 export function matchBlockLinkItem(items: PickerItem[], text: string): PickerItem | undefined {
   const pages = items.filter((item) => !item.isCreate && !item.isAlias)
   const lowest = (found: PickerItem[]) => found.toSorted((a, b) => compareUtf8Bytes(a.id, b.id))[0]
   const key = nameKey(text)
   return (
-    lowest(pages.filter((item) => (item.title ?? item.label) === text)) ??
     lowest(pages.filter((item) => nameKey(item.title ?? item.label) === key)) ??
     lowest(
       items.filter(

@@ -4279,7 +4279,7 @@ async fn resolve_answers_a_shared_name_with_its_lowest_id_6278() {
     let result = tools
         .call_tool(
             "resolve",
-            json!({ "names": ["dup", "Dup"], "space_id": space }),
+            json!({ "names": ["dup", "Dup", "DUP"], "space_id": space }),
             &test_ctx(),
         )
         .await
@@ -4289,9 +4289,10 @@ async fn resolve_answers_a_shared_name_with_its_lowest_id_6278() {
         result,
         json!([
             { "name": "dup", "page_id": holder, "tag_id": null },
-            { "name": "Dup", "page_id": a, "tag_id": null },
+            { "name": "Dup", "page_id": holder, "tag_id": null },
+            { "name": "DUP", "page_id": holder, "tag_id": null },
         ]),
-        "a case tie answers the lowest id; the exact title wins it",
+        "the lowest id answers every spelling, each page's own included",
     );
 
     let err = tools

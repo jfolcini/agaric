@@ -1,11 +1,10 @@
 /**
  * #5160 Phase 3a — the mock's name pass (`resolveInboundNames`), through the
  * commands that run it: `paste_blocks` and `apply_page_source`. The rule is the
- * backend's (N4): exact title, then a case-insensitive title, then an alias,
- * else a new page, and where several pages match, the lowest id (#6278); tags
- * resolve by normalised name. Everything is read back through the mock's stores;
- * backend parity for the paste is pinned by
- * `conformance/fixtures/paste_blocks.json`.
+ * backend's (N4): the title under `nameKey`, then an alias, else a new page,
+ * and where several pages hold the name, the lowest id (#6278); tags resolve by
+ * normalised name. Everything is read back through the mock's stores; backend
+ * parity for the paste is pinned by `conformance/fixtures/paste_blocks.json`.
  */
 
 import { readFileSync } from 'node:fs'
@@ -153,10 +152,10 @@ describe('paste_blocks resolves names in the anchor’s space (#5160 N4)', () =>
     expect(rows[1]?.content).toBe(`see [[${fresh.id}]]`)
   })
 
-  it('links the lowest id of two pages that differ only by case (#6278)', () => {
-    const rows = paste(ANCHOR, '- tie [[FOO]] and exact [[Foo]]')
+  it('links the lowest id of two pages that differ only by case, whichever spelling is typed (#6278)', () => {
+    const rows = paste(ANCHOR, '- tie [[FOO]] and the higher id’s own spelling [[foo]]')
     expect(rows.map((r) => r.block_type)).toEqual(['content'])
-    expect(rows[0]?.content).toBe(`tie [[${FOO}]] and exact [[${FOO}]]`)
+    expect(rows[0]?.content).toBe(`tie [[${FOO}]] and the higher id’s own spelling [[${FOO}]]`)
     expect(livePages('FOO')).toHaveLength(0)
   })
 

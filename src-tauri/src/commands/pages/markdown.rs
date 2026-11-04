@@ -238,11 +238,11 @@ fn split_wikilink_anchor(name: &str) -> (&str, Option<&str>) {
 }
 
 /// The ways a wiki-link body reads as a name and a label, in the order the
-/// name pass tries them (#5160 D9, D10 exact title first): the whole body with
-/// no label, then each prefix ending before a `|`, longest first, labelled
-/// with the text after that `|`. Names and labels are trimmed, and an empty
-/// label is none. The last reading splits on the first `|`; its name is what
-/// [`split_wikilink_anchor`] then reads, so `A#B|label` anchors `A#B`.
+/// name pass tries them (#5160 D9, D10): the whole body with no label, then
+/// each prefix ending before a `|`, longest first, labelled with the text after
+/// that `|`. Names and labels are trimmed, and an empty label is none. The last
+/// reading splits on the first `|`; its name is what [`split_wikilink_anchor`]
+/// then reads, so `A#B|label` anchors `A#B`.
 fn link_body_readings(body: &str) -> Vec<(&str, Option<&str>)> {
     let mut readings = vec![(body.trim(), None)];
     for (at, _) in body.rmatch_indices('|') {
@@ -771,9 +771,9 @@ fn tag_reads_back_bare(before: &str, name: &str, after: &str) -> bool {
 /// The check runs the importer's own name collection and rewrite over the
 /// named text, with `is_code` as the parser will read the block; only the
 /// resolution comes from `names` instead of the database, and nothing is
-/// created. A name can be unique and still not come back: `[[Foo|Bar]]` reads
-/// as the page `Foo|Bar` when one exists (#5160 D10), and `#v1.2` as the tag
-/// `v1`.
+/// created. A name can be the page's own and still not come back: `[[Foo|Bar]]`
+/// reads as the page `Foo|Bar` when one exists (#5160 D10), and `#v1.2` as the
+/// tag `v1`.
 fn humanise_refs_for_source(
     content: &str,
     is_code: bool,
@@ -812,17 +812,14 @@ struct NameSnapshot {
 
 impl NameSnapshot {
     /// What the importer's page-link pass would make of each link body
-    /// without creating a page: its reading ([`read_link_body`]), when the
-    /// name read is an in-space page's exact title, linking the lowest id that
-    /// holds it (#6278). The render writes titles, and an exact title wins
-    /// before any case or alias match (N4), so nothing else can claim the
-    /// name.
+    /// without creating a page: its reading ([`read_link_body`]) and the page
+    /// the name read names, the lowest id holding it (#6278).
     fn page_links(&self, bodies: impl IntoIterator<Item = String>) -> PageLinks {
         let mut links = PageLinks::default();
         for body in bodies {
             let (name, label) = read_link_body(&body, &self.pages);
-            if let Some(id) = self.pages.exact.get(name) {
-                links.ids.insert(name.to_string(), id.clone());
+            if let Some(id) = self.pages.find(name) {
+                links.ids.insert(name.to_string(), id.to_string());
                 let reading = (name.to_string(), label.map(str::to_string));
                 links.readings.insert(body, reading);
             }
@@ -4368,15 +4365,13 @@ async fn create_import_page(
     // #5160 D12 — the page of this title, the lowest id where several share
     // it (#6278), is adopted when it has no blocks (the placeholder a
     // `[[link]]` in an earlier file created), so the links to it resolve. The
-    // title exact or case-folded, never an alias: an alias names a page of
-    // another title. A page with content is never touched.
+    // title under `name_key`, never an alias: an alias names a page of another
+    // title. A page with content is never touched.
     let title = [page_title.to_string()];
     let matches = snapshot_page_link_matches(&mut tx, space_id, &title).await?;
-    let same_title = matches.exact.get(page_title).or_else(|| {
-        matches
-            .folded
-            .get(&agaric_core::tag_norm::name_key(page_title))
-    });
+    let same_title = matches
+        .folded
+        .get(&agaric_core::tag_norm::name_key(page_title));
     match same_title {
         Some(id) if !page_has_blocks(&mut tx, id).await? => {
             return Ok((tx, id.clone()));
@@ -4924,8 +4919,6 @@ fn deferred_anchor(
 /// resolves to it.
 #[derive(Default)]
 struct LinkMatches {
-    /// Exact title → id.
-    exact: HashMap<String, String>,
     /// Title under [`name_key`](agaric_core::tag_norm::name_key) (trim, case,
     /// NFC) → id.
     folded: HashMap<String, String>,
@@ -4955,15 +4948,15 @@ impl LinkMatches {
             .or_else(|| anchored.then(|| self.find(base)).flatten())
     }
 
-    /// The page `name` resolves to (#5160 N4): the exact title, else a title
-    /// under [`name_key`](agaric_core::tag_norm::name_key), else an alias
-    /// under it, else none; where several pages match, the lowest id (#6278).
-    /// Titles are compared whole, namespace included.
+    /// The page `name` resolves to (#5160 N4): the title under
+    /// [`name_key`](agaric_core::tag_norm::name_key), else an alias under it,
+    /// else none. Where several pages hold the name, the lowest id does
+    /// (#6278), however `name` is spelled. Titles are compared whole,
+    /// namespace included.
     fn find(&self, name: &str) -> Option<&str> {
         let key = agaric_core::tag_norm::name_key(name);
-        self.exact
-            .get(name)
-            .or_else(|| self.folded.get(&key))
+        self.folded
+            .get(&key)
             .or_else(|| self.aliases.get(&key))
             .map(String::as_str)
     }
@@ -5022,11 +5015,10 @@ pub(crate) async fn match_tag_names(
 }
 
 /// Read the [`LinkMatches`] for `link_names` in `space_id`: the live pages
-/// whose folded title is a folded name (which covers the exact matches), then
-/// the live pages one of the names is an alias of. SQLite cannot apply the
-/// fold, so every page and alias of the space is read and folded here; with
-/// no index on `content`, SQLite reads every page row for a title filter
-/// anyway.
+/// whose title keys like one of the names, then the live pages one of the names
+/// is an alias of. SQLite cannot apply the fold, so every page and alias of the
+/// space is read and folded here; with no index on `content`, SQLite reads
+/// every page row for a title filter anyway.
 async fn snapshot_page_link_matches(
     conn: &mut sqlx::SqliteConnection,
     space_id: &str,
@@ -5059,8 +5051,7 @@ async fn snapshot_page_link_matches(
             continue;
         }
         LinkMatches::push(&mut matches.folded, key, r.id.clone());
-        matches.titles.insert(r.id.clone(), r.content.clone());
-        LinkMatches::push(&mut matches.exact, r.content, r.id);
+        matches.titles.insert(r.id, r.content);
     }
     let rows = sqlx::query!(
         r#"SELECT a.page_id AS "page_id!", a.alias AS "alias!", b.content AS "title?"
@@ -5385,9 +5376,8 @@ fn tree_path<'a>(
 /// chunk).
 ///
 /// Resolution is [`LinkMatches::find`]'s rule (#5160 N4), scoped to the name
-/// context's space: the exact title, else a case-insensitive title, else an
-/// alias, else the page is created; where several pages match, the lowest id
-/// (#6278).
+/// context's space: the title under `name_key`, else an alias, else the page is
+/// created; where several pages hold the name, the lowest id does (#6278).
 ///
 /// A name we cannot resolve or create is simply absent from the map, so the
 /// rewrite leaves its original `[[Name]]` token untouched — nothing is lost.
@@ -7664,7 +7654,6 @@ mod tests {
             for page in &row.pages {
                 let id = page.id.clone();
                 LinkMatches::push(&mut matches.folded, name_key(&page.title), id.clone());
-                LinkMatches::push(&mut matches.exact, page.title.clone(), id.clone());
                 for alias in &page.aliases {
                     LinkMatches::push(&mut matches.aliases, name_key(alias), id.clone());
                 }
@@ -7718,7 +7707,6 @@ mod tests {
                 agaric_core::tag_norm::name_key(title),
                 id.clone(),
             );
-            LinkMatches::push(&mut matches.exact, title.clone(), id.clone());
         }
         matches
     }

@@ -2800,14 +2800,15 @@ async fn get_page_buffer_writes_in_space_names() {
     );
 }
 
-/// A title two in-space pages share names the lowest id (#6278): a link to
-/// that page is written as the title, and a link to the other stays raw, since
-/// its title would read back to the lowest id.
+/// A title two in-space pages share, a case apart, names the lowest id
+/// (#6278): a link to that page is written as the title, and a link to the
+/// other stays raw even though the title is spelled as its own, since it would
+/// read back to the lowest id.
 #[tokio::test]
 async fn get_page_buffer_names_the_lowest_id_of_a_shared_title_6278() {
     let (pool, _dir) = test_pool().await;
     seed_source_page(&pool, &format!("see [[{SOURCE_PROJECT}]]")).await;
-    insert_block(&pool, SOURCE_PROJECT_TWIN, "page", "Project", None, Some(3)).await;
+    insert_block(&pool, SOURCE_PROJECT_TWIN, "page", "project", None, Some(3)).await;
     assign_to_space(&pool, SOURCE_PROJECT_TWIN, TEST_SPACE_ID).await;
     let twin_link = format!("and [[{SOURCE_PROJECT_TWIN}]]");
     sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
@@ -3177,48 +3178,57 @@ async fn apply_page_source_sets_and_deletes_properties() {
 }
 
 /// A value typed under a `ref`-declared key is a live block's id, or a page
-/// title in the space as a typed `[[name]]` resolves (#5160 D11).
+/// title in the space as a typed `[[name]]` resolves (#5160 D11); a title two
+/// pages tie on, the lowest id (#6278).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn apply_page_source_reads_a_ref_value_as_an_id_or_a_title() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let page = dup_page(&pool, &mat, "Refs").await;
     let project = dup_page(&pool, &mat, "Project").await;
+    let twin = dup_page(&pool, &mat, "Twin").await;
+    let twin_lower = dup_twin_page(&pool, &mat, "twin").await;
     create_test_property_def(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();
     let plain = dup_child(&pool, &mat, &page, "plain").await;
     let linked = dup_child(&pool, &mat, &page, "linked").await;
+    let tied = dup_child(&pool, &mat, &page, "tied").await;
     settle(&mat).await;
     let base = page_source(&pool, &page).await;
-    let plain_line = format!("plain ^{plain}\n");
-    let linked_line = format!("linked ^{linked}\n");
-
-    let source = with(
-        &with(
-            &base,
-            &plain_line,
-            &format!("{plain_line}  reviewer:: Project\n"),
-        ),
-        &linked_line,
-        &format!("{linked_line}  reviewer:: [[project]]\n"),
-    );
+    let source = [
+        ("plain", &plain, "Project"),
+        ("linked", &linked, "[[project]]"),
+        ("tied", &tied, "TWIN"),
+    ]
+    .iter()
+    .fold(base.clone(), |source, (text, id, value)| {
+        let line = format!("{text} ^{id}\n");
+        with(&source, &line, &format!("{line}  reviewer:: {value}\n"))
+    });
     let report = save_source(&pool, &mat, &page, &source, &base)
         .await
         .unwrap();
 
-    assert_eq!(counts(&report), [0, 0, 0, 0, 2, 0], "both are set");
-    let reviewer = format!(
-        "reviewer text=None num=None date=None ref={:?} bool=None",
-        Some(project.as_str())
-    );
+    assert_eq!(counts(&report), [0, 0, 0, 0, 3, 0], "all three are set");
+    let reviewer = |target: &str| {
+        format!(
+            "reviewer text=None num=None date=None ref={:?} bool=None",
+            Some(target)
+        )
+    };
     for block in [&plain, &linked] {
         assert_eq!(
             dup_storage(&pool, block).await[1],
-            reviewer,
+            reviewer(project.as_str()),
             "the page, by its title"
         );
     }
+    assert_eq!(
+        dup_storage(&pool, &tied).await[1],
+        reviewer(twin.as_str().min(twin_lower.as_str())),
+        "a title two pages tie on is the lowest id"
+    );
 }
 
 /// What the user types is checked against the key's options, as the property
@@ -4031,17 +4041,20 @@ async fn apply_page_source_resolves_only_the_names_a_block_newly_writes() {
     assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
 }
 
-/// A title two pages of the space share names the one with the lowest id
-/// (#6278): the save links it, creates nothing and warns of nothing. The
-/// higher id is seeded first, so the order the rows were written in decides
-/// nothing.
+/// A title two pages of the space share, a case apart, names the one with the
+/// lowest id (#6278): the save links it for either spelling, creates nothing
+/// and warns of nothing. The higher id is seeded first, so the order the rows
+/// were written in decides nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn apply_page_source_links_a_shared_title_to_its_lowest_id_6278() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let page = dup_page(&pool, &mat, "Shared").await;
-    for (id, position) in [(SOURCE_PROJECT_TWIN, 11), (SOURCE_PROJECT, 10)] {
-        insert_block(&pool, id, "page", "Twin", None, Some(position)).await;
+    for (id, title, position) in [
+        (SOURCE_PROJECT_TWIN, "Twin", 11),
+        (SOURCE_PROJECT, "twin", 10),
+    ] {
+        insert_block(&pool, id, "page", title, None, Some(position)).await;
         assign_to_space(&pool, id, TEST_SPACE_ID).await;
     }
     settle(&mat).await;
@@ -4054,7 +4067,7 @@ async fn apply_page_source_links_a_shared_title_to_its_lowest_id_6278() {
     assert_eq!(
         dup_children(&pool, &page).await[0].1,
         format!("see [[{SOURCE_PROJECT}]] [[{SOURCE_PROJECT}]]"),
-        "the exact title and its case variant both link the lowest id"
+        "each page's own spelling of the title links the lowest id"
     );
     assert!(report.names_created.is_empty(), "nothing is created");
     assert!(report.warnings.is_empty(), "{:?}", report.warnings);
@@ -11561,10 +11574,10 @@ async fn block_starting(pool: &SqlitePool, prefix: &str) -> String {
     .unwrap()
 }
 
-/// N4 — `[[name]]` resolves to the exact title, else a case-insensitive title,
-/// else an alias, else a new page; a case tie links its lowest id (#6278).
+/// N4 — `[[name]]` resolves to the title under `name_key`, else an alias, else
+/// a new page; where several pages hold the name, its lowest id (#6278).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn import_resolves_a_name_by_exact_title_then_case_then_alias_then_creates() {
+async fn import_resolves_a_name_by_title_then_alias_then_creates() {
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let plan = dup_page(&pool, &mat, "Project Plan").await;
@@ -11582,7 +11595,7 @@ async fn import_resolves_a_name_by_exact_title_then_case_then_alias_then_creates
         dir.path(),
         "Notes.md",
         "- exact [[Project Plan]]\n- folded [[project plan]]\n- alias [[RM]]\n\
-         - tie [[FOO]]\n- exactcase [[Foo]]\n- fresh [[Brand New]]",
+         - tie [[FOO]]\n- spelled [[Foo]] [[foo]]\n- fresh [[Brand New]]",
     )
     .await;
 
@@ -11609,9 +11622,9 @@ async fn import_resolves_a_name_by_exact_title_then_case_then_alias_then_creates
     assert!(result.warnings.is_empty(), "{:?}", result.warnings);
     assert_eq!(pages_titled(&pool, "FOO").await, Vec::<String>::new());
     assert_eq!(
-        block_starting(&pool, "exactcase").await,
-        format!("exactcase [[{foo}]]"),
-        "the exact spelling picks between the two"
+        block_starting(&pool, "spelled").await,
+        format!("spelled [[{holder}]] [[{holder}]]"),
+        "a page's own spelling of the name does not win it"
     );
     let fresh = pages_titled(&pool, "Brand New").await;
     assert_eq!(fresh.len(), 1);
@@ -11619,6 +11632,48 @@ async fn import_resolves_a_name_by_exact_title_then_case_then_alias_then_creates
         block_starting(&pool, "fresh").await,
         format!("fresh [[{}]]", fresh[0])
     );
+    mat.shutdown();
+}
+
+/// #6278 — a create of a name and a link to it meet one page, whichever
+/// spelling either uses: the create resolves by `name_key`, lowest id first,
+/// and an imported `[[name]]` links by the same rule, so neither takes the
+/// newer page for being spelled as typed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_create_and_an_imported_link_of_one_name_meet_the_same_page_6278() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let lower = dup_page(&pool, &mat, "foo").await;
+    let upper = dup_twin_page(&pool, &mat, "Foo").await;
+    settle(&mat).await;
+    let holder = lower.as_str().min(upper.as_str());
+
+    import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Notes.md",
+        "- link [[Foo]] [[foo]] [[ FOO ]]",
+    )
+    .await;
+
+    assert_eq!(
+        block_starting(&pool, "link").await,
+        format!("link [[{holder}]] [[{holder}]] [[{holder}]]")
+    );
+    for spelling in ["Foo", "foo", " FOO "] {
+        let created = create_page_in_space_inner(
+            &pool,
+            DEV,
+            &mat,
+            None,
+            spelling.into(),
+            TEST_SPACE_ID.into(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(created.as_str(), holder, "a create of {spelling:?}");
+    }
     mat.shutdown();
 }
 

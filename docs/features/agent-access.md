@@ -70,7 +70,7 @@ Several writes at once:
 
 Names in place of ids:
 
-- Wherever a tool takes a page, tag or parent id (`parent_id`, `page_id`, `tag_id`, `tag_ids`), a value that is not a ULID is a name in the call's `space_id`: a page by exact title, else by case-insensitive title, else by alias, the oldest page (the lowest id) where several match; a tag by name, ignoring case. A name nothing has is refused with a validation error. Block ids stay ULIDs: blocks have no names. `get_page` and `get_page_markdown` take ids only.
+- Wherever a tool takes a page, tag or parent id (`parent_id`, `page_id`, `tag_id`, `tag_ids`), a value that is not a ULID is a name in the call's `space_id`: a page by title, ignoring case, else by alias, the oldest page (the lowest id) where several match; a tag by name, ignoring case. A name nothing has is refused with a validation error. Block ids stay ULIDs: blocks have no names. `get_page` and `get_page_markdown` take ids only.
 - `append_block` and `update_block_content` write a `[[Name]]` or `#name` as the app's paste does: linked by id, creating the page or tag in the space when nothing matches; a name several pages share links the oldest of them. A page's title and a tag's name are kept as written.
 - `resolve { names, space_id }` looks up many names in one call and answers each with `page_id` and `tag_id` (null when nothing matches), the oldest page where several share the name.
 

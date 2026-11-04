@@ -541,7 +541,8 @@ fn data_with_names(
     let mut matches = LinkMatches::default();
     for (title, ids) in pages {
         for id in *ids {
-            LinkMatches::push(&mut matches.exact, title.to_string(), id.to_string());
+            let key = agaric_core::tag_norm::name_key(title);
+            LinkMatches::push(&mut matches.folded, key, id.to_string());
         }
     }
     data.name_snapshot = NameSnapshot {
@@ -582,6 +583,26 @@ fn a_title_two_pages_share_names_the_lowest_id() {
     data.page_titles
         .insert(OTHER_PROJECT.into(), "Project".into());
     assert_eq!(render_page_document(&data).0, format!("{twin} ^{BLOCK}\n"));
+}
+
+/// Titles a case apart are one name (#6278): the page that holds it is written
+/// by its own spelling, and the other, whose spelling is exactly the one a
+/// link would type, stays raw.
+#[test]
+fn a_page_does_not_win_its_name_by_spelling_it() {
+    let pages: &[(&str, &[&str])] = &[("project", &[PROJECT]), ("Project", &[OTHER_PROJECT])];
+    let source = |linked: &str| {
+        let mut data = data_with_names(&format!("see [[{linked}]]"), pages, &[]);
+        data.page_titles.insert(PROJECT.into(), "project".into());
+        data.page_titles
+            .insert(OTHER_PROJECT.into(), "Project".into());
+        render_page_document(&data).0
+    };
+    assert_eq!(source(PROJECT), format!("see [[project]] ^{BLOCK}\n"));
+    assert_eq!(
+        source(OTHER_PROJECT),
+        format!("see [[{OTHER_PROJECT}]] ^{BLOCK}\n")
+    );
 }
 
 /// The linked page is in another space, and this space has its own page of
