@@ -24,9 +24,9 @@ import {
   blockStaticByMarker,
   navigateTo,
   runScopedMarker,
-  typeInputVerified,
   typeMarkerVerified,
   waitForAppReady,
+  waitForResults,
 } from './helpers'
 
 // Plain words with no letter doubled (see `runScopedMarker`), in no marker.
@@ -34,51 +34,6 @@ const OLD = 'quartz'
 const NEW = 'violet'
 const EDITED = runScopedMarker('wdio-edited-word')
 const KEPT = runScopedMarker('wdio-kept-word')
-const INPUT = '[aria-label="Search blocks"]'
-
-/**
- * Replace the search field's text with `query` and submit it. Emptying the
- * field first drops the query, so the same text asked again is a new ask.
- */
-async function search(query: string): Promise<void> {
-  await $(INPUT).click()
-  await browser.keys(['Control', 'a'])
-  await browser.keys(['Delete'])
-  await typeInputVerified(INPUT, query)
-  await browser.keys(['Enter'])
-}
-
-/** The block ids of the listed results (SearchResultBlockRow.tsx), read once. */
-function resultIds(): Promise<string[]> {
-  return browser.execute(() =>
-    [...document.querySelectorAll('[data-testid^="search-result-row-"]')].map(
-      (row) => row.getAttribute('data-testid')?.slice('search-result-row-'.length) ?? '',
-    ),
-  )
-}
-
-/** Search `word` until its results satisfy `holds`, asking again each time. */
-async function waitForResults(
-  word: string,
-  holds: (ids: string[]) => boolean,
-  what: string,
-): Promise<void> {
-  let seen: string[] = []
-  await search(word)
-  await browser
-    .waitUntil(
-      async () => {
-        seen = await resultIds()
-        if (holds(seen)) return true
-        await search(word)
-        return false
-      },
-      { timeout: ACTION_TIMEOUT, interval: 3_000 },
-    )
-    .catch(() => {
-      throw new Error(`${what}; the results held ${JSON.stringify(seen)}`)
-    })
-}
 
 describe('Agaric real-backend search after an edit (#5366) @editor @search', () => {
   it('finds an edited block by its new word and not by its old one', async () => {

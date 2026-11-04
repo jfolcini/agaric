@@ -678,7 +678,7 @@ fn a_name_inside_code_stays_raw() {
 /// `conformance/block-content.vectors.json`: stored block content and the
 /// meaning Rust and the block editor must agree on. This side reads each
 /// content through the buffer as one block with that content and no
-/// properties, and authors each row's `rustReads`
+/// properties, and authors each row's `rustReads` and `fts`
 /// ([`the_block_content_vectors_carry_what_rust_reads`]);
 /// `block-content-conformance.test.ts` runs the editor's save flush over the
 /// same rows and parses each content into the same code blocks and rules.
@@ -736,8 +736,30 @@ fn rust_reads(content: &str) -> Vec<&'static str> {
         .collect()
 }
 
-/// Each stored block row carries `rustReads`, which Rust authors
-/// (`CONFORMANCE_UPDATE=1` writes it) and the editor's parse asserts.
+/// The text the search index holds for `content` (#6277 B3), with each
+/// `blockRefTargets` id resolving to its target's first line.
+fn fts_text(content: &str, block_ref_targets: &serde_json::Value) -> String {
+    let block_titles = block_ref_targets
+        .as_object()
+        .expect("`blockRefTargets` maps an id to its content")
+        .iter()
+        .map(|(id, target)| {
+            let first_line = target.as_str().unwrap_or_default().lines().next();
+            (id.clone(), first_line.unwrap_or_default().to_owned())
+        })
+        .collect();
+    agaric_store::fts::strip::strip_for_fts_with_maps(
+        "vector",
+        content,
+        &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
+        &block_titles,
+    )
+}
+
+/// Each stored block row carries `rustReads` and `fts`, which Rust authors
+/// (`CONFORMANCE_UPDATE=1` writes them); the editor's parse asserts the
+/// first and the mock's search strip the second.
 #[test]
 fn the_block_content_vectors_carry_what_rust_reads() {
     let written: serde_json::Value = serde_json::from_str(
@@ -745,12 +767,17 @@ fn the_block_content_vectors_carry_what_rust_reads() {
     )
     .expect("the block-content vectors are JSON");
     let mut authored = written.clone();
+    let block_ref_targets = written["blockRefTargets"].clone();
     for row in authored["blocks"]
         .as_array_mut()
         .expect("the vectors hold `blocks`")
     {
-        let content = row["content"].as_str().expect("a row has `content`");
-        row["rustReads"] = serde_json::json!(rust_reads(content));
+        let content = row["content"]
+            .as_str()
+            .expect("a row has `content`")
+            .to_owned();
+        row["rustReads"] = serde_json::json!(rust_reads(&content));
+        row["fts"] = serde_json::json!(fts_text(&content, &block_ref_targets));
     }
     if std::env::var("CONFORMANCE_UPDATE").as_deref() == Ok("1") {
         let mut out = serde_json::to_string_pretty(&authored).expect("vectors serialise");
@@ -760,7 +787,7 @@ fn the_block_content_vectors_carry_what_rust_reads() {
     }
     assert_eq!(
         written, authored,
-        "`rustReads` drifted from Rust's reading: re-author with CONFORMANCE_UPDATE=1"
+        "`rustReads` or `fts` drifted from Rust's reading: re-author with CONFORMANCE_UPDATE=1"
     );
 }
 
@@ -821,6 +848,52 @@ fn the_checkbox_alphabet_vector_is_read_by_the_buffer_and_import() {
                 .as_deref()
                 .expect("a canonical marker has a state");
             assert_eq!(import::task_marker_for(state), Some(marker), "{state}");
+        }
+    }
+}
+
+proptest! {
+    /// A block property's value, a ref's as its title, reads back from the
+    /// export as an import reads it and from the agent's read as a paste
+    /// reads it: one with a line break or surrounding spaces is quoted, or its
+    /// later lines would become blocks of their own (#6277 A2).
+    #[test]
+    fn a_property_value_survives_the_export_and_the_agent_read(
+        properties in prop::collection::btree_map(arb_property_key(), arb_property_value(), 1..=3)
+    ) {
+        let spec = BlockSpec {
+            level: 0,
+            content: "block".into(),
+            todo_state: None,
+            priority: None,
+            scheduled_date: None,
+            due_date: None,
+            list_style: None,
+            properties,
+        };
+        let (data, _) = build_page(std::slice::from_ref(&spec));
+        let expected: BTreeMap<String, String> = spec
+            .properties
+            .iter()
+            .map(|(key, (value, is_ref))| {
+                let value = if *is_ref { &data.ref_titles[value] } else { value };
+                (key.clone(), value.clone())
+            })
+            .collect();
+        let export = render_page_markdown(PAGE, &data);
+        let agent = render_page_for_agent(&data);
+        let agent_blocks = agent.strip_prefix("# Title\n\n").expect("the title, then the blocks");
+        for (md, parsed) in [
+            (
+                &export,
+                import::parse_logseq_markdown(&import::strip_title_heading(&export, "Title")).blocks,
+            ),
+            (&agent, import::parse_pasted_text(agent_blocks)),
+        ] {
+            let blocks: Vec<&str> = parsed.iter().map(|block| block.content.as_str()).collect();
+            prop_assert_eq!(blocks, ["block"], "md:\n{}", md);
+            let read_back: BTreeMap<String, String> = parsed[0].properties.iter().cloned().collect();
+            prop_assert_eq!(&read_back, &expected, "md:\n{}", md);
         }
     }
 }

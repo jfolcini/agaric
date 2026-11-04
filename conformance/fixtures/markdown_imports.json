@@ -1,5 +1,5 @@
 {
-  "description": "#5071 — the two importers, each fed a multi-line document spelled inline as the op's `content`, into a space an op creates (`C1`; an import refuses a target that is not a space). The markdown document is shaped as Agaric's own export writes one: a title heading the filename already names, then front matter, then a section heading over nesting two deep, a block whose text runs over two lines, a task checkbox, a page link, a tag and a block property. The link and the tag name the seeded S1 and S3, moved into `C1` first: a name the import resolved to a block it CREATED would land in `content` as that block's id, minted per run, which no recorded snapshot can hold. The bibliography document is two BibTeX entries and a third that repeats the first one's key. The snapshot pins every block, property and tag the imports wrote, and each return pins its counts. The grammar has one implementation, in Rust: the mock's importers are deliberate approximations (one flat block per line, placeholder reference pages), so this fixture is backend-only on the mock (`DRIFT_SKIP` in conformance.test.ts). Seed: S1 (Seed Catalogue); S2 (Tags) > S3 (garden). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "description": "#5071 — the two importers, each fed a multi-line document spelled inline as the op's `content`, into a space an op creates (`C1`; an import refuses a target that is not a space). The markdown document is shaped as Agaric's own export writes one: front matter, then a title heading the filename already names, then a section heading over nesting two deep, a block whose text runs over two lines, a task checkbox, a page link, a tag and a block property. The link and the tag name the seeded S1 and S3, moved into `C1` first: a name the import resolved to a block it CREATED would land in `content` as that block's id, minted per run, which no recorded snapshot can hold. The bibliography document is two BibTeX entries and a third that repeats the first one's key. The snapshot pins every block, property and tag the imports wrote, and each return pins its counts. The grammar has one implementation, in Rust: the mock's importers are deliberate approximations (one flat block per line, placeholder reference pages), so this fixture is backend-only on the mock (`DRIFT_SKIP` in conformance.test.ts). Seed: S1 (Seed Catalogue); S2 (Tags) > S3 (garden). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -486,13 +486,13 @@
     },
     {
       "args": {
-        "content": "# Garden Notes\n\n---\nseason: spring\n---\n\n## Beds\n- Plant **tomatoes** in spring\n  - Water daily\n    - Mornings only\n- A block that runs\n  over two lines\n- [ ] Order seeds\n- See [[Seed Catalogue]] and #garden\n  owner:: ada\n",
+        "content": "---\nseason: spring\n---\n\n# Garden Notes\n\n## Beds\n- Plant **tomatoes** in spring\n  - Water daily\n    - Mornings only\n- A block that runs\n  over two lines\n- [ ] Order seeds\n- See [[Seed Catalogue]] and #garden\n  owner:: ada\n",
         "dialect": "Markdown",
         "filename": "Garden Notes.md",
         "spaceId": "C1"
       },
       "command": "import_markdown",
-      "comment": "The title comes from the filename, so the leading heading that repeats it is no block and the front matter after it is the page's property; the section heading is a block the list nests under; indentation is nesting and a continuation line stays in its block; the checkbox is the task state; the link and the tag resolve to S1 and S3; `owner::` is the last block's property.",
+      "comment": "The title comes from the filename, so the heading after the front matter that repeats it is no block and the front matter is the page's property; the section heading is a block the list nests under; indentation is nesting and a continuation line stays in its block; the checkbox is the task state; the link and the tag resolve to S1 and S3; `owner::` is the last block's property.",
       "name": "a_nested_page",
       "via": "command"
     },
