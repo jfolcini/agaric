@@ -229,6 +229,29 @@ describe('a typed whole `![[Name]]` in block mode (#6033)', () => {
     expect(handle.unmount()).toBe(`[[${PAGE}]]`)
   })
 
+  it.each([
+    ['', '![[Twin]]'],
+    ['Hello', 'Hello![[Twin]]'],
+  ])('after %j, a name two pages share stays as typed', async (before, expected) => {
+    const twin = (id: string): PickerItem => ({ id, label: 'Twin', title: 'Twin' })
+    const search = searchPages.getMockImplementation()
+    searchPages.mockImplementation(async (query) =>
+      query === 'Twin'
+        ? [twin('01PAGE0000000000000000TWNA'), twin('01PAGE0000000000000000TWNB')]
+        : [],
+    )
+    try {
+      const handle = await blockMode(before)
+      const editor = handle.editor as Editor
+      type(editor, '![[Twin]]')
+      await vi.waitFor(() => expect(editor.getText()).toContain(']]'))
+
+      expect(editor.getText()).toBe(expected)
+    } finally {
+      if (search) searchPages.mockImplementation(search)
+    }
+  })
+
   it('one undo brings back the typed text', async () => {
     const handle = await blockMode()
     const editor = handle.editor as Editor
