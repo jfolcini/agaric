@@ -1,4 +1,5 @@
 import type React from 'react'
+import { useState } from 'react'
 
 import {
   CALLOUT_CONFIG,
@@ -6,7 +7,9 @@ import {
   type RenderContext,
 } from '@/components/RichContentRenderer/context'
 import { renderInlineContent } from '@/components/RichContentRenderer/marks/inline'
+import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import type { BlockLevelNode, BlockquoteNode } from '@/editor/types'
+import { calloutStyle } from '@/lib/callout-style'
 import { i18n } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 
@@ -62,23 +65,35 @@ function renderBlockquoteChild(
   return renderBlockNode(child, key, ctx)
 }
 
-function renderCalloutBlock(
-  calloutType: string,
-  children: React.ReactNode[],
-  key: string,
-): React.ReactElement {
-  // #2275 — the parser accepts any `\w+` as a callout type (`[!frobnicate]`),
-  // but only the five configured types have a CALLOUT_CONFIG entry and a
-  // `callout.<type>` i18n string. Resolve an unknown type to `note` for BOTH
-  // the visual config AND the header label so a missing translation key never
-  // surfaces to the user as the raw `callout.<type>` string.
-  const knownType = Object.hasOwn(CALLOUT_CONFIG, calloutType) ? calloutType : 'note'
-  const config = CALLOUT_CONFIG[knownType] ?? CALLOUT_CONFIG['note']
-  if (!config) return <blockquote key={key}>{children}</blockquote>
+interface CalloutBlockProps {
+  calloutType: string
+  fold: '+' | '-' | undefined
+  /** What a folded callout shows while closed. */
+  title: React.ReactNode
+  children: React.ReactNode[]
+}
+
+/**
+ * A callout in the style its type maps to (`calloutStyle`), labelled with that
+ * style's name so a custom type never shows a raw `callout.<type>` key
+ * (#2275). A `-` / `+` fold marker adds a toggle, starting closed / open,
+ * that shows the title alone while closed. Open or closed is view state:
+ * nothing is saved, and the editor shows the callout whole.
+ */
+function CalloutBlock({
+  calloutType,
+  fold,
+  title,
+  children,
+}: CalloutBlockProps): React.ReactElement {
+  const [open, setOpen] = useState(fold !== '-')
+  const style = calloutStyle(calloutType)
+  const config = CALLOUT_CONFIG[style]
+  if (!config) return <blockquote>{children}</blockquote>
   const CalloutIcon = config.icon
+  const label = i18n.t(`callout.${style}`)
   return (
     <blockquote
-      key={key}
       className={cn('border-l-[3px] pl-4 py-2 rounded-r-md', config.borderClass, config.bgClass)}
       data-callout-type={calloutType}
       data-testid="callout-block"
@@ -86,11 +101,55 @@ function renderCalloutBlock(
       <div className={cn('flex items-center gap-1.5 font-semibold text-sm mb-1', config.textClass)}>
         {/* The header pins text-sm, so the icon sizes from the setting itself (#5369). */}
         <CalloutIcon className="size-[var(--agaric-font-size,1rem)] shrink-0" aria-hidden="true" />
-        <span>{i18n.t(`callout.${knownType}`)}</span>
+        <span>{label}</span>
+        {fold !== undefined && (
+          <button
+            type="button"
+            className="shrink-0 rounded-sm p-0.5 focus-ring-visible touch-hit-area"
+            data-testid="callout-fold-toggle"
+            aria-expanded={open}
+            aria-label={i18n.t(open ? 'callout.collapse' : 'callout.expand', { name: label })}
+            // Like `CollapsibleImage`'s toggle: keep the editor's focus on
+            // mousedown, and keep the click and Enter/Space from reaching the
+            // row's own handlers, which would open the block for editing.
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={(e) => {
+              e.stopPropagation()
+              setOpen((o) => !o)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') e.stopPropagation()
+            }}
+          >
+            <ChevronToggle isExpanded={open} size="md" solidWhenCollapsed />
+          </button>
+        )}
       </div>
-      <div className="text-foreground">{children}</div>
+      <div className="text-foreground">{open ? children : title}</div>
     </blockquote>
   )
+}
+
+/**
+ * A callout's title: its first line, which is the first child up to its first
+ * hard break (`> [!faq]- Why?` / `> Because.` parse as one paragraph).
+ */
+function renderCalloutTitle(
+  content: readonly BlockLevelNode[],
+  key: string,
+  ctx: RenderContext,
+  depth: number,
+  renderBlockNode: RenderBlockFn,
+): React.ReactNode {
+  const first = content[0]
+  if (first === undefined) return null
+  if (first.type !== 'paragraph') {
+    return renderBlockquoteChild(first, `${key}-0`, ctx, depth, renderBlockNode)
+  }
+  const inline = first.content ?? []
+  const breakAt = inline.findIndex((node) => node.type === 'hardBreak')
+  const line = breakAt < 0 ? first : { ...first, content: inline.slice(0, breakAt) }
+  return renderBlockquoteChild(line, `${key}-0`, ctx, depth, renderBlockNode)
 }
 
 export function renderBlockquoteBlock(
@@ -108,7 +167,16 @@ export function renderBlockquoteBlock(
     if (rendered != null) children.push(rendered)
   }
   const calloutType = block.attrs?.calloutType
-  if (calloutType) return renderCalloutBlock(calloutType, children, key)
+  if (calloutType) {
+    const fold = block.attrs?.calloutFold
+    const title =
+      fold === undefined ? null : renderCalloutTitle(content, key, ctx, depth, renderBlockNode)
+    return (
+      <CalloutBlock key={key} calloutType={calloutType} fold={fold} title={title}>
+        {children}
+      </CalloutBlock>
+    )
+  }
   return (
     <blockquote key={key} className="border-l-[3px] border-border pl-4 text-muted-foreground">
       {children}
