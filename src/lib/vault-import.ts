@@ -18,6 +18,14 @@ import type { VaultFile } from '@/lib/bindings'
 import { type EnexNote, enexNoteToMarkdown, sanitizeNoteTitleToFilename } from '@/lib/enex-import'
 import { NOTE_EXTENSIONS, scanAttachmentRefs } from '@/lib/import-attachments'
 import { type JexNote, jexNoteToMarkdown } from '@/lib/jex-import'
+import {
+  isLogseqAppFile,
+  isLogseqGraph,
+  LOGSEQ_CONFIG,
+  type LogseqGraph,
+  logseqGraph,
+  logseqTitleProperty,
+} from '@/lib/logseq-import'
 import { isNotionExport, notionToMarkdown, stripNotionIds } from '@/lib/notion-import'
 import { orgToMarkdown } from '@/lib/org-import'
 
@@ -307,47 +315,92 @@ function retitle(path: string, title: string): string {
 }
 
 /**
+ * The paths a pick's notes import as, the notes keyed by the names a link
+ * calls them, and the Logseq graph they make, if any.
+ */
+interface NamedNotes {
+  paths: string[]
+  notesByName: Map<string, string[]>
+  graph: LogseqGraph | null
+}
+
+/**
+ * Name a pick's `notes`. A Logseq graph's pages and journals are titled as
+ * Logseq titles them (#6033), and keyed by the whole title, since a Logseq
+ * link names one; any other note by its file stem, as Obsidian links it.
+ */
+async function nameNotes(
+  files: readonly File[],
+  notes: readonly { file: File; path: string }[],
+  logseq: boolean,
+): Promise<NamedNotes> {
+  const relPath = (file: File) => vaultRelativePath(file.webkitRelativePath)
+  const config = logseq ? files.find((file) => relPath(file) === LOGSEQ_CONFIG) : undefined
+  const graph = logseq
+    ? logseqGraph(
+        (await config?.text()) ?? null,
+        notes.map(({ file }) => relPath(file)),
+      )
+    : null
+  const paths = notes.map(({ path }, index) => {
+    const title = graph?.titles[index]
+    return title == null ? path : `${title}.md`
+  })
+  const notesByName = new Map<string, string[]>()
+  for (const path of paths) {
+    const name = (graph === null ? basename(path) : path).slice(0, -'.md'.length).toLowerCase()
+    notesByName.set(name, [...(notesByName.get(name) ?? []), path])
+  }
+  return { paths, notesByName, graph }
+}
+
+/**
  * Folder/vault/file producer: one unit per note, a file with one of the
  * {@link NOTE_EXTENSIONS}, so a folder pick's other files are attachments
  * only (#5740). Content is read lazily inside `load` (so a cancel avoids
  * reading not-yet-reached files), `path` is the folder-relative path for the
  * #1446 namespace mapping (basename fallback for a plain pick), and vault
  * siblings and the notes a file links are collected only when a `vaultIndex`
- * is present. An Org file is converted, and a Notion export's pages lose the
- * ids in their names and links (#6032).
+ * is present. An Org file is converted, a Notion export's pages lose the
+ * ids in their names and links (#6032), and a Logseq graph's pages and
+ * journals take Logseq's titles, its own `logseq/` folder left out (#6033).
  */
 export function mdFilesToUnits(
   files: File[],
   vaultIndex: VaultIndex | null,
   notion: boolean,
 ): ImportUnit[] {
+  const logseq = isLogseqGraph(files.map((file) => vaultRelativePath(file.webkitRelativePath)))
   const notes = files.flatMap((file) => {
     const extension = noteExtension(file.name)
-    return extension === null
-      ? []
-      : [{ file, extension, path: importPath(file, extension, notion) }]
+    if (extension === null) return []
+    if (logseq && isLogseqAppFile(vaultRelativePath(file.webkitRelativePath))) return []
+    return [{ file, extension, path: importPath(file, extension, notion) }]
   })
-  const notesByName = new Map<string, string[]>()
-  for (const { path } of notes) {
-    const name = basename(path).slice(0, -'.md'.length).toLowerCase()
-    notesByName.set(name, [...(notesByName.get(name) ?? []), path])
-  }
-  return notes.map(({ file, extension, path: filePath }) => ({
+  // A Logseq graph's titles wait on its `config.edn`, read once, on the first load.
+  let named: Promise<NamedNotes> | undefined
+  const naming = () => (named ??= nameNotes(files, notes, logseq))
+  return notes.map(({ file, extension }, index) => ({
     name: file.name,
     // Count bytes from the file size (known without reading) so a load
     // failure still advances the byte counter, matching the pre-refactor loop.
     bytes: file.size,
     load: async () => {
+      const { paths, notesByName, graph } = await naming()
       const text = await file.text()
       let content = text
-      let path = filePath
+      let path = paths[index] as string
       if (extension === '.org') {
         const org = orgToMarkdown(text)
         content = org.markdown
         if (org.title !== null && org.title !== '') path = retitle(path, org.title)
       } else if (notion && extension === '.md') {
         content = notionToMarkdown(text, basename(path).slice(0, -'.md'.length))
+      } else if (graph !== null) {
+        const title = logseqTitleProperty(text)
+        if (title !== null) path = `${title}.md`
       }
+      if (graph !== null) content = graph.rewrite(content)
       // #1925 — on a vault/folder import, ship matched sibling bytes; a
       // single-file import (no index) has no siblings. A folder note always
       // ships its note names, even none: that marks it as a folder's, whose
