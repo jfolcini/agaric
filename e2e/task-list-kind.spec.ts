@@ -145,8 +145,8 @@ const todos = (page: Page, ids: readonly string[]) =>
     ),
   )
 
-// A task's checkbox; block mode also draws an empty one on a plain block, named "Set as TODO".
-const CHECKBOX = '[data-testid="task-marker"][aria-label^="Task:"]'
+// A task's checkbox.
+const CHECKBOX = '[data-testid="task-marker"]'
 
 /** What each block shows before its text: `☐` for a task's checkbox, its list marker, or nothing. */
 async function shown(blocks: Locator[]): Promise<string[]> {

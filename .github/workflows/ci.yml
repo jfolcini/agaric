@@ -15,54 +15,21 @@ on:
     tags-ignore: ['**']
   pull_request:
     branches: [main]
+  # The merge queue tests each group's merged result before it lands; this
+  # run reports `validate / validate-all` for it.
+  merge_group:
 
-# Cancel an in-flight CI run when a new push lands on the same ref. On a PR
-# branch that is unambiguously right: a push-then-fix cycle supersedes its own
-# earlier run and only the latest head is interesting.
+# PR refs and merge-queue refs cancel a superseded run of the same ref: only
+# the latest head is interesting.
 #
-# ─── Why `main` is excluded (#3672) ─────────────────────────────────────────
-#
-# The paragraph that used to be here argued the same cancellation was safe on
-# `main`, on the grounds that main CI is a post-merge sanity check and "the
-# latest state always is" validated. The second half of that sentence is the
-# part that stopped being true, and it is measurable: on 2026-08-09, five PRs
-# merged in about 45 minutes and the run history shows FOUR consecutive
-# cancelled main runs — 91022aaeb, a650ab4de, 4ccac145b, 23776e853 — with the
-# last main CI to actually COMPLETE being 4f2efb1bf, before all of them. Across
-# the whole day, 31 of 47 main CI runs were cancelled. `main` was not
-# "validated at its latest state"; it was unvalidated across five commits, and
-# while merges keep arriving at that rate the latest state is cancelled too, so
-# main CI never completes at all.
-#
-# That is the sharpest form of #3672. That issue is that nothing verifies a
-# merge RESULT before it becomes `main`; this made it worse, because the
-# post-merge run which is the last thing that could have caught it was being
-# cancelled by the next merge. A break introduced by merge #2 and masked in
-# merge #5's tree would never have been attributed to anything.
-#
-# So: cancel on PR refs, never on `main`. Push-mode CI is not a merge gate
-# either way — `validate / validate-all`, `e2e-tauri-gate` and `dco` still gate the PR — but a
-# completed verdict per merged commit is what makes a red main attributable to
-# the merge that caused it.
-#
-# ─── Why `cancel-in-progress: false` was not enough ─────────────────────────
-#
-# It only protects the RUNNING run. A concurrency group holds at most ONE
-# pending run, so a third push evicts the second before it ever starts — and an
-# evicted run is `cancelled` with zero jobs, indistinguishable at a glance from
-# a run that was cancelled for cause. Measured on 2026-09-22, all three on
-# `main`: `e26dc1ae` started 08:48:18 and was still running; `5090cb91b` queued
-# 09:15:20; `d49aaa59d` arrived 09:22:33 and `5090cb91b` was cancelled having
-# dispatched nothing. That is #3672 again, one layer down, and the paragraph
-# above claimed it was fixed.
-#
-# The group therefore has to be per-COMMIT on `main`, not per-ref: runs that
-# share no group cannot evict each other, whatever `cancel-in-progress` says.
-# The cost is the one the note above already accepted — N back-to-back merges
-# burn N full main runs — except now they run rather than queue behind one
-# slot. PR refs keep the per-ref group, where superseding is the point.
+# `main` shares one group without cancel. The merge queue tests every merged
+# result before it lands, so the post-merge run is a sanity check, not the
+# gate: a running main run finishes, a newer push replaces the one pending run,
+# and the newest main commit's run covers everything before it. One run per
+# commit (#3672) kept a verdict for every merge but piled main runs up in the
+# runner queue ahead of PR gates.
 concurrency:
-  group: ${{ github.ref == 'refs/heads/main' && format('ci-main-{0}', github.sha) || format('ci-{0}', github.ref) }}
+  group: ${{ github.ref == 'refs/heads/main' && 'ci-main' || format('ci-{0}', github.ref) }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 # Default to read-only for the workflow's GITHUB_TOKEN. Individual jobs do
@@ -132,7 +99,9 @@ jobs:
   # ---------------------------------------------------------------------------
   build:
     needs: validate
-    if: needs.validate.outputs.desktop == 'true'
+    # Not a required check, and the post-merge main run builds the bundle:
+    # a merge-group run spends no slot on it.
+    if: github.event_name != 'merge_group' && needs.validate.outputs.desktop == 'true'
     # PEND-41 R1 — observed Linux wall-clock 24.3 min (run 25966040732,
     # 2026-05-16, n=1). +50% headroom + round up → 50.
     timeout-minutes: 50
@@ -239,7 +208,8 @@ jobs:
   # ---------------------------------------------------------------------------
   android-build:
     needs: validate
-    if: needs.validate.outputs.android == 'true'
+    # Same as `build`: not required, rebuilt by the post-merge main run.
+    if: github.event_name != 'merge_group' && needs.validate.outputs.android == 'true'
     runs-on: ubuntu-24.04
     # PEND-41 R1 — observed wall-clock 27.8 min (run 25966040732, 2026-05-16,
     # n=1). +50% headroom + round up → 45 min.
@@ -484,8 +454,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        # Safe when two main runs prune at once (one concurrency group per
-        # commit): each deletes only entries older than one it listed, under
+        # Safe if two main runs ever prune at once: each deletes only entries older than one it listed, under
         # the same total order, so no run deletes a family's newest entry. A
         # listing or delete error is a warning, not a red `main`: the worst
         # outcome is a stale generation that the next push prunes.

@@ -862,6 +862,13 @@ describe('expandTemplateVariables — resolver map (#1450 Phase 1)', () => {
       expect(expandTemplateVariables("<% today:' %>", { now: NOW })).toBe('2026-03-07')
     })
 
+    // #6277 — the `<% %>` path shares the `{{date:FORMAT}}` Moment mapping.
+    it('<% today:dddd, MMMM Do %> reads the Moment day tokens', () => {
+      expect(expandTemplateVariables('<% today:dddd, MMMM Do %>', { now: NOW })).toBe(
+        'Saturday, March 7th',
+      )
+    })
+
     it('ignores spaces around the colon', () => {
       expect(expandTemplateVariables('<% today : DD/MM/YYYY %>', { now: NOW })).toBe('07/03/2026')
     })
