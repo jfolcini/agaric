@@ -1,4 +1,5 @@
 use crate::prelude::*;
+use agaric_engine::import::ImportDialect;
 use agaric_lib::commands::pages::anchor_free;
 use agaric_store::space::{SpaceId, SpaceScope};
 
@@ -8146,6 +8147,7 @@ async fn import_markdown_emits_started_progress_complete() {
         content.into(),
         Some("Streamed.md".into()),
         TEST_SPACE_ID.into(),
+        ImportDialect::Markdown,
         None,
         None,
         Some(&sink),
@@ -8220,6 +8222,7 @@ async fn import_markdown_progress_empty_file_started_then_complete() {
         String::new(),
         Some("Empty.md".into()),
         TEST_SPACE_ID.into(),
+        ImportDialect::Markdown,
         None,
         None,
         Some(&sink),
@@ -8280,6 +8283,7 @@ async fn import_markdown_progress_failure_emits_no_complete() {
         "- Block 1\n- Block 2".into(),
         Some("Fails.md".into()),
         TEST_SPACE_ID.into(),
+        ImportDialect::Markdown,
         None,
         None,
         Some(&sink),
@@ -8705,6 +8709,7 @@ async fn import_markdown_commits_chunks_visible_to_separate_reader_662() {
         content,
         Some("LockRelease.md".into()),
         TEST_SPACE_ID.into(),
+        ImportDialect::Markdown,
         None,
         None,
         None,
@@ -12053,6 +12058,7 @@ async fn import_reads_a_bare_wikilink_as_the_vault_note_of_that_name() {
                 md.into(),
                 Some(path.into()),
                 TEST_SPACE_ID.into(),
+                ImportDialect::Markdown,
                 None,
                 Some(notes.clone()),
                 None,
@@ -17851,6 +17857,7 @@ async fn import_folder(
             (*md).to_string(),
             Some((*path).to_string()),
             TEST_SPACE_ID.into(),
+            ImportDialect::Markdown,
             Some(files.to_vec()),
             Some(paths.clone()),
             None,

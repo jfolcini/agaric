@@ -47,7 +47,7 @@ use super::conformance_query::{
     PROJECTING_STEP, PROPERTY_DEF_ATTRS, SPACE_TOKEN, relabel_token, row_token,
 };
 use agaric_core::ulid::{ActiveBlockId, AttachmentId, BlockId};
-use agaric_engine::import::ImportAnchor;
+use agaric_engine::import::{ImportAnchor, ImportDialect};
 use agaric_lib::commands::properties::property_changed_events;
 use agaric_store::op::OpRef;
 use agaric_store::space::{SpaceId, SpaceScope};
@@ -1246,7 +1246,7 @@ pub(super) async fn apply_op_via_command(
         // the target space is a label. The markdown import's vault-file bytes
         // are left out, so it ingests no attachment.
         "import_markdown" => to_json(
-            import_markdown_inner(
+            import_markdown_with_progress(
                 pool,
                 DEV,
                 mat,
@@ -1254,6 +1254,12 @@ pub(super) async fn apply_op_via_command(
                 text("content"),
                 opt_str("filename"),
                 arg_label_id("spaceId").expect("spaceId"),
+                serde_json::from_value::<ImportDialect>(arg("dialect").cloned().unwrap_or_else(
+                    || panic!("conformance op '{command}' is missing arg 'dialect'"),
+                ))
+                .expect("dialect"),
+                None,
+                None,
                 None,
             )
             .await,

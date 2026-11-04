@@ -185,6 +185,7 @@
     {
       "args": {
         "content": "First paragraph\n\nSee [[S1]] here\n",
+        "dialect": "Markdown",
         "filename": "Plain.md",
         "spaceId": "C1"
       },

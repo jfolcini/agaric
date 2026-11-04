@@ -487,6 +487,7 @@
     {
       "args": {
         "content": "# Garden Notes\n\n---\nseason: spring\n---\n\n## Beds\n- Plant **tomatoes** in spring\n  - Water daily\n    - Mornings only\n- A block that runs\n  over two lines\n- [ ] Order seeds\n- See [[Seed Catalogue]] and #garden\n  owner:: ada\n",
+        "dialect": "Markdown",
         "filename": "Garden Notes.md",
         "spaceId": "C1"
       },

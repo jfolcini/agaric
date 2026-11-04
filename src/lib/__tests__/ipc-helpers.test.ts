@@ -209,7 +209,7 @@ describe('importMarkdown', () => {
     }
     mockedInvoke.mockImplementation(mockInvokeCommands({ import_markdown: () => expected }))
 
-    const result = await importMarkdown('# Title\n\nBody', 'my-page.md', 'SPACE_A')
+    const result = await importMarkdown('# Title\n\nBody', 'my-page.md', 'SPACE_A', 'LogseqOrg')
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
     // `space_id` is required; the helper threads
@@ -218,6 +218,7 @@ describe('importMarkdown', () => {
       content: '# Title\n\nBody',
       filename: 'my-page.md',
       spaceId: 'SPACE_A',
+      dialect: 'LogseqOrg',
       // #1925 — no vault files and no vault notes: the backend treats a null
       // `vault` as a plain pick.
       vault: null,
@@ -245,12 +246,13 @@ describe('importMarkdown', () => {
       }),
     )
 
-    await importMarkdown('hello', undefined, 'SPACE_A')
+    await importMarkdown('hello', undefined, 'SPACE_A', 'Markdown')
 
     expect(mockedInvoke).toHaveBeenCalledWith('import_markdown', {
       content: 'hello',
       filename: null,
       spaceId: 'SPACE_A',
+      dialect: 'Markdown',
       vault: null,
       progress: expect.anything(),
     })
@@ -281,7 +283,7 @@ describe('importMarkdown', () => {
     )
 
     const onProgress = vi.fn()
-    await importMarkdown('- a', 'x.md', 'SPACE_A', onProgress)
+    await importMarkdown('- a', 'x.md', 'SPACE_A', 'Markdown', onProgress)
 
     const event = { kind: 'started', page_title: 'X', blocks_total: 1 }
     capturedChannel?.onmessage?.(event)
@@ -289,8 +291,8 @@ describe('importMarkdown', () => {
   })
 
   it('forwards vaultFiles and vaultNotes as the vault of the import_markdown command (#1925, #5740)', async () => {
-    // #1925 — the optional 5th `vaultFiles` arg (referenced attachment bytes
-    // from the vault picker), #5740 the 6th `vaultNotes`. Either one alone
+    // #1925 — the optional 6th `vaultFiles` arg (referenced attachment bytes
+    // from the vault picker), #5740 the 7th `vaultNotes`. Either one alone
     // still sends both fields, which the backend reads as lists.
     mockedInvoke.mockImplementation(
       mockInvokeCommands({
@@ -308,13 +310,14 @@ describe('importMarkdown', () => {
     )
 
     const vaultFiles = [{ path: 'assets/a.png', bytes: [1, 2, 3] }]
-    await importMarkdown('![](assets/a.png)', 'p.md', 'SPACE_A', undefined, vaultFiles)
-    await importMarkdown('[[n]]', 'V/p.md', 'SPACE_A', undefined, null, ['V/n.md'])
+    await importMarkdown('![](assets/a.png)', 'p.md', 'SPACE_A', 'Markdown', undefined, vaultFiles)
+    await importMarkdown('[[n]]', 'V/p.md', 'SPACE_A', 'Markdown', undefined, null, ['V/n.md'])
 
     expect(mockedInvoke).toHaveBeenNthCalledWith(1, 'import_markdown', {
       content: '![](assets/a.png)',
       filename: 'p.md',
       spaceId: 'SPACE_A',
+      dialect: 'Markdown',
       vault: { files: vaultFiles, notes: [] },
       progress: expect.anything(),
     })
@@ -322,6 +325,7 @@ describe('importMarkdown', () => {
       content: '[[n]]',
       filename: 'V/p.md',
       spaceId: 'SPACE_A',
+      dialect: 'Markdown',
       vault: { files: [], notes: ['V/n.md'] },
       progress: expect.anything(),
     })
