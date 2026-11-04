@@ -167,6 +167,26 @@ describe('UnfitPropertyValues', () => {
     expect(properties.get(MTG_2)?.get('project')?.['value_text']).toBe('beta')
   })
 
+  it("counts them again when the toast's Undo is pressed after the list was left and reopened", async () => {
+    const user = userEvent.setup()
+    await projectLosesBeta()
+    const first = render(<PropertyDefinitionsList />)
+    const dialog = await openDialog('project')
+    await user.click(button(dialog, 'propertiesView.unfitRemove') as HTMLElement)
+    await waitFor(() => {
+      expect(badge('project')).not.toBeInTheDocument()
+    })
+    first.unmount()
+    render(<PropertyDefinitionsList />)
+    expect(await screen.findByTestId('property-usage-project')).toBeInTheDocument()
+
+    undoOf(t('propertiesView.unfitRemoved', { count: 1, key: 'project' }))?.()
+
+    await waitFor(() => {
+      expect(badge('project')).toHaveTextContent(t('propertiesView.unfitBadge', { count: 1 }))
+    })
+  })
+
   it('adds them to the options, and the badge goes', async () => {
     const user = userEvent.setup()
     await projectLosesBeta()

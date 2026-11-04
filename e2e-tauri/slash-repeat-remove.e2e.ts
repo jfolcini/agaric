@@ -25,6 +25,7 @@ import {
   cycleTaskTo,
   editAtEnd,
   expectAbsent,
+  invoke,
   occurrenceIn,
   openPageSource,
   clickPageSourceButton,
@@ -63,7 +64,8 @@ describe('Agaric real-backend /repeat remove (#5160) @editor @journal', () => {
     await reopenPageHolding(page, task)
     const id = await blockStaticByMarker(task).getAttribute('data-block-id')
     if (id === null) throw new Error('the task block has no id')
-    await cycleTaskTo(id, 'TODO')
+    await invoke('set_todo_state', { blockId: id, state: 'TODO' })
+    await reopenPageHolding(page, task)
     await $(`[data-block-id="${id}"] .repeat-indicator`).waitForDisplayed({ timeout: NAV_TIMEOUT })
 
     await editAtEnd(id)
