@@ -140,6 +140,13 @@ export const MARKDOWN_REFERENCE: readonly MarkdownReferenceEntry[] = [
     covers: ['block_ref'],
     readBy: 'embed',
   },
+  { id: 'footnote', group: 'links', typed: 'A claim[^source]', covers: ['footnote_ref'] },
+  {
+    id: 'footnote-definition',
+    group: 'links',
+    typed: '[^source]: Where it comes from',
+    covers: ['footnote_ref'],
+  },
 
   { id: 'task-todo', group: 'tasks', typed: '- [ ] Task', covers: ['paragraph.todoState'] },
   { id: 'task-doing', group: 'tasks', typed: '- [/] Task', covers: ['paragraph.todoState'] },

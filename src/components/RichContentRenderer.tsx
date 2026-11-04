@@ -2,8 +2,13 @@ import type React from 'react'
 
 import type { RenderContext } from '@/components/RichContentRenderer/context'
 import { renderBlock, renderBlockInline } from '@/components/RichContentRenderer/marks/block'
+import {
+  renderFootnoteDefinition,
+  withoutDefinitionPrefix,
+} from '@/components/RichContentRenderer/marks/footnote'
+import { definedLabel, type FootnoteNumbering } from '@/editor/footnotes'
 import { parse, serialize } from '@/editor/markdown-serializer'
-import type { BlockLevelNode, BlockLinkNode, DocNode } from '@/editor/types'
+import type { BlockLevelNode, BlockLinkNode, DocNode, ParagraphNode } from '@/editor/types'
 
 // Re-export `CALLOUT_CONFIG` so existing imports keep working.
 // (`{ CALLOUT_CONFIG, renderRichContent } from '@/components/RichContentRenderer'`)
@@ -109,6 +114,8 @@ export function renderRichContent(
      * this the content without that link, as the editor would serialize it.
      */
     onRemoveBrokenLink?: ((contentWithoutLink: string) => void) | undefined
+    /** The numbering of the page the content is on (#6033); unset, a footnote shows its label. */
+    footnotes?: FootnoteNumbering | undefined
   },
 ): React.ReactNode {
   if (!markdown) return null
@@ -125,8 +132,13 @@ export function renderRichContent(
           ...options,
           removeBrokenLink: (link) => onRemoveBrokenLink(serialize(withoutLink(doc, link))),
         }
+  const defines = inline ? null : definedLabel(doc)
   for (let bIdx = 0; bIdx < doc.content.length; bIdx++) {
-    const block = doc.content[bIdx] as BlockLevelNode
+    let block = doc.content[bIdx] as BlockLevelNode
+    if (bIdx === 0 && defines !== null) {
+      elements.push(renderFootnoteDefinition(defines, ctx))
+      block = withoutDefinitionPrefix(block as ParagraphNode)
+    }
     if (inline) {
       const inlineNodes = renderBlockInline(block, `b-${bIdx}`, ctx)
       if (inlineNodes.length === 0) continue

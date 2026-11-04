@@ -77,14 +77,15 @@ function source(pageId = PAGE): string {
 /**
  * `buffer`, written as the page's buffer writes it, each block's ` ^ID` ending
  * its last line, as the editor holds it: the text less those anchors, each id
- * beside the line its block starts on, the first after a blank line.
+ * beside the line its block starts on, the first after a blank line or a `+`
+ * item's line (decision 2, #6277).
  */
 function byLine(buffer: string): { source: string; lineIds: Array<string | null> } {
   const lines = buffer.split('\n')
   const lineIds: Array<string | null> = lines.map(() => null)
   let start = 0
   lines.forEach((line, i) => {
-    if (i === 0 || lines[i - 1] === '') start = i
+    if (i === 0 || lines[i - 1] === '' || /^ *\+ /.test(line)) start = i
     const anchor = / \^([0-9A-Z]{26})$/.exec(line)
     if (anchor === null) return
     lines[i] = line.slice(0, anchor.index)
@@ -142,14 +143,14 @@ function isLive(blockId: string): boolean {
 
 const COUNTS_NONE = { created: 0, edited: 0, moved: 0, deleted: 0 }
 
+// A plain child is a `+` item (decision 2, #6277).
 const INITIAL = [
   `alpha ^${A}`,
   ``,
   `bravo ^${B}`,
   ``,
-  `  bravo child ^${B1}`,
-  ``,
-  `    grandchild ^${B11}`,
+  `  + bravo child ^${B1}`,
+  `    + grandchild ^${B11}`,
   ``,
   `charlie ^${C}`,
   ``,
@@ -274,7 +275,7 @@ describe('tauri-mock apply_page_source', () => {
 
   it('deletes a block left out of the buffer with its subtree, in one op', () => {
     const report = apply(
-      INITIAL.replace(`bravo ^${B}\n\n  bravo child ^${B1}\n\n    grandchild ^${B11}\n\n`, ''),
+      INITIAL.replace(`bravo ^${B}\n\n  + bravo child ^${B1}\n    + grandchild ^${B11}\n\n`, ''),
     )
 
     expect(report).toMatchObject({ ...COUNTS_NONE, deleted: 3 })
@@ -286,7 +287,7 @@ describe('tauri-mock apply_page_source', () => {
   it('moves a kept child out before deleting its parent', () => {
     const report = apply(
       INITIAL.replace(
-        `bravo ^${B}\n\n  bravo child ^${B1}\n\n    grandchild ^${B11}`,
+        `bravo ^${B}\n\n  + bravo child ^${B1}\n    + grandchild ^${B11}`,
         `bravo child ^${B1}\n\n  grandchild ^${B11}`,
       ),
     )
@@ -615,10 +616,13 @@ describe('tauri-mock get_page_buffer and apply_page_source by line ids (#5160 A)
   it('gives the source, the source less its anchors, and the id each line carries', () => {
     const { source: anchored, text, line_ids } = buffer()
 
+    // A plain child is a `+` item (decision 2, #6277).
     expect(anchored).toBe(
-      `alpha ^${A}\n\nbravo ^${B}\n\n  bravo child ^${B1}\n\ncharlie ^${C}\n\nmulti\n\\\n  indented line ^${M}\n`,
+      `alpha ^${A}\n\nbravo ^${B}\n\n  + bravo child ^${B1}\n\ncharlie ^${C}\n\nmulti\n\\\n  indented line ^${M}\n`,
     )
-    expect(text).toBe('alpha\n\nbravo\n\n  bravo child\n\ncharlie\n\nmulti\n\\\n  indented line\n')
+    expect(text).toBe(
+      'alpha\n\nbravo\n\n  + bravo child\n\ncharlie\n\nmulti\n\\\n  indented line\n',
+    )
     expect(line_ids).toEqual([A, null, B, null, B1, null, C, null, M, null, null, null])
   })
 
