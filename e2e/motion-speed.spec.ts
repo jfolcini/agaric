@@ -22,7 +22,7 @@ const SPEEDS = [
   { motion: 'fast', scale: 0.5 },
 ] as const
 
-test.describe('animation speed reaches every overlay @settings @ui', () => {
+test.describe('animation speed reaches every overlay @settings', () => {
   for (const { motion, scale } of SPEEDS) {
     test(`${motion}: overlays and plain transitions run at ${scale}x`, async ({ page }) => {
       await page.addInitScript((m) => localStorage.setItem('agaric-motion', m), motion)
