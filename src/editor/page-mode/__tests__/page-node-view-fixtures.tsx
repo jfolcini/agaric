@@ -197,7 +197,11 @@ export function seedPage(
 /** `PageModeEditor` on `pageId`, as `PageEditor` mounts it. */
 export function renderPageMode(
   pageId: string,
-  props: { onNavigateToPage?: NavigateToPageFn; opening?: PageModeOpening } = {},
+  props: {
+    onNavigateToPage?: NavigateToPageFn
+    opening?: PageModeOpening
+    onShown?: () => void
+  } = {},
 ) {
   const store = createPageBlockStore(pageId)
   const handle = createRef<PageModeEditorHandle>()
