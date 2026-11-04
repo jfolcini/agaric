@@ -3352,9 +3352,93 @@ async fn a_moved_notes_tag_mention_follows_the_tags_rename_6242() {
     fx.mat_a.shutdown();
 }
 
+/// #6277 B3: a `((ULID))` indexes as its target's first line, and a peer's
+/// edit of that line re-strips the note on this device.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_synced_edit_of_a_block_ref_target_re_strips_the_ref_6277() {
+    use crate::commands::{create_block_inner, edit_block_inner};
+    use crate::materializer::Materializer;
+
+    let fx = mention_fixture(false).await;
+    let create = |content: String| {
+        create_block_inner(
+            &fx.pool_a,
+            "device-A",
+            &fx.mat_a,
+            "content".into(),
+            content,
+            Some(fx.holder.clone()),
+            None,
+        )
+    };
+    let target = create("Plan first\nbody".into()).await.unwrap().id;
+    let note = create(format!("see (({target}))")).await.unwrap().id;
+    fx.mat_a.flush_background().await.unwrap();
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_b = Materializer::new(pool_b.clone());
+    super::bootstrap::bootstrap_spaces(&pool_b, "device-B", &mat_b)
+        .await
+        .unwrap();
+    let space = &fx.spaces[0];
+    sync_space_a_to_b_settled(&fx.pool_a, &fx.mat_a, space, &pool_b, &mat_b).await;
+    let note_id = note.as_str().to_owned();
+    assert!(
+        fts_hits(&pool_b, "see Plan first").await.contains(&note_id),
+        "synced: the note is indexed under the target's first line"
+    );
+
+    edit_block_inner(
+        &fx.pool_a,
+        "device-A",
+        &fx.mat_a,
+        target.clone(),
+        "Goal first\nbody".into(),
+    )
+    .await
+    .unwrap();
+    fx.mat_a.flush_background().await.unwrap();
+    sync_space_a_to_b_settled(&fx.pool_a, &fx.mat_a, space, &pool_b, &mat_b).await;
+    for (label, pool, mat) in [("B", &pool_b, &mat_b), ("A", &fx.pool_a, &fx.mat_a)] {
+        assert!(
+            fts_hits(pool, "see Goal first").await.contains(&note_id),
+            "edited, on {label}: the note follows the target's new first line"
+        );
+        assert!(
+            !fts_hits(pool, "Plan first").await.contains(&note_id),
+            "edited, on {label}: the old first line no longer finds the note"
+        );
+        assert_eq!(
+            fts_drift(pool, mat).await,
+            Vec::<String>::new(),
+            "edited, on {label}"
+        );
+    }
+
+    // A deleted target keeps its first line, as its chip does, so the note
+    // keeps its text and owes no reindex.
+    crate::commands::delete_block_inner(&fx.pool_a, "device-A", &fx.mat_a, target)
+        .await
+        .unwrap();
+    fx.mat_a.flush_background().await.unwrap();
+    sync_space_a_to_b_settled(&fx.pool_a, &fx.mat_a, space, &pool_b, &mat_b).await;
+    for (label, pool, mat) in [("B", &pool_b, &mat_b), ("A", &fx.pool_a, &fx.mat_a)] {
+        assert!(
+            fts_hits(pool, "see Goal first").await.contains(&note_id),
+            "target deleted, on {label}: the note keeps the target's first line"
+        );
+        assert_eq!(
+            fts_drift(pool, mat).await,
+            Vec::<String>::new(),
+            "target deleted, on {label}"
+        );
+    }
+    mat_b.shutdown();
+    fx.mat_a.shutdown();
+}
+
 /// #6243: deleting a page or tag drops its name from the notes that mention
 /// it, and restoring it gives the name back: locally on A, and on B through
-/// sync, which heals through `changed_page_and_tag_ids` (#5241).
+/// sync, which heals through `changed_ref_targets` (#5241).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_deleted_and_restored_target_leaves_no_stale_mention_on_either_device_6243() {
     use crate::commands::{delete_block_inner, restore_block_inner};

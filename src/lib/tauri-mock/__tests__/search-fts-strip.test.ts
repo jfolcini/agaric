@@ -192,21 +192,16 @@ describe('stripForFts — models strip_for_fts_with_maps (strip.rs:114-163)', ()
     })
   })
 
-  // Step 4 — unescape then NFC (strip.rs:141-162).
-  it('unescapes the four backslash sequences', () => {
+  // Step 1 — decode escapes outside code (#6277 B3).
+  it('decodes escaped punctuation', () => {
     // Unpaired delimiters, so the markup pass finds nothing and this isolates
     // the unescape. Input: `a \* b \~ c \= d \` e`.
     expect(stripForFts('a \\* b \\~ c \\= d \\` e')).toBe('a * b ~ c = d ` e')
   })
 
-  // The unescape runs AFTER the markup pass, not before (strip.rs:122 then
-  // :141) — an ordering with an observable consequence, so it is pinned rather
-  // than left to the reader of the two line numbers. Escaped delimiters that
-  // happen to PAIR are still eaten as markup, backslashes and all; unescaping
-  // first would turn `\*a\*` into `*a*` and then strip it to `a`.
-  it('strips markup BEFORE unescaping, as the backend does', () => {
-    expect(stripForFts('\\*a\\*')).toBe('\\a\\')
-    expect(stripForFts('\\*a\\*')).not.toBe('a')
+  // An escaped delimiter that happens to PAIR is still literal (#6277 B3).
+  it('decodes an escape before the markup pass, so an escaped delimiter is literal', () => {
+    expect(stripForFts('\\*a\\*')).toBe('*a*')
   })
 
   it('NFC-normalises the result', () => {

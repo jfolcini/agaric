@@ -39,6 +39,15 @@
 //! reference-resolved *projection* of `blocks.content`, not the verbatim
 //! column, so it has no external-content source to point at.
 //!
+//! ## Reference maps
+//!
+//! Every writer hands `strip_for_fts_with_maps` three maps. Tag names and page
+//! titles come from `load_ref_maps` (every live tag and page, once per call)
+//! or `load_ref_maps_for_block` (the ids one block names). Block-ref first
+//! lines come only for the `((ULID))` ids the content being stripped names
+//! ([`load_block_ref_titles`], once per chunk), so no pass loads every block's
+//! first line (#6277 B3).
+//!
 //! ## Per-block index-size cap (#435)
 //!
 //! `fts_blocks` is a standalone trigram FTS5 table, so it stores `stripped` in
@@ -52,7 +61,9 @@
 
 use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 
-use super::strip::{load_ref_maps, strip_for_fts_with_maps};
+use super::strip::{
+    load_block_ref_titles, load_ref_maps, load_ref_maps_for_block, strip_for_fts_with_maps,
+};
 use agaric_core::error::AppError;
 
 /// Chunk size for [`reindex_fts_references`].
@@ -111,18 +122,13 @@ async fn insert_fts_rows_tx(
 ///
 /// E: this is the convenience entry point used by tests and
 /// one-off callers (recovery, manual rebuilds). It loads the
-/// tag/page reference maps from the DB on every call and delegates
-/// to [`update_fts_for_block_with_maps`].
-///
-/// Hot-path callers (the materializer batch loop) should call
-/// [`update_fts_for_block_with_maps`] directly with maps loaded once
-/// per batch, avoiding the two redundant `SELECT block_type=…` queries
-/// per block. See the module-level docs in `crate::fts` for the
-/// rationale.
+/// reference maps the block's own content names
+/// ([`load_ref_maps_for_block`]) and delegates to
+/// [`update_fts_for_block_with_maps`], as the `UpdateFtsBlock` handler does.
 #[tracing::instrument(skip_all, err)]
 pub async fn update_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
-    let (tag_names, page_titles) = load_ref_maps(pool).await?;
-    update_fts_for_block_with_maps(pool, block_id, &tag_names, &page_titles).await
+    let (tag_names, page_titles, block_titles) = load_ref_maps_for_block(pool, block_id).await?;
+    update_fts_for_block_with_maps(pool, block_id, &tag_names, &page_titles, &block_titles).await
 }
 
 /// Update FTS for a single block, using pre-loaded reference maps.
@@ -142,6 +148,7 @@ pub async fn update_fts_for_block_with_maps(
     block_id: &str,
     tag_names: &std::collections::HashMap<String, String>,
     page_titles: &std::collections::HashMap<String, String>,
+    block_titles: &std::collections::HashMap<String, String>,
 ) -> Result<(), AppError> {
     let mut tx = crate::db::begin_immediate_logged(pool, "fts_update_block").await?;
 
@@ -174,7 +181,8 @@ pub async fn update_fts_for_block_with_maps(
         Some(r) => {
             // Active block with content — strip via pre-loaded maps and index.
             let content = r.content.unwrap();
-            let stripped = strip_for_fts_with_maps(block_id, &content, tag_names, page_titles);
+            let stripped =
+                strip_for_fts_with_maps(block_id, &content, tag_names, page_titles, block_titles);
 
             // Delete existing entry
             sqlx::query!("DELETE FROM fts_blocks WHERE block_id = ?", block_id)
@@ -207,9 +215,17 @@ pub async fn update_fts_for_block_split(
     read_pool: &SqlitePool,
     block_id: &str,
 ) -> Result<(), AppError> {
-    let (tag_names, page_titles) = load_ref_maps(read_pool).await?;
-    update_fts_for_block_split_with_maps(write_pool, read_pool, block_id, &tag_names, &page_titles)
-        .await
+    let (tag_names, page_titles, block_titles) =
+        load_ref_maps_for_block(read_pool, block_id).await?;
+    update_fts_for_block_split_with_maps(
+        write_pool,
+        read_pool,
+        block_id,
+        &tag_names,
+        &page_titles,
+        &block_titles,
+    )
+    .await
 }
 
 /// Split-pool variant of [`update_fts_for_block_with_maps`]: reads from
@@ -225,6 +241,7 @@ pub async fn update_fts_for_block_split_with_maps(
     block_id: &str,
     tag_names: &std::collections::HashMap<String, String>,
     page_titles: &std::collections::HashMap<String, String>,
+    block_titles: &std::collections::HashMap<String, String>,
 ) -> Result<(), AppError> {
     // Phase 1: Read — no write lock needed
     let row = sqlx::query!(
@@ -252,7 +269,8 @@ pub async fn update_fts_for_block_split_with_maps(
 
     // Phase 1b: Strip content using pre-loaded maps (no read pool round-trip).
     let content = row.unwrap().content.unwrap();
-    let stripped = strip_for_fts_with_maps(block_id, &content, tag_names, page_titles);
+    let stripped =
+        strip_for_fts_with_maps(block_id, &content, tag_names, page_titles, block_titles);
 
     // Phase 2b: Write — minimal transaction
     let mut tx = crate::db::begin_immediate_logged(write_pool, "fts_update_block_write").await?;
@@ -306,11 +324,12 @@ pub async fn remove_fts_for_blocks<S: AsRef<str>>(
     Ok(())
 }
 
-/// Reindex FTS for all blocks that reference the given tag or page block.
+/// Reindex FTS for all blocks that reference the given block.
 ///
-/// When a tag/page is renamed (edited), the FTS entries for every block that
-/// references it become stale because `strip_for_fts` resolves `#[ULID]` /
-/// `[[ULID]]` tokens to human-readable names, whatever space the target is in.
+/// When a tag or page is renamed, or a block's first line edited, the FTS
+/// entries for every block that references it become stale because
+/// `strip_for_fts_with_maps` resolves `#[ULID]` / `[[ULID]]` tokens to names
+/// and `((ULID))` to the target's first line, whatever space the target is in.
 /// The referrers are those `referrers_of` returns for the block.
 ///
 /// The re-strip is chunked by `reindex_fts_for_ids`, one transaction per
@@ -324,7 +343,8 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
 
 /// #6243 — the blocks whose stripped text names a page or tag in `cohort`,
 /// for a delete or restore that changes what those names resolve to. Other
-/// members are skipped: strip resolves only tags and pages.
+/// members are skipped: a `((ULID))` keeps a soft-deleted target's first line
+/// (#6277 B3), so their delete or restore changes no referrer's text.
 #[tracing::instrument(skip_all, err)]
 pub async fn page_and_tag_referrers<S: AsRef<str>>(
     pool: &SqlitePool,
@@ -347,9 +367,10 @@ pub async fn page_and_tag_referrers<S: AsRef<str>>(
 /// The blocks that reference any id in `targets_json` (a JSON array), deduped.
 ///
 /// - `block_tags`: explicit tags;
-/// - `block_links`: same-space `[[ULID]]` links;
-/// - `block_links_unresolved`: `[[ULID]]` tokens `block_links` drops, a
-///   target in another space, not yet arrived or deleted (#6242);
+/// - `block_links`: same-space `[[ULID]]` links and `((ULID))` refs;
+/// - `block_links_unresolved`: the `[[ULID]]` / `((ULID))` tokens
+///   `block_links` drops, a target in another space, not yet arrived or
+///   deleted (#6242);
 /// - for the tags only, a scan of `blocks.content` for their `#[ULID]`
 ///   tokens. `block_tag_refs` drops a tag in another space or deleted, and no
 ///   table keeps that token (#6242). Every `block_tag_refs` row is such a
@@ -471,15 +492,21 @@ pub async fn reindex_fts_for_ids(pool: &SqlitePool, ids: &[String]) -> Result<()
         // referenced by tens of thousands of blocks the per-statement
         // overhead dominated. `strip_for_fts_with_maps` is sync, so the
         // staging loop is just an in-memory map.
-        let mut to_insert: Vec<(String, String)> = Vec::with_capacity(rows.len());
-        for row in &rows {
-            if row.deleted_at.is_none()
-                && let Some(content) = row.content.as_deref()
-            {
-                let stripped = strip_for_fts_with_maps(&row.id, content, &tag_names, &page_titles);
-                to_insert.push((row.id.clone(), stripped));
-            }
-        }
+        let live: Vec<(&str, &str)> = rows
+            .iter()
+            .filter(|row| row.deleted_at.is_none())
+            .filter_map(|row| Some((row.id.as_str(), row.content.as_deref()?)))
+            .collect();
+        let block_titles =
+            load_block_ref_titles(&mut *tx, live.iter().map(|&(_, content)| content)).await?;
+        let to_insert: Vec<(String, String)> = live
+            .iter()
+            .map(|&(id, content)| {
+                let stripped =
+                    strip_for_fts_with_maps(id, content, &tag_names, &page_titles, &block_titles);
+                (id.to_owned(), stripped)
+            })
+            .collect();
         insert_fts_rows_tx(&mut tx, &to_insert).await?;
 
         tx.commit().await?;
@@ -568,10 +595,14 @@ async fn rebuild_fts_index_impl(pool: &SqlitePool) -> Result<u64, AppError> {
     // D: chunked INSERT loop, fresh transaction per chunk.
     let mut total: u64 = 0;
     for chunk in blocks.chunks(FTS_REINDEX_CHUNK) {
+        let block_titles =
+            load_block_ref_titles(pool, chunk.iter().filter_map(|row| row.content.as_deref()))
+                .await?;
         let mut to_insert: Vec<(String, String)> = Vec::with_capacity(chunk.len());
         for row in chunk {
             let content = row.content.as_deref().unwrap_or("");
-            let stripped = strip_for_fts_with_maps(&row.id, content, &tag_names, &page_titles);
+            let stripped =
+                strip_for_fts_with_maps(&row.id, content, &tag_names, &page_titles, &block_titles);
             to_insert.push((row.id.clone(), stripped));
         }
         let mut tx = crate::db::begin_immediate_logged(pool, "fts_rebuild_index_chunk").await?;
@@ -639,10 +670,16 @@ async fn rebuild_fts_index_split_impl(
     // Write pool. multi-row INSERT per chunk.
     let mut total: u64 = 0;
     for chunk in blocks.chunks(FTS_REINDEX_CHUNK) {
+        let block_titles = load_block_ref_titles(
+            read_pool,
+            chunk.iter().filter_map(|row| row.content.as_deref()),
+        )
+        .await?;
         let mut to_insert: Vec<(String, String)> = Vec::with_capacity(chunk.len());
         for row in chunk {
             let content = row.content.as_deref().unwrap_or("");
-            let stripped = strip_for_fts_with_maps(&row.id, content, &tag_names, &page_titles);
+            let stripped =
+                strip_for_fts_with_maps(&row.id, content, &tag_names, &page_titles, &block_titles);
             to_insert.push((row.id.clone(), stripped));
         }
         let mut tx =

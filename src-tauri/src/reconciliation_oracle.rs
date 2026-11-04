@@ -75,7 +75,7 @@
 //! | `page_link_cache` (the page-level `block_links` roll-up) | `blocks`, `block_links` | `reindex_page_link_cache_for_block` (the `ReindexBlockLinks` task — the SOLE per-block writer) / `rebuild_page_link_cache` (the `RebuildPageLinkCache` task) |
 //! | `block_links` ITSELF (#3955) | `blocks` — **`blocks.content`**, not `block_links` | `reindex_block_links_conn` / `reindex_block_links_split` (the incremental writers) / `backfill_block_links` (the one-shot vault-wide arm, marker-gated at boot, #4905) — audited by [`reconcile_block_links`], NOT by [`reconcile`] |
 //! | `block_links_unresolved` (#4229) | `blocks.content` **and** `block_links` | `sync_unresolved_links` (inside both reindex writers) / `rebuild_block_links_unresolved` (the vault-wide arm, #4218; no production caller since #4699 — `backfill_block_links` reaches this table through the reindex writers instead) — audited by [`reconcile_block_links_unresolved`], NOT by [`reconcile`] |
-//! | `fts_blocks` (#3345) | `blocks` — `content`, `deleted_at`, and the tag/page names the refs resolve to | `update_fts_for_block` / `remove_fts_for_block` / `reindex_fts_references` / `rebuild_fts_index` (the four FTS tasks; NOTHING writes it inside `apply_op_tx`) |
+//! | `fts_blocks` (#3345) | `blocks` — `content`, `deleted_at`, and the tag/page names and block-ref first lines the refs resolve to | `update_fts_for_block` / `remove_fts_for_block` / `reindex_fts_references` / `rebuild_fts_index` (the four FTS tasks; NOTHING writes it inside `apply_op_tx`) |
 //! | `blocks.space_id` on DERIVED rows (#3345) | `blocks` — `parent_id`, `block_type`, and the owning PAGE's own `space_id` | `maintain_pages_cache_counts_after_op`'s Create arm (in-tx, from the owning page) + `set_block_space_id_from_parent` (the post-commit re-stamp, the space half of the `SetBlockPageId` task) / `project_set_property_to_sql` + `project_delete_property_to_sql` (the in-tx page-group write of a `space` op) / `rederive_page_and_space_ids` (the in-tx move arm) / `rebuild_space_ids` (the vault-wide arm, second half of `RebuildPageIds`) — see [`fold_block_space_ids`] for what "derived" excludes |
 //! | `block_tag_refs` (the INLINE tag index, #3345) | `blocks` — **`blocks.content`** | `reindex_block_tag_refs(_in_tx/_split/_split_in_tx)` / `rebuild_block_tag_refs_cache` (the vault-wide arm) — audited by [`reconcile_block_tag_refs`], NOT by [`reconcile`] |
 //! | `tags_cache.usage_count` (#3345) | `blocks`, `block_tags` **and** `block_tag_refs` (explicit + inline, so it rides on Artefact 12) | `rebuild_tags_cache(_split)` / `refresh_tag_usage_count` — audited by [`reconcile_tags_cache`], NOT by [`reconcile`] |
@@ -3601,32 +3601,36 @@ pub async fn reconcile_block_links_unresolved(
 /// `blocks.block_type` for a tag block — the rows whose content is a tag NAME.
 const TAG_BLOCK_TYPE: &str = "tag";
 
-/// Fold the tag-name and page-title reference maps out of the `blocks` dump.
+/// Fold the tag-name, page-title and block-ref first-line maps out of the
+/// `blocks` dump.
 ///
-/// Production loads these with two `SELECT id, content FROM blocks WHERE
-/// block_type = … AND deleted_at IS NULL` queries (`fts::strip::load_ref_maps`,
-/// `pub(crate)` and therefore unreachable from here anyway). Folding them from
-/// the same flat dump every other artefact uses keeps the whole rebuild on one
-/// base-table read and keeps the predicate in Rust where it can be compared
-/// against, rather than delegated to the same SQL the maintainer runs.
+/// Production loads the first two with two `SELECT id, content FROM blocks
+/// WHERE block_type = … AND deleted_at IS NULL` queries
+/// (`fts::strip::load_ref_maps`, `pub(crate)` and therefore unreachable from
+/// here anyway), and the third with a SQL `substr`/`instr` first-line cut
+/// (`fts::strip::load_block_ref_titles`). Folding them from the same flat dump
+/// every other artefact uses keeps the whole rebuild on one base-table read
+/// and keeps the predicates in Rust where they can be compared against,
+/// rather than delegated to the same SQL the maintainer runs.
 ///
-/// A NULL-content tag or page contributes no entry: an unresolvable `#[ULID]`
-/// / `[[ULID]]` token strips to the empty string on both sides.
-fn fold_ref_maps(
-    blocks: &[BaseBlock],
-) -> (
-    std::collections::HashMap<String, String>,
-    std::collections::HashMap<String, String>,
-) {
+/// A NULL-content block contributes no entry: an unresolvable `#[ULID]` /
+/// `[[ULID]]` / `((ULID))` token strips to the empty string on both sides. A
+/// block-ref target keeps its first line while soft-deleted, as its chip does
+/// (#6277 B3), so that map is folded before the `deleted_at` skip.
+fn fold_ref_maps(blocks: &[BaseBlock]) -> agaric_store::fts::strip::RefMaps {
     let mut tag_names = std::collections::HashMap::new();
     let mut page_titles = std::collections::HashMap::new();
+    let mut block_titles = std::collections::HashMap::new();
     for block in blocks {
-        if block.deleted_at.is_some() {
-            continue;
-        }
         let Some(content) = block.content.as_deref() else {
             continue;
         };
+        let first_line = content.split('\n').next().unwrap_or_default();
+        let first_line = first_line.strip_suffix('\r').unwrap_or(first_line);
+        block_titles.insert(block.id.clone(), first_line.to_owned());
+        if block.deleted_at.is_some() {
+            continue;
+        }
         match block.block_type.as_str() {
             TAG_BLOCK_TYPE => {
                 tag_names.insert(block.id.clone(), content.to_owned());
@@ -3637,7 +3641,7 @@ fn fold_ref_maps(
             _ => {}
         }
     }
-    (tag_names, page_titles)
+    (tag_names, page_titles, block_titles)
 }
 
 /// Recompute the whole FTS index from `blocks` alone.
@@ -3659,9 +3663,9 @@ fn fold_ref_maps(
 /// have it. That is a deliberate line, not an oversight:
 ///
 /// * `strip_for_fts_with_maps` is a PURE function of `(content, tag_names,
-///   page_titles)`. It has no per-op-type arms, so it is not the thing this
-///   module exists to audit; it is unit-tested in `fts/strip.rs` and fuzzed by
-///   `fuzz/fuzz_targets/fts_strip.rs` (#2945).
+///   page_titles, block_titles)`. It has no per-op-type arms, so it is not the
+///   thing this module exists to audit; it is unit-tested in `fts/tests.rs`
+///   and fuzzed by `fuzz/fuzz_targets/fts_strip.rs` (#2945).
 /// * What IS hand-maintained per op arm — and therefore what this artefact
 ///   audits — is *which blocks get reindexed and when*:
 ///   `materializer::dispatch::invalidations_for_op` decides whether an op
@@ -3701,12 +3705,13 @@ fn fold_ref_maps(
 /// empty, which a vault carrying residue is not.
 ///
 /// The reference maps ARE folded independently (see [`fold_ref_maps`]) and
-/// re-read on every call, which is what makes a stale row after a tag rename
-/// or a page retitle expressible: production propagates those through
+/// re-read on every call, which is what makes a stale row after a tag rename,
+/// a page retitle or an edit to a block-ref target's first line expressible:
+/// production propagates those through
 /// `ReindexFtsReferences`, and an arm that forgets to enqueue it leaves the
 /// old name sitting in `stripped` while this rebuild resolves the new one.
 pub fn rebuild_fts_index_from_base(blocks: &[BaseBlock]) -> BTreeMap<String, String> {
-    let (tag_names, page_titles) = fold_ref_maps(blocks);
+    let (tag_names, page_titles, block_titles) = fold_ref_maps(blocks);
 
     let mut expected = BTreeMap::new();
     for block in blocks {
@@ -3723,6 +3728,7 @@ pub fn rebuild_fts_index_from_base(blocks: &[BaseBlock]) -> BTreeMap<String, Str
                 content,
                 &tag_names,
                 &page_titles,
+                &block_titles,
             ),
         );
     }

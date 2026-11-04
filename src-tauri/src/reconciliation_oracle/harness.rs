@@ -849,13 +849,14 @@ pub async fn settle_fts_for_op(
             MaterializeTask::UpdateFtsBlock { block_id } => {
                 // The handler's own read: maps scoped to this block's refs
                 // (#418), fed to the `_with_maps` upsert.
-                let (tag_names, page_titles) =
+                let (tag_names, page_titles, block_titles) =
                     agaric_store::fts::load_ref_maps_for_block(pool, block_id).await?;
                 agaric_store::fts::update_fts_for_block_with_maps(
                     pool,
                     block_id,
                     &tag_names,
                     &page_titles,
+                    &block_titles,
                 )
                 .await?;
                 ran += 1;

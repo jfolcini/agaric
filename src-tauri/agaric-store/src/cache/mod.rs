@@ -95,7 +95,8 @@ pub fn page_link_label<'a>(caps: &'a regex::Captures<'_>) -> Option<&'a str> {
 /// `((ULID))` block-reference token (and captures the inner ULID) but NOT the
 /// `[[ULID]]` page-link form. Used by markdown export to resolve `((ULID))`
 /// block references to a human-readable, roundtrip-safe Obsidian block-anchor
-/// wiki-link (#2963). Kept distinct from [`ULID_LINK_RE`] (which matches both
+/// wiki-link (#2963), and by the FTS strip to index one as its target's first
+/// line (#6277 B3). Kept distinct from [`ULID_LINK_RE`] (which matches both
 /// delimiter styles) so the exporter can rewrite block references and page
 /// links independently.
 pub static BLOCK_REF_RE: LazyLock<Regex> =
