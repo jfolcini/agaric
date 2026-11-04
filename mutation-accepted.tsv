@@ -151,7 +151,6 @@ frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (id ===
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (id === null || state === null) {
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (id === null || text === null) {
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (id !== null) this.shown.add(id)
-frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (id === null) this.unsubscribeMarker = () => {}
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (saved === undefined || node === null || task === null) {
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	2	if (this.renderer !== null) return
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	53	1	if (typeof IntersectionObserver === 'undefined' || (id !== null && this.shown.has(id))) {
@@ -169,10 +168,8 @@ frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (near.h
 # #5964 page-tasks: `at < hi` made true or `<=` in firstReaching: `at` reaches `hi` only past hidden blocks, every block from `hi` to the one found is hidden, and `pick` skips hidden blocks
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (at < hi) found = at
 frontend	src/editor/page-mode/page-tasks.ts	EqualityOperator	5	1	if (at < hi) found = at
-# #5964 page-tasks: the view's `id === null` for its list marker (the subscription and `listMarker`): a block's view never holds a null id, as the id rules mint one in the transaction that makes the block
-frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	1	1	id === null ? () => {} : lists.subscribe(id, () => this.showMarker(this.listMarker()))
-frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	8	1	return id === null ? '' : this.lists.markerOf(id)
-frontend	src/editor/page-mode/page-tasks.ts	StringLiteral	22	1	return id === null ? '' : this.lists.markerOf(id)
+# #5964 page-tasks: the view's `id === null` for its list marker: a block's view never holds a null id, as the id rules mint one in the transaction that makes the block
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	26	1	this.unsubscribeMarker = id === null ? () => {} : this.followMarker(id)
 # #5966 token-ids: `id === null` made false lets an id-less block whose tokens a cut took put null in `taken`; idsAfter reads `taken` only for a block whose own id is not null
 frontend	src/editor/token-ids.ts	ConditionalExpression	5	1	if (id === null || !goneAt(mapping, start) || !goneAt(mapping, tokens.last(node, offset))) {
 # #5966 token-ids: `kept !== null` made true sends an id-less block to the arm that pushes `kept`, null, as the else arm does; the null it adds to `held` is read only by later id-less blocks, which push null either way. The key also covers the whole condition made true or false at this column, which the Enter and undo-after-a-peer tests kill today

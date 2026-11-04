@@ -393,16 +393,19 @@ class PageBlockView implements NodeView {
     this.unsubscribe = tasks.subscribe(() => this.show())
     const id = blockIdOf(node)
     this.lists = lists
-    this.showMarker(this.listMarker())
-    this.unsubscribeMarker =
-      id === null ? () => {} : lists.subscribe(id, () => this.showMarker(this.listMarker()))
+    this.unsubscribeMarker = id === null ? () => {} : this.followMarker(id)
     this.gate.watch(this.dom, id, () => this.reveal())
   }
 
-  /** The marker its list draws for the block: none while its text opens with no paragraph. */
-  private listMarker(): string {
-    const id = blockIdOf(this.node)
-    return id === null ? '' : this.lists.markerOf(id)
+  /**
+   * Draw block `id`'s marker, and again each time its list changes it. The list
+   * reads the document, so a block whose text stops opening with a paragraph
+   * loses its marker the same way.
+   */
+  private followMarker(id: string): () => void {
+    const draw = (): void => this.showMarker(this.lists.markerOf(id))
+    draw()
+    return this.lists.subscribe(id, draw)
   }
 
   /** Block mode's list marker, before the text on its first line; none for a plain block. */
