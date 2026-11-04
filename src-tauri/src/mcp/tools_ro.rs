@@ -2208,10 +2208,10 @@ async fn handle_list_attachments(
     }))
 }
 
-/// One `list_attachments` row: the attachment and the absolute path its file
-/// is read from.
+/// One `list_attachments` row, as `attach_file` also returns it: the
+/// attachment and the absolute path its file is read from.
 #[derive(Serialize)]
-struct AttachmentListRow {
+pub(crate) struct AttachmentListRow {
     id: String,
     block_id: String,
     filename: String,
@@ -2222,7 +2222,7 @@ struct AttachmentListRow {
 }
 
 impl AttachmentListRow {
-    fn new(app_data_dir: &Path, row: AttachmentRow) -> Result<Self, AppError> {
+    pub(crate) fn new(app_data_dir: &Path, row: AttachmentRow) -> Result<Self, AppError> {
         Ok(Self {
             path: validate_attachment_fs_path(app_data_dir, &row.fs_path)?,
             id: row.id.into_string(),
