@@ -1,4 +1,4 @@
-# Session 3338 — the ZIP carries what a file cannot
+# Session 3354 — the ZIP carries what a file cannot
 
 #6277 G2 (decision 8). A restore of the ZIP export stored every number, date, select and ref property value as text, because the space's property definitions never left the database; titled `a:b` as `a_b`, because `titleToZipPath` sanitises a segment and nothing recorded the original, while its links still said `[[a:b]]`; and imported `export-report.txt` as a page, `.txt` being a note extension.
 
