@@ -980,6 +980,9 @@ enum PageRead {
     Buffer,
     /// A duplicate, which writes every id raw: nothing more.
     Duplicate,
+    /// The mirror's file: the buffer's reads and the blocks something
+    /// addresses, which alone carry an anchor.
+    File,
 }
 
 /// The renderings of a page's block tree. In every one a task's state is a
@@ -999,19 +1002,66 @@ enum PageRead {
 /// would not read back without it. `Agent` is the page an MCP agent reads
 /// (#5375): `Document`, every block with its `^ID` so the agent can name the
 /// block it edits next, but with the export's names, which may be ambiguous.
+/// `File` is the Markdown mirror's file (#5363): `Document`, with a `^ID`
+/// only on a block [`file_anchors`] names, and otherwise as the clipboard
+/// writes one.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RenderMode {
     Export,
     Clipboard,
     Agent,
     Document,
+    File,
 }
 
 impl RenderMode {
     /// Whether the rendering is laid out as a Document buffer.
     fn lays_out_document(self) -> bool {
-        matches!(self, Self::Document | Self::Clipboard | Self::Agent)
+        matches!(
+            self,
+            Self::Document | Self::Clipboard | Self::Agent | Self::File
+        )
     }
+}
+
+/// Whether the mirror's file writes block `id` with its `^ID`: only when
+/// something addresses it (#6277 decision 6).
+fn file_anchors(data: &PageExportData, id: &str) -> bool {
+    data.addressed_blocks.contains(id)
+}
+
+/// A page as the Markdown mirror writes its file (#5363): the text, and for
+/// each of its lines the id of the block that starts there, `None` on every
+/// other line, both from one render.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageFile {
+    pub text: String,
+    pub line_ids: Vec<Option<String>>,
+}
+
+/// The page's file: its front matter and block tree in [`RenderMode::File`].
+fn render_page_file(data: &PageExportData) -> PageFile {
+    let mut text = String::new();
+    render_frontmatter(&mut text, data);
+    let starts = render_block_tree(&mut text, data.page.id.as_str(), data, RenderMode::File);
+    let line_ids = block_start_lines(&text, &starts);
+    PageFile { text, line_ids }
+}
+
+/// One entry per line of `text`, each block's id, from `starts`, on the line
+/// the block starts on. A block's offset includes the blank line written
+/// before it, which is never its own first line: a bare empty first line is
+/// written `\`.
+fn block_start_lines(text: &str, starts: &[(String, usize)]) -> Vec<Option<String>> {
+    let mut ids = vec![None; text.split('\n').count()];
+    let (mut line, mut at) = (0, 0);
+    for (id, start) in starts {
+        let start = start + usize::from(text[*start..].starts_with('\n'));
+        line += text[at..start].matches('\n').count();
+        at = start;
+        ids[line] = Some(id.clone());
+    }
+    ids
 }
 
 /// The page's buffer, its front matter and then its block tree in
@@ -1071,7 +1121,7 @@ fn render_block(
             let resolved = export_block_text(content, &id, data);
             push_block_bullet(output, &indent, &list_marker, &task_marker, &resolved, mode);
         }
-        RenderMode::Clipboard | RenderMode::Agent | RenderMode::Document => {
+        RenderMode::Clipboard | RenderMode::Agent | RenderMode::Document | RenderMode::File => {
             push_buffer_bullet(
                 output,
                 block,
@@ -1119,18 +1169,17 @@ fn render_block(
     // escape-hatch custom-property case. `descendant_properties` was
     // batch-read once for the whole subtree, so this is a HashMap lookup,
     // not a per-block query. The buffer writes a ref-typed value as its raw
-    // id, which is what the value is, and quotes a value its line cannot
-    // carry as it is (#5160 X5).
+    // id, which is what the value is. Every mode quotes a value its line
+    // cannot carry as it is (#5160 X5, #6277 A2).
     let no_titles = HashMap::new();
-    let (ref_titles, write_value): (_, fn(&str) -> String) = match mode {
-        RenderMode::Export | RenderMode::Agent => (ref_titles, str::to_string),
-        RenderMode::Clipboard | RenderMode::Document => {
-            (&no_titles, import::write_source_property_value)
-        }
+    let ref_titles = match mode {
+        RenderMode::Export | RenderMode::Agent => ref_titles,
+        RenderMode::Clipboard | RenderMode::Document | RenderMode::File => &no_titles,
     };
     if let Some(props) = descendant_properties.get(&id) {
         for prop in props {
-            let value = write_value(&frontmatter_row_value(prop, ref_titles));
+            let value =
+                import::write_source_property_value(&frontmatter_row_value(prop, ref_titles));
             output.push_str(&format!("{prop_indent}{}:: {value}\n", prop.key));
         }
     }
@@ -1270,11 +1319,17 @@ fn push_buffer_bullet(
         push_anchored_bullet(output, indent, list_marker, task_marker, &named, id);
         return;
     }
-    let push = |output: &mut String, content: &str| match mode {
-        RenderMode::Clipboard => {
+    let anchored = match mode {
+        RenderMode::Clipboard => false,
+        RenderMode::File => file_anchors(data, id),
+        _ => true,
+    };
+    let push = |output: &mut String, content: &str| {
+        if anchored {
+            push_anchored_bullet(output, indent, list_marker, task_marker, content, id)
+        } else {
             push_clipboard_bullet(output, indent, list_marker, task_marker, content, id)
         }
-        _ => push_anchored_bullet(output, indent, list_marker, task_marker, content, id),
     };
     let start = output.len();
     let is_code = push(output, content);
@@ -1439,10 +1494,11 @@ fn render_page_attachments(output: &mut String, page_id: &str, data: &PageExport
     // inline image) is skipped here so it isn't double-emitted — it was
     // already rendered inline as part of the `# {title}` line above.
     //
-    // Emitted at depth 0 (no indent), right after frontmatter and before the
-    // descendant bullets: these lines aren't nested under any bullet (the
-    // page has none — its content is the `# Title` heading), so they sit at
-    // the same top level as the first-level descendant bullets below.
+    // Emitted at depth 0 (no indent), right after the front matter and title
+    // and before the descendant bullets: these lines aren't nested under any
+    // bullet (the page has none — its content is the `# Title` heading), so
+    // they sit at the same top level as the first-level descendant bullets
+    // below.
     if let Some(atts) = attachments_by_block.get(page_id) {
         let page_content = page.content.as_deref().unwrap_or("");
         for (att_id, filename) in atts {
@@ -1501,29 +1557,23 @@ fn group_children_by_parent<'a>(
 /// Split out of `export_page_markdown_inner` (#4639); behaviour-preserving,
 /// with the export tests as the oracle.
 fn render_page_markdown(page_id: &str, data: &PageExportData) -> String {
-    let page = &data.page;
     let mut output = String::new();
-
-    // Title
-    //
-    // #2991 — `page.content` is cloned (not moved) here because the page
-    // block's own non-inline attachments (emitted just below, after
-    // frontmatter) need the raw content string for the same inline-token
-    // dedup check the descendant loops use.
-    let title = page
-        .content
-        .clone()
-        .unwrap_or_else(|| "Untitled".to_string());
-    output.push_str(&format!("# {title}\n\n"));
-
-    render_frontmatter(&mut output, data);
+    render_page_head(&mut output, data);
     render_page_attachments(&mut output, page_id, data);
     render_block_tree(&mut output, page_id, data, RenderMode::Export);
     output
 }
 
-/// The page as an MCP agent reads it (#5375): `# Title`, the export's front
-/// matter, then the block tree in [`RenderMode::Agent`].
+/// The front matter, at byte 0 where Obsidian and GitHub read it, then the
+/// `# Title` line (#6277 A1).
+fn render_page_head(output: &mut String, data: &PageExportData) {
+    render_frontmatter(output, data);
+    let title = data.page.content.as_deref().unwrap_or("Untitled");
+    output.push_str(&format!("# {title}\n\n"));
+}
+
+/// The page as an MCP agent reads it (#5375): the export's front matter and
+/// `# Title`, then the block tree in [`RenderMode::Agent`].
 fn render_page_for_agent(data: &PageExportData) -> String {
     render_page_for_agent_spans(data).0
 }
@@ -1531,9 +1581,8 @@ fn render_page_for_agent(data: &PageExportData) -> String {
 /// [`render_page_for_agent`], with each block's id and the byte offset it
 /// starts at, the blank line before it included, in render order.
 fn render_page_for_agent_spans(data: &PageExportData) -> (String, Vec<(String, usize)>) {
-    let title = data.page.content.as_deref().unwrap_or("Untitled");
-    let mut output = format!("# {title}\n\n");
-    render_frontmatter(&mut output, data);
+    let mut output = String::new();
+    render_page_head(&mut output, data);
     let starts = render_block_tree(&mut output, data.page.id.as_str(), data, RenderMode::Agent);
     (output, starts)
 }
@@ -2423,8 +2472,8 @@ async fn load_frontmatter_lists(
 /// Export a page and its full descendant subtree as a Markdown string with
 /// human-readable tag/page references and optional YAML frontmatter.
 ///
-/// 1. Emits `# Page Title`
-/// 2. If the page has properties, emits a `---` YAML frontmatter block
+/// 1. If the page has properties, emits a `---` YAML frontmatter block
+/// 2. Emits `# Page Title`
 /// 3. For each descendant block — direct children **and** transitively
 ///    nested blocks — ordered by `(position, id)` over the keyset,
 ///    resolves `#[ULID]` and `[[ULID]]` references to their human-readable
@@ -2560,6 +2609,21 @@ pub async fn get_page_buffer_inner(
         text,
         line_ids,
     })
+}
+
+/// The page as the Markdown mirror writes its file (#5363), read in one
+/// snapshot as the buffer is, with the names the buffer may write.
+///
+/// # Errors
+///
+/// As [`export_page_markdown_inner`].
+#[instrument(skip(pool), err)]
+pub async fn get_page_file_inner(pool: &SqlitePool, page_id: &str) -> Result<PageFile, AppError> {
+    BlockId::from_string(page_id)?;
+    let mut tx = pool.begin().await?;
+    let data = load_page_export_data(&mut tx, page_id, PageRead::File).await?;
+    tx.commit().await?;
+    Ok(render_page_file(&data))
 }
 
 /// The blocks `block_ids` names as the clipboard carries them (#5140): the
@@ -3503,7 +3567,7 @@ async fn load_page_export_data(
         HashMap::new()
     };
     let mut refs = resolve_references(conn, page_id, &descendants).await?;
-    if export {
+    if export || read == PageRead::File {
         refs.addressed_blocks
             .extend(load_addressed_blocks(conn, &descendants).await?);
     }
@@ -3523,7 +3587,7 @@ async fn load_page_export_data(
     } else {
         (Vec::new(), Vec::new())
     };
-    let name_snapshot = if read == PageRead::Buffer {
+    let name_snapshot = if matches!(read, PageRead::Buffer | PageRead::File) {
         load_name_snapshot(conn, &page.id, &descendants, &refs.page_titles).await?
     } else {
         NameSnapshot::default()
@@ -3704,7 +3768,7 @@ fn push_block_bullet(
 ) -> CodeLines {
     let fence_opener = match mode {
         RenderMode::Export => import::fence_opener,
-        RenderMode::Document | RenderMode::Clipboard | RenderMode::Agent => {
+        RenderMode::Document | RenderMode::Clipboard | RenderMode::Agent | RenderMode::File => {
             import::document_fence_opener
         }
     };
@@ -4186,15 +4250,15 @@ fn parse_import_payload(
         .map(|f| folder_path_to_namespace_title(&f))
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| "Imported Page".to_string());
-    // Agaric's own export writes the title as a leading `# Title` line, which
-    // would otherwise come back as a block repeating it (#5160 S6). A note of a
+    // Agaric's own export writes the title as a `# Title` line, which would
+    // otherwise come back as a block repeating it (#5160 S6). A note of a
     // folder import keeps its `((uuid))` refs to other notes for
     // `link_import_anchors`.
     let text = import::strip_title_heading(content, &page_title);
     let mut parse_output = if vault_notes.is_some() {
-        import::parse_vault_markdown(text)
+        import::parse_vault_markdown(&text)
     } else {
-        import::parse_logseq_markdown(text)
+        import::parse_logseq_markdown(&text)
     };
     // A folder import links its notes by relative path (#5160 N10); a lone
     // file has no vault to be relative to. The title is the note's path below
@@ -8534,7 +8598,7 @@ mod tests {
                 .collect()
         }
 
-        /// The title, the front matter, every id as its name, the nesting,
+        /// The front matter, the title, every id as its name, the nesting,
         /// a plain child a `+` item (decision 2, #6277), and a `^ID` on every
         /// block.
         #[test]
@@ -8557,8 +8621,8 @@ mod tests {
             assert_eq!(
                 render_page_for_agent(&data),
                 format!(
-                    "# Title\n\n---\naliases: [Plan B]\ntags: [work]\nstatus: active\n\
-                     project: Project Alpha\n---\n\nplan #work ^{PARENT}\n\n  + \
+                    "---\naliases: [Plan B]\ntags: [work]\nstatus: active\n\
+                     project: Project Alpha\n---\n\n# Title\n\nplan #work ^{PARENT}\n\n  + \
                      see [[Linked Page]] ^{CHILD}\n    owner:: Ada\n"
                 )
             );

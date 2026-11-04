@@ -424,11 +424,13 @@ fn inbound_sync_fts_tasks(changed_blocks: &[agaric_core::ulid::BlockId]) -> Vec<
 /// `materializer_retry_queue`, so a saturation drop self-heals via the
 /// sweeper). Deliberately aliased to the FTS bound because the SAME
 /// `changed_blocks` set drives all three per-block fan-outs in one call
-/// (FTS, this, and `block_links` since #4293): gating them on one threshold
-/// makes a large import cross into single-task territory for all three at
-/// once, keeping the combined per-block fan-out at
-/// ≤ `3 * BACKGROUND_CAPACITY/4` and leaving a quarter of the channel as
-/// headroom for the 7-task global fan-out + concurrent work.
+/// (FTS, this, and `block_links` since #4293, plus `ReindexFtsReferences` for
+/// a changed page, tag or block-ref target): gating them on one threshold
+/// makes a large import cross into single-task territory for all of them at
+/// once. Below it the per-block fan-out is at most four tasks a block, so a
+/// near-threshold import of reference targets can fill the channel; a shed
+/// `ReindexFtsReferences` is not persisted, and its referrers stay stale
+/// until their next edit or a rebuild.
 const SYNC_BLOCK_TAG_REFS_PER_BLOCK_MAX: usize = SYNC_FTS_PER_BLOCK_MAX;
 
 /// #2667: choose the `block_tag_refs`-reindex task(s) for an inbound-sync
@@ -467,8 +469,8 @@ fn inbound_sync_block_tag_refs_tasks(
     }
 }
 
-/// A `page` or `tag` row among an inbound sync's changed blocks.
-struct ChangedPageOrTag {
+/// A changed block whose text another block's FTS row embeds.
+struct ChangedRefTarget {
     id: String,
     block_type: String,
 }
@@ -752,16 +754,17 @@ impl Materializer {
         }
         // #5241: a renamed page or tag arrives as a changed block, and the
         // FTS rows of the blocks referencing it still carry its old name
-        // (`strip.rs` substitutes titles at index time). A local rename
-        // enqueues this from the `EditBlock` arm; nothing did for sync. Same
-        // threshold as the siblings: above it the full `RebuildFtsIndex`
+        // (`strip.rs` substitutes titles at index time), as do the rows of
+        // the blocks whose `((ULID))` names an edited block (#6277 B3). A
+        // local edit enqueues this from the `EditBlock` arm; nothing did for
+        // sync. Same threshold as the siblings: above it the full `RebuildFtsIndex`
         // enqueued above re-resolves every reference anyway. A purge-only
         // import has nothing to look up, so it skips the pool read like the
         // sibling selectors do (the debounce tests arm with one under paused
         // time, where a pool acquire times out).
         let mut a_tag_changed = false;
         if !changed_blocks.is_empty() && changed_blocks.len() <= SYNC_FTS_PER_BLOCK_MAX {
-            for row in self.changed_page_and_tag_ids(changed_blocks).await? {
+            for row in self.changed_ref_targets(changed_blocks).await? {
                 a_tag_changed |= row.block_type == "tag";
                 self.try_enqueue_background(MaterializeTask::ReindexFtsReferences {
                     block_id: Arc::from(row.id),
@@ -812,22 +815,28 @@ impl Materializer {
         Ok(())
     }
 
-    /// #5241: the `page` / `tag` blocks among `changed_blocks` — the ones
-    /// whose title other blocks' FTS rows embed — with their `block_type`.
-    async fn changed_page_and_tag_ids(
+    /// #5241: the blocks among `changed_blocks` whose text other blocks' FTS
+    /// rows embed, with their `block_type`: every page and tag, and a
+    /// content block that a `block_links` or `block_links_unresolved` row
+    /// targets, for its first line (#6277 B3). A content block nothing
+    /// references is skipped: its reindex would find no referrer, and each
+    /// one takes a slot in the bounded queue that a shed task never gets back.
+    async fn changed_ref_targets(
         &self,
         changed_blocks: &[agaric_core::ulid::BlockId],
-    ) -> Result<Vec<ChangedPageOrTag>, AppError> {
+    ) -> Result<Vec<ChangedRefTarget>, AppError> {
         let ids: Vec<&str> = changed_blocks
             .iter()
             .map(agaric_core::ulid::BlockId::as_str)
             .collect();
         let ids_json = serde_json::to_string(&ids)?;
         Ok(sqlx::query_as!(
-            ChangedPageOrTag,
-            "SELECT id, block_type FROM blocks \
+            ChangedRefTarget,
+            "SELECT id, block_type FROM blocks b \
              WHERE id IN (SELECT value FROM json_each(?)) \
-               AND block_type IN ('page', 'tag')",
+               AND (block_type IN ('page', 'tag') \
+                    OR EXISTS (SELECT 1 FROM block_links WHERE target_id = b.id) \
+                    OR EXISTS (SELECT 1 FROM block_links_unresolved WHERE target_id = b.id))",
             ids_json,
         )
         .fetch_all(&self.reader_pool)
@@ -1638,7 +1647,12 @@ fn push_edit_block_invalidations(
                 block_id: Arc::from(block_id),
             });
         }
-        Some("content") => {}
+        // #6277 B3: a `((ULID))` indexes as its target's first line.
+        Some("content") => {
+            tasks.push(MaterializeTask::ReindexFtsReferences {
+                block_id: Arc::from(block_id),
+            });
+        }
         _ => {
             tasks.push(MaterializeTask::RebuildTagsCache);
             tasks.push(MaterializeTask::RebuildPagesCache);
@@ -2548,12 +2562,15 @@ mod tests {
         let r = make_record("edit_block", r#"{"block_id":"E3"}"#, Some("E3"));
         let tasks = invalidations_for_op(&r, Some("content"), None).unwrap();
         // Content edits never invalidate the tags/pages/agenda caches —
-        // this is the perf carve-out the hint exists for.
+        // this is the perf carve-out the hint exists for. Its first line is
+        // what a `((ULID))` to it indexes as, so its referrers re-strip
+        // (#6277 B3).
         assert_eq!(
             labels(&tasks),
             vec![
                 "ReindexBlockLinks(E3)",
                 "ReindexBlockTagRefs(E3)",
+                "ReindexFtsReferences(E3)",
                 "UpdateFtsBlock(E3)",
             ],
         );

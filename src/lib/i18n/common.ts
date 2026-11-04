@@ -21,6 +21,11 @@ export const common: Record<string, string> = {
   // canonical — but a restart usually re-runs recovery cleanly).
   'boot.recoveryDegradedBody':
     'A startup recovery step did not finish, so recent edits may not appear yet. Your data is safe — restarting Agaric usually fixes this. Avoid making large edits until it is resolved.',
+  // #6057: shown only on the boot that moved inbound sync deltas to quarantine.
+  'boot.syncQuarantinedBody_one':
+    '{{count}} change from another device could not be applied. It has been kept, not lost.',
+  'boot.syncQuarantinedBody_other':
+    '{{count}} changes from another device could not be applied. They have been kept, not lost.',
   // #2921 — generic fallback shown on the BootGate error screen when
   // `refreshAvailableSpaces()` hard-fails during boot (no prior snapshot)
   // and the caught value carries no readable message of its own.
@@ -102,6 +107,7 @@ export const common: Record<string, string> = {
   'action.undo': 'Undo',
   'action.redo': 'Redo',
   'action.retry': 'Retry',
+  'action.review': 'Review',
   'action.reload': 'Reload',
   'action.loadMore': 'Load more',
   'action.loading': 'Loading\u2026',
@@ -504,6 +510,21 @@ export const common: Record<string, string> = {
   'data.exportAllSpacesSuccess_one': 'Exported {{count}} space',
   'data.exportAllSpacesSuccess_other': 'Exported {{count}} spaces',
   'data.exportAllSpacesFailed': 'Export failed',
+  // #5363 — the outbound Markdown mirror: one `.md` file per page in a folder
+  // this device writes to. Files edited elsewhere are listed, not overwritten.
+  'data.mirrorTitle': 'Markdown mirror',
+  'data.mirrorDesc':
+    'Agaric writes every page as a .md file into a folder you choose and keeps it up to date. A file you edit elsewhere is not overwritten.',
+  'data.mirrorFolderLabel': 'Mirror folder',
+  'data.mirrorOff': 'Off. No folder chosen.',
+  'data.mirrorChooseButton': 'Choose folder…',
+  'data.mirrorTurnOffButton': 'Turn off',
+  'data.mirrorFailed': 'The mirror folder was not changed: {{reason}}',
+  'data.mirrorPaused': 'Paused: {{reason}}',
+  'data.mirrorDivergedHeading': 'Changed outside Agaric; not overwritten',
+  'data.mirrorDivergedNone': 'No file has changed outside Agaric.',
+  'data.mirrorFailedHeading': 'Could not be written',
+  'data.mirrorFailedItem': '{{path}}: {{message}}',
   // The vault genuinely has no spaces at all — distinct from a space that
   // simply has no pages, so an empty ZIP is never downloaded silently.
   'data.exportAllSpacesNoSpaces': 'No spaces to export',

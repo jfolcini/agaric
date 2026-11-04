@@ -241,9 +241,14 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   ingest_otel_spans: 'no persistent state — telemetry export',
   set_trace_sampling: 'no persistent state — runtime tracing toggle',
   notify_task: 'no persistent state — OS notification side effect',
-  speech_status: 'no persistent state — reports which speech engine this build has',
   mcp_set_enabled: 'no persistent domain state — MCP server runtime toggle',
   mcp_disconnect_all: 'no persistent domain state — MCP transport reset',
+
+  // ── Markdown mirror (#5363) ──
+  pick_mirror_folder: 'no persistent state — an OS folder dialog; it stores nothing',
+  set_mirror_folder:
+    'device-local file I/O: validates a folder on disk and writes a marker file into it, ' +
+    'which a fixture seed cannot express',
 }
 
 // ---------------------------------------------------------------------------
@@ -411,6 +416,13 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   is_flatpak: 'no domain state — packaging/environment probe',
   get_mcp_status: 'no domain state — MCP server runtime status',
   get_mcp_recent_activity: 'no domain state — in-memory MCP activity ring buffer',
+  get_speech_status:
+    'no domain state — a `cfg`-picked constant per OS (#5745), fixed on the Linux backend a fixture is authored from, so a step would pin one constant against another',
+
+  // ── Markdown mirror (#5363) ──
+  get_mirror_status:
+    'environment dependent: reads the mirror folder and its files on disk, so the answer ' +
+    'is not a function of the seeded state',
 }
 
 // ---------------------------------------------------------------------------
@@ -494,9 +506,10 @@ const NO_DOMAIN_STATE_MUTATING: ReadonlySet<string> = new Set([
   'ingest_otel_spans',
   'set_trace_sampling',
   'notify_task',
-  'speech_status',
   'mcp_set_enabled',
   'mcp_disconnect_all',
+  // An OS folder dialog (#5363).
+  'pick_mirror_folder',
 ])
 
 const NO_DOMAIN_STATE_READ: ReadonlySet<string> = new Set([
@@ -512,6 +525,7 @@ const NO_DOMAIN_STATE_READ: ReadonlySet<string> = new Set([
   'is_flatpak',
   'get_mcp_status',
   'get_mcp_recent_activity',
+  'get_speech_status',
 ])
 
 /**
@@ -541,6 +555,9 @@ const PINNING_BLOCKED_READ: ReadonlySet<string> = new Set([
   // generated on, so the fixture cannot spell the input on any other day.
   'compute_reconciliation_report',
   'list_projected_agenda',
+  // Reads the mirror folder on disk (#5363): the answer depends on the files
+  // there, which no fixture seed can spell.
+  'get_mirror_status',
 ])
 
 /**
@@ -584,6 +601,10 @@ const PINNING_BLOCKED_MUTATING: ReadonlySet<string> = new Set([
   // snapshot is narrow — #4998 deliberately pulled the other `app_settings`
   // writers out of the permanent half, so the distinction matters.
   'cancel_pairing',
+  // The input is a folder on disk (#5363): the backend validates it (absolute,
+  // existing, empty or carrying its marker) and writes a marker file into it,
+  // and a fixture seed has no way to name a directory on either stack.
+  'set_mirror_folder',
 ])
 
 /**

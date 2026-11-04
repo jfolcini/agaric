@@ -8,7 +8,9 @@
  * one plain edit: the flush acts only on what the edit added, never on the
  * shape the block was loaded with (D2). And the editor's parse reads each
  * content into the code blocks and thematic breaks Rust's grammar reads there
- * (`rustReads`, which Rust authors), in the same order (#6033).
+ * (`rustReads`, which Rust authors), in the same order (#6033). The mock's
+ * search strip indexes each content as Rust does (`fts`, which Rust authors,
+ * #6277 B3), with `blockRefTargets` as the blocks a `((ULID))` names.
  *
  * The stored form is the editor's form (#6277 C3): the editor writes back each
  * row, and each import-corpus block in `corpusBlocks` (which Rust authors), as
@@ -27,6 +29,9 @@ import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { parse, serialize } from '@/editor/markdown-serializer'
 import { processCheckboxSyntax } from '@/lib/block-utils'
 import { TASK_STATE_TO_MARKER, TASK_STATES, type TodoState } from '@/lib/task-states'
+import { clearMock } from '@/lib/tauri-mock/__tests__/mock-store-helpers'
+import { stripForFts } from '@/lib/tauri-mock/handlers/search'
+import { blocks, makeBlock } from '@/lib/tauri-mock/seed'
 import { runUnmountFlush, type UnmountFlushResult } from '@/stores/unmount-flush'
 
 interface StoredForm {
@@ -39,6 +44,7 @@ interface StoredForm {
 interface StoredBlock extends StoredForm {
   editorFlush: UnmountFlushResult['kind']
   rustReads: ('code' | 'rule')[]
+  fts: string
 }
 
 interface TaskMarker {
@@ -48,6 +54,7 @@ interface TaskMarker {
 }
 
 interface Vectors {
+  blockRefTargets: Record<string, string>
   blocks: StoredBlock[]
   corpusBlocks: StoredForm[]
   taskMarkers: TaskMarker[]
@@ -120,6 +127,17 @@ describe('stored block content vectors (#5160)', () => {
   it('the import corpus has blocks', () => {
     expect(vectors.corpusBlocks.length).toBeGreaterThan(0)
   })
+
+  it.each(vectors.blocks.map((row) => [row.name, row] as const))(
+    'the mock indexes %s as Rust does',
+    (_name, row) => {
+      clearMock()
+      for (const [id, content] of Object.entries(vectors.blockRefTargets)) {
+        blocks.set(id, makeBlock(id, 'content', content, null, 0))
+      }
+      expect(stripForFts(row.content)).toBe(row.fts)
+    },
+  )
 
   it.each(vectors.taskMarkers.map((row) => [row.marker, row] as const))(
     'the checkbox [%s] means what it means in Rust',

@@ -161,6 +161,7 @@ impl RecoveryReport {
         RecoveryStatus {
             degraded: self.replay_failed(),
             replay_errors: self.replay_errors.clone(),
+            sync_quarantined_this_boot: self.sync_inbox_quarantined,
         }
     }
 }
@@ -191,6 +192,11 @@ pub struct RecoveryStatus {
     /// degraded end-of-replay reprojection is reported here but does not
     /// raise the user-visible signal.
     pub replay_errors: Vec<String>,
+    /// #6057: inbound sync deltas THIS boot moved to quarantine (the same as
+    /// [`RecoveryReport::sync_inbox_quarantined`]). The frontend warns once on
+    /// the boot that quarantined something, not on every boot with a standing
+    /// backlog, because nothing can delete a quarantined delta.
+    pub sync_quarantined_this_boot: u64,
 }
 
 /// #1255: managed-state holder for the boot [`RecoveryStatus`].
@@ -246,6 +252,16 @@ mod replay_signal_tests {
             1,
             "the entry is still reported for diagnostics / the bug-report bundle"
         );
+    }
+
+    #[test]
+    fn to_status_carries_this_boots_quarantine_count_6057() {
+        let report = RecoveryReport {
+            sync_inbox_quarantined: 3,
+            sync_inbox_quarantine_pending: 7,
+            ..report_with(&[])
+        };
+        assert_eq!(report.to_status().sync_quarantined_this_boot, 3);
     }
 
     /// The other arm: entries that mean ops were NOT applied must still

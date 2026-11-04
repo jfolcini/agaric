@@ -26,7 +26,7 @@ pub enum SpeechStatus {
 
 #[tauri::command]
 #[specta::specta]
-pub fn speech_status() -> Result<SpeechStatus, AppError> {
+pub fn get_speech_status() -> Result<SpeechStatus, AppError> {
     Ok(if cfg!(any(target_os = "macos", target_os = "windows")) {
         SpeechStatus::Webview
     } else {
@@ -41,6 +41,6 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn speech_status_is_unsupported_on_linux() {
-        assert_eq!(speech_status().unwrap(), SpeechStatus::Unsupported);
+        assert_eq!(get_speech_status().unwrap(), SpeechStatus::Unsupported);
     }
 }

@@ -1,8 +1,10 @@
 //! FTS5 full-text search backend.
 //!
 //! Provides strip/index/search functions for the `fts_blocks` virtual table.
-//! The strip pass converts raw block content to plain text for FTS indexing
-//! by removing markdown formatting and resolving tag/page references.
+//! The strip pass converts raw block content to the text the editor shows,
+//! for FTS indexing: escapes decoded outside code, code raw, markdown
+//! formatting removed, tag/page references resolved to names and block
+//! references to their target's first line.
 //!
 //! ## Design
 //!

@@ -2,7 +2,7 @@
 //!
 //! Contains the regex patterns for markdown formatting and reference resolution,
 //! plus the `strip_for_fts_with_maps` (sync, pre-loaded maps) function used to
-//! convert raw block content to plain text for FTS indexing.
+//! convert raw block content to the text the editor shows, for FTS indexing.
 
 use regex::Regex;
 use sqlx::SqlitePool;
@@ -18,43 +18,38 @@ use agaric_core::error::AppError;
 
 // Hardcoded regex patterns — compilation cannot fail for these constant strings.
 
-/// Combined alternation of the five inline-formatting patterns
-/// (bold, italic, code, strikethrough, highlight) in one compiled regex.
+/// Combined alternation of the four inline-formatting patterns
+/// (bold, italic, strikethrough, highlight) in one compiled regex. Code
+/// never reaches it: [`mask_shown_spans`] takes every backtick first.
 ///
-/// The previous implementation chained five sequential
-/// `Regex::replace_all(...).to_string()` calls — five regex compilations,
-/// five passes, four intermediate `String` allocations even when the input
-/// had no markup at all. This single alternation collapses the five into
-/// one compiled regex and one pass per iteration, plus a single `to_string`
-/// at the end via [`strip_inline_markup`] that loops until the result is
-/// stable to preserve the nested-formatting semantics of the old chain
+/// One alternation is one compiled regex and one pass per iteration, plus a
+/// single `to_string` at the end via [`strip_inline_markup`], which loops
+/// until the result is stable to strip nested formatting
 /// (e.g. `**bold *italic***` → `bold italic`).
 ///
 /// Group numbering — exactly one group matches per match position:
 /// 1. bold inner `**(...)**`
 /// 2. italic inner `*(...)*`
-/// 3. inline-code inner `` `(...)` ``
-/// 4. strikethrough inner `~~(...)~~`
-/// 5. highlight inner `==(...)==`
+/// 3. strikethrough inner `~~(...)~~`
+/// 4. highlight inner `==(...)==`
 ///
 /// Order matters: bold (`**`) must precede italic (`*`) so the regex
 /// engine's leftmost-first alternation prefers the longer delimiter at
-/// any given position. The remaining three (code/strike/highlight) have
-/// disjoint delimiters so their relative order is irrelevant.
+/// any given position. Strike and highlight have disjoint delimiters so
+/// their relative order is irrelevant.
 ///
 /// Strike and highlight need a non-space next to each delimiter: the editor
 /// stores a space-flanked `~~` or `==` bare because it cannot be a mark
 /// (#5160 N12), so `a == b and c == d` is a comparison, indexed as written.
 static MARKUP_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`|~~(\S(?:.*?\S)?)~~|==(\S(?:.*?\S)?)==")
+    Regex::new(r"\*\*(.+?)\*\*|\*(.+?)\*|~~(\S(?:.*?\S)?)~~|==(\S(?:.*?\S)?)==")
         .expect("invalid combined markup regex")
 });
 
-/// Strip inline markup (bold/italic/code/strike/highlight) from `content`.
+/// Strip inline markup (bold/italic/strike/highlight) from `content`.
 ///
 /// Applies [`MARKUP_RE`] iteratively until the result no longer changes,
-/// which preserves the semantics of the previous five sequential
-/// `replace_all` passes for nested cases like `**bold *italic***`. Each
+/// which strips nested cases like `**bold *italic***`. Each
 /// iteration only modifies the string when a match is found
 /// (`replace_all` returns `Cow::Borrowed` on no-match), so plain-text
 /// input runs the regex exactly once and never allocates.
@@ -68,8 +63,8 @@ fn strip_inline_markup(content: &str) -> String {
     let mut current: Cow<'_, str> = Cow::Borrowed(content);
     loop {
         let next = MARKUP_RE.replace_all(&current, |caps: &regex::Captures<'_>| {
-            // Exactly one of groups 1-5 matched; return its inner text.
-            for i in 1..=5 {
+            // Exactly one of groups 1-4 matched; return its inner text.
+            for i in 1..=4 {
                 if let Some(m) = caps.get(i) {
                     return m.as_str().to_owned();
                 }
@@ -101,14 +96,34 @@ pub(crate) use crate::cache::TAG_REF_RE;
 /// owned by `crate::cache`.
 pub(crate) use crate::cache::PAGE_LINK_RE;
 
+/// Matches block references: `((ULID))`. Re-exports the canonical regex
+/// owned by `crate::cache`.
+pub(crate) use crate::cache::BLOCK_REF_RE;
+
+/// Tag names, page titles and block-ref first lines, each keyed by block id:
+/// what [`strip_for_fts_with_maps`] resolves `#[ULID]`, `[[ULID]]` and
+/// `((ULID))` to.
+pub type RefMaps = (
+    HashMap<String, String>,
+    HashMap<String, String>,
+    HashMap<String, String>,
+);
+
 // ---------------------------------------------------------------------------
 // Strip functions
 // ---------------------------------------------------------------------------
 
-/// Strip markdown and resolve references using pre-loaded maps (sync, for batch rebuild).
+/// The text the editor shows for `content`, for the index (#6277 B3).
+///
+/// First `mask_shown_spans` takes code, backslash escapes and `((ULID))`
+/// block refs out of reach; then markup is stripped, `#[ULID]` resolves to
+/// its tag's name and `[[ULID]]` to its label, else its page's title; then
+/// the masked spans come back.
 ///
 /// `tag_names` maps tag block_id → tag name (content).
 /// `page_titles` maps page block_id → page title (content).
+/// `block_titles` maps block_id → first line (`load_block_ref_titles`).
+/// A token whose target is not in its map strips to `""`.
 /// `block_id` is threaded through solely so `cap_indexed_text` can name the
 /// offending block in its truncation warning (#1321). It does not affect the
 /// stripped output.
@@ -120,37 +135,33 @@ pub fn strip_for_fts_with_maps(
     content: &str,
     tag_names: &HashMap<String, String>,
     page_titles: &HashMap<String, String>,
+    block_titles: &HashMap<String, String>,
 ) -> String {
-    // Single combined alternation regex iterated to a fixed
-    // point, replaces five sequential `replace_all().to_string()` calls.
-    let mut result = strip_inline_markup(content);
+    let mut pieces = Vec::new();
+    let masked = mask_shown_spans(content, block_titles, &mut pieces);
+    let result = strip_inline_markup(&masked);
 
-    // Step 4: Replace tag references
-    result = TAG_REF_RE
-        .replace_all(&result, |caps: &regex::Captures| {
-            let ulid = &caps[1];
-            tag_names.get(ulid).cloned().unwrap_or_default()
-        })
-        .to_string();
+    // A resolved name is a piece too, so every placeholder in the text is
+    // one this strip wrote.
+    let result = TAG_REF_RE.replace_all(&result, |caps: &regex::Captures| {
+        let name = tag_names.get(&caps[1]).cloned().unwrap_or_default();
+        piece(&mut pieces, name)
+    });
 
-    // Step 5: Replace page links with the label the reader sees (#5160 D9),
-    // else the page's title
-    result = PAGE_LINK_RE
-        .replace_all(
-            &result,
-            |caps: &regex::Captures| match crate::cache::page_link_label(caps) {
-                Some(label) => label.to_string(),
-                None => page_titles.get(&caps[1]).cloned().unwrap_or_default(),
-            },
-        )
-        .to_string();
-
-    // Step 6: Unescape backslash sequences (\* -> *, \` -> `, \~ -> ~, \= -> =)
-    result = result
-        .replace("\\*", "*")
-        .replace("\\`", "`")
-        .replace("\\~", "~")
-        .replace("\\=", "=");
+    // A labelled link shows its label (#5160 D9), else the page's title.
+    let result = PAGE_LINK_RE.replace_all(&result, |caps: &regex::Captures| {
+        match crate::cache::page_link_label(caps) {
+            Some(label) => label.to_string(),
+            None => {
+                let title = page_titles.get(&caps[1]).cloned().unwrap_or_default();
+                piece(&mut pieces, title)
+            }
+        }
+    });
+    let result = PIECE_RE.replace_all(&result, |caps: &regex::Captures| {
+        let index = caps[1].parse::<usize>().ok();
+        index.and_then(|i| pieces.get(i)).map_or("", String::as_str)
+    });
 
     // NFC-normalise the stripped output before it enters
     // the FTS index. macOS volume content tends to land NFD (filename
@@ -168,6 +179,97 @@ pub fn strip_for_fts_with_maps(
     // any single block's contribution — search over its first
     // `FTS_MAX_INDEXED_BYTES` still works, only the tail is unindexed.
     cap_indexed_text(block_id, nfc_normalise(&result))
+}
+
+/// Opens and closes a placeholder, `\u{E002}<index>\u{E003}`, that stands for
+/// `pieces[index]` while the markup and reference passes run. U+E000 and
+/// U+E001 are the snippet highlight sentinels (`search::SNIPPET_HL_OPEN`).
+const PIECE_OPEN: char = '\u{E002}';
+const PIECE_CLOSE: char = '\u{E003}';
+
+static PIECE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new("\u{E002}([0-9]+)\u{E003}").expect("invalid piece regex"));
+
+/// [`BLOCK_REF_RE`] anchored at the scan position.
+static BLOCK_REF_AT_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!("^(?:{})", BLOCK_REF_RE.as_str())).expect("invalid block-ref regex")
+});
+
+/// Store `shown` and return the placeholder that stands for it.
+fn piece(pieces: &mut Vec<String>, shown: String) -> String {
+    pieces.push(shown);
+    format!("{PIECE_OPEN}{}{PIECE_CLOSE}", pieces.len() - 1)
+}
+
+/// `content` with each span whose shown text no later pass may touch replaced
+/// by a placeholder for that text, scanned left to right in the editor's
+/// order (`parseLine`, `src/editor/markdown-parse/parser.ts`): code
+/// ([`code_span`]), then a backslash escape, then a `((ULID))` block ref,
+/// shown as its target's first line. A placeholder opener already in the text
+/// is a piece too, so it cannot be read as one.
+fn mask_shown_spans(
+    content: &str,
+    block_titles: &HashMap<String, String>,
+    pieces: &mut Vec<String>,
+) -> String {
+    let mut out = String::with_capacity(content.len());
+    let mut rest = content;
+    while let Some(ch) = rest.chars().next() {
+        let span = match ch {
+            '`' => Some(code_span(rest)),
+            '\\' => rest[1..]
+                .chars()
+                .next()
+                .filter(|&next| is_escapable(next))
+                .map(|next| (next.to_string(), 1 + next.len_utf8())),
+            '(' => BLOCK_REF_AT_RE.captures(rest).map(|caps| {
+                let title = block_titles.get(&caps[1]).cloned().unwrap_or_default();
+                (title, caps[0].len())
+            }),
+            PIECE_OPEN => Some((PIECE_OPEN.to_string(), PIECE_OPEN.len_utf8())),
+            _ => None,
+        };
+        let len = match span {
+            Some((shown, len)) => {
+                out.push_str(&piece(pieces, shown));
+                len
+            }
+            None => {
+                out.push(ch);
+                ch.len_utf8()
+            }
+        };
+        rest = &rest[len..];
+    }
+    out
+}
+
+/// The code a backtick run at the start of `rest` opens, and the bytes it
+/// takes, as the editor reads it: the next run of exactly as many backticks
+/// closes it, on the same line for a code span (`scanCodeSpan` sees one
+/// line) and on any later line for a fence of three or more. With no closer,
+/// the rest of the line is literal, backticks included.
+fn code_span(rest: &str) -> (String, usize) {
+    let run_at = |at: usize| rest[at..].len() - rest[at..].trim_start_matches('`').len();
+    let open = run_at(0);
+    let line_end = rest.find('\n').unwrap_or(rest.len());
+    let limit = if open >= 3 { rest.len() } else { line_end };
+    let mut at = open;
+    while let Some(found) = rest[at..limit].find('`') {
+        let close_at = at + found;
+        let close = run_at(close_at);
+        if close == open {
+            return (rest[open..close_at].to_owned(), close_at + close);
+        }
+        at = close_at + close;
+    }
+    (rest[..line_end].to_owned(), line_end)
+}
+
+/// The chars a backslash escapes, as the editor's `isEscapableChar` reads
+/// them: ASCII punctuation, a digit, a space or a tab.
+fn is_escapable(c: char) -> bool {
+    c.is_ascii_punctuation() || c.is_ascii_digit() || c == ' ' || c == '\t'
 }
 
 /// #435 — hard cap on per-block FTS-indexed text (bytes). Headroom against a
@@ -243,8 +345,54 @@ pub(crate) async fn load_ref_maps(
     Ok((tag_names, page_titles))
 }
 
-/// Load tag-name and page-title maps scoped to ONLY the references that
-/// appear in `block_id`'s own content.
+/// The first line of each block a `((ULID))` in `contents` names: the text its
+/// chip shows, whole, without a trailing `\r` (#6277 B3). There is no
+/// `deleted_at` filter, so a soft-deleted target keeps its title as the chip
+/// does and its delete or restore owes its referrers nothing. A purged or
+/// missing target has no entry and strips to `""`.
+///
+/// One `json_each` query of primary-key seeks for the whole batch; the SQL
+/// cuts the first line, so no body leaves the database.
+pub(crate) async fn load_block_ref_titles<'a, 'e, E>(
+    executor: E,
+    contents: impl IntoIterator<Item = &'a str>,
+) -> Result<HashMap<String, String>, AppError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    let ids: Vec<&str> = contents
+        .into_iter()
+        .flat_map(|content| BLOCK_REF_RE.captures_iter(content))
+        .map(|cap| cap.extract::<1>().1[0])
+        .collect();
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let ids_json = serde_json::to_string(&ids)?;
+    let rows = sqlx::query!(
+        r#"SELECT id AS "id!",
+                  substr(content, 1, instr(content || char(10), char(10)) - 1)
+                      AS "first_line!: String"
+           FROM blocks
+           WHERE id IN (SELECT value FROM json_each(?)) AND content IS NOT NULL"#,
+        ids_json
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let mut first_line = row.first_line;
+            if first_line.ends_with('\r') {
+                first_line.pop();
+            }
+            (row.id, first_line)
+        })
+        .collect())
+}
+
+/// Tag names, page titles and block-ref first lines scoped to ONLY the
+/// references that appear in `block_id`'s own content.
 ///
 /// Audit #418 — the per-block `UpdateFtsBlock` path previously called
 /// `load_ref_maps`, which scans every `page` and `tag` block in the vault
@@ -254,24 +402,24 @@ pub(crate) async fn load_ref_maps(
 /// the same patterns `strip_for_fts_with_maps` resolves) and fetches only
 /// those rows with the same `deleted_at IS NULL` filter `load_ref_maps`
 /// applies — turning two full-table scans into two bounded `id IN (…)` seeks.
+/// The block refs go through `load_block_ref_titles`.
 ///
 /// The returned maps plug into [`strip_for_fts_with_maps`] unchanged, so NFC
 /// normalisation and conflict-row filtering are preserved. Extracting the ids
 /// from the raw content (before markup stripping) yields a superset of the
-/// refs the strip pass resolves — markup stripping never removes a `#[ULID]`
-/// / `[[ULID]]` token — and a superset is harmless (unused map entries are
-/// never looked up).
+/// refs the strip pass resolves — a token inside code or behind an escape is
+/// fetched and never looked up — and a superset is harmless.
 pub async fn load_ref_maps_for_block(
     pool: &SqlitePool,
     block_id: &str,
-) -> Result<(HashMap<String, String>, HashMap<String, String>), AppError> {
+) -> Result<RefMaps, AppError> {
     let content: Option<String> =
         sqlx::query_scalar!("SELECT content FROM blocks WHERE id = ?", block_id)
             .fetch_optional(pool)
             .await?
             .flatten();
     let Some(content) = content else {
-        return Ok((HashMap::new(), HashMap::new()));
+        return Ok((HashMap::new(), HashMap::new(), HashMap::new()));
     };
 
     let tag_ids: Vec<String> = TAG_REF_RE
@@ -316,5 +464,6 @@ pub async fn load_ref_maps_for_block(
         .collect()
     };
 
-    Ok((tag_names, page_titles))
+    let block_titles = load_block_ref_titles(pool, [content.as_str()]).await?;
+    Ok((tag_names, page_titles, block_titles))
 }

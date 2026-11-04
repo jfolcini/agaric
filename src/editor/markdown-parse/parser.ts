@@ -1370,7 +1370,7 @@ export function scanEscape(st: InlineState): boolean {
  *    the serializer must re-emit the escape wherever it decodes
  *    (`serializeBlockSequence`, whose tab arm exists because `\<tab>` does).
  */
-function isEscapableChar(ch: string): boolean {
+export function isEscapableChar(ch: string): boolean {
   return ASCII_PUNCTUATION_RE.test(ch) || (ch >= '0' && ch <= '9') || ch === ' ' || ch === '\t'
 }
 

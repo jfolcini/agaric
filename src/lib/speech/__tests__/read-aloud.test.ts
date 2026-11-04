@@ -119,6 +119,26 @@ describe('a reading', () => {
     expect(listener).toHaveBeenCalledTimes(2)
     unsubscribe()
   })
+
+  it('stops notifying a subscriber that unsubscribed', () => {
+    const listener = vi.fn()
+    subscribeReadAloud(listener)()
+    startReading(UTTERANCES.slice(2), PAGE)
+    expect(listener).not.toHaveBeenCalled()
+  })
+
+  it('gives the toast’s Stop button a touch target and announces the stop', () => {
+    startReading(UTTERANCES, PAGE)
+    expect(vi.mocked(toast)).toHaveBeenLastCalledWith(
+      t('readAloud.reading'),
+      expect.objectContaining({ classNames: { actionButton: 'touch-hit-area' } }),
+    )
+    const options = vi.mocked(toast).mock.lastCall?.[1] as {
+      action: { label: string; onClick: () => void }
+    }
+    options.action.onClick()
+    expect(vi.mocked(announce)).toHaveBeenLastCalledWith(t('announce.readAloudStopped'))
+  })
 })
 
 describe('stopping', () => {
@@ -143,6 +163,13 @@ describe('stopping', () => {
     expect(getReadAloudSnapshot().reading).toBe(false)
   })
 
+  it('with nothing being read, stops nothing and says nothing', () => {
+    stopReading()
+    stopReading(PAGE)
+    expect(speech.cancel).not.toHaveBeenCalled()
+    expect(vi.mocked(announce)).not.toHaveBeenCalled()
+  })
+
   it('a new reading replaces the one under way', () => {
     startReading(UTTERANCES, PAGE)
     startReading([{ blockId: 'C', text: 'other' }], PAGE)
@@ -152,6 +179,21 @@ describe('stopping', () => {
     // The first reading's cut utterance does not advance the second.
     speech.spoken[0]?.end()
     expect(speech.spoken).toHaveLength(2)
+  })
+
+  it('keeps the replacing reading going when the replaced one’s utterance ends late', () => {
+    startReading(UTTERANCES, PAGE)
+    startReading(
+      [
+        { blockId: 'C', text: 'other' },
+        { blockId: 'D', text: 'then' },
+      ],
+      PAGE,
+    )
+    speech.spoken[0]?.end()
+    expect(getReadAloudSnapshot()).toMatchObject({ reading: true, currentBlockId: 'C' })
+    speech.endCurrent()
+    expect(speech.spoken.map((u) => u.text)).toEqual(['first', 'other', 'then'])
   })
 
   it('gives the replacing reading its own toast, which the old toast closing cannot end', () => {
@@ -184,7 +226,7 @@ describe('engine errors', () => {
     expect(speech.spoken).toHaveLength(1)
   })
 
-  it.each(['synthesis-unavailable', 'language-unavailable'])(
+  it.each(['synthesis-unavailable', 'language-unavailable', 'voice-unavailable'])(
     '%s points to the OS speech settings',
     (error) => {
       vi.spyOn(logger, 'warn').mockImplementation(() => {})
@@ -197,23 +239,53 @@ describe('engine errors', () => {
 
 describe('support', () => {
   it('is reported when the backend speaks through the webview', async () => {
-    vi.mocked(invoke).mockImplementation(mockInvokeCommands({ speech_status: () => 'Webview' }))
+    vi.mocked(invoke).mockImplementation(mockInvokeCommands({ get_speech_status: () => 'Webview' }))
     checkReadAloudSupport()
     await vi.waitFor(() => expect(getReadAloudSnapshot().supported).toBe(true))
   })
 
   it('is not reported where the backend has no engine', async () => {
     const status = vi.fn((): SpeechStatus => 'Unsupported')
-    vi.mocked(invoke).mockImplementation(mockInvokeCommands({ speech_status: status }))
+    vi.mocked(invoke).mockImplementation(mockInvokeCommands({ get_speech_status: status }))
     checkReadAloudSupport()
     await vi.waitFor(() => expect(status).toHaveBeenCalledTimes(1))
     await Promise.resolve()
     expect(getReadAloudSnapshot().supported).toBe(false)
   })
 
+  it('stays unreported once an Unsupported answer has been handled', async () => {
+    const listener = vi.fn()
+    subscribeReadAloud(listener)
+    vi.mocked(invoke).mockImplementation(
+      mockInvokeCommands({ get_speech_status: () => 'Unsupported' }),
+    )
+    checkReadAloudSupport()
+    // The answer reaches the snapshot through a few promise hops; a rejected check logs on the last.
+    await vi.waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledTimes(1))
+    for (let hop = 0; hop < 5; hop += 1) await Promise.resolve()
+    expect(getReadAloudSnapshot().supported).toBe(false)
+    expect(listener).not.toHaveBeenCalled()
+  })
+
+  it('starts hidden and unasked in a freshly loaded module', async () => {
+    vi.resetModules()
+    const fresh = await import('@/lib/speech/read-aloud')
+    const { invoke: freshInvoke } = await import('@tauri-apps/api/core')
+    expect(fresh.getReadAloudSnapshot()).toEqual({
+      supported: false,
+      reading: false,
+      currentBlockId: null,
+    })
+    vi.mocked(freshInvoke).mockImplementation(
+      mockInvokeCommands({ get_speech_status: () => 'Webview' }),
+    )
+    fresh.checkReadAloudSupport()
+    await vi.waitFor(() => expect(fresh.getReadAloudSnapshot().supported).toBe(true))
+  })
+
   it('asks the backend once', async () => {
     const status = vi.fn((): SpeechStatus => 'Webview')
-    vi.mocked(invoke).mockImplementation(mockInvokeCommands({ speech_status: status }))
+    vi.mocked(invoke).mockImplementation(mockInvokeCommands({ get_speech_status: status }))
     checkReadAloudSupport()
     checkReadAloudSupport()
     await vi.waitFor(() => expect(getReadAloudSnapshot().supported).toBe(true))
@@ -227,16 +299,16 @@ describe('support', () => {
     expect(getReadAloudSnapshot().supported).toBe(false)
   })
 
-  it('stays hidden, with a warning, when speech_status fails', async () => {
+  it('stays hidden, with a warning, when get_speech_status fails', async () => {
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     vi.mocked(invoke).mockImplementation(
-      mockInvokeCommands({ speech_status: () => Promise.reject(new Error('ipc down')) }),
+      mockInvokeCommands({ get_speech_status: () => Promise.reject(new Error('ipc down')) }),
     )
     checkReadAloudSupport()
     await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(1))
     expect(warn).toHaveBeenCalledWith(
       'read-aloud',
-      'speech_status failed; Read aloud stays hidden',
+      'get_speech_status failed; Read aloud stays hidden',
       undefined,
       expect.anything(),
     )
