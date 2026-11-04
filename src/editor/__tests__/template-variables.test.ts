@@ -65,6 +65,20 @@ describe('substituteTemplateVariables', () => {
       expect(text).toBe('Mar 7, 2026')
     })
 
+    // #6277 — an Obsidian template's Moment day tokens read as Moment does.
+    it('maps the Moment day tokens dddd, ddd, Do and D onto date-fns', () => {
+      expect(substituteTemplateVariables('{{date:dddd, MMMM Do}}', { now: NOW }).text).toBe(
+        'Saturday, March 7th',
+      )
+      expect(substituteTemplateVariables('{{date:ddd D/M}}', { now: NOW }).text).toBe('Sat 7/3')
+    })
+
+    it('leaves a quoted Moment token literal', () => {
+      expect(substituteTemplateVariables("{{date:'Do D dddd' D}}", { now: NOW }).text).toBe(
+        'Do D dddd 7',
+      )
+    })
+
     it('tolerates whitespace around the format', () => {
       const { text } = substituteTemplateVariables('{{ date : YYYY-MM-DD }}', { now: NOW })
       expect(text).toBe('2026-03-07')
