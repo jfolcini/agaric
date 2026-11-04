@@ -29,6 +29,7 @@ pub mod maintenance;
 // its tests stays here as `materializer_app_tests` (below).
 pub use agaric_engine::materializer;
 pub mod mcp;
+pub mod mirror;
 // #3120: `recovery` lives in `agaric-sync` (it needed nothing above the
 // materializer once #4502 moved that down); the app keeps the path.
 pub use agaric_sync::recovery;
@@ -258,6 +259,10 @@ macro_rules! agaric_commands {
             // Task reminders (#4554)
             $crate::commands::notifier::get_reminder_settings,
             $crate::commands::notifier::set_reminder_settings,
+            // The Markdown mirror (#5363)
+            $crate::commands::mirror::pick_mirror_folder,
+            $crate::commands::mirror::set_mirror_folder,
+            $crate::commands::mirror::get_mirror_status,
             // Read aloud (#5745)
             $crate::commands::speech::speech_status,
             // Logseq/Markdown import (#660)
@@ -2835,6 +2840,14 @@ fn boot(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // Best-effort boot maintenance (off-critical-path spawn + the
     // remaining synchronous enqueues + post-draft-recovery refresh).
     spawn_boot_maintenance(&pools, &materializer, &report);
+
+    // #5363: the Markdown mirror, managed everywhere for its commands, run on
+    // desktop only. Its first pass is off the critical path, a tick after boot.
+    let mirror_state = mirror::MirrorState::new(app_data_dir.clone());
+    app.manage(mirror_state.clone());
+    if cfg!(desktop) {
+        mirror::spawn(pools.read.clone(), device_id.clone(), mirror_state);
+    }
 
     // Long-running background tasks: sweepers, maintenance daemon,
     // periodic Loro snapshot.

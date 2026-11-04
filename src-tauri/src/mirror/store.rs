@@ -1,0 +1,192 @@
+//! What the Markdown mirror (#5363) keeps: the folder setting, the marker in
+//! the folder naming the device that writes it, and a state file per page in
+//! the app data dir, outside the folder, holding the path and the texts last
+//! written there. Every file goes through [`write_atomic`].
+
+use std::collections::HashMap;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+use sqlx::SqlitePool;
+
+use agaric_core::error::AppError;
+
+/// `app_settings` key: the mirror's folder, an absolute path. Absent, the
+/// mirror is off.
+const FOLDER_KEY: &str = "mirror.folder";
+
+/// The file in the mirror's folder that names the device writing it, so a
+/// second device refuses the folder.
+pub const MARKER_NAME: &str = ".agaric-mirror";
+
+/// How many texts a page's state keeps, newest last.
+const SHADOWS_KEPT: usize = 3;
+
+/// The mirror's folder, `None` when the mirror is off.
+pub async fn folder(pool: &SqlitePool) -> Result<Option<String>, AppError> {
+    let value = sqlx::query_scalar!("SELECT value FROM app_settings WHERE key = ?", FOLDER_KEY)
+        .fetch_optional(pool)
+        .await?;
+    Ok(value)
+}
+
+/// Store the mirror's folder, or with `None` turn the mirror off.
+pub async fn set_folder(pool: &SqlitePool, folder: Option<&str>) -> Result<(), AppError> {
+    let Some(folder) = folder else {
+        sqlx::query!("DELETE FROM app_settings WHERE key = ?", FOLDER_KEY)
+            .execute(pool)
+            .await?;
+        return Ok(());
+    };
+    let now = crate::db::now_ms();
+    sqlx::query!(
+        "INSERT INTO app_settings (key, value, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET
+             value = excluded.value,
+             updated_at = excluded.updated_at",
+        FOLDER_KEY,
+        folder,
+        now,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// The device the folder's marker names, `None` when it has none.
+pub fn marker_device(root: &Path) -> std::io::Result<Option<String>> {
+    match std::fs::read_to_string(root.join(MARKER_NAME)) {
+        Ok(text) => Ok(Some(text.trim().to_owned())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+pub fn write_marker(root: &Path, device_id: &str) -> std::io::Result<()> {
+    write_atomic(&root.join(MARKER_NAME), format!("{device_id}\n").as_bytes())
+}
+
+/// `bytes` at `path`, all or nothing: written to a temporary file beside it,
+/// synced, then renamed over it.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| std::io::Error::other(format!("{} names no file", path.display())))?;
+    let temp = path.with_file_name(format!(".{}.agaric-tmp", name.to_string_lossy()));
+    let written = std::fs::File::create(&temp).and_then(|mut file| {
+        file.write_all(bytes)?;
+        file.sync_all()
+    });
+    let renamed = written.and_then(|()| std::fs::rename(&temp, path));
+    if renamed.is_err() {
+        // The temporary file is ours; what failed is reported, not this.
+        let _ = std::fs::remove_file(&temp);
+    }
+    renamed
+}
+
+/// `path`'s bytes, `None` when there is no file.
+pub fn read_optional(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// One text the mirror wrote for a page: its exact bytes, and for each of its
+/// lines the id of the block that starts there, `None` on every other line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Shadow {
+    pub text: String,
+    pub line_ids: Vec<Option<String>>,
+}
+
+/// A page's file as the mirror last wrote it: the path below the folder,
+/// `/`-separated, and the last texts written, newest last.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageState {
+    pub path: String,
+    pub shadows: Vec<Shadow>,
+}
+
+impl PageState {
+    pub fn newest(&self) -> Option<&Shadow> {
+        self.shadows.last()
+    }
+
+    /// Record `shadow` as written at `path`, keeping the last
+    /// [`SHADOWS_KEPT`] texts.
+    pub fn record(&mut self, path: String, shadow: Shadow) {
+        self.path = path;
+        if self.newest() != Some(&shadow) {
+            self.shadows.push(shadow);
+        }
+        let excess = self.shadows.len().saturating_sub(SHADOWS_KEPT);
+        self.shadows.drain(..excess);
+    }
+}
+
+/// The per-page state files: `mirror/state/<PAGE_ID>.json` in the app data
+/// dir.
+pub struct StateDir(PathBuf);
+
+impl StateDir {
+    pub fn new(app_data_dir: &Path) -> Self {
+        Self(app_data_dir.join("mirror").join("state"))
+    }
+
+    fn file(&self, page_id: &str) -> PathBuf {
+        self.0.join(format!("{page_id}.json"))
+    }
+
+    /// Every page's state. A file that does not parse is skipped with a
+    /// warning: its page is then written as a new one, which the guard keeps
+    /// from overwriting a file that differs.
+    pub fn load(&self) -> std::io::Result<HashMap<String, PageState>> {
+        let mut states = HashMap::new();
+        let entries = match std::fs::read_dir(&self.0) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(states),
+            Err(e) => return Err(e),
+        };
+        for entry in entries {
+            let path = entry?.path();
+            let Some(page_id) = path
+                .file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .and_then(|n| n.strip_suffix(".json"))
+                .filter(|n| !n.starts_with('.'))
+            else {
+                continue;
+            };
+            let parsed = std::fs::read(&path)
+                .map_err(AppError::from)
+                .and_then(|bytes| Ok(serde_json::from_slice::<PageState>(&bytes)?));
+            match parsed {
+                Ok(state) => {
+                    states.insert(page_id.to_owned(), state);
+                }
+                Err(e) => {
+                    tracing::warn!(path = %path.display(), error = %e, "unreadable mirror state")
+                }
+            }
+        }
+        Ok(states)
+    }
+
+    pub fn save(&self, page_id: &str, state: &PageState) -> Result<(), AppError> {
+        std::fs::create_dir_all(&self.0)?;
+        write_atomic(&self.file(page_id), &serde_json::to_vec(state)?)?;
+        Ok(())
+    }
+
+    pub fn delete(&self, page_id: &str) -> std::io::Result<()> {
+        match std::fs::remove_file(self.file(page_id)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
+    }
+}

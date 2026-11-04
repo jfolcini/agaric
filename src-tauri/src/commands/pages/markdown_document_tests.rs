@@ -248,6 +248,25 @@ proptest! {
         check_read_back(&md, &import::parse_pasted_text(&md), &as_document(expected), false)?;
     }
 
+    /// The mirror's file has one id entry per line, a block's on the line it
+    /// reads back as starting on, its anchor's id where it has one (#5363).
+    #[test]
+    fn a_files_line_ids_are_where_its_blocks_start(forest in arb_document_forest()) {
+        let (data, _) = build_page(&forest);
+        let file = render_page_file(&data);
+        prop_assert_eq!(file.line_ids.len(), file.text.split('\n').count(), "text:\n{}", file.text);
+        let blocks = import::parse_document_outline(&file.text).blocks;
+        let starts: Vec<usize> = blocks.iter().filter_map(|block| block.line).collect();
+        let id_lines: Vec<usize> = (1..=file.line_ids.len())
+            .filter(|&line| file.line_ids[line - 1].is_some())
+            .collect();
+        prop_assert_eq!(id_lines, starts, "text:\n{}", file.text);
+        for block in blocks.iter().filter(|block| block.block_anchor.is_some()) {
+            let line = block.line.expect("a block has a line");
+            prop_assert_eq!(&file.line_ids[line - 1], &block.block_anchor, "text:\n{}", file.text);
+        }
+    }
+
     /// Render → read → render writes the same bytes.
     #[test]
     fn a_document_renders_its_own_reading_as_the_same_text(forest in arb_document_forest()) {
