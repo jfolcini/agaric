@@ -41,14 +41,15 @@ export type BlockTypeToken =
 
 const HEADING_RE = /^(#{1,6})\s+/
 // The callout marker, spelled the way the PARSER spells it (`CALLOUT_RE` in
-// `markdown-parse/vocab.ts`): `[!TYPE]` NOT followed by `(`. That one refused
+// `markdown-parse/vocab.ts`): `[!TYPE]` NOT followed by `(`, then its optional
+// `-` / `+` fold marker, stripped with it. That one refused
 // follower is the whole difference between a marker and a link whose visible
 // text starts with `!` — `> [!a](https://example.com)a` is a blockquote holding
 // a link, so the Turn-into menu must call it a quote and `stripBlockMarker`
 // must leave it alone; stripping `> [!a]` off it would delete the link (#4072).
 // Both patterns below are built from this one fragment so the module cannot
 // drift from itself: whatever is not a callout here IS a plain quote.
-const CALLOUT_MARKER_SRC = String.raw`\[![A-Za-z]+\](?!\()`
+const CALLOUT_MARKER_SRC = String.raw`\[![\w-]+\](?!\()[+-]?`
 // Plain blockquote: `> ` not followed by a callout marker.
 // content-regex-allow: interpolates a compile-time literal, never user prose
 const QUOTE_RE = new RegExp(`^>\\s+(?!${CALLOUT_MARKER_SRC})`)

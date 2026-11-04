@@ -852,3 +852,55 @@ describe('parse — tab-indented lists (#4052)', () => {
     expect(parse('# h')).toEqual(doc(heading(1, text('h'))))
   })
 })
+
+// -- #6033: callout fold markers and hyphenated types ---------------------------
+
+describe('parse — callout fold markers and hyphenated types (#6033)', () => {
+  it.each([
+    ['-', '> [!faq]- Why?'],
+    ['+', '> [!faq]+ Why?'],
+  ] as const)('reads `%s` after `]` as the fold, not as title text', (fold, md) => {
+    expect(parse(md)).toEqual(
+      doc({
+        type: 'blockquote',
+        attrs: { calloutType: 'faq', calloutFold: fold },
+        content: [paragraph(text('Why?'))],
+      }),
+    )
+  })
+
+  it("keeps a folded callout's body line in its title paragraph, after a hard break", () => {
+    // The renderer shows the text before the first hard break as the title.
+    expect(parse('> [!FAQ]- Why?\n> Because.')).toEqual(
+      doc({
+        type: 'blockquote',
+        attrs: { calloutType: 'faq', calloutFold: '-' },
+        content: [paragraph(text('Why?'), hardBreak(), text('Because.'))],
+      }),
+    )
+  })
+
+  it('reads a folded callout with no title', () => {
+    expect(parse('> [!faq]-')).toEqual(
+      doc({
+        type: 'blockquote',
+        attrs: { calloutType: 'faq', calloutFold: '-' },
+        content: [paragraph()],
+      }),
+    )
+  })
+
+  it('reads a hyphenated custom type', () => {
+    expect(parse('> [!my-type] t')).toEqual(doc(callout('my-type', paragraph(text('t')))))
+  })
+
+  it('a `-` after the separating space is title text, not a fold', () => {
+    expect(parse('> [!note] -x')).toEqual(doc(callout('note', paragraph(text('-x')))))
+  })
+
+  it('serializes the fold back after the type', () => {
+    expect(serialize(parse('> [!faq]- Why?\n> Because.'))).toBe('> [!FAQ]- Why?\n> Because.')
+    expect(serialize(parse('> [!my-type]+ t'))).toBe('> [!MY-TYPE]+ t')
+    expect(serialize(parse('> [!faq]-'))).toBe('> [!FAQ]-')
+  })
+})

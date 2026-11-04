@@ -559,6 +559,25 @@ const FIXPOINT_SEEDS: readonly DocNode[] = [
   doc(paragraph(text('a'), hardBreak(), hardBreak(), text('b'))),
   doc(blockquote(paragraph(text('a')), paragraph(text('b')))),
   doc(bulletList(listItem(paragraph(text('p')), paragraph(text('a')), paragraph(text('b'))))),
+  // #6033: a callout's `-` / `+` fold marker follows its type, which may be
+  // hyphenated, and a title opening with `-` after the space stays title text.
+  doc({
+    type: 'blockquote',
+    attrs: { calloutType: 'faq', calloutFold: '-' },
+    content: [paragraph(text('t'))],
+  }),
+  doc({
+    type: 'blockquote',
+    attrs: { calloutType: 'my-type', calloutFold: '+' },
+    content: [paragraph(text('t'))],
+  }),
+  doc({
+    type: 'blockquote',
+    attrs: { calloutType: 'faq', calloutFold: '-' },
+    content: [paragraph(text('Why?'), hardBreak(), text('Because.'))],
+  }),
+  doc({ type: 'blockquote', attrs: { calloutType: 'faq', calloutFold: '-' } }),
+  doc({ type: 'blockquote', attrs: { calloutType: 'note' }, content: [paragraph(text('-x'))] }),
 ]
 
 /** Shapes that normalize (string changes once) before becoming stable. */

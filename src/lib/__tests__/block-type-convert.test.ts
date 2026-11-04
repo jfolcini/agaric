@@ -338,3 +338,17 @@ describe('#4072: `[!x](…)` is a link, not a callout marker', () => {
     )
   })
 })
+
+// -- #6033: fold markers and hyphenated types, as the parser reads them -------
+describe('#6033: a callout with a fold marker or a hyphenated type', () => {
+  it('is detected as a callout', () => {
+    expect(detectBlockType('> [!FAQ]- Why?')).toBe('callout')
+    expect(detectBlockType('> [!MY-TYPE]+ t')).toBe('callout')
+  })
+
+  it('sheds its fold marker with its type, so the title never turns into a list', () => {
+    expect(stripBlockMarker('> [!FAQ]- Why?')).toBe('Why?')
+    expect(convertBlockContent('> [!FAQ]- Why?\n> Because.', 'paragraph')).toBe('Why?\nBecause.')
+    expect(convertBlockContent('> [!MY-TYPE]+ t', 'callout', 'tip')).toBe('> [!TIP] t')
+  })
+})

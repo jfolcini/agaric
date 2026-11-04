@@ -364,8 +364,8 @@ function isFirstLine($pos: ResolvedPos, depth: number): boolean {
 
 /**
  * What the serializer writes before the text of the textblock at `$pos`: a
- * `> ` per quote around it, outermost first, and a callout's `[!TYPE]` on its
- * first line.
+ * `> ` per quote around it, outermost first, and a callout's `[!TYPE]` and
+ * fold marker on its first line.
  */
 function quotePrefix($pos: ResolvedPos): string {
   let prefix = ''
@@ -374,7 +374,8 @@ function quotePrefix($pos: ResolvedPos): string {
     if (node.type.name !== 'blockquote') continue
     prefix += '> '
     const callout = node.attrs['calloutType'] as string | null
-    if (callout && isFirstLine($pos, depth)) prefix += `[!${callout.toUpperCase()}] `
+    const fold = (node.attrs['calloutFold'] as string | null) ?? ''
+    if (callout && isFirstLine($pos, depth)) prefix += `[!${callout.toUpperCase()}]${fold} `
   }
   return prefix
 }

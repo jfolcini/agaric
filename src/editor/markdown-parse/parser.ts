@@ -269,34 +269,37 @@ export function parseBlockquote(
     quoteLines.push(lines[j] === '>' ? '' : (lines[j]?.slice(2) as string))
     j++
   }
-  const calloutType = extractCalloutType(quoteLines)
+  const callout = extractCallout(quoteLines)
   const innerDoc = parse(quoteLines.join('\n'), depth + 1)
-  const block = buildBlockquote(innerDoc.content, calloutType)
+  const block = buildBlockquote(innerDoc.content, callout)
   return { blocks: [block], consumed: j - i }
 }
 
+type CalloutAttrs = NonNullable<BlockquoteNode['attrs']>
+
 /**
- * Detect a `[!TYPE]` callout prefix on the first line of a blockquote. When
- * found, mutates `quoteLines[0]` to strip the prefix and returns the callout
- * type (lowercased). Returns undefined when absent.
+ * Detect a `[!TYPE]` callout prefix, with its optional `-` / `+` fold marker,
+ * on the first line of a blockquote. When found, mutates `quoteLines[0]` to
+ * strip the prefix and returns the callout attrs (type lowercased). Returns
+ * undefined when absent.
  */
-function extractCalloutType(quoteLines: string[]): string | undefined {
+function extractCallout(quoteLines: string[]): CalloutAttrs | undefined {
   const calloutMatch = quoteLines[0]?.match(CALLOUT_RE)
   if (!calloutMatch) return undefined
-  quoteLines[0] = calloutMatch[2] as string
-  return (calloutMatch[1] as string).toLowerCase()
+  quoteLines[0] = calloutMatch[3] as string
+  const calloutType = (calloutMatch[1] as string).toLowerCase()
+  const fold = calloutMatch[2]
+  return fold === '-' || fold === '+' ? { calloutType, calloutFold: fold } : { calloutType }
 }
 
 function buildBlockquote(
   content: readonly BlockLevelNode[] | undefined,
-  calloutType: string | undefined,
+  attrs: CalloutAttrs | undefined,
 ): BlockquoteNode {
   if (!content || content.length === 0) {
-    return calloutType ? { type: 'blockquote', attrs: { calloutType } } : { type: 'blockquote' }
+    return attrs ? { type: 'blockquote', attrs } : { type: 'blockquote' }
   }
-  return calloutType
-    ? { type: 'blockquote', attrs: { calloutType }, content }
-    : { type: 'blockquote', content }
+  return attrs ? { type: 'blockquote', attrs, content } : { type: 'blockquote', content }
 }
 
 /**

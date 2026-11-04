@@ -40,9 +40,11 @@ export { taskStateFromMarker } from '@/lib/task-states'
 export const MAX_LINK_SCAN = 10_000
 /**
  * Callout prefix on the first line of a blockquote: `[!NOTE] title`. Group 1 is
- * the type, group 2 the remaining title text, which `extractCalloutType`
- * (`./parser`) writes BACK over the quote line — so what group 2 fails to
- * capture is not merely unmatched, it is DELETED.
+ * the type (word characters and hyphens, `[!my-type]`), group 2 Obsidian's fold
+ * marker (`-` folded, `+` foldable and open, empty for neither), group 3 the
+ * remaining title text, which `extractCalloutType` (`./parser`) writes BACK over
+ * the quote line — so what group 3 fails to capture is not merely unmatched, it
+ * is DELETED.
  *
  * That makes this the one production where the `.` → `[^\n]` rule of #4051 is
  * destructive rather than inert. Every other line production is anchored `$`,
@@ -63,7 +65,7 @@ export const MAX_LINK_SCAN = 10_000
  * title, never by the `(` that opens a link destination — so declining that one
  * character separates them without narrowing the callout syntax anywhere else.
  */
-export const CALLOUT_RE = /^\[!(\w+)\](?!\()[ \t]?([^\n]*)/i
+export const CALLOUT_RE = /^\[!([\w-]+)\](?!\()([+-]?)[ \t]?([^\n]*)/i
 /**
  * Maximum recursion depth for `parse()` to guard against pathological or
  * adversarial inputs (deeply nested blockquotes, link-display-text with

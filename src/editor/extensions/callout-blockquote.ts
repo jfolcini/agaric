@@ -10,12 +10,17 @@
  * trip, downgrading every callout to a plain blockquote (affecting both the
  * `/callout` slash command and the toolbar Callout button).
  *
- * Declaring the attribute here lets it survive editing. The visible callout
- * styling lives in the static renderer (`RichContentRenderer`); in the editor
- * the node round-trips as a blockquote tagged with `data-callout-type`.
+ * Declaring the attribute here lets it survive editing, and `calloutFold`
+ * (the `-` / `+` after `[!TYPE]`) with it. The visible callout styling lives
+ * in the static renderer (`RichContentRenderer`); in the editor the node
+ * round-trips as a blockquote tagged with `data-callout-type`, and
+ * `data-callout-style` names the style its type maps to for the editor's CSS.
+ * The editor always shows a folded callout open.
  */
 
 import Blockquote from '@tiptap/extension-blockquote'
+
+import { calloutStyle } from '@/lib/callout-style'
 
 export const CalloutBlockquote = Blockquote.extend({
   addAttributes() {
@@ -24,9 +29,20 @@ export const CalloutBlockquote = Blockquote.extend({
       calloutType: {
         default: null,
         parseHTML: (element) => element.getAttribute('data-callout-type'),
+        renderHTML: (attributes) => {
+          const type = attributes['calloutType'] as string | null
+          return type ? { 'data-callout-type': type, 'data-callout-style': calloutStyle(type) } : {}
+        },
+      },
+      calloutFold: {
+        default: null,
+        parseHTML: (element) => {
+          const fold = element.getAttribute('data-callout-fold')
+          return fold === '-' || fold === '+' ? fold : null
+        },
         renderHTML: (attributes) =>
-          attributes['calloutType']
-            ? { 'data-callout-type': attributes['calloutType'] as string }
+          attributes['calloutFold']
+            ? { 'data-callout-fold': attributes['calloutFold'] as string }
             : {},
       },
     }
