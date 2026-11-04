@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { enexNoteToMarkdown, type EnexNote } from '@/lib/enex-import'
+import { t } from '@/lib/i18n'
 import { jexNoteToMarkdown, type JexNote } from '@/lib/jex-import'
 import {
   basename,
@@ -18,7 +19,9 @@ import {
   isNotionPick,
   jexNotesToUnits,
   mdFilesToUnits,
+  pathTitle,
   resolveVaultRef,
+  restoreSpaceFile,
   sanitizeSpaceNameForFilename,
   skippedFiles,
   vaultRelativePath,
@@ -399,6 +402,81 @@ async function loadAll(files: File[]): Promise<Array<{ path: string; content: st
 }
 
 // #6032 — a folder pick dropped every note that was not `.md`, saying nothing.
+// #6277 decision 8 — an unzipped export folder-picked back in.
+describe('restoring an export', () => {
+  it('titles a note its space file lists by the recorded title, which its links then name', async () => {
+    const files = [
+      folderFile(['- body'], 'a_b.md', 'Export/a_b.md'),
+      folderFile(['- see [[a:b]]'], 'home.md', 'Export/home.md'),
+    ]
+    const units = mdFilesToUnits(files, indexVaultFiles(files), false, new Map([['a_b.md', 'a:b']]))
+
+    const loaded = await Promise.all(units.map((unit) => unit.load()))
+    expect(loaded.map((unit) => unit.path)).toEqual(['a:b.md', 'home.md'])
+    expect(loaded[1]?.vaultNotes).toEqual(['a:b.md'])
+  })
+
+  it('imports no note under `.agaric/`, and every page the export filed under a leading dot', () => {
+    const files = [
+      folderFile(['report'], 'export-report.txt', 'Export/.agaric/export-report.txt', 'text/plain'),
+      folderFile(['x'], '.NET.md', 'Export/.NET.md'),
+      folderFile(['x'], 'Core.md', 'Export/.NET/Core.md'),
+    ]
+    expect(mdFilesToUnits(files, indexVaultFiles(files), false).map((unit) => unit.name)).toEqual([
+      '.NET.md',
+      'Core.md',
+    ])
+  })
+
+  it.each([
+    ['no definitions', '{"titles": {}}', 'not a space file'],
+    ['null titles', '{"propertyDefinitions": [], "titles": null}', 'not a space file'],
+    [
+      'a title that is no string',
+      '{"propertyDefinitions": [], "titles": {"a.md": 1}}',
+      'not a space file',
+    ],
+    [
+      'a definition without a type',
+      '{"propertyDefinitions": [{"key": "k", "options": null}], "titles": {}}',
+      'not a property definition',
+    ],
+    ['a list for a file', '[]', 'not a space file'],
+    ['a list for titles', '{"propertyDefinitions": [], "titles": []}', 'not a space file'],
+    [
+      'a list for a definition',
+      '{"propertyDefinitions": [[]], "titles": {}}',
+      'not a property definition',
+    ],
+    [
+      'a definition whose key is no string',
+      '{"propertyDefinitions": [{"key": 1, "value_type": "text", "options": null}], "titles": {}}',
+      'not a property definition',
+    ],
+    [
+      'a definition whose options are no string',
+      '{"propertyDefinitions": [{"key": "k", "value_type": "select", "options": 1}], "titles": {}}',
+      'not a property definition',
+    ],
+  ])('says a space file with %s, and restores nothing from it', async (_, text, reason) => {
+    const files = [folderFile([text], 'space.json', 'Export/.agaric/space.json', '')]
+    const restored = await restoreSpaceFile(files, 'SPACE')
+    expect(restored.titles.size).toBe(0)
+    expect(restored.warnings).toEqual([t('data.importSpaceFileFailed', { reason })])
+  })
+
+  it('reads no space file from a plain pick, which has no folder', async () => {
+    const file = new File(['{"propertyDefinitions": [], "titles": {"a.md": "b"}}'], 'space.json')
+    expect(await restoreSpaceFile([file], 'SPACE')).toEqual({ titles: new Map(), warnings: [] })
+  })
+
+  it('reads a path back as the importer titles it: no `.md`, segments trimmed, empty ones dropped', () => {
+    expect(pathTitle(' a / /b .md')).toBe('a/b')
+    expect(pathTitle('a_b.md')).toBe('a_b')
+    expect(pathTitle('Notes.MD')).toBe('Notes.MD')
+  })
+})
+
 describe('folder picks of other note formats (#6032)', () => {
   it('imports `.markdown`, `.mdx` and `.txt` as Markdown, each titled without its extension', async () => {
     const files = [
@@ -864,6 +942,50 @@ describe('Org files (#6032)', () => {
     const nfd = 'cafe\u0301'
 
     expect(await orgContent(`* Visit :${nfd}:`)).toBe(`- Visit #[[${nfd}]]\n`)
+  })
+})
+
+describe('Logseq graph (#6033)', () => {
+  const graph = () => [
+    folderFile(
+      ['{:journal/page-title-format "MMM do, yyyy"\n :file/name-format :triple-lowbar}'],
+      'config.edn',
+      'Graph/logseq/config.edn',
+      '',
+    ),
+    folderFile(['- old'], '2026.md', 'Graph/logseq/bak/pages/a___b/2026.md'),
+    folderFile(['- see [[Oct 21st, 2026]] [[A/B]]'], 'a___b.md', 'Graph/pages/a___b.md'),
+    folderFile(['title:: Real/Title\n\n- q'], 'What%3F.md', 'Graph/pages/What%3F.md'),
+    folderFile(['- why [[b]]'], 'Why%3F.md', 'Graph/pages/Why%3F.md'),
+    folderFile(['- day'], '2026_10_21.md', 'Graph/journals/2026_10_21.md'),
+  ]
+
+  it("titles pages and journals as Logseq does, skipping the graph's own folder", async () => {
+    expect(await loadAll(graph())).toEqual([
+      { path: 'a/b.md', content: '- see [[2026-10-21]] [[A/B]]' },
+      { path: 'Real/Title.md', content: 'title:: Real/Title\n\n- q' },
+      { path: 'Why?.md', content: '- why [[b]]' },
+      { path: '2026-10-21.md', content: '- day' },
+    ])
+  })
+
+  it('ships the notes a link names by their whole titles, never a namespaced one', async () => {
+    const both = folderFile(['- [[A/B]] and [[b]]'], 'c.md', 'Graph/pages/c.md')
+    const files = [...graph(), both]
+    const [namespaced, , leaf, , c] = mdFilesToUnits(files, indexVaultFiles(files), false)
+
+    expect((await namespaced?.load())?.vaultNotes).toEqual(['2026-10-21.md'])
+    expect((await leaf?.load())?.vaultNotes).toEqual([])
+    expect((await c?.load())?.vaultNotes).toEqual([])
+  })
+
+  it('reads a pick with `pages/` and `journals/` but no config as a graph of the defaults', async () => {
+    expect((await loadAll(graph().slice(2))).map((l) => l.path)).toEqual([
+      'a/b.md',
+      'Real/Title.md',
+      'Why?.md',
+      '2026-10-21.md',
+    ])
   })
 })
 

@@ -851,24 +851,24 @@ impl NameSnapshot {
 }
 
 /// #2963 — append an Obsidian `^<block-ulid>` block-anchor marker to a block's
-/// resolved export content when that block is the TARGET of a same-page
-/// `((ULID))` reference elsewhere in the export.
+/// resolved export content when something addresses that block
+/// ([`PageExportData::addressed_blocks`], #6277).
 ///
 /// The marker lands at the very end of the block's content — its last line —
 /// which is exactly where the importer's `strip_block_anchor_marker` reads it
-/// back into `ParsedBlock::block_anchor`, so the matching `[[#^<ULID>]]` link
-/// (emitted by [`resolve_ulids_for_export`]) resolves to a real `((<new
-/// ULID>))` block reference on re-import. A block that is not a same-page ref
-/// target is returned unchanged. The marker id is the block's own ULID, which
-/// satisfies the importer's `^[A-Za-z0-9-]+` anchor grammar and is guaranteed
-/// unique, so it is a stable document-local key linking the reference to its
-/// target.
+/// back into `ParsedBlock::block_anchor`, so a `[[#^<ULID>]]` or
+/// `[[Page#^<ULID>]]` link (emitted by [`resolve_ulids_for_export`]) resolves
+/// to a real `((<new ULID>))` block reference on re-import, a folder import
+/// included. A block nothing addresses is returned unchanged. The marker id is
+/// the block's own ULID, which satisfies the importer's `^[A-Za-z0-9-]+` anchor
+/// grammar and is guaranteed unique, so it is a stable key linking the
+/// reference to its target.
 fn stamp_block_anchor_marker(
     resolved: String,
     block_id: &str,
-    same_page_ref_targets: &std::collections::HashSet<String>,
+    addressed_blocks: &std::collections::HashSet<String>,
 ) -> String {
-    if !same_page_ref_targets.contains(block_id) {
+    if !addressed_blocks.contains(block_id) {
         return resolved;
     }
     append_block_anchor(&resolved, block_id)
@@ -951,7 +951,11 @@ struct PageExportData {
     tag_names: HashMap<String, String>,
     page_titles: HashMap<String, String>,
     block_ref_replacement: HashMap<String, String>,
-    same_page_ref_targets: HashSet<String>,
+    /// The page's blocks an export anchors with their `^ID` (#6277): those a
+    /// block ref or embed from any page, a ref-typed property value or an
+    /// attachment addresses, so a link to one reads back as the block. Read
+    /// by an export only.
+    addressed_blocks: HashSet<String>,
     descendant_properties: HashMap<String, Vec<FrontmatterRow>>,
     list_styles: HashMap<String, String>,
     ref_titles: HashMap<String, String>,
@@ -981,8 +985,8 @@ enum PageRead {
 /// The renderings of a page's block tree. In every one a task's state is a
 /// checkbox after the bullet (#5160 D6), or a `todo_state::` line for a state
 /// outside the checkbox alphabet. `Export` writes a file for other tools: ids
-/// become names and links, and only a block a same-page ref points at carries
-/// an anchor. `Document` writes the buffer Edit as Markdown edits (#5691),
+/// become names and links, and only a block something addresses carries an
+/// anchor. `Document` writes the buffer Edit as Markdown edits (#5691),
 /// which `import::parse_document_outline` reads back as exactly this tree: a
 /// plain block is its own paragraph, a list block carries its marker and a
 /// task is `- [ ] x`, which has no list style (D3); a blank line separates
@@ -1219,14 +1223,10 @@ fn task_marker(block: &BlockRow) -> String {
 }
 
 /// A block's content as an export writes it: tag, page and block ids resolved
-/// to names and links, inline queries made readable, and an anchor when a
-/// same-page ref points at the block.
+/// to names and links, inline queries made readable, and an anchor when
+/// something addresses the block.
 fn export_block_text(content: &str, id: &str, data: &PageExportData) -> String {
-    stamp_block_anchor_marker(
-        named_block_text(content, data),
-        id,
-        &data.same_page_ref_targets,
-    )
+    stamp_block_anchor_marker(named_block_text(content, data), id, &data.addressed_blocks)
 }
 
 /// A block's content with its tag, page and block ids resolved to names and
@@ -1908,13 +1908,40 @@ async fn load_attachments(
     Ok(attachments_by_block)
 }
 
+/// The page's blocks something addresses (#6277 decision 6): the target of a
+/// block ref or embed from any live block, a ref-typed property value of one,
+/// or an attachment's owner.
+async fn load_addressed_blocks(
+    conn: &mut sqlx::SqliteConnection,
+    descendants: &[BlockRow],
+) -> Result<HashSet<String>, AppError> {
+    let ids: Vec<&str> = descendants.iter().map(|b| b.id.as_str()).collect();
+    let ids_json = serde_json::to_string(&ids)?;
+    let rows = sqlx::query_scalar!(
+        r#"SELECT b.id FROM blocks b
+           WHERE b.id IN (SELECT value FROM json_each(?1))
+             AND (EXISTS (SELECT 1 FROM block_links l JOIN blocks s ON s.id = l.source_id
+                          WHERE l.target_id = b.id AND l.kind = 'block_ref'
+                            AND s.deleted_at IS NULL)
+                  OR EXISTS (SELECT 1 FROM block_properties p JOIN blocks s ON s.id = p.block_id
+                             WHERE p.value_ref = b.id AND s.deleted_at IS NULL)
+                  OR EXISTS (SELECT 1 FROM attachments a
+                             WHERE a.block_id = b.id AND a.deleted_at IS NULL))"#,
+        ids_json,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows.into_iter().collect())
+}
+
 /// The `#[…]`, `[[…]]` and `((…))` tokens found in a page's descendants,
 /// resolved to the names and links the renderer emits.
 struct PageReferences {
     tag_names: HashMap<String, String>,
     page_titles: HashMap<String, String>,
     block_ref_replacement: HashMap<String, String>,
-    same_page_ref_targets: HashSet<String>,
+    /// The targets of the page's refs to its own blocks.
+    addressed_blocks: HashSet<String>,
 }
 
 /// The `#[…]` / `[[…]]` targets and the `((…))` targets a page's descendants
@@ -2005,6 +2032,9 @@ async fn resolve_tag_and_page_names(
 
 /// Step 3b: resolve `((ULID))` targets to a roundtrip-safe link, and record
 /// which of them live on THIS page and so need an `^<ULID>` anchor marker.
+/// They are read from the content as well as from `block_links`
+/// ([`load_addressed_blocks`]), which the materializer derives in the
+/// background: the page's own `[[#^ULID]]` must find its anchor.
 async fn resolve_block_refs(
     conn: &mut sqlx::SqliteConnection,
     page_id: &str,
@@ -2026,14 +2056,16 @@ async fn resolve_block_refs(
     //         (see the emit loop) is what that pass matches on.
     //       * target on ANOTHER page → emit `[[<Target Page>#^<ULID>]]`. This
     //         renders as a block link in Obsidian. Read back into a space
-    //         where that block still lives on that page, it is the block ref
-    //         again (#5160 D10); anywhere else it degrades to a page link + a
-    //         warning. Still strictly better than the opaque `((ULID))` (which
-    //         no external tool renders and which the importer strips entirely).
+    //         where that block still lives on that page, or by a folder import
+    //         beside that page's export, which anchors the block (#6277), it
+    //         is the block ref again (#5160 D10); anywhere else it degrades to
+    //         a page link + a warning. Still strictly better than the opaque
+    //         `((ULID))` (which no external tool renders and which the
+    //         importer strips entirely).
     //       * target missing / deleted → absent from the map; the resolver
     //         emits a `(unresolved block reference)` literal (never a raw ULID).
     let mut block_ref_replacement: HashMap<String, String> = HashMap::new();
-    let mut same_page_ref_targets: HashSet<String> = HashSet::new();
+    let mut addressed_blocks: HashSet<String> = HashSet::new();
     if !block_ref_ulids.is_empty() {
         let ulids: Vec<String> = block_ref_ulids.into_iter().collect();
         let ids_json = serde_json::to_string(&ulids)?;
@@ -2051,7 +2083,7 @@ async fn resolve_block_refs(
             // A target whose denormalised `page_id` equals the page being
             // exported is same-page: anchor-only link + it will get a marker.
             if r.page_id.as_deref() == Some(page_id) {
-                same_page_ref_targets.insert(r.id.clone());
+                addressed_blocks.insert(r.id.clone());
                 block_ref_replacement.insert(r.id.clone(), format!("[[#^{}]]", r.id));
             } else {
                 // Cross-page (or a target with no page, e.g. a page block):
@@ -2062,7 +2094,7 @@ async fn resolve_block_refs(
             }
         }
     }
-    Ok((block_ref_replacement, same_page_ref_targets))
+    Ok((block_ref_replacement, addressed_blocks))
 }
 
 /// Steps 3 and 3b: one batched lookup per token flavour over the whole subtree.
@@ -2073,13 +2105,13 @@ async fn resolve_references(
 ) -> Result<PageReferences, AppError> {
     let (ulid_set, block_ref_ulids) = collect_reference_ulids(descendants);
     let (tag_names, page_titles) = resolve_tag_and_page_names(conn, ulid_set).await?;
-    let (block_ref_replacement, same_page_ref_targets) =
+    let (block_ref_replacement, addressed_blocks) =
         resolve_block_refs(conn, page_id, block_ref_ulids).await?;
     Ok(PageReferences {
         tag_names,
         page_titles,
         block_ref_replacement,
-        same_page_ref_targets,
+        addressed_blocks,
     })
 }
 
@@ -3470,7 +3502,11 @@ async fn load_page_export_data(
     } else {
         HashMap::new()
     };
-    let refs = resolve_references(conn, page_id, &descendants).await?;
+    let mut refs = resolve_references(conn, page_id, &descendants).await?;
+    if export {
+        refs.addressed_blocks
+            .extend(load_addressed_blocks(conn, &descendants).await?);
+    }
     let properties = if front_matter {
         load_page_properties(conn, page_id).await?
     } else {
@@ -3499,7 +3535,7 @@ async fn load_page_export_data(
         tag_names: refs.tag_names,
         page_titles: refs.page_titles,
         block_ref_replacement: refs.block_ref_replacement,
-        same_page_ref_targets: refs.same_page_ref_targets,
+        addressed_blocks: refs.addressed_blocks,
         descendant_properties: descendant.properties,
         list_styles: descendant.list_styles,
         ref_titles,
@@ -8542,8 +8578,8 @@ mod tests {
             );
         }
 
-        /// A block a same-page ref points at carries its own `^ID` once, not
-        /// the export's anchor as well.
+        /// A block a ref points at carries its own `^ID` once, not the
+        /// export's anchor as well.
         #[test]
         fn a_same_page_ref_target_has_one_anchor() {
             let mut data = page_data(vec![
@@ -8552,7 +8588,7 @@ mod tests {
             ]);
             data.block_ref_replacement
                 .insert(CHILD.into(), format!("[[#^{CHILD}]]"));
-            data.same_page_ref_targets.insert(CHILD.into());
+            data.addressed_blocks.insert(CHILD.into());
             assert_eq!(
                 render_page_for_agent(&data),
                 format!("# Title\n\nsee [[#^{CHILD}]] ^{PARENT}\n\ntarget ^{CHILD}\n")
