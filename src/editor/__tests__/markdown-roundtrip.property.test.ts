@@ -24,14 +24,18 @@ import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
 import {
+  aligned,
   allStoredText,
   blockRef,
   blockquote,
   bold,
   bulletList,
+  codeBlock,
   doc,
+  footnoteRef,
   hardBreak,
   heading,
+  horizontalRule,
   listItem,
   mathInline,
   paragraph,
@@ -54,6 +58,7 @@ import type {
   MathBlockNode,
   ParagraphNode,
   PMMark,
+  TableCellAlign,
   TableNode,
   TodoState,
 } from '@/editor/types'
@@ -319,22 +324,32 @@ const arbTable: fc.Arbitrary<TableNode> = fc
   .tuple(fc.integer({ min: 1, max: 2 }), fc.integer({ min: 1, max: 2 }))
   .chain(([rows, cols]) =>
     fc
-      .array(
+      .tuple(
         fc.array(
-          arbInlineContent.map((content) => ({ type: 'paragraph' as const, content })),
-          { minLength: cols, maxLength: cols },
+          fc.array(
+            arbInlineContent.map((content) => ({ type: 'paragraph' as const, content })),
+            { minLength: cols, maxLength: cols },
+          ),
+          { minLength: rows, maxLength: rows },
         ),
-        { minLength: rows, maxLength: rows },
+        // #6277 — a column's alignment sits on every one of its cells.
+        fc.array(fc.constantFrom<TableCellAlign | null>(null, 'left', 'right', 'center'), {
+          minLength: cols,
+          maxLength: cols,
+        }),
       )
-      .map((rowCells) => ({
+      .map(([rowCells, aligns]) => ({
         type: 'table' as const,
         content: rowCells.map((cells, r) => ({
           type: 'tableRow' as const,
-          content: cells.map((p) =>
-            r === 0
-              ? { type: 'tableHeader' as const, content: [p] }
-              : { type: 'tableCell' as const, content: [p] },
-          ),
+          content: cells.map((p, c) => {
+            const cell =
+              r === 0
+                ? { type: 'tableHeader' as const, content: [p] }
+                : { type: 'tableCell' as const, content: [p] }
+            const align = aligns[c]
+            return align ? aligned(align, cell) : cell
+          }),
         })),
       })),
   )
@@ -559,6 +574,47 @@ const FIXPOINT_SEEDS: readonly DocNode[] = [
   doc(paragraph(text('a'), hardBreak(), hardBreak(), text('b'))),
   doc(blockquote(paragraph(text('a')), paragraph(text('b')))),
   doc(bulletList(listItem(paragraph(text('p')), paragraph(text('a')), paragraph(text('b'))))),
+  // #6033: a `~~~` fence and a `***` / `___` rule are blocks, so a paragraph
+  // of that text, a dash run trailing whitespace, and code holding a tilde
+  // fence must come back as written.
+  doc(paragraph(text('~~~'))),
+  doc(paragraph(text('a'), hardBreak(), text('~~~js'))),
+  doc(paragraph(text('***'))),
+  doc(paragraph(text('___'))),
+  doc(paragraph(text('--- '))),
+  doc(paragraph(text('a'), hardBreak(), text('---\u00A0'))),
+  doc(codeBlock('~~~\nx\n~~~')),
+  doc(paragraph(text('a')), horizontalRule(), paragraph(text('b'))),
+  // #6033: a callout's `-` / `+` fold marker follows its type, which may be
+  // hyphenated, and a title opening with `-` after the space stays title text.
+  doc({
+    type: 'blockquote',
+    attrs: { calloutType: 'faq', calloutFold: '-' },
+    content: [paragraph(text('t'))],
+  }),
+  doc({
+    type: 'blockquote',
+    attrs: { calloutType: 'my-type', calloutFold: '+' },
+    content: [paragraph(text('t'))],
+  }),
+  doc({
+    type: 'blockquote',
+    attrs: { calloutType: 'faq', calloutFold: '-' },
+    content: [paragraph(text('Why?'), hardBreak(), text('Because.'))],
+  }),
+  doc({ type: 'blockquote', attrs: { calloutType: 'faq', calloutFold: '-' } }),
+  doc({ type: 'blockquote', attrs: { calloutType: 'note' }, content: [paragraph(text('-x'))] }),
+  // #6033: a footnote reference, the literal text that reads as one, definition
+  // blocks, a reference inside bold, and a `(` after a reference, which would
+  // otherwise read as a link.
+  doc(paragraph(footnoteRef('1'))),
+  doc(paragraph(text('[^1]'))),
+  doc(paragraph(footnoteRef('a-b'), text(': x'))),
+  doc(paragraph(bold('a '), footnoteRef('1'), bold(' b'))),
+  doc(paragraph(footnoteRef('note'), text(': see '), bold('this'), text(' and [^1]'))),
+  doc(paragraph(footnoteRef('1'), text('(x)'))),
+  // #6277: a header-only aligned table, whose delimiter is all it has after the header.
+  doc(table(tableRow(aligned('right', tableHeader(paragraph(text('a'))))))),
 ]
 
 /** Shapes that normalize (string changes once) before becoming stable. */
@@ -648,6 +704,31 @@ describe('property: structural round-trip for the fixed audit shapes', () => {
       expect(serialize(parse(md))).toBe(md)
     },
   )
+})
+
+describe('#6277 a table keeps its GFM column alignment', () => {
+  const ALIGNED = '| a | b | c | d |\n| :--- | ---: | :---: | --- |\n| 1 | 2 | 3 | 4 |'
+
+  it('a stored aligned table re-serializes byte-identically', () => {
+    expect(serialize(parse(ALIGNED))).toBe(ALIGNED)
+  })
+
+  it('the short delimiter forms converge on the canonical one in one pass', () => {
+    expect(serialize(parse('| a | b | c | d |\n|:-|-:|:-:|-|\n| 1 | 2 | 3 | 4 |'))).toBe(ALIGNED)
+  })
+
+  it('an aligned table doc reads back as itself', () => {
+    const d = doc(
+      table(
+        tableRow(
+          aligned('left', tableHeader(paragraph(text('a')))),
+          tableHeader(paragraph(text('b'))),
+        ),
+        tableRow(aligned('left', tableCell(paragraph(text('1')))), tableCell(paragraph(text('2')))),
+      ),
+    )
+    expect(parse(serialize(d))).toEqual(d)
+  })
 })
 
 // -- #4053: the exclusion predicate itself ------------------------------------
@@ -1001,6 +1082,47 @@ describe('property (#4052): a leading tab parses as the columns it occupies', ()
         expect(serialize(parse(md1))).toBe(md1)
       }),
       { numRuns: NESTING_NUM_RUNS },
+    )
+  })
+})
+
+// -- #6033: footnote references among any inline nodes ------------------------
+
+/** A footnote label: anything but whitespace, `[`, `]` and `\`, here the chars that mean something nearby. */
+const arbFootnoteLabel: fc.Arbitrary<string> = fc
+  .array(fc.constantFrom(...'ab1-_*`($|!^'.split('')), { minLength: 1, maxLength: 4 })
+  .map((chars) => chars.join(''))
+
+const arbInlineWithFootnotes: fc.Arbitrary<InlineNode[]> = fc
+  .array(
+    fc.oneof(
+      { weight: 4, arbitrary: arbInlineNode },
+      { weight: 2, arbitrary: arbFootnoteLabel.map((label) => footnoteRef(label)) },
+    ),
+    { minLength: 1, maxLength: 5 },
+  )
+  .map(mergeAdjacentSameMarkText)
+
+const arbFootnoteBlock: fc.Arbitrary<BlockLevelNode> = fc.oneof(
+  arbInlineWithFootnotes.map((content) => paragraph(...content)),
+  arbInlineWithFootnotes.map((content) => table(tableRow(tableHeader(paragraph(...content))))),
+  arbInlineWithFootnotes.map((content) => bulletList(listItem(paragraph(...content)))),
+)
+
+describe('property (#6033): footnote references round-trip among any inline nodes', () => {
+  it('the first serialize is byte-identical after a reparse', () => {
+    fc.assert(
+      fc.property(
+        fc
+          .array(arbFootnoteBlock, { minLength: 1, maxLength: 2 })
+          .map((content): DocNode => ({ type: 'doc', content }))
+          .filter((d) => !hasGreedyAdjacency(d)),
+        (d) => {
+          const md1 = serialize(d)
+          expect(serialize(parse(md1))).toBe(md1)
+        },
+      ),
+      { numRuns: NUM_RUNS },
     )
   })
 })

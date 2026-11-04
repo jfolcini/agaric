@@ -58,6 +58,7 @@ import type { InlineProperty } from '@/hooks/useExtraBlockProperties'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { usePropertyDefForEdit } from '@/hooks/usePropertyDefForEdit'
+import { useIsBlockBeingRead } from '@/hooks/useReadAloud'
 import { useRescheduleDragSourceEnabled } from '@/hooks/useRescheduleDragSource'
 import { performActivePageUndo } from '@/hooks/useUndoShortcuts'
 import { detectBlockType } from '@/lib/block-type-convert'
@@ -473,6 +474,8 @@ interface SortableBlockProps {
   isFocused: boolean
   /** Depth in the block tree (0 = root level). */
   depth?: number | undefined
+  /** How many of its ancestors are tasks: its text starts past that many checkboxes. */
+  tasksAbove?: number | undefined
   rovingEditor: RovingEditorHandle
   /** Whether this block has children in the tree. */
   hasChildren?: boolean | undefined
@@ -497,6 +500,7 @@ function SortableBlockInner({
   content,
   isFocused,
   depth = 0,
+  tasksAbove,
   rovingEditor,
   hasChildren = false,
   isCollapsed = false,
@@ -684,6 +688,7 @@ function SortableBlockInner({
     useBlockTouchLongPress({ openContextMenu: openContextMenuClaimingGesture, isDraggingRef })
 
   const isTouchDevice = useIsTouch()
+  const isBeingRead = useIsBlockBeingRead(blockId)
   // #1349: stable id for the sr-only swipe-gesture description (per block).
   const swipeRowDescId = `swipe-row-desc-${blockId}`
 
@@ -735,7 +740,10 @@ function SortableBlockInner({
     // Fade the source row hard during drag so it reads as a "lifted"
     // placeholder rather than competing with the new position.
     opacity: isDragging ? 0.35 : 1,
-    paddingLeft: depth > 0 ? `calc(var(--indent-width) * ${depth})` : undefined,
+    paddingLeft:
+      depth > 0
+        ? `calc(var(--indent-width) * ${depth} + var(--block-tree-task-shift) * ${tasksAbove})`
+        : undefined,
   }
 
   return (
@@ -747,6 +755,8 @@ function SortableBlockInner({
       style={style}
       data-block-id={blockId}
       data-testid="sortable-block"
+      // #5745 — the block *Read aloud* is speaking (`index.css`).
+      data-reading={isBeingRead ? '' : undefined}
       // #2770 — native HTML5 reschedule-drag source (WeeklyView only, see
       // `rescheduleDragEnabled` above). `undefined` rather than `false` when
       // disabled so this never overrides an ancestor's own `draggable`

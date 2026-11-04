@@ -116,13 +116,14 @@ describe('tauri-mock clipboard pair', () => {
       expect(source([CODE], false)).toBe(`${FENCED}\n`)
     })
 
+    // A plain child is a `+` item (decision 2, #6277).
     it('renders the content subtree two columns deeper per level, skipping a nested page', () => {
-      expect(source([CODE], true)).toBe(`${FENCED}\n\n  child\n\n    grandchild\n`)
+      expect(source([CODE], true)).toBe(`${FENCED}\n\n  + child\n    + grandchild\n`)
     })
 
     it('renders roots in document order and drops a selected descendant', () => {
       expect(source([B, CHILD, A, CODE], true)).toBe(
-        `alpha\n\n${FENCED}\n\n  child\n\n    grandchild\n\nbeta\n`,
+        `alpha\n\n${FENCED}\n\n  + child\n    + grandchild\n\nbeta\n`,
       )
     })
 

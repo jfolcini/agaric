@@ -1,68 +1,131 @@
 {
   "blocks": [
     {
-      "name": "two lines of prose are one block",
       "content": "hello\nworld",
-      "editorFlush": "edit"
+      "editorFlush": "edit",
+      "name": "two lines of prose are one block",
+      "rustReads": []
     },
     {
-      "name": "a second line shaped like a property stays text",
       "content": "hello\nkey:: v",
-      "editorFlush": "edit"
+      "editorFlush": "edit",
+      "name": "a second line shaped like a property stays text",
+      "rustReads": []
     },
     {
-      "name": "a second line shaped like a bullet stays text",
       "content": "first\n- not a bullet",
-      "editorFlush": "edit"
+      "editorFlush": "edit",
+      "name": "a second line shaped like a bullet stays text",
+      "rustReads": []
     },
     {
-      "name": "a first line shaped like a property stays text",
       "content": "key:: v",
-      "editorFlush": "edit"
+      "editorFlush": "edit",
+      "name": "a first line shaped like a property stays text",
+      "rustReads": []
     },
     {
-      "name": "a line shaped like an anchor line stays text",
       "content": "see below\n^01J0000000000000000000ANCH",
-      "editorFlush": "edit"
+      "editorFlush": "edit",
+      "name": "a line shaped like an anchor line stays text",
+      "rustReads": []
     },
     {
-      "name": "two trailing spaces before a line break keep the line in the block",
       "content": "line one  \nline two",
-      "editorFlush": "edit"
+      "editorFlush": "edit",
+      "name": "two trailing spaces before a line break keep the line in the block",
+      "rustReads": []
     },
     {
-      "name": "trailing spaces are kept",
       "content": "trailing  ",
-      "editorFlush": "edit"
+      "editorFlush": "edit",
+      "name": "trailing spaces are kept",
+      "rustReads": []
     },
     {
-      "name": "a fenced block keeps its bullet and property lines as code",
       "content": "```sh\necho hi\n- x\nkey:: v\n```",
-      "editorFlush": "edit"
+      "editorFlush": "edit",
+      "name": "a fenced block keeps its bullet and property lines as code",
+      "rustReads": ["code"]
     },
     {
-      "name": "text shaped like a checkbox stays text",
       "content": "[x] not a task",
-      "editorFlush": "edit"
+      "editorFlush": "edit",
+      "name": "text shaped like a checkbox stays text",
+      "rustReads": []
     },
     {
-      "name": "text shaped like a task list item stays text",
       "content": "- [ ] open task",
-      "editorFlush": "edit"
+      "editorFlush": "edit",
+      "name": "text shaped like a task list item stays text",
+      "rustReads": []
     },
     {
-      "name": "text shaped like an ordered list item stays text",
       "content": "1. not a list",
-      "editorFlush": "edit"
+      "editorFlush": "edit",
+      "name": "text shaped like an ordered list item stays text",
+      "rustReads": []
+    },
+    {
+      "content": "~~~ a`b\necho hi\n~~~",
+      "editorFlush": "edit",
+      "name": "a tilde fence is code, its info string may hold a backtick",
+      "rustReads": ["code"]
+    },
+    {
+      "content": "above\n***\nbelow",
+      "editorFlush": "edit",
+      "name": "a line of stars between lines of text is a thematic break",
+      "rustReads": ["rule"]
+    },
+    {
+      "content": "above\n___\nbelow",
+      "editorFlush": "edit",
+      "name": "a line of underscores between lines of text is a thematic break",
+      "rustReads": ["rule"]
+    },
+    {
+      "content": "| a | b |\n|:--|--:|\n| 1 | 2 |",
+      "editorFlush": "edit",
+      "name": "a table keeps its column alignment",
+      "rustReads": []
     }
   ],
   "taskMarkers": [
-    { "marker": " ", "todoState": "TODO", "canonical": true },
-    { "marker": "/", "todoState": "DOING", "canonical": true },
-    { "marker": "x", "todoState": "DONE", "canonical": true },
-    { "marker": "X", "todoState": "DONE", "canonical": false },
-    { "marker": "-", "todoState": "CANCELLED", "canonical": true },
-    { "marker": "?", "todoState": null, "canonical": false },
-    { "marker": ">", "todoState": null, "canonical": false }
+    {
+      "canonical": true,
+      "marker": " ",
+      "todoState": "TODO"
+    },
+    {
+      "canonical": true,
+      "marker": "/",
+      "todoState": "DOING"
+    },
+    {
+      "canonical": true,
+      "marker": "x",
+      "todoState": "DONE"
+    },
+    {
+      "canonical": false,
+      "marker": "X",
+      "todoState": "DONE"
+    },
+    {
+      "canonical": true,
+      "marker": "-",
+      "todoState": "CANCELLED"
+    },
+    {
+      "canonical": false,
+      "marker": "?",
+      "todoState": null
+    },
+    {
+      "canonical": false,
+      "marker": ">",
+      "todoState": null
+    }
   ]
 }

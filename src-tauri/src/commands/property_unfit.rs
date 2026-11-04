@@ -1,5 +1,6 @@
 //! A key's values that don't fit its definition (#6206): counted, listed,
-//! removed, converted as the user maps each, and added to a select's options.
+//! removed, converted as the user maps each, moved to another key where they
+//! fit, and added to a select's options.
 //!
 //! A value doesn't fit when its `block_properties` row is not in the column
 //! its key's type takes (`declared_type_admits_shape`), or when it is a
@@ -32,7 +33,7 @@ use super::properties::{
     UNCOUNTED_PROPERTY_KEYS, append_and_apply, refuse_builtin_definition_write, user_property_def,
     write_property_def_in_tx,
 };
-use super::property_keys::{declared_def, value_fields};
+use super::property_keys::{declared_def, refuse_internal_key, value_fields, visible_holders};
 use super::{PropertyDefinition, WithOps, capture_op_refs, sanitize_internal_error};
 
 /// How many values of a key don't fit it: `unfit` on live blocks,
@@ -102,6 +103,17 @@ pub struct UnfitValueReplacement {
     pub replacement: String,
     /// That value's counts as the user saw them.
     pub acknowledged: PropertyUnfitCounts,
+}
+
+/// What moving a key's values that don't fit to another key does to a
+/// space's blocks, the Trash's included: `moved` values fit the other key and
+/// move to it; on `occupied` blocks, which hold it already, and as
+/// `unfit_there` values, which don't fit it, they stay.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct UnfitMoveCounts {
+    pub moved: i64,
+    pub occupied: i64,
+    pub unfit_there: i64,
 }
 
 /// A held value that doesn't fit its key, with its block.
@@ -244,7 +256,7 @@ fn counts_of(values: &[Unfit]) -> PropertyUnfitCounts {
 }
 
 /// [`PropertyUnfitCounts`] of every key of `space_id` with a value that
-/// doesn't fit it, counted from the rows the list and both actions read: a
+/// doesn't fit it, counted from the rows the list and every action read: a
 /// count query of its own would be a second predicate to drift from theirs.
 pub(super) async fn unfit_counts(
     conn: &mut SqliteConnection,
@@ -592,6 +604,154 @@ pub async fn convert_unfit_property_values_inner(
     Ok(converted)
 }
 
+/// `into_key`'s declaration in `space_id`, as the key a move of `key`'s
+/// values that don't fit takes them to: a user's key, not `key`, not the app's
+/// own, and not a ref, whose values are blocks.
+async fn move_target(
+    conn: &mut SqliteConnection,
+    space_id: &str,
+    key: &str,
+    into_key: &str,
+) -> Result<PropertyDeclaration, AppError> {
+    if into_key == key {
+        return Err(AppError::validation(format!(
+            "the values of '{key}' cannot move to '{key}' itself"
+        )));
+    }
+    refuse_builtin_definition_write(into_key)?;
+    refuse_internal_key(into_key)?;
+    let def = declared_def(conn, space_id, into_key).await?;
+    if def.value_type == "ref" {
+        return Err(AppError::validation(format!(
+            "'{into_key}' is a ref property; its values are blocks"
+        )));
+    }
+    Ok(PropertyDeclaration {
+        value_type: def.value_type,
+        options: def.options,
+    })
+}
+
+/// What moving `space_id`'s values under `key` that don't fit it to
+/// `into_key` does, and per value moved its two writes, by block: removed
+/// under `key`, then written under `into_key` as [`fitted`] to it. A block
+/// holding `into_key` keeps its value under `key`, whether or not it would
+/// fit; a target that is no ref has a `block_properties` row for each value,
+/// so the write over none records none.
+async fn plan_move(
+    conn: &mut SqliteConnection,
+    space_id: &str,
+    key: &str,
+    into_key: &str,
+) -> Result<(UnfitMoveCounts, Vec<PropertyValueWrite>), AppError> {
+    let decl = move_target(conn, space_id, key, into_key).await?;
+    let held = unfit_values(conn, space_id, Some(key), None, usize::MAX).await?;
+    let occupied = visible_holders(conn, space_id, into_key).await?;
+    let mut counts = UnfitMoveCounts::default();
+    let mut writes = Vec::new();
+    for u in held {
+        if occupied.contains(&u.block_id) {
+            counts.occupied += 1;
+            continue;
+        }
+        let value = PropertyValue::from(&u.fields);
+        let Some(fit) = fitted(into_key, &value, &decl) else {
+            counts.unfit_there += 1;
+            continue;
+        };
+        counts.moved += 1;
+        let block_id = BlockId::from_trusted(&u.block_id);
+        writes.push(PropertyValueWrite {
+            block_id: block_id.clone(),
+            key: key.to_owned(),
+            value: None,
+            prior: value_fields(&value),
+        });
+        writes.push(PropertyValueWrite {
+            block_id,
+            key: into_key.to_owned(),
+            value: value_fields(&fit),
+            prior: None,
+        });
+    }
+    Ok((counts, writes))
+}
+
+/// What moving `space_id`'s values under `key` that don't fit it to
+/// `into_key` would do, which [`move_unfit_property_values_inner`] takes as
+/// its acknowledgement. Refused as the move is.
+///
+/// # Errors
+///
+/// The refusals of [`move_unfit_property_values_inner`] but the stale
+/// acknowledgement's.
+#[instrument(skip(pool), err)]
+pub async fn preview_unfit_property_move_inner(
+    pool: &SqlitePool,
+    space_id: &str,
+    key: String,
+    into_key: String,
+) -> Result<UnfitMoveCounts, AppError> {
+    let mut conn = pool.acquire().await?;
+    Ok(plan_move(&mut conn, space_id, &key, &into_key).await?.0)
+}
+
+/// Move each value of `space_id`'s blocks under `key` that doesn't fit it,
+/// the Trash's included, to `into_key` on the same block, where it fits read
+/// under `into_key`'s type, in one `RewriteProperties` op recording each, so
+/// an undo puts them all back. A value on a block holding `into_key` stays,
+/// and so does one that doesn't fit `into_key`. `key` may be a built-in.
+/// Returns what it moved and left; with nothing to move it appends no op.
+///
+/// `acknowledged` is what [`preview_unfit_property_move_inner`] answered; the
+/// move counts again in its transaction and refuses when the answer changed.
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] when `into_key` is `key`, the app's own or a
+///   ref.
+/// - [`AppError::Validation`] coded [`ValidationCode::BuiltinPropertyLocked`]
+///   when `into_key` is built in.
+/// - [`AppError::NotFound`] when the space does not declare `into_key`.
+/// - [`AppError::Validation`] coded [`ValidationCode::UnacknowledgedPropertyLoss`]
+///   when the counts differ from `acknowledged`.
+#[instrument(skip(pool, device_id, materializer), err)]
+pub async fn move_unfit_property_values_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    space_id: &str,
+    key: String,
+    into_key: String,
+    acknowledged: UnfitMoveCounts,
+) -> Result<UnfitMoveCounts, AppError> {
+    let mut tx = CommandTx::begin_immediate(pool, "move_unfit_property_values").await?;
+    tx.arm_engine_rollback(materializer.loro_state());
+    let (counts, values) = plan_move(&mut tx, space_id, &key, &into_key).await?;
+    if counts != acknowledged {
+        return Err(AppError::validation_coded(
+            ValidationCode::UnacknowledgedPropertyLoss,
+            format!(
+                "moving '{key}' to '{into_key}' now moves {}, and leaves {} already set there \
+                 and {} that don't fit; look again",
+                counts.moved, counts.occupied, counts.unfit_there
+            ),
+        ));
+    }
+    if values.is_empty() {
+        return Ok(counts);
+    }
+    let payload = OpPayload::RewriteProperties(RewritePropertiesPayload {
+        space_id: BlockId::from_trusted(space_id),
+        reason: RewriteReason::MoveUnfit,
+        defs: Vec::new(),
+        values,
+    });
+    append_and_apply(&mut tx, materializer.loro_state(), device_id, payload).await?;
+    tx.commit_and_dispatch(materializer).await?;
+    Ok(counts)
+}
+
 /// Tauri command: one page of a key's values that don't fit it. Delegates to
 /// [`list_unfit_property_values_inner`].
 #[tauri::command]
@@ -690,6 +850,48 @@ pub async fn convert_unfit_property_values(
         space_id.as_str(),
         key,
         replacements,
+    ))
+    .await
+    .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: what moving a key's values that don't fit to another key
+/// would move and leave. Delegates to [`preview_unfit_property_move_inner`].
+#[tauri::command]
+#[specta::specta]
+pub async fn preview_unfit_property_move(
+    read_pool: State<'_, ReadPool>,
+    space_id: SpaceId,
+    key: String,
+    into_key: String,
+) -> Result<UnfitMoveCounts, AppError> {
+    space_id.validate_shape()?;
+    preview_unfit_property_move_inner(&read_pool.0, space_id.as_str(), key, into_key)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: move a key's values that don't fit to another key where
+/// they fit. Delegates to [`move_unfit_property_values_inner`]; the response
+/// carries the op ref.
+#[tauri::command]
+#[specta::specta]
+pub async fn move_unfit_property_values(
+    ctx: State<'_, WriteCtx>,
+    space_id: SpaceId,
+    key: String,
+    into_key: String,
+    acknowledged: UnfitMoveCounts,
+) -> Result<WithOps<UnfitMoveCounts>, AppError> {
+    space_id.validate_shape()?;
+    capture_op_refs(move_unfit_property_values_inner(
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
+        space_id.as_str(),
+        key,
+        into_key,
+        acknowledged,
     ))
     .await
     .map_err(sanitize_internal_error)

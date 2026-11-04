@@ -23,6 +23,7 @@
  */
 
 import { MARKER_INDENT_SRC } from '@/editor/markdown-parse/vocab'
+import { closesFence } from '@/editor/source-buffer-document'
 
 /** Canonical block-type tokens used by the Turn-into menu. */
 export type BlockTypeToken =
@@ -41,14 +42,15 @@ export type BlockTypeToken =
 
 const HEADING_RE = /^(#{1,6})\s+/
 // The callout marker, spelled the way the PARSER spells it (`CALLOUT_RE` in
-// `markdown-parse/vocab.ts`): `[!TYPE]` NOT followed by `(`. That one refused
-// follower is the whole difference between a marker and a link whose visible
+// `markdown-parse/vocab.ts`): `[!TYPE]` NOT followed by `(`, then its optional
+// `-` / `+` fold marker (group 1), stripped with it. The refused `(` is the whole
+// difference between a marker and a link whose visible
 // text starts with `!` — `> [!a](https://example.com)a` is a blockquote holding
 // a link, so the Turn-into menu must call it a quote and `stripBlockMarker`
 // must leave it alone; stripping `> [!a]` off it would delete the link (#4072).
 // Both patterns below are built from this one fragment so the module cannot
 // drift from itself: whatever is not a callout here IS a plain quote.
-const CALLOUT_MARKER_SRC = String.raw`\[![A-Za-z]+\](?!\()`
+const CALLOUT_MARKER_SRC = String.raw`\[![\w-]+\](?!\()([+-]?)`
 // Plain blockquote: `> ` not followed by a callout marker.
 // content-regex-allow: interpolates a compile-time literal, never user prose
 const QUOTE_RE = new RegExp(`^>\\s+(?!${CALLOUT_MARKER_SRC})`)
@@ -73,7 +75,8 @@ const CALLOUT_RE = new RegExp(`^>\\s+${CALLOUT_MARKER_SRC}\\s*`)
 const ORDERED_RE = new RegExp(`^${MARKER_INDENT_SRC}\\d+\\.\\s+`)
 // content-regex-allow: interpolates a compile-time quantifier, never user prose
 const BULLET_RE = new RegExp(`^${MARKER_INDENT_SRC}[-*+]\\s+`)
-const FENCE_RE = /^```/
+/** A code fence's opening run, backticks or tildes, as the parser reads one (#6033). */
+const FENCE_RE = /^(`{3,}|~{3,})/
 
 /**
  * Strip the leading structural marker from a single line of markdown,
@@ -134,9 +137,11 @@ export function detectBlockType(content: string): BlockTypeToken {
 function extractLines(content: string): string[] {
   const lines = content.split('\n')
   const first = lines[0] ?? ''
-  if (FENCE_RE.test(first.trimStart())) {
-    const inner = content.replace(/^```[^\n]*\n?/, '').replace(/\n?```\s*$/, '')
-    return inner.split('\n')
+  const fence = FENCE_RE.exec(first.trimStart())?.[1]
+  if (fence !== undefined) {
+    const inner = lines.slice(1)
+    if (closesFence(inner.at(-1) ?? '', { ch: fence.charAt(0), len: fence.length })) inner.pop()
+    return inner
   }
   const rest = lines.slice(1)
   if (QUOTE_RE.test(first) || CALLOUT_RE.test(first)) {
@@ -193,7 +198,10 @@ export function convertBlockContent(
       return [text, ...rest].map((l) => `> ${l}`).join('\n')
     }
     case 'callout': {
-      return [`> [!${calloutType.toUpperCase()}] ${text}`, ...rest.map((l) => `> ${l}`)].join('\n')
+      // A change of callout type keeps the callout's fold.
+      const fold = CALLOUT_RE.exec(content)?.[1] ?? ''
+      const marker = `> [!${calloutType.toUpperCase()}]${fold}`
+      return [`${marker} ${text}`, ...rest.map((l) => `> ${l}`)].join('\n')
     }
     default: {
       return content

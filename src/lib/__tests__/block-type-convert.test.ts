@@ -338,3 +338,40 @@ describe('#4072: `[!x](…)` is a link, not a callout marker', () => {
     )
   })
 })
+
+describe('a tilde fence is code, as the parser reads it (#6033)', () => {
+  it('detects a `~~~` fence as code', () => {
+    expect(detectBlockType('~~~js\nlet x\n~~~')).toBe('code')
+  })
+
+  it('unwraps a tilde fence, closed by a tilde run at least as long', () => {
+    expect(convertBlockContent('~~~~js\n~~~\n```\n~~~~~', 'paragraph')).toBe('~~~\n```')
+  })
+
+  it('leaves a tilde-fenced block as it is when turned into code', () => {
+    expect(convertBlockContent('~~~\nx\n~~~', 'code')).toBe('~~~\nx\n~~~')
+  })
+})
+
+// -- #6033: fold markers and hyphenated types, as the parser reads them -------
+describe('#6033: a callout with a fold marker or a hyphenated type', () => {
+  it('is detected as a callout', () => {
+    expect(detectBlockType('> [!FAQ]- Why?')).toBe('callout')
+    expect(detectBlockType('> [!MY-TYPE]+ t')).toBe('callout')
+  })
+
+  it('sheds its fold marker with its type, so the title never turns into a list', () => {
+    expect(stripBlockMarker('> [!FAQ]- Why?')).toBe('Why?')
+    expect(convertBlockContent('> [!FAQ]- Why?\n> Because.', 'paragraph')).toBe('Why?\nBecause.')
+  })
+
+  it('keeps its fold through a change of callout type, and drops it with the callout', () => {
+    expect(convertBlockContent('> [!MY-TYPE]+ t', 'callout', 'tip')).toBe('> [!TIP]+ t')
+    expect(convertBlockContent('> [!FAQ]- Why?\n> Because.', 'callout', 'tip')).toBe(
+      '> [!TIP]- Why?\n> Because.',
+    )
+    expect(convertBlockContent('> [!FAQ] Why?', 'callout', 'tip')).toBe('> [!TIP] Why?')
+    expect(convertBlockContent('> [!FAQ]- Why?\n> Because.', 'quote')).toBe('> Why?\n> Because.')
+    expect(convertBlockContent('> -x', 'callout', 'tip')).toBe('> [!TIP] -x')
+  })
+})

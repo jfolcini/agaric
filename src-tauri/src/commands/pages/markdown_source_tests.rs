@@ -53,7 +53,7 @@ pub(super) fn page_data(descendants: Vec<BlockRow>) -> PageExportData {
         tag_names: HashMap::new(),
         page_titles: HashMap::new(),
         block_ref_replacement: HashMap::new(),
-        same_page_ref_targets: HashSet::new(),
+        addressed_blocks: HashSet::new(),
         descendant_properties: HashMap::new(),
         list_styles: HashMap::new(),
         ref_titles: HashMap::new(),
@@ -398,7 +398,7 @@ fn check_read_back(
 // ── fixtures ────────────────────────────────────────────────────────────────
 
 /// A block that leaves its fence open gets its anchor on a line of its own,
-/// which ends the fence before the child.
+/// which ends the fence before the child, a `+` item (decision 2, #6277).
 #[test]
 fn an_open_fence_ends_at_its_blocks_anchor_line() {
     const A: &str = "01J0000000000000000000000A";
@@ -406,7 +406,7 @@ fn an_open_fence_ends_at_its_blocks_anchor_line() {
     let data = page_data(vec![row(A, PAGE, 1, "````"), row(B, A, 1, "B")]);
     assert_eq!(
         render_page_document(&data).0,
-        format!("````\n^{A}\n\n  B ^{B}\n")
+        format!("````\n^{A}\n\n  + B ^{B}\n")
     );
 }
 
@@ -434,7 +434,7 @@ fn a_clipboard_copy_of_a_plain_subtree_has_no_anchor() {
 /// keep it: one leaving a fence open, whose anchor line ends the fence before
 /// its child, and one ending in ` ^` and a block id, which a paste takes as
 /// an anchor. One ending in ` ^word` or in a blank line reads back without one
-/// (#6190).
+/// (#6190). The child is a `+` item (decision 2, #6277).
 #[test]
 fn a_clipboard_copy_keeps_the_anchors_blocks_need_to_read_back() {
     const A: &str = "01J0000000000000000000000A";
@@ -454,7 +454,7 @@ fn a_clipboard_copy_keeps_the_anchors_blocks_need_to_read_back() {
     assert_eq!(
         copy,
         format!(
-            "````\n^{A}\n\n  B\n\nends in ^word\n\nends in a blank line\n\\\n\nends in ^{B} ^{E}\n"
+            "````\n^{A}\n\n  + B\n\nends in ^word\n\nends in a blank line\n\\\n\nends in ^{B} ^{E}\n"
         )
     );
     let pasted: Vec<String> = import::parse_pasted_text(&copy)
@@ -686,8 +686,10 @@ fn a_name_inside_code_stays_raw() {
 /// `conformance/block-content.vectors.json`: stored block content and the
 /// meaning Rust and the block editor must agree on. This side reads each
 /// content through the buffer as one block with that content and no
-/// properties; `block-content-conformance.test.ts` runs the editor's save
-/// flush over the same rows.
+/// properties, and authors each row's `rustReads`
+/// ([`the_block_content_vectors_carry_what_rust_reads`]);
+/// `block-content-conformance.test.ts` runs the editor's save flush over the
+/// same rows and parses each content into the same code blocks and rules.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BlockContentVectors {
@@ -712,12 +714,62 @@ struct TaskMarkerVector {
     canonical: bool,
 }
 
+const BLOCK_CONTENT_VECTORS: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../conformance/block-content.vectors.json"
+);
+
 fn block_content_vectors() -> BlockContentVectors {
     serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../conformance/block-content.vectors.json"
     )))
     .expect("block-content conformance vectors must be valid JSON")
+}
+
+/// The code blocks and thematic breaks Rust's grammar reads in `content`, in
+/// order, as a paste reads text (#6033).
+fn rust_reads(content: &str) -> Vec<&'static str> {
+    import::parse_pasted_text(content)
+        .iter()
+        .filter_map(|block| {
+            if block.is_code {
+                Some("code")
+            } else if block.properties.is_empty() && import::is_thematic_break(&block.content) {
+                Some("rule")
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Each stored block row carries `rustReads`, which Rust authors
+/// (`CONFORMANCE_UPDATE=1` writes it) and the editor's parse asserts.
+#[test]
+fn the_block_content_vectors_carry_what_rust_reads() {
+    let written: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(BLOCK_CONTENT_VECTORS).expect("read the block-content vectors"),
+    )
+    .expect("the block-content vectors are JSON");
+    let mut authored = written.clone();
+    for row in authored["blocks"]
+        .as_array_mut()
+        .expect("the vectors hold `blocks`")
+    {
+        let content = row["content"].as_str().expect("a row has `content`");
+        row["rustReads"] = serde_json::json!(rust_reads(content));
+    }
+    if std::env::var("CONFORMANCE_UPDATE").as_deref() == Ok("1") {
+        let mut out = serde_json::to_string_pretty(&authored).expect("vectors serialise");
+        out.push('\n');
+        std::fs::write(BLOCK_CONTENT_VECTORS, out).expect("write the block-content vectors");
+        return;
+    }
+    assert_eq!(
+        written, authored,
+        "`rustReads` drifted from Rust's reading: re-author with CONFORMANCE_UPDATE=1"
+    );
 }
 
 #[test]

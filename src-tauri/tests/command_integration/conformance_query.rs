@@ -1604,6 +1604,30 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 next_cursor: None,
             }
         }
+        // ── What moving a key's values that don't fit moves and leaves (#6206) ──
+        //
+        // One headed row, `unfit_move_counts#moved=<n>#occupied=<n>#unfit_there=<n>`.
+        "preview_unfit_property_move" => {
+            let counts = preview_unfit_property_move_inner(
+                pool,
+                &arg_req::<String>(args, "spaceId"),
+                arg_req(args, "key"),
+                arg_req(args, "intoKey"),
+            )
+            .await?;
+            let v = serde_json::to_value(counts).expect("serialize UnfitMoveCounts");
+            RawResult {
+                rows: vec![format!(
+                    "unfit_move_counts#moved={}#occupied={}#unfit_there={}",
+                    attr_value("moved", v.get("moved")),
+                    attr_value("occupied", v.get("occupied")),
+                    attr_value("unfit_there", v.get("unfit_there")),
+                )],
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
         // ── What a type change converts and leaves unfit (#5841 S3) ──
         //
         // One headed row, `property_type_change_counts#converted=<n>#unfit=<n>`;
@@ -3133,7 +3157,12 @@ pub(super) mod reader_delegation_tests {
     // grouped in Rust, behind `PageRequest::new` and `build_page_response`.
     // The conversion it lists for is `convert_unfit_property_values`, not a
     // read arm. Writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 67;
+    // #6206 wired `preview_unfit_property_move`: the same SELECT, a
+    // `property_definitions` lookup and one `query_scalar!` SELECT over
+    // `block_properties JOIN blocks` (`commands/property_keys.rs`). The move
+    // it previews is `move_unfit_property_values`, not a read arm. Writer set
+    // unchanged.
+    const SWEPT_ARM_COUNT: usize = 68;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

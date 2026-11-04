@@ -16,6 +16,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  aligned,
   blockRef,
   bold,
   boldItalic,
@@ -413,6 +414,24 @@ describe('finding 12: adjacent sibling blockquotes/tables merge (pinned canonica
     expect(serialize(parse(md))).toBe(md)
   })
 
+  // #6277: the second table's delimiter carries its alignment (`:---`), and
+  // the width change still splits it off rather than merging a ragged table.
+  it('a width change splits off a second table whose delimiter is aligned', () => {
+    const d = doc(
+      table(
+        tableRow(tableHeader(paragraph(text('a'))), tableHeader(paragraph(text('b')))),
+        tableRow(tableCell(paragraph(text('x'))), tableCell(paragraph(text('y')))),
+      ),
+      table(
+        tableRow(aligned('right', tableHeader(paragraph(text('c'))))),
+        tableRow(aligned('right', tableCell(paragraph(text('z'))))),
+      ),
+    )
+    const md = serialize(d)
+    expect(md).toBe('| a | b |\n| --- | --- |\n| x | y |\n| c |\n| ---: |\n| z |')
+    expect(parse(md)).toEqual(d)
+  })
+
   it('three tables of alternating widths split at every boundary, not just the first', () => {
     const d = doc(
       table(tableRow(tableHeader(paragraph(text('a'))))),
@@ -429,7 +448,7 @@ describe('finding 12: adjacent sibling blockquotes/tables merge (pinned canonica
   // never emits a bare `---` cell for genuine data — not even when the cell's
   // text carries surrounding whitespace, which `serializeTable` strips at the
   // NODE level (`canonicalCellParagraphs`) BEFORE `serializeParagraph`'s
-  // `^-{3,}$` horizontal-rule guard runs, not on the emitted string after it.
+  // `isThematicBreak` horizontal-rule guard runs, not on the emitted string after it.
   it('a `--- ` cell (untrimmed) is escaped too — the guard sees the trimmed text', () => {
     const d = doc(
       table(
@@ -452,7 +471,7 @@ describe('finding 12: adjacent sibling blockquotes/tables merge (pinned canonica
   it('a merge is not falsely triggered by a genuine `--` data row (not 3+ dashes)', () => {
     // `--` is a legal GFM delimiter cell shape but NOT the canonical `---`
     // `serializeTable` emits and `serializeParagraph`'s horizontal-rule guard
-    // (`^-{3,}$`) does not escape it — so it is reachable as genuine,
+    // (`isThematicBreak`) does not escape it — so it is reachable as genuine,
     // unescaped data mid-table, and must not be misread as an absorbed
     // second table's separator.
     const d = doc(

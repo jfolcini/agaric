@@ -1,7 +1,8 @@
 /**
  * Tauri mock — a key's values that don't fit its definition (#6206): counted,
- * listed, removed, converted as the user maps each, and added to a select's
- * options. Mirrors `src-tauri/src/commands/property_unfit.rs`.
+ * listed, removed, converted as the user maps each, moved to another key where
+ * they fit, and added to a select's options. Mirrors
+ * `src-tauri/src/commands/property_unfit.rs`.
  *
  * A value doesn't fit when its row is not in a slot its key's type takes, or
  * when it is a select's text outside the options. The built-ins count but
@@ -9,7 +10,7 @@
  * read Trash included, as the backend reads them.
  */
 
-import type { PropertyUnfitCounts, UnfitValueReplacement } from '@/lib/bindings'
+import type { PropertyUnfitCounts, UnfitMoveCounts, UnfitValueReplacement } from '@/lib/bindings'
 import { fitsDefinition, UNCOUNTED_PROPERTY_KEYS, valueForm } from '@/lib/property-fit'
 import { BUILTIN_PROPERTY_DEFS } from '@/lib/property-save-utils'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
@@ -21,10 +22,12 @@ import {
   fieldsUnder,
   heldValueOf,
   refuseBuiltinKey,
+  refuseInternalKey,
   rejection,
   type RewritePayload,
   rowHolders,
   userDef,
+  type ValueWrite,
 } from '@/lib/tauri-mock/property-keys'
 import { holderRow } from '@/lib/tauri-mock/property-type-change'
 import {
@@ -159,7 +162,7 @@ export function distinctUnfitValues(spaceId: string, key: string): Row[] {
  * admitted by `check_property_value`, which refuses blank text and a select's
  * text outside the options — or null when it doesn't fit.
  */
-function fitted(value: string, def: DefState): HeldValue | null {
+function fitted(value: HeldValue, def: DefState): HeldValue | null {
   const held = coerce(value, def.value_type)
   if (held === null) return null
   if (typeof held === 'string' && held.replace(RUST_TRIM, '') === '') return null
@@ -245,6 +248,97 @@ export function convertUnfitPropertyValues(
   const op = pushOp('rewrite_properties', { ...payload })
   applyRewrite(payload)
   return { ...converted, op_refs: [{ device_id: op.device_id, seq: op.seq }] }
+}
+
+/** `move_target`: `intoKey`'s definition, refused as the backend refuses it. */
+function moveTarget(spaceId: string, key: string, intoKey: string): DefState {
+  if (intoKey === key) {
+    throw rejection({
+      kind: 'validation',
+      message: `the values of '${key}' cannot move to '${key}' itself`,
+    })
+  }
+  refuseBuiltinKey(intoKey)
+  refuseInternalKey(intoKey)
+  const def = defState(userDef(spaceId, intoKey))
+  if (def.value_type === 'ref') {
+    throw rejection({
+      kind: 'validation',
+      message: `'${intoKey}' is a ref property; its values are blocks`,
+    })
+  }
+  return def
+}
+
+/**
+ * `plan_move`: what moving `key`'s values that don't fit to `intoKey` does,
+ * and per value moved its two writes, by block. A block holding `intoKey`
+ * keeps its value, whether or not it would fit.
+ */
+function planMove(
+  spaceId: string,
+  key: string,
+  intoKey: string,
+): { counts: UnfitMoveCounts; values: ValueWrite[] } {
+  const def = moveTarget(spaceId, key, intoKey)
+  const occupied = new Set(rowHolders(spaceId, intoKey))
+  const counts: UnfitMoveCounts = { moved: 0, occupied: 0, unfit_there: 0 }
+  const values: ValueWrite[] = []
+  for (const blockId of unfitHolders(spaceId, key)) {
+    if (occupied.has(blockId)) {
+      counts.occupied += 1
+      continue
+    }
+    const held = heldValueOf(heldRow(blockId, key)) as HeldValue
+    const fit = fitted(held, def)
+    if (fit === null) {
+      counts.unfit_there += 1
+      continue
+    }
+    counts.moved += 1
+    values.push(
+      { block_id: blockId, key, value: null, prior: fieldsUnder(held, 'text') },
+      { block_id: blockId, key: intoKey, value: fieldsUnder(fit, 'text'), prior: null },
+    )
+  }
+  return { counts, values }
+}
+
+/** `preview_unfit_property_move_inner`. */
+export function previewUnfitPropertyMove(
+  spaceId: string,
+  key: string,
+  intoKey: string,
+): UnfitMoveCounts {
+  return planMove(spaceId, key, intoKey).counts
+}
+
+/** `move_unfit_property_values_inner`: what it moved and left, and the op. */
+export function moveUnfitPropertyValues(
+  spaceId: string,
+  key: string,
+  intoKey: string,
+  acknowledged: UnfitMoveCounts,
+): Row {
+  const { counts, values } = planMove(spaceId, key, intoKey)
+  if (
+    counts.moved !== acknowledged.moved ||
+    counts.occupied !== acknowledged.occupied ||
+    counts.unfit_there !== acknowledged.unfit_there
+  ) {
+    throw rejection({
+      kind: 'validation',
+      code: 'UnacknowledgedPropertyLoss',
+      message:
+        `moving '${key}' to '${intoKey}' now moves ${counts.moved}, and leaves ` +
+        `${counts.occupied} already set there and ${counts.unfit_there} that don't fit; look again`,
+    })
+  }
+  if (values.length === 0) return { ...counts, op_refs: [] }
+  const payload: RewritePayload = { space_id: spaceId, reason: 'move_unfit', defs: [], values }
+  const op = pushOp('rewrite_properties', { ...payload })
+  applyRewrite(payload)
+  return { ...counts, op_refs: [{ device_id: op.device_id, seq: op.seq }] }
 }
 
 /** `add_unfit_values_to_options_inner`: the definition after, and the op. */
