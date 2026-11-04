@@ -415,18 +415,13 @@ describe('Agaric real-backend repeating tasks (#5366, #5734, #5735, #5736) @jour
     for (const id of ids) await waitForTaskState(id, 'DONE')
 
     // Each next occurrence is the open TODO bullet of the task; its due date
-    // is the property line under it.
+    // is the `📅` signifier on its line (#6277 decision 4).
     const source = await openPageSource(modes.map(({ task }) => task))
     const lines = (await pageSourceLines()).map(({ text }) => text)
     const nextDue = (task: string) => {
-      const at = lines.findIndex((line) => line.startsWith(`- [ ] ${task}`))
-      if (at < 0) return 'no next occurrence'
-      for (const line of lines.slice(at + 1)) {
-        if (!line.startsWith(' ')) break
-        const due = /^\s+due_date:: (\S+)/.exec(line)
-        if (due?.[1] !== undefined) return due[1]
-      }
-      return 'no due date'
+      const line = lines.find((text) => text.startsWith(`- [ ] ${task}`))
+      if (line === undefined) return 'no next occurrence'
+      return / 📅 (\S+)/.exec(line)?.[1] ?? 'no due date'
     }
     const next = Object.fromEntries(modes.map(({ command, task }) => [command, nextDue(task)]))
     await clickPageSourceButton('Cancel')

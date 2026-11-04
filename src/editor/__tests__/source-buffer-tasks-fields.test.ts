@@ -68,14 +68,27 @@ describe('a task line’s Tasks fields (#6277 D2)', () => {
     expect(readLines(ed.state.doc).text).toBe('- [/] a ⏫ 📅 2026-10-05')
   })
 
-  it('writes a `key::` line under the task line, which it leaves as typed', () => {
+  it('sets and clears them on the task line, as the backend writes them (#6277 D3)', () => {
     const ed = build(TASK)
-    expect(blockProperty(ed.state.doc, block(ed), 'due_date')).toBeNull()
+    expect(blockProperty(ed.state.doc, block(ed), 'due_date')).toBe('2026-10-05')
 
     setBlockProperty(block(ed), 'due_date', '2026-11-01')(ed.state, ed.view.dispatch)
+    expect(readLines(ed.state.doc).text).toBe('- [ ] a ⏫ 📅 2026-11-01')
+    setBlockProperty(block(ed), 'scheduled_date', '2026-10-20')(ed.state, ed.view.dispatch)
+    expect(readLines(ed.state.doc).text).toBe('- [ ] a ⏫ ⏳ 2026-10-20 📅 2026-11-01')
+    setBlockProperty(block(ed), 'priority', null)(ed.state, ed.view.dispatch)
 
-    expect(readLines(ed.state.doc).text).toBe(`${TASK}\n  due_date:: 2026-11-01`)
-    expect(blockProperty(ed.state.doc, block(ed), 'due_date')).toBe('2026-11-01')
+    expect(readLines(ed.state.doc).text).toBe('- [ ] a ⏳ 2026-10-20 📅 2026-11-01')
+    expect(blockProperty(ed.state.doc, block(ed), 'priority')).toBeNull()
+  })
+
+  it('writes a `key::` line under the task line for a value no signifier carries', () => {
+    const ed = build(TASK)
+
+    setBlockProperty(block(ed), 'priority', 'A')(ed.state, ed.view.dispatch)
+
+    expect(readLines(ed.state.doc).text).toBe(`${TASK}\n  priority:: A`)
+    expect(blockProperty(ed.state.doc, block(ed), 'priority')).toBe('A')
   })
 
   it('stays text in page mode’s paste', () => {

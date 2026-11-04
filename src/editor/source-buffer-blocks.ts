@@ -25,6 +25,9 @@ import {
   lineLayout,
   parseDocument,
   pushDocumentLines,
+  TASK_SIGNIFIER_KEYS,
+  taskSignifier,
+  writeTaskFields,
 } from '@/editor/source-buffer-document'
 import { type BlockTypeToken, convertBlockContent, detectBlockType } from '@/lib/block-type-convert'
 import { foldPropertyKey } from '@/lib/inline-property-parse'
@@ -463,11 +466,37 @@ function propertyIndex(read: DocumentBlock, key: string): number {
   )
 }
 
-/** The value of `block`'s `key::` line, or null. */
+/** The value of `block`'s `key::` line or, on a task, its Tasks signifier, or null. */
 export function blockProperty(doc: PMNode, block: SourceBlock, key: string): string | null {
   const read = readingOf(doc, block)
-  const value = read === null ? '' : (read.properties[propertyIndex(read, key)]?.[1] ?? '')
+  const at = read?.properties.findLastIndex(
+    ([typed]) => foldPropertyKey(typed) === foldPropertyKey(key),
+  )
+  const value = read === null || at === undefined ? '' : (read.properties[at]?.[1] ?? '')
   return value === '' ? null : value
+}
+
+/**
+ * `read`'s content with its task line's Tasks signifiers holding `key` as
+ * `value`, or none for null, written as the backend writes them (#6277 D3);
+ * null when `read` is no task, or `value` is no signifier's, which a
+ * `key::` line carries instead.
+ */
+function withTaskField(read: DocumentBlock, key: string, value: string | null): string | null {
+  if (read.todoState === null) return null
+  const done = read.todoState === 'DONE'
+  if (value !== null && taskSignifier(key, value, done) === null) return null
+  const fields = new Map(read.properties.filter((_, i) => read.propertyLines[i] === read.line))
+  if (value === null && !fields.has(key)) return null
+  if (value === null) fields.delete(key)
+  else fields.set(key, value)
+  const signifiers = TASK_SIGNIFIER_KEYS.flatMap((field) => {
+    const held = fields.get(field)
+    const signifier = held === undefined ? null : taskSignifier(field, held, done)
+    return signifier === null ? [] : [signifier]
+  })
+  const [first = '', ...rest] = read.content.split('\n')
+  return [writeTaskFields(first, signifiers, done), ...rest].join('\n')
 }
 
 /** A block of the buffer as the toolbar reads it, for the Preview. */
@@ -513,6 +542,7 @@ export function frontMatterProperties(
 /**
  * Write `block`'s `key:: value` line, under its text at its text's column, or
  * take it out for `null`: the export's line for the block's priority and dates.
+ * A task with no such line writes them as its Tasks signifiers instead.
  */
 export function setBlockProperty(block: SourceBlock, key: string, value: string | null): Command {
   return (state, dispatch) => {
@@ -522,6 +552,11 @@ export function setBlockProperty(block: SourceBlock, key: string, value: string 
     const span = buffer.spans[at]
     if (read === undefined || span === undefined) return true
     const found = propertyIndex(read, key)
+    const content = found < 0 ? withTaskField(read, key, value) : null
+    if (content !== null) {
+      dispatch?.(rewriteAt(state, buffer, at, (old) => ({ ...old, content }), true))
+      return true
+    }
     const tr = state.tr
     if (found >= 0) {
       const line = (read.propertyLines[found] as number) - 1

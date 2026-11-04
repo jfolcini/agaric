@@ -89,11 +89,18 @@ fn arb_document_block() -> impl Strategy<Value = BlockSpec> {
 /// A forest of [`arb_document_block`]s led by one of the dialect's hard shapes
 /// (§ g.4): a plain block under a list block, which only `+` carries (D4), a
 /// first block opening with `---` and a second one, whose line would close the
-/// front matter the first opened, or an empty plain block, which only `\`
-/// carries (D4).
+/// front matter the first opened, an empty plain block, which only `\`
+/// carries (D4), or a task whose text ends in a word shaped like a Tasks
+/// field, which only an escape keeps text (#6277 D3).
 fn arb_document_forest() -> impl Strategy<Value = Vec<BlockSpec>> {
-    let lead = (arb_block(), arb_block(), 0..3, "-{3,4}[a-z ]{0,3}").prop_map(
-        |(parent, child, shape, rule)| {
+    let lead = (
+        arb_block(),
+        arb_block(),
+        0..4,
+        "-{3,4}[a-z ]{0,3}",
+        arb_signifier_word(),
+    )
+        .prop_map(|(parent, child, shape, rule, word)| {
             let child = BlockSpec {
                 level: 0,
                 list_style: None,
@@ -119,13 +126,17 @@ fn arb_document_forest() -> impl Strategy<Value = Vec<BlockSpec>> {
                         ..child
                     },
                 ],
-                _ => vec![BlockSpec {
+                2 => vec![BlockSpec {
                     content: String::new(),
                     ..child
                 }],
+                _ => vec![BlockSpec {
+                    content: format!("task {word}"),
+                    todo_state: Some("TODO".into()),
+                    ..child
+                }],
             }
-        },
-    );
+        });
     (lead, arb_forest_of(arb_document_block())).prop_map(|(mut lead, forest)| {
         lead.extend(forest);
         lead
@@ -515,6 +526,62 @@ fn document_rows() -> Vec<(&'static str, Vec<BlockSpec>, &'static str)> {
             "D1: a break followed by a Unicode space is still a break, as the reader trims it",
             vec![plain(0, "para\n---\u{a0}")],
             "para\n\\---\u{a0}\n",
+        ),
+        (
+            "#6277 D3: a task's priority, dates and rule are Tasks signifiers at the end of its line",
+            vec![
+                BlockSpec {
+                    priority: Some("1".into()),
+                    scheduled_date: Some("2026-10-01".into()),
+                    due_date: Some("2026-10-05".into()),
+                    properties: repeat("+1w"),
+                    ..task(0, "a", "TODO")
+                },
+                BlockSpec {
+                    priority: Some("3".into()),
+                    properties: repeat(".+2d"),
+                    ..task(0, "b", "DOING")
+                },
+            ],
+            "- [ ] a ⏫ 🔁 every week ⏳ 2026-10-01 📅 2026-10-05\n\
+             - [/] b 🔽 🔁 every 2 days when done\n",
+        ),
+        (
+            "#6277 D3: a rule Tasks cannot express stays a `repeat::` line, and a block with no \
+             checkbox keeps its `key::` lines",
+            vec![
+                BlockSpec {
+                    due_date: Some("2026-10-05".into()),
+                    properties: repeat("++1d"),
+                    ..task(0, "c", "TODO")
+                },
+                BlockSpec {
+                    priority: Some("2".into()),
+                    due_date: Some("2026-10-05".into()),
+                    ..styled(0, "d", "bullet")
+                },
+                BlockSpec {
+                    due_date: Some("2026-10-05".into()),
+                    ..task(0, "e", "WAITING")
+                },
+            ],
+            "- [ ] c 📅 2026-10-05\n  repeat:: ++1d\n- d\n  priority:: 2\n  due_date:: 2026-10-05\n\n\
+             e\n  todo_state:: WAITING\n  due_date:: 2026-10-05\n",
+        ),
+        (
+            "#6277 D3: a task whose own text would not read back as written has its signifiers \
+             escaped",
+            vec![
+                task(0, "call 📅 2026-01-01", "TODO"),
+                BlockSpec {
+                    due_date: Some("2026-10-05".into()),
+                    ..task(0, "go ⏫", "TODO")
+                },
+                task(0, "start 🛫 2026-01-01", "TODO"),
+                task(0, "\\📅 x", "TODO"),
+            ],
+            "- [ ] call \\📅 2026-01-01\n- [ ] go \\⏫ 📅 2026-10-05\n\
+             - [ ] start \\🛫 2026-01-01\n- [ ] \\\\📅 x\n",
         ),
     ]
 }

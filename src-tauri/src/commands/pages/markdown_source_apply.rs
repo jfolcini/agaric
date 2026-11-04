@@ -865,7 +865,12 @@ impl PropertyChanges {
                 changes.set.push((key.clone(), value.clone()));
             }
         }
-        for key in old.keys().filter(|key| !new.contains_key(*key)) {
+        // `completed_at` goes with the task state, whose stamps keep it while
+        // the task is done: a `✅` taken off a done task's line deletes nothing.
+        for key in old
+            .keys()
+            .filter(|key| !new.contains_key(*key) && *key != "completed_at")
+        {
             if key == "todo_state" {
                 changes.todo_state = Some(None);
             } else {
@@ -974,7 +979,12 @@ async fn write_properties(
             save.report.properties_deleted += 1;
         }
     }
-    let (set, completed) = completed_at_last(&changes.set);
+    // A `✅` date (#6277 D2) goes after the task state, whose move into DONE
+    // stamps today.
+    let (set, completed): (Vec<_>, Vec<_>) = changes
+        .set
+        .into_iter()
+        .partition(|(key, _)| key != "completed_at");
     let (materializer, device_id) = (save.materializer, save.device_id);
     let set = apply_block_properties(tx, materializer, device_id, id, &set, save.lines).await?;
     save.report.properties_set += set;

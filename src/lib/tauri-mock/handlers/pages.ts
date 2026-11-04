@@ -56,6 +56,8 @@ import {
   titleSortKey,
   validationRejection,
   readActiveSpaceScope,
+  type TaskLine,
+  taskLineOf,
 } from '@/lib/tauri-mock/handlers/shared'
 import { tagsHandlers } from '@/lib/tauri-mock/handlers/tags'
 import { indexLinks } from '@/lib/tauri-mock/link-index'
@@ -228,8 +230,10 @@ function renderPageDocument(pid: string): { source: string; ids: string[] } {
       const opensRule = front === '' && lines.length === 0 && content.startsWith('---')
       const place = layout.place(depth, listMarker, todo, opensRule)
       if (place.blank) lines.push('')
-      pushAnchoredDocumentBlock(lines, place.indent, place.marker, place.taskMarker, content, id)
-      pushPropertyLines(lines, place.childIndent, row, place.taskMarker === '' ? todo : null)
+      const task = taskLineOf(row, place.taskMarker !== '')
+      const text = task.write(content)
+      pushAnchoredDocumentBlock(lines, place.indent, place.marker, place.taskMarker, text, id)
+      pushPropertyLines(lines, place.childIndent, row, place.taskMarker === '' ? todo : null, task)
       ids.push(id)
       render(id, depth + 1)
     }
@@ -257,13 +261,15 @@ function listOrdinal(row: Record<string, unknown>): number {
 /**
  * A block's `key:: value` lines at `indent`, as `render_block` writes them:
  * `todo` when its checkbox does not carry it, its priority and dates, then its
- * other properties by key, each value as the line reads it back.
+ * other properties by key, each value as the line reads it back, less the keys
+ * `task` writes as Tasks signifiers.
  */
 function pushPropertyLines(
   lines: string[],
   indent: string,
   row: Record<string, unknown>,
   todo: string | null,
+  task: TaskLine,
 ): void {
   const reserved = [
     ['todo_state', todo],
@@ -272,10 +278,12 @@ function pushPropertyLines(
     ['due_date', row['due_date']],
   ] as const
   for (const [key, value] of reserved) {
-    if (typeof value === 'string' && value !== '') lines.push(`${indent}${key}:: ${value}`)
+    if (typeof value === 'string' && value !== '' && !task.keys.has(key)) {
+      lines.push(`${indent}${key}:: ${value}`)
+    }
   }
   const rows = [...(properties.get(row['id'] as string) ?? [])]
-    .filter(([key]) => !BLOCK_LINE_HIDDEN_KEYS.has(key))
+    .filter(([key]) => !BLOCK_LINE_HIDDEN_KEYS.has(key) && !task.keys.has(key))
     .toSorted(([a], [b]) => compareUtf8Bytes(a, b))
   for (const [key, value] of rows) {
     lines.push(`${indent}${key}:: ${writeSourcePropertyValue(frontMatterValue(value))}`)
@@ -1930,8 +1938,9 @@ export const pagesHandlers = {
       const opensRule = lines.length === 0 && content.startsWith('---')
       const place = layout.place(depth, listMarker, todo, opensRule)
       if (place.blank) lines.push('')
-      pushDocumentLines(lines, place.indent, place.marker, place.taskMarker, content)
-      pushPropertyLines(lines, place.childIndent, row, place.taskMarker === '' ? todo : null)
+      const task = taskLineOf(row, place.taskMarker !== '')
+      pushDocumentLines(lines, place.indent, place.marker, place.taskMarker, task.write(content))
+      pushPropertyLines(lines, place.childIndent, row, place.taskMarker === '' ? todo : null, task)
       if (!withChildren) return
       for (const child of liveChildren(id)) {
         if (child['block_type'] === 'content') renderBlock(child, depth + 1)

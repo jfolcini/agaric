@@ -14451,6 +14451,8 @@ async fn export_emits_bulleted_indented_block_content_1916() {
 /// checkbox after the bullet (`- [ ] `, `[/]`, `[x]`, `[-]`), a state outside
 /// that alphabet as a `todo_state::` line, and priority and the dates as
 /// indented `key:: value` property lines, all of which the importer reads back.
+/// A checkbox task writes its dates as Tasks signifiers instead (#6277
+/// decision 4), and a priority outside the levels stays a line.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn export_emits_task_checkbox_and_metadata_property_lines_1916() {
     let (pool, _dir) = test_pool().await;
@@ -14469,10 +14471,22 @@ async fn export_emits_task_checkbox_and_metadata_property_lines_1916() {
     agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     for (state, bullet) in [
-        ("TODO", "- [ ] Write the report\n"),
-        ("DOING", "- [/] Write the report\n"),
-        ("DONE", "- [x] Write the report\n"),
-        ("CANCELLED", "- [-] Write the report\n"),
+        (
+            "TODO",
+            "- [ ] Write the report ⏳ 2026-06-21 📅 2026-06-28\n",
+        ),
+        (
+            "DOING",
+            "- [/] Write the report ⏳ 2026-06-21 📅 2026-06-28\n",
+        ),
+        (
+            "DONE",
+            "- [x] Write the report ⏳ 2026-06-21 📅 2026-06-28\n",
+        ),
+        (
+            "CANCELLED",
+            "- [-] Write the report ⏳ 2026-06-21 📅 2026-06-28\n",
+        ),
         ("WAITING", "- Write the report\n  todo_state:: WAITING\n"),
     ] {
         set_task_columns(
@@ -14498,12 +14512,15 @@ async fn export_emits_task_checkbox_and_metadata_property_lines_1916() {
             md.contains("  priority:: A\n"),
             "{state}: priority; got:\n{md}"
         );
-        assert!(
-            md.contains("  scheduled_date:: 2026-06-21\n"),
+        let lines = usize::from(state == "WAITING");
+        assert_eq!(
+            md.matches("  scheduled_date:: 2026-06-21\n").count(),
+            lines,
             "{state}: scheduled_date; got:\n{md}"
         );
-        assert!(
-            md.contains("  due_date:: 2026-06-28\n"),
+        assert_eq!(
+            md.matches("  due_date:: 2026-06-28\n").count(),
+            lines,
             "{state}: due_date; got:\n{md}"
         );
     }
@@ -14855,6 +14872,119 @@ async fn import_one_task(
     let id = BlockId::from_string(id).unwrap();
     let (storage, stamps) = (dup_storage(pool, &id).await, dup_stamps(pool, &id).await);
     (content, storage, stamps, result.warnings)
+}
+
+/// #6277 D3 — a task's dates, priority, rule and done date export as Tasks
+/// signifiers at the end of its line and import back into the same columns
+/// and properties. A rule with a bound stays `repeat*::` lines, and a task
+/// whose own text ends in a signifier keeps it as text through an escape.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_writes_a_tasks_fields_as_signifiers_that_import_back() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Plan").await;
+    let mut ids = Vec::new();
+    for (content, state, priority, scheduled, due) in [
+        (
+            "plan",
+            "TODO",
+            Some("1"),
+            Some("2026-10-01"),
+            Some("2026-10-05"),
+        ),
+        ("ship", "DONE", None, None, None),
+        ("water", "TODO", None, None, Some("2026-10-05")),
+        ("pay", "DOING", Some("3"), None, None),
+        ("call 📅 2026-01-01", "TODO", None, None, None),
+    ] {
+        let id = dup_child(&pool, &mat, &page, content).await;
+        sqlx::query(
+            "UPDATE blocks SET todo_state = ?, priority = ?, scheduled_date = ?, due_date = ? \
+             WHERE id = ?",
+        )
+        .bind(state)
+        .bind(priority)
+        .bind(scheduled)
+        .bind(due)
+        .bind(id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+        ids.push(id);
+    }
+    for (at, key, text, date) in [
+        (0, "repeat", Some("+1w"), None),
+        (1, "completed_at", None, Some("2026-10-03")),
+        (2, "repeat", Some("+1w"), None),
+        (2, "repeat-until", None, Some("2026-12-31")),
+        (3, "repeat", Some("++1d"), None),
+    ] {
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text, value_date) \
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(ids[at].as_str())
+        .bind(key)
+        .bind(text)
+        .bind(date)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let md = export_page_markdown_inner(&pool, page.as_str())
+        .await
+        .unwrap();
+
+    for line in [
+        "- [ ] plan ⏫ 🔁 every week ⏳ 2026-10-01 📅 2026-10-05\n",
+        "- [x] ship ✅ 2026-10-03\n",
+        "- [ ] water 📅 2026-10-05\n  repeat:: +1w\n  repeat-until:: 2026-12-31\n",
+        "- [/] pay 🔽\n  repeat:: ++1d\n",
+        "- [ ] call \\📅 2026-01-01\n",
+    ] {
+        assert!(md.contains(line), "{line:?} in:\n{md}");
+    }
+    let import = tempfile::TempDir::new().unwrap();
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        import.path(),
+        md.clone(),
+        Some("Plan again.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert_eq!(result.warnings, Vec::<String>::new(), "{md}");
+    for id in &ids {
+        let content: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let copy: String = sqlx::query_scalar(
+            "SELECT id FROM blocks WHERE page_id = ? AND content = ? AND deleted_at IS NULL",
+        )
+        .bind(&result.page_id)
+        .bind(&content)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let copy = BlockId::from_string(copy).unwrap();
+        assert_eq!(
+            (
+                dup_storage(&pool, &copy).await,
+                dup_stamps(&pool, &copy).await
+            ),
+            (dup_storage(&pool, id).await, dup_stamps(&pool, id).await),
+            "{content}"
+        );
+    }
+    mat.shutdown();
 }
 
 /// #1918 — a single over-deep import block must skip-and-warn, NOT abort the
@@ -17352,11 +17482,12 @@ async fn export_descendant_reserved_columns_not_duplicated_2962() {
 
     let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
 
+    // A checkbox task's dates are Tasks signifiers (#6277 decision 4).
     for expected in [
-        "- [ ] Write the report\n",
+        "- [ ] Write the report ⏳ 2026-06-21 📅 2026-06-28\n",
         "  priority:: A\n",
-        "  scheduled_date:: 2026-06-21\n",
-        "  due_date:: 2026-06-28\n",
+        "2026-06-21",
+        "2026-06-28",
         "  assignee:: Alice\n",
     ] {
         assert_eq!(

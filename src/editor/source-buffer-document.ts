@@ -326,10 +326,18 @@ function taskField(signifier: string, value: string, done: boolean): [string, st
   return level !== undefined && value === '' ? ['priority', level] : null
 }
 
+/** A whitespace character ending a text, which `split_task_fields` takes before the first field. */
+const LAST_WS = new RegExp(`[${WS}]$`)
+
+/** `TASK_SIGNIFIERS` after a `\`: text, the escape `write_task_fields` writes. */
+const ESCAPED_SIGNIFIER = /\\(?=[📅⏳✅🔁🔺⏫🔼🔽⏬🛫➕❌🆔⛔🏁])/gu
+
 /**
  * `split_task_fields`: the Tasks fields at the end of a task's first line,
- * before an optional ` ^anchor`, read out of it; a signifier read as none
- * stays, counted. With none read, the line is kept as written.
+ * before an optional ` ^anchor`, read out of it, with the one space before
+ * the first; a signifier read as none stays, counted. A signifier after a `\`
+ * is text, and the `\` goes (#6277 D3). With none read, the line is kept as
+ * written, less those escapes.
  */
 function splitTaskFields(
   line: string,
@@ -337,8 +345,10 @@ function splitTaskFields(
 ): { text: string; fields: Array<[string, string]>; unread: number } {
   const anchorAt = BLOCK_ANCHOR.exec(line)?.index ?? line.length
   const head = line.slice(0, anchorAt)
-  const starts = [...head.matchAll(TASK_SIGNIFIER)].map((match) => match.index)
-  const kept = [head.slice(0, starts[0] ?? head.length).replace(TRAILING_WS, '')]
+  const starts = [...head.matchAll(TASK_SIGNIFIER)]
+    .map((match) => match.index)
+    .filter((at) => head.charAt(at - 1) !== '\\')
+  const kept = [head.slice(0, starts[0] ?? head.length).replace(LAST_WS, '')]
   const fields: Array<[string, string]> = []
   starts.forEach((at, i) => {
     const segment = head.slice(at, starts[i + 1] ?? head.length)
@@ -348,8 +358,76 @@ function splitTaskFields(
     else fields.push(field)
   })
   const text =
-    fields.length === 0 ? line : kept.filter((part) => part !== '').join(' ') + line.slice(anchorAt)
+    fields.length === 0
+      ? line.replace(ESCAPED_SIGNIFIER, '')
+      : kept
+          .filter((part) => part !== '')
+          .join(' ')
+          .replace(ESCAPED_SIGNIFIER, '') + line.slice(anchorAt)
   return { text, fields, unread: kept.length - 1 }
+}
+
+/** `tasks_recurrence_words`: the Tasks recurrence a `repeat` rule is written as, if it reads back as it. */
+function tasksRecurrenceWords(rule: string): string | null {
+  const match = /^(\.?)\+(.+)([dwmy])$/.exec(rule)
+  if (match === null) return null
+  const [, dot, count, unit] = match as unknown as [string, string, string, string]
+  const name = { d: 'day', w: 'week', m: 'month', y: 'year' }[unit as 'd' | 'w' | 'm' | 'y']
+  const words = `every ${count === '1' ? name : `${count} ${name}s`}${dot === '' ? '' : ' when done'}`
+  return tasksRecurrence(words) === rule ? words : null
+}
+
+/** `TASK_SIGNIFIER_KEYS`: the keys a task writes as signifiers, in the Tasks plugin's order. */
+export const TASK_SIGNIFIER_KEYS = [
+  'priority',
+  'repeat',
+  'scheduled_date',
+  'due_date',
+  'completed_at',
+] as const
+
+/** `task_signifier`: the Tasks signifier a task's `key` and `value` are written as, if it reads back as that value. */
+export function taskSignifier(key: string, value: string, done: boolean): string | null {
+  let written: string | null = null
+  if (key === 'priority') {
+    const at = PRIORITY_LEVELS.indexOf(value)
+    written = at < 0 ? null : (['⏫', '🔼', '🔽'][at] as string)
+  } else if (key === 'repeat') {
+    const words = tasksRecurrenceWords(value)
+    written = words === null ? null : `🔁 ${words}`
+  } else {
+    const signifier = { scheduled_date: '⏳', due_date: '📅', completed_at: '✅' }[
+      key as 'scheduled_date' | 'due_date' | 'completed_at'
+    ] as string | undefined
+    written = signifier === undefined ? null : `${signifier} ${value}`
+  }
+  if (written === null) return null
+  const read = splitTaskFields(written, done).fields
+  return read.length === 1 && read[0]?.[0] === key && read[0][1] === value ? written : null
+}
+
+/**
+ * `write_task_fields`: `line`, a task's first line, with `signifiers` at its
+ * end. Its own signifiers are escaped when it would not read back as written
+ * with them, its fields as `signifiers`, and no signifier left unread.
+ */
+export function writeTaskFields(
+  line: string,
+  signifiers: readonly string[],
+  done: boolean,
+): string {
+  const fields = signifiers.join(' ')
+  const joined = (text: string): string =>
+    fields === '' ? text : text === '' ? fields : `${text} ${fields}`
+  const plain = joined(line)
+  const read = splitTaskFields(plain, done)
+  const expected = splitTaskFields(fields, done).fields
+  const same =
+    read.text === line &&
+    read.unread === 0 &&
+    read.fields.length === expected.length &&
+    read.fields.every(([key, value], i) => expected[i]?.[0] === key && expected[i]?.[1] === value)
+  return same ? plain : joined(line.replace(/[📅⏳✅🔁🔺⏫🔼🔽⏬🛫➕❌🆔⛔🏁]/gu, '\\$&'))
 }
 
 type Kind = 'bullet' | 'paragraph' | 'verbatim'

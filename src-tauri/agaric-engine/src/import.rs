@@ -536,8 +536,10 @@ struct TaskFields {
 
 /// The Tasks fields at the end of a task's first line (#6277 D2), before an
 /// optional ` ^anchor`: each signifier and the text up to the next one is a
-/// field. One [`task_field`] reads leaves the text; any other stays, counted.
-/// With none read, the line is kept exactly as written.
+/// field. One [`task_field`] reads leaves the text, with the one space before
+/// the first; any other stays, counted. A signifier after a `\` is text, the
+/// escape [`write_task_fields`] writes, which is removed (D3). With none
+/// read, the line is kept as written, less those escapes.
 fn split_task_fields(line: &str, done: bool) -> TaskFields {
     let anchor_at = OBSIDIAN_BLOCK_ANCHOR_RE
         .find(line)
@@ -546,8 +548,14 @@ fn split_task_fields(line: &str, done: bool) -> TaskFields {
     let starts: Vec<usize> = head
         .match_indices(TASK_SIGNIFIERS)
         .map(|(at, _)| at)
+        .filter(|&at| !head[..at].ends_with('\\'))
         .collect();
-    let mut kept = vec![head[..starts.first().copied().unwrap_or(head.len())].trim_end()];
+    let description = &head[..starts.first().copied().unwrap_or(head.len())];
+    let mut kept = vec![
+        description
+            .strip_suffix(char::is_whitespace)
+            .unwrap_or(description),
+    ];
     let mut fields = Vec::new();
     for (i, &at) in starts.iter().enumerate() {
         let segment = &head[at..starts.get(i + 1).copied().unwrap_or(head.len())];
@@ -560,16 +568,97 @@ fn split_task_fields(line: &str, done: bool) -> TaskFields {
     }
     let unread = kept.len() - 1;
     let text = if fields.is_empty() {
-        line.to_string()
+        unescape_task_signifiers(line)
     } else {
         kept.retain(|part| !part.is_empty());
-        format!("{}{anchor}", kept.join(" "))
+        format!("{}{anchor}", unescape_task_signifiers(&kept.join(" ")))
     };
     TaskFields {
         text,
         fields,
         unread,
     }
+}
+
+/// `text` with a `\` before each Tasks signifier, which [`split_task_fields`]
+/// reads as text and removes.
+fn escape_task_signifiers(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for c in text.chars() {
+        if TASK_SIGNIFIERS.contains(&c) {
+            escaped.push('\\');
+        }
+        escaped.push(c);
+    }
+    escaped
+}
+
+/// `text` less the `\` [`escape_task_signifiers`] writes before a signifier.
+fn unescape_task_signifiers(text: &str) -> String {
+    let mut chars = text.chars().peekable();
+    let mut unescaped = String::with_capacity(text.len());
+    while let Some(c) = chars.next() {
+        if c != '\\'
+            || !chars
+                .peek()
+                .is_some_and(|next| TASK_SIGNIFIERS.contains(next))
+        {
+            unescaped.push(c);
+        }
+    }
+    unescaped
+}
+
+/// The Tasks signifier a task's `key` and `value` are written as (#6277 D3),
+/// in [`TASK_SIGNIFIER_KEYS`]' order, or `None` when it would not read back
+/// as that value ([`task_field`]), which keeps its `key::` line.
+pub fn task_signifier(key: &str, value: &str, done: bool) -> Option<String> {
+    let written = match key {
+        "priority" => {
+            let at = agaric_store::op::PRIORITY_LEVELS
+                .iter()
+                .position(|level| *level == value)?;
+            ["⏫", "🔼", "🔽"][at].to_string()
+        }
+        "repeat" => format!("🔁 {}", tasks_recurrence_words(value)?),
+        "scheduled_date" => format!("⏳ {value}"),
+        "due_date" => format!("📅 {value}"),
+        "completed_at" => format!("✅ {value}"),
+        _ => return None,
+    };
+    let read = split_task_fields(&written, done).fields;
+    (read == [(key.to_string(), value.to_string())]).then_some(written)
+}
+
+/// The keys a task writes as signifiers, in the order the Tasks plugin
+/// writes their fields.
+pub const TASK_SIGNIFIER_KEYS: [&str; 5] = [
+    "priority",
+    "repeat",
+    "scheduled_date",
+    "due_date",
+    "completed_at",
+];
+
+/// `line`, a task's first line, with `signifiers` at its end (#6277 D3). Its
+/// own signifiers are escaped when it would not read back as written with
+/// them, its fields as `signifiers`, and no signifier left unread.
+pub fn write_task_fields(line: &str, signifiers: &[String], done: bool) -> String {
+    let fields = signifiers.join(" ");
+    let joined = |line: &str| match (line.is_empty(), fields.is_empty()) {
+        (_, true) => line.to_string(),
+        (true, false) => fields.clone(),
+        (false, false) => format!("{line} {fields}"),
+    };
+    let plain = joined(line);
+    let read = split_task_fields(&plain, done);
+    if read.text == line
+        && read.unread == 0
+        && read.fields == split_task_fields(&fields, done).fields
+    {
+        return plain;
+    }
+    joined(&escape_task_signifiers(line))
 }
 
 /// The field a Tasks `signifier` and its `value` give (#6277 D2, #6033 Q10):
@@ -594,6 +683,30 @@ fn task_field(signifier: char, value: &str, done: bool) -> Option<(&'static str,
         '🔁' => tasks_recurrence(value).map(|rule| ("repeat", rule)),
         _ => None,
     }
+}
+
+/// The Tasks recurrence a `repeat` rule is written as: `+1d` is `every day`,
+/// `+3w` `every 3 weeks`, and a `.+` rule ends `when done`. `None` for a rule
+/// the reader would read back as no rule or another ([`tasks_recurrence`]).
+fn tasks_recurrence_words(rule: &str) -> Option<String> {
+    let (when_done, interval) = match rule.strip_prefix(".+") {
+        Some(interval) => (" when done", interval),
+        None => ("", rule.strip_prefix('+')?),
+    };
+    let (count, unit) = interval.split_at_checked(interval.len().checked_sub(1)?)?;
+    let unit = match unit {
+        "d" => "day",
+        "w" => "week",
+        "m" => "month",
+        "y" => "year",
+        _ => return None,
+    };
+    let words = if count == "1" {
+        format!("every {unit}{when_done}")
+    } else {
+        format!("every {count} {unit}s{when_done}")
+    };
+    (tasks_recurrence(&words).as_deref() == Some(rule)).then_some(words)
 }
 
 /// The `repeat` rule of a Tasks recurrence: `every day` is `+1d`, `every 3

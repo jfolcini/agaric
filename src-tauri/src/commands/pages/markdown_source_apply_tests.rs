@@ -655,3 +655,93 @@ fn tasks_signifiers_typed_on_a_task_line_save_as_its_fields() {
         );
     });
 }
+
+/// #6277 D3 — a task whose stored text ends in a Tasks signifier is written
+/// with it escaped, so a save that edits the block keeps the signifier as its
+/// text and reads no field from it.
+#[test]
+fn a_tasks_own_signifier_text_survives_an_edit_of_its_block() {
+    Runtime::new().unwrap().block_on(async {
+        let fx = fixture().await;
+        let forest = [BlockSpec {
+            level: 0,
+            content: "call 📅 2026-01-01".to_string(),
+            todo_state: Some("TODO".to_string()),
+            priority: None,
+            scheduled_date: None,
+            due_date: None,
+            list_style: None,
+            properties: BTreeMap::new(),
+        }];
+        let ids = create_forest(&fx, &forest).await;
+        write_metadata(&fx.pool, &ids, &forest).await;
+        let buffer = get_page_buffer_inner(&fx.pool, &fx.page).await.unwrap();
+
+        let edited = buffer.text.replacen("- [ ] call", "- [ ] call mom", 1);
+        let report = save(&fx, (edited, buffer.line_ids.clone()), &buffer.source).await;
+
+        assert_eq!(report.warnings, Vec::<String>::new());
+        let (content, due): (String, Option<String>) =
+            sqlx::query_as("SELECT content, due_date FROM blocks WHERE id = ?")
+                .bind(&ids[0])
+                .fetch_one(&fx.pool)
+                .await
+                .unwrap();
+        assert_eq!((content.as_str(), due), ("call mom 📅 2026-01-01", None));
+    });
+}
+
+/// #6277 D3 — a done task's `✅` is its done date, which only the task state
+/// writes and clears: taking it off a done task's line keeps the date, and
+/// unticking the task clears it once.
+#[test]
+fn a_done_tasks_check_line_leaves_its_done_date_to_the_task_state() {
+    Runtime::new().unwrap().block_on(async {
+        let fx = fixture().await;
+        let done = |content: &str| BlockSpec {
+            level: 0,
+            content: content.to_string(),
+            todo_state: Some("DONE".to_string()),
+            priority: None,
+            scheduled_date: None,
+            due_date: None,
+            list_style: None,
+            properties: BTreeMap::new(),
+        };
+        let forest = [done("kept"), done("unticked")];
+        let ids = create_forest(&fx, &forest).await;
+        write_metadata(&fx.pool, &ids, &forest).await;
+        for id in &ids {
+            sqlx::query(
+                "INSERT INTO block_properties (block_id, key, value_date) \
+                 VALUES (?, 'completed_at', '2026-10-03')",
+            )
+            .bind(id)
+            .execute(&fx.pool)
+            .await
+            .unwrap();
+        }
+        let buffer = get_page_buffer_inner(&fx.pool, &fx.page).await.unwrap();
+        assert_eq!(
+            buffer.text,
+            "- [x] kept ✅ 2026-10-03\n- [x] unticked ✅ 2026-10-03\n"
+        );
+
+        let edited = "- [x] kept\n- [ ] unticked\n".to_string();
+        save(&fx, (edited, buffer.line_ids.clone()), &buffer.source).await;
+
+        let completed = |id: &String| {
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT value_date FROM block_properties WHERE block_id = ? \
+                 AND key = 'completed_at'",
+            )
+            .bind(id.clone())
+            .fetch_optional(&fx.pool)
+        };
+        assert_eq!(
+            completed(&ids[0]).await.unwrap(),
+            Some(Some("2026-10-03".to_string()))
+        );
+        assert_eq!(completed(&ids[1]).await.unwrap(), None);
+    });
+}

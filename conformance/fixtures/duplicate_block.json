@@ -321,11 +321,11 @@
           "op_type": "set_priority"
         },
         {
-          "op_type": "set_due_date"
-        },
-        {
           "key": "repeat",
           "op_type": "set_property"
+        },
+        {
+          "op_type": "set_due_date"
         },
         {
           "op_type": "create_block"

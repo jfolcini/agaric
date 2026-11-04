@@ -89,10 +89,23 @@ fn arb_ref_id() -> impl Strategy<Value = &'static str> {
     proptest::sample::select(&REF_IDS[..])
 }
 
+/// A word shaped like an Obsidian Tasks field (#6277 D3): one a task line's
+/// reader reads, one it keeps as text, and one escaped.
+pub(super) fn arb_signifier_word() -> impl Strategy<Value = String> {
+    prop_oneof![
+        "[📅⏳✅] 2026-0[1-9]-1[0-9]",
+        "[🔺⏫🔼🔽⏬]",
+        "🔁 every (day|2 weeks)( when done)?",
+        "[🛫📅] [a-z]{1,4}",
+        r"\\{1,2}[📅⏫]",
+    ]
+}
+
 /// One word of prose. No backtick, so a fence only ever comes from
 /// [`arb_fence`].
 fn arb_word() -> impl Strategy<Value = String> {
     prop_oneof![
+        arb_signifier_word(),
         "[a-z0-9]{1,5}",
         "[a-z0-9#:^.()/*\\[\\]\\\\-]{1,5}",
         arb_ref_id().prop_map(|id| format!("[[{id}]]")),
