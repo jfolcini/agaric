@@ -555,6 +555,17 @@ export const commands = {
 	 *  the op ref.
 	 */
 	convertUnfitPropertyValues: (spaceId: SpaceId, key: string, replacements: UnfitValueReplacement[]) => typedError<WithOps<PropertyUnfitCounts>, AppError>(__TAURI_INVOKE("convert_unfit_property_values", { spaceId, key, replacements })),
+	/**
+	 *  Tauri command: what moving a key's values that don't fit to another key
+	 *  would move and leave. Delegates to [`preview_unfit_property_move_inner`].
+	 */
+	previewUnfitPropertyMove: (spaceId: SpaceId, key: string, intoKey: string) => typedError<UnfitMoveCounts, AppError>(__TAURI_INVOKE("preview_unfit_property_move", { spaceId, key, intoKey })),
+	/**
+	 *  Tauri command: move a key's values that don't fit to another key where
+	 *  they fit. Delegates to [`move_unfit_property_values_inner`]; the response
+	 *  carries the op ref.
+	 */
+	moveUnfitPropertyValues: (spaceId: SpaceId, key: string, intoKey: string, acknowledged: UnfitMoveCounts) => typedError<WithOps<UnfitMoveCounts>, AppError>(__TAURI_INVOKE("move_unfit_property_values", { spaceId, key, intoKey, acknowledged })),
 	/**  Tauri command: list all sync peers. Delegates to [`list_peer_refs_inner`]. */
 	listPeerRefs: () => typedError<PeerRef[], AppError>(__TAURI_INVOKE("list_peer_refs")),
 	/**  Tauri command: delete (unpair) a sync peer. Delegates to [`delete_peer_ref_inner`]. */
@@ -713,6 +724,9 @@ export const commands = {
 	 *  A `time` that is not `HH:MM` surfaces as [`AppError::Validation`].
 	 */
 	setReminderSettings: (settings: ReminderSettings) => typedError<null, AppError>(__TAURI_INVOKE("set_reminder_settings", { settings })),
+	pickMirrorFolder: () => typedError<string | null, AppError>(__TAURI_INVOKE("pick_mirror_folder")),
+	setMirrorFolder: (path: string | null) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_folder", { path })),
+	getMirrorStatus: () => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("get_mirror_status")),
 	speechStatus: () => typedError<SpeechStatus, AppError>(__TAURI_INVOKE("speech_status")),
 	/**
 	 *  Tauri command: import a Logseq-style markdown file as a page with
@@ -2818,6 +2832,37 @@ export type MdnsStatus = {
 	reason: string | null,
 };
 
+/**  A page whose file could not be written, and why. */
+export type MirrorFailure = {
+	page_id: string,
+	path: string,
+	message: string,
+};
+
+/**  A page's file, by its path below the mirror's folder, `/`-separated. */
+export type MirrorFile = {
+	page_id: string,
+	path: string,
+};
+
+/**  What the mirror is doing (#5363). */
+export type MirrorStatus = {
+	/**  `false` where the mirror does not run, on mobile. */
+	supported: boolean,
+	/**  The folder pages are written to; `None` when the mirror is off. */
+	folder: string | null,
+	/**  Why nothing is written while the folder is set, if nothing is. */
+	paused: string | null,
+	/**
+	 *  Files changed outside Agaric, which it leaves alone: their pages are
+	 *  not written until the file is what Agaric last wrote again.
+	 */
+	diverged: MirrorFile[],
+	failed: MirrorFailure[],
+	/**  When the last pass ended, in ms since the epoch. */
+	last_pass_ms: number | null,
+};
+
 export type MoveResponse = {
 	block_id: string,
 	new_parent_id: string | null,
@@ -4830,6 +4875,18 @@ export type UndoResult = {
 	new_op_type: string,
 	/**  Whether this was a redo (true) or undo (false). */
 	is_redo: boolean,
+};
+
+/**
+ *  What moving a key's values that don't fit to another key does to a
+ *  space's blocks, the Trash's included: `moved` values fit the other key and
+ *  move to it; on `occupied` blocks, which hold it already, and as
+ *  `unfit_there` values, which don't fit it, they stay.
+ */
+export type UnfitMoveCounts = {
+	moved: number,
+	occupied: number,
+	unfit_there: number,
 };
 
 /**
