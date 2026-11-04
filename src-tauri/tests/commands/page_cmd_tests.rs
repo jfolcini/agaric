@@ -6034,10 +6034,64 @@ async fn a_copy_into_another_space_pastes_its_foreign_refs_as_their_text_6277() 
     assert_eq!(
         pasted.warnings,
         [
-            "3 reference(s) to another space were written as the text they show: \
+            "references to 3 target(s) in another space were written as the text they show: \
           a block cannot reference another space"
         ],
-        "one warning counts them"
+        "one warning counts the targets"
+    );
+}
+
+/// A page the paste links and a block it refs links too is written as its
+/// title both times, so the paste lands (#6277 B2): the second link is met a
+/// pass after the first was written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_foreign_page_met_again_in_a_block_ref_line_is_written_as_its_title_6277() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let linked = dup_page(&pool, &mat, "Linked").await;
+    let source = dup_page(&pool, &mat, "Source").await;
+    let about = dup_child(&pool, &mat, &source, &format!("about [[{linked}]]")).await;
+    ensure_test_space_b(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_B_ID).await;
+    let dest = create_page_in_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        None,
+        "Dest".into(),
+        TEST_SPACE_B_ID.into(),
+    )
+    .await
+    .unwrap();
+    let anchor = dup_child(&pool, &mat, &dest, "anchor").await;
+    settle(&mat).await;
+
+    let text = format!("see [[{linked}]] and (({about}))");
+    let pasted = paste_blocks_inner(&pool, DEV, &mat, anchor, paste_text(&text), None)
+        .await
+        .expect("a paste into another space lands");
+    settle(&mat).await;
+
+    let in_b: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Linked' AND space_id = ?",
+    )
+    .bind(TEST_SPACE_B_ID)
+    .fetch_one(&pool)
+    .await
+    .expect("the title made a page in the destination");
+    let children = dup_children(&pool, &dest).await;
+    assert_eq!(
+        children.iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(),
+        ["anchor", &format!("see [[{in_b}]] and about [[{in_b}]]")],
+        "both links name the destination's page"
+    );
+    assert_eq!(
+        pasted.warnings,
+        [
+            "references to 2 target(s) in another space were written as the text they show: \
+          a block cannot reference another space"
+        ],
+        "one warning counts the targets"
     );
 }
 

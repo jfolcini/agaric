@@ -3405,8 +3405,9 @@ async fn resolve_pasted_names(
 /// the text its chip shows (#6277 B2), with one warning counting them: a link
 /// as `[[Title]]` and a tag as `#name`, which the paste then resolves in
 /// `space` as any name, and a block ref as its target's first line. That line
-/// may hold refs of its own, so the pass repeats over what it wrote, each
-/// target written once: a ref met again stays, and the create refuses it.
+/// may hold refs of its own, so the pass repeats over what it wrote: a link or
+/// tag is written as its name each time it is met, a block ref only in one
+/// pass, so a block ref met again stays, and the create refuses it.
 async fn write_foreign_refs_as_text(
     tx: &mut CommandTx,
     space: &SpaceId,
@@ -3415,47 +3416,68 @@ async fn write_foreign_refs_as_text(
     warnings: &mut Vec<String>,
 ) -> Result<(), AppError> {
     use agaric_store::cross_space_validation::foreign_content_refs;
-    let mut written: HashSet<String> = HashSet::new();
+    let mut shown: HashMap<String, String> = HashMap::new();
+    let mut expanded: HashSet<String> = HashSet::new();
     loop {
         let all: Vec<&str> = blocks.iter().map(|block| block.content.as_str()).collect();
-        let ids: Vec<String> = foreign_content_refs(tx, space, &all.join("\n"), anchor.as_str())
-            .await?
-            .into_iter()
-            .map(|(id, _)| id)
-            .filter(|id| !written.contains(id))
-            .collect();
+        let ids = foreign_content_refs(tx, space, &all.join("\n"), anchor.as_str()).await?;
         if ids.is_empty() {
             break;
         }
-        let shown: HashMap<String, String> = load_live_blocks(tx, &ids)
-            .await?
+        let fresh: Vec<String> = ids
             .into_iter()
-            .map(|(id, _, content)| {
-                let first = content.as_deref().unwrap_or_default().lines().next();
-                (id, first.unwrap_or_default().to_owned())
-            })
+            .map(|(id, _)| id)
+            .filter(|id| !shown.contains_key(id))
             .collect();
-        for block in blocks.iter_mut() {
-            let named = humanise_tag_and_page_refs(&block.content, &shown, &shown);
-            block.content = agaric_store::cache::BLOCK_REF_RE
-                .replace_all(&named, |caps: &regex::Captures<'_>| {
-                    shown
-                        .get(&caps[1])
-                        .cloned()
-                        .unwrap_or_else(|| caps[0].to_owned())
-                })
-                .into_owned();
+        shown.extend(
+            load_live_blocks(tx, &fresh)
+                .await?
+                .into_iter()
+                .map(|(id, _, content)| {
+                    let first = content.as_deref().unwrap_or_default().lines().next();
+                    (id, first.unwrap_or_default().to_owned())
+                }),
+        );
+        let newly = write_shown_text(blocks, &shown, &expanded);
+        if fresh.is_empty() && newly.is_empty() {
+            break;
         }
-        written.extend(ids);
+        expanded.extend(newly);
     }
-    if !written.is_empty() {
+    if !shown.is_empty() {
         warnings.push(format!(
-            "{} reference(s) to another space were written as the text they show: \
-             a block cannot reference another space",
-            written.len()
+            "references to {} target(s) in another space were written as the text they \
+             show: a block cannot reference another space",
+            shown.len()
         ));
     }
     Ok(())
+}
+
+/// Write each `[[ULID]]` and `#[ULID]` of `blocks` whose target `shown` holds
+/// as its name, and each such `((ULID))` as its first line unless an earlier
+/// pass wrote it (`expanded`). Returns the block refs written.
+fn write_shown_text(
+    blocks: &mut [import::ParsedBlock],
+    shown: &HashMap<String, String>,
+    expanded: &HashSet<String>,
+) -> HashSet<String> {
+    let mut written = HashSet::new();
+    for block in blocks.iter_mut() {
+        let named = humanise_tag_and_page_refs(&block.content, shown, shown);
+        block.content = agaric_store::cache::BLOCK_REF_RE
+            .replace_all(&named, |caps: &regex::Captures<'_>| {
+                match shown.get(&caps[1]).filter(|_| !expanded.contains(&caps[1])) {
+                    Some(line) => {
+                        written.insert(caps[1].to_owned());
+                        line.clone()
+                    }
+                    None => caps[0].to_owned(),
+                }
+            })
+            .into_owned();
+    }
+    written
 }
 
 /// The `todo_state` a parsed block carries, from its checkbox or a property
