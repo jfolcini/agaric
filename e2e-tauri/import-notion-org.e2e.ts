@@ -155,16 +155,16 @@ describe('Agaric real-backend Notion, Org and text folder import (#6032) @markdo
 
     await navigateTo('Journal')
     await navigateTo('Pages')
-    await pageEntryTitled(`${folder}/links`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await pageEntryTitled('links').waitForDisplayed({ timeout: NAV_TIMEOUT })
     await expectAbsent('span[title="*Budget"]', 'a page made of a heading link')
 
-    await openPageTitled(`${folder}/${roamTitle}`)
+    await openPageTitled(roamTitle)
     await expectTaskState(`${marker}-next`, 'TODO')
     const tag = (await rowOf(`${marker}-next`)).$('[data-testid="tag-ref-chip"]')
     await tag.waitForExist({ timeout: ACTION_TIMEOUT })
     expect(await tag.getText()).toBe('orgtag')
 
-    await openPageTitled(`${folder}/links`)
+    await openPageTitled('links')
     // A reference chip's title is its target's text; an unresolved one reads otherwise.
     const ref = (await rowOf(`${marker}-ref`)).$('[data-testid="block-ref-chip"]')
     await browser.waitUntil(async () => (await ref.getAttribute('title')) === `${marker}-target`, {
@@ -172,10 +172,10 @@ describe('Agaric real-backend Notion, Org and text folder import (#6032) @markdo
       timeoutMsg: 'the id: link never resolved to the headline it names',
     })
     const page = (await rowOf(`${marker}-back`)).$('[data-testid="block-link-chip"]')
-    await browser.waitUntil(
-      async () => (await page.getAttribute('title')) === `${folder}/${roamTitle}`,
-      { timeout: NAV_TIMEOUT, timeoutMsg: 'the file id: link never resolved to its page' },
-    )
+    await browser.waitUntil(async () => (await page.getAttribute('title')) === roamTitle, {
+      timeout: NAV_TIMEOUT,
+      timeoutMsg: 'the file id: link never resolved to its page',
+    })
   })
 
   it('links a Markdown link to a sibling .txt note to the page it imports as', async () => {

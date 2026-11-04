@@ -799,7 +799,7 @@ describe('Org files (#6032)', () => {
     expect(linked?.content).toBe(
       [
         `- See ((${TARGET_ID})) and ((${TARGET_ID}))`,
-        '- Back to [[Vault/Roam Notes|notes]] and [[Vault/Roam Notes]]',
+        '- Back to [[Roam Notes|notes]] and [[Roam Notes]]',
         `- Lost \\[[id:${LOST_ID}]] and \\[[id:custom-1]]`,
         '',
       ].join('\n'),
