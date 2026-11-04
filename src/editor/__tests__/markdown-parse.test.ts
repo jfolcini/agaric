@@ -27,6 +27,7 @@ import {
   doc,
   hardBreak,
   heading,
+  horizontalRule,
   italic,
   listItem,
   orderedList,
@@ -863,6 +864,60 @@ describe('parse — tab-indented lists (#4052)', () => {
   it('a tab-indented heading is not a heading — its production is at column 0', () => {
     expect(parse('\t# h')).toEqual(doc(paragraph(text('    # h'))))
     expect(parse('# h')).toEqual(doc(heading(1, text('h'))))
+  })
+})
+
+describe('parse — tilde fences and `***` / `___` rules, as Rust reads them (#6033)', () => {
+  it('a `~~~` fence is a code block, its info string the language', () => {
+    expect(parse('~~~\ncode\n~~~')).toEqual(doc(codeBlock('code')))
+    expect(parse('~~~js\nlet x\n~~~')).toEqual(doc(codeBlock('let x', 'js')))
+  })
+
+  it("a `~~~` fence's info string may hold backticks, which a backtick fence's may not", () => {
+    expect(parse('~~~ a`b\ncode\n~~~')).toEqual(doc(codeBlock('code')))
+    expect(parse('``` a`b')).toEqual(doc(paragraph(text('``` a`b'))))
+  })
+
+  it('a tilde fence closes only on a run of `~` at least as long', () => {
+    expect(parse('~~~~\n~~~\n```\n~~~~~ ')).toEqual(doc(codeBlock('~~~\n```')))
+    expect(parse('```\n~~~\n```')).toEqual(doc(codeBlock('~~~')))
+  })
+
+  it('a `~~~` line under a paragraph starts a code block, as a backtick fence does', () => {
+    expect(parse('intro:\n~~~\nls\n~~~')).toEqual(doc(paragraph(text('intro:')), codeBlock('ls')))
+  })
+
+  it('three or more `*` or `_` are a rule, as three or more `-` are', () => {
+    for (const rule of ['***', '___', '****', '_____']) {
+      expect(parse(rule), rule).toEqual(doc(horizontalRule()))
+    }
+    expect(parse('a\n***\nb')).toEqual(
+      doc(paragraph(text('a')), horizontalRule(), paragraph(text('b'))),
+    )
+  })
+
+  it('`****`, once literal stars (#5160 N9), is a rule', () => {
+    expect(parse('****')).toEqual(doc(horizontalRule()))
+  })
+
+  it('a rule may trail whitespace, which Rust trims', () => {
+    for (const rule of ['--- ', '***\t', '___\u00A0']) {
+      expect(parse(rule), JSON.stringify(rule)).toEqual(doc(horizontalRule()))
+    }
+  })
+
+  it('spaced, mixed, indented or two-character runs are not a rule', () => {
+    expect(parse('* * *')).not.toEqual(doc(horizontalRule()))
+    expect(parse('-*-')).not.toEqual(doc(horizontalRule()))
+    expect(parse('  ***')).toEqual(doc(paragraph(text('  ***'))))
+    expect(parse('__')).toEqual(doc(paragraph(text('__'))))
+  })
+
+  it('a paragraph whose text is a fence or a rule stays text', () => {
+    for (const shape of ['~~~', '~~~js', '***', '___', '---', '--- ', '---\u00A0']) {
+      const d = doc(paragraph(text(shape)))
+      expect(parse(serialize(d)), JSON.stringify(shape)).toEqual(d)
+    }
   })
 })
 

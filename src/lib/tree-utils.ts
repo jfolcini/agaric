@@ -114,6 +114,28 @@ export function buildFlatTree(
   return result
 }
 
+/**
+ * How many tasks each block in `items` (depth-first, as `buildFlatTree` gives
+ * them) is or is under. A task's checkbox pushes its text in, and its children
+ * follow it, so a block's text starts the count of its parent's checkbox
+ * widths past where its depth alone puts it. One pass.
+ */
+export function countTasksAtOrAbove<T extends Pick<TreeItem, 'id' | 'depth'>>(
+  items: readonly T[],
+  isTask: (item: T) => boolean,
+): Map<string, number> {
+  const counts = new Map<string, number>()
+  // The count of the last block seen at each depth: the parent of the next block one deeper.
+  const atDepth: number[] = []
+  for (const item of items) {
+    const { depth } = item
+    const count = (depth > 0 ? (atDepth[depth - 1] ?? 0) : 0) + (isTask(item) ? 1 : 0)
+    counts.set(item.id, count)
+    atDepth[depth] = count
+  }
+  return counts
+}
+
 // ── Drag descendants ─────────────────────────────────────────────────────
 
 /**
