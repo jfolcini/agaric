@@ -3,16 +3,14 @@
 # classic branch-protection's "required status checks"; this repo uses a
 # ruleset instead, so we assert the set of *rule types* enforced on `main`.
 #
-# Expected ruleset shape (sorted), as of the 2026-05-17 second
-# Scorecard-hardening pass (added `required_linear_history` +
-# `strict_required_status_checks_policy: true` on top of the previous
-# day's pass; see `docs/architecture/ci-and-tooling.md` §13):
-#   ["deletion", "non_fast_forward", "pull_request", "required_linear_history",
-#    "required_signatures", "required_status_checks"]
+# Expected ruleset shape (sorted). The merge queue tests each group's merged
+# result, so it replaces the strict up-to-date-branch flag, which is false:
+#   ["deletion", "merge_queue", "non_fast_forward", "pull_request",
+#    "required_linear_history", "required_signatures", "required_status_checks"]
 #
 # Beyond rule types, the job also asserts the required status-check
-# CONTEXTS (`dco`, `e2e-tauri-gate`, `validate / validate-all`), the strict up-to-date-branch flag
-# (#819 (1)), and the `pull_request` rule's four review parameters —
+# CONTEXTS (`dco`, `e2e-tauri-gate`, `validate / validate-all`), the strict
+# up-to-date-branch flag (off under the merge queue), and the `pull_request` rule's four review parameters —
 # type-only asserting passed even after a context removal, and passes with
 # every review toggle off.
 #
@@ -48,12 +46,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          EXPECTED='["deletion","non_fast_forward","pull_request","required_linear_history","required_signatures","required_status_checks"]'
+          EXPECTED='["deletion","merge_queue","non_fast_forward","pull_request","required_linear_history","required_signatures","required_status_checks"]'
           # Required status-check CONTEXTS + the strict (up-to-date-branch)
           # flag are asserted too (#819 (1), pairs with #805): asserting
           # rule TYPES alone would still pass after someone removed
           # `validate-all` from the required contexts or flipped strict
-          # off — exactly the silent-weakening drift this job exists to
+          # — exactly the silent-weakening drift this job exists to
           # catch. The context is the check run's full name: `ci.yml`'s
           # `validate` job calls `_validate.yml`, so it posts
           # `validate / validate-all`, and a bare `validate-all` never
@@ -90,11 +88,11 @@ jobs:
             echo "  actual:   ${ACTUAL_CONTEXTS}" >&2
           fi
 
-          if [ "${ACTUAL_STRICT}" = "true" ]; then
-            echo "OK: strict_required_status_checks_policy is true"
+          if [ "${ACTUAL_STRICT}" = "false" ]; then
+            echo "OK: strict_required_status_checks_policy is false (the merge queue tests the merged result)"
           else
             failed=1
-            echo "ERROR: strict_required_status_checks_policy drifted (expected true, got ${ACTUAL_STRICT})." >&2
+            echo "ERROR: strict_required_status_checks_policy drifted (expected false, got ${ACTUAL_STRICT})." >&2
           fi
 
           # The `pull_request` rule's parameters are the whole review gate
