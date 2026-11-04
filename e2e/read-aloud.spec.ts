@@ -1,5 +1,5 @@
 /**
- * *Read aloud* (#5745) on the mock, standing in for macOS / Windows: `speech_status` answers
+ * *Read aloud* (#5745) on the mock, standing in for macOS / Windows: `get_speech_status` answers
  * `Webview` (`localStorage['__mockSpeechStatus']`) and an init script replaces the webview's
  * `speechSynthesis` with a fake that records each utterance and speaks nothing, so the spec ends
  * each one itself (`finishUtterance`). Real voices are a device check: CI's Chromium has none.
@@ -27,7 +27,7 @@ interface FakeSpeechWindow {
   __speech: { spoken: string[]; cancels: number; finish: () => void }
 }
 
-/** Installs the fake engine before boot; `status` is what `speech_status` answers. */
+/** Installs the fake engine before boot; `status` is what `get_speech_status` answers. */
 async function installFakeSpeech(page: Page, status: 'Webview' | 'Unsupported'): Promise<void> {
   await page.addInitScript((speechStatus) => {
     localStorage.setItem('__mockSpeechStatus', speechStatus)

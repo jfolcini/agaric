@@ -118,6 +118,10 @@ describe('spokenUtterances — block-level content', () => {
     expect(spoken('above\n\n---\n\nbelow')).toBe('above\nbelow')
   })
 
+  it('speaks no bare number for an empty ordered item', () => {
+    expect(spoken('1. \n2. second')).toBe('2. second')
+  })
+
   it('reads ordered list numbers as shown, restarting in a nested list', () => {
     expect(spoken('1. first\n2. second\n   1. inner')).toBe('1. first\n2. second\n1. inner')
   })

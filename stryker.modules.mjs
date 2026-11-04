@@ -341,6 +341,14 @@ export const MODULES = {
     src: 'src/editor/page-mode/page-attachments.ts',
     tests: ['src/editor/page-mode/__tests__/page-attachments.test.tsx'],
   },
+  // Read aloud's one reading (#5745): a survivor is a reading that does not stop
+  // when asked, a queue that skips or repeats an utterance, or a failure that
+  // leaves the toast up.
+  'read-aloud': {
+    setup: true,
+    src: 'src/lib/speech/read-aloud.ts',
+    tests: ['src/lib/speech/__tests__/read-aloud.test.ts'],
+  },
   // The text Read aloud speaks (#5745): a survivor is an id read out, part of
   // a note never read, or an utterance too long for Android to take.
   'spoken-text': {

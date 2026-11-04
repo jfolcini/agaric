@@ -713,7 +713,7 @@ export const commands = {
 	 *  A `time` that is not `HH:MM` surfaces as [`AppError::Validation`].
 	 */
 	setReminderSettings: (settings: ReminderSettings) => typedError<null, AppError>(__TAURI_INVOKE("set_reminder_settings", { settings })),
-	speechStatus: () => typedError<SpeechStatus, AppError>(__TAURI_INVOKE("speech_status")),
+	getSpeechStatus: () => typedError<SpeechStatus, AppError>(__TAURI_INVOKE("get_speech_status")),
 	/**
 	 *  Tauri command: import a Logseq-style markdown file as a page with
 	 *  block hierarchy. Delegates to [`import_markdown_with_progress`].

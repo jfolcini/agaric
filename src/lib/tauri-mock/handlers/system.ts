@@ -62,7 +62,7 @@ export const systemHandlers = {
 
   // Read aloud (#5745): the Chromium mock stands in for Linux, which has no engine. A spec
   // stands in for macOS or Windows with `localStorage['__mockSpeechStatus'] = 'Webview'`.
-  speech_status: () =>
+  get_speech_status: () =>
     globalThis.localStorage?.getItem('__mockSpeechStatus') === 'Webview'
       ? 'Webview'
       : 'Unsupported',
@@ -116,7 +116,7 @@ export const systemHandlers = {
   | 'is_flatpak'
   | 'get_recovery_status'
   | 'log_frontend'
-  | 'speech_status'
+  | 'get_speech_status'
   | 'collect_bug_report_metadata'
   | 'read_logs_for_report'
   | 'compute_reconciliation_report'
