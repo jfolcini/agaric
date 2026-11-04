@@ -11,8 +11,8 @@
  * The fix mirrors the #1067 viewport pattern: the per-move drag state lives in
  * a ref-backed external store with PER-ID subscription. Each row subscribes to
  * a tiny derived snapshot for ITS OWN id (`isActiveDragRow`,
- * `projectedDepthOverride`, `showDropIndicator`, `dropAfter`,
- * `dropIndicatorDepth`) via `useSyncExternalStore`. A move that changes the
+ * `projectedDepthOverride`, `projectedTasksOverride`, `showDropIndicator`,
+ * `dropAfter`, `dropIndicatorDepth`) via `useSyncExternalStore`. A move that changes the
  * over-row notifies only the two rows whose derived snapshot actually changes
  * (the previous over-row and the new one) plus the active row; every other row
  * keeps a referentially-equal snapshot and stays memoized.
@@ -31,6 +31,8 @@ export interface DragState {
   activeId: string | null
   overId: string | null
   dropAfter: boolean
+  /** Tasks at or above the projected parent (`countTasksAtOrAbove`); 0 when absent. */
+  projectedTasks?: number
 }
 
 /**
@@ -48,6 +50,8 @@ export interface RowDragState {
    * projection exists (B3, #217).
    */
   projectedDepthOverride: number | null
+  /** The tasks above the projected position, alongside `projectedDepthOverride`. */
+  projectedTasksOverride: number | null
   /** True when the drop indicator + over-row tint show on this row (#923/#991). */
   showDropIndicator: boolean
   /** #923 — render the indicator BELOW the row (dragging downward) when true. */
@@ -60,6 +64,7 @@ export interface RowDragState {
 export const IDLE_ROW_DRAG_STATE: RowDragState = {
   isActiveDragRow: false,
   projectedDepthOverride: null,
+  projectedTasksOverride: null,
   showDropIndicator: false,
   dropAfter: false,
   dropIndicatorDepth: 0,
@@ -76,11 +81,14 @@ export function deriveRowDragState(id: string, state: DragState): RowDragState {
   // B3 (#217): the active row and the over-row preview the projected depth.
   const projectedDepthOverride =
     projected && (isActiveDragRow || isOverRow) ? projected.depth : null
+  const projectedTasksOverride =
+    projectedDepthOverride === null ? null : (state.projectedTasks ?? 0)
   // #923/#991: indicator + tint on the over-row only, never the active row.
   const showDropIndicator = projected != null && isOverRow && !isActiveDragRow
   return {
     isActiveDragRow,
     projectedDepthOverride,
+    projectedTasksOverride,
     showDropIndicator,
     dropAfter: showDropIndicator ? dropAfter : false,
     // Zero unless the indicator is actually shown — otherwise an unrelated row's
@@ -95,6 +103,7 @@ function rowDragStateEqual(a: RowDragState, b: RowDragState): boolean {
   return (
     a.isActiveDragRow === b.isActiveDragRow &&
     a.projectedDepthOverride === b.projectedDepthOverride &&
+    a.projectedTasksOverride === b.projectedTasksOverride &&
     a.showDropIndicator === b.showDropIndicator &&
     a.dropAfter === b.dropAfter &&
     a.dropIndicatorDepth === b.dropIndicatorDepth

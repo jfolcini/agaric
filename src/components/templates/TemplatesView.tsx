@@ -26,6 +26,7 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { notifyPageAdded } from '@/lib/name-change-bus'
+import { nameKey } from '@/lib/name-tokens'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { paginationLimit } from '@/lib/safe-limit'
@@ -158,7 +159,10 @@ export function TemplatesView(): React.ReactElement {
       const spacePages = unwrap(
         await commands.listAllPagesInSpace({ kind: 'active', space_id: activeSpaceId }, null),
       )
-      if (spacePages.some((page) => page.content === name)) {
+      // #6278 — under the key the backend resolves a title by.
+      if (
+        spacePages.some((page) => page.content !== null && nameKey(page.content) === nameKey(name))
+      ) {
         notify.error(t('templates.titleTaken', { name }))
         setIsCreating(false)
         return

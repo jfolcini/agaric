@@ -1,0 +1,223 @@
+{
+  "description": "#6278 I1 — a tag name is one name under `name_key` (trimmed, lowercased, NFC) whichever spelling the tag is stored under. The ops make a space (`C1`) and the tag ` Padded ` (C2), stored with its padding. A create of `padded` resolves to C2: no tag, no op. A second tag `Other` (C3) may not be renamed to `PADDED`, and may respell its own name.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": " Padded ",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "other ",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 12,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B1",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_space",
+      "returns": ["create_space#space_id=B1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_tag_stored_with_padding",
+      "returns": ["B2#block_type=tag#content= Padded #parent_id=null#position=2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_create_of_the_trimmed_name_resolves_to_the_tag",
+      "returns": ["B2#block_type=tag#content= Padded #parent_id=null#position=2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "another_tag",
+      "returns": ["B3#block_type=tag#content=Other#parent_id=null#position=3"]
+    },
+    {
+      "code": "DuplicatePageTitle",
+      "error": "validation",
+      "name": "a_rename_onto_the_padded_tags_name_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_tag_respells_its_own_name",
+      "returns": ["B3#content=other "]
+    }
+  ],
+  "name": "tag_name_one_name_key",
+  "ops": [
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Work"
+      },
+      "command": "create_space",
+      "comment": "The space every tag below lives in.",
+      "name": "a_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "tag",
+        "content": " Padded ",
+        "parentId": null,
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "create_block",
+      "comment": "The tag keeps the padding it was created with.",
+      "name": "a_tag_stored_with_padding",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "tag",
+        "content": "padded",
+        "parentId": null,
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "create_block",
+      "comment": "The same name once trimmed and lowercased: the answer is C2 and nothing is created. Comparing the stored name untrimmed creates a second tag.",
+      "name": "a_create_of_the_trimmed_name_resolves_to_the_tag",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "tag",
+        "content": "Other",
+        "parentId": null,
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "create_block",
+      "comment": "The tag the renames below run from.",
+      "name": "another_tag",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C3",
+        "toText": "PADDED"
+      },
+      "command": "edit_block",
+      "comment": "C2 holds `padded`: refused, and C3 keeps its name.",
+      "expect_code": "DuplicatePageTitle",
+      "expect_error": "validation",
+      "name": "a_rename_onto_the_padded_tags_name_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C3",
+        "toText": "other "
+      },
+      "command": "edit_block",
+      "comment": "The tag is no clash with itself.",
+      "name": "a_tag_respells_its_own_name",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [],
+    "properties": [],
+    "tags": []
+  }
+}

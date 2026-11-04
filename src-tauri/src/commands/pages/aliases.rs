@@ -46,7 +46,9 @@ pub struct PageAliases {
 ///
 /// - [`AppError::NotFound`] — `page_id` names no live page.
 /// - [`AppError::Validation`] coded [`ValidationCode::DuplicatePageAlias`] —
-///   another page, in any space or the Trash, holds one of the aliases.
+///   another page, in any space or the Trash, holds one of the aliases, or
+///   another live page of this page's space holds one as its title or an
+///   alias under `name_key` (#6278).
 #[instrument(skip(pool, device_id, materializer, aliases), err)]
 pub async fn set_page_aliases_inner(
     pool: &SqlitePool,
@@ -108,19 +110,37 @@ pub(crate) async fn require_live_page(
     }
 }
 
-/// The page other than `page_id` that holds `alias`, if any.
+/// The page other than `page_id` that holds `alias`, if any: as an alias in
+/// any space or the Trash (`COLLATE NOCASE`), or as the title or an alias of a
+/// live page in `page_id`'s space under `name_key` (#6278).
 pub(crate) async fn alias_holder_other_than(
     conn: &mut sqlx::SqliteConnection,
     page_id: &str,
     alias: &str,
 ) -> Result<Option<String>, AppError> {
-    Ok(sqlx::query_scalar!(
+    let holder = sqlx::query_scalar!(
         "SELECT page_id FROM page_aliases WHERE alias = ?1 AND page_id <> ?2",
         alias,
         page_id,
     )
     .fetch_optional(&mut *conn)
-    .await?)
+    .await?;
+    if holder.is_some() {
+        return Ok(holder);
+    }
+    let space_id = sqlx::query_scalar!(
+        r#"SELECT space_id AS "space_id?: String" FROM blocks WHERE id = ?"#,
+        page_id
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    let Some(space_id) = space_id else {
+        return Ok(None);
+    };
+    let holder =
+        crate::commands::spaces::find_live_page_by_name(conn, &space_id, alias, Some(page_id))
+            .await?;
+    Ok(holder.map(crate::commands::spaces::PageNameHolder::into_id))
 }
 
 /// Make `page_id`'s aliases `wanted` (already [`wanted_aliases`]) in the

@@ -32,6 +32,8 @@
 //! `blocks.content` verbatim today, and the SQL layer does not trim —
 //! adding it here would make the engine key disagree with every other
 //! name surface. Revisit (with a migration) in #709 Phase 2 if desired.
+//! A uniqueness check trims anyway, through [`name_key`], which is never
+//! stored.
 //!
 //! ## Stability contract
 //!
@@ -53,9 +55,76 @@ pub fn normalize_tag_name(name: &str) -> String {
         .collect()
 }
 
+/// The key two names of one space compare by (#6278): a page title against
+/// another page's title or alias, a tag name against another tag's.
+/// [`normalize_tag_name`] of the trimmed name, so `Foo`, `foo `, and an NFD
+/// spelling of a name are one name. Compared, never stored: the stability
+/// contract above covers the engine keys, not this.
+///
+/// A uniqueness check folds every name of a space, so the fold takes the
+/// short way to that key: ASCII lowercases alone, and lowercasing keeps
+/// canonical equivalence, so one NFC pass after it suffices, skipped for text
+/// already in NFC.
+pub fn name_key(name: &str) -> String {
+    use unicode_normalization::{IsNormalized, is_nfc_quick};
+    let name = name.trim();
+    if name.is_ascii() {
+        return name.to_ascii_lowercase();
+    }
+    let lower = name.to_lowercase();
+    if is_nfc_quick(lower.chars()) == IsNormalized::Yes {
+        lower
+    } else {
+        lower.nfc().collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::normalize_tag_name;
+    use super::{name_key, normalize_tag_name};
+    use proptest::prelude::*;
+
+    proptest! {
+        /// `name_key`'s fast paths fold exactly as the tag key of the trimmed
+        /// name does.
+        #[test]
+        fn name_key_is_the_tag_key_of_the_trimmed_name(
+            name in "[ \t\u{a0}\u{85}a-zA-Z\u{c0}-\u{24f}\u{300}-\u{36f}\u{130}\u{131}\u{3a3}\u{3c2}\u{1e9e}\u{212a}\u{212b}\u{1100}-\u{1112}\u{1161}-\u{1175}\u{ac00}-\u{ac10}]{0,12}",
+        ) {
+            prop_assert_eq!(name_key(&name), normalize_tag_name(name.trim()));
+        }
+
+        #[test]
+        fn name_key_is_the_tag_key_of_any_trimmed_string(name in any::<String>()) {
+            prop_assert_eq!(name_key(&name), normalize_tag_name(name.trim()));
+        }
+    }
+
+    /// The `nameKeyCases` rows the mock's `nameKey` is pinned by too
+    /// (`src/lib/__tests__/name-tokens.test.ts`).
+    #[test]
+    fn name_key_matches_the_shared_vectors() {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Vectors {
+            name_key_cases: Vec<Case>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            input: String,
+            key: String,
+        }
+        let vectors: Vectors = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../conformance/reference-tokens.vectors.json"
+        )))
+        .expect("the vectors are valid JSON");
+        assert!(!vectors.name_key_cases.is_empty());
+        for case in vectors.name_key_cases {
+            assert_eq!(name_key(&case.input), case.key, "{}", case.name);
+        }
+    }
 
     /// Drift guard (pattern: #589) — the tag rules must stay aligned
     /// with the FTS pipeline's NFC normalisation: feeding the helper an

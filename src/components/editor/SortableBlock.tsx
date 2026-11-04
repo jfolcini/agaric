@@ -474,6 +474,8 @@ interface SortableBlockProps {
   isFocused: boolean
   /** Depth in the block tree (0 = root level). */
   depth?: number | undefined
+  /** How many of its ancestors are tasks: its text starts past that many checkboxes. */
+  tasksAbove?: number | undefined
   rovingEditor: RovingEditorHandle
   /** Whether this block has children in the tree. */
   hasChildren?: boolean | undefined
@@ -498,6 +500,7 @@ function SortableBlockInner({
   content,
   isFocused,
   depth = 0,
+  tasksAbove,
   rovingEditor,
   hasChildren = false,
   isCollapsed = false,
@@ -737,7 +740,10 @@ function SortableBlockInner({
     // Fade the source row hard during drag so it reads as a "lifted"
     // placeholder rather than competing with the new position.
     opacity: isDragging ? 0.35 : 1,
-    paddingLeft: depth > 0 ? `calc(var(--indent-width) * ${depth})` : undefined,
+    paddingLeft:
+      depth > 0
+        ? `calc(var(--indent-width) * ${depth} + var(--block-tree-task-shift) * ${tasksAbove})`
+        : undefined,
   }
 
   return (

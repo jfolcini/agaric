@@ -37,8 +37,8 @@
  *     stays literal instead — silently deleting text a user just typed would
  *     be data loss, while an imported file's reserved lines are
  *     exporter-noise by construction.
- *   - Lines inside fenced code blocks (``` delimiters) are never property
- *     lines, mirroring import.rs's `line_is_code` guard.
+ *   - Lines inside fenced code blocks (``` or ~~~ delimiters) are never
+ *     property lines, mirroring import.rs's `line_is_code` guard.
  *   - HARD BREAKS: block content arrives SERIALIZED (see
  *     `markdown-serialize.ts`), where a Shift+Enter hard break is a bare
  *     newline (#5160 D2), or — next to an empty line, and in content stored
@@ -127,6 +127,14 @@ export interface InlinePropertyLine {
   lineIndex: number
 }
 
+/** import.rs `fence_run`: a backtick fence's run (its info holding no backtick) or a tilde fence's. */
+const FENCE_OPEN = /^(`{3,}(?![\s\S]*`)|~{3,})/
+
+/** import.rs `closes_fence` on a trimmed line: a run of the fence's character at least as long. */
+function closesFence(trimmed: string, fence: string): boolean {
+  return trimmed.length >= fence.length && trimmed === fence.charAt(0).repeat(trimmed.length)
+}
+
 /**
  * Parse every property line out of a block's content. Returns one entry per
  * line that is EXACTLY a property line per the import.rs rules (see module
@@ -136,7 +144,7 @@ export interface InlinePropertyLine {
  */
 export function parseInlineProperties(content: string): InlinePropertyLine[] {
   const result: InlinePropertyLine[] = []
-  let inFence = false
+  let fence: string | null = null
   const lines = content.split('\n')
   for (const [lineIndex, line] of lines.entries()) {
     // Drop the hard-break marker (`\` before the newline) from a non-final
@@ -147,11 +155,12 @@ export function parseInlineProperties(content: string): InlinePropertyLine[] {
     const trimmed = raw.trim()
     // Fenced code guard — mirror import.rs's `line_is_code`: the delimiter
     // lines and everything between them are code, never properties.
-    if (trimmed.startsWith('```')) {
-      inFence = !inFence
+    if (fence !== null) {
+      if (closesFence(trimmed, fence)) fence = null
       continue
     }
-    if (inFence) continue
+    fence = FENCE_OPEN.exec(trimmed)?.[1] ?? null
+    if (fence !== null) continue
     const sepIndex = trimmed.search(/::[ \t]/)
     if (sepIndex === -1) continue
     const key = trimmed.slice(0, sepIndex).trim()
