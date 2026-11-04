@@ -68,6 +68,9 @@ import type {
   OrderedListNode,
   ParagraphNode,
   PMMark,
+  TableCellAlign,
+  TableCellNode,
+  TableHeaderNode,
   TableNode,
   TableRowNode,
   TextNode,
@@ -269,34 +272,37 @@ export function parseBlockquote(
     quoteLines.push(lines[j] === '>' ? '' : (lines[j]?.slice(2) as string))
     j++
   }
-  const calloutType = extractCalloutType(quoteLines)
+  const callout = extractCallout(quoteLines)
   const innerDoc = parse(quoteLines.join('\n'), depth + 1)
-  const block = buildBlockquote(innerDoc.content, calloutType)
+  const block = buildBlockquote(innerDoc.content, callout)
   return { blocks: [block], consumed: j - i }
 }
 
+type CalloutAttrs = NonNullable<BlockquoteNode['attrs']>
+
 /**
- * Detect a `[!TYPE]` callout prefix on the first line of a blockquote. When
- * found, mutates `quoteLines[0]` to strip the prefix and returns the callout
- * type (lowercased). Returns undefined when absent.
+ * Detect a `[!TYPE]` callout prefix, with its optional `-` / `+` fold marker,
+ * on the first line of a blockquote. When found, mutates `quoteLines[0]` to
+ * strip the prefix and returns the callout attrs (type lowercased). Returns
+ * undefined when absent.
  */
-function extractCalloutType(quoteLines: string[]): string | undefined {
+function extractCallout(quoteLines: string[]): CalloutAttrs | undefined {
   const calloutMatch = quoteLines[0]?.match(CALLOUT_RE)
   if (!calloutMatch) return undefined
-  quoteLines[0] = calloutMatch[2] as string
-  return (calloutMatch[1] as string).toLowerCase()
+  quoteLines[0] = calloutMatch[3] as string
+  const calloutType = (calloutMatch[1] as string).toLowerCase()
+  const fold = calloutMatch[2]
+  return fold === '-' || fold === '+' ? { calloutType, calloutFold: fold } : { calloutType }
 }
 
 function buildBlockquote(
   content: readonly BlockLevelNode[] | undefined,
-  calloutType: string | undefined,
+  attrs: CalloutAttrs | undefined,
 ): BlockquoteNode {
   if (!content || content.length === 0) {
-    return calloutType ? { type: 'blockquote', attrs: { calloutType } } : { type: 'blockquote' }
+    return attrs ? { type: 'blockquote', attrs } : { type: 'blockquote' }
   }
-  return calloutType
-    ? { type: 'blockquote', attrs: { calloutType }, content }
-    : { type: 'blockquote', content }
+  return attrs ? { type: 'blockquote', attrs, content } : { type: 'blockquote', content }
 }
 
 /**
@@ -374,20 +380,23 @@ export function parseTable(
 }
 
 /**
- * A row shape ONLY `serializeTable`'s own separator ever takes: `---` in
- * every populated cell — 3 OR MORE bare dashes, no colons, no shorter form.
- * Deliberately narrower than `DELIMITER_CELL` / `isSeparatorRow`'s full GFM
- * delimiter grammar (colons, `-`, `--` all qualify there): a genuine data
- * cell can legally hold `--` or `:-` and nothing escapes it on serialize, so
- * treating those shapes as a split signal here — with no header context to
- * disambiguate, unlike row 1 — would misfire on real content. A bare 3+-dash
- * cell has no such escape hatch in OUR OWN output: `serializeParagraph`'s
- * horizontal-rule guard (`^-{3,}$`, table cells go through it too) escapes a
- * genuine one to `\---` — including a cell whose text has surrounding
- * whitespace (`"--- "`), because `serializeTable` trims the cell at the NODE
- * level, via `canonicalCellParagraphs`, BEFORE `serializeParagraph` ever sees
- * it; the `.trim()` on the emitted string is only a finisher for the
- * multi-paragraph seam (pinned in `markdown-roundtrip-fidelity.test.ts`).
+ * A row shape `serializeTable`'s own separator takes: `---` in every
+ * populated cell — 3 OR MORE dashes, with the column's alignment colons
+ * (`:---`, `---:`, `:---:`, #6277), no shorter form. Deliberately narrower
+ * than `DELIMITER_CELL` / `isSeparatorRow`'s full GFM delimiter grammar (`-`,
+ * `--`, `:-` all qualify there): a genuine data cell can legally hold `--` or
+ * `:-` and nothing escapes it on serialize, so treating those shapes as a
+ * split signal here — with no header context to disambiguate, unlike row 1 —
+ * would misfire on real content. A bare 3+-dash cell has no such escape
+ * hatch in OUR OWN output: `serializeParagraph`'s horizontal-rule guard
+ * (`^-{3,}$`, table cells go through it too) escapes a genuine one to `\---`
+ * — including a cell whose text has surrounding whitespace (`"--- "`),
+ * because `serializeTable` trims the cell at the NODE level, via
+ * `canonicalCellParagraphs`, BEFORE `serializeParagraph` ever sees it; the
+ * `.trim()` on the emitted string is only a finisher for the multi-paragraph
+ * seam (pinned in `markdown-roundtrip-fidelity.test.ts`). An aligned form is
+ * not escaped in a data cell, so for it only the width disagreement
+ * `splitTableRuns` requires decides.
  *
  * NECESSARY, NOT SUFFICIENT. That guarantee covers our own re-serialized
  * output only. FOREIGN markdown escapes nothing, so an unescaped bare-dash
@@ -395,7 +404,7 @@ export function parseTable(
  * placeholder) — which is why `splitTableRuns` requires a second, decidable
  * condition on top of this shape test.
  */
-const ABSORBED_TABLE_SEPARATOR_CELL = /^-{3,}$/
+const ABSORBED_TABLE_SEPARATOR_CELL = /^:?-{3,}:?$/
 
 function looksLikeAbsorbedTableSeparator(cells: readonly string[]): boolean {
   const written = cells.filter((cell) => cell !== '')
@@ -611,28 +620,41 @@ function isSeparatorRow(cells: readonly string[], hasFollowingRows: boolean): bo
   return !written.every((cell) => AMBIGUOUS_DELIMITER_CELL.test(cell))
 }
 
+/** The column alignment a delimiter cell writes (#6277): `:--` left, `--:` right, `:-:` center. */
+function delimiterAlign(cell: string): TableCellAlign | null {
+  const left = cell.startsWith(':')
+  const right = cell.endsWith(':')
+  if (left && right) return 'center'
+  if (left) return 'left'
+  return right ? 'right' : null
+}
+
 function buildTableRows(tableLines: readonly string[], depth: number): TableRowNode[] {
+  // Split ONCE, then both classify and build from that one array, so the
+  // cells a row is built from cannot disagree with the cells it was judged
+  // by — structurally, not by convention.
+  const cellRows = tableLines.map(rowCells)
+  // GFM's delimiter row is POSITIONAL, not content-based: only the row
+  // immediately after the header (index 1) can ever be a separator. The
+  // previous code applied the dash/colon heuristic to EVERY row, so a
+  // legitimate DATA row made entirely of dashes/colons (`| - | - |`)
+  // anywhere else in the table was silently swallowed on reparse (#3274).
+  // At index 1 the row is disambiguated by `isSeparatorRow` (#4003).
+  const delimiter = cellRows[1]
+  const hasDelimiter = delimiter !== undefined && isSeparatorRow(delimiter, cellRows.length > 2)
+  const aligns = hasDelimiter ? delimiter.map(delimiterAlign) : []
   const rows: TableRowNode[] = []
-  for (let r = 0; r < tableLines.length; r++) {
-    const tableLine = tableLines[r] as string
-    // Split ONCE, then both classify and build from that one array, so the
-    // cells a row is built from cannot disagree with the cells it was judged
-    // by — structurally, not by convention.
-    const rawCells = rowCells(tableLine)
-    // GFM's delimiter row is POSITIONAL, not content-based: only the row
-    // immediately after the header (r === 1) can ever be a separator. The
-    // previous code applied the dash/colon heuristic to EVERY row, so a
-    // legitimate DATA row made entirely of dashes/colons (`| - | - |`)
-    // anywhere else in the table was silently swallowed on reparse (#3274).
-    // At index 1 the row is disambiguated by `isSeparatorRow` (#4003).
-    if (r === 1 && isSeparatorRow(rawCells, tableLines.length > 2)) continue
+  for (let r = 0; r < cellRows.length; r++) {
+    if (r === 1 && hasDelimiter) continue
     // Only the `\|` → `|` unescape is applied on top of that split, and only
     // here: it runs BEFORE parseLine so pipes inside inline code spans and link
     // URLs (which bypass scanEscape) are restored too, while the delimiter test
     // wants the raw text (an escaped pipe is not a dash either way).
-    const cellTexts = rawCells.map((c) => c.replace(/\\\|/g, '|'))
+    const cellTexts = (cellRows[r] as string[]).map((c) => c.replace(/\\\|/g, '|'))
     const isHeader = r === 0
-    const cells = cellTexts.map((cellText) => buildTableCell(cellText, isHeader, depth))
+    const cells = cellTexts.map((cellText, c) =>
+      buildTableCell(cellText, isHeader, aligns[c] ?? null, depth),
+    )
     rows.push({ type: 'tableRow', content: cells })
   }
   return rows
@@ -641,14 +663,14 @@ function buildTableRows(tableLines: readonly string[], depth: number): TableRowN
 function buildTableCell(
   cellText: string,
   isHeader: boolean,
+  align: TableCellAlign | null,
   depth: number,
-):
-  | { type: 'tableHeader'; content: ParagraphNode[] }
-  | { type: 'tableCell'; content: ParagraphNode[] } {
+): TableHeaderNode | TableCellNode {
   const content: ParagraphNode[] = cellText
     ? [{ type: 'paragraph', content: parseLine(cellText, depth) }]
     : []
-  return isHeader ? { type: 'tableHeader', content } : { type: 'tableCell', content }
+  const type = isHeader ? 'tableHeader' : 'tableCell'
+  return align ? { type, attrs: { align }, content } : { type, content }
 }
 
 /** Horizontal rule: 3+ hyphens on their own line. */
@@ -1408,6 +1430,29 @@ export function scanExternalLinkToken(st: InlineState): boolean {
   return true
 }
 
+/**
+ * Footnote reference (#6033): `[^label]`, the label one or more characters
+ * other than whitespace, `[`, `]` and `\`: a `[` or a trailing `\` would pair the
+ * reference's bracket with a later `]` as a link's text, so the reference would
+ * not read back as written. Runs after `scanExternalLinkToken`, so
+ * `[^x](url)` stays the link it also is; the serializer escapes a `(` written
+ * right after a reference. A literal `\[^1\]` never reaches here: `scanEscape`
+ * runs first.
+ */
+const FOOTNOTE_REF_RE = /\[\^([^\s[\]\\]+)\]/y
+
+function scanFootnoteRef(st: InlineState): boolean {
+  const s = st.scanner
+  if (peek(s) !== '[' || peek(s, 1) !== '^') return false
+  FOOTNOTE_REF_RE.lastIndex = s.pos
+  const match = FOOTNOTE_REF_RE.exec(s.src)
+  if (!match) return false
+  flushBuf(st, currentMarks(st))
+  st.nodes.push({ type: 'footnote_ref', attrs: { label: match[1] as string } })
+  s.pos += match[0].length
+  return true
+}
+
 /** Push a `[url](url)` link node (text === href) at the current cursor. */
 function pushAutolink(st: InlineState, url: string): void {
   flushBuf(st, currentMarks(st))
@@ -1749,6 +1794,7 @@ export function parseLine(line: string, depth = 0): InlineNode[] {
     if (scanTokenRef(st)) continue
     if (scanImage(st)) continue
     if (scanExternalLinkToken(st)) continue
+    if (scanFootnoteRef(st)) continue
     if (scanAutolink(st)) continue
     if (scanBold(st)) continue
     if (scanStrike(st)) continue

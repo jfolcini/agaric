@@ -53,7 +53,7 @@ pub(super) fn page_data(descendants: Vec<BlockRow>) -> PageExportData {
         tag_names: HashMap::new(),
         page_titles: HashMap::new(),
         block_ref_replacement: HashMap::new(),
-        same_page_ref_targets: HashSet::new(),
+        addressed_blocks: HashSet::new(),
         descendant_properties: HashMap::new(),
         list_styles: HashMap::new(),
         ref_titles: HashMap::new(),
@@ -398,7 +398,7 @@ fn check_read_back(
 // ── fixtures ────────────────────────────────────────────────────────────────
 
 /// A block that leaves its fence open gets its anchor on a line of its own,
-/// which ends the fence before the child.
+/// which ends the fence before the child, a `+` item (decision 2, #6277).
 #[test]
 fn an_open_fence_ends_at_its_blocks_anchor_line() {
     const A: &str = "01J0000000000000000000000A";
@@ -406,7 +406,7 @@ fn an_open_fence_ends_at_its_blocks_anchor_line() {
     let data = page_data(vec![row(A, PAGE, 1, "````"), row(B, A, 1, "B")]);
     assert_eq!(
         render_page_document(&data).0,
-        format!("````\n^{A}\n\n  B ^{B}\n")
+        format!("````\n^{A}\n\n  + B ^{B}\n")
     );
 }
 
@@ -434,7 +434,7 @@ fn a_clipboard_copy_of_a_plain_subtree_has_no_anchor() {
 /// keep it: one leaving a fence open, whose anchor line ends the fence before
 /// its child, and one ending in ` ^` and a block id, which a paste takes as
 /// an anchor. One ending in ` ^word` or in a blank line reads back without one
-/// (#6190).
+/// (#6190). The child is a `+` item (decision 2, #6277).
 #[test]
 fn a_clipboard_copy_keeps_the_anchors_blocks_need_to_read_back() {
     const A: &str = "01J0000000000000000000000A";
@@ -454,7 +454,7 @@ fn a_clipboard_copy_keeps_the_anchors_blocks_need_to_read_back() {
     assert_eq!(
         copy,
         format!(
-            "````\n^{A}\n\n  B\n\nends in ^word\n\nends in a blank line\n\\\n\nends in ^{B} ^{E}\n"
+            "````\n^{A}\n\n  + B\n\nends in ^word\n\nends in a blank line\n\\\n\nends in ^{B} ^{E}\n"
         )
     );
     let pasted: Vec<String> = import::parse_pasted_text(&copy)

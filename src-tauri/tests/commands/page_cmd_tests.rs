@@ -1175,10 +1175,8 @@ async fn export_code_block_ref_target_anchor_round_trips_5140() {
 
 /// #2963 — a CROSS-PAGE `((ULID))` block reference (target on a different page)
 /// exports to a human-readable `[[Target Page#^<ULID>]]` link, never the raw
-/// ULID. The importer's block-anchor resolution is intra-note only, so this
-/// form degrades to a page link on re-import rather than a block ref — this
-/// test asserts the EXPORT shape (the documented gap for the roundtrip is
-/// reported separately).
+/// ULID. This test asserts the EXPORT shape; the round trip through a folder
+/// import is `an_exported_cross_page_ref_and_embed_restore_by_folder_import`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn export_page_markdown_cross_page_block_ref_is_human_readable_2963() {
     let (pool, _dir) = test_pool().await;
@@ -1232,6 +1230,34 @@ async fn export_page_markdown_cross_page_block_ref_is_human_readable_2963() {
         !md.contains(&format!("Faraway block ^{TARGET_B}")),
         "no anchor marker should be stamped for a cross-page target, got: {md}"
     );
+}
+
+/// #6277 A3 — a block another page's ref-typed property value names is
+/// anchored too; a block nothing addresses is not.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_anchors_a_block_a_ref_property_names() {
+    let (pool, _dir) = test_pool().await;
+    const PAGE: &str = "01AAAAAAAAAAAAAAAAAA6277P1";
+    const TARGET: &str = "01AAAAAAAAAAAAAAAAAA6277T1";
+    const PLAIN: &str = "01AAAAAAAAAAAAAAAAAA6277N1";
+    const OTHER: &str = "01AAAAAAAAAAAAAAAAAA6277P2";
+    const SOURCE: &str = "01AAAAAAAAAAAAAAAAAA6277S1";
+    insert_block(&pool, PAGE, "page", "Named", None, Some(1)).await;
+    insert_block(&pool, TARGET, "content", "named", Some(PAGE), Some(1)).await;
+    insert_block(&pool, PLAIN, "content", "plain", Some(PAGE), Some(2)).await;
+    insert_block(&pool, OTHER, "page", "Namer", None, Some(2)).await;
+    insert_block(&pool, SOURCE, "content", "source", Some(OTHER), Some(1)).await;
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'see', ?)")
+        .bind(SOURCE)
+        .bind(TARGET)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+
+    assert_eq!(md, format!("# Named\n\n- named ^{TARGET}\n- plain\n"));
 }
 
 /// #2963 — a `((ULID))` whose target block is missing (deleted / never
@@ -3644,9 +3670,10 @@ async fn apply_page_source_deleting_a_parent_keeps_its_outdented_child() {
     let gone = dup_child(&pool, &mat, &parent, "gone with it").await;
     settle(&mat).await;
     let base = page_source(&pool, &page).await;
+    // A plain child is a `+` item (decision 2, #6277).
     assert_eq!(
         base,
-        format!("parent ^{parent}\n\n  child ^{child}\n\n  gone with it ^{gone}\n"),
+        format!("parent ^{parent}\n\n  + child ^{child}\n  + gone with it ^{gone}\n"),
         "seed"
     );
 
@@ -4480,16 +4507,17 @@ async fn get_page_buffer_is_the_source_less_its_anchors_with_ids_beside_it() {
 
     let buffer = get_page_buffer_inner(&pool, page.as_str()).await.unwrap();
 
+    // A plain child is a `+` item (decision 2, #6277).
     assert_eq!(
         buffer.source,
         format!(
-            "two\nlines ^note ^{a}\n\n  child ^{b}\n\n```sh\necho hi\n```\n^{c}\n  lang:: sh\n"
+            "two\nlines ^note ^{a}\n\n  + child ^{b}\n\n```sh\necho hi\n```\n^{c}\n  lang:: sh\n"
         ),
         "seed: one anchor at a line's end, one on a line of its own"
     );
     assert_eq!(
         buffer.text,
-        "two\nlines ^note\n\n  child\n\n```sh\necho hi\n```\n  lang:: sh\n"
+        "two\nlines ^note\n\n  + child\n\n```sh\necho hi\n```\n  lang:: sh\n"
     );
     let id = |block: &BlockId| Some(block.as_str().to_owned());
     assert_eq!(
@@ -5856,8 +5884,9 @@ async fn get_blocks_source_writes_each_root_once_in_document_order() {
 
     let md = copy_source(&pool, &[&c, &a1x, &a, &a1], true).await;
 
+    // A plain child is a `+` item (decision 2, #6277).
     assert_eq!(
-        md, "a\n\n  a1\n\n    a1x\n\n  a2\n\nc\n",
+        md, "a\n\n  + a1\n    + a1x\n  + a2\n\nc\n",
         "a block under another selected block travels with it, and roots follow the page"
     );
 }
@@ -17976,6 +18005,64 @@ async fn a_folder_import_links_embeds_and_anchors_across_its_notes() {
             "{stray:?}"
         );
     }
+    mat.shutdown();
+}
+
+/// #6277 A3 — a space's export restored by a folder import on a device that
+/// never synced keeps a ref and an embed of another page's block: the export
+/// anchors every block something addresses, so the import links each to the
+/// target's copy rather than widening it to the page.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_exported_cross_page_ref_and_embed_restore_by_folder_import() {
+    let (src, _src_dir) = test_pool().await;
+    let src_mat = Materializer::new(src.clone());
+    let alpha = dup_page(&src, &src_mat, "Alpha").await;
+    let target = dup_child(&src, &src_mat, &alpha, "the target").await;
+    let beta = dup_page(&src, &src_mat, "Beta").await;
+    dup_child(&src, &src_mat, &beta, &format!("see (({target}))")).await;
+    dup_child(
+        &src,
+        &src_mat,
+        &beta,
+        &format!("{{{{embed (({target}))}}}}"),
+    )
+    .await;
+    settle(&src_mat).await;
+    let alpha_md = export_page_markdown_inner(&src, alpha.as_str())
+        .await
+        .unwrap();
+    let beta_md = export_page_markdown_inner(&src, beta.as_str())
+        .await
+        .unwrap();
+    src_mat.shutdown();
+
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let warnings = import_folder(
+        &pool,
+        &mat,
+        dir.path(),
+        &[("Beta.md", &beta_md), ("Alpha.md", &alpha_md)],
+        &[],
+    )
+    .await;
+
+    let [new_alpha] = <[String; 1]>::try_from(pages_titled(&pool, "Alpha").await).unwrap();
+    let [new_beta] = <[String; 1]>::try_from(pages_titled(&pool, "Beta").await).unwrap();
+    let alpha_blocks = dup_children(&pool, &BlockId::from_trusted(&new_alpha)).await;
+    let beta_blocks = dup_children(&pool, &BlockId::from_trusted(&new_beta)).await;
+    let [(new_target, target_text)] = <[(String, String); 1]>::try_from(alpha_blocks).unwrap();
+    assert_eq!(target_text, "the target", "the anchor leaves the text");
+    let texts: Vec<&str> = beta_blocks.iter().map(|(_, t)| t.as_str()).collect();
+    assert_eq!(
+        texts,
+        [
+            format!("see (({new_target}))"),
+            format!("{{{{embed (({new_target}))}}}}"),
+        ],
+        "Alpha:\n{alpha_md}\nBeta:\n{beta_md}"
+    );
+    assert_eq!(warnings, Vec::<String>::new());
     mat.shutdown();
 }
 
