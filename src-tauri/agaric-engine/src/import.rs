@@ -1927,10 +1927,10 @@ pub fn inline_code_spans(content: &str) -> Vec<(usize, usize)> {
 ///
 /// Covers every extension the app takes as an attachment (`ATTACHMENT_EXTENSIONS`
 /// in the app crate, whose test pins the two together). Falls back to
-/// `application/octet-stream` for unknown extensions — the caller then skips+warns because the attachment MIME
-/// allow-list rejects it (matching the `add_attachment_with_bytes_inner`
-/// validation), so an unrecognized asset never silently lands with a wrong
-/// type.
+/// `application/octet-stream` for unknown extensions — the caller then
+/// skips+warns because the attachment MIME allow-list rejects it (matching the
+/// `add_attachment_with_bytes_inner` validation), so an unrecognized asset
+/// never silently lands with a wrong type.
 pub fn guess_attachment_mime(path: &str) -> String {
     let ext = path
         .rsplit('.')
