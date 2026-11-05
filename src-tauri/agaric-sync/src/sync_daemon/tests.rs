@@ -2283,6 +2283,89 @@ async fn a_busy_refusal_is_booked_and_ends_quietly_6051() {
     init_mat.shutdown();
 }
 
+/// #6353: a `Busy` refusal came from the bound key over the dialled address, so
+/// that address is cached as a successful session's is. Without it, a device
+/// that mDNS never shows (QR pairing needs no multicast) has no dialable path
+/// left once its first sync after pairing collides with the peer's own.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_busy_refusal_caches_the_address_that_answered_6353() {
+    const INIT_DEV: &str = "INIT6353";
+    const RESP_DEV: &str = "RESP6353";
+    let harness = ServiceHarness::new().await;
+
+    let (resp_pool, _resp_dir) = test_pool().await;
+    let resp_mat = Materializer::new(resp_pool.clone());
+    bind_client_as(&resp_pool, INIT_DEV, &harness).await;
+    let resp_sched = Arc::new(SyncScheduler::new());
+    let _their_own_dial = resp_sched.try_lock_peer(&client_key(&harness)).unwrap();
+    let resp_task = spawn_responder(
+        &harness,
+        resp_pool,
+        RESP_DEV,
+        resp_mat.clone(),
+        resp_sched.clone(),
+        Arc::new(RecordingEventSink::new()),
+        Arc::new(AtomicBool::new(false)),
+    );
+
+    let (init_pool, _init_dir) = test_pool().await;
+    let init_mat = Materializer::new(init_pool.clone());
+    peer_refs::upsert_peer_ref(&init_pool, RESP_DEV)
+        .await
+        .unwrap();
+    peer_refs::bind_endpoint_id(
+        &init_pool,
+        RESP_DEV,
+        &harness.service.endpoint_id().to_string(),
+    )
+    .await
+    .unwrap();
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let scheduler = SyncScheduler::new();
+    let cancel = AtomicBool::new(false);
+    let apply_host: Arc<dyn crate::apply_host::ApplyHost> = Arc::new(init_mat.clone());
+    let ctx = SyncSessionContext {
+        pool: &init_pool,
+        device_id: INIT_DEV,
+        materializer: &apply_host,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
+        relay_url: None,
+    };
+    let peer = discovered_service_peer(RESP_DEV, &harness);
+    let refs = peer_refs::list_peer_refs(&init_pool).await.unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        try_sync_with_peer(&ctx, &peer, &refs, None),
+    )
+    .await
+    .expect("try_sync_with_peer timed out");
+    tokio::time::timeout(std::time::Duration::from_secs(20), resp_task)
+        .await
+        .expect("responder task timed out")
+        .expect("responder task panicked")
+        .expect("a refusal is not a responder error");
+
+    assert_eq!(
+        scheduler.failure_count(RESP_DEV),
+        1,
+        "precondition: the session was refused, not completed"
+    );
+    assert_eq!(
+        peer_refs::get_peer_ref(&init_pool, RESP_DEV)
+            .await
+            .unwrap()
+            .and_then(|r| r.last_address),
+        Some(format!("{}:{}", peer.addresses[0], peer.port)),
+        "the address the bound key answered on must be cached"
+    );
+    resp_mat.shutdown();
+    init_mat.shutdown();
+}
+
 /// S-5 across the two roles (#3511): an inbound session is refused while an
 /// OUTBOUND session with the same physical peer is in flight — *during the
 /// pairing window*, which is the only window in which the two used to disagree.
