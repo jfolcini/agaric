@@ -884,6 +884,29 @@ describe('Org files (#6032)', () => {
     )
   })
 
+  it('links a `file:` link to an Org file of the pick to the page its `#+TITLE` names', async () => {
+    const [, linking, nested] = await loadAll([
+      folderFile(['#+TITLE: Alpha Title\n* a'], 'a.org', 'Vault/a.org', ''),
+      folderFile(
+        ['* See [[file:a.org][see]], [[file:./a.org]] and [[file:sub/c.org][down]]'],
+        'b.org',
+        'Vault/b.org',
+        '',
+      ),
+      folderFile(
+        ['#+TITLE: Gamma\n* Up [[file:../a.org][up]] and [[file:c.org]]'],
+        'c.org',
+        'Vault/sub/c.org',
+        '',
+      ),
+    ])
+
+    expect(linking?.content).toBe(
+      '- See [[Alpha Title|see]], [[Alpha Title]] and [[sub/Gamma|down]]\n',
+    )
+    expect(nested?.content).toBe('- Up [[Alpha Title|up]] and [[sub/Gamma]]\n')
+  })
+
   it('#6032 N7 — reads the keywords of `#+TODO` lines as task states, open before the `|`, leaving those the importer reads', async () => {
     const text = [
       '#+TODO: TODO NEXT(n) NOW DOING WAIT(w@/!) | DONE(d) CANCELED(c)',

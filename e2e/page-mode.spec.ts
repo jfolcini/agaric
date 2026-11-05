@@ -1061,7 +1061,10 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
           .map((row) => [row.key, row.value_text]),
       )
 
-    await expect(inBlock(ids[0], '.repeat-indicator')).toHaveAttribute('aria-label', 'Repeats +1w')
+    await expect(inBlock(ids[0], '.repeat-indicator')).toHaveAttribute(
+      'aria-label',
+      'Repeats every 1 week',
+    )
     await expect(inBlock(ids[0], '.due-date-chip')).toHaveText('Oct 20')
     await expect(chips(ids[1])).toHaveAttribute('aria-label', 'Assignee: Ana')
     await expect(inBlock(ids[2], '.block-metadata-row')).toHaveCount(0)
@@ -1102,7 +1105,10 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(3)
     await expect(chips(ids[1]).nth(0)).toHaveAttribute('aria-label', 'Assignee: Bo')
     await expect(chips(ids[1]).nth(1)).toHaveAttribute('aria-label', 'Status: done')
-    await expect(inBlock(ids[0], '.repeat-indicator')).toHaveAttribute('aria-label', 'Repeats +1w')
+    await expect(inBlock(ids[0], '.repeat-indicator')).toHaveAttribute(
+      'aria-label',
+      'Repeats every 1 week',
+    )
     expect(await backend(page, pageId)).toEqual(await shown(page))
     await page.addScriptTag({ path: axePath })
     const violations = await page.evaluate(async () => {

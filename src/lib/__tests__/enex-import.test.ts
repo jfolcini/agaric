@@ -874,6 +874,29 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
     expect(note.markdown).toContain('After')
   })
 
+  it('renders a legacy -en-codeblock div as a fenced block keeping each line verbatim', () => {
+    const enml =
+      '<div style="box-sizing: border-box; padding: 8px; font-family: Monaco, Menlo, Consolas, ' +
+      "'Courier New', monospace; font-size: 12px; -en-codeblock:true;\">" +
+      '<div>def f():</div><div>    return 1</div><div><br/></div><div># not a tag</div></div>' +
+      '<div>after</div>'
+    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
+
+    expect(at(parseEnex(xml)).markdown).toBe(
+      '```\ndef f():\n    return 1\n\n# not a tag\n```\n\nafter',
+    )
+  })
+
+  it('renders an Evernote 10 --en-codeblock div as a fence longer than any it holds', () => {
+    // Evernote 10 indents with `&nbsp;`, which forces the HTML parse.
+    const enml =
+      '<div style="--en-codeblock:true;">' +
+      '<div>if x:</div><div>&nbsp;&nbsp;TODO later</div><div>```</div></div>'
+    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
+
+    expect(at(parseEnex(xml)).markdown).toBe('````\nif x:\n  TODO later\n```\n````')
+  })
+
   it('renders a table with no header row as a pipe table headed by its first row', () => {
     // Evernote writes no `<th>`, and wraps each cell's text in `<div>`s: the
     // first row is the header, a two-line cell is one line of its row, and a
