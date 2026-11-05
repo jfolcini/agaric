@@ -884,6 +884,49 @@ test.describe('Edit as Markdown on a 390 px phone @editor @pages @markdown @mobi
     for (const frame of closing) expect(frame).toEqual(open)
   })
 
+  test('a tap on the buffer while the page menu closes reaches the buffer', async ({ page }) => {
+    await waitForBoot(page)
+    await openPageMobile(page, PAGE)
+    await pageActions(page).click()
+    const editSource = page.getByRole('menuitem', { name: 'Edit as Markdown', exact: true })
+    await expect(editSource).toBeVisible()
+    await activeSheet(page).evaluate((sheet) =>
+      Promise.all(sheet.getAnimations().map((slide) => slide.finished)),
+    )
+    // On a busy main thread the closed sheet's exit starts late, so it still
+    // sits where it was open when the next tap comes. Freezing every animation
+    // holds it there.
+    const cdp = await page.context().newCDPSession(page)
+    await cdp.send('Animation.enable')
+    await cdp.send('Animation.setPlaybackRate', { playbackRate: 0 })
+    await editSource.click()
+    const editor = page.getByRole('textbox', { name: 'Markdown source', exact: true })
+    await expect(editor).toContainText(WELCOME)
+    await expect(editor).toBeFocused()
+
+    // The closed menu's Insert emoji row lies over the middle of the line.
+    const line = await sourceLine(editor, WELCOME).boundingBox()
+    const row = await activeSheet(page)
+      .getByRole('menuitem', { name: 'Insert emoji', exact: true })
+      .boundingBox()
+    if (line === null || row === null) throw new Error('the line or the closed row has no box')
+    const x = line.x + line.width / 2
+    const y = line.y + line.height / 2
+    expect(y > row.y && y < row.y + row.height).toBe(true)
+
+    // A finger's tap there, with none of Playwright's waits for the point to clear.
+    await page.mouse.click(x, y)
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const at = window.getSelection()?.anchorNode
+          const element = at instanceof Element ? at : at?.parentElement
+          return element?.closest('[data-source-line]')?.textContent ?? ''
+        }),
+      )
+      .toContain(WELCOME)
+  })
+
   test('Cancel on the toolbar asks first when the buffer changed', async ({ page }) => {
     await waitForBoot(page)
     await openPageMobile(page, PAGE)

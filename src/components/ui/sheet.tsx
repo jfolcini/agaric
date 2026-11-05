@@ -18,8 +18,12 @@ import { cn } from '@/lib/utils'
 // site — mirrors the DialogContent shape in `./dialog-shared.ts`. Below `sm`
 // the padding is the app's 16 px phone gutter (`App.tsx`), so a sheet's text
 // starts where the view's does. A consumer overriding it overrides `sm:` too.
+//
+// A closed sheet takes no taps: until it unmounts it can still sit where it
+// was open (a busy main thread starts its exit late, and it springs back once
+// the exit ends), and a row there took the tap meant for the view below (#6347).
 const SHEET_CONTENT_BASE =
-  'fixed z-50 flex flex-col overflow-hidden gap-4 bg-popover text-popover-foreground outline-none p-4 sm:p-6 shadow-(--shadow-overlay) transition ease-in-out data-[state=closed]:animate-out data-[state=closed]:duration-moderate data-[state=open]:animate-in data-[state=open]:duration-moderate'
+  'fixed z-50 flex flex-col overflow-hidden gap-4 bg-popover text-popover-foreground outline-none p-4 sm:p-6 shadow-(--shadow-overlay) transition ease-in-out data-[state=closed]:pointer-events-none data-[state=closed]:animate-out data-[state=closed]:duration-moderate data-[state=open]:animate-in data-[state=open]:duration-moderate'
 
 function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />

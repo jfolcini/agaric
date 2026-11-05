@@ -12,9 +12,11 @@ export const DIALOG_CONTENT_BASE =
 
 // Scrim behind every dialog, alert dialog and sheet. A dark page's text is
 // light, so dark themes take the heavier wash to sink it below the overlay's
-// own muted text.
+// own muted text. A closed scrim takes no taps while it fades out, so a tap
+// meant for the view below reaches it; `!` beats the `pointer-events: auto`
+// Radix sets on the overlay inline.
 export const OVERLAY_SCRIM_CLASS =
-  'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/20 dark:bg-black/65'
+  'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:!pointer-events-none data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/20 dark:bg-black/65'
 
 // Radix ScrollArea's Viewport wraps its children in an inner
 // `<div style="min-width:100%; display:table">`. `display:table` shrink-wraps
