@@ -254,7 +254,7 @@ function computeHighlight(
 ): HastRootNode | null {
   if (code.length > HIGHLIGHT_MAX_LENGTH) return null
   try {
-    const tree = (language
+    const tree = (language && lowlight.registered(language)
       ? lowlight.highlight(language, code)
       : lowlight.highlightAuto(code)) as unknown as HastRootNode
     return exceedsHighlightNodeCap(tree.children) ? null : tree

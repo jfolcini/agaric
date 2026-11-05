@@ -446,8 +446,8 @@ export function revealedBlockSyntax(state: EditorState): BlockSyntax[] {
   const code = linesAtSelection(state).flatMap(($pos): BlockSyntax[] => {
     const block = $pos.parent
     if (block.type.name !== 'codeBlock') return []
-    const fence = codeFence(block.textContent)
     const language = (block.attrs['language'] as string | null) ?? ''
+    const fence = codeFence(block.textContent, language)
     return [{ from: $pos.before(), to: $pos.after(), open: `${fence}${language}`, close: fence }]
   })
   const math = nodesAtSelection(state.selection).flatMap(({ node, pos }): BlockSyntax[] =>
