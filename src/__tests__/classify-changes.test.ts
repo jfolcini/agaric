@@ -466,6 +466,24 @@ describe('classify-changes.sh', () => {
     },
   )
 
+  // A lane's own definition is a change to that lane: #6373 and #6375 edited cargo-tests'
+  // command and cache key and merged with cargo-tests never run.
+  it.each([
+    '.github/workflows/_validate.yml',
+    '.github/actions/toolchain/action.yml',
+    '.github/actions/setup-node/action.yml',
+  ])('%s runs every _validate.yml lane whole', (path) => {
+    expect(classify([path])).toMatchObject({
+      frontend: 'true',
+      backend: 'true',
+      rust_tests: 'true',
+      ci: 'true',
+      vitest: 'true',
+      playwright: 'true',
+      playwright_specs: '',
+    })
+  })
+
   it('the playwright-setup composite runs every Playwright shard', () => {
     expect(classify(['.github/actions/playwright-setup/action.yml'])).toMatchObject({
       vitest: 'false',
