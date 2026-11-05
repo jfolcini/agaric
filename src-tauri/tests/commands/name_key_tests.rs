@@ -79,6 +79,25 @@ impl Vault {
         tag
     }
 
+    /// A tag of space A named `name` as one from before #6278 I4 may be: made
+    /// by the plain create, which runs no name rule, and stamped into A.
+    async fn tag_named_before_the_rule(&self, name: &str) -> BlockId {
+        let tag = create_block_inner(
+            &self.pool,
+            DEV,
+            &self.mat,
+            "tag".into(),
+            name.into(),
+            None,
+            None,
+        )
+        .await
+        .expect("create the tag");
+        assign_to_space(&self.pool, tag.id.as_str(), &self.a).await;
+        settle(&self.mat).await;
+        tag.id
+    }
+
     async fn rename(&self, block: &BlockId, to: &str) -> Result<BlockRow, AppError> {
         let renamed = edit_block_inner(&self.pool, DEV, &self.mat, block.clone(), to.into()).await;
         settle(&self.mat).await;
@@ -394,12 +413,14 @@ async fn undo_of_a_rename_onto_another_spelling_of_a_title_is_refused() {
 }
 
 /// A tag name compares trimmed too, whichever spelling the tag was stored
-/// under: a create resolves to the tag, a rename onto it is refused.
+/// under: a create of either spelling resolves to the other's tag, and a
+/// rename onto it is refused. A new name holds no whitespace (#6278 I4), so
+/// the padded tag is one from before that rule, seeded below the name checks.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_tag_name_is_one_name_with_its_padded_spelling() {
     let v = vault().await;
     let work = v.tag("work").await;
-    let padded = v.tag(" Padded ").await;
+    let padded = v.tag_named_before_the_rule(" Padded ").await;
     let other = v.tag("other").await;
     let ops = v.ops().await;
 
@@ -410,11 +431,11 @@ async fn a_tag_name_is_one_name_with_its_padded_spelling() {
     );
     assert_eq!(
         v.tag("padded").await.id,
-        padded.id,
+        padded,
         "`padded` is the stored ` Padded `"
     );
     assert_eq!(v.ops().await, ops, "no op was appended");
-    for name in ["Work ", " PADDED"] {
+    for name in ["WORK", "PADDED"] {
         assert_refused(
             v.rename(&other.id, name).await,
             ValidationCode::DuplicatePageTitle,

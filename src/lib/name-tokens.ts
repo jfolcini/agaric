@@ -86,6 +86,14 @@ const trimWhiteSpace = (s: string): string => s.replace(/^\p{White_Space}+|\p{Wh
  */
 export const nameKey = (name: string): string => trimWhiteSpace(name).toLowerCase().normalize('NFC')
 
+/**
+ * The name a new tag takes for `name` (#6278 I4): the ends trimmed and each
+ * whitespace run a `-`, since a tag name holds no whitespace. Rust's
+ * `inbound_tag_spelling` (`markdown.rs`) spells a new tag the same way.
+ */
+export const dashedTagName = (name: string): string =>
+  trimWhiteSpace(name).replace(/\p{White_Space}+/gu, '-')
+
 /** A link body read as a page name, with the label the rest of it shows. */
 export interface LinkReading {
   name: string
@@ -94,10 +102,10 @@ export interface LinkReading {
 
 /**
  * `link_body_readings`: the ways a link body reads as a name and a label, in
- * the order the name pass tries them (#5160 D10, exact title first): the whole
- * body with no label, then each prefix ending before a `|`, longest first,
- * labelled with the rest. Trimmed; an empty label is none. The last reading
- * splits on the first `|`.
+ * the order the name pass tries them (#5160 D10): the whole body with no
+ * label, then each prefix ending before a `|`, longest first, labelled with
+ * the rest. Trimmed; an empty label is none. The last reading splits on the
+ * first `|`.
  */
 export function linkBodyReadings(body: string): LinkReading[] {
   const readings: LinkReading[] = [{ name: trimWhiteSpace(body) }]

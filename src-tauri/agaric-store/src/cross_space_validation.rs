@@ -155,6 +155,28 @@ pub async fn validate_content_refs_in_space(
     content: &str,
     on_page_of: &str,
 ) -> Result<(), AppError> {
+    let foreign = foreign_content_refs(conn, source_space, content, on_page_of).await?;
+    match foreign.into_iter().next() {
+        Some((target, target_space)) => Err(AppError::validation(format!(
+            "cross-space reference: block '{}' (space {}) references '{}' (space {})",
+            source_block_id.as_str(),
+            source_space.as_str(),
+            target,
+            target_space.as_str(),
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// The targets `content` names by `[[ULID]]`, `((ULID))` or `#[ULID]` that
+/// [`validate_content_refs_in_space`] refuses, each once with its space, in
+/// the order it checks them: a paste writes them as text first (#6277 B2).
+pub async fn foreign_content_refs(
+    conn: &mut sqlx::SqliteConnection,
+    source_space: &SpaceId,
+    content: &str,
+    on_page_of: &str,
+) -> Result<Vec<(String, SpaceId)>, AppError> {
     // Collect all ULIDs referenced in the content (both link and tag-ref forms)
     let mut targets: Vec<&str> = Vec::new();
     for cap in ULID_LINK_RE.captures_iter(content) {
@@ -172,23 +194,18 @@ pub async fn validate_content_refs_in_space(
     // of a per-token `resolve_block_space` round-trip. A target absent from
     // the map is an orphan (no space) and is tolerated — not cross-space yet.
     let target_spaces = resolve_block_spaces_batch(&mut *conn, &targets).await?;
+    let mut foreign: Vec<(String, SpaceId)> = Vec::new();
     for target_str in targets {
         // The page lookup runs only on the rare cross-space path.
         if let Some(target_space) = target_spaces.get(target_str)
             && target_space != source_space
+            && !foreign.iter().any(|(seen, _)| seen == target_str)
             && !page_holds_token(&mut *conn, on_page_of, target_str).await?
         {
-            return Err(AppError::validation(format!(
-                "cross-space reference: block '{}' (space {}) references '{}' (space {})",
-                source_block_id.as_str(),
-                source_space.as_str(),
-                target_str,
-                target_space.as_str(),
-            )));
+            foreign.push((target_str.to_owned(), target_space.clone()));
         }
     }
-
-    Ok(())
+    Ok(foreign)
 }
 
 /// Whether a live block of `member`'s page holds `token` in its content.

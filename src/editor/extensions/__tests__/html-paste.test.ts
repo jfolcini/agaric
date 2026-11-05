@@ -813,6 +813,7 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
     ['a Logseq ^^highlight^^', 'x ^^y^^'],
     ['LaTeX \\(math\\)', 'area \\(x^2\\) here'],
     ['LaTeX \\[math\\]', 'see \\[\\pi r^2\\]'],
+    ['an Obsidian ![[Note]] embed', '![[Fresh page]]'],
   ])('routes one line holding %s as text, spliced at the caret', async (_name, text) => {
     mockFocusedBlockId = 'BLOCK_A'
     editor = await buildEditor(HELLO_WORLD)

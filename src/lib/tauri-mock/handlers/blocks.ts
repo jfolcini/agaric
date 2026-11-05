@@ -830,6 +830,19 @@ function rejectDuplicateTagName(tagId: string, name: string): void {
 }
 
 /**
+ * #6278 I4 — refuse a new tag name holding whitespace. Mock twin of
+ * `reject_spaced_tag_name` (`src-tauri/src/commands/blocks/crud.rs`).
+ */
+function rejectSpacedTagName(name: string): void {
+  if (!/\p{White_Space}/u.test(name)) return
+  throw appErrorRejection({
+    kind: 'validation',
+    code: 'TagNameWhitespace',
+    message: `the tag name '${name}' holds whitespace; use '-' instead`,
+  })
+}
+
+/**
  * #4723 — refuse titling `page` `title` when another live page of its space
  * holds that name, as its title or an alias (#6278). Mock twin of
  * `reject_duplicate_page_title` (`src-tauri/src/commands/blocks/crud.rs`); the
@@ -1095,6 +1108,23 @@ export const blocksHandlers = {
         return {
           ...existing,
           id: existing['id'] as string,
+          op_refs: [] as { device_id: string; seq: number }[],
+        }
+      }
+      rejectSpacedTagName((a['content'] as string) ?? '')
+    }
+    // A page goes through `create_page_in_space_inner`, which resolves a title
+    // already held in the space (`nameKey`, #4723, #6278) to that page's own
+    // row, creating nothing and appending no op, and refuses another page's
+    // alias (`createPageInSpace`).
+    if (blockType === 'page' && typeof a['content'] === 'string') {
+      const holder = pageNameHolder(a['content'], spaceId)
+      if (holder?.by === 'alias') throw pageNameRefusal(holder, a['content'])
+      const held = holder ? blocks.get(holder.id) : undefined
+      if (held) {
+        return {
+          ...held,
+          id: held['id'] as string,
           op_refs: [] as { device_id: string; seq: number }[],
         }
       }
@@ -1441,7 +1471,10 @@ export const blocksHandlers = {
       throw notFoundRejection(`block '${blockId}' (not found or deleted)`)
     }
     if (b['block_type'] === 'page') rejectDuplicatePageTitle(b, a['toText'] as string)
-    if (b['block_type'] === 'tag') rejectDuplicateTagName(blockId, a['toText'] as string)
+    if (b['block_type'] === 'tag') {
+      rejectSpacedTagName(a['toText'] as string)
+      rejectDuplicateTagName(blockId, a['toText'] as string)
+    }
     rejectCrossSpaceTokens(definitionSpaceOf(blockId), a['toText'] as string, blockId)
     const oldContent = b['content'] as string | null
     const linked = linkedTargets(b)

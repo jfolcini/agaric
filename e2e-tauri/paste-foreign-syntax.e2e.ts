@@ -1,10 +1,11 @@
 // ---------------------------------------------------------------------------
-// Real-backend paste of Logseq's highlight (#6033 S4).
+// Real-backend paste of Logseq's highlight and Obsidian's embed (#6033 S4, S5b).
 //
 // One pasted line holding `^^x^^` goes to the block path, whose save writes it
-// as Agaric's `==x==`; and text holding `^^` literally, which the editor stores
-// escaped, copies and pastes back byte for byte (Q3). The backend normalises,
-// the mock does not, so only this lane can show either.
+// as Agaric's `==x==`; text holding `^^` literally, which the editor stores
+// escaped, copies and pastes back byte for byte (Q3); and a `![[Note]]` pasted
+// into an empty block is stored as an embed of that page. The backend
+// normalises, the mock does not, so only this lane can show any of them.
 //
 // Globals (`$`, `$$`, `browser`, `expect`) come from @wdio/globals — see
 // helpers.ts.
@@ -32,6 +33,10 @@ const HEAD = runScopedMarker('wdio-foreign-head')
 const TAIL = runScopedMarker('wdio-foreign-tail')
 const LITERAL = runScopedMarker('wdio-foreign-literal')
 const ESCAPED = `${LITERAL} a \\^\\^b\\^\\^ c`
+const NOTE_PAGE = runScopedMarker('wdio-foreign-embed-note')
+const NOTE_BODY = runScopedMarker('wdio-foreign-embed-body')
+const EMBED_PAGE = runScopedMarker('wdio-foreign-embed-page')
+const EMBED_OF_A_PAGE = /^\{\{embed \[\[[0-9A-Z]{26}\]\]\}\}$/
 
 /** The ids of the rows whose text holds `marker`, in document order. */
 function rowIds(marker: string): Promise<string[]> {
@@ -115,5 +120,32 @@ describe('Agaric real-backend paste of foreign syntax (#6033) @editor', () => {
     expect(ids.length).toBe(2)
     const texts = await Promise.all(ids.map(stored))
     expect(texts).toEqual([ESCAPED, ESCAPED])
+  })
+
+  it('stores a pasted ![[Note]] as an embed of the page', async () => {
+    await openNewPage(NOTE_PAGE)
+    await typeMarkerVerified(NOTE_BODY)
+    await browser.keys(['Escape'])
+    await openNewPage(EMBED_PAGE)
+    const [id] = await browser.execute(() =>
+      Array.from(document.querySelectorAll('[data-testid="sortable-block"]')).map(
+        (row) => row.getAttribute('data-block-id') ?? '',
+      ),
+    )
+
+    await pastePlainText(`![[${NOTE_PAGE}]]`)
+    await browser.waitUntil(async () => EMBED_OF_A_PAGE.test(await stored(id as string)), {
+      timeout: ACTION_TIMEOUT,
+      timeoutMsg: 'the pasted embed was never stored as {{embed [[ULID]]}}',
+    })
+    await navigateTo('Journal')
+    await reopenPageByTitle(EMBED_PAGE)
+
+    const embed = $(`li[data-block-id="${id as string}"] [data-testid="embed-container"]`)
+    await browser.waitUntil(async () => (await embed.getText()).includes(NOTE_BODY), {
+      timeout: NAV_TIMEOUT,
+      timeoutMsg: 'the embed never showed the note',
+    })
+    expect(await stored(id as string)).toMatch(EMBED_OF_A_PAGE)
   })
 })

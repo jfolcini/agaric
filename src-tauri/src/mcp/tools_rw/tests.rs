@@ -416,6 +416,34 @@ async fn append_markdown_writes_foreign_highlight_and_math_in_agarics_form() {
     );
 }
 
+/// #6033 S5b — content an agent writes reads an Obsidian note embed as a
+/// paste does: the whole content embeds the page, an embed among text links
+/// it, and a file embed stays text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn update_block_content_reads_obsidian_note_embeds() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let page = mk_page(&pool, &mat, &space, "Page").await;
+    let note = mk_page(&pool, &mat, &space, "Note").await;
+    let block = mk_child_of(&pool, &mat, &page, "draft").await;
+    settle(&mat).await;
+
+    for (content, expected) in [
+        ("![[Note]]", format!("{{{{embed [[{note}]]}}}}")),
+        ("see ![[Note]]", format!("see [[{note}]]")),
+        ("![[img.png]]", "![[img.png]]".to_string()),
+    ] {
+        let result = tools
+            .call_tool(
+                "update_block_content",
+                json!({"block_id": block, "content": content, "space_id": space}),
+                &test_ctx_agent(),
+            )
+            .await
+            .expect("happy path");
+        assert_eq!(result["content"], expected, "{content}");
+    }
+}
+
 // -------------------------------------------------------------------
 // update_block_content
 // -------------------------------------------------------------------
@@ -2384,6 +2412,38 @@ async fn create_tag_creates_in_space_and_reuses_the_name() {
     );
 }
 
+/// #6278 I4 — an agent's tag name holds no whitespace either: the call is
+/// refused with the reason that suggests `-`, and nothing is created or sent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_tag_refuses_a_name_holding_whitespace_6278() {
+    let (tools, _mat, pool, space, emitter, _dir) = mk_tools_recording().await;
+
+    let err = tools
+        .call_tool(
+            "create_tag",
+            json!({"name": "deep work", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("a name holding whitespace is refused");
+
+    assert_eq!(
+        err.validation_code(),
+        Some(agaric_core::error::ValidationCode::TagNameWhitespace),
+        "got {err:?}"
+    );
+    assert!(err.to_string().contains("use '-' instead"), "got {err}");
+    let tags: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE block_type = 'tag'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(tags, 0, "no tag was created");
+    assert!(
+        emitter.blocks_changed().is_empty(),
+        "a refused create tells no view"
+    );
+}
+
 /// The space's tag names as `list_all_tags_in_space` reads them at the moment
 /// `blocks:changed` goes out: what a `#` picker refilling on that event gets.
 struct TagNamesAtEmit {
@@ -3275,6 +3335,8 @@ async fn append_block_takes_its_parent_page_by_name_5397() {
     assert_eq!(result["parent_id"], page.as_str());
     assert!(result.get("warnings").is_none(), "no warnings, no key");
 
+    // A tie links its lowest id (#6278), in content as in an argument.
+    let holder = dup_a.as_str().min(dup_b.as_str());
     let result = tools
         .call_tool(
             "append_block",
@@ -3282,28 +3344,19 @@ async fn append_block_takes_its_parent_page_by_name_5397() {
             &test_ctx_agent(),
         )
         .await
-        .expect("a tie in content is kept as text");
-    assert_eq!(result["content"], "see [[dup]]");
-    assert_eq!(
-        result["warnings"],
-        json!(["wiki-link '[[dup]]' matches multiple pages in this space; left as plain text"]),
-    );
+        .expect("a tie in content links the lowest id");
+    assert_eq!(result["content"], format!("see [[{holder}]]"));
+    assert!(result.get("warnings").is_none(), "no warnings, no key");
 
-    let err = tools
+    let result = tools
         .call_tool(
             "append_block",
             json!({"parent_id": "dup", "content": "x", "space_id": space}),
             &test_ctx_agent(),
         )
         .await
-        .expect_err("a tie must be refused");
-    let message = err.to_string();
-    assert!(
-        matches!(err, AppError::Validation { .. })
-            && message.contains(&format!("{dup_a} (Dup)"))
-            && message.contains(&format!("{dup_b} (DUP)")),
-        "the error names each candidate with its id, got {message}"
-    );
+        .expect("a tie names the lowest id");
+    assert_eq!(result["parent_id"], holder);
 
     let err = tools
         .call_tool(
@@ -3314,8 +3367,13 @@ async fn append_block_takes_its_parent_page_by_name_5397() {
         .await
         .expect_err("an unknown name must be refused");
     assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
-    assert!(child_contents(&pool, &dup_a).await.is_empty());
-    assert!(child_contents(&pool, &dup_b).await.is_empty());
+    let other = if holder == dup_a.as_str() {
+        dup_b.as_str()
+    } else {
+        dup_a.as_str()
+    };
+    assert_eq!(child_contents(&pool, holder).await, ["x"]);
+    assert!(child_contents(&pool, other).await.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -4405,6 +4463,48 @@ async fn edit_page_markdown_of_an_unchanged_code_block_writes_nothing_6190() {
     settle(&mat).await;
 
     assert_eq!(op_count(&pool).await, before, "no op was written: {result}");
+}
+
+/// An unchanged read sent back with CRLF or CR line ends, or opening with a
+/// BOM, as some clients write text, saves as nothing: no block keeps its
+/// ` ^ULID` as text, and the front matter still reads as the page's (#6277 B1).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_page_markdown_of_an_unchanged_crlf_or_bom_read_writes_nothing_6277() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let (page, _) = mk_list_page(&pool, &mat, &space, "P").await;
+    seed_aliases(&pool, &mat, &page, &["alt"]).await;
+    let base = editable_source(&pool, &mat, &page, &space).await;
+    assert!(
+        base.starts_with("---\n"),
+        "the read opens with front matter: {base}"
+    );
+
+    for markdown in [
+        base.replace('\n', "\r\n"),
+        base.replace('\n', "\r"),
+        format!("\u{feff}{base}"),
+    ] {
+        let before = op_count(&pool).await;
+        let result = tools
+            .call_tool(
+                "edit_page_markdown",
+                json!({ "page_id": page, "markdown": markdown, "base": base, "space_id": space }),
+                &test_ctx_agent(),
+            )
+            .await
+            .expect("an unchanged read saves");
+        settle(&mat).await;
+        assert_eq!(
+            op_count(&pool).await,
+            before,
+            "no op was written for {markdown:?}: {result}"
+        );
+    }
+    assert_eq!(
+        aliases_of(&pool, &page).await,
+        ["alt"],
+        "the aliases are kept"
+    );
 }
 
 /// What an agent reads, appended under another page, reads back as the same

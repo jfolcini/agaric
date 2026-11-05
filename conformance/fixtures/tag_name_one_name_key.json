@@ -1,11 +1,11 @@
 {
-  "description": "#6278 I1 — a tag name is one name under `name_key` (trimmed, lowercased, NFC) whichever spelling the tag is stored under. The ops make a space (`C1`) and the tag ` Padded ` (C2), stored with its padding. A create of `padded` resolves to C2: no tag, no op. A second tag `Other` (C3) may not be renamed to `PADDED`, and may respell its own name.",
+  "description": "#6278 I1 — a tag name is one name under `name_key` (trimmed, lowercased, NFC) whichever spelling the tag is stored under. The seed holds ` Padded ` (S1), a tag stored with its padding as one named before a new name could hold no whitespace (#6278 I4); the ops make a space (`C1`) and move S1 into it. A create of `padded` resolves to S1: no tag, no op. A second tag `Other` (C2) may not be renamed to `PADDED`, and may respell its own name.",
   "expected": {
     "block_tags": [],
     "blocks": [
       {
-        "block_type": "page",
-        "content": "Work",
+        "block_type": "tag",
+        "content": " Padded ",
         "deleted_at": null,
         "due_date": null,
         "id": "B1",
@@ -17,8 +17,8 @@
         "todo_state": null
       },
       {
-        "block_type": "tag",
-        "content": " Padded ",
+        "block_type": "page",
+        "content": "Work",
         "deleted_at": null,
         "due_date": null,
         "id": "B2",
@@ -31,7 +31,7 @@
       },
       {
         "block_type": "tag",
-        "content": "other ",
+        "content": "OTHER",
         "deleted_at": null,
         "due_date": null,
         "id": "B3",
@@ -44,7 +44,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 12,
+      "count": 11,
       "ops": [
         {
           "op_type": "create_block"
@@ -69,9 +69,6 @@
           "op_type": "set_property_def"
         },
         {
-          "op_type": "create_block"
-        },
-        {
           "key": "space",
           "op_type": "set_property"
         },
@@ -90,7 +87,7 @@
     "page_links": [],
     "properties": [
       {
-        "block_id": "B1",
+        "block_id": "B2",
         "key": "is_space",
         "value": "true",
         "value_type": "Text"
@@ -102,19 +99,19 @@
       "code": null,
       "error": null,
       "name": "a_space",
-      "returns": ["create_space#space_id=B1"]
+      "returns": ["create_space#space_id=B2"]
     },
     {
       "code": null,
       "error": null,
-      "name": "a_tag_stored_with_padding",
-      "returns": ["B2#block_type=tag#content= Padded #parent_id=null#position=2"]
+      "name": "the_padded_tag_moves_into_the_space",
+      "returns": ["move_blocks_to_space#moved=1"]
     },
     {
       "code": null,
       "error": null,
       "name": "a_create_of_the_trimmed_name_resolves_to_the_tag",
-      "returns": ["B2#block_type=tag#content= Padded #parent_id=null#position=2"]
+      "returns": ["B1#block_type=tag#content= Padded #parent_id=null#position=1"]
     },
     {
       "code": null,
@@ -132,7 +129,7 @@
       "code": null,
       "error": null,
       "name": "a_tag_respells_its_own_name",
-      "returns": ["B3#content=other "]
+      "returns": ["B3#content=OTHER"]
     }
   ],
   "name": "tag_name_one_name_key",
@@ -149,17 +146,12 @@
     },
     {
       "args": {
-        "blockType": "tag",
-        "content": " Padded ",
-        "parentId": null,
-        "scope": {
-          "kind": "active",
-          "space_id": "C1"
-        }
+        "blockIds": ["S1"],
+        "spaceId": "C1"
       },
-      "command": "create_block",
-      "comment": "The tag keeps the padding it was created with.",
-      "name": "a_tag_stored_with_padding",
+      "command": "move_blocks_to_space",
+      "comment": "The padded tag joins it; a move runs no whitespace rule.",
+      "name": "the_padded_tag_moves_into_the_space",
       "via": "command"
     },
     {
@@ -173,7 +165,7 @@
         }
       },
       "command": "create_block",
-      "comment": "The same name once trimmed and lowercased: the answer is C2 and nothing is created. Comparing the stored name untrimmed creates a second tag.",
+      "comment": "The same name once trimmed and lowercased: the answer is S1 and nothing is created. Comparing the stored name untrimmed creates a second tag.",
       "name": "a_create_of_the_trimmed_name_resolves_to_the_tag",
       "via": "command"
     },
@@ -194,11 +186,11 @@
     },
     {
       "args": {
-        "blockId": "C3",
+        "blockId": "C2",
         "toText": "PADDED"
       },
       "command": "edit_block",
-      "comment": "C2 holds `padded`: refused, and C3 keeps its name.",
+      "comment": "S1 holds `padded`: refused, and C2 keeps its name.",
       "expect_code": "DuplicatePageTitle",
       "expect_error": "validation",
       "name": "a_rename_onto_the_padded_tags_name_is_refused",
@@ -206,8 +198,8 @@
     },
     {
       "args": {
-        "blockId": "C3",
-        "toText": "other "
+        "blockId": "C2",
+        "toText": "OTHER"
       },
       "command": "edit_block",
       "comment": "The tag is no clash with itself.",
@@ -216,7 +208,15 @@
     }
   ],
   "seed": {
-    "blocks": [],
+    "blocks": [
+      {
+        "block_type": "tag",
+        "content": " Padded ",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      }
+    ],
     "properties": [],
     "tags": []
   }

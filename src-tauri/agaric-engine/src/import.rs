@@ -1067,39 +1067,52 @@ pub fn embed_names_note(name: &str) -> bool {
 /// `content` with each Obsidian note embed outside inline code written in
 /// Agaric's form (<https://obsidian.md/help/embeds>): a block that is one
 /// embed becomes the embed block `{{embed [[target]]}}`, its `|label`
-/// dropped, and an embed among other text the link `[[target|label]]`, since
-/// an Agaric embed is a whole block. The name pass then links the target, a
-/// `#heading` or `#^id` anchor to the block it names. `names_note` tells a
-/// note's name from a file's ([`embed_names_note`]); a file embed is left to
-/// the attachment pass, and an escaped one is text.
+/// dropped, and an embed among other text the link `[[target|label]]`
+/// ([`link_obsidian_note_embeds`]), since an Agaric embed is a whole block.
+/// The name pass then links the target, a `#heading` or `#^id` anchor to the
+/// block it names. `names_note` tells a note's name from a file's
+/// ([`embed_names_note`]); a file embed is left to the attachment pass, and an
+/// escaped one is text.
 pub fn rewrite_obsidian_note_embeds(content: &str, names_note: impl Fn(&str) -> bool) -> String {
+    if let Some(caps) = OBSIDIAN_EMBED_RE.captures(content)
+        && &caps[0] == content.trim()
+        && names_note(embed_target_name(&caps))
+    {
+        return format!("{{{{embed [[{}]]}}}}", caps[1].trim());
+    }
+    link_obsidian_note_embeds(content, names_note)
+}
+
+/// `content` with each Obsidian note embed outside inline code written as the
+/// link `[[target|label]]`, as an embed among other text reads, even one that
+/// is the whole of `content`: a paste joins its first and last block to the
+/// text around the cursor. `names_note` and what stays text are as in
+/// [`rewrite_obsidian_note_embeds`].
+pub fn link_obsidian_note_embeds(content: &str, names_note: impl Fn(&str) -> bool) -> String {
     if !content.contains("![[") {
         return content.to_string();
     }
     let code_spans = inline_code_spans(content);
-    let is_note_embed = |caps: &regex::Captures<'_>| {
-        let start = caps.get(0).expect("group 0 always present").start();
-        let name = caps[1].split('#').next().unwrap_or_default().trim();
-        !code_spans.iter().any(|&(s, e)| start >= s && start < e)
-            && !is_escaped(content, start)
-            && names_note(name)
-    };
-    if let Some(caps) = OBSIDIAN_EMBED_RE.captures(content)
-        && &caps[0] == content.trim()
-        && is_note_embed(&caps)
-    {
-        return format!("{{{{embed [[{}]]}}}}", caps[1].trim());
-    }
     OBSIDIAN_EMBED_RE
         .replace_all(content, |caps: &regex::Captures<'_>| {
             let whole = &caps[0];
-            if is_note_embed(caps) {
+            let start = caps.get(0).expect("group 0 always present").start();
+            if !code_spans.iter().any(|&(s, e)| start >= s && start < e)
+                && !is_escaped(content, start)
+                && names_note(embed_target_name(caps))
+            {
                 whole[1..].to_string()
             } else {
                 whole.to_string()
             }
         })
         .into_owned()
+}
+
+/// An Obsidian embed's target name: its text before any `#anchor` or `|label`.
+fn embed_target_name<'h>(caps: &regex::Captures<'h>) -> &'h str {
+    let target = caps.get(1).map_or("", |m| m.as_str());
+    target.split('#').next().unwrap_or_default().trim()
 }
 
 /// `content` with the foreign forms of highlight and math written in Agaric's
@@ -1679,6 +1692,12 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     parse_import(content, false, ImportDialect::LogseqOrg)
 }
 
+/// `text` less a leading byte order mark, which some editors and clients
+/// write: left in, it is text, and front matter after it is not read (#6277).
+fn without_bom(text: &str) -> &str {
+    text.strip_prefix('\u{feff}').unwrap_or(text)
+}
+
 /// The import reading of [`parse_logseq_markdown`] in `dialect`, keeping every
 /// `((uuid))` reference when `keep_refs`, as a note of a folder import does for
 /// `link_import_anchors` to link once the note naming it is imported.
@@ -1692,7 +1711,9 @@ pub fn parse_import(content: &str, keep_refs: bool, dialect: ImportDialect) -> P
     // Lines without stray `\r` characters.
     // Tabs stay: `indent_columns` reads one to its tab stop, and a fence keeps
     // its lines verbatim (#5160 follow-up, item 9).
-    let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
+    let normalized = without_bom(content)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
 
     // Capture + parse a leading YAML frontmatter block (#1432). The exporter
     // (`export_page_markdown_inner`) emits page properties as scalar
@@ -1936,7 +1957,9 @@ fn source_outline(
     foreign: bool,
     id_lines: Option<&std::collections::HashSet<usize>>,
 ) -> ParseOutput {
-    let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
+    let normalized = without_bom(content)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
     let mut output = ParseOutput {
         blocks: Vec::new(),
         frontmatter: Vec::new(),
@@ -5976,6 +5999,30 @@ mod tests_l9 {
             assert_eq!(m.properties, l.properties);
         }
         assert_eq!(mixed_out.warnings, lf_out.warnings);
+    }
+
+    /// A leading BOM is no text: the front matter after it is read, by an
+    /// import and by a Document buffer, and a paste does not keep it (#6277).
+    #[test]
+    fn a_leading_bom_is_dropped_by_every_reader() {
+        let contents = |blocks: &[ParsedBlock]| -> Vec<String> {
+            blocks.iter().map(|b| b.content.clone()).collect()
+        };
+        let text = "---\nstatus: hello\n---\n- body";
+        for (reader, read) in [
+            ("import", parse_logseq_markdown as fn(&str) -> ParseOutput),
+            ("document", parse_document_outline),
+        ] {
+            let with_bom = read(&format!("\u{feff}{text}"));
+            assert_eq!(
+                with_bom.frontmatter,
+                [("status".to_string(), "hello".to_string())],
+                "{reader}: the front matter is read past the BOM"
+            );
+            assert_eq!(contents(&with_bom.blocks), ["body"], "{reader}: one block");
+        }
+        let pasted = parse_pasted_text("\u{feff}body");
+        assert_eq!(contents(&pasted), ["body"], "a paste drops the BOM");
     }
 
     #[test]

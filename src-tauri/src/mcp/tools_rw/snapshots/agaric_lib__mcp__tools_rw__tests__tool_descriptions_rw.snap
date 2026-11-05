@@ -179,7 +179,7 @@ expression: wire
     additionalProperties: false
     properties:
       name:
-        description: "Tag name (becomes the tag's content)."
+        description: "Tag name (becomes the tag's content). A new tag's name holds no whitespace: write `deep-work`, not `deep work`."
         type: string
       space_id:
         description: ULID of the space the tag belongs to.

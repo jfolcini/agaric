@@ -581,6 +581,7 @@ function writeFrontMatter(
   } else if (writes.tagsAdded.length > 0) {
     const tags = resolveTagNames(writes.tagsAdded, spaceId, out.opRefs)
     out.namesCreated.push(...tags.created)
+    out.warnings.push(...tags.warnings)
     for (const tagId of tags.ids.values()) {
       out.opRefs.push(...tagsHandlers.add_tag({ blockId: pageId, tagId }).op_refs)
     }
