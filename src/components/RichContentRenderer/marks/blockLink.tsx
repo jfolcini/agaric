@@ -72,7 +72,9 @@ export function renderBlockLink(
       </Tooltip>
     )
   }
-  const deletedProps = status === 'deleted' ? { 'aria-label': `${title} (deleted)` } : {}
+  // The name opens with the shown label, not the title: voice control matches
+  // on what the user sees (WCAG 2.5.3); the full path stays in `title`.
+  const deletedProps = status === 'deleted' ? { 'aria-label': `${label} (deleted)` } : {}
   // Unified chip interactivity policy (matches tagRef / blockRef):
   // - clickable (handler AND interactive) → full affordances: role=link,
   //   tabIndex=0, key/click handlers, cursor-pointer.
