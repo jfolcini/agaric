@@ -5713,11 +5713,11 @@ mod mcp_reads {
         let (_dir, _pool, tools) = fixture(&rt, "slo_mcp_page_markdown");
         let args = json!({"page_id": PAGE_ID, "space_id": SPACE_ID});
         let observed = call(&rt, &tools, "get_page_markdown", &args);
-        assert!(
-            observed["markdown"]
-                .as_str()
-                .unwrap()
-                .starts_with("# SLO Export Page\n"),
+        // The read carries the page in its own fields; its `markdown` is the
+        // page buffer, which has no `# Title` line (#6277 E4).
+        assert_eq!(
+            (&observed["page_id"], &observed["title"]),
+            (&json!(PAGE_ID), &json!("SLO Export Page")),
             "mcp get_page_markdown @ 100K: untimed probe must read the fixture page"
         );
         assert_eq!(
