@@ -368,7 +368,9 @@ proptest! {
             .collect();
         let md = render_page_markdown(PAGE, &data);
         let imported = import_as_markdown_file(&md);
-        let read = import::parse_document_outline(&import::strip_title_heading(&md, "Title"));
+        let mut read = import::parse_document_outline(&import::strip_title_heading(&md, "Title"));
+        // An import also writes foreign highlight, math and embeds in Agaric's form.
+        normalize_foreign_forms(&mut read.blocks, import::embed_names_note);
         prop_assert_eq!(tree_of(&imported.blocks), tree_of(&read.blocks), "md:\n{}", md);
         prop_assert_eq!(&imported.frontmatter, &read.frontmatter, "md:\n{}", md);
     }
