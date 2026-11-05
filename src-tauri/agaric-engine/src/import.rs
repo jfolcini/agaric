@@ -1011,8 +1011,7 @@ pub struct VaultFile {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachmentRef {
     /// An image's alt text or a link's label, kept in the rewritten token.
-    /// Empty for Obsidian embeds `![[file]]` (which carry no alt) and for an
-    /// empty `![]` or `[]`.
+    /// An Obsidian embed's is its image size (`|300`, `|300x200`), else empty.
     pub alt: String,
     /// The path the token names, used to match a [`VaultFile`]: an embed's name
     /// as written, an image's destination without its `<…>` and percent-decoded
@@ -1034,11 +1033,16 @@ impl AttachmentRef {
 }
 
 /// Obsidian embed `![[file.png]]` — group 1 is the inner ref (path or basename,
-/// any run of chars that is neither `]`, `|`, nor newline; the optional `|alt`
-/// display-text suffix that Obsidian allows is dropped). Non-greedy.
+/// any run of chars that is neither `]`, `|`, nor newline), group 2 the
+/// optional `|…` suffix after it. Non-greedy.
 static OBSIDIAN_EMBED_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"!\[\[([^\]\|\n]+?)(?:\|[^\]\n]*)?\]\]").expect("invalid obsidian-embed regex")
+    Regex::new(r"!\[\[([^\]\|\n]+?)(?:\|([^\]\n]*))?\]\]").expect("invalid obsidian-embed regex")
 });
+
+/// An embed suffix that sizes the image, `300` or `300x200`, in the grammar
+/// `parseImageAlt` (`src/lib/image-alt-size.ts`) reads after an alt's `|`.
+static EMBED_SIZE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[1-9]\d*(?:x\d+)?$").expect("invalid embed-size regex"));
 
 /// The opening of a standard markdown image `![alt](` — group 1 is the alt
 /// text — or of a link `[label](` — group 2 is the label, which holds no
@@ -1181,7 +1185,8 @@ fn links_a_file(destination: &str) -> bool {
 ///
 /// Handles four inbound shapes, mirroring the tag/wiki-link detection style in
 /// `commands::pages::markdown`:
-///   * Obsidian embed — `![[file.png]]` (optional `|display` suffix dropped),
+///   * Obsidian embed — `![[file.png]]` (a `|300` size kept as the alt, any
+///     other `|display` suffix dropped),
 ///   * standard markdown image — `![alt](relative/path.png)`, its destination
 ///     read by `link_destination` and percent-decoded,
 ///   * Logseq/relative asset paths captured by the markdown-image form above
@@ -1234,8 +1239,14 @@ pub fn detect_attachment_refs(content: &str, code_spans: &[(usize, usize)]) -> V
         if inner.is_empty() || is_skippable_attachment_ref(inner) {
             continue;
         }
+        // A suffix that is no size is Obsidian's display text, which Agaric
+        // has no place for.
+        let alt = match cap.get(2) {
+            Some(size) if EMBED_SIZE_RE.is_match(size.as_str()) => format!("|{}", size.as_str()),
+            _ => String::new(),
+        };
         refs.push(AttachmentRef {
-            alt: String::new(),
+            alt,
             original_ref: inner.to_string(),
             full_match: whole.as_str().to_string(),
         });
@@ -1333,6 +1344,69 @@ pub fn link_obsidian_note_embeds(content: &str, names_note: impl Fn(&str) -> boo
             }
         })
         .into_owned()
+}
+
+/// The attribute map Logseq writes right after an image,
+/// `{:height 53, :width 42}`: group 1 its keys and values.
+static LOGSEQ_IMAGE_ATTRS_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\{(:[^{}\n]*)\}").expect("invalid logseq-attrs regex"));
+
+/// A `:width` or `:height` of that map: group 1 the key, group 2 its whole
+/// pixels. A size dragged in Logseq can carry a fraction, which is dropped.
+static LOGSEQ_IMAGE_SIZE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r":(width|height)[^\S\n]+([1-9]\d*)(?:\.\d+)?(?:[,\s]|$)")
+        .expect("invalid logseq-size regex")
+});
+
+/// `content` with each Logseq image size in Agaric's form, the alt's `|W` or
+/// `|WxH` suffix (`parseImageAlt` in `src/lib/image-alt-size.ts`):
+/// `![a](x.png){:width 300}` becomes `![a|300](x.png)`, the map dropped. A
+/// map with no width, and an image in inline code or escaped, are left as
+/// written.
+pub fn rewrite_logseq_image_sizes(content: &str) -> String {
+    if !content.contains("){:") {
+        return content.to_string();
+    }
+    let code_spans = inline_code_spans(content);
+    let mut out = String::with_capacity(content.len());
+    let mut copied = 0;
+    for token in markdown_link_tokens(content) {
+        if !token.is_image
+            || code_spans
+                .iter()
+                .any(|&(s, e)| token.start >= s && token.start < e)
+            || is_escaped(content, token.start)
+        {
+            continue;
+        }
+        let Some(attrs) = LOGSEQ_IMAGE_ATTRS_RE.captures(&content[token.end..]) else {
+            continue;
+        };
+        let (mut width, mut height) = (None, None);
+        for size in LOGSEQ_IMAGE_SIZE_RE.captures_iter(&attrs[1]) {
+            let px = size.get(2).expect("group 2 present").as_str();
+            if &size[1] == "width" {
+                width = Some(px);
+            } else {
+                height = Some(px);
+            }
+        }
+        let Some(width) = width else {
+            continue;
+        };
+        let alt_end = token.start + "![".len() + token.text.len();
+        out.push_str(&content[copied..alt_end]);
+        out.push('|');
+        out.push_str(width);
+        if let Some(height) = height {
+            out.push('x');
+            out.push_str(height);
+        }
+        out.push_str(&content[alt_end..token.end]);
+        copied = token.end + attrs[0].len();
+    }
+    out.push_str(&content[copied..]);
+    out
 }
 
 /// An Obsidian embed's target name: its text before any `#anchor` or `|label`.
@@ -8802,6 +8876,49 @@ mod tests_line_probes_5160 {
             ("\n# Trip\n", "Trip"),
         ] {
             assert_eq!(strip_title_heading(md, title), md, "{md:?} {title:?}");
+        }
+    }
+}
+
+/// #6033 S6 — Logseq's image size map read into the alt's `|W` / `|WxH`.
+#[cfg(test)]
+mod tests_logseq_image_sizes {
+    use super::rewrite_logseq_image_sizes;
+
+    #[test]
+    fn a_width_map_becomes_the_alt_size() {
+        for (logseq, agaric) in [
+            ("![a](x.png){:width 300}", "![a|300](x.png)"),
+            ("![](x.png){:height 53, :width 42}", "![|42x53](x.png)"),
+            (
+                "![a](x.png){:width 312.5, :align \"center\"}",
+                "![a|312](x.png)",
+            ),
+            (
+                r#"![](<my x.png> "t"){:width 3} ok"#,
+                r#"![|3](<my x.png> "t") ok"#,
+            ),
+            (
+                "![a](x.png){:width 1} ![b](y.png){:width 2}",
+                "![a|1](x.png) ![b|2](y.png)",
+            ),
+        ] {
+            assert_eq!(rewrite_logseq_image_sizes(logseq), agaric, "{logseq:?}");
+        }
+    }
+
+    /// No width, no image, code, an escape or a space before the map: text.
+    #[test]
+    fn anything_else_stays_as_written() {
+        for text in [
+            "![a](x.png){:height 3}",
+            "![a](x.png){:max-width 3}",
+            "![a](x.png) {:width 3}",
+            "[a](x.pdf){:width 3}",
+            "`![a](x.png){:width 3}`",
+            r"\![a](x.png){:width 3}",
+        ] {
+            assert_eq!(rewrite_logseq_image_sizes(text), text, "{text:?}");
         }
     }
 }
