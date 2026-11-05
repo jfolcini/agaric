@@ -237,6 +237,7 @@ macro_rules! agaric_commands {
             $crate::commands::sync_cmds::set_sync_relay_settings,
             // #6057 — the sync deltas the boot replay quarantined (#3226).
             $crate::commands::sync_cmds::list_quarantined_sync_slots,
+            $crate::commands::sync_cmds::readmit_quarantined_sync_slot,
             // Batch count commands (#604)
             $crate::commands::agenda::count_agenda_batch_by_source,
             $crate::commands::queries::count_backlinks_batch,
