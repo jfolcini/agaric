@@ -215,7 +215,9 @@ fn mask_shown_spans(
     let mut out = String::with_capacity(content.len());
     let mut rest = content;
     while let Some(ch) = rest.chars().next() {
+        let at_line_start = rest.len() == content.len() || out.ends_with('\n');
         let span = match ch {
+            '~' if at_line_start => tilde_fence(rest),
             '`' => Some(code_span(rest)),
             '\\' => rest[1..]
                 .chars()
@@ -242,6 +244,31 @@ fn mask_shown_spans(
         rest = &rest[len..];
     }
     out
+}
+
+/// The code a tilde fence at the start of `rest`, which starts a line, opens,
+/// and the bytes it takes, as `parseCodeBlock` reads it: a run of three or
+/// more `~` closed by a line holding only a run at least as long, plus
+/// whitespace. With no closer the fence runs to the end. `None` for a run
+/// too short to open one.
+fn tilde_fence(rest: &str) -> Option<(String, usize)> {
+    let open = rest.len() - rest.trim_start_matches('~').len();
+    if open < 3 {
+        return None;
+    }
+    let mut line_start = rest.find('\n')? + 1;
+    while line_start <= rest.len() {
+        let line_end = rest[line_start..]
+            .find('\n')
+            .map_or(rest.len(), |at| line_start + at);
+        let line = &rest[line_start..line_end];
+        let run = line.len() - line.trim_start_matches('~').len();
+        if run >= open && line[run..].trim().is_empty() {
+            return Some((rest[open..line_start].to_owned(), line_end));
+        }
+        line_start = line_end + 1;
+    }
+    Some((rest[open..].to_owned(), rest.len()))
 }
 
 /// The code a backtick run at the start of `rest` opens, and the bytes it
