@@ -400,6 +400,8 @@ describe('classify-changes.sh', () => {
     'src-tauri/.cargo/mutants.toml',
     'scripts/check-sqlx-cache-drift.sh',
     'scripts/check-unsafe-allowlist.sh',
+    'scripts/clippy-sqlx-check.sh',
+    'scripts/sqlx-rustc-wrapper.sh',
     '.github/actions/sqlx-offline-check/action.yml',
   ])('%s is read only by lint: no Rust suite, build or real lane', (path) => {
     expect(classify([path])).toMatchObject(LINT_ONLY_RUST)

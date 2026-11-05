@@ -429,7 +429,7 @@ There is **no Play Store upload step** in the release pipeline. The `android-bui
 just gen-sqlx
 ```
 
-Run after touching any `sqlx::query!` / `sqlx::query_as!` call. Commit the regenerated `.sqlx/` caches alongside the Rust changes; a stale cache is caught by pre-push Phase E and by CI's `sqlx-offline-check` lanes (root plus each member crate that holds query macros). `just gen-sqlx` regenerates all of them: first the workspace-wide `cargo sqlx prepare --workspace -- --workspace --tests` at the root (the second `--workspace`, passed to *cargo* after the `--`, is what captures leaf crates nothing depends on — a bare `cargo sqlx prepare` silently drops them and reddens CI's offline `clippy --workspace`), then one crate-local pass per member crate against a throwaway migrated DB.
+Run after touching any `sqlx::query!` / `sqlx::query_as!` call. Commit the regenerated `.sqlx/` caches alongside the Rust changes; a stale cache is caught by pre-push Phase E and by CI's `lint` job (`scripts/clippy-sqlx-check.sh`, root plus each member crate that holds query macros). `just gen-sqlx` regenerates all of them: first the workspace-wide `cargo sqlx prepare --workspace -- --workspace --tests` at the root (the second `--workspace`, passed to *cargo* after the `--`, is what captures leaf crates nothing depends on — a bare `cargo sqlx prepare` silently drops them and reddens CI's root-cache check), then one crate-local pass per member crate against a throwaway migrated DB.
 
 ## TypeScript bindings (specta)
 
