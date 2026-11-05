@@ -5994,12 +5994,13 @@ async fn a_copy_into_another_space_pastes_its_foreign_refs_as_their_text_6277() 
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let source = dup_page(&pool, &mat, "Source").await;
-    // Two pages of one title, so the copy writes the link to one of them raw.
+    // Two pages of one title: the name reads back as the lower id, so the
+    // copy writes the link to the other one raw.
     for (id, position) in [(SOURCE_PROJECT, 10), (SOURCE_PROJECT_TWIN, 11)] {
         insert_block(&pool, id, "page", "Twin", None, Some(position)).await;
         assign_to_space(&pool, id, TEST_SPACE_ID).await;
     }
-    let twin = SOURCE_PROJECT;
+    let twin = SOURCE_PROJECT_TWIN;
     let other = dup_page(&pool, &mat, "Other").await;
     let target = dup_child(
         &pool,
