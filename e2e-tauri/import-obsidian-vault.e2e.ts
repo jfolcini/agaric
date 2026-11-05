@@ -12,8 +12,9 @@
 // carries the vault's name, `[[über]]` names `Über.md` (the backend folds note
 // names in full Unicode, as the frontend does), the tag chip reads its name,
 // the front-matter property is set, the embed renders from the stored bytes,
-// the image is an attachment only, never a page, and `![[topic]]`, Obsidian's
-// stored embed of a note, is an embed block showing the note. `![[topic#^step]]`
+// a `|300` embed at that width, the image is an attachment only, never a
+// page, and `![[topic]]`, Obsidian's stored embed of a note, is an embed
+// block showing the note. `![[topic#^step]]`
 // embeds one block of a note imported AFTER the one that names it, whose `^step`
 // marker leaves the block's text: only the folder's closing `link_import_anchors`
 // call can link it, so it is the embed showing that block alone.
@@ -73,6 +74,7 @@ describe('Agaric real-backend Obsidian vault import (#5740) @markdown', () => {
       '---',
       `- ${marker}-links [[${topic}]] #${marker}-tag`,
       `- ${marker}-figure ![[pic.png]]`,
+      `- ${marker}-sized ![[pic.png|300]]`,
       `- ![[${topic}]]`,
       `- ![[${topic}#^step]]`,
       `- ${marker}-umlaut [[über]]`,
@@ -116,6 +118,16 @@ describe('Agaric real-backend Obsidian vault import (#5740) @markdown', () => {
         throw new Error(`the tag chip reads ${JSON.stringify(tagText)}, not the imported tag`)
       })
     await expectImageRendered(await blockId(`${marker}-figure`), 'the embedded image')
+    const sized = await blockId(`${marker}-sized`)
+    await expectImageRendered(sized, 'the sized embed')
+    const width = await browser.execute(
+      (id: string) =>
+        document.querySelector<HTMLImageElement>(
+          `[data-block-id="${id}"] [data-testid="image-rendered"]`,
+        )?.style.width ?? '',
+      sized,
+    )
+    expect(width).toBe('300px')
     // The embeds in block order: the note, whose two blocks both show, then the
     // one block `^step` named, which shows alone.
     let embeds: string[] = []

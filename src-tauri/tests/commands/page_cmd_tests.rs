@@ -16970,6 +16970,117 @@ async fn import_attaches_a_linked_file_as_a_file_link_6032() {
     mat.shutdown();
 }
 
+/// #6033 S6 — an Obsidian image embed's `|300` or `|300x200` size is stored as
+/// the alt's size suffix `parseImageAlt` reads; display text has no place in
+/// an Agaric image, and a sized embed of a non-image is labelled by its name.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_obsidian_embed_keeps_its_width() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- ![[pic.png|300]] and ![[pic.png|300x200]] and ![[pic.png|big]]\n\
+         - scan ![[scan.pdf|300]]"
+            .into(),
+        Some("note.md".into()),
+        TEST_SPACE_ID.into(),
+        Some(vec![
+            VaultFile {
+                path: "pic.png".into(),
+                bytes: vec![0x89, b'P', b'N', b'G'],
+            },
+            VaultFile {
+                path: "scan.pdf".into(),
+                bytes: b"%PDF-1.4".to_vec(),
+            },
+        ]),
+    )
+    .await
+    .unwrap();
+    assert!(result.warnings.is_empty(), "got {:?}", result.warnings);
+    settle(&mat).await;
+
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT a.id FROM attachments a JOIN blocks b ON b.id = a.block_id \
+         WHERE a.deleted_at IS NULL ORDER BY b.position",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let [pic, scan] = ids.as_slice() else {
+        panic!("two attachments, got {ids:?}");
+    };
+    assert_eq!(
+        content_block_texts(&pool).await,
+        vec![
+            format!(
+                "![|300](attachment:{pic}) and ![|300x200](attachment:{pic}) \
+                 and ![](attachment:{pic})"
+            ),
+            format!("scan [scan.pdf](attachment:{scan})"),
+        ]
+    );
+
+    mat.shutdown();
+}
+
+/// #6033 S6 — Logseq's `{:width N}` map after an image, ingested or remote,
+/// is stored as the alt's size suffix, a height kept as `|WxH` and a dragged
+/// size's fraction dropped. Code keeps the map as written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_logseq_image_width_becomes_its_alt_width() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- ![a cat](assets/cat.png){:height 53, :width 42} by \
+         ![](https://example.com/x.png){:width 312.5}\n\
+         - `![](https://example.com/c.png){:width 9}`\n\
+         - ```\n  ![](https://example.com/f.png){:width 9}\n  ```"
+            .into(),
+        Some("note.md".into()),
+        TEST_SPACE_ID.into(),
+        Some(vec![VaultFile {
+            path: "assets/cat.png".into(),
+            bytes: vec![0x89, b'P', b'N', b'G'],
+        }]),
+    )
+    .await
+    .unwrap();
+    assert!(result.warnings.is_empty(), "got {:?}", result.warnings);
+    settle(&mat).await;
+
+    let rows = attachment_rows(&pool).await;
+    let [(cat, ..)] = rows.as_slice() else {
+        panic!("one attachment, got {rows:?}");
+    };
+    let texts = content_block_texts(&pool).await;
+    assert_eq!(texts.len(), 3, "{texts:?}");
+    assert_eq!(
+        texts[0],
+        format!("![a cat|42x53](attachment:{cat}) by ![|312](https://example.com/x.png)")
+    );
+    assert_eq!(texts[1], "`![](https://example.com/c.png){:width 9}`");
+    assert!(
+        texts[2].contains("![](https://example.com/f.png){:width 9}"),
+        "{texts:?}"
+    );
+
+    mat.shutdown();
+}
+
 // ======================================================================
 // #2722 — aliases & tags import as REAL associations, never inert text props
 // ======================================================================

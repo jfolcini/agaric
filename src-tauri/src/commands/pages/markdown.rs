@@ -4419,6 +4419,9 @@ fn parse_import_payload(
     // A note of the folder is a note whatever its name looks like.
     let names_note =
         |name: &str| import::embed_names_note(name) || notes.contains_key(&name.to_lowercase());
+    for block in parse_output.blocks.iter_mut().filter(|b| !b.is_code) {
+        block.content = import::rewrite_logseq_image_sizes(&block.content);
+    }
     normalize_foreign_forms(&mut parse_output.blocks, names_note);
     if !notes.is_empty() {
         for block in parse_output.blocks.iter_mut().filter(|b| !b.is_code) {
@@ -7019,12 +7022,13 @@ fn match_ref_to_vault_file(
 /// stays the link `[label](attachment:<id>)`, an embedded image stays the
 /// image `![alt](attachment:<id>)`, and any other embedded file becomes a
 /// link, since a PDF written as an image renders broken. A link is labelled by
-/// its label or alt, else the file's name.
+/// its label or alt, else the file's name; an Obsidian embed's alt is only its
+/// image size, so it is labelled by the file's name.
 fn attachment_token(att: &import::AttachmentRef, id: &str, filename: &str, mime: &str) -> String {
     if !att.is_link() && mime.starts_with("image/") {
         return format!("![{}](attachment:{id})", att.alt);
     }
-    let label = if att.alt.is_empty() {
+    let label = if att.alt.is_empty() || att.full_match.starts_with("![[") {
         filename
     } else {
         &att.alt
