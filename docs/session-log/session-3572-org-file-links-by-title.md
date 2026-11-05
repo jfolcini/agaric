@@ -1,4 +1,4 @@
-# Session 3570 — Org file links name the page by its #+TITLE
+# Session 3572 — Org file links name the page by its #+TITLE
 
 Item 1 of what was left in #6032. On a folder import, an Org `[[file:other.org][desc]]` link to an Org file of the pick whose `#+TITLE` differs from its file name linked (and created) a page named after the file, while the file imported under its `#+TITLE`.
 
