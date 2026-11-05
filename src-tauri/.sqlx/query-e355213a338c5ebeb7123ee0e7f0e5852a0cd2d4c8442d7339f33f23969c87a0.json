@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (\n               SELECT 1 FROM block_tags bt\n               JOIN blocks b ON b.id = bt.block_id AND b.deleted_at IS NULL\n               LEFT JOIN blocks p ON p.id = b.page_id AND p.deleted_at IS NULL\n               WHERE bt.tag_id = ?1 AND COALESCE(b.space_id, p.space_id) IS NOT ?2\n           ) OR EXISTS (\n               SELECT 1 FROM blocks b\n               LEFT JOIN blocks p ON p.id = b.page_id AND p.deleted_at IS NULL\n               WHERE b.deleted_at IS NULL AND instr(b.content, ?3) > 0\n                 AND COALESCE(b.space_id, p.space_id) IS NOT ?2\n           ) AS \"outside!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "outside!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e355213a338c5ebeb7123ee0e7f0e5852a0cd2d4c8442d7339f33f23969c87a0"
+}

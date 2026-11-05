@@ -120,6 +120,7 @@ A property of type *ref* can point at a tag as well as a page (e.g. a custom `ar
 
 ## Pitfalls to know
 
+- **Two same-named tags from two devices merge.** A tag name is unique within its space, in any case. Two devices that each create `#project` while apart merge the two after they sync: the device that made the newer tag moves every chip and inline reference to the older one and deletes the newer, and a device that is gone, or a block of another space holding or naming the newer tag, leaves both tags in place ([Sync](sync.md#how-sync-runs)).
 - **Tag namespaces are a naming convention, not a hierarchy.** `@projects/website` is a *different, unrelated* tag from `@projects`. Use a prefix query (`projects/`) to sweep a namespace — and remember it won't include the bare parent tag.
 - **A block reference is a link, not a copy.** The `((…))` chip carries the target's title and nothing else — no children, no live content. To pull a block's actual content onto another page, use an **embed**.
 - **Unlinked references are case-insensitive substring matches.** They can be noisy if a page title is a common word. Use page aliases (or rename) to disambiguate.

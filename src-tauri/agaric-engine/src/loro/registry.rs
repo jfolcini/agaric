@@ -435,6 +435,15 @@ impl LoroEngineRegistry {
         )
     }
 
+    /// Whether this device created `block_id` in `space_id`'s engine
+    /// ([`LoroEngine::created_here`]), `false` for a space with no engine,
+    /// read as [`Self::loro_vv`] reads: without creating an engine or marking
+    /// the space dirty. The caller must hold no engine guard.
+    pub fn created_here(&self, space_id: &SpaceId, block_id: &str) -> bool {
+        let shared = { self.inner.lock().get(space_id).map(Arc::clone) };
+        shared.is_some_and(|shared| shared.lock().created_here(block_id))
+    }
+
     /// All [`SpaceId`]s currently registered, in arbitrary order.
     ///
     /// Used by the sync orchestrator to enumerate which spaces to
@@ -1028,6 +1037,40 @@ mod tests {
             "the edges of both engines"
         );
         assert_eq!(r.len(), 2, "the read creates no engine");
+    }
+
+    /// #6278 — the engine that minted a block's node created it, and one that
+    /// only imported it did not; a space with no engine has no creator here,
+    /// and the read creates none.
+    #[test]
+    fn created_here_is_the_engine_that_minted_the_node_and_creates_none_6278() {
+        let r = LoroEngineRegistry::new();
+        let a = SpaceId::from_trusted(SPACE_A);
+        let mut elsewhere = LoroEngine::with_peer_id("device-2").expect("peer");
+        elsewhere
+            .apply_create_block("THEIRS", "content", "t", None, 0)
+            .expect("create");
+        let snapshot = elsewhere.export_snapshot().expect("export");
+        {
+            let mut g = r.for_space(&a, "device-1").expect("space A");
+            let engine = g.engine_mut();
+            engine
+                .apply_create_block("MINE", "content", "m", None, 0)
+                .expect("create");
+            engine.import(&snapshot).expect("import");
+        }
+
+        assert!(r.created_here(&a, "MINE"), "this device minted the node");
+        assert!(
+            !r.created_here(&a, "THEIRS"),
+            "the other device minted it; this one only imported it"
+        );
+        assert!(!r.created_here(&a, "ABSENT"), "no node, no creator");
+        assert!(
+            !r.created_here(&SpaceId::from_trusted(SPACE_B), "MINE"),
+            "a space with no engine has no creator"
+        );
+        assert_eq!(r.len(), 1, "the read creates no engine");
     }
 
     /// #5712 — of the inbound syncs in flight, only the last to leave is told

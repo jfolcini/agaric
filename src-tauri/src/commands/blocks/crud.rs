@@ -616,7 +616,7 @@ async fn reject_duplicate_tag_name(
 }
 
 /// Every live tag of `space_id`, as `(id, name_key)`.
-async fn space_tag_names(
+pub(crate) async fn space_tag_names(
     conn: &mut sqlx::SqliteConnection,
     space_id: &str,
 ) -> Result<Vec<(String, String)>, AppError> {

@@ -33,6 +33,7 @@ import { useIsTouch } from '@/hooks/useIsTouch'
 import { useLanguage } from '@/hooks/useLanguage'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { useOnlineStatus } from '@/hooks/useOnlineStatus'
+import { usePageRenameNotices } from '@/hooks/usePageRenameNotices'
 import { usePrimaryFocusRegistry } from '@/hooks/usePrimaryFocus'
 import { useQuickCaptureShortcut } from '@/hooks/useQuickCaptureShortcut'
 import { useRecoveryStatus } from '@/hooks/useRecoveryStatus'
@@ -378,6 +379,11 @@ function App() {
   // emits before this listener registers) and show a persistent warning
   // banner. No-op outside Tauri / on a healthy boot.
   useRecoveryStatus()
+
+  // ── Name-tie renames (#6278) ───────────────────────────────────────
+  // After a sync, this device renames a newer page it made that shares a
+  // name with another page of its space (`Foo (2)`); say so.
+  usePageRenameNotices()
 
   // ── Desktop auto-update check (FEAT: updater wire-up) ─────────────
   // Fires at most once per 24 h to ask the Tauri updater plugin whether
