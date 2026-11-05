@@ -2365,29 +2365,6 @@ pub fn read_pasted_text(text: &str) -> ParseOutput {
     output
 }
 
-/// A block HTML paste sends, at `depth`: a checkbox after the list marker on
-/// its first line (`- [ ] text`, a task list item) is its `todo_state` (D6);
-/// the rest is kept as it comes.
-pub fn pasted_block(content: String, depth: usize) -> ParsedBlock {
-    let (first, rest) = content.split_once('\n').unzip();
-    let Some((state, text)) = first
-        .unwrap_or(&content)
-        .strip_prefix("- ")
-        .and_then(split_task_marker)
-    else {
-        return verbatim_block(content, depth);
-    };
-    let text = match rest {
-        Some(rest) => format!("{text}\n{rest}"),
-        None => text.to_string(),
-    };
-    let mut block = verbatim_block(text, depth);
-    block
-        .properties
-        .push(("todo_state".to_string(), state.to_string()));
-    block
-}
-
 /// A block holding `content` as it comes, at `depth`. Like an imported block,
 /// it is code when a line of it opens a fence.
 pub fn verbatim_block(content: String, depth: usize) -> ParsedBlock {
