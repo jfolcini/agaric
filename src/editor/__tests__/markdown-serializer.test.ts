@@ -2385,14 +2385,13 @@ describe('code blocks', () => {
     expect(result.content?.[2]?.type).toBe('paragraph')
   })
 
-  it('invalid code block language is sanitized to null', () => {
+  it('a code fence keeps its whole info string, spaces and punctuation included (#6277 C3)', () => {
     const md = '```not a language!\nconsole.log("hi")\n```'
     const result = parse(md)
     expect(result.content).toHaveLength(1)
     const block = result.content?.[0]
     expect(block?.type).toBe('codeBlock')
-    // Language should be stripped because it contains spaces / invalid chars
-    expect((block as { attrs?: { language?: string } }).attrs?.language).toBeUndefined()
+    expect((block as { attrs?: { language?: string } }).attrs?.language).toBe('not a language!')
   })
 
   it('valid code block language is preserved', () => {

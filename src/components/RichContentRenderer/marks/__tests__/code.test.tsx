@@ -98,6 +98,13 @@ describe('renderCodeBlock — highlight size cap (#747 item 3)', () => {
     await waitFor(() => expect(hljsSpans(container).length).toBeGreaterThan(0))
   })
 
+  it('auto-highlights a block whose info string names no grammar (#6277 C3)', async () => {
+    const block = codeBlock('def greet():\n    return "hi"\n', 'py title="hi.py"')
+    const { container } = render(<>{renderCodeBlock(block, 'k')}</>)
+
+    await waitFor(() => expect(hljsSpans(container).length).toBeGreaterThan(0))
+  })
+
   it('falls back to PLAIN TEXT above the cap — no highlight spans (auto path)', async () => {
     // A >cap input that WOULD otherwise produce highlight spans if processed.
     const huge = 'const value = 42;\n'.repeat(Math.ceil(HIGHLIGHT_MAX_LENGTH / 18) + 100)
