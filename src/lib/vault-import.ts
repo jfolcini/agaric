@@ -31,7 +31,7 @@ import {
   logseqTitleProperty,
 } from '@/lib/logseq-import'
 import { isNotionExport, notionToMarkdown, stripNotionIds } from '@/lib/notion-import'
-import { type OrgIdTargets, orgToMarkdown } from '@/lib/org-import'
+import { type OrgLinkTargets, orgToMarkdown } from '@/lib/org-import'
 import { listAllPropertyDefs } from '@/lib/property-save-utils'
 
 /**
@@ -474,23 +474,30 @@ async function nameNotes(
   return { paths, notesByName, graph }
 }
 
+/** Where the Org links of a pick lead: its `:ID:`s and its Org files' page titles by vault path. */
+interface OrgPickTargets {
+  ids: OrgLinkTargets['ids']
+  titles: ReadonlyMap<string, string>
+}
+
 /**
- * Where each `:ID:` of a pick's Org files leads (#6032 N4): a headline's to
- * its block, a file's to the page the file imports as, by the title the
- * backend gives its path.
+ * Where each `:ID:` of a pick's Org files leads (#6032 N4), a headline's to
+ * its block and a file's to the page the file imports as, and each Org file's
+ * page title, the title the backend gives its path.
  */
-async function orgIdTargets(
+async function orgPickTargets(
   orgNotes: readonly { file: File; path: string }[],
-): Promise<OrgIdTargets> {
-  const targets = new Map<string, string | null>()
+): Promise<OrgPickTargets> {
+  const ids = new Map<string, string | null>()
+  const titles = new Map<string, string>()
   for (const { file, path } of orgNotes) {
     const org = orgToMarkdown(await file.text())
-    for (const id of org.headlineIds) targets.set(id, null)
-    if (org.fileId !== null) {
-      targets.set(org.fileId, retitle(path, org.title).slice(0, -'.md'.length))
-    }
+    const title = retitle(path, org.title).slice(0, -'.md'.length)
+    titles.set(vaultRelativePath(file.webkitRelativePath), title)
+    for (const id of org.headlineIds) ids.set(id, null)
+    if (org.fileId !== null) ids.set(org.fileId, title)
   }
-  return targets
+  return { ids, titles }
 }
 
 /**
@@ -504,8 +511,9 @@ async function orgIdTargets(
  * present. An Org file is converted, a Notion export's pages lose the ids in
  * their names and links (#6032), and a Logseq graph's pages and journals take
  * Logseq's titles, its own `logseq/` folder left out (#6033). An Org file's
- * `id:` links resolve through the `:ID:`s of every Org file of the pick, by
- * the paths they import as, which the first Org file loaded reads.
+ * `id:` links, and its `file:` links read from its own folder, resolve through
+ * the `:ID:`s and the page titles of every Org file of the pick, by the paths
+ * they import as, which the first Org file loaded reads.
  */
 export function mdFilesToUnits(
   files: File[],
@@ -526,7 +534,7 @@ export function mdFilesToUnits(
   // A Logseq graph's titles wait on its `config.edn`, read once, on the first load.
   let named: Promise<NamedNotes> | undefined
   const naming = () => (named ??= nameNotes(files, notes, logseq))
-  let orgTargets: Promise<OrgIdTargets> | undefined
+  let orgTargets: Promise<OrgPickTargets> | undefined
   return notes.map(({ file, extension }, index) => ({
     name: file.name,
     // Count bytes from the file size (known without reading) so a load
@@ -537,13 +545,20 @@ export function mdFilesToUnits(
       const text = await file.text()
       let content = text
       let path = paths[index] as string
+      const notePath = vaultRelativePath(file.webkitRelativePath)
+      const noteDir = notePath.slice(0, Math.max(notePath.lastIndexOf('/'), 0))
       if (extension === '.org') {
-        orgTargets ??= orgIdTargets(
+        orgTargets ??= orgPickTargets(
           notes.flatMap((note, i) =>
             note.extension === '.org' ? [{ file: note.file, path: paths[i] as string }] : [],
           ),
         )
-        const org = orgToMarkdown(text, await orgTargets)
+        const { ids, titles: orgTitles } = await orgTargets
+        const fileTitle = (name: string) => {
+          const target = resolveVaultPath(noteDir, name)
+          return target === null ? undefined : orgTitles.get(target)
+        }
+        const org = orgToMarkdown(text, { ids, fileTitle })
         content = org.markdown
         path = retitle(path, org.title)
       } else if (notion && extension === '.md') {
@@ -557,8 +572,6 @@ export function mdFilesToUnits(
       // single-file import (no index) has no siblings. A folder note always
       // ships its note names, even none: that marks it as a folder's, whose
       // references into other notes wait for `link_import_anchors`.
-      const notePath = vaultRelativePath(file.webkitRelativePath)
-      const noteDir = notePath.slice(0, Math.max(notePath.lastIndexOf('/'), 0))
       const vaultFiles =
         vaultIndex == null ? null : await collectVaultFiles(content, noteDir, vaultIndex)
       const vaultNotes = vaultIndex == null ? null : linkedNotePaths(content, notesByName)

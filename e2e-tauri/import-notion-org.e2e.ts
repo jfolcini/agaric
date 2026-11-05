@@ -205,4 +205,32 @@ describe('Agaric real-backend Notion, Org and text folder import (#6032) @markdo
       },
     )
   })
+
+  it('links an Org `file:` link to an Org file of the pick to the page its `#+TITLE` names', async () => {
+    await waitForAppReady()
+    const marker = runScopedMarker('wdio-6032-orgfile')
+    const folder = `${marker}-vault`
+    const alphaTitle = `${marker} Alpha`
+    await importFolder(
+      'import-folder-input',
+      folder,
+      {
+        [`${marker}-a.org`]: Buffer.from(`#+TITLE: ${alphaTitle}\n* ${marker}-alpha\n`),
+        [`${marker}-b.org`]: Buffer.from(`* ${marker}-link [[file:${marker}-a.org][see]]\n`),
+      },
+      'Imported “2 files”',
+    )
+
+    await navigateTo('Journal')
+    await navigateTo('Pages')
+    await pageEntryTitled(alphaTitle).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await expectAbsent(`span[title="${marker}-a"]`, "a page named after the linked file's name")
+
+    await openPageTitled(`${marker}-b`)
+    const chip = (await rowOf(`${marker}-link`)).$('[data-testid="block-link-chip"]')
+    await browser.waitUntil(async () => (await chip.getAttribute('title')) === alphaTitle, {
+      timeout: NAV_TIMEOUT,
+      timeoutMsg: 'the file: link never resolved to the page its #+TITLE names',
+    })
+  })
 })

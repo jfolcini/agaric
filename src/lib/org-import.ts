@@ -28,11 +28,15 @@ export interface OrgPage {
   headlineIds: string[]
 }
 
-/**
- * Where an Org `id:` link of a pick leads, by id: `null` for a headline's,
- * referenced as its block, else the title of the page a file-level id names.
- */
-export type OrgIdTargets = ReadonlyMap<string, string | null>
+/** Where an Org link to an `id:` or a file of the pick leads. */
+export interface OrgLinkTargets {
+  /** By id: `null` for a headline's, referenced as its block, else the title of the page a file-level id names. */
+  ids: ReadonlyMap<string, string | null>
+  /** By a `file:` link's path: the title of the page the Org file of the pick it names imports as. */
+  fileTitle: (path: string) => string | undefined
+}
+
+const NO_TARGETS: OrgLinkTargets = { ids: new Map(), fileTitle: () => undefined }
 
 const HEADLINE_RE = /^(\*+)[ \t]+(.*)$/
 const TITLE_RE = /^#\+title:\s*(.*)$/i
@@ -68,7 +72,7 @@ const IMPORTER_KEYWORDS: ReadonlySet<string> = new Set([
   'CANCEL',
 ])
 
-export function orgToMarkdown(org: string, targets: OrgIdTargets = new Map()): OrgPage {
+export function orgToMarkdown(org: string, targets: OrgLinkTargets = NO_TARGETS): OrgPage {
   const page: OrgPage = { title: null, markdown: '', fileId: null, headlineIds: [] }
   const lines = org.replace(/\r\n?/g, '\n').split('\n')
   const vocabulary = taskVocabulary(lines)
@@ -133,7 +137,7 @@ function taskVocabulary(lines: readonly string[]): Map<string, string> {
 function headlineText(
   text: string,
   vocabulary: Map<string, string>,
-  targets: OrgIdTargets,
+  targets: OrgLinkTargets,
 ): string {
   const tagged = HEADLINE_TAGS_RE.exec(text)
   let title = tagged === null ? text : text.slice(0, tagged.index)
@@ -154,7 +158,7 @@ function sectionToMarkdown(
   lines: readonly string[],
   indent: string,
   page: OrgPage,
-  targets: OrgIdTargets,
+  targets: OrgLinkTargets,
 ): string[] {
   const widths = lines.filter((l) => l.trim() !== '').map((l) => l.length - l.trimStart().length)
   const strip = widths.length > 0 ? Math.min(...widths) : 0
@@ -256,7 +260,8 @@ function fenceFor(rest: readonly string[]): string {
 }
 
 /**
- * Org links in `text` as Markdown: a URL as `[desc](url)`, a `file:` link as a
+ * Org links in `text` as Markdown: a URL as `[desc](url)`, a `file:` link to
+ * an Org file the pick's `targets` hold as a link to its page, any other as a
  * relative link (to the `.md` page an `.org` file imports as, or an image
  * embed when it has no description), and `[[Page][desc]]` as `[[Page|desc]]`.
  * An `id:` link the pick's `targets` hold is a reference to the headline's
@@ -265,18 +270,20 @@ function fenceFor(rest: readonly string[]): string {
  * escaped so the importer reads no page name in them; `[[Page]]` stays as
  * written.
  */
-function orgLinks(text: string, targets: OrgIdTargets): string {
+function orgLinks(text: string, targets: OrgLinkTargets): string {
   return text.replace(LINK_RE, (whole, target: string, desc: string | undefined) => {
     if (URL_RE.test(target)) return `[${desc ?? target}](${target})`
     const file = /^file:([^:]+)/i.exec(target)
     if (file !== null) {
       const name = file[1] as string
+      const title = targets.fileTitle(name)
+      if (title !== undefined) return desc === undefined ? `[[${title}]]` : `[[${title}|${desc}]]`
       const path = name.replace(/\.org$/i, '.md').replaceAll(' ', '%20')
       if (desc === undefined && IMAGE_RE.test(path)) return `![](${path})`
       return `[${desc ?? name}](${path})`
     }
     const id = /^id:(.+)$/.exec(target)?.[1]?.trim()
-    const page = id === undefined ? undefined : targets.get(id)
+    const page = id === undefined ? undefined : targets.ids.get(id)
     if (page === null) return `((${id}))`
     if (page !== undefined) return desc === undefined ? `[[${page}]]` : `[[${page}|${desc}]]`
     if (id !== undefined || /^[*#]/.test(target)) return `\\${whole}`
