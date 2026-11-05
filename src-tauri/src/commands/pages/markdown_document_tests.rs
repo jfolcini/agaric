@@ -379,11 +379,13 @@ proptest! {
 
     /// A page's export, imported as a `Markdown` file, reads as
     /// `parse_document_outline` reads the same text less its title line: one
-    /// reader (decision 1, #6277), whichever blocks something addresses.
+    /// reader (decision 1, #6277), whichever blocks something addresses, saved
+    /// with `\r\n` line ends or a BOM or not ([`saved_as`]).
     #[test]
     fn an_export_imported_as_a_markdown_file_reads_as_the_document_reader_reads_it(
         forest in arb_document_forest(),
         addressed in prop::collection::vec(any::<bool>(), 10),
+        saved in any::<(bool, bool)>()
     ) {
         let (mut data, expected) = build_page(&forest);
         data.addressed_blocks = expected
@@ -393,7 +395,7 @@ proptest! {
             .map(|((_, _, id, _), _)| id.clone())
             .collect();
         let md = render_page_markdown(PAGE, &data);
-        let imported = import_as_markdown_file(&md);
+        let imported = import_as_markdown_file(&saved_as(&md, saved));
         let mut read = import::parse_document_outline(&import::strip_title_heading(&md, "Title"));
         // An import also writes foreign highlight, math and embeds in Agaric's form.
         normalize_foreign_forms(&mut read.blocks, import::embed_names_note);

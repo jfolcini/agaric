@@ -2377,12 +2377,14 @@ pub fn verbatim_block(content: String, depth: usize) -> ParsedBlock {
     }
 }
 
-/// `content` less its `# {title}` line, the first line or the first after a
-/// leading front matter: Agaric's own export writes the page title as one,
-/// after the front matter (#6277 A1) or, in an older export, before it, and an
-/// import derives the title from the file name, so the line would come back as
-/// a block repeating it (#5160 S6). Any other line is kept.
+/// `content` less a leading byte order mark and its `# {title}` line, the
+/// first line or the first after a leading front matter: Agaric's own export
+/// writes the page title as one, after the front matter (#6277 A1) or, in an
+/// older export, before it, and an import derives the title from the file
+/// name, so the line would come back as a block repeating it (#5160 S6). Any
+/// other line is kept.
 pub fn strip_title_heading<'a>(content: &'a str, title: &str) -> std::borrow::Cow<'a, str> {
+    let content = without_bom(content);
     let (front, body) = content.split_at(front_matter_fence(content).map_or(0, |(_, end)| end));
     let body = if front.is_empty() {
         body

@@ -3070,6 +3070,23 @@ describe('export_page_markdown', () => {
 
     expect(children).toEqual(['# Plan', 'Intro'])
   })
+
+  // An editor may save the export after a byte order mark (#6277 H1).
+  it('leaves out the title line of an export saved after a BOM', () => {
+    blocks.set('BOM_PAGE', makeBlock('BOM_PAGE', 'page', 'Saved', null, 93))
+    blocks.set('BOM_BODY', makeBlock('BOM_BODY', 'content', 'Intro', 'BOM_PAGE', 1))
+    const md = invoke('export_page_markdown', { pageId: 'BOM_PAGE' }) as string
+    const { page_id } = invoke('import_markdown', {
+      content: `\uFEFF${md}`,
+      filename: 'Saved.md',
+      spaceId: 'SPACE_PERSONAL',
+    }) as { page_id: string }
+    const children = (
+      invoke('list_blocks', { parentId: page_id }) as { items: Record<string, unknown>[] }
+    ).items.map((b) => b['content'])
+
+    expect(children).toEqual(['Intro'])
+  })
 })
 
 // ---------------------------------------------------------------------------

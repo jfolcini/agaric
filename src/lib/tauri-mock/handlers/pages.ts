@@ -1326,13 +1326,13 @@ const PAGES_PRIMITIVE_TYPES: ReadonlySet<string> = new Set([
 ])
 
 /**
- * `content`'s lines less a `# Title` equal to `title`, the first line or the
- * first after a leading front matter, and the blank lines after it, so front
- * matter is still leading, as the backend's `strip_title_heading` does (#5160
- * S6, #6277 A1).
+ * `content`'s lines less a leading byte order mark and a `# Title` equal to
+ * `title`, the first line or the first after a leading front matter, and the
+ * blank lines after it, so front matter is still leading, as the backend's
+ * `strip_title_heading` does (#5160 S6, #6277 A1).
  */
 function stripTitleHeading(content: string, title: string): string[] {
-  const lines = content.split('\n')
+  const lines = content.replace(/^\uFEFF/, '').split('\n')
   const close = lines[0]?.startsWith('---')
     ? lines.findIndex((line, i) => i > 0 && line.startsWith('---'))
     : -1
