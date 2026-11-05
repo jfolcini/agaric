@@ -1,4 +1,4 @@
-# Session 3514 — Review notes from the #6033 and #6277 PRs
+# Session 3533 — Review notes from the #6033 and #6277 PRs
 
 This collects the non-blocking review notes from this sweep's merged PRs (#6304, #6314, #6317, #6322, #6332, #6335, #6339, #6343, #6350, #6351, #6357, #6365) and the orchestrator's own list.
 
