@@ -170,19 +170,27 @@ function applyTextMarks(node: TextNode, ctx: RenderContext, key: string): React.
     content = <u>{content}</u>
   }
 
+  return linkMark ? applyLinkMark(content, linkMark, ctx, key) : content
+}
+
+/** Wrap `content`, a marked text run or an image (#6342), in the link `mark` opens. */
+export function applyLinkMark(
+  content: React.ReactNode,
+  mark: LinkMark,
+  ctx: RenderContext,
+  key: string,
+): React.ReactNode {
   // Re-validate href scheme at the render sink: input-time validation
   // (external-link extension / link editor) is bypassed by the markdown
   // import / peer sync, so a `javascript:`/`data:` href can reach stored
   // content. Render those, and an `attachment:` href naming no id, as plain
   // marked text rather than a clickable link.
-  const href = linkMark?.attrs.href ?? ''
+  const href = mark.attrs.href
   const attachmentId = parseAttachmentRef(href)
-  if (attachmentId !== null) {
-    content = renderAttachmentLink(content, attachmentId, ctx, `${key}-link`)
-  } else if (linkMark && !href.startsWith(ATTACHMENT_REF_SCHEME) && isAllowedUrl(href)) {
-    content = renderExternalLink(content, href, ctx, `${key}-link`)
+  if (attachmentId !== null) return renderAttachmentLink(content, attachmentId, ctx, `${key}-link`)
+  if (!href.startsWith(ATTACHMENT_REF_SCHEME) && isAllowedUrl(href)) {
+    return renderExternalLink(content, href, ctx, `${key}-link`)
   }
-
   return content
 }
 

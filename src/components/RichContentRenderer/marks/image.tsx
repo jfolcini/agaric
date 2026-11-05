@@ -3,6 +3,7 @@ import type React from 'react'
 import { CollapsibleImage } from '@/components/rendering/CollapsibleImage'
 import { GatedImage } from '@/components/rendering/GatedImage'
 import type { RenderContext } from '@/components/RichContentRenderer/context'
+import { applyLinkMark } from '@/components/RichContentRenderer/marks/text'
 import type { ImageNode } from '@/editor/types'
 import { parseImageAlt } from '@/lib/image-alt-size'
 
@@ -35,6 +36,13 @@ import { parseImageAlt } from '@/lib/image-alt-size'
  */
 export function renderImage(node: ImageNode, key: string, ctx: RenderContext): React.ReactElement {
   const { text, width } = parseImageAlt(node.attrs.alt)
+  // A linked image (`[![alt](src)](href)`, a README badge) opens its link
+  // (#6342), and has no fold toggle: a click on it is the link's.
+  const link = node.marks?.[0]
+  if (link) {
+    const image = <GatedImage src={node.attrs.src} alt={text} width={width} />
+    return <span key={key}>{applyLinkMark(image, link, ctx, key)}</span>
+  }
   if (ctx.interactive !== true) {
     return <GatedImage key={key} src={node.attrs.src} alt={text} width={width} />
   }
