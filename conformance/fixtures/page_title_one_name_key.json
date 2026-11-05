@@ -1,5 +1,5 @@
 {
-  "description": "#6278 I1 — a page title and the aliases of the space's pages are one name under `name_key` (trimmed, lowercased, NFC). The ops make a space (`C1`) and the page `Foo` (C2). A create of `foo ` resolves to C2: no page, no op. `Bar` (C3) takes the alias `Roadmap`. Renaming C3 to `FOO` is refused; a create of `roadmap` is refused, the alias naming C3 there; C2 taking the alias `BAR` is refused, the title naming C3. C3 may respell its own title. An undo of a rename onto another spelling of a title is refused, and so are the undo of a delete and a restore that would bring back an alias another page is now titled.",
+  "description": "#6278 I1 — a page title and the aliases of the space's pages are one name under `name_key` (trimmed, lowercased, NFC). The ops make a space (`C1`) and the page `Foo` (C2). A create of `foo ` resolves to C2: no page, no op. `Bar` (C3) takes the alias `Roadmap`. Renaming C3 to `FOO` is refused; a create of `roadmap` is refused, the alias naming C3 there; the `create_block` IPC makes a page by the same path, so `FOO ` answers C2 and `ROADMAP` is refused; C2 taking the alias `BAR` is refused, the title naming C3. C3 may respell its own title. An undo of a rename onto another spelling of a title is refused, and so are the undo of a delete and a restore that would bring back an alias another page is now titled.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -210,6 +210,18 @@
       "returns": []
     },
     {
+      "code": null,
+      "error": null,
+      "name": "a_create_block_of_another_spelling_resolves_to_the_page",
+      "returns": ["B2#block_type=page#content=Foo#parent_id=null#position=2"]
+    },
+    {
+      "code": "DuplicatePageTitle",
+      "error": "validation",
+      "name": "a_create_block_naming_another_pages_alias_is_refused",
+      "returns": []
+    },
+    {
       "code": "DuplicatePageAlias",
       "error": "validation",
       "name": "an_alias_naming_another_pages_title_is_refused",
@@ -336,6 +348,42 @@
       "expect_code": "DuplicatePageTitle",
       "expect_error": "validation",
       "name": "a_create_naming_another_pages_alias_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": null,
+        "blockType": "page",
+        "content": "FOO ",
+        "index": null,
+        "parentId": null,
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "create_block",
+      "comment": "The `create_block` IPC makes a page by the same path: another spelling of C2's title answers C2's own row, nothing is created.",
+      "name": "a_create_block_of_another_spelling_resolves_to_the_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": null,
+        "blockType": "page",
+        "content": "ROADMAP",
+        "index": null,
+        "parentId": null,
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "create_block",
+      "comment": "C3's alias, through `create_block` too: refused, and nothing is created.",
+      "expect_code": "DuplicatePageTitle",
+      "expect_error": "validation",
+      "name": "a_create_block_naming_another_pages_alias_is_refused",
       "via": "command"
     },
     {

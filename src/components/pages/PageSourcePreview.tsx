@@ -24,7 +24,8 @@ import type { SourceLines } from '@/editor/source-buffer'
 import { frontMatterProperties, readBlocks } from '@/editor/source-buffer-blocks'
 import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import { contentShowsListMarker, shownListStyle } from '@/lib/list-style'
-import { linkBodyReadings, normalizeTagName, scanNameTokens } from '@/lib/name-tokens'
+import { linkBodyReadings, nameKey, scanNameTokens } from '@/lib/name-tokens'
+import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -80,23 +81,25 @@ function newNameId({ ids, titles }: NewNames, name: string): string {
   return id
 }
 
-/** Titles the resolve cache holds in the active space, exact first, then folded as a tag name is. */
+/**
+ * Titles the resolve cache holds in the active space by `nameKey`, the lowest
+ * id where several share one, as the save links it (#6278).
+ */
 function useTitleIds(): (name: string) => string | null {
   const cache = useResolveStore((s) => s.cache)
   const version = useResolveStore((s) => s.version)
   const spaceId = useSpaceStore((s) => s.currentSpaceId)
   return useMemo(() => {
     const prefix = `${spaceId ?? '__global__'}::`
-    const exact = new Map<string, string>()
-    const folded = new Map<string, string>()
+    const holders = new Map<string, string>()
     for (const [key, entry] of cache) {
       if (!key.startsWith(prefix) || entry.deleted) continue
       const id = key.slice(prefix.length)
-      if (!exact.has(entry.title)) exact.set(entry.title, id)
-      const fold = normalizeTagName(entry.title)
-      if (!folded.has(fold)) folded.set(fold, id)
+      const name = nameKey(entry.title)
+      const held = holders.get(name)
+      if (held === undefined || compareUtf8Bytes(id, held) < 0) holders.set(name, id)
     }
-    return (name: string) => exact.get(name) ?? folded.get(normalizeTagName(name)) ?? null
+    return (name: string) => holders.get(nameKey(name)) ?? null
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- the cache Map is mutated in place; `version` is what changes when it does.
   }, [cache, version, spaceId])
 }

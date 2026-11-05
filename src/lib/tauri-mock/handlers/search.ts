@@ -206,11 +206,36 @@ function codeSpan(src: string, at: number): [string, number] {
   return [src.slice(at, end), end]
 }
 
+/** `tilde_fence` (`strip.rs`): the code a tilde fence opening the line at
+ *  `at` holds and the index after it, as `parseCodeBlock` reads it. A run of
+ *  three or more `~` closes on a line holding only a run at least as long,
+ *  plus whitespace, or runs to the end; `null` for a run too short. */
+function tildeFence(src: string, at: number): [string, number] | null {
+  let open = 0
+  while (src[at + open] === '~') open++
+  if (open < 3) return null
+  const firstBreak = src.indexOf('\n', at)
+  let lineStart = firstBreak === -1 ? src.length + 1 : firstBreak + 1
+  while (lineStart <= src.length) {
+    const nextBreak = src.indexOf('\n', lineStart)
+    const lineEnd = nextBreak === -1 ? src.length : nextBreak
+    const line = src.slice(lineStart, lineEnd)
+    let run = 0
+    while (line[run] === '~') run++
+    if (run >= open && line.slice(run).trim() === '') {
+      return [src.slice(at + open, lineStart), lineEnd]
+    }
+    lineStart = lineEnd + 1
+  }
+  return [src.slice(at + open), src.length]
+}
+
 /** The span at `at` whose shown text no later pass may touch, and the index
  *  after it: code, a backslash escape, a `((ULID))` as its target's first line,
  *  or a placeholder opener already in the text. */
 function shownSpanAt(src: string, at: number): [string, number] | null {
   const ch = src[at]
+  if (ch === '~' && (at === 0 || src[at - 1] === '\n')) return tildeFence(src, at)
   if (ch === '`') return codeSpan(src, at)
   if (ch === '\\') {
     const next = src[at + 1]

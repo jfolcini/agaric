@@ -802,13 +802,17 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
     expect(dispatchBlockCommand).toHaveBeenCalledTimes(1)
   })
 
-  // #6033 — only the block path resolves a page name, so one line naming a
-  // page goes there, spliced at the caret.
+  // #6033 — only the block path resolves a page name and writes a foreign
+  // form in Agaric's, so one line holding either goes there, spliced at the
+  // caret.
   it.each([
     ['a [[Name]] link', 'see [[Fresh page]] now'],
     ['a labelled [[Name|label]] link', '[[Fresh page|label]]'],
     ['a Logseq [label]([[Name]]) link', '[alias]([[Fresh page]])'],
     ['a [[Name]] link with blank lines around it', '\n see [[Fresh page]]\n\n'],
+    ['a Logseq ^^highlight^^', 'x ^^y^^'],
+    ['LaTeX \\(math\\)', 'area \\(x^2\\) here'],
+    ['LaTeX \\[math\\]', 'see \\[\\pi r^2\\]'],
   ])('routes one line holding %s as text, spliced at the caret', async (_name, text) => {
     mockFocusedBlockId = 'BLOCK_A'
     editor = await buildEditor(HELLO_WORLD)
@@ -833,6 +837,8 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
     ['a list line after text, which the block path would renumber', '3. see [[Fresh page]]'],
     ['a list line after a blank line', '\n3. see [[Fresh page]]'],
     ['a task line, which TaskPaste owns', '- [ ] see [[Fresh page]]'],
+    ['a lone caret', 'x^2 and (y)'],
+    ['a foreign form on a list line after text', '3. x ^^y^^'],
   ])('leaves one line holding %s off the block path', async (_name, text) => {
     editor = await buildEditor(HELLO_WORLD)
     editor.commands.setTextSelection(7)
@@ -851,6 +857,18 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
     editor.commands.setTextSelection(endOf(editor, 'one'))
 
     paste(editor, ' see [[Fresh page]]')
+
+    expect(dispatchBlockCommand).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['a table cell', () => TABLE_DOC],
+    ['a list item', () => LIST_DOC],
+  ])('leaves one line holding a foreign form in %s off the block path', async (_name, doc) => {
+    editor = await buildEditor(doc())
+    editor.commands.setTextSelection(endOf(editor, 'one'))
+
+    paste(editor, ' x ^^y^^')
 
     expect(dispatchBlockCommand).not.toHaveBeenCalled()
   })
