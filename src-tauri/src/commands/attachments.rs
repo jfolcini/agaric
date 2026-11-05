@@ -104,7 +104,7 @@ fn validate_attachment_filename(filename: &str) -> Result<String, AppError> {
 /// Validate and normalize metadata for a new attachment before any bytes are
 /// written. The storage path is intentionally absent: only the backend-owned
 /// bytes command can originate attachments, and it generates that path.
-fn validate_new_attachment(
+pub(crate) fn validate_new_attachment(
     filename: &str,
     mime_type: &str,
     size_bytes: i64,
@@ -184,15 +184,57 @@ async fn persist_attachment(
     fs_path: String,
     content_hash: String,
 ) -> Result<AttachmentRow, AppError> {
-    // Generate ULID for attachment_id
-    let attachment_id = ulid::Ulid::generate().to_string().to_uppercase();
-    let now = now_ms();
-
     // Single IMMEDIATE transaction: validation + op_log + attachments write.
     // CommandTx couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "add_attachment").await?;
+    tx.arm_engine_rollback(materializer.loro_state());
+    let row = persist_attachment_in_tx(
+        &mut tx,
+        materializer,
+        device_id,
+        block_id,
+        StoredBytes {
+            filename,
+            mime_type,
+            size_bytes,
+            fs_path,
+            content_hash,
+        },
+    )
+    .await?;
+    tx.commit_and_dispatch(materializer).await?;
+    Ok(row)
+}
+
+/// Bytes [`write_attachment_bytes`] stored, and the name and type the row
+/// will carry.
+pub(crate) struct StoredBytes {
+    pub filename: String,
+    pub mime_type: String,
+    pub size_bytes: i64,
+    pub fs_path: String,
+    pub content_hash: String,
+}
+
+/// [`persist_attachment`] inside the caller's rollback-armed transaction
+/// (`add_meeting_inner`, #5364), the op enqueued for the caller's commit.
+pub(crate) async fn persist_attachment_in_tx(
+    tx: &mut CommandTx,
+    materializer: &Materializer,
+    device_id: &str,
+    block_id: BlockId,
+    stored: StoredBytes,
+) -> Result<AttachmentRow, AppError> {
+    let StoredBytes {
+        filename,
+        mime_type,
+        size_bytes,
+        fs_path,
+        content_hash,
+    } = stored;
+    let attachment_id = ulid::Ulid::generate().to_string().to_uppercase();
+    let now = now_ms();
     let state = materializer.loro_state();
-    tx.arm_engine_rollback(state);
 
     // Validate block exists and is not deleted (TOCTOU-safe inside tx)
     let block_id_str = block_id.as_str();
@@ -200,7 +242,7 @@ async fn persist_attachment(
         r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id_str
     )
-    .fetch_optional(&mut **tx)
+    .fetch_optional(&mut ***tx)
     .await?;
     if exists.is_none() {
         return Err(AppError::NotFound(format!(
@@ -208,8 +250,7 @@ async fn persist_attachment(
         )));
     }
 
-    let row_fs_path =
-        resolve_attachment_blob(&mut tx, &fs_path, size_bytes, &content_hash, now).await?;
+    let row_fs_path = resolve_attachment_blob(tx, &fs_path, size_bytes, &content_hash, now).await?;
 
     // `fs_path` is the canonical blob path (which may differ from the
     // supplied path on a dedup reuse), so every read/sync path resolves the
@@ -225,18 +266,14 @@ async fn persist_attachment(
         fs_path: row_fs_path.clone(),
         content_hash: Some(content_hash.clone()),
     });
-    let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
-    crate::materializer::apply_op_projected(&mut tx, &op_record, state, false).await?;
-
-    // Commit + fire-and-forget background cache dispatch.
+    let op_record = op_log::append_local_op_in_tx(tx, device_id, payload, now).await?;
+    crate::materializer::apply_op_projected(tx, &op_record, state, false).await?;
     tx.enqueue_background(op_record);
-    tx.commit_and_dispatch(materializer).await?;
 
     // #1993 Phase 1 — on a dedup reuse, the just-written duplicate at the
     // supplied `fs_path` is redundant (the committed row points at the
     // canonical blob path instead). Reclamation of those bytes is DEFERRED to
     // the GC pass (`cleanup_orphaned_attachments`) rather than unlinked here.
-    //
     Ok(AttachmentRow {
         id: BlockId::from_trusted(&attachment_id),
         block_id,
@@ -306,7 +343,7 @@ async fn resolve_attachment_blob(
 }
 
 /// Best-effort cleanup for bytes written by a rejected upload.
-async fn cleanup_rejected_attachment(full_path: &Path) {
+pub(crate) async fn cleanup_rejected_attachment(full_path: &Path) {
     match tokio::fs::remove_file(full_path).await {
         Ok(()) => {}
         Err(unlink_err) if unlink_err.kind() == std::io::ErrorKind::NotFound => {}
@@ -441,38 +478,14 @@ pub mod write_fault {
     }
 }
 
-/// Add an attachment by passing the raw file bytes over IPC.
-///
-/// The frontend reads the file into bytes (a browser `ArrayBuffer`) and hands
-/// them to this command; the **backend is the sole writer** — it generates the
-/// storage path, writes the bytes under `app_data_dir/attachments/`, then
-/// persists the op-log + row atomically. This avoids exposing any renderer API
-/// that can point an attachment row at an arbitrary app-data file.
-///
-/// On any failure after writing, cleanup of the freshly-written bytes is
-/// attempted. A failed cleanup is logged and left for the attachment GC to
-/// reconcile.
-///
-/// # Errors
-///
-/// - [`AppError::Validation`] — size exceeds 50 MB or MIME type not allowed
-/// - [`AppError::NotFound`] — block does not exist or is soft-deleted
-/// - [`AppError::Io`] — writing or verifying the bytes on disk failed
-#[allow(clippy::too_many_arguments)]
-#[instrument(skip(pool, device_id, materializer, app_data_dir, bytes), err)]
-pub async fn add_attachment_with_bytes_inner(
-    pool: &SqlitePool,
-    device_id: &str,
-    materializer: &Materializer,
+/// Write `bytes` under a fresh backend-generated path in `app_data_dir`, and
+/// check they landed whole. Returns the relative path and the bytes' hash. A
+/// failed check removes what was written.
+pub(crate) async fn write_attachment_bytes(
     app_data_dir: &Path,
-    block_id: BlockId,
-    filename: String,
-    mime_type: String,
     bytes: Vec<u8>,
-) -> Result<AttachmentRow, AppError> {
-    let size_bytes = i64::try_from(bytes.len()).unwrap_or(i64::MAX);
-    let filename = validate_new_attachment(&filename, &mime_type, size_bytes)?;
-
+    size_bytes: i64,
+) -> Result<(String, String), AppError> {
     // Backend-generated relative storage path — the FE never supplies one.
     // #3370: minted through the same type the apply / undo / replay writers
     // coerce into and the resolvers parse, so there is exactly one definition
@@ -518,6 +531,44 @@ pub async fn add_attachment_with_bytes_inner(
     // is never committed if storage disappears or reports a different length.
     let full_path = app_data_dir.join(&fs_path);
     verify_written_attachment(&full_path, size_bytes).await?;
+
+    Ok((fs_path, content_hash))
+}
+
+/// Add an attachment by passing the raw file bytes over IPC.
+///
+/// The frontend reads the file into bytes (a browser `ArrayBuffer`) and hands
+/// them to this command; the **backend is the sole writer** — it generates the
+/// storage path, writes the bytes under `app_data_dir/attachments/`, then
+/// persists the op-log + row atomically. This avoids exposing any renderer API
+/// that can point an attachment row at an arbitrary app-data file.
+///
+/// On any failure after writing, cleanup of the freshly-written bytes is
+/// attempted. A failed cleanup is logged and left for the attachment GC to
+/// reconcile.
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — size exceeds 50 MB or MIME type not allowed
+/// - [`AppError::NotFound`] — block does not exist or is soft-deleted
+/// - [`AppError::Io`] — writing or verifying the bytes on disk failed
+#[allow(clippy::too_many_arguments)]
+#[instrument(skip(pool, device_id, materializer, app_data_dir, bytes), err)]
+pub async fn add_attachment_with_bytes_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    app_data_dir: &Path,
+    block_id: BlockId,
+    filename: String,
+    mime_type: String,
+    bytes: Vec<u8>,
+) -> Result<AttachmentRow, AppError> {
+    let size_bytes = i64::try_from(bytes.len()).unwrap_or(i64::MAX);
+    let filename = validate_new_attachment(&filename, &mime_type, size_bytes)?;
+
+    let (fs_path, content_hash) = write_attachment_bytes(app_data_dir, bytes, size_bytes).await?;
+    let full_path = app_data_dir.join(&fs_path);
 
     // On ANY persistence failure, unlink the bytes we just wrote so a rejected
     // upload leaves nothing behind.
