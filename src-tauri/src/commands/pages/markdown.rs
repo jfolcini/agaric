@@ -3058,7 +3058,9 @@ impl PasteSplice {
 /// `content` as inline math when it is a `$$` block of one line of LaTeX, for
 /// a block joined to text (#6033): mid-text a `$$` line opens no block, so the
 /// editor would show both fences as text. A digit first is braced, as import
-/// writes `\(2x\)`, since `$2` reads as currency.
+/// writes `\(2x\)`, since `$2` reads as currency. LaTeX of several lines stays
+/// a `$$` block: joined onto one line, a `%` comment on any line but the last
+/// would swallow the lines after it.
 fn display_math_as_inline(content: &str) -> Option<String> {
     let latex = content.strip_prefix("$$\n")?.strip_suffix("\n$$")?.trim();
     if latex.is_empty() || latex.contains(['\n', '$']) {

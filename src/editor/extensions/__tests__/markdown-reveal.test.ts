@@ -1598,6 +1598,12 @@ describe('MarkdownReveal for quotes, callouts, code blocks and math (#5691)', ()
     expect(syntax(ed)).toEqual(['~~~a`b', '~~~'])
   })
 
+  it('draws a space before an info string that starts with a tilde, as the block is stored', () => {
+    const ed = createEditor('~~~ ~`b\nx\n~~~', constructs)
+    ed.commands.setTextSelection(2)
+    expect(syntax(ed)).toEqual(['~~~ ~`b', '~~~'])
+  })
+
   it('keeps the caret in the code, at its start and at its end, and typing there is code', () => {
     const ed = createEditor(CODE, constructs)
     const start = at(ed, 'let')

@@ -16,6 +16,7 @@ import type { EditorState, Selection } from '@tiptap/pm/state'
 import {
   CLOSE_DELIMITER,
   codeFence,
+  codeFenceOpen,
   inlineCodeDelimiters,
   MARK_ORDER,
   OPEN_DELIMITER,
@@ -448,7 +449,9 @@ export function revealedBlockSyntax(state: EditorState): BlockSyntax[] {
     if (block.type.name !== 'codeBlock') return []
     const language = (block.attrs['language'] as string | null) ?? ''
     const fence = codeFence(block.textContent, language)
-    return [{ from: $pos.before(), to: $pos.after(), open: `${fence}${language}`, close: fence }]
+    return [
+      { from: $pos.before(), to: $pos.after(), open: codeFenceOpen(fence, language), close: fence },
+    ]
   })
   const math = nodesAtSelection(state.selection).flatMap(({ node, pos }): BlockSyntax[] =>
     node.type.name === 'math_block'
