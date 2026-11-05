@@ -6,7 +6,8 @@ description: >-
   install runs anyway against the image's existing package lists. Only the
   INSTALL decides the step's exit status, and an install that fails after a
   never-completed update exits 75 (not 1) so "this job could not run" is
-  distinguishable from "this job failed".
+  distinguishable from "this job failed". The install is bounded too and gets
+  one retry; an install that runs out its bound both times also exits 75.
 inputs:
   packages:
     description: >-
@@ -22,6 +23,16 @@ inputs:
       already did before this action existed. NOT a new number either way.
     required: false
     default: '300'
+  install-timeout:
+    description: >-
+      Seconds to bound each `apt-get install` attempt. A slow mirror can
+      trickle .debs to one runner for most of its job budget while sibling shards
+      install in seconds, and Acquire::http::Timeout does not fire on a slow
+      connection, only a silent one. The retry opens new connections and
+      reuses every .deb the first attempt finished. Defaults to the
+      update's bound.
+    required: false
+    default: '300'
 runs:
   using: composite
   steps:
@@ -32,6 +43,7 @@ runs:
       env:
         APT_PACKAGES: ${{ inputs.packages }}
         APT_UPDATE_TIMEOUT: ${{ inputs.update-timeout }}
+        APT_INSTALL_TIMEOUT: ${{ inputs.install-timeout }}
       run: |
         set -uo pipefail
 
@@ -96,6 +108,29 @@ runs:
           cat "${RUNNER_TEMP}/apt-mirrors.diag" 2>/dev/null || true
         }
 
+        # `sudo timeout` makes apt-get timeout's DIRECT child, so the signal
+        # does reach it — unlike the `timeout … npx … sudo apt-get` shape
+        # prepare-apt warns about. The kills are belt and braces for a KILLed
+        # apt-get's orphaned acquire methods and dpkg.
+        reap_apt() {
+          sudo pkill -TERM -x apt-get 2>/dev/null || true
+          sleep 5
+          sudo pkill -KILL -x apt-get 2>/dev/null || true
+          sudo pkill -KILL -x dpkg 2>/dev/null || true
+        }
+
+        # Same three locks and the same ≤180s budget prepare-apt polls: an
+        # apt-get killed by name does not reap a dpkg child, and dpkg holds
+        # /var/lib/dpkg/lock, which a lock-frontend-only poll cannot see.
+        wait_for_apt_locks() {
+          for _ in $(seq 1 60); do
+            sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock \
+                   /var/lib/apt/lists/lock >/dev/null 2>&1 || break
+            sleep 3
+          done
+          sudo dpkg --configure -a || true
+        }
+
         update_status=0
         for attempt in 1 2; do
           update_status=0
@@ -123,29 +158,13 @@ runs:
           case "${update_status}" in
             124|137)
               echo "::warning::apt-get update attempt ${attempt} exceeded ${APT_UPDATE_TIMEOUT}s (exit ${update_status}); the Ubuntu mirror is slow or down, this is not the diff"
-              # `sudo timeout` makes apt-get timeout's DIRECT child, so the
-              # signal does reach it — unlike the `timeout … npx … sudo
-              # apt-get` shape prepare-apt warns about. The kills are belt and
-              # braces for a KILLed apt-get's orphaned acquire methods.
-              sudo pkill -TERM -x apt-get 2>/dev/null || true
-              sleep 5
-              sudo pkill -KILL -x apt-get 2>/dev/null || true
-              sudo pkill -KILL -x dpkg 2>/dev/null || true
+              reap_apt
               ;;
             *)
               echo "::warning::apt-get update attempt ${attempt} failed (exit ${update_status})"
               ;;
           esac
-
-          # Same three locks and the same ≤180s budget prepare-apt polls: an
-          # apt-get killed by name does not reap a dpkg child, and dpkg holds
-          # /var/lib/dpkg/lock, which a lock-frontend-only poll cannot see.
-          for _ in $(seq 1 60); do
-            sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock \
-                   /var/lib/apt/lists/lock >/dev/null 2>&1 || break
-            sleep 3
-          done
-          sudo dpkg --configure -a || true
+          wait_for_apt_locks
         done
 
         if [ "${update_status}" -ne 0 ]; then
@@ -153,15 +172,43 @@ runs:
         fi
 
         install_status=0
-        : >"${apt_log}"
-        # shellcheck disable=SC2024 # as above
-        sudo apt-get install -y -qq "${pkgs[@]}" >>"${apt_log}" || install_status=$?
+        for attempt in 1 2; do
+          install_status=0
+          : >"${apt_log}"
+          # shellcheck disable=SC2024 # as above
+          sudo timeout -k 30 "${APT_INSTALL_TIMEOUT}" \
+            apt-get install -y -qq "${pkgs[@]}" >>"${apt_log}" || install_status=$?
+
+          case "${install_status}" in
+            124|137) ;;
+            *) break ;;
+          esac
+
+          # The log's `Get:` lines name the mirror that was trickling.
+          print_apt_log
+          echo "::warning::apt-get install attempt ${attempt} exceeded ${APT_INSTALL_TIMEOUT}s (exit ${install_status}); the Ubuntu mirror is slow, this is not the diff"
+          reap_apt
+          wait_for_apt_locks
+        done
 
         # A stalled update already raised a `::warning::` above; the install
         # succeeding needs no further line.
         if [ "${install_status}" -eq 0 ]; then
           exit 0
         fi
+
+        case "${install_status}" in
+          124|137)
+            echo "::error title=apt mirror (infra, not this diff)::AGARIC_APT_INFRA: apt-get install exceeded ${APT_INSTALL_TIMEOUT}s twice. Ubuntu mirror problem — rerun the job."
+            {
+              echo "### apt could not run (infra, not this diff)"
+              echo
+              echo '`apt-get install` timed out twice at'" \`${APT_INSTALL_TIMEOUT}s\`."
+              echo "Marker: \`AGARIC_APT_INFRA\`. Step exit: \`75\` (EX_TEMPFAIL), deliberately not \`1\`."
+            } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            exit 75
+            ;;
+        esac
 
         print_apt_log
 
