@@ -122,6 +122,8 @@ beforeEach(() => {
   stubInvoke(vi.mocked(invoke), {
     batch_resolve: () => [],
     list_all_tags_in_space: () => [],
+    // A Markdown file's run first asks which existing pages it updates (#6277 G5).
+    list_import_merges: () => [],
     get_mirror_status: () => ({
       supported: false,
       folder: null,
@@ -243,6 +245,8 @@ describe('DataTab', () => {
         null,
         // #5740 — nor notes for its links to name.
         null,
+        // #6277 G5 — no earlier file of the run wrote a page.
+        [],
       )
     })
   })
@@ -1293,6 +1297,8 @@ describe('DataTab', () => {
         null,
         // No `[[Name]]` links ⇒ no vault notes, which still marks a folder's note.
         [],
+        // #6277 G5 — no earlier file of the run wrote a page.
+        [],
       )
     })
   })
@@ -2037,6 +2043,35 @@ describe('DataTab', () => {
       expect(vaultFiles0).toHaveLength(1)
       expect(vaultFiles0?.[0]?.path).toBe('pic.png')
       expect(vaultFiles0?.[0]?.bytes).toEqual([104, 101, 108, 108, 111])
+    })
+
+    it('#6032 — warns once for every Evernote note link across the files that names no note of its file', async () => {
+      mockImportMarkdown.mockResolvedValue(okResult())
+      const link = (text: string) => `<a href="evernote:///view/1/s1/g/g/">${text}</a>`
+      const enexOf = (title: string, enml: string) =>
+        `<?xml version="1.0" encoding="UTF-8"?><en-export>` +
+        `<note><title>${title}</title><content><![CDATA[<en-note>${enml}</en-note>]]></content></note>` +
+        `</en-export>`
+
+      render(<DataTab />)
+      const input = screen.getByTestId('import-enex-input') as HTMLInputElement
+      const files = [
+        new File([enexOf('Plan', `<p>${link('Plan')} ${link('Gone')}</p>`)], 'Work.enex'),
+        new File([enexOf('Home', `<p>${link('Plan')}</p>`)], 'Home.enex'),
+      ]
+      Object.defineProperty(input, 'files', { value: files })
+
+      await act(async () => {
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+
+      await waitFor(() => {
+        expect(screen.getByTestId('import-warnings-heading')).toHaveTextContent('1 warning')
+      })
+      expect(screen.getAllByTestId('import-warning-item').map((item) => item.textContent)).toEqual([
+        t('data.importEnexNoteLinks', { count: 2 }),
+      ])
+      expect(mockImportMarkdown.mock.calls[0]?.[0]).toContain('[[Work/Plan|Plan]]')
     })
 
     it('has no a11y violations with the enex control present', async () => {

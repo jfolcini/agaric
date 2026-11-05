@@ -64,6 +64,7 @@ import { tagsHandlers } from '@/lib/tauri-mock/handlers/tags'
 import { indexLinks } from '@/lib/tauri-mock/link-index'
 import {
   findEmptyPageTitled,
+  findPageTitled,
   resolveInboundNames,
   resolveRefValue,
   resolveTagNames,
@@ -374,6 +375,16 @@ function unquoteYaml(value: string): string {
   return quoted?.[1] ?? value
 }
 
+/**
+ * `import::front_matter_scalar`: a property's value, unquoted, a double-quoted
+ * one also losing the `\\`, `\r` and `\n` escapes the export writes (#6325).
+ */
+function readFrontMatterScalar(value: string): string {
+  const quoted = /^"(.*)"$/s.exec(value)?.[1]
+  if (quoted === undefined) return unquoteYaml(value)
+  return quoted.replace(/\\([\\rn])/g, (_, c: string) => (c === 'r' ? '\r' : c === 'n' ? '\n' : c))
+}
+
 /** A refusal at buffer line `line`, prefixed with it as the backend's are (`at_line`). */
 function refusedAt(line: number | undefined, message: string): Error {
   return validationRejection(line === undefined ? message : `line ${line}: ${message}`)
@@ -424,7 +435,7 @@ function readFrontMatter(source: string): {
         .map((item) => unquoteYaml(item.trim()))
         .filter((item) => item !== '')
     } else {
-      front.properties.set(key, unquoteYaml(value))
+      front.properties.set(key, readFrontMatterScalar(value))
     }
   }
   return { front, lines, body: rows.map((row, at) => (at > close ? row : '')).join('\n') }
@@ -1331,6 +1342,22 @@ const PAGES_PRIMITIVE_TYPES: ReadonlySet<string> = new Set([
  * blank lines after it, so front matter is still leading, as the backend's
  * `strip_title_heading` does (#5160 S6, #6277 A1).
  */
+/**
+ * The page title a file imports as, as the backend derives it (`import_title`
+ * and `folder_path_to_namespace_title`): a trailing `.md` stripped, `\`→`/`,
+ * empty segments dropped, else "Imported Page".
+ */
+function importTitle(filename: string | null): string {
+  const namespaceTitle = (filename ?? '')
+    .replace(/\.md$/i, '')
+    .replace(/\\/g, '/')
+    .split('/')
+    .map((seg) => seg.trim())
+    .filter((seg) => seg.length > 0)
+    .join('/')
+  return namespaceTitle.length > 0 ? namespaceTitle : 'Imported Page'
+}
+
 function stripTitleHeading(content: string, title: string): string[] {
   const lines = content.replace(/^\uFEFF/, '').split('\n')
   const close = lines[0]?.startsWith('---')
@@ -2030,6 +2057,9 @@ export const pagesHandlers = {
   //   - Attachment handling (kept as literal text).
   //   - A folder pick's note names (`vault.notes`, #5740): a bare `[[Name]]`
   //     resolves as `Name`, never as the vault's note of that name.
+  //   - A file whose title names a page with blocks (#6277 decision 7): the
+  //     backend merges a Markdown file into it, or imports `Title (2)`, and
+  //     reads `runPages`; the mock makes another page of the title.
   //
   // WARNING: mock-backed frontend tests give NO assurance about import-contract
   // fidelity. Validate import semantics against the Rust tests, not this mock.
@@ -2066,18 +2096,7 @@ export const pagesHandlers = {
       }
     }
 
-    // Derive the page title the way the backend does
-    // (`folder_path_to_namespace_title`, markdown.rs): strip a trailing `.md`,
-    // normalise `\`→`/`, drop empty segments, rejoin with `/`. Fall back to
-    // "Imported Page" when nothing usable remains, matching markdown.rs:884.
-    const namespaceTitle = (filename ?? '')
-      .replace(/\.md$/i, '')
-      .replace(/\\/g, '/')
-      .split('/')
-      .map((seg) => seg.trim())
-      .filter((seg) => seg.length > 0)
-      .join('/')
-    const pageTitle = namespaceTitle.length > 0 ? namespaceTitle : 'Imported Page'
+    const pageTitle = importTitle(filename)
     const lines = stripTitleHeading(content, pageTitle)
 
     // Faithful-but-simple property count: the real importer pulls properties
@@ -2173,7 +2192,23 @@ export const pagesHandlers = {
       warnings,
       anchors: [],
       deferred: [],
+      merged: null,
     }
+  },
+
+  // `list_import_merges_inner` (#6277 G5): the page each file's title names
+  // that holds blocks, once each, in file order. The mock's import does not
+  // merge into it, which the Rust tests own.
+  list_import_merges: (args) => {
+    const { spaceId, filenames } = args as { spaceId: string; filenames: string[] }
+    const listed = new Map<string, string>()
+    for (const filename of filenames) {
+      const page = findPageTitled(importTitle(filename), spaceId)
+      if (page?.hasBlocks && !listed.has(page.id)) {
+        listed.set(page.id, (blocks.get(page.id)?.['content'] as string | null) ?? '')
+      }
+    }
+    return [...listed].map(([page_id, title]) => ({ page_id, title }))
   },
 
   // The end of a folder import. The mock's import defers no reference, so
@@ -2275,6 +2310,7 @@ export const pagesHandlers = {
   | 'apply_page_source'
   | 'get_blocks_source'
   | 'import_markdown'
+  | 'list_import_merges'
   | 'link_import_anchors'
   | 'import_bibliography'
 >

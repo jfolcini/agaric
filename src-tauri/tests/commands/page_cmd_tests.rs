@@ -12035,6 +12035,13 @@ async fn import_export_namespace_and_wikilink_round_trip_1446() {
         "export must humanise the wiki-link; got:\n{md}"
     );
 
+    // A file of a live page's title merges into it (#6277 decision 7); with
+    // the source in the Trash the export imports as a new page.
+    sqlx::query("UPDATE blocks SET deleted_at = 1 WHERE id = ?")
+        .bind(SRC)
+        .execute(&pool)
+        .await
+        .unwrap();
     // Re-import with the folder path Part A's ZIP would produce.
     let result = import_markdown_inner(
         &pool,
@@ -12358,10 +12365,11 @@ async fn import_adopts_the_empty_page_a_link_created_in_either_file_order() {
     }
 }
 
-/// D12 — a same-title page with content is never touched: the file becomes a
-/// new page and the import warns.
+/// #6277 decision 7 — a file of a same-title page with content merges into
+/// it, as an Edit as Markdown save of the file: no twin, and a block the file
+/// does not hold goes to the Trash.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn import_leaves_a_same_title_page_with_content_alone_and_warns() {
+async fn import_merges_into_a_same_title_page_with_content() {
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let existing = dup_page(&pool, &mat, "B").await;
@@ -12370,18 +12378,18 @@ async fn import_leaves_a_same_title_page_with_content_alone_and_warns() {
 
     let result = import_file(&pool, &mat, dir.path(), "B.md", "- b body").await;
 
-    let b_pages = pages_titled(&pool, "B").await;
-    assert_eq!(b_pages.len(), 2, "the file became a new page");
     assert_eq!(
-        dup_children(&pool, &existing).await.len(),
-        1,
-        "the existing page keeps only its own block"
+        pages_titled(&pool, "B").await,
+        [existing.as_str().to_owned()]
     );
-    assert_eq!(block_starting(&pool, "b body").await, "b body");
-    assert_eq!(
-        result.warnings,
-        ["a page titled 'B' already exists in this space; the file was imported as a new page"]
-    );
+    let children: Vec<String> = dup_children(&pool, &existing)
+        .await
+        .into_iter()
+        .map(|(_, content)| content)
+        .collect();
+    assert_eq!(children, ["b body"], "the existing page holds the file");
+    assert_eq!(result.page_id, existing.as_str());
+    assert_eq!(result.warnings, Vec::<String>::new());
     mat.shutdown();
 }
 
@@ -15497,6 +15505,13 @@ async fn export_import_round_trip_keeps_every_task_state() {
         assert!(md.contains(written), "{written:?}; got:\n{md}");
     }
     assert!(!md.contains('\\'), "nothing is escaped; got:\n{md}");
+    // A file of a live page's title merges into it (#6277 decision 7); with
+    // the source in the Trash the export imports as a new page.
+    sqlx::query("UPDATE blocks SET deleted_at = 1 WHERE id = ?")
+        .bind(SRC)
+        .execute(&pool)
+        .await
+        .unwrap();
     import_markdown_inner(
         &pool,
         DEV,
@@ -16223,10 +16238,16 @@ async fn import_export_full_round_trip_1916_1917_1918() {
         .await
         .unwrap();
 
+    // A file of a live page's title merges into it (#6277 decision 7); with
+    // the source in the Trash the export imports as a new page.
+    sqlx::query("UPDATE blocks SET deleted_at = 1 WHERE id = ?")
+        .bind(SRC)
+        .execute(&pool)
+        .await
+        .unwrap();
     // 2. Re-import as a NEW page, from the file Export All writes: named after
     // the title, so the `# Round Trip Source` line is the title, not a block
-    // (#5160 S6). An import never adopts an existing page, so the new page is
-    // the newest of that title.
+    // (#5160 S6). The new page is the newest of that title.
     let result = import_markdown_inner(
         &pool,
         DEV,

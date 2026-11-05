@@ -977,6 +977,14 @@ const WIRE: Readonly<Record<string, WireShape>> = {
     hasMoreKey: null,
     totalKey: null,
   },
+  // The import dialog's pages (#6277 G5), the title an attribute: a mock
+  // matching another spelling of it lists that page.
+  list_import_merges: {
+    rows: { kind: 'bare-array' },
+    token: { kind: 'id', idKey: 'page_id', attrKeys: ['title'] },
+    hasMoreKey: null,
+    totalKey: null,
+  },
   get_page_aliases: {
     rows: { kind: 'bare-array' },
     token: { kind: 'scalar' },

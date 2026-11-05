@@ -833,6 +833,14 @@ export async function reopenPageByTitle(title: string): Promise<void> {
   await $('[aria-label="Page title"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
 }
 
+/** How many rows of the Pages list carry exactly `title`. */
+export async function pagesTitled(title: string): Promise<number> {
+  await navigateTo('Pages')
+  const rows = `.//span[contains(@class, "page-browser-item-title")][normalize-space(.)="${title}"]`
+  await $(rows).waitForDisplayed({ timeout: NAV_TIMEOUT })
+  return $$(rows).length
+}
+
 /**
  * The Pages entry titled exactly `title`: a namespaced page is a leaf of the
  * namespace tree (PageTreeItem.tsx), a flat one a PageRow; both carry the

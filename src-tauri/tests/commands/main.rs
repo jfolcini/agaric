@@ -32,6 +32,7 @@ mod name_key_tests;
 mod page_alias_ops_tests;
 mod page_cmd_tests;
 mod page_front_matter_tests;
+mod page_reimport_tests;
 mod pages_filter_primitive_conformance_tests;
 mod pages_metadata_conformance_tests;
 mod pages_orphan_conformance_tests;

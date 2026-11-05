@@ -21,11 +21,12 @@ import {
   BibliographyResultPanel,
   useBibliographyImport,
 } from '@/components/settings/BibliographySection'
+import { ImportMergeDialog } from '@/components/settings/ImportMergeDialog'
 import { type FailedFile, useImportRunner } from '@/components/settings/useImportRunner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { SettingRow } from '@/components/ui/setting-row'
-import { parseEnex } from '@/lib/enex-import'
+import { countEvernoteNoteLinks, parseEnex } from '@/lib/enex-import'
 import { formatBytes } from '@/lib/format'
 import { NOTE_EXTENSIONS } from '@/lib/import-attachments'
 import { parseJex } from '@/lib/jex-import'
@@ -80,6 +81,7 @@ export function ImportSection(): React.ReactElement {
 
   const {
     importing,
+    mergeQuestion,
     setImporting,
     importResult,
     detailsExpanded,
@@ -146,15 +148,16 @@ export function ImportSection(): React.ReactElement {
         return warnings
       }
 
-      const { totalBlocks, succeededFiles, failedFiles, cancelled, navTitle } = await run({
-        event: e,
-        activeSpaceId,
-        units,
-        notes: false,
-        loggerFailLabel: 'file import failed',
-        initialWarnings: restored.warnings,
-        finalWarnings: skippedWarnings,
-      })
+      const { totalBlocks, pagesUpdated, succeededFiles, failedFiles, cancelled, navTitle } =
+        await run({
+          event: e,
+          activeSpaceId,
+          units,
+          notes: false,
+          loggerFailLabel: 'file import failed',
+          initialWarnings: restored.warnings,
+          finalWarnings: skippedWarnings,
+        })
 
       const viewAction =
         navTitle != null
@@ -170,7 +173,7 @@ export function ImportSection(): React.ReactElement {
         // #1927 — user aborted mid-loop. Report how many imported before
         // cancel rather than a generic success/error.
         notify(t('data.importCancelled', { count: succeededFiles }))
-      } else if (totalBlocks === 0) {
+      } else if (totalBlocks === 0 && pagesUpdated === 0) {
         // Nothing imported — either every file failed or all files were
         // empty. Never fire a success toast here (#1928); surface an error.
         notify.error(
@@ -216,9 +219,12 @@ export function ImportSection(): React.ReactElement {
       const parseFailures: FailedFile[] = []
       // Flatten every note across every picked file into a single unit list.
       const units: ImportUnit[] = []
+      let noteLinks = 0
       for (const file of fileArray) {
         try {
-          units.push(...enexNotesToUnits(parseEnex(await file.text()), file.name))
+          const notes = parseEnex(await file.text(), file.name)
+          noteLinks += countEvernoteNoteLinks(notes)
+          units.push(...enexNotesToUnits(notes, file.name))
         } catch (err) {
           logger.error(
             'DataSettingsTab',
@@ -231,14 +237,17 @@ export function ImportSection(): React.ReactElement {
         }
       }
 
-      const { totalBlocks, succeededFiles, failedFiles, cancelled, navTitle } = await run({
-        event: e,
-        activeSpaceId,
-        units,
-        notes: true,
-        loggerFailLabel: 'enex note failed',
-        initialFailures: parseFailures,
-      })
+      const { totalBlocks, pagesUpdated, succeededFiles, failedFiles, cancelled, navTitle } =
+        await run({
+          event: e,
+          activeSpaceId,
+          units,
+          notes: true,
+          loggerFailLabel: 'enex note failed',
+          initialWarnings:
+            noteLinks > 0 ? [t('data.importEnexNoteLinks', { count: noteLinks })] : [],
+          initialFailures: parseFailures,
+        })
 
       const viewAction =
         navTitle != null
@@ -252,7 +261,7 @@ export function ImportSection(): React.ReactElement {
 
       if (cancelled) {
         notify(t('data.importCancelled', { count: succeededFiles }))
-      } else if (totalBlocks === 0) {
+      } else if (totalBlocks === 0 && pagesUpdated === 0) {
         // #2513 — nothing imported. Each PARSE failure already fired its own
         // per-file error toast above (`importEnexParseFailed`), so the summary
         // fallback must only fire when there is MORE to say: a note that PARSED
@@ -330,15 +339,16 @@ export function ImportSection(): React.ReactElement {
         }
       }
 
-      const { totalBlocks, succeededFiles, failedFiles, cancelled, navTitle } = await run({
-        event: e,
-        activeSpaceId,
-        units,
-        notes: true,
-        loggerFailLabel: 'jex note import failed',
-        initialWarnings: preWarnings,
-        initialFailures: parseFailures,
-      })
+      const { totalBlocks, pagesUpdated, succeededFiles, failedFiles, cancelled, navTitle } =
+        await run({
+          event: e,
+          activeSpaceId,
+          units,
+          notes: true,
+          loggerFailLabel: 'jex note import failed',
+          initialWarnings: preWarnings,
+          initialFailures: parseFailures,
+        })
 
       const viewAction =
         navTitle != null
@@ -352,7 +362,7 @@ export function ImportSection(): React.ReactElement {
 
       if (cancelled) {
         notify(t('data.importCancelled', { count: succeededFiles }))
-      } else if (totalBlocks === 0) {
+      } else if (totalBlocks === 0 && pagesUpdated === 0) {
         // #2513 — nothing imported. Each PARSE failure already fired its own
         // per-file toast, so the summary fallback only fires when there is MORE
         // to say (a note that PARSED but failed to import, or an empty
@@ -693,13 +703,14 @@ export function ImportSection(): React.ReactElement {
               warnings,
               blocksCreated,
               propertiesSet,
+              pagesUpdated,
               importedCount,
               cancelled,
               pageTitle,
               navTitle,
               notes,
             } = importResult
-            const allFailed = blocksCreated === 0 && failures.length > 0
+            const allFailed = blocksCreated === 0 && pagesUpdated === 0 && failures.length > 0
             const hasDetail = failures.length > 0 || warnings.length > 0
             // Cap the at-rest list; the toggle reveals the rest.
             const PREVIEW = 5
@@ -738,6 +749,8 @@ export function ImportSection(): React.ReactElement {
                     {t('data.importResultSummary', { title, count: blocksCreated })}
                     {propertiesSet > 0 &&
                       `, ${t('data.importResultProperties', { count: propertiesSet })}`}
+                    {pagesUpdated > 0 &&
+                      `, ${t('data.importResultUpdated', { count: pagesUpdated })}`}
                   </p>
                 )}
                 {/* #1927 — post-import navigation: jump to what was
@@ -821,6 +834,7 @@ export function ImportSection(): React.ReactElement {
           })()}
         {/* #1454 — bibliography import outcome (summary + warnings). */}
         {bibResult && <BibliographyResultPanel result={bibResult} />}
+        <ImportMergeDialog question={mergeQuestion} />
       </CardContent>
     </Card>
   )
