@@ -128,3 +128,87 @@ test('a WebM voice note shows its length before it is played @attachments', asyn
   expect(row?.mime_type).toBe('audio/webm')
   expect(row?.filename).toMatch(/^voice-note-.*\.webm$/)
 })
+
+/** The attachments on BLOCK_GS_1, read back from the backend. */
+async function attachmentsOnBlock(page: Page) {
+  return page.evaluate(async (blockId) => {
+    const { invoke } = (
+      window as unknown as {
+        __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+      }
+    ).__TAURI_INTERNALS__
+    return (await invoke('list_attachments', { blockId })) as unknown[]
+  }, BLOCK_GS_1)
+}
+
+async function openVoiceDialog(page: Page) {
+  await waitForBoot(page)
+  await openPage(page, 'Getting Started')
+  await focusBlockById(page, BLOCK_GS_1)
+  await typeSlashCommand(page, 'voice')
+  await activeSuggestionList(page)
+    .locator('[data-testid="suggestion-item"]', { hasText: 'VOICE' })
+    .click()
+  return activeDialog(page)
+}
+
+test('cancelling a recording attaches nothing and releases the microphone @attachments', async ({
+  page,
+}) => {
+  // Every track the dialog opens, so the test can see whether it was stopped.
+  await page.addInitScript(() => {
+    const tracks: MediaStreamTrack[] = []
+    Object.assign(window, { __micTracks: tracks })
+    const getUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices)
+    navigator.mediaDevices.getUserMedia = async (constraints) => {
+      const stream = await getUserMedia(constraints)
+      tracks.push(...stream.getTracks())
+      return stream
+    }
+  })
+  const dialog = await openVoiceDialog(page)
+  await dialog.getByRole('button', { name: 'Record' }).click()
+  await expect(dialog.getByRole('timer', { name: 'Recording time' })).toHaveText('0:02', {
+    timeout: 10_000,
+  })
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(dialog).toBeHidden()
+
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as unknown as { __micTracks: MediaStreamTrack[] }).__micTracks.map(
+          (track) => track.readyState,
+        ),
+      ),
+    )
+    .toEqual(['ended'])
+  await reopenPage(page, 'Getting Started')
+  expect(await attachmentsOnBlock(page)).toEqual([])
+})
+
+/**
+ * Chromium under Playwright never reports a blocked microphone the way a user
+ * sees it: the fake prompt grants it whatever the permission says, and without
+ * the prompt it answers `NotSupportedError`. So the request is stubbed to reject
+ * as a blocked site does, with `NotAllowedError`.
+ */
+test('a denied microphone says so and records nothing @attachments', async ({ page }) => {
+  await page.addInitScript(() => {
+    navigator.mediaDevices.getUserMedia = () =>
+      Promise.reject(new DOMException('Permission denied', 'NotAllowedError'))
+  })
+  const dialog = await openVoiceDialog(page)
+  await dialog.getByRole('button', { name: 'Record' }).click()
+  await expect(
+    page.locator('[data-sonner-toast]').getByText('Microphone access was denied', {
+      exact: true,
+    }),
+  ).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Record' })).toBeEnabled()
+  await expect(dialog.getByRole('timer', { name: 'Recording time' })).toHaveText('0:00')
+
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  await reopenPage(page, 'Getting Started')
+  expect(await attachmentsOnBlock(page)).toEqual([])
+})
