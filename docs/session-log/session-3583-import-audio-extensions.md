@@ -1,4 +1,4 @@
-# Session 3574 — every attachment extension imports
+# Session 3583 — every attachment extension imports
 
 This checks #6032's question of whether the MIME allow-list drops Evernote audio, Office and zip resources. The allow-list already takes audio, zip and tar (#6203), and Office and video stay out by decision. One gap was left: an import ingests a file by the type its name guesses (`guess_attachment_mime`), and that guess knew no `.aac`, `.oga`, `.opus`, `.webm` or `.markdown`, all of which the app takes as attachments. Such a file was guessed `application/octet-stream` and skipped with a warning; Obsidian records audio as `.webm`.
 
