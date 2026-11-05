@@ -427,7 +427,6 @@
     },
     {
       "content": "[![CI](https://github.com/example/fastgrep/actions/workflows/ci.yml/badge.svg)](https://github.com/example/fastgrep/actions)",
-      "knownLoss": "#6342",
       "name": "github-readme block 2"
     },
     {

@@ -204,7 +204,15 @@ export function GatedImage({
           data-testid="image-load-button"
           // Add the exact host to the allowlist; the policy hook re-snapshots via
           // the synthetic storage event, re-rendering this image as allowed.
-          onClick={() => addHost(host)}
+          // Stopped: the image can sit inside a link (#6342) or a row that
+          // opens on click, and loading it must do neither.
+          onClick={(e) => {
+            e.stopPropagation()
+            addHost(host)
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') e.stopPropagation()
+          }}
         >
           {t('editor.image.loadButton')}
         </button>

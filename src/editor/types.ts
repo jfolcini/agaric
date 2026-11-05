@@ -107,7 +107,8 @@ export interface MathInlineNode {
  * `attrs.alt` holds the alt text and `attrs.src` the image URL. Serializes back
  * to `![alt](url)` (loss-free, escaping `]` in alt and unbalanced parens in the
  * URL exactly as the link serializer does). The leading `!` is what
- * distinguishes it from a `[text](url)` link on parse.
+ * distinguishes it from a `[text](url)` link on parse. An image inside a link,
+ * `[![alt](src)](href)` (a README badge), carries the link mark (#6342).
  *
  * SCOPE (#1434 slice): markdown round-trip + render only. Binary image paste /
  * drag-drop → attachment and attachment-ref ↔ export-path resolution are
@@ -116,6 +117,7 @@ export interface MathInlineNode {
 export interface ImageNode {
   readonly type: 'image'
   readonly attrs: { readonly alt: string; readonly src: string }
+  readonly marks?: readonly [LinkMark]
 }
 
 /**

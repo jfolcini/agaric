@@ -7,6 +7,7 @@
  * an image. SCOPE: `![alt](url)` parse/serialize + render only — binary
  * paste/drag-drop → attachment is a deferred FOLLOW-UP.
  */
+import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
 import { parse } from '@/editor/markdown-parse'
@@ -194,5 +195,40 @@ describe('image — round-trip stability (#1434)', () => {
     // The re-escape is surgical: a sentence-final `!` stays a bare `!`.
     expect(serialize(parse('hi!'))).toBe('hi!')
     expect(serialize(parse('a!b'))).toBe('a!b')
+  })
+})
+
+describe('image inside a link — round trip (#6342)', () => {
+  const badge =
+    '[![CI](https://github.com/x/y/actions/workflows/ci.yml/badge.svg)](https://github.com/x/y/actions)'
+
+  it('reads a README badge as an image carrying the link mark', () => {
+    expect(firstParaContent(badge)).toEqual([
+      {
+        type: 'image',
+        attrs: { alt: 'CI', src: 'https://github.com/x/y/actions/workflows/ci.yml/badge.svg' },
+        marks: [{ type: 'link', attrs: { href: 'https://github.com/x/y/actions' } }],
+      },
+    ])
+  })
+
+  it('writes a README badge back unchanged', () => {
+    expect(serialize(parse(badge))).toBe(badge)
+  })
+
+  it('a link holding text and an image keeps both inside it', () => {
+    const md = 'see [the ![logo](l.png) site](https://x.com) now'
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  it('any linked image between text round-trips unchanged', () => {
+    const word = fc.stringMatching(/^[a-z]{1,6}$/)
+    const href = fc.constantFrom('https://x.com/a', 'https://x.com/(b)', 'rel/path', '#frag')
+    fc.assert(
+      fc.property(word, word, href, word, (alt, src, link, tail) => {
+        const md = `${tail} [![${alt}](${src}.png)](${link}) ${tail}`
+        expect(serialize(parse(md))).toBe(md)
+      }),
+    )
   })
 })
