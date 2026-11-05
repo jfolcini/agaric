@@ -96,6 +96,7 @@ pub(crate) const TOOL_BATCH: &str = "batch";
 pub(crate) const TOOL_EDIT_PAGE_MARKDOWN: &str = "edit_page_markdown";
 pub(crate) const TOOL_SET_PAGE_ALIASES: &str = "set_page_aliases";
 pub(crate) const TOOL_ATTACH_FILE: &str = "attach_file";
+pub(crate) const TOOL_ADD_MEETING: &str = "add_meeting";
 
 /// Metadata returned by [`ToolRegistry::list_tools`] — one entry per
 /// advertised tool. The JSON shape matches MCP's `tools/list` response:

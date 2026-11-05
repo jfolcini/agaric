@@ -94,6 +94,7 @@ async fn list_tools_advertises_the_rw_tools() {
         "edit_page_markdown",
         "set_page_aliases",
         "attach_file",
+        "add_meeting",
     ];
     expected.extend(ro.iter().map(|d| d.name.as_str()));
     assert_eq!(
@@ -3751,6 +3752,17 @@ async fn each_write_tool_opens_one_command_transaction_5402() {
     )
     .await;
     opened.push(("attach_file", n));
+    let (_, n) = command_txs_of(
+        &tools,
+        "add_meeting",
+        json!({
+            "space_id": space,
+            "block_id": page,
+            "audio_path": source_file(&outside, "a.ogg", b"OggS"),
+        }),
+    )
+    .await;
+    opened.push(("add_meeting", n));
 
     assert_eq!(
         opened,
@@ -3770,6 +3782,7 @@ async fn each_write_tool_opens_one_command_transaction_5402() {
             ("batch", 1),
             ("edit_page_markdown", 1),
             ("attach_file", 1),
+            ("add_meeting", 1),
         ],
         "each write opens one transaction, its space check inside it"
     );
@@ -5144,5 +5157,439 @@ fn attach_file_reads_the_type_of_a_name_with_stray_spaces_5410() {
     assert_eq!(
         super::attachment_mime_type(" call.ogg ").expect("a padded name keeps its type"),
         "audio/ogg"
+    );
+}
+
+// ── add_meeting (#5364) ──────────────────────────────────────
+
+/// The live children of `parent`, in order, as their contents.
+async fn child_texts(pool: &SqlitePool, parent: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT COALESCE(content, '') FROM blocks \
+         WHERE parent_id = ? AND deleted_at IS NULL ORDER BY position, id",
+    )
+    .bind(parent)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// The (filename, type) of each attachment on `block`, by name.
+async fn attached(pool: &SqlitePool, block: &str) -> Vec<(String, String)> {
+    sqlx::query_as(
+        "SELECT filename, mime_type FROM attachments WHERE block_id = ? ORDER BY filename",
+    )
+    .bind(block)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+async fn live_pages_titled(pool: &SqlitePool, space: &str, title: &str) -> i64 {
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND content = ? \
+         AND space_id = ? AND deleted_at IS NULL",
+    )
+    .bind(title)
+    .bind(space)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// A template page of `space` holding `contents`.
+async fn mk_template(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    space: &str,
+    title: &str,
+    contents: &[&str],
+) -> String {
+    let page = mk_page(pool, mat, space, title).await;
+    crate::commands::set_property_inner(
+        pool,
+        DEV,
+        mat,
+        agaric_core::ulid::ActiveBlockId::from(page.clone()),
+        "template".into(),
+        Some("true".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    for content in contents {
+        mk_child_of(pool, mat, &page, content).await;
+    }
+    page
+}
+
+async fn add_meeting(tools: &ReadWriteTools, args: Value) -> Result<Value, AppError> {
+    tools
+        .call_tool("add_meeting", args, &test_ctx_agent())
+        .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_meeting_makes_the_page_links_the_day_and_attaches_the_files_5364() {
+    use agaric_store::task_locals::{LAST_APPEND, take_appends};
+    use std::cell::RefCell;
+
+    let (tools, mat, pool, space, emitter, vault) = mk_tools_recording().await;
+    let template = mk_template(&pool, &mat, &space, "Meeting notes", &["<% recording %>"]).await;
+    settle(&mat).await;
+    let outside = TempDir::new().unwrap();
+    let audio = source_file(&outside, "standup.ogg", b"OggS audio");
+    let transcript = source_file(&outside, "standup.txt", b"[00:00:04] **Alice:** Hi.");
+
+    let (result, refs) = LAST_APPEND
+        .scope(RefCell::new(Vec::new()), async {
+            let result = add_meeting(
+                &tools,
+                json!({
+                    "space_id": space,
+                    "title": "Standup",
+                    "date": "2031-03-14",
+                    "template": "Meeting notes",
+                    "audio_path": audio,
+                    "transcript_path": transcript,
+                    "summary_markdown": "Shipped it.",
+                }),
+            )
+            .await
+            .expect("a meeting is made");
+            (result, take_appends())
+        })
+        .await;
+
+    let page = result["page_id"].as_str().unwrap().to_owned();
+    let recording = result["recording_block_id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        live_pages_titled(&pool, &space, "Standup 2031-03-14").await,
+        1
+    );
+    assert_eq!(
+        child_texts(&pool, &page).await,
+        vec!["Shipped it.".to_owned(), String::new()],
+        "the summary above the template's recording block"
+    );
+    assert_eq!(
+        attached(&pool, &recording).await,
+        vec![
+            ("standup.ogg".to_owned(), "audio/ogg".to_owned()),
+            (
+                "standup.transcript.md".to_owned(),
+                "text/markdown".to_owned()
+            ),
+        ]
+    );
+    let rows = result["attachments"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    for row in rows {
+        let stored = PathBuf::from(row["path"].as_str().unwrap());
+        assert!(stored.starts_with(vault.path()), "{}", stored.display());
+    }
+    let link = result["link_block_id"].as_str().unwrap();
+    let day: String = sqlx::query_scalar("SELECT parent_id FROM blocks WHERE id = ?")
+        .bind(link)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let day_title: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(&day)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(day_title, "2031-03-14", "the meeting's day links it");
+    assert_eq!(
+        child_texts(&pool, &day).await.last().cloned(),
+        Some(format!("[[{page}]]")),
+        "the day's journal ends with the link"
+    );
+    let changed: Vec<String> = emitter.blocks_changed().concat();
+    assert!(
+        changed.contains(&page) && changed.contains(&day),
+        "the meeting and the day reload: {changed:?}"
+    );
+    let origins: Vec<String> =
+        sqlx::query_scalar("SELECT DISTINCT origin FROM op_log WHERE origin LIKE 'agent:%'")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(origins, vec!["agent:test-agent".to_owned()]);
+
+    tools
+        .call_tool(
+            "undo",
+            json!({ "op_refs": refs, "space_id": space }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("one undo takes the meeting back");
+    assert_eq!(
+        live_pages_titled(&pool, &space, "Standup 2031-03-14").await,
+        0
+    );
+    assert_eq!(attached(&pool, &recording).await, vec![]);
+    let _ = template;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_meeting_refuses_both_summaries_and_both_targets_5364() {
+    let (tools, mat, pool, space, _vault) = mk_tools().await;
+    let page = mk_page(&pool, &mat, &space, "Old").await;
+    settle(&mat).await;
+    let outside = TempDir::new().unwrap();
+    let summary = source_file(&outside, "s.md", b"S");
+
+    for (args, names) in [
+        (
+            json!({ "space_id": space, "summary_markdown": "S", "summary_path": summary }),
+            "`summary_markdown` or `summary_path`",
+        ),
+        (
+            json!({ "space_id": space, "page": page, "block_id": page }),
+            "`page` or `block_id`",
+        ),
+        (
+            json!({ "space_id": space, "page": page, "title": "T" }),
+            "`title`, `date` and `template` make a new meeting",
+        ),
+    ] {
+        let err = add_meeting(&tools, args).await.unwrap_err();
+        assert!(
+            matches!(&err, AppError::Validation { .. }) && err.to_string().contains(names),
+            "{names}: got {err:?}"
+        );
+    }
+    assert_eq!(
+        live_pages_titled(
+            &pool,
+            &space,
+            &format!("Meeting {}", chrono::Local::now().date_naive())
+        )
+        .await,
+        0,
+        "nothing was made"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_meeting_refuses_an_unknown_template_and_a_page_that_is_not_one_5364() {
+    let (tools, mat, pool, space, _vault) = mk_tools().await;
+    mk_page(&pool, &mat, &space, "Plain page").await;
+    settle(&mat).await;
+
+    for template in ["No such page", "Plain page"] {
+        let err = add_meeting(
+            &tools,
+            json!({ "space_id": space, "date": "2031-03-14", "template": template }),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, AppError::Validation { .. }),
+            "{template}: got {err:?}"
+        );
+    }
+    assert_eq!(
+        live_pages_titled(&pool, &space, "Meeting 2031-03-14").await,
+        0
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_meeting_adds_files_to_an_existing_meeting_by_page_or_block_5364() {
+    let (tools, mat, _pool, space, _vault) = mk_tools().await;
+    settle(&mat).await;
+    let outside = TempDir::new().unwrap();
+    let made = add_meeting(
+        &tools,
+        json!({
+            "space_id": space,
+            "title": "Retro",
+            "date": "2031-03-14",
+            "audio_path": source_file(&outside, "retro.ogg", b"OggS"),
+        }),
+    )
+    .await
+    .unwrap();
+    let recording = made["recording_block_id"].as_str().unwrap().to_owned();
+
+    let by_page = add_meeting(
+        &tools,
+        json!({
+            "space_id": space,
+            "page": "Retro 2031-03-14",
+            "transcript_path": source_file(&outside, "retro.md", b"[00:01] Hi."),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(by_page["recording_block_id"], recording.as_str());
+    assert_eq!(
+        by_page["link_block_id"],
+        Value::Null,
+        "an existing meeting is not linked again"
+    );
+
+    let by_block = add_meeting(
+        &tools,
+        json!({
+            "space_id": space,
+            "block_id": recording,
+            "summary_path": source_file(&outside, "retro-notes.md", b"Done."),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        by_block["attachments"][0]["filename"], "retro-notes.summary.md",
+        "an attached summary takes its suffix"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_meeting_refuses_a_path_that_is_not_a_regular_file_5364() {
+    let (tools, mat, pool, space, vault) = mk_tools().await;
+    settle(&mat).await;
+    let outside = TempDir::new().unwrap();
+
+    let err = add_meeting(
+        &tools,
+        json!({
+            "space_id": space,
+            "date": "2031-03-14",
+            "audio_path": outside.path().to_str().unwrap(),
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(
+        matches!(&err, AppError::Validation { .. })
+            && err.to_string().contains("tool `add_meeting`")
+            && err.to_string().contains("is a directory"),
+        "got {err:?}"
+    );
+    assert_eq!(
+        live_pages_titled(&pool, &space, "Meeting 2031-03-14").await,
+        0
+    );
+    assert!(
+        !vault.path().join("attachments").exists(),
+        "no bytes stored"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_meeting_on_a_block_of_another_space_is_refused_and_stores_nothing_5364() {
+    let (tools, mat, pool, space, vault) = mk_tools().await;
+    let other = mk_space(&pool, "other").await;
+    let page = mk_page(&pool, &mat, &other, "Elsewhere").await;
+    let block = mk_child_of(&pool, &mat, &page, "x").await;
+    settle(&mat).await;
+    let outside = TempDir::new().unwrap();
+
+    let err = add_meeting(
+        &tools,
+        json!({
+            "space_id": space,
+            "block_id": block,
+            "audio_path": source_file(&outside, "a.ogg", b"OggS"),
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+    assert_eq!(attached(&pool, &block).await, vec![]);
+    let stored = std::fs::read_dir(vault.path().join("attachments")).map_or(0, Iterator::count);
+    assert_eq!(stored, 0, "the written bytes are removed");
+}
+
+/// The tool and the inner, given the same meeting, make the same page: the
+/// app's dialog calls the inner, so an agent's meeting comes out as the app's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_meeting_makes_what_add_meeting_inner_makes_5364() {
+    use crate::commands::meeting_attachments as meeting;
+
+    let (tools, mat, pool, space, vault) = mk_tools().await;
+    let other = mk_space(&pool, "other").await;
+    let contents = [
+        "Attendees of <% page title %>",
+        "<% recording %>",
+        "Actions",
+    ];
+    mk_template(&pool, &mat, &space, "T", &contents).await;
+    let other_template = mk_template(&pool, &mat, &other, "T", &contents).await;
+    settle(&mat).await;
+    let outside = TempDir::new().unwrap();
+    let audio = b"OggS audio";
+    let transcript = b"[00:00:04] Hi.";
+
+    let tool = add_meeting(
+        &tools,
+        json!({
+            "space_id": space,
+            "title": "Sync",
+            "date": "2031-03-14",
+            "template": "T",
+            "audio_path": source_file(&outside, "call.ogg", audio),
+            "transcript_path": source_file(&outside, "call.md", transcript),
+            "summary_markdown": "Recap.",
+        }),
+    )
+    .await
+    .unwrap();
+    let inner = meeting::add_meeting_inner(
+        &pool,
+        DEV,
+        &mat,
+        vault.path(),
+        meeting::AddMeetingRequest {
+            space_id: other.clone(),
+            target: meeting::MeetingTarget::New {
+                title: "Sync".into(),
+                date: chrono::NaiveDate::from_ymd_opt(2031, 3, 14).unwrap(),
+                template_id: Some(BlockId::from_trusted(&other_template)),
+                link: meeting::MeetingLink::Journal(
+                    chrono::NaiveDate::from_ymd_opt(2031, 3, 14).unwrap(),
+                ),
+            },
+            audio: Some(meeting::MeetingFile {
+                filename: "call.ogg".into(),
+                bytes: audio.to_vec(),
+            }),
+            transcript: Some(meeting::MeetingFile {
+                filename: "call.md".into(),
+                bytes: transcript.to_vec(),
+            }),
+            summary: Some(meeting::MeetingSummary::Text("Recap.".into())),
+        },
+    )
+    .await
+    .unwrap();
+
+    let tool_page = tool["page_id"].as_str().unwrap();
+    assert_eq!(
+        child_texts(&pool, tool_page).await,
+        child_texts(&pool, inner.page_id.as_str()).await,
+    );
+    assert_eq!(
+        attached(&pool, tool["recording_block_id"].as_str().unwrap()).await,
+        attached(&pool, inner.recording_block_id.as_str()).await,
+    );
+    assert_eq!(
+        child_texts(&pool, tool_page).await,
+        vec![
+            "Attendees of Sync 2031-03-14".to_owned(),
+            "Recap.".to_owned(),
+            String::new(),
+            "Actions".to_owned(),
+        ]
     );
 }
