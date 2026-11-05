@@ -85,7 +85,7 @@
       "content": "~~~ a`b\necho hi\n~~~",
       "editorCanonical": "~~~a`b\necho hi\n~~~",
       "editorFlush": "edit",
-      "fts": "~~~ a`b\necho hi\n~~~",
+      "fts": " a`b\necho hi\n",
       "name": "a tilde fence is code, its info string may hold a backtick",
       "rustReads": ["code"]
     },
@@ -178,11 +178,11 @@
     },
     {
       "content": "~~~md\n```js\nx\n```\n~~~",
+      "editorCanonical": "````md\n```js\nx\n```\n````",
       "editorFlush": "edit",
       "fts": "md\n```js\nx\n```\n",
       "name": "a tilde fence keeps its backtick lines as code",
-      "rustReads": ["code"],
-      "editorCanonical": "````md\n```js\nx\n```\n````"
+      "rustReads": ["code"]
     }
   ],
   "corpusBlocks": [
