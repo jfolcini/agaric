@@ -748,7 +748,7 @@ export const commands = {
 	 *  `Channel<ImportProgressUpdate>` (mirroring `start_sync`); sends are
 	 *  best-effort, so a dropped channel never aborts the import.
 	 */
-	importMarkdown: (content: string, filename: string | null, spaceId: SpaceId, vault: {
+	importMarkdown: (content: string, filename: string | null, spaceId: SpaceId, dialect: ImportDialect, vault: {
 	/**  The bytes of the sibling files the note references (#1925). */
 	files?: VaultFile[],
 	/**
@@ -756,7 +756,7 @@ export const commands = {
 	 *  note may name (#5740).
 	 */
 	notes?: string[],
-} | null, progress: Channel<ImportProgressUpdate>) => typedError<ImportResult, AppError>(__TAURI_INVOKE("import_markdown", { content, filename, spaceId, vault, progress })),
+} | null, progress: Channel<ImportProgressUpdate>) => typedError<ImportResult, AppError>(__TAURI_INVOKE("import_markdown", { content, filename, spaceId, dialect, vault, progress })),
 	/**
 	 *  Tauri command: the end of a folder import, linking the references its notes
 	 *  left (`ImportResult::deferred`) to the blocks their anchors name
@@ -2504,6 +2504,15 @@ export type ImportBibliographyResult = {
 	 */
 	warnings: string[],
 };
+
+/**
+ *  Which reading a file import's source is for (#6277 E1), as its front end
+ *  tells: a Logseq graph or an `.org` file is `LogseqOrg`, everything else
+ *  `Markdown`. Only `LogseqOrg` reads Logseq's `STARTED` keyword and Org's
+ *  `#+BEGIN_X` blocks (#6033 S3); it is the seam the `Markdown` reader
+ *  switches on.
+ */
+export type ImportDialect = "Markdown" | "LogseqOrg";
 
 /**
  *  Streaming progress payload for a single `import_markdown` call (#128).
@@ -5022,7 +5031,13 @@ export type ValidationCode =
  *  definition since the preview, so the caller previews again and asks
  *  once more.
  */
-"UnacknowledgedPropertyLoss";
+"UnacknowledgedPropertyLoss" | 
+/**
+ *  Creating or renaming a tag to a name holding whitespace (#6278 I4),
+ *  which Obsidian's `#tag` cannot spell. Coded so the tag surfaces can
+ *  suggest `-`.
+ */
+"TagNameWhitespace";
 
 /**
  *  A single referenced sibling file carried over IPC for an attachment-aware

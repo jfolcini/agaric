@@ -49,7 +49,8 @@ test.describe('Typing # makes a tag (#5160 D8) @editor @pages', () => {
       .toMatch(/^Plan #\[[0-9A-Z]{26}\] and #\[[0-9A-Z]{26}\] done$/)
     const ids = [...(await storedContent(page)).matchAll(TAG_REF)].map((m) => m[1] as string)
     const names = await tagNames(page)
-    expect(ids.map((id) => names.get(id))).toEqual(['project', 'multi word'])
+    // #6278 I4 — a new tag name holds no whitespace.
+    expect(ids.map((id) => names.get(id))).toEqual(['project', 'multi-word'])
   })
 
   test('a #name left as text by Escape is a tag once Enter saves the block', async ({ page }) => {

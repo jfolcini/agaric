@@ -67,7 +67,13 @@ function unit(name: string): ImportUnit {
   return {
     name,
     bytes: name.length,
-    load: async () => ({ content: `c-${name}`, path: name, vaultFiles: null, vaultNotes: null }),
+    load: async () => ({
+      content: `c-${name}`,
+      path: name,
+      dialect: 'Markdown',
+      vaultFiles: null,
+      vaultNotes: null,
+    }),
   }
 }
 
@@ -131,12 +137,13 @@ describe('useImportRunner', () => {
       navTitle: 'ok',
     })
 
-    // IPC shape: (content, path, spaceId, onProgress fn, vaultFiles, vaultNotes).
+    // IPC shape: (content, path, spaceId, dialect, onProgress fn, vaultFiles, vaultNotes).
     expect(mockImportMarkdown).toHaveBeenNthCalledWith(
       1,
       'c-ok.md',
       'ok.md',
       'SPACE',
+      'Markdown',
       expect.any(Function),
       null,
       null,
@@ -466,6 +473,7 @@ describe('useImportRunner', () => {
         _content: string,
         _path: string,
         _spaceId: string,
+        _dialect: string,
         onProgress?: (u: { kind: string; blocks_total?: number; blocks_done?: number }) => void,
       ) => {
         onProgress?.({ kind: 'started', blocks_total: 3 })

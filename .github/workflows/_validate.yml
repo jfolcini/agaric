@@ -1585,19 +1585,27 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Free up runner disk space
+      - name: Free up runner disk space, in the background
         # The coverage-instrumented test build filled the runner's disk and the
         # job died mid-test with "No space left on device" (#6262, #6272). Drop
-        # preinstalled toolchains this job never uses before the build, as
-        # ci.yml's android-build does.
+        # preinstalled toolchains this job never uses, as ci.yml's android-build
+        # does. The deletes take about two minutes, so they run beside the setup
+        # steps, which fit in the disk the runner starts with; the test step
+        # waits for them.
         run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc /usr/local/.ghcup
-          sudo rm -rf /usr/local/share/powershell
-          sudo rm -rf /usr/local/share/chromium
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo docker image prune --all --force >/dev/null || true
+          nohup sudo bash -c '
+            (
+              set -e
+              rm -rf /usr/share/dotnet
+              rm -rf /opt/ghc /usr/local/.ghcup
+              rm -rf /usr/local/share/powershell
+              rm -rf /usr/local/share/chromium
+              rm -rf /usr/local/lib/android
+              rm -rf /opt/hostedtoolcache/CodeQL
+              docker image prune --all --force >/dev/null || true
+            )
+            echo $? > /tmp/free-disk.status
+          ' > /tmp/free-disk.log 2>&1 &
 
       - name: Prepare apt (free dpkg lock, bound downloads)
         uses: ./.github/actions/prepare-apt
@@ -1693,6 +1701,14 @@ jobs:
         uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: cargo-nextest,cargo-llvm-cov
+
+      - name: Wait for the disk cleanup
+        timeout-minutes: 10
+        run: |
+          until [ -e /tmp/free-disk.status ]; do sleep 2; done
+          cat /tmp/free-disk.log
+          [ "$(cat /tmp/free-disk.status)" = 0 ]
+          df -h /
 
       - name: Cargo test (nextest, shard ${{ matrix.shard }}/2, with llvm-cov)
         working-directory: src-tauri

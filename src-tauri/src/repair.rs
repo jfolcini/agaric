@@ -14,6 +14,12 @@
 //! space that had none, and the hydration, which skips a space with no engine,
 //! would then seed that space whole.
 //!
+//! The #6278 name collision pass ([`name_collisions`]) runs right after the
+//! op-emitting repairs, so the journal merge has already folded the date
+//! duplicates it leaves alone. [`repair_after_sync`] runs the two of them
+//! again after each sync session that changed something: a session is what
+//! brings in another device's same-named page, tag or journal day.
+//!
 //! The one-shot #5074 agenda rewrite follows the repairs, whatever they
 //! found: `DESIRED_AGENDA_SQL` changed under rows already in `agenda_cache`
 //! and only a rebuild rewrites them. An `app_settings` marker retires it once
@@ -45,6 +51,8 @@ use agaric_engine::repair::orphans::repair_orphans;
 use agaric_engine::repair::page_aliases::repair_page_aliases;
 use agaric_engine::repair::property_definitions::repair_property_definitions;
 use agaric_store::op_log::OpRecord;
+
+pub mod name_collisions;
 
 /// The repairs. The op-emitting ones run first, in [`Repair::OPS`] order,
 /// which is only the order the issues were filed in; `Attachments` and
@@ -90,6 +98,7 @@ pub async fn repair_unreachable_content_at_boot(
     for repair in Repair::OPS {
         run_or_log(pool, device_id, materializer, repair).await;
     }
+    name_collisions::repair_name_collisions(pool, read_pool, device_id, materializer).await;
 
     match hydrate_engine_missing_blocks_once(pool, device_id, materializer).await {
         Ok(Some(missing)) => tracing::info!(missing, "engine hydration repair ran (#5670)"),
@@ -112,6 +121,47 @@ pub async fn repair_unreachable_content_at_boot(
             error = %e,
             "agenda cache rewrite failed — boot continues; the next boot retries it (#5074)"
         ),
+    }
+}
+
+/// What [`repair_after_sync`] did.
+#[derive(Debug, Default)]
+pub struct AfterSyncRepair {
+    /// Whether it may have written anything, so open views must reload.
+    pub changed: bool,
+    /// The pages this device renamed: its notice.
+    pub renamed: Vec<name_collisions::PageRenamed>,
+}
+
+/// #6278 — the repairs a sync session can make due, after it completes:
+/// the journal merge (#4715), then the name collision pass. Never fails; a
+/// failure is logged and the next session or boot retries. The journal
+/// merge first probes on the read pool, so a session that brought no
+/// duplicate day never takes the writer for it.
+pub async fn repair_after_sync(
+    pool: &SqlitePool,
+    read_pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+) -> AfterSyncRepair {
+    let journal_due = match read_pool.acquire().await {
+        Ok(mut conn) => {
+            agaric_engine::repair::journal_duplicates::journal_duplicates_pending(&mut conn).await
+        }
+        Err(e) => Err(e.into()),
+    };
+    let journal_due = journal_due.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "journal duplicate probe failed after sync (#6278)");
+        false
+    });
+    if journal_due {
+        run_or_log(pool, device_id, materializer, Repair::JournalDuplicates).await;
+    }
+    let names =
+        name_collisions::repair_name_collisions(pool, read_pool, device_id, materializer).await;
+    AfterSyncRepair {
+        changed: journal_due || names.changed(),
+        renamed: names.renamed,
     }
 }
 

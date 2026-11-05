@@ -846,6 +846,46 @@ describe('useBlockTags handleCreateTag', () => {
     expect(mockedToastError).toHaveBeenCalledWith('Failed to create tag')
   })
 
+  // #6278 I4 — a new tag name holds no whitespace: the picker's Create row
+  // names `deep-work`, and that is the tag created and applied.
+  it('creates and applies the dashed name for a name holding whitespace', async () => {
+    const createdBlock = makeBlock({
+      id: 'NEW_TAG_DASHED',
+      block_type: 'tag' as const,
+      content: 'deep-work',
+      page_id: null,
+    })
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_all_tags_in_space: () => [],
+      list_tags_for_block: () => [],
+      create_block: () => withOps(createdBlock),
+      add_tag: () => ({ block_id: 'BLOCK_1', tag_id: 'NEW_TAG_DASHED', op_refs: [] }),
+    })
+
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    await act(async () => {
+      await result.current.handleCreateTag(' deep   work ')
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+      blockType: 'tag',
+      content: 'deep-work',
+      parentId: null,
+      index: null,
+      scope: { kind: 'active', space_id: 'SPACE_1' },
+      blockId: null,
+    })
+    expect(result.current.allTags).toEqual([{ id: 'NEW_TAG_DASHED', name: 'deep-work' }])
+    expect(result.current.appliedTagIds.has('NEW_TAG_DASHED')).toBe(true)
+    expect(mockedToastError).not.toHaveBeenCalled()
+  })
+
   it('does not update allTags or resolveStore when createBlock fails', async () => {
     const resolveSetSpy = vi.fn()
     useResolveStore.setState({ ...useResolveStore.getState(), set: resolveSetSpy })
