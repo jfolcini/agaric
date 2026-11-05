@@ -150,14 +150,36 @@ function extractLines(content: string): string[] {
   return [stripBlockMarker(first), ...rest]
 }
 
+/** `text` with a leading `1. `, `- `, `* ` or `+ ` escaped, so it stays text. */
+function escapeListMarker(text: string): string {
+  return text.replace(/^(\d+)\. /, '$1\\. ').replace(/^([-*+]) /, '\\$1 ')
+}
+
 /**
- * Convert `content` to the target block `type`, returning the new markdown.
+ * `content` converted to `type` as stored markdown: [`convertBlockText`], with
+ * a list marker the text of a heading or quote starts with escaped, as it
+ * would otherwise read back as a list item once its marker is gone (#6370).
+ */
+export function convertBlockContent(
+  content: string,
+  type: BlockTypeToken,
+  calloutType = 'info',
+): string {
+  const converted = convertBlockText(content, type, calloutType)
+  return type === 'paragraph' || type === 'numbered-list' || type === 'bullet-list'
+    ? escapeListMarker(converted)
+    : converted
+}
+
+/**
+ * Convert `content` to the target block `type`, returning the new text, for a
+ * caller that writes the escapes itself (the source buffer).
  * Re-marks the first line and preserves every trailing line: quote/callout
  * targets re-mark each line (so the whole block stays inside the quote);
  * other targets keep the tail verbatim (markdown lazy continuation keeps it
  * attached to list items). `calloutType` is the variant a `callout` target takes.
  */
-export function convertBlockContent(
+export function convertBlockText(
   content: string,
   type: BlockTypeToken,
   calloutType = 'info',
