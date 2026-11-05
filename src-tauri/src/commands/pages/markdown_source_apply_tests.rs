@@ -963,3 +963,59 @@ fn a_save_reads_note_embeds_only_in_the_blocks_it_writes() {
         );
     });
 }
+
+/// #6325 — a page property holding a carriage return, alone, in a CRLF line or
+/// beside a literal `\r` in a quoted value, keeps one buffer line per `\n`, and
+/// the page's own buffer saved by its line ids writes nothing.
+#[test]
+fn a_page_property_with_a_carriage_return_saves_by_its_line_ids() {
+    Runtime::new().unwrap().block_on(async {
+        let fx = fixture().await;
+        let front = FrontSpec {
+            aliases: BTreeSet::new(),
+            tagged: false,
+            properties: [("a", "\r"), ("b", "one\r\ntwo"), ("c", "path: C:\\repo\r")]
+                .into_iter()
+                .map(|(key, value)| (key.to_string(), (value.to_string(), false)))
+                .collect(),
+        };
+        write_front_matter(&fx, &front).await;
+        let buffer = get_page_buffer_inner(&fx.pool, &fx.page).await.unwrap();
+        assert_eq!(
+            buffer.text,
+            "---\na: \"\\r\"\nb: \"one\\r\\ntwo\"\nc: \"path: C:\\\\repo\\r\"\n---\n\n"
+        );
+        assert_eq!(buffer.text.split('\n').count(), buffer.line_ids.len());
+        let before = op_counts(&fx.pool).await;
+
+        let report = save(
+            &fx,
+            (buffer.text.clone(), buffer.line_ids.clone()),
+            &buffer.source,
+        )
+        .await;
+
+        assert_eq!(
+            appended(&before, &op_counts(&fx.pool).await),
+            BTreeMap::new()
+        );
+        assert_eq!((report.properties_set, report.properties_deleted), (0, 0));
+
+        let edited = buffer.text.replace("a: \"\\r\"", "a: \"x\\ry \\\\n\"");
+        let base = get_page_buffer_inner(&fx.pool, &fx.page)
+            .await
+            .unwrap()
+            .source;
+        let report = save(&fx, (edited, buffer.line_ids), &base).await;
+
+        assert_eq!(report.properties_set, 1);
+        let stored: String = sqlx::query_scalar(
+            "SELECT value_text FROM block_properties WHERE block_id = ? AND key = 'a'",
+        )
+        .bind(&fx.page)
+        .fetch_one(&fx.pool)
+        .await
+        .unwrap();
+        assert_eq!(stored, "x\ry \\n");
+    });
+}

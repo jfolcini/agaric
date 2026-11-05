@@ -3651,6 +3651,31 @@ fn flow_item(raw: &str) -> String {
     out
 }
 
+/// One inline front-matter scalar, unquoted. A double-quoted value also loses
+/// the `\\`, `\r` and `\n` escapes the exporter's `yaml_scalar_emit` writes
+/// (#6325); any other backslash stays as written.
+fn front_matter_scalar(raw: &str) -> String {
+    let Some(inner) = raw.strip_prefix('"').and_then(|s| s.strip_suffix('"')) else {
+        return strip_yaml_quotes(raw).to_string();
+    };
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars().peekable();
+    while let Some(c) = chars.next() {
+        let decoded = match (c, chars.peek()) {
+            ('\\', Some('\\')) => '\\',
+            ('\\', Some('r')) => '\r',
+            ('\\', Some('n')) => '\n',
+            _ => {
+                out.push(c);
+                continue;
+            }
+        };
+        out.push(decoded);
+        chars.next();
+    }
+    out
+}
+
 /// One open YAML block scalar (#1590). When a key line ends with a `|` / `>`
 /// indicator, the subsequent MORE-INDENTED lines are continuation content
 /// belonging to that key — valid YAML, NOT invalid top-level lines. They are
@@ -3915,7 +3940,7 @@ impl<'a> FrontmatterScan<'a> {
             return;
         }
 
-        let value = strip_yaml_quotes(value_trimmed);
+        let value = front_matter_scalar(value_trimmed);
         // An empty inline value (`key:`) may be the header of a block-style
         // sequence whose `- item` elements follow on subsequent lines (#1917).
         // Open a pending sequence keyed on this line; `absorb_sequence_item`
@@ -3935,7 +3960,7 @@ impl<'a> FrontmatterScan<'a> {
             ));
             return;
         }
-        self.pairs.push((key.to_string(), value.to_string()));
+        self.pairs.push((key.to_string(), value));
     }
 
     /// Flush whatever is still open at end of input and append the aggregate
