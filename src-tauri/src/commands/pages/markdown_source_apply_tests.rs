@@ -829,3 +829,45 @@ fn a_done_tasks_check_line_leaves_its_done_date_to_the_task_state() {
         assert_eq!(completed(&ids[1]).await.unwrap(), None);
     });
 }
+
+/// #6033 — Obsidian's older singular front matter keys: a buffer's `alias:`
+/// is the page's alias and its `tag:` the page's tag, not text properties.
+#[test]
+fn a_buffers_yaml_alias_and_tag_are_the_pages_aliases_and_tags() {
+    Runtime::new().unwrap().block_on(async {
+        let fx = fixture().await;
+        let body = BlockSpec {
+            level: 0,
+            content: "body".to_string(),
+            todo_state: None,
+            priority: None,
+            scheduled_date: None,
+            due_date: None,
+            list_style: None,
+            properties: BTreeMap::new(),
+        };
+        create_forest(&fx, &[body]).await;
+        let buffer = get_page_buffer_inner(&fx.pool, &fx.page).await.unwrap();
+        let text = format!("---\nalias: Atlas\ntag: project\n---\n{}", buffer.text);
+        let line_ids = [vec![None; 4], buffer.line_ids.clone()].concat();
+
+        let report = save(&fx, (text, line_ids), &buffer.source).await;
+
+        assert_eq!(report.properties_set, 0, "no text property: {report:?}");
+        assert_eq!(
+            crate::commands::pages::get_page_aliases_inner(&fx.pool, &fx.page)
+                .await
+                .unwrap(),
+            ["Atlas"]
+        );
+        let tags: Vec<String> = sqlx::query_scalar(
+            "SELECT t.content FROM block_tags bt JOIN blocks t ON t.id = bt.tag_id \
+             WHERE bt.block_id = ?",
+        )
+        .bind(&fx.page)
+        .fetch_all(&fx.pool)
+        .await
+        .unwrap();
+        assert_eq!(tags, ["project"]);
+    });
+}

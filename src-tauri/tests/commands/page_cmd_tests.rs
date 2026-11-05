@@ -11246,6 +11246,71 @@ async fn export_aliases_tags_and_properties_coexist_1433() {
     );
 }
 
+/// #6277 A1 — the export opens with its front matter, the only place Obsidian
+/// reads properties, and the `# Title` after it re-imports as no block: the
+/// import names the page after its file. Export → import → export is a
+/// fixpoint.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_writes_front_matter_first_and_reimports_without_a_heading_6277() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    async fn import_and_export(
+        pool: &SqlitePool,
+        mat: &Materializer,
+        dir: &std::path::Path,
+        md: &str,
+    ) -> (Vec<String>, String) {
+        import_markdown_inner(
+            pool,
+            DEV,
+            mat,
+            dir,
+            md.into(),
+            Some("Front6277.md".into()),
+            TEST_SPACE_ID.into(),
+            None,
+        )
+        .await
+        .unwrap();
+        settle(mat).await;
+        // The newest page of that title: an import never adopts an existing
+        // page.
+        let page_id: String = sqlx::query_scalar(
+            "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Front6277' \
+             ORDER BY id DESC LIMIT 1",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        let contents: Vec<String> = sqlx::query_scalar(
+            "SELECT content FROM blocks WHERE page_id = ? AND id != page_id \
+             AND deleted_at IS NULL ORDER BY content",
+        )
+        .bind(&page_id)
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        (
+            contents,
+            export_page_markdown_inner(pool, &page_id).await.unwrap(),
+        )
+    }
+
+    let expected = "---\nstatus: active\n---\n\n# Front6277\n\n- a block\n";
+    let input = "---\nstatus: active\n---\n\n- a block\n";
+    let (_, md) = import_and_export(&pool, &mat, dir.path(), input).await;
+    assert_eq!(md, expected, "front matter at byte 0, the title after it");
+
+    let (contents, again) = import_and_export(&pool, &mat, dir.path(), &md).await;
+    assert_eq!(contents, ["a block"], "the title line is no block");
+    assert_eq!(again, expected, "the export is a fixpoint");
+
+    mat.shutdown();
+}
+
 // ======================================================================
 // #1446 Part B — import wiki-link resolution + folder → namespace
 // ======================================================================
@@ -15167,6 +15232,67 @@ async fn import_keeps_an_org_planning_date_past_a_warning_period_or_a_foreign_da
         ]
     );
     mat.shutdown();
+}
+
+/// The content and `todo_state` of each block `md` imports as, in order, on the
+/// page `title`.
+async fn imported_blocks(md: &str, title: &str) -> Vec<(String, Option<String>)> {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md.into(),
+        Some(format!("{title}.md")),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let rows = sqlx::query_as(
+        "SELECT b.content, b.todo_state FROM blocks b JOIN blocks p ON p.id = b.parent_id \
+         WHERE p.content = ? AND b.deleted_at IS NULL ORDER BY b.position",
+    )
+    .bind(title)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    mat.shutdown();
+    rows
+}
+
+/// #6033 — Logseq's `STARTED` keyword is a DOING task.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_reads_a_logseq_started_task_as_doing() {
+    assert_eq!(
+        imported_blocks("- STARTED Write the report\n", "Started").await,
+        [("Write the report".to_string(), Some("DOING".to_string()))]
+    );
+}
+
+/// #6033 — a Logseq `#+BEGIN_NOTE` block is a note callout.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_logseq_note_block_imports_as_a_note_callout() {
+    let md = "- #+BEGIN_NOTE\n  Mind the gap\n  #+END_NOTE\n";
+    assert_eq!(
+        imported_blocks(md, "Note Block").await,
+        [("> [!NOTE]\n> Mind the gap".to_string(), None)]
+    );
+}
+
+/// #6033 — a Logseq `#+BEGIN_QUOTE` block is a quote; the text before it stays.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_logseq_quote_block_imports_as_a_quote() {
+    let md = "- Hamlet said:\n  #+BEGIN_QUOTE\n  To be\n  #+END_QUOTE\n";
+    assert_eq!(
+        imported_blocks(md, "Quote Block").await,
+        [("Hamlet said:\n> To be".to_string(), None)]
+    );
 }
 
 /// #1918 — a single over-deep import block must skip-and-warn, NOT abort the

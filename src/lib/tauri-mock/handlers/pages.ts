@@ -371,10 +371,10 @@ function refusedAt(line: number | undefined, message: string): Error {
 /**
  * DELIBERATE APPROXIMATION of `import::read_page_properties` (#5160 S8): the
  * YAML front matter a buffer opens with, as `key: value` lines, `aliases:` and
- * `tags:` as `[a, b]` lists split on every comma, one layer of quotes
- * stripped. A line that is none of these, a key only the app sets and a key
- * written twice refuse the save by their line, as does a `---` nothing
- * closes. No Logseq `key::` lines, block scalars or block sequences. Returns
+ * `tags:` (or `alias:` and `tag:`) as `[a, b]` lists split on every comma, one
+ * layer of quotes stripped. A line that is none of these, a key only the app
+ * sets and a key written twice refuse the save by their line, as does a `---`
+ * nothing closes. No Logseq `key::` lines, block scalars or block sequences. Returns
  * the front matter, each key's line, and the buffer with its lines left blank,
  * so a block after it names its line in the buffer (#5160 X3).
  */
@@ -395,7 +395,9 @@ function readFrontMatter(source: string): {
     const text = (rows[at] ?? '').trim()
     if (text === '' || text.startsWith('#')) continue
     const colon = text.indexOf(':')
-    const key = colon < 0 ? '' : text.slice(0, colon).trim()
+    const typed = colon < 0 ? '' : text.slice(0, colon).trim()
+    // Obsidian's older singular keys name the page's aliases and tags (`parse_entry_line`).
+    const key = typed === 'alias' ? 'aliases' : typed === 'tag' ? 'tags' : typed
     const refuse = (why: string) => refusedAt(at + 1, why)
     if (!isInlinePropertyKey(key)) throw refuse(`\`${text}\` is not a \`key: value\` line`)
     if (FOLDED_RESERVED_KEYS.has(foldPropertyKey(key))) {
@@ -1311,6 +1313,28 @@ const PAGES_PRIMITIVE_TYPES: ReadonlySet<string> = new Set([
   'HasNoInboundLinks',
 ])
 
+/**
+ * `content`'s lines less a `# Title` equal to `title`, the first line or the
+ * first after a leading front matter, and the blank lines after it, so front
+ * matter is still leading, as the backend's `strip_title_heading` does (#5160
+ * S6, #6277 A1).
+ */
+function stripTitleHeading(content: string, title: string): string[] {
+  const lines = content.split('\n')
+  const close = lines[0]?.startsWith('---')
+    ? lines.findIndex((line, i) => i > 0 && line.startsWith('---'))
+    : -1
+  const isBlank = (i: number): boolean => lines[i] !== undefined && /^\r?$/.test(lines[i])
+  let at = close + 1
+  while (close >= 0 && isBlank(at)) at += 1
+  const first = lines[at]?.replace(/\r$/, '') ?? ''
+  if (first.startsWith('# ') && first.slice(2).trim() === title) {
+    lines.splice(at, 1)
+    while (isBlank(at)) lines.splice(at, 1)
+  }
+  return lines
+}
+
 export const pagesHandlers = {
   // Indexed lookup for a single date-formatted journal page in
   // the active space. Real backend implementation: a SELECT on
@@ -2052,15 +2076,7 @@ export const pagesHandlers = {
       .filter((seg) => seg.length > 0)
       .join('/')
     const pageTitle = namespaceTitle.length > 0 ? namespaceTitle : 'Imported Page'
-    // A leading `# Title` equal to the derived title is dropped, and the blank
-    // lines after it, so front matter is still leading, as the backend's
-    // `strip_title_heading` does (#5160 S6).
-    const lines = content.split('\n')
-    const first = lines[0]?.replace(/\r$/, '') ?? ''
-    if (first.startsWith('# ') && first.slice(2).trim() === pageTitle) {
-      lines.shift()
-      while (lines[0] !== undefined && /^\r?$/.test(lines[0])) lines.shift()
-    }
+    const lines = stripTitleHeading(content, pageTitle)
 
     // Faithful-but-simple property count: the real importer pulls properties
     // from YAML frontmatter and inline `key:: value` lines. We don't reproduce

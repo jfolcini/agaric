@@ -22,6 +22,9 @@
  * user a restart usually re-runs recovery cleanly and to avoid large edits
  * until then.
  *
+ * The same backfill also carries the boot's sync-quarantine count (#6057);
+ * see `showSyncQuarantinedToast`.
+ *
  * No-op outside Tauri (browser dev sessions without `__TAURI_INTERNALS__`).
  * Mount once in `App.tsx`.
  */
@@ -35,6 +38,7 @@ import type { RecoveryStatus } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { useNavigationStore } from '@/stores/navigation'
 
 /** Event name — must mirror `EVENT_RECOVERY_DEGRADED` in
  *  `src-tauri/agaric-sync/src/recovery/mod.rs`. */
@@ -43,6 +47,9 @@ export const RECOVERY_DEGRADED_EVENT = 'recovery:degraded'
 /** Fixed sonner id so the live event and the mount backfill collapse into
  *  one persistent banner instead of stacking two. */
 export const RECOVERY_DEGRADED_TOAST_ID = 'recovery-degraded'
+
+/** Fixed sonner id for the boot-quarantine warning (#6057). */
+export const SYNC_QUARANTINED_TOAST_ID = 'sync-quarantined'
 
 /** Defensive shape check for the `RecoveryStatus` payload. */
 function isRecoveryStatus(p: unknown): p is RecoveryStatus {
@@ -69,6 +76,28 @@ export function showRecoveryDegradedBanner(status: RecoveryStatus): void {
     // Persist until the user dismisses it — a transient toast would scroll
     // away before a user who stepped away from a crashed session sees it.
     duration: Number.POSITIVE_INFINITY,
+  })
+}
+
+/** Same navigation as `handleOpenSyncSettings` in `App.tsx`. */
+function openSyncSettings(): void {
+  const navigation = useNavigationStore.getState()
+  navigation.setPendingSettingsTab('sync')
+  navigation.setView('settings')
+}
+
+/**
+ * #6057: warn on the boot that moved inbound sync deltas to quarantine. Only
+ * that boot reports a non-zero count, so a backlog nobody can clear does not
+ * nag on every start. Persistent and deduped by `id`, like the degraded banner.
+ */
+export function showSyncQuarantinedToast(status: RecoveryStatus): void {
+  const count = status.sync_quarantined_this_boot
+  if (count === 0) return
+  notify.warning(i18n.t('boot.syncQuarantinedBody', { count }), {
+    id: SYNC_QUARANTINED_TOAST_ID,
+    duration: Number.POSITIVE_INFINITY,
+    action: { label: i18n.t('action.review'), onClick: openSyncSettings },
   })
 }
 
@@ -108,6 +137,9 @@ export function useRecoveryStatus(): void {
         const status = unwrap(res)
         if (cancelled) return
         showRecoveryDegradedBanner(status)
+        // Backfill only: the `recovery:degraded` event fires on a degraded
+        // boot alone, so it cannot carry this signal.
+        showSyncQuarantinedToast(status)
       })
       .catch((err: unknown) => {
         logger.warn('boot', 'getRecoveryStatus() rejected', undefined, err)

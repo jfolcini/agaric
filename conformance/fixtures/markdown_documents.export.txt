@@ -1,10 +1,10 @@
-# Field Notes
-
 ---
 aliases: [Notebook]
 tags: [research]
 season: autumn
 ---
+
+# Field Notes
 
 - [map.png](attachment:ATT2)
 - ## Findings
