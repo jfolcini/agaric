@@ -3446,10 +3446,12 @@ async fn splice_into_anchor(
     Ok(rows)
 }
 
-/// Resolve the page links and tags `blocks` write as names in `anchor`'s
-/// space, creating what no name there matches, and write each block's content
-/// with their ids. Returns the pages and tags created; a name left as text is
-/// named in `warnings`. With no space, every name stays text.
+/// Write the foreign highlight and math of `blocks` in Agaric's form
+/// ([`normalize_foreign_forms`]), then resolve the page links and tags they
+/// write as names in `anchor`'s space, creating what no name there matches,
+/// and write each block's content with their ids. Returns the pages and tags
+/// created; a name left as text is named in `warnings`. With no space, every
+/// name stays text.
 async fn resolve_pasted_names(
     mut tx: CommandTx,
     materializer: &Materializer,
@@ -3458,6 +3460,7 @@ async fn resolve_pasted_names(
     blocks: &mut [import::ParsedBlock],
     warnings: &mut Vec<String>,
 ) -> Result<(CommandTx, Vec<BlockRow>), AppError> {
+    normalize_foreign_forms(blocks);
     let Some(space) = agaric_store::space::resolve_block_space(&mut **tx, anchor).await? else {
         return Ok((tx, Vec::new()));
     };
@@ -4284,12 +4287,24 @@ fn parse_import_payload(
     for block in parse_output.blocks.iter_mut().filter(|b| !b.is_code) {
         block.content = import::rewrite_obsidian_note_embeds(&block.content, names_note);
     }
+    normalize_foreign_forms(&mut parse_output.blocks);
     if !notes.is_empty() {
         for block in parse_output.blocks.iter_mut().filter(|b| !b.is_code) {
             block.content = rewrite_vault_wikilinks(&block.content, &notes);
         }
     }
     Ok((parse_output, page_title))
+}
+
+/// Each block's foreign highlight and math in Agaric's form
+/// ([`import::normalize_foreign_inline`]), as import, paste, every MCP content
+/// write and Edit as Markdown take text in (#6033).
+fn normalize_foreign_forms(blocks: &mut [import::ParsedBlock]) {
+    for block in blocks {
+        if let std::borrow::Cow::Owned(content) = import::normalize_foreign_inline(&block.content) {
+            block.content = content;
+        }
+    }
 }
 
 /// The page title each of a folder pick's `.md` paths imports as, keyed by its
@@ -7476,6 +7491,25 @@ mod tests {
         cases: Vec<ReferenceTokenCase>,
         name_rule_cases: Vec<NameRuleCase>,
         page_name_fold_cases: Vec<PageNameFoldCase>,
+        heading_anchors: HeadingAnchors,
+    }
+
+    /// #6033 — whether the anchor of `[[Page#anchor]]` names a page's block,
+    /// `block_id`, holding `content`. `reference-tokens-conformance.test.ts`
+    /// drives the editor's matcher for a typed anchor over the same rows.
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct HeadingAnchors {
+        block_id: String,
+        cases: Vec<HeadingAnchorCase>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct HeadingAnchorCase {
+        name: String,
+        content: String,
+        anchor: String,
+        matches: bool,
     }
 
     /// #6052 — whether `[[link]]` names the one page, titled `title`, when the
@@ -7808,6 +7842,33 @@ mod tests {
                 vector.transformed,
                 "stored content for {:?}",
                 vector.name
+            );
+        }
+    }
+
+    #[test]
+    fn heading_anchor_vectors_pin_which_block_an_anchor_names() {
+        let vectors: ReferenceTokenVectors = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../conformance/reference-tokens.vectors.json"
+        )))
+        .expect("reference-token conformance fixture must be valid JSON");
+        let HeadingAnchors { block_id, cases } = vectors.heading_anchors;
+        assert!(!cases.is_empty());
+        for row in cases {
+            let candidates = [AnchorCandidate {
+                id: block_id.clone(),
+                page_id: "PAGE".into(),
+                parent_id: None,
+                position: Some(1),
+                content: row.content,
+            }];
+            let by_id = HashMap::from([(block_id.as_str(), &candidates[0])]);
+            assert_eq!(
+                anchor_block(&candidates, &by_id, "PAGE", &row.anchor).is_some(),
+                row.matches,
+                "{:?}",
+                row.name
             );
         }
     }

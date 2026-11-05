@@ -45,7 +45,8 @@
 //! in which a slot "recovers" and keeps its row: the sole exits from the inbox
 //! are (a) its projection committing, which DELETEs it in the same transaction,
 //! (b) a #792 / #1054 gate dropping it, and (c) this quarantine move. So a slot
-//! that reaches N has genuinely failed N boots in a row.
+//! that reaches N has genuinely failed N boots in a row, except a re-admitted
+//! one, which starts one boot short (see [`readmit_quarantined_slot`]).
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -356,9 +357,16 @@ pub async fn read_quarantined_bytes(
 /// The move is transactional in the same direction as
 /// [`note_unresolved_slot`]'s: the inbox row is inserted and the quarantine row
 /// deleted in ONE transaction, so the blob is never absent from both tables.
-/// `unresolved_boots` resets to 0 — a deliberate re-admission grants a fresh
-/// budget; without the reset the slot would re-quarantine on its very next
-/// unresolved boot and the manual action would look like it did nothing.
+///
+/// # A re-admission gets one boot (#6057)
+///
+/// The inbox row starts at `unresolved_boots = QUARANTINE_AFTER_BOOTS - 1`, so
+/// the next boot either applies the blob or moves it straight back here with a
+/// fresh `last_reason`. A full budget would hide a retry that still fails in
+/// the inbox for [`QUARANTINE_AFTER_BOOTS`] boots, while Settings › Sync &
+/// devices showed nothing stuck. `created_at` keeps the quarantine row's
+/// `first_seen_at_ms`, so "first seen" still says how long the blob has been
+/// stuck after it comes back.
 pub async fn readmit_quarantined_slot(
     pool: &SqlitePool,
     quarantine_id: i64,
@@ -370,7 +378,8 @@ pub async fn readmit_quarantined_slot(
     let mut tx = agaric_store::db::begin_immediate_logged(pool, "sync_quarantine_readmit").await?;
 
     let Some(row) = sqlx::query!(
-        "SELECT space_id, bytes, purged_ids FROM loro_sync_quarantine WHERE id = ?",
+        "SELECT space_id, bytes, purged_ids, first_seen_at_ms \
+         FROM loro_sync_quarantine WHERE id = ?",
         quarantine_id,
     )
     .fetch_optional(&mut *tx)
@@ -380,16 +389,17 @@ pub async fn readmit_quarantined_slot(
         return Ok(None);
     };
 
-    let created_at = agaric_store::db::now_ms();
+    let one_boot_left = QUARANTINE_AFTER_BOOTS - 1;
     let inbox_id: i64 = sqlx::query_scalar!(
         r#"INSERT INTO loro_sync_inbox
              (space_id, bytes, purged_ids, created_at, unresolved_boots)
-           VALUES (?, ?, ?, ?, 0)
+           VALUES (?, ?, ?, ?, ?)
            RETURNING id as "id!: i64""#,
         row.space_id,
         row.bytes,
         row.purged_ids,
-        created_at,
+        row.first_seen_at_ms,
+        one_boot_left,
     )
     .fetch_one(&mut *tx)
     .await?;
@@ -407,7 +417,8 @@ pub async fn readmit_quarantined_slot(
         inbox_id,
         space_id = %row.space_id,
         "#3226: manually re-admitted a quarantined sync blob into the write-ahead \
-         inbox; the next boot replay will retry it with a fresh boot budget"
+         inbox; the next boot replay retries it once and quarantines it again if \
+         it still does not apply"
     );
     Ok(Some(inbox_id))
 }
