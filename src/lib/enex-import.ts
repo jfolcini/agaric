@@ -42,6 +42,11 @@
  * {@link placeTaskGroups}); an older note reminder opens the note with a task
  * block named after it, as a Joplin to-do does (see {@link reminderTask}).
  *
+ * LINKS BETWEEN NOTES (#6032): an export carries no note GUID, so an
+ * `evernote:///view/…` link whose text names a note of the same file (as page
+ * names match, {@link nameKey}) links that note's page; any other stays an
+ * Evernote link, counted by {@link countEvernoteNoteLinks}.
+ *
  * DEFERRED (separate follow-up): Joplin `.jex` import.
  *
  * ACCEPTED MUTATION GAPS (#4815). The mutants still surviving here are
@@ -66,6 +71,7 @@ import TurndownService from 'turndown'
 import { gfm } from 'turndown-plugin-gfm'
 
 import { formatDate } from '@/lib/date-utils'
+import { nameKey } from '@/lib/name-tokens'
 
 /**
  * One decoded, referenced `<resource>` attachment for a note (#2513). Only
@@ -720,12 +726,14 @@ function normalizeCdata(xmlText: string): string {
 }
 
 /**
- * Parse an Evernote `.enex` export into {@link EnexNote}s.
+ * Parse an Evernote `.enex` export into {@link EnexNote}s. A link to another
+ * note of the file names its page under `fileName` ({@link enexPageName}), or
+ * its title alone when there is none.
  *
  * @throws {Error} when the XML is malformed (DOMParser produces a
  *   `<parsererror>` element). The caller surfaces this via a notify/error.
  */
-export function parseEnex(xmlText: string): EnexNote[] {
+export function parseEnex(xmlText: string, fileName?: string): EnexNote[] {
   const doc = new DOMParser().parseFromString(normalizeCdata(xmlText), 'application/xml')
   // `application/xml` does not throw on malformed input; it embeds a
   // `<parsererror>` element in the returned document instead.
@@ -733,13 +741,14 @@ export function parseEnex(xmlText: string): EnexNote[] {
     throw new Error('Failed to parse ENEX file: malformed XML.')
   }
 
-  const td = createHtmlTurndown()
   const noteEls = Array.from(doc.querySelectorAll('note'))
-  return noteEls.map((noteEl) => {
-    // Each `<task>` holds its own `title`, `created` and `updated`, so the
-    // note's are read as direct children.
-    const rawTitle = childText(noteEl, 'title')
-    const title = rawTitle.length > 0 ? rawTitle : UNTITLED_PLACEHOLDER
+  // Each `<task>` holds its own `title`, `created` and `updated`, so the
+  // note's are read as direct children.
+  const titles = noteEls.map((noteEl) => childText(noteEl, 'title') || UNTITLED_PLACEHOLDER)
+  const td = createHtmlTurndown()
+  addNoteLinkRule(td, titles, fileName)
+  return noteEls.map((noteEl, index) => {
+    const title = titles[index] ?? UNTITLED_PLACEHOLDER
 
     // Decode+index this note's `<resource>` attachments by MD5 (#2513) before
     // converting the body, so `<en-media hash=…>` refs can be matched.
@@ -767,6 +776,38 @@ export function parseEnex(xmlText: string): EnexNote[] {
 
     return { title, markdown, tags, createdMs, updatedMs, sourceUrl, attachments }
   })
+}
+
+const EVERNOTE_NOTE_LINK = 'evernote:///view/'
+
+/**
+ * Teach `td` to write an Evernote note link whose text is one of `titles` as a
+ * link to that note's page. Any other link falls through to Turndown's own.
+ */
+function addNoteLinkRule(td: TurndownService, titles: string[], fileName?: string): void {
+  const pages = new Map<string, string>()
+  for (const title of titles) {
+    const page =
+      fileName === undefined ? sanitizeNoteTitleToFilename(title) : enexPageName(fileName, title)
+    if (!pages.has(nameKey(title))) pages.set(nameKey(title), page)
+  }
+  const pageOf = (node: HTMLElement) =>
+    node.nodeName === 'A' && (node.getAttribute('href') ?? '').startsWith(EVERNOTE_NOTE_LINK)
+      ? pages.get(nameKey(node.textContent ?? ''))
+      : undefined
+  td.addRule('evernoteNoteLink', {
+    filter: (node) => pageOf(node) !== undefined,
+    replacement: (_content, node) => {
+      const page = pageOf(node as HTMLElement) ?? ''
+      const text = (node.textContent ?? '').trim()
+      return page === text ? `[[${page}]]` : `[[${page}|${text}]]`
+    },
+  })
+}
+
+/** How many links in `notes` are still Evernote note links, none naming a note of their file. */
+export function countEvernoteNoteLinks(notes: EnexNote[]): number {
+  return notes.reduce((n, note) => n + note.markdown.split(`](${EVERNOTE_NOTE_LINK}`).length - 1, 0)
 }
 
 /** The trimmed text of the element at `path` below `parent`'s own children, or `''`. */
@@ -893,6 +934,15 @@ export function escapeTitleSeparators(title: string): string {
 export function sanitizeNoteTitleToFilename(title: string): string {
   const cleaned = escapeTitleSeparators(title.replace(/\s+/g, ' ').trim())
   return cleaned.length > 0 ? cleaned : UNTITLED_PLACEHOLDER
+}
+
+/**
+ * The page a note of the `.enex` file `fileName` imports as: `<file stem>/<title>`,
+ * since an export names no notebook, each part one namespace level.
+ */
+export function enexPageName(fileName: string, title: string): string {
+  const notebook = sanitizeNoteTitleToFilename(fileName.replace(/\.enex$/i, ''))
+  return `${notebook}/${sanitizeNoteTitleToFilename(title)}`
 }
 
 /**

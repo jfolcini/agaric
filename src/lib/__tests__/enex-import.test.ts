@@ -39,6 +39,7 @@ import { describe, expect, it } from 'vitest'
 import { parse } from '@/editor/markdown-serializer'
 import { formatDate } from '@/lib/date-utils'
 import {
+  countEvernoteNoteLinks,
   type EnexNote,
   enexNoteToMarkdown,
   parseEnex,
@@ -1366,5 +1367,62 @@ describe('Evernote notebooks (#6032)', () => {
     const [unit] = enexNotesToUnits([note('TCP/IP')], 'Q3\\Q4.enex')
 
     expect(unit?.name).toBe('Q3⧵Q4/TCP∕IP.md')
+  })
+})
+
+describe('parseEnex — links between notes (#6032)', () => {
+  const link = (text: string, guid = 'abc') =>
+    `<a href="evernote:///view/123/s1/${guid}/${guid}/">${text}</a>`
+  const file = (...notes: Array<[string, string]>) =>
+    enex(
+      ...notes.map(
+        ([title, enml]) =>
+          `<note><title>${title}</title><content>${content(enml)}</content></note>`,
+      ),
+    )
+
+  it("links a note whose title is the link's text, as page names match, by its page under the file name", () => {
+    const xml = file(
+      ['Plan', `<p>See ${link('Meeting')} and ${link('meeting')}.</p>`],
+      ['Meeting', '<p>m</p>'],
+    )
+
+    expect(at(parseEnex(xml, 'Work.enex')).markdown).toBe(
+      'See [[Work/Meeting|Meeting]] and [[Work/Meeting|meeting]].',
+    )
+    expect(at(parseEnex(xml)).markdown).toBe('See [[Meeting]] and [[Meeting|meeting]].')
+  })
+
+  it('keeps a link whose text names no note of the file, and counts it', () => {
+    const notes = parseEnex(
+      file(['Plan', `<p>${link('Elsewhere')}</p>`], ['Meeting', '<p>m</p>']),
+      'Work.enex',
+    )
+
+    expect(at(notes).markdown).toBe('[Elsewhere](evernote:///view/123/s1/abc/abc/)')
+    expect(countEvernoteNoteLinks(notes)).toBe(1)
+  })
+
+  it('keeps a link to a note of another file', () => {
+    const other = parseEnex(file(['Meeting', '<p>m</p>']), 'Home.enex')
+    const notes = parseEnex(file(['Plan', `<p>${link('Meeting')}</p>`]), 'Work.enex')
+
+    expect(other).toHaveLength(1)
+    expect(at(notes).markdown).toBe('[Meeting](evernote:///view/123/s1/abc/abc/)')
+  })
+
+  it('counts every kept link across notes, and none it linked or a web link', () => {
+    const notes = parseEnex(
+      file(
+        [
+          'Plan',
+          `<p>${link('A')} ${link('B')} ${link('Meeting')} <a href="https://x.org/">w</a></p>`,
+        ],
+        ['Meeting', `<p>${link('C')}</p>`],
+      ),
+      'Work.enex',
+    )
+
+    expect(countEvernoteNoteLinks(notes)).toBe(3)
   })
 })
