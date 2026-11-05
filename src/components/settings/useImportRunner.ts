@@ -323,7 +323,8 @@ export function useImportRunner(): UseImportRunner {
             },
             vaultFiles,
             vaultNotes,
-            [...importedPageIds],
+            // Only a file that can merge needs the run's pages; the rest import as new pages anyway.
+            unit.merges === undefined ? [] : [...importedPageIds],
           )
           // A merge is the page's undo step, as an Edit as Markdown save is.
           if (result.merged) {

@@ -1,8 +1,8 @@
 /**
  * Tests for `useImportRunner`'s merges (#6277 decision 7): before a run that
  * may merge files into existing pages it asks which pages, through
- * `list_import_merges`, and waits on the user; each file then carries the
- * pages the run wrote so far, and a merge is its page's undo step.
+ * `list_import_merges`, and waits on the user; each file that can merge then
+ * carries the pages the run wrote so far, and a merge is its page's undo step.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -126,11 +126,7 @@ describe('useImportRunner merges', () => {
     })
 
     expect(result.current.mergeQuestion).toBeNull()
-    expect(mockImportMarkdown.mock.calls.map((call) => call[7])).toEqual([
-      [],
-      ['PLAN'],
-      ['PLAN', 'NEW'],
-    ])
+    expect(mockImportMarkdown.mock.calls.map((call) => call[7])).toEqual([[], ['PLAN'], []])
     expect(outcome).toMatchObject({ pagesUpdated: 1, totalBlocks: 0, navTitle: 'NOTE' })
     expect(result.current.importResult).toMatchObject({ pagesUpdated: 1, cancelled: false })
     expect(useUndoStore.getState().pages.get('PLAN')?.undoStack[0]?.refs).toEqual(ops)

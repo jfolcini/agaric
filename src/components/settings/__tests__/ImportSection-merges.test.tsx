@@ -60,9 +60,9 @@ beforeEach(() => {
   })
 })
 
-async function pick(name: string): Promise<void> {
+async function pick(...names: string[]): Promise<void> {
   const input = screen.getByTestId('import-file-input') as HTMLInputElement
-  Object.defineProperty(input, 'files', { value: [new File(['body'], name)] })
+  Object.defineProperty(input, 'files', { value: names.map((name) => new File(['body'], name)) })
   await act(async () => {
     input.dispatchEvent(new Event('change', { bubbles: true }))
   })
@@ -112,6 +112,34 @@ describe('ImportSection merge question', () => {
 
     await waitFor(() => expect(toast.success).toHaveBeenCalledOnce())
     expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('does not call a run all failed when an update that added no block succeeded beside a failure', async () => {
+    const user = userEvent.setup()
+    listImportMerges.mockReturnValue([{ page_id: 'PLAN', title: 'Plan' }])
+    mockImportMarkdown
+      .mockResolvedValueOnce({
+        page_title: 'Plan',
+        page_id: 'PLAN',
+        blocks_created: 0,
+        properties_set: 0,
+        collapsed: [],
+        warnings: [],
+        anchors: [],
+        deferred: [],
+        merged: [],
+      })
+      .mockRejectedValueOnce({ kind: 'validation', message: 'line 2: refused' })
+    render(<ImportSection />)
+
+    await pick('Plan.md', 'Bad.md')
+    const dialog = await screen.findByRole('alertdialog')
+    await user.click(within(dialog).getByRole('button', { name: t('data.importMergeConfirm') }))
+
+    const result = await screen.findByTestId('import-result')
+    expect(result).toHaveTextContent(t('data.importResultUpdated', { count: 1 }))
+    expect(screen.queryByTestId('import-result-error')).not.toBeInTheDocument()
+    expect(screen.getByTestId('import-failures-heading')).toBeInTheDocument()
   })
 
   it('imports nothing when the user declines', async () => {

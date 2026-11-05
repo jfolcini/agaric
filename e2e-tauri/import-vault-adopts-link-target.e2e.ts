@@ -29,6 +29,7 @@ import {
   NAV_TIMEOUT,
   blockStaticByMarker,
   navigateTo,
+  pagesTitled,
   reopenPageByTitle,
   runScopedMarker,
   waitForAppReady,
@@ -54,17 +55,6 @@ async function importFile(file: string, title: string): Promise<void> {
     timeout: ACTION_TIMEOUT,
     timeoutMsg: `import result never named ${JSON.stringify(title)}`,
   })
-}
-
-/** How many rows of the Pages list carry exactly `title`. */
-async function pagesTitled(title: string): Promise<number> {
-  await navigateTo('Pages')
-  const first = $(
-    `.//span[contains(@class, "page-browser-item-title")][normalize-space(.)="${title}"]`,
-  )
-  await first.waitForDisplayed({ timeout: NAV_TIMEOUT })
-  return $$(`.//span[contains(@class, "page-browser-item-title")][normalize-space(.)="${title}"]`)
-    .length
 }
 
 async function assertOneTargetHoldingItsBlockAndLinked(

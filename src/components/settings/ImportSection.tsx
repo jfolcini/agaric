@@ -705,7 +705,7 @@ export function ImportSection(): React.ReactElement {
               navTitle,
               notes,
             } = importResult
-            const allFailed = blocksCreated === 0 && failures.length > 0
+            const allFailed = blocksCreated === 0 && pagesUpdated === 0 && failures.length > 0
             const hasDetail = failures.length > 0 || warnings.length > 0
             // Cap the at-rest list; the toggle reveals the rest.
             const PREVIEW = 5

@@ -8,9 +8,9 @@
 // mock lists from its own approximation, so only this lane shows the real
 // match: the page the backend will merge into, by the title the backend
 // derives from the file name. After the confirm, the page is updated in place
-// (one page, the edited line's block rewritten, the dropped line's block in
-// the Trash), asserted after a navigation round-trip, on what the backend
-// stored.
+// (still one page of that title, holding the unchanged and the edited line,
+// the dropped line gone), asserted after a navigation round-trip, on what the
+// backend stored. Which blocks keep their ids is the Rust tests'.
 //
 // The file is picked as import-markdown-readme.e2e.ts picks its fixture:
 // WebDriver's Element Send Keys on the Data tab's hidden `<input type="file">`.
@@ -31,6 +31,7 @@ import {
   importMarkdownPage,
   navigateTo,
   openDataTab,
+  pagesTitled,
   reopenPageByTitle,
   runScopedMarker,
   waitForAppReady,
@@ -39,14 +40,6 @@ import {
 
 const MARKER = runScopedMarker('wdio-reimport')
 const TITLE = `${MARKER}-plan`
-
-/** How many rows of the Pages list carry exactly `title`. */
-async function pagesTitled(title: string): Promise<number> {
-  await navigateTo('Pages')
-  const rows = `.//span[contains(@class, "page-browser-item-title")][normalize-space(.)="${title}"]`
-  await $(rows).waitForDisplayed({ timeout: NAV_TIMEOUT })
-  return $$(rows).length
-}
 
 describe('Agaric real-backend re-import merges into the page of its title (#6277 G5) @markdown @pages', () => {
   it('lists the existing page before it runs and updates it in place', async () => {

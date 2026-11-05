@@ -2,7 +2,7 @@
 //! page as an Edit as Markdown save writes its buffer (decision 7).
 
 use crate::prelude::*;
-use agaric_engine::import::{ImportDialect, ImportResult};
+use agaric_engine::import::{ImportDialect, ImportResult, VaultFile};
 
 use super::page_cmd_tests::{dup_child, dup_page};
 
@@ -222,9 +222,9 @@ async fn an_oversize_merge_is_refused_by_the_op_cap() {
 }
 
 /// Red: a file the save cannot read as its import does (a Logseq or Org
-/// file, a folder's note) does not merge, and makes no twin either: it is
-/// the page `Title (2)`, with a warning, and the page of its title is left as
-/// it was.
+/// file, a folder's note, a note with attachments) does not merge, and makes
+/// no twin either: it is the page `Title (2)`, with a warning, and the page of
+/// its title is left as it was.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_file_that_cannot_merge_is_imported_as_title_2() {
     let (pool, dir) = test_pool().await;
@@ -263,6 +263,24 @@ async fn a_file_that_cannot_merge_is_imported_as_title_2() {
     )
     .await
     .unwrap();
+    let scan = import_markdown_with_progress(
+        &pool,
+        DEV,
+        &mat,
+        dir.path(),
+        "scan ![[pic.png]]".into(),
+        Some("Plan.md".into()),
+        TEST_SPACE_ID.into(),
+        ImportDialect::Markdown,
+        Some(vec![VaultFile {
+            path: "pic.png".into(),
+            bytes: vec![0x89, b'P', b'N', b'G', 1, 2, 3, 4],
+        }]),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
 
     assert_eq!(contents(&pool, page.as_str()).await, ["kept"]);
@@ -274,6 +292,8 @@ async fn a_file_that_cannot_merge_is_imported_as_title_2() {
     assert_eq!(contents(&pool, &outline.page_id).await, ["outline"]);
     assert_eq!(note.page_title, "Plan (3)");
     assert_eq!(contents(&pool, &note.page_id).await, ["note"]);
+    assert_eq!(scan.page_title, "Plan (4)");
+    assert_eq!(scan.merged, None);
     let why = "a page titled 'Plan' is in this space, and a Logseq or Org file, a folder's note \
                or a note with attachments does not merge into it";
     assert_eq!(
@@ -283,6 +303,38 @@ async fn a_file_that_cannot_merge_is_imported_as_title_2() {
     assert_eq!(
         note.warnings,
         [format!("{why}; the file was imported as 'Plan (3)'")]
+    );
+    assert_eq!(
+        scan.warnings,
+        [format!("{why}; the file was imported as 'Plan (4)'")]
+    );
+    mat.shutdown();
+}
+
+/// Red: an anchor names the block a line updates, whatever the line says:
+/// two blocks that swap places and change their text keep their ids, which
+/// only their anchors tell apart (by text they would pair the other way).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_anchored_line_updates_the_block_its_anchor_names() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Anchors").await;
+    let alpha = dup_child(&pool, &mat, &page, "alpha").await;
+    let beta = dup_child(&pool, &mat, &page, "beta").await;
+    settle(&mat).await;
+
+    let md = format!("two ^{beta}\n\none ^{alpha}\n");
+    let result = import(&pool, &mat, dir.path(), "Anchors.md", &md)
+        .await
+        .unwrap();
+
+    assert_eq!(result.warnings, Vec::<String>::new());
+    assert_eq!(
+        children(&pool, page.as_str()).await,
+        [
+            (beta.as_str().to_owned(), "two".to_owned()),
+            (alpha.as_str().to_owned(), "one".to_owned())
+        ]
     );
     mat.shutdown();
 }
