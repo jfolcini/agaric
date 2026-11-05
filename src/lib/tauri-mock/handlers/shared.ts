@@ -212,7 +212,23 @@ function copyJournalTemplateBlocks(dayPageId: string, spaceId: string | null, da
     )
     .toSorted((x, y) => compareUtf8Bytes(x['id'] as string, y['id'] as string))[0]
   if (template === undefined) return
-  const templateId = template['id'] as string
+  copyTemplateBlocks(template['id'] as string, dayPageId, (content) =>
+    expandJournalTemplateVariables(content, date),
+  )
+}
+
+/**
+ * Copy the content blocks of the template page `templateId` under `destPageId`,
+ * nesting included, each expanded by `expand`. Returns the copies, depth-first,
+ * as `copy_page_blocks_in_tx` does. The same approximation as
+ * {@link copyJournalTemplateBlocks}: content and nesting only.
+ */
+export function copyTemplateBlocks(
+  templateId: string,
+  destPageId: string,
+  expand: (content: string) => string,
+): Record<string, unknown>[] {
+  const copied: Record<string, unknown>[] = []
   const copyChildren = (sourceParent: string, destParent: string): void => {
     const children = [...blocks.values()]
       .filter(
@@ -224,9 +240,9 @@ function copyJournalTemplateBlocks(dayPageId: string, spaceId: string | null, da
       const row = {
         id,
         block_type: 'content',
-        content: expandJournalTemplateVariables((source['content'] as string | null) ?? '', date),
+        content: expand((source['content'] as string | null) ?? ''),
         parent_id: destParent,
-        page_id: dayPageId,
+        page_id: destPageId,
         position: 0,
         deleted_at: null,
         todo_state: null,
@@ -236,6 +252,7 @@ function copyJournalTemplateBlocks(dayPageId: string, spaceId: string | null, da
         space_id: null,
       }
       blocks.set(id, row)
+      copied.push(row)
       insertAtSlotAndRenumber(destParent, id, appendSlot(destParent, id))
       pushOp('create_block', {
         block_id: id,
@@ -247,7 +264,8 @@ function copyJournalTemplateBlocks(dayPageId: string, spaceId: string | null, da
       copyChildren(source['id'] as string, id)
     }
   }
-  copyChildren(templateId, dayPageId)
+  copyChildren(templateId, destPageId)
+  return copied
 }
 
 /**
@@ -259,7 +277,11 @@ function copyJournalTemplateBlocks(dayPageId: string, spaceId: string | null, da
  * `:FORMAT` in the tokens `formatDateFnsSubset` knows, any other format giving
  * the default form; anything else stays. Names are English, as chrono's are.
  */
-export function expandJournalTemplateVariables(content: string, date: string): string {
+export function expandJournalTemplateVariables(
+  content: string,
+  date: string,
+  title: string = date,
+): string {
   const now = new Date()
   const [year, month, day] = date.split('-').map(Number) as [number, number, number]
   const at = (offsetDays: number): Date =>
@@ -286,7 +308,7 @@ export function expandJournalTemplateVariables(content: string, date: string): s
       }
       case 'page title':
       case 'title': {
-        return date
+        return title
       }
       case 'weekday': {
         return formatted(at(0), formatDateFns(at(0), 'EEEE'))

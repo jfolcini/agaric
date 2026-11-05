@@ -45,6 +45,7 @@ import { blocksHandlers } from '@/lib/tauri-mock/handlers/blocks'
 import { draftsHandlers } from '@/lib/tauri-mock/handlers/drafts'
 import { historyHandlers } from '@/lib/tauri-mock/handlers/history'
 import { linksHandlers } from '@/lib/tauri-mock/handlers/links'
+import { meetingsHandlers } from '@/lib/tauri-mock/handlers/meetings'
 import { pagesHandlers } from '@/lib/tauri-mock/handlers/pages'
 import { propertiesHandlers } from '@/lib/tauri-mock/handlers/properties'
 import { searchHandlers } from '@/lib/tauri-mock/handlers/search'
@@ -83,6 +84,7 @@ const HANDLERS_TYPED = {
   ...propertiesHandlers,
   ...syncHandlers,
   ...attachmentsHandlers,
+  ...meetingsHandlers,
   ...systemHandlers,
   ...draftsHandlers,
 } satisfies TypedHandlers
