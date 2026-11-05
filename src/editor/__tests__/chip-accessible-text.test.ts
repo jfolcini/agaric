@@ -76,7 +76,7 @@ describe('editor chips speak what they show', () => {
     expectSpeaksWhatItShows(mount(link('My label'), { title: () => 'Roadmap' }), 'My label')
   })
 
-  it('a deleted labelled page link reads its label, then what a click does', () => {
+  it('a deleted labelled page link reads its label', () => {
     const chip = mount(link('My label'), { title: () => 'Roadmap', status: () => 'deleted' })
     expectSpeaksWhatItShows(chip, 'My label')
   })
