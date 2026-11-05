@@ -214,7 +214,7 @@ fn is_journal_title(title: &str) -> bool {
 /// again, and the later page becomes `Foo (2) (2)`: still unique, and not worth
 /// guessing whether a trailing `(n)` is the pass's own or the user's, as in
 /// `Report (2024)`.
-fn first_free_title(names: &SpacePageNames, title: &str) -> String {
+pub(crate) fn first_free_title(names: &SpacePageNames, title: &str) -> String {
     let base = title.trim();
     let mut n: u64 = 2;
     loop {

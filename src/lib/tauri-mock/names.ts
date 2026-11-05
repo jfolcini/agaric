@@ -109,18 +109,26 @@ function readLinkBody(token: PageToken, pages: readonly Row[]): LinkReading {
 }
 
 /**
- * The page an import of a file titled `title` adopts (#5160 D12): the page of
+ * The page a file titled `title` imports into (`import_target`): the page of
  * that title under `nameKey`, the lowest id where several share it (#6278),
- * when it has no live child; never a page matched by alias
- * (`create_import_page`); `null` otherwise.
+ * never one matched by alias, and whether it has a live child.
  */
-export function findEmptyPageTitled(title: string, spaceId: string): string | null {
+export function findPageTitled(
+  title: string,
+  spaceId: string,
+): { id: string; hasBlocks: boolean } | null {
   const match = findTitled(title, livePages(spaceId))
   if (match === null) return null
-  const hasChild = [...blocks.values()].some(
+  const hasBlocks = [...blocks.values()].some(
     (b) => b['parent_id'] === match && b['deleted_at'] == null,
   )
-  return hasChild ? null : match
+  return { id: match, hasBlocks }
+}
+
+/** The page of `title` an import adopts (#5160 D12): {@link findPageTitled}'s, when it has no live child. */
+export function findEmptyPageTitled(title: string, spaceId: string): string | null {
+  const page = findPageTitled(title, spaceId)
+  return page === null || page.hasBlocks ? null : page.id
 }
 
 /**

@@ -344,6 +344,14 @@ export function inferBibliographyFormat(filename: string): BibliographyFormat | 
 export interface ImportUnit {
   name: string
   bytes: number
+  /**
+   * The `path` a unit the backend may merge into the page of its title
+   * imports as, known before the run: a Markdown file sent with no vault
+   * (#6277 decision 7), whose existing page the run asks about first. Absent
+   * for a folder's note, a note with attachments and a Logseq or Org file,
+   * which never merge.
+   */
+  merges?: string | undefined
   load: () => Promise<{
     content: string
     path: string
@@ -540,11 +548,12 @@ export function mdFilesToUnits(
   let named: Promise<NamedNotes> | undefined
   const naming = () => (named ??= nameNotes(files, notes, logseq))
   let orgTargets: Promise<OrgPickTargets> | undefined
-  return notes.map(({ file, extension }, index) => ({
+  return notes.map(({ file, extension, path: importedAs }, index) => ({
     name: file.name,
     // Count bytes from the file size (known without reading) so a load
     // failure still advances the byte counter, matching the pre-refactor loop.
     bytes: file.size,
+    merges: vaultIndex === null && !logseq && extension !== '.org' ? importedAs : undefined,
     load: async () => {
       const { paths, notesByName, graph } = await naming()
       const text = await file.text()
@@ -626,6 +635,7 @@ export function enexNotesToUnits(notes: EnexNote[], fileName: string): ImportUni
     return {
       name,
       bytes: content.length,
+      merges: note.attachments.length === 0 ? name : undefined,
       load: () =>
         Promise.resolve({
           content,
@@ -660,6 +670,7 @@ export function jexNotesToUnits(notes: JexNote[]): ImportUnit[] {
     return {
       name,
       bytes: content.length,
+      merges: note.attachments.length === 0 ? name : undefined,
       load: () =>
         Promise.resolve({
           content,

@@ -126,7 +126,7 @@ pub(super) struct LinkMatches {
     /// Alias under the same key → page id.
     pub(super) aliases: HashMap<String, String>,
     /// Every matched page's title by id.
-    titles: HashMap<String, String>,
+    pub(super) titles: HashMap<String, String>,
 }
 
 impl LinkMatches {

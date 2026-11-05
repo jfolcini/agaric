@@ -206,6 +206,7 @@ describe('importMarkdown', () => {
       anchors: [],
       deferred: [],
       warnings: [],
+      merged: null,
     }
     mockedInvoke.mockImplementation(mockInvokeCommands({ import_markdown: () => expected }))
 
@@ -225,6 +226,7 @@ describe('importMarkdown', () => {
       // #128 — the helper always passes a `Channel<ImportProgressUpdate>`
       // for progress streaming (mirroring `startSync`), even when no
       // `onProgress` callback is supplied.
+      runPages: [],
       progress: expect.anything(),
     })
     expect(result).toEqual(expected)
@@ -242,6 +244,7 @@ describe('importMarkdown', () => {
           anchors: [],
           deferred: [],
           warnings: [],
+          merged: null,
         }),
       }),
     )
@@ -254,6 +257,7 @@ describe('importMarkdown', () => {
       spaceId: 'SPACE_A',
       dialect: 'Markdown',
       vault: null,
+      runPages: [],
       progress: expect.anything(),
     })
   })
@@ -277,6 +281,7 @@ describe('importMarkdown', () => {
             anchors: [],
             deferred: [],
             warnings: [],
+            merged: null,
           }
         },
       }),
@@ -288,6 +293,31 @@ describe('importMarkdown', () => {
     const event = { kind: 'started', page_title: 'X', blocks_total: 1 }
     capturedChannel?.onmessage?.(event)
     expect(onProgress).toHaveBeenCalledWith(event)
+  })
+
+  it('forwards the pages earlier files of the run wrote as runPages (#6277 G5)', async () => {
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        import_markdown: () => ({
+          page_title: 'P',
+          blocks_created: 1,
+          properties_set: 0,
+          page_id: 'PAGE',
+          collapsed: [],
+          anchors: [],
+          deferred: [],
+          warnings: [],
+          merged: null,
+        }),
+      }),
+    )
+
+    await importMarkdown('x', 'p.md', 'SPACE_A', 'Markdown', undefined, null, null, ['PAGE_1'])
+
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'import_markdown',
+      expect.objectContaining({ runPages: ['PAGE_1'], vault: null }),
+    )
   })
 
   it('forwards vaultFiles and vaultNotes as the vault of the import_markdown command (#1925, #5740)', async () => {
@@ -305,6 +335,7 @@ describe('importMarkdown', () => {
           anchors: [],
           deferred: [],
           warnings: [],
+          merged: null,
         }),
       }),
     )
@@ -319,6 +350,7 @@ describe('importMarkdown', () => {
       spaceId: 'SPACE_A',
       dialect: 'Markdown',
       vault: { files: vaultFiles, notes: [] },
+      runPages: [],
       progress: expect.anything(),
     })
     expect(mockedInvoke).toHaveBeenNthCalledWith(2, 'import_markdown', {
@@ -327,6 +359,7 @@ describe('importMarkdown', () => {
       spaceId: 'SPACE_A',
       dialect: 'Markdown',
       vault: { files: [], notes: ['V/n.md'] },
+      runPages: [],
       progress: expect.anything(),
     })
   })

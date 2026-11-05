@@ -486,6 +486,18 @@ export const common: Record<string, string> = {
   // property definitions and the titles its file names cannot spell.
   'data.importSpaceFileFailed': 'The export’s .agaric/space.json could not be restored: {{reason}}',
   'data.importPropertyDefFailed': 'The property “{{key}}” could not be restored: {{reason}}',
+  // #6277 decision 7 — a file whose title names an existing page merges into it.
+  'data.importResultUpdated_one': '{{count}} existing page updated',
+  'data.importResultUpdated_other': '{{count}} existing pages updated',
+  'data.importMergeTitle_one': 'Update an existing page?',
+  'data.importMergeTitle_other': 'Update {{count}} existing pages?',
+  'data.importMergeDescription_one':
+    'A file has the title of this page, so the import updates it in place: changed lines update their blocks, new lines add blocks, and lines missing from the file go to the Trash. Undo on the page reverts the update.',
+  'data.importMergeDescription_other':
+    'These files have the titles of existing pages, so the import updates each in place: changed lines update their blocks, new lines add blocks, and lines missing from a file go to the Trash. Undo on a page reverts its update.',
+  'data.importMergeConfirm': 'Update and import',
+  'data.importMergeCheckFailed':
+    'The import did not run: the pages it would update could not be read: {{reason}}',
   'data.importShowAll': 'Show all',
   'data.importShowLess': 'Show less',
   // Accessible names for the two progress bars (#1929).

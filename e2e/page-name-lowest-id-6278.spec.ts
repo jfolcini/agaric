@@ -38,11 +38,11 @@ async function pagesTitled(page: Page, title: string): Promise<string[]> {
 }
 
 /**
- * Two pages of one name, titled `olderTitle` and then `newerTitle`: a file
- * imported under the title of a page that has content becomes a page of its
- * own (`create_import_page`), the way a vault comes to hold a name twice below
- * the name check that `create_block` and `create_page_in_space` apply.
- * Returns `[older, newer]`.
+ * Two pages of one name, titled `olderTitle` and then `newerTitle`: the mock
+ * imports a file under the title of a page that has content as a page of its
+ * own, the way sync or old data comes to hold a name twice below the name
+ * check that `create_block` and `create_page_in_space` apply. (The backend's
+ * import merges into that page instead, #6277 G5.) Returns `[older, newer]`.
  */
 async function twoPagesTitled(
   page: Page,
