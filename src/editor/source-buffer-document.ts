@@ -431,7 +431,9 @@ export function writeTaskFields(
     read.unread === 0 &&
     read.fields.length === expected.length &&
     read.fields.every(([key, value], i) => expected[i]?.[0] === key && expected[i]?.[1] === value)
-  return same ? plain : joined(line.replace(/[📅⏳✅🔁🔺⏫🔼🔽⏬🛫➕❌🆔⛔🏁]/gu, '\\$&'))
+  return same
+    ? plain
+    : joined(line.replace(/\\/g, '\\\\').replace(/[📅⏳✅🔁🔺⏫🔼🔽⏬🛫➕❌🆔⛔🏁]/gu, '\\$&'))
 }
 
 type Kind = 'bullet' | 'paragraph' | 'verbatim'
