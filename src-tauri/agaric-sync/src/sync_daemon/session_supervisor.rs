@@ -2014,21 +2014,21 @@ async fn run_initiator_session(
 /// with the bound key. See `discovery::resolve_peer_address`.
 async fn cache_peer_address(ctx: &SyncSessionContext<'_>, peer: &DiscoveredPeer) {
     let peer_id = &peer.device_id;
-    if let Err(e) = peer_refs::update_last_address(
-        ctx.pool,
-        peer_id,
-        &format!(
-            "{}:{}",
-            peer.addresses
-                .first()
-                .map_or_else(|| std::net::IpAddr::from([0, 0, 0, 0]), |ip| *ip),
-            peer.port
-        ),
-    )
-    .await
+    if let Err(e) = peer_refs::update_last_address(ctx.pool, peer_id, &last_address_of(peer)).await
     {
         tracing::warn!(peer_id, error = %e, "failed to save peer address");
     }
+}
+
+/// `peer_refs.last_address`'s form of a peer's first address.
+pub(super) fn last_address_of(peer: &DiscoveredPeer) -> String {
+    format!(
+        "{}:{}",
+        peer.addresses
+            .first()
+            .map_or_else(|| std::net::IpAddr::from([0, 0, 0, 0]), |ip| *ip),
+        peer.port
+    )
 }
 
 /// Post-session bookkeeping for a session that completed: reset the backoff,

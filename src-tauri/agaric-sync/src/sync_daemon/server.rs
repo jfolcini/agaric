@@ -890,6 +890,25 @@ async fn bind_peer_to_key(
     }
 }
 
+/// #6353: the bind that pairs a host this device scanned also closes the window
+/// the scan was offered to the daemon in (`peers_for_change_round`), so without
+/// mDNS the scanned address is the only path back to the host. Kept only when
+/// the scan names the key the handshake just authenticated, and only at that
+/// bind: the scan is never cleared, and a later session must not put the QR's
+/// address back over one a completed dial cached since.
+async fn cache_scanned_address(ctx: &ResponderCtx<'_>, scheduler: &SyncScheduler, peer_id: &str) {
+    let Some(scanned) = scheduler.scanned_peer() else {
+        return;
+    };
+    if scanned.endpoint_id != Some(ctx.endpoint_id) {
+        return;
+    }
+    let address = super::session_supervisor::last_address_of(&scanned);
+    if let Err(e) = peer_refs::update_last_address(ctx.pool, peer_id, &address).await {
+        tracing::warn!(peer_id, error = %e, "failed to save the scanned peer's address");
+    }
+}
+
 /// Record what the peer calls itself (#4298).
 ///
 /// Here, and not earlier, for the same reason the bind is here: this is the first
@@ -1287,6 +1306,9 @@ async fn handle_incoming_sync_inner(
     let settled_remote_id = orch.session().remote_device_id.clone();
     let bound_to_this_key =
         bind_peer_to_key(&ctx, &settled_remote_id, pairing_pending, heads_ambiguous).await;
+    if bound_to_this_key && pairing_pending {
+        cache_scanned_address(&ctx, &scheduler, &settled_remote_id).await;
+    }
     record_advertised_name(
         &ctx,
         &settled_remote_id,
