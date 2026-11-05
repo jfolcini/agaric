@@ -2677,8 +2677,8 @@ struct Fence {
 /// The line scan's state: the blocks so far, whether each one's last line was
 /// code (which decides whether a trailing `^id` on it is an anchor,
 /// [`extract_block_anchors`]), the open blocks innermost last, the open fence,
-/// and what separates the current line from the last non-blank one. A buffer
-/// keeps a block's interior blank lines: whether a blank line is interior
+/// and what separates the current line from the last non-blank one. A block
+/// keeps its interior blank lines (#6032 N5): whether a blank line is interior
 /// is known only at the next non-blank line, so `blank_run` holds them until a
 /// continuation line takes them or another line drops them.
 struct Scan<'a> {
@@ -2741,11 +2741,7 @@ fn parse_block_lines(
     for (index, line) in normalized.lines().enumerate() {
         let trimmed = line.trim_start();
         if trimmed.is_empty() {
-            // A fence keeps its blank lines; a source buffer keeps a block's
-            // interior ones too.
-            if mode != ParseMode::Import || scan.fence.is_some() {
-                scan.blank_run.push(line);
-            }
+            scan.blank_run.push(line);
             scan.after_blank = true;
             continue;
         }
@@ -3107,10 +3103,10 @@ impl<'a> Scan<'a> {
         }
     }
 
-    /// Fold `line` into the innermost open block, less the indentation up to
-    /// its content column: an import normalises prose and keeps code as
-    /// written; a source buffer keeps every byte, interior blank lines
-    /// included.
+    /// Fold `line`, and the interior blank lines before it, into the innermost
+    /// open block, less the indentation up to its content column: an import
+    /// normalises prose and keeps code as written; a source buffer keeps every
+    /// byte.
     fn append(&mut self, line: &'a str, is_code: bool) {
         let top = self
             .open
@@ -3211,8 +3207,9 @@ fn clean_text(
 /// (newline-joined) to the owning block's content, as Logseq stores a
 /// multi-line bullet body. Returns how many `((uuid))` references were
 /// stripped from it. A code line is kept as written, less the indentation up
-/// to `width`, its block's content column, and so are the blank lines of its
-/// fence before it, which the scan held in `blank_run`.
+/// to `width`, its block's content column. The blank lines before it, which
+/// the scan held in `blank_run`, are interior to the block once it has text
+/// (#6032 N5): kept the same way before code, and empty before prose.
 fn append_continuation_line(
     last: &mut ParsedBlock,
     blank_run: &[&str],
@@ -3222,10 +3219,6 @@ fn append_continuation_line(
     kept_refs: &std::collections::HashSet<String>,
 ) -> usize {
     let (cleaned, removed) = if line_is_code {
-        for blank in blank_run {
-            last.content.push('\n');
-            last.content.push_str(dedent(blank, width));
-        }
         (dedent(line, width).to_string(), 0)
     } else {
         strip_block_refs_counted(
@@ -3242,6 +3235,14 @@ fn append_continuation_line(
     }
     if !cleaned.is_empty() {
         if !last.content.is_empty() {
+            for blank in blank_run {
+                last.content.push('\n');
+                last.content.push_str(if line_is_code {
+                    dedent(blank, width)
+                } else {
+                    ""
+                });
+            }
             last.content.push('\n');
         }
         last.content.push_str(&cleaned);
@@ -8390,6 +8391,57 @@ mod tests_block_grammar_5160 {
         let md = "- ```\n  code\n- c\n";
         assert_eq!(shape(&parse_pasted_text(md)), [(0, "```\ncode"), (0, "c")]);
         assert_eq!(by_line(md, &[1]).blocks.len(), 1, "no id on line 3: code");
+    }
+
+    /// #6032 N5 — an import keeps a block's interior blank lines, so a Logseq
+    /// bullet's paragraphs and an Org section's (which `org-import.ts` writes
+    /// at its bullet's content column) stay paragraphs. Its leading blank
+    /// lines are not interior.
+    #[test]
+    fn an_import_keeps_a_blocks_interior_blank_lines() {
+        let md = "- First paragraph.\n\n  Second paragraph.\n- next\n";
+        assert_eq!(
+            shape(&parse_logseq_markdown(md).blocks),
+            [(0, "First paragraph.\n\nSecond paragraph."), (0, "next")]
+        );
+        let org =
+            "- Headline\n  Prose, line one\n  line two.\n\n  More prose.\n\n- Next headline\n";
+        assert_eq!(
+            shape(&parse_logseq_markdown(org).blocks),
+            [
+                (0, "Headline\nProse, line one\nline two.\n\nMore prose."),
+                (0, "Next headline")
+            ]
+        );
+        assert_eq!(
+            shape(&parse_logseq_markdown("-\n\n  text\n").blocks),
+            [(0, "text")]
+        );
+    }
+
+    /// N5's other side: a trailing blank line is no block's, before the next
+    /// block, a property line or the end, and a blank line before a dedent
+    /// still ends the block.
+    #[test]
+    fn an_import_drops_a_blocks_trailing_blank_lines() {
+        for md in ["- a\n  b\n\n- c\n", "- a\n  b\n\n\n- c\n"] {
+            assert_eq!(
+                shape(&parse_logseq_markdown(md).blocks),
+                [(0, "a\nb"), (0, "c")],
+                "{md:?}"
+            );
+        }
+        let out = parse_logseq_markdown("- a\n  b\n\n  key:: v\n\n");
+        assert_eq!(shape(&out.blocks), [(0, "a\nb")]);
+        assert_eq!(out.blocks[0].properties, [("key".into(), "v".into())]);
+        assert_eq!(
+            shape(&parse_logseq_markdown("- a\n\n  b\n\nc\n").blocks),
+            [(0, "a\n\nb"), (0, "c")]
+        );
+        assert_eq!(
+            shape(&parse_logseq_markdown("- a\n  - b\n\n  c\n").blocks),
+            [(0, "a"), (1, "b"), (1, "c")]
+        );
     }
 }
 

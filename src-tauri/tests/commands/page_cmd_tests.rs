@@ -16065,6 +16065,25 @@ async fn a_logseq_quote_block_imports_as_a_quote() {
     );
 }
 
+/// #6032 N5 — an Org section, as `org-import.ts` writes it under its headline's
+/// bullet, keeps its paragraphs, a quote's included, and the blank line before
+/// the next headline is no block's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_logseq_org_import_keeps_a_sections_paragraphs() {
+    let md = "- Headline\n  First paragraph.\n\n  #+BEGIN_QUOTE\n  To be\n\n  or not\n  \
+              #+END_QUOTE\n\n- Next headline\n";
+    assert_eq!(
+        imported_blocks(md, "Org Prose", ImportDialect::LogseqOrg).await,
+        [
+            (
+                "Headline\nFirst paragraph.\n\n> To be\n>\n> or not".to_string(),
+                None
+            ),
+            ("Next headline".to_string(), None),
+        ]
+    );
+}
+
 /// #1918 — a single over-deep import block must skip-and-warn, NOT abort the
 /// whole chunk. We hand-author markdown a single block of which exceeds
 /// `MAX_BLOCK_DEPTH` once the page-root offset is added, by forging a depth
