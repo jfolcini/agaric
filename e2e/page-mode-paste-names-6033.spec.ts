@@ -2,8 +2,10 @@
  * #6033 — page mode's paste reads names as block mode's does: a `[[Name]]`
  * pasted in one line or in several goes through block mode's `paste_blocks`,
  * which links the page of that name, created when none exists, and leaves the
- * caret after the paste. The page's undo takes the paste back. Every assertion
- * of what is stored reads the mock backend after navigating away and back.
+ * caret after the paste. The page's undo takes the paste back. Text dropped
+ * from outside is no paste: it goes in where it is dropped, as text. Every
+ * assertion of what is stored reads the mock backend after navigating away and
+ * back.
  */
 
 import type { Locator, Page } from '@playwright/test'
@@ -105,6 +107,28 @@ async function pasteFromOutside(page: Page, text: string): Promise<void> {
   }, text)
 }
 
+/** Drop `text` from outside the app, which holds only plain text, at the end of block `index`'s text. */
+async function dropFromOutside(page: Page, text: string, index: number): Promise<void> {
+  const box = await page.locator(`${EDITOR} [data-page-block] p`).nth(index).boundingBox()
+  if (box === null) throw new Error(`block ${index} has no box`)
+  await page.locator(EDITOR).evaluate(
+    (dom, { plain, x, y }) => {
+      const data = new DataTransfer()
+      data.setData('text/plain', plain)
+      dom.dispatchEvent(
+        new DragEvent('drop', {
+          dataTransfer: data,
+          clientX: x,
+          clientY: y,
+          bubbles: true,
+          cancelable: true,
+        }),
+      )
+    },
+    { plain: text, x: box.x + box.width - 4, y: box.y + box.height / 2 },
+  )
+}
+
 /** The texts of the page's top-level blocks as the backend holds them, in order. */
 async function storedTexts(page: Page, pageId: string): Promise<Array<string | null>> {
   const { blocks } = await ipc<{ blocks: Array<Row & { parent_id: string; position: number }> }>(
@@ -183,6 +207,25 @@ test.describe('page mode’s paste reads names as block mode’s does (#6033) @e
     await openViaPalette(page, 'Getting Started')
     await openInPageMode(page, title, 2)
     expect(await storedTexts(page, pageId)).toEqual(['Hello ', 'next'])
+    expect(await pagesTitled(page, 'Fresh page')).toEqual([])
+  })
+
+  test('text dropped from outside goes in where it is dropped, as text, not as a paste', async ({
+    page,
+  }) => {
+    const title = 'Names dropped'
+    const { pageId } = await seedRows(page, title, ['Hello ', 'next'])
+    await openInPageMode(page, title, 2)
+    await caretAtEnd(page, 0)
+
+    await dropFromOutside(page, 'see [[Fresh page]]', 1)
+
+    await expect(page.locator(`${EDITOR} [data-page-block]`).nth(1)).toHaveText(
+      'nextsee [[Fresh page]]',
+    )
+    await openViaPalette(page, 'Getting Started')
+    await openInPageMode(page, title, 2)
+    expect(await storedTexts(page, pageId)).toEqual(['Hello ', 'nextsee \\[\\[Fresh page\\]\\]'])
     expect(await pagesTitled(page, 'Fresh page')).toEqual([])
   })
 })

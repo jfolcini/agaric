@@ -130,20 +130,23 @@ const storedTexts = (pageId: string): Array<string | null> =>
     .map((b) => b.content)
 
 describe('which pastes go to block mode’s block path', () => {
+  // The caret is `at` characters into 'Hello': 5 is after it, 0 where the block starts.
   it.each([
-    ['one line naming a page', 'see [[Fresh page]]', true],
-    ['one line holding a foreign form', 'a ^^mark^^', true],
-    ['lines naming a page', 'one\n\nsee [[Fresh page]]', true],
-    ['one plain line', 'see me', false],
-    ['plain lines', 'one\n\ntwo', false],
-    ['a list line after text, which stays the text pasted', '- see [[Fresh page]]', false],
-  ])('%s: %s', (_, text, expected) => {
+    ['one line naming a page', 'see [[Fresh page]]', 5, true],
+    ['one line holding a foreign form', 'a ^^mark^^', 5, true],
+    ['lines naming a page', 'one\n\nsee [[Fresh page]]', 5, true],
+    ['list lines naming a page, after text', '- one\n- see [[Fresh page]]', 5, true],
+    ['one list line naming a page, where the block starts', '- see [[Fresh page]]', 0, true],
+    ['one plain line', 'see me', 5, false],
+    ['plain lines', 'one\n\ntwo', 5, false],
+    ['one list line after text, which stays the text pasted', '- see [[Fresh page]]', 5, false],
+  ])('%s: %s', (_, text, at, expected) => {
     const ed = open([{ id: 'A', depth: 0, content: 'Hello' }])
-    ed.commands.setTextSelection(posIn(ed, 0, 5))
+    ed.commands.setTextSelection(posIn(ed, 0, at))
     expect(goesToBlockPath(text, ed.state.selection)).toBe(expected)
   })
 
-  it('takes none inside a table, which the splice would cut, nor over two blocks', () => {
+  it('takes none inside a table, which the splice would cut', () => {
     const ed = open([
       { id: 'A', depth: 0, content: '| a | b |\n| --- | --- |\n| c | d |' },
       { id: 'B', depth: 0, content: 'two' },
@@ -152,8 +155,16 @@ describe('which pastes go to block mode’s block path', () => {
     expect(goesToBlockPath('see [[Fresh page]]', ed.state.selection)).toBe(false)
     ed.commands.setTextSelection({ from: posIn(ed, 1, 1), to: posIn(ed, 1, 2) })
     expect(goesToBlockPath('see [[Fresh page]]', ed.state.selection)).toBe(true)
-    const across = { from: posIn(ed, 0, 3), to: posIn(ed, 1, 2) }
-    ed.commands.setTextSelection(across)
+  })
+
+  it('takes none over two blocks, which the splice would join', () => {
+    const ed = open([
+      { id: 'A', depth: 0, content: 'one' },
+      { id: 'B', depth: 0, content: 'two' },
+    ])
+    ed.commands.setTextSelection({ from: posIn(ed, 1, 1), to: posIn(ed, 1, 2) })
+    expect(goesToBlockPath('see [[Fresh page]]', ed.state.selection)).toBe(true)
+    ed.commands.setTextSelection({ from: posIn(ed, 0, 1), to: posIn(ed, 1, 2) })
     expect(goesToBlockPath('see [[Fresh page]]', ed.state.selection)).toBe(false)
   })
 
@@ -193,6 +204,21 @@ describe('the splice of the block pasted into', () => {
       after: '**d** world',
     })
     expect(pageSplice(ed.state.doc, { ...range, blockId: 'B' })).toBeNull()
+  })
+
+  it('is none once the block was split inside the range, whose end is then in the next block', () => {
+    const ed = open([{ id: 'A', depth: 0, content: 'Hello world' }])
+    const range: BlockPathPaste = {
+      blockId: 'A',
+      text: 'x',
+      from: posIn(ed, 0, 2),
+      to: posIn(ed, 0, 8),
+    }
+    const split = ed.state.tr.split(posIn(ed, 0, 5), 2)
+
+    mapPaste(range, split.mapping)
+
+    expect(pageSplice(split.doc, range)).toBeNull()
   })
 
   it('stays on the range pasted over, before text typed at it', () => {
@@ -304,14 +330,16 @@ describe('the caret once a paste landed', () => {
     return { ed: shown, pasted, landed: landed as NonNullable<typeof landed> }
   }
 
-  it('goes into the last block pasted, before the text that followed the range', async () => {
+  it('goes into the last block pasted, before the text that followed the range, in view', async () => {
     const { ed, pasted, landed } = await landedPage('one\n\ntwo [[Fresh page]] ')
+    const dispatched = vi.spyOn(ed.view, 'dispatch')
 
     caretAtJoin(ed.view, pasted, landed)
 
     const { $head } = ed.state.selection
     expect($head.index(0)).toBe(1)
     expect($head.parent.textBetween(0, $head.parentOffset, '', '￼')).toBe('two ￼ ')
+    expect(dispatched.mock.calls.map(([tr]) => tr.scrolledIntoView)).toEqual([true])
   })
 
   it('stays where it is once it left the block pasted into', async () => {

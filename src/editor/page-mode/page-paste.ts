@@ -20,12 +20,19 @@
  * Text naming a page or holding a foreign form, which only block mode's block
  * path resolves or writes in Agaric's form (`onlyBlockPathReads`, #6033), goes
  * there instead, by the test block mode routes it by: one line block mode
- * sends there (`needsBlockPath`), or lines read as blocks. Pasted within one
- * block's text, outside a list or a table in it, it is not put in the document:
+ * sends there (`needsBlockPath`), or lines read as blocks. A paste of text
+ * alone (a drop, or HTML beside the text, keeps ProseMirror's own) within one
+ * block's text, outside a list or a table in it, is not put in the document:
  * once the page is saved, `paste_blocks` pastes it into that block with the
  * text around the range it was pasted over as the splice, and the page is read
  * again, its pages and tags made. Page mode's undo leaves it; the page's undo
  * takes it back. Refused, it goes in as a plain-text paste puts it.
+ *
+ * Editing that block while `paste_blocks` runs is the one loss: unsaved text
+ * wins over a change from elsewhere (`remote-patch.ts`), so the block keeps
+ * what was typed, not what was pasted into it, and with several blocks the text
+ * after the range is then in it and in the last block pasted. Block mode loses
+ * the typed text there instead (`remount` in `paste-into-block.ts`).
  */
 
 import { Extension, type JSONContent } from '@tiptap/core'
@@ -275,8 +282,8 @@ export async function landOnBlockPath(
 
 /**
  * Leave the caret where a text editor does once `landed` is in the document, as block mode's
- * paste does: in its last block, before the text that followed the range pasted over. Only while
- * the caret is still in the block pasted into.
+ * paste does: in its last block, before the text that followed the range pasted over, in view.
+ * Only while the caret is still in the block pasted into.
  */
 export function caretAtJoin(view: EditorView, paste: BlockPathPaste, { ids, after }: Landed): void {
   const { doc, selection } = view.state
@@ -291,7 +298,9 @@ export function caretAtJoin(view: EditorView, paste: BlockPathPaste, { ids, afte
   const tail = inlineSize(doc.type.schema.nodeFromJSON(parse(after)))
   const inBlock = tail === 0 ? null : posBeforeTail(block, tail)
   const pos = inBlock === null ? at + block.nodeSize - 1 : at + 1 + inBlock
-  view.dispatch(view.state.tr.setSelection(TextSelection.near(doc.resolve(pos), -1)))
+  view.dispatch(
+    view.state.tr.setSelection(TextSelection.near(doc.resolve(pos), -1)).scrollIntoView(),
+  )
 }
 
 export interface PagePasteOptions {
@@ -314,6 +323,9 @@ export const PagePaste = Extension.create<PagePasteOptions>({
     // What this paste's text read as; each paste's DOM event clears it, so no other paste takes it.
     let read: PastedStyles | null = null
     let routed: BlockPathPaste | null = null
+    // Whether the text parsed is a paste's: a drop of text is parsed too, at the drop point, and no
+    // `handlePaste` follows it, so a drop claimed here would be lost.
+    let pasting = false
     const parser = (
       text: string,
       $context: ResolvedPos,
@@ -321,7 +333,7 @@ export const PagePaste = Extension.create<PagePasteOptions>({
       view: EditorView,
     ): Slice | null => {
       const { selection } = view.state
-      if (blockPath !== undefined && !plain && goesToBlockPath(text, selection)) {
+      if (pasting && blockPath !== undefined && !plain && goesToBlockPath(text, selection)) {
         const blockId = blockIdOf(selection.$from.node(1)) as string
         routed = { blockId, text, from: selection.from, to: selection.to }
         return Slice.empty
@@ -340,10 +352,16 @@ export const PagePaste = Extension.create<PagePasteOptions>({
             paste: () => {
               read = null
               routed = null
+              pasting = true
+              return false
+            },
+            drop: () => {
+              pasting = false
               return false
             },
           },
           handlePaste(view, _event, slice) {
+            pasting = false
             const paste = routed
             routed = null
             if (paste !== null) {
