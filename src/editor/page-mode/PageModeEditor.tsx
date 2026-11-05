@@ -38,7 +38,8 @@
  * Block mode's slash menu and `::` and `{{` pickers act on the caret's block
  * through block mode's own handlers (`page-slash-commands.tsx`): a command that
  * writes to the block runs after the save, on the same chain, and the page is
- * read again after it.
+ * read again after it. So does a paste naming a page or holding a foreign form,
+ * through block mode's `paste_blocks` (`page-paste.ts`).
  *
  * The grip, on the block under the pointer, drags that block with the blocks
  * under it, an edit of the document the save writes as block mode's moves,
@@ -54,6 +55,7 @@
 
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { Selection, type Transaction } from '@tiptap/pm/state'
+import { Mapping } from '@tiptap/pm/transform'
 import { type Editor, EditorContent, useEditor } from '@tiptap/react'
 import { FileCode } from 'lucide-react'
 import type React from 'react'
@@ -98,6 +100,13 @@ import {
   type PageModeOpening,
   restoreScrollPlace,
 } from '@/editor/page-mode/page-mode-switch'
+import {
+  type BlockPathPaste,
+  caretAtJoin,
+  landOnBlockPath,
+  mapPaste,
+  pasteAsText,
+} from '@/editor/page-mode/page-paste'
 import { PageProperties } from '@/editor/page-mode/page-properties'
 import {
   createSaveState,
@@ -430,6 +439,8 @@ function PageModeDocument({
       turnInto: (id: string, item: PickerItem) => void
       /** The block menu's task state set on a selection, once its blocks are saved. */
       setTodo: (ids: string[], state: string | null) => void
+      /** A paste only block mode's block path reads: pasted there once its block is saved. */
+      pasteOnBlockPath: (paste: BlockPathPaste) => void
     }
   >({
     cycle: () => {},
@@ -450,6 +461,7 @@ function PageModeDocument({
     attachPicked: () => {},
     openHistory: () => {},
     turnInto: () => {},
+    pasteOnBlockPath: () => {},
   })
   // A block made a task loses its list style through page mode's lists (#5691 D3). Each write
   // joins the change's undo entry by its own refs (#6156), so none are handed back.
@@ -535,6 +547,7 @@ function PageModeDocument({
         onSlashCommand: (item: PickerItem) => actions.current.command(item),
         searchPropertyKeys,
       },
+      blockPath: (paste: BlockPathPaste) => actions.current.pasteOnBlockPath(paste),
     }),
     content: pageDocContent(blocks, newBlockId),
     // Built in an effect: a lazily loaded editor built during render can be
@@ -815,6 +828,8 @@ function PageModeDocument({
         if (!editor.isDestroyed) await bringIn(await read())
       })
     }
+    // Pastes on their way through `paste_blocks`, each kept on the range it was pasted over.
+    const onBlockPath = new Set<BlockPathPaste>()
     const runAfterSave = (id: string, item: PickerItem): void => {
       void afterSave(id, async () => {
         running = true
@@ -925,6 +940,24 @@ function PageModeDocument({
         runAfterSave(id, item)
       },
       turnInto: runAfterSave,
+      pasteOnBlockPath: (paste) => {
+        onBlockPath.add(paste)
+        let ran = false
+        void afterSave(paste.blockId, async () => {
+          ran = true
+          const landed = await landOnBlockPath(editor.view, paste, pageStore.getState().pasteBlocks)
+          if (landed === null || editor.isDestroyed) return
+          // A write: the rows `pasteBlocks` set before its reload, queued for `bringIn`, are stale.
+          save.writes += 1
+          // The store holds the page as the paste left it (`pasteBlocks` reads it again).
+          await bringIn(pageStore.getState().blocks)
+          if (!editor.isDestroyed) caretAtJoin(editor.view, paste, landed)
+        }).then(() => {
+          onBlockPath.delete(paste)
+          // The block was gone, or its save failed: the text goes in here, not lost.
+          if (!ran) pasteAsText(editor.view, paste)
+        })
+      },
     }
 
     const onTransaction = ({
@@ -936,6 +969,12 @@ function PageModeDocument({
     }): void => {
       const was = caretIn
       caretIn = cursorBlock()
+      if (transaction.docChanged && onBlockPath.size > 0) {
+        const mapping = new Mapping(
+          [transaction, ...appendedTransactions].flatMap((tr) => tr.mapping.maps),
+        )
+        for (const paste of onBlockPath) mapPaste(paste, mapping)
+      }
       if (transaction.docChanged && transaction.getMeta(REMOTE_PATCH) !== true) {
         const maps = [transaction, ...appendedTransactions].flatMap((tr) => tr.mapping.maps)
         for (const id of changedBlocks(editor.state.doc, maps)) {

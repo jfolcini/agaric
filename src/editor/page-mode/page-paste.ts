@@ -16,6 +16,16 @@
  * reads them), lines with no Markdown in them, a plain-text paste (Shift), and
  * a paste into code, or into a list or a table in a block's content, keep
  * ProseMirror's own paste.
+ *
+ * Text naming a page or holding a foreign form, which only block mode's block
+ * path resolves or writes in Agaric's form (`onlyBlockPathReads`, #6033), goes
+ * there instead, by the test block mode routes it by: one line block mode
+ * sends there (`needsBlockPath`), or lines read as blocks. Pasted within one
+ * block's text, outside a list or a table in it, it is not put in the document:
+ * once the page is saved, `paste_blocks` pastes it into that block with the
+ * text around the range it was pasted over as the splice, and the page is read
+ * again, its pages and tags made. Page mode's undo leaves it; the page's undo
+ * takes it back. Refused, it goes in as a plain-text paste puts it.
  */
 
 import { Extension, type JSONContent } from '@tiptap/core'
@@ -26,14 +36,18 @@ import {
   type Schema,
   Slice,
 } from '@tiptap/pm/model'
-import { Plugin, PluginKey } from '@tiptap/pm/state'
+import { Plugin, PluginKey, type Selection, TextSelection } from '@tiptap/pm/state'
+import type { Mappable } from '@tiptap/pm/transform'
 import type { EditorProps, EditorView } from '@tiptap/pm/view'
 
+import { inlineSize, posBeforeTail } from '@/components/block-tree/paste-into-block'
+import { needsBlockPath, onlyBlockPathReads, spliceAround } from '@/editor/extensions/html-paste'
 import { parse } from '@/editor/markdown-serializer'
 import { depthOf, insideListOrTable, PAGE_BLOCK } from '@/editor/page-mode/page-document'
 import type { PageListSource } from '@/editor/page-mode/page-lists'
 import { type DocumentBlock, parsePastedText } from '@/editor/source-buffer-document'
 import { blockIdOf, pasteKeepingIds } from '@/editor/token-ids'
+import type { PasteInput, PasteSplice } from '@/lib/bindings'
 import type { ListStyle } from '@/lib/list-style'
 import { isTodoState, TASK_STATE_TO_MARKER } from '@/lib/task-states'
 
@@ -112,13 +126,18 @@ interface PastedStyles {
   atBlockStart: boolean
 }
 
+/** Whether `$pos` is where its block's text starts. */
+function startsItsBlock($pos: ResolvedPos): boolean {
+  return $pos.depth >= 2 && $pos.index(1) === 0 && $pos.parentOffset === 0
+}
+
 /** What `text`, pasted at `$context`, brings in; null leaves it to ProseMirror's own paste. */
 function pastedSlice(
   text: string,
   $context: ResolvedPos,
   plain: boolean,
 ): { slice: Slice; styles: PastedStyles } | null {
-  const atBlockStart = $context.depth >= 2 && $context.index(1) === 0 && $context.parentOffset === 0
+  const atBlockStart = startsItsBlock($context)
   if (plain || !holdsLines(text, atBlockStart) || insideListOrTable($context)) return null
   const blocks = pastedBlocks(text)
   if (blocks.length === 0) return null
@@ -166,17 +185,147 @@ function pasteWithStyles(
   })
 }
 
-/** Page mode's paste of Markdown text, which gives a list item `lists`' style; none gives none. */
-export const PagePaste = Extension.create<{ lists: PageListSource | undefined }>({
+/**
+ * A paste on its way through block mode's block path: its text, and the range of its block it
+ * was pasted over, which its holder keeps mapped through each change until it lands.
+ */
+export interface BlockPathPaste {
+  blockId: string
+  text: string
+  from: number
+  to: number
+}
+
+/**
+ * Whether `text`, pasted over `selection`, goes through block mode's block path: it names a page
+ * or holds a foreign form, as one line block mode sends there or as lines read as blocks, pasted
+ * within one block's text and outside a list or a table in it, which the splice would cut.
+ */
+export function goesToBlockPath(text: string, { $from, $to }: Selection): boolean {
+  if ($from.depth < 2 || $from.index(0) !== $to.index(0) || insideListOrTable($from)) return false
+  if (blockIdOf($from.node(1)) === null) return false
+  return (
+    needsBlockPath(text) || (holdsLines(text, startsItsBlock($from)) && onlyBlockPathReads(text))
+  )
+}
+
+/** Keep `paste` on the range it was pasted over, before any text typed at it. */
+export function mapPaste(paste: BlockPathPaste, mapping: Mappable): void {
+  paste.from = mapping.map(paste.from, -1)
+  paste.to = mapping.map(paste.to, -1)
+}
+
+/**
+ * Its block's text before and after the range `paste` was pasted over, as block mode's splice;
+ * null once the range has left its block.
+ */
+export function pageSplice(doc: PMNode, { blockId, from, to }: BlockPathPaste): PasteSplice | null {
+  const $from = doc.resolve(from)
+  if ($from.depth < 1 || blockIdOf($from.node(1)) !== blockId) return null
+  const start = $from.start(1)
+  const block = $from.node(1)
+  if (to > start + block.content.size) return null
+  return spliceAround(block, from - start, to - start)
+}
+
+/** Put `paste`'s text over its range as a plain-text paste (Shift) puts it. */
+export function pasteAsText(view: EditorView, { from, to, text }: BlockPathPaste): void {
+  if (view.isDestroyed) return
+  const { doc } = view.state
+  view.dispatch(
+    view.state.tr.setSelection(TextSelection.between(doc.resolve(from), doc.resolve(to))),
+  )
+  view.pasteText(text)
+}
+
+/** Block mode's paste into a block, the page store's: the content blocks pasted, none if refused. */
+export type PasteBlocks = (
+  anchorBlockId: string,
+  input: PasteInput,
+  splice: PasteSplice,
+) => Promise<string[]>
+
+/** What a paste through `paste_blocks` landed as: its blocks, and the text it ended them with. */
+export interface Landed {
+  ids: string[]
+  after: string
+}
+
+/**
+ * Paste `paste` into its block, which the backend holds as the document shows it, through
+ * `paste_blocks`. Resolves what it landed as; null when its range left the block or the backend
+ * refused it (the store logs and tells which), and its text then goes in as text, so none is lost.
+ */
+export async function landOnBlockPath(
+  view: EditorView,
+  paste: BlockPathPaste,
+  pasteBlocks: PasteBlocks,
+): Promise<Landed | null> {
+  const splice = pageSplice(view.state.doc, paste)
+  const ids =
+    splice === null
+      ? []
+      : await pasteBlocks(paste.blockId, { kind: 'text', text: paste.text }, splice)
+  if (splice === null || ids.length === 0) {
+    pasteAsText(view, paste)
+    return null
+  }
+  return { ids, after: splice.after }
+}
+
+/**
+ * Leave the caret where a text editor does once `landed` is in the document, as block mode's
+ * paste does: in its last block, before the text that followed the range pasted over. Only while
+ * the caret is still in the block pasted into.
+ */
+export function caretAtJoin(view: EditorView, paste: BlockPathPaste, { ids, after }: Landed): void {
+  const { doc, selection } = view.state
+  const { $head } = selection
+  if ($head.depth < 1 || blockIdOf($head.node(1)) !== paste.blockId) return
+  let at = -1
+  doc.forEach((node, pos) => {
+    if (at === -1 && blockIdOf(node) === ids.at(-1)) at = pos
+  })
+  const block = at === -1 ? null : doc.nodeAt(at)
+  if (block === null) return
+  const tail = inlineSize(doc.type.schema.nodeFromJSON(parse(after)))
+  const inBlock = tail === 0 ? null : posBeforeTail(block, tail)
+  const pos = inBlock === null ? at + block.nodeSize - 1 : at + 1 + inBlock
+  view.dispatch(view.state.tr.setSelection(TextSelection.near(doc.resolve(pos), -1)))
+}
+
+export interface PagePasteOptions {
+  lists: PageListSource | undefined
+  /** Takes a paste for block mode's block path; none keeps every paste in the document. */
+  blockPath: ((paste: BlockPathPaste) => void) | undefined
+}
+
+/**
+ * Page mode's paste of Markdown text, which gives a list item `lists`' style (none gives none),
+ * and of text only block mode's block path reads, which goes to `blockPath`.
+ */
+export const PagePaste = Extension.create<PagePasteOptions>({
   name: 'pagePaste',
   // Ahead of the id rules (`page-block-ids.ts`), whose paste lands the blocks with no style.
   priority: 101,
-  addOptions: () => ({ lists: undefined }),
+  addOptions: () => ({ lists: undefined, blockPath: undefined }),
   addProseMirrorPlugins() {
-    const { lists } = this.options
+    const { lists, blockPath } = this.options
     // What this paste's text read as; each paste's DOM event clears it, so no other paste takes it.
     let read: PastedStyles | null = null
-    const parser = (text: string, $context: ResolvedPos, plain: boolean): Slice | null => {
+    let routed: BlockPathPaste | null = null
+    const parser = (
+      text: string,
+      $context: ResolvedPos,
+      plain: boolean,
+      view: EditorView,
+    ): Slice | null => {
+      const { selection } = view.state
+      if (blockPath !== undefined && !plain && goesToBlockPath(text, selection)) {
+        const blockId = blockIdOf(selection.$from.node(1)) as string
+        routed = { blockId, text, from: selection.from, to: selection.to }
+        return Slice.empty
+      }
       const pasted = pastedSlice(text, $context, plain)
       read = pasted?.styles ?? null
       return pasted?.slice ?? null
@@ -190,10 +339,17 @@ export const PagePaste = Extension.create<{ lists: PageListSource | undefined }>
           handleDOMEvents: {
             paste: () => {
               read = null
+              routed = null
               return false
             },
           },
           handlePaste(view, _event, slice) {
+            const paste = routed
+            routed = null
+            if (paste !== null) {
+              blockPath?.(paste)
+              return true
+            }
             const styles = read
             read = null
             if (lists === undefined || styles === null) return false
