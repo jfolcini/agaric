@@ -17,9 +17,9 @@
 // midnight the minute is the coming midnight instead, so the run that fires
 // sees the same date the task is due on.
 //
-// Slow by design: the job runs on the maintenance daemon's 60 s tick, the
-// first a tick after boot, and that real run is what the spec proves. It
-// waits for one run only; that a later run does not notify again is the
+// The job runs on the maintenance daemon's tick, a few seconds under the e2e
+// sandbox (`maintenance::tick_interval`), and that real run is what the spec
+// proves. It waits for one run only; that a later run does not notify again is the
 // ledger's job, pinned by `fires_exactly_once_across_two_ticks`.
 //
 // Globals (`$`, `$$`, `browser`, `expect`) come from @wdio/globals — see
