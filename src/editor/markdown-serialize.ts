@@ -269,9 +269,9 @@ function emitCloseAll(active: ReadonlySet<string>): string {
 
 // -- Link mark helpers --------------------------------------------------------
 
-/** Extract link href from a text node's marks (null if no link mark). */
+/** Extract link href from a text or image node's marks (null if no link mark). */
 function getLinkHref(node: InlineNode): string | null {
-  if (node.type !== 'text' || !node.marks) return null
+  if ((node.type !== 'text' && node.type !== 'image') || !node.marks) return null
   for (const m of node.marks) {
     if (m.type === 'link') return m.attrs.href
   }
@@ -280,6 +280,7 @@ function getLinkHref(node: InlineNode): string | null {
 
 /** Return a copy of an InlineNode with the link mark stripped. */
 function stripLinkMark(node: InlineNode): InlineNode {
+  if (node.type === 'image') return { type: 'image', attrs: node.attrs }
   if (node.type !== 'text' || !node.marks) return node
   const marks = node.marks.filter((m) => m.type !== 'link')
   if (marks.length === 0) {
@@ -751,7 +752,8 @@ function serializeInlineChild(
   // Image (#1434): emit `![alt](url)`. The alt is escaped for the chars that
   // could break the `![…](…)` shape on reparse (`\` and `]`); the URL is written
   // as a link's is (`linkDestinationText`). An image is an atom and never
-  // carries text marks, so it serializes as an atom.
+  // carries text marks, so it serializes as an atom; its link mark was
+  // written by `serializeParagraph`'s link grouping (#6342).
   if (child.type === 'image') {
     const alt = escapeImageAlt(child.attrs.alt)
     return serializeInlineAtom(`![${alt}](${linkDestinationText(child.attrs.src)})`, activeMarks)

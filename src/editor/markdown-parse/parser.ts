@@ -64,6 +64,7 @@ import type {
   HeadingNode,
   HorizontalRuleNode,
   InlineNode,
+  LinkMark,
   ListItemNode,
   MathBlockNode,
   OrderedListNode,
@@ -146,7 +147,7 @@ function consumeExternalLink(
     })
   }
 
-  const linkMark: PMMark = { type: 'link' as const, attrs: { href } }
+  const linkMark: LinkMark = { type: 'link' as const, attrs: { href } }
 
   if (match.displayText.length === 0) {
     // Empty display text — use URL as text
@@ -172,6 +173,8 @@ function consumeExternalLink(
       const marks = [...outerMarks, ...existing, linkMark]
       return { type: 'text', text: node.text, marks }
     }
+    // An image is the one atom a link wraps (`[![alt](src)](href)`, #6342).
+    if (node.type === 'image') return { type: 'image', attrs: node.attrs, marks: [linkMark] }
     // tag_ref, block_link, hardBreak — can't apply marks to atom nodes
     return node
   })

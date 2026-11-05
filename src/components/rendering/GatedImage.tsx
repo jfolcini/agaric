@@ -107,6 +107,12 @@ export interface GatedImageProps {
   imgClassName?: string
   /** Drawn on the real `<img>`'s corner — never on a placeholder (#4712). */
   resizeHandle?: React.ReactNode
+  /**
+   * Wraps the image in the link it sits in (`[![alt](src)](href)`, #6342).
+   * While the image is withheld, only its alt is the link, so the link keeps
+   * the alt as its name and the Load button stays outside it.
+   */
+  link?: (content: React.ReactNode) => React.ReactNode
 }
 
 export function GatedImage({
@@ -115,7 +121,9 @@ export function GatedImage({
   width = null,
   imgClassName = 'image-rendered inline-block max-w-full align-middle',
   resizeHandle,
-}: GatedImageProps): React.ReactElement {
+  link,
+}: GatedImageProps): React.ReactNode {
+  const linked = (content: React.ReactNode) => (link ? link(content) : content)
   const { t } = useTranslation()
   const { policy } = useExternalImagePolicy()
   const { allowlist, addHost } = useExternalImageAllowlist()
@@ -126,7 +134,7 @@ export function GatedImage({
   const isAttachment = isAttachmentRef(src)
   const { url: resolvedUrl, error: attachmentError } = useResolvedAttachmentSrc(src)
 
-  const renderImg = (imgSrc: string): React.ReactElement => {
+  const renderImg = (imgSrc: string): React.ReactNode => {
     const img = (
       <img
         src={imgSrc}
@@ -144,19 +152,19 @@ export function GatedImage({
         onError={() => setFailed(true)}
       />
     )
-    if (resizeHandle === undefined) return img
-    return (
+    if (resizeHandle === undefined) return linked(img)
+    return linked(
       <span className="relative inline-block max-w-full align-middle">
         {img}
         {resizeHandle}
-      </span>
+      </span>,
     )
   }
 
   // Broken-image fallback (#1434) once the real <img> errors out, or the
   // attachment bytes failed to load.
   if (failed || (isAttachment && attachmentError)) {
-    return <BrokenImage alt={alt} src={src} />
+    return linked(<BrokenImage alt={alt} src={src} />)
   }
 
   // Attachment ref: a trusted local image — never gated. Render the resolved
@@ -164,7 +172,7 @@ export function GatedImage({
   // (no <img src> is mounted, so no broken-image flash before the URL resolves).
   if (isAttachment) {
     if (resolvedUrl === null) {
-      return <BrokenImage alt={alt} src={src} />
+      return linked(<BrokenImage alt={alt} src={src} />)
     }
     return renderImg(resolvedUrl)
   }
@@ -194,6 +202,7 @@ export function GatedImage({
       title={src}
     >
       <span aria-hidden="true">🖼️</span>
+      {link?.(<span>{alt.length > 0 ? alt : src}</span>)}
       <span data-testid="image-external-domain" className="font-medium">
         {domainLabel}
       </span>
@@ -204,7 +213,15 @@ export function GatedImage({
           data-testid="image-load-button"
           // Add the exact host to the allowlist; the policy hook re-snapshots via
           // the synthetic storage event, re-rendering this image as allowed.
-          onClick={() => addHost(host)}
+          // Stopped: the image can sit in a row that opens on click, and
+          // loading it must not open the row.
+          onClick={(e) => {
+            e.stopPropagation()
+            addHost(host)
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') e.stopPropagation()
+          }}
         >
           {t('editor.image.loadButton')}
         </button>
