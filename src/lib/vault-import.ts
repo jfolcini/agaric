@@ -17,7 +17,12 @@
 
 import { isAppError, unwrap } from '@/lib/app-error'
 import { type ImportDialect, type VaultFile, commands } from '@/lib/bindings'
-import { type EnexNote, enexNoteToMarkdown, sanitizeNoteTitleToFilename } from '@/lib/enex-import'
+import {
+  type EnexNote,
+  enexNoteToMarkdown,
+  enexPageName,
+  sanitizeNoteTitleToFilename,
+} from '@/lib/enex-import'
 import { t } from '@/lib/i18n'
 import { NOTE_EXTENSIONS, scanAttachmentRefs } from '@/lib/import-attachments'
 import { type JexNote, jexNoteToMarkdown } from '@/lib/jex-import'
@@ -615,9 +620,8 @@ function attachmentsToVaultFiles(
  * only when this unit's `load()` runs, right before its `invoke`.
  */
 export function enexNotesToUnits(notes: EnexNote[], fileName: string): ImportUnit[] {
-  const notebook = sanitizeNoteTitleToFilename(fileName.replace(/\.enex$/i, ''))
   return notes.map((note) => {
-    const name = `${notebook}/${sanitizeNoteTitleToFilename(note.title)}.md`
+    const name = `${enexPageName(fileName, note.title)}.md`
     const content = enexNoteToMarkdown(note)
     return {
       name,
