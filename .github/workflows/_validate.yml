@@ -1468,7 +1468,7 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # cargo-tests — full Rust test suite (nextest) with cargo-llvm-cov
-  # source-based coverage. Uses its own `rust-cov` Swatinem cache key
+  # source-based coverage. Uses its own `rust-cov-deps-o2` Swatinem cache key
   # (issue #813) — the instrumented tree shares nothing with the lint /
   # mcp / release trees. MCP build + UDS smoke + externalBin verify live
   # in their own `mcp-tests` job so a coverage-suite slowdown doesn't
@@ -1590,7 +1590,11 @@ jobs:
           # release trees, so under the old shared `rust-deps` key it lost
           # the single cache slot to a faster sibling and recompiled from
           # scratch every PR. See the matching comment in the `lint` job.
-          shared-key: rust-cov
+          # The `-deps-o2` suffix names the dependency opt-level the nextest step
+          # builds with. Change it whenever that build's flags change: rust-cache
+          # skips the save on an exact key match, so a tree cached under other
+          # flags would be rebuilt on every run and never replaced.
+          shared-key: rust-cov-deps-o2
           # One shard saves: both compile the same instrumented tree, and two
           # saves of one key race ("Unable to reserve cache", #5853).
           save-if: ${{ github.ref == 'refs/heads/main' && matrix.shard == 1 }}
