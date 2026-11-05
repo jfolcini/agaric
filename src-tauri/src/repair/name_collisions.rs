@@ -362,7 +362,9 @@ async fn merge_tag(
     delete_later_tag(pool, device_id, materializer, tie).await
 }
 
-/// Up to `chunk` live blocks holding `tag_id`, past `after`, in id order.
+/// Up to `chunk` live blocks holding `tag_id`, past `after`, in id order. A
+/// Trash block keeps the later tag, as it keeps any tag deleted while it is
+/// there: `edit_block_in_tx` and `AddTag` act on live blocks only.
 async fn live_holders(
     conn: &mut sqlx::SqliteConnection,
     tag_id: &str,
@@ -385,7 +387,8 @@ async fn live_holders(
 }
 
 /// Up to `chunk` live blocks whose content holds `token`, past `after`, in id
-/// order, with that content. The content is the source of truth: the
+/// order, with that content; live for the reason [`live_holders`] gives. The
+/// content is the source of truth: the
 /// `block_tag_refs` cache trails an edit, and a cursor over it could revisit
 /// a block this pass already rewrote.
 async fn live_referrers(
