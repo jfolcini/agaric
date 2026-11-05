@@ -36,11 +36,15 @@ test('Ctrl+Shift+E copies the page as Markdown under its title @editor @pages', 
   await page.keyboard.press('Control+Shift+E')
 
   await expect
-    .poll(async () => (await readClipboard(page)).split('\n').slice(0, 3))
+    .poll(async () => (await readClipboard(page)).split('\n').slice(0, 7))
     .toEqual([
+      '---',
+      'aliases: [getting-started, gs]',
+      '---',
+      '',
       '# Getting Started',
       '',
-      '- Welcome to Agaric! This is your personal knowledge base.',
+      'Welcome to Agaric! This is your personal knowledge base.',
     ])
 })
 

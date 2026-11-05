@@ -33,7 +33,7 @@ async function pageTitle(): Promise<string> {
 describe('Agaric real-backend chip below the edited block (#5807) @editor', () => {
   it('one click on a link chip in the block below the edited one follows it', async () => {
     await waitForAppReady()
-    expect(await importMarkdownPage(SOURCE, `- ${EDITED}\n- see [[${TARGET}]]\n`)).toContain(
+    expect(await importMarkdownPage(SOURCE, `${EDITED}\n\nsee [[${TARGET}]]\n`)).toContain(
       '2 blocks',
     )
     await reopenPageByTitle(SOURCE)

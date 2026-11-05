@@ -385,6 +385,7 @@ async fn import_markdown_keeps_a_key_two_definitions_fold_to_as_typed() {
         [
             NO_COLUMNS,
             r#"Due-Date text=Some("soon") num=None date=None ref=None bool=None"#,
+            BULLET_ROW,
         ]
     );
 }
@@ -496,6 +497,7 @@ async fn import_markdown_folds_a_key_to_its_canonical_spelling() {
             r#"columns todo=None priority=Some("1") scheduled=Some("2026-04-01") due=Some("2026-05-01")"#.to_owned(),
             r#"Owner text=Some("ann") num=None date=None ref=None bool=None"#.to_owned(),
             r#"due text=Some("2026-06-01") num=None date=None ref=None bool=None"#.to_owned(),
+            BULLET_ROW.to_owned(),
         ],
         "a key no definition folds to stays as typed"
     );
@@ -526,14 +528,13 @@ async fn import_markdown_resolves_a_ref_value_by_title() {
     assert_eq!(contents, ["a", "b", "c", "d\nreviewer:: Nobody"]);
     let ids = child_ids(&pool, &page).await;
     for id in &ids[..2] {
-        assert_eq!(dup_storage(&pool, id).await[1], reviewer_row(&alice));
+        let rows = dup_storage(&pool, id).await;
+        assert_eq!(rows[1..], [BULLET_ROW.to_owned(), reviewer_row(&alice)]);
     }
-    assert_eq!(dup_storage(&pool, &ids[2]).await[1], reviewer_row(&holder));
-    assert_eq!(
-        dup_storage(&pool, &ids[3]).await.len(),
-        1,
-        "nothing is stored"
-    );
+    let rows = dup_storage(&pool, &ids[2]).await;
+    assert_eq!(rows[1..], [BULLET_ROW.to_owned(), reviewer_row(&holder)]);
+    let rows = dup_storage(&pool, &ids[3]).await;
+    assert_eq!(rows[1..], [BULLET_ROW], "nothing is stored but the bullet");
     let named: Vec<&String> = result
         .warnings
         .iter()
@@ -667,10 +668,9 @@ async fn export_then_import_keeps_a_ref_property_and_the_recurrence_rule() {
 
     assert!(result.warnings.is_empty(), "{:?}", result.warnings);
     let copy = page_titled(&pool, "Weekly copy").await;
-    // The export's `# Weekly` names another page, so it stays a heading, and
-    // owns the task (D16).
-    let heading = &child_ids(&pool, &copy).await[0];
-    let imported = &child_ids(&pool, heading).await[0];
+    // The export's `# Weekly` names another page, so it stays a heading, which
+    // owns nothing (decision 1, #6277): the task follows it.
+    let imported = &child_ids(&pool, &copy).await[1];
     let stored = dup_storage(&pool, imported).await;
     assert_eq!(
         stored,
@@ -789,6 +789,10 @@ async fn copy_then_paste_keeps_a_repeating_task_repeating() {
 }
 
 const NO_COLUMNS: &str = "columns todo=None priority=None scheduled=None due=None";
+
+/// The row a `- ` line stores: a Markdown file's `- x` is a bulleted block
+/// (decision 1, #6277).
+const BULLET_ROW: &str = r#"listStyle text=Some("bullet") num=None date=None ref=None bool=None"#;
 
 /// A front-matter value its definition refuses is skipped with a warning
 /// naming it (D11): front matter has no block to keep it in as text, and the

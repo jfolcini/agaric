@@ -170,7 +170,6 @@ fn document_text_carries(spec: &BlockSpec) -> bool {
         list_marker,
         &task_marker,
         &spec.content,
-        RenderMode::Document,
     )
     .open;
     let ends_blank = spec
@@ -377,6 +376,141 @@ proptest! {
         let (again, _) = render_page_document(&build_page(&read).0);
         prop_assert_eq!(again, md);
     }
+
+    /// A page's export, imported as a `Markdown` file, reads as
+    /// `parse_document_outline` reads the same text less its title line: one
+    /// reader (decision 1, #6277), whichever blocks something addresses, saved
+    /// with `\r\n` line ends or a BOM or not ([`saved_as`]).
+    #[test]
+    fn an_export_imported_as_a_markdown_file_reads_as_the_document_reader_reads_it(
+        forest in arb_document_forest(),
+        addressed in prop::collection::vec(any::<bool>(), 10),
+        saved in any::<(bool, bool)>()
+    ) {
+        let (mut data, expected) = build_page(&forest);
+        data.addressed_blocks = expected
+            .iter()
+            .zip(&addressed)
+            .filter(|(_, addressed)| **addressed)
+            .map(|((_, _, id, _), _)| id.clone())
+            .collect();
+        let md = render_page_markdown(PAGE, &data);
+        let imported = import_as_markdown_file(&saved_as(&md, saved));
+        let mut read = import::parse_document_outline(&import::strip_title_heading(&md, "Title"));
+        // An import also writes foreign highlight, math and embeds in Agaric's form.
+        normalize_foreign_forms(&mut read.blocks, import::embed_names_note);
+        prop_assert_eq!(tree_of(&imported.blocks), tree_of(&read.blocks), "md:\n{}", md);
+        prop_assert_eq!(&imported.frontmatter, &read.frontmatter, "md:\n{}", md);
+    }
+
+    /// With every block addressed, so each carries its `^ID`, a page's export
+    /// imported as a `Markdown` file is the page's tree in the export's names:
+    /// a ref and a ref-typed value as titles, and a task with no list style
+    /// ([`as_document`]).
+    #[test]
+    fn an_export_with_every_block_anchored_imports_as_its_tree(forest in arb_document_forest()) {
+        let (mut data, expected) = build_page(&forest);
+        data.addressed_blocks = expected.iter().map(|(_, _, id, _)| id.clone()).collect();
+        let named: Vec<Expected> = as_document(expected)
+            .into_iter()
+            .zip(&forest)
+            .map(|((depth, content, id, mut properties), spec)| {
+                for (key, (value, is_ref)) in &spec.properties {
+                    if *is_ref {
+                        properties.insert(key.clone(), data.ref_titles[value].clone());
+                    }
+                }
+                (depth, named_block_text(&content, &data), id, properties)
+            })
+            .collect();
+        let md = render_page_markdown(PAGE, &data);
+        check_read_back(&md, &import_as_markdown_file(&md).blocks, &named, true)?;
+    }
+}
+
+/// A block that leaves a fence open is exported with its `^ID` on a line of
+/// its own, which ends the fence, so the block after it reads back as its own
+/// (#6277 E2): unanchored, a paragraph's open fence would run to the end of the
+/// file and take every later block into its code.
+#[test]
+fn an_export_ends_a_blocks_open_fence_with_its_anchor() {
+    const A: &str = "01J0000000000000000000000A";
+    const B: &str = "01J0000000000000000000000B";
+    let data = page_data(vec![row(A, PAGE, 1, "```\ncode"), row(B, PAGE, 2, "after")]);
+    let md = render_page_markdown(PAGE, &data);
+    assert_eq!(md, format!("# Title\n\n```\ncode\n^{A}\n\nafter\n"));
+    let read: Vec<(String, Option<String>)> = import_as_markdown_file(&md)
+        .blocks
+        .into_iter()
+        .map(|block| (block.content, block.block_anchor))
+        .collect();
+    let expected = [
+        ("```\ncode".to_string(), Some(A.to_string())),
+        ("after".to_string(), None),
+    ];
+    assert_eq!(read, expected, "md:\n{md}");
+}
+
+/// A file's first block that opens with `# ` reads back as written, from the
+/// export, the export less its title line as a ZIP writes it, and the mirror's
+/// file (#6277 E2): an import takes a bare `# Title` there for the page's title
+/// (`import::strip_title_heading`), and a bare heading over `---` rules for an
+/// older export's title over its front matter.
+#[test]
+fn a_file_opening_with_a_heading_imports_back_to_its_blocks() {
+    let pages: [&[&str]; 2] = [
+        &["# Title", "Intro"],
+        &["# Weekly sync", "---", "Date: 2026-11-05", "---", "Agenda"],
+    ];
+    let mut lost = Vec::new();
+    for contents in pages {
+        let ids = ["A", "B", "C", "D", "E"].map(|tail| format!("01J0000000000000000000000{tail}"));
+        let rows = contents
+            .iter()
+            .zip(&ids)
+            .zip(1..)
+            .map(|((content, id), position)| row(id, PAGE, position, content))
+            .collect();
+        let data = page_data(rows);
+        let export = render_page_markdown(PAGE, &data);
+        let zip = export.replacen("# Title\n\n", "", 1);
+        for md in [export, zip, render_page_file(&data).text] {
+            let read = import_as_markdown_file(&md);
+            let blocks: Vec<String> = read.blocks.into_iter().map(|b| b.content).collect();
+            if blocks != contents || !read.frontmatter.is_empty() {
+                lost.push((md, blocks, read.frontmatter));
+            }
+        }
+    }
+    assert!(lost.is_empty(), "{lost:#?}");
+}
+
+/// `md`, a page's export, read as a file import reads a `Markdown` file named
+/// after the page.
+fn import_as_markdown_file(md: &str) -> import::ParseOutput {
+    let file = Some("Title.md".to_string());
+    parse_import_payload(md, file, ImportDialect::Markdown, None, None)
+        .expect("no attachments to budget")
+        .0
+}
+
+/// A read block's depth, content, anchor and properties.
+type BlockShape<'a> = (usize, &'a str, Option<&'a str>, &'a [(String, String)]);
+
+/// Each block of `blocks` as its [`BlockShape`].
+fn tree_of(blocks: &[import::ParsedBlock]) -> Vec<BlockShape<'_>> {
+    blocks
+        .iter()
+        .map(|block| {
+            let anchor = block.block_anchor.as_deref();
+            (
+                block.depth,
+                block.content.as_str(),
+                anchor,
+                block.properties.as_slice(),
+            )
+        })
+        .collect()
 }
 
 /// The hard cases of § g.3, by row, as D1–D4 settle them: each tree and the

@@ -734,8 +734,9 @@ export const commands = {
 	getMirrorStatus: () => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("get_mirror_status")),
 	getSpeechStatus: () => typedError<SpeechStatus, AppError>(__TAURI_INVOKE("get_speech_status")),
 	/**
-	 *  Tauri command: import a Logseq-style markdown file as a page with
-	 *  block hierarchy. Delegates to [`import_markdown_with_progress`].
+	 *  Tauri command: import a Markdown, Logseq or Org file, in the `dialect` its
+	 *  front end read it as, as a page with block hierarchy. Delegates to
+	 *  [`import_markdown_with_progress`].
 	 * 
 	 *  `space_id` is required. The imported page is
 	 *  stamped with `space = ?space_id` inside the same transaction as the
@@ -2507,10 +2508,9 @@ export type ImportBibliographyResult = {
 
 /**
  *  Which reading a file import's source is for (#6277 E1), as its front end
- *  tells: a Logseq graph or an `.org` file is `LogseqOrg`, everything else
- *  `Markdown`. Only `LogseqOrg` reads Logseq's `STARTED` keyword and Org's
- *  `#+BEGIN_X` blocks (#6033 S3); it is the seam the `Markdown` reader
- *  switches on.
+ *  tells: a Logseq graph or an `.org` file is `LogseqOrg`, read as an outline
+ *  ([`parse_logseq_markdown`]), everything else `Markdown`, read as paste and
+ *  Edit as Markdown read text ([`parse_markdown_file`], decision 1).
  */
 export type ImportDialect = "Markdown" | "LogseqOrg";
 

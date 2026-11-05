@@ -387,14 +387,16 @@ async function exportSpacePagesIntoZip(
 
 /**
  * `md` without the `# {title}` line `render_page_markdown` starts with, and
- * the blank line after it, found at the very start or right after closing
- * front matter; any other heading is content.
+ * the blank line after it, found at the very start or after closing front
+ * matter and the blank line the export writes there (#6277 A1); any other
+ * heading is content.
  */
 function dropTitleLine(md: string, title: string): string {
   const line = `# ${title}\n\n`
   if (md.startsWith(line)) return md.slice(line.length)
   const close = md.startsWith('---\n') ? md.indexOf('\n---\n', 3) : -1
-  const end = close + '\n---\n'.length
+  const fenced = close + '\n---\n'.length
+  const end = md.startsWith('\n', fenced) ? fenced + 1 : fenced
   return close !== -1 && md.startsWith(line, end)
     ? md.slice(0, end) + md.slice(end + line.length)
     : md

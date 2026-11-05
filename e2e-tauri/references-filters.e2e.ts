@@ -20,7 +20,7 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   chooseSelectOption,
-  importMarkdownPage,
+  importLogseqPage,
   navigateTo,
   reopenPageByTitle,
   runScopedMarker,
@@ -30,7 +30,8 @@ import {
 const MARKER = runScopedMarker('wdio-ref')
 const SOURCE = runScopedMarker('wdio-ref-source')
 const TARGET = runScopedMarker('wdio-ref-target')
-// `[#A]` / `[#B]` import as priority 1 / 2, the definition's first two levels.
+// `[#A]` / `[#B]` import as priority 1 / 2, the definition's first two levels,
+// from a page of a Logseq graph (#6277 decision 1).
 const SOURCES = {
   'todo-high': `TODO [#A] ${MARKER}-todo-high`,
   'todo-medium': `TODO [#B] ${MARKER}-todo-medium`,
@@ -168,7 +169,7 @@ describe('Agaric real-backend References Status / Priority / Created Date filter
     const markdown = Object.values(SOURCES)
       .map((source) => `- ${source} links [[${TARGET}]]`)
       .join('\n')
-    expect(await importMarkdownPage(SOURCE, `${markdown}\n`)).toContain(`${ALL.length} blocks`)
+    expect(await importLogseqPage(SOURCE, `${markdown}\n`)).toContain(`${ALL.length} blocks`)
 
     await openTarget()
     await addFilter('Status', 'TODO')

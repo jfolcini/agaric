@@ -6,12 +6,17 @@ season: autumn
 
 # Field Notes
 
-- [map.png](attachment:ATT2)
-- ## Findings
-  - **Bold**, *italic* and `code` ^000000000000000000000000S3
-    - deeper
-- first line
-  second line ^000000000000000000000000S5
-  - [report.pdf](attachment:ATT1)
-- see [[#^000000000000000000000000S3]]
-- read [[Reading List]] for #research
+[map.png](attachment:ATT2)
+
+## Findings
+
+  + **Bold**, *italic* and `code` ^000000000000000000000000S3
+    + deeper
+
+first line
+second line ^000000000000000000000000S5
+  + [report.pdf](attachment:ATT1)
+
+see [[#^000000000000000000000000S3]]
+
+read [[Reading List]] for #research

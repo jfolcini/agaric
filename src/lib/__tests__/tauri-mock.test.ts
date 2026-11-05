@@ -3013,12 +3013,15 @@ describe('page alias commands', () => {
 // ---------------------------------------------------------------------------
 
 describe('export_page_markdown', () => {
+  // Laid out as the page's buffer is, plain blocks as paragraphs, with the
+  // front matter first and the title after it (#6277 E2).
   it('returns markdown with page title and child blocks', () => {
     const md = invoke('export_page_markdown', {
       pageId: SEED_IDS.PAGE_GETTING_STARTED,
     }) as string
-    expect(md).toContain('# Getting Started')
-    expect(md).toContain('- Welcome to Agaric!')
+    expect(md).toMatch(/^---\naliases: \[getting-started, gs\]\n---\n\n# Getting Started\n\n/)
+    expect(md).toContain('\n\nWelcome to Agaric! This is your personal knowledge base.\n\n')
+    expect(md).not.toContain('^')
   })
 
   it('throws for non-existent page', () => {
@@ -3046,6 +3049,43 @@ describe('export_page_markdown', () => {
     ).items.map((b) => b['content'])
 
     expect(children).toContain(content)
+  })
+
+  // A first block repeating the title is a `+` item, so the file a ZIP writes,
+  // with no title line, still imports it as a block (#6277 E2).
+  it('round-trips a first block that repeats the title through a ZIP file', () => {
+    blocks.set('PLAN_PAGE', makeBlock('PLAN_PAGE', 'page', 'Plan', null, 92))
+    blocks.set('PLAN_HEAD', makeBlock('PLAN_HEAD', 'content', '# Plan', 'PLAN_PAGE', 1))
+    blocks.set('PLAN_BODY', makeBlock('PLAN_BODY', 'content', 'Intro', 'PLAN_PAGE', 2))
+    const md = invoke('export_page_markdown', { pageId: 'PLAN_PAGE' }) as string
+    const zipped = md.replace('# Plan\n\n', '')
+    const { page_id } = invoke('import_markdown', {
+      content: zipped,
+      filename: 'Plan.md',
+      spaceId: 'SPACE_PERSONAL',
+    }) as { page_id: string }
+    const children = (
+      invoke('list_blocks', { parentId: page_id }) as { items: Record<string, unknown>[] }
+    ).items.map((b) => b['content'])
+
+    expect(children).toEqual(['# Plan', 'Intro'])
+  })
+
+  // An editor may save the export after a byte order mark (#6277 H1).
+  it('leaves out the title line of an export saved after a BOM', () => {
+    blocks.set('BOM_PAGE', makeBlock('BOM_PAGE', 'page', 'Saved', null, 93))
+    blocks.set('BOM_BODY', makeBlock('BOM_BODY', 'content', 'Intro', 'BOM_PAGE', 1))
+    const md = invoke('export_page_markdown', { pageId: 'BOM_PAGE' }) as string
+    const { page_id } = invoke('import_markdown', {
+      content: `\uFEFF${md}`,
+      filename: 'Saved.md',
+      spaceId: 'SPACE_PERSONAL',
+    }) as { page_id: string }
+    const children = (
+      invoke('list_blocks', { parentId: page_id }) as { items: Record<string, unknown>[] }
+    ).items.map((b) => b['content'])
+
+    expect(children).toEqual(['Intro'])
   })
 })
 

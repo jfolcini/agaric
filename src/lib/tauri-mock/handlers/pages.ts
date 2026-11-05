@@ -14,6 +14,7 @@ import {
   DocumentLayout,
   needsBlankLineEscape,
   parseDocument,
+  parseMarkdownFile,
   pushDocumentLines,
   writeSourcePropertyValue,
 } from '@/editor/source-buffer-document'
@@ -209,12 +210,17 @@ function pushAnchoredDocumentBlock(
  * state outside the checkbox alphabet, its priority and dates and its other
  * properties follow as `key:: value` lines at its text's column. Like the
  * backend, a nested page and what is under it are left out; unlike it, no id
- * in the text is written as a name. Returns the buffer and the ids it holds,
- * in order.
+ * in the text is written as a name. `exported`, it is `render_page_markdown`
+ * (#6277 E2): the `# Title` after the front matter, the first block laid out
+ * as if it opened the file, and no `^ID`, which the backend writes only on a
+ * block something addresses or that leaves a fence open. Returns the buffer
+ * and the ids it holds, in order.
  */
-function renderPageDocument(pid: string): { source: string; ids: string[] } {
+function renderPageDocument(pid: string, exported = false): { source: string; ids: string[] } {
   requirePageToRender(pid)
   const front = renderFrontMatter(pageFrontMatter(pid))
+  const title = (blocks.get(pid)?.['content'] as string | null) ?? 'Untitled'
+  const head = exported ? `${front}# ${title}\n\n` : front
   const lines: string[] = []
   const ids: string[] = []
   const layout = new DocumentLayout()
@@ -228,19 +234,24 @@ function renderPageDocument(pid: string): { source: string; ids: string[] } {
       const style = storedListStyle(id)
       run = style === 'ordered' && todo === null ? run + 1 : 0
       const listMarker = style === null ? '' : style === 'bullet' ? '- ' : `${run}. `
-      const opensRule = front === '' && lines.length === 0 && content.startsWith('---')
-      const place = layout.place(depth, listMarker, todo, opensRule)
+      const opensMisread =
+        lines.length === 0 &&
+        (content.startsWith('---')
+          ? exported || front === ''
+          : exported && content.startsWith('# '))
+      const place = layout.place(depth, listMarker, todo, opensMisread)
       if (place.blank) lines.push('')
       const task = taskLineOf(row, place.taskMarker !== '')
       const text = task.write(content)
-      pushAnchoredDocumentBlock(lines, place.indent, place.marker, place.taskMarker, text, id)
+      if (exported) pushDocumentLines(lines, place.indent, place.marker, place.taskMarker, text)
+      else pushAnchoredDocumentBlock(lines, place.indent, place.marker, place.taskMarker, text, id)
       pushPropertyLines(lines, place.childIndent, row, place.taskMarker === '' ? todo : null, task)
       ids.push(id)
       render(id, depth + 1)
     }
   }
   render(pid, 0)
-  return { source: front + lines.map((line) => `${line}\n`).join(''), ids }
+  return { source: head + lines.map((line) => `${line}\n`).join(''), ids }
 }
 
 /**
@@ -1315,13 +1326,13 @@ const PAGES_PRIMITIVE_TYPES: ReadonlySet<string> = new Set([
 ])
 
 /**
- * `content`'s lines less a `# Title` equal to `title`, the first line or the
- * first after a leading front matter, and the blank lines after it, so front
- * matter is still leading, as the backend's `strip_title_heading` does (#5160
- * S6, #6277 A1).
+ * `content`'s lines less a leading byte order mark and a `# Title` equal to
+ * `title`, the first line or the first after a leading front matter, and the
+ * blank lines after it, so front matter is still leading, as the backend's
+ * `strip_title_heading` does (#5160 S6, #6277 A1).
  */
 function stripTitleHeading(content: string, title: string): string[] {
-  const lines = content.split('\n')
+  const lines = content.replace(/^\uFEFF/, '').split('\n')
   const close = lines[0]?.startsWith('---')
     ? lines.findIndex((line, i) => i > 0 && line.startsWith('---'))
     : -1
@@ -1832,23 +1843,10 @@ export const pagesHandlers = {
   // Markdown export
   // ---------------------------------------------------------------------------
 
-  export_page_markdown: (args) => {
-    const a = args as Record<string, unknown>
-    const pid = a['pageId'] as string
-    const page = blocks.get(pid)
-    if (!page) throw notFoundRejection(`page '${pid}' not found`)
-    const children = [...blocks.values()]
-      .filter((b) => b['parent_id'] === pid && !(b['deleted_at'] as string | null))
-      .toSorted((x, y) => ((x['position'] as number) ?? 0) - ((y['position'] as number) ?? 0))
-    let md = `# ${(page['content'] as string) ?? 'Untitled'}\n\n`
-    for (const child of children) {
-      // Like the backend's `push_block_bullet`: the lines after the first
-      // are indented under the bullet, so a fence's tab stays code.
-      const [head, ...rest] = ((child['content'] as string | null) ?? '').split('\n')
-      md += `- ${head}${rest.map((line) => `\n  ${line}`).join('')}\n`
-    }
-    return md
-  },
+  // The file for other tools, laid out as the page's buffer is (#6277 E2),
+  // without the attachment lines and names the backend writes.
+  export_page_markdown: (args) =>
+    renderPageDocument((args as Record<string, unknown>)['pageId'] as string, true).source,
 
   // #5160 A — the page's buffer with each block's id beside its text: the
   // mock's Document render less its anchors ({@link anchorFree}, #5691).
@@ -1994,7 +1992,7 @@ export const pagesHandlers = {
   // ---------------------------------------------------------------------------
 
   // DELIBERATE APPROXIMATION of the Rust importer (#1919). The real import
-  // contract lives in `agaric-engine/src/import.rs` (`parse_logseq_markdown`)
+  // contract lives in `agaric-engine/src/import.rs` (`parse_markdown_file`)
   // and `src-tauri/src/commands/pages/markdown.rs` (`import_markdown_with_progress`
   // / `folder_path_to_namespace_title`). This handler does NOT reimplement that
   // parser — it deliberately models a faithful *subset* of the backend so the
@@ -2007,12 +2005,12 @@ export const pagesHandlers = {
   //     `/`), falling back to "Imported Page". A leading `# heading` equal to
   //     that title is the title, not a block (#5160 S6); any other heading is
   //     ordinary content.
-  //   - Blocks: the Document reader (`parseDocument`, as Edit as Markdown
-  //     reads a buffer): one block per list item of any marker, heading and
-  //     paragraph, a checkbox after the marker as the block's `todo_state`
-  //     (#5160 D6). Front matter and the `key:: value` lines before the first
-  //     block are the page's, and a `key:: value` line under a block is its
-  //     property, neither a block, as on import.
+  //   - Blocks: a `Markdown` file's reading (`parseMarkdownFile`, as a paste
+  //     reads text, #6277 decision 1): one block per list item of any
+  //     marker, heading and paragraph, a checkbox after the marker as the
+  //     block's `todo_state` (#5160 D6). Front matter and the `key:: value`
+  //     lines before the first block are the page's, and a `key:: value` line
+  //     under a block is its property, neither a block, as on import.
   //   - Names: `[[Page]]` and `#tag` resolve in the target space through
   //     `resolveInboundNames` (#5160 N4), and a file whose title names an
   //     empty page of the space fills that page (D12).
@@ -2025,8 +2023,9 @@ export const pagesHandlers = {
   //   - `((block-ref))` stripping, `[[Page#anchor]]` block targets and
   //     Obsidian `![[Note]]` embeds.
   //   - Depth: every content block is emitted flat under the page.
-  //   - A fenced code block under a list item: an import keeps it in the item,
-  //     the Document reader makes it a block of its own, one more.
+  //   - The outline reading a `LogseqOrg` file gets (`parse_logseq_markdown`):
+  //     every dialect reads as `Markdown` here, so a Logseq task keyword is
+  //     text and a heading owns nothing.
   //   - Attachment handling (kept as literal text).
   //   - A folder pick's note names (`vault.notes`, #5740): a bare `[[Name]]`
   //     resolves as `Name`, never as the vault's note of that name.
@@ -2035,8 +2034,7 @@ export const pagesHandlers = {
   // fidelity. Validate import semantics against the Rust tests, not this mock.
   import_markdown: (args) => {
     const a = args as Record<string, unknown>
-    // `dialect` (#6277 E1) goes unread: the dialects differ only in Logseq's `STARTED` and
-    // Org's `#+BEGIN_` blocks, which the mock reads in neither.
+    // `dialect` (#6277 E1) goes unread: the mock models the `Markdown` reading alone.
     const content = (a['content'] as string) ?? ''
     const filename = (a['filename'] as string | null) ?? null
     // Backend now requires `space_id`. Mirror the
@@ -2116,7 +2114,9 @@ export const pagesHandlers = {
     // Pre-compute the content blocks so we know `blocks_total` before emitting
     // `started` (the real backend reports the parser's count up front so the UI
     // can render a determinate bar from the very first event).
-    const parsed = parseDocument(lines.join('\n'), null).blocks
+    // The mock stamps no property on a block, so a task line's Tasks fields stay
+    // its text (#6277 D2).
+    const parsed = parseMarkdownFile(lines.join('\n'))
     const parsedLines = parsed.map((block) => block.contentAsWritten)
     const blocksTotal = parsedLines.length
 

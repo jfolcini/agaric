@@ -1439,6 +1439,26 @@ export async function importMarkdownPage(title: string, markdown: string): Promi
   return result.getText()
 }
 
+/**
+ * Import `markdown` as the page `title` of a Logseq graph, a folder holding
+ * `logseq/config.edn`, which the front end sends as `LogseqOrg`, read as an
+ * outline: a lone `.md` file reads as Markdown, where a `TODO` keyword or an
+ * `[#A]` cookie is text (#6277 decision 1). Resolves to the import summary
+ * once it names the page.
+ */
+export async function importLogseqPage(title: string, markdown: string): Promise<string> {
+  await importFolder(
+    'import-folder-input',
+    `${title}-graph`,
+    {
+      'logseq/config.edn': Buffer.from('{:file/name-format :triple-lowbar}\n'),
+      [`pages/${title}.md`]: Buffer.from(markdown),
+    },
+    `Imported “${title}”`,
+  )
+  return $('[data-testid="import-result"]').getText()
+}
+
 /** The rows of the open page whose text holds `task`, one per occurrence of a repeating task. */
 export function taskRows(task: string) {
   return $$(`[data-testid="sortable-block"]*=${task}`).getElements()

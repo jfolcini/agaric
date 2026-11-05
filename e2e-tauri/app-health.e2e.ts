@@ -227,7 +227,7 @@ describe('Agaric real-backend App health and bug report (#5741, #5740) @boot @se
     await importMarkdownPage(
       marker,
       [
-        `- TODO ${marker}-task #${marker}-tag [[${marker}-target]]`,
+        `- [ ] ${marker}-task #${marker}-tag [[${marker}-target]]`,
         '  repeat:: weekly',
         `  assignee:: ${marker}-carol`,
         `- ${marker}-parent`,

@@ -6,9 +6,10 @@
 // reader, a declared approximation, and emits every block flat, so only this
 // lane can prove what the real importer does with a document that is not a
 // `- ` outline: the leading `# Title` equal to the file name is the title and
-// not a block (S6), a heading owns what follows it (D16), a paragraph is a
-// block (D2), a fence is one block (S4), `1.` and `*` items are blocks nested
-// by their content column (S1, S7). Depths are asserted through the page
+// not a block (S6), a heading owns nothing, as a Markdown file reads (#6277
+// decision 1), a paragraph is a block (D2), a fence is one block (S4), `1.`
+// and `*` items are blocks nested by their content column (S1, S7). Depths
+// are asserted through the page
 // editor AFTER a navigation round-trip, i.e. on what the backend stored.
 //
 // The file is picked as import-markdown-nesting.e2e.ts picks its fixture:
@@ -73,7 +74,7 @@ async function ariaLevelOf(marker: string): Promise<string | null> {
 }
 
 describe('Agaric real-backend README import (#5160) @markdown', () => {
-  it('imports a README as headings owning their sections, paragraphs, a fence and nested list items', async () => {
+  it('imports a README as headings owning nothing, paragraphs, a fence and nested list items', async () => {
     await waitForAppReady()
     await navigateTo('Settings')
     const dataTab = $('#settings-tab-data')
@@ -109,15 +110,15 @@ describe('Agaric real-backend README import (#5160) @markdown', () => {
 
     // The title line is the page title, not a block.
     await expectAbsent(`[data-testid="block-static"]*=# ${TITLE}`, 'a block repeating the title')
-    // Top level: the intro paragraph and the headings.
+    // Top level: the intro paragraph, the headings, and, since a heading
+    // owns nothing, the fence, the numbered and the starred items too.
     expect(await ariaLevelOf(`${MARKER}-intro`)).toBe('1')
     expect(await ariaLevelOf(`${MARKER}-install`)).toBe('1')
     expect(await ariaLevelOf(`${MARKER}-features`)).toBe('1')
-    // Each heading owns its section: the fence, the numbered and the starred
-    // items are one level down, the nested `*` item two.
-    expect(await ariaLevelOf(`cargo install ${MARKER}-bin`)).toBe('2')
-    expect(await ariaLevelOf(`${MARKER}-build`)).toBe('2')
-    expect(await ariaLevelOf(`${MARKER}-regex`)).toBe('2')
-    expect(await ariaLevelOf(`${MARKER}-nested`)).toBe('3')
+    expect(await ariaLevelOf(`cargo install ${MARKER}-bin`)).toBe('1')
+    expect(await ariaLevelOf(`${MARKER}-build`)).toBe('1')
+    expect(await ariaLevelOf(`${MARKER}-regex`)).toBe('1')
+    // The nested `*` item nests by its content column, one level down.
+    expect(await ariaLevelOf(`${MARKER}-nested`)).toBe('2')
   })
 })

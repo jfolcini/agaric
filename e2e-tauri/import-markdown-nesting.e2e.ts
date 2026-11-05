@@ -4,7 +4,7 @@
 // The mock's `import_markdown` is a declared approximation (flat, no nesting,
 // no links — src/lib/tauri-mock/handlers/pages.ts), so only this lane can
 // prove what the real importer does with an indented list and a `[[link]]`:
-// `parse_logseq_markdown` (agaric-engine/src/import.rs) turns two-space
+// `parse_markdown_file` (agaric-engine/src/import.rs) turns two-space
 // indentation into depth, and `resolve_inbound_page_links`
 // (commands/pages/markdown.rs) creates the missing target page and rewrites
 // the link to its ULID. Both are asserted here through the page editor AFTER a

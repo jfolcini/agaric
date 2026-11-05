@@ -177,7 +177,11 @@ before(waitForAppReady)
 
 describe('Agaric real-backend Advanced Query grouping (#5738) @search', () => {
   it('groups the matches by state with per-group counts and a Count aggregate', async () => {
-    const markdown = TASKS.map(([state, name]) => `- ${state} ${MARKER} ${name}`).join('\n')
+    // A Markdown file's task is a checkbox item (#6277 decision 1).
+    const checkbox = { TODO: '[ ]', DOING: '[/]', DONE: '[x]' } as const
+    const markdown = TASKS.map(([state, name]) => `- ${checkbox[state]} ${MARKER} ${name}`).join(
+      '\n',
+    )
     expect(await importMarkdownPage(TITLE, `${markdown}\n`)).toContain(`${TASKS.length} blocks`)
 
     await openAdvancedQuery()

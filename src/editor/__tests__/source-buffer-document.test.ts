@@ -20,6 +20,7 @@ import {
   type DocumentBlock,
   DocumentLayout,
   parseDocument,
+  parseMarkdownFile,
   parsePastedText,
   pushDocumentLines,
 } from '@/editor/source-buffer-document'
@@ -112,6 +113,37 @@ describe('the Document dialect vectors (#5691)', () => {
     expect(read('"\\ud83d\\ude00"')).toEqual([['k', '\u{1F600}']])
     expect(read('"\\ud83d"')).toEqual([['k', '"\\ud83d"']])
     expect(read('"\\ude00"')).toEqual([['k', '"\\ude00"']])
+  })
+})
+
+// #6277 decision 1 — `import::parse_markdown_file`, which the mock's import reads with.
+describe('a Markdown file read as an import reads it', () => {
+  it('reads the blocks as a paste does: a heading owns nothing, `- x` is a bullet', () => {
+    const read = parseMarkdownFile('# Plan\nIntro\n- milk\n* [x] done')
+    expect(read.map(pastedTree)).toEqual([
+      { depth: 0, content: '# Plan', properties: {} },
+      { depth: 0, content: 'Intro', properties: {} },
+      { depth: 0, content: 'milk', properties: { listStyle: 'bullet' } },
+      { depth: 0, content: 'done', properties: { todo_state: 'DONE' } },
+    ])
+  })
+
+  it('leaves the front matter and the leading `key:: value` lines to the page', () => {
+    const read = parseMarkdownFile('---\ntags: [a]\n---\nsource:: web\n\nbody\n')
+    expect(read.map(pastedTree)).toEqual([{ depth: 0, content: 'body', properties: {} }])
+  })
+
+  it('keeps a trailing `^word` as the anchor a paste would keep as text', () => {
+    const [block] = parseMarkdownFile('the step ^step\n')
+    expect(block?.content).toBe('the step')
+    expect(block?.anchor).toBe('step')
+    expect(parsePastedText('the step ^step\n')[0]?.content).toBe('the step ^step')
+  })
+
+  it('ends an unterminated fence with its list item, and reads no block in an empty file', () => {
+    const read = parseMarkdownFile('- ```\n  never closed\n- next\n')
+    expect(read.map((block) => block.content)).toEqual(['```\nnever closed', 'next'])
+    expect(parseMarkdownFile('')).toEqual([])
   })
 })
 

@@ -2,9 +2,11 @@
 //!
 //! The Markdown/Obsidian importer parses fully arbitrary user files — a picked
 //! vault folder, an Obsidian export, or ENEX/JEX notes composed into Markdown
-//! by the frontend importers (#1282). `parse_logseq_markdown` is therefore a
-//! raw-input boundary: it must never panic, hang, or OOM on any input; it
-//! either produces blocks or records a soft warning. So are the other
+//! by the frontend importers (#1282). `parse_markdown_file`, which reads them
+//! (#6277 decision 1), and `parse_logseq_markdown`, which reads a Logseq graph
+//! or an Org file, are therefore raw-input boundaries: they must never panic,
+//! hang, or OOM on any input; each either produces blocks or records a soft
+//! warning. So are the other
 //! readings of the same grammar (#5160): in the Document dialect (#5691),
 //! `parse_document_outline` and `parse_document_text` run on every Edit as
 //! Markdown save, and `parse_pasted_text`, which reads the Document dialect too
@@ -24,7 +26,8 @@ use libfuzzer_sys::fuzz_target;
 // `ImportProgressSink` seam once #2897 removed the re-export shim, so the
 // parsers are no longer reachable through it.
 use agaric_engine::import::{
-    parse_document_outline, parse_document_text, parse_logseq_markdown, parse_pasted_text,
+    parse_document_outline, parse_document_text, parse_logseq_markdown, parse_markdown_file,
+    parse_pasted_text,
 };
 
 fuzz_target!(|data: &[u8]| {
@@ -33,6 +36,7 @@ fuzz_target!(|data: &[u8]| {
     // free pass). We assert only the no-panic / no-hang contract — any parse
     // outcome (blocks and/or warnings) is acceptable.
     if let Ok(s) = std::str::from_utf8(data) {
+        let _ = parse_markdown_file(s);
         let _ = parse_logseq_markdown(s);
         let _ = parse_pasted_text(s);
         let _ = parse_document_outline(s);
