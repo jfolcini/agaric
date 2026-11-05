@@ -1,6 +1,6 @@
 /**
  * The block a typed `[[Page#anchor]]` names on its page (#6033), as import's
- * `anchor_block` (`src-tauri/src/commands/pages/markdown.rs`) finds it: for
+ * `anchor_block` (`src-tauri/src/commands/pages/markdown_import_anchors.rs`) finds it: for
  * `^ULID` the block of that id, else the first block in document order whose
  * first line is an ATX heading of the anchor's text, compared case- and
  * whitespace-insensitively. `reference-tokens.vectors.json`'s `headingAnchors`

@@ -1993,8 +1993,9 @@ export const pagesHandlers = {
 
   // DELIBERATE APPROXIMATION of the Rust importer (#1919). The real import
   // contract lives in `agaric-engine/src/import.rs` (`parse_markdown_file`)
-  // and `src-tauri/src/commands/pages/markdown.rs` (`import_markdown_with_progress`
-  // / `folder_path_to_namespace_title`). This handler does NOT reimplement that
+  // and `src-tauri/src/commands/pages/markdown.rs` (`import_markdown_with_progress`)
+  // / `src-tauri/src/commands/pages/markdown_links.rs`
+  // (`folder_path_to_namespace_title`). This handler does NOT reimplement that
   // parser — it deliberately models a faithful *subset* of the backend so the
   // dev-preview UI (progress bar, warnings panel, "N properties" branch) is
   // exercised, while never *accepting more structure than the backend does*.

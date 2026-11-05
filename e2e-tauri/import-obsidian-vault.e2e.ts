@@ -4,7 +4,7 @@
 // A vault is a folder pick: each note imports as the page `<note>`, the
 // vault folder's own name no part of it (#6277 decision 8), shipping the
 // bytes of the attachments it embeds (`ingest_attachments` in
-// commands/pages/markdown.rs) and the paths of the notes its `[[Name]]` links
+// commands/pages/markdown_import_attachments.rs) and the paths of the notes its `[[Name]]` links
 // name, which the backend writes with those notes' titles
 // (`rewrite_vault_wikilinks`). Only this lane holds the stored bytes, the
 // resolved link and the materialized tag, so each is asserted after a

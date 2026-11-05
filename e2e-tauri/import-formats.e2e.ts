@@ -5,7 +5,7 @@
 // Each format reaches the backend as one `import_markdown` call per file or
 // note: a folder pick ships the bytes of the files a note references, which
 // the backend stores as attachments and rewrites the refs to
-// (`ingest_attachments` in commands/pages/markdown.rs); `.enex` and `.jex` are
+// (`ingest_attachments` in commands/pages/markdown_import_attachments.rs); `.enex` and `.jex` are
 // unpacked in the webview (`parseEnex`, `parseJex`), a note's title prefixed
 // with its Joplin notebook path or its `.enex` file name. The mock keeps
 // attachment refs as literal text and models only a subset of the backend's

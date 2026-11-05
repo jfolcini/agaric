@@ -3113,7 +3113,7 @@ pub(super) mod reader_delegation_tests {
     // `set_property`, neither a read arm. Writer set unchanged.
     // #5160 A wired `get_page_buffer`: `load_page_export_data` in a plain
     // `pool.begin()` tx, SELECTs only, plus `anchor_free`, a pure string pass
-    // (`commands/pages/markdown.rs`). Writer set unchanged.
+    // (`commands/pages/markdown_export.rs`). Writer set unchanged.
     // #5422 wired `count_unlinked_references`: the title/alias SELECTs and
     // one COUNT over the same `fts_blocks` scan `list_unlinked_references`
     // runs (`count_unlinked_references` in
@@ -3121,7 +3121,7 @@ pub(super) mod reader_delegation_tests {
     // #5071 wired `export_page_markdown` and `get_blocks_source`: each is
     // `load_page_export_data` in a plain `pool.begin()` tx, SELECTs only (the
     // clipboard one first SELECTs the page id), then a pure render
-    // (`commands/pages/markdown.rs`). Writer set unchanged.
+    // (`commands/pages/markdown_export.rs`). Writer set unchanged.
     // #5841 S0.6 wired `preview_space_move` and `list_property_loss_values`:
     // one `query_as!` SELECT each over `blocks`, `block_properties` and
     // `property_definitions` (`commands/blocks/space_move.rs`), the paged one
