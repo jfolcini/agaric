@@ -581,6 +581,7 @@ function writeFrontMatter(
   } else if (writes.tagsAdded.length > 0) {
     const tags = resolveTagNames(writes.tagsAdded, spaceId, out.opRefs)
     out.namesCreated.push(...tags.created)
+    out.warnings.push(...tags.warnings)
     for (const tagId of tags.ids.values()) {
       out.opRefs.push(...tagsHandlers.add_tag({ blockId: pageId, tagId }).op_refs)
     }
@@ -1891,6 +1892,7 @@ export const pagesHandlers = {
         bullet.content = names.contents[i] as string
       })
       namesCreated.push(...names.created)
+      edit.warnings.push(...names.warnings)
     }
     opRefs.push(...placeSourceBullets(pageId, edit.t1, report))
     const marks = { set: 0, deleted: 0 }
@@ -2022,6 +2024,8 @@ export const pagesHandlers = {
   // fidelity. Validate import semantics against the Rust tests, not this mock.
   import_markdown: (args) => {
     const a = args as Record<string, unknown>
+    // `dialect` (#6277 E1) goes unread: the dialects differ only in Logseq's `STARTED` and
+    // Org's `#+BEGIN_` blocks, which the mock reads in neither.
     const content = (a['content'] as string) ?? ''
     const filename = (a['filename'] as string | null) ?? null
     // Backend now requires `space_id`. Mirror the
@@ -2115,6 +2119,7 @@ export const pagesHandlers = {
     ]
     const names = spaceId ? resolveInboundNames(parsedLines, spaceId, []) : null
     const contentLines = names?.contents ?? parsedLines
+    warnings.push(...(names?.warnings ?? []))
 
     let blocksCreated = 0
     let position = nextDenseRank(pageId, null)

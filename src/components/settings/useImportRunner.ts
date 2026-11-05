@@ -246,11 +246,12 @@ export function useImportRunner(): UseImportRunner {
         setCurrentFileBlocksDone(0)
         setCurrentFileBlocksTotal(0)
         try {
-          const { content, path, vaultFiles, vaultNotes } = await unit.load()
+          const { content, path, dialect, vaultFiles, vaultNotes } = await unit.load()
           const result = await importMarkdown(
             content,
             path,
             activeSpaceId,
+            dialect,
             (update) => {
               // #128 — drive the intra-file block bar from the streamed
               // events. `complete` arrives after the backend commits; we

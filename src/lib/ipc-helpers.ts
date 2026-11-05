@@ -33,6 +33,7 @@ import type {
   BulkTrashResponse,
   DateFilter,
   DateOp,
+  ImportDialect,
   ImportProgressUpdate,
   ImportResult,
   NamedDateRange,
@@ -281,11 +282,15 @@ export async function purgeAllDeletedInSpace(spaceId: string): Promise<BulkTrash
  *
  * `vaultNotes` (#5740) — on a folder pick, the `.md` paths a `[[Name]]` in
  * this file may name, which the backend writes as those notes' titles.
+ *
+ * `dialect` (#6277 E1) — `LogseqOrg` for a Logseq graph's file or an `.org`
+ * file, `Markdown` for everything else.
  */
 export async function importMarkdown(
   content: string,
   filename: string | undefined,
   spaceId: string,
+  dialect: ImportDialect,
   onProgress?: (update: ImportProgressUpdate) => void,
   vaultFiles?: VaultFile[] | null,
   vaultNotes?: string[] | null,
@@ -302,7 +307,9 @@ export async function importMarkdown(
     vaultFiles == null && vaultNotes == null
       ? null
       : { files: vaultFiles ?? [], notes: vaultNotes ?? [] }
-  return unwrap(await commands.importMarkdown(content, filename ?? null, spaceId, vault, channel))
+  return unwrap(
+    await commands.importMarkdown(content, filename ?? null, spaceId, dialect, vault, channel),
+  )
 }
 
 /** Start a sync session with a known peer. */

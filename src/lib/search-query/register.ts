@@ -123,7 +123,7 @@ export function ensureRegistered(): void {
   // tag-name itself preserves Unicode (the plan calls this out
   // explicitly: `tag:#日本語`, `tag:#📌` must round-trip).
   // #3288 — `tag:#"my tag"` peels the quotes like path:/prop: do, so a
-  // multi-word tag (creatable through the importers) round-trips.
+  // multi-word tag (one named before #6278 I4) round-trips.
   registerTokenPrefix('tag:', (value, span) => parseTagToken(value, span, 'tag'))
   // under: — the same value as tag:, matched attached, inline or inherited
   // (#5679, "Search everything under #tag").

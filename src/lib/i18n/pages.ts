@@ -496,6 +496,11 @@ export const pages: Record<string, string> = {
   'outline.navLabel': 'Page outline',
   'pages.tags.empty': 'No more tags',
   'pages.outline.empty': 'No headings found',
+  // #6278: `from` and `to` are the one page's titles; `count` the pages renamed.
+  'pages.nameTieRenamed_one':
+    'Renamed “{{from}}” to “{{to}}”: another page in this space already had that name.',
+  'pages.nameTieRenamed_other':
+    'Renamed {{count}} pages whose names another page in their space already had. History lists each rename.',
   'pageTree.toggleNamespace': 'Toggle {{path}} namespace',
   'pageTree.toggleHybrid': 'Toggle {{path}} (hybrid namespace)',
   // Bug 2 — child-pages tree section at the bottom of PageEditor.

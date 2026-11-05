@@ -10,7 +10,9 @@
 // maps `[#A]` onto the priority definition's first option, and the page editor
 // shows the three from the stored row AFTER a navigation round-trip. The
 // mock reads neither Logseq's `STARTED` keyword nor a `#+BEGIN_NOTE` block
-// (#6033), which `import::rewrite_org_blocks` writes as a `> [!NOTE]` callout.
+// (#6033), which `import::rewrite_org_blocks` writes as a `> [!NOTE]` callout;
+// the backend reads both in a Logseq graph's page only (#6277 E1), so those
+// specs pick a graph folder.
 //
 // The file is picked through the Data tab's hidden `<input type="file">`, as
 // `import-markdown-nesting.e2e.ts` does.
@@ -26,7 +28,7 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
-  importMarkdownPage,
+  importFolder,
   navigateTo,
   reopenPageByTitle,
   runScopedMarker,
@@ -43,9 +45,20 @@ const MARKDOWN = [
   '',
 ].join('\n')
 
-/** Import `markdown` as the page `title` and reopen it from a fresh backend read (#6033). */
+/**
+ * Import `markdown` as the page `title` of a Logseq graph, which a `logseq/config.edn` marks,
+ * and reopen it from a fresh backend read (#6033).
+ */
 async function importAndReopen(title: string, markdown: string): Promise<void> {
-  await importMarkdownPage(title, markdown)
+  await importFolder(
+    'import-folder-input',
+    `${title}-graph`,
+    {
+      'logseq/config.edn': Buffer.from('{:file/name-format :triple-lowbar}\n'),
+      [`pages/${title}.md`]: Buffer.from(markdown),
+    },
+    `Imported “${title}”`,
+  )
   await navigateTo('Journal')
   await reopenPageByTitle(title)
 }

@@ -30,6 +30,12 @@
 //! `page_link_cache` credits its links to its parent block and the graph a
 //! mounted view refetched on `sync:complete` has no edge for them. The signal
 //! carries the session's own page ids, or none when a block was placed.
+//!
+//! #6278: after the placement the task runs [`crate::repair::repair_after_sync`]:
+//! the journal merge and the name collision pass, for a duplicate day or a
+//! same-named page or tag the session brought in. A repair that wrote
+//! anything takes the full-reload form too, and the pages this device renamed
+//! go out as `pages:renamed`, its notice.
 
 use std::sync::Arc;
 
@@ -119,14 +125,26 @@ impl SyncEventSink for SpacePlacementSink {
                             false
                         }
                     };
+                // #6278: a duplicate journal day or a same-named page or tag
+                // the session brought in, once the placement gave it a space.
+                let repaired =
+                    crate::repair::repair_after_sync(&pool, &read_pool, &device_id, &materializer)
+                        .await;
                 // #5251: signal only once the post-sync rebuild has drained —
                 // it is what fills `page_id` and `page_link_cache` for the
                 // synced-in blocks, and (#4781) what turns a placed block's raw
-                // `#[ULID]` back into a tag, so a placement takes the
-                // full-reload form. The wait fails only on shutdown, when the
-                // signal has no listener either.
+                // `#[ULID]` back into a tag, so a placement, like a repair,
+                // takes the full-reload form. The wait fails only on shutdown,
+                // when the signal has no listener either.
                 let _ = materializer.flush_inbound_rebuilds().await;
-                view.emit_blocks_changed(if placed { Vec::new() } else { changed_page_ids });
+                view.emit_blocks_changed(if placed || repaired.changed {
+                    Vec::new()
+                } else {
+                    changed_page_ids
+                });
+                if !repaired.renamed.is_empty() {
+                    view.emit_pages_renamed(repaired.renamed);
+                }
             });
             #[cfg(test)]
             {

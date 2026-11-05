@@ -6,7 +6,8 @@
 // fired inside the tag. This spec types both typed-tag forms, `#name` and a
 // space and `#[[multi word]]` and a space, into a journal block, commits,
 // navigates away and back, and reads the chips the real backend's stored
-// content renders: exactly two, named as typed, and no stray bracket
+// content renders: exactly two, named as typed with the multi-word one's spaces
+// as `-` (#6278 I4), and no stray bracket
 // (AGENTS.md § Testing invariants, rule 4). `e2e/hash-tag-typing.spec.ts` is
 // the per-PR pair against the mock.
 //
@@ -28,6 +29,8 @@ const MARKER = runScopedMarker('wdio-typed-tags')
 // Letters, digits and `-` only, so the bare `#name` ends at the space after it.
 const TAG = runScopedMarker('wdio-typed-tag')
 const MULTI = runScopedMarker('wdio multi word')
+// A new tag name holds no whitespace (#6278 I4).
+const MULTI_TAG = MULTI.replaceAll(' ', '-')
 
 const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
 const CHIP = '[data-testid="tag-ref-chip"]'
@@ -78,11 +81,11 @@ describe('Agaric real-backend typed tags (#5160 N7) @editor @pages', () => {
       .waitUntil(
         async () => {
           stored = await chipNames(block)
-          return JSON.stringify(stored) === JSON.stringify([TAG, MULTI])
+          return JSON.stringify(stored) === JSON.stringify([TAG, MULTI_TAG])
         },
         {
           timeout: NAV_TIMEOUT,
-          timeoutMsg: `the stored block's tags never read ${TAG} and ${MULTI}`,
+          timeoutMsg: `the stored block's tags never read ${TAG} and ${MULTI_TAG}`,
         },
       )
       .catch((err: unknown) => {

@@ -495,6 +495,42 @@ describe('PageHeader duplicate-title rename (#4723)', () => {
   })
 })
 
+describe('PageHeader tag rename holding whitespace (#6278 I4)', () => {
+  // A tag opens as a page, its name the title; a name holding whitespace is
+  // refused coded, and the toast says to use `-`.
+  it('shows the use-a-dash toast and restores the previous name', async () => {
+    const user = userEvent.setup()
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'edit_block') {
+        const rejection: AppError = {
+          kind: 'validation',
+          code: 'TagNameWhitespace',
+          message: "the tag name 'deep work' holds whitespace; use '-' instead",
+        }
+        throw rejection
+      }
+      if (cmd === 'get_page_aliases') return []
+      return null
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="deep-work" />)
+
+    const titleEl = screen.getByRole('textbox', { name: /page title/i })
+    await user.clear(titleEl)
+    await user.type(titleEl, 'deep work')
+    await user.tab()
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(t('tags.nameHasWhitespace'))
+    })
+    expect(mockedToastError).not.toHaveBeenCalledWith(t('pageHeader.renameFailed'))
+    expect(titleEl).toHaveTextContent('deep-work')
+  })
+})
+
 describe('PageHeader tag management', () => {
   it('add tag via picker', async () => {
     const user = userEvent.setup()
@@ -624,6 +660,34 @@ describe('PageHeader tag management', () => {
         blockId: null,
       })
     })
+  })
+
+  // #6278 I4 — typing `deep work` offers `Create "deep-work"`, and that is the
+  // tag created, not one the backend would refuse.
+  it('creates the dashed tag for a name typed with a space', async () => {
+    const user = userEvent.setup()
+    setupTagMock([])
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText('Add tag'))
+    await user.type(await screen.findByLabelText('Search tags'), 'deep work')
+
+    await user.click(await screen.findByText('Create "deep-work"'))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+        blockType: 'tag',
+        content: 'deep-work',
+        parentId: null,
+        index: null,
+        scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+        blockId: null,
+      })
+    })
+    expect(mockedToastError).not.toHaveBeenCalledWith(t('tags.nameHasWhitespace'))
+    expect(mockedToastError).not.toHaveBeenCalledWith(t('tags.createFailed'))
   })
 
   it('search filters available tags', async () => {

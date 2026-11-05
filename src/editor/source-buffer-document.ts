@@ -524,6 +524,11 @@ function unescapeBareLine(text: string): string {
   return text.startsWith('\\') && needsBareLineEscape(text.slice(1), true) ? text.slice(1) : text
 }
 
+/** `text` with its line ends `\n` and less a leading BOM, as `import::source_outline` reads it. */
+function readerText(text: string): string {
+  return text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')
+}
+
 /** `unescape_continuation` in a Document buffer. */
 function unescapeContinuation(text: string): string {
   return text.startsWith('\\') && needsDocumentLineEscape(text.slice(1)) ? text.slice(1) : text
@@ -554,7 +559,7 @@ export function parseDocument(
 ): DocumentReading {
   const idLines = lineIds && new Set(lineIds.flatMap((id, i) => (id == null ? [] : [i + 1])))
   const scan = new Scan(idLines, isId)
-  scan.scan(blockText(text.replace(/\r\n?/g, '\n')).split('\n'))
+  scan.scan(blockText(readerText(text)).split('\n'))
   if (idLines === null) scan.extractAnchors()
   return { blocks: scan.blocks, warnings: scan.warnings }
 }
@@ -569,7 +574,7 @@ export function parseDocument(
  */
 export function parsePastedText(text: string): DocumentBlock[] {
   const scan = new Scan(null, isUlid, true)
-  scan.scan(text.replace(/\r\n?/g, '\n').split('\n'))
+  scan.scan(readerText(text).split('\n'))
   scan.extractAnchors()
   for (const block of scan.blocks) {
     const word = block.anchor

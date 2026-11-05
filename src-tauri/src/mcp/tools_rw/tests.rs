@@ -2412,6 +2412,38 @@ async fn create_tag_creates_in_space_and_reuses_the_name() {
     );
 }
 
+/// #6278 I4 — an agent's tag name holds no whitespace either: the call is
+/// refused with the reason that suggests `-`, and nothing is created or sent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_tag_refuses_a_name_holding_whitespace_6278() {
+    let (tools, _mat, pool, space, emitter, _dir) = mk_tools_recording().await;
+
+    let err = tools
+        .call_tool(
+            "create_tag",
+            json!({"name": "deep work", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("a name holding whitespace is refused");
+
+    assert_eq!(
+        err.validation_code(),
+        Some(agaric_core::error::ValidationCode::TagNameWhitespace),
+        "got {err:?}"
+    );
+    assert!(err.to_string().contains("use '-' instead"), "got {err}");
+    let tags: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE block_type = 'tag'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(tags, 0, "no tag was created");
+    assert!(
+        emitter.blocks_changed().is_empty(),
+        "a refused create tells no view"
+    );
+}
+
 /// The space's tag names as `list_all_tags_in_space` reads them at the moment
 /// `blocks:changed` goes out: what a `#` picker refilling on that event gets.
 struct TagNamesAtEmit {
@@ -4431,6 +4463,48 @@ async fn edit_page_markdown_of_an_unchanged_code_block_writes_nothing_6190() {
     settle(&mat).await;
 
     assert_eq!(op_count(&pool).await, before, "no op was written: {result}");
+}
+
+/// An unchanged read sent back with CRLF or CR line ends, or opening with a
+/// BOM, as some clients write text, saves as nothing: no block keeps its
+/// ` ^ULID` as text, and the front matter still reads as the page's (#6277 B1).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_page_markdown_of_an_unchanged_crlf_or_bom_read_writes_nothing_6277() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let (page, _) = mk_list_page(&pool, &mat, &space, "P").await;
+    seed_aliases(&pool, &mat, &page, &["alt"]).await;
+    let base = editable_source(&pool, &mat, &page, &space).await;
+    assert!(
+        base.starts_with("---\n"),
+        "the read opens with front matter: {base}"
+    );
+
+    for markdown in [
+        base.replace('\n', "\r\n"),
+        base.replace('\n', "\r"),
+        format!("\u{feff}{base}"),
+    ] {
+        let before = op_count(&pool).await;
+        let result = tools
+            .call_tool(
+                "edit_page_markdown",
+                json!({ "page_id": page, "markdown": markdown, "base": base, "space_id": space }),
+                &test_ctx_agent(),
+            )
+            .await
+            .expect("an unchanged read saves");
+        settle(&mat).await;
+        assert_eq!(
+            op_count(&pool).await,
+            before,
+            "no op was written for {markdown:?}: {result}"
+        );
+    }
+    assert_eq!(
+        aliases_of(&pool, &page).await,
+        ["alt"],
+        "the aliases are kept"
+    );
 }
 
 /// What an agent reads, appended under another page, reads back as the same
