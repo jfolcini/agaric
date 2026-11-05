@@ -538,14 +538,15 @@ debug = "none"
 # debuggability (breakpoints, variable inspection, backtraces in agaric_lib /
 # the bins) is unchanged. Reversible with zero runtime effect — dev profile
 # never ships.
-#
-# `opt-level = 2` on the same dependencies: much of a test's time is spent in
-# dependency code (SQLite, which is bundled C, plus sqlx and Loro). The
-# workspace members stay at opt-level 0, so debugging them is unchanged; a cold
-# dependency build costs more.
 [profile.dev.package."*"]
 debug = false
-opt-level = 2
+
+# Bundled SQLite optimized in dev and test builds: a DB test spends much of its
+# time inside SQLite, which is C compiled at -O0 otherwise, and it is a single
+# crate to rebuild. Optimizing every dependency was faster still but more than
+# doubled a cold build.
+[profile.dev.package.libsqlite3-sys]
+opt-level = 3
 
 # Dev-build link-time trim, part 2 (companion to the dep-debuginfo override
 # above and the mold/lld linker auto-wired by scripts/setup.sh). Default Linux
