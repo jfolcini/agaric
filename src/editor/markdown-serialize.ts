@@ -70,8 +70,9 @@ function dollarOpensMath(s: string, i: number): boolean {
  * Single-char escapes whose verdict is context-free: the char is always
  * rewritten to `\<char>` regardless of neighbours. `*`/`` ` `` are mark and
  * code delimiters, `[`/`]` open and close link labels, and `\` itself doubles.
- * `~`, `=` and `|` are escaped only where they would parse (#5160 N12): see
- * `delimiterRunNeedsEscape`, `escapeLeadingBlockMarker` and `escapeCellPipes`.
+ * `~`, `=` and `|` are escaped only where they would parse (#5160 N12), and `^`
+ * where it would pair (#6033): see `delimiterRunNeedsEscape`,
+ * `escapeLeadingBlockMarker` and `escapeCellPipes`.
  */
 const ALWAYS_ESCAPE: Record<string, string> = {
   '\\': '\\\\',
@@ -153,10 +154,13 @@ function opensBlockRefToken(s: string, i: number): boolean {
 }
 
 /**
- * Whether the `~`/`=` run `s[start, end)` would parse as a strike or highlight
- * delimiter (#5160 N12): it joins the same char just outside the text, or it
- * is two or more that could flank. Any `~~~` is escaped too, since the parser
- * and the import read one at a line start as a code fence. `x = 5` and `a == b` stay bare.
+ * Whether the `~`/`=`/`^` run `s[start, end)` would parse as a strike or
+ * highlight delimiter (#5160 N12): it joins the same char just outside the
+ * text, or it is two or more that could flank. Any `~~~` is escaped too, since
+ * the parser and the import read one at a line start as a code fence. A `^^`
+ * is Logseq's highlight, which paste and Edit as Markdown write as `==`
+ * (#6033), so a literal one must not pair there. `x = 5`, `a == b` and `x^2`
+ * stay bare.
  */
 function delimiterRunNeedsEscape(
   s: string,
@@ -177,7 +181,7 @@ function delimiterRunNeedsEscape(
 
 /**
  * Escape a text node's text. `before` and `after` are the chars emitted just
- * outside it (`''` at a line edge), which decide a `~`/`=` run at its edge.
+ * outside it (`''` at a line edge), which decide a `~`/`=`/`^` run at its edge.
  */
 function escapeText(s: string, before: string, after: string): string {
   let out = ''
@@ -189,7 +193,7 @@ function escapeText(s: string, before: string, after: string): string {
       i = url.next
       continue
     }
-    if (ch === '~' || ch === '=') {
+    if (ch === '~' || ch === '=' || ch === '^') {
       let end = i + 1
       while (s[end] === ch) end++
       const run = s.slice(i, end)

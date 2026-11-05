@@ -45,6 +45,12 @@ describe('stripForFts — the text the editor shows (#6277 B3)', () => {
     ['```\n*a* \\* x\n```', '\n*a* \\* x\n'],
     ['a `b \\* c\nd \\* e', 'a `b \\* c\nd * e'],
     ['Use `foo\nbar` here', 'Use `foo\nbar` here'],
+    // A tilde fence opens at a line start and keeps its body raw, backtick
+    // lines included, to its closing line or the end.
+    ['~~~md\n```js\nx\n```\n~~~', 'md\n```js\nx\n```\n'],
+    ['a\n~~~\n\\* b', 'a\n\n\\* b'],
+    ['a ~~~ \\* b', 'a ~~~ * b'],
+    ['```\n~~~\n```', '\n~~~\n'],
     // Every char `isEscapableChar` names, written out.
     [
       ESCAPABLE.split('')
