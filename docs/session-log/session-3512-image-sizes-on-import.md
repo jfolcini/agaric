@@ -1,4 +1,4 @@
-# Session 3454 — Image sizes survive import (#6033 S6)
+# Session 3512 — Image sizes survive import (#6033 S6)
 
 Set out to build #6033 S6: an image's display size, written in Obsidian's or Logseq's own form, was dropped on import, so a sized figure came back at full width.
 
