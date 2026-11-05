@@ -16,7 +16,7 @@
  * row, and each import-corpus block in `corpusBlocks` (which Rust authors), as
  * it was stored, or as its reviewed `editorCanonical` where the editor
  * normalises a source form without losing anything. A `knownLoss` row names
- * the issue of a loss the editor still has, and stays red until it is fixed.
+ * the issue of a loss the editor still has, and goes red once it is fixed.
  */
 
 import { readFileSync } from 'node:fs'
