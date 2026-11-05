@@ -34,7 +34,9 @@ set -euo pipefail
 #                mcp-tests.
 #   ci           any .github/, scripts/, .claude/, prek.toml, .taplo.toml,
 #                lychee.toml, .gitleaks.toml, justfile, .editorconfig,
-#                .vscode/.
+#                .vscode/. `_validate.yml` and the composites its jobs run
+#                through also set every `_validate.yml` lane
+#                (`validate_lanes_re`).
 #   desktop      a Linux-bundle-relevant path: `ci.yml`'s `build`.
 #   android      an Android-package-relevant path: `ci.yml`'s `android-build`.
 #   vitest       the whole sharded suite and its coverage gate: any `frontend`
@@ -202,6 +204,13 @@ ci_re='(^\.github/|^scripts/|^\.claude/|^prek\.toml$|^\.taplo\.toml$|^lychee\.to
 desktop_re='^(src-tauri/|\.cargo/config\.toml\.example$|scripts/(fix-appimage-icons\.sh|check-appimage-media-plugins\.sh|prepare-external-bins\.mjs)$|package(-lock)?\.json$|\.github/workflows/ci\.yml$|\.github/actions/)'
 android_re='^(src-tauri/gen/android/|src-tauri/tauri\.android\.conf\.json$|src-tauri/tauri\.conf\.json$|src-tauri/Cargo\.(toml|lock)$|src-tauri/build\.rs$|src-tauri/src/(lib|lifecycle|android_jni)\.rs$|src-tauri/agaric-store/src/db/mod\.rs$|src-tauri/agaric-sync/src/android_context\.rs$|src-tauri/agaric-sync/src/sync_daemon/(android_multicast|android_network_block|mod|session_supervisor)\.rs$|scripts/patch-android-build\.sh$|scripts/check-android-so-alignment\.mjs$|scripts/prepare-external-bins\.mjs$|\.github/workflows/ci\.yml$|\.github/actions/)'
 
+# A lane's own definition: `_validate.yml` and the composites its jobs run
+# through. Such a change runs every `_validate.yml` lane whole, so the PR that
+# edits a job runs it. `playwright-setup` (Playwright alone) and
+# `sqlx-offline-check` (lint alone) are routed above.
+validate_lanes_re='^\.github/(workflows/_validate\.yml$|actions/)'
+validate_lanes_routed_re='^\.github/actions/(playwright-setup|sqlx-offline-check)/'
+
 # The real-backend lane (`e2e-tauri-weekly.yml`): could this path change what
 # that lane BUILDS or RUNS? The Rust app, the frontend bundle the binary serves
 # (`public/` is copied verbatim into `dist/`), the specs and their runner, and
@@ -289,8 +298,9 @@ codeql_all_re='^\.github/(codeql/|workflows/codeql\.yml$)'
 # build/toolchain change no single suite owns, so it pins
 # frontend=backend=rust_tests=ci=true, every frontend lane whole, the
 # real-backend lane whole and every CodeQL language.
-# Recognized-but-unsuited categories (a pure `ci` change like a workflow edit)
-# do NOT trip this: `lint` (incl. zizmor) covers them.
+# Recognized-but-unsuited categories (a pure `ci` change like an edit to a
+# workflow other than `_validate.yml`) do NOT trip this: `lint` (incl. zizmor)
+# covers them.
 docs_only=true
 docs=false
 frontend=false
@@ -326,6 +336,9 @@ for f in "${changed[@]}"; do
     if [[ ! "$f" =~ $rust_lint_only_re ]]; then rust_tests=true; fi
   fi
   if [[ "$f" =~ $ci_re ]]; then ci=true; matched_cat=true; fi
+  if [[ "$f" =~ $validate_lanes_re ]] && [[ ! "$f" =~ $validate_lanes_routed_re ]]; then
+    frontend=true; backend=true; rust_tests=true; vitest_full=true; pw_full=true
+  fi
   # Build gates only: they never suppress the fail-closed branch below, and a
   # test-only file never makes a build relevant.
   if [ "$test_only" = "false" ]; then

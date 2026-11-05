@@ -1659,7 +1659,7 @@ jobs:
         # Dependencies at opt-level 2, in this job only: under coverage most
         # of a test's time is dependency code, which the dev profile compiles
         # at -O0. Local and other CI builds keep the dev profile, so only this
-        # job's rust-cov cache pays the slower cold build on a miss. The report
+        # job's cache pays the slower cold build on a miss. The report
         # below only reads the profiles, so it needs no flag.
         run: |
           cargo llvm-cov nextest --workspace --profile ci --no-fail-fast \
