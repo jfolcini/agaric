@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT block_id AS \"block_id!\", key AS \"key!\", value_text, value_date,\n                      value_num, value_ref, value_bool AS \"value_bool: i64\"\n               FROM block_properties\n               WHERE block_id IN (SELECT value FROM json_each(?1))\n                 AND key NOT IN (\n                    'space', 'is_space', 'created_at', 'completed_at',\n                    'repeat-seq', 'repeat-origin', 'template', 'listStyle'\n                 )\n               ORDER BY block_id ASC, key ASC",
+  "query": "SELECT block_id AS \"block_id!\", key AS \"key!\", value_text, value_date,\n                      value_num, value_ref, value_bool AS \"value_bool: i64\"\n               FROM block_properties\n               WHERE block_id IN (SELECT value FROM json_each(?1))\n                 AND key NOT IN (\n                    'space', 'is_space', 'created_at',\n                    'repeat-seq', 'repeat-origin', 'template', 'listStyle'\n                 )\n               ORDER BY block_id ASC, key ASC",
   "describe": {
     "columns": [
       {
@@ -94,5 +94,5 @@
       true
     ]
   },
-  "hash": "7ff73be1634b6584354cd71638b25dbe70d83feefe514e894c5c71aac61a9e1f"
+  "hash": "c295f3499210e032ed3dd129d12a67ecd7bc6830b29fa056fbdf8d9e21f22429"
 }

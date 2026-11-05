@@ -840,17 +840,18 @@ jobs:
           [ "$passed" -eq "$expected" ] || { echo "$passed of $expected manual hooks reported Passed"; exit 1; }
           if grep -q 'Skipped' manual.log; then echo "a manual-stage hook was Skipped"; exit 1; fi
 
-      - name: Run cargo clippy (backend PRs)
+      - name: Run cargo clippy + sqlx offline cache check (backend PRs)
         # cargo-clippy is staged `pre-push` in prek.toml, so the pre-commit-stage
-        # `prek run --all-files` above never executes it — clippy would not gate
-        # PRs at all without this step. Invoke the hook explicitly (mirrors the
-        # npm-audit step) so its exact config runs: `cargo clippy --workspace
-        # --all-targets -- -D warnings`. Gated on backend == 'true' — the Rust
-        # toolchain is installed under the same condition; skipped on
-        # frontend/docs/ci-only PRs (fail-closed: unrecognized paths pin
-        # backend=true, so any Rust diff keeps clippy on).
+        # `prek run --all-files` above never executes it. This script runs that
+        # hook's command (`cargo clippy --workspace --all-targets -- -D warnings`)
+        # with the query macros online, and in the same compile does
+        # `cargo sqlx prepare --check` for all four `.sqlx/` caches (root,
+        # agaric-store, agaric-engine, agaric-sync), which used to be four
+        # steps that each recompiled the workspace. Gated on backend == 'true'
+        # (fail-closed: unrecognized paths pin backend=true, and .sqlx/
+        # changes pin it too).
         if: needs.detect-changes.outputs.backend == 'true'
-        run: prek run --all-files --hook-stage pre-push cargo-clippy
+        run: bash scripts/clippy-sqlx-check.sh
 
       - name: Run cargo doc link/HTML-tag denies (backend PRs)
         # cargo-doc-links is staged `pre-push` in prek.toml, so the
@@ -1021,86 +1022,6 @@ jobs:
         continue-on-error: true
         working-directory: src-tauri
         run: cargo deny check advisories
-
-      - name: sqlx offline cache check
-        # ci/path-conditional-jobs: sqlx `prepare --check` compiles the crate
-        # against its committed .sqlx/ cache — Rust-only, and .sqlx/ changes pin
-        # backend=true — so it is skipped on a backend-less PR.
-        if: needs.detect-changes.outputs.backend == 'true'
-        # Reusable composite action (#2621 layered-workspace split): each
-        # workspace crate that carries `query!`/`query_as!` macros — and so
-        # its own committed `.sqlx/` cache — gets its own lane by calling
-        # this action with a distinct working-directory + database-url. The
-        # sqlx-0.9.x `prepare --check` rationale and the `-- --tests`
-        # default (query drift in `#[cfg(test)]` modules must not slip
-        # through — prek.toml MAINT-227) live in the action itself. Four
-        # crates now carry a cache: `agaric` (this lane), `agaric-store`,
-        # `agaric-engine`, and `agaric-sync` (the lanes below).
-        uses: ./.github/actions/sqlx-offline-check
-        with:
-          working-directory: src-tauri
-          database-url: 'sqlite:ci-sqlx-prepare.db'
-
-      - name: sqlx offline cache check (agaric-store)
-        # ci/path-conditional-jobs: same as the app-crate lane above — Rust-only
-        # sqlx compile, skipped on a backend-less PR (backend != 'true').
-        if: needs.detect-changes.outputs.backend == 'true'
-        # #2621 wave S3b-ii: op_log's `query!`/`query_as!` macros moved into
-        # agaric-store, which now carries its own committed `.sqlx/` cache.
-        # A `../migrations` symlink under the crate lets both this action's
-        # `cargo sqlx migrate run` and `sqlx::migrate!` resolve the shared
-        # workspace migrations.
-        #
-        # The `database-url` MUST be absolute for a NON-root workspace member.
-        # `cargo sqlx database create` runs in `working-directory`
-        # (src-tauri/agaric-store), but `sqlx::query!` resolves a *relative*
-        # sqlite path at compile time from rustc's CWD — the WORKSPACE ROOT
-        # (src-tauri), not the crate dir — so a relative url has the DB created
-        # under agaric-store/ yet looked for under src-tauri/, failing every
-        # query with "unable to open database file". The app lane above works
-        # with a relative url only because the app crate IS the workspace root.
-        uses: ./.github/actions/sqlx-offline-check
-        with:
-          working-directory: src-tauri/agaric-store
-          database-url: 'sqlite:${{ runner.temp }}/agaric-store-sqlx-prepare.db'
-
-      - name: sqlx offline cache check (agaric-engine)
-        # ci/path-conditional-jobs: same as the app-crate lane above — Rust-only
-        # sqlx compile, skipped on a backend-less PR (backend != 'true').
-        if: needs.detect-changes.outputs.backend == 'true'
-        # #2621 wave E1: loro's `query!`/`query_scalar!` macros moved into
-        # agaric-engine, which now carries its own committed `.sqlx/` cache.
-        # A `../migrations` symlink under the crate lets both this action's
-        # `cargo sqlx migrate run` and `sqlx::migrate!` resolve the shared
-        # workspace migrations.
-        #
-        # The `database-url` MUST be absolute for a NON-root workspace member —
-        # see the agaric-store lane's comment above for the relative-path
-        # failure mode (rustc resolves relative sqlite paths from the workspace
-        # root, not the crate dir).
-        uses: ./.github/actions/sqlx-offline-check
-        with:
-          working-directory: src-tauri/agaric-engine
-          database-url: 'sqlite:${{ runner.temp }}/agaric-engine-sqlx-prepare.db'
-
-      - name: sqlx offline cache check (agaric-sync)
-        # ci/path-conditional-jobs: same as the app-crate lane above — Rust-only
-        # sqlx compile, skipped on a backend-less PR (backend != 'true').
-        if: needs.detect-changes.outputs.backend == 'true'
-        # #2621 Sync-D: the net/protocol/daemon/files + snapshot cluster's
-        # `query!`/`query_as!`/`query_scalar!` macros moved into agaric-sync,
-        # which now carries its own committed `.sqlx/` cache. A `../migrations`
-        # symlink under the crate lets both this action's `cargo sqlx migrate
-        # run` and `sqlx::migrate!` resolve the shared workspace migrations.
-        #
-        # The `database-url` MUST be absolute for a NON-root workspace member —
-        # see the agaric-store lane's comment above for the relative-path
-        # failure mode (rustc resolves relative sqlite paths from the workspace
-        # root, not the crate dir).
-        uses: ./.github/actions/sqlx-offline-check
-        with:
-          working-directory: src-tauri/agaric-sync
-          database-url: 'sqlite:${{ runner.temp }}/agaric-sync-sqlx-prepare.db'
 
   # ---------------------------------------------------------------------------
   # docs-lint (#833) — the docs-only counterpart to `lint`. Runs ONLY on a
@@ -1585,19 +1506,27 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Free up runner disk space
+      - name: Free up runner disk space, in the background
         # The coverage-instrumented test build filled the runner's disk and the
         # job died mid-test with "No space left on device" (#6262, #6272). Drop
-        # preinstalled toolchains this job never uses before the build, as
-        # ci.yml's android-build does.
+        # preinstalled toolchains this job never uses, as ci.yml's android-build
+        # does. The deletes take about two minutes, so they run beside the setup
+        # steps, which fit in the disk the runner starts with; the test step
+        # waits for them.
         run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc /usr/local/.ghcup
-          sudo rm -rf /usr/local/share/powershell
-          sudo rm -rf /usr/local/share/chromium
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo docker image prune --all --force >/dev/null || true
+          nohup sudo bash -c '
+            (
+              set -e
+              rm -rf /usr/share/dotnet
+              rm -rf /opt/ghc /usr/local/.ghcup
+              rm -rf /usr/local/share/powershell
+              rm -rf /usr/local/share/chromium
+              rm -rf /usr/local/lib/android
+              rm -rf /opt/hostedtoolcache/CodeQL
+              docker image prune --all --force >/dev/null || true
+            )
+            echo $? > /tmp/free-disk.status
+          ' > /tmp/free-disk.log 2>&1 &
 
       - name: Prepare apt (free dpkg lock, bound downloads)
         uses: ./.github/actions/prepare-apt
@@ -1694,6 +1623,14 @@ jobs:
         with:
           tool: cargo-nextest,cargo-llvm-cov
 
+      - name: Wait for the disk cleanup
+        timeout-minutes: 10
+        run: |
+          until [ -e /tmp/free-disk.status ]; do sleep 2; done
+          cat /tmp/free-disk.log
+          [ "$(cat /tmp/free-disk.status)" = 0 ]
+          df -h /
+
       - name: Cargo test (nextest, shard ${{ matrix.shard }}/2, with llvm-cov)
         working-directory: src-tauri
         # Run THIS shard's deterministic partition under llvm-cov, then emit a
@@ -1714,8 +1651,15 @@ jobs:
         # from the lcov even though the run above tested them. That is why
         # each crate extraction (#2621, #4631, #4502) read as a phantom
         # coverage drop: the moved code left the report, not the tests.
+        #
+        # Dependencies at opt-level 2, in this job only: under coverage most
+        # of a test's time is dependency code, which the dev profile compiles
+        # at -O0. Local and other CI builds keep the dev profile, so only this
+        # job's rust-cov cache pays the slower cold build on a miss. The report
+        # below only reads the profiles, so it needs no flag.
         run: |
           cargo llvm-cov nextest --workspace --profile ci --no-fail-fast \
+            --config 'profile.dev.package."*".opt-level=2' \
             --partition count:${{ matrix.shard }}/2 --no-report
           cargo llvm-cov report --lcov --workspace \
             --output-path coverage-${{ matrix.shard }}.lcov

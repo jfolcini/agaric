@@ -8,7 +8,8 @@
  *   headings.
  * - Typing `#name` and then a space or punctuation makes the tag without
  *   picking, and so does closing `#[[multi word]]` (N7): the existing tag of
- *   that name in any case, else a new one. The terminator stays after the tag;
+ *   that name in any case, else the tag `multi-word`, since a new tag name
+ *   holds no whitespace (#6278 I4). The terminator stays after the tag;
  *   Enter is left to the picker or the block. {@link completedTag} reads the
  *   name with the rule import, paste and the buffer use (`scanNameTokens`), so
  *   `#42`, `a#b`, `(#tag`, `x.com/#frag`, `&#39;`, `\#tag` and a `#` in a URL,
@@ -31,9 +32,8 @@ import {
   resolveAndInsertPickerToken,
 } from '@/editor/extensions/picker-plugin'
 import type { PickerItem } from '@/editor/SuggestionList'
-import { foldForSearch } from '@/lib/fold-for-search'
 import { t } from '@/lib/i18n'
-import { scanNameTokens } from '@/lib/name-tokens'
+import { nameKey, scanNameTokens } from '@/lib/name-tokens'
 
 export const atTagPickerPluginKey = new PluginKey('atTagPicker')
 export const hashTagPickerPluginKey = new PluginKey('hashTagPicker')
@@ -127,7 +127,7 @@ function tagPicker(
               ? onCreate
               : async (name) => {
                   const existing = (await options.items(name)).find(
-                    (i) => !i.isCreate && foldForSearch(i.label) === foldForSearch(name),
+                    (i) => !i.isCreate && nameKey(i.label) === nameKey(name),
                   )
                   return existing ? existing.id : onCreate(name)
                 },
@@ -177,9 +177,7 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
             insertPos: range.from,
             items: extensionOptions.items,
             matchItem: (items, text) =>
-              items.find(
-                (item) => !item.isCreate && item.label.toLowerCase() === text.toLowerCase(),
-              ),
+              items.find((item) => !item.isCreate && nameKey(item.label) === nameKey(text)),
             tokenFor: (id) => ({ type: 'tag_ref', attrs: { id } }),
             onCreate: extensionOptions.onCreate,
             loggerComponent: 'AtTagPicker',

@@ -1056,22 +1056,20 @@ fn render_block(
     let task_marker = task_marker(block);
     let file = matches!(mode, RenderMode::Export | RenderMode::File);
     let (indent, list_marker, prop_indent) = layout.place(output, block, depth, list_marker, file);
+    let props = descendant_properties
+        .get(&id)
+        .map_or(&[][..], Vec::as_slice);
+    let task = (!task_marker.is_empty()).then(|| TaskLine::of(block, props));
+    let markers = (indent.as_str(), list_marker.as_str(), task_marker.as_str());
     match mode {
         RenderMode::Export => {
-            push_export_bullet(output, block, &indent, &list_marker, &task_marker, data);
+            push_export_bullet(output, block, markers, task.as_ref(), data);
         }
         RenderMode::Clipboard | RenderMode::Agent | RenderMode::Document | RenderMode::File => {
-            push_buffer_bullet(
-                output,
-                block,
-                &indent,
-                &list_marker,
-                &task_marker,
-                data,
-                mode,
-            );
+            push_buffer_bullet(output, block, markers, task.as_ref(), data, mode);
         }
     }
+    let written = task.as_ref().map_or(&[][..], |task| task.keys.as_slice());
 
     // #1916 — task metadata (TODO/DONE state, priority, scheduled/due
     // dates) lives in the reserved `blocks` columns, not in
@@ -1082,20 +1080,13 @@ fn render_block(
     // `due_date` / `scheduled_date` into their columns via
     // `typed_property_args_for_string_value`. A state already written as a
     // checkbox is not written twice.
-    let todo_state = block
-        .todo_state
-        .as_deref()
-        .filter(|_| task_marker.is_empty());
-    for (key, value) in [
-        ("todo_state", todo_state),
-        ("priority", block.priority.as_deref()),
-        ("scheduled_date", block.scheduled_date.as_deref()),
-        ("due_date", block.due_date.as_deref()),
-    ] {
-        if let Some(v) = value.filter(|s| !s.is_empty()) {
-            output.push_str(&format!("{prop_indent}{key}:: {v}\n"));
-        }
-    }
+    push_column_lines(
+        output,
+        block,
+        &prop_indent,
+        !task_marker.is_empty(),
+        written,
+    );
 
     // #2962 — custom `block_properties` on this block (anything NOT one
     // of the 4 reserved `blocks` columns above) round-trip the same way:
@@ -1110,12 +1101,13 @@ fn render_block(
         RenderMode::Export | RenderMode::Agent => ref_titles,
         RenderMode::Clipboard | RenderMode::Document | RenderMode::File => &no_titles,
     };
-    if let Some(props) = descendant_properties.get(&id) {
-        for prop in props {
-            let value =
-                import::write_source_property_value(&frontmatter_row_value(prop, ref_titles));
-            output.push_str(&format!("{prop_indent}{}:: {value}\n", prop.key));
-        }
+    // `completed_at` is the app's: only a done task's `✅` writes it.
+    for prop in props
+        .iter()
+        .filter(|prop| prop.key != "completed_at" && !written.contains(&prop.key.as_str()))
+    {
+        let value = import::write_source_property_value(&frontmatter_row_value(prop, ref_titles));
+        output.push_str(&format!("{prop_indent}{}:: {value}\n", prop.key));
     }
 
     // #2961 — emit a link line for each block-scoped (non-inline)
@@ -1135,6 +1127,29 @@ fn render_block(
             }
             let label = attachment_link_label(filename);
             output.push_str(&format!("{prop_indent}+ [{label}](attachment:{att_id})\n"));
+        }
+    }
+}
+
+/// A block's reserved columns as `key:: value` lines at `indent`: its task
+/// state unless its checkbox writes it, and each column but those its Tasks
+/// signifiers wrote (`written`).
+fn push_column_lines(
+    output: &mut String,
+    block: &BlockRow,
+    indent: &str,
+    checkbox: bool,
+    written: &[&str],
+) {
+    let todo_state = block.todo_state.as_deref().filter(|_| !checkbox);
+    for (key, value) in [
+        ("todo_state", todo_state),
+        ("priority", block.priority.as_deref()),
+        ("scheduled_date", block.scheduled_date.as_deref()),
+        ("due_date", block.due_date.as_deref()),
+    ] {
+        if let Some(v) = value.filter(|s| !s.is_empty() && !written.contains(&key)) {
+            output.push_str(&format!("{indent}{key}:: {v}\n"));
         }
     }
 }
@@ -1211,17 +1226,21 @@ fn task_marker(block: &BlockRow) -> String {
 /// A block as an export writes it: its text with names ([`named_block_text`]),
 /// and its `^ID` when something addresses it ([`PageExportData::addressed_blocks`],
 /// #6277), so a link to it reads back as the block, or when it leaves a fence
-/// open, which the anchor's line ends before the next block.
+/// open, which the anchor's line ends before the next block. A checkbox task's
+/// first line is its [`TaskLine`].
 fn push_export_bullet(
     output: &mut String,
     block: &BlockRow,
-    indent: &str,
-    list_marker: &str,
-    task_marker: &str,
+    (indent, list_marker, task_marker): (&str, &str, &str),
+    task: Option<&TaskLine>,
     data: &PageExportData,
 ) {
     let id = block.id.as_str();
     let named = named_block_text(block.content.as_deref().unwrap_or(""), data);
+    let named = match task {
+        Some(task) => task.write(&named),
+        None => named,
+    };
     if !data.addressed_blocks.contains(id) {
         let start = output.len();
         if !push_block_bullet(output, indent, list_marker, task_marker, &named).open {
@@ -1230,6 +1249,59 @@ fn push_export_bullet(
         output.truncate(start);
     }
     push_anchored_bullet(output, indent, list_marker, task_marker, &named, id);
+}
+
+/// How a checkbox task's first line is written (#6277 D3): its fields as the
+/// Tasks signifiers at its end, and its own signifiers escaped where they
+/// would not read back as its text ([`import::write_task_fields`]).
+struct TaskLine {
+    signifiers: Vec<String>,
+    /// The keys the signifiers write, which write no `key::` line.
+    keys: Vec<&'static str>,
+    done: bool,
+}
+
+impl TaskLine {
+    /// The task line of `block`, a checkbox task holding `props`. A rule with
+    /// a bound stays `repeat*::` lines, as does any value no signifier reads
+    /// back as ([`import::task_signifier`]).
+    fn of(block: &BlockRow, props: &[FrontmatterRow]) -> Self {
+        let done = block.todo_state.as_deref() == Some("DONE");
+        let prop = |key: &str| {
+            let row = props.iter().find(|row| row.key == key)?;
+            Some(frontmatter_row_value(row, &HashMap::new()))
+        };
+        let bounded = prop("repeat-until").is_some() || prop("repeat-count").is_some();
+        let mut line = Self {
+            signifiers: Vec::new(),
+            keys: Vec::new(),
+            done,
+        };
+        for key in import::TASK_SIGNIFIER_KEYS {
+            let value = match key {
+                "priority" => block.priority.clone(),
+                "scheduled_date" => block.scheduled_date.clone(),
+                "due_date" => block.due_date.clone(),
+                "repeat" if bounded => None,
+                _ => prop(key),
+            };
+            if let Some(signifier) = value.and_then(|v| import::task_signifier(key, &v, done)) {
+                line.signifiers.push(signifier);
+                line.keys.push(key);
+            }
+        }
+        line
+    }
+
+    /// `text`, the task's content, with its first line written as a task line.
+    fn write(&self, text: &str) -> String {
+        let (first, rest) = text.split_once('\n').unzip();
+        let first = import::write_task_fields(first.unwrap_or(text), &self.signifiers, self.done);
+        match rest {
+            Some(rest) => format!("{first}\n{rest}"),
+            None => first,
+        }
+    }
 }
 
 /// A block's content with its tag, page and block ids resolved to names and
@@ -1260,16 +1332,16 @@ fn named_block_text(content: &str, data: &PageExportData) -> String {
 fn push_buffer_bullet(
     output: &mut String,
     block: &BlockRow,
-    indent: &str,
-    list_marker: &str,
-    task_marker: &str,
+    (indent, list_marker, task_marker): (&str, &str, &str),
+    task: Option<&TaskLine>,
     data: &PageExportData,
     mode: RenderMode,
 ) {
     let id = block.id.as_str();
     let content = block.content.as_deref().unwrap_or("");
+    let written = |text: &str| task.map_or_else(|| text.to_string(), |task| task.write(text));
     if mode == RenderMode::Agent {
-        let named = named_block_text(content, data);
+        let named = written(&named_block_text(content, data));
         push_anchored_bullet(output, indent, list_marker, task_marker, &named, id);
         return;
     }
@@ -1279,10 +1351,12 @@ fn push_buffer_bullet(
         _ => true,
     };
     let push = |output: &mut String, content: &str| {
+        let line = written(content);
         if anchored {
-            push_anchored_bullet(output, indent, list_marker, task_marker, content, id)
+            push_anchored_bullet(output, indent, list_marker, task_marker, &line, id)
         } else {
-            push_clipboard_bullet(output, indent, list_marker, task_marker, content, id)
+            let markers = (indent, list_marker, task_marker);
+            push_clipboard_bullet(output, markers, &line, content, id)
         }
     };
     let start = output.len();
@@ -1300,26 +1374,26 @@ fn push_buffer_bullet(
     push(output, &named);
 }
 
-/// `content` as a Document block without its `^id`, unless the block needs it
-/// to read back as a paste reads it: when the block leaves a fence open, which
-/// the anchor line ends, or when the block alone reads back as other content,
-/// as one ending in ` ^` and a block id does. Returns whether any line is code.
+/// `written`, a Document block that reads back as `content`, without its
+/// `^id`, unless the block needs it to read back as a paste reads it: when the
+/// block leaves a fence open, which the anchor line ends, or when the block
+/// alone reads back as other content, as one ending in ` ^` and a block id
+/// does. Returns whether any line is code.
 fn push_clipboard_bullet(
     output: &mut String,
-    indent: &str,
-    list_marker: &str,
-    task_marker: &str,
+    (indent, list_marker, task_marker): (&str, &str, &str),
+    written: &str,
     content: &str,
     id: &str,
 ) -> bool {
     let start = output.len();
-    let code = push_block_bullet(output, indent, list_marker, task_marker, content);
+    let code = push_block_bullet(output, indent, list_marker, task_marker, written);
     let read_back = import::parse_pasted_text(&output[start..]);
     if !code.open && matches!(read_back.as_slice(), [block] if block.content == content) {
         return code.any;
     }
     output.truncate(start);
-    push_anchored_bullet(output, indent, list_marker, task_marker, content, id)
+    push_anchored_bullet(output, indent, list_marker, task_marker, written, id)
 }
 
 /// `content` as a Document block with `^id` at the end of its last line or,
@@ -1581,12 +1655,15 @@ fn agent_markdown_stretch(
 /// goes. Everything else is kept as written, so the parse by id reads the text
 /// back as the blocks the anchors named. What is not an anchor, a `^word` that
 /// is no block id, stays. Public so the command tests can write an edited
-/// buffer as the source it was loaded from, anchors and all.
+/// buffer as the source it was loaded from, anchors and all. CRLF and CR line
+/// ends, as some clients send text, are read as the parser reads them, or a
+/// line keeps its anchor behind a `\r` (#6277 B1); the parser drops a BOM.
 pub fn anchor_free(source: &str) -> (String, Vec<Option<String>>) {
+    let source = source.replace("\r\n", "\n").replace('\r', "\n");
     let mut lines: Vec<(&str, Option<String>)> =
         source.split('\n').map(|line| (line, None)).collect();
     let mut own_lines = HashSet::new();
-    for block in import::parse_document_outline(source).blocks {
+    for block in import::parse_document_outline(&source).blocks {
         let (Some(word), Some(start)) = (block.block_anchor, block.line) else {
             continue;
         };
@@ -1995,32 +2072,44 @@ async fn resolve_tag_and_page_names(
     let mut page_titles: HashMap<String, String> = HashMap::new();
     if !ulid_set.is_empty() {
         let ulids: Vec<String> = ulid_set.into_iter().collect();
-        // sqlx requires `String` (NOT `Vec<String>`) for `json_each(?)`
-        // binds — encode the set as a JSON array text and bind that.
-        let ids_json = serde_json::to_string(&ulids)?;
-        let rows = sqlx::query!(
-            r#"SELECT id, block_type, content FROM blocks
-               WHERE id IN (SELECT value FROM json_each(?1))
-                 AND deleted_at IS NULL"#,
-            ids_json,
-        )
-        .fetch_all(&mut *conn)
-        .await?;
-        for r in rows {
-            match r.block_type.as_str() {
+        for (id, block_type, content) in load_live_blocks(conn, &ulids).await? {
+            match block_type.as_str() {
                 "tag" => {
-                    if let Some(c) = r.content {
-                        tag_names.insert(r.id, c);
+                    if let Some(c) = content {
+                        tag_names.insert(id, c);
                     }
                 }
                 "page" => {
-                    page_titles.insert(r.id, r.content.unwrap_or_else(|| "Untitled".to_string()));
+                    page_titles.insert(id, content.unwrap_or_else(|| "Untitled".to_string()));
                 }
                 _ => {}
             }
         }
     }
     Ok((tag_names, page_titles))
+}
+
+/// The live blocks of `ids`, in one `json_each(?)` query: each one's id,
+/// type and content.
+async fn load_live_blocks(
+    conn: &mut sqlx::SqliteConnection,
+    ids: &[String],
+) -> Result<Vec<(String, String, Option<String>)>, AppError> {
+    // sqlx requires `String` (NOT `Vec<String>`) for `json_each(?)`
+    // binds — encode the set as a JSON array text and bind that.
+    let ids_json = serde_json::to_string(ids)?;
+    let rows = sqlx::query!(
+        r#"SELECT id, block_type, content FROM blocks
+               WHERE id IN (SELECT value FROM json_each(?1))
+                 AND deleted_at IS NULL"#,
+        ids_json,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.id, r.block_type, r.content))
+        .collect())
 }
 
 /// Step 3b: resolve `((ULID))` targets to a roundtrip-safe link, and record
@@ -2247,6 +2336,10 @@ async fn load_descendant_properties(
     // Copies (1) and (2) are literal SQL, so grepping for either constant name
     // will NOT find them.
     //
+    // #6277 D3 — `completed_at` is read HERE, unlike the other three copies:
+    // a done task writes it as its `✅` signifier (`TaskLine`), and no block
+    // writes it as a line.
+    //
     // #4552 slice 4 — `listStyle` is excluded HERE (and in the page query
     // above) but NOT from the two import-side copies; the full rationale for
     // that deliberate asymmetry is on the page-property query above. In short:
@@ -2295,7 +2388,7 @@ async fn load_descendant_properties(
                FROM block_properties
                WHERE block_id IN (SELECT value FROM json_each(?1))
                  AND key NOT IN (
-                    'space', 'is_space', 'created_at', 'completed_at',
+                    'space', 'is_space', 'created_at',
                     'repeat-seq', 'repeat-origin', 'template', 'listStyle'
                  )
                ORDER BY block_id ASC, key ASC"#,
@@ -2817,24 +2910,27 @@ pub struct PastedBlock {
 }
 
 impl PasteInput {
-    /// The blocks the input holds. After text (#5160 D4) the first of an HTML
-    /// paste's blocks is the text it was pasted as, so its `- [ ] ` checkbox
-    /// stays text as a plain item's `- ` does.
-    fn into_blocks(self, after_text: bool) -> Vec<import::ParsedBlock> {
+    /// The blocks the input holds, and the warnings of reading them. After
+    /// text (#5160 D4) the first of an HTML paste's blocks is the text it was
+    /// pasted as, so its `- [ ] ` checkbox stays text as a plain item's `- `
+    /// does.
+    fn into_blocks(self, after_text: bool) -> (Vec<import::ParsedBlock>, Vec<String>) {
         match self {
-            Self::Text { text } => import::parse_pasted_text(&text),
-            Self::Blocks { blocks } => blocks
-                .into_iter()
-                .enumerate()
-                .map(|(at, block)| {
+            Self::Text { text } => {
+                let read = import::read_pasted_text(&text);
+                (read.blocks, read.warnings)
+            }
+            Self::Blocks { blocks } => {
+                let blocks = blocks.into_iter().enumerate().map(|(at, block)| {
                     let depth = block.depth as usize;
                     if at == 0 && after_text {
                         import::verbatim_block(block.content, depth)
                     } else {
                         import::pasted_block(block.content, depth)
                     }
-                })
-                .collect(),
+                });
+                (blocks.collect(), Vec::new())
+            }
         }
     }
 }
@@ -2976,12 +3072,13 @@ fn pasted_as_text(block: &import::ParsedBlock, starts_line: bool) -> String {
 /// so one undo. Text is read by [`import::parse_pasted_text`]; each of
 /// `blocks` is one block as it comes. A page link or tag written as a name is
 /// resolved in the anchor's space as an import resolves it, creating the page
-/// or tag when no name there matches; ids and block refs stay as written, and
-/// an `^anchor` in the text never pairs with a block. The top-level blocks
-/// land in order right after the anchor among its siblings, each deeper one
-/// under its parsed parent, with its task state, priority, dates, list style
-/// and properties. Returns the pages and tags the names created, then the
-/// pasted blocks in document order.
+/// or tag when no name there matches; ids and block refs stay as written, but
+/// one whose target is in another space is written as the text its chip shows
+/// (#6277 B2), and an `^anchor` in the text never pairs with a block. The
+/// top-level blocks land in order right after the anchor among its siblings,
+/// each deeper one under its parsed parent, with its task state, priority,
+/// dates, list style and properties. Returns the pages and tags the names
+/// created, then the pasted blocks in document order.
 ///
 /// With a `splice`, the paste goes into the anchor's text (#5160 D4). The
 /// anchor becomes the first block, `before` + its content, and keeps its id,
@@ -2995,7 +3092,8 @@ fn pasted_as_text(block: &import::ParsedBlock, starts_line: bool) -> String {
 /// returned. The names in `before` and `after` are left as they are.
 ///
 /// A property line a definition refuses stays text at the end of its block,
-/// and the reply's warnings name each (#5160 D11).
+/// and the reply's warnings name each (#5160 D11) and count the refs
+/// written as text.
 ///
 /// # Errors
 ///
@@ -3014,7 +3112,8 @@ pub async fn paste_blocks_inner(
     splice: Option<PasteSplice>,
 ) -> Result<PastedBlocks, AppError> {
     let anchor_id = BlockId::from_string(anchor_block_id.into_string())?;
-    let mut blocks = input.into_blocks(splice.as_ref().is_some_and(|s| !s.before.is_empty()));
+    let (mut blocks, read_warnings) =
+        input.into_blocks(splice.as_ref().is_some_and(|s| !s.before.is_empty()));
     if blocks.is_empty() {
         return Err(AppError::validation("there is nothing to paste".into()));
     }
@@ -3078,7 +3177,7 @@ pub async fn paste_blocks_inner(
     created.extend(pasted);
     Ok(PastedBlocks {
         blocks: created,
-        warnings,
+        warnings: [read_warnings, warnings].concat(),
     })
 }
 
@@ -3135,7 +3234,11 @@ pub(crate) async fn append_markdown_in_tx(
     markdown: &str,
     index: Option<i64>,
 ) -> Result<(CommandTx, PastedBlocks), AppError> {
-    let mut blocks = import::parse_pasted_text(markdown);
+    let import::ParseOutput {
+        mut blocks,
+        warnings: read_warnings,
+        ..
+    } = import::read_pasted_text(markdown);
     if blocks.is_empty() {
         return Err(AppError::validation("there is nothing to append".into()));
     }
@@ -3164,7 +3267,7 @@ pub(crate) async fn append_markdown_in_tx(
         tx,
         PastedBlocks {
             blocks: created,
-            warnings,
+            warnings: [read_warnings, warnings].concat(),
         },
     ))
 }
@@ -3400,7 +3503,7 @@ async fn splice_into_anchor(
     )
     .await?;
     apply_block_properties(tx, materializer, device_id, id, &first.properties, lines).await?;
-    if let Some(state) = parsed_todo_state(first) {
+    if let Some(state) = stamped_todo_state(first) {
         super::super::properties::write_todo_timestamp_transitions_in_tx(
             tx,
             loro,
@@ -3432,9 +3535,10 @@ async fn splice_into_anchor(
 /// Write the note embeds, foreign highlight and math of `blocks` in Agaric's
 /// form ([`normalize_foreign_forms`]), then resolve the page links and tags they
 /// write as names in `anchor`'s space, creating what no name there matches,
-/// and write each block's content with their ids. Returns the pages and tags
-/// created; a dropped anchor or label is named in `warnings`. With no space,
-/// every name stays text.
+/// and write each block's content with their ids, once each ref to another
+/// space is written as the text it shows ([`write_foreign_refs_as_text`]).
+/// Returns the pages and tags created; a dropped anchor or label is named in
+/// `warnings`. With no space, every name stays text.
 async fn resolve_pasted_names(
     mut tx: CommandTx,
     materializer: &Materializer,
@@ -3447,6 +3551,7 @@ async fn resolve_pasted_names(
     let Some(space) = agaric_store::space::resolve_block_space(&mut **tx, anchor).await? else {
         return Ok((tx, Vec::new()));
     };
+    write_foreign_refs_as_text(&mut tx, &space, anchor, blocks, warnings).await?;
     let mut names = NameCtx {
         materializer,
         device_id,
@@ -3464,6 +3569,97 @@ async fn resolve_pasted_names(
             rewrite_block_content_for_import(block, &links.page_links, &links.titles, &tag_tokens);
     }
     Ok((tx, names.created))
+}
+
+/// The `todo_state` whose stamps writing a parsed block takes: none for a done
+/// task that brings its `completed_at`, a Tasks `✅` date (#6277 D2), which is
+/// the stamp a move into DONE would write as today.
+fn stamped_todo_state(block: &import::ParsedBlock) -> Option<&str> {
+    let completed = block
+        .properties
+        .iter()
+        .any(|(key, _)| key == "completed_at");
+    parsed_todo_state(block).filter(|state| !(completed && *state == "DONE"))
+}
+
+/// Write each raw `[[ULID]]`, `#[ULID]` and `((ULID))` of `blocks` that the
+/// create would refuse, its target being in another space than `space`, as
+/// the text its chip shows (#6277 B2), with one warning counting them: a link
+/// as `[[Title]]` and a tag as `#name`, which the paste then resolves in
+/// `space` as any name, and a block ref as its target's first line. That line
+/// may hold refs of its own, so the pass repeats over what it wrote: a link or
+/// tag is written as its name each time it is met, a block ref only in one
+/// pass, so a block ref met again stays, and the create refuses it.
+async fn write_foreign_refs_as_text(
+    tx: &mut CommandTx,
+    space: &SpaceId,
+    anchor: &BlockId,
+    blocks: &mut [import::ParsedBlock],
+    warnings: &mut Vec<String>,
+) -> Result<(), AppError> {
+    use agaric_store::cross_space_validation::foreign_content_refs;
+    let mut shown: HashMap<String, String> = HashMap::new();
+    let mut expanded: HashSet<String> = HashSet::new();
+    loop {
+        let all: Vec<&str> = blocks.iter().map(|block| block.content.as_str()).collect();
+        let ids = foreign_content_refs(tx, space, &all.join("\n"), anchor.as_str()).await?;
+        if ids.is_empty() {
+            break;
+        }
+        let fresh: Vec<String> = ids
+            .into_iter()
+            .map(|(id, _)| id)
+            .filter(|id| !shown.contains_key(id))
+            .collect();
+        shown.extend(
+            load_live_blocks(tx, &fresh)
+                .await?
+                .into_iter()
+                .map(|(id, _, content)| {
+                    let first = content.as_deref().unwrap_or_default().lines().next();
+                    (id, first.unwrap_or_default().to_owned())
+                }),
+        );
+        let newly = write_shown_text(blocks, &shown, &expanded);
+        if fresh.is_empty() && newly.is_empty() {
+            break;
+        }
+        expanded.extend(newly);
+    }
+    if !shown.is_empty() {
+        warnings.push(format!(
+            "references to {} target(s) in another space were written as the text they \
+             show: a block cannot reference another space",
+            shown.len()
+        ));
+    }
+    Ok(())
+}
+
+/// Write each `[[ULID]]` and `#[ULID]` of `blocks` whose target `shown` holds
+/// as its name, and each such `((ULID))` as its first line unless an earlier
+/// pass wrote it (`expanded`). Returns the block refs written.
+fn write_shown_text(
+    blocks: &mut [import::ParsedBlock],
+    shown: &HashMap<String, String>,
+    expanded: &HashSet<String>,
+) -> HashSet<String> {
+    let mut written = HashSet::new();
+    for block in blocks.iter_mut() {
+        let named = humanise_tag_and_page_refs(&block.content, shown, shown);
+        block.content = agaric_store::cache::BLOCK_REF_RE
+            .replace_all(&named, |caps: &regex::Captures<'_>| {
+                match shown.get(&caps[1]).filter(|_| !expanded.contains(&caps[1])) {
+                    Some(line) => {
+                        written.insert(caps[1].to_owned());
+                        line.clone()
+                    }
+                    None => caps[0].to_owned(),
+                }
+            })
+            .into_owned();
+    }
+    written
 }
 
 /// The `todo_state` a parsed block carries, from its checkbox or a property
@@ -3519,7 +3715,7 @@ async fn create_parsed_blocks(
         tx.enqueue_background(op);
         let id = row.id.clone().into_string();
         apply_block_properties(tx, materializer, device_id, &id, &block.properties, lines).await?;
-        if let Some(state) = parsed_todo_state(block) {
+        if let Some(state) = stamped_todo_state(block) {
             super::super::properties::write_todo_timestamp_transitions_in_tx(
                 tx,
                 materializer.loro_state(),
@@ -4229,6 +4425,9 @@ fn parse_import_payload(
     // A note of the folder is a note whatever its name looks like.
     let names_note =
         |name: &str| import::embed_names_note(name) || notes.contains_key(&name.to_lowercase());
+    for block in parse_output.blocks.iter_mut().filter(|b| !b.is_code) {
+        block.content = import::rewrite_logseq_image_sizes(&block.content);
+    }
     normalize_foreign_forms(&mut parse_output.blocks, names_note);
     if !notes.is_empty() {
         for block in parse_output.blocks.iter_mut().filter(|b| !b.is_code) {
@@ -5538,8 +5737,9 @@ fn warn_dropped_labels(warnings: &mut Vec<String>, n: usize) {
 /// (NFC → Unicode lowercase → NFC) and NOCASE folds only ASCII A–Z, so we fold
 /// in Rust here to catch every case-variant the Loro engine (which keys by
 /// `normalize_tag_name`) already merges. Tag count is bounded by the user's
-/// vocabulary, so the snapshot is cheap. `create_tag_in_space_inner` reads the
-/// same map to resolve a create to the existing same-name tag (#5236).
+/// vocabulary, so the snapshot is cheap. Its readers: the inbound resolve pass
+/// (`resolve_tag_names`), the page buffer render (`load_name_snapshot`) and
+/// the MCP name lookup (`match_tag_names`).
 pub(crate) async fn snapshot_tags_by_norm(
     conn: &mut sqlx::SqliteConnection,
     space_id: &str,
@@ -5565,6 +5765,27 @@ pub(crate) async fn snapshot_tags_by_norm(
         }
     }
     Ok(map)
+}
+
+/// The spelling an inbound tag `token` (`#[[multi word]]`, a front-matter
+/// item) is stored under (#6278 I4): as written when the space already holds
+/// that name, as a tag named before the rule may; else with each whitespace
+/// run a `-`, named in `warnings`, since a new tag name holds none.
+fn inbound_tag_spelling(
+    token: &str,
+    existing: &HashMap<String, String>,
+    warnings: &mut Vec<String>,
+) -> String {
+    if existing.contains_key(&agaric_core::tag_norm::normalize_tag_name(token)) {
+        return token.to_owned();
+    }
+    let dashed = token.split_whitespace().collect::<Vec<_>>().join("-");
+    if dashed != token {
+        warnings.push(format!(
+            "tag '{token}' was read as '{dashed}': a tag name holds no whitespace"
+        ));
+    }
+    dashed
 }
 
 /// The resolved tag state [`resolve_tag_names`] returns with the
@@ -5609,8 +5830,9 @@ async fn resolve_tag_names(
     // (resolve-or-create). This mirrors the wiki-link pre-pass above: resolve a
     // tag by its NORMALIZED name
     // (`tag_norm::normalize_tag_name` — the engine's tag identity key) else
-    // create a new `block_type='tag'` block whose content is the display name,
-    // and return its ULID. NO explicit `block_tags` association is written:
+    // create a new `block_type='tag'` block whose content is the display name
+    // (each whitespace run a `-`, #6278 I4), and return its ULID. NO explicit
+    // `block_tags` association is written:
     // typing/pasting `#tag` in the editor creates an INLINE ref (materialized
     // into `block_tag_refs` from the `#[ULID]` content by the `CreateBlock`
     // dispatch's `ReindexBlockTagRefs` task — identical to how `[[ULID]]` page
@@ -5631,7 +5853,8 @@ async fn resolve_tag_names(
     let mut resolved_tag_tokens: HashMap<String, String> = HashMap::new();
     let existing_tag_by_norm = snapshot_tags_by_norm(&mut tx, space_id).await?;
     for token_name in tag_token_names {
-        let norm = agaric_core::tag_norm::normalize_tag_name(&token_name);
+        let name = inbound_tag_spelling(&token_name, &existing_tag_by_norm, ctx.warnings);
+        let norm = agaric_core::tag_norm::normalize_tag_name(&name);
 
         // Already resolved/created in this pass (case/dedup convergence).
         if let Some(ulid) = resolved_tag_norm.get(&norm) {
@@ -5660,7 +5883,7 @@ async fn resolve_tag_names(
             materializer.loro_state(),
             device_id,
             "tag".into(),
-            token_name.clone(),
+            name,
             None,
             None,
             // #2849 PR2: server-generated id.
@@ -5783,7 +6006,8 @@ async fn resolve_or_create_frontmatter_tag(
     resolved_tag_norm: &mut HashMap<String, String>,
     existing_tag_by_norm: &HashMap<String, String>,
 ) -> Result<Option<String>, AppError> {
-    let norm = agaric_core::tag_norm::normalize_tag_name(tag_name);
+    let tag_name = inbound_tag_spelling(tag_name, existing_tag_by_norm, &mut ctx.warnings);
+    let norm = agaric_core::tag_norm::normalize_tag_name(&tag_name);
     if let Some(id) = resolved_tag_norm.get(&norm) {
         return Ok(Some(id.clone()));
     }
@@ -5800,7 +6024,7 @@ async fn resolve_or_create_frontmatter_tag(
         ctx.materializer.loro_state(),
         ctx.device_id,
         "tag".into(),
-        tag_name.to_string(),
+        tag_name.clone(),
         None,
         None,
         // #2849 PR2: server-generated id.
@@ -6805,12 +7029,13 @@ fn match_ref_to_vault_file(
 /// stays the link `[label](attachment:<id>)`, an embedded image stays the
 /// image `![alt](attachment:<id>)`, and any other embedded file becomes a
 /// link, since a PDF written as an image renders broken. A link is labelled by
-/// its label or alt, else the file's name.
+/// its label or alt, else the file's name; an Obsidian embed's alt is only its
+/// image size, so it is labelled by the file's name.
 fn attachment_token(att: &import::AttachmentRef, id: &str, filename: &str, mime: &str) -> String {
     if !att.is_link() && mime.starts_with("image/") {
         return format!("![{}](attachment:{id})", att.alt);
     }
-    let label = if att.alt.is_empty() {
+    let label = if att.alt.is_empty() || att.full_match.starts_with("![[") {
         filename
     } else {
         &att.alt

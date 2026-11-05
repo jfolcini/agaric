@@ -103,6 +103,20 @@ type JobPredicate = Box<dyn Fn() -> bool + Send + Sync>;
 /// tick itself is invisible cost.
 pub const TICK_INTERVAL: Duration = Duration::from_secs(60);
 
+/// The tick under the e2e sandbox, so a real-backend spec that waits on a job
+/// (`reminder-due-task.e2e.ts`) waits seconds, not a minute.
+const E2E_SANDBOX_TICK_INTERVAL: Duration = Duration::from_secs(5);
+
+/// The daemon's tick: [`TICK_INTERVAL`], or `E2E_SANDBOX_TICK_INTERVAL`
+/// under `AGARIC_E2E_SANDBOX`, which no user build sets.
+pub fn tick_interval() -> Duration {
+    if crate::app_paths::sandboxed() {
+        E2E_SANDBOX_TICK_INTERVAL
+    } else {
+        TICK_INTERVAL
+    }
+}
+
 /// Issue #157 — one periodic maintenance task.
 ///
 /// `predicate` gates the per-tick decision: returning `false` skips
@@ -687,7 +701,7 @@ pub fn spawn_daemon(jobs: Vec<MaintenanceJob>, shutdown_flag: Arc<AtomicBool>) {
 
     let _handle = spawn_fn(async move {
         let mut jobs = jobs;
-        let mut ticker = tokio::time::interval(TICK_INTERVAL);
+        let mut ticker = tokio::time::interval(tick_interval());
         // After a long stall (a system suspend), run once rather than once
         // per missed tick, and stay on the TICK_INTERVAL grid.
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

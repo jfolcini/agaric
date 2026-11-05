@@ -458,9 +458,18 @@ export function PageHeader({
         notify.success(t('pageHeader.pageRenamed'))
       } catch (err) {
         logger.error('PageHeader', 'Failed to rename page', { pageId }, err)
-        // #4723 — a title clash is the user's to resolve, so name it.
-        const duplicate = validationCode(err) === ValidationCode.DuplicatePageTitle
-        notify.error(t(duplicate ? 'pageHeader.renameDuplicateTitle' : 'pageHeader.renameFailed'))
+        // #4723 — a title clash is the user's to resolve, so name it; so is a
+        // tag page's name holding whitespace (#6278 I4).
+        const code = validationCode(err)
+        notify.error(
+          t(
+            code === ValidationCode.DuplicatePageTitle
+              ? 'pageHeader.renameDuplicateTitle'
+              : code === ValidationCode.TagNameWhitespace
+                ? 'tags.nameHasWhitespace'
+                : 'pageHeader.renameFailed',
+          ),
+        )
         announce(t('announce.pageRenameFailed'))
         setEditableTitle(title)
         if (titleRef.current) titleRef.current.textContent = title

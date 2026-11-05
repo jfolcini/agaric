@@ -58,6 +58,7 @@ If you opened Agaric before spaces existed, your existing pages migrated automat
 ## Per-space integrations
 
 - **Journal & journal template** — fully per-space.
+- **Page titles and tag names** — each unique within its space, in any case ([Views](views.md)). Two devices that each make one name while apart keep both after a sync until the device that made the newer page renames it `Name (2)`, or merges its newer tag into the older one ([Sync](sync.md#how-sync-runs)).
 - **Property definitions** — each space declares its own; see [properties.md](properties.md#where-to-manage-definitions).
 - **MCP / agents** — agents see every space and name one in each tool call; see [agent-access.md](agent-access.md).
 

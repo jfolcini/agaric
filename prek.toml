@@ -1511,11 +1511,11 @@ stages = ["pre-commit"]
 # invoked directly from `scripts/verify-ci-equivalent.sh`, not through
 # this stage — that script is a local hook only, never executed by any
 # GitHub Actions workflow (see PR #3945 review note 5). The per-PR CI net
-# for this same drift shape is `.github/actions/sqlx-offline-check`'s
-# four `cargo sqlx prepare --check` lanes in `_validate.yml`'s `lint` job
+# for this same drift shape is `scripts/clippy-sqlx-check.sh`, the
+# `prepare --check` of all four caches in `_validate.yml`'s `lint` job
 # (invoked on every `pull_request` via `ci.yml`) — if a partial prepare
 # left the cache disagreeing with a crate's actual `query!` call sites,
-# that lane fails, independent of this bash guard and independent of the
+# that step fails, independent of this bash guard and independent of the
 # scheduled `cargo sqlx prepare --check` in `scheduled-deep-checks.yml`.
 # Detection rules live in scripts/check-sqlx-cache-drift.sh.
 # WHY: a stale .sqlx query cache makes offline builds compile against the wrong schema — #3901 (#3910, #3945)

@@ -294,18 +294,24 @@ function isBlockPaste(text: string, view?: EditorView): boolean {
 const FOREIGN_FORM_RE = /\^\^|\\[([]|!\[\[/
 
 /**
- * One line only the block path reads in full (#6033): one naming a page
- * (`[[Name]]`, `[[Name|label]]`, `[label]([[Name]])`), whose name only it
- * resolves, or holding a foreign form only it writes in Agaric's (`^^x^^`,
- * `\(x\)`, `\[x\]`, `![[Note]]`); the block path reads any other line the
- * same, so a false positive (a file's `![[img.png]]`) is harmless. A `#tag`
- * needs no route, as the save makes it a tag, and a list line stays inline
- * for the reason `isBlockPaste` gives.
+ * Text only the block path reads in full (#6033): naming a page (`[[Name]]`,
+ * `[[Name|label]]`, `[label]([[Name]])`), whose name only it resolves, or
+ * holding a foreign form only it writes in Agaric's (`^^x^^`, `\(x\)`,
+ * `\[x\]`, `![[Note]]`); the block path reads any other text the same, so a
+ * false positive (a file's `![[img.png]]`) is harmless. A `#tag` needs no
+ * route, as the save makes it a tag.
  */
-function needsBlockPath(text: string): boolean {
+export function onlyBlockPathReads(text: string): boolean {
+  return FOREIGN_FORM_RE.test(text) || scanNameTokens(text).some((token) => token.kind === 'page')
+}
+
+/**
+ * One line only the block path reads in full (`onlyBlockPathReads`). A list
+ * line stays inline for the reason `isBlockPaste` gives.
+ */
+export function needsBlockPath(text: string): boolean {
   const line = text.trim()
-  if (LIST_LINE_RE.test(line)) return false
-  return FOREIGN_FORM_RE.test(line) || scanNameTokens(line).some((token) => token.kind === 'page')
+  return !LIST_LINE_RE.test(line) && onlyBlockPathReads(line)
 }
 
 /** Serialize a ProseMirror doc to the block's markdown. */
@@ -333,17 +339,25 @@ function hollow(node: PMNode): boolean {
  * quote or a list item would repeat its marker mid-text.
  */
 function pasteSplice(view: EditorView): PasteSplice {
-  const { doc, selection, schema } = view.state
-  const { $to } = selection
-  const paragraph = schema.nodes['paragraph']
-  let after = doc.cut(selection.to)
+  const { doc, selection } = view.state
+  return spliceAround(doc, selection.from, selection.to)
+}
+
+/**
+ * The splice of a paste over `from`..`to` of `root`, a block's content as its
+ * document holds it (`pasteSplice`); page mode's block is one node of its page.
+ */
+export function spliceAround(root: PMNode, from: number, to: number): PasteSplice {
+  const $to = root.resolve(to)
+  const paragraph = root.type.schema.nodes['paragraph']
+  let after = root.cut(to)
   if ($to.parent.isTextblock && paragraph) {
-    let rest = doc.cut($to.after()).content
+    let rest = root.cut($to.after()).content
     while (rest.firstChild && hollow(rest.firstChild)) rest = rest.cut(rest.firstChild.nodeSize)
     const tail = paragraph.create(null, $to.parent.cut($to.parentOffset).content)
-    after = doc.type.create(null, Fragment.from(tail).append(rest))
+    after = root.type.create(null, Fragment.from(tail).append(rest))
   }
-  return { before: toMarkdown(doc.cut(0, selection.from)), after: toMarkdown(after) }
+  return { before: toMarkdown(root.cut(0, from)), after: toMarkdown(after) }
 }
 
 /**

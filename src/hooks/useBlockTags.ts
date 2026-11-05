@@ -6,6 +6,7 @@ import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notifyTagAdded, subscribeToNameChanges } from '@/lib/name-change-bus'
+import { dashedTagName } from '@/lib/name-tokens'
 import { notify } from '@/lib/notify'
 import { requireActiveScope } from '@/lib/space-scope'
 import { usePageBlockStoreApi } from '@/stores/page-blocks'
@@ -205,8 +206,10 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
 
   const handleCreateTag = useCallback(
     async (name: string) => {
-      const trimmed = name.trim()
-      if (!trimmed) return
+      // #6278 I4 — a new tag name holds no whitespace; the picker's Create row
+      // shows this name.
+      const dashed = dashedTagName(name)
+      if (!dashed) return
       // #3081 — create the tag ATOMICALLY space-scoped (thread the active
       // spaceId) so the backend stamps `blocks.space_id` in the same
       // transaction as the CreateBlock op. Previously the tag was born an
@@ -218,7 +221,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
       if (spaceId == null) {
         logger.error('useBlockTags', 'No active space; cannot create tag', {
           blockId,
-          name: trimmed,
+          name: dashed,
         })
         notify.error(i18n.t('tags.createFailed'))
         return
@@ -226,21 +229,21 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
       let tagId: string
       try {
         const resp = unwrap(
-          await commands.createBlock('tag', trimmed, null, null, requireActiveScope(spaceId), null),
+          await commands.createBlock('tag', dashed, null, null, requireActiveScope(spaceId), null),
         )
         tagId = resp.id
       } catch (error) {
-        logger.error('useBlockTags', 'Failed to create tag', { blockId, name: trimmed }, error)
+        logger.error('useBlockTags', 'Failed to create tag', { blockId, name: dashed }, error)
         notify.error(i18n.t('tags.createFailed'))
         return
       }
       // #5236 — the backend answers a name that already exists with that
       // tag, which may already be listed here or applied to this block.
       setAllTags((prev) =>
-        prev.some((tag) => tag.id === tagId) ? prev : [...prev, { id: tagId, name: trimmed }],
+        prev.some((tag) => tag.id === tagId) ? prev : [...prev, { id: tagId, name: dashed }],
       )
-      useResolveStore.getState().set(tagId, trimmed, false)
-      notifyTagAdded(tagId, trimmed, spaceId)
+      useResolveStore.getState().set(tagId, dashed, false)
+      notifyTagAdded(tagId, dashed, spaceId)
       // `add_tag` rejects a tag that is already applied.
       if (!appliedTagIds.has(tagId)) await handleAddTag(tagId)
     },

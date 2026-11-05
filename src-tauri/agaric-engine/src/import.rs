@@ -36,8 +36,9 @@ pub struct ParsedBlock {
     pub depth: usize,
     /// The block's `key:: value` lines and the properties its markers stand
     /// for: `listStyle`, `todo_state` (a checkbox on every surface, D6; a task
-    /// keyword on import, D7), and on import `priority` as an Org letter
-    /// (`A`–`C`) and the `scheduled_date` / `due_date` / `repeat` of a
+    /// keyword on import, D7), the Tasks fields a checkbox task's line ends
+    /// with on every surface (#6277 D2), and on import `priority` as an Org
+    /// letter (`A`–`C`) and the `scheduled_date` / `due_date` / `repeat` of a
     /// planning line. Later entries win.
     pub properties: Vec<(String, String)>,
     /// #1924 — `true` when the block's source line(s) fell inside a fenced
@@ -538,6 +539,226 @@ fn is_org_time(token: &str) -> bool {
         .all(|time| chrono::NaiveTime::parse_from_str(time, "%H:%M").is_ok())
 }
 
+/// The signifiers of the Obsidian Tasks plugin (#6277 D2). Each starts a
+/// field of a task line; [`task_field`] reads some of them, and the rest
+/// (`🛫`, `➕`, `❌`, `🆔`, `⛔`, `🏁`) stay text.
+const TASK_SIGNIFIERS: [char; 15] = [
+    '📅', '⏳', '✅', '🔁', '🔺', '⏫', '🔼', '🔽', '⏬', '🛫', '➕', '❌', '🆔', '⛔', '🏁',
+];
+
+/// A task line's first line with its Tasks fields read out of it.
+struct TaskFields {
+    text: String,
+    fields: Vec<(String, String)>,
+    /// The signifiers kept in `text`, read as no field.
+    unread: usize,
+}
+
+/// The Tasks fields at the end of a task's first line (#6277 D2), before an
+/// optional ` ^anchor`: each signifier and the text up to the next one is a
+/// field. One [`task_field`] reads leaves the text, with the one space before
+/// the first; any other stays, counted. A signifier after a `\` is text, the
+/// escape [`write_task_fields`] writes, which is removed (D3). With none
+/// read, the line is kept as written, less those escapes.
+fn split_task_fields(line: &str, done: bool) -> TaskFields {
+    let anchor_at = OBSIDIAN_BLOCK_ANCHOR_RE
+        .find(line)
+        .map_or(line.len(), |anchor| anchor.start());
+    let (head, anchor) = line.split_at(anchor_at);
+    let starts: Vec<usize> = head
+        .match_indices(TASK_SIGNIFIERS)
+        .map(|(at, _)| at)
+        .filter(|&at| !head[..at].ends_with('\\'))
+        .collect();
+    let description = &head[..starts.first().copied().unwrap_or(head.len())];
+    let mut kept = vec![
+        description
+            .strip_suffix(char::is_whitespace)
+            .unwrap_or(description),
+    ];
+    let mut fields = Vec::new();
+    for (i, &at) in starts.iter().enumerate() {
+        let segment = &head[at..starts.get(i + 1).copied().unwrap_or(head.len())];
+        let mut chars = segment.chars();
+        let signifier = chars.next().expect("a segment starts with its signifier");
+        match task_field(signifier, chars.as_str().trim(), done) {
+            Some((key, value)) => fields.push((key.to_string(), value)),
+            None => kept.push(segment.trim_end()),
+        }
+    }
+    let unread = kept.len() - 1;
+    let text = if fields.is_empty() {
+        unescape_task_signifiers(line)
+    } else {
+        kept.retain(|part| !part.is_empty());
+        format!("{}{anchor}", unescape_task_signifiers(&kept.join(" ")))
+    };
+    TaskFields {
+        text,
+        fields,
+        unread,
+    }
+}
+
+/// `text` with a `\` before each Tasks signifier, which [`split_task_fields`]
+/// reads as text and removes.
+fn escape_task_signifiers(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for c in text.chars() {
+        if TASK_SIGNIFIERS.contains(&c) {
+            escaped.push('\\');
+        }
+        escaped.push(c);
+    }
+    escaped
+}
+
+/// `text` less the `\` [`escape_task_signifiers`] writes before a signifier.
+fn unescape_task_signifiers(text: &str) -> String {
+    let mut chars = text.chars().peekable();
+    let mut unescaped = String::with_capacity(text.len());
+    while let Some(c) = chars.next() {
+        if c != '\\'
+            || !chars
+                .peek()
+                .is_some_and(|next| TASK_SIGNIFIERS.contains(next))
+        {
+            unescaped.push(c);
+        }
+    }
+    unescaped
+}
+
+/// The Tasks signifier a task's `key` and `value` are written as (#6277 D3),
+/// in [`TASK_SIGNIFIER_KEYS`]' order, or `None` when it would not read back
+/// as that value (`task_field`), which keeps its `key::` line.
+pub fn task_signifier(key: &str, value: &str, done: bool) -> Option<String> {
+    let written = match key {
+        "priority" => {
+            let at = agaric_store::op::PRIORITY_LEVELS
+                .iter()
+                .position(|level| *level == value)?;
+            ["⏫", "🔼", "🔽"][at].to_string()
+        }
+        "repeat" => format!("🔁 {}", tasks_recurrence_words(value)?),
+        "scheduled_date" => format!("⏳ {value}"),
+        "due_date" => format!("📅 {value}"),
+        "completed_at" => format!("✅ {value}"),
+        _ => return None,
+    };
+    let read = split_task_fields(&written, done).fields;
+    (read == [(key.to_string(), value.to_string())]).then_some(written)
+}
+
+/// The keys a task writes as signifiers, in the order the Tasks plugin
+/// writes their fields.
+pub const TASK_SIGNIFIER_KEYS: [&str; 5] = [
+    "priority",
+    "repeat",
+    "scheduled_date",
+    "due_date",
+    "completed_at",
+];
+
+/// `line`, a task's first line, with `signifiers` at its end (#6277 D3). Its
+/// own signifiers are escaped when it would not read back as written with
+/// them, its fields as `signifiers`, and no signifier left unread.
+pub fn write_task_fields(line: &str, signifiers: &[String], done: bool) -> String {
+    let fields = signifiers.join(" ");
+    let joined = |line: &str| match (line.is_empty(), fields.is_empty()) {
+        (_, true) => line.to_string(),
+        (true, false) => fields.clone(),
+        (false, false) => format!("{line} {fields}"),
+    };
+    let plain = joined(line);
+    let read = split_task_fields(&plain, done);
+    if read.text == line
+        && read.unread == 0
+        && read.fields == split_task_fields(&fields, done).fields
+    {
+        return plain;
+    }
+    joined(&escape_task_signifiers(line))
+}
+
+/// The field a Tasks `signifier` and its `value` give (#6277 D2, #6033 Q10):
+/// `📅` the due date, `⏳` the scheduled date, `✅` a done task's
+/// `completed_at` (only a done task holds one), a priority signifier its
+/// level and `🔁 every …` its `repeat` rule. `None` for any other.
+fn task_field(signifier: char, value: &str, done: bool) -> Option<(&'static str, String)> {
+    let date = |key| {
+        agaric_core::date_validation::is_valid_iso_date(value).then(|| (key, value.to_string()))
+    };
+    let level = |at: usize| {
+        let level = agaric_store::op::PRIORITY_LEVELS[at];
+        value.is_empty().then(|| ("priority", level.to_string()))
+    };
+    match signifier {
+        '📅' => date("due_date"),
+        '⏳' => date("scheduled_date"),
+        '✅' if done => date("completed_at"),
+        '🔺' | '⏫' => level(0),
+        '🔼' => level(1),
+        '🔽' | '⏬' => level(2),
+        '🔁' => tasks_recurrence(value).map(|rule| ("repeat", rule)),
+        _ => None,
+    }
+}
+
+/// The Tasks recurrence a `repeat` rule is written as: `+1d` is `every day`,
+/// `+3w` `every 3 weeks`, and a `.+` rule ends `when done`. `None` for a rule
+/// the reader would read back as no rule or another ([`tasks_recurrence`]).
+fn tasks_recurrence_words(rule: &str) -> Option<String> {
+    let (when_done, interval) = match rule.strip_prefix(".+") {
+        Some(interval) => (" when done", interval),
+        None => ("", rule.strip_prefix('+')?),
+    };
+    let (count, unit) = interval.split_at_checked(interval.len().checked_sub(1)?)?;
+    let unit = match unit {
+        "d" => "day",
+        "w" => "week",
+        "m" => "month",
+        "y" => "year",
+        _ => return None,
+    };
+    let words = if count == "1" {
+        format!("every {unit}{when_done}")
+    } else {
+        format!("every {count} {unit}s{when_done}")
+    };
+    (tasks_recurrence(&words).as_deref() == Some(rule)).then_some(words)
+}
+
+/// The `repeat` rule of a Tasks recurrence: `every day` is `+1d`, `every 3
+/// weeks` `+3w`, and a trailing `when done` makes it the `.+` rule, which
+/// counts from completion. `None` for any rule the plugin has beyond those.
+fn tasks_recurrence(value: &str) -> Option<String> {
+    let mut words: Vec<&str> = value.split_whitespace().collect();
+    let when_done = words.ends_with(&["when", "done"]);
+    if when_done {
+        words.truncate(words.len() - 2);
+    }
+    let (count, unit) = match words.as_slice() {
+        ["every", unit] => ("1", *unit),
+        ["every", count, unit] => (*count, *unit),
+        _ => return None,
+    };
+    if !(1..=9).contains(&count.len()) || !count.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let unit = match unit.strip_suffix('s').unwrap_or(unit) {
+        "day" => 'd',
+        "week" => 'w',
+        "month" => 'm',
+        "year" => 'y',
+        _ => return None,
+    };
+    let rule = format!("{}+{count}{unit}", if when_done { "." } else { "" });
+    agaric_store::recurrence_math::validate_repeat_rule_shape(&rule)
+        .is_ok()
+        .then_some(rule)
+}
+
 /// A source buffer's anchor line: `^` and a ULID, alone on the line.
 static ANCHOR_LINE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\^[0-9A-HJKMNP-TV-Z]{26}$").expect("invalid anchor-line regex"));
@@ -572,6 +793,9 @@ struct BulletBody<'a> {
     /// The `todo_state` of a checkbox after them (D6) or, on import, of a
     /// task keyword (D7).
     todo_state: Option<&'static str>,
+    /// Whether a checkbox was written: only such a task line carries Tasks
+    /// fields (#6277 D2).
+    checkbox: bool,
     /// The `priority` letter of an Org `[#A]` cookie, on import (D7).
     priority: Option<&'static str>,
     text: &'a str,
@@ -598,6 +822,7 @@ fn bullet_body<'a>(marker: &str, text: &'a str, mode: ParseMode) -> BulletBody<'
         return BulletBody {
             list_style,
             todo_state,
+            checkbox: todo_state.is_some(),
             priority: None,
             text,
         };
@@ -607,11 +832,12 @@ fn bullet_body<'a>(marker: &str, text: &'a str, mode: ParseMode) -> BulletBody<'
     } else {
         split_block_list_marker(text)
     };
-    let (todo_state, text) = split_block_task_marker(text);
-    let (todo_state, priority, text) = split_task_syntax(text, todo_state);
+    let (checkbox, text) = split_block_task_marker(text);
+    let (todo_state, priority, text) = split_task_syntax(text, checkbox);
     BulletBody {
         list_style,
         todo_state,
+        checkbox: checkbox.is_some(),
         priority,
         text,
     }
@@ -769,8 +995,7 @@ pub struct VaultFile {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachmentRef {
     /// An image's alt text or a link's label, kept in the rewritten token.
-    /// Empty for Obsidian embeds `![[file]]` (which carry no alt) and for an
-    /// empty `![]` or `[]`.
+    /// An Obsidian embed's is its image size (`|300`, `|300x200`), else empty.
     pub alt: String,
     /// The path the token names, used to match a [`VaultFile`]: an embed's name
     /// as written, an image's destination without its `<…>` and percent-decoded
@@ -792,11 +1017,16 @@ impl AttachmentRef {
 }
 
 /// Obsidian embed `![[file.png]]` — group 1 is the inner ref (path or basename,
-/// any run of chars that is neither `]`, `|`, nor newline; the optional `|alt`
-/// display-text suffix that Obsidian allows is dropped). Non-greedy.
+/// any run of chars that is neither `]`, `|`, nor newline), group 2 the
+/// optional `|…` suffix after it. Non-greedy.
 static OBSIDIAN_EMBED_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"!\[\[([^\]\|\n]+?)(?:\|[^\]\n]*)?\]\]").expect("invalid obsidian-embed regex")
+    Regex::new(r"!\[\[([^\]\|\n]+?)(?:\|([^\]\n]*))?\]\]").expect("invalid obsidian-embed regex")
 });
+
+/// An embed suffix that sizes the image, `300` or `300x200`, in the grammar
+/// `parseImageAlt` (`src/lib/image-alt-size.ts`) reads after an alt's `|`.
+static EMBED_SIZE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[1-9]\d*(?:x\d+)?$").expect("invalid embed-size regex"));
 
 /// The opening of a standard markdown image `![alt](` — group 1 is the alt
 /// text — or of a link `[label](` — group 2 is the label, which holds no
@@ -939,7 +1169,8 @@ fn links_a_file(destination: &str) -> bool {
 ///
 /// Handles four inbound shapes, mirroring the tag/wiki-link detection style in
 /// `commands::pages::markdown`:
-///   * Obsidian embed — `![[file.png]]` (optional `|display` suffix dropped),
+///   * Obsidian embed — `![[file.png]]` (a `|300` size kept as the alt, any
+///     other `|display` suffix dropped),
 ///   * standard markdown image — `![alt](relative/path.png)`, its destination
 ///     read by `link_destination` and percent-decoded,
 ///   * Logseq/relative asset paths captured by the markdown-image form above
@@ -992,8 +1223,14 @@ pub fn detect_attachment_refs(content: &str, code_spans: &[(usize, usize)]) -> V
         if inner.is_empty() || is_skippable_attachment_ref(inner) {
             continue;
         }
+        // A suffix that is no size is Obsidian's display text, which Agaric
+        // has no place for.
+        let alt = match cap.get(2) {
+            Some(size) if EMBED_SIZE_RE.is_match(size.as_str()) => format!("|{}", size.as_str()),
+            _ => String::new(),
+        };
         refs.push(AttachmentRef {
-            alt: String::new(),
+            alt,
             original_ref: inner.to_string(),
             full_match: whole.as_str().to_string(),
         });
@@ -1091,6 +1328,69 @@ pub fn link_obsidian_note_embeds(content: &str, names_note: impl Fn(&str) -> boo
             }
         })
         .into_owned()
+}
+
+/// The attribute map Logseq writes right after an image,
+/// `{:height 53, :width 42}`: group 1 its keys and values.
+static LOGSEQ_IMAGE_ATTRS_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\{(:[^{}\n]*)\}").expect("invalid logseq-attrs regex"));
+
+/// A `:width` or `:height` of that map: group 1 the key, group 2 its whole
+/// pixels. A size dragged in Logseq can carry a fraction, which is dropped.
+static LOGSEQ_IMAGE_SIZE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r":(width|height)[^\S\n]+([1-9]\d*)(?:\.\d+)?(?:[,\s]|$)")
+        .expect("invalid logseq-size regex")
+});
+
+/// `content` with each Logseq image size in Agaric's form, the alt's `|W` or
+/// `|WxH` suffix (`parseImageAlt` in `src/lib/image-alt-size.ts`):
+/// `![a](x.png){:width 300}` becomes `![a|300](x.png)`, the map dropped. A
+/// map with no width, and an image in inline code or escaped, are left as
+/// written.
+pub fn rewrite_logseq_image_sizes(content: &str) -> String {
+    if !content.contains("){:") {
+        return content.to_string();
+    }
+    let code_spans = inline_code_spans(content);
+    let mut out = String::with_capacity(content.len());
+    let mut copied = 0;
+    for token in markdown_link_tokens(content) {
+        if !token.is_image
+            || code_spans
+                .iter()
+                .any(|&(s, e)| token.start >= s && token.start < e)
+            || is_escaped(content, token.start)
+        {
+            continue;
+        }
+        let Some(attrs) = LOGSEQ_IMAGE_ATTRS_RE.captures(&content[token.end..]) else {
+            continue;
+        };
+        let (mut width, mut height) = (None, None);
+        for size in LOGSEQ_IMAGE_SIZE_RE.captures_iter(&attrs[1]) {
+            let px = size.get(2).expect("group 2 present").as_str();
+            if &size[1] == "width" {
+                width = Some(px);
+            } else {
+                height = Some(px);
+            }
+        }
+        let Some(width) = width else {
+            continue;
+        };
+        let alt_end = token.start + "![".len() + token.text.len();
+        out.push_str(&content[copied..alt_end]);
+        out.push('|');
+        out.push_str(width);
+        if let Some(height) = height {
+            out.push('x');
+            out.push_str(height);
+        }
+        out.push_str(&content[alt_end..token.end]);
+        copied = token.end + attrs[0].len();
+    }
+    out.push_str(&content[copied..]);
+    out
 }
 
 /// An Obsidian embed's target name: its text before any `#anchor` or `|label`.
@@ -1694,6 +1994,12 @@ pub fn parse_markdown_file(content: &str) -> ParseOutput {
     parse_import(content, ParseMode::Document, false)
 }
 
+/// `text` less a leading byte order mark, which some editors and clients
+/// write: left in, it is text, and front matter after it is not read (#6277).
+fn without_bom(text: &str) -> &str {
+    text.strip_prefix('\u{feff}').unwrap_or(text)
+}
+
 /// A file read in `mode`, its leading front matter and `key:: value` lines the
 /// page's: the outline reading of [`parse_logseq_markdown`], keeping every
 /// `((uuid))` reference when `keep_refs`, or the Document reading of
@@ -1708,7 +2014,9 @@ fn parse_import(content: &str, mode: ParseMode, keep_refs: bool) -> ParseOutput 
     // Lines without stray `\r` characters.
     // Tabs stay: `indent_columns` reads one to its tab stop, and a fence keeps
     // its lines verbatim (#5160 follow-up, item 9).
-    let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
+    let normalized = without_bom(content)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
 
     // Capture + parse a leading YAML frontmatter block (#1432). The exporter
     // (`export_page_markdown_inner`) emits page properties as scalar
@@ -1947,7 +2255,9 @@ fn source_outline(
     foreign: bool,
     id_lines: Option<&std::collections::HashSet<usize>>,
 ) -> ParseOutput {
-    let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
+    let normalized = without_bom(content)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
     let mut output = ParseOutput {
         blocks: Vec::new(),
         frontmatter: Vec::new(),
@@ -2020,9 +2330,15 @@ fn read_page_properties(normalized: &str, output: &mut ParseOutput) -> String {
 /// paste (#5160 S3): a README or an LLM answer gives the blocks its headings,
 /// paragraphs, list items and fences are.
 pub fn parse_pasted_text(text: &str) -> Vec<ParsedBlock> {
-    let mut blocks = source_outline(text, ParseMode::Document, true, None).blocks;
-    blocks.iter_mut().for_each(restore_text_anchor);
-    blocks
+    read_pasted_text(text).blocks
+}
+
+/// [`parse_pasted_text`] with the warnings of what it read lossily, such as a
+/// Tasks signifier it kept as text (#6277 D2).
+pub fn read_pasted_text(text: &str) -> ParseOutput {
+    let mut output = source_outline(text, ParseMode::Document, true, None);
+    output.blocks.iter_mut().for_each(restore_text_anchor);
+    output
 }
 
 /// A block HTML paste sends, at `depth`: a checkbox after the list marker on
@@ -2179,6 +2495,9 @@ struct LossyCounts {
     /// #5160 D7 — `SCHEDULED:` / `DEADLINE:` lines an import could not read in
     /// full and kept as text.
     unreadable_planning: usize,
+    /// #6277 D2 — Tasks signifiers on a task line that were read as no field
+    /// and kept as text.
+    unreadable_task_fields: usize,
     /// #6032 N6 — Org warning periods and delays (`-3d`) dropped from planning
     /// lines read for their dates.
     warning_periods: usize,
@@ -2199,6 +2518,7 @@ impl LossyCounts {
             reserved_property,
             stripped_refs,
             unreadable_planning,
+            unreadable_task_fields,
             warning_periods,
             logbooks,
             unclosed_fences,
@@ -2230,6 +2550,11 @@ impl LossyCounts {
             warnings.push(format!(
                 "{unreadable_planning} SCHEDULED/DEADLINE line(s) could not be read and were \
                  kept as text"
+            ));
+        }
+        if *unreadable_task_fields > 0 {
+            warnings.push(format!(
+                "{unreadable_task_fields} Tasks signifier(s) could not be read and were kept as text"
             ));
         }
         if *warning_periods > 0 {
@@ -2617,12 +2942,12 @@ impl<'a> Scan<'a> {
     /// A bullet: a block under the innermost open block whose text starts at
     /// or left of its marker (S7). The marker(s) become its `listStyle`
     /// (#4552), a checkbox or, on import, a task keyword its `todo_state`, an
-    /// Org `[#A]` its `priority` ([`bullet_body`]), and a fence its text opens
-    /// is its own.
+    /// Org `[#A]` its `priority` ([`bullet_body`]), the Tasks fields a
+    /// checkbox task's line ends with its dates, priority and rule
+    /// ([`split_task_fields`]), and a fence its text opens is its own.
     fn bullet(&mut self, trimmed: &str, indent: usize, len: usize, number: usize) {
         let body = bullet_body(&trimmed[..len], bullet_text(trimmed, len), self.mode);
-        let text = body.text;
-        let properties: Vec<(String, String)> = [
+        let mut properties: Vec<(String, String)> = [
             (LIST_STYLE_KEY, body.list_style),
             ("todo_state", body.todo_state),
             ("priority", body.priority),
@@ -2630,11 +2955,19 @@ impl<'a> Scan<'a> {
         .into_iter()
         .filter_map(|(key, value)| Some((key.to_string(), value?.to_string())))
         .collect();
-        let fence = fence_run(text);
+        let fence = fence_run(body.text);
+        let text = if body.checkbox {
+            let read = split_task_fields(body.text, body.todo_state == Some("DONE"));
+            self.lossy.unreadable_task_fields += read.unread;
+            properties.extend(read.fields);
+            read.text
+        } else {
+            body.text.to_string()
+        };
         self.pop_to(indent, None);
         let content = indent + len + 1;
         self.push_block(
-            text,
+            &text,
             properties,
             fence.is_some(),
             indent,
@@ -5973,6 +6306,30 @@ mod tests_l9 {
         assert_eq!(mixed_out.warnings, lf_out.warnings);
     }
 
+    /// A leading BOM is no text: the front matter after it is read, by an
+    /// import and by a Document buffer, and a paste does not keep it (#6277).
+    #[test]
+    fn a_leading_bom_is_dropped_by_every_reader() {
+        let contents = |blocks: &[ParsedBlock]| -> Vec<String> {
+            blocks.iter().map(|b| b.content.clone()).collect()
+        };
+        let text = "---\nstatus: hello\n---\n- body";
+        for (reader, read) in [
+            ("import", parse_logseq_markdown as fn(&str) -> ParseOutput),
+            ("document", parse_document_outline),
+        ] {
+            let with_bom = read(&format!("\u{feff}{text}"));
+            assert_eq!(
+                with_bom.frontmatter,
+                [("status".to_string(), "hello".to_string())],
+                "{reader}: the front matter is read past the BOM"
+            );
+            assert_eq!(contents(&with_bom.blocks), ["body"], "{reader}: one block");
+        }
+        let pasted = parse_pasted_text("\u{feff}body");
+        assert_eq!(contents(&pasted), ["body"], "a paste drops the BOM");
+    }
+
     #[test]
     fn lf_frontmatter_still_stripped_after_normalization() {
         // Regression guard: the existing `parse_yaml_frontmatter_stripped`
@@ -8532,6 +8889,49 @@ mod tests_line_probes_5160 {
             ("\n# Trip\n", "Trip"),
         ] {
             assert_eq!(strip_title_heading(md, title), md, "{md:?} {title:?}");
+        }
+    }
+}
+
+/// #6033 S6 — Logseq's image size map read into the alt's `|W` / `|WxH`.
+#[cfg(test)]
+mod tests_logseq_image_sizes {
+    use super::rewrite_logseq_image_sizes;
+
+    #[test]
+    fn a_width_map_becomes_the_alt_size() {
+        for (logseq, agaric) in [
+            ("![a](x.png){:width 300}", "![a|300](x.png)"),
+            ("![](x.png){:height 53, :width 42}", "![|42x53](x.png)"),
+            (
+                "![a](x.png){:width 312.5, :align \"center\"}",
+                "![a|312](x.png)",
+            ),
+            (
+                r#"![](<my x.png> "t"){:width 3} ok"#,
+                r#"![|3](<my x.png> "t") ok"#,
+            ),
+            (
+                "![a](x.png){:width 1} ![b](y.png){:width 2}",
+                "![a|1](x.png) ![b|2](y.png)",
+            ),
+        ] {
+            assert_eq!(rewrite_logseq_image_sizes(logseq), agaric, "{logseq:?}");
+        }
+    }
+
+    /// No width, no image, code, an escape or a space before the map: text.
+    #[test]
+    fn anything_else_stays_as_written() {
+        for text in [
+            "![a](x.png){:height 3}",
+            "![a](x.png){:max-width 3}",
+            "![a](x.png) {:width 3}",
+            "[a](x.pdf){:width 3}",
+            "`![a](x.png){:width 3}`",
+            r"\![a](x.png){:width 3}",
+        ] {
+            assert_eq!(rewrite_logseq_image_sizes(text), text, "{text:?}");
         }
     }
 }

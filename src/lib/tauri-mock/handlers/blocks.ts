@@ -46,6 +46,7 @@ import {
   spaceRootGroup,
   validationRejection,
   readActiveSpaceScope,
+  taskLineOf,
 } from '@/lib/tauri-mock/handlers/shared'
 import { resolveInboundNames } from '@/lib/tauri-mock/names'
 import { pageNameHolder, pageNameRefusal, rejectTakenPageNames } from '@/lib/tauri-mock/page-names'
@@ -543,8 +544,8 @@ function agendaRangeDate(
 
 type OpRefs = Array<{ device_id: string; seq: number }>
 
-/** The column-backed keys a copy carries, in the order the backend writes them. */
-const DUPLICATED_COLUMNS = ['todo_state', 'priority', 'scheduled_date', 'due_date'] as const
+/** The column-backed keys a copy carries after its task state, in the order the backend writes them. */
+const DUPLICATED_COLUMNS = ['priority', 'scheduled_date', 'due_date'] as const
 
 /**
  * `rootId` and its live descendants in pre-order, children by
@@ -621,16 +622,30 @@ function duplicateRow(
     record(pushOp('set_property', { block_id: id, key, from_value: null }))
   }
   if (src['todo_state'] == null) copyProperty(LIST_STYLE_KEY)
-  for (const column of DUPLICATED_COLUMNS) {
-    if (src[column] == null) continue
+  const copyColumn = (column: string): void => {
+    if (src[column] == null) return
     row[column] = src[column]
     record(pushOp('set_property', { block_id: id, key: column, from_value: null }))
   }
+  // A task's line writes its Tasks signifiers before its `key::` lines (#6277 D3).
+  const todo = src['todo_state']
+  const task = taskLineOf(
+    src,
+    typeof todo === 'string' && Object.hasOwn(TASK_STATE_TO_MARKER, todo),
+  )
+  const signified = [...task.keys].filter((key) => key !== 'completed_at')
+  copyColumn('todo_state')
+  for (const key of signified) {
+    if (key === 'repeat') copyProperty(key)
+    else copyColumn(key)
+  }
+  for (const column of DUPLICATED_COLUMNS) if (!task.keys.has(column)) copyColumn(column)
   const customKeys = [...srcProps.keys()]
     // The reserved keys the backend's buffer render leaves out: they
     // describe the original (its space, timestamps, one occurrence of its
     // recurrence, template). The rule itself is copied (#5160 P4).
     .filter((key) => key !== LIST_STYLE_KEY && !INLINE_PROPERTY_RESERVED_KEYS.has(key))
+    .filter((key) => !task.keys.has(key))
     .toSorted(compareUtf8Bytes)
   for (const key of customKeys) copyProperty(key)
   return row
@@ -827,6 +842,19 @@ function rejectDuplicateTagName(tagId: string, name: string): void {
       message: `a tag named '${name}' already exists in this space`,
     })
   }
+}
+
+/**
+ * #6278 I4 — refuse a new tag name holding whitespace. Mock twin of
+ * `reject_spaced_tag_name` (`src-tauri/src/commands/blocks/crud.rs`).
+ */
+function rejectSpacedTagName(name: string): void {
+  if (!/\p{White_Space}/u.test(name)) return
+  throw appErrorRejection({
+    kind: 'validation',
+    code: 'TagNameWhitespace',
+    message: `the tag name '${name}' holds whitespace; use '-' instead`,
+  })
 }
 
 /**
@@ -1098,6 +1126,7 @@ export const blocksHandlers = {
           op_refs: [] as { device_id: string; seq: number }[],
         }
       }
+      rejectSpacedTagName((a['content'] as string) ?? '')
     }
     // A page goes through `create_page_in_space_inner`, which resolves a title
     // already held in the space (`nameKey`, #4723, #6278) to that page's own
@@ -1457,7 +1486,10 @@ export const blocksHandlers = {
       throw notFoundRejection(`block '${blockId}' (not found or deleted)`)
     }
     if (b['block_type'] === 'page') rejectDuplicatePageTitle(b, a['toText'] as string)
-    if (b['block_type'] === 'tag') rejectDuplicateTagName(blockId, a['toText'] as string)
+    if (b['block_type'] === 'tag') {
+      rejectSpacedTagName(a['toText'] as string)
+      rejectDuplicateTagName(blockId, a['toText'] as string)
+    }
     rejectCrossSpaceTokens(definitionSpaceOf(blockId), a['toText'] as string, blockId)
     const oldContent = b['content'] as string | null
     const linked = linkedTargets(b)

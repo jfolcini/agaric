@@ -189,6 +189,8 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       // the user sees "already exists" instead of the generic toast.
       if (isConflict(error)) {
         notify.error(t('tags.duplicateName'))
+      } else if (validationCode(error) === ValidationCode.TagNameWhitespace) {
+        notify.error(t('tags.nameHasWhitespace'))
       } else {
         notify.error(t('tags.createFailed'))
       }
@@ -285,6 +287,8 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         // coded, which the list above can miss when it is stale.
         if (isConflict(error) || validationCode(error) === ValidationCode.DuplicatePageTitle) {
           notify.error(t('tags.duplicateName'))
+        } else if (validationCode(error) === ValidationCode.TagNameWhitespace) {
+          notify.error(t('tags.nameHasWhitespace'))
         } else {
           notify.error(`${t('tags.renameFailed')}: ${String(error)}`)
         }

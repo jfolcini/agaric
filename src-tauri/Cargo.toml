@@ -129,7 +129,7 @@ ci-smoke = []
 # the moved suites and the two remaining in-lib test modules both use) to that
 # set, which is why the feature now pulls `tempfile` — the same shape as
 # `agaric-store`'s `test-util = ["dep:tempfile"]` for its `test_support`.
-test-util = ["dep:tempfile"]
+test-util = ["dep:tempfile", "agaric-store/test-util"]
 # #645 — the `diagnostics` feature (formerly built the
 # `audit_cross_space_refs` / `op_log_histogram` bins) is retired: those
 # bins moved to the `agaric-diagnostics` workspace member, so the feature
@@ -540,6 +540,13 @@ debug = "none"
 # never ships.
 [profile.dev.package."*"]
 debug = false
+
+# Bundled SQLite optimized in dev and test builds: a DB test spends much of its
+# time inside SQLite, which is C compiled at -O0 otherwise, and it is a single
+# crate to rebuild. Optimizing every dependency was faster still but more than
+# doubled a cold build.
+[profile.dev.package.libsqlite3-sys]
+opt-level = 3
 
 # Dev-build link-time trim, part 2 (companion to the dep-debuginfo override
 # above and the mold/lld linker auto-wired by scripts/setup.sh). Default Linux

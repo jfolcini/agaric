@@ -109,6 +109,22 @@ describe('PageTagSection rendering', () => {
     expect(screen.getByText(/Create "newtag"/)).toBeInTheDocument()
   })
 
+  // #6278 I4 — the row names the tag `onCreateTag` makes: a new tag name holds
+  // no whitespace.
+  it('labels the create option with the dashed name for a query holding spaces', () => {
+    render(
+      <PageTagSection
+        {...defaultProps}
+        showTagPicker
+        tagQuery=" deep  work "
+        availableTags={[]}
+        allTags={[TAG_1]}
+      />,
+    )
+
+    expect(screen.getByText('Create "deep-work"')).toBeInTheDocument()
+  })
+
   it('does not show create option when query matches an existing tag name', () => {
     render(
       <PageTagSection

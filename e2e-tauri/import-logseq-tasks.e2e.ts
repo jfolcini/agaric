@@ -10,7 +10,8 @@
 // maps `[#A]` onto the priority definition's first option, and the page editor
 // shows the three from the stored row AFTER a navigation round-trip. The
 // mock reads neither Logseq's `STARTED` keyword nor a `#+BEGIN_NOTE` block
-// (#6033), which `import::rewrite_org_blocks` writes as a `> [!NOTE]` callout.
+// (#6033), which `import::rewrite_org_blocks` writes as a `> [!NOTE]` callout;
+// the backend reads both in a Logseq graph's page only (#6277 E1).
 //
 // The page is picked as a page of a Logseq graph through the Data tab's folder
 // input (`importLogseqPage`), so it is sent as `LogseqOrg`: a lone `.md` file

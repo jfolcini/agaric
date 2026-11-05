@@ -460,16 +460,19 @@ test.describe('Export preserves block structure @markdown', () => {
       return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE03' })
     })) as string
 
-    // Two paragraphs, then three tasks, each a checkbox item (#6277 E2)
+    // Two paragraphs, then three tasks, each a checkbox item (#6277 E2) with its
+    // priority, due date and, done, completion date as Tasks signifiers (#6277 D3).
     const blockLines = exportedBlockLines(markdown)
     expect(blockLines.length).toBe(5)
 
     // Verify position-based ordering
     expect(blockLines[0]).toBe('Morning standup notes go here')
     expect(blockLines[1]).toBe('Review project milestones')
-    expect(blockLines[2]).toBe('- [ ] Buy groceries')
-    expect(blockLines[3]).toBe('- [/] Review pull requests')
-    expect(blockLines[4]).toBe('- [x] Write documentation')
+    expect(blockLines[2]).toMatch(/^- \[ \] Buy groceries ⏫ 📅 \d{4}-\d{2}-\d{2}$/)
+    expect(blockLines[3]).toMatch(/^- \[\/\] Review pull requests 🔼 📅 \d{4}-\d{2}-\d{2}$/)
+    expect(blockLines[4]).toMatch(
+      /^- \[x\] Write documentation 🔽 📅 \d{4}-\d{2}-\d{2} ✅ \d{4}-\d{2}-\d{2}$/,
+    )
   })
 })
 

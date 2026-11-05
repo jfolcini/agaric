@@ -147,6 +147,15 @@ describe('a Markdown file read as an import reads it', () => {
   })
 })
 
+describe('a leading BOM (#6277)', () => {
+  it('is no text: a buffer reads its front matter past it, and a paste drops it', () => {
+    const text = '---\nalias: hello\n---\n\nbody'
+    expect(parseDocument(`\uFEFF${text}`, null)).toEqual(parseDocument(text, null))
+    expect(parseDocument(text, null).blocks.map((block) => block.content)).toEqual(['body'])
+    expect(parsePastedText('\uFEFFbody').map((block) => block.content)).toEqual(['body'])
+  })
+})
+
 describe('the block at a line of a Document buffer', () => {
   let editor: Editor | null = null
 

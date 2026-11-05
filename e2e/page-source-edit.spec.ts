@@ -847,6 +847,43 @@ test.describe('Edit as Markdown on a 390 px phone @editor @pages @markdown @mobi
     await expect(staticBlock(page, GS1)).toContainText('knowledge base. Typed on a phone.')
   })
 
+  test('the page menu keeps its rows in place while it closes', async ({ page }) => {
+    await waitForBoot(page)
+    await openPageMobile(page, PAGE)
+    await pageActions(page).click()
+    const editSource = page.getByRole('menuitem', { name: 'Edit as Markdown', exact: true })
+    await expect(editSource).toBeVisible()
+    // Every frame from the click until the sheet has left: its rows, each with
+    // its offset from the sheet's top, so the slide itself does not count.
+    await page.evaluate(() => {
+      const frames: string[][] = []
+      Object.assign(window, { closingRows: frames })
+      const sample = () => {
+        const sheet = document.querySelector('[data-slot="sheet-content"]')
+        if (sheet == null) return
+        const top = sheet.getBoundingClientRect().top
+        frames.push(
+          [...sheet.querySelectorAll('[role="menuitem"]')].map(
+            (row) => `${row.textContent} @${Math.round(row.getBoundingClientRect().top - top)}`,
+          ),
+        )
+        requestAnimationFrame(sample)
+      }
+      requestAnimationFrame(sample)
+    })
+    await editSource.click()
+    await expect(page.getByRole('menu', { name: 'Page actions', exact: true })).toHaveCount(0)
+
+    const frames = await page.evaluate(
+      () => (window as unknown as { closingRows: string[][] }).closingRows,
+    )
+    // The first frame is the open menu; how many follow depends on the frame rate.
+    const [open, ...closing] = frames
+    expect(open?.some((row) => row.startsWith('Edit as Markdown'))).toBe(true)
+    expect(closing.length).toBeGreaterThan(0)
+    for (const frame of closing) expect(frame).toEqual(open)
+  })
+
   test('Cancel on the toolbar asks first when the buffer changed', async ({ page }) => {
     await waitForBoot(page)
     await openPageMobile(page, PAGE)
