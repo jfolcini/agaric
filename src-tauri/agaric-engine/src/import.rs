@@ -2341,10 +2341,27 @@ pub fn parse_pasted_text(text: &str) -> Vec<ParsedBlock> {
 }
 
 /// [`parse_pasted_text`] with the warnings of what it read lossily, such as a
-/// Tasks signifier it kept as text (#6277 D2).
+/// Tasks signifier it kept as text (#6277 D2). A front matter block at byte 0,
+/// which a page copy opens with, is no block, with one warning (#6277 E4); its
+/// lines stay blank, so a block after it names its own line.
 pub fn read_pasted_text(text: &str) -> ParseOutput {
-    let mut output = source_outline(text, ParseMode::Document, true, None);
+    // The front matter fence and its line count are measured on the normalized text,
+    // so this runs before `source_outline`, whose own pass then finds nothing to do.
+    let normalized = without_bom(text).replace("\r\n", "\n").replace('\r', "\n");
+    let front = front_matter_fence(&normalized).map(|(_, len)| len);
+    let body = match front {
+        Some(len) => {
+            let lines = normalized[..len].matches('\n').count();
+            format!("{}{}", "\n".repeat(lines), &normalized[len..])
+        }
+        None => normalized,
+    };
+    let mut output = source_outline(&body, ParseMode::Document, true, None);
     output.blocks.iter_mut().for_each(restore_text_anchor);
+    if front.is_some() {
+        let why = "the front matter the text opens with is a page's, so it was not pasted";
+        output.warnings.push(why.to_string());
+    }
     output
 }
 
@@ -2677,8 +2694,8 @@ struct Fence {
 /// The line scan's state: the blocks so far, whether each one's last line was
 /// code (which decides whether a trailing `^id` on it is an anchor,
 /// [`extract_block_anchors`]), the open blocks innermost last, the open fence,
-/// and what separates the current line from the last non-blank one. A buffer
-/// keeps a block's interior blank lines: whether a blank line is interior
+/// and what separates the current line from the last non-blank one. A block
+/// keeps its interior blank lines (#6032 N5): whether a blank line is interior
 /// is known only at the next non-blank line, so `blank_run` holds them until a
 /// continuation line takes them or another line drops them.
 struct Scan<'a> {
@@ -2741,11 +2758,7 @@ fn parse_block_lines(
     for (index, line) in normalized.lines().enumerate() {
         let trimmed = line.trim_start();
         if trimmed.is_empty() {
-            // A fence keeps its blank lines; a source buffer keeps a block's
-            // interior ones too.
-            if mode != ParseMode::Import || scan.fence.is_some() {
-                scan.blank_run.push(line);
-            }
+            scan.blank_run.push(line);
             scan.after_blank = true;
             continue;
         }
@@ -3107,10 +3120,10 @@ impl<'a> Scan<'a> {
         }
     }
 
-    /// Fold `line` into the innermost open block, less the indentation up to
-    /// its content column: an import normalises prose and keeps code as
-    /// written; a source buffer keeps every byte, interior blank lines
-    /// included.
+    /// Fold `line`, and the interior blank lines before it, into the innermost
+    /// open block, less the indentation up to its content column: an import
+    /// normalises prose and keeps code as written; a source buffer keeps every
+    /// byte.
     fn append(&mut self, line: &'a str, is_code: bool) {
         let top = self
             .open
@@ -3211,8 +3224,9 @@ fn clean_text(
 /// (newline-joined) to the owning block's content, as Logseq stores a
 /// multi-line bullet body. Returns how many `((uuid))` references were
 /// stripped from it. A code line is kept as written, less the indentation up
-/// to `width`, its block's content column, and so are the blank lines of its
-/// fence before it, which the scan held in `blank_run`.
+/// to `width`, its block's content column. The blank lines before it, which
+/// the scan held in `blank_run`, are interior to the block once it has text
+/// (#6032 N5): kept the same way before code, and empty before prose.
 fn append_continuation_line(
     last: &mut ParsedBlock,
     blank_run: &[&str],
@@ -3222,10 +3236,6 @@ fn append_continuation_line(
     kept_refs: &std::collections::HashSet<String>,
 ) -> usize {
     let (cleaned, removed) = if line_is_code {
-        for blank in blank_run {
-            last.content.push('\n');
-            last.content.push_str(dedent(blank, width));
-        }
         (dedent(line, width).to_string(), 0)
     } else {
         strip_block_refs_counted(
@@ -3242,6 +3252,14 @@ fn append_continuation_line(
     }
     if !cleaned.is_empty() {
         if !last.content.is_empty() {
+            for blank in blank_run {
+                last.content.push('\n');
+                last.content.push_str(if line_is_code {
+                    dedent(blank, width)
+                } else {
+                    ""
+                });
+            }
             last.content.push('\n');
         }
         last.content.push_str(&cleaned);
@@ -6369,6 +6387,14 @@ mod tests_l9 {
     }
 
     #[test]
+    fn a_paste_with_bom_and_crlf_front_matter_drops_it_and_keeps_later_lines() {
+        let out = read_pasted_text("\u{feff}---\r\nstatus: hello\r\n---\r\n- body");
+        let contents: Vec<_> = out.blocks.iter().map(|b| b.content.as_str()).collect();
+        assert_eq!(contents, ["body"]);
+        assert_eq!(out.warnings.len(), 1);
+    }
+
+    #[test]
     fn lf_frontmatter_still_stripped_after_normalization() {
         // Regression guard: the existing `parse_yaml_frontmatter_stripped`
         // fixture must keep passing after line-ending normalization is added.
@@ -7777,7 +7803,7 @@ mod tests_pasted_text_5140 {
 mod tests_block_grammar_5160 {
     use super::{
         ParsedBlock, parse_document_outline, parse_logseq_markdown, parse_markdown_file,
-        parse_pasted_text,
+        parse_pasted_text, read_pasted_text,
     };
 
     /// `(depth, content)` of each block.
@@ -8390,6 +8416,85 @@ mod tests_block_grammar_5160 {
         let md = "- ```\n  code\n- c\n";
         assert_eq!(shape(&parse_pasted_text(md)), [(0, "```\ncode"), (0, "c")]);
         assert_eq!(by_line(md, &[1]).blocks.len(), 1, "no id on line 3: code");
+    }
+
+    /// #6032 N5 — an import keeps a block's interior blank lines, so a Logseq
+    /// bullet's paragraphs and an Org section's (which `org-import.ts` writes
+    /// at its bullet's content column) stay paragraphs. Its leading blank
+    /// lines are not interior.
+    #[test]
+    fn an_import_keeps_a_blocks_interior_blank_lines() {
+        let md = "- First paragraph.\n\n  Second paragraph.\n- next\n";
+        assert_eq!(
+            shape(&parse_logseq_markdown(md).blocks),
+            [(0, "First paragraph.\n\nSecond paragraph."), (0, "next")]
+        );
+        let org =
+            "- Headline\n  Prose, line one\n  line two.\n\n  More prose.\n\n- Next headline\n";
+        assert_eq!(
+            shape(&parse_logseq_markdown(org).blocks),
+            [
+                (0, "Headline\nProse, line one\nline two.\n\nMore prose."),
+                (0, "Next headline")
+            ]
+        );
+        assert_eq!(
+            shape(&parse_logseq_markdown("-\n\n  text\n").blocks),
+            [(0, "text")]
+        );
+    }
+
+    /// N5's other side: a trailing blank line is no block's, before the next
+    /// block, a property line or the end, and a blank line before a dedent
+    /// still ends the block.
+    #[test]
+    fn an_import_drops_a_blocks_trailing_blank_lines() {
+        for md in ["- a\n  b\n\n- c\n", "- a\n  b\n\n\n- c\n"] {
+            assert_eq!(
+                shape(&parse_logseq_markdown(md).blocks),
+                [(0, "a\nb"), (0, "c")],
+                "{md:?}"
+            );
+        }
+        let out = parse_logseq_markdown("- a\n  b\n\n  key:: v\n\n");
+        assert_eq!(shape(&out.blocks), [(0, "a\nb")]);
+        assert_eq!(out.blocks[0].properties, [("key".into(), "v".into())]);
+        assert_eq!(
+            shape(&parse_logseq_markdown("- a\n\n  b\n\nc\n").blocks),
+            [(0, "a\n\nb"), (0, "c")]
+        );
+        assert_eq!(
+            shape(&parse_logseq_markdown("- a\n  - b\n\n  c\n").blocks),
+            [(0, "a"), (1, "b"), (1, "c")]
+        );
+    }
+
+    /// #6277 E4 — a paste drops a front matter block at byte 0, as a page
+    /// copy opens with one, with one warning, and its blocks keep their line
+    /// numbers. A `---` anywhere else, or one no `---` line closes, is text.
+    #[test]
+    fn a_paste_drops_the_front_matter_it_opens_with_6277() {
+        let read = read_pasted_text("---\naliases: [a]\n---\n\n# T\n\nx\n");
+        let contents: Vec<&str> = read.blocks.iter().map(|b| b.content.as_str()).collect();
+        assert_eq!(contents, ["# T", "x"]);
+        assert_eq!(
+            read.blocks[0].line,
+            Some(5),
+            "the dropped lines still count"
+        );
+        assert_eq!(read.warnings.len(), 1, "{:?}", read.warnings);
+
+        for text in ["x\n\n---\naliases: [a]\n---\n", "---\naliases: [a]\n"] {
+            let read = read_pasted_text(text);
+            assert!(
+                read.blocks
+                    .iter()
+                    .any(|b| b.content.starts_with("aliases:")),
+                "{text:?} reads its lines as text: {:?}",
+                read.blocks
+            );
+            assert!(read.warnings.is_empty(), "{:?}", read.warnings);
+        }
     }
 }
 

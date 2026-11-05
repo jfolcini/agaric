@@ -273,7 +273,11 @@ export interface DocumentBlock {
 
 export interface DocumentReading {
   blocks: DocumentBlock[]
-  /** Tasks signifiers kept as text, counted (#6277 D2), then one per fence a line carrying an id ended (D5). */
+  /**
+   * Tasks signifiers kept as text, counted (#6277 D2), then one per fence a
+   * line carrying an id ended (D5), or, for a paste, the front matter it
+   * dropped (E4).
+   */
   warnings: string[]
 }
 
@@ -453,14 +457,7 @@ const ownsFrom = (open: Open): number => (open.kind === 'bullet' ? open.content 
  * `key:: value` lines after it left blank, which a block's line numbers count.
  */
 function blockText(normalized: string): string {
-  let at = 0
-  const afterOpen = normalized.startsWith('---') ? normalized.slice(3) : null
-  const close = afterOpen?.indexOf('\n---') ?? -1
-  if (afterOpen !== null && close >= 0) {
-    const tail = afterOpen.slice(close + 4)
-    const lineEnd = tail.indexOf('\n')
-    at = 3 + close + 4 + (lineEnd < 0 ? tail.length : lineEnd + 1)
-  }
+  let at = frontMatterLength(normalized)
   for (const line of normalized.slice(at).split(/(?<=\n)/)) {
     const trimmed = trim(line)
     const property = splitPropertyLine(trimmed)
@@ -468,8 +465,25 @@ function blockText(normalized: string): string {
     if (trimmed !== '' && !page) break
     at += line.length
   }
-  const read = normalized.slice(0, at)
-  return '\n'.repeat(read.split('\n').length - 1) + normalized.slice(at)
+  return blanked(normalized, at)
+}
+
+/**
+ * `front_matter_fence`: the bytes a front matter fence opening `normalized`
+ * takes through its closing `---` line, `0` when none closes it.
+ */
+function frontMatterLength(normalized: string): number {
+  const afterOpen = normalized.startsWith('---') ? normalized.slice(3) : null
+  const close = afterOpen?.indexOf('\n---') ?? -1
+  if (afterOpen === null || close < 0) return 0
+  const tail = afterOpen.slice(close + 4)
+  const lineEnd = tail.indexOf('\n')
+  return 3 + close + 4 + (lineEnd < 0 ? tail.length : lineEnd + 1)
+}
+
+/** `normalized` with its first `length` bytes left blank, which a block's line numbers count. */
+function blanked(normalized: string, length: number): string {
+  return '\n'.repeat(normalized.slice(0, length).split('\n').length - 1) + normalized.slice(length)
 }
 
 /**
@@ -761,8 +775,19 @@ export function parseDocument(
  * one, `+ x` a plain one and `- [ ] x` a task (#5691 D2, D4).
  */
 export function parsePastedText(text: string): DocumentBlock[] {
+  return readPastedText(text).blocks
+}
+
+/**
+ * `import::read_pasted_text`: {@link parsePastedText} with the warnings of
+ * what it read lossily. A front matter block at byte 0, which a page copy
+ * opens with, is no block, with one warning (#6277 E4).
+ */
+export function readPastedText(text: string): DocumentReading {
+  const normalized = readerText(text)
+  const front = frontMatterLength(normalized)
   const scan = new Scan(null, isUlid, true)
-  scan.scan(readerText(text).split('\n'))
+  scan.scan(blanked(normalized, front).split('\n'))
   scan.extractAnchors()
   for (const block of scan.blocks) {
     const word = block.anchor
@@ -771,7 +796,10 @@ export function parsePastedText(text: string): DocumentBlock[] {
     block.anchor = null
   }
   scan.readTaskFields()
-  return scan.blocks
+  if (front > 0) {
+    scan.warnings.push("the front matter the text opens with is a page's, so it was not pasted")
+  }
+  return { blocks: scan.blocks, warnings: scan.warnings }
 }
 
 /**

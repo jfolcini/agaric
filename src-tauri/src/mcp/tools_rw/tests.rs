@@ -3727,7 +3727,7 @@ async fn each_write_tool_opens_one_command_transaction_5402() {
         opened.push((name, n));
     }
     settle(&mat).await;
-    let base = editable_source(&pool, &mat, &page, &space).await;
+    let base = read_markdown(&pool, &mat, &page, &space).await;
     let (_, n) = command_txs_of(
         &tools,
         "edit_page_markdown",
@@ -4265,8 +4265,8 @@ async fn batch_delete_takes_the_descendants_out_of_the_engine_5399() {
     );
 }
 
-/// The page's source as the RO `get_page_markdown` hands an agent to edit.
-async fn editable_source(pool: &SqlitePool, mat: &Materializer, page: &str, space: &str) -> String {
+/// The page's Markdown as the RO `get_page_markdown` hands it to an agent.
+async fn read_markdown(pool: &SqlitePool, mat: &Materializer, page: &str, space: &str) -> String {
     let ro = crate::mcp::tools_ro::ReadOnlyTools::new(
         pool.clone(),
         pool.clone(),
@@ -4277,7 +4277,7 @@ async fn editable_source(pool: &SqlitePool, mat: &Materializer, page: &str, spac
     let read = ro
         .call_tool(
             "get_page_markdown",
-            json!({ "page_id": page, "editable": true, "space_id": space }),
+            json!({ "page_id": page, "space_id": space }),
             &test_ctx_agent(),
         )
         .await
@@ -4310,7 +4310,7 @@ async fn edit_page_markdown_round_trip_writes_one_move_5399() {
     let b = mk_child_of(&pool, &mat, &page, "B").await;
     let c = mk_child_of(&pool, &mat, &page, "C").await;
     settle(&mat).await;
-    let base = editable_source(&pool, &mat, &page, &space).await;
+    let base = read_markdown(&pool, &mat, &page, &space).await;
     let since = last_seq(&pool).await;
 
     let result = tools
@@ -4344,7 +4344,7 @@ async fn edit_page_markdown_stale_base_is_refused_5399() {
     let a = mk_child_of(&pool, &mat, &page, "A").await;
     let b = mk_child_of(&pool, &mat, &page, "B").await;
     settle(&mat).await;
-    let base = editable_source(&pool, &mat, &page, &space).await;
+    let base = read_markdown(&pool, &mat, &page, &space).await;
     crate::commands::edit_block_inner(&pool, DEV, &mat, BlockId::from_trusted(&b), "B2".into())
         .await
         .unwrap();
@@ -4381,7 +4381,7 @@ async fn edit_page_markdown_cross_space_refused_5399() {
     let a = mk_child_of(&pool, &mat, &page, "A").await;
     let b = mk_child_of(&pool, &mat, &page, "B").await;
     settle(&mat).await;
-    let base = editable_source(&pool, &mat, &page, &other).await;
+    let base = read_markdown(&pool, &mat, &page, &other).await;
     let before = op_count(&pool).await;
 
     let err = tools
@@ -4483,20 +4483,20 @@ fn without_anchors(markdown: &str) -> String {
     lines.join("\n") + "\n"
 }
 
-/// The editable read is the page's Document buffer, and sent back unchanged
-/// it saves as nothing (#6190).
+/// What get_page_markdown reads is the page's Document buffer, and sent back
+/// unchanged as its own base it saves as nothing (#6190, #6277 E4).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn edit_page_markdown_of_an_unchanged_read_writes_nothing_6190() {
     let (tools, mat, pool, space, _dir) = mk_tools().await;
     let (page, ids) = mk_list_page(&pool, &mat, &space, "P").await;
-    let base = editable_source(&pool, &mat, &page, &space).await;
+    let base = read_markdown(&pool, &mat, &page, &space).await;
     let [x, y, one, two, t, p] = &ids[..] else {
         panic!("six blocks");
     };
     assert_eq!(
         base,
         format!("- x ^{x}\n  + y ^{y}\n1. one ^{one}\n2. two ^{two}\n- [ ] t ^{t}\n\np ^{p}\n"),
-        "the editable read is the Document buffer"
+        "the read is the Document buffer"
     );
     let before = op_count(&pool).await;
 
@@ -4524,7 +4524,7 @@ async fn edit_page_markdown_of_an_unchanged_code_block_writes_nothing_6190() {
     let code = mk_child_of(&pool, &mat, &page, "```sh\necho hi\n```").await;
     let after = mk_child_of(&pool, &mat, &page, "after").await;
     settle(&mat).await;
-    let base = editable_source(&pool, &mat, &page, &space).await;
+    let base = read_markdown(&pool, &mat, &page, &space).await;
     assert_eq!(
         base,
         format!("```sh\necho hi\n```\n^{code}\n\nafter ^{after}\n"),
@@ -4553,7 +4553,7 @@ async fn edit_page_markdown_of_an_unchanged_crlf_or_bom_read_writes_nothing_6277
     let (tools, mat, pool, space, _dir) = mk_tools().await;
     let (page, _) = mk_list_page(&pool, &mat, &space, "P").await;
     seed_aliases(&pool, &mat, &page, &["alt"]).await;
-    let base = editable_source(&pool, &mat, &page, &space).await;
+    let base = read_markdown(&pool, &mat, &page, &space).await;
     assert!(
         base.starts_with("---\n"),
         "the read opens with front matter: {base}"
@@ -4587,8 +4587,9 @@ async fn edit_page_markdown_of_an_unchanged_crlf_or_bom_read_writes_nothing_6277
     );
 }
 
-/// What an agent reads, appended under another page, reads back as the same
-/// blocks with the same list kinds, under new ids (#6190).
+/// What an agent reads, appended under another page as it is, lands as the
+/// same blocks with the same list kinds, under new ids, and nothing else: the
+/// title is a field of the read, not a line of it (#6190, #6277 E4).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_page_markdown_appended_reads_back_as_the_blocks_read_6190() {
     let (tools, mat, pool, space, _dir) = mk_tools().await;
@@ -4596,14 +4597,11 @@ async fn get_page_markdown_appended_reads_back_as_the_blocks_read_6190() {
     let copy = mk_page(&pool, &mat, &space, "Copy").await;
     settle(&mat).await;
     let read = agent_read(&tools, &page, &space).await;
-    let blocks = read
-        .strip_prefix("# P\n\n")
-        .expect("the title, then the blocks");
 
     tools
         .call_tool(
             "append_markdown",
-            json!({ "parent_id": copy, "markdown": blocks, "space_id": space }),
+            json!({ "parent_id": copy, "markdown": read, "space_id": space }),
             &test_ctx_agent(),
         )
         .await
@@ -4612,12 +4610,12 @@ async fn get_page_markdown_appended_reads_back_as_the_blocks_read_6190() {
     let again = agent_read(&tools, &copy, &space).await;
 
     assert_eq!(
-        without_anchors(again.strip_prefix("# Copy\n\n").expect("the title")),
-        without_anchors(blocks),
+        without_anchors(&again),
+        without_anchors(&read),
         "read: {read}\nread again: {again}"
     );
     assert_eq!(
-        without_anchors(blocks),
+        without_anchors(&read),
         "- x\n  + y\n1. one\n2. two\n- [ ] t\n\np\n",
         "each list kind is read as its own"
     );

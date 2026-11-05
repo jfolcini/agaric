@@ -1191,9 +1191,25 @@
       ]
     },
     {
-      "name": "front matter is no page's: a break, a paragraph and a break",
-      "text": "---\ntitle: x\n---\n",
+      "name": "front matter at byte 0 is no block (#6277 E4)",
+      "text": "---\ntitle: x\n---\n\n# T\n",
       "tree": [
+        {
+          "content": "# T",
+          "depth": 0,
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "name": "front matter after text is a break, a paragraph and a break",
+      "text": "x\n\n---\ntitle: x\n---\n",
+      "tree": [
+        {
+          "content": "x",
+          "depth": 0,
+          "properties": {}
+        },
         {
           "content": "---",
           "depth": 0,
