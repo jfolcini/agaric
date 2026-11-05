@@ -985,8 +985,8 @@ pub fn detect_attachment_refs(content: &str, code_spans: &[(usize, usize)]) -> V
         if inner.is_empty() || is_skippable_attachment_ref(inner) {
             continue;
         }
-        // Any other suffix is Obsidian's display text, which Agaric has no
-        // place for.
+        // A suffix that is no size is Obsidian's display text, which Agaric
+        // has no place for.
         let alt = match cap.get(2) {
             Some(size) if EMBED_SIZE_RE.is_match(size.as_str()) => format!("|{}", size.as_str()),
             _ => String::new(),
