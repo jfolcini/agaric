@@ -46,6 +46,11 @@ items:
     value_type: text
   - builtin: true
     created_at: "[TIMESTAMP]"
+    key: meeting_date
+    options: ~
+    value_type: date
+  - builtin: true
+    created_at: "[TIMESTAMP]"
     key: priority
     options: "[\"1\",\"2\",\"3\"]"
     value_type: select

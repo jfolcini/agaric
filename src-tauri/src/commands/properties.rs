@@ -1814,7 +1814,10 @@ pub async fn list_property_defs_inner(
             .filter(|def| cursor_flag.is_none() || def.key > cursor_key)
             .map(builtin_definition),
     );
-    rows.sort_by(|a, b| a.key.cmp(&b.key));
+    // A space's row for a key that became a built-in later (`meeting_date`,
+    // #5364) yields to the built-in.
+    rows.sort_by(|a, b| a.key.cmp(&b.key).then(b.builtin.cmp(&a.builtin)));
+    rows.dedup_by(|later, earlier| later.key == earlier.key);
     rows.truncate(usize::try_from(fetch_limit).unwrap_or(usize::MAX));
     pagination::build_page_response(rows, page.limit, |last| {
         pagination::Cursor::for_id(last.key.clone())

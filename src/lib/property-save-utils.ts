@@ -64,6 +64,7 @@ export const BUILTIN_PROPERTY_DEFS: readonly BuiltinPropertyDef[] = [
   { key: 'space', value_type: 'ref', options: null },
   { key: 'is_space', value_type: 'select', options: ['true'] },
   { key: 'listStyle', value_type: 'select', options: ['bullet', 'ordered'] },
+  { key: 'meeting_date', value_type: 'date', options: null },
 ]
 
 /**

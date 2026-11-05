@@ -250,6 +250,7 @@
         "due_date#value_type=date#options=null#builtin=true",
         "is_space#value_type=select#options=[\"true\"]#builtin=true",
         "listStyle#value_type=select#options=[\"bullet\",\"ordered\"]#builtin=true",
+        "meeting_date#value_type=date#options=null#builtin=true",
         "priority#value_type=select#options=[\"1\",\"2\",\"3\"]#builtin=true",
         "prose#value_type=text#options=null#builtin=false",
         "repeat#value_type=text#options=null#builtin=true",
