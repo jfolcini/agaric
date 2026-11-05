@@ -32,9 +32,8 @@ import {
   resolveAndInsertPickerToken,
 } from '@/editor/extensions/picker-plugin'
 import type { PickerItem } from '@/editor/SuggestionList'
-import { foldForSearch } from '@/lib/fold-for-search'
 import { t } from '@/lib/i18n'
-import { scanNameTokens } from '@/lib/name-tokens'
+import { nameKey, scanNameTokens } from '@/lib/name-tokens'
 
 export const atTagPickerPluginKey = new PluginKey('atTagPicker')
 export const hashTagPickerPluginKey = new PluginKey('hashTagPicker')
@@ -128,7 +127,7 @@ function tagPicker(
               ? onCreate
               : async (name) => {
                   const existing = (await options.items(name)).find(
-                    (i) => !i.isCreate && foldForSearch(i.label) === foldForSearch(name),
+                    (i) => !i.isCreate && nameKey(i.label) === nameKey(name),
                   )
                   return existing ? existing.id : onCreate(name)
                 },
@@ -178,9 +177,7 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
             insertPos: range.from,
             items: extensionOptions.items,
             matchItem: (items, text) =>
-              items.find(
-                (item) => !item.isCreate && item.label.toLowerCase() === text.toLowerCase(),
-              ),
+              items.find((item) => !item.isCreate && nameKey(item.label) === nameKey(text)),
             tokenFor: (id) => ({ type: 'tag_ref', attrs: { id } }),
             onCreate: extensionOptions.onCreate,
             loggerComponent: 'AtTagPicker',
