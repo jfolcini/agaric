@@ -1962,7 +1962,7 @@ pub(super) fn push_block_bullet(
             }
             true
         } else {
-            in_fence = import::fence_opener(written);
+            in_fence = import::document_fence_opener(written);
             in_fence.is_some()
         };
         code.any |= code.last;
