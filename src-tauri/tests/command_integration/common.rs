@@ -23,7 +23,7 @@ pub const DEV: &str = "cmd-test-device-001";
 pub async fn test_pool() -> (SqlitePool, TempDir) {
     let dir = TempDir::new().unwrap();
     let db_path: PathBuf = dir.path().join("test.db");
-    let pool = agaric_lib::commands::tests::common::init_pool_from_template(&db_path).await;
+    let pool = agaric_lib::db::init_pool(&db_path).await.unwrap();
     (pool, dir)
 }
 

@@ -20,9 +20,7 @@ use sqlx::SqlitePool;
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
-use crate::commands::tests::common::{
-    DEV, TEST_SPACE_ID, ensure_test_space, init_pool_from_template, mark_block_as_space,
-};
+use crate::commands::tests::common::{DEV, TEST_SPACE_ID, ensure_test_space, mark_block_as_space};
 use crate::commands::{
     PropertyMergeCounts, capture_op_refs, create_page_in_space_inner, create_property_def_inner,
     delete_property_inner, merge_property_key_inner, preview_property_merge_inner,
@@ -183,7 +181,9 @@ async fn set_text(case: &Case, page: usize, key: &str, value: &str) -> OpRef {
 
 async fn new_case() -> Case {
     let dir = TempDir::new().unwrap();
-    let pool = init_pool_from_template(&dir.path().join("test.db")).await;
+    let pool = crate::db::init_pool(&dir.path().join("test.db"))
+        .await
+        .unwrap();
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;

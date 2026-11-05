@@ -31,44 +31,73 @@ pub async fn test_pool() -> (SqlitePool, TempDir) {
     (pool, dir)
 }
 
-/// [`test_pool`] for a test that builds many pools, such as a proptest with
-/// one per case: migrating is most of what a pool costs, so this process
-/// migrates once and every call starts from a copy of that. [`init_pool`]
-/// still runs on the copy and applies anything missing.
-pub async fn test_pool_from_template() -> (SqlitePool, TempDir) {
-    static MIGRATED: tokio::sync::OnceCell<Vec<u8>> = tokio::sync::OnceCell::const_new();
-    let template = MIGRATED
-        .get_or_init(|| async {
-            let (pool, dir) = test_pool().await;
-            // Not a copy of `test.db`: migrated pages may still sit in its WAL.
-            let snapshot = dir.path().join("snapshot.db");
-            sqlx::query("VACUUM INTO ?")
-                .bind(snapshot.to_str().expect("temp path is UTF-8"))
-                .execute(&pool)
-                .await
-                .unwrap();
-            pool.close().await;
-            std::fs::read(&snapshot).unwrap()
-        })
-        .await;
-    let dir = TempDir::new().unwrap();
-    let db_path = dir.path().join("test.db");
-    std::fs::write(&db_path, template).unwrap();
-    (init_pool(&db_path).await.unwrap(), dir)
-}
-
 /// [`test_pool`] at a caller-chosen path — the same recovery-free stand-in
 /// for the app's `init_pool`, with its signature, so the materializer tests
 /// that moved down with #4502 keep their `init_pool(&db_path)` call shape.
 pub async fn init_pool(
     db_path: &std::path::Path,
 ) -> Result<SqlitePool, agaric_core::error::AppError> {
+    seed_from_migrated_template(db_path).await;
+    migrate_at(db_path).await
+}
+
+async fn migrate_at(db_path: &std::path::Path) -> Result<SqlitePool, agaric_core::error::AppError> {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(5)
         .connect_with(crate::db::base_connect_options(db_path))
         .await?;
     sqlx::migrate!("../migrations").run(&pool).await?;
     Ok(pool)
+}
+
+/// Give a database that does not exist yet the migrated schema by copying it,
+/// instead of running every migration. Migrating is most of what a fresh test
+/// database costs, and nextest runs each test in its own process, so the
+/// migrated copy lives on disk, named for the migrations' checksums: a changed
+/// migration names a new copy. The migrator still runs on the result and
+/// applies anything missing. A path that exists, or whose directory does not,
+/// is left alone for the caller's own open to handle.
+pub async fn seed_from_migrated_template(db_path: &std::path::Path) {
+    if db_path.exists() || !db_path.parent().is_some_and(std::path::Path::is_dir) {
+        return;
+    }
+    let template = migrated_template().await;
+    std::fs::copy(&template, db_path).unwrap_or_else(|e| {
+        panic!(
+            "copying the migrated template {} to {}: {e}",
+            template.display(),
+            db_path.display()
+        )
+    });
+}
+
+async fn migrated_template() -> std::path::PathBuf {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for migration in sqlx::migrate!("../migrations").iter() {
+        migration.version.hash(&mut hasher);
+        migration.checksum.hash(&mut hasher);
+    }
+    let template =
+        std::env::temp_dir().join(format!("agaric-migrated-{:016x}.db", hasher.finish()));
+    if template.exists() {
+        return template;
+    }
+    // Processes racing here each build their own copy and rename it into place;
+    // the rename is atomic and every copy is the same schema.
+    let dir = TempDir::new().unwrap();
+    let pool = migrate_at(&dir.path().join("build.db")).await.unwrap();
+    // `VACUUM INTO`, not a file copy: migrated pages may still sit in the WAL.
+    let staged = template.with_extension(format!("{}.tmp", std::process::id()));
+    let _ = std::fs::remove_file(&staged);
+    sqlx::query("VACUUM INTO ?")
+        .bind(staged.to_str().expect("temp path is UTF-8"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+    std::fs::rename(&staged, &template).unwrap();
+    template
 }
 
 /// Insert a block directly into the `blocks` table (bypasses the command
@@ -130,17 +159,45 @@ mod tests {
     /// A row written through one caller's pool, before the next caller's pool
     /// exists, is absent from it: no two callers share a database.
     #[tokio::test]
-    async fn test_pool_from_template_gives_each_caller_its_own_database() {
+    async fn test_pool_gives_each_caller_its_own_database() {
         const BLOCK: &str = "01HZ0000000000000000000001";
-        let (first, _first_dir) = test_pool_from_template().await;
+        let (first, _first_dir) = test_pool().await;
         insert_block(&first, BLOCK, "page", "first", None, None).await;
 
-        let (second, _second_dir) = test_pool_from_template().await;
+        let (second, _second_dir) = test_pool().await;
         let seen: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
             .bind(BLOCK)
             .fetch_one(&second)
             .await
             .unwrap();
         assert_eq!(seen, 0);
+    }
+
+    /// A new path gets every migration without the migrator running on it.
+    #[tokio::test]
+    async fn seeding_a_new_path_applies_every_migration() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("seeded.db");
+        seed_from_migrated_template(&db_path).await;
+
+        let raw = sqlx::SqlitePool::connect_with(crate::db::base_connect_options(&db_path))
+            .await
+            .unwrap();
+        let applied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+            .fetch_one(&raw)
+            .await
+            .unwrap();
+        let embedded = i64::try_from(sqlx::migrate!("../migrations").iter().count()).unwrap();
+        assert_eq!(applied, embedded);
+    }
+
+    /// A file already at the path is the caller's database: seeding keeps it.
+    #[tokio::test]
+    async fn seeding_leaves_an_existing_file_alone() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("existing.db");
+        std::fs::write(&db_path, b"not a template").unwrap();
+        seed_from_migrated_template(&db_path).await;
+        assert_eq!(std::fs::read(&db_path).unwrap(), b"not a template");
     }
 }
