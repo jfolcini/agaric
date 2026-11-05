@@ -553,3 +553,25 @@ describe('the typed rule agrees with the shared name rule (#5160 D8)', () => {
     expect(rows.some((row) => row.input.includes('x.com/#install'))).toBe(true)
   })
 })
+
+describe('a typed tag matches an existing one by `nameKey` (#6278 I1)', () => {
+  const cafe = async (): Promise<PickerItem[]> => [{ id: 'TAG_CAFE', label: 'Café' }]
+
+  it('resolves an NFD-spelled `#name` to the NFC tag of that name', async () => {
+    const { editor: ed, createTag } = setup('', { items: cafe })
+    type(ed, '#Café ')
+    await vi.waitFor(() => expect(inline(ed)).toEqual(['#TAG_CAFE', ' ']))
+    expect(createTag).not.toHaveBeenCalled()
+  })
+
+  it('creates `cafe` from a stale create row when only `café` exists', async () => {
+    const { editor: ed, createTag } = setup('', { items: cafe })
+    type(ed, '#cafe')
+    await vi.waitFor(() => expect(rendered.props.get(hashTagPickerPluginKey)).toBeDefined())
+    rendered.props
+      .get(hashTagPickerPluginKey)
+      ?.command({ id: '__create__', label: 'caf', isCreate: true })
+    await vi.waitFor(() => expect(inline(ed)).toEqual(['#NEW_cafe']))
+    expect(createTag).toHaveBeenCalledWith('cafe')
+  })
+})

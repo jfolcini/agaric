@@ -5730,8 +5730,9 @@ fn warn_dropped_labels(warnings: &mut Vec<String>, n: usize) {
 /// (NFC → Unicode lowercase → NFC) and NOCASE folds only ASCII A–Z, so we fold
 /// in Rust here to catch every case-variant the Loro engine (which keys by
 /// `normalize_tag_name`) already merges. Tag count is bounded by the user's
-/// vocabulary, so the snapshot is cheap. `create_tag_in_space_inner` reads the
-/// same map to resolve a create to the existing same-name tag (#5236).
+/// vocabulary, so the snapshot is cheap. Its readers: the inbound resolve pass
+/// (`resolve_tag_names`), the page buffer render (`load_name_snapshot`) and
+/// the MCP name lookup (`match_tag_names`).
 pub(crate) async fn snapshot_tags_by_norm(
     conn: &mut sqlx::SqliteConnection,
     space_id: &str,

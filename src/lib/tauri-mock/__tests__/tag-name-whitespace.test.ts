@@ -13,6 +13,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import type { PageBuffer, PageSourceReport } from '@/lib/bindings'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, makeBlock, pageAliases, properties, seedBlocks } from '@/lib/tauri-mock/seed'
 
@@ -109,5 +110,23 @@ describe('create_block keeps resolving a tag named before the rule (#6278 I4)', 
 
     expect(row.id).toBe(SPACED)
     expect(liveTags()).toEqual(['deep work'])
+  })
+})
+
+describe('Edit as Markdown names the tag it respells (#6278 I4)', () => {
+  it('names a new bullet’s `#[[multi word]]` in apply_page_source’s warnings', () => {
+    const base = dispatch('get_page_buffer', { pageId: PAGE }) as PageBuffer
+    const report = dispatch('apply_page_source', {
+      pageId: PAGE,
+      source: `${base.text}- b #[[multi word]] there\n`,
+      baseSource: base.source,
+      merge: false,
+      lineIds: [...base.line_ids, null],
+    }) as PageSourceReport
+
+    expect(liveTags()).toEqual(['multi-word'])
+    expect(report.warnings).toEqual([
+      "tag 'multi word' was read as 'multi-word': a tag name holds no whitespace",
+    ])
   })
 })
