@@ -1875,7 +1875,7 @@ fn reminders_tick_job(pools: &db::DbPools, app: tauri::AppHandle) -> maintenance
     let reminders_pool = pools.write.clone();
     maintenance::MaintenanceJob {
         name: "reminders_tick",
-        interval: std::time::Duration::from_secs(60),
+        interval: maintenance::tick_interval(),
         last_run: None,
         predicate: Box::new(|| true),
         run: Box::new(move || {
