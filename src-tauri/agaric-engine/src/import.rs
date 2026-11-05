@@ -1925,9 +1925,9 @@ pub fn inline_code_spans(content: &str) -> Vec<(usize, usize)> {
 
 /// Guess an attachment MIME type from a filename/path extension (#1925).
 ///
-/// Covers the common vault asset types (images, audio, pdf, plain text, json,
-/// zip and tar archives). Falls back to `application/octet-stream` for unknown
-/// extensions — the caller then skips+warns because the attachment MIME
+/// Covers every extension the app takes as an attachment (`ATTACHMENT_EXTENSIONS`
+/// in the app crate, whose test pins the two together). Falls back to
+/// `application/octet-stream` for unknown extensions — the caller then skips+warns because the attachment MIME
 /// allow-list rejects it (matching the `add_attachment_with_bytes_inner`
 /// validation), so an unrecognized asset never silently lands with a wrong
 /// type.
@@ -1949,14 +1949,16 @@ pub fn guess_attachment_mime(path: &str) -> String {
         "avif" => "image/avif",
         "mp3" => "audio/mpeg",
         "m4a" => "audio/mp4",
+        "aac" => "audio/aac",
         "wav" => "audio/wav",
-        "ogg" => "audio/ogg",
+        "ogg" | "oga" | "opus" => "audio/ogg",
+        "webm" => "audio/webm",
         "flac" => "audio/flac",
         "pdf" => "application/pdf",
         "json" => "application/json",
         "zip" => "application/zip",
         "tar" => "application/x-tar",
-        "txt" | "md" | "csv" | "log" => "text/plain",
+        "txt" | "md" | "markdown" | "csv" | "log" => "text/plain",
         _ => "application/octet-stream",
     }
     .to_string()
