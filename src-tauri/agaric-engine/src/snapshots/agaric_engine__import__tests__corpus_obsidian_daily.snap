@@ -15,19 +15,23 @@ document:
       is_code: false
       properties: []
     - block_anchor: ~
-      content: Call the bank 📅 2026-09-25
+      content: Call the bank
       depth: 0
       is_code: false
       properties:
         - - todo_state
           - TODO
+        - - due_date
+          - 2026-09-25
     - block_anchor: ~
-      content: Draft the RFC ⏫
+      content: Draft the RFC
       depth: 0
       is_code: false
       properties:
         - - todo_state
           - TODO
+        - - priority
+          - "1"
     - block_anchor: ~
       content: Outline
       depth: 1
@@ -36,12 +40,14 @@ document:
         - - todo_state
           - TODO
     - block_anchor: ~
-      content: Collect feedback ✅ 2026-09-23
+      content: Collect feedback
       depth: 1
       is_code: false
       properties:
         - - todo_state
           - DONE
+        - - completed_at
+          - 2026-09-23
     - block_anchor: ~
       content: "## Log"
       depth: 0
@@ -77,19 +83,23 @@ import:
       is_code: false
       properties: []
     - block_anchor: ~
-      content: Call the bank 📅 2026-09-25
+      content: Call the bank
       depth: 2
       is_code: false
       properties:
         - - todo_state
           - TODO
+        - - due_date
+          - 2026-09-25
     - block_anchor: ~
-      content: Draft the RFC ⏫
+      content: Draft the RFC
       depth: 2
       is_code: false
       properties:
         - - todo_state
           - TODO
+        - - priority
+          - "1"
     - block_anchor: ~
       content: Outline
       depth: 3
@@ -98,12 +108,14 @@ import:
         - - todo_state
           - TODO
     - block_anchor: ~
-      content: Collect feedback ✅ 2026-09-23
+      content: Collect feedback
       depth: 3
       is_code: false
       properties:
         - - todo_state
           - DONE
+        - - completed_at
+          - 2026-09-23
     - block_anchor: ~
       content: "## Log"
       depth: 1
@@ -134,19 +146,23 @@ paste:
     is_code: false
     properties: []
   - block_anchor: ~
-    content: Call the bank 📅 2026-09-25
+    content: Call the bank
     depth: 0
     is_code: false
     properties:
       - - todo_state
         - TODO
+      - - due_date
+        - 2026-09-25
   - block_anchor: ~
-    content: Draft the RFC ⏫
+    content: Draft the RFC
     depth: 0
     is_code: false
     properties:
       - - todo_state
         - TODO
+      - - priority
+        - "1"
   - block_anchor: ~
     content: Outline
     depth: 1
@@ -155,12 +171,14 @@ paste:
       - - todo_state
         - TODO
   - block_anchor: ~
-    content: Collect feedback ✅ 2026-09-23
+    content: Collect feedback
     depth: 1
     is_code: false
     properties:
       - - todo_state
         - DONE
+      - - completed_at
+        - 2026-09-23
   - block_anchor: ~
     content: "## Log"
     depth: 0

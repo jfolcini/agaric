@@ -182,8 +182,9 @@ describe('Agaric real-backend due date in the agenda (#5365) @journal', () => {
     await reopenTheNewPage()
     const source = await openPageSource([TASK])
     const text = await pageSourceText()
-    expect(text).toContain(`- [ ] ${TASK}`)
-    expect(text).toContain(`due_date:: ${today}`)
+    // A task writes its due date as a Tasks signifier (#6277 decision 4), after
+    // the trailing space that typing ` /due` left in its text.
+    expect(text).toMatch(new RegExp(`- \\[ \\] ${TASK} +📅 ${today}`))
     const lines = await pageSourceLines()
     await setPageSourceLines(
       lines.map(({ text: line, id }) => ({

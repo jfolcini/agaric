@@ -7869,6 +7869,98 @@ async fn paste_blocks_splices_the_document_into_the_anchors_text() {
     }
 }
 
+/// #6277 D2 — a done task pasted into an empty block makes it that task, its
+/// `✅` date its `completed_at`, not the day of the paste.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_into_a_block_keeps_a_done_tasks_completion_date() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let anchor = dup_child(&pool, &mat, &page, "").await;
+    settle(&mat).await;
+
+    let resp = paste_into(&pool, &mat, &anchor, "- [x] ship ✅ 2026-10-03", ("", "")).await;
+
+    assert_eq!(resp.inner.warnings, Vec::<String>::new());
+    assert_eq!(
+        dup_children(&pool, &page).await,
+        vec![(anchor.to_string(), "ship".to_owned())]
+    );
+    assert_eq!(
+        dup_stamps(&pool, &anchor).await,
+        ["completed_at=2026-10-03"]
+    );
+}
+
+/// #6277 D2 — a paste says which Tasks signifiers it kept as text, and a done
+/// task it creates after the first keeps its `✅` date as well.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_reports_unread_tasks_signifiers_and_keeps_every_done_date() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let anchor = dup_child(&pool, &mat, &page, "").await;
+    settle(&mat).await;
+
+    let resp = paste_into(
+        &pool,
+        &mat,
+        &anchor,
+        "- [ ] call ⏳ tomorrow\n- [x] ship ✅ 2026-10-03",
+        ("", ""),
+    )
+    .await;
+
+    assert_eq!(
+        resp.inner.warnings,
+        ["1 Tasks signifier(s) could not be read and were kept as text"]
+    );
+    let children = dup_children(&pool, &page).await;
+    let texts: Vec<&str> = children
+        .iter()
+        .map(|(_, content)| content.as_str())
+        .collect();
+    assert_eq!(texts, ["call ⏳ tomorrow", "ship"]);
+    let ship = BlockId::from_string(children[1].0.clone()).unwrap();
+    assert_eq!(dup_stamps(&pool, &ship).await, ["completed_at=2026-10-03"]);
+}
+
+/// #6277 D3 — a copy of a done task is done on the day its original was, not on
+/// the day it was copied.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_keeps_a_done_tasks_completion_date() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Plan").await;
+    let original = dup_child(&pool, &mat, &page, "ship").await;
+    sqlx::query("UPDATE blocks SET todo_state = 'DONE' WHERE id = ?")
+        .bind(original.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_date) \
+         VALUES (?, 'completed_at', '2026-10-03')",
+    )
+    .bind(original.as_str())
+    .execute(&pool)
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let copy = duplicate(&pool, &mat, &original).await;
+
+    assert_eq!(copy.len(), 1);
+    assert_eq!(
+        dup_storage(&pool, &copy[0].id).await[0],
+        r#"columns todo=Some("DONE") priority=None scheduled=None due=None"#
+    );
+    assert_eq!(
+        dup_stamps(&pool, &copy[0].id).await,
+        ["completed_at=2026-10-03"]
+    );
+}
+
 /// A paste that reads as one block edits the anchor and creates nothing: the
 /// block is joined between the two halves of the text.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -15142,6 +15234,8 @@ async fn export_emits_bulleted_indented_block_content_1916() {
 /// checkbox after the bullet (`- [ ] `, `[/]`, `[x]`, `[-]`), a state outside
 /// that alphabet as a `todo_state::` line, and priority and the dates as
 /// indented `key:: value` property lines, all of which the importer reads back.
+/// A checkbox task writes its dates as Tasks signifiers instead (#6277
+/// decision 4), and a priority outside the levels stays a line.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn export_emits_task_checkbox_and_metadata_property_lines_1916() {
     let (pool, _dir) = test_pool().await;
@@ -15160,10 +15254,22 @@ async fn export_emits_task_checkbox_and_metadata_property_lines_1916() {
     agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     for (state, bullet) in [
-        ("TODO", "- [ ] Write the report\n"),
-        ("DOING", "- [/] Write the report\n"),
-        ("DONE", "- [x] Write the report\n"),
-        ("CANCELLED", "- [-] Write the report\n"),
+        (
+            "TODO",
+            "- [ ] Write the report ⏳ 2026-06-21 📅 2026-06-28\n",
+        ),
+        (
+            "DOING",
+            "- [/] Write the report ⏳ 2026-06-21 📅 2026-06-28\n",
+        ),
+        (
+            "DONE",
+            "- [x] Write the report ⏳ 2026-06-21 📅 2026-06-28\n",
+        ),
+        (
+            "CANCELLED",
+            "- [-] Write the report ⏳ 2026-06-21 📅 2026-06-28\n",
+        ),
         ("WAITING", "- Write the report\n  todo_state:: WAITING\n"),
     ] {
         set_task_columns(
@@ -15189,12 +15295,15 @@ async fn export_emits_task_checkbox_and_metadata_property_lines_1916() {
             md.contains("  priority:: A\n"),
             "{state}: priority; got:\n{md}"
         );
-        assert!(
-            md.contains("  scheduled_date:: 2026-06-21\n"),
+        let lines = usize::from(state == "WAITING");
+        assert_eq!(
+            md.matches("  scheduled_date:: 2026-06-21\n").count(),
+            lines,
             "{state}: scheduled_date; got:\n{md}"
         );
-        assert!(
-            md.contains("  due_date:: 2026-06-28\n"),
+        assert_eq!(
+            md.matches("  due_date:: 2026-06-28\n").count(),
+            lines,
             "{state}: due_date; got:\n{md}"
         );
     }
@@ -15432,6 +15541,232 @@ async fn import_maps_an_org_priority_letter_to_its_level() {
     .await
     .unwrap();
     assert_eq!(priority.as_deref(), Some("2"));
+    mat.shutdown();
+}
+
+/// #6277 D2 — each Obsidian Tasks signifier at the end of a task line lands
+/// where a typed task keeps that field: `📅` / `⏳` in the date columns, the
+/// priority emoji as their level, `🔁 every …` in `repeat`, and a done task's
+/// `✅` in `completed_at`. One that cannot be read stays text, counted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_reads_each_tasks_signifier_into_its_field() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let todo = |priority: &str, scheduled: &str, due: &str| {
+        format!("columns todo=Some(\"TODO\") priority={priority} scheduled={scheduled} due={due}")
+    };
+    let repeat =
+        |rule: &str| format!("repeat text=Some(\"{rule}\") num=None date=None ref=None bool=None");
+    let (none, one, two, three) = ("None", "Some(\"1\")", "Some(\"2\")", "Some(\"3\")");
+    let date = |d: &str| format!("Some(\"{d}\")");
+    let rows: Vec<(&str, &str, Vec<String>, Vec<&str>)> = vec![
+        (
+            "📅 2026-10-05",
+            "a",
+            vec![todo(none, none, &date("2026-10-05"))],
+            vec![],
+        ),
+        (
+            "⏳ 2026-10-01",
+            "a",
+            vec![todo(none, &date("2026-10-01"), none)],
+            vec![],
+        ),
+        ("🔺", "a", vec![todo(one, none, none)], vec![]),
+        ("⏫", "a", vec![todo(one, none, none)], vec![]),
+        ("🔼", "a", vec![todo(two, none, none)], vec![]),
+        ("🔽", "a", vec![todo(three, none, none)], vec![]),
+        ("⏬", "a", vec![todo(three, none, none)], vec![]),
+        (
+            "🔁 every 2 weeks",
+            "a",
+            vec![todo(none, none, none), repeat("+2w")],
+            vec![],
+        ),
+        (
+            "🔁 every month when done",
+            "a",
+            vec![todo(none, none, none), repeat(".+1m")],
+            vec![],
+        ),
+        (
+            "📅 someday 🛫 2026-10-01",
+            "a 📅 someday 🛫 2026-10-01",
+            vec![todo(none, none, none)],
+            vec!["2 Tasks signifier(s) could not be read and were kept as text"],
+        ),
+    ];
+    for (n, (fields, content, storage, warnings)) in rows.into_iter().enumerate() {
+        let md = format!("- [ ] a {fields}\n");
+        let read = import_one_task(&pool, &mat, &format!("Tasks {n}"), &md).await;
+        let warnings = warnings.into_iter().map(String::from).collect();
+        assert_eq!(
+            read,
+            (content.into(), storage, vec![], warnings),
+            "{fields}"
+        );
+    }
+    let done = import_one_task(&pool, &mat, "Done", "- [x] a ✅ 2026-10-03\n").await;
+    assert_eq!(
+        done,
+        (
+            "a".into(),
+            vec!["columns todo=Some(\"DONE\") priority=None scheduled=None due=None".into()],
+            vec!["completed_at=2026-10-03".into()],
+            vec![],
+        )
+    );
+    mat.shutdown();
+}
+
+/// Import `md` as the page `title`, and read its one block back: its content,
+/// columns and properties ([`dup_storage`]) and task stamps, and the import's
+/// warnings.
+async fn import_one_task(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    title: &str,
+    md: &str,
+) -> (String, Vec<String>, Vec<String>, Vec<String>) {
+    let dir = tempfile::TempDir::new().unwrap();
+    let result = import_markdown_inner(
+        pool,
+        DEV,
+        mat,
+        dir.path(),
+        md.into(),
+        Some(format!("{title}.md")),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(mat).await;
+    let (id, content): (String, String) = sqlx::query_as(
+        "SELECT b.id, b.content FROM blocks b JOIN blocks p ON p.id = b.parent_id \
+         WHERE p.content = ? AND b.deleted_at IS NULL",
+    )
+    .bind(title)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let id = BlockId::from_string(id).unwrap();
+    let (storage, stamps) = (dup_storage(pool, &id).await, dup_stamps(pool, &id).await);
+    (content, storage, stamps, result.warnings)
+}
+
+/// #6277 D3 — a task's dates, priority, rule and done date export as Tasks
+/// signifiers at the end of its line and import back into the same columns
+/// and properties. A rule with a bound stays `repeat*::` lines, and a task
+/// whose own text ends in a signifier keeps it as text through an escape.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_writes_a_tasks_fields_as_signifiers_that_import_back() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Plan").await;
+    let mut ids = Vec::new();
+    for (content, state, priority, scheduled, due) in [
+        (
+            "plan",
+            "TODO",
+            Some("1"),
+            Some("2026-10-01"),
+            Some("2026-10-05"),
+        ),
+        ("ship", "DONE", None, None, None),
+        ("water", "TODO", None, None, Some("2026-10-05")),
+        ("pay", "DOING", Some("3"), None, None),
+        ("call 📅 2026-01-01", "TODO", None, None, None),
+    ] {
+        let id = dup_child(&pool, &mat, &page, content).await;
+        sqlx::query(
+            "UPDATE blocks SET todo_state = ?, priority = ?, scheduled_date = ?, due_date = ? \
+             WHERE id = ?",
+        )
+        .bind(state)
+        .bind(priority)
+        .bind(scheduled)
+        .bind(due)
+        .bind(id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+        ids.push(id);
+    }
+    for (at, key, text, date) in [
+        (0, "repeat", Some("+1w"), None),
+        (1, "completed_at", None, Some("2026-10-03")),
+        (2, "repeat", Some("+1w"), None),
+        (2, "repeat-until", None, Some("2026-12-31")),
+        (3, "repeat", Some("++1d"), None),
+    ] {
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text, value_date) \
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(ids[at].as_str())
+        .bind(key)
+        .bind(text)
+        .bind(date)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let md = export_page_markdown_inner(&pool, page.as_str())
+        .await
+        .unwrap();
+
+    for line in [
+        "- [ ] plan ⏫ 🔁 every week ⏳ 2026-10-01 📅 2026-10-05\n",
+        "- [x] ship ✅ 2026-10-03\n",
+        "- [ ] water 📅 2026-10-05\n  repeat:: +1w\n  repeat-until:: 2026-12-31\n",
+        "- [/] pay 🔽\n  repeat:: ++1d\n",
+        "- [ ] call \\📅 2026-01-01\n",
+    ] {
+        assert!(md.contains(line), "{line:?} in:\n{md}");
+    }
+    let import = tempfile::TempDir::new().unwrap();
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        import.path(),
+        md.clone(),
+        Some("Plan again.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert_eq!(result.warnings, Vec::<String>::new(), "{md}");
+    for id in &ids {
+        let content: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let copy: String = sqlx::query_scalar(
+            "SELECT id FROM blocks WHERE page_id = ? AND content = ? AND deleted_at IS NULL",
+        )
+        .bind(&result.page_id)
+        .bind(&content)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let copy = BlockId::from_string(copy).unwrap();
+        assert_eq!(
+            (
+                dup_storage(&pool, &copy).await,
+                dup_stamps(&pool, &copy).await
+            ),
+            (dup_storage(&pool, id).await, dup_stamps(&pool, id).await),
+            "{content}"
+        );
+    }
     mat.shutdown();
 }
 
@@ -18173,11 +18508,12 @@ async fn export_descendant_reserved_columns_not_duplicated_2962() {
 
     let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
 
+    // A checkbox task's dates are Tasks signifiers (#6277 decision 4).
     for expected in [
-        "- [ ] Write the report\n",
+        "- [ ] Write the report ⏳ 2026-06-21 📅 2026-06-28\n",
         "  priority:: A\n",
-        "  scheduled_date:: 2026-06-21\n",
-        "  due_date:: 2026-06-28\n",
+        "2026-06-21",
+        "2026-06-28",
         "  assignee:: Alice\n",
     ] {
         assert_eq!(

@@ -90,11 +90,18 @@ fn arb_document_block() -> impl Strategy<Value = BlockSpec> {
 /// (§ g.4): a plain block under a list block, which only `+` carries (D4), a
 /// first block opening with `---` and a second one, whose line would close the
 /// front matter the first opened, an empty plain block, which only `\`
-/// carries (D4), or a plain block under a plain block, a `+` item too
-/// (decision 2, #6277).
+/// carries (D4), a plain block under a plain block, a `+` item too (decision 2,
+/// #6277), or a task whose text ends in a word shaped like a Tasks field, which
+/// only an escape keeps text (#6277 D3).
 fn arb_document_forest() -> impl Strategy<Value = Vec<BlockSpec>> {
-    let lead = (arb_block(), arb_block(), 0..4, "-{3,4}[a-z ]{0,3}").prop_map(
-        |(parent, child, shape, rule)| {
+    let lead = (
+        arb_block(),
+        arb_block(),
+        0..5,
+        "-{3,4}[a-z ]{0,3}",
+        arb_signifier_word(),
+    )
+        .prop_map(|(parent, child, shape, rule, word)| {
             let child = BlockSpec {
                 level: 0,
                 list_style: None,
@@ -124,7 +131,7 @@ fn arb_document_forest() -> impl Strategy<Value = Vec<BlockSpec>> {
                     content: String::new(),
                     ..child
                 }],
-                _ => vec![
+                3 => vec![
                     BlockSpec {
                         level: 0,
                         list_style: None,
@@ -133,9 +140,13 @@ fn arb_document_forest() -> impl Strategy<Value = Vec<BlockSpec>> {
                     },
                     BlockSpec { level: 1, ..child },
                 ],
+                _ => vec![BlockSpec {
+                    content: format!("task {word}"),
+                    todo_state: Some("TODO".into()),
+                    ..child
+                }],
             }
-        },
-    );
+        });
     (lead, arb_forest_of(arb_document_block())).prop_map(|(mut lead, forest)| {
         lead.extend(forest);
         lead
@@ -624,6 +635,62 @@ fn document_rows() -> Vec<(&'static str, Vec<BlockSpec>, &'static str)> {
             vec![plain(0, "para\n---\u{a0}")],
             "para\n\\---\u{a0}\n",
         ),
+        (
+            "#6277 D3: a task's priority, dates and rule are Tasks signifiers at the end of its line",
+            vec![
+                BlockSpec {
+                    priority: Some("1".into()),
+                    scheduled_date: Some("2026-10-01".into()),
+                    due_date: Some("2026-10-05".into()),
+                    properties: repeat("+1w"),
+                    ..task(0, "a", "TODO")
+                },
+                BlockSpec {
+                    priority: Some("3".into()),
+                    properties: repeat(".+2d"),
+                    ..task(0, "b", "DOING")
+                },
+            ],
+            "- [ ] a ⏫ 🔁 every week ⏳ 2026-10-01 📅 2026-10-05\n\
+             - [/] b 🔽 🔁 every 2 days when done\n",
+        ),
+        (
+            "#6277 D3: a rule Tasks cannot express stays a `repeat::` line, and a block with no \
+             checkbox keeps its `key::` lines",
+            vec![
+                BlockSpec {
+                    due_date: Some("2026-10-05".into()),
+                    properties: repeat("++1d"),
+                    ..task(0, "c", "TODO")
+                },
+                BlockSpec {
+                    priority: Some("2".into()),
+                    due_date: Some("2026-10-05".into()),
+                    ..styled(0, "d", "bullet")
+                },
+                BlockSpec {
+                    due_date: Some("2026-10-05".into()),
+                    ..task(0, "e", "WAITING")
+                },
+            ],
+            "- [ ] c 📅 2026-10-05\n  repeat:: ++1d\n- d\n  priority:: 2\n  due_date:: 2026-10-05\n\n\
+             e\n  todo_state:: WAITING\n  due_date:: 2026-10-05\n",
+        ),
+        (
+            "#6277 D3: a task whose own text would not read back as written has its signifiers \
+             escaped",
+            vec![
+                task(0, "call 📅 2026-01-01", "TODO"),
+                BlockSpec {
+                    due_date: Some("2026-10-05".into()),
+                    ..task(0, "go ⏫", "TODO")
+                },
+                task(0, "start 🛫 2026-01-01", "TODO"),
+                task(0, "\\📅 x", "TODO"),
+            ],
+            "- [ ] call \\📅 2026-01-01\n- [ ] go \\⏫ 📅 2026-10-05\n\
+             - [ ] start \\🛫 2026-01-01\n- [ ] \\\\📅 x\n",
+        ),
     ]
 }
 
@@ -671,11 +738,65 @@ fn typed_rows() -> Vec<(&'static str, &'static str, Vec<BlockSpec>)> {
             vec![plain(0, "para"), styled(0, "a", "bullet")],
         ),
         (
+            "#6277 D2: a task line's Tasks fields are its dates, priority and recurrence",
+            "- [ ] a ⏫ 🔁 every 2 weeks ⏳ 2026-10-01 📅 2026-10-05\n",
+            vec![BlockSpec {
+                priority: Some("1".into()),
+                scheduled_date: Some("2026-10-01".into()),
+                due_date: Some("2026-10-05".into()),
+                properties: repeat("+2w"),
+                ..task(0, "a", "TODO")
+            }],
+        ),
+        (
+            "#6277 D2: each priority signifier is a level, `when done` the `.+` rule, and a \
+             property line after them wins",
+            "- [ ] b 🔺\n- [ ] c 🔼 🔁 every day when done\n- [/] d 🔽\n- [-] e ⏬\n  priority:: 2\n",
+            vec![
+                BlockSpec {
+                    priority: Some("1".into()),
+                    ..task(0, "b", "TODO")
+                },
+                BlockSpec {
+                    priority: Some("2".into()),
+                    properties: repeat(".+1d"),
+                    ..task(0, "c", "TODO")
+                },
+                BlockSpec {
+                    priority: Some("3".into()),
+                    ..task(0, "d", "DOING")
+                },
+                BlockSpec {
+                    priority: Some("2".into()),
+                    ..task(0, "e", "CANCELLED")
+                },
+            ],
+        ),
+        (
+            "#6277 D2: a signifier that does not parse, one with no field, `✅` on an open task \
+             and any signifier off a task line stay text",
+            "- [ ] f 📅 2026-02-30 🛫 2026-10-01 ⏳ 2026-10-02\n- [ ] g ✅ 2026-10-03\n\
+             - h 📅 2026-10-05\n",
+            vec![
+                BlockSpec {
+                    scheduled_date: Some("2026-10-02".into()),
+                    ..task(0, "f 📅 2026-02-30 🛫 2026-10-01", "TODO")
+                },
+                task(0, "g ✅ 2026-10-03", "TODO"),
+                styled(0, "h 📅 2026-10-05", "bullet"),
+            ],
+        ),
+        (
             "a tab reaches the next tab stop, so a tab-indented numbered list nests (decision 2, #6277)",
             "1. a\n\t1. b",
             vec![styled(0, "a", "ordered"), styled(1, "b", "ordered")],
         ),
     ]
+}
+
+/// A `repeat` rule as a block's property.
+fn repeat(rule: &str) -> BTreeMap<String, (String, bool)> {
+    BTreeMap::from([("repeat".to_string(), (rule.to_string(), false))])
 }
 
 /// Text pasted from outside (#6190): each text and the tree a paste reads it
@@ -728,6 +849,30 @@ fn pasted_rows() -> Vec<(&'static str, &'static str, Vec<BlockSpec>)> {
             "a ^word\n\nb ^01J0000000000000000000000B\n\nc ^01j0000000000000000000000c\n",
             vec![plain(0, "a ^word"), plain(0, "b"), plain(0, "c")],
         ),
+        (
+            "#6277 D2: a done task's `✅` is its `completed_at`, and the fields sit before a \
+             trailing `^word`",
+            "- [x] a ✅ 2026-10-03 📅 2026-10-01\n- [ ] b 📅 2026-10-05 ^word\n\
+             - [ ] c ⏳ 2026-10-02 ^01J0000000000000000000000B\n",
+            vec![
+                BlockSpec {
+                    due_date: Some("2026-10-01".into()),
+                    properties: BTreeMap::from([(
+                        "completed_at".to_string(),
+                        ("2026-10-03".to_string(), false),
+                    )]),
+                    ..task(0, "a", "DONE")
+                },
+                BlockSpec {
+                    due_date: Some("2026-10-05".into()),
+                    ..task(0, "b ^word", "TODO")
+                },
+                BlockSpec {
+                    scheduled_date: Some("2026-10-02".into()),
+                    ..task(0, "c", "TODO")
+                },
+            ],
+        ),
     ]
 }
 
@@ -771,6 +916,32 @@ fn each_hard_case_is_written_as_its_row_and_read_back() {
             .and_then(|()| check_read_back(&text, &read.blocks, &as_document(expected), true));
         assert!(result.is_ok(), "{name}: {result:?}");
     }
+}
+
+/// The mirror's file writes a task's fields as Tasks signifiers, escaped where
+/// the task's own text would read as one, as the buffer does (#6277 decision
+/// 4), and an addressed task's `^ID` after them (decision 6).
+#[test]
+fn a_file_writes_a_tasks_fields_as_signifiers() {
+    let rows: Vec<_> = document_rows()
+        .into_iter()
+        .filter(|(name, ..)| name.starts_with("#6277 D3"))
+        .collect();
+    assert_eq!(rows.len(), 3);
+    for (name, forest, written) in rows {
+        let (data, _) = build_page(&forest);
+        assert_eq!(render_page_file(&data).text, written, "{name}");
+    }
+    let (mut data, expected) = build_page(&[BlockSpec {
+        due_date: Some("2026-10-05".into()),
+        ..task(0, "go ⏫", "TODO")
+    }]);
+    let id = expected[0].2.clone();
+    data.addressed_blocks.insert(id.clone());
+    assert_eq!(
+        render_page_file(&data).text,
+        format!("- [ ] go \\⏫ 📅 2026-10-05 ^{id}\n")
+    );
 }
 
 /// `conformance/document-lines.vectors.json`: each row as the tree it reads

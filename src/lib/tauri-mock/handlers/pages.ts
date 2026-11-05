@@ -56,6 +56,8 @@ import {
   titleSortKey,
   validationRejection,
   readActiveSpaceScope,
+  type TaskLine,
+  taskLineOf,
 } from '@/lib/tauri-mock/handlers/shared'
 import { tagsHandlers } from '@/lib/tauri-mock/handlers/tags'
 import { indexLinks } from '@/lib/tauri-mock/link-index'
@@ -229,8 +231,10 @@ function renderPageDocument(pid: string): { source: string; ids: string[] } {
       const opensRule = front === '' && lines.length === 0 && content.startsWith('---')
       const place = layout.place(depth, listMarker, todo, opensRule)
       if (place.blank) lines.push('')
-      pushAnchoredDocumentBlock(lines, place.indent, place.marker, place.taskMarker, content, id)
-      pushPropertyLines(lines, place.childIndent, row, place.taskMarker === '' ? todo : null)
+      const task = taskLineOf(row, place.taskMarker !== '')
+      const text = task.write(content)
+      pushAnchoredDocumentBlock(lines, place.indent, place.marker, place.taskMarker, text, id)
+      pushPropertyLines(lines, place.childIndent, row, place.taskMarker === '' ? todo : null, task)
       ids.push(id)
       render(id, depth + 1)
     }
@@ -258,13 +262,15 @@ function listOrdinal(row: Record<string, unknown>): number {
 /**
  * A block's `key:: value` lines at `indent`, as `render_block` writes them:
  * `todo` when its checkbox does not carry it, its priority and dates, then its
- * other properties by key, each value as the line reads it back.
+ * other properties by key, each value as the line reads it back, less the keys
+ * `task` writes as Tasks signifiers.
  */
 function pushPropertyLines(
   lines: string[],
   indent: string,
   row: Record<string, unknown>,
   todo: string | null,
+  task: TaskLine,
 ): void {
   const reserved = [
     ['todo_state', todo],
@@ -273,10 +279,12 @@ function pushPropertyLines(
     ['due_date', row['due_date']],
   ] as const
   for (const [key, value] of reserved) {
-    if (typeof value === 'string' && value !== '') lines.push(`${indent}${key}:: ${value}`)
+    if (typeof value === 'string' && value !== '' && !task.keys.has(key)) {
+      lines.push(`${indent}${key}:: ${value}`)
+    }
   }
   const rows = [...(properties.get(row['id'] as string) ?? [])]
-    .filter(([key]) => !BLOCK_LINE_HIDDEN_KEYS.has(key))
+    .filter(([key]) => !BLOCK_LINE_HIDDEN_KEYS.has(key) && !task.keys.has(key))
     .toSorted(([a], [b]) => compareUtf8Bytes(a, b))
   for (const [key, value] of rows) {
     lines.push(`${indent}${key}:: ${writeSourcePropertyValue(frontMatterValue(value))}`)
@@ -1001,7 +1009,9 @@ function planMarkWrites(
     .filter((key) => !wants.has(key) && holds.has(key))
     .toSorted(compareUtf8Bytes)
   const set = changed.filter(([key]) => key !== 'todo_state')
-  const deleted = dropped.filter((key) => key !== 'todo_state')
+  // A `✅` taken off a done task's line deletes nothing: its `completed_at` goes with the
+  // task state (`PropertyChanges::between`).
+  const deleted = dropped.filter((key) => key !== 'todo_state' && key !== 'completed_at')
   const state = changed.find(([key]) => key === 'todo_state')
   const todoState = state ? { to: state[1] } : dropped.includes('todo_state') ? { to: null } : null
   const restyled = set.some(([key]) => key === 'listStyle')
@@ -1114,21 +1124,20 @@ const COLUMN_WRITERS: ReadonlyMap<string, (blockId: string, value: string | null
 function writeMarks(id: string, writes: MarkWrites): OpRefs {
   const spaceId = definitionSpaceOf(id)
   const start = opLog.length
+  const write = ([key, value]: [string, string]): void => {
+    const column = COLUMN_WRITERS.get(key)
+    if (column === undefined) {
+      propertiesHandlers.set_property({ blockId: id, key, value: lineColumns(spaceId, key, value) })
+    } else {
+      column(id, value)
+    }
+  }
   withoutEvents(() => {
     for (const key of writes.deleted) propertiesHandlers.delete_property({ blockId: id, key })
-    for (const [key, value] of writes.set) {
-      const column = COLUMN_WRITERS.get(key)
-      if (column === undefined) {
-        propertiesHandlers.set_property({
-          blockId: id,
-          key,
-          value: lineColumns(spaceId, key, value),
-        })
-      } else {
-        column(id, value)
-      }
-    }
+    writes.set.filter(([key]) => key !== 'completed_at').forEach(write)
     if (writes.todoState !== null) COLUMN_WRITERS.get('todo_state')?.(id, writes.todoState.to)
+    // A `✅` date goes after the task state, whose move into DONE stamps today (`write_properties`).
+    writes.set.filter(([key]) => key === 'completed_at').forEach(write)
   })
   return opLog.slice(start).map(({ device_id, seq }) => ({ device_id, seq }))
 }
@@ -1962,8 +1971,9 @@ export const pagesHandlers = {
       const opensRule = lines.length === 0 && content.startsWith('---')
       const place = layout.place(depth, listMarker, todo, opensRule)
       if (place.blank) lines.push('')
-      pushDocumentLines(lines, place.indent, place.marker, place.taskMarker, content)
-      pushPropertyLines(lines, place.childIndent, row, place.taskMarker === '' ? todo : null)
+      const task = taskLineOf(row, place.taskMarker !== '')
+      pushDocumentLines(lines, place.indent, place.marker, place.taskMarker, task.write(content))
+      pushPropertyLines(lines, place.childIndent, row, place.taskMarker === '' ? todo : null, task)
       if (!withChildren) return
       for (const child of liveChildren(id)) {
         if (child['block_type'] === 'content') renderBlock(child, depth + 1)
@@ -2010,7 +2020,8 @@ export const pagesHandlers = {
   // It intentionally does NOT model (and tests MUST NOT rely on the mock for
   // any of these — the Rust tests own the import contract):
   //   - Frontmatter / inline `key:: value` properties beyond a raw COUNT
-  //     (`properties_set`); no property values are stamped onto blocks.
+  //     (`properties_set`); no property values are stamped onto blocks, and a
+  //     task line's Tasks fields stay its text.
   //   - `((block-ref))` stripping, `[[Page#anchor]]` block targets and
   //     Obsidian `![[Note]]` embeds.
   //   - Depth: every content block is emitted flat under the page.
@@ -2106,7 +2117,7 @@ export const pagesHandlers = {
     // `started` (the real backend reports the parser's count up front so the UI
     // can render a determinate bar from the very first event).
     const parsed = parseDocument(lines.join('\n'), null).blocks
-    const parsedLines = parsed.map((block) => block.content)
+    const parsedLines = parsed.map((block) => block.contentAsWritten)
     const blocksTotal = parsedLines.length
 
     emit({ kind: 'started', page_title: pageTitle, blocks_total: blocksTotal })

@@ -564,8 +564,7 @@
         "line#text=",
         "B14#text=- plain bullet from here",
         "B11#text=1. plain bullet from the page",
-        "B12#text=- [ ] new task",
-        "line#text=  due_date:: 2026-03-01",
+        "B12#text=- [ ] new task 📅 2026-03-01",
         "line#text=  count:: 3",
         "B13#text=1. new numbered",
         "line#text=   deadline:: 2026-07-01",
@@ -724,16 +723,16 @@
         ],
         "merge": false,
         "pageId": "S1",
-        "source": "## Findings\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n- [x] task item\n\n\\\n\nwith property\n  priority:: 2\n  note:: yes\n\n1. plain bullet\n"
+        "source": "## Findings\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n- [/] task item\n\n\\\n\nwith property\n  priority:: 2\n  note:: yes\n\n1. plain bullet\n"
       },
       "command": "apply_page_source",
-      "comment": "A task's `[ ]` ticked to `[x]`: its state is the write, and the list style the buffer hides on the task goes with the edit, as the block was changed.",
+      "comment": "A task's `[ ]` ticked to `[/]`: its state is the write, and the list style the buffer hides on the task goes with the edit, as the block was changed. Not `[x]`: a done task's line ends in its done date (#6277 D3), which is the day the step runs.",
       "name": "a_ticked_checkbox_sets_the_task_state",
       "via": "command"
     },
     {
       "args": {
-        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [x] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  note:: yes\n\n1. plain bullet ^00000000000000000000000S11\n",
+        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [/] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  note:: yes\n\n1. plain bullet ^00000000000000000000000S11\n",
         "lineIds": [
           "000000000000000000000000S2",
           null,
@@ -759,7 +758,7 @@
         ],
         "merge": false,
         "pageId": "S1",
-        "source": "## Findings\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n- [x] task item\n\n\\\n\nwith property\n  priority:: 3\n  note:: no\n\n1. plain bullet\n"
+        "source": "## Findings\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n- [/] task item\n\n\\\n\nwith property\n  priority:: 3\n  note:: no\n\n1. plain bullet\n"
       },
       "command": "apply_page_source",
       "comment": "A block's `note::` and `priority::` lines given other values: each is set, a custom key as a property, the reserved key on its column.",
@@ -768,7 +767,7 @@
     },
     {
       "args": {
-        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [x] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 3\n  note:: no\n\n1. plain bullet ^00000000000000000000000S11\n",
+        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [/] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 3\n  note:: no\n\n1. plain bullet ^00000000000000000000000S11\n",
         "lineIds": [
           "000000000000000000000000S2",
           null,
@@ -796,7 +795,7 @@
         ],
         "merge": false,
         "pageId": "S1",
-        "source": "## Findings\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n- [x] task item\n\n\\\n\nwith property\n  priority:: 3\n  note::\n  mood:: calm\n  count:: 4\n\n1. plain bullet\n"
+        "source": "## Findings\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n- [/] task item\n\n\\\n\nwith property\n  priority:: 3\n  note::\n  mood:: calm\n  count:: 4\n\n1. plain bullet\n"
       },
       "command": "apply_page_source",
       "comment": "The `note::` line emptied deletes the property; a `mood::` line typed under it sets a new one, and a `count::` line a number, which the `count` definition types.",
@@ -815,7 +814,7 @@
     },
     {
       "args": {
-        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [x] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 3\n  count:: 4\n  mood:: calm\n\n1. plain bullet ^00000000000000000000000S11\n",
+        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [/] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 3\n  count:: 4\n  mood:: calm\n\n1. plain bullet ^00000000000000000000000S11\n",
         "lineIds": [
           "000000000000000000000000S2",
           null,
@@ -842,7 +841,7 @@
         ],
         "merge": true,
         "pageId": "S1",
-        "source": "## Findings\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n- [x] task item\n\n\\\n\nwith property\n  priority:: 2\n  count:: 4\n  mood:: calm\n\n1. plain bullet\n"
+        "source": "## Findings\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n- [/] task item\n\n\\\n\nwith property\n  priority:: 2\n  count:: 4\n  mood:: calm\n\n1. plain bullet\n"
       },
       "command": "apply_page_source",
       "comment": "The page set `mood` after the buffer was read; the buffer, stale, changes `priority` and leaves `mood` as it read it. Merged, the save writes the priority and keeps the page's mood.",
@@ -851,7 +850,7 @@
     },
     {
       "args": {
-        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [x] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet ^00000000000000000000000S11\n",
+        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [/] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet ^00000000000000000000000S11\n",
         "lineIds": [
           "000000000000000000000000S2",
           null,
@@ -878,7 +877,7 @@
         ],
         "merge": false,
         "pageId": "S1",
-        "source": "## Findings edited\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n- [x] task item\n\n\\\n\nwith property\n  priority:: 9\n  count:: 4\n  mood:: happy\n\n1. plain bullet\n"
+        "source": "## Findings edited\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n- [/] task item\n\n\\\n\nwith property\n  priority:: 9\n  count:: 4\n  mood:: happy\n\n1. plain bullet\n"
       },
       "command": "apply_page_source",
       "comment": "`9` is not an option of `priority`, so the save is refused as the property drawer refuses it, and the heading's edit beside it is not written either.",
@@ -888,7 +887,7 @@
     },
     {
       "args": {
-        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [x] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet ^00000000000000000000000S11\n",
+        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [/] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet ^00000000000000000000000S11\n",
         "lineIds": [
           "000000000000000000000000S2",
           null,
@@ -916,7 +915,7 @@
         ],
         "merge": false,
         "pageId": "S1",
-        "source": "## Findings edited\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n- [x] task item\n\n\\\n\nwith property\n  priority:: 2\n  owner:: Nowhere\n  count:: 4\n  mood:: happy\n\n1. plain bullet\n"
+        "source": "## Findings edited\n\n```sh\necho hi\n```\n\n---\n\n- bullet item edited\n  + plain child\n1. numbered item\n- [/] task item\n\n\\\n\nwith property\n  priority:: 2\n  owner:: Nowhere\n  count:: 4\n  mood:: happy\n\n1. plain bullet\n"
       },
       "command": "apply_page_source",
       "comment": "No page is titled `Nowhere`, so the `owner` ref line names no block and refuses the save, the heading's edit beside it with it.",
@@ -926,7 +925,7 @@
     },
     {
       "args": {
-        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [x] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet ^00000000000000000000000S11\n",
+        "baseSource": "## Findings ^000000000000000000000000S2\n\n```sh\necho hi\n```\n^000000000000000000000000S3\n\n--- ^000000000000000000000000S4\n\n- bullet item edited ^000000000000000000000000S5\n  + plain child ^000000000000000000000000S6\n1. numbered item ^000000000000000000000000S7\n- [/] task item ^000000000000000000000000S8\n\n\\ ^000000000000000000000000S9\n\nwith property ^00000000000000000000000S10\n  priority:: 2\n  count:: 4\n  mood:: happy\n\n1. plain bullet ^00000000000000000000000S11\n",
         "lineIds": [
           "000000000000000000000000S2",
           null,

@@ -108,6 +108,7 @@ describe('Agaric real-backend Duplicate of a repeating task (#5160 P4) @editor @
     })
     await openPageSource([TASK])
     const saved = await pageSourceText()
-    expect(saved.split(RULE).length - 1).toBe(2)
+    // A task writes its rule as a Tasks signifier (#6277 decision 4).
+    expect(saved.split(' 🔁 every week').length - 1).toBe(2)
   })
 })

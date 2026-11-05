@@ -13,6 +13,8 @@
  */
 
 import { FOLDED_RESERVED_KEYS, foldPropertyKey } from '@/lib/inline-property-parse'
+import { PRIORITY_LEVELS } from '@/lib/priority-levels'
+import { isIsoDate } from '@/lib/search-query/is-iso-date'
 import { TASK_STATE_TO_MARKER, type TodoState, taskStateFromMarker } from '@/lib/task-states'
 
 const WS = '\\t\\n\\v\\f\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000'
@@ -252,13 +254,18 @@ export interface DocumentBlock {
   line: number
   depth: number
   content: string
+  /** `content` with the Tasks fields read out of its task line still in it, as written. */
+  contentAsWritten: string
   /** The style its list marker gives: `-` and `*` a bullet, `N.` and `N)` numbered (D2). */
   listStyle: 'bullet' | 'ordered' | null
   /** The state its checkbox gives; a task has no list style (D3). */
   todoState: TodoState | null
-  /** Its `key:: value` lines in order, the value read; an empty one clears the key. */
+  /**
+   * The Tasks fields its task line ends with (#6277 D2), then its `key:: value`
+   * lines in order, the value read; an empty one clears the key.
+   */
   properties: Array<[key: string, value: string]>
-  /** The buffer line each of `properties` is on, counted from 1. */
+  /** The buffer line each of `properties` is on, counted from 1: a Tasks field's is the block's own. */
   propertyLines: number[]
   /** The `^ID` its text ended with, read only from a buffer with no ids beside it. */
   anchor: string | null
@@ -266,8 +273,165 @@ export interface DocumentBlock {
 
 export interface DocumentReading {
   blocks: DocumentBlock[]
-  /** One per fence a line carrying an id ended (D5). */
+  /** Tasks signifiers kept as text, counted (#6277 D2), then one per fence a line carrying an id ended (D5). */
   warnings: string[]
+}
+
+/** `TASK_SIGNIFIERS`: the Obsidian Tasks signifiers, each starting a field of a task line. */
+const TASK_SIGNIFIER = /[📅⏳✅🔁🔺⏫🔼🔽⏬🛫➕❌🆔⛔🏁]/gu
+
+const RECURRENCE_UNITS: ReadonlyMap<string, string> = new Map([
+  ['day', 'd'],
+  ['week', 'w'],
+  ['month', 'm'],
+  ['year', 'y'],
+])
+
+/** `tasks_recurrence`: `every [N] day|week|month|year[s] [when done]` as a `repeat` rule. */
+function tasksRecurrence(value: string): string | null {
+  const words = value.split(new RegExp(`[${WS}]+`)).filter((word) => word !== '')
+  const whenDone = words.length >= 2 && words.at(-2) === 'when' && words.at(-1) === 'done'
+  if (whenDone) words.length -= 2
+  if (words[0] !== 'every' || words.length < 2 || words.length > 3) return null
+  const count = words.length === 3 ? (words[1] as string) : '1'
+  if (!/^\d{1,9}$/.test(count) || Number(count) === 0) return null
+  const unit = RECURRENCE_UNITS.get((words.at(-1) as string).replace(/s$/, ''))
+  if (unit === undefined) return null
+  return `${whenDone ? '.' : ''}+${count}${unit}`
+}
+
+const TASK_DATE_KEYS: ReadonlyMap<string, string> = new Map([
+  ['📅', 'due_date'],
+  ['⏳', 'scheduled_date'],
+  ['✅', 'completed_at'],
+])
+
+const TASK_PRIORITY_LEVELS: ReadonlyMap<string, string> = new Map(
+  (
+    [
+      ['🔺', 0],
+      ['⏫', 0],
+      ['🔼', 1],
+      ['🔽', 2],
+      ['⏬', 2],
+    ] as const
+  ).map(([signifier, at]) => [signifier, PRIORITY_LEVELS[at] as string]),
+)
+
+/** `task_field`: the field a Tasks signifier and its value give, a done task's `✅` its `completed_at`. */
+function taskField(signifier: string, value: string, done: boolean): [string, string] | null {
+  if (signifier === '🔁') {
+    const rule = tasksRecurrence(value)
+    return rule === null ? null : ['repeat', rule]
+  }
+  const dateKey = signifier === '✅' && !done ? undefined : TASK_DATE_KEYS.get(signifier)
+  if (dateKey !== undefined) return isIsoDate(value) ? [dateKey, value] : null
+  const level = TASK_PRIORITY_LEVELS.get(signifier)
+  return level !== undefined && value === '' ? ['priority', level] : null
+}
+
+/** A whitespace character ending a text, which `split_task_fields` takes before the first field. */
+const LAST_WS = new RegExp(`[${WS}]$`)
+
+/** `TASK_SIGNIFIERS` after a `\`: text, the escape `write_task_fields` writes. */
+const ESCAPED_SIGNIFIER = /\\(?=[📅⏳✅🔁🔺⏫🔼🔽⏬🛫➕❌🆔⛔🏁])/gu
+
+/**
+ * `split_task_fields`: the Tasks fields at the end of a task's first line,
+ * before an optional ` ^anchor`, read out of it, with the one space before
+ * the first; a signifier read as none stays, counted. A signifier after a `\`
+ * is text, and the `\` goes (#6277 D3). With none read, the line is kept as
+ * written, less those escapes.
+ */
+export function splitTaskFields(
+  line: string,
+  done: boolean,
+): { text: string; fields: Array<[string, string]>; unread: number } {
+  const anchorAt = BLOCK_ANCHOR.exec(line)?.index ?? line.length
+  const head = line.slice(0, anchorAt)
+  const starts = [...head.matchAll(TASK_SIGNIFIER)]
+    .map((match) => match.index)
+    .filter((at) => head.charAt(at - 1) !== '\\')
+  const kept = [head.slice(0, starts[0] ?? head.length).replace(LAST_WS, '')]
+  const fields: Array<[string, string]> = []
+  starts.forEach((at, i) => {
+    const segment = head.slice(at, starts[i + 1] ?? head.length)
+    const signifier = String.fromCodePoint(segment.codePointAt(0) as number)
+    const field = taskField(signifier, trim(segment.slice(signifier.length)), done)
+    if (field === null) kept.push(segment.replace(TRAILING_WS, ''))
+    else fields.push(field)
+  })
+  const text =
+    fields.length === 0
+      ? line.replace(ESCAPED_SIGNIFIER, '')
+      : kept
+          .filter((part) => part !== '')
+          .join(' ')
+          .replace(ESCAPED_SIGNIFIER, '') + line.slice(anchorAt)
+  return { text, fields, unread: kept.length - 1 }
+}
+
+/** `tasks_recurrence_words`: the Tasks recurrence a `repeat` rule is written as, if it reads back as it. */
+function tasksRecurrenceWords(rule: string): string | null {
+  const match = /^(\.?)\+(.+)([dwmy])$/.exec(rule)
+  if (match === null) return null
+  const [, dot, count, unit] = match as unknown as [string, string, string, string]
+  const name = { d: 'day', w: 'week', m: 'month', y: 'year' }[unit as 'd' | 'w' | 'm' | 'y']
+  const words = `every ${count === '1' ? name : `${count} ${name}s`}${dot === '' ? '' : ' when done'}`
+  return tasksRecurrence(words) === rule ? words : null
+}
+
+/** `TASK_SIGNIFIER_KEYS`: the keys a task writes as signifiers, in the Tasks plugin's order. */
+export const TASK_SIGNIFIER_KEYS = [
+  'priority',
+  'repeat',
+  'scheduled_date',
+  'due_date',
+  'completed_at',
+] as const
+
+/** `task_signifier`: the Tasks signifier a task's `key` and `value` are written as, if it reads back as that value. */
+export function taskSignifier(key: string, value: string, done: boolean): string | null {
+  let written: string | null = null
+  if (key === 'priority') {
+    const at = PRIORITY_LEVELS.indexOf(value)
+    written = at < 0 ? null : (['⏫', '🔼', '🔽'][at] as string)
+  } else if (key === 'repeat') {
+    const words = tasksRecurrenceWords(value)
+    written = words === null ? null : `🔁 ${words}`
+  } else {
+    const signifier = { scheduled_date: '⏳', due_date: '📅', completed_at: '✅' }[
+      key as 'scheduled_date' | 'due_date' | 'completed_at'
+    ] as string | undefined
+    written = signifier === undefined ? null : `${signifier} ${value}`
+  }
+  if (written === null) return null
+  const read = splitTaskFields(written, done).fields
+  return read.length === 1 && read[0]?.[0] === key && read[0][1] === value ? written : null
+}
+
+/**
+ * `write_task_fields`: `line`, a task's first line, with `signifiers` at its
+ * end. Its own signifiers are escaped when it would not read back as written
+ * with them, its fields as `signifiers`, and no signifier left unread.
+ */
+export function writeTaskFields(
+  line: string,
+  signifiers: readonly string[],
+  done: boolean,
+): string {
+  const fields = signifiers.join(' ')
+  const joined = (text: string): string =>
+    fields === '' ? text : text === '' ? fields : `${text} ${fields}`
+  const plain = joined(line)
+  const read = splitTaskFields(plain, done)
+  const expected = splitTaskFields(fields, done).fields
+  const same =
+    read.text === line &&
+    read.unread === 0 &&
+    read.fields.length === expected.length &&
+    read.fields.every(([key, value], i) => expected[i]?.[0] === key && expected[i]?.[1] === value)
+  return same ? plain : joined(line.replace(/[📅⏳✅🔁🔺⏫🔼🔽⏬🛫➕❌🆔⛔🏁]/gu, '\\$&'))
 }
 
 type Kind = 'bullet' | 'paragraph' | 'verbatim'
@@ -460,6 +624,7 @@ class Scan {
       line: this.line,
       depth: this.open.length,
       content,
+      contentAsWritten: content,
       listStyle,
       todoState,
       properties: [],
@@ -505,6 +670,28 @@ class Scan {
     block.properties.push([trim(property.key), readSourcePropertyValue(property.value)])
     block.propertyLines.push(this.line)
     return true
+  }
+
+  /**
+   * The Tasks fields each task line ends with (#6277 D2), as the Rust scan reads
+   * them at the line. Read here once the anchors are, which reads alike but for
+   * a `^word` the fields leave last, which Rust then reads as the anchor.
+   */
+  readTaskFields(): void {
+    let unread = 0
+    for (const block of this.blocks) {
+      block.contentAsWritten = block.content
+      const [first = '', ...rest] = block.content.split('\n')
+      if (block.todoState === null) continue
+      const read = splitTaskFields(first, block.todoState === 'DONE')
+      unread += read.unread
+      block.content = [read.text, ...rest].join('\n')
+      block.properties.unshift(...read.fields)
+      block.propertyLines.unshift(...read.fields.map(() => block.line))
+    }
+    if (unread > 0) {
+      this.warnings.unshift(`${unread} Tasks signifier(s) could not be read and were kept as text`)
+    }
   }
 
   /** `extract_block_anchors`: the `^ID` ending a block's text, unless that text ends in code. */
@@ -561,6 +748,7 @@ export function parseDocument(
   const scan = new Scan(idLines, isId)
   scan.scan(blockText(readerText(text)).split('\n'))
   if (idLines === null) scan.extractAnchors()
+  scan.readTaskFields()
   return { blocks: scan.blocks, warnings: scan.warnings }
 }
 
@@ -582,6 +770,7 @@ export function parsePastedText(text: string): DocumentBlock[] {
     block.content = `${block.content}${block.content === '' ? '' : ' '}^${word}`
     block.anchor = null
   }
+  scan.readTaskFields()
   return scan.blocks
 }
 
