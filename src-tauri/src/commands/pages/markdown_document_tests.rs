@@ -199,6 +199,17 @@ fn read_by_ids(text: &str, line_ids: &[Option<String>]) -> import::ParseOutput {
     parsed
 }
 
+/// `text` as another editor may save it (#6277 H1): with `\r\n` line ends
+/// when `crlf`, after a byte order mark when `bom`.
+fn saved_as(text: &str, (crlf, bom): (bool, bool)) -> String {
+    let text = if crlf {
+        text.replace('\n', "\r\n")
+    } else {
+        text.to_owned()
+    };
+    if bom { format!("\u{feff}{text}") } else { text }
+}
+
 /// A page with no properties reads back with none, and nothing refused: no
 /// block's line opened front matter or read as a page property.
 fn check_no_page_properties(md: &str, parsed: &import::ParseOutput) -> Result<(), TestCaseError> {
@@ -243,14 +254,16 @@ proptest! {
     }
 
     /// The buffer less its anchors holds one id entry per line, and read by
-    /// those ids is the tree, for every block the text carries.
+    /// those ids is the tree, for every block the text carries, saved with
+    /// `\r\n` line ends or a BOM or not ([`saved_as`]).
     #[test]
     fn a_document_read_by_its_line_ids_is_the_tree_it_was_rendered_from(
         forest in arb_document_forest()
-            .prop_filter("the text carries it", |forest| forest.iter().all(document_text_carries))
+            .prop_filter("the text carries it", |forest| forest.iter().all(document_text_carries)),
+        saved in any::<(bool, bool)>()
     ) {
         let (data, expected) = build_page(&forest);
-        let (text, line_ids) = anchor_free(&render_page_document(&data).0);
+        let (text, line_ids) = anchor_free(&saved_as(&render_page_document(&data).0, saved));
         prop_assert_eq!(text.split('\n').count(), line_ids.len(), "text:\n{}", text);
         let parsed = read_by_ids(&text, &line_ids);
         check_no_page_properties(&text, &parsed)?;
@@ -295,13 +308,15 @@ proptest! {
     /// The mirror's file anchors exactly the addressed blocks (#6277 decision
     /// 6), and with its anchors taken out it is the buffer's text with the
     /// buffer's ids on the same lines, so a save reads the file as it reads
-    /// the buffer (#5363).
+    /// the buffer (#5363), also once another editor saved it with `\r\n` line
+    /// ends or a BOM ([`saved_as`]).
     #[test]
     fn a_file_without_its_anchors_is_the_buffer_by_its_line_ids(
         (forest, addressed) in arb_document_forest().prop_flat_map(|forest| {
             let n = forest.len();
             (Just(forest), prop::collection::vec(any::<bool>(), n))
-        })
+        }),
+        saved in any::<(bool, bool)>()
     ) {
         // An unaddressed block of plain words, which never needs an anchor.
         let (mut forest, mut addressed) = (forest, addressed);
@@ -327,7 +342,7 @@ proptest! {
             }
         }
         let (buffer_text, buffer_ids) = anchor_free(&render_page_document(&data).0);
-        let (file_text, _) = anchor_free(&file.text);
+        let (file_text, _) = anchor_free(&saved_as(&file.text, saved));
         let own_anchor_lines: HashSet<String> =
             expected.iter().map(|(_, _, id, _)| format!("^{id}")).collect();
         let file_ids: Vec<Option<String>> = file

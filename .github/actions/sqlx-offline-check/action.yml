@@ -6,8 +6,9 @@ description: >
 
   Reusable per crate: each query-bearing cache owner calls this action with
   a distinct `working-directory` + `database-url` — no copy-pasted YAML.
-  The current workspace uses it for `agaric`, `agaric-store`,
-  `agaric-engine`, and `agaric-sync`.
+  The weekly `scheduled-deep-checks.yml` lane uses it for `agaric`,
+  `agaric-store`, `agaric-engine`, and `agaric-sync`; per-PR `lint` checks
+  the same caches in one compile with `scripts/clippy-sqlx-check.sh`.
 
 inputs:
   working-directory:

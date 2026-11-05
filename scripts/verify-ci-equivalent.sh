@@ -26,8 +26,8 @@
 #
 #   Phase E — `cargo sqlx prepare --check` if any .rs changed in range,
 #             against all four committed `.sqlx/` caches (workspace root +
-#             `agaric-store`/`agaric-engine`/`agaric-sync`) — mirrors every
-#             `sqlx-offline-check` lane in `_validate.yml`.
+#             `agaric-store`/`agaric-engine`/`agaric-sync`) — mirrors the
+#             `lint` job's `scripts/clippy-sqlx-check.sh`.
 #
 #   Phase F — `agaric-mcp` release build + MCP UDS smoke + externalBin
 #             host-triple verify. **Only when MCP paths change**
@@ -2433,7 +2433,7 @@ fi
 # ── Phase E: cargo sqlx prepare --check, ALL FOUR lanes (only if Rust
 # changed) ──────────────────────────────────────────────────────────
 #
-# Mirrors every `sqlx-offline-check` lane in `_validate.yml`: the workspace
+# Checks the same four caches as CI's `scripts/clippy-sqlx-check.sh`: the workspace
 # root (`src-tauri`) plus each layered-workspace member with its own
 # crate-local `.sqlx/` cache — `agaric-store`, `agaric-engine`, `agaric-sync`
 # (#2621 split). Checking only the root here let member-crate cache drift
