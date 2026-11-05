@@ -2366,6 +2366,104 @@ async fn a_busy_refusal_caches_the_address_that_answered_6353() {
     init_mat.shutdown();
 }
 
+/// A harness whose dialling key sorts below (or above) the service's, so a test
+/// of the glare tie-break can pin each side of it.
+async fn harness_where_client_sorts_lower(lower: bool) -> ServiceHarness {
+    loop {
+        let harness = ServiceHarness::new().await;
+        let client_lower =
+            harness.client_endpoint.id().as_bytes() < harness.service.endpoint_id().as_bytes();
+        if client_lower == lower {
+            return harness;
+        }
+    }
+}
+
+/// The initiator side of a glare inside a pairing window: it dials a responder
+/// whose own dial back holds the per-peer lock, so the answer is `Busy`.
+/// Returns how many sync rounds the refused initiator asked for.
+async fn rounds_asked_after_a_busy_in_the_pairing_window(harness: &ServiceHarness) -> u64 {
+    const INIT_DEV: &str = "INITGLARE";
+    const RESP_DEV: &str = "RESPGLARE";
+    let (resp_pool, _resp_dir) = test_pool().await;
+    let resp_mat = Materializer::new(resp_pool.clone());
+    bind_client_as(&resp_pool, INIT_DEV, harness).await;
+    let resp_sched = Arc::new(SyncScheduler::new());
+    let _their_own_dial = resp_sched.try_lock_peer(&client_key(harness)).unwrap();
+    let resp_task = spawn_responder(
+        harness,
+        resp_pool,
+        RESP_DEV,
+        resp_mat.clone(),
+        resp_sched.clone(),
+        Arc::new(RecordingEventSink::new()),
+        Arc::new(AtomicBool::new(false)),
+    );
+
+    let (init_pool, _init_dir) = test_pool().await;
+    let init_mat = Materializer::new(init_pool.clone());
+    peer_refs::set_pending_pairing(&init_pool, "test-proof")
+        .await
+        .unwrap();
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let scheduler = SyncScheduler::new();
+    let cancel = AtomicBool::new(false);
+    let apply_host: Arc<dyn crate::apply_host::ApplyHost> = Arc::new(init_mat.clone());
+    let ctx = SyncSessionContext {
+        pool: &init_pool,
+        device_id: INIT_DEV,
+        materializer: &apply_host,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
+        relay_url: None,
+    };
+    let peer = discovered_service_peer(RESP_DEV, harness);
+    let before = scheduler.change_count();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        try_sync_with_peer(&ctx, &peer, &[], None),
+    )
+    .await
+    .expect("try_sync_with_peer timed out");
+    tokio::time::timeout(std::time::Duration::from_secs(20), resp_task)
+        .await
+        .expect("responder task timed out")
+        .expect("responder task panicked")
+        .expect("a refusal is not a responder error");
+    assert_eq!(
+        scheduler.failure_count(RESP_DEV),
+        0,
+        "precondition: a refusal inside the pairing window books no backoff"
+    );
+    resp_mat.shutdown();
+    init_mat.shutdown();
+    scheduler.change_count() - before
+}
+
+/// Glare in the pairing window: both devices dialled at once and each refused
+/// the other as `Busy`. No backoff is booked there and the resync round dials
+/// only paired peers, so unless one side dials again the pairing never ends.
+/// The side whose key sorts lower asks for one more round; the other waits for
+/// it, or both would collide again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn after_a_busy_in_the_pairing_window_only_the_lower_key_dials_again() {
+    let lower = harness_where_client_sorts_lower(true).await;
+    assert_eq!(
+        rounds_asked_after_a_busy_in_the_pairing_window(&lower).await,
+        1,
+        "the lower key must ask for another round"
+    );
+    let higher = harness_where_client_sorts_lower(false).await;
+    assert_eq!(
+        rounds_asked_after_a_busy_in_the_pairing_window(&higher).await,
+        0,
+        "the higher key must leave the next dial to the lower one"
+    );
+}
+
 /// S-5 across the two roles (#3511): an inbound session is refused while an
 /// OUTBOUND session with the same physical peer is in flight — *during the
 /// pairing window*, which is the only window in which the two used to disagree.
