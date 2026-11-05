@@ -49,6 +49,8 @@ export interface ResolvedNames {
   contents: string[]
   /** The pages and tags created, in creation order. */
   created: Row[]
+  /** A warning per tag name respelled (#6278 I4). */
+  warnings: string[]
 }
 
 function inSpace(row: Row, spaceId: string): boolean {
@@ -273,7 +275,6 @@ export function resolveInboundNames(
     opRefs,
   )
   created.push(...tags.created)
-  warnings.push(...tags.warnings)
   const tagIds = tags.ids
   const linkRef = (token: PageToken): string | undefined => {
     const reading = readings.get(token.body)
@@ -290,5 +291,5 @@ export function resolveInboundNames(
     }
     return out
   })
-  return { contents: rewritten, created }
+  return { contents: rewritten, created, warnings: tags.warnings }
 }
