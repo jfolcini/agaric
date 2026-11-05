@@ -1,4 +1,4 @@
-# Session 3431 — Obsidian note embeds on paste, Edit as Markdown and MCP writes (#6033 S5b, #6277 D4)
+# Session 3452 — Obsidian note embeds on paste, Edit as Markdown and MCP writes (#6033 S5b, #6277 D4)
 
 Set out to build #6033 S5b (= #6277 D4). Import read Obsidian's `![[Note]]` as an embed, but a paste, an Edit as Markdown save or an MCP write stored the literal text.
 
