@@ -1171,11 +1171,20 @@ export function codeFence(code: string, language = ''): string {
   return ch.repeat(Math.max(3, longest + 1))
 }
 
+/**
+ * The opening line of `fence` with the info string `language`, a space between
+ * them when the info string starts with the fence's character, which would
+ * otherwise lengthen the fence past its closing one.
+ */
+export function codeFenceOpen(fence: string, language: string): string {
+  return language.startsWith(fence.charAt(0)) ? `${fence} ${language}` : `${fence}${language}`
+}
+
 function serializeCodeBlock(node: CodeBlockNode): string {
   const code = node.content?.[0]?.text ?? ''
   const lang = node.attrs?.language ?? ''
   const fence = codeFence(code, lang)
-  return `${fence}${lang}\n${code}\n${fence}`
+  return `${codeFenceOpen(fence, lang)}\n${code}\n${fence}`
 }
 
 /**
