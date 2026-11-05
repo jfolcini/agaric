@@ -30,6 +30,7 @@ import { t as translate } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
+import { dashedTagName } from '@/lib/name-tokens'
 import { notify } from '@/lib/notify'
 import { searchBlocksLimit } from '@/lib/safe-limit'
 import { requireActiveScope, requireActiveSearchScope } from '@/lib/space-scope'
@@ -844,9 +845,10 @@ export function useBlockResolve(): UseBlockResolveReturn {
         const qFolded = foldForSearch(q)
         const exactMatch = tags.some((t) => foldForSearch(t.name) === qFolded)
         if (!exactMatch) {
+          // #6278 I4 — the name `onCreateTag` creates, so the row shows it.
           result.unshift({
             id: '__create__',
-            label: query.replace(/\]+$/, '').trim(),
+            label: dashedTagName(query.replace(/\]+$/, '')),
             isCreate: true,
           })
         }
@@ -1032,7 +1034,10 @@ export function useBlockResolve(): UseBlockResolveReturn {
     recordCreatedRow(pagesListRef, nameChangeGenerationRef, row, 'id')
   }, [])
 
-  const onCreateTag = useCallback(async (name: string): Promise<string> => {
+  const onCreateTag = useCallback(async (typed: string): Promise<string> => {
+    // #6278 I4 — a new tag name holds no whitespace; an existing tag of the
+    // typed name was matched before this create was asked for.
+    const name = dashedTagName(typed)
     try {
       // #3081/#2996/#2997 — create the tag ATOMICALLY space-scoped in ONE
       // command: pass the active `spaceId` so the backend stamps

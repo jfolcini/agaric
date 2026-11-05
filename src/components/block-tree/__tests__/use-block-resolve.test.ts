@@ -479,6 +479,21 @@ describe('searchTags', () => {
     expect(createOption).toEqual({ id: '__create__', label: 'MyTag', isCreate: true })
   })
 
+  // #6278 I4 — the row names the tag `onCreateTag` makes for the query.
+  it('labels "Create new tag" with the dashed name for a query holding spaces', async () => {
+    mockedListAllTagsInSpace.mockResolvedValueOnce([])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags(' deep  work]')
+    })
+
+    const createOption = items.find((i) => i.isCreate)
+    expect(createOption).toEqual({ id: '__create__', label: 'deep-work', isCreate: true })
+  })
+
   it('strips trailing ] from tag query', async () => {
     mockedListAllTagsInSpace.mockResolvedValueOnce([
       { tag_id: 'T40', name: 'todo', usage_count: 2, updated_at: '2024-01-01' },
@@ -543,6 +558,45 @@ describe('onCreateTag', () => {
       null,
     )
     expect(newId).toBe('NEW_TAG_1')
+  })
+
+  // #6278 I4 — a new tag name holds no whitespace: a typed `#[[deep work]]`
+  // naming no tag creates `deep-work`, and the chip reads it.
+  it('creates the dashed name for a name holding whitespace', async () => {
+    mockedCreateBlock.mockResolvedValueOnce({
+      id: 'NEW_TAG_DASHED',
+      block_type: 'tag',
+      content: 'deep-work',
+      parent_id: null,
+      position: null,
+      deleted_at: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+      scheduled_date: null,
+      page_id: null,
+      op_refs: [],
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.onCreateTag('deep \u00A0work')
+    })
+
+    expect(mockedCreateBlock).toHaveBeenCalledWith(
+      'tag',
+      'deep-work',
+      null,
+      null,
+      { kind: 'active', space_id: 'SPACE_TEST' },
+      null,
+    )
+    expect(useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'NEW_TAG_DASHED'))).toEqual({
+      title: 'deep-work',
+      deleted: false,
+      resolved: true,
+    })
   })
 
   it('updates the resolve store with the new tag', async () => {

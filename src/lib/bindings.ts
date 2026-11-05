@@ -5022,7 +5022,13 @@ export type ValidationCode =
  *  definition since the preview, so the caller previews again and asks
  *  once more.
  */
-"UnacknowledgedPropertyLoss";
+"UnacknowledgedPropertyLoss" | 
+/**
+ *  Creating or renaming a tag to a name holding whitespace (#6278 I4),
+ *  which Obsidian's `#tag` cannot spell. Coded so the tag surfaces can
+ *  suggest `-`.
+ */
+"TagNameWhitespace";
 
 /**
  *  A single referenced sibling file carried over IPC for an attachment-aware

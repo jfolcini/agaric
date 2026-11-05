@@ -24,6 +24,7 @@
 
 import { ULID_RE } from '@/editor/markdown-common'
 import {
+  dashedTagName,
   type LinkReading,
   linkBodyReadings,
   nameKey,
@@ -48,6 +49,8 @@ export interface ResolvedNames {
   contents: string[]
   /** The pages and tags created, in creation order. */
   created: Row[]
+  /** A warning per tag name respelled (#6278 I4). */
+  warnings: string[]
 }
 
 function inSpace(row: Row, spaceId: string): boolean {
@@ -192,14 +195,16 @@ function pageRef(id: string, label: string | undefined): string {
 
 /**
  * Each of `names` as the tag of `spaceId` its normalised name names (the
- * smallest id wins), created where there is none. Returns the ids and the
- * tags created, in creation order.
+ * smallest id wins), else the tag of its dashed name (#6278 I4), created
+ * where there is none. Returns the ids, the tags created in creation order,
+ * and a warning per name respelled. Mock twin of `resolve_tag_names` and
+ * `inbound_tag_spelling` (`markdown.rs`).
  */
 export function resolveTagNames(
   names: readonly string[],
   spaceId: string,
   opRefs: OpRefs,
-): { ids: Map<string, string>; created: Row[] } {
+): { ids: Map<string, string>; created: Row[]; warnings: string[] } {
   const created: Row[] = []
   const tagsByNorm = new Map<string, string>()
   for (const row of [...blocks.values()].toSorted((a, b) =>
@@ -210,7 +215,12 @@ export function resolveTagNames(
     if (!tagsByNorm.has(norm)) tagsByNorm.set(norm, row['id'] as string)
   }
   const ids = new Map<string, string>()
-  for (const name of names) {
+  const warnings: string[] = []
+  for (const token of names) {
+    const name = tagsByNorm.has(normalizeTagName(token)) ? token : dashedTagName(token)
+    if (name !== token) {
+      warnings.push(`tag '${token}' was read as '${name}': a tag name holds no whitespace`)
+    }
     const norm = normalizeTagName(name)
     let id = tagsByNorm.get(norm)
     if (id === undefined) {
@@ -219,9 +229,9 @@ export function resolveTagNames(
       id = row['id'] as string
       tagsByNorm.set(norm, id)
     }
-    ids.set(name, id)
+    ids.set(token, id)
   }
-  return { ids, created }
+  return { ids, created, warnings }
 }
 
 /** Resolve the names `contents` write in `spaceId`, creating what no name matches. */
@@ -281,5 +291,5 @@ export function resolveInboundNames(
     }
     return out
   })
-  return { contents: rewritten, created }
+  return { contents: rewritten, created, warnings: tags.warnings }
 }
