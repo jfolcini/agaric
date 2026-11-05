@@ -10,20 +10,18 @@
 // maps `[#A]` onto the priority definition's first option, and the page editor
 // shows the three from the stored row AFTER a navigation round-trip.
 //
-// The file is picked through the Data tab's hidden `<input type="file">`, as
-// `import-markdown-nesting.e2e.ts` does.
+// The page is picked as a page of a Logseq graph through the Data tab's folder
+// input (`importLogseqPage`), so it is sent as `LogseqOrg`: a lone `.md` file
+// reads as Markdown, where `TODO` is text (#6277 decision 1).
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
-
-import { mkdtempSync, writeFileSync } from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
 
 import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
+  importLogseqPage,
   navigateTo,
   reopenPageByTitle,
   runScopedMarker,
@@ -31,7 +29,7 @@ import {
 } from './helpers'
 
 const MARKER = runScopedMarker('wdio-logseq-task')
-// The page title is the file path minus `.md`.
+// The page title is the file name under `pages/` minus `.md`.
 const TITLE = `${MARKER}-doc`
 const MARKDOWN = [
   `- TODO [#A] ${MARKER}-task`,
@@ -43,31 +41,8 @@ const MARKDOWN = [
 describe('Agaric real-backend Logseq task import (#5160 D7) @markdown', () => {
   it('imports `TODO [#A]` with a SCHEDULED line as a TODO with a priority and a scheduled date', async () => {
     await waitForAppReady()
-    await navigateTo('Settings')
-    const dataTab = $('#settings-tab-data')
-    await dataTab.waitForClickable({ timeout: NAV_TIMEOUT })
-    await dataTab.click()
-    await $('[data-testid="settings-panel-data"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
-
-    const dir = mkdtempSync(path.join(os.tmpdir(), 'wdio-logseq-'))
-    const file = path.join(dir, `${TITLE}.md`)
-    writeFileSync(file, MARKDOWN)
-
-    const input = $('[data-testid="import-file-input"]')
-    await input.waitForExist({ timeout: ACTION_TIMEOUT })
-    await browser.execute(() => {
-      document.querySelector('[data-testid="import-file-input"]')?.classList.remove('hidden')
-    })
-    await input.addValue(file)
-
-    const result = $('[data-testid="import-result"]')
-    await result.waitForDisplayed({ timeout: ACTION_TIMEOUT })
-    await browser.waitUntil(async () => (await result.getText()).includes(`Imported “${TITLE}”`), {
-      timeout: ACTION_TIMEOUT,
-      timeoutMsg: 'import result never named the imported page',
-    })
     // Two blocks; the planning line was consumed, not made a block or a warning.
-    expect(await result.getText()).toContain('2 blocks')
+    expect(await importLogseqPage(TITLE, MARKDOWN)).toContain(`Imported “${TITLE}”: 2 blocks`)
 
     // Round-trip: Journal first, then back in through the Pages list, so the
     // page editor mounts from a fresh backend read.

@@ -244,8 +244,9 @@ pub const LIST_STYLE_ORDERED: &str = "ordered";
 /// returning the [`LIST_STYLE_BULLET`] / [`LIST_STYLE_ORDERED`] value it
 /// implies and the remaining text.
 ///
-/// The grammar is exactly what the exporter emits: `-` / `- text` for a
-/// bullet, and `<digits>.` / `<digits>. text` for an ordered item. The literal
+/// The grammar is exactly what Agaric's old outline export wrote after its
+/// outline bullet: `-` / `- text` for a bullet, and `<digits>.` /
+/// `<digits>. text` for an ordered item. The literal
 /// ORDINAL is discarded — numbering is positional on export and re-derived
 /// from sibling order, never stored (`docs/architecture/list-ergonomics.md`),
 /// so `3.` and `1.` both import as plain `ordered`.
@@ -274,14 +275,15 @@ fn split_list_marker(text: &str) -> Option<(&'static str, &str)> {
     None
 }
 
-/// #4552 slice 4 — `true` when the exporter must backslash-escape `text` (a
-/// block's FIRST line) so it does not re-import as a list marker.
+/// #4552 slice 4 — `true` when a writer must backslash-escape `text` (a
+/// block's FIRST line) so it does not read back as a list marker.
 ///
 /// A `listStyle: none` block whose content literally begins with `- ` or
 /// `1. ` is indistinguishable, once written after the outline bullet, from a
 /// styled block — `- - foo` would mean both "plain block whose text is `- foo`"
-/// and "bullet block whose text is `foo`". The exporter therefore writes
-/// `- \- foo`, and [`split_block_list_marker`] reverses it.
+/// and "bullet block whose text is `foo`". Agaric's old Logseq-style export
+/// therefore wrote `- \- foo`, and [`split_block_list_marker`] reverses it on
+/// the outline reading.
 ///
 /// The predicate looks PAST a leading run of backslashes so the escape is
 /// injective: `\- foo` (a literal backslash-dash the user typed) is itself
@@ -415,13 +417,13 @@ fn split_org_priority(text: &str) -> Option<(&'static str, &str)> {
         .find_map(|&(cookie, letter)| split_word(text, cookie).map(|rest| (letter, rest)))
 }
 
-/// `true` when an export must backslash-escape `text`, a block's first line
-/// after its markers, so an import does not read it as a task keyword or a
-/// priority cookie (D7) and Export → Import stays the identity. It looks past
-/// a leading run of backslashes, as [`needs_task_marker_escape`] does, so the
-/// escape is injective. The buffer and the clipboard read no keyword, so they
-/// neither write nor remove it.
-pub fn needs_task_syntax_escape(text: &str) -> bool {
+/// `true` when `text`, a block's first line after its markers, reads as a
+/// task keyword or a priority cookie under the outline reading (D7), which
+/// removes the backslash Agaric's old Logseq-style export wrote before one
+/// (decision 3, #6277: no writer writes it now). It looks past a leading run
+/// of backslashes, as [`needs_task_marker_escape`] does, so the escape is
+/// injective. The Document reading reads no keyword.
+fn needs_task_syntax_escape(text: &str) -> bool {
     let body = text.trim_start_matches('\\');
     split_task_keyword(body).is_some() || split_org_priority(body).is_some()
 }
@@ -429,7 +431,7 @@ pub fn needs_task_syntax_escape(text: &str) -> bool {
 /// An import's reading of the task keyword and priority cookie opening `text`,
 /// the checkbox already split off: a keyword only where no checkbox was
 /// written (after one, `TODO` is the task's text), a cookie after either, and
-/// neither after the export's escape, which is removed.
+/// neither after the old export's escape, which is removed.
 fn split_task_syntax<'a>(
     text: &'a str,
     checkbox: Option<&'static str>,
@@ -642,10 +644,10 @@ pub fn closes_fence(line: &str, fence: FenceRun) -> bool {
     run >= fence.len && trimmed[run..].trim().is_empty()
 }
 
-/// The fence `line` opens as an import reads it: at the line's own text, or at
-/// the text of its bullet past the list marker(s) and checkbox, so a
-/// list-styled code block (`- - ```sh`, `- 1. ```sh`) and a task whose
-/// content is a code block (`- [ ] ```sh`) open one too.
+/// The fence `line` opens as the outline reading (`LogseqOrg`) reads it: at
+/// the line's own text, or at the text of its bullet past the list marker(s)
+/// and checkbox, so a list-styled code block (`- - ```sh`, `- 1. ```sh`) and a
+/// task whose content is a code block (`- [ ] ```sh`) open one too.
 pub fn fence_opener(line: &str) -> Option<FenceRun> {
     line_fence(line, ParseMode::Import)
 }
@@ -718,9 +720,9 @@ pub enum ImportProgressUpdate {
 // `src-tauri/src/import.rs`.
 
 /// Which reading a file import's source is for (#6277 E1), as its front end
-/// tells: a Logseq graph or an `.org` file is `LogseqOrg`, everything else
-/// `Markdown`. Both read the same today; it is the seam the `Markdown` reader
-/// switches on.
+/// tells: a Logseq graph or an `.org` file is `LogseqOrg`, read as an outline
+/// ([`parse_logseq_markdown`]), everything else `Markdown`, read as paste and
+/// Edit as Markdown read text ([`parse_markdown_file`], decision 1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Type)]
 pub enum ImportDialect {
     Markdown,
@@ -1264,8 +1266,9 @@ pub fn guess_attachment_mime(path: &str) -> String {
     .to_string()
 }
 
-/// Parse a markdown file into a list of blocks with depth, by the block
-/// grammar `parse_block_lines` describes: one block per list item, heading,
+/// Parse a Logseq or Org file (`ImportDialect::LogseqOrg`) into a list of
+/// blocks with depth, by the block grammar `parse_block_lines` describes as an
+/// outline: one block per list item, heading,
 /// paragraph and fence, nested by the content column, headings owning what
 /// follows them. Logseq's continuation lines and `key:: value` property lines
 /// (#682) attach to the block indentation says owns them; a property with no
@@ -1275,19 +1278,31 @@ pub fn guess_attachment_mime(path: &str) -> String {
 /// `:LOGBOOK:` drawers dropped, and a `((uuid))` reference to no block of the
 /// file is stripped.
 pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
-    parse_import(content, false)
+    parse_import(content, ParseMode::Import, false)
 }
 
 /// [`parse_logseq_markdown`] for a note of a folder import: a `((uuid))`
 /// reference to no block of the file is kept, for `link_import_anchors` to
 /// link once the note naming it is imported.
 pub fn parse_vault_markdown(content: &str) -> ParseOutput {
-    parse_import(content, true)
+    parse_import(content, ParseMode::Import, true)
 }
 
-/// The import reading of [`parse_logseq_markdown`], keeping every `((uuid))`
-/// reference when `keep_refs`.
-fn parse_import(content: &str, keep_refs: bool) -> ParseOutput {
+/// A Markdown file as an import reads it (#6277 decision 1): its blocks as a
+/// paste reads text ([`parse_pasted_text`]), so a heading owns nothing, `- x`
+/// is a bulleted block and a bare `TODO` is text, but with the front matter
+/// and the `key:: value` lines before the first block the page's properties,
+/// as [`parse_logseq_markdown`] reads them, and a trailing `^word` its
+/// block's anchor, which an Obsidian link may name.
+pub fn parse_markdown_file(content: &str) -> ParseOutput {
+    parse_import(content, ParseMode::Document, false)
+}
+
+/// A file read in `mode`, its leading front matter and `key:: value` lines the
+/// page's: the outline reading of [`parse_logseq_markdown`], keeping every
+/// `((uuid))` reference when `keep_refs`, or the Document reading of
+/// [`parse_markdown_file`].
+fn parse_import(content: &str, mode: ParseMode, keep_refs: bool) -> ParseOutput {
     // Normalize line endings BEFORE any other parsing. The frontmatter strip
     // below uses `find("\n---")`, which is fragile against CRLF (works only
     // because `\n---` is a substring of `\r\n---`) and outright broken for
@@ -1332,15 +1347,11 @@ fn parse_import(content: &str, keep_refs: bool) -> ParseOutput {
     });
 
     let mut warnings = frontmatter_warnings;
-    let mut blocks = parse_outline(
-        body,
-        ParseMode::Import,
-        true,
-        None,
-        keep_refs,
-        &mut warnings,
-    );
-    let collapsed = read_logseq_bookkeeping(&mut blocks);
+    let mut blocks = parse_outline(body, mode, true, None, keep_refs, &mut warnings);
+    let collapsed = match mode {
+        ParseMode::Import => read_logseq_bookkeeping(&mut blocks),
+        ParseMode::Document => Vec::new(),
+    };
 
     ParseOutput {
         blocks,
@@ -2577,12 +2588,12 @@ pub fn continuation_line_is_ambiguous(line: &str) -> bool {
     is_bullet_line(body) || heading_level(body).is_some() || line_is_property_shaped(body)
 }
 
-/// `true` when an export must backslash-escape `line`, a continuation line, so
-/// an import does not read it as a `SCHEDULED:` / `DEADLINE:` planning line
-/// (D7). The buffer and the clipboard read none, so they neither write nor
-/// remove it, as with [`needs_task_syntax_escape`]. Injective as
+/// `true` when `line`, a continuation line, reads as a `SCHEDULED:` /
+/// `DEADLINE:` planning line under the outline reading (D7), which removes the
+/// backslash Agaric's old export wrote before one, as with
+/// [`needs_task_syntax_escape`]. The Document reading reads none. Injective as
 /// [`continuation_line_is_ambiguous`] is.
-pub fn needs_planning_line_escape(line: &str) -> bool {
+fn needs_planning_line_escape(line: &str) -> bool {
     is_planning_line(line.trim_start_matches(|c: char| c.is_whitespace() || c == '\\'))
 }
 
@@ -5327,10 +5338,13 @@ bare line (({UUID_B})) too"
     ];
 
     /// Each real-shaped document under `tests/markdown-corpus/` (#5160) as the
-    /// three parsers read it: a file import, an Edit as Markdown save and a
-    /// plain-text paste, snapshotted as `corpus_<file stem>` with `-` written
-    /// `_`. The snapshot is the reviewable spec of what Agaric does with that
-    /// document today, so a grammar change shows as its diff.
+    /// three parsers read it: the outline reading a Logseq or Org file import
+    /// gets (`import`), an Edit as Markdown save and a plain-text paste,
+    /// snapshotted as `corpus_<file stem>` with `-` written `_`. A Markdown
+    /// file import reads its blocks as the paste does, a trailing `^word` its
+    /// anchor (#6277 decision 1). The
+    /// snapshot is the reviewable spec of what Agaric does with that document
+    /// today, so a grammar change shows as its diff.
     #[test]
     fn corpus_documents_read_as_snapshotted() {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/markdown-corpus");
@@ -6871,7 +6885,10 @@ mod tests_pasted_text_5140 {
 /// named after it.
 #[cfg(test)]
 mod tests_block_grammar_5160 {
-    use super::{ParsedBlock, parse_document_outline, parse_logseq_markdown, parse_pasted_text};
+    use super::{
+        ParsedBlock, parse_document_outline, parse_logseq_markdown, parse_markdown_file,
+        parse_pasted_text,
+    };
 
     /// `(depth, content)` of each block.
     fn shape(blocks: &[ParsedBlock]) -> Vec<(usize, &str)> {
@@ -6881,20 +6898,32 @@ mod tests_block_grammar_5160 {
             .collect()
     }
 
-    /// The two parsers over `md`, each named.
+    /// The two parsers over `md`, each named: the outline reading a Logseq or
+    /// Org import gets (`LogseqOrg`), and a paste's.
     fn import_and_paste(md: &str) -> [(&'static str, Vec<ParsedBlock>); 2] {
         [
-            ("import", parse_logseq_markdown(md).blocks),
+            ("logseq import", parse_logseq_markdown(md).blocks),
             ("paste", parse_pasted_text(md)),
         ]
     }
 
-    /// The parser that reads the outline grammar over `md`, named. A paste
-    /// reads the Document dialect (#6190), where a heading owns nothing and the
+    /// The parser that reads the outline grammar over `md`, named: a Logseq
+    /// or Org import's. A paste and a Markdown file import read the Document
+    /// dialect (#6190, #6277 decision 1), where a heading owns nothing and the
     /// lines after a closing fence or a fence under a list item's text do not
     /// continue the item; the tests that differ check it beside them.
     fn import_only(md: &str) -> [(&'static str, Vec<ParsedBlock>); 1] {
-        [("import", parse_logseq_markdown(md).blocks)]
+        [("logseq import", parse_logseq_markdown(md).blocks)]
+    }
+
+    /// The depth of each block a paste and a Markdown file import read in
+    /// `md`, each named.
+    fn document_depths(md: &str) -> [(&'static str, Vec<usize>); 2] {
+        let depths = |blocks: Vec<ParsedBlock>| blocks.iter().map(|b| b.depth).collect();
+        [
+            ("paste", depths(parse_pasted_text(md))),
+            ("markdown file", depths(parse_markdown_file(md).blocks)),
+        ]
     }
 
     fn list_style(block: &ParsedBlock) -> Option<&str> {
@@ -6984,13 +7013,15 @@ mod tests_block_grammar_5160 {
         assert!(out.warnings.is_empty(), "{:?}", out.warnings);
     }
 
-    /// S2 + D16: a README is one block per heading and paragraph, each
-    /// heading owning what follows it.
+    /// S2 + D16: a README is one block per heading and paragraph. Read as an
+    /// outline each heading owns what follows it; pasted or imported as a
+    /// Markdown file no heading owns anything (decision 1, #6277).
     #[test]
     fn b2_readme_shape_reads_as_a_document() {
         let md = "# Title\n\n## A\n\nPara a.\n\n## B\n\nPara b.\n\n- item\n";
-        let pasted: Vec<usize> = parse_pasted_text(md).iter().map(|b| b.depth).collect();
-        assert_eq!(pasted, [0; 6], "a paste's heading owns nothing");
+        for (parser, depths) in document_depths(md) {
+            assert_eq!(depths, [0; 6], "{parser}: a heading owns nothing");
+        }
         for (parser, blocks) in import_only(md) {
             assert_eq!(
                 shape(&blocks),
@@ -7007,12 +7038,15 @@ mod tests_block_grammar_5160 {
         }
     }
 
-    /// S2 + D16: a heading between two lists owns the second one.
+    /// S2 + D16: read as an outline, a heading between two lists owns the
+    /// second one; pasted or imported as a Markdown file it owns nothing
+    /// (decision 1, #6277).
     #[test]
     fn b2_heading_between_lists() {
         let md = "- one\n- two\n\n## Section\n\n- three\n- four\n";
-        let pasted: Vec<usize> = parse_pasted_text(md).iter().map(|b| b.depth).collect();
-        assert_eq!(pasted, [0; 5], "a paste's heading owns nothing");
+        for (parser, depths) in document_depths(md) {
+            assert_eq!(depths, [0; 5], "{parser}: a heading owns nothing");
+        }
         for (parser, blocks) in import_only(md) {
             assert_eq!(
                 shape(&blocks),
@@ -7031,8 +7065,9 @@ mod tests_block_grammar_5160 {
             let depths: Vec<usize> = blocks.iter().map(|b| b.depth).collect();
             assert_eq!(depths, [0, 1, 2, 3, 4, 5], "{parser}");
         }
-        let pasted: Vec<usize> = parse_pasted_text(md).iter().map(|b| b.depth).collect();
-        assert_eq!(pasted, [0; 6], "a paste's heading owns nothing");
+        for (parser, depths) in document_depths(md) {
+            assert_eq!(depths, [0; 6], "{parser}: a heading owns nothing");
+        }
     }
 
     /// D16: a heading inside a list item is its own block and owns nothing.
@@ -7323,12 +7358,14 @@ mod tests_block_grammar_5160 {
         assert!(pasted[1].is_code);
     }
 
-    /// D5: on import and paste an unterminated fence ends with its list item.
+    /// D5: on import, either dialect, and paste an unterminated fence ends
+    /// with its list item.
     #[test]
     fn b3_unterminated_fence_ends_with_its_list_item() {
         let md = "- ```\n  never closed\n- next\n- after\n";
         for (parser, blocks) in [
-            ("import", parse_logseq_markdown(md).blocks),
+            ("logseq import", parse_logseq_markdown(md).blocks),
+            ("markdown file", parse_markdown_file(md).blocks),
             ("paste", parse_pasted_text(md)),
         ] {
             assert_eq!(
@@ -7466,12 +7503,16 @@ mod tests_block_grammar_5160 {
     }
 }
 
-/// Logseq/Org task syntax, read by an import alone (#5160 D7): the keyword
+/// Logseq/Org task syntax, read by the outline reading alone (`LogseqOrg`,
+/// #5160 D7, #6277 decision 1): the keyword
 /// map, the `[#A]` priority cookie, `SCHEDULED:` / `DEADLINE:` planning lines
 /// and their repeater.
 #[cfg(test)]
 mod tests_task_syntax_5160 {
-    use super::{ParsedBlock, parse_document_outline, parse_logseq_markdown, parse_pasted_text};
+    use super::{
+        ParsedBlock, parse_document_outline, parse_logseq_markdown, parse_markdown_file,
+        parse_pasted_text,
+    };
 
     fn property<'a>(block: &'a ParsedBlock, key: &str) -> Option<&'a str> {
         block
@@ -7745,10 +7786,12 @@ mod tests_task_syntax_5160 {
         assert_eq!(property(&out.blocks[0], "due_date"), None);
     }
 
-    /// Export → Import stays the identity (D7): the export escapes a first line
-    /// an import would read as a keyword or a cookie, after a checkbox too, and
-    /// a planning-shaped continuation line; the import removes exactly that
-    /// escape and reads no task syntax. The escape is injective.
+    /// An old export stays the text it was through the outline reading (D7,
+    /// decision 3, #6277): Agaric's old Logseq-style export escaped a first
+    /// line the outline reading reads as a keyword or a cookie, after a
+    /// checkbox too, and a planning-shaped continuation line; that reading
+    /// removes exactly that escape and reads no task syntax. The escape is
+    /// injective.
     #[test]
     fn the_export_escape_keeps_task_syntax_as_text() {
         for (md, state, content) in [
@@ -7797,16 +7840,18 @@ mod tests_task_syntax_5160 {
         }
     }
 
-    /// Import only (D7): a paste and the buffer keep the keyword, the cookie
-    /// and the planning line as the text they are.
+    /// `LogseqOrg` only (D7): a paste, the buffer and a Markdown file keep the
+    /// keyword, the cookie and the planning line as the text they are, a bare
+    /// `TODO` included (decision 1, #6277).
     #[test]
     fn paste_and_buffer_keep_the_logseq_syntax_as_text() {
         let md = "- TODO [#A] x\n  SCHEDULED: <2026-10-01 Thu>\n";
-        // Both read `- ` as a bulleted block (#6190).
+        // Each reads `- ` as a bulleted block (#6190).
         let bullet = vec![("listStyle".to_string(), "bullet".to_string())];
         for (parser, blocks, properties) in [
             ("buffer", parse_document_outline(md).blocks, bullet.clone()),
-            ("paste", parse_pasted_text(md), bullet),
+            ("paste", parse_pasted_text(md), bullet.clone()),
+            ("markdown file", parse_markdown_file(md).blocks, bullet),
         ] {
             assert_eq!(blocks.len(), 1, "{parser}");
             assert_eq!(

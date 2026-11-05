@@ -1204,7 +1204,6 @@ mod tests {
             list_marker,
             &task_marker,
             &block.content,
-            super::super::RenderMode::Document,
         )
         .open;
         let ends_blank = block

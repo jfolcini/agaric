@@ -580,6 +580,19 @@ export function parsePastedText(text: string): DocumentBlock[] {
   return scan.blocks
 }
 
+/**
+ * A Markdown file read into blocks as `import::parse_markdown_file` reads one
+ * (#6277 decision 1): as {@link parsePastedText} reads text, but with its front
+ * matter and the `key:: value` lines before its first block the page's, and a
+ * trailing `^word` its block's anchor, which an Obsidian link may name.
+ */
+export function parseMarkdownFile(text: string): DocumentBlock[] {
+  const scan = new Scan(null, isUlid, true)
+  scan.scan(blockText(text.replace(/\r\n?/g, '\n')).split('\n'))
+  scan.extractAnchors()
+  return scan.blocks
+}
+
 /** Where a written line puts what is under it: whether it opens with a list marker, and its text's column. */
 interface LineLayout {
   marked: boolean

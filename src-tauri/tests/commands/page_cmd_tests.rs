@@ -1258,7 +1258,8 @@ async fn export_anchors_a_block_a_ref_property_names() {
 
     let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
 
-    assert_eq!(md, format!("# Named\n\n- named ^{TARGET}\n- plain\n"));
+    // Each block a paragraph of its own (decision 1, #6277).
+    assert_eq!(md, format!("# Named\n\nnamed ^{TARGET}\n\nplain\n"));
 }
 
 /// #2963 — a `((ULID))` whose target block is missing (deleted / never
@@ -1476,7 +1477,8 @@ async fn insert_attachment(pool: &SqlitePool, id: &str, block_id: &str, filename
 
 /// A block-scoped (non-inline) attachment — a row with no matching
 /// `attachment:<id>` token in the owning block's content — must surface as
-/// a nested markdown link line `- [filename](attachment:<id>)`. Pre-fix,
+/// a nested markdown link line `+ [filename](attachment:<id>)`, a plain child
+/// (decision 1, #6277). Pre-fix,
 /// such attachments (PDFs/docs/any file dropped with no inline token) were
 /// entirely absent from the export.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1515,13 +1517,13 @@ async fn export_page_markdown_emits_block_scoped_attachment_link_2961() {
         .unwrap();
 
     assert!(
-        md.contains("- [report.pdf](attachment:01ATT0000000000000000AT01)"),
+        md.contains("+ [report.pdf](attachment:01ATT0000000000000000AT01)"),
         "block-scoped attachment should emit a link line, got: {md}"
     );
-    // Nested one level under the owning (depth-0) block, matching the
-    // `"  ".repeat(depth + 1)` child-bullet indent.
+    // Nested at the owning (depth-0) block's child column, a `+` item there
+    // (decision 1, #6277).
     assert!(
-        md.contains("\n  - [report.pdf](attachment:01ATT0000000000000000AT01)\n"),
+        md.contains("\n  + [report.pdf](attachment:01ATT0000000000000000AT01)\n"),
         "attachment link should be indented as a child of its owning block, got: {md}"
     );
 }
@@ -1683,7 +1685,7 @@ async fn export_page_markdown_emits_orphan_block_attachment_link_2961() {
         .unwrap();
 
     assert!(
-        md.contains("  - [orphan.bin](attachment:01ATT0000000000000000AT03)"),
+        md.contains("  + [orphan.bin](attachment:01ATT0000000000000000AT03)"),
         "orphan stray block's attachment must be emitted by the safety-net loop, got: {md}"
     );
 }
@@ -1736,13 +1738,14 @@ async fn export_page_markdown_emits_page_own_attachment_link_2991() {
         .unwrap();
 
     assert!(
-        md.contains("- [cover.png](attachment:01ATT0000000000000000AT04)"),
+        md.contains("[cover.png](attachment:01ATT0000000000000000AT04)"),
         "the page block's own non-inline attachment should emit a link line, got: {md}"
     );
     // Emitted at depth 0 (no indent) — right after frontmatter/title, not
-    // nested under any bullet (the page itself has none).
+    // nested under any block (the page itself has none): a paragraph of its
+    // own (decision 1, #6277).
     assert!(
-        md.contains("\n- [cover.png](attachment:01ATT0000000000000000AT04)\n"),
+        md.contains("\n\n[cover.png](attachment:01ATT0000000000000000AT04)\n\n"),
         "the page's own attachment link should be top-level (no indent), got: {md}"
     );
 }
@@ -6788,8 +6791,9 @@ async fn export_and_import_round_trip_refs_after_a_backslash() {
     let md = export_page_markdown_inner(&pool, src.as_str())
         .await
         .unwrap();
-    let written = format!(r"- foo\#[{tag}] bar\\#[[work]] \[[{page}]] \\[[Target]]");
-    assert!(md.contains(&written), "{md}");
+    // A plain block is a paragraph of its own (decision 1, #6277).
+    let written = format!(r"foo\#[{tag}] bar\\#[[work]] \[[{page}]] \\[[Target]]");
+    assert_eq!(md, format!("# Src\n\n{written}\n"));
 
     import_file(&pool, &mat, dir.path(), "Roundtrip.md", &md).await;
     let copies: Vec<String> = sqlx::query_scalar(
@@ -7945,7 +7949,7 @@ async fn import_markdown_handles_properties() {
     // Values must be in the seeded options:
     //   priority: ["1","2","3"]; status: ["active","paused","done","archived"]
     let content = "- Task\n  priority:: 1\n  status:: done";
-    let result = import_markdown_inner(
+    let result = import_logseq_inner(
         &pool,
         DEV,
         &mat,
@@ -7979,7 +7983,7 @@ async fn import_markdown_due_date_stores_as_date() {
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
 
     let content = "- Pay rent\n  due_date:: 2026-01-01\n  scheduled_date:: 2026-02-02";
-    let result = import_markdown_inner(
+    let result = import_logseq_inner(
         &pool,
         DEV,
         &mat,
@@ -8062,7 +8066,7 @@ async fn import_markdown_block_ref_strip_surfaces_warning_1933() {
 
     let content = "- See ((7f3a1b2c-4d5e-4f60-8a9b-0c1d2e3f4a5b)) and \
                    ((650f0a1b-2c3d-4e5f-8091-a2b3c4d5e6f7)) here";
-    let result = import_markdown_inner(
+    let result = import_logseq_inner(
         &pool,
         DEV,
         &mat,
@@ -8158,7 +8162,7 @@ async fn import_markdown_emits_started_progress_complete() {
         content.into(),
         Some("Streamed.md".into()),
         TEST_SPACE_ID.into(),
-        ImportDialect::Markdown,
+        ImportDialect::LogseqOrg,
         None,
         None,
         Some(&sink),
@@ -8339,7 +8343,7 @@ async fn import_markdown_single_transaction() {
     // Values must be in the seeded options:
     //   priority: ["1","2","3"]; status: ["active","paused","done","archived"]
     let content = "- Parent block\n  priority:: 1\n  status:: active\n  - Child A\n  - Child B\n    - Grandchild";
-    let result = import_markdown_inner(
+    let result = import_logseq_inner(
         &pool,
         DEV,
         &mat,
@@ -8481,7 +8485,7 @@ async fn import_markdown_keeps_a_refused_value_as_text_l30() {
     // `priority` is a select-type property whose built-in options are
     // ["1","2","3"], so `99` is refused.
     let content = "- Block 1\n- Block 2\n  priority:: 99\n- Block 3\n  priority:: 2";
-    let result = import_markdown_inner(
+    let result = import_logseq_inner(
         &pool,
         DEV,
         &mat,
@@ -8563,7 +8567,7 @@ async fn import_markdown_multi_chunk_tree_matches_single_chunk() {
     let n_i64 = i64::try_from(n).unwrap();
     let content = flat_markdown(n);
 
-    let result = import_markdown_inner(
+    let result = import_logseq_inner(
         &pool,
         DEV,
         &mat,
@@ -11656,6 +11660,61 @@ async fn import_file(
     result
 }
 
+/// [`import_file`] for a page of a Logseq graph, read as an outline
+/// ([`import_logseq_inner`]).
+async fn import_logseq_file(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    dir: &std::path::Path,
+    name: &str,
+    md: &str,
+) -> agaric_engine::import::ImportResult {
+    let file = Some(name.into());
+    let result = import_logseq_inner(
+        pool,
+        DEV,
+        mat,
+        dir,
+        md.into(),
+        file,
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(mat).await;
+    result
+}
+
+/// [`import_markdown_inner`] for a Logseq page, which a Logseq graph's front
+/// end sends as `ImportDialect::LogseqOrg`, read as an outline (#6277 E1, E2).
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn import_logseq_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    mat: &Materializer,
+    dir: &std::path::Path,
+    content: String,
+    filename: Option<String>,
+    space_id: String,
+    vault_files: Option<Vec<VaultFile>>,
+) -> Result<agaric_engine::import::ImportResult, AppError> {
+    import_markdown_with_progress(
+        pool,
+        device_id,
+        mat,
+        dir,
+        content,
+        filename,
+        space_id,
+        ImportDialect::LogseqOrg,
+        vault_files,
+        None,
+        None,
+    )
+    .await
+}
+
 /// The live pages of the test space titled `title`, by id.
 async fn pages_titled(pool: &SqlitePool, title: &str) -> Vec<String> {
     sqlx::query_scalar(
@@ -12080,8 +12139,10 @@ async fn import_reads_a_link_to_any_note_extension_or_anchor_as_a_page_link() {
         )
     );
     let other_page = BlockId::from_trusted(&other_id);
-    let heading = &dup_children(&pool, &other_page).await[0].0;
-    let pid = &children_of(&pool, &other_page, "# Heading").await[0].0;
+    // The heading owns nothing: the anchored paragraph follows it (decision 1,
+    // #6277).
+    let other_blocks = dup_children(&pool, &other_page).await;
+    let [(heading, _), (pid, _)] = <[(String, String); 2]>::try_from(other_blocks).unwrap();
     assert_eq!(
         block_starting(&pool, "((").await,
         format!("(({heading})) (({pid}))")
@@ -12171,6 +12232,82 @@ async fn import_reads_a_bare_wikilink_as_the_vault_note_of_that_name() {
                 "order {order:?}: no page {stray}"
             );
         }
+        mat.shutdown();
+    }
+}
+
+/// Every Markdown source reads as paste and Edit as Markdown read (decision 1,
+/// #6277): one note, `# Plan\nIntro\n- milk\n* [x] done`, as each front end
+/// sends it, is four blocks under the page: a heading that owns nothing, a
+/// paragraph, a bulleted block and a task with no list style.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn every_markdown_source_stores_a_note_as_the_document_reader_reads_it() {
+    const NOTE: &str = "# Plan\nIntro\n- milk\n* [x] done";
+    let folder = Some(vec!["notes.md".to_string()]);
+    let sources: [(&str, &str, String, Option<Vec<String>>); 5] = [
+        ("plain", "notes.md", NOTE.into(), None),
+        ("Obsidian", "notes.md", NOTE.into(), folder.clone()),
+        // `notionToMarkdown` keeps a heading other than the title, then a blank line.
+        ("Notion", "notes.md", NOTE.replacen('\n', "\n\n", 1), folder),
+        // `enexNoteToMarkdown` and `jexNoteToMarkdown` lead with front matter.
+        (
+            "Evernote",
+            "Work/notes.md",
+            format!("---\nsource: evernote\n---\n\n{NOTE}\n"),
+            None,
+        ),
+        (
+            "Joplin",
+            "notes.md",
+            format!("---\nsource: joplin\n---\n\n{NOTE}\n"),
+            None,
+        ),
+    ];
+    for (source, path, content, notes) in sources {
+        let (pool, dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        ensure_test_space(&pool).await;
+        mark_block_as_space(&pool, TEST_SPACE_ID).await;
+        let result = import_markdown_with_progress(
+            &pool,
+            DEV,
+            &mat,
+            dir.path(),
+            content,
+            Some(path.into()),
+            TEST_SPACE_ID.into(),
+            ImportDialect::Markdown,
+            None,
+            notes,
+            None,
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+
+        let page = BlockId::from_trusted(&result.page_id);
+        let children = dup_children(&pool, &page).await;
+        let contents: Vec<&str> = children.iter().map(|(_, text)| text.as_str()).collect();
+        assert_eq!(contents, ["# Plan", "Intro", "milk", "done"], "{source}");
+        let mut stored = Vec::new();
+        for (id, _) in &children {
+            let id = BlockId::from_trusted(id);
+            let owned = dup_children(&pool, &id).await;
+            assert_eq!(
+                owned,
+                Vec::<(String, String)>::new(),
+                "{source}: a block owns nothing"
+            );
+            stored.push(dup_storage(&pool, &id).await);
+        }
+        let plain = "columns todo=None priority=None scheduled=None due=None";
+        let bullet = "listStyle text=Some(\"bullet\") num=None date=None ref=None bool=None";
+        let done = "columns todo=Some(\"DONE\") priority=None scheduled=None due=None";
+        assert_eq!(
+            stored,
+            [vec![plain], vec![plain], vec![plain, bullet], vec![done]],
+            "{source}"
+        );
         mat.shutdown();
     }
 }
@@ -13450,7 +13587,7 @@ async fn a_logseq_page_imports_its_page_properties_and_bookkeeping() {
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
     let quote_id = "650f1c2e-8a3b-4f6e-9d21-7c5e0b9a1f33";
-    let result = import_file(
+    let result = import_logseq_file(
         &pool,
         &mat,
         dir.path(),
@@ -14527,8 +14664,9 @@ async fn set_task_columns(
     .unwrap();
 }
 
-/// #1916 — the exporter must emit each descendant block as
-/// `<indent>- <content>` (the EXACT shape the importer reconstructs), with
+/// #1916 — the exporter must emit each descendant block in the shape the
+/// importer reconstructs, a plain block as a paragraph and a plain child as a
+/// `+` item at its parent's child column (decision 1, #6277), with
 /// indentation reflecting the block's tree depth. Pre-fix the loop wrote raw
 /// content with no bullet and no indent, so Agaric's own export collapsed to
 /// a single block on re-import.
@@ -14545,14 +14683,10 @@ async fn export_emits_bulleted_indented_block_content_1916() {
 
     let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
 
-    // Depth-0 block: `- Parent block`; depth-1 block: `  - Child block`.
-    assert!(
-        md.contains("- Parent block\n"),
-        "depth-0 block must be a bare bullet; got:\n{md}"
-    );
-    assert!(
-        md.contains("  - Child block\n"),
-        "depth-1 block must be indented two spaces; got:\n{md}"
+    // Depth-0 block: the paragraph `Parent block`; depth-1 block: `  + Child block`.
+    assert_eq!(
+        md, "# Hierarchy Page\n\nParent block\n\n  + Child block\n",
+        "depth-0 block must be a paragraph and its child a `+` item two columns in"
     );
 }
 
@@ -14583,7 +14717,8 @@ async fn export_emits_task_checkbox_and_metadata_property_lines_1916() {
         ("DOING", "- [/] Write the report\n"),
         ("DONE", "- [x] Write the report\n"),
         ("CANCELLED", "- [-] Write the report\n"),
-        ("WAITING", "- Write the report\n  todo_state:: WAITING\n"),
+        // A plain block is a paragraph (decision 1, #6277).
+        ("WAITING", "\n\nWrite the report\n  todo_state:: WAITING\n"),
     ] {
         set_task_columns(
             &pool,
@@ -14603,7 +14738,7 @@ async fn export_emits_task_checkbox_and_metadata_property_lines_1916() {
             usize::from(state == "WAITING"),
             "{state}: a checkbox state is never written twice; got:\n{md}"
         );
-        // The other columns are property lines indented one level under the bullet.
+        // The other columns are property lines at the block's text column.
         assert!(
             md.contains("  priority:: A\n"),
             "{state}: priority; got:\n{md}"
@@ -14631,9 +14766,9 @@ async fn export_import_round_trip_keeps_every_task_state() {
     const SRC: &str = "01AAAAAAAAAAAAAAAAAATASKRT";
     insert_block(&pool, SRC, "page", "Task Round Trip", None, Some(1)).await;
     assign_to_space(&pool, SRC, TEST_SPACE_ID).await;
-    // Each block's text is the task keyword an import would read (D7), so the
-    // round trip also proves the export escapes it and the import reads the
-    // escape back.
+    // Each block's text is a task keyword a Logseq import would read (D7). A
+    // Markdown file reads none (decision 1, #6277), so the export writes the
+    // text as it is and the import keeps it.
     let states = [
         ("TODO", Some("TODO")),
         ("DOING", Some("DOING")),
@@ -14650,13 +14785,14 @@ async fn export_import_round_trip_keeps_every_task_state() {
     agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, SRC).await.unwrap();
-    for escaped in [
-        "- [ ] \\TODO\n",
-        "- \\[ ] not a task\n",
-        "- \\[#A] not a priority\n  \\SCHEDULED: <2026-10-01 Thu>\n",
+    for written in [
+        "- [ ] TODO\n",
+        "\n\n[ ] not a task\n",
+        "\n\n[#A] not a priority\nSCHEDULED: <2026-10-01 Thu>\n",
     ] {
-        assert!(md.contains(escaped), "{escaped:?}; got:\n{md}");
+        assert!(md.contains(written), "{written:?}; got:\n{md}");
     }
+    assert!(!md.contains('\\'), "nothing is escaped; got:\n{md}");
     import_markdown_inner(
         &pool,
         DEV,
@@ -14762,7 +14898,7 @@ async fn import_reads_logseq_task_syntax_into_the_task_columns() {
               - DONE Book the room\n  SCHEDULED: <2026-10-01 Thu +1h>\n\
               - Plain text\n";
 
-    let result = import_markdown_inner(
+    let result = import_logseq_inner(
         &pool,
         DEV,
         &mat,
@@ -14830,7 +14966,7 @@ async fn import_maps_an_org_priority_letter_to_its_level() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    import_markdown_inner(
+    import_logseq_inner(
         &pool,
         DEV,
         &mat,
@@ -14867,7 +15003,7 @@ async fn import_keeps_an_org_planning_date_past_a_warning_period_or_a_foreign_da
               - TODO b\n  SCHEDULED: <2026-10-02 Fri --3d>\n\
               - TODO c\n  DEADLINE: <2026-10-03 jeu.>\n\
               - TODO d\n  DEADLINE: <2026-10-04 周四>\n";
-    let result = import_markdown_inner(
+    let result = import_logseq_inner(
         &pool,
         DEV,
         &mat,
@@ -17076,18 +17212,20 @@ async fn export_emits_custom_descendant_block_property_2962() {
 
     let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
 
+    // A plain block is a paragraph, its property lines at its text column
+    // plus two (decision 1, #6277).
     assert!(
-        md.contains("- Write the report\n"),
-        "bullet content missing, got:\n{md}"
+        md.contains("\n\nWrite the report\n"),
+        "block content missing, got:\n{md}"
     );
     assert!(
-        md.contains("  assignee:: Alice\n"),
+        md.contains("\n  assignee:: Alice\n"),
         "custom descendant property must be emitted, got:\n{md}"
     );
 }
 
 /// #2962 — a NESTED descendant (depth >= 2) custom property must be indented
-/// one level under ITS OWN bullet, not the page-root indentation, and the
+/// at ITS OWN text column, not the page-root indentation, and the
 /// batched `block_properties` read must resolve correctly across an entire
 /// subtree (not just direct children of the page).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -17125,14 +17263,16 @@ async fn export_emits_custom_property_for_nested_descendant_2962() {
 
     let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
 
+    // The plain child is a `+` item at its parent's child column (decision 1,
+    // #6277).
     assert!(
-        md.contains("  - Child block\n"),
-        "child bullet must be indented one level; got:\n{md}"
+        md.contains("\n  + Child block\n"),
+        "child must be a `+` item two columns in; got:\n{md}"
     );
     assert!(
-        md.contains("    effort:: 2\n"),
-        "nested descendant's custom property must be indented one level under \
-         ITS OWN (depth-1) bullet, i.e. two levels total; got:\n{md}"
+        md.contains("\n    effort:: 2\n"),
+        "nested descendant's custom property must be indented at \
+         ITS OWN (depth-1) text column, four columns in; got:\n{md}"
     );
 }
 
@@ -17546,13 +17686,16 @@ async fn export_emits_list_marker_and_no_list_style_property_4552() {
 
     let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
 
+    // The Document layout: the marker is the line's own, and a plain block a
+    // paragraph after a blank line (decision 1, #6277).
     assert_eq!(
         md,
         "# Marker Page\n\n\
-         - - Buy milk\n\
-         - 1. Step one\n\
-         - 2. Step two\n\
-         - Just prose\n",
+         - Buy milk\n\
+         1. Step one\n\
+         2. Step two\n\
+         \n\
+         Just prose\n",
         "the marker is emitted from `listStyle`, numbered POSITIONALLY, and a \
          plain block gets none; got:\n{md}"
     );
@@ -17575,8 +17718,9 @@ async fn export_renumbers_ordered_runs_positionally_4552() {
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
 
     // `7.` and `1.` are deliberately non-canonical, and the `- ` bullet in the
-    // middle splits the run in two.
-    let md_in = "- 3. alpha\n- 7. beta\n- - a bullet\n- 1. gamma\n";
+    // middle splits the run in two. A Markdown file's list, as the Document
+    // reader reads it (decision 1, #6277).
+    let md_in = "3. alpha\n7. beta\n- a bullet\n1. gamma\n";
     import_markdown_inner(
         &pool,
         DEV,
@@ -17602,10 +17746,10 @@ async fn export_renumbers_ordered_runs_positionally_4552() {
     assert_eq!(
         md_out,
         "# Renumber4552\n\n\
-         - 1. alpha\n\
-         - 2. beta\n\
-         - - a bullet\n\
-         - 1. gamma\n",
+         1. alpha\n\
+         2. beta\n\
+         - a bullet\n\
+         1. gamma\n",
         "ordinals are re-derived from sibling position and restart after a \
          non-ordered sibling; got:\n{md_out}"
     );
@@ -17636,19 +17780,25 @@ async fn export_import_export_list_style_fixpoint_4552() {
 
     // The canonical body: two bullets, a two-item ordered run, a nested
     // ordered child (its own run, restarting at 1), a plain block, and the two
-    // criterion-11 blocks whose text begins with a literal marker.
+    // criterion-11 blocks whose text begins with a literal marker, in the
+    // Document layout the export writes and a Markdown file reads (decision 1,
+    // #6277): a list line carries its own marker, a paragraph stands after a
+    // blank line.
     // NOTE: written with `concat!` because Rust's `\<newline>` string
     // continuation eats the next line's LEADING WHITESPACE — which is exactly
-    // what the nested `  - 1. Nested step` line is testing.
+    // what the nested `   1. Nested step` line is testing.
     const BODY: &str = concat!(
-        "- - Buy milk\n",
-        "- - Buy eggs\n",
-        "- 1. Step one\n",
-        "  - 1. Nested step\n",
-        "- 2. Step two\n",
-        "- Just prose\n",
-        "- \\- not a list\n",
-        "- \\1. also not a list\n",
+        "- Buy milk\n",
+        "- Buy eggs\n",
+        "1. Step one\n",
+        "   1. Nested step\n",
+        "2. Step two\n",
+        "\n",
+        "Just prose\n",
+        "\n",
+        "\\- not a list\n",
+        "\n",
+        "\\1. also not a list\n",
     );
 
     async fn import_and_export(
@@ -17743,9 +17893,9 @@ async fn export_import_export_list_style_fixpoint_4552() {
     mat.shutdown();
 }
 
-/// #4552 — a list-styled code block exports as `- - ```sh` / ```` - 1. ``` ````,
-/// and that line has to open the fence on import as well, or the `- x` lines
-/// inside the code come back as child blocks.
+/// #4552 — a list-styled code block exports as `- ```sh` / ```` 1. ``` ```` (decision
+/// 1, #6277), and that line has to open the fence on import as well, or the
+/// `- x` lines inside the code come back as child blocks.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn export_import_list_styled_code_block_round_trip_4552() {
     let (pool, _dir) = test_pool().await;
@@ -17773,7 +17923,7 @@ async fn export_import_list_styled_code_block_round_trip_4552() {
     // and import would still agree, but only by escaping the code's own lines.
     assert_eq!(
         md,
-        "# List Code\n\n- - ```sh\n  - x\n  - y\n  ```\n- 1. ```\n  - z\n  ```\n"
+        "# List Code\n\n- ```sh\n  - x\n  - y\n  ```\n1. ```\n   - z\n   ```\n"
     );
     let mut expected = vec!["# List Code", BULLET_CODE, ORDERED_CODE];
     expected.sort_unstable();
@@ -17839,19 +17989,20 @@ async fn export_emits_a_stray_the_dfs_walk_cannot_reach() {
 
     // Whole lines, not substrings: a deeper-indented bullet still CONTAINS the
     // undented one, so `md.contains(..)` would wave an indentation bug through.
+    // A plain block at depth 0 is a paragraph (decision 1, #6277).
     assert!(
-        lines.contains(&"- Reachable child"),
+        lines.contains(&"Reachable child"),
         "the reachable child must export at depth 0, got: {md}"
     );
     let stray = lines
         .iter()
-        .position(|l| *l == "- Stray block")
+        .position(|l| *l == "Stray block")
         .unwrap_or_else(|| panic!("an unreachable stray must still export at depth 0, got: {md}"));
     assert_eq!(
         lines[stray + 1],
         "  priority:: 1",
-        "a stray's reserved-column metadata is indented one level under its \
-         bullet, exactly as a walked block's is, got: {md}"
+        "a stray's reserved-column metadata is indented at its text column \
+         plus two, exactly as a walked block's is, got: {md}"
     );
 }
 
@@ -17920,6 +18071,18 @@ async fn import_folder(
     notes: &[(&str, &str)],
     files: &[VaultFile],
 ) -> Vec<String> {
+    import_folder_as(pool, mat, dir, notes, files, ImportDialect::Markdown).await
+}
+
+/// [`import_folder`] in `dialect`: `LogseqOrg` for a Logseq graph.
+async fn import_folder_as(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    dir: &std::path::Path,
+    notes: &[(&str, &str)],
+    files: &[VaultFile],
+    dialect: ImportDialect,
+) -> Vec<String> {
     ensure_test_space(pool).await;
     mark_block_as_space(pool, TEST_SPACE_ID).await;
     let paths: Vec<String> = notes.iter().map(|(path, _)| (*path).to_string()).collect();
@@ -17933,7 +18096,7 @@ async fn import_folder(
             (*md).to_string(),
             Some((*path).to_string()),
             TEST_SPACE_ID.into(),
-            ImportDialect::Markdown,
+            dialect,
             Some(files.to_vec()),
             Some(paths.clone()),
             None,
@@ -18042,8 +18205,7 @@ async fn a_folder_import_links_embeds_and_anchors_across_its_notes() {
     let page_b = BlockId::from_trusted(&page_b);
     let b_top = dup_children(&pool, &page_b).await;
     let setup = &b_top[1].0;
-    let b_setup = children_of(&pool, &page_b, "## Setup").await;
-    let step = &b_setup[0].0;
+    let step = &b_top[2].0;
     let a_blocks = dup_children(&pool, &BlockId::from_trusted(&page_a)).await;
     let mine = &a_blocks[6].0;
     let att: String = sqlx::query_scalar("SELECT id FROM attachments WHERE deleted_at IS NULL")
@@ -18066,14 +18228,18 @@ async fn a_folder_import_links_embeds_and_anchors_across_its_notes() {
             format!("{{{{embed [[{page_b}]]}}}}"),
         ]
     );
-    assert_eq!(texts(&b_top), ["Intro paragraph.", "## Setup"]);
+    // A heading owns nothing (decision 1, #6277).
     assert_eq!(
-        texts(&b_setup),
+        texts(&b_top),
         [
+            "Intro paragraph.".to_string(),
+            "## Setup".to_string(),
             "The step.".to_string(),
             format!("Back to (({mine})) and [[{page_a}]]."),
         ]
     );
+    let under_setup = children_of(&pool, &page_b, "## Setup").await;
+    assert_eq!(under_setup, Vec::<(String, String)>::new());
     assert_eq!(
         warnings,
         [
@@ -18161,7 +18327,7 @@ async fn a_logseq_embed_imports_as_the_embed_of_its_target() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    let result = import_file(
+    let result = import_logseq_file(
         &pool,
         &mat,
         dir.path(),
@@ -18201,7 +18367,7 @@ async fn a_folder_import_links_logseq_refs_across_its_files() {
          - {{{{embed (({LOGSEQ_OWN}))}}}}\n- mine\n  id:: {LOGSEQ_OWN}\n- lost (({none}))\n"
     );
     let second = format!("- target block\n  id:: {LOGSEQ_OTHER}\n- back (({LOGSEQ_OWN}))\n");
-    let warnings = import_folder(
+    let warnings = import_folder_as(
         &pool,
         &mat,
         dir.path(),
@@ -18210,6 +18376,7 @@ async fn a_folder_import_links_logseq_refs_across_its_files() {
             ("graph/pages/L2.md", &second),
         ],
         &[],
+        ImportDialect::LogseqOrg,
     )
     .await;
 

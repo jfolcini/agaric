@@ -56,6 +56,18 @@ async function triggerExport(page: import('@playwright/test').Page) {
 }
 
 // ===========================================================================
+/**
+ * The first line of each block of a page's export: its lines below the
+ * `# Title` line that start at column 0. The export lays a page out as Edit as
+ * Markdown does (#6277 E2): a plain block is a paragraph, a list block or a
+ * task opens with its marker, and property lines and children are indented.
+ */
+function exportedBlockLines(markdown: string): string[] {
+  const lines = markdown.split('\n')
+  const title = lines.findIndex((line) => line.startsWith('# '))
+  return lines.slice(title + 1).filter((line) => line !== '' && !/^\s/.test(line))
+}
+
 // Helper: navigate to Settings → Data tab (where the import/export UI lives
 // After). The import panel used to live in the Status panel but was
 // moved to Settings → Data with the lazy-loaded DataSettingsTab component.
@@ -112,13 +124,13 @@ test.describe('Export page as markdown @markdown', () => {
       return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE01' })
     })
 
-    // Verify it starts with the page title as a heading
-    expect(markdown).toMatch(/^# Getting Started/)
+    // The page's front matter, then its title as a heading (#6277 A1)
+    expect(markdown).toMatch(/^---\naliases: \[getting-started, gs\]\n---\n\n# Getting Started\n\n/)
 
-    // Verify it contains list items for the child blocks
-    expect(markdown).toContain('- Welcome to Agaric!')
-    expect(markdown).toContain('- Use the sidebar to navigate')
-    expect(markdown).toContain('- Create new blocks by pressing Enter')
+    // Each plain child block is a paragraph of its own (#6277 E2)
+    expect(markdown).toContain('\n\nWelcome to Agaric!')
+    expect(markdown).toContain('\n\nUse the sidebar to navigate')
+    expect(markdown).toContain('\n\nCreate new blocks by pressing Enter')
   })
 })
 
@@ -201,7 +213,7 @@ test.describe('Export all pages as ZIP @markdown', () => {
     // space's typed definitions travel beside it (#6277 decision 8).
     const gettingStarted = await zip.file('Getting Started.md')?.async('string')
     expect(gettingStarted).not.toContain('# Getting Started')
-    expect(gettingStarted).toContain('- Welcome to Agaric!')
+    expect(gettingStarted).toContain('\n\nWelcome to Agaric!')
     const space = JSON.parse((await zip.file('.agaric/space.json')?.async('string')) ?? '{}')
     expect(space.propertyDefinitions).toContainEqual({
       key: 'project',
@@ -408,7 +420,7 @@ test.describe('Export preserves block structure @markdown', () => {
     await waitForBoot(page)
   })
 
-  test('exported markdown contains all child blocks as list items', async ({ page }) => {
+  test('exported markdown contains all child blocks as blocks of their own', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
     // Use evaluate to get the raw markdown
@@ -423,16 +435,16 @@ test.describe('Export preserves block structure @markdown', () => {
       return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE01' })
     })) as string
 
-    // The page has 5 child blocks — each should be a list item
-    const listItems = markdown.split('\n').filter((line: string) => line.startsWith('- '))
-    expect(listItems.length).toBe(5)
+    // The page has 5 plain child blocks — each a paragraph of its own
+    const blockLines = exportedBlockLines(markdown)
+    expect(blockLines.length).toBe(5)
 
     // Verify block ordering matches seed data positions
-    expect(listItems[0]).toContain('Welcome to Agaric!')
-    expect(listItems[1]).toContain('Use the sidebar')
-    expect(listItems[2]).toContain('Create new blocks')
-    expect(listItems[3]).toContain('Try tagging blocks')
-    expect(listItems[4]).toContain('Use the search panel')
+    expect(blockLines[0]).toMatch(/^Welcome to Agaric!/)
+    expect(blockLines[1]).toMatch(/^Use the sidebar/)
+    expect(blockLines[2]).toMatch(/^Create new blocks/)
+    expect(blockLines[3]).toMatch(/^Try tagging blocks/)
+    expect(blockLines[4]).toMatch(/^\*\*Use the search panel/)
   })
 
   test('exported Daily page preserves task blocks in order', async ({ page }) => {
@@ -448,15 +460,16 @@ test.describe('Export preserves block structure @markdown', () => {
       return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE03' })
     })) as string
 
-    const listItems = markdown.split('\n').filter((line: string) => line.startsWith('- '))
-    expect(listItems.length).toBe(5)
+    // Two paragraphs, then three tasks, each a checkbox item (#6277 E2)
+    const blockLines = exportedBlockLines(markdown)
+    expect(blockLines.length).toBe(5)
 
     // Verify position-based ordering
-    expect(listItems[0]).toContain('Morning standup notes')
-    expect(listItems[1]).toContain('Review project milestones')
-    expect(listItems[2]).toContain('Buy groceries')
-    expect(listItems[3]).toContain('Review pull requests')
-    expect(listItems[4]).toContain('Write documentation')
+    expect(blockLines[0]).toBe('Morning standup notes go here')
+    expect(blockLines[1]).toBe('Review project milestones')
+    expect(blockLines[2]).toBe('- [ ] Buy groceries')
+    expect(blockLines[3]).toBe('- [/] Review pull requests')
+    expect(blockLines[4]).toBe('- [x] Write documentation')
   })
 })
 
@@ -552,11 +565,10 @@ test.describe('Round-trip fidelity @markdown', () => {
     // Verify heading
     expect(markdown).toMatch(/^# Quick Notes/)
 
-    // Each block's text content should appear as a list item in the export
+    // Each block should be a block of the export, a paragraph here
     // The rendered text may resolve [[ULID]] tokens into display text,
     // but the raw export should contain the original content with tokens
-    const listItems = markdown.split('\n').filter((line: string) => line.startsWith('- '))
-    expect(listItems.length).toBe(blockTexts.length)
+    expect(exportedBlockLines(markdown).length).toBe(blockTexts.length)
   })
 
   test('import then export preserves block content', async ({ page }) => {
@@ -623,14 +635,17 @@ test.describe('Round-trip fidelity @markdown', () => {
     }, importedPage?.id)) as string
 
     // The export header is the (filename-derived) page title (#1919).
-    expect(exportedMd).toMatch(/^# round-trip/)
+    expect(exportedMd).toMatch(/^# round-trip\n\n/)
     // The original `# Round Trip Test` heading is now ordinary content, so it
-    // round-trips as a content bullet rather than the page title.
-    expect(exportedMd).toContain('- # Round Trip Test')
-    // The body content still round-trips faithfully.
-    expect(exportedMd).toContain('- Alpha block')
-    expect(exportedMd).toContain('- Beta block')
-    expect(exportedMd).toContain('- Gamma block')
+    // round-trips as a heading block rather than the page title, and the body
+    // content still round-trips faithfully. The mock stamps no list style, so
+    // its blocks come back as paragraphs.
+    expect(exportedBlockLines(exportedMd)).toEqual([
+      '# Round Trip Test',
+      'Alpha block',
+      'Beta block',
+      'Gamma block',
+    ])
   })
 
   test('export of Projects page has correct block count', async ({ page }) => {
@@ -645,11 +660,13 @@ test.describe('Round-trip fidelity @markdown', () => {
       return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE04' })
     })) as string
 
-    expect(markdown).toMatch(/^# Projects/)
+    expect(markdown).toMatch(/\n# Projects\n\n/)
 
-    // Projects page has 5 child blocks (BLOCK_PROJ_1..4 + BLOCK_OVERDUE_1)
-    const listItems = markdown.split('\n').filter((line: string) => line.startsWith('- '))
-    expect(listItems.length).toBe(5)
+    // Projects page has 5 child blocks (BLOCK_PROJ_1..4 + BLOCK_OVERDUE_1),
+    // each a task item
+    const blockLines = exportedBlockLines(markdown)
+    expect(blockLines.length).toBe(5)
+    expect(blockLines.every((line) => /^- \[.\] /.test(line))).toBe(true)
 
     // Verify specific content from seed data
     expect(markdown).toContain('Ship v2.0 release')

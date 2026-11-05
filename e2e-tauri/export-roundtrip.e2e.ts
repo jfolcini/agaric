@@ -138,10 +138,12 @@ describe('Agaric real-backend export (#5740) @markdown', () => {
 
     await waitForAppReady()
     await importMarkdownPage(target, `- ${target}-body\n`)
+    // A Markdown file's task is a checkbox item; a bare `TODO` is text (#6277
+    // decision 1).
     await importMarkdownPage(
       title,
       [
-        `- TODO ${task} #${tag} [[${target}|${label}]]`,
+        `- [ ] ${task} #${tag} [[${target}|${label}]]`,
         '  repeat:: weekly',
         `- ${marker}-parent`,
         `  - ${marker}-child`,
@@ -152,6 +154,8 @@ describe('Agaric real-backend export (#5740) @markdown', () => {
     await reopenPageByTitle(title)
     const source = await rowShape(task, expected)
     const exported = await exportOpenPage()
+    // The Document layout (#6277 E2): the task, then two bulleted blocks, each
+    // line its own marker.
     expect(exported).toBe(
       [
         `# ${title}`,
@@ -218,7 +222,9 @@ describe('Agaric real-backend export (#5740) @markdown', () => {
 
     const page = await zip.file(`${folder}/${leaf}.md`)?.async('string')
     if (page === undefined) throw new Error(`no ${folder}/${leaf}.md in ${JSON.stringify(names)}`)
-    expect(page).toContain(`- ${marker}![${filename}](../${asset})`)
+    // The file opens with the block, a paragraph, its title line dropped
+    // (#6277 E2, decision 8).
+    expect(page.startsWith(`${marker}![${filename}](../${asset})`)).toBe(true)
     expect(page).not.toContain('attachment:')
     // The report lists what an export skipped; a clean export has none.
     expect(names).not.toContain('.agaric/export-report.txt')

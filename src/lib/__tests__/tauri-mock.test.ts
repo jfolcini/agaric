@@ -3013,12 +3013,15 @@ describe('page alias commands', () => {
 // ---------------------------------------------------------------------------
 
 describe('export_page_markdown', () => {
+  // Laid out as the page's buffer is, plain blocks as paragraphs, with the
+  // front matter first and the title after it (#6277 E2).
   it('returns markdown with page title and child blocks', () => {
     const md = invoke('export_page_markdown', {
       pageId: SEED_IDS.PAGE_GETTING_STARTED,
     }) as string
-    expect(md).toContain('# Getting Started')
-    expect(md).toContain('- Welcome to Agaric!')
+    expect(md).toMatch(/^---\naliases: \[getting-started, gs\]\n---\n\n# Getting Started\n\n/)
+    expect(md).toContain('\n\nWelcome to Agaric! This is your personal knowledge base.\n\n')
+    expect(md).not.toContain('^')
   })
 
   it('throws for non-existent page', () => {

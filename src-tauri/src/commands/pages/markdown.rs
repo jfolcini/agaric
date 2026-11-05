@@ -851,42 +851,6 @@ impl NameSnapshot {
     }
 }
 
-/// #2963 — append an Obsidian `^<block-ulid>` block-anchor marker to a block's
-/// resolved export content when something addresses that block
-/// ([`PageExportData::addressed_blocks`], #6277).
-///
-/// The marker lands at the very end of the block's content — its last line —
-/// which is exactly where the importer's `strip_block_anchor_marker` reads it
-/// back into `ParsedBlock::block_anchor`, so a `[[#^<ULID>]]` or
-/// `[[Page#^<ULID>]]` link (emitted by [`resolve_ulids_for_export`]) resolves
-/// to a real `((<new ULID>))` block reference on re-import, a folder import
-/// included. A block nothing addresses is returned unchanged. The marker id is
-/// the block's own ULID, which satisfies the importer's `^[A-Za-z0-9-]+` anchor
-/// grammar and is guaranteed unique, so it is a stable key linking the
-/// reference to its target.
-fn stamp_block_anchor_marker(
-    resolved: String,
-    block_id: &str,
-    addressed_blocks: &std::collections::HashSet<String>,
-) -> String {
-    if !addressed_blocks.contains(block_id) {
-        return resolved;
-    }
-    append_block_anchor(&resolved, block_id)
-}
-
-/// `resolved` with the `^<block_id>` marker at its end. A block ending on a
-/// fence line gets the marker on a line of its own: on the fence line the
-/// importer reads it as code and never strips it.
-fn append_block_anchor(resolved: &str, block_id: &str) -> String {
-    let last_line = resolved
-        .rsplit_once('\n')
-        .map_or(resolved, |(_, line)| line);
-    let ends_on_closing_fence = import::fence_run(last_line.trim_start()).is_some();
-    let separator = if ends_on_closing_fence { '\n' } else { ' ' };
-    format!("{resolved}{separator}^{block_id}")
-}
-
 /// One projected `block_properties` row destined for the exported YAML
 /// frontmatter (#384). A row stores its value in exactly one of the typed
 /// columns; the emit loop in [`export_page_markdown_inner`] picks the populated
@@ -983,36 +947,30 @@ enum PageRead {
     Duplicate,
 }
 
-/// The renderings of a page's block tree. In every one a task's state is a
-/// checkbox after the bullet (#5160 D6), or a `todo_state::` line for a state
-/// outside the checkbox alphabet. `Export` writes a file for other tools: ids
-/// become names and links, and only a block something addresses carries an
-/// anchor. `Document` writes the buffer Edit as Markdown edits (#5691),
-/// which `import::parse_document_outline` reads back as exactly this tree: a
-/// plain block is its own paragraph, a list block carries its marker and a
-/// task is `- [ ] x`, which has no list style (D3); a blank line separates
+/// The renderings of a page's block tree, each laid out as a Document buffer
+/// (#5691), which `import::parse_document_outline` reads back as exactly this
+/// tree: a plain block is its own paragraph, a list block carries its marker
+/// and a task is `- [ ] x`, which has no list style (D3), or a `todo_state::`
+/// line for a state outside the checkbox alphabet; a blank line separates
 /// blocks but neighbouring list lines (D1), a plain block under another block
-/// is a `+` item and a line holding only `\` an empty line (D4). Every block
-/// carries its `^ID`, and ids stay raw unless a name reads back to the same
-/// id. Duplicate, journal templates and the MCP page tools write and read it
-/// too, as a paste reads it (#6190). `Clipboard` is `Document` for text that
-/// leaves the app, which a paste reads: a block carries its `^ID` only when it
-/// would not read back without it. `Agent` is the page an MCP agent reads
-/// (#5375): `Document`, every block with its `^ID` so the agent can name the
-/// block it edits next, but with the export's names, which may be ambiguous.
+/// is a `+` item and a line holding only `\` an empty line (D4). `Document` is
+/// the buffer Edit as Markdown edits: every block carries its `^ID`, and ids
+/// stay raw unless a name reads back to the same id. Duplicate, journal
+/// templates and the MCP page tools write and read it too, as a paste reads it
+/// (#6190). `Clipboard` is `Document` for text that leaves the app, which a
+/// paste reads: a block carries its `^ID` only when it would not read back
+/// without it. `Agent` is the page an MCP agent reads (#5375): `Document`,
+/// every block with its `^ID` so the agent can name the block it edits next,
+/// but with the export's names, which may be ambiguous. `Export` writes a file
+/// for other tools, which a `Markdown` file import reads as a paste does
+/// (#6277 decision 1): ids become names and links, and a block carries its
+/// `^ID` only when something addresses it or it leaves a fence open.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RenderMode {
     Export,
     Clipboard,
     Agent,
     Document,
-}
-
-impl RenderMode {
-    /// Whether the rendering is laid out as a Document buffer.
-    fn lays_out_document(self) -> bool {
-        matches!(self, Self::Document | Self::Clipboard | Self::Agent)
-    }
 }
 
 /// The page's buffer, its front matter and then its block tree in
@@ -1033,16 +991,11 @@ fn render_page_document(data: &PageExportData) -> (String, Vec<String>) {
     (output, ids)
 }
 
-/// Emits one block as `<indent>- <content>` — the *exact* shape
-/// `import::parse_logseq_markdown` reconstructs, deriving block identity from
-/// the `- ` prefix and nesting depth from leading-spaces / 2 (#1916).
-///
-/// Below the bullet: the reserved-column task metadata, the block's custom
-/// `key:: value` properties, and, in an export, its non-inline attachments,
-/// each indented one level further. The orphan safety net renders a stray
-/// through this same path at depth 0, so a stray and a walked block cannot
-/// drift apart. A Document buffer places the block by `layout` instead
-/// ([`DocumentLayout::place`]).
+/// Writes one block where `layout` places it ([`DocumentLayout::place`]),
+/// then, at its text's column, the reserved-column task metadata, the block's
+/// custom `key:: value` properties, and, in an export, its non-inline
+/// attachments. The orphan safety net renders a stray through this same path
+/// at depth 0, so a stray and a walked block cannot drift apart.
 fn render_block(
     output: &mut String,
     block: &BlockRow,
@@ -1063,14 +1016,10 @@ fn render_block(
     let content = block.content.as_deref().unwrap_or("");
     let list_marker = list_marker_for(&id, list_styles, list_ordinals);
     let task_marker = task_marker(block);
-    let (indent, list_marker, prop_indent) = match mode {
-        mode if mode.lays_out_document() => layout.place(output, block, depth, list_marker),
-        _ => ("  ".repeat(depth), list_marker, "  ".repeat(depth + 1)),
-    };
+    let (indent, list_marker, prop_indent) = layout.place(output, block, depth, list_marker);
     match mode {
         RenderMode::Export => {
-            let resolved = export_block_text(content, &id, data);
-            push_block_bullet(output, &indent, &list_marker, &task_marker, &resolved, mode);
+            push_export_bullet(output, block, &indent, &list_marker, &task_marker, data);
         }
         RenderMode::Clipboard | RenderMode::Agent | RenderMode::Document => {
             push_buffer_bullet(
@@ -1088,14 +1037,12 @@ fn render_block(
     // #1916 — task metadata (TODO/DONE state, priority, scheduled/due
     // dates) lives in the reserved `blocks` columns, not in
     // `block_properties`, so it is invisible to the content render above.
-    // Emit each populated column as a `key:: value` property line indented
-    // one level under the bullet — the EXACT form the importer's property
-    // parser reads back (`parse_logseq_markdown` attaches a `key:: value`
-    // line to its owning block, and the apply path routes the reserved
-    // keys `todo_state` / `priority` / `due_date` / `scheduled_date` into
-    // their columns via `typed_property_args_for_string_value`). No new
-    // syntax is invented — these are ordinary Logseq property lines. A state
-    // already written as a checkbox is not written twice.
+    // Emit each populated column as a `key:: value` property line at the
+    // block's text column, which every reader attaches to the block, and the
+    // apply path routes the reserved keys `todo_state` / `priority` /
+    // `due_date` / `scheduled_date` into their columns via
+    // `typed_property_args_for_string_value`. A state already written as a
+    // checkbox is not written twice.
     let todo_state = block
         .todo_state
         .as_deref()
@@ -1113,11 +1060,8 @@ fn render_block(
 
     // #2962 — custom `block_properties` on this block (anything NOT one
     // of the 4 reserved `blocks` columns above) round-trip the same way:
-    // one `key:: value` line per property, indented one level under the
-    // bullet. This is the exact shape `parse_logseq_markdown` reads back
-    // into `block.properties` (see the reserved-column comment above) —
-    // no new syntax, just the previously-missing emission for the
-    // escape-hatch custom-property case. `descendant_properties` was
+    // one `key:: value` line per property at the block's text column, which
+    // the readers read back into `block.properties`. `descendant_properties` was
     // batch-read once for the whole subtree, so this is a HashMap lookup,
     // not a per-block query. The buffer writes a ref-typed value as its raw
     // id, which is what the value is. Every mode quotes a value its line
@@ -1136,10 +1080,10 @@ fn render_block(
     }
 
     // #2961 — emit a link line for each block-scoped (non-inline)
-    // attachment, nested one level under this block's bullet. Skips any
+    // attachment, a plain `+` child of this block. Skips any
     // attachment whose id already appears as an `attachment:<id>` token
     // in `content` — that's an inline image, already rendered above by
-    // `resolve_ulids_for_export`/`push_block_bullet` — so only
+    // `push_export_bullet` — so only
     // genuine file attachments (PDFs/docs/images with no inline token)
     // get a line here. The buffer has no attachment lines: attachments
     // have their own UI.
@@ -1151,7 +1095,7 @@ fn render_block(
                 continue;
             }
             let label = attachment_link_label(filename);
-            output.push_str(&format!("{prop_indent}- [{label}](attachment:{att_id})\n"));
+            output.push_str(&format!("{prop_indent}+ [{label}](attachment:{att_id})\n"));
         }
     }
 }
@@ -1222,11 +1166,28 @@ fn task_marker(block: &BlockRow) -> String {
         .unwrap_or_default()
 }
 
-/// A block's content as an export writes it: tag, page and block ids resolved
-/// to names and links, inline queries made readable, and an anchor when
-/// something addresses the block.
-fn export_block_text(content: &str, id: &str, data: &PageExportData) -> String {
-    stamp_block_anchor_marker(named_block_text(content, data), id, &data.addressed_blocks)
+/// A block as an export writes it: its text with names ([`named_block_text`]),
+/// and its `^ID` when something addresses it ([`PageExportData::addressed_blocks`],
+/// #6277), so a link to it reads back as the block, or when it leaves a fence
+/// open, which the anchor's line ends before the next block.
+fn push_export_bullet(
+    output: &mut String,
+    block: &BlockRow,
+    indent: &str,
+    list_marker: &str,
+    task_marker: &str,
+    data: &PageExportData,
+) {
+    let id = block.id.as_str();
+    let named = named_block_text(block.content.as_deref().unwrap_or(""), data);
+    if !data.addressed_blocks.contains(id) {
+        let start = output.len();
+        if !push_block_bullet(output, indent, list_marker, task_marker, &named).open {
+            return;
+        }
+        output.truncate(start);
+    }
+    push_anchored_bullet(output, indent, list_marker, task_marker, &named, id);
 }
 
 /// A block's content with its tag, page and block ids resolved to names and
@@ -1304,14 +1265,7 @@ fn push_clipboard_bullet(
     id: &str,
 ) -> bool {
     let start = output.len();
-    let code = push_block_bullet(
-        output,
-        indent,
-        list_marker,
-        task_marker,
-        content,
-        RenderMode::Document,
-    );
+    let code = push_block_bullet(output, indent, list_marker, task_marker, content);
     let read_back = import::parse_pasted_text(&output[start..]);
     if !code.open && matches!(read_back.as_slice(), [block] if block.content == content) {
         return code.any;
@@ -1333,7 +1287,6 @@ fn push_anchored_bullet(
     content: &str,
     id: &str,
 ) -> bool {
-    let mode = RenderMode::Document;
     let start = output.len();
     let blank_last = content
         .rsplit_once('\n')
@@ -1344,27 +1297,22 @@ fn push_anchored_bullet(
         // Whether the last line is code does not depend on the marker, since
         // fences are told by their prefix.
         let anchored = format!("{content} ^{id}");
-        let code = push_block_bullet(output, indent, list_marker, task_marker, &anchored, mode);
+        let code = push_block_bullet(output, indent, list_marker, task_marker, &anchored);
         if !code.last {
             return code.any;
         }
         output.truncate(start);
     }
-    let code = push_block_bullet(output, indent, list_marker, task_marker, content, mode);
-    let column = continuation_indent(indent, list_marker, mode);
+    let code = push_block_bullet(output, indent, list_marker, task_marker, content);
+    let column = continuation_indent(indent, list_marker);
     output.push_str(&format!("{column}^{id}\n"));
     code.any
 }
 
-/// The indent of a block's continuation lines: two columns past its outline
-/// bullet's or, in a Document buffer, its text's column, a bare block's own.
-fn continuation_indent(indent: &str, list_marker: &str, mode: RenderMode) -> String {
-    let width = if mode == RenderMode::Document {
-        list_marker.len()
-    } else {
-        2
-    };
-    format!("{indent}{}", " ".repeat(width))
+/// The indent of a block's continuation lines: its text's column, a bare
+/// block's own.
+fn continuation_indent(indent: &str, list_marker: &str) -> String {
+    format!("{indent}{}", " ".repeat(list_marker.len()))
 }
 
 /// The `---` YAML frontmatter block, emitted only when the page carries
@@ -1440,10 +1388,10 @@ fn render_page_attachments(output: &mut String, page_id: &str, data: &PageExport
     // already rendered inline as part of the `# {title}` line above.
     //
     // Emitted at depth 0 (no indent), right after the front matter and title
-    // and before the descendant bullets: these lines aren't nested under any
-    // bullet (the page has none — its content is the `# Title` heading), so
-    // they sit at the same top level as the first-level descendant bullets
-    // below.
+    // and before the descendant blocks, each a paragraph of its own: these
+    // lines aren't nested under any block (the page has none — its content
+    // is the `# Title` heading), so they sit at the same top level as the
+    // first-level descendant blocks below.
     if let Some(atts) = attachments_by_block.get(page_id) {
         let page_content = page.content.as_deref().unwrap_or("");
         for (att_id, filename) in atts {
@@ -1451,7 +1399,7 @@ fn render_page_attachments(output: &mut String, page_id: &str, data: &PageExport
                 continue;
             }
             let label = attachment_link_label(filename);
-            output.push_str(&format!("- [{label}](attachment:{att_id})\n"));
+            output.push_str(&format!("[{label}](attachment:{att_id})\n\n"));
         }
     }
 }
@@ -1499,13 +1447,17 @@ fn group_children_by_parent<'a>(
 /// Render the resolved export data as markdown. Pure — no database access, so
 /// the whole document is built from one consistent snapshot (#660).
 ///
-/// Split out of `export_page_markdown_inner` (#4639); behaviour-preserving,
-/// with the export tests as the oracle.
+/// The block tree is laid out on its own, as if it opened the file: an import
+/// drops the `# Title` line before it (`import::strip_title_heading`), and so
+/// does a ZIP, so a first block opening with `---` is a `+` item there too,
+/// not front matter ([`DocumentLayout::place`]).
 fn render_page_markdown(page_id: &str, data: &PageExportData) -> String {
     let mut output = String::new();
     render_page_head(&mut output, data);
     render_page_attachments(&mut output, page_id, data);
-    render_block_tree(&mut output, page_id, data, RenderMode::Export);
+    let mut blocks = String::new();
+    render_block_tree(&mut blocks, page_id, data, RenderMode::Export);
+    output.push_str(&blocks);
     output
 }
 
@@ -1634,7 +1586,7 @@ fn render_block_tree(
     // numeric is stored: the number is re-derived on every export, so a
     // reorder renumbers and a hand-written `3.` / `7.` normalises on the first
     // round trip.
-    let list_ordinals = compute_list_ordinals(&children_by_parent, &data.list_styles, mode);
+    let list_ordinals = compute_list_ordinals(&children_by_parent, &data.list_styles);
     let roots = children_by_parent
         .get(page_id)
         .map_or(&[][..], Vec::as_slice);
@@ -1713,8 +1665,7 @@ fn render_subtrees<'a>(
 /// Returns the buffer and the ids it holds, in order.
 fn render_subtree(data: &PageExportData, root: &BlockRow) -> (String, Vec<String>) {
     let children_by_parent = group_children_by_parent(data.page.id.as_str(), &data.descendants);
-    let list_ordinals =
-        compute_list_ordinals(&children_by_parent, &data.list_styles, RenderMode::Document);
+    let list_ordinals = compute_list_ordinals(&children_by_parent, &data.list_styles);
     let mut output = String::new();
     let ids = render_subtrees(
         &mut output,
@@ -2606,11 +2557,7 @@ fn render_clipboard_source(
     with_children: bool,
 ) -> String {
     let children_by_parent = group_children_by_parent(data.page.id.as_str(), &data.descendants);
-    let list_ordinals = compute_list_ordinals(
-        &children_by_parent,
-        &data.list_styles,
-        RenderMode::Clipboard,
-    );
+    let list_ordinals = compute_list_ordinals(&children_by_parent, &data.list_styles);
     let selected: HashSet<&str> = selected.iter().map(String::as_str).collect();
     let mut roots = Vec::new();
     let mut stack: Vec<&BlockRow> = children_by_parent
@@ -3607,19 +3554,18 @@ fn attachment_link_label(filename: &str) -> String {
 /// `children_by_parent`'s vectors are already sibling-sorted by
 /// `(position, id)` — the same order the DFS emits them in — so a single pass
 /// per group is enough. Blocks with no entry in the returned map are not
-/// `ordered` and take no number. A Document buffer writes a block with a task
-/// state as a task whatever its style (#5691 D3), so there it ends a run.
+/// `ordered` and take no number. A block with a task state is written as a
+/// task whatever its style (#5691 D3), so it ends a run.
 fn compute_list_ordinals(
     children_by_parent: &HashMap<String, Vec<&BlockRow>>,
     list_styles: &HashMap<String, String>,
-    mode: RenderMode,
 ) -> HashMap<String, usize> {
     let mut ordinals: HashMap<String, usize> = HashMap::new();
     for children in children_by_parent.values() {
         let mut run: usize = 0;
         for child in children {
             let id = child.id.clone().into_string();
-            let task = mode.lays_out_document() && child.todo_state.is_some();
+            let task = child.todo_state.is_some();
             if list_styles.get(&id).map(String::as_str) == Some("ordered") && !task {
                 run += 1;
                 ordinals.insert(id, run);
@@ -3632,7 +3578,7 @@ fn compute_list_ordinals(
 }
 
 /// #4552 slice 4 — the markdown list marker a block's `listStyle` projects to,
-/// written between the outline bullet and the block's text.
+/// written before the block's text.
 ///
 /// `"- "` for `bullet` (the canonical bullet char, matching
 /// `serializeBulletList`), `"<n>. "` for `ordered` (the positional ordinal
@@ -3655,37 +3601,26 @@ fn list_marker_for(
     }
 }
 
-/// #2716 — append a block's (already ULID-resolved) `content` as a Logseq
-/// bullet. The first line is written after the `- ` marker; every subsequent
-/// line is a CONTINUATION line indented two spaces under the bullet (never
-/// re-prefixed with `- `), which `import::parse_logseq_markdown` folds back
-/// into the same block. A continuation line that would otherwise be read as
-/// something else — a bullet of any marker, a heading or a `key:: value`
-/// property ([`import::continuation_line_is_ambiguous`]), and in an export a
-/// planning line ([`import::needs_planning_line_escape`]) — is
-/// backslash-escaped so the importer's continuation branch keeps it literal
-/// (and reverses the escape).
+/// #2716 — append a block's (already ULID-resolved) `content` as a Document
+/// buffer writes it (#5691): its markers, `"+ "` among them
+/// ([`DocumentLayout::place`]), and the first line, or the text alone, then
+/// every further line at the text's column, each escaped that would read as
+/// anything but that line of the block ([`import::needs_document_line_escape`]):
+/// blank, a list item, a `key:: value` property, or a heading, a fence or a
+/// thematic break, which start blocks of their own there. Every
+/// escape has its unescape in the reader.
 ///
 /// Lines inside a fenced code block (```` ``` ```` or `~~~`, closed by a run of
-/// the same character at least as long) are emitted verbatim: the importer
-/// reads them as code without an escape, and code must not gain stray
-/// backslashes. The one exception, outside an export, is
-/// [`import::needs_anchor_line_escape`], for a code line the parser would read
-/// as a line that ends the fence.
+/// the same character at least as long) are emitted verbatim: the reader takes
+/// them as code without an escape, and code must not gain stray backslashes.
+/// The one exception is [`import::needs_anchor_line_escape`], for a code line
+/// the reader would take as a line that ends the fence.
 ///
 /// #4552 slice 4 — `list_marker` (from [`list_marker_for`]) is the block's
-/// `listStyle` marker, written between the outline `- ` and the first line:
-/// `""`, `"- "`, or `"<n>. "`. `task_marker` (`"[x] "`, or `""`) follows it
-/// in every mode (#5160 D6). A first line that would itself read as a marker the
-/// block does not write is backslash-escaped ([`first_line_needs_escape`]),
-/// the first-line analogue of the continuation-line escape above.
-///
-/// A Document buffer (#5691) writes no outline bullet: the line is the
-/// markers, `"+ "` among them ([`DocumentLayout::place`]), and the text, or the
-/// text alone, and the continuation lines sit at the text's column, each
-/// escaped that would read as anything but that line of the block
-/// ([`import::needs_document_line_escape`]): blank, or a heading, a fence or a
-/// thematic break, which start blocks of their own there.
+/// `listStyle` marker: `""`, `"- "`, `"+ "` or `"<n>. "`. `task_marker`
+/// (`"[x] "`, or `""`) follows it (#5160 D6). A first line that would itself
+/// read as a marker the block does not write is backslash-escaped
+/// ([`first_line_needs_escape`]).
 ///
 /// Returns which lines are code, as the parser's fence tracking will see them.
 fn push_block_bullet(
@@ -3694,41 +3629,30 @@ fn push_block_bullet(
     list_marker: &str,
     task_marker: &str,
     resolved: &str,
-    mode: RenderMode,
 ) -> CodeLines {
-    let fence_opener = match mode {
-        RenderMode::Export => import::fence_opener,
-        RenderMode::Document | RenderMode::Clipboard | RenderMode::Agent => {
-            import::document_fence_opener
-        }
-    };
-
     let mut lines = resolved.split('\n').peekable();
     let first = lines.next().unwrap_or("");
     let followed = lines.peek().is_some();
     let line_start = output.len();
     output.push_str(indent);
-    if mode != RenderMode::Document {
-        output.push_str("- ");
-    }
     let markers = format!("{list_marker}{task_marker}");
     if first.is_empty() && !markers.is_empty() {
-        // An EMPTY first line after a marker: emit the bare marker (`- -`,
-        // `- 1.`, `- [ ]`) rather than a line with trailing whitespace. Both
-        // forms re-import identically, but only this one is a byte-level
+        // An EMPTY first line after a marker: emit the bare marker (`-`,
+        // `1.`, `- [ ]`) rather than a line with trailing whitespace. Both
+        // forms read back identically, but only this one is a byte-level
         // fixpoint.
         output.push_str(markers.trim_end());
     } else {
         output.push_str(&markers);
-        if first_line_needs_escape(first, followed, list_marker, task_marker, mode) {
+        if first_line_needs_escape(first, followed, list_marker, task_marker) {
             output.push('\\');
         }
         output.push_str(first);
     }
     // Fences are tracked over each line as written, escape and marker
-    // included, with the importer's own probes: an escaped ```` \- ``` ```` opens
+    // included, with the reader's own probes: an escaped ```` \- ``` ```` opens
     // no fence there, so it must open none here either.
-    let mut in_fence = fence_opener(&output[line_start..]);
+    let mut in_fence = import::document_fence_opener(&output[line_start..]);
     let mut code = CodeLines {
         any: in_fence.is_some(),
         last: in_fence.is_some(),
@@ -3736,17 +3660,14 @@ fn push_block_bullet(
     };
     output.push('\n');
 
-    let cont_indent = continuation_indent(indent, list_marker, mode);
+    let cont_indent = continuation_indent(indent, list_marker);
     for line in lines {
         let line_start = output.len();
         output.push_str(&cont_indent);
         let needs_escape = if in_fence.is_some() {
-            mode != RenderMode::Export && import::needs_anchor_line_escape(line)
-        } else if mode == RenderMode::Document {
-            import::needs_document_line_escape(line)
+            import::needs_anchor_line_escape(line)
         } else {
-            import::continuation_line_is_ambiguous(line)
-                || (mode == RenderMode::Export && import::needs_planning_line_escape(line))
+            import::needs_document_line_escape(line)
         };
         if needs_escape {
             output.push('\\');
@@ -3780,42 +3701,22 @@ struct CodeLines {
 /// `true` when a block's first line needs a leading `\` to read back as text
 /// rather than as a marker the block does not write.
 ///
-/// #4552 slice 4 — a block with no `listStyle` whose first line itself OPENS a
-/// list marker must be escaped: unescaped, `- - foo` would re-import as a
-/// `bullet` block whose text is `foo` instead of a plain block whose text is
-/// `- foo`. `\- ` / `\1. ` is the same escape shape the TS serializer uses for
-/// a paragraph (`docs/architecture/list-ergonomics.md`), and
-/// `import::split_block_list_marker` reverses it. A checkbox is escaped the
-/// same way, after any list marker, since every parser reads one (#5160 D6);
-/// after a checkbox no further marker is read. An export also escapes a first
-/// line an import would read as a Logseq/Org task keyword or priority cookie
-/// (D7, `import::needs_task_syntax_escape`), after a checkbox too, so
-/// Export → Import keeps a block whose text starts with `TODO`; the buffer and
-/// the clipboard read neither, so they write no such escape. A Document buffer
-/// reads one list marker, so after one it escapes only a checkbox, and a line
-/// with none, `followed` by the block's other lines or not, as
-/// [`import::needs_bare_line_escape`] says.
+/// A Document buffer reads one list marker, so after one it escapes only a
+/// checkbox (#5160 D6, `import::needs_task_marker_escape`), and a line with
+/// none, `followed` by the block's other lines or not, as
+/// [`import::needs_bare_line_escape`] says: unescaped, `- foo` would read back
+/// as a bulleted block whose text is `foo` (#4552 slice 4).
 fn first_line_needs_escape(
     first: &str,
     followed: bool,
     list_marker: &str,
     task_marker: &str,
-    mode: RenderMode,
 ) -> bool {
-    if mode == RenderMode::Document {
-        return if list_marker.is_empty() {
-            import::needs_bare_line_escape(first, followed)
-        } else {
-            task_marker.is_empty() && import::needs_task_marker_escape(first)
-        };
+    if list_marker.is_empty() {
+        import::needs_bare_line_escape(first, followed)
+    } else {
+        task_marker.is_empty() && import::needs_task_marker_escape(first)
     }
-    let task_syntax = mode == RenderMode::Export && import::needs_task_syntax_escape(first);
-    if !task_marker.is_empty() {
-        return task_syntax;
-    }
-    (list_marker.is_empty() && import::needs_list_marker_escape(first))
-        || import::needs_task_marker_escape(first)
-        || task_syntax
 }
 
 /// #2724 — count how many attachment INGEST ATTEMPTS will read each vault file,
@@ -3856,7 +3757,8 @@ pub fn ingest_read_counts(
     counts
 }
 
-/// Import a Logseq-style markdown file as a page with block hierarchy.
+/// Import a Markdown file as a page with block hierarchy, read as a paste
+/// reads text (`ImportDialect::Markdown`, #6277 decision 1).
 ///
 /// Creates a page from the filename (or first heading), then creates
 /// blocks following the indentation hierarchy. Properties are set via
@@ -3870,7 +3772,7 @@ pub fn ingest_read_counts(
 /// chunks. See [`import_markdown_with_progress`] for the full chunk-
 /// boundary and partial-import contract. A failure anywhere still surfaces
 /// as `Err(AppError)`; `result.warnings` is reserved for non-transactional
-/// parse diagnostics from [`import::parse_logseq_markdown`] (e.g. depth
+/// parse diagnostics from [`import::parse_markdown_file`] (e.g. depth
 /// clamping). Savepoint-based partial recovery was considered and rejected
 /// as too invasive for the available signal.
 #[instrument(
@@ -4037,6 +3939,7 @@ pub async fn import_markdown_with_progress(
     let (mut parse_output, page_title) = parse_import_payload(
         &content,
         filename,
+        dialect,
         vault_files.as_deref(),
         vault_notes.as_deref(),
     )?;
@@ -4171,6 +4074,7 @@ fn marked_blocks(
 fn parse_import_payload(
     content: &str,
     filename: Option<String>,
+    dialect: ImportDialect,
     vault_files: Option<&[VaultFile]>,
     vault_notes: Option<&[String]>,
 ) -> Result<(import::ParseOutput, String), AppError> {
@@ -4184,14 +4088,15 @@ fn parse_import_payload(
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| "Imported Page".to_string());
     // Agaric's own export writes the title as a `# Title` line, which would
-    // otherwise come back as a block repeating it (#5160 S6). A note of a
+    // otherwise come back as a block repeating it (#5160 S6). A Markdown file
+    // reads as a paste does (#6277 decision 1); a Logseq or Org note of a
     // folder import keeps its `((uuid))` refs to other notes for
     // `link_import_anchors`.
     let text = import::strip_title_heading(content, &page_title);
-    let mut parse_output = if vault_notes.is_some() {
-        import::parse_vault_markdown(&text)
-    } else {
-        import::parse_logseq_markdown(&text)
+    let mut parse_output = match dialect {
+        ImportDialect::Markdown => import::parse_markdown_file(&text),
+        ImportDialect::LogseqOrg if vault_notes.is_some() => import::parse_vault_markdown(&text),
+        ImportDialect::LogseqOrg => import::parse_logseq_markdown(&text),
     };
     // A folder import links its notes by relative path (#5160 N10); a lone
     // file has no vault to be relative to. The title is the note's path below
@@ -4778,7 +4683,8 @@ async fn apply_frontmatter_properties(
     // #1432 — apply the leading YAML frontmatter as PAGE-level properties,
     // closing the export↔import asymmetry: `export_page_markdown_inner`
     // already emits page properties as frontmatter, but the importer used to
-    // discard them. The parser (`import::parse_logseq_markdown`) has already
+    // discard them. The parser (`import::parse_markdown_file` or
+    // `parse_logseq_markdown`, by dialect) has already
     // filtered the exporter's internal/reserved keys and validated each key
     // against the `^[A-Za-z0-9_-]{1,64}$` alphabet, so every pair here is a
     // user-visible scalar safe to stamp onto the page. These properties are
@@ -7264,8 +7170,9 @@ pub struct VaultImport {
     pub notes: Vec<String>,
 }
 
-/// Tauri command: import a Logseq-style markdown file as a page with
-/// block hierarchy. Delegates to [`import_markdown_with_progress`].
+/// Tauri command: import a Markdown, Logseq or Org file, in the `dialect` its
+/// front end read it as, as a page with block hierarchy. Delegates to
+/// [`import_markdown_with_progress`].
 ///
 /// `space_id` is required. The imported page is
 /// stamped with `space = ?space_id` inside the same transaction as the
@@ -8079,6 +7986,7 @@ mod tests {
              - ![[Topic]] ![[topic.png]] #[[Topic]] \\[[Topic]] `[[Topic]]`\n\
              - ````\n  ![[Topic]] [[Topic]]\n  ````\n",
             Some("v/home.md".into()),
+            ImportDialect::Markdown,
             None,
             Some(&notes),
         )
