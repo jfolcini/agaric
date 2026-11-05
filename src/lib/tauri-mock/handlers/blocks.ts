@@ -1413,7 +1413,7 @@ export const blocksHandlers = {
     // `PasteInput::into_blocks`: after text an HTML paste's first block is the
     // text it was pasted as, its `- [ ] ` included.
     const afterText = splice !== null && splice.before !== ''
-    const read =
+    const { planned: parsed, warnings } =
       input.kind === 'text'
         ? plannedFromText(input.text)
         : {
@@ -1424,7 +1424,6 @@ export const blocksHandlers = {
             ),
             warnings: [],
           }
-    const parsed = read.planned
     if (parsed.length === 0) throw validationRejection('nothing to paste')
     const planned = splice ? joinSplice(parsed, splice) : parsed
     const parentId = (anchor['parent_id'] as string | null) ?? null
@@ -1476,7 +1475,7 @@ export const blocksHandlers = {
       open.push({ depth: block.depth, id: row['id'] as string })
       out.push(row)
     }
-    return { blocks: out, warnings: read.warnings, op_refs: opRefs }
+    return { blocks: out, warnings, op_refs: opRefs }
   },
 
   // ---------------------------------------------------------------------------

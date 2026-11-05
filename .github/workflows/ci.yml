@@ -423,6 +423,39 @@ jobs:
         run: df -h /
 
   # ---------------------------------------------------------------------------
+  # Keep the real-backend lane's runtime `.deb` cache warm. `e2e-tauri-weekly`
+  # runs on main only weekly, so its shards' own saves would be evicted before
+  # anything read them (#5853), and a shard downloading from a slow mirror
+  # stalled the lane. A fresh runner installs the same list the shards do, so
+  # Keep-Downloaded-Packages leaves exactly their closure to save; a hit
+  # stops at the probe.
+  # ---------------------------------------------------------------------------
+  e2e-tauri-apt-cache:
+    # `refs/heads/main` is only ever a push here: PR runs carry `refs/pull/N/merge`.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    # apt on a slow mirror.
+    timeout-minutes: 20
+    steps:
+      - name: Probe the cache
+        id: probe
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /var/cache/apt/archives/*.deb
+          # `actions/e2e-tauri-runtime`'s key.
+          key: apt-e2e-tauri-runtime-${{ runner.os }}-v1
+          lookup-only: true
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.probe.outputs.cache-hit != 'true'
+        with:
+          persist-credentials: false
+
+      - name: Install and save the runtime packages
+        if: steps.probe.outputs.cache-hit != 'true'
+        uses: ./.github/actions/e2e-tauri-runtime
+
+  # ---------------------------------------------------------------------------
   # Prune superseded Rust cache generations (#5853). A `Cargo.lock` change
   # starts a new generation of every `v0-rust-<shared-key>-` family, and the
   # old one sits in the shared 10 GB quota until LRU eviction takes it, along

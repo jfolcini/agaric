@@ -2345,6 +2345,8 @@ pub fn parse_pasted_text(text: &str) -> Vec<ParsedBlock> {
 /// which a page copy opens with, is no block, with one warning (#6277 E4); its
 /// lines stay blank, so a block after it names its own line.
 pub fn read_pasted_text(text: &str) -> ParseOutput {
+    // The front matter fence and its line count are measured on the normalized text,
+    // so this runs before `source_outline`, whose own pass then finds nothing to do.
     let normalized = without_bom(text).replace("\r\n", "\n").replace('\r', "\n");
     let front = front_matter_fence(&normalized).map(|(_, len)| len);
     let body = match front {
@@ -6382,6 +6384,14 @@ mod tests_l9 {
         }
         let pasted = parse_pasted_text("\u{feff}body");
         assert_eq!(contents(&pasted), ["body"], "a paste drops the BOM");
+    }
+
+    #[test]
+    fn a_paste_with_bom_and_crlf_front_matter_drops_it_and_keeps_later_lines() {
+        let out = read_pasted_text("\u{feff}---\r\nstatus: hello\r\n---\r\n- body");
+        let contents: Vec<_> = out.blocks.iter().map(|b| b.content.as_str()).collect();
+        assert_eq!(contents, ["body"]);
+        assert_eq!(out.warnings.len(), 1);
     }
 
     #[test]
