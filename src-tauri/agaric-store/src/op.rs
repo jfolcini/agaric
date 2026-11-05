@@ -793,10 +793,10 @@ pub const PRIORITY_LEVELS: [&str; 3] = ["1", "2", "3"];
 
 /// Every built-in property definition (#5841): the reserved column keys,
 /// the task-lifecycle and recurrence keys the app writes itself, the space
-/// membership keys and the list style. Mirrored by `BUILTIN_PROPERTY_DEFS` in
-/// `src/lib/property-save-utils.ts`, which
+/// membership keys, the list style and a meeting page's date (#5364).
+/// Mirrored by `BUILTIN_PROPERTY_DEFS` in `src/lib/property-save-utils.ts`, which
 /// `property-save-utils-rust-parity.test.ts` parses this array against.
-pub const BUILTIN_PROPERTY_DEFS: [BuiltinPropertyDef; 14] = [
+pub const BUILTIN_PROPERTY_DEFS: [BuiltinPropertyDef; 15] = [
     BuiltinPropertyDef::select("todo_state", &["TODO", "DOING", "DONE", "CANCELLED"]),
     BuiltinPropertyDef::select("priority", &PRIORITY_LEVELS),
     BuiltinPropertyDef::of("due_date", "date"),
@@ -811,6 +811,7 @@ pub const BUILTIN_PROPERTY_DEFS: [BuiltinPropertyDef; 14] = [
     BuiltinPropertyDef::of("space", "ref"),
     BuiltinPropertyDef::select("is_space", &["true"]),
     BuiltinPropertyDef::select("listStyle", &["bullet", "ordered"]),
+    BuiltinPropertyDef::of("meeting_date", "date"),
 ];
 
 /// The keys the app writes for its own bookkeeping, which a user's rename or

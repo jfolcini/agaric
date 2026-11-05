@@ -181,6 +181,7 @@
         "homepage#value_type=url#options=null#builtin=false",
         "is_space#value_type=select#options=[\"true\"]#builtin=true",
         "listStyle#value_type=select#options=[\"bullet\",\"ordered\"]#builtin=true",
+        "meeting_date#value_type=date#options=null#builtin=true",
         "note#value_type=text#options=null#builtin=false",
         "priority#value_type=select#options=[\"1\",\"2\",\"3\"]#builtin=true",
         "repeat#value_type=text#options=null#builtin=true",

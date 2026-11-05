@@ -117,7 +117,7 @@ async fn title_pages(
         .map(|id| {
             id.map(|id| TitlePage {
                 id: id.clone(),
-                title: matches.titles.get(id).cloned().unwrap_or_default(),
+                title: matches.titles[id].clone(),
                 has_blocks: with_blocks.contains(id),
             })
         })

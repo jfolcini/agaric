@@ -21,10 +21,10 @@
 //! | `get_agenda` | [`agenda_range_inner`] | Dated blocks in the range plus projected repeats, one row each. `space_id` required. |
 //! | `journal_for_date` | [`journal_for_date_inner`] | Idempotent date → page lookup with a **bounded create carve-out (#2719)**: for `date` within today ± [`JOURNAL_CREATE_WINDOW_MONTHS`] months, creates the missing page on first call (single `CreateBlock`+`SetProperty` op pair, origin `agent:<name>`); outside that window the tool never creates — it returns an existing page as a pure read or `AppError::NotFound`. See [`ReadOnlyTools`] and `handle_journal_for_date` below. |
 //! | `list_spaces` | [`list_spaces_registry_inner`] | #633 — space discovery for agents. Returns `{ id, name, is_default }` per live space from the canonical `spaces` registry (#804). |
-//! | `get_page_markdown` | [`get_page_for_agent_paged_inner`], or [`get_page_buffer_inner`] with `editable` | #5375 — the page as Markdown in the dialect `append_markdown` reads, ids written as names and every block with its `^ID`, a [`RESPONSE_BYTES_CAP`] stretch at a time from a block cursor (#5402). `editable` (#5399) returns instead the whole buffer Edit as Markdown edits, which `edit_page_markdown` takes back, never cut: a block left out of it is deleted. `space_id` required; a page in another space is rejected. |
+//! | `get_page_markdown` | [`get_page_for_agent_inner`] | #5375 — the page's title, and its buffer as Edit as Markdown edits it and `edit_page_markdown` takes it back (#6277 E4): front matter, then the blocks in the dialect `append_markdown` reads, a name only where it reads back and every block with its `^ID`, a [`RESPONSE_BYTES_CAP`] stretch at a time from a block cursor (#5402). `space_id` required; a page in another space is rejected. |
 //! | `page_history` | [`list_page_history_inner`] | Ops on a page's blocks, newest first: device, origin, op type, time, clipped before/after. Cursor paginated. `space_id` required. |
 //! | `block_history` | [`get_block_history_inner`] | The same rows for one block. |
-//! | `get_journal` | [`get_journal_page_by_date_inner`] + [`get_page_for_agent_inner`] | #5396 — a day as `get_page_markdown` renders it; `date` is `today` (default), `yesterday` or `YYYY-MM-DD` on the device's clock. Never creates: a missing day is an empty `markdown`. |
+//! | `get_journal` | [`get_journal_page_by_date_inner`] + [`get_page_buffer_inner`] | #5396 — a day as `get_page_markdown` renders it; `date` is `today` (default), `yesterday` or `YYYY-MM-DD` on the device's clock. Never creates: a missing day is an empty `markdown`. |
 //! | `list_journal` | [`list_journal_days_inner`] | #5396 — the days in `[from, to]` with their block counts. Cursor paginated. |
 //! | `list_trash` | [`list_trash_inner`] | Deleted blocks of one space (deletion roots), newest first. Cursor paginated. `space_id` required. |
 //! | `query` | [`compile_and_run`] | #5398 — the advanced-query engine over one space: a `FilterExpr` tree, sort, group, aggregate. Rows add the page title and the properties the query reads. Cursor paginated. `space_id` required. |
@@ -97,12 +97,12 @@ use crate::commands::pages::metadata::{
 use crate::commands::{
     AttachmentRow, PropertyRow, agenda_range_inner, batch_resolve_inner, get_active_block_inner,
     get_batch_properties_inner, get_block_history_inner, get_journal_page_by_date_inner,
-    get_page_aliases_inner, get_page_for_agent_inner, get_page_for_agent_paged_inner,
-    get_page_inner, get_properties_inner, journal_for_date_inner, list_attachments_batch_inner,
-    list_attachments_inner, list_attachments_paged_inner, list_backlinks_grouped_inner,
-    list_journal_days_inner, list_page_attachments_inner, list_page_history_inner,
-    list_property_defs_inner, list_spaces_registry_inner, list_tags_for_block_inner,
-    list_tags_inner, list_trash_inner, search_blocks_inner,
+    get_page_aliases_inner, get_page_for_agent_inner, get_page_inner, get_properties_inner,
+    journal_for_date_inner, list_attachments_batch_inner, list_attachments_inner,
+    list_attachments_paged_inner, list_backlinks_grouped_inner, list_journal_days_inner,
+    list_page_attachments_inner, list_page_history_inner, list_property_defs_inner,
+    list_spaces_registry_inner, list_tags_for_block_inner, list_tags_inner, list_trash_inner,
+    search_blocks_inner,
 };
 use crate::db::validate_block_in_space;
 use crate::materializer::Materializer;
@@ -365,8 +365,6 @@ struct GetPageMarkdownArgs {
     space_id: String,
     #[serde(default)]
     cursor: Option<String>,
-    #[serde(default)]
-    editable: bool,
 }
 
 /// Exactly one of `block_id` and `page_id`.
@@ -1153,25 +1151,22 @@ fn tool_desc_get_page_markdown() -> ToolDescription {
     ToolDescription {
         name: TOOL_GET_PAGE_MARKDOWN.to_string(),
         description: format!(
-            "Read a page as Markdown, returned as {{ page_id, markdown, truncated, next_cursor }}: \
-             YAML front matter with the page's aliases, tags and properties, a `# Title` line, \
+            "Read a page as Markdown, returned as {{ page_id, title, markdown, truncated, \
+             next_cursor }}: YAML front matter with the page's aliases, tags and properties, \
              then the blocks as append_markdown reads them: each a paragraph, a `- ` bullet, \
              a `1. ` numbered item or a `- [ ]` task (`[/]` doing, `[x]` done, `[-]` \
              cancelled), a child indented under its parent, a plain block under another block \
              written as a `+ ` item, and properties as indented `key:: value` lines, but a \
              task's priority, dates and rule as Obsidian Tasks signifiers at the end of its \
-             line (`⏫ 🔁 every week ⏳ YYYY-MM-DD 📅 YYYY-MM-DD`). \
-             Links, tags and ref-typed values are written as names, \
-             for reading; a name several pages share reads back as the one with the lowest \
-             id, so write links by ULID (`[[ULID]]`, \
-             `#[ULID]`). Each block ends with `^ULID`, the block_id update_block_content takes. \
-             Past {RESPONSE_BYTES_CAP} bytes the Markdown stops at a block with \
-             `truncated: true`; pass `next_cursor` as `cursor` for the rest, which carries on \
-             from that block. With `editable: true`, \
-             `markdown` is instead the page's whole Markdown as the app's Edit as Markdown \
-             edits it, never truncated, the text the read-write server's edit_page_markdown \
-             takes back: no title line, a name only where it reads back as the same link, \
-             ref-typed values as ULIDs, and each block's `^ULID`."
+             line (`⏫ 🔁 every week ⏳ YYYY-MM-DD 📅 YYYY-MM-DD`). The title has no line. \
+             A link or tag is written as its name where that name reads back as the same \
+             page or tag, else as its ULID (`[[ULID]]`, `#[ULID]`), and a ref-typed value as \
+             its ULID. Each block ends with `^ULID`, the block_id update_block_content takes. \
+             This is the page as the app's Edit as Markdown edits it: edit it and pass it to \
+             the read-write server's edit_page_markdown. Past {RESPONSE_BYTES_CAP} bytes the \
+             Markdown stops at a block with `truncated: true`; pass `next_cursor` as `cursor` \
+             for the rest, which carries on from that block. The stretches, read in turn, are \
+             the whole Markdown."
         ),
         input_schema: json!({
             "type": "object",
@@ -1187,7 +1182,6 @@ fn tool_desc_get_page_markdown() -> ToolDescription {
                     "type": "string",
                     "description": "The `next_cursor` of a truncated read, to continue it.",
                 },
-                "editable": { "type": "boolean", "description": "Return the Markdown edit_page_markdown takes instead. Defaults to false." },
             },
         }),
     }
@@ -1637,20 +1631,14 @@ async fn handle_get_page_markdown(pool: &SqlitePool, args: Value) -> Result<Valu
     let page_id = normalize_ulid_arg(&args.page_id);
     let space_id = SpaceId::from_string(args.space_id)?;
     validate_block_in_space(pool, &page_id, space_id.as_str()).await?;
-    // The Markdown `edit_page_markdown` takes back is never cut: a block left
-    // out of it is deleted.
-    let (markdown, next_cursor) = if args.editable {
-        let buffer = get_page_buffer_inner(pool, &page_id).await?;
-        (buffer.source, None)
-    } else {
-        get_page_for_agent_paged_inner(pool, &page_id, args.cursor.as_deref(), RESPONSE_BYTES_CAP)
-            .await?
-    };
+    let page = get_page_for_agent_inner(pool, &page_id, args.cursor.as_deref(), RESPONSE_BYTES_CAP)
+        .await?;
     Ok(json!({
         "page_id": page_id,
-        "markdown": markdown,
-        "truncated": next_cursor.is_some(),
-        "next_cursor": next_cursor,
+        "title": page.title,
+        "markdown": page.markdown,
+        "truncated": page.next_cursor.is_some(),
+        "next_cursor": page.next_cursor,
     }))
 }
 
@@ -2077,7 +2065,7 @@ async fn handle_get_journal(
     let space_id = SpaceId::from_string(args.space_id)?;
     let page = get_journal_page_by_date_inner(pool, &date, space_id.as_str()).await?;
     let markdown = match &page {
-        Some(page) => get_page_for_agent_inner(pool, page.id.as_str()).await?,
+        Some(page) => get_page_buffer_inner(pool, page.id.as_str()).await?.source,
         None => String::new(),
     };
     Ok(json!({

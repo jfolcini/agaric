@@ -23,6 +23,7 @@ import {
   parseMarkdownFile,
   parsePastedText,
   pushDocumentLines,
+  readPastedText,
 } from '@/editor/source-buffer-document'
 
 interface TreeBlock {
@@ -153,6 +154,27 @@ describe('a leading BOM (#6277)', () => {
     expect(parseDocument(`\uFEFF${text}`, null)).toEqual(parseDocument(text, null))
     expect(parseDocument(text, null).blocks.map((block) => block.content)).toEqual(['body'])
     expect(parsePastedText('\uFEFFbody').map((block) => block.content)).toEqual(['body'])
+  })
+})
+
+describe('a paste opening with front matter (#6277 E4)', () => {
+  it('drops it with one warning, its lines still counted', () => {
+    const read = readPastedText('---\naliases: [a]\n---\n\n# T\n\nx\n')
+    expect(read.blocks.map((block) => [block.content, block.line])).toEqual([
+      ['# T', 5],
+      ['x', 7],
+    ])
+    expect(read.warnings).toEqual([
+      "the front matter the text opens with is a page's, so it was not pasted",
+    ])
+  })
+
+  it('reads `---` after text, or one no `---` closes, as text', () => {
+    for (const text of ['x\n\n---\naliases: [a]\n---\n', '---\naliases: [a]\n']) {
+      const read = readPastedText(text)
+      expect(read.blocks.map((block) => block.content)).toContain('aliases: [a]')
+      expect(read.warnings).toEqual([])
+    }
   })
 })
 

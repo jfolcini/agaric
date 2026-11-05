@@ -1,0 +1,7 @@
+# Session 3603 — Export bench probes count blocks with the Document reader
+
+Main's weekly `bench-slo` and `bench-smoke (3)` lanes were red (run 42086082040, #3394). Both `export_page_markdown` shape probes counted exported children as `- ` lines. Since the #6277 Document-dialect export work, a plain child is a paragraph separated by a blank line, so the count was 0.
+
+- Premise check first: on the `export_bench` fixture the export carried all 100 children as paragraphs, and `agaric_engine::import::parse_markdown_file` read 101 blocks (the `# Title` heading plus the 100 children). The export loses no data. Only the probes were wrong.
+- Both probes (`benches/interactive_slo.rs` `bench_export_page_markdown`, `benches/groups/export_bench.rs`) now count `parse_markdown_file(&observed).blocks.len()` against children + 1. The format's own import reader does the counting, so the next dialect change cannot zero the count without also breaking import. The MCP `anchored_blocks` counter (#6265) counts the current shape and passes, so it was left as it is. No other bench parses export output.
+- Ran, in debug criterion test mode (`cargo test --bench <target> -- export_page_markdown`): io_bench green at 100/500/2000; the interactive_slo probe green (the cold debug timing then trips the 30 ms budget, which does not gate). Reds seen with each fixture seeded with zero children: left 1, right 101 and left 1, right 2001. `cargo clippy --workspace --all-targets -- -D warnings` was clean. The warm release lanes are the check, dispatched on the branch by the coordinator.
