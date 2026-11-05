@@ -1,4 +1,5 @@
 use crate::prelude::*;
+use agaric_engine::import::ImportDialect;
 use agaric_lib::commands::pages::anchor_free;
 use agaric_store::space::{SpaceId, SpaceScope};
 
@@ -8516,6 +8517,7 @@ async fn import_markdown_emits_started_progress_complete() {
         content.into(),
         Some("Streamed.md".into()),
         TEST_SPACE_ID.into(),
+        ImportDialect::Markdown,
         None,
         None,
         Some(&sink),
@@ -8590,6 +8592,7 @@ async fn import_markdown_progress_empty_file_started_then_complete() {
         String::new(),
         Some("Empty.md".into()),
         TEST_SPACE_ID.into(),
+        ImportDialect::Markdown,
         None,
         None,
         Some(&sink),
@@ -8650,6 +8653,7 @@ async fn import_markdown_progress_failure_emits_no_complete() {
         "- Block 1\n- Block 2".into(),
         Some("Fails.md".into()),
         TEST_SPACE_ID.into(),
+        ImportDialect::Markdown,
         None,
         None,
         Some(&sink),
@@ -9075,6 +9079,7 @@ async fn import_markdown_commits_chunks_visible_to_separate_reader_662() {
         content,
         Some("LockRelease.md".into()),
         TEST_SPACE_ID.into(),
+        ImportDialect::Markdown,
         None,
         None,
         None,
@@ -12554,6 +12559,7 @@ async fn import_reads_a_bare_wikilink_as_the_vault_note_of_that_name() {
                 md.into(),
                 Some(path.into()),
                 TEST_SPACE_ID.into(),
+                ImportDialect::Markdown,
                 None,
                 Some(notes.clone()),
                 None,
@@ -15480,14 +15486,18 @@ async fn import_keeps_an_org_planning_date_past_a_warning_period_or_a_foreign_da
     mat.shutdown();
 }
 
-/// The content and `todo_state` of each block `md` imports as, in order, on the
-/// page `title`.
-async fn imported_blocks(md: &str, title: &str) -> Vec<(String, Option<String>)> {
+/// The content and `todo_state` of each block `md` imports as under `dialect`,
+/// in order, on the page `title`.
+async fn imported_blocks(
+    md: &str,
+    title: &str,
+    dialect: ImportDialect,
+) -> Vec<(String, Option<String>)> {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    import_markdown_inner(
+    import_markdown_with_progress(
         &pool,
         DEV,
         &mat,
@@ -15495,6 +15505,9 @@ async fn imported_blocks(md: &str, title: &str) -> Vec<(String, Option<String>)>
         md.into(),
         Some(format!("{title}.md")),
         TEST_SPACE_ID.into(),
+        dialect,
+        None,
+        None,
         None,
     )
     .await
@@ -15512,22 +15525,33 @@ async fn imported_blocks(md: &str, title: &str) -> Vec<(String, Option<String>)>
     rows
 }
 
-/// #6033 — Logseq's `STARTED` keyword is a DOING task.
+/// A Logseq `STARTED` task and `#+BEGIN_NOTE` block.
+const LOGSEQ_STARTED_AND_NOTE: &str =
+    "- STARTED Write the report\n- #+BEGIN_NOTE\n  Mind the gap\n  #+END_NOTE\n";
+
+/// #6033 — under `LogseqOrg`, Logseq's `STARTED` keyword is a DOING task and a
+/// `#+BEGIN_NOTE` block a note callout.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn import_reads_a_logseq_started_task_as_doing() {
+async fn a_logseq_org_import_reads_started_and_a_note_block() {
     assert_eq!(
-        imported_blocks("- STARTED Write the report\n", "Started").await,
-        [("Write the report".to_string(), Some("DOING".to_string()))]
+        imported_blocks(LOGSEQ_STARTED_AND_NOTE, "Started", ImportDialect::LogseqOrg).await,
+        [
+            ("Write the report".to_string(), Some("DOING".to_string())),
+            ("> [!NOTE]\n> Mind the gap".to_string(), None),
+        ]
     );
 }
 
-/// #6033 — a Logseq `#+BEGIN_NOTE` block is a note callout.
+/// #6277 E1 — under `Markdown`, the same `STARTED` and `#+BEGIN_NOTE` stay as
+/// written.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_logseq_note_block_imports_as_a_note_callout() {
-    let md = "- #+BEGIN_NOTE\n  Mind the gap\n  #+END_NOTE\n";
+async fn a_markdown_import_keeps_started_and_a_note_block_as_written() {
     assert_eq!(
-        imported_blocks(md, "Note Block").await,
-        [("> [!NOTE]\n> Mind the gap".to_string(), None)]
+        imported_blocks(LOGSEQ_STARTED_AND_NOTE, "Started", ImportDialect::Markdown).await,
+        [
+            ("STARTED Write the report".to_string(), None),
+            ("#+BEGIN_NOTE\nMind the gap\n#+END_NOTE".to_string(), None),
+        ]
     );
 }
 
@@ -15536,7 +15560,7 @@ async fn a_logseq_note_block_imports_as_a_note_callout() {
 async fn a_logseq_quote_block_imports_as_a_quote() {
     let md = "- Hamlet said:\n  #+BEGIN_QUOTE\n  To be\n  #+END_QUOTE\n";
     assert_eq!(
-        imported_blocks(md, "Quote Block").await,
+        imported_blocks(md, "Quote Block", ImportDialect::LogseqOrg).await,
         [("Hamlet said:\n> To be".to_string(), None)]
     );
 }
@@ -18571,6 +18595,7 @@ async fn import_folder(
             (*md).to_string(),
             Some((*path).to_string()),
             TEST_SPACE_ID.into(),
+            ImportDialect::Markdown,
             Some(files.to_vec()),
             Some(paths.clone()),
             None,

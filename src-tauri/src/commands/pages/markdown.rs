@@ -19,7 +19,8 @@ use agaric_core::error::AppError;
 use agaric_core::ulid::{BlockId, PageId};
 use agaric_engine::import;
 use agaric_engine::import::{
-    ImportAnchor, ImportProgressUpdate, ImportResult, VaultFile, is_escaped, percent_decode,
+    ImportAnchor, ImportDialect, ImportProgressUpdate, ImportResult, VaultFile, is_escaped,
+    percent_decode,
 };
 use agaric_store::pagination::{BlockRow, Cursor, NULL_POSITION_SENTINEL, PageRequest};
 use agaric_store::space::SpaceId;
@@ -4109,6 +4110,7 @@ pub async fn import_markdown_inner(
         content,
         filename,
         space_id,
+        ImportDialect::Markdown,
         vault_files,
         None,
         None,
@@ -4222,6 +4224,7 @@ pub async fn import_markdown_with_progress(
     content: String,
     filename: Option<String>,
     space_id: String,
+    dialect: ImportDialect,
     // #1925 — referenced sibling files' bytes. `None`/empty ⇒ no attachment
     // ingest (exact pre-#1925 behaviour).
     vault_files: Option<Vec<VaultFile>>,
@@ -4243,6 +4246,7 @@ pub async fn import_markdown_with_progress(
     let (mut parse_output, page_title) = parse_import_payload(
         &content,
         filename,
+        dialect,
         vault_files.as_deref(),
         vault_notes.as_deref(),
     )?;
@@ -4252,6 +4256,7 @@ pub async fn import_markdown_with_progress(
         &page_title,
         blocks_total,
         &space_id,
+        dialect,
         parse_output.warnings.len(),
     );
 
@@ -4376,6 +4381,7 @@ fn marked_blocks(
 fn parse_import_payload(
     content: &str,
     filename: Option<String>,
+    dialect: ImportDialect,
     vault_files: Option<&[VaultFile]>,
     vault_notes: Option<&[String]>,
 ) -> Result<(import::ParseOutput, String), AppError> {
@@ -4393,14 +4399,12 @@ fn parse_import_payload(
     // folder import keeps its `((uuid))` refs to other notes for
     // `link_import_anchors`.
     let text = import::strip_title_heading(content, &page_title);
-    let mut parse_output = if vault_notes.is_some() {
-        import::parse_vault_markdown(&text)
-    } else {
-        import::parse_logseq_markdown(&text)
-    };
+    let mut parse_output = import::parse_import(&text, vault_notes.is_some(), dialect);
     // Every block, code too: the rewrite skips the lines of its code fences.
-    for block in &mut parse_output.blocks {
-        block.content = import::rewrite_org_blocks(&block.content);
+    if dialect == ImportDialect::LogseqOrg {
+        for block in &mut parse_output.blocks {
+            block.content = import::rewrite_org_blocks(&block.content);
+        }
     }
     // A folder import links its notes by relative path (#5160 N10); a lone
     // file has no vault to be relative to. The title is the note's path below
@@ -4570,6 +4574,7 @@ fn announce_import_start(
     page_title: &str,
     blocks_total: u64,
     space_id: &str,
+    dialect: ImportDialect,
     parse_warnings: usize,
 ) {
     let span = tracing::Span::current();
@@ -4579,6 +4584,7 @@ fn announce_import_start(
         page = %page_title,
         blocks_total,
         space = %space_id,
+        ?dialect,
         parse_warnings,
         "import: starting markdown import"
     );
@@ -7436,11 +7442,14 @@ pub struct VaultImport {
 /// best-effort, so a dropped channel never aborts the import.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn import_markdown(
     app: tauri::AppHandle,
     content: String,
     filename: Option<String>,
     space_id: SpaceId,
+    // Which reading the source is for (#6277 E1).
+    dialect: ImportDialect,
     // `None`/omitted ⇒ no attachment ingest and no note names (a plain pick).
     vault: Option<VaultImport>,
     progress: tauri::ipc::Channel<ImportProgressUpdate>,
@@ -7464,6 +7473,7 @@ pub async fn import_markdown(
         content,
         filename,
         space_id.into_string(),
+        dialect,
         vault_files,
         vault_notes,
         Some(&crate::main_thread::UiChannel::new(app, progress)),
@@ -8325,6 +8335,7 @@ mod tests {
              - ![[Topic]] ![[topic.png]] #[[Topic]] \\[[Topic]] `[[Topic]]`\n\
              - ````\n  ![[Topic]] [[Topic]]\n  ````\n",
             Some("v/home.md".into()),
+            ImportDialect::Markdown,
             None,
             Some(&notes),
         )

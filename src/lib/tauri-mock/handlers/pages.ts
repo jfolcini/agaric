@@ -2024,6 +2024,8 @@ export const pagesHandlers = {
   // fidelity. Validate import semantics against the Rust tests, not this mock.
   import_markdown: (args) => {
     const a = args as Record<string, unknown>
+    // `dialect` (#6277 E1) goes unread: the dialects differ only in Logseq's `STARTED` and
+    // Org's `#+BEGIN_` blocks, which the mock reads in neither.
     const content = (a['content'] as string) ?? ''
     const filename = (a['filename'] as string | null) ?? null
     // Backend now requires `space_id`. Mirror the

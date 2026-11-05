@@ -371,8 +371,9 @@ fn split_block_task_marker(text: &str) -> (Option<&'static str>, &str) {
 }
 
 /// The Logseq and Org task keywords an import reads at the start of a bullet's
-/// text (#5160 D7), and the `todo_state` each stands for. Typing, paste and
-/// Edit as Markdown keep them as words.
+/// text (#5160 D7), and the `todo_state` each stands for; `STARTED` under
+/// `LogseqOrg` only (#6277 E1). Typing, paste and Edit as Markdown keep them
+/// as words.
 const TASK_KEYWORDS: [(&str, &str); 12] = [
     ("TODO", "TODO"),
     ("LATER", "TODO"),
@@ -403,10 +404,12 @@ fn split_word<'a>(text: &'a str, word: &str) -> Option<&'a str> {
     rest.strip_prefix(' ')
 }
 
-/// The `todo_state` of a task keyword opening `text`, and the text after it.
-fn split_task_keyword(text: &str) -> Option<(&'static str, &str)> {
+/// The `todo_state` of a task keyword `dialect` reads opening `text`, and the
+/// text after it.
+fn split_task_keyword(text: &str, dialect: ImportDialect) -> Option<(&'static str, &str)> {
     TASK_KEYWORDS
         .iter()
+        .filter(|(keyword, _)| dialect == ImportDialect::LogseqOrg || *keyword != "STARTED")
         .find_map(|&(keyword, state)| split_word(text, keyword).map(|rest| (state, rest)))
 }
 
@@ -425,7 +428,8 @@ fn split_org_priority(text: &str) -> Option<(&'static str, &str)> {
 /// neither write nor remove it.
 pub fn needs_task_syntax_escape(text: &str) -> bool {
     let body = text.trim_start_matches('\\');
-    split_task_keyword(body).is_some() || split_org_priority(body).is_some()
+    split_task_keyword(body, ImportDialect::LogseqOrg).is_some()
+        || split_org_priority(body).is_some()
 }
 
 /// An import's reading of the task keyword and priority cookie opening `text`,
@@ -435,6 +439,7 @@ pub fn needs_task_syntax_escape(text: &str) -> bool {
 fn split_task_syntax<'a>(
     text: &'a str,
     checkbox: Option<&'static str>,
+    dialect: ImportDialect,
 ) -> (Option<&'static str>, Option<&'static str>, &'a str) {
     if let Some(rest) = text.strip_prefix('\\')
         && needs_task_syntax_escape(rest)
@@ -443,7 +448,8 @@ fn split_task_syntax<'a>(
     }
     let (todo_state, text) = match checkbox {
         Some(state) => (Some(state), text),
-        None => split_task_keyword(text).map_or((None, text), |(state, rest)| (Some(state), rest)),
+        None => split_task_keyword(text, dialect)
+            .map_or((None, text), |(state, rest)| (Some(state), rest)),
     };
     let (priority, text) =
         split_org_priority(text).map_or((None, text), |(letter, rest)| (Some(letter), rest));
@@ -582,7 +588,12 @@ struct BulletBody<'a> {
 /// priority cookie after either (`- TODO [#A] x`). A Document buffer reads the
 /// style off the one marker, `-` and `*` a bullet and `+` none, and a checkbox
 /// after any marker is a task, which has no style (#5691 D2, D3).
-fn bullet_body<'a>(marker: &str, text: &'a str, mode: ParseMode) -> BulletBody<'a> {
+fn bullet_body<'a>(
+    marker: &str,
+    text: &'a str,
+    mode: ParseMode,
+    dialect: ImportDialect,
+) -> BulletBody<'a> {
     let ordered = marker.ends_with(['.', ')']);
     if mode == ParseMode::Document {
         let (todo_state, text) = split_block_task_marker(text);
@@ -606,7 +617,7 @@ fn bullet_body<'a>(marker: &str, text: &'a str, mode: ParseMode) -> BulletBody<'
         split_block_list_marker(text)
     };
     let (todo_state, text) = split_block_task_marker(text);
-    let (todo_state, priority, text) = split_task_syntax(text, todo_state);
+    let (todo_state, priority, text) = split_task_syntax(text, todo_state, dialect);
     BulletBody {
         list_style,
         todo_state,
@@ -661,9 +672,15 @@ pub fn document_fence_opener(line: &str) -> Option<FenceRun> {
 fn line_fence(line: &str, mode: ParseMode) -> Option<FenceRun> {
     let trimmed = line.trim_start();
     match bullet_marker(trimmed) {
-        Some((len, _)) => {
-            fence_run(bullet_body(&trimmed[..len], bullet_text(trimmed, len), mode).text)
-        }
+        Some((len, _)) => fence_run(
+            bullet_body(
+                &trimmed[..len],
+                bullet_text(trimmed, len),
+                mode,
+                ImportDialect::LogseqOrg,
+            )
+            .text,
+        ),
         None => fence_run(trimmed),
     }
 }
@@ -718,6 +735,17 @@ pub enum ImportProgressUpdate {
 // its `impl … for tauri::ipc::Channel` app-side avoids giving `agaric-engine` a
 // `tauri` dependency (orphan rule: the trait is app-local there). See
 // `src-tauri/src/import.rs`.
+
+/// Which reading a file import's source is for (#6277 E1), as its front end
+/// tells: a Logseq graph or an `.org` file is `LogseqOrg`, everything else
+/// `Markdown`. Only `LogseqOrg` reads Logseq's `STARTED` keyword and Org's
+/// `#+BEGIN_X` blocks (#6033 S3); it is the seam the `Markdown` reader
+/// switches on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Type)]
+pub enum ImportDialect {
+    Markdown,
+    LogseqOrg,
+}
 
 /// A single referenced sibling file carried over IPC for an attachment-aware
 /// import (#1925).
@@ -1661,14 +1689,7 @@ pub fn guess_attachment_mime(path: &str) -> String {
 /// `:LOGBOOK:` drawers dropped, and a `((uuid))` reference to no block of the
 /// file is stripped.
 pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
-    parse_import(content, false)
-}
-
-/// [`parse_logseq_markdown`] for a note of a folder import: a `((uuid))`
-/// reference to no block of the file is kept, for `link_import_anchors` to
-/// link once the note naming it is imported.
-pub fn parse_vault_markdown(content: &str) -> ParseOutput {
-    parse_import(content, true)
+    parse_import(content, false, ImportDialect::LogseqOrg)
 }
 
 /// `text` less a leading byte order mark, which some editors and clients
@@ -1677,9 +1698,10 @@ fn without_bom(text: &str) -> &str {
     text.strip_prefix('\u{feff}').unwrap_or(text)
 }
 
-/// The import reading of [`parse_logseq_markdown`], keeping every `((uuid))`
-/// reference when `keep_refs`.
-fn parse_import(content: &str, keep_refs: bool) -> ParseOutput {
+/// The import reading of [`parse_logseq_markdown`] in `dialect`, keeping every
+/// `((uuid))` reference when `keep_refs`, as a note of a folder import does for
+/// `link_import_anchors` to link once the note naming it is imported.
+pub fn parse_import(content: &str, keep_refs: bool, dialect: ImportDialect) -> ParseOutput {
     // Normalize line endings BEFORE any other parsing. The frontmatter strip
     // below uses `find("\n---")`, which is fragile against CRLF (works only
     // because `\n---` is a substring of `\r\n---`) and outright broken for
@@ -1729,6 +1751,7 @@ fn parse_import(content: &str, keep_refs: bool) -> ParseOutput {
     let mut blocks = parse_outline(
         body,
         ParseMode::Import,
+        dialect,
         true,
         None,
         keep_refs,
@@ -1951,7 +1974,15 @@ fn source_outline(
     } else {
         read_page_properties(&normalized, &mut output)
     };
-    output.blocks = parse_outline(&body, mode, foreign, id_lines, false, &mut output.warnings);
+    output.blocks = parse_outline(
+        &body,
+        mode,
+        ImportDialect::Markdown,
+        foreign,
+        id_lines,
+        false,
+        &mut output.warnings,
+    );
     output
 }
 
@@ -2096,13 +2127,14 @@ enum ParseMode {
 fn parse_outline(
     normalized: &str,
     mode: ParseMode,
+    dialect: ImportDialect,
     foreign: bool,
     id_lines: Option<&std::collections::HashSet<usize>>,
     keep_refs: bool,
     warnings: &mut Vec<String>,
 ) -> Vec<ParsedBlock> {
     let (mut blocks, ends_in_code, mut lossy) =
-        read_blocks(normalized, mode, foreign, id_lines, keep_refs);
+        read_blocks(normalized, mode, dialect, foreign, id_lines, keep_refs);
     if id_lines.is_none() {
         extract_block_anchors(&mut blocks, &ends_in_code, mode);
     }
@@ -2120,12 +2152,13 @@ fn parse_outline(
 fn read_blocks(
     normalized: &str,
     mode: ParseMode,
+    dialect: ImportDialect,
     foreign: bool,
     id_lines: Option<&std::collections::HashSet<usize>>,
     keep_refs: bool,
 ) -> (Vec<ParsedBlock>, Vec<bool>, LossyCounts) {
     let none = std::collections::HashSet::new();
-    let read = parse_block_lines(normalized, mode, foreign, &none, id_lines);
+    let read = parse_block_lines(normalized, mode, dialect, foreign, &none, id_lines);
     let ids = if keep_refs {
         LOGSEQ_BLOCK_REF_RE
             .find_iter(normalized)
@@ -2137,7 +2170,7 @@ fn read_blocks(
     if read.2.stripped_refs == 0 || ids.is_empty() {
         return read;
     }
-    parse_block_lines(normalized, mode, foreign, &ids, id_lines)
+    parse_block_lines(normalized, mode, dialect, foreign, &ids, id_lines)
 }
 
 /// Counts of the lossy / silently-corrected transforms [`parse_block_lines`]
@@ -2338,6 +2371,8 @@ struct Fence {
 /// continuation line takes them or another line drops them.
 struct Scan<'a> {
     mode: ParseMode,
+    /// Which task keywords an import reads (#6277 E1).
+    dialect: ImportDialect,
     /// Text from outside Agaric (an import or a paste): an unterminated fence
     /// ends with its list item, as CommonMark reads it (D5).
     foreign: bool,
@@ -2374,12 +2409,14 @@ struct Scan<'a> {
 fn parse_block_lines(
     normalized: &str,
     mode: ParseMode,
+    dialect: ImportDialect,
     foreign: bool,
     kept_refs: &std::collections::HashSet<String>,
     id_lines: Option<&std::collections::HashSet<usize>>,
 ) -> (Vec<ParsedBlock>, Vec<bool>, LossyCounts) {
     let mut scan = Scan {
         mode,
+        dialect,
         foreign,
         blocks: Vec::new(),
         ends_in_code: Vec::new(),
@@ -2609,7 +2646,12 @@ impl<'a> Scan<'a> {
     /// Org `[#A]` its `priority` ([`bullet_body`]), and a fence its text opens
     /// is its own.
     fn bullet(&mut self, trimmed: &str, indent: usize, len: usize, number: usize) {
-        let body = bullet_body(&trimmed[..len], bullet_text(trimmed, len), self.mode);
+        let body = bullet_body(
+            &trimmed[..len],
+            bullet_text(trimmed, len),
+            self.mode,
+            self.dialect,
+        );
         let text = body.text;
         let properties: Vec<(String, String)> = [
             (LIST_STYLE_KEY, body.list_style),
@@ -8638,7 +8680,7 @@ mod tests_obsidian_embeds {
         let md = format!(
             "- {{{{embed (({OTHER}))}}}}\n- see (({OTHER})) and (({OWN}))\n- mine\n  id:: {OWN}\n"
         );
-        let kept = parse_vault_markdown(&md);
+        let kept = parse_import(&md, true, ImportDialect::LogseqOrg);
         assert_eq!(
             contents(&kept),
             [
