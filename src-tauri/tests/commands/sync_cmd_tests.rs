@@ -1272,3 +1272,138 @@ async fn list_quarantined_sync_slots_is_empty_on_a_fresh_db() {
         "nothing quarantined lists nothing and counts zero"
     );
 }
+
+// ======================================================================
+// Sync — readmit_quarantined_sync_slot (#6057)
+// ======================================================================
+
+async fn inbox_count(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+        .fetch_one(pool)
+        .await
+        .expect("count inbox rows")
+}
+
+async fn quarantine_count(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_quarantine")
+        .fetch_one(pool)
+        .await
+        .expect("count quarantine rows")
+}
+
+/// The id of the one row `loro_sync_quarantine` holds.
+async fn only_quarantined_id(pool: &SqlitePool) -> i64 {
+    let list = list_quarantined_sync_slots_inner(pool, 100).await.unwrap();
+    assert_eq!(list.total, 1, "precondition: exactly one quarantined row");
+    list.slots[0].id
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn readmit_quarantined_sync_slot_moves_the_row_back_with_one_boot_left() {
+    let (pool, _dir) = test_pool().await;
+    // Structured bytes, so a truncating or re-encoding move would show.
+    let payload: Vec<u8> = (0u8..=255).rev().take(48).collect();
+    quarantine_slot(&pool, "SPACE_A", &payload, 1_234).await;
+    let id = only_quarantined_id(&pool).await;
+    assert_eq!(
+        inbox_count(&pool).await,
+        0,
+        "precondition: the inbox is empty"
+    );
+
+    readmit_quarantined_sync_slot_inner(&pool, id)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        quarantine_count(&pool).await,
+        0,
+        "the row leaves the quarantine"
+    );
+    let rows: Vec<(String, Vec<u8>, i64, i64)> =
+        sqlx::query_as("SELECT space_id, bytes, unresolved_boots, created_at FROM loro_sync_inbox")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        vec![(
+            "SPACE_A".to_string(),
+            payload,
+            QUARANTINE_AFTER_BOOTS - 1,
+            1_234
+        )],
+        "one inbox row: the same space and bytes, one boot of budget left, and \
+         first_seen_at_ms as its created_at"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn readmit_quarantined_sync_slot_unknown_id_is_not_found() {
+    let (pool, _dir) = test_pool().await;
+    quarantine_slot(&pool, "SPACE_A", &[7; 16], 1_000).await;
+    let id = only_quarantined_id(&pool).await;
+
+    let result = readmit_quarantined_sync_slot_inner(&pool, id + 1).await;
+
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "an unknown id must be NotFound; got {result:?}"
+    );
+    assert_eq!(
+        inbox_count(&pool).await,
+        0,
+        "nothing is inserted into the inbox"
+    );
+    assert_eq!(
+        quarantine_count(&pool).await,
+        1,
+        "the quarantined row stays where it is"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_retried_slot_that_still_fails_is_quarantined_again_after_one_boot() {
+    let (pool, _dir) = test_pool().await;
+    // Not a Loro blob: every boot replay fails to import it.
+    let garbage = b"agaric #6057: not a loro blob".to_vec();
+    quarantine_slot(&pool, "SPACE_A", &garbage, 1_500).await;
+    let id = only_quarantined_id(&pool).await;
+    readmit_quarantined_sync_slot_inner(&pool, id)
+        .await
+        .unwrap();
+
+    let mat = Materializer::new(pool.clone());
+    let registry = agaric_engine::loro::registry::LoroEngineRegistry::new();
+    let replayed = agaric_sync::recovery::replay_sync_inbox(&pool, &registry, DEV, &mat)
+        .await
+        .expect("one boot replay");
+    mat.shutdown();
+
+    assert_eq!(replayed, 0, "the garbage blob cannot apply");
+    let list = list_quarantined_sync_slots_inner(&pool, 100).await.unwrap();
+    assert_eq!(
+        list.total, 1,
+        "one failed boot puts the retried slot back in the list"
+    );
+    let slot = &list.slots[0];
+    assert!(
+        slot.last_reason.starts_with("replay failed"),
+        "the boot records a fresh reason; got {:?}",
+        slot.last_reason
+    );
+    assert_eq!(
+        (slot.first_seen_at_ms, slot.byte_len, slot.unresolved_boots),
+        (
+            1_500,
+            i64::try_from(garbage.len()).unwrap(),
+            QUARANTINE_AFTER_BOOTS
+        ),
+        "first seen survives the round trip, with the same bytes and a spent budget"
+    );
+    assert_eq!(
+        inbox_count(&pool).await,
+        0,
+        "the slot moved, it was not copied"
+    );
+}
