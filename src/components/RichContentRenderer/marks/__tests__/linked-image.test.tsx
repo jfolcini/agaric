@@ -67,6 +67,15 @@ describe('renderImage — an image inside a link (#6342)', () => {
     expect(mockOpenUrl).not.toHaveBeenCalled()
   })
 
+  it('names a withheld external badge by its alt, with Load outside the link', async () => {
+    const node = linkedImage('https://x.com/actions', 'https://img.x.com/badge.svg')
+    const { container } = render(<p>{renderImage(node, 'k', { interactive: true })}</p>)
+
+    expect(screen.getByRole('link', { name: 'CI (opens in new tab)' })).toBeInTheDocument()
+    expect(screen.getByTestId('image-load-button').closest('[role="link"]')).toBeNull()
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
   it('renders a blocked-scheme link as the bare image', () => {
     render(<>{renderImage(linkedImage('javascript:alert(1)'), 'k', { interactive: true })}</>)
     expect(screen.queryByRole('link')).toBeNull()
