@@ -26,7 +26,7 @@ import { notify } from '@/lib/notify'
 import {
   buildInitParams,
   DRAFT_ROW_VALUE_TYPES,
-  NON_DELETABLE_PROPERTIES,
+  APP_MANAGED_BUILTIN_KEYS,
   SYSTEM_MANAGED_PROPERTY_KEYS,
 } from '@/lib/property-save-utils'
 import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error'
@@ -329,7 +329,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
     (d) =>
       !properties.some((p) => p.key === d.key) &&
       !TASK_ONLY_PROPERTIES.has(d.key) &&
-      !NON_DELETABLE_PROPERTIES.has(d.key) &&
+      !APP_MANAGED_BUILTIN_KEYS.has(d.key) &&
       !INTERNAL_PROPERTY_KEYS.has(d.key),
   )
 

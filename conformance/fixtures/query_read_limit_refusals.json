@@ -183,8 +183,8 @@
       },
       "command": "query_by_tags",
       "comment": "No tags and no prefixes short-circuit to an empty page before the limit is checked, so limit 0 is answered, not refused. The empty result is the negative this pins.",
-      "expect_empty": true,
-      "name": "tagged_no_leaves_limit_0"
+      "name": "tagged_no_leaves_limit_0",
+      "expect_empty": true
     },
     {
       "args": {

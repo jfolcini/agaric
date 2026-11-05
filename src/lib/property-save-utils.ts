@@ -76,6 +76,15 @@ export const NON_DELETABLE_PROPERTIES: ReadonlySet<string> = new Set(
 )
 
 /**
+ * The built-ins the app manages itself, which the add-property pickers, the
+ * sort picker and query columns leave out. `meeting_date` (#5364) is the one
+ * built-in a user sets by hand, so those surfaces offer it like their own keys.
+ */
+export const APP_MANAGED_BUILTIN_KEYS: ReadonlySet<string> = new Set(
+  BUILTIN_PROPERTY_DEFS.map((def) => def.key).filter((key) => key !== 'meeting_date'),
+)
+
+/**
  * The keys `delete_property` refuses, which only state transitions and
  * recurrence write. Mirrors `SYSTEM_MANAGED_PROPERTY_KEYS` in
  * `src-tauri/src/commands/properties.rs`; every other property, the repeat

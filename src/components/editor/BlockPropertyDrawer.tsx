@@ -41,7 +41,7 @@ import { isUnfit, valueForm } from '@/lib/property-fit'
 import {
   buildInitParams,
   DRAFT_ROW_VALUE_TYPES,
-  NON_DELETABLE_PROPERTIES,
+  APP_MANAGED_BUILTIN_KEYS,
   SYSTEM_MANAGED_PROPERTY_KEYS,
 } from '@/lib/property-save-utils'
 import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
@@ -331,7 +331,7 @@ export function BlockPropertyDrawer({
   const availableDefs = definitions.filter(
     (d) =>
       !existingKeys.has(d.key) &&
-      !NON_DELETABLE_PROPERTIES.has(d.key) &&
+      !APP_MANAGED_BUILTIN_KEYS.has(d.key) &&
       !INTERNAL_PROPERTY_KEYS.has(d.key),
   )
 
