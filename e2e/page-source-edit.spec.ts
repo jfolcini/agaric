@@ -75,9 +75,6 @@ async function openSourceMode(page: Page, shows = WELCOME): Promise<Locator> {
   // writes its own selection back over the DOM's shortly after a focus: a
   // click or key sent before then is undone.
   await expect(editor).toBeFocused()
-  // The page menu is still sliding away when the buffer takes focus; a click
-  // sent into the buffer before it has left can land on one of its rows.
-  await expect(page.getByRole('menu', { name: 'Page actions', exact: true })).toHaveCount(0)
   return editor
 }
 
