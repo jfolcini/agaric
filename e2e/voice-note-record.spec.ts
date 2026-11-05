@@ -31,6 +31,35 @@ test.use({
 /** BLOCK_GS_1, the first child of "Getting Started" in the mock seed. */
 const BLOCK_GS_1 = '0000000000000000000BLOCK01'
 
+interface AttachmentRow {
+  filename: string
+  mime_type: string
+  size_bytes: number
+}
+
+/** The attachments on BLOCK_GS_1, read back from the backend. */
+async function attachmentsOnBlock(page: Page) {
+  return page.evaluate(async (blockId) => {
+    const { invoke } = (
+      window as unknown as {
+        __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+      }
+    ).__TAURI_INTERNALS__
+    return (await invoke('list_attachments', { blockId })) as AttachmentRow[]
+  }, BLOCK_GS_1)
+}
+
+async function openVoiceDialog(page: Page) {
+  await waitForBoot(page)
+  await openPage(page, 'Getting Started')
+  await focusBlockById(page, BLOCK_GS_1)
+  await typeSlashCommand(page, 'voice')
+  await activeSuggestionList(page)
+    .locator('[data-testid="suggestion-item"]', { hasText: 'VOICE' })
+    .click()
+  return activeDialog(page)
+}
+
 /**
  * Records a three-second note into BLOCK_GS_1 and saves it; checks the player
  * that appears, then again after leaving the page and coming back, and returns
@@ -47,15 +76,7 @@ async function recordVoiceNote(page: Page) {
       true,
     )
   })
-  await waitForBoot(page)
-  await openPage(page, 'Getting Started')
-  await focusBlockById(page, BLOCK_GS_1)
-  await typeSlashCommand(page, 'voice')
-  await activeSuggestionList(page)
-    .locator('[data-testid="suggestion-item"]', { hasText: 'VOICE' })
-    .click()
-
-  const dialog = activeDialog(page)
+  const dialog = await openVoiceDialog(page)
   await dialog.getByRole('button', { name: 'Record' }).click()
   await expect(dialog.getByRole('timer', { name: 'Recording time' })).toHaveText('0:03', {
     timeout: 10_000,
@@ -66,18 +87,7 @@ async function recordVoiceNote(page: Page) {
 
   await reopenPage(page, 'Getting Started')
   await expectLengthBeforePlay(page)
-  const rows = await page.evaluate(async (blockId) => {
-    const { invoke } = (
-      window as unknown as {
-        __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
-      }
-    ).__TAURI_INTERNALS__
-    return (await invoke('list_attachments', { blockId })) as Array<{
-      filename: string
-      mime_type: string
-      size_bytes: number
-    }>
-  }, BLOCK_GS_1)
+  const rows = await attachmentsOnBlock(page)
   expect(rows).toHaveLength(1)
   return rows[0]
 }
@@ -128,29 +138,6 @@ test('a WebM voice note shows its length before it is played @attachments', asyn
   expect(row?.mime_type).toBe('audio/webm')
   expect(row?.filename).toMatch(/^voice-note-.*\.webm$/)
 })
-
-/** The attachments on BLOCK_GS_1, read back from the backend. */
-async function attachmentsOnBlock(page: Page) {
-  return page.evaluate(async (blockId) => {
-    const { invoke } = (
-      window as unknown as {
-        __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
-      }
-    ).__TAURI_INTERNALS__
-    return (await invoke('list_attachments', { blockId })) as unknown[]
-  }, BLOCK_GS_1)
-}
-
-async function openVoiceDialog(page: Page) {
-  await waitForBoot(page)
-  await openPage(page, 'Getting Started')
-  await focusBlockById(page, BLOCK_GS_1)
-  await typeSlashCommand(page, 'voice')
-  await activeSuggestionList(page)
-    .locator('[data-testid="suggestion-item"]', { hasText: 'VOICE' })
-    .click()
-  return activeDialog(page)
-}
 
 test('cancelling a recording attaches nothing and releases the microphone @attachments', async ({
   page,
