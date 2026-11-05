@@ -58,7 +58,7 @@ function remount(target: PasteIntoBlockTarget, content: string): void {
 }
 
 /** The inline positions `node` holds: one per character and per inline atom. */
-function inlineSize(node: PMNode): number {
+export function inlineSize(node: PMNode): number {
   let size = 0
   node.descendants((child) => {
     if (child.isInline) size += child.nodeSize
@@ -68,7 +68,7 @@ function inlineSize(node: PMNode): number {
 }
 
 /** The position in `doc` that its last `tail` inline positions follow. */
-function posBeforeTail(doc: PMNode, tail: number): number | null {
+export function posBeforeTail(doc: PMNode, tail: number): number | null {
   let skip = Math.max(0, inlineSize(doc) - tail)
   let pos: number | null = null
   doc.descendants((child, offset) => {
