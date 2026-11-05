@@ -8,7 +8,7 @@
  * escapes it needs, its property lines as typed and its children at its text's
  * column, a blank line between it and a neighbour unless both are list lines.
  * So the save reads it back as the block editor would have written it: the
- * text through the block editor's own `convertBlockContent`, the list style
+ * text through the block editor's own `convertBlockText`, the list style
  * as its marker, and the priority and dates as `priority::`, `due_date::` and
  * `scheduled_date::` lines (a checkbox task's as the Tasks signifiers ending
  * its line, which go with it when it stops being a task, #6277 D3).
@@ -31,7 +31,7 @@ import {
   taskSignifier,
   writeTaskFields,
 } from '@/editor/source-buffer-document'
-import { type BlockTypeToken, convertBlockContent, detectBlockType } from '@/lib/block-type-convert'
+import { type BlockTypeToken, convertBlockText, detectBlockType } from '@/lib/block-type-convert'
 import { foldPropertyKey } from '@/lib/inline-property-parse'
 import { type ListStyle, listStyleForBlockType } from '@/lib/list-style'
 import { PRIORITY_CYCLE } from '@/lib/priority-levels'
@@ -450,7 +450,7 @@ function retask(
 export function turnInto(block: SourceBlock, type: BlockTypeToken, calloutType?: string): Command {
   const style = listStyleForBlockType(type)
   const listStyle = style === 'none' ? null : style
-  const convert = (content: string): string => convertBlockContent(content, type, calloutType)
+  const convert = (content: string): string => convertBlockText(content, type, calloutType)
   return rewriteBlock(block, (read) => ({
     ...retask(read, listStyle === null ? read.todoState : null, convert),
     listStyle,

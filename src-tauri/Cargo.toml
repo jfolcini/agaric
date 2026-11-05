@@ -541,6 +541,13 @@ debug = "none"
 [profile.dev.package."*"]
 debug = false
 
+# Bundled SQLite optimized in dev and test builds: a DB test spends much of its
+# time inside SQLite, which is C compiled at -O0 otherwise, and it is a single
+# crate to rebuild. Optimizing every dependency was faster still but more than
+# doubled a cold build.
+[profile.dev.package.libsqlite3-sys]
+opt-level = 3
+
 # Dev-build link-time trim, part 2 (companion to the dep-debuginfo override
 # above and the mold/lld linker auto-wired by scripts/setup.sh). Default Linux
 # `split-debuginfo` packs DWARF into the linked artifact; `"unpacked"` leaves it
