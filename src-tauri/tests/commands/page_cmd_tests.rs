@@ -13934,13 +13934,15 @@ async fn a_logseq_page_imports_its_page_properties_and_bookkeeping() {
     .fetch_all(&pool)
     .await
     .unwrap();
-    assert_eq!(tags, ["Q3 plans", "project"]);
+    // #6278 I4 — a new tag name holds no whitespace.
+    assert_eq!(tags, ["Q3-plans", "project"]);
     assert_eq!(
         result.warnings,
         [
             "1 ((block-ref)) reference(s) were stripped from imported content and could not be \
              preserved",
             "1 Logseq :LOGBOOK: drawer(s) were dropped",
+            "tag 'Q3 plans' was read as 'Q3-plans': a tag name holds no whitespace",
         ]
     );
     mat.shutdown();
@@ -14225,7 +14227,7 @@ async fn an_unmatched_anchor_into_the_file_drops_a_label_equal_to_its_title() {
 ///   - `#project` — a bare hashtag — resolves-or-creates a `block_type='tag'`
 ///     block "project" and rewrites the token to a canonical `#[ULID]` ref.
 ///   - `#[[My Topic]]` — the multi-word form (#1950) — resolves-or-creates a
-///     TAG "My Topic" (NOT a page) and likewise rewrites to `#[ULID]`. The
+///     TAG "My-Topic" (#6278 I4; NOT a page) and likewise rewrites to `#[ULID]`. The
 ///     wiki-link pre-pass's `#`-prefix guard leaves the `[[…]]` for the tag
 ///     pass, so NO "My Topic" PAGE is created.
 /// The created tags materialize as INLINE refs (`block_tag_refs` from the
@@ -14273,7 +14275,7 @@ async fn import_markdown_hashtags_no_tag_rows_1922() {
 
     // #1950 — "My Topic" is a TAG, NOT a page.
     let my_topic_tags: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM blocks WHERE block_type = 'tag' AND content = 'My Topic' \
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'tag' AND content = 'My-Topic' \
          AND deleted_at IS NULL",
     )
     .fetch_one(&pool)
@@ -14392,8 +14394,9 @@ async fn import_inline_bare_tag_links_and_round_trips_1924() {
     mat.shutdown();
 }
 
-/// #1924/#1950 — multi-word `#[[my tag]]` is linked as a TAG (block_type='tag',
-/// content 'my tag'); it round-trips LOSSLESSLY: the exporter emits the
+/// #1924/#1950 — multi-word `#[[my tag]]` is linked as the TAG of that name
+/// (block_type='tag', content 'my tag', one from before #6278 I4); it
+/// round-trips LOSSLESSLY: the exporter emits the
 /// `#[[my tag]]` bracket form for whitespace names, and re-importing that
 /// resolves back to the SAME tag instead of splitting at the first space.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -14403,6 +14406,10 @@ async fn import_inline_multiword_tag_links_and_round_trips_1924() {
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
     agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+    let seeded = create_block_inner(&pool, DEV, &mat, "tag".into(), "my tag".into(), None, None)
+        .await
+        .unwrap();
+    assign_to_space(&pool, seeded.id.as_str(), TEST_SPACE_ID).await;
 
     import_markdown_inner(
         &pool,
@@ -14494,6 +14501,155 @@ async fn import_inline_multiword_tag_links_and_round_trips_1924() {
     );
 
     mat.shutdown();
+}
+
+/// The live tags named `name`, any space.
+async fn tag_ids_named(pool: &SqlitePool, name: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'tag' AND content = ? AND deleted_at IS NULL",
+    )
+    .bind(name)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// #6278 I4 — an imported `#[[multi word]]` naming no tag creates `multi-word`,
+/// since a new tag name holds no whitespace, links it, and says so; a
+/// front-matter tag (as ENEX and Joplin write theirs) reads the same way.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_dashes_a_multi_word_tag_naming_no_tag_6278() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "---\ntags: [\"deep  work\"]\n---\n- a #[[multi word]] here".into(),
+        Some("Dashed.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let dashed = tag_ids_named(&pool, "multi-word").await;
+    assert_eq!(
+        dashed.len(),
+        1,
+        "`#[[multi word]]` creates the tag `multi-word`"
+    );
+    assert_eq!(
+        tag_ids_named(&pool, "multi word").await,
+        Vec::<String>::new(),
+        "and no tag holding a space"
+    );
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        content,
+        format!("a #[{}] here", dashed[0]),
+        "the block links the tag it created"
+    );
+
+    let page_tags: Vec<String> = sqlx::query_scalar(
+        "SELECT t.content FROM block_tags bt JOIN blocks t ON t.id = bt.tag_id \
+         JOIN blocks p ON p.id = bt.block_id WHERE p.content = 'Dashed'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        page_tags,
+        vec!["deep-work".to_string()],
+        "a front-matter tag's whitespace run is one `-`"
+    );
+    let mut warnings = result.warnings.clone();
+    warnings.sort();
+    assert_eq!(
+        warnings,
+        vec![
+            "tag 'deep  work' was read as 'deep-work': a tag name holds no whitespace".to_string(),
+            "tag 'multi word' was read as 'multi-word': a tag name holds no whitespace".to_string(),
+        ],
+        "each respelled tag is named in the warnings"
+    );
+
+    mat.shutdown();
+}
+
+/// #6278 I4 — a pasted `#[[Multi Word]]` resolves to an existing `multi-word`,
+/// and to an existing tag holding the space when there is one, which keeps
+/// working under its name until it is renamed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_resolves_a_multi_word_tag_to_its_existing_tag_6278() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let dashed = create_block_inner_with_space(
+        &pool,
+        DEV,
+        &mat,
+        "tag".into(),
+        "multi-word".into(),
+        None,
+        None,
+        &test_space_scope(),
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    let spaced = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "tag".into(),
+        "deep work".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    assign_to_space(&pool, spaced.as_str(), TEST_SPACE_ID).await;
+    let anchor = dup_child(&pool, &mat, &page, "anchor").await;
+    settle(&mat).await;
+
+    let pasted = paste_blocks_inner(
+        &pool,
+        DEV,
+        &mat,
+        anchor.clone(),
+        paste_text("- see #[[Multi Word]] and #[[Deep Work]]\n- more"),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let contents: Vec<Option<&str>> = pasted.blocks.iter().map(|r| r.content.as_deref()).collect();
+    assert_eq!(
+        contents,
+        [
+            Some(format!("see #[{dashed}] and #[{spaced}]").as_str()),
+            Some("more")
+        ],
+        "both resolve to the existing tags; nothing is created"
+    );
+    assert_eq!(
+        pasted.warnings,
+        vec!["tag 'Multi Word' was read as 'Multi-Word': a tag name holds no whitespace"],
+        "only the respelled name is named"
+    );
 }
 
 /// #1924/#1950 regression — a same-name tag living in ANOTHER space must NOT be
@@ -17145,7 +17301,9 @@ async fn import_markdown_alias_and_tag_with_embedded_comma_not_split_2829() {
     // Hand-authored frontmatter mirroring the exporter's quoting shape: a
     // flow-sequence item containing a literal comma, quoted, alongside a
     // second, ordinary item — for BOTH `aliases` and `tags`.
-    let md = "# Comma Page\n\n---\naliases: [\"Beta, Inc\", Gamma]\ntags: [\"billing, invoices\", \
+    // The tag's comma has no space after it: a new tag name holds no whitespace
+    // (#6278 I4).
+    let md = "# Comma Page\n\n---\naliases: [\"Beta, Inc\", Gamma]\ntags: [\"billing,invoices\", \
               urgent]\n---\n";
 
     let result = import_markdown_inner(
@@ -17202,7 +17360,7 @@ async fn import_markdown_alias_and_tag_with_embedded_comma_not_split_2829() {
     tag_names.sort();
     assert_eq!(
         tag_names,
-        vec!["billing, invoices".to_string(), "urgent".to_string()],
+        vec!["billing,invoices".to_string(), "urgent".to_string()],
         "a tag containing a literal comma must survive as ONE tag, not be split \
          on every comma; got {tag_names:?}"
     );

@@ -13,6 +13,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import type { TagEntry } from '@/hooks/useBlockTags'
 import { useEmojiRecents } from '@/hooks/useEmojiRecents'
 import { insertEmojiIntoInput, spliceEmojiIntoText } from '@/lib/insert-emoji-at-caret'
+import { dashedTagName } from '@/lib/name-tokens'
 
 export interface PageTagSectionProps {
   appliedTags: TagEntry[]
@@ -166,7 +167,8 @@ export function PageTagSection({
                 className="w-full justify-start text-muted-foreground"
                 onClick={onCreateTag}
               >
-                {t('pageHeader.createTag', { name: tagQuery.trim() })}
+                {/* #6278 I4 — the name `onCreateTag` creates: a new tag name holds no whitespace. */}
+                {t('pageHeader.createTag', { name: dashedTagName(tagQuery) })}
               </Button>
             )}
             {availableTags.length === 0 && !tagQuery.trim() && (

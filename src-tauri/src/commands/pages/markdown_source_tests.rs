@@ -703,10 +703,12 @@ fn a_name_inside_code_stays_raw() {
 /// `conformance/block-content.vectors.json`: stored block content and the
 /// meaning Rust and the block editor must agree on. This side reads each
 /// content through the buffer as one block with that content and no
-/// properties, and authors each row's `rustReads` and `fts`
-/// ([`the_block_content_vectors_carry_what_rust_reads`]);
+/// properties, and authors each row's `rustReads` and `fts` and the
+/// `corpusBlocks` rows ([`the_block_content_vectors_carry_what_rust_reads`]);
 /// `block-content-conformance.test.ts` runs the editor's save flush over the
-/// same rows and parses each content into the same code blocks and rules.
+/// same rows, parses each content into the same code blocks and rules, writes
+/// every row back as it was stored, and indexes each `blocks` content through
+/// the mock's search strip as Rust does.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BlockContentVectors {
@@ -761,6 +763,85 @@ fn rust_reads(content: &str) -> Vec<&'static str> {
         .collect()
 }
 
+/// The id an import into an empty space gives the page or tag `key` names,
+/// fixed so the vectors stay the same from run to run.
+fn fixed_ulid(key: &str) -> String {
+    let hash = blake3::hash(key.as_bytes());
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&hash.as_bytes()[..16]);
+    ulid::Ulid::from_bytes(bytes).to_string()
+}
+
+/// `block` as stored: its foreign highlight and math in Agaric's form, then
+/// its names as ids by the importer's own name collection and rewrite, each
+/// page and tag resolved as an empty space resolves it, by creating it, here
+/// under a [`fixed_ulid`].
+fn stored_form(block: &import::ParsedBlock) -> String {
+    let mut block = block.clone();
+    normalize_foreign_forms(std::slice::from_mut(&mut block), import::embed_names_note);
+    let block = &block;
+    let blocks = std::slice::from_ref(block);
+    let mut links = PageLinks::default();
+    let mut titles = HashMap::new();
+    for body in collect_inbound_page_link_bodies(blocks) {
+        let (name, label) = read_link_body(&body, &LinkMatches::default());
+        // An anchor names no heading in a page just created, so the link
+        // links the page.
+        let page = split_wikilink_anchor(name).0;
+        if page.is_empty() {
+            continue;
+        }
+        let id = fixed_ulid(&format!("page {page}"));
+        titles.insert(id.clone(), page.to_string());
+        links.ids.insert(name.to_string(), id);
+        let reading = (name.to_string(), label.map(str::to_string));
+        links.readings.insert(body.clone(), reading);
+    }
+    let tags = collect_inbound_tag_names(blocks)
+        .into_iter()
+        .map(|name| {
+            let norm = agaric_core::tag_norm::normalize_tag_name(&name);
+            (name, fixed_ulid(&format!("tag {norm}")))
+        })
+        .collect();
+    rewrite_block_content_for_import(block, &links, &titles, &tags)
+}
+
+/// Each distinct block the Document reader reads in the import corpus, as
+/// `(name, stored content)`, in file and block order.
+fn corpus_blocks() -> Vec<(String, String)> {
+    let dir = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/agaric-engine/tests/markdown-corpus"
+    );
+    let mut paths: Vec<_> = std::fs::read_dir(dir)
+        .expect("the corpus directory")
+        .map(|entry| entry.expect("a corpus entry").path())
+        .collect();
+    paths.sort();
+    let mut seen = HashSet::new();
+    let mut rows = Vec::new();
+    for path in paths {
+        let stem = path
+            .file_stem()
+            .and_then(std::ffi::OsStr::to_str)
+            .expect("a UTF-8 file name")
+            .to_string();
+        let text = std::fs::read_to_string(&path).expect("a UTF-8 document");
+        for (n, block) in import::parse_document_outline(&text)
+            .blocks
+            .iter()
+            .enumerate()
+        {
+            let content = stored_form(block);
+            if seen.insert(content.clone()) {
+                rows.push((format!("{stem} block {}", n + 1), content));
+            }
+        }
+    }
+    rows
+}
+
 /// The text the search index holds for `content` (#6277 B3), with each
 /// `blockRefTargets` id resolving to its target's first line.
 fn fts_text(content: &str, block_ref_targets: &serde_json::Value) -> String {
@@ -782,9 +863,12 @@ fn fts_text(content: &str, block_ref_targets: &serde_json::Value) -> String {
     )
 }
 
-/// Each stored block row carries `rustReads` and `fts`, which Rust authors
-/// (`CONFORMANCE_UPDATE=1` writes them); the editor's parse asserts the
-/// first and the mock's search strip the second.
+/// Each stored block row carries `rustReads` and `fts`, and `corpusBlocks`
+/// holds each corpus block's stored form; Rust authors all three
+/// (`CONFORMANCE_UPDATE=1` writes them). The editor's parse asserts
+/// `rustReads`, the mock's search strip `fts`, and the editor's round trip
+/// `corpusBlocks`. A corpus row keeps the fields a reviewer wrote on it
+/// (`editorCanonical`, `knownLoss`) while its name stays.
 #[test]
 fn the_block_content_vectors_carry_what_rust_reads() {
     let written: serde_json::Value = serde_json::from_str(
@@ -804,6 +888,23 @@ fn the_block_content_vectors_carry_what_rust_reads() {
         row["rustReads"] = serde_json::json!(rust_reads(&content));
         row["fts"] = serde_json::json!(fts_text(&content, &block_ref_targets));
     }
+    let reviewed: HashMap<&str, &serde_json::Value> = written["corpusBlocks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| Some((row["name"].as_str()?, row)))
+        .collect();
+    authored["corpusBlocks"] = corpus_blocks()
+        .into_iter()
+        .map(|(name, content)| {
+            let mut row = reviewed
+                .get(name.as_str())
+                .map_or_else(|| serde_json::json!({}), |&row| row.clone());
+            row["name"] = serde_json::json!(name);
+            row["content"] = serde_json::json!(content);
+            row
+        })
+        .collect();
     if std::env::var("CONFORMANCE_UPDATE").as_deref() == Ok("1") {
         let mut out = serde_json::to_string_pretty(&authored).expect("vectors serialise");
         out.push('\n');
@@ -812,7 +913,7 @@ fn the_block_content_vectors_carry_what_rust_reads() {
     }
     assert_eq!(
         written, authored,
-        "`rustReads` or `fts` drifted from Rust's reading: re-author with CONFORMANCE_UPDATE=1"
+        "`rustReads`, `fts` or `corpusBlocks` drifted from Rust: re-author with CONFORMANCE_UPDATE=1"
     );
 }
 

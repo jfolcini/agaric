@@ -50,6 +50,8 @@ export const ValidationCode = {
   BuiltinPropertyLocked: 'BuiltinPropertyLocked',
   /** A cross-space move's acknowledged property losses are stale; preview again (#5841). */
   UnacknowledgedPropertyLoss: 'UnacknowledgedPropertyLoss',
+  /** A tag created or renamed to a name holding whitespace (#6278 I4). */
+  TagNameWhitespace: 'TagNameWhitespace',
 } as const satisfies { [K in GeneratedValidationCode]: K }
 
 /**

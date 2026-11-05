@@ -61,6 +61,7 @@
     },
     {
       "content": "[x] not a task",
+      "editorCanonical": "\\[x\\] not a task",
       "editorFlush": "edit",
       "fts": "[x] not a task",
       "name": "text shaped like a checkbox stays text",
@@ -82,6 +83,7 @@
     },
     {
       "content": "~~~ a`b\necho hi\n~~~",
+      "editorCanonical": "~~~a`b\necho hi\n~~~",
       "editorFlush": "edit",
       "fts": " a`b\necho hi\n",
       "name": "a tilde fence is code, its info string may hold a backtick",
@@ -89,6 +91,7 @@
     },
     {
       "content": "above\n***\nbelow",
+      "editorCanonical": "above\n---\nbelow",
       "editorFlush": "edit",
       "fts": "above\n*\nbelow",
       "name": "a line of stars between lines of text is a thematic break",
@@ -96,6 +99,7 @@
     },
     {
       "content": "above\n___\nbelow",
+      "editorCanonical": "above\n---\nbelow",
       "editorFlush": "edit",
       "fts": "above\n___\nbelow",
       "name": "a line of underscores between lines of text is a thematic break",
@@ -103,6 +107,7 @@
     },
     {
       "content": "| a | b |\n|:--|--:|\n| 1 | 2 |",
+      "editorCanonical": "| a | b |\n| :--- | ---: |\n| 1 | 2 |",
       "editorFlush": "edit",
       "fts": "| a | b |\n|:--|--:|\n| 1 | 2 |",
       "name": "a table keeps its column alignment",
@@ -151,11 +156,667 @@
       "rustReads": []
     },
     {
+      "content": "```py title=\"hi.py\"\nprint(1)\n```",
+      "editorFlush": "edit",
+      "fts": "py title=\"hi.py\"\nprint(1)\n",
+      "name": "a fence keeps its whole info string",
+      "rustReads": ["code"]
+    },
+    {
+      "content": "Agaric is local-first[^1].",
+      "editorFlush": "edit",
+      "fts": "Agaric is local-first[^1].",
+      "name": "a footnote reference",
+      "rustReads": []
+    },
+    {
+      "content": "[^1]: See the README.",
+      "editorFlush": "edit",
+      "fts": "[^1]: See the README.",
+      "name": "a footnote definition",
+      "rustReads": []
+    },
+    {
       "content": "~~~md\n```js\nx\n```\n~~~",
+      "editorCanonical": "````md\n```js\nx\n```\n````",
       "editorFlush": "edit",
       "fts": "md\n```js\nx\n```\n",
       "name": "a tilde fence keeps its backtick lines as code",
       "rustReads": ["code"]
+    }
+  ],
+  "corpusBlocks": [
+    {
+      "content": "# Trip",
+      "name": "agaric-export block 1"
+    },
+    {
+      "content": "---",
+      "name": "agaric-export block 2"
+    },
+    {
+      "content": "status: planning",
+      "name": "agaric-export block 3"
+    },
+    {
+      "content": "Plan the trip",
+      "name": "agaric-export block 5"
+    },
+    {
+      "content": "- Book flights",
+      "name": "agaric-export block 6"
+    },
+    {
+      "content": "1. Pick dates",
+      "name": "agaric-export block 7"
+    },
+    {
+      "content": "2. Pay deposit",
+      "editorCanonical": "1. Pay deposit",
+      "name": "agaric-export block 8"
+    },
+    {
+      "content": "A block with a [[1GSYM1C5GHNPVYCDWXR22XKS5S]] link and #[5NQM6TGGE28PTT8SB4QX29ARVJ]",
+      "name": "agaric-export block 9"
+    },
+    {
+      "content": "Here's a simple plan to get your garden ready for winter:",
+      "name": "chatgpt-answer block 1"
+    },
+    {
+      "content": "### 1. Clean up",
+      "name": "chatgpt-answer block 2"
+    },
+    {
+      "content": "**Remove dead plants** – they harbour pests.",
+      "name": "chatgpt-answer block 3"
+    },
+    {
+      "content": "**Rake leaves** into a compost pile.",
+      "name": "chatgpt-answer block 4"
+    },
+    {
+      "content": "Shred them first so they break down faster.",
+      "name": "chatgpt-answer block 5"
+    },
+    {
+      "content": "Avoid diseased leaves.",
+      "name": "chatgpt-answer block 6"
+    },
+    {
+      "content": "### 2. Protect the soil",
+      "name": "chatgpt-answer block 7"
+    },
+    {
+      "content": "Add a 5–8 cm layer of mulch.",
+      "name": "chatgpt-answer block 8"
+    },
+    {
+      "content": "Plant a cover crop such as winter rye.",
+      "name": "chatgpt-answer block 9"
+    },
+    {
+      "content": "**Tip:** you can check your soil with:",
+      "name": "chatgpt-answer block 11"
+    },
+    {
+      "content": "```bash\nsoil-test --ph --moisture\n```",
+      "name": "chatgpt-answer block 12"
+    },
+    {
+      "content": "Let me know if you'd like a week-by-week schedule!",
+      "name": "chatgpt-answer block 13"
+    },
+    {
+      "content": "## Summary",
+      "name": "claude-answer block 1"
+    },
+    {
+      "content": "The migration has three phases.",
+      "name": "claude-answer block 2"
+    },
+    {
+      "content": "## Phases",
+      "name": "claude-answer block 3"
+    },
+    {
+      "content": "**Phase 1** — freeze writes",
+      "name": "claude-answer block 4"
+    },
+    {
+      "content": "announce the window",
+      "name": "claude-answer block 5"
+    },
+    {
+      "content": "snapshot the database",
+      "name": "claude-answer block 6"
+    },
+    {
+      "content": "**Phase 2** — copy data",
+      "name": "claude-answer block 7"
+    },
+    {
+      "content": "**Phase 3** — cut over",
+      "name": "claude-answer block 8"
+    },
+    {
+      "content": "| Phase | Owner | Days |\n|-------|-------|------|\n| 1     | Ops   | 1    |\n| 2     | Data  | 3    |",
+      "editorCanonical": "| Phase | Owner | Days |\n| --- | --- | --- |\n| 1 | Ops | 1 |\n| 2 | Data | 3 |",
+      "name": "claude-answer block 9"
+    },
+    {
+      "content": "```sql\nSELECT count(*) FROM blocks;\n```",
+      "name": "claude-answer block 10"
+    },
+    {
+      "content": "# Deploy notes",
+      "name": "code-heavy block 1"
+    },
+    {
+      "content": "Run the migration first:",
+      "name": "code-heavy block 2"
+    },
+    {
+      "content": "```bash\n# comment, not a heading\n- not a bullet\npsql -f migrate.sql\n```",
+      "name": "code-heavy block 3"
+    },
+    {
+      "content": "Then check the config:",
+      "name": "code-heavy block 4"
+    },
+    {
+      "content": "~~~yaml\n- name: web\n  replicas: 3\n~~~",
+      "editorCanonical": "```yaml\n- name: web\n  replicas: 3\n```",
+      "name": "code-heavy block 5"
+    },
+    {
+      "content": "How to document a snippet:",
+      "name": "code-heavy block 6"
+    },
+    {
+      "content": "````md\n```js\nconsole.log(\"hi\")\n```\n- item inside the example\n````",
+      "name": "code-heavy block 7"
+    },
+    {
+      "content": "Old-style indented code:",
+      "name": "code-heavy block 8"
+    },
+    {
+      "content": "make release",
+      "name": "code-heavy block 9"
+    },
+    {
+      "content": "Groceries",
+      "name": "crlf-windows block 1"
+    },
+    {
+      "content": "Milk",
+      "name": "crlf-windows block 2"
+    },
+    {
+      "content": "Eggs",
+      "name": "crlf-windows block 3"
+    },
+    {
+      "content": "Call the plumber",
+      "name": "crlf-windows block 4"
+    },
+    {
+      "content": "Projects",
+      "name": "four-space-outline block 1"
+    },
+    {
+      "content": "Agaric",
+      "name": "four-space-outline block 2"
+    },
+    {
+      "content": "Grammar review",
+      "name": "four-space-outline block 3"
+    },
+    {
+      "content": "Garden",
+      "name": "four-space-outline block 4"
+    },
+    {
+      "content": "Areas",
+      "name": "four-space-outline block 5"
+    },
+    {
+      "content": "# Team offsite",
+      "name": "gdocs-export block 1"
+    },
+    {
+      "content": "**Date:** 24 September 2026",
+      "name": "gdocs-export block 2"
+    },
+    {
+      "content": "## Agenda",
+      "name": "gdocs-export block 3"
+    },
+    {
+      "content": "Welcome  ",
+      "name": "gdocs-export block 4"
+    },
+    {
+      "content": "Roadmap review  ",
+      "name": "gdocs-export block 5"
+    },
+    {
+      "content": "Q4 bets  ",
+      "name": "gdocs-export block 6"
+    },
+    {
+      "content": "Retro",
+      "name": "gdocs-export block 7"
+    },
+    {
+      "content": "## Decisions",
+      "name": "gdocs-export block 8"
+    },
+    {
+      "content": "Move standup to 10:00  ",
+      "name": "gdocs-export block 9"
+    },
+    {
+      "content": "Adopt the new on-call rota",
+      "name": "gdocs-export block 10"
+    },
+    {
+      "content": "# fastgrep",
+      "name": "github-readme block 1"
+    },
+    {
+      "content": "[![CI](https://github.com/example/fastgrep/actions/workflows/ci.yml/badge.svg)](https://github.com/example/fastgrep/actions)",
+      "knownLoss": "#6342",
+      "name": "github-readme block 2"
+    },
+    {
+      "content": "A tiny, fast grep clone.",
+      "name": "github-readme block 3"
+    },
+    {
+      "content": "## Install",
+      "name": "github-readme block 4"
+    },
+    {
+      "content": "```sh\ncargo install fastgrep\n```",
+      "name": "github-readme block 5"
+    },
+    {
+      "content": "## Usage",
+      "name": "github-readme block 6"
+    },
+    {
+      "content": "Build the index: `fastgrep index .`",
+      "name": "github-readme block 7"
+    },
+    {
+      "content": "Search: `fastgrep find \"needle\"`",
+      "name": "github-readme block 8"
+    },
+    {
+      "content": "## Features",
+      "name": "github-readme block 9"
+    },
+    {
+      "content": "Regex support",
+      "name": "github-readme block 10"
+    },
+    {
+      "content": "Respects `.gitignore`",
+      "name": "github-readme block 11"
+    },
+    {
+      "content": "including nested ignore files",
+      "name": "github-readme block 12"
+    },
+    {
+      "content": "## License",
+      "name": "github-readme block 13"
+    },
+    {
+      "content": "MIT",
+      "name": "github-readme block 14"
+    },
+    {
+      "content": "Markdown is the most popular format that Logseq supports. Logseq supports most syntaxes including some extended ones.",
+      "name": "logseq-docs-markdown block 1"
+    },
+    {
+      "content": "### **Standard** syntax",
+      "name": "logseq-docs-markdown block 2"
+    },
+    {
+      "content": "what's logseq? #[7ME5KQBD8V5FAGK2100VMZVZ2S]",
+      "name": "logseq-docs-markdown block 3"
+    },
+    {
+      "content": "knowledge base",
+      "name": "logseq-docs-markdown block 4"
+    },
+    {
+      "content": "and so on...",
+      "name": "logseq-docs-markdown block 5"
+    },
+    {
+      "content": "### **Extended** syntax",
+      "name": "logseq-docs-markdown block 6"
+    },
+    {
+      "content": "[[38H076NXT5B9N7JAQVTMK3MBVC]]",
+      "name": "logseq-docs-markdown block 7"
+    },
+    {
+      "content": "syntax: `[[page name]]`",
+      "name": "logseq-docs-markdown block 8"
+    },
+    {
+      "content": "## Goals",
+      "name": "logseq-page block 1"
+    },
+    {
+      "content": "Cut onboarding time in half",
+      "name": "logseq-page block 2"
+    },
+    {
+      "content": "Replace the legacy importer",
+      "name": "logseq-page block 3"
+    },
+    {
+      "content": "Met with [[606GYQDTNMDZV25HG4MTWQAFC1]] about [[7MFFCRNRP1C4Q54GMBJADFVHNM]]",
+      "name": "logseq-page block 4"
+    },
+    {
+      "content": "She wants the draft by Friday",
+      "name": "logseq-page block 5"
+    },
+    {
+      "content": "TODO Send her the budget sheet\nSCHEDULED: <2026-09-26 Sat>",
+      "name": "logseq-page block 6"
+    },
+    {
+      "content": "DONE Book the room",
+      "name": "logseq-page block 7"
+    },
+    {
+      "content": "NOW [#A] Review PR 4412\nDEADLINE: <2026-09-25 Fri>",
+      "editorCanonical": "NOW \\[#A\\] Review PR 4412\nDEADLINE: <2026-09-25 Fri>",
+      "name": "logseq-page block 8"
+    },
+    {
+      "content": "LATER Read ((650f1c2e-8a3b-4f6e-9d21-7c5e0b9a1f33))",
+      "name": "logseq-page block 9"
+    },
+    {
+      "content": "Quote from the call",
+      "name": "logseq-page block 10"
+    },
+    {
+      "content": "Ship small, ship often",
+      "name": "logseq-page block 11"
+    },
+    {
+      "content": "Two task flavours:",
+      "name": "logseq-page block 12"
+    },
+    {
+      "content": "`LATER` -> `NOW` -> `DONE`",
+      "name": "logseq-page block 13"
+    },
+    {
+      "content": "`TODO` -> `DOING` -> `DONE`",
+      "name": "logseq-page block 14"
+    },
+    {
+      "content": "A block with a code sample",
+      "name": "logseq-page block 15"
+    },
+    {
+      "content": "```python\ndef hello():\n    print(\"hi\")\n```",
+      "name": "logseq-page block 16"
+    },
+    {
+      "content": "A multi-line block\nsecond line of the same block",
+      "name": "logseq-page block 17"
+    },
+    {
+      "content": "## Open questions",
+      "name": "logseq-page block 18"
+    },
+    {
+      "content": "Who owns the migration?",
+      "name": "logseq-page block 19"
+    },
+    {
+      "content": "Weekly sync 24/09\nAttendees: Alice, Bob, Carol",
+      "name": "meeting-notes-plain block 1"
+    },
+    {
+      "content": "Agenda",
+      "name": "meeting-notes-plain block 2"
+    },
+    {
+      "content": "Budget",
+      "name": "meeting-notes-plain block 3"
+    },
+    {
+      "content": "Hiring",
+      "name": "meeting-notes-plain block 4"
+    },
+    {
+      "content": "Action items\nAlice: send the deck\nBob: book interviews",
+      "name": "meeting-notes-plain block 5"
+    },
+    {
+      "content": "Clothes",
+      "name": "nbsp-indent block 1"
+    },
+    {
+      "content": "Socks",
+      "name": "nbsp-indent block 2"
+    },
+    {
+      "content": "Rain jacket",
+      "name": "nbsp-indent block 3"
+    },
+    {
+      "content": "Documents",
+      "name": "nbsp-indent block 4"
+    },
+    {
+      "content": "Passport",
+      "name": "nbsp-indent block 5"
+    },
+    {
+      "content": "Budget: 300 €",
+      "name": "nbsp-indent block 6"
+    },
+    {
+      "content": "# Q3 Planning",
+      "name": "notion-export block 1"
+    },
+    {
+      "content": "Status: In progress\nOwner: Alice Smith\nTags: planning, q3",
+      "name": "notion-export block 2"
+    },
+    {
+      "content": "Ship the importer",
+      "name": "notion-export block 4"
+    },
+    {
+      "content": "Parse bullets",
+      "name": "notion-export block 5"
+    },
+    {
+      "content": "Parse tasks",
+      "name": "notion-export block 6"
+    },
+    {
+      "content": "Write the doc",
+      "name": "notion-export block 7"
+    },
+    {
+      "content": "Kick-off meeting",
+      "name": "notion-export block 8"
+    },
+    {
+      "content": "<aside>\n💡 Remember to invite design.",
+      "name": "notion-export block 9"
+    },
+    {
+      "content": "</aside>",
+      "name": "notion-export block 10"
+    },
+    {
+      "content": "See [Retro notes](Q3%20Planning%2012ab34cd56ef7890/Retro%20notes%2098fe76dc54ba3210.md)",
+      "name": "notion-export block 11"
+    },
+    {
+      "content": "# 2026-09-24",
+      "name": "obsidian-daily block 1"
+    },
+    {
+      "content": "## Tasks",
+      "name": "obsidian-daily block 2"
+    },
+    {
+      "content": "Call the bank 📅 2026-09-25",
+      "name": "obsidian-daily block 3"
+    },
+    {
+      "content": "Draft the RFC ⏫",
+      "name": "obsidian-daily block 4"
+    },
+    {
+      "content": "Outline",
+      "name": "obsidian-daily block 5"
+    },
+    {
+      "content": "Collect feedback ✅ 2026-09-23",
+      "name": "obsidian-daily block 6"
+    },
+    {
+      "content": "## Log",
+      "name": "obsidian-daily block 7"
+    },
+    {
+      "content": "09:30 Standup",
+      "name": "obsidian-daily block 8"
+    },
+    {
+      "content": "14:00 1:1 with [[606GYQDTNMDZV25HG4MTWQAFC1]]",
+      "name": "obsidian-daily block 9"
+    },
+    {
+      "content": "# Deep Work",
+      "name": "obsidian-note block 1"
+    },
+    {
+      "content": "Cal Newport argues that focused work is **rare** and _valuable_. See also [[78A4XS4F68HPNP38T5N63DCPSE|his later book]] and [[0YFTF537CD84BB4KXTECFKJFMC]].",
+      "editorCanonical": "Cal Newport argues that focused work is **rare** and *valuable*. See also [[78A4XS4F68HPNP38T5N63DCPSE|his later book]] and [[0YFTF537CD84BB4KXTECFKJFMC]].",
+      "name": "obsidian-note block 2"
+    },
+    {
+      "content": "> [!note] Key idea\n> Schedule every minute of your day.",
+      "editorCanonical": "> [!NOTE] Key idea\n> Schedule every minute of your day.",
+      "name": "obsidian-note block 3"
+    },
+    {
+      "content": "## Takeaways",
+      "name": "obsidian-note block 4"
+    },
+    {
+      "content": "Work deeply",
+      "name": "obsidian-note block 5"
+    },
+    {
+      "content": "Choose a depth philosophy",
+      "name": "obsidian-note block 6"
+    },
+    {
+      "content": "Ritualize",
+      "name": "obsidian-note block 7"
+    },
+    {
+      "content": "Embrace boredom",
+      "name": "obsidian-note block 8"
+    },
+    {
+      "content": "Quit social media",
+      "name": "obsidian-note block 9"
+    },
+    {
+      "content": "~~~python\nblocks = plan(day)\n~~~",
+      "editorCanonical": "```python\nblocks = plan(day)\n```",
+      "name": "obsidian-note block 10"
+    },
+    {
+      "content": "Finish chapter 3",
+      "name": "obsidian-note block 12"
+    },
+    {
+      "content": "Buy the book",
+      "name": "obsidian-note block 13"
+    },
+    {
+      "content": "Preheat the oven to 200 °C.",
+      "name": "ordered-steps block 1"
+    },
+    {
+      "content": "Mix the dry ingredients.",
+      "name": "ordered-steps block 2"
+    },
+    {
+      "content": "Flour",
+      "name": "ordered-steps block 3"
+    },
+    {
+      "content": "Sugar",
+      "name": "ordered-steps block 4"
+    },
+    {
+      "content": "Bake for 25 minutes.",
+      "name": "ordered-steps block 5"
+    },
+    {
+      "content": "{{[[3EGDP1VKZAV77A91ZJHTVH84GS]]}} Draft the essay outline",
+      "name": "roam-export block 1"
+    },
+    {
+      "content": "Intro:: why notes matter",
+      "name": "roam-export block 2"
+    },
+    {
+      "content": "{{[[33ZBSCA3ET8XRD497PW3F3CWYB]]}} Collect sources #[416FDV90K9063R0K0RKH9T7W2Q]",
+      "name": "roam-export block 3"
+    },
+    {
+      "content": "Met [[606GYQDTNMDZV25HG4MTWQAFC1]] on [[52Z1HMJR8001ZDGEJ6FASMVFAX]]",
+      "name": "roam-export block 4"
+    },
+    {
+      "content": "She said ==ship it==",
+      "name": "roam-export block 5"
+    },
+    {
+      "content": "## Ideas",
+      "name": "roam-export block 6"
+    },
+    {
+      "content": "Link to ((GH7xk2PqA))",
+      "name": "roam-export block 7"
+    },
+    {
+      "content": "Book flights",
+      "name": "star-checklist block 2"
+    },
+    {
+      "content": "Book hotel",
+      "name": "star-checklist block 3"
+    },
+    {
+      "content": "Pack",
+      "name": "star-checklist block 4"
     }
   ],
   "taskMarkers": [
