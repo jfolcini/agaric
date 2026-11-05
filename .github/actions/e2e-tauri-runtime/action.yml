@@ -1,0 +1,61 @@
+name: e2e-tauri runtime packages
+description: >-
+  Install what the real-backend specs run (`e2e-tauri-weekly.yml`'s `specs`
+  shards), from a `.deb` cache when one exists. `ci.yml`'s
+  `e2e-tauri-apt-cache` job runs this on every main push so the key stays warm;
+  the shards restore it, and fall back to the mirror on a miss.
+
+runs:
+  using: composite
+  steps:
+    - name: Prepare apt (free dpkg lock, bound downloads)
+      uses: ./.github/actions/prepare-apt
+
+    - name: Restore apt archives (e2e-tauri runtime)
+      id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: /var/cache/apt/archives/*.deb
+        # Bump `-v1` when the package list below changes. `ci.yml`'s probe step
+        # names the same key.
+        key: apt-e2e-tauri-runtime-${{ runner.os }}-v1
+
+    - name: Install runtime dependencies
+      # The build deps stay in the lane's `build` job.
+      #   - webkit2gtk-driver — provides WebKitWebDriver, which tauri-driver
+      #     proxies on Linux. It pins `libwebkit2gtk-4.1-0`, whose
+      #     dependencies provide every shared library the binaries link.
+      #   - xvfb — a virtual display so the WebKitWebView can render headless.
+      #   - dbus-daemon — owns `dbus-run-session` (verified in release.yml:
+      #     `dpkg -S /usr/bin/dbus-run-session` on noble), for the lane's run
+      #     step (#4444).
+      #   - openbox — a window manager, so the app window gets focus (#5457).
+      #   - gstreamer1.0-plugins-good — WebKitGTK's WAV demuxer (wavparse), so
+      #     `editor-durability.e2e.ts` can play an audio attachment (#5733).
+      #   - xdotool — presses OS-level chords at the X server for the Quick
+      #     Capture hotkey spec (#5741).
+      #   - dbus-bin — `dbus-monitor`, the reminder spec's notification sink
+      #     (#5741); dbus-daemon depends on it, named because a spec calls it.
+      uses: ./.github/actions/apt-install
+      with:
+        packages: >-
+          webkit2gtk-driver
+          xvfb
+          dbus-daemon
+          openbox
+          gstreamer1.0-plugins-good
+          xdotool
+          dbus-bin
+
+    - name: Save apt archives (e2e-tauri runtime)
+      # On a fresh runner with Keep-Downloaded-Packages, the archive dir now
+      # holds exactly the closure a fresh shard fetches. Main saves for every
+      # PR to read; a branch dispatch saves too, readable by that branch's next
+      # dispatch, which is how a change here shows its hit path before merge.
+      if: >-
+        steps.restore.outputs.cache-hit != 'true'
+        && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: /var/cache/apt/archives/*.deb
+        key: apt-e2e-tauri-runtime-${{ runner.os }}-v1

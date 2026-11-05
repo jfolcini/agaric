@@ -265,8 +265,8 @@ jobs:
     name: Real-backend specs
     needs: [detect, build]
     runs-on: ubuntu-24.04
-    # apt on a slow mirror plus a shard of specs, which the slowest files can
-    # make uneven.
+    # apt on a slow mirror (a cache miss) plus a shard of specs, which the
+    # slowest files can make uneven.
     timeout-minutes: 40
     strategy:
       # Every shard runs to the end, so a run reports every failing spec.
@@ -288,35 +288,10 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
-      - name: Prepare apt (free dpkg lock, bound downloads)
-        uses: ./.github/actions/prepare-apt
-
       - name: Install runtime dependencies
-        # What the specs run; the build deps stay in `build`.
-        #   - webkit2gtk-driver — provides WebKitWebDriver, which tauri-driver
-        #     proxies on Linux. It pins `libwebkit2gtk-4.1-0`, whose
-        #     dependencies provide every shared library the binaries link.
-        #   - xvfb — a virtual display so the WebKitWebView can render headless.
-        #   - dbus-daemon — owns `dbus-run-session` (verified in release.yml:
-        #     `dpkg -S /usr/bin/dbus-run-session` on noble), for the run step
-        #     below (#4444).
-        #   - openbox — a window manager, so the app window gets focus (#5457).
-        #   - gstreamer1.0-plugins-good — WebKitGTK's WAV demuxer (wavparse), so
-        #     `editor-durability.e2e.ts` can play an audio attachment (#5733).
-        #   - xdotool — presses OS-level chords at the X server for the Quick
-        #     Capture hotkey spec (#5741).
-        #   - dbus-bin — `dbus-monitor`, the reminder spec's notification sink
-        #     (#5741); dbus-daemon depends on it, named because a spec calls it.
-        uses: ./.github/actions/apt-install
-        with:
-          packages: >-
-            webkit2gtk-driver
-            xvfb
-            dbus-daemon
-            openbox
-            gstreamer1.0-plugins-good
-            xdotool
-            dbus-bin
+        # From the `.deb` cache `ci.yml` keeps warm on main; a miss falls back
+        # to the mirror.
+        uses: ./.github/actions/e2e-tauri-runtime
 
       - name: Download the binaries
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
