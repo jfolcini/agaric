@@ -1688,12 +1688,13 @@ fn bench_export_page_markdown(c: &mut Criterion) {
         observed.starts_with("# SLO Export Page\n"),
         "export_page_markdown @ 100K: untimed probe must export the fixture page (#3304)"
     );
+    // Counted by the format's own reader, so a dialect change cannot zero the
+    // count; the `# Title` heading reads as a block too, hence `+ 1`.
     assert_eq!(
-        observed
-            .lines()
-            .filter(|line| line.starts_with("- "))
-            .count(),
-        CHILD_COUNT,
+        agaric_engine::import::parse_markdown_file(&observed)
+            .blocks
+            .len(),
+        CHILD_COUNT + 1,
         "export_page_markdown @ 100K: untimed probe must serialize all 2K fixture children (#3304)"
     );
 

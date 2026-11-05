@@ -6,6 +6,7 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 
+use agaric_engine::import::parse_markdown_file;
 use agaric_lib::commands::export_page_markdown_inner;
 use agaric_lib::db::init_pool;
 
@@ -116,12 +117,11 @@ fn bench_export_page_markdown(c: &mut Criterion) {
              seeded fixture page, but the first line was: {:?}",
             observed.lines().next()
         );
+        // Counted by the format's own reader, so a dialect change cannot zero
+        // the count; the `# Title` heading reads as a block too, hence `+ 1`.
         assert_eq!(
-            observed
-                .lines()
-                .filter(|line| line.starts_with("- "))
-                .count(),
-            n_blocks,
+            parse_markdown_file(&observed).blocks.len(),
+            n_blocks + 1,
             "export_page_markdown/{n_blocks}_blocks: untimed probe must serialize all \
              {n_blocks} seeded children — a heading-only export means the fixture lost \
              its subtree and this bench is timing the wrong work (#3304)"
