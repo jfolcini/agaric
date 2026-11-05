@@ -19,6 +19,11 @@
 import { format as formatDateFns, getISOWeek } from 'date-fns'
 import { enUS } from 'date-fns/locale/en-US'
 
+import {
+  TASK_SIGNIFIER_KEYS,
+  taskSignifier,
+  writeTaskFields,
+} from '@/editor/source-buffer-document'
 import { utf8ToBase64Url } from '@/lib/base64url'
 import type { AppError, PageResponse, PageSort, commands } from '@/lib/bindings'
 import { CROCKFORD_BASE32, ulidToDate } from '@/lib/format'
@@ -2535,4 +2540,50 @@ export function pageRequestLimit(raw: unknown): number {
     )
   }
   return rawLimit ?? PAGINATION_DEFAULT_PAGE_SIZE
+}
+
+/** How a block's text and lines are written: `TaskLine` (`markdown.rs`) for a checkbox task. */
+export interface TaskLine {
+  /** The keys its Tasks signifiers write, which write no `key::` line. */
+  keys: ReadonlySet<string>
+  /** `content` with its first line written as a task line. */
+  write: (content: string) => string
+}
+
+const PLAIN_LINE: TaskLine = { keys: new Set(), write: (content) => content }
+
+/**
+ * `TaskLine::of` (#6277 D3): a checkbox task's fields as Tasks signifiers at
+ * the end of its first line, a rule with a bound staying `repeat*::` lines;
+ * any other block's text as it is.
+ */
+export function taskLineOf(row: Record<string, unknown>, checkbox: boolean): TaskLine {
+  if (!checkbox) return PLAIN_LINE
+  const held = properties.get(row['id'] as string)
+  const prop = (key: string): string | null => {
+    const value = held?.get(key)
+    if (value === undefined) return null
+    const text = value['value_date'] ?? value['value_text'] ?? value['value_num']
+    return typeof text === 'string' || typeof text === 'number' ? String(text) : ''
+  }
+  const bounded = prop('repeat-until') !== null || prop('repeat-count') !== null
+  const done = row['todo_state'] === 'DONE'
+  const signifiers: string[] = []
+  const keys = new Set<string>()
+  for (const key of TASK_SIGNIFIER_KEYS) {
+    const column = key === 'repeat' || key === 'completed_at' ? null : row[key]
+    const value =
+      typeof column === 'string' ? column : key === 'repeat' && bounded ? null : prop(key)
+    const signifier = value === null || value === '' ? null : taskSignifier(key, value, done)
+    if (signifier === null) continue
+    signifiers.push(signifier)
+    keys.add(key)
+  }
+  return {
+    keys,
+    write: (content) => {
+      const [first = '', ...rest] = content.split('\n')
+      return [writeTaskFields(first, signifiers, done), ...rest].join('\n')
+    },
+  }
 }

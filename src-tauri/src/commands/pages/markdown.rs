@@ -1109,23 +1109,25 @@ fn render_block(
         mode if mode.lays_out_document() => layout.place(output, block, depth, list_marker),
         _ => ("  ".repeat(depth), list_marker, "  ".repeat(depth + 1)),
     };
+    let props = descendant_properties
+        .get(&id)
+        .map_or(&[][..], Vec::as_slice);
+    let task = (!task_marker.is_empty()).then(|| TaskLine::of(block, props));
+    let markers = (indent.as_str(), list_marker.as_str(), task_marker.as_str());
     match mode {
         RenderMode::Export => {
-            let resolved = export_block_text(content, &id, data);
+            let named = task.as_ref().map_or_else(
+                || named_block_text(content, data),
+                |task| task.write(&named_block_text(content, data)),
+            );
+            let resolved = stamp_block_anchor_marker(named, &id, &data.addressed_blocks);
             push_block_bullet(output, &indent, &list_marker, &task_marker, &resolved, mode);
         }
         RenderMode::Clipboard | RenderMode::Agent | RenderMode::Document | RenderMode::File => {
-            push_buffer_bullet(
-                output,
-                block,
-                &indent,
-                &list_marker,
-                &task_marker,
-                data,
-                mode,
-            );
+            push_buffer_bullet(output, block, markers, task.as_ref(), data, mode);
         }
     }
+    let written = task.as_ref().map_or(&[][..], |task| task.keys.as_slice());
 
     // #1916 — task metadata (TODO/DONE state, priority, scheduled/due
     // dates) lives in the reserved `blocks` columns, not in
@@ -1138,20 +1140,13 @@ fn render_block(
     // their columns via `typed_property_args_for_string_value`). No new
     // syntax is invented — these are ordinary Logseq property lines. A state
     // already written as a checkbox is not written twice.
-    let todo_state = block
-        .todo_state
-        .as_deref()
-        .filter(|_| task_marker.is_empty());
-    for (key, value) in [
-        ("todo_state", todo_state),
-        ("priority", block.priority.as_deref()),
-        ("scheduled_date", block.scheduled_date.as_deref()),
-        ("due_date", block.due_date.as_deref()),
-    ] {
-        if let Some(v) = value.filter(|s| !s.is_empty()) {
-            output.push_str(&format!("{prop_indent}{key}:: {v}\n"));
-        }
-    }
+    push_column_lines(
+        output,
+        block,
+        &prop_indent,
+        !task_marker.is_empty(),
+        written,
+    );
 
     // #2962 — custom `block_properties` on this block (anything NOT one
     // of the 4 reserved `blocks` columns above) round-trip the same way:
@@ -1169,12 +1164,13 @@ fn render_block(
         RenderMode::Export | RenderMode::Agent => ref_titles,
         RenderMode::Clipboard | RenderMode::Document | RenderMode::File => &no_titles,
     };
-    if let Some(props) = descendant_properties.get(&id) {
-        for prop in props {
-            let value =
-                import::write_source_property_value(&frontmatter_row_value(prop, ref_titles));
-            output.push_str(&format!("{prop_indent}{}:: {value}\n", prop.key));
-        }
+    // `completed_at` is the app's: only a done task's `✅` writes it.
+    for prop in props
+        .iter()
+        .filter(|prop| prop.key != "completed_at" && !written.contains(&prop.key.as_str()))
+    {
+        let value = import::write_source_property_value(&frontmatter_row_value(prop, ref_titles));
+        output.push_str(&format!("{prop_indent}{}:: {value}\n", prop.key));
     }
 
     // #2961 — emit a link line for each block-scoped (non-inline)
@@ -1194,6 +1190,29 @@ fn render_block(
             }
             let label = attachment_link_label(filename);
             output.push_str(&format!("{prop_indent}- [{label}](attachment:{att_id})\n"));
+        }
+    }
+}
+
+/// A block's reserved columns as `key:: value` lines at `indent`: its task
+/// state unless its checkbox writes it, and each column but those its Tasks
+/// signifiers wrote (`written`).
+fn push_column_lines(
+    output: &mut String,
+    block: &BlockRow,
+    indent: &str,
+    checkbox: bool,
+    written: &[&str],
+) {
+    let todo_state = block.todo_state.as_deref().filter(|_| !checkbox);
+    for (key, value) in [
+        ("todo_state", todo_state),
+        ("priority", block.priority.as_deref()),
+        ("scheduled_date", block.scheduled_date.as_deref()),
+        ("due_date", block.due_date.as_deref()),
+    ] {
+        if let Some(v) = value.filter(|s| !s.is_empty() && !written.contains(&key)) {
+            output.push_str(&format!("{indent}{key}:: {v}\n"));
         }
     }
 }
@@ -1264,11 +1283,57 @@ fn task_marker(block: &BlockRow) -> String {
         .unwrap_or_default()
 }
 
-/// A block's content as an export writes it: tag, page and block ids resolved
-/// to names and links, inline queries made readable, and an anchor when
-/// something addresses the block.
-fn export_block_text(content: &str, id: &str, data: &PageExportData) -> String {
-    stamp_block_anchor_marker(named_block_text(content, data), id, &data.addressed_blocks)
+/// How a checkbox task's first line is written (#6277 D3): its fields as the
+/// Tasks signifiers at its end, and its own signifiers escaped where they
+/// would not read back as its text ([`import::write_task_fields`]).
+struct TaskLine {
+    signifiers: Vec<String>,
+    /// The keys the signifiers write, which write no `key::` line.
+    keys: Vec<&'static str>,
+    done: bool,
+}
+
+impl TaskLine {
+    /// The task line of `block`, a checkbox task holding `props`. A rule with
+    /// a bound stays `repeat*::` lines, as does any value no signifier reads
+    /// back as ([`import::task_signifier`]).
+    fn of(block: &BlockRow, props: &[FrontmatterRow]) -> Self {
+        let done = block.todo_state.as_deref() == Some("DONE");
+        let prop = |key: &str| {
+            let row = props.iter().find(|row| row.key == key)?;
+            Some(frontmatter_row_value(row, &HashMap::new()))
+        };
+        let bounded = prop("repeat-until").is_some() || prop("repeat-count").is_some();
+        let mut line = Self {
+            signifiers: Vec::new(),
+            keys: Vec::new(),
+            done,
+        };
+        for key in import::TASK_SIGNIFIER_KEYS {
+            let value = match key {
+                "priority" => block.priority.clone(),
+                "scheduled_date" => block.scheduled_date.clone(),
+                "due_date" => block.due_date.clone(),
+                "repeat" if bounded => None,
+                _ => prop(key),
+            };
+            if let Some(signifier) = value.and_then(|v| import::task_signifier(key, &v, done)) {
+                line.signifiers.push(signifier);
+                line.keys.push(key);
+            }
+        }
+        line
+    }
+
+    /// `text`, the task's content, with its first line written as a task line.
+    fn write(&self, text: &str) -> String {
+        let (first, rest) = text.split_once('\n').unzip();
+        let first = import::write_task_fields(first.unwrap_or(text), &self.signifiers, self.done);
+        match rest {
+            Some(rest) => format!("{first}\n{rest}"),
+            None => first,
+        }
+    }
 }
 
 /// A block's content with its tag, page and block ids resolved to names and
@@ -1299,16 +1364,16 @@ fn named_block_text(content: &str, data: &PageExportData) -> String {
 fn push_buffer_bullet(
     output: &mut String,
     block: &BlockRow,
-    indent: &str,
-    list_marker: &str,
-    task_marker: &str,
+    (indent, list_marker, task_marker): (&str, &str, &str),
+    task: Option<&TaskLine>,
     data: &PageExportData,
     mode: RenderMode,
 ) {
     let id = block.id.as_str();
     let content = block.content.as_deref().unwrap_or("");
+    let written = |text: &str| task.map_or_else(|| text.to_string(), |task| task.write(text));
     if mode == RenderMode::Agent {
-        let named = named_block_text(content, data);
+        let named = written(&named_block_text(content, data));
         push_anchored_bullet(output, indent, list_marker, task_marker, &named, id);
         return;
     }
@@ -1318,10 +1383,12 @@ fn push_buffer_bullet(
         _ => true,
     };
     let push = |output: &mut String, content: &str| {
+        let line = written(content);
         if anchored {
-            push_anchored_bullet(output, indent, list_marker, task_marker, content, id)
+            push_anchored_bullet(output, indent, list_marker, task_marker, &line, id)
         } else {
-            push_clipboard_bullet(output, indent, list_marker, task_marker, content, id)
+            let markers = (indent, list_marker, task_marker);
+            push_clipboard_bullet(output, markers, &line, content, id)
         }
     };
     let start = output.len();
@@ -1339,15 +1406,15 @@ fn push_buffer_bullet(
     push(output, &named);
 }
 
-/// `content` as a Document block without its `^id`, unless the block needs it
-/// to read back as a paste reads it: when the block leaves a fence open, which
-/// the anchor line ends, or when the block alone reads back as other content,
-/// as one ending in ` ^` and a block id does. Returns whether any line is code.
+/// `written`, a Document block that reads back as `content`, without its
+/// `^id`, unless the block needs it to read back as a paste reads it: when the
+/// block leaves a fence open, which the anchor line ends, or when the block
+/// alone reads back as other content, as one ending in ` ^` and a block id
+/// does. Returns whether any line is code.
 fn push_clipboard_bullet(
     output: &mut String,
-    indent: &str,
-    list_marker: &str,
-    task_marker: &str,
+    (indent, list_marker, task_marker): (&str, &str, &str),
+    written: &str,
     content: &str,
     id: &str,
 ) -> bool {
@@ -1357,7 +1424,7 @@ fn push_clipboard_bullet(
         indent,
         list_marker,
         task_marker,
-        content,
+        written,
         RenderMode::Document,
     );
     let read_back = import::parse_pasted_text(&output[start..]);
@@ -1365,7 +1432,7 @@ fn push_clipboard_bullet(
         return code.any;
     }
     output.truncate(start);
-    push_anchored_bullet(output, indent, list_marker, task_marker, content, id)
+    push_anchored_bullet(output, indent, list_marker, task_marker, written, id)
 }
 
 /// `content` as a Document block with `^id` at the end of its last line or,
@@ -2311,6 +2378,10 @@ async fn load_descendant_properties(
     // Copies (1) and (2) are literal SQL, so grepping for either constant name
     // will NOT find them.
     //
+    // #6277 D3 — `completed_at` is read HERE, unlike the other three copies:
+    // a done task writes it as its `✅` signifier (`TaskLine`), and no block
+    // writes it as a line.
+    //
     // #4552 slice 4 — `listStyle` is excluded HERE (and in the page query
     // above) but NOT from the two import-side copies; the full rationale for
     // that deliberate asymmetry is on the page-property query above. In short:
@@ -2359,7 +2430,7 @@ async fn load_descendant_properties(
                FROM block_properties
                WHERE block_id IN (SELECT value FROM json_each(?1))
                  AND key NOT IN (
-                    'space', 'is_space', 'created_at', 'completed_at',
+                    'space', 'is_space', 'created_at',
                     'repeat-seq', 'repeat-origin', 'template', 'listStyle'
                  )
                ORDER BY block_id ASC, key ASC"#,
@@ -2885,24 +2956,27 @@ pub struct PastedBlock {
 }
 
 impl PasteInput {
-    /// The blocks the input holds. After text (#5160 D4) the first of an HTML
-    /// paste's blocks is the text it was pasted as, so its `- [ ] ` checkbox
-    /// stays text as a plain item's `- ` does.
-    fn into_blocks(self, after_text: bool) -> Vec<import::ParsedBlock> {
+    /// The blocks the input holds, and the warnings of reading them. After
+    /// text (#5160 D4) the first of an HTML paste's blocks is the text it was
+    /// pasted as, so its `- [ ] ` checkbox stays text as a plain item's `- `
+    /// does.
+    fn into_blocks(self, after_text: bool) -> (Vec<import::ParsedBlock>, Vec<String>) {
         match self {
-            Self::Text { text } => import::parse_pasted_text(&text),
-            Self::Blocks { blocks } => blocks
-                .into_iter()
-                .enumerate()
-                .map(|(at, block)| {
+            Self::Text { text } => {
+                let read = import::read_pasted_text(&text);
+                (read.blocks, read.warnings)
+            }
+            Self::Blocks { blocks } => {
+                let blocks = blocks.into_iter().enumerate().map(|(at, block)| {
                     let depth = block.depth as usize;
                     if at == 0 && after_text {
                         import::verbatim_block(block.content, depth)
                     } else {
                         import::pasted_block(block.content, depth)
                     }
-                })
-                .collect(),
+                });
+                (blocks.collect(), Vec::new())
+            }
         }
     }
 }
@@ -3086,7 +3160,8 @@ pub async fn paste_blocks_inner(
     splice: Option<PasteSplice>,
 ) -> Result<PastedBlocks, AppError> {
     let anchor_id = BlockId::from_string(anchor_block_id.into_string())?;
-    let mut blocks = input.into_blocks(splice.as_ref().is_some_and(|s| !s.before.is_empty()));
+    let (mut blocks, read_warnings) =
+        input.into_blocks(splice.as_ref().is_some_and(|s| !s.before.is_empty()));
     if blocks.is_empty() {
         return Err(AppError::validation("there is nothing to paste".into()));
     }
@@ -3150,7 +3225,7 @@ pub async fn paste_blocks_inner(
     created.extend(pasted);
     Ok(PastedBlocks {
         blocks: created,
-        warnings,
+        warnings: [read_warnings, warnings].concat(),
     })
 }
 
@@ -3207,7 +3282,11 @@ pub(crate) async fn append_markdown_in_tx(
     markdown: &str,
     index: Option<i64>,
 ) -> Result<(CommandTx, PastedBlocks), AppError> {
-    let mut blocks = import::parse_pasted_text(markdown);
+    let import::ParseOutput {
+        mut blocks,
+        warnings: read_warnings,
+        ..
+    } = import::read_pasted_text(markdown);
     if blocks.is_empty() {
         return Err(AppError::validation("there is nothing to append".into()));
     }
@@ -3236,7 +3315,7 @@ pub(crate) async fn append_markdown_in_tx(
         tx,
         PastedBlocks {
             blocks: created,
-            warnings,
+            warnings: [read_warnings, warnings].concat(),
         },
     ))
 }
@@ -3472,7 +3551,7 @@ async fn splice_into_anchor(
     )
     .await?;
     apply_block_properties(tx, materializer, device_id, id, &first.properties, lines).await?;
-    if let Some(state) = parsed_todo_state(first) {
+    if let Some(state) = stamped_todo_state(first) {
         super::super::properties::write_todo_timestamp_transitions_in_tx(
             tx,
             loro,
@@ -3538,6 +3617,17 @@ async fn resolve_pasted_names(
             rewrite_block_content_for_import(block, &links.page_links, &links.titles, &tag_tokens);
     }
     Ok((tx, names.created))
+}
+
+/// The `todo_state` whose stamps writing a parsed block takes: none for a done
+/// task that brings its `completed_at`, a Tasks `✅` date (#6277 D2), which is
+/// the stamp a move into DONE would write as today.
+fn stamped_todo_state(block: &import::ParsedBlock) -> Option<&str> {
+    let completed = block
+        .properties
+        .iter()
+        .any(|(key, _)| key == "completed_at");
+    parsed_todo_state(block).filter(|state| !(completed && *state == "DONE"))
 }
 
 /// Write each raw `[[ULID]]`, `#[ULID]` and `((ULID))` of `blocks` that the
@@ -3673,7 +3763,7 @@ async fn create_parsed_blocks(
         tx.enqueue_background(op);
         let id = row.id.clone().into_string();
         apply_block_properties(tx, materializer, device_id, &id, &block.properties, lines).await?;
-        if let Some(state) = parsed_todo_state(block) {
+        if let Some(state) = stamped_todo_state(block) {
             super::super::properties::write_todo_timestamp_transitions_in_tx(
                 tx,
                 materializer.loro_state(),

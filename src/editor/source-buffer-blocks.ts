@@ -8,9 +8,10 @@
  * escapes it needs, its property lines as typed and its children at its text's
  * column, a blank line between it and a neighbour unless both are list lines.
  * So the save reads it back as the block editor would have written it: the
- * text through the block editor's own `convertBlockContent`, the list style
+ * text through the block editor's own `convertBlockText`, the list style
  * as its marker, and the priority and dates as `priority::`, `due_date::` and
- * `scheduled_date::` lines.
+ * `scheduled_date::` lines (a checkbox task's as the Tasks signifiers ending
+ * its line, which go with it when it stops being a task, #6277 D3).
  */
 
 import type { NodeType, Node as PMNode } from '@tiptap/pm/model'
@@ -25,8 +26,12 @@ import {
   lineLayout,
   parseDocument,
   pushDocumentLines,
+  splitTaskFields,
+  TASK_SIGNIFIER_KEYS,
+  taskSignifier,
+  writeTaskFields,
 } from '@/editor/source-buffer-document'
-import { type BlockTypeToken, convertBlockContent, detectBlockType } from '@/lib/block-type-convert'
+import { type BlockTypeToken, convertBlockText, detectBlockType } from '@/lib/block-type-convert'
 import { foldPropertyKey } from '@/lib/inline-property-parse'
 import { type ListStyle, listStyleForBlockType } from '@/lib/list-style'
 import { PRIORITY_CYCLE } from '@/lib/priority-levels'
@@ -156,11 +161,16 @@ function written(buffer: Parsed, i: number): Written {
   return {
     from: i,
     depth: block.depth,
-    content: block.content,
+    content: block.contentAsWritten,
     listStyle: block.listStyle,
     todoState: block.todoState,
-    properties: block.propertyLines.map((line) => buffer.texts[line - 1] as string),
+    properties: propertyLinesOf(block).map((line) => buffer.texts[line - 1] as string),
   }
+}
+
+/** The lines of `block`'s `key::` lines: a Tasks field on its own line is in its text. */
+function propertyLinesOf(block: DocumentBlock): number[] {
+  return block.propertyLines.filter((line) => line !== block.line)
 }
 
 function headOf(buffer: Parsed, i: number): string {
@@ -391,6 +401,48 @@ function lineRange(doc: PMNode, from: number, to: number): [number, number] {
 }
 
 /**
+ * The Tasks signifiers `fields` are written as on a task in the state `done`
+ * says, in the order the Tasks plugin writes them (#6277 D3); a field no
+ * signifier reads back as is left out.
+ */
+function signifiersOf(fields: ReadonlyMap<string, string>, done: boolean): string[] {
+  return TASK_SIGNIFIER_KEYS.flatMap((key) => {
+    const held = fields.get(key)
+    const signifier = held === undefined ? null : taskSignifier(key, held, done)
+    return signifier === null ? [] : [signifier]
+  })
+}
+
+/**
+ * `read` as a block in the task state `next`, its text through `convert`. A
+ * Tasks field is part of a checkbox task's line (#6277 D3): on a task it is
+ * written there again, a done date only on a done task, and on a block with
+ * no checkbox it is the `key::` line such a block keeps, ahead of the lines it
+ * has, which win. So the toolbar's cycle and Turn into move a task's priority
+ * and dates with it, and leave none behind as text.
+ */
+function retask(
+  read: Written,
+  next: TodoState | null,
+  convert: (content: string) => string = (content) => content,
+): Written {
+  if (read.todoState === null) return { ...read, content: convert(read.content), todoState: next }
+  const [first = '', ...rest] = read.content.split('\n')
+  const { text, fields } = splitTaskFields(first, read.todoState === 'DONE')
+  const content = convert([text, ...rest].join('\n'))
+  if (next === null) {
+    const lines = fields
+      .filter(([key]) => key !== 'completed_at')
+      .map(([key, value]) => `${key}:: ${value}`)
+    return { ...read, content, todoState: null, properties: [...lines, ...read.properties] }
+  }
+  const [head = '', ...tail] = content.split('\n')
+  const done = next === 'DONE'
+  const line = writeTaskFields(head, signifiersOf(new Map(fields), done), done)
+  return { ...read, content: [line, ...tail].join('\n'), todoState: next }
+}
+
+/**
  * Turn `block` into `type`, as the block editor's Turn into does: its text
  * and its list style. A list kind takes a task's checkbox off, as a task has
  * no list style (D3).
@@ -398,11 +450,10 @@ function lineRange(doc: PMNode, from: number, to: number): [number, number] {
 export function turnInto(block: SourceBlock, type: BlockTypeToken, calloutType?: string): Command {
   const style = listStyleForBlockType(type)
   const listStyle = style === 'none' ? null : style
+  const convert = (content: string): string => convertBlockText(content, type, calloutType)
   return rewriteBlock(block, (read) => ({
-    ...read,
-    content: convertBlockContent(read.content, type, calloutType),
+    ...retask(read, listStyle === null ? read.todoState : null, convert),
     listStyle,
-    todoState: listStyle === null ? read.todoState : null,
   }))
 }
 
@@ -422,10 +473,7 @@ export function cycleTaskAt(index: number): Command {
     const buffer = readBuffer(state.doc)
     const at = indexAt(buffer, index)
     if (at < 0) return true
-    const change = (read: Written): Written => ({
-      ...read,
-      todoState: nextTaskState(read.todoState),
-    })
+    const change = (read: Written): Written => retask(read, nextTaskState(read.todoState))
     dispatch?.(rewriteAt(state, buffer, at, change, false))
     return true
   }
@@ -451,14 +499,38 @@ export function blockTaskState(doc: PMNode, block: SourceBlock): TodoState | nul
 
 /** Which of `read`'s property lines is its last `key::` line, as the grammar matches the key; -1 for none. */
 function propertyIndex(read: DocumentBlock, key: string): number {
-  return read.properties.findLastIndex(([typed]) => foldPropertyKey(typed) === foldPropertyKey(key))
+  return read.properties.findLastIndex(
+    ([typed], i) =>
+      read.propertyLines[i] !== read.line && foldPropertyKey(typed) === foldPropertyKey(key),
+  )
 }
 
-/** The value of `block`'s `key::` line, or null. */
+/** The value of `block`'s `key::` line or, on a task, its Tasks signifier, or null. */
 export function blockProperty(doc: PMNode, block: SourceBlock, key: string): string | null {
   const read = readingOf(doc, block)
-  const value = read === null ? '' : (read.properties[propertyIndex(read, key)]?.[1] ?? '')
+  const at = read?.properties.findLastIndex(
+    ([typed]) => foldPropertyKey(typed) === foldPropertyKey(key),
+  )
+  const value = read === null || at === undefined ? '' : (read.properties[at]?.[1] ?? '')
   return value === '' ? null : value
+}
+
+/**
+ * `read`'s content with its task line's Tasks signifiers holding `key` as
+ * `value`, or none for null, written as the backend writes them (#6277 D3);
+ * null when `read` is no task, or `value` is no signifier's, which a
+ * `key::` line carries instead.
+ */
+function withTaskField(read: DocumentBlock, key: string, value: string | null): string | null {
+  if (read.todoState === null) return null
+  const done = read.todoState === 'DONE'
+  if (value !== null && taskSignifier(key, value, done) === null) return null
+  const fields = new Map(read.properties.filter((_, i) => read.propertyLines[i] === read.line))
+  if (value === null && !fields.has(key)) return null
+  if (value === null) fields.delete(key)
+  else fields.set(key, value)
+  const [first = '', ...rest] = read.content.split('\n')
+  return [writeTaskFields(first, signifiersOf(fields, done), done), ...rest].join('\n')
 }
 
 /** A block of the buffer as the toolbar reads it, for the Preview. */
@@ -504,6 +576,7 @@ export function frontMatterProperties(
 /**
  * Write `block`'s `key:: value` line, under its text at its text's column, or
  * take it out for `null`: the export's line for the block's priority and dates.
+ * A task with no such line writes them as its Tasks signifiers instead.
  */
 export function setBlockProperty(block: SourceBlock, key: string, value: string | null): Command {
   return (state, dispatch) => {
@@ -513,6 +586,11 @@ export function setBlockProperty(block: SourceBlock, key: string, value: string 
     const span = buffer.spans[at]
     if (read === undefined || span === undefined) return true
     const found = propertyIndex(read, key)
+    const content = found < 0 ? withTaskField(read, key, value) : null
+    if (content !== null) {
+      dispatch?.(rewriteAt(state, buffer, at, (old) => ({ ...old, content }), true))
+      return true
+    }
     const tr = state.tr
     if (found >= 0) {
       const line = (read.propertyLines[found] as number) - 1

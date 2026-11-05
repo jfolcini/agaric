@@ -276,12 +276,12 @@ describe('list button — content is bare, no in-block list node (#2999, superse
 describe('#4552 slice 1: only the real (first) marker is stripped', () => {
   it('a heading titled with a literal ordered-list prefix keeps its text intact', () => {
     expect(stripBlockMarker('# 1. groceries')).toBe('1. groceries')
-    expect(convertBlockContent('# 1. groceries', 'paragraph')).toBe('1. groceries')
+    expect(convertBlockContent('# 1. groceries', 'paragraph')).toBe('1\\. groceries')
   })
 
   it('a heading titled with a literal bullet prefix keeps its text intact', () => {
     expect(stripBlockMarker('# - to buy')).toBe('- to buy')
-    expect(convertBlockContent('# - to buy', 'paragraph')).toBe('- to buy')
+    expect(convertBlockContent('# - to buy', 'paragraph')).toBe('\\- to buy')
   })
 
   it('an ordered-list item whose text starts with a literal bullet keeps it', () => {
@@ -373,5 +373,25 @@ describe('#6033: a callout with a fold marker or a hyphenated type', () => {
     expect(convertBlockContent('> [!FAQ] Why?', 'callout', 'tip')).toBe('> [!TIP] Why?')
     expect(convertBlockContent('> [!FAQ]- Why?\n> Because.', 'quote')).toBe('> Why?\n> Because.')
     expect(convertBlockContent('> -x', 'callout', 'tip')).toBe('> [!TIP] -x')
+  })
+})
+
+// -- #6370: a heading's text that starts like a list item stays a paragraph ---
+describe('#6370: Turn into Paragraph escapes a leading list marker', () => {
+  it.each([
+    ['# 1. groceries', '1\\. groceries'],
+    ['## 12. step', '12\\. step'],
+    ['# - to buy', '\\- to buy'],
+    ['# * to buy', '\\* to buy'],
+    ['# + to buy', '\\+ to buy'],
+    ['> - quoted', '\\- quoted'],
+  ])('%s reads back as the paragraph %s', (content, expected) => {
+    expect(convertBlockContent(content, 'paragraph')).toBe(expected)
+    expect(parse(expected).content?.map((node) => node.type)).toEqual(['paragraph'])
+  })
+
+  it('leaves text that does not start like a list item as it is', () => {
+    expect(convertBlockContent('# 1.5 kg of flour', 'paragraph')).toBe('1.5 kg of flour')
+    expect(convertBlockContent('# -minus', 'paragraph')).toBe('-minus')
   })
 })

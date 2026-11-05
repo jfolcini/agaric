@@ -1158,7 +1158,9 @@ fn tool_desc_get_page_markdown() -> ToolDescription {
              then the blocks as append_markdown reads them: each a paragraph, a `- ` bullet, \
              a `1. ` numbered item or a `- [ ]` task (`[/]` doing, `[x]` done, `[-]` \
              cancelled), a child indented under its parent, a plain block under another block \
-             written as a `+ ` item, and properties as indented `key:: value` lines. \
+             written as a `+ ` item, and properties as indented `key:: value` lines, but a \
+             task's priority, dates and rule as Obsidian Tasks signifiers at the end of its \
+             line (`⏫ 🔁 every week ⏳ YYYY-MM-DD 📅 YYYY-MM-DD`). \
              Links, tags and ref-typed values are written as names, \
              for reading; a name several pages share reads back as the one with the lowest \
              id, so write links by ULID (`[[ULID]]`, \

@@ -215,7 +215,8 @@ describe('the mock in the Document dialect (#5691)', () => {
       },
     ])
     const own = buffer()
-    const edited = own.text.replace('[ ]', '[x]').replace('priority:: 2', 'priority:: 3')
+    // A task's priority is its line's Tasks signifier (#6277 decision 4).
+    const edited = own.text.replace('- [ ] task 🔼', '- [x] task 🔽')
 
     const { op_refs: ops } = save(edited, own.line_ids, own.source) as PageSourceReport & {
       op_refs: Array<{ device_id: string; seq: number }>

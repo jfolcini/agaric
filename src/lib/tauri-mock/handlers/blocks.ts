@@ -46,6 +46,7 @@ import {
   spaceRootGroup,
   validationRejection,
   readActiveSpaceScope,
+  taskLineOf,
 } from '@/lib/tauri-mock/handlers/shared'
 import { resolveInboundNames } from '@/lib/tauri-mock/names'
 import { pageNameHolder, pageNameRefusal, rejectTakenPageNames } from '@/lib/tauri-mock/page-names'
@@ -543,8 +544,8 @@ function agendaRangeDate(
 
 type OpRefs = Array<{ device_id: string; seq: number }>
 
-/** The column-backed keys a copy carries, in the order the backend writes them. */
-const DUPLICATED_COLUMNS = ['todo_state', 'priority', 'scheduled_date', 'due_date'] as const
+/** The column-backed keys a copy carries after its task state, in the order the backend writes them. */
+const DUPLICATED_COLUMNS = ['priority', 'scheduled_date', 'due_date'] as const
 
 /**
  * `rootId` and its live descendants in pre-order, children by
@@ -621,16 +622,30 @@ function duplicateRow(
     record(pushOp('set_property', { block_id: id, key, from_value: null }))
   }
   if (src['todo_state'] == null) copyProperty(LIST_STYLE_KEY)
-  for (const column of DUPLICATED_COLUMNS) {
-    if (src[column] == null) continue
+  const copyColumn = (column: string): void => {
+    if (src[column] == null) return
     row[column] = src[column]
     record(pushOp('set_property', { block_id: id, key: column, from_value: null }))
   }
+  // A task's line writes its Tasks signifiers before its `key::` lines (#6277 D3).
+  const todo = src['todo_state']
+  const task = taskLineOf(
+    src,
+    typeof todo === 'string' && Object.hasOwn(TASK_STATE_TO_MARKER, todo),
+  )
+  const signified = [...task.keys].filter((key) => key !== 'completed_at')
+  copyColumn('todo_state')
+  for (const key of signified) {
+    if (key === 'repeat') copyProperty(key)
+    else copyColumn(key)
+  }
+  for (const column of DUPLICATED_COLUMNS) if (!task.keys.has(column)) copyColumn(column)
   const customKeys = [...srcProps.keys()]
     // The reserved keys the backend's buffer render leaves out: they
     // describe the original (its space, timestamps, one occurrence of its
     // recurrence, template). The rule itself is copied (#5160 P4).
     .filter((key) => key !== LIST_STYLE_KEY && !INLINE_PROPERTY_RESERVED_KEYS.has(key))
+    .filter((key) => !task.keys.has(key))
     .toSorted(compareUtf8Bytes)
   for (const key of customKeys) copyProperty(key)
   return row

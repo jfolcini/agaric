@@ -1011,6 +1011,128 @@
           "properties": {}
         }
       ]
+    },
+    {
+      "lineIds": ["01J00000000000000000000000", "01J00000000000000000000001", null],
+      "name": "#6277 D3: a task's priority, dates and rule are Tasks signifiers at the end of its line",
+      "text": "- [ ] a ⏫ 🔁 every week ⏳ 2026-10-01 📅 2026-10-05\n- [/] b 🔽 🔁 every 2 days when done\n",
+      "tree": [
+        {
+          "content": "a",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {
+            "due_date": "2026-10-05",
+            "priority": "1",
+            "repeat": "+1w",
+            "scheduled_date": "2026-10-01",
+            "todo_state": "TODO"
+          }
+        },
+        {
+          "content": "b",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {
+            "priority": "3",
+            "repeat": ".+2d",
+            "todo_state": "DOING"
+          }
+        }
+      ]
+    },
+    {
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        "01J00000000000000000000001",
+        null,
+        null,
+        null,
+        "01J00000000000000000000002",
+        null,
+        null,
+        null
+      ],
+      "name": "#6277 D3: a rule Tasks cannot express stays a `repeat::` line, and a block with no checkbox keeps its `key::` lines",
+      "text": "- [ ] c 📅 2026-10-05\n  repeat:: ++1d\n- d\n  priority:: 2\n  due_date:: 2026-10-05\n\ne\n  todo_state:: WAITING\n  due_date:: 2026-10-05\n",
+      "tree": [
+        {
+          "content": "c",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {
+            "due_date": "2026-10-05",
+            "repeat": "++1d",
+            "todo_state": "TODO"
+          }
+        },
+        {
+          "content": "d",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {
+            "due_date": "2026-10-05",
+            "listStyle": "bullet",
+            "priority": "2"
+          }
+        },
+        {
+          "content": "e",
+          "depth": 0,
+          "id": "01J00000000000000000000002",
+          "properties": {
+            "due_date": "2026-10-05",
+            "todo_state": "WAITING"
+          }
+        }
+      ]
+    },
+    {
+      "lineIds": [
+        "01J00000000000000000000000",
+        "01J00000000000000000000001",
+        "01J00000000000000000000002",
+        "01J00000000000000000000003",
+        null
+      ],
+      "name": "#6277 D3: a task whose own text would not read back as written has its signifiers escaped",
+      "text": "- [ ] call \\📅 2026-01-01\n- [ ] go \\⏫ 📅 2026-10-05\n- [ ] start \\🛫 2026-01-01\n- [ ] \\\\📅 x\n",
+      "tree": [
+        {
+          "content": "call 📅 2026-01-01",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {
+            "todo_state": "TODO"
+          }
+        },
+        {
+          "content": "go ⏫",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {
+            "due_date": "2026-10-05",
+            "todo_state": "TODO"
+          }
+        },
+        {
+          "content": "start 🛫 2026-01-01",
+          "depth": 0,
+          "id": "01J00000000000000000000002",
+          "properties": {
+            "todo_state": "TODO"
+          }
+        },
+        {
+          "content": "\\📅 x",
+          "depth": 0,
+          "id": "01J00000000000000000000003",
+          "properties": {
+            "todo_state": "TODO"
+          }
+        }
+      ]
     }
   ],
   "description": "#5691 — Edit as Markdown's Document dialect, one case per hard case of the line-split format: the tree, each block under its id, the text a page holding it is written as, and the id each line of that text carries; under `typed`, text typed with no blank line between blocks and the tree it reads as, ids aside; and under `pasted`, text pasted from outside and the tree a paste reads it as (#6190). Authored by `markdown_document_tests.rs` with CONFORMANCE_UPDATE=1; never hand-edit.",
@@ -1156,6 +1278,37 @@
           "properties": {}
         }
       ]
+    },
+    {
+      "name": "#6277 D2: a done task's `✅` is its `completed_at`, and the fields sit before a trailing `^word`",
+      "text": "- [x] a ✅ 2026-10-03 📅 2026-10-01\n- [ ] b 📅 2026-10-05 ^word\n- [ ] c ⏳ 2026-10-02 ^01J0000000000000000000000B\n",
+      "tree": [
+        {
+          "content": "a",
+          "depth": 0,
+          "properties": {
+            "completed_at": "2026-10-03",
+            "due_date": "2026-10-01",
+            "todo_state": "DONE"
+          }
+        },
+        {
+          "content": "b ^word",
+          "depth": 0,
+          "properties": {
+            "due_date": "2026-10-05",
+            "todo_state": "TODO"
+          }
+        },
+        {
+          "content": "c",
+          "depth": 0,
+          "properties": {
+            "scheduled_date": "2026-10-02",
+            "todo_state": "TODO"
+          }
+        }
+      ]
     }
   ],
   "typed": [
@@ -1281,6 +1434,90 @@
         },
         {
           "content": "a",
+          "depth": 0,
+          "properties": {
+            "listStyle": "bullet"
+          }
+        }
+      ]
+    },
+    {
+      "name": "#6277 D2: a task line's Tasks fields are its dates, priority and recurrence",
+      "text": "- [ ] a ⏫ 🔁 every 2 weeks ⏳ 2026-10-01 📅 2026-10-05\n",
+      "tree": [
+        {
+          "content": "a",
+          "depth": 0,
+          "properties": {
+            "due_date": "2026-10-05",
+            "priority": "1",
+            "repeat": "+2w",
+            "scheduled_date": "2026-10-01",
+            "todo_state": "TODO"
+          }
+        }
+      ]
+    },
+    {
+      "name": "#6277 D2: each priority signifier is a level, `when done` the `.+` rule, and a property line after them wins",
+      "text": "- [ ] b 🔺\n- [ ] c 🔼 🔁 every day when done\n- [/] d 🔽\n- [-] e ⏬\n  priority:: 2\n",
+      "tree": [
+        {
+          "content": "b",
+          "depth": 0,
+          "properties": {
+            "priority": "1",
+            "todo_state": "TODO"
+          }
+        },
+        {
+          "content": "c",
+          "depth": 0,
+          "properties": {
+            "priority": "2",
+            "repeat": ".+1d",
+            "todo_state": "TODO"
+          }
+        },
+        {
+          "content": "d",
+          "depth": 0,
+          "properties": {
+            "priority": "3",
+            "todo_state": "DOING"
+          }
+        },
+        {
+          "content": "e",
+          "depth": 0,
+          "properties": {
+            "priority": "2",
+            "todo_state": "CANCELLED"
+          }
+        }
+      ]
+    },
+    {
+      "name": "#6277 D2: a signifier that does not parse, one with no field, `✅` on an open task and any signifier off a task line stay text",
+      "text": "- [ ] f 📅 2026-02-30 🛫 2026-10-01 ⏳ 2026-10-02\n- [ ] g ✅ 2026-10-03\n- h 📅 2026-10-05\n",
+      "tree": [
+        {
+          "content": "f 📅 2026-02-30 🛫 2026-10-01",
+          "depth": 0,
+          "properties": {
+            "scheduled_date": "2026-10-02",
+            "todo_state": "TODO"
+          }
+        },
+        {
+          "content": "g ✅ 2026-10-03",
+          "depth": 0,
+          "properties": {
+            "todo_state": "TODO"
+          }
+        },
+        {
+          "content": "h 📅 2026-10-05",
           "depth": 0,
           "properties": {
             "listStyle": "bullet"

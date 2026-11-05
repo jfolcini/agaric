@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 9cd5b3e68f3e75abc12442b08cd8171fbf63cee8abba18ff0dbabd52e2148575 # shrinks to forest = [BlockSpec { level: 0, content: "", todo_state: None, priority: None, scheduled_date: None, due_date: None, list_style: Some("bullet"), properties: {} }, BlockSpec { level: 1, content: "", todo_state: None, priority: None, scheduled_date: None, due_date: None, list_style: None, properties: {} }]
+cc 0f1a7ce6a04c8f8fa42200ec859e357d5ce22155eb75e3d7e22e5a9eab62bca6 # shrinks to forest = [BlockSpec { level: 0, content: "task 📅 2026-01-10", todo_state: Some("TODO"), priority: None, scheduled_date: None, due_date: None, list_style: None, properties: {} }]

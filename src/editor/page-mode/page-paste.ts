@@ -8,9 +8,10 @@
  * save creates them as it creates typed blocks. A `- x` or `* x` item is a
  * bulleted block and a `1. x` item a numbered one, the style written once the
  * block is saved, as a typed `- ` writes it (`page-lists.ts`); a `+ x` item is
- * a plain block. A task item keeps its checkbox as text, and a property line
- * stays a line of its block's text, each becoming its block's task state or
- * property once the caret has left it (`page-tasks.ts`, `page-properties.ts`).
+ * a plain block. A task item keeps its checkbox and its Tasks fields as text,
+ * and a property line stays a line of its block's text, each becoming its
+ * block's task state or property once the caret has left it (`page-tasks.ts`,
+ * `page-properties.ts`).
  *
  * One line (but a list or task line where it starts a block, as block mode
  * reads them), lines with no Markdown in them, a plain-text paste (Shift), and
@@ -77,11 +78,17 @@ function plainText(node: JSONContent): boolean {
   )
 }
 
-/** `block` of `lines` as page mode holds a new one: its checkbox and property lines as text. */
+/**
+ * `block` of `lines` as page mode holds a new one: its checkbox, Tasks fields
+ * and property lines as text.
+ */
 function blockContent(block: DocumentBlock, lines: readonly string[]): JSONContent[] {
   const checkbox = block.todoState === null ? '' : `[${TASK_STATE_TO_MARKER[block.todoState]}] `
-  const properties = block.propertyLines.map((line) => `\n${lines[line - 1]?.trimStart() ?? ''}`)
-  return (parse(`${checkbox}${block.content}${properties.join('')}`).content ?? []) as JSONContent[]
+  const properties = block.propertyLines
+    .filter((line) => line !== block.line)
+    .map((line) => `\n${lines[line - 1]?.trimStart() ?? ''}`)
+  const text = `${checkbox}${block.contentAsWritten}${properties.join('')}`
+  return (parse(text).content ?? []) as JSONContent[]
 }
 
 /**
