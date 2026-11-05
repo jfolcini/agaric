@@ -7490,6 +7490,25 @@ mod tests {
         cases: Vec<ReferenceTokenCase>,
         name_rule_cases: Vec<NameRuleCase>,
         page_name_fold_cases: Vec<PageNameFoldCase>,
+        heading_anchors: HeadingAnchors,
+    }
+
+    /// #6033 — whether the anchor of `[[Page#anchor]]` names a page's block,
+    /// `block_id`, holding `content`. `reference-tokens-conformance.test.ts`
+    /// drives the editor's matcher for a typed anchor over the same rows.
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct HeadingAnchors {
+        block_id: String,
+        cases: Vec<HeadingAnchorCase>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct HeadingAnchorCase {
+        name: String,
+        content: String,
+        anchor: String,
+        matches: bool,
     }
 
     /// #6052 — whether `[[link]]` names the one page, titled `title`, when the
@@ -7822,6 +7841,33 @@ mod tests {
                 vector.transformed,
                 "stored content for {:?}",
                 vector.name
+            );
+        }
+    }
+
+    #[test]
+    fn heading_anchor_vectors_pin_which_block_an_anchor_names() {
+        let vectors: ReferenceTokenVectors = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../conformance/reference-tokens.vectors.json"
+        )))
+        .expect("reference-token conformance fixture must be valid JSON");
+        let HeadingAnchors { block_id, cases } = vectors.heading_anchors;
+        assert!(!cases.is_empty());
+        for row in cases {
+            let candidates = [AnchorCandidate {
+                id: block_id.clone(),
+                page_id: "PAGE".into(),
+                parent_id: None,
+                position: Some(1),
+                content: row.content,
+            }];
+            let by_id = HashMap::from([(block_id.as_str(), &candidates[0])]);
+            assert_eq!(
+                anchor_block(&candidates, &by_id, "PAGE", &row.anchor).is_some(),
+                row.matches,
+                "{:?}",
+                row.name
             );
         }
     }
