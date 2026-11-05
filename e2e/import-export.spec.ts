@@ -411,6 +411,45 @@ test.describe('Folder import of Notion, Org and text files @markdown', () => {
   })
 })
 
+test.describe('Evernote links between notes @markdown', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('#6032 — links a note to the note of its file the link text names, and warns for the rest', async ({
+    page,
+  }) => {
+    const link = (text: string) => `<a href="evernote:///view/1/s1/g/g/">${text}</a>`
+    const note = (title: string, enml: string) =>
+      `<note><title>${title}</title><content><![CDATA[<en-note>${enml}</en-note>]]></content></note>`
+    const notes = [
+      note('Plan', `<div>See ${link('Meeting')} and ${link('Elsewhere')}</div>`),
+      note('Meeting', '<div>Agenda</div>'),
+    ]
+    const enex = `<?xml version="1.0" encoding="UTF-8"?><en-export>${notes.join('')}</en-export>`
+
+    await navigateToDataSettings(page)
+    await page.locator('[data-testid="import-enex-input"]').setInputFiles({
+      name: 'Work.enex',
+      mimeType: 'application/xml',
+      buffer: Buffer.from(enex),
+    })
+    await expect(page.locator('[data-testid="import-result"]')).toContainText('2 notes')
+    await page.getByTestId('import-result-details').locator('summary').click()
+    await expect(
+      page.getByTestId('import-warning-item').filter({ hasText: 'Evernote note link' }),
+    ).toHaveText('1 Evernote note link stays an Evernote link: its text names no note in its file.')
+
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Pages', exact: true })
+      .click()
+    await page.locator('span[title="Work/Plan"]').click()
+    const block = page.locator('[data-testid="block-static"]', { hasText: 'See' })
+    await expect(block.getByTestId('block-link-chip')).toHaveAttribute('title', 'Work/Meeting')
+  })
+})
+
 // ===========================================================================
 // 3. Export preserves block structure
 // ===========================================================================
