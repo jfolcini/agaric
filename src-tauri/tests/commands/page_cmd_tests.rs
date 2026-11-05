@@ -6309,6 +6309,56 @@ async fn a_copy_pastes_back_as_the_blocks_it_was_copied_from() {
     );
 }
 
+/// #6033 S4 — a paste writes Logseq's `^^` highlight, `\(…\)` and `\[…\]` math
+/// and a ```` ```math ```` fence in Agaric's form; code keeps them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_paste_writes_foreign_highlight_and_math_in_agarics_form() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Paste").await;
+    let anchor = dup_child(&pool, &mat, &page, "the anchor").await;
+    settle(&mat).await;
+    let text = "x ^^y^^\n\n\\(x^2\\) and \\[\\pi r^2\\]\n\n\\[\\frac{a}{b}\\]\n\n\
+                ```math\ne^{i\\pi}\n```\n\n`^^code^^`\n";
+
+    let rows = paste(&pool, &mat, &anchor, paste_text(text)).await;
+
+    let contents: Vec<&str> = rows.iter().filter_map(|r| r.content.as_deref()).collect();
+    assert_eq!(
+        contents,
+        [
+            "x ==y==",
+            "$x^2$ and $\\pi r^2$",
+            "$$\n\\frac{a}{b}\n$$",
+            "$$\ne^{i\\pi}\n$$",
+            "`^^code^^`",
+        ],
+        "each foreign form is stored in Agaric's form"
+    );
+}
+
+/// #6033 Q3 — a copy of blocks whose text holds `^^`, `\(` and `[x]` literally,
+/// which Agaric stores escaped, pastes back byte for byte.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_copy_of_literal_foreign_forms_pastes_back_byte_for_byte() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Copy").await;
+    let stored = [r"a \^\^b\^\^ c", r"text \[\\alpha\] and \\(y\\)"];
+    let mut originals = Vec::new();
+    for content in stored {
+        originals.push(dup_child(&pool, &mat, &page, content).await);
+    }
+    let anchor = dup_child(&pool, &mat, &page, "the anchor").await;
+    settle(&mat).await;
+    let md = copy_source(&pool, &originals.iter().collect::<Vec<_>>(), true).await;
+
+    let rows = paste(&pool, &mat, &anchor, paste_text(&md)).await;
+
+    let contents: Vec<&str> = rows.iter().filter_map(|r| r.content.as_deref()).collect();
+    assert_eq!(contents, stored, "pasted back as stored; md:\n{md}");
+}
+
 /// `[[Name]]` and `#tag` resolve in the anchor's space as an import resolves
 /// them: an existing unique page or tag is linked, a missing one is created in
 /// the space, an ambiguous title and anything in code stay text.
@@ -18438,6 +18488,40 @@ async fn a_logseq_embed_imports_as_the_embed_of_its_target() {
             format!("{{{{embed [[{other}]]}}}}"),
             format!("{{{{embed (({mine}))}}}}"),
             "mine".to_string(),
+        ]
+    );
+    assert_eq!(result.warnings, Vec::<String>::new());
+    mat.shutdown();
+}
+
+/// #6033 S4 — Logseq's `^^` highlight, `\(…\)` math, a block that is one
+/// `\[…\]` and a ```` ```math ```` fence import in Agaric's form; code keeps
+/// them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn foreign_highlight_and_math_import_in_agarics_form() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let result = import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Logseq.md",
+        "- a ^^b^^ c\n- area \\(x^2\\)\n- \\[\\frac{a}{b}\\]\n\
+         - ```math\n  e^{i\\pi}\n  ```\n- `^^code^^`\n",
+    )
+    .await;
+    let children = dup_children(&pool, &BlockId::from_trusted(&result.page_id)).await;
+    let contents: Vec<&str> = children.iter().map(|(_, text)| text.as_str()).collect();
+    assert_eq!(
+        contents,
+        [
+            "a ==b== c",
+            "area $x^2$",
+            "$$\n\\frac{a}{b}\n$$",
+            "$$\ne^{i\\pi}\n$$",
+            "`^^code^^`",
         ]
     );
     assert_eq!(result.warnings, Vec::<String>::new());

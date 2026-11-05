@@ -1109,6 +1109,18 @@ export async function pasteFileIntoFocusedBlock(
   )
 }
 
+/** Paste `text` as `text/plain` into the focused block's editor. */
+export async function pastePlainText(text: string): Promise<void> {
+  await browser.execute((value: string) => {
+    const editor = document.querySelector('[data-testid="block-editor"] [contenteditable="true"]')
+    const data = new DataTransfer()
+    data.setData('text/plain', value)
+    editor?.dispatchEvent(
+      new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }),
+    )
+  }, text)
+}
+
 /**
  * Wait until block `id` renders exactly one image, decoded from a `blob:` URL:
  * GatedImage wraps the bytes `read_attachment` returns, so a decoded image

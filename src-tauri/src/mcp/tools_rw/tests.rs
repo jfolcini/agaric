@@ -387,6 +387,35 @@ async fn append_markdown_cross_space_rejected() {
     );
 }
 
+/// #6033 S4 — Markdown an agent appends lands with Logseq's `^^` highlight and
+/// LaTeX's math in Agaric's form, as a paste writes them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_markdown_writes_foreign_highlight_and_math_in_agarics_form() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let page = mk_page(&pool, &mat, &space, "Page").await;
+    settle(&mat).await;
+
+    tools
+        .call_tool(
+            "append_markdown",
+            json!({
+                "parent_id": page,
+                "markdown": "a ^^b^^\n\n\\(x^2\\)\n\n```math\ny\n```\n",
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("happy path");
+    settle(&mat).await;
+
+    assert_eq!(
+        child_contents(&pool, &page).await,
+        ["a ==b==", "$x^2$", "$$\ny\n$$"],
+        "each foreign form is stored in Agaric's form"
+    );
+}
+
 // -------------------------------------------------------------------
 // update_block_content
 // -------------------------------------------------------------------

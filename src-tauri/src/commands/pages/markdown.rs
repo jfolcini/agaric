@@ -3461,12 +3461,13 @@ async fn splice_into_anchor(
     Ok(rows)
 }
 
-/// Resolve the page links and tags `blocks` write as names in `anchor`'s
-/// space, creating what no name there matches, and write each block's content
-/// with their ids, once each ref to another space is written as the text it
-/// shows ([`write_foreign_refs_as_text`]). Returns the pages and tags created;
-/// a name left as text is named in `warnings`. With no space, every name stays
-/// text.
+/// Write the foreign highlight and math of `blocks` in Agaric's form
+/// ([`normalize_foreign_forms`]), then resolve the page links and tags they
+/// write as names in `anchor`'s space, creating what no name there matches,
+/// and write each block's content with their ids, once each ref to another
+/// space is written as the text it shows ([`write_foreign_refs_as_text`]).
+/// Returns the pages and tags created; a name left as text is named in
+/// `warnings`. With no space, every name stays text.
 async fn resolve_pasted_names(
     mut tx: CommandTx,
     materializer: &Materializer,
@@ -3475,6 +3476,7 @@ async fn resolve_pasted_names(
     blocks: &mut [import::ParsedBlock],
     warnings: &mut Vec<String>,
 ) -> Result<(CommandTx, Vec<BlockRow>), AppError> {
+    normalize_foreign_forms(blocks);
     let Some(space) = agaric_store::space::resolve_block_space(&mut **tx, anchor).await? else {
         return Ok((tx, Vec::new()));
     };
@@ -4379,12 +4381,24 @@ fn parse_import_payload(
     for block in parse_output.blocks.iter_mut().filter(|b| !b.is_code) {
         block.content = import::rewrite_obsidian_note_embeds(&block.content, names_note);
     }
+    normalize_foreign_forms(&mut parse_output.blocks);
     if !notes.is_empty() {
         for block in parse_output.blocks.iter_mut().filter(|b| !b.is_code) {
             block.content = rewrite_vault_wikilinks(&block.content, &notes);
         }
     }
     Ok((parse_output, page_title))
+}
+
+/// Each block's foreign highlight and math in Agaric's form
+/// ([`import::normalize_foreign_inline`]), as import, paste, every MCP content
+/// write and Edit as Markdown take text in (#6033).
+fn normalize_foreign_forms(blocks: &mut [import::ParsedBlock]) {
+    for block in blocks {
+        if let std::borrow::Cow::Owned(content) = import::normalize_foreign_inline(&block.content) {
+            block.content = content;
+        }
+    }
 }
 
 /// The page title each of a folder pick's `.md` paths imports as, keyed by its
