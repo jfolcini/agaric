@@ -1,0 +1,11 @@
+# Session 3387 — CRLF and BOM buffers, and a paste into another space
+
+#6277 B1 and B2.
+
+B1: `anchor_free` split a buffer on `\n` only. An MCP client that sends CRLF kept a `\r` on every line, so ` ^ULID` never stripped, and an unchanged `edit_page_markdown` text rewrote every block with its anchor as text. A leading BOM hid the front matter, and the save deleted the page's properties and aliases. `anchor_free` now normalises CR and CRLF. The two Rust reader entries that already normalise line ends (`parse_import`, `source_outline`) and the TS `readerText` drop a leading BOM. `anchor_free` takes no BOM strip of its own, because once the parser drops it a second strip changes nothing.
+
+B2: a paste into another space of a subtree holding a raw `[[ULID]]`, `#[ULID]` or `((ULID))` whose target lives elsewhere was refused whole by `validate_content_refs_in_space`. `resolve_pasted_names` now first writes each foreign ref as the text it shows: `[[Title]]` and `#name`, which the name pass then resolves in the destination space, and a block ref as its target's first line. The pass repeats, because that first line can hold refs: a link or tag is written as its name each time it is met, a block ref expanded in one pass only, so a cycle still ends in the old refusal. One warning counts the targets. `foreign_content_refs` is now the one rule for both "written as text" and "refused". `resolve_pasted_names` is shared, so the MCP append/update/capture/batch tools now degrade a foreign ref with the same warning instead of refusing. `edit_page_markdown` and `edit_block` still refuse one.
+
+Reds: `edit_page_markdown_of_an_unchanged_crlf_or_bom_read_writes_nothing_6277` (27 ops instead of 21; the BOM case made blocks of the front matter); `a_copy_into_another_space_pastes_its_foreign_refs_as_their_text_6277` (the cross-space refusal); `a_leading_bom_is_dropped_by_every_reader`; a TS BOM case. Each fix was falsified on its own. No e2e-tauri spec: the PCT drives the real paste command.
+
+Ran: nextest over the paste, anchor, edit_page_markdown, page_source, cross_space, import, conformance and mcp filters (1053) and a second filter over the other `resolve_pasted_names` callers (470); clippy; `SQLX_OFFLINE=true cargo check --workspace --all-targets`; vitest over `src/editor` and the mock; typecheck.
