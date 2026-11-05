@@ -4108,6 +4108,7 @@ pub async fn import_markdown_with_progress(
     let (mut parse_output, page_title) = parse_import_payload(
         &content,
         filename,
+        dialect,
         vault_files.as_deref(),
         vault_notes.as_deref(),
     )?;
@@ -4242,6 +4243,7 @@ fn marked_blocks(
 fn parse_import_payload(
     content: &str,
     filename: Option<String>,
+    dialect: ImportDialect,
     vault_files: Option<&[VaultFile]>,
     vault_notes: Option<&[String]>,
 ) -> Result<(import::ParseOutput, String), AppError> {
@@ -4259,14 +4261,12 @@ fn parse_import_payload(
     // folder import keeps its `((uuid))` refs to other notes for
     // `link_import_anchors`.
     let text = import::strip_title_heading(content, &page_title);
-    let mut parse_output = if vault_notes.is_some() {
-        import::parse_vault_markdown(&text)
-    } else {
-        import::parse_logseq_markdown(&text)
-    };
+    let mut parse_output = import::parse_import(&text, vault_notes.is_some(), dialect);
     // Every block, code too: the rewrite skips the lines of its code fences.
-    for block in &mut parse_output.blocks {
-        block.content = import::rewrite_org_blocks(&block.content);
+    if dialect == ImportDialect::LogseqOrg {
+        for block in &mut parse_output.blocks {
+            block.content = import::rewrite_org_blocks(&block.content);
+        }
     }
     // A folder import links its notes by relative path (#5160 N10); a lone
     // file has no vault to be relative to. The title is the note's path below
@@ -8154,6 +8154,7 @@ mod tests {
              - ![[Topic]] ![[topic.png]] #[[Topic]] \\[[Topic]] `[[Topic]]`\n\
              - ````\n  ![[Topic]] [[Topic]]\n  ````\n",
             Some("v/home.md".into()),
+            ImportDialect::Markdown,
             None,
             Some(&notes),
         )

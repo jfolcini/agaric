@@ -2503,7 +2503,8 @@ export type ImportBibliographyResult = {
 /**
  *  Which reading a file import's source is for (#6277 E1), as its front end
  *  tells: a Logseq graph or an `.org` file is `LogseqOrg`, everything else
- *  `Markdown`. Both read the same today; it is the seam the `Markdown` reader
+ *  `Markdown`. Only `LogseqOrg` reads Logseq's `STARTED` keyword and Org's
+ *  `#+BEGIN_X` blocks (#6033 S3); it is the seam the `Markdown` reader
  *  switches on.
  */
 export type ImportDialect = "Markdown" | "LogseqOrg";

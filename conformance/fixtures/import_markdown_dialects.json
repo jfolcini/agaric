@@ -1,5 +1,5 @@
 {
-  "description": "#6277 E1 — `import_markdown` takes the dialect its front end read the source as: `LogseqOrg` for a Logseq graph or an `.org` file, `Markdown` for everything else. Both read as today until E2 switches the `Markdown` reader, so the one document imported under each dialect gives the same two blocks on both stacks.",
+  "description": "#6277 E1 — `import_markdown` takes the dialect its front end read the source as: `LogseqOrg` for a Logseq graph or an `.org` file, `Markdown` for everything else. The two differ only in Logseq's `STARTED` and Org's `#+BEGIN_` blocks, which the mock reads in neither, so the one document, holding neither, gives the same two blocks under each dialect on both stacks.",
   "expected": {
     "block_tags": [],
     "blocks": [
