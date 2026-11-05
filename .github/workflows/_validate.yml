@@ -1651,8 +1651,15 @@ jobs:
         # from the lcov even though the run above tested them. That is why
         # each crate extraction (#2621, #4631, #4502) read as a phantom
         # coverage drop: the moved code left the report, not the tests.
+        #
+        # Dependencies at opt-level 2, in this job only: under coverage most
+        # of a test's time is dependency code, which the dev profile compiles
+        # at -O0. Local and other CI builds keep the dev profile, so only this
+        # job's rust-cov cache pays the slower cold build on a miss. The report
+        # below only reads the profiles, so it needs no flag.
         run: |
           cargo llvm-cov nextest --workspace --profile ci --no-fail-fast \
+            --config 'profile.dev.package."*".opt-level=2' \
             --partition count:${{ matrix.shard }}/2 --no-report
           cargo llvm-cov report --lcov --workspace \
             --output-path coverage-${{ matrix.shard }}.lcov
