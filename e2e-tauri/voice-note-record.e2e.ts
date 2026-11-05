@@ -20,6 +20,7 @@ import {
   navigateTo,
   openNewPage,
   reopenPageByTitle,
+  restartApp,
   runScopedMarker,
   typeMarkerVerified,
   waitForAppReady,
@@ -93,5 +94,36 @@ describe('Agaric real-webview voice note (#5730) @attachments', () => {
     // Three seconds on the timer, give or take the start-up and the click.
     expect(duration).toBeGreaterThan(2.5)
     expect(duration).toBeLessThan(4.5)
+  })
+
+  // The note the case above recorded: an `it` sees the ones before it in its file.
+  it('plays the note back after the app restarts', async () => {
+    await restartApp()
+    await reopenPageByTitle(PAGE)
+    const block = blockStaticByMarker(BLOCK)
+    await block.waitForDisplayed({ timeout: NAV_TIMEOUT })
+    const blockId = await block.getAttribute('data-block-id')
+    if (blockId === null) throw new Error('the voice note block has no data-block-id')
+    const [row] = await invoke<AttachmentRow[]>('list_attachments', { blockId })
+    if (row === undefined) throw new Error('the voice note is gone after the restart')
+
+    const player = `audio[aria-label="Audio ${row.filename}"]`
+    await $(player).waitForExist({ timeout: NAV_TIMEOUT })
+    // Muted, so the webview's autoplay policy lets a script start it.
+    await browser.execute((selector: string) => {
+      const audio = document.querySelector<HTMLAudioElement>(selector)
+      if (audio === null) throw new Error(`no ${selector}`)
+      audio.muted = true
+      void audio.play()
+    }, player)
+    await browser.waitUntil(
+      () =>
+        browser.execute(
+          (selector: string) =>
+            (document.querySelector<HTMLAudioElement>(selector)?.currentTime ?? 0) > 1,
+          player,
+        ),
+      { timeout: ACTION_TIMEOUT, timeoutMsg: 'the voice note never played after the restart' },
+    )
   })
 })

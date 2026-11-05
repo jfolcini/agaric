@@ -9,6 +9,7 @@ import {
   focusBlockById,
   navigateToView,
   openPage,
+  openPageMobile,
   reopenPage,
   test,
   typeSlashCommand,
@@ -433,5 +434,32 @@ test.describe('A transcript seeks its recording @attachments', () => {
 
     await reopenPage(page, 'Getting Started')
     await seekFromTranscript()
+  })
+})
+
+/**
+ * The native `<audio controls>` is the player on every platform (#5410). It is
+ * a replaced element, so `touch-hit-area`'s pseudo-element cannot grow it; its
+ * own box has to be the 44 px target. jsdom has no layout, so the check is here.
+ */
+test.describe('The audio player on a touch screen @attachments', () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 412, height: 915 } })
+
+  test('is at least 44 px tall under a coarse pointer', async ({ page }) => {
+    await waitForBoot(page)
+    await page.evaluate(
+      ({ blockId, wav }) => {
+        const w = window as unknown as MockRecordingWindow
+        w.__addMockAttachmentWithBytes?.(blockId, 'standup.wav', 'audio/wav', wav)
+      },
+      { blockId: BLOCK_GS_1, wav: silentWav(2) },
+    )
+    await openPageMobile(page, 'Getting Started')
+    const player = page.getByTestId('attachment-section').getByLabel('Audio standup.wav')
+    await expect(player).toBeVisible()
+
+    expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true)
+    const box = await player.boundingBox()
+    expect(box?.height).toBeGreaterThanOrEqual(44)
   })
 })
