@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT 1 AS \"ok!: i64\"\n           FROM blocks b\n           JOIN block_properties bp\n             ON bp.block_id = b.id AND bp.key = 'template' AND bp.value_text = 'true'\n           WHERE b.id = ?1 AND b.block_type = 'page' AND b.deleted_at IS NULL\n             AND b.space_id = ?2",
+  "describe": {
+    "columns": [
+      {
+        "name": "ok!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "83c3f2ff1dcc07e5b44db18f9d91c08fb792bbc97323952a2b93377e4b560f0d"
+}

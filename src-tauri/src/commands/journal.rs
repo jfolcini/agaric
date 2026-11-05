@@ -152,7 +152,7 @@ async fn resolve_or_create_journal_page(
 /// [`resolve_or_create_journal_page`] inside the caller's rollback-armed
 /// transaction, for a caller that writes under the day in the same
 /// transaction (MCP `capture`, #5396). `date` is already `YYYY-MM-DD`.
-async fn resolve_or_create_journal_page_in_tx(
+pub(crate) async fn resolve_or_create_journal_page_in_tx(
     tx: &mut CommandTx,
     device_id: &str,
     materializer: &Materializer,
@@ -344,18 +344,31 @@ pub(crate) async fn apply_journal_template_in_tx(
     }))
 }
 
+/// [`expand_template_variables`] for the journal day `day`, whose title is
+/// the day itself.
+fn expand_journal_template_variables(content: &str, day: NaiveDate, time: NaiveTime) -> String {
+    expand_template_variables(content, day, time, &day.format("%Y-%m-%d").to_string())
+}
+
 /// Expand one block's template variables for the day `day` (#5395), the
 /// names the Templates view lists: `<% today %>`, `<% time %>`,
 /// `<% datetime %>`, `<% page title %>`, `<% weekday %>`, `<% month %>`,
 /// `<% isoweek %>` and `<% date+N %>` / `<% date-N %>`, N days from the day;
 /// the `{{date}}`, `{{time}}` and `{{title}}` spellings of the `/template`
-/// grammar take the same names, and `{{cursor}}` is stripped. A name is
+/// grammar take the same names, and `{{cursor}}` is stripped. `<% page title %>`
+/// is `title`: the day for a journal day, the page's title for a meeting
+/// (#5364). A name is
 /// case-insensitive and its inner whitespace collapses. A date or time name
 /// takes a `:FORMAT` suffix in the date-fns tokens [`format_date_fns`] knows
 /// (`<% today:EEEE, MMMM d %>`); a format with a token it does not know gives
 /// the default form, never a literal token in every new day. Day and month
 /// names are English. Any other token stays as written.
-fn expand_journal_template_variables(content: &str, day: NaiveDate, time: NaiveTime) -> String {
+pub(crate) fn expand_template_variables(
+    content: &str,
+    day: NaiveDate,
+    time: NaiveTime,
+    title: &str,
+) -> String {
     let resolve = |body: &str| -> Option<String> {
         let (head, format) = match body.split_once(':') {
             Some((head, format)) => (head, Some(format.trim())),
@@ -378,7 +391,7 @@ fn expand_journal_template_variables(content: &str, day: NaiveDate, time: NaiveT
             "today" | "date" => Some(formatted(day, date)),
             "time" => Some(formatted(day, clock)),
             "datetime" => Some(formatted(day, format!("{date} {clock}"))),
-            "page title" | "title" => Some(date),
+            "page title" | "title" => Some(title.to_owned()),
             "weekday" => Some(formatted(day, day.format("%A").to_string())),
             "month" => Some(formatted(day, day.format("%B").to_string())),
             "isoweek" => Some(day.iso_week().week().to_string()),

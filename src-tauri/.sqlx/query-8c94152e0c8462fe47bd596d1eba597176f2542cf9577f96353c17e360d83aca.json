@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) AS \"n!: i64\"\n           FROM blocks s, blocks r\n           WHERE r.id = ?2 AND s.parent_id = ?1 AND s.deleted_at IS NULL\n             AND (s.position < r.position OR (s.position = r.position AND s.id < r.id))",
+  "describe": {
+    "columns": [
+      {
+        "name": "n!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8c94152e0c8462fe47bd596d1eba597176f2542cf9577f96353c17e360d83aca"
+}
