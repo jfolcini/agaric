@@ -51,6 +51,8 @@ describe('stripForFts — the text the editor shows (#6277 B3)', () => {
     ['a\n~~~\n\\* b', 'a\n\n\\* b'],
     ['a ~~~ \\* b', 'a ~~~ * b'],
     ['```\n~~~\n```', '\n~~~\n'],
+    ['~~~md', 'md'],
+    ['~~~', ''],
     // Every char `isEscapableChar` names, written out.
     [
       ESCAPABLE.split('')
