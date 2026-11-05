@@ -2001,29 +2001,19 @@ async fn run_initiator_session(
     (orch, outcome)
 }
 
-/// Post-session bookkeeping for a session that completed: reset the backoff,
-/// cache the address that worked, and TOFU-bind an unbound peer's announced key,
-/// which closes the pairing window.
-async fn record_session_success(
-    ctx: &SyncSessionContext<'_>,
-    peer: &DiscoveredPeer,
-    orch: &SyncOrchestrator,
-    pinned: Option<&str>,
-    announced_key: &str,
-) {
+/// Remember one address that reached the peer, alongside the key.
+///
+/// Plan #3464 expected this column to lose its meaning, on the reasoning that
+/// iroh keeps its own per-`EndpointId` path state. That holds *within a
+/// process*. It does not survive a restart, and the LAN-only endpoint calls
+/// `clear_address_lookup()`, so mDNS is the only discovery there is — which
+/// makes this the only way a fresh start reaches a paired peer that has not
+/// announced yet. It is no longer a dial *order* (iroh races candidates, so
+/// the sequential loop and its "try this one first" optimisation are both
+/// gone); it is a cached candidate path, and it is only usable in company
+/// with the bound key. See `discovery::resolve_peer_address`.
+async fn cache_peer_address(ctx: &SyncSessionContext<'_>, peer: &DiscoveredPeer) {
     let peer_id = &peer.device_id;
-    ctx.scheduler.record_success(peer_id);
-    // Remember one address that worked, alongside the key.
-    //
-    // Plan #3464 expected this column to lose its meaning, on the reasoning that
-    // iroh keeps its own per-`EndpointId` path state. That holds *within a
-    // process*. It does not survive a restart, and the LAN-only endpoint calls
-    // `clear_address_lookup()`, so mDNS is the only discovery there is — which
-    // makes this the only way a fresh start reaches a paired peer that has not
-    // announced yet. It is no longer a dial *order* (iroh races candidates, so
-    // the sequential loop and its "try this one first" optimisation are both
-    // gone); it is a cached candidate path, and it is only usable in company
-    // with the bound key. See `discovery::resolve_peer_address`.
     if let Err(e) = peer_refs::update_last_address(
         ctx.pool,
         peer_id,
@@ -2039,6 +2029,21 @@ async fn record_session_success(
     {
         tracing::warn!(peer_id, error = %e, "failed to save peer address");
     }
+}
+
+/// Post-session bookkeeping for a session that completed: reset the backoff,
+/// cache the address that worked, and TOFU-bind an unbound peer's announced key,
+/// which closes the pairing window.
+async fn record_session_success(
+    ctx: &SyncSessionContext<'_>,
+    peer: &DiscoveredPeer,
+    orch: &SyncOrchestrator,
+    pinned: Option<&str>,
+    announced_key: &str,
+) {
+    let peer_id = &peer.device_id;
+    ctx.scheduler.record_success(peer_id);
+    cache_peer_address(ctx, peer).await;
     //
     // `bind_endpoint_id` touches only its own column, so re-binding preserves
     // this peer's version vectors and sync state — a device that merely
@@ -2111,10 +2116,18 @@ fn report_user_cancel(ctx: &SyncSessionContext<'_>, peer_id: &str, reason: impl 
 async fn record_session_failure(
     ctx: &SyncSessionContext<'_>,
     peer_refs: &[PeerRef],
-    peer_id: &str,
+    peer: &DiscoveredPeer,
     orch: &SyncOrchestrator,
     e: AppError,
 ) {
+    let peer_id = peer.device_id.as_str();
+    // #6353: a `Busy` refusal came over this dial from the bound key, so the
+    // address worked even though the session did not. Uncached, a peer mDNS
+    // never shows has no path left for the next attempt. Ahead of every branch
+    // below, the pairing window's included, and changing none of them.
+    if session_rejection(orch) == Some(Rejection::Busy) {
+        cache_peer_address(ctx, peer).await;
+    }
     // A cancel is told apart by the live flag, still set here: the owning
     // guard clears it on Drop, after this call, and only once no other owner
     // is live.
@@ -2403,7 +2416,7 @@ pub async fn try_sync_with_peer(
             record_session_success(ctx, peer, &orch, pinned.as_deref(), &announced_key).await;
         }
         Err(e) => {
-            record_session_failure(ctx, peer_refs, peer_id, &orch, e).await;
+            record_session_failure(ctx, peer_refs, peer, &orch, e).await;
         }
     }
 
