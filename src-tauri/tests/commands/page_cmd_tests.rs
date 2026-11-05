@@ -6339,6 +6339,114 @@ async fn a_paste_writes_foreign_highlight_and_math_in_agarics_form() {
     );
 }
 
+/// #6033 S5b — a paste reads Obsidian's note embeds as import does: a block
+/// that is one `![[Note]]` embeds the page, created when none has that name,
+/// `![[Note#Heading]]` and `![[Note#^id]]` the block they name, one among text
+/// links the page, and a file embed, whose bytes a paste does not have, stays
+/// text, as does code.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_paste_reads_obsidian_note_embeds_as_import_does() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Paste").await;
+    let note = dup_page(&pool, &mat, "Note").await;
+    let part = dup_child(&pool, &mat, &note, "## Part").await;
+    let other = dup_child(&pool, &mat, &note, "other").await;
+    let anchor = dup_child(&pool, &mat, &page, "the anchor").await;
+    settle(&mat).await;
+    let text = format!(
+        "![[Fresh]]\n\n![[Note#Part]]\n\n![[Note#^{other}]]\n\n\
+         see ![[Note|it]] and ![[Note]]\n\n![[img.png]]\n\n`![[Note]]`\n"
+    );
+
+    let rows = paste(&pool, &mat, &anchor, paste_text(&text)).await;
+
+    let [fresh] = <[String; 1]>::try_from(pages_titled(&pool, "Fresh").await).unwrap();
+    let contents: Vec<&str> = rows
+        .iter()
+        .filter(|r| r.block_type == "content")
+        .filter_map(|r| r.content.as_deref())
+        .collect();
+    assert_eq!(
+        contents,
+        [
+            format!("{{{{embed [[{fresh}]]}}}}"),
+            format!("{{{{embed (({part}))}}}}"),
+            format!("{{{{embed (({other}))}}}}"),
+            format!("see [[{note}|it]] and [[{note}]]"),
+            "![[img.png]]".to_string(),
+            "`![[Note]]`".to_string(),
+        ],
+        "each note embed is read as import reads it; a file embed and code stay text"
+    );
+}
+
+/// #6033 S5b — a `![[Note]]` pasted into a block's text is among that text, so
+/// it links the page; pasted into an empty block it embeds it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_note_embed_pasted_into_text_links_the_page() {
+    for (case, stored, cursor, expected) in [
+        (
+            "mid-block",
+            "Hello world",
+            ("Hello ", "world"),
+            "Hello [[NOTE]]world",
+        ),
+        ("at the start", "world", ("", "world"), "[[NOTE]]world"),
+        ("at the end", "Hello", ("Hello", ""), "Hello[[NOTE]]"),
+        ("into an empty block", "", ("", ""), "{{embed [[NOTE]]}}"),
+    ] {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let page = dup_page(&pool, &mat, "Dest").await;
+        let note = dup_page(&pool, &mat, "Note").await;
+        let anchor = dup_child(&pool, &mat, &page, stored).await;
+        settle(&mat).await;
+
+        paste_into(&pool, &mat, &anchor, "![[Note]]", cursor).await;
+
+        assert_eq!(
+            dup_children(&pool, &page).await[0].1,
+            expected.replace("NOTE", note.as_str()),
+            "{case}"
+        );
+    }
+}
+
+/// #6033 S4 — display math pasted into a block's text is among that text, so
+/// it is inline math: a `$$` line mid-text opens no block, and the editor
+/// would show both fences as text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn display_math_pasted_into_text_is_inline_math() {
+    for (case, text, expected) in [
+        (
+            "a whole-block \\[x\\]",
+            "\\[\\frac{a}{b}\\]",
+            "Hello $\\frac{a}{b}$world",
+        ),
+        (
+            "a math fence",
+            "```math\ne^{i\\pi}\n```",
+            "Hello $e^{i\\pi}$world",
+        ),
+    ] {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let page = dup_page(&pool, &mat, "Dest").await;
+        let anchor = dup_child(&pool, &mat, &page, "Hello world").await;
+        settle(&mat).await;
+
+        paste_into(&pool, &mat, &anchor, text, ("Hello ", "world")).await;
+
+        let contents: Vec<String> = dup_children(&pool, &page)
+            .await
+            .into_iter()
+            .map(|(_, content)| content)
+            .collect();
+        assert_eq!(contents, [expected], "{case}");
+    }
+}
+
 /// #6033 Q3 — a copy of blocks whose text holds `^^`, `\(` and `[x]` literally,
 /// which Agaric stores escaped, pastes back byte for byte.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

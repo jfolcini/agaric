@@ -1039,39 +1039,52 @@ pub fn embed_names_note(name: &str) -> bool {
 /// `content` with each Obsidian note embed outside inline code written in
 /// Agaric's form (<https://obsidian.md/help/embeds>): a block that is one
 /// embed becomes the embed block `{{embed [[target]]}}`, its `|label`
-/// dropped, and an embed among other text the link `[[target|label]]`, since
-/// an Agaric embed is a whole block. The name pass then links the target, a
-/// `#heading` or `#^id` anchor to the block it names. `names_note` tells a
-/// note's name from a file's ([`embed_names_note`]); a file embed is left to
-/// the attachment pass, and an escaped one is text.
+/// dropped, and an embed among other text the link `[[target|label]]`
+/// ([`link_obsidian_note_embeds`]), since an Agaric embed is a whole block.
+/// The name pass then links the target, a `#heading` or `#^id` anchor to the
+/// block it names. `names_note` tells a note's name from a file's
+/// ([`embed_names_note`]); a file embed is left to the attachment pass, and an
+/// escaped one is text.
 pub fn rewrite_obsidian_note_embeds(content: &str, names_note: impl Fn(&str) -> bool) -> String {
+    if let Some(caps) = OBSIDIAN_EMBED_RE.captures(content)
+        && &caps[0] == content.trim()
+        && names_note(embed_target_name(&caps))
+    {
+        return format!("{{{{embed [[{}]]}}}}", caps[1].trim());
+    }
+    link_obsidian_note_embeds(content, names_note)
+}
+
+/// `content` with each Obsidian note embed outside inline code written as the
+/// link `[[target|label]]`, as an embed among other text reads, even one that
+/// is the whole of `content`: a paste joins its first and last block to the
+/// text around the cursor. `names_note` and what stays text are as in
+/// [`rewrite_obsidian_note_embeds`].
+pub fn link_obsidian_note_embeds(content: &str, names_note: impl Fn(&str) -> bool) -> String {
     if !content.contains("![[") {
         return content.to_string();
     }
     let code_spans = inline_code_spans(content);
-    let is_note_embed = |caps: &regex::Captures<'_>| {
-        let start = caps.get(0).expect("group 0 always present").start();
-        let name = caps[1].split('#').next().unwrap_or_default().trim();
-        !code_spans.iter().any(|&(s, e)| start >= s && start < e)
-            && !is_escaped(content, start)
-            && names_note(name)
-    };
-    if let Some(caps) = OBSIDIAN_EMBED_RE.captures(content)
-        && &caps[0] == content.trim()
-        && is_note_embed(&caps)
-    {
-        return format!("{{{{embed [[{}]]}}}}", caps[1].trim());
-    }
     OBSIDIAN_EMBED_RE
         .replace_all(content, |caps: &regex::Captures<'_>| {
             let whole = &caps[0];
-            if is_note_embed(caps) {
+            let start = caps.get(0).expect("group 0 always present").start();
+            if !code_spans.iter().any(|&(s, e)| start >= s && start < e)
+                && !is_escaped(content, start)
+                && names_note(embed_target_name(caps))
+            {
                 whole[1..].to_string()
             } else {
                 whole.to_string()
             }
         })
         .into_owned()
+}
+
+/// An Obsidian embed's target name: its text before any `#anchor` or `|label`.
+fn embed_target_name<'h>(caps: &regex::Captures<'h>) -> &'h str {
+    let target = caps.get(1).map_or("", |m| m.as_str());
+    target.split('#').next().unwrap_or_default().trim()
 }
 
 /// `content` with the foreign forms of highlight and math written in Agaric's

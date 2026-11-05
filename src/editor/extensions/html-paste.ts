@@ -287,16 +287,20 @@ function isBlockPaste(text: string, view?: EditorView): boolean {
   return pastedTaskParagraph(text) === null
 }
 
-/** Logseq's `^^` highlight and LaTeX's `\(` / `\[` math, which the block path rewrites. */
-const FOREIGN_FORM_RE = /\^\^|\\[([]/
+/**
+ * Logseq's `^^` highlight, LaTeX's `\(` / `\[` math and Obsidian's `![[` embed,
+ * which the block path rewrites.
+ */
+const FOREIGN_FORM_RE = /\^\^|\\[([]|!\[\[/
 
 /**
  * One line only the block path reads in full (#6033): one naming a page
  * (`[[Name]]`, `[[Name|label]]`, `[label]([[Name]])`), whose name only it
  * resolves, or holding a foreign form only it writes in Agaric's (`^^x^^`,
- * `\(x\)`, `\[x\]`); the block path reads any other line the same, so a false
- * positive is harmless. A `#tag` needs no route, as the save makes it a tag,
- * and a list line stays inline for the reason `isBlockPaste` gives.
+ * `\(x\)`, `\[x\]`, `![[Note]]`); the block path reads any other line the
+ * same, so a false positive (a file's `![[img.png]]`) is harmless. A `#tag`
+ * needs no route, as the save makes it a tag, and a list line stays inline
+ * for the reason `isBlockPaste` gives.
  */
 function needsBlockPath(text: string): boolean {
   const line = text.trim()

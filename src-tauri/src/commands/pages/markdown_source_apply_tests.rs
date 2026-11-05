@@ -734,3 +734,49 @@ fn a_buffers_yaml_alias_and_tag_are_the_pages_aliases_and_tags() {
         assert_eq!(tags, ["project"]);
     });
 }
+
+/// #6033 S5b — a save reads an Obsidian note embed in a block it rewrites or
+/// creates as import does: one that is the whole block embeds the page, one
+/// among text links it. A block the save does not touch keeps its text.
+#[test]
+fn a_save_reads_note_embeds_only_in_the_blocks_it_writes() {
+    Runtime::new().unwrap().block_on(async {
+        let fx = fixture().await;
+        let block = |content: &str| BlockSpec {
+            level: 0,
+            content: content.to_string(),
+            todo_state: None,
+            priority: None,
+            scheduled_date: None,
+            due_date: None,
+            list_style: None,
+            properties: BTreeMap::new(),
+        };
+        create_forest(&fx, &[block("kept ![[Page 1]]"), block("edited")]).await;
+        let buffer = get_page_buffer_inner(&fx.pool, &fx.page).await.unwrap();
+        let text = buffer.text.replacen("edited", "![[Page 0]]", 1) + "\nnew ![[Page 1]]\n";
+        let mut line_ids = buffer.line_ids.clone();
+        line_ids.extend([None, None]);
+
+        let report = save(&fx, (text, line_ids), &buffer.source).await;
+
+        assert_eq!((report.created, report.edited), (1, 1));
+        let contents: Vec<String> = sqlx::query_scalar(
+            "SELECT content FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+             ORDER BY position, id",
+        )
+        .bind(&fx.page)
+        .fetch_all(&fx.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            contents,
+            [
+                "kept ![[Page 1]]".to_string(),
+                format!("{{{{embed [[{}]]}}}}", REF_IDS[0]),
+                format!("new [[{}]]", REF_IDS[1]),
+            ],
+            "only the edited and the new block read their embeds"
+        );
+    });
+}
