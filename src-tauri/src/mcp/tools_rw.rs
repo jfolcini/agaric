@@ -27,7 +27,7 @@
 //! | `remove_tag` | [`remove_tag_inner`] | |
 //! | `restore_block` | [`restore_block_inner`] | Takes the `deleted_at` that `delete_block` / `list_trash` returned. |
 //! | `batch` | the `_in_tx` halves of the tools it names | #5399 — `append_block`, `update_block_content`, `set_property`, `add_tag`, `remove_tag`, `move_blocks` and `delete_block` calls in one transaction: one activity entry, one undo, nothing written when one is refused. |
-//! | `edit_page_markdown` | [`apply_page_source_inner`] | #5399 — the page's Markdown as `get_page_markdown` with `editable` reads it, edited, saved as the app's Edit as Markdown saves it. A stale `base` is refused. |
+//! | `edit_page_markdown` | [`apply_page_source_inner`] | #5399 — the page's Markdown as `get_page_markdown` reads it, edited, saved as the app's Edit as Markdown saves it. A stale `base` is refused. |
 //! | `set_page_aliases` | [`set_page_aliases_inner`] | Replaces the page's whole alias list in one transaction. An alias another page holds is refused, nothing written. |
 //! | `attach_file` | [`add_attachment_with_bytes_inner`] | #5410 — copies the regular file at an absolute `path` onto a block, as the app attaches a file: size cap, type allow-list, dedup, undo, sync. The type is the extension's. A symlink, a directory or a file over the cap is refused before it is read. |
 //!
@@ -1011,7 +1011,7 @@ fn tool_desc_edit_page_markdown() -> ToolDescription {
         name: TOOL_EDIT_PAGE_MARKDOWN.to_string(),
         description: "Save an edited copy of a page's Markdown in one transaction and one undo, \
                       as the app's Edit as Markdown saves it. Read the page with \
-                      get_page_markdown and `editable: true`, edit that text, and pass \
+                      get_page_markdown, every stretch of it, edit that text, and pass \
                       it back as `markdown`, with the text you read as `base`. Blocks are \
                       written as append_markdown reads them and matched by the `^ULID` each \
                       one's text ends with, so keep it with the block when you move or change \
@@ -1030,7 +1030,7 @@ fn tool_desc_edit_page_markdown() -> ToolDescription {
             "properties": {
                 "page_id": { "type": "string", "description": "ULID of the page, or its title or alias." },
                 "markdown": { "type": "string", "description": "The page's Markdown, edited, each kept block still ending with its `^ULID`." },
-                "base": { "type": "string", "description": "The Markdown get_page_markdown returned with `editable: true`, unedited." },
+                "base": { "type": "string", "description": "The Markdown get_page_markdown returned, every stretch of it, unedited." },
                 "space_id": {
                     "type": "string",
                     "description": "ULID of the space the agent is operating in. The save is rejected with a Validation error if the page lives in a different space.",

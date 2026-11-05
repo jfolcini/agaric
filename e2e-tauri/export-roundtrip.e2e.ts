@@ -5,7 +5,9 @@
 // its own Markdown, so only this lane shows that what the backend writes, the
 // backend's importer reads back to the same page. Export this space builds a
 // ZIP from every page's export and the attachment bytes, and the file it
-// downloads is only on disk here. The two tests share one vault.
+// downloads is only on disk here. A page copy pasted into another page is the
+// backend's `paste_blocks` reading what it wrote (#6277 E4). The tests share
+// one vault.
 //
 // Globals (`$`, `$$`, `browser`, `expect`) come from @wdio/globals — see
 // helpers.ts.
@@ -228,5 +230,72 @@ describe('Agaric real-backend export (#5740) @markdown', () => {
     expect(page).not.toContain('attachment:')
     // The report lists what an export skipped; a clean export has none.
     expect(names).not.toContain('.agaric/export-report.txt')
+  })
+
+  it('pastes a page copy into another page as its title heading and its blocks (#6277 E4)', async () => {
+    const marker = runScopedMarker('wdio-pc')
+    const title = `${marker}-page`
+    const dest = `${marker}-dest`
+    const anchor = `${marker}-anchor`
+    const milk = `${marker}-milk`
+    const litres = `${marker}-litres`
+    const intro = `${marker}-intro`
+    const markers = [anchor, title, milk, litres, intro]
+
+    await importMarkdownPage(
+      title,
+      [
+        '---',
+        `aliases: [${marker}-alias]`,
+        '---',
+        '',
+        `- ${milk}`,
+        `  + ${litres}`,
+        '',
+        intro,
+        '',
+      ].join('\n'),
+    )
+    await navigateTo('Journal')
+    await reopenPageByTitle(title)
+    await blockStaticByMarker(litres).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    const copied = await exportOpenPage()
+    expect(copied.startsWith(`---\naliases: [${marker}-alias]\n---\n\n# ${title}\n`)).toBe(true)
+
+    // Escape leaves the typed anchor selected (#5160 D17), and Ctrl+V pastes
+    // the clipboard after the selected block.
+    await openNewPage(dest)
+    await typeMarkerVerified(anchor)
+    await browser.keys(['Escape'])
+    await $('[data-testid="block-editor"]').waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
+    await browser.keys(['Control', 'v'])
+    await blockStaticByMarker(intro).waitForDisplayed({ timeout: ACTION_TIMEOUT })
+
+    // The durable read: the backend's rows after a round-trip. The title is
+    // one heading block; the front matter is no block, where it was two `---`
+    // rules and an `aliases:` paragraph.
+    await navigateTo('Journal')
+    await reopenPageByTitle(dest)
+    await blockStaticByMarker(intro).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    const rows = await browser.execute(
+      (all: string[]) =>
+        Array.from(document.querySelectorAll('[data-testid="sortable-block"]')).map((row) => {
+          const text = row.textContent ?? ''
+          return {
+            marker: all.find((m) => text.includes(m)) ?? text,
+            level: row.closest('li[aria-level]')?.getAttribute('aria-level') ?? null,
+            heading: row.querySelector('h1') !== null,
+            rule: row.querySelector('hr') !== null,
+          }
+        }),
+      markers,
+    )
+    expect(rows).toEqual([
+      { marker: anchor, level: '1', heading: false, rule: false },
+      { marker: title, level: '1', heading: true, rule: false },
+      { marker: milk, level: '1', heading: false, rule: false },
+      { marker: litres, level: '2', heading: false, rule: false },
+      { marker: intro, level: '1', heading: false, rule: false },
+    ])
   })
 })

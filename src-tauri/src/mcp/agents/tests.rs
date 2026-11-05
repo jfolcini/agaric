@@ -546,11 +546,12 @@ async fn link_that_crosses_to_b(v: &Vault) -> (String, String) {
     (from_a, linked)
 }
 
-/// Gap 1: Markdown names a linked page of another space by its title.
+/// Gap 1, closed (#6277 E4): Markdown writes a linked page of another space
+/// by its id, since its title does not read back in the agent's space.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn gap_markdown_names_a_linked_page_of_another_space_5667() {
+async fn markdown_writes_a_linked_page_of_another_space_by_its_id_6277() {
     let v = Vault::new().await;
-    link_that_crosses_to_b(&v).await;
+    let (_, linked) = link_that_crosses_to_b(&v).await;
     let agent = v.agent("Reader", McpAgentMode::ReadOnly, Some(&[A])).await;
 
     let page = v
@@ -561,9 +562,10 @@ async fn gap_markdown_names_a_linked_page_of_another_space_5667() {
         )
         .await
         .unwrap();
+    let markdown = page["markdown"].as_str().unwrap();
     assert!(
-        page["markdown"].as_str().unwrap().contains("[[Linked]]"),
-        "the link reads as the title of B's page: {page}",
+        markdown.contains(&format!("[[{linked}]]")) && !markdown.contains("Linked"),
+        "the link reads as the id of B's page: {page}",
     );
 }
 

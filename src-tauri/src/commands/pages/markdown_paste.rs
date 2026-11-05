@@ -38,7 +38,7 @@ pub(crate) async fn copy_page_blocks_in_tx(
     let data = load_page_export_data(tx, source_page_id, PageRead::Duplicate).await?;
     let mut source = String::new();
     let ids: Vec<String> =
-        render_block_tree(&mut source, source_page_id, &data, RenderMode::Document)
+        render_block_tree(&mut source, source_page_id, &data, RenderMode::DOCUMENT)
             .into_iter()
             .map(|(id, _)| id)
             .collect();

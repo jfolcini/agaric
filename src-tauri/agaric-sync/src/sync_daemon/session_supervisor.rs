@@ -2111,6 +2111,19 @@ fn report_user_cancel(ctx: &SyncSessionContext<'_>, peer_id: &str, reason: impl 
     tracing::info!(peer_id, %reason, "sync session cancelled by user");
 }
 
+/// Whether this device dials again after a `Busy` refusal inside a pairing
+/// window.
+///
+/// `Busy` there is glare: both devices dialled at once, each holds its own lock
+/// for the other, so each responder refused the other's dial. Nothing else
+/// re-dials: the pairing window books no backoff, and the resync round reaches
+/// only paired peers. If both sides asked for another round they would collide
+/// again, so only the side whose key sorts lower does; the other's lock is free
+/// by then and its responder takes the dial.
+fn redials_after_glare(local: &iroh::EndpointId, remote: &iroh::EndpointId) -> bool {
+    local.as_bytes() < remote.as_bytes()
+}
+
 /// Post-session bookkeeping for a session that ended in an error: a user cancel,
 /// a refusal received mid-pairing, or a real failure to book against the peer.
 async fn record_session_failure(
@@ -2162,6 +2175,13 @@ async fn record_session_failure(
             ops_received: 0,
             ops_sent: 0,
         });
+        if rejection == Rejection::Busy
+            && peer
+                .endpoint_id
+                .is_some_and(|remote| redials_after_glare(&ctx.endpoint.id(), &remote))
+        {
+            ctx.scheduler.notify_change();
+        }
     } else {
         // #4297: the one refusal that is durable state rather than an
         // event. Checked BEFORE the failure is booked because the two
