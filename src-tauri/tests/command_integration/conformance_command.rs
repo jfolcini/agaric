@@ -327,6 +327,15 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         &["block_id", "filename", "mime_type", "size_bytes"],
         &[],
     ),
+    // #5364 — the meeting's ids, which both stacks mint as created blocks the
+    // relabel names; its attachments are observed by a `list_attachments`
+    // step, since each row is half stack-local as above.
+    (
+        "add_meeting",
+        "page_id",
+        &["recording_block_id", "link_block_id"],
+        &[],
+    ),
     // #5057 — `page_aliases` is outside the snapshot's five arrays too, so the
     // `get_page_aliases` step observes the table. The RETURN is its own
     // evidence: a LIST OF BARE STRINGS naming the aliases the page holds after
@@ -992,6 +1001,38 @@ pub(super) async fn apply_op_via_command(
             )
             .await,
         ),
+        // #5364 — one `input` object, as the frontend sends it: its space and
+        // its two block ids are labels, as the scalar keys are.
+        "add_meeting" => {
+            let mut input = arg("input")
+                .cloned()
+                .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'input'"));
+            for key in ["space_id", "template_id", "link_block_id"] {
+                if let Some(label) = input[key].as_str().map(str::to_owned) {
+                    input[key] = if label == SPACE_TOKEN {
+                        json!(TEST_SPACE_ID)
+                    } else {
+                        json!(resolve_op_arg_id(&label, created_ids))
+                    };
+                }
+            }
+            let input: agaric_lib::commands::meeting_attachments::AddMeetingInput =
+                serde_json::from_value(input)
+                    .unwrap_or_else(|e| panic!("conformance op '{command}': input: {e}"));
+            to_json(match input.into_request() {
+                Ok(req) => {
+                    agaric_lib::commands::meeting_attachments::add_meeting_inner(
+                        pool,
+                        DEV,
+                        mat,
+                        app_data_dir,
+                        req,
+                    )
+                    .await
+                }
+                Err(e) => Err(e),
+            })
+        }
         // `retentionDays` is the fixture's own literal, and the cutoff it
         // derives is `now()`-relative — which is exactly why this corpus can
         // only reach the no-op and the refusal.
@@ -1736,7 +1777,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 68;
+    const MUTATING_ARM_COUNT: usize = 69;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {
