@@ -1195,8 +1195,8 @@ async fn prepare_append_block(
     Ok((BlockId::from_trusted(&parent_id), args.content, index))
 }
 
-/// `block` as a write tool returns it, with the warnings naming a `[[Name]]`
-/// or `#name` its content left as text, when there are any.
+/// `block` as a write tool returns it, with the warnings its content's names
+/// gave (a dropped anchor or label), when there are any.
 fn with_warnings(
     block: &agaric_store::pagination::BlockRow,
     warnings: &[String],

@@ -1114,6 +1114,22 @@ export const blocksHandlers = {
         }
       }
     }
+    // A page goes through `create_page_in_space_inner`, which resolves a title
+    // already held in the space (`nameKey`, #4723, #6278) to that page's own
+    // row, creating nothing and appending no op, and refuses another page's
+    // alias (`createPageInSpace`).
+    if (blockType === 'page' && typeof a['content'] === 'string') {
+      const holder = pageNameHolder(a['content'], spaceId)
+      if (holder?.by === 'alias') throw pageNameRefusal(holder, a['content'])
+      const held = holder ? blocks.get(holder.id) : undefined
+      if (held) {
+        return {
+          ...held,
+          id: held['id'] as string,
+          op_refs: [] as { device_id: string; seq: number }[],
+        }
+      }
+    }
     // `resolve_block_id_in_tx`: a client id already in `blocks`, live or not.
     if (clientId != null && blocks.has(clientId)) {
       throw appErrorRejection({
