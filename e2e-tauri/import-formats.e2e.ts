@@ -301,6 +301,46 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     )
   })
 
+  it('#6032 — imports an Evernote code block as one code block, its indentation kept and its #word no tag', async () => {
+    await waitForAppReady()
+    const marker = runScopedMarker('wdio-enex-code')
+    const title = `${marker}-note`
+    const word = `#${marker}-word`
+    // Evernote 10 writes a code block as a styled `<div>` of one `<div>` per
+    // line, indenting with `&nbsp;`.
+    const code =
+      '<div style="--en-codeblock:true;">' +
+      `<div>${marker}-code():</div><div>&nbsp;&nbsp;&nbsp;&nbsp;return 1</div><div>${word}</div>` +
+      '</div>'
+    const enml = `<en-note>${code}<div>${marker}-after</div></en-note>`
+    const enex = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<en-export>',
+      `<note><title>${title}</title><content><![CDATA[${enml}]]></content></note>`,
+      '</en-export>',
+    ].join('\n')
+    await importFile('import-enex-input', 'export.enex', enex, `Imported “export/${title}”`)
+
+    await navigateTo('Journal')
+    await openPageTitled(`export/${title}`)
+    await blockStaticByMarker(`${marker}-after`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    const block = blockStaticByMarker(`${marker}-code`)
+    await block.waitForDisplayed({ timeout: NAV_TIMEOUT })
+    const id = await block.getAttribute('data-block-id')
+    if (id === null) throw new Error('the code block has no data-block-id')
+    await $(`[data-block-id="${id}"] pre`).waitForExist({ timeout: NAV_TIMEOUT })
+    const text = await browser.execute(
+      (blockId: string) =>
+        document.querySelector(`[data-block-id="${blockId}"] pre`)?.textContent ?? '',
+      id,
+    )
+    expect(text).toContain(`${marker}-code():\n    return 1\n${word}`)
+    await expectAbsent(
+      `[data-block-id="${id}"] [data-testid="tag-ref-chip"]`,
+      'a tag chip in the code block',
+    )
+  })
+
   it('imports a .jex with each note a page titled by its notebook path, a to-do a task, a tag a page tag', async () => {
     await waitForAppReady()
     const marker = runScopedMarker('wdio-jex')

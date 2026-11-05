@@ -430,6 +430,9 @@ function uniqueResourcePath(
  *    callout). The ciphertext can't be decrypted on import, so its children are
  *    discarded (never leaked) and replaced by a clear, non-destructive marker
  *    (#2513, advanced ENML fidelity).
+ *  - a code block (a `<div>` styled `-en-codeblock:true`, or `--en-codeblock`
+ *    in Evernote 10, holding one `<div>` per line) → `<pre><code>`, so Turndown
+ *    fences it and leaves its indentation, `#` and `TODO` unread,
  *  - each `<table>`, through {@link prepareTablesForGfm}.
  */
 function transformEnmlDom(
@@ -439,6 +442,15 @@ function transformEnmlDom(
   mediaRefs: string[],
 ): void {
   const ownerDoc = root.ownerDocument
+  for (const block of Array.from(root.querySelectorAll('div[style*="en-codeblock:true"]'))) {
+    const code = ownerDoc.createElement('code')
+    code.textContent = Array.from(block.children, (line) => line.textContent ?? '')
+      .join('\n')
+      .replace(/\u00A0/g, ' ')
+    const pre = ownerDoc.createElement('pre')
+    pre.append(code)
+    block.replaceWith(pre)
+  }
   for (const todo of Array.from(root.querySelectorAll('en-todo'))) {
     const checked = todo.getAttribute('checked') === 'true'
     const sentinel = ownerDoc.createTextNode(
