@@ -163,14 +163,6 @@
       "rustReads": ["code"]
     },
     {
-      "content": "~~~md\n```js\nx\n```\n~~~",
-      "editorCanonical": "````md\n```js\nx\n```\n````",
-      "editorFlush": "edit",
-      "fts": "~~~md\njs\nx\n\n~~~",
-      "name": "a tilde fence around backtick lines is a longer backtick fence",
-      "rustReads": ["code"]
-    },
-    {
       "content": "Agaric is local-first[^1].",
       "editorFlush": "edit",
       "fts": "Agaric is local-first[^1].",
@@ -183,6 +175,14 @@
       "fts": "[^1]: See the README.",
       "name": "a footnote definition",
       "rustReads": []
+    },
+    {
+      "content": "~~~md\n```js\nx\n```\n~~~",
+      "editorFlush": "edit",
+      "fts": "md\n```js\nx\n```\n",
+      "name": "a tilde fence keeps its backtick lines as code",
+      "rustReads": ["code"],
+      "editorCanonical": "````md\n```js\nx\n```\n````"
     }
   ],
   "corpusBlocks": [

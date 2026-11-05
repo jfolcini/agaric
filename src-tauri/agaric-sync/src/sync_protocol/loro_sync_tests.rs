@@ -5885,7 +5885,8 @@ async fn quarantining_preserves_the_blob_bytes_verbatim_535_3226() {
 /// The documented decision is that nothing re-admits a quarantined blob
 /// automatically (see `readmit_quarantined_slot`'s docs for the three reasons).
 /// This pins the other half of that decision: the manual route exists, moves the
-/// row back, resets the budget, and the content is still PROJECTABLE afterwards.
+/// row back with one boot of budget left, and the content is still PROJECTABLE
+/// afterwards.
 /// Together with the byte-identity test above that is the full meaning of
 /// "nothing was lost" — not just "the bytes are somewhere" but "the bytes still
 /// work".
@@ -5931,10 +5932,10 @@ async fn readmitted_quarantined_blob_projects_on_the_next_boot_3226() {
     );
     assert_eq!(
         unresolved_boots_3226(&pool).await,
-        0,
-        "a deliberate re-admission must grant a FRESH budget, else the very next \
-         unresolved boot would re-quarantine it and the action would look like a \
-         no-op"
+        quarantine::QUARANTINE_AFTER_BOOTS - 1,
+        "#6057: a re-admission gets ONE boot, so a retry that still fails is back \
+         in the quarantine list after the next start instead of hiding in the \
+         inbox for a whole budget"
     );
 
     let mat = agaric_engine::materializer::Materializer::new(pool.clone());

@@ -191,7 +191,7 @@ describe('a typed whole `![[Name]]` in block mode (#6033)', () => {
     expect(handle.unmount()).toBe(`{{embed [[${PAGE}]]}}`)
   })
 
-  it('embeds the page an anchored body names, dropping the anchor as a typed link does', async () => {
+  it('embeds the page an anchored body names when the anchor names no block', async () => {
     const handle = await blockMode()
     await typeResolved(handle.editor as Editor, '![[Project#Goals]]')
 

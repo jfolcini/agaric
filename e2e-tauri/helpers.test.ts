@@ -4,7 +4,7 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
-import { distinctKeyChunks } from './helpers'
+import { dataDirFromEnviron, distinctKeyChunks } from './helpers'
 
 describe('distinctKeyChunks', () => {
   it('splits an adjacent repeat, so `[[` goes out as two calls', () => {
@@ -29,5 +29,17 @@ describe('distinctKeyChunks', () => {
         }
       }),
     )
+  })
+})
+
+describe('dataDirFromEnviron', () => {
+  it('reads AGARIC_DATA_DIR out of the NUL-separated entries', () => {
+    const environ =
+      'HOME=/root\0AGARIC_DATA_DIR=/tmp/agaric-wdio-vault-x/vault\0AGARIC_E2E_SANDBOX=1\0'
+    expect(dataDirFromEnviron(environ)).toBe('/tmp/agaric-wdio-vault-x/vault')
+  })
+
+  it('does not take a variable whose name only ends in AGARIC_DATA_DIR', () => {
+    expect(dataDirFromEnviron('OLD_AGARIC_DATA_DIR=/elsewhere\0HOME=/root\0')).toBeNull()
   })
 })

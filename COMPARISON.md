@@ -354,7 +354,7 @@ reachable from the browser, and a token-scoped REST API landed on master after 2
 | Pairing fallback | N/A | The QR (v2, #4702) carries the responder's dial address and device id, so a first pair needs no multicast; passphrase-only pairing still does | Done |
 | Remote / internet sync | 2.0 RTC syncs over the internet; the README still calls RTC **alpha** | LAN by default. An **opt-in relay** (#5135, `internet_relay_url` in `src-tauri/agaric-sync/src/transport/endpoint.rs`) carries traffic between peers that have **already discovered each other**; it does not discover | Design choice |
 | Conflict resolution | OG: file-level (fragile). 2.0 RTC: alpha; 2.0.2 keeps property-value replacements together. The July 2026 iOS data-loss incident was not re-verified | **Loro CRDT** per space: `LoroTree`, `LoroText`, `LoroMap`; SQL tree columns are derived. Move/replay ordering fixed (#5711, #5720); purges wait until every space lands (#5712) | Better |
-| **What does not converge** | — | **Attachments now converge**: in the engine, hashed and byte-verified (#5608, #5728). Before 2026-10-17 no attachment ever reached a peer. Still true: the **op log is audit-only across peers**, and a **quarantined delta cannot be retried**: Settings › Sync & devices lists it (#6057), but nothing in the UI re-admits it | Partial |
+| **What does not converge** | — | **Attachments now converge**: in the engine, hashed and byte-verified (#5608, #5728). Before 2026-10-17 no attachment ever reached a peer. Still true: the **op log is audit-only across peers**. A quarantined delta is listed in Settings › Sync & devices and can be retried at the next start (#6057) | Partial |
 | Sync direction | Bidirectional | **A session is a pull** (responder → initiator, `docs/architecture/sync-protocol-spec.md`); two-way needs two sessions, which the scheduler runs | Partial |
 | **Multi-device, verified** | Widely used (and widely complained about) | **CI-verified two-way**: `e2e-tauri/sync-two-device.e2e.ts` against a headless peer (`e2e-tauri/sync-peer.ts`) pairs, edits each way, sets a property, moves, makes concurrent edits to one block, sends an image each way, cancels and unpairs; required on `main` via `e2e-tauri-gate` (#5996). **In daily use between Android and Linux, both directions** (maintainer report, 2026-10-21). Unproven: devices on different networks, a restrictive network; there is no iOS | Done (one network) |
 | Sync controls | — | **Cancel** at dial or mid-session (#6026); per-peer **progress** in messages, files and bytes (#5997); a named engine-version mismatch (#5728) | Done |
@@ -440,10 +440,9 @@ Trimmed to claims that survived verification on 2026-10-21.
   helps only peers that have already found each other.
 - Android syncs only in the foreground.
 - There is no backup or restore.
-- A quarantined slot is listed in Settings › Sync & devices, but cannot be retried from there.
 - Nobody has shown it working across networks or on a restrictive one.
 
-These five, ranked, open [Part 9](#part-9-what-would-actually-make-agaric-superior).
+These four, ranked, open [Part 9](#part-9-what-would-actually-make-agaric-superior).
 
 ---
 
@@ -481,7 +480,7 @@ collect the benefit, or where its own documentation is wrong. Each carries its 2
 | **Advanced query engine depth** | 10 property operators, 4 value types, 7 group keys, property aggregates | **Fixed for the engine/UI gap** (#4569, #4804). Remaining: bounded group preview, no column picker, no text language |
 | **Saved views** | A saved-view UI and storage | **Partly fixed**: invisible since a space migration until #5828; now per-space `localStorage`, not synced; old views stay invisible |
 | **The notification subsystem** | OS plumbing on three platforms, a settings tab, a permission flow | **Partly fixed**: desktop `due_date` reminders while the app runs (#4806). No Android, catch-up, lead time or `scheduled_date` |
-| **The sync quarantine** | A quarantine table, boot fields `sync_inbox_quarantined` and `sync_inbox_quarantine_pending` | **Partly fixed**: Settings › Sync & devices lists the quarantined slots (#6057); there is no retry, and the boot fields still reach logs only |
+| **The sync quarantine** | A quarantine table, boot fields `sync_inbox_quarantined` and `sync_inbox_quarantine_pending` | **Fixed**: Settings › Sync & devices lists the quarantined slots and retries one at the next start, and the start that quarantines one warns with a toast (#6057) |
 | **i18next** | ~3,056 keys across 13 namespaces (2026-08-30 count) | Two locales, `es` partial (#4555); not re-audited |
 
 ### Documentation that is false
@@ -593,8 +592,8 @@ master), with its beta status called out separately rather than deducted twice.
 | Templates | 7 | 8 | 7 | — (journal templates carry properties; `/template` drops them and is not atomic) |
 | Spaces | 2 | 3 | **9** | — |
 | AI / agent access | 2 | 8 | **9** | **Agaric +1** (38 tools, per-agent tokens, modes and space allow-lists; not isolation). **2.0 held**: the proposed +1 rests on the REST API (#13019), which merged after 2.0.2 and is in no release |
-| Sync / storage | 4 | 5 | **7** | **+2.** Two of the three deductions behind the 5 are gone: two-way sync is CI-verified and in daily Android ↔ Linux use, and QR pairing needs no multicast. Attachments converge, and the snapshot OOM is gone. Not 8: no backup, mDNS-only discovery, foreground-only Android, no quarantine retry |
-| Data integrity | 3 | 4 | **8** | — (integrity check and audits added; quarantine listed but not retryable, no backup, late convergence bugs #5608, #5712) |
+| Sync / storage | 4 | 5 | **7** | **+2.** Two of the three deductions behind the 5 are gone: two-way sync is CI-verified and in daily Android ↔ Linux use, and QR pairing needs no multicast. Attachments converge, and the snapshot OOM is gone. Not 8: no backup, mDNS-only discovery, foreground-only Android |
+| Data integrity | 3 | 4 | **8** | — (integrity check and audits added; quarantine listed and retryable, no backup, late convergence bugs #5608, #5712) |
 | Performance | 3 | 7 | 7 | — (lazy hydration; revert over budget, memory unmeasured) |
 | Import / export | 9 | 8 | 6 | — (better grammar and Logseq fidelity; no structured export, clipboard-only per-page export) |
 | Mobile | 5 | **4** | 5 | **2.0 +1** (native iOS in TestFlight, Android APK in release assets; no store listing) |
@@ -633,9 +632,7 @@ Ranked by how much each one stands between a user and sync that works out of the
    (`docs/architecture/sync-and-network.md`), so a phone catches up only while it is open.
 3. **Backup and restore.** None exists. Agaric stores everything in one opaque file and needs this
    more than Logseq 2.0, which keeps hourly snapshots and the last 12.
-4. **Let the user retry the quarantine.** Settings › Sync & devices lists a slot that cannot apply
-   (#6057), so it no longer disappears while the UI says "synced"; nothing in the UI re-admits it.
-5. **Close the proof gap.** Different-network and restrictive-network use is unproven.
+4. **Close the proof gap.** Different-network and restrictive-network use is unproven.
 
 ### The 2026-08-30 list, with verdicts
 
@@ -644,9 +641,9 @@ Ranked by how much each one stands between a user and sync that works out of the
 | 1 | Fix the false documentation | Partial | `[[` "page or block", the `/embed` drift, the agent-access deep link (Part 5); the sync "unverified" line is fixed in this revision |
 | 2 | Wire or delete `block_tag_inherited` and `listStyle` | Partial | `listStyle` done; inheritance not in `FilterPrimitive` or inline queries |
 | 3 | Finish the notification scheduler | Partial | Android, closed-app delivery, catch-up, `scheduled_date` |
-| 4 | Make sync provable | Done (one network) | CI suite required by `e2e-tauri-gate` (#5996) + daily Android ↔ Linux use; the residue is sync item 5 |
+| 4 | Make sync provable | Done (one network) | CI suite required by `e2e-tauri-gate` (#5996) + daily Android ↔ Linux use; the residue is sync item 4 |
 | 5 | Pairing fallback without multicast | Done for QR (#4702) | Passphrase-only pairing still needs multicast |
-| 6 | Surface quarantined slots and op origin | Partial | Quarantined slots are listed (#6057), not retryable (sync item 4); the History view still does not render `agent:` origin |
+| 6 | Surface quarantined slots and op origin | Partial | Quarantined slots are listed and retryable (#6057); the History view still does not render `agent:` origin |
 | 7 | Ship backup/restore | Open | Sync item 3 |
 | 8 | Fix template block-property loss and the PDF dangling ref | Partial | Journal templates fixed (#5395); `/template` drops properties; PDF not re-checked |
 | 9 | Block and page embeds | Done, with limits (#4572, #4809) | Task and property UI in embed rows; unlock in page mode |

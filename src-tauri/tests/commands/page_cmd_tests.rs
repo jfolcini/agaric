@@ -6107,6 +6107,56 @@ async fn a_copy_pastes_back_as_the_blocks_it_was_copied_from() {
     );
 }
 
+/// #6033 S4 — a paste writes Logseq's `^^` highlight, `\(…\)` and `\[…\]` math
+/// and a ```` ```math ```` fence in Agaric's form; code keeps them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_paste_writes_foreign_highlight_and_math_in_agarics_form() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Paste").await;
+    let anchor = dup_child(&pool, &mat, &page, "the anchor").await;
+    settle(&mat).await;
+    let text = "x ^^y^^\n\n\\(x^2\\) and \\[\\pi r^2\\]\n\n\\[\\frac{a}{b}\\]\n\n\
+                ```math\ne^{i\\pi}\n```\n\n`^^code^^`\n";
+
+    let rows = paste(&pool, &mat, &anchor, paste_text(text)).await;
+
+    let contents: Vec<&str> = rows.iter().filter_map(|r| r.content.as_deref()).collect();
+    assert_eq!(
+        contents,
+        [
+            "x ==y==",
+            "$x^2$ and $\\pi r^2$",
+            "$$\n\\frac{a}{b}\n$$",
+            "$$\ne^{i\\pi}\n$$",
+            "`^^code^^`",
+        ],
+        "each foreign form is stored in Agaric's form"
+    );
+}
+
+/// #6033 Q3 — a copy of blocks whose text holds `^^`, `\(` and `[x]` literally,
+/// which Agaric stores escaped, pastes back byte for byte.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_copy_of_literal_foreign_forms_pastes_back_byte_for_byte() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Copy").await;
+    let stored = [r"a \^\^b\^\^ c", r"text \[\\alpha\] and \\(y\\)"];
+    let mut originals = Vec::new();
+    for content in stored {
+        originals.push(dup_child(&pool, &mat, &page, content).await);
+    }
+    let anchor = dup_child(&pool, &mat, &page, "the anchor").await;
+    settle(&mat).await;
+    let md = copy_source(&pool, &originals.iter().collect::<Vec<_>>(), true).await;
+
+    let rows = paste(&pool, &mat, &anchor, paste_text(&md)).await;
+
+    let contents: Vec<&str> = rows.iter().filter_map(|r| r.content.as_deref()).collect();
+    assert_eq!(contents, stored, "pasted back as stored; md:\n{md}");
+}
+
 /// `[[Name]]` and `#tag` resolve in the anchor's space as an import resolves
 /// them: an existing unique page or tag is linked, a missing one is created in
 /// the space, an ambiguous title and anything in code stay text.
@@ -14899,6 +14949,67 @@ async fn import_keeps_an_org_planning_date_past_a_warning_period_or_a_foreign_da
     mat.shutdown();
 }
 
+/// The content and `todo_state` of each block `md` imports as, in order, on the
+/// page `title`.
+async fn imported_blocks(md: &str, title: &str) -> Vec<(String, Option<String>)> {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md.into(),
+        Some(format!("{title}.md")),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let rows = sqlx::query_as(
+        "SELECT b.content, b.todo_state FROM blocks b JOIN blocks p ON p.id = b.parent_id \
+         WHERE p.content = ? AND b.deleted_at IS NULL ORDER BY b.position",
+    )
+    .bind(title)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    mat.shutdown();
+    rows
+}
+
+/// #6033 — Logseq's `STARTED` keyword is a DOING task.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_reads_a_logseq_started_task_as_doing() {
+    assert_eq!(
+        imported_blocks("- STARTED Write the report\n", "Started").await,
+        [("Write the report".to_string(), Some("DOING".to_string()))]
+    );
+}
+
+/// #6033 — a Logseq `#+BEGIN_NOTE` block is a note callout.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_logseq_note_block_imports_as_a_note_callout() {
+    let md = "- #+BEGIN_NOTE\n  Mind the gap\n  #+END_NOTE\n";
+    assert_eq!(
+        imported_blocks(md, "Note Block").await,
+        [("> [!NOTE]\n> Mind the gap".to_string(), None)]
+    );
+}
+
+/// #6033 — a Logseq `#+BEGIN_QUOTE` block is a quote; the text before it stays.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_logseq_quote_block_imports_as_a_quote() {
+    let md = "- Hamlet said:\n  #+BEGIN_QUOTE\n  To be\n  #+END_QUOTE\n";
+    assert_eq!(
+        imported_blocks(md, "Quote Block").await,
+        [("Hamlet said:\n> To be".to_string(), None)]
+    );
+}
+
 /// #1918 — a single over-deep import block must skip-and-warn, NOT abort the
 /// whole chunk. We hand-author markdown a single block of which exceeds
 /// `MAX_BLOCK_DEPTH` once the page-root offset is added, by forging a depth
@@ -18175,6 +18286,40 @@ async fn a_logseq_embed_imports_as_the_embed_of_its_target() {
             format!("{{{{embed [[{other}]]}}}}"),
             format!("{{{{embed (({mine}))}}}}"),
             "mine".to_string(),
+        ]
+    );
+    assert_eq!(result.warnings, Vec::<String>::new());
+    mat.shutdown();
+}
+
+/// #6033 S4 — Logseq's `^^` highlight, `\(…\)` math, a block that is one
+/// `\[…\]` and a ```` ```math ```` fence import in Agaric's form; code keeps
+/// them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn foreign_highlight_and_math_import_in_agarics_form() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let result = import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Logseq.md",
+        "- a ^^b^^ c\n- area \\(x^2\\)\n- \\[\\frac{a}{b}\\]\n\
+         - ```math\n  e^{i\\pi}\n  ```\n- `^^code^^`\n",
+    )
+    .await;
+    let children = dup_children(&pool, &BlockId::from_trusted(&result.page_id)).await;
+    let contents: Vec<&str> = children.iter().map(|(_, text)| text.as_str()).collect();
+    assert_eq!(
+        contents,
+        [
+            "a ==b== c",
+            "area $x^2$",
+            "$$\n\\frac{a}{b}\n$$",
+            "$$\ne^{i\\pi}\n$$",
+            "`^^code^^`",
         ]
     );
     assert_eq!(result.warnings, Vec::<String>::new());
