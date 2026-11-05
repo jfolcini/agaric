@@ -17,3 +17,6 @@ anchors:
     block_id: 01J00000000000000000BLOCK2
 deferred:
   - 01J00000000000000000BLOCK3
+merged:
+  - device_id: device-a
+    seq: 7

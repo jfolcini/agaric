@@ -1,5 +1,5 @@
 //! The import core: [`IMPORT_CHUNK_BLOCKS`], [`parse_import_payload`],
-//! [`create_import_page`], [`resolve_document_refs`], [`ImportCtx`],
+//! [`import_title`], [`create_import_page`], [`resolve_document_refs`], [`ImportCtx`],
 //! [`NameCtx`], [`insert_blocks`], the chunk commits and [`finish`].
 
 use super::*;
@@ -93,10 +93,7 @@ pub(super) fn parse_import_payload(
         let total_bytes: u64 = files.iter().map(|f| f.bytes.len() as u64).sum();
         check_attachment_budget(files.len(), total_bytes)?;
     }
-    let page_title = filename
-        .map(|f| folder_path_to_namespace_title(&f))
-        .filter(|t| !t.is_empty())
-        .unwrap_or_else(|| "Imported Page".to_string());
+    let page_title = import_title(filename);
     // Agaric's own export writes the title as a `# Title` line, which would
     // otherwise come back as a block repeating it (#5160 S6). A Markdown file
     // reads as a paste does (#6277 decision 1); a Logseq or Org note of a
@@ -139,6 +136,15 @@ pub(super) fn parse_import_payload(
         }
     }
     Ok((parse_output, page_title))
+}
+
+/// The page title a file imports as: its `filename`'s path, `.md` dropped
+/// (#1446 Part B), else `Imported Page`.
+pub(super) fn import_title(filename: Option<String>) -> String {
+    filename
+        .map(|f| folder_path_to_namespace_title(&f))
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| "Imported Page".to_string())
 }
 
 /// Each block's Obsidian note embeds ([`import::rewrite_obsidian_note_embeds`],
@@ -313,9 +319,13 @@ pub(super) fn announce_import_start(
     }
 }
 
-/// Open the import's first chunk and create the page it writes into, or adopt
-/// the empty same-title page an earlier file's link created (#5160 D12),
-/// returning the transaction and the page's ULID.
+/// Open the import's first chunk and create the page `file` writes into, or
+/// adopt the empty same-title page an earlier file's link created (#5160
+/// D12), returning the transaction, the page's ULID and title and how the
+/// file's property lines read ([`import_property_lines`]). A file that merges
+/// into the page of its title, which holds blocks ([`import_target`], #6277
+/// decision 7), rolls the chunk back and merges ([`merge_into_page`]),
+/// returning its result.
 ///
 /// --- Chunked IMMEDIATE transactions (#662) --- `CommandTx` couples commit +
 /// post-commit dispatch; op records enqueue per chunk and drain in FIFO order on
@@ -341,70 +351,74 @@ pub(super) async fn create_import_page(
     pool: &SqlitePool,
     materializer: &Materializer,
     device_id: &str,
-    space_id: &str,
-    page_title: &str,
-    warnings: &mut Vec<String>,
-) -> Result<(CommandTx, String), AppError> {
+    file: &ImportFile<'_>,
+    progress: Option<&dyn ImportProgressSink>,
+    parse_output: &mut import::ParseOutput,
+) -> Result<ImportPage, AppError> {
     let mut tx = CommandTx::begin_immediate(pool, "import_markdown").await?;
     // #2604 — rollback-safe engine apply (rewind on tx abort). Re-armed per
     // chunk when the block loop reopens the transaction.
     tx.arm_engine_rollback(materializer.loro_state());
 
+    let space_id = file.space_id;
     crate::commands::spaces::require_live_space_in_tx(&mut tx, space_id).await?;
 
-    // #5160 D12 — the page of this title, the lowest id where several share
-    // it (#6278), is adopted when it has no blocks (the placeholder a
-    // `[[link]]` in an earlier file created), so the links to it resolve. The
-    // title under `name_key`, never an alias: an alias names a page of another
-    // title. A page with content is never touched.
-    let title = [page_title.to_string()];
-    let matches = snapshot_page_link_matches(&mut tx, space_id, &title).await?;
-    let same_title = matches
-        .folded
-        .get(&agaric_core::tag_norm::name_key(page_title));
-    match same_title {
-        Some(id) if !page_has_blocks(&mut tx, id).await? => {
-            return Ok((tx, id.clone()));
+    let warnings = &mut parse_output.warnings;
+    let (page_id, title) = match import_target(&mut tx, file, warnings).await? {
+        ImportTarget::Adopt(page_id) => (page_id, file.title.to_string()),
+        ImportTarget::Merge { page_id, title } => {
+            tx.rollback().await?;
+            let merge = merge_into_page(pool, device_id, materializer, &page_id, file);
+            let merged = Box::pin(merge).await?;
+            return Ok(ImportPage::Merged(merged_result(
+                progress, page_id, title, merged,
+            )));
         }
-        Some(_) => warnings.push(format!(
-            "a page titled '{page_title}' already exists in this space; the file was imported as \
-             a new page"
-        )),
-        None => {}
-    }
-
-    let (page, page_op) = create_block_in_tx(
-        &mut tx,
-        materializer.loro_state(),
-        device_id,
-        "page".into(),
-        page_title.to_string(),
-        None,
-        None,
-        // #2849 PR2: server-generated id.
-        None,
-    )
-    .await?;
-    tx.enqueue_background(page_op);
-    let page_id = page.id.clone().into_string();
-    stamp_space_property(&mut tx, materializer, device_id, page_id.clone(), space_id).await?;
-    Ok((tx, page_id))
+        ImportTarget::Create(title) => {
+            let (page, page_op) = create_block_in_tx(
+                &mut tx,
+                materializer.loro_state(),
+                device_id,
+                "page".into(),
+                title.clone(),
+                None,
+                None,
+                // #2849 PR2: server-generated id.
+                None,
+            )
+            .await?;
+            tx.enqueue_background(page_op);
+            let page_id = page.id.clone().into_string();
+            stamp_space_property(&mut tx, materializer, device_id, page_id.clone(), space_id)
+                .await?;
+            (page_id, title)
+        }
+    };
+    let lines = import_property_lines(&mut tx, space_id, parse_output).await?;
+    Ok(ImportPage::Write(Box::new(OpenPage {
+        tx,
+        page_id,
+        title,
+        lines,
+    })))
 }
 
-/// Whether `page_id` has a live child block.
-async fn page_has_blocks(
-    conn: &mut sqlx::SqliteConnection,
-    page_id: &str,
-) -> Result<bool, AppError> {
-    let has = sqlx::query_scalar!(
-        r#"SELECT EXISTS(
-               SELECT 1 FROM blocks WHERE parent_id = ?1 AND deleted_at IS NULL
-           ) AS "has!: bool""#,
-        page_id,
-    )
-    .fetch_one(&mut *conn)
-    .await?;
-    Ok(has)
+/// How the file's property lines read against the space's definitions: each
+/// ref value resolved, and each value a definition refuses kept as text in
+/// its block, with a warning (#5160 D11).
+pub(super) async fn import_property_lines(
+    tx: &mut CommandTx,
+    space_id: &str,
+    parse_output: &mut import::ParseOutput,
+) -> Result<PropertyLines, AppError> {
+    let mut lines = PropertyLines::load(tx, Some(space_id), PropertyWrite::Import).await?;
+    let values = parse_output
+        .blocks
+        .iter()
+        .flat_map(|block| &block.properties);
+    lines.resolve_refs(tx, Some(space_id), values).await?;
+    lines.keep_refused_as_text(&mut parse_output.blocks, &mut parse_output.warnings);
+    Ok(lines)
 }
 
 /// Everything the block loop and the post-commit anchor phase need to rewrite a
@@ -1089,5 +1103,6 @@ pub(super) fn finish(
         warnings,
         anchors,
         deferred,
+        merged: None,
     }
 }

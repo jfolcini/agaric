@@ -21,13 +21,14 @@ import { useCallback, useRef, useState } from 'react'
 
 import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { unwrap } from '@/lib/app-error'
-import { type ImportAnchor, commands } from '@/lib/bindings'
+import { type ImportAnchor, type ImportMerge, commands } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { importMarkdown } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
 import { requireActiveScope } from '@/lib/space-scope'
 import { type ImportUnit, importErrorReason } from '@/lib/vault-import'
+import { notifyUndoNewAction } from '@/stores/page-blocks-reducers'
 import { useResolveStore } from '@/stores/resolve'
 import { useTabsStore } from '@/stores/tabs'
 
@@ -64,6 +65,8 @@ export interface ImportRunResult {
   cancelled: boolean
   blocksCreated: number
   propertiesSet: number
+  /** Existing pages files merged into (#6277 decision 7). */
+  pagesUpdated: number
   /** Soft, per-file parse warnings; the file still imported. */
   warnings: string[]
   /** Files that threw and produced no page, with their failure reason. */
@@ -107,6 +110,8 @@ export interface RunOptions {
 /** What a completed {@link UseImportRunner.run} returns to the caller. */
 export interface RunOutcome {
   totalBlocks: number
+  /** Existing pages files merged into, which may have added no block. */
+  pagesUpdated: number
   succeededFiles: number
   /** The combined seeded + per-unit failures (what the result panel showed). */
   failedFiles: FailedFile[]
@@ -114,8 +119,19 @@ export interface RunOutcome {
   navTitle: string | null
 }
 
+/**
+ * The existing pages a run would merge its files into, asked before it runs
+ * (#6277 decision 7); `answer(true)` lets it run.
+ */
+export interface MergeQuestion {
+  pages: ImportMerge[]
+  answer: (go: boolean) => void
+}
+
 export interface UseImportRunner {
   importing: boolean
+  /** The merge question the run waits on, if any. */
+  mergeQuestion: MergeQuestion | null
   /** Exposed for the single-IPC bibliography importer, which shares the gate. */
   setImporting: (value: boolean) => void
   importResult: ImportRunResult | null
@@ -161,6 +177,25 @@ export function useImportRunner(): UseImportRunner {
   // the file currently being imported. Reset at the start of each file.
   const [currentFileBlocksDone, setCurrentFileBlocksDone] = useState(0)
   const [currentFileBlocksTotal, setCurrentFileBlocksTotal] = useState(0)
+  const [mergeQuestion, setMergeQuestion] = useState<MergeQuestion | null>(null)
+
+  // Whether the user lets the run merge `units` into the existing pages of
+  // their titles; true when there are none to ask about.
+  const confirmMerges = useCallback(async (spaceId: string, units: ImportUnit[]) => {
+    const filenames = units.flatMap((unit) => (unit.merges === undefined ? [] : [unit.merges]))
+    if (filenames.length === 0) return true
+    const pages = unwrap(await commands.listImportMerges(spaceId, filenames))
+    if (pages.length === 0) return true
+    return new Promise<boolean>((resolve) => {
+      setMergeQuestion({
+        pages,
+        answer: (go) => {
+          setMergeQuestion(null)
+          resolve(go)
+        },
+      })
+    })
+  }, [])
 
   // #1927 — navigate to a just-imported page. The run result keeps only the
   // page title (`navTitle`), so resolve the title→id through
@@ -218,6 +253,7 @@ export function useImportRunner(): UseImportRunner {
       let totalBlocks = 0
       let totalProps = 0
       let totalBytes = 0
+      let pagesUpdated = 0
       const allWarnings: string[] = initialWarnings ? [...initialWarnings] : []
       // Hard failures: units that threw and produced no page. Seeded with any
       // parse failures the caller recorded, then extended per import failure.
@@ -229,14 +265,26 @@ export function useImportRunner(): UseImportRunner {
       const anchors: ImportAnchor[] = []
       const deferred: string[] = []
       let lastTitle = ''
-      // #1927 — true once the user hits Cancel mid-loop.
+      // #1927 — true once the user hits Cancel mid-loop, or declines the merges.
       let cancelled = false
+      try {
+        cancelled = !(await confirmMerges(activeSpaceId, units))
+      } catch (err) {
+        logger.error(
+          'DataSettingsTab',
+          'reading the pages the import updates failed',
+          undefined,
+          err,
+        )
+        allWarnings.push(t('data.importMergeCheckFailed', { reason: importErrorReason(err) }))
+        cancelled = true
+      }
 
       for (const [i, unit] of units.entries()) {
         // #1927 — check the abort flag BETWEEN units. The currently in-flight
         // `importMarkdown` (if any) still completes, but no further units are
         // started; we report how many imported.
-        if (cancelRef.current) {
+        if (cancelled || cancelRef.current) {
           cancelled = true
           break
         }
@@ -275,7 +323,13 @@ export function useImportRunner(): UseImportRunner {
             },
             vaultFiles,
             vaultNotes,
+            [...importedPageIds],
           )
+          // A merge is the page's undo step, as an Edit as Markdown save is.
+          if (result.merged) {
+            pagesUpdated += 1
+            if (result.merged.length > 0) notifyUndoNewAction(result.page_id, result.merged)
+          }
           // Collapse is this device's layout, so the blocks a Logseq page
           // folded are folded here (#5160 D14).
           if (result.collapsed.length > 0) {
@@ -337,7 +391,7 @@ export function useImportRunner(): UseImportRunner {
       // #1927 — the title to navigate to after a successful import. We resolve
       // it to a page id lazily in the View action, so the toast/panel only need
       // the title.
-      const navTitle = totalBlocks > 0 ? lastTitle : null
+      const navTitle = totalBlocks > 0 || pagesUpdated > 0 ? lastTitle : null
 
       setImportResult({
         pageTitle: units.length === 1 ? lastTitle : null,
@@ -346,6 +400,7 @@ export function useImportRunner(): UseImportRunner {
         cancelled,
         blocksCreated: totalBlocks,
         propertiesSet: totalProps,
+        pagesUpdated,
         warnings: allWarnings,
         failures: failedFiles,
         navTitle,
@@ -363,13 +418,14 @@ export function useImportRunner(): UseImportRunner {
       // re-open the picker without a stale value.
       event.target.value = ''
 
-      return { totalBlocks, succeededFiles, failedFiles, cancelled, navTitle }
+      return { totalBlocks, pagesUpdated, succeededFiles, failedFiles, cancelled, navTitle }
     },
-    [],
+    [confirmMerges],
   )
 
   return {
     importing,
+    mergeQuestion,
     setImporting,
     importResult,
     detailsExpanded,

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT DISTINCT parent_id AS \"id!: String\" FROM blocks\n           WHERE parent_id IN (SELECT value FROM json_each(?1)) AND deleted_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "parent_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "ce3c8434db5c1180f50eab5e6f2efbdd33aa47c86da0ecfe5637b3162fabc2d6"
+}

@@ -1,0 +1,266 @@
+{
+  "description": "#6277 G5 — the READ the import dialog lists its merges through, `list_import_merges`: the page each file's title names (`folder_path_to_namespace_title`, `.md` dropped) that holds a live block, matched as an import matches it, once each, in file order. `Plan.md` and `plan.md` both name S1 under `name_key` and list it once; `Empty.md` names S3, which has no block and is filled, not merged into; `Later.md` is S4's alias, which an import never adopts; `Gone.md` names S8, whose only block the op trashes; `New.md` names nothing. A mock comparing titles exactly drops `plan.md`'s match and lists nothing twice, one matching aliases lists S4, one counting tombstoned children lists S8, and one sorting lists `Plan` before `dir/Sub`.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Plan",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "plan body",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Empty",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Roadmap",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "roadmap body",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B4",
+        "parent_id": "B4",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "dir/Sub",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B6",
+        "parent_id": null,
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "sub body",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B6",
+        "parent_id": "B6",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Gone",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B8",
+        "parent_id": null,
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "gone body",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B8",
+        "parent_id": "B8",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 1,
+      "ops": [
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "pages_with_blocks_once_each_in_file_order",
+      "rows": ["B6#title=dir/Sub", "B1#title=Plan"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "nothing_to_merge_into",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "query_import_merges",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S9"
+      },
+      "command": "delete_block"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "filenames": [
+          "dir/Sub.md",
+          "Plan.md",
+          "plan.md",
+          "Empty.md",
+          "Later.md",
+          "Gone.md",
+          "New.md"
+        ],
+        "spaceId": "$SPACE"
+      },
+      "command": "list_import_merges",
+      "comment": "S6 then S1, each once: the pages with a live block the files' titles name, in the order the files name them.",
+      "name": "pages_with_blocks_once_each_in_file_order"
+    },
+    {
+      "args": {
+        "filenames": ["Empty.md", "Later.md", "Gone.md"],
+        "spaceId": "$SPACE"
+      },
+      "command": "list_import_merges",
+      "comment": "None: an empty page, an alias and a page whose only block is in the Trash are not merged into.",
+      "expect_empty": true,
+      "name": "nothing_to_merge_into"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Plan",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "plan body",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Empty",
+        "id": "S3",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "page",
+        "content": "Roadmap",
+        "id": "S4",
+        "parent_id": null,
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "roadmap body",
+        "id": "S5",
+        "parent_id": "S4",
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "dir/Sub",
+        "id": "S6",
+        "parent_id": null,
+        "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": "sub body",
+        "id": "S7",
+        "parent_id": "S6",
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Gone",
+        "id": "S8",
+        "parent_id": null,
+        "position": 5
+      },
+      {
+        "block_type": "content",
+        "content": "gone body",
+        "id": "S9",
+        "parent_id": "S8",
+        "position": 1
+      }
+    ],
+    "page_aliases": [
+      {
+        "alias": "Later",
+        "page_id": "S4"
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

@@ -270,6 +270,8 @@ macro_rules! agaric_commands {
             $crate::commands::speech::get_speech_status,
             // Logseq/Markdown import (#660)
             $crate::commands::pages::import_markdown,
+            // The pages an import merges its files into (#6277 G5).
+            $crate::commands::pages::list_import_merges,
             // The end of a folder import: links between its notes.
             $crate::commands::pages::link_import_anchors,
             // BibTeX / CSL-JSON bibliography import (#1454 tier a)

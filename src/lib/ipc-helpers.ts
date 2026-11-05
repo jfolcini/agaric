@@ -285,6 +285,10 @@ export async function purgeAllDeletedInSpace(spaceId: string): Promise<BulkTrash
  *
  * `dialect` (#6277 E1) — `LogseqOrg` for a Logseq graph's file or an `.org`
  * file, `Markdown` for everything else.
+ *
+ * `runPages` (#6277 G5) — the pages earlier files of the same run created or
+ * merged into: a file of one of their titles becomes a new page `Title (2)`
+ * rather than merging into it.
  */
 export async function importMarkdown(
   content: string,
@@ -294,6 +298,7 @@ export async function importMarkdown(
   onProgress?: (update: ImportProgressUpdate) => void,
   vaultFiles?: VaultFile[] | null,
   vaultNotes?: string[] | null,
+  runPages: string[] = [],
 ): Promise<ImportResult> {
   const channel = new Channel<ImportProgressUpdate>()
   // oxlint-disable-next-line unicorn/prefer-add-event-listener -- Tauri `Channel` is an IPC primitive, not a DOM EventTarget; it only exposes an `onmessage` setter (no `addEventListener`)
@@ -308,7 +313,15 @@ export async function importMarkdown(
       ? null
       : { files: vaultFiles ?? [], notes: vaultNotes ?? [] }
   return unwrap(
-    await commands.importMarkdown(content, filename ?? null, spaceId, dialect, vault, channel),
+    await commands.importMarkdown(
+      content,
+      filename ?? null,
+      spaceId,
+      dialect,
+      vault,
+      runPages,
+      channel,
+    ),
   )
 }
 

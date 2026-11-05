@@ -463,7 +463,8 @@ pub async fn append_markdown_inner(
 /// reads text (`ImportDialect::Markdown`, #6277 decision 1).
 ///
 /// Creates a page from the filename (or first heading), then creates
-/// blocks following the indentation hierarchy. Properties are set via
+/// blocks following the indentation hierarchy, or merges into the page of
+/// that title ([`import_markdown_with_progress`]). Properties are set via
 /// SetProperty ops. Returns import statistics.
 ///
 /// #662 — Chunked, atomic-subtree semantics (relaxes the original
@@ -579,6 +580,51 @@ pub async fn import_markdown_inner(
 /// emit, so a consumer that sees `Started` but no `Complete` must treat the
 /// import as failed (possibly partially-applied per the chunk semantics
 /// above). Sends are best-effort (see [`ImportProgressSink`]).
+///
+/// ## A page of the file's title
+///
+/// A file whose title names a page of the space with blocks, a Markdown file
+/// sent with no vault, merges into that page as an Edit as Markdown save
+/// writes its buffer, in one transaction ([`ImportResult::merged`], #6277
+/// decision 7); any other is a new page `Title (n)`. A page with no blocks is
+/// filled (#5160 D12).
+#[allow(clippy::too_many_arguments)]
+pub async fn import_markdown_with_progress(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    app_data_dir: &std::path::Path,
+    content: String,
+    filename: Option<String>,
+    space_id: String,
+    dialect: ImportDialect,
+    // #1925 — referenced sibling files' bytes. `None`/empty ⇒ no attachment
+    // ingest (exact pre-#1925 behaviour).
+    vault_files: Option<Vec<VaultFile>>,
+    // #5740 — the folder pick's `.md` paths a `[[Name]]` here may name.
+    vault_notes: Option<Vec<String>>,
+    progress: Option<&dyn ImportProgressSink>,
+) -> Result<ImportResult, AppError> {
+    import_markdown_in_run(
+        pool,
+        device_id,
+        materializer,
+        app_data_dir,
+        content,
+        filename,
+        space_id,
+        dialect,
+        vault_files,
+        vault_notes,
+        &[],
+        progress,
+    )
+    .await
+}
+
+/// [`import_markdown_with_progress`] for one file of an import run, after the
+/// files that wrote `run_pages`: a file whose title names one of them is a
+/// new page `Title (n)` rather than merging into it (#6277 G5).
 // #1934 — declare identifying span fields up front so the import span can be
 // filtered/grouped by target space and size. `content`, `progress`, and the
 // heavy handles are `skip`-ped; `space_id` is recorded here (it is an arg)
@@ -605,13 +651,14 @@ pub async fn import_markdown_inner(
         progress,
         app_data_dir,
         vault_files,
-        vault_notes
+        vault_notes,
+        run_pages
     ),
     fields(blocks_total = tracing::field::Empty, space = %space_id),
     err
 )]
 #[allow(clippy::too_many_arguments)]
-pub async fn import_markdown_with_progress(
+pub async fn import_markdown_in_run(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
@@ -620,11 +667,9 @@ pub async fn import_markdown_with_progress(
     filename: Option<String>,
     space_id: String,
     dialect: ImportDialect,
-    // #1925 — referenced sibling files' bytes. `None`/empty ⇒ no attachment
-    // ingest (exact pre-#1925 behaviour).
     vault_files: Option<Vec<VaultFile>>,
-    // #5740 — the folder pick's `.md` paths a `[[Name]]` here may name.
     vault_notes: Option<Vec<String>>,
+    run_pages: &[String],
     progress: Option<&dyn ImportProgressSink>,
 ) -> Result<ImportResult, AppError> {
     // #1934 — wall-clock measurement of the whole import so duration is
@@ -655,31 +700,36 @@ pub async fn import_markdown_with_progress(
         parse_output.warnings.len(),
     );
 
-    let (mut tx, page_id) = create_import_page(
+    let file = ImportFile {
+        space_id: &space_id,
+        title: &page_title,
+        content: &content,
+        rule: MergeRule::new(
+            dialect,
+            vault_files.as_deref(),
+            vault_notes.is_some(),
+            run_pages,
+        ),
+    };
+    let page = create_import_page(
         pool,
         materializer,
         device_id,
-        &space_id,
-        &page_title,
-        &mut parse_output.warnings,
-    )
-    .await?;
-    let mut lines =
-        PropertyLines::load(&mut tx, Some(space_id.as_str()), PropertyWrite::Import).await?;
-    let values = parse_output
-        .blocks
-        .iter()
-        .flat_map(|block| &block.properties);
-    lines.resolve_refs(&mut tx, Some(&space_id), values).await?;
-    lines.keep_refused_as_text(&mut parse_output.blocks, &mut parse_output.warnings);
+        &file,
+        progress,
+        &mut parse_output,
+    );
+    let page = match Box::pin(page).await? {
+        ImportPage::Write(page) => *page,
+        ImportPage::Merged(result) => return Ok(result),
+    };
 
-    let mut counters = ImportCounters::default();
     // Bundle the read-only handles + derived identity + the running `warnings`
     // list that every phase appends to, so the phase helpers below take one
     // `&mut ImportCtx` instead of a long, repeated argument list. `warnings` is
     // seeded from the parser's diagnostics (`std::mem::take` leaves the parsed
     // struct otherwise intact so its other fields are still read by the phases).
-    let mut ctx = ImportCtx {
+    let ctx = ImportCtx {
         pool,
         device_id,
         materializer,
@@ -687,16 +737,28 @@ pub async fn import_markdown_with_progress(
         progress,
         started_at,
         space_id,
-        page_id,
-        page_title,
+        page_id: page.page_id,
+        page_title: page.title,
         blocks_total,
-        lines,
+        lines: page.lines,
         warnings: std::mem::take(&mut parse_output.warnings),
         folder: vault_notes.is_some(),
         deferred: Vec::new(),
     };
+    write_import(ctx, page.tx, &parse_output, vault_files).await
+}
 
-    let (tx, refs) = resolve_document_refs(&mut ctx, tx, &parse_output, &mut counters).await?;
+/// The import's phases once its page is open in `tx` (#662): the document's
+/// references, the chunked block insertion, then, once it has committed, the
+/// anchors and the attachments.
+async fn write_import(
+    mut ctx: ImportCtx<'_>,
+    tx: CommandTx,
+    parse_output: &import::ParseOutput,
+    vault_files: Option<Vec<VaultFile>>,
+) -> Result<ImportResult, AppError> {
+    let mut counters = ImportCounters::default();
+    let (tx, refs) = resolve_document_refs(&mut ctx, tx, parse_output, &mut counters).await?;
 
     // #2724 — the post-commit ingest (`ingest_attachments`) takes ownership of
     // these files so it can MOVE each single-attempt file's bytes out
@@ -707,7 +769,7 @@ pub async fn import_markdown_with_progress(
     let (created_block_ids, pending_attachments) = insert_blocks(
         &mut ctx,
         tx,
-        &parse_output,
+        parse_output,
         &refs,
         &vault_files,
         &mut counters,
@@ -715,12 +777,12 @@ pub async fn import_markdown_with_progress(
     .await?;
 
     // #2510 / #2567 — post-commit anchor resolution + block-ref rewrite.
-    resolve_anchor_links(&mut ctx, &parse_output, &created_block_ids, &refs).await;
+    resolve_anchor_links(&mut ctx, parse_output, &created_block_ids, &refs).await;
 
     // #1925 — post-commit attachment ingest + content rewrite.
     ingest_attachments(&mut ctx, vault_files, pending_attachments).await;
 
-    let (collapsed, anchors) = marked_blocks(&ctx.page_id, &parse_output, &created_block_ids);
+    let (collapsed, anchors) = marked_blocks(&ctx.page_id, parse_output, &created_block_ids);
     // #128 / #1932 / #1934 — completion event + diagnostics/telemetry logging.
     Ok(finish(ctx, &counters, collapsed, anchors))
 }
@@ -926,6 +988,8 @@ pub async fn import_markdown(
     dialect: ImportDialect,
     // `None`/omitted ⇒ no attachment ingest and no note names (a plain pick).
     vault: Option<VaultImport>,
+    // The pages earlier files of this run created or merged into (#6277 G5).
+    run_pages: Vec<PageId>,
     progress: tauri::ipc::Channel<ImportProgressUpdate>,
     ctx: State<'_, WriteCtx>,
 ) -> Result<ImportResult, AppError> {
@@ -939,7 +1003,8 @@ pub async fn import_markdown(
     let app_data_dir = crate::app_paths::resolve_app_data_dir(&app).map_err(AppError::Io)?;
     let (vault_files, vault_notes) =
         vault.map_or((None, None), |vault| (Some(vault.files), Some(vault.notes)));
-    import_markdown_with_progress(
+    let run_pages: Vec<String> = run_pages.into_iter().map(PageId::into_string).collect();
+    import_markdown_in_run(
         ctx.pool(),
         ctx.device_id(),
         ctx.materializer(),
@@ -950,6 +1015,7 @@ pub async fn import_markdown(
         dialect,
         vault_files,
         vault_notes,
+        &run_pages,
         Some(&crate::main_thread::UiChannel::new(app, progress)),
     )
     .await
@@ -996,6 +1062,10 @@ pub use paste::*;
 #[path = "markdown_import.rs"]
 mod import_core;
 pub use import_core::*;
+
+#[path = "markdown_import_merge.rs"]
+mod import_merge;
+pub use import_merge::*;
 
 #[path = "markdown_import_front_matter.rs"]
 mod import_front_matter;

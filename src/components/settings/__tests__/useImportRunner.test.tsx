@@ -131,13 +131,15 @@ describe('useImportRunner', () => {
     // Outcome aggregate.
     expect(outcome).toEqual({
       totalBlocks: 3,
+      pagesUpdated: 0,
       succeededFiles: 1,
       failedFiles: [{ name: 'bad.md', reason: 'bad' }],
       cancelled: false,
       navTitle: 'ok',
     })
 
-    // IPC shape: (content, path, spaceId, dialect, onProgress fn, vaultFiles, vaultNotes).
+    // IPC shape: (content, path, spaceId, dialect, onProgress fn, vaultFiles, vaultNotes,
+    // runPages).
     expect(mockImportMarkdown).toHaveBeenNthCalledWith(
       1,
       'c-ok.md',
@@ -147,6 +149,7 @@ describe('useImportRunner', () => {
       expect.any(Function),
       null,
       null,
+      [],
     )
 
     // The per-unit failure is logged at ERROR with a name-distinct message.

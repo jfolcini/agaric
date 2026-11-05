@@ -21,6 +21,7 @@ import {
   BibliographyResultPanel,
   useBibliographyImport,
 } from '@/components/settings/BibliographySection'
+import { ImportMergeDialog } from '@/components/settings/ImportMergeDialog'
 import { type FailedFile, useImportRunner } from '@/components/settings/useImportRunner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -80,6 +81,7 @@ export function ImportSection(): React.ReactElement {
 
   const {
     importing,
+    mergeQuestion,
     setImporting,
     importResult,
     detailsExpanded,
@@ -146,15 +148,16 @@ export function ImportSection(): React.ReactElement {
         return warnings
       }
 
-      const { totalBlocks, succeededFiles, failedFiles, cancelled, navTitle } = await run({
-        event: e,
-        activeSpaceId,
-        units,
-        notes: false,
-        loggerFailLabel: 'file import failed',
-        initialWarnings: restored.warnings,
-        finalWarnings: skippedWarnings,
-      })
+      const { totalBlocks, pagesUpdated, succeededFiles, failedFiles, cancelled, navTitle } =
+        await run({
+          event: e,
+          activeSpaceId,
+          units,
+          notes: false,
+          loggerFailLabel: 'file import failed',
+          initialWarnings: restored.warnings,
+          finalWarnings: skippedWarnings,
+        })
 
       const viewAction =
         navTitle != null
@@ -170,7 +173,7 @@ export function ImportSection(): React.ReactElement {
         // #1927 — user aborted mid-loop. Report how many imported before
         // cancel rather than a generic success/error.
         notify(t('data.importCancelled', { count: succeededFiles }))
-      } else if (totalBlocks === 0) {
+      } else if (totalBlocks === 0 && pagesUpdated === 0) {
         // Nothing imported — either every file failed or all files were
         // empty. Never fire a success toast here (#1928); surface an error.
         notify.error(
@@ -231,14 +234,15 @@ export function ImportSection(): React.ReactElement {
         }
       }
 
-      const { totalBlocks, succeededFiles, failedFiles, cancelled, navTitle } = await run({
-        event: e,
-        activeSpaceId,
-        units,
-        notes: true,
-        loggerFailLabel: 'enex note failed',
-        initialFailures: parseFailures,
-      })
+      const { totalBlocks, pagesUpdated, succeededFiles, failedFiles, cancelled, navTitle } =
+        await run({
+          event: e,
+          activeSpaceId,
+          units,
+          notes: true,
+          loggerFailLabel: 'enex note failed',
+          initialFailures: parseFailures,
+        })
 
       const viewAction =
         navTitle != null
@@ -252,7 +256,7 @@ export function ImportSection(): React.ReactElement {
 
       if (cancelled) {
         notify(t('data.importCancelled', { count: succeededFiles }))
-      } else if (totalBlocks === 0) {
+      } else if (totalBlocks === 0 && pagesUpdated === 0) {
         // #2513 — nothing imported. Each PARSE failure already fired its own
         // per-file error toast above (`importEnexParseFailed`), so the summary
         // fallback must only fire when there is MORE to say: a note that PARSED
@@ -330,15 +334,16 @@ export function ImportSection(): React.ReactElement {
         }
       }
 
-      const { totalBlocks, succeededFiles, failedFiles, cancelled, navTitle } = await run({
-        event: e,
-        activeSpaceId,
-        units,
-        notes: true,
-        loggerFailLabel: 'jex note import failed',
-        initialWarnings: preWarnings,
-        initialFailures: parseFailures,
-      })
+      const { totalBlocks, pagesUpdated, succeededFiles, failedFiles, cancelled, navTitle } =
+        await run({
+          event: e,
+          activeSpaceId,
+          units,
+          notes: true,
+          loggerFailLabel: 'jex note import failed',
+          initialWarnings: preWarnings,
+          initialFailures: parseFailures,
+        })
 
       const viewAction =
         navTitle != null
@@ -352,7 +357,7 @@ export function ImportSection(): React.ReactElement {
 
       if (cancelled) {
         notify(t('data.importCancelled', { count: succeededFiles }))
-      } else if (totalBlocks === 0) {
+      } else if (totalBlocks === 0 && pagesUpdated === 0) {
         // #2513 — nothing imported. Each PARSE failure already fired its own
         // per-file toast, so the summary fallback only fires when there is MORE
         // to say (a note that PARSED but failed to import, or an empty
@@ -693,6 +698,7 @@ export function ImportSection(): React.ReactElement {
               warnings,
               blocksCreated,
               propertiesSet,
+              pagesUpdated,
               importedCount,
               cancelled,
               pageTitle,
@@ -738,6 +744,8 @@ export function ImportSection(): React.ReactElement {
                     {t('data.importResultSummary', { title, count: blocksCreated })}
                     {propertiesSet > 0 &&
                       `, ${t('data.importResultProperties', { count: propertiesSet })}`}
+                    {pagesUpdated > 0 &&
+                      `, ${t('data.importResultUpdated', { count: pagesUpdated })}`}
                   </p>
                 )}
                 {/* #1927 — post-import navigation: jump to what was
@@ -821,6 +829,7 @@ export function ImportSection(): React.ReactElement {
           })()}
         {/* #1454 — bibliography import outcome (summary + warnings). */}
         {bibResult && <BibliographyResultPanel result={bibResult} />}
+        <ImportMergeDialog question={mergeQuestion} />
       </CardContent>
     </Card>
   )
