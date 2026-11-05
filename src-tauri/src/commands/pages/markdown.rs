@@ -1170,8 +1170,7 @@ fn render_block(
         .filter(|prop| prop.key != "completed_at" && !written.contains(&prop.key.as_str()))
     {
         let value = import::write_source_property_value(&frontmatter_row_value(prop, ref_titles));
-        output.push_str(&format!("{prop_indent}{}:: {value}
-", prop.key));
+        output.push_str(&format!("{prop_indent}{}:: {value}\n", prop.key));
     }
 
     // #2961 — emit a link line for each block-scoped (non-inline)
