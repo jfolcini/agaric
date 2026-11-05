@@ -2296,7 +2296,7 @@ describe('PageModeEditor properties (#5743)', () => {
       container
         .querySelector(`[data-page-block-id="${ids[0]}"] .repeat-indicator`)
         ?.getAttribute('aria-label'),
-    ).toBe(t('block.repeats', { value: '+1w' }))
+    ).toBe(t('block.repeats', { value: 'every 1 week' }))
     // The rule has its chip; the stamps the task's state wrote are the app's.
     expect(chips(container, ids[0] as string)).toEqual([])
     expect(

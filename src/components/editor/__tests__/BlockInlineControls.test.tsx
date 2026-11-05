@@ -609,6 +609,21 @@ describe('BlockMetadataRow', () => {
     expect(indicator.getAttribute('aria-label')).toContain('weekly')
   })
 
+  // #5745 S3: a screen reader reads the rule the chip shows, never its raw syntax.
+  it.each(['+1w', '.+3d', '++monthly'])(
+    'names the repeat chip by the rule it shows (%s)',
+    (rule) => {
+      const { container } = renderMetadata(
+        makeMetaProps({ properties: [{ key: 'repeat', value: rule }] }),
+      )
+      const indicator = container.querySelector('.repeat-indicator') as HTMLElement
+      expect(indicator.textContent).not.toBe(rule)
+      expect(indicator.getAttribute('aria-label')).toBe(
+        t('block.repeats', { value: indicator.textContent }),
+      )
+    },
+  )
+
   it('renders property chips up to 3', () => {
     const filtered = [
       { key: 'a', value: 'v1' },
