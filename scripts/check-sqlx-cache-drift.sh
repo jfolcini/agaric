@@ -55,9 +55,9 @@
 #      that apart from a genuine full retirement — both look like "gone
 #      from every cache that ever had it." This is the SAME failure mode
 #      #3901 exists to catch, just outside this check's blind spot; the
-#      per-PR CI net for this shape is `.github/actions/sqlx-offline-check`'s
-#      `cargo sqlx prepare --check` lanes in `_validate.yml`'s `lint` job
-#      (one per crate, run on every PR via `ci.yml`) — see prek.toml's
+#      per-PR CI net for this shape is `scripts/clippy-sqlx-check.sh`, the
+#      `prepare --check` of every crate's cache in `_validate.yml`'s `lint`
+#      job (run on every PR via `ci.yml`) — see prek.toml's
 #      hook comment for the full picture, including the LOCAL-only
 #      `--range` backstop and the separate scheduled
 #      `cargo sqlx prepare --check` in `scheduled-deep-checks.yml`.

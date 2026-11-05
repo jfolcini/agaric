@@ -63,7 +63,7 @@ After adding or changing a `sqlx::query!` / `sqlx::query_scalar!` /
 error: `.sqlx` is missing one or more queries
 ```
 
-Pre-push Phase E and CI's `sqlx-offline-check` lanes fail for the same reason.
+Pre-push Phase E and CI's sqlx cache check (`scripts/clippy-sqlx-check.sh` in `lint`) fail for the same reason.
 
 ### Cause
 
@@ -192,7 +192,7 @@ cargo tauri dev
 where it's absent), but it's behind the migrations directory — e.g. you
 pulled a branch that added new migrations. `cargo sqlx prepare --check`
 (pre-push Phase E of `scripts/verify-ci-equivalent.sh`, and the equivalent
-`sqlx-offline-check` lanes in CI) fails with a schema-mismatch error rather
+`scripts/clippy-sqlx-check.sh` step in CI) fails with a schema-mismatch error rather
 than a missing-file error, for example:
 
 ```text
