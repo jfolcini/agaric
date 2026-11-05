@@ -1,4 +1,5 @@
 import type * as React from 'react'
+import { useState } from 'react'
 
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
@@ -32,6 +33,12 @@ export function MenuSheet({
   children,
   ...contentProps
 }: MenuSheetProps): React.ReactElement {
+  // A closing sheet keeps the rows it showed while open. The row a user picks
+  // can change what the menu renders (Edit as Markdown drops the edit-mode
+  // rows), and a sheet that re-laid out while sliding away moved another row
+  // under the finger still on the screen (#6347).
+  const [rowsWhileOpen, setRowsWhileOpen] = useState(children)
+  if (open && rowsWhileOpen !== children) setRowsWhileOpen(children)
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       {trigger}
@@ -44,7 +51,7 @@ export function MenuSheet({
       >
         <SheetTitle className="sr-only">{title}</SheetTitle>
         <ScrollArea className="min-h-0 flex-1" viewportClassName="[&>div]:!block">
-          {children}
+          {open ? children : rowsWhileOpen}
         </ScrollArea>
       </SheetContent>
     </Sheet>
