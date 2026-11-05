@@ -5651,6 +5651,27 @@ pub(crate) async fn snapshot_tags_by_norm(
     Ok(map)
 }
 
+/// The spelling an inbound tag `token` (`#[[multi word]]`, a front-matter
+/// item) is stored under (#6278 I4): as written when the space already holds
+/// that name, as a tag named before the rule may; else with each whitespace
+/// run a `-`, named in `warnings`, since a new tag name holds none.
+fn inbound_tag_spelling(
+    token: &str,
+    existing: &HashMap<String, String>,
+    warnings: &mut Vec<String>,
+) -> String {
+    if existing.contains_key(&agaric_core::tag_norm::normalize_tag_name(token)) {
+        return token.to_owned();
+    }
+    let dashed = token.split_whitespace().collect::<Vec<_>>().join("-");
+    if dashed != token {
+        warnings.push(format!(
+            "tag '{token}' was read as '{dashed}': a tag name holds no whitespace"
+        ));
+    }
+    dashed
+}
+
 /// The resolved tag state [`resolve_tag_names`] returns with the
 /// transaction: by normalised name, by token, and the pre-pass snapshot.
 type ResolvedTags = (
@@ -5693,8 +5714,9 @@ async fn resolve_tag_names(
     // (resolve-or-create). This mirrors the wiki-link pre-pass above: resolve a
     // tag by its NORMALIZED name
     // (`tag_norm::normalize_tag_name` — the engine's tag identity key) else
-    // create a new `block_type='tag'` block whose content is the display name,
-    // and return its ULID. NO explicit `block_tags` association is written:
+    // create a new `block_type='tag'` block whose content is the display name
+    // (each whitespace run a `-`, #6278 I4), and return its ULID. NO explicit
+    // `block_tags` association is written:
     // typing/pasting `#tag` in the editor creates an INLINE ref (materialized
     // into `block_tag_refs` from the `#[ULID]` content by the `CreateBlock`
     // dispatch's `ReindexBlockTagRefs` task — identical to how `[[ULID]]` page
@@ -5715,7 +5737,8 @@ async fn resolve_tag_names(
     let mut resolved_tag_tokens: HashMap<String, String> = HashMap::new();
     let existing_tag_by_norm = snapshot_tags_by_norm(&mut tx, space_id).await?;
     for token_name in tag_token_names {
-        let norm = agaric_core::tag_norm::normalize_tag_name(&token_name);
+        let name = inbound_tag_spelling(&token_name, &existing_tag_by_norm, ctx.warnings);
+        let norm = agaric_core::tag_norm::normalize_tag_name(&name);
 
         // Already resolved/created in this pass (case/dedup convergence).
         if let Some(ulid) = resolved_tag_norm.get(&norm) {
@@ -5744,7 +5767,7 @@ async fn resolve_tag_names(
             materializer.loro_state(),
             device_id,
             "tag".into(),
-            token_name.clone(),
+            name,
             None,
             None,
             // #2849 PR2: server-generated id.
@@ -5867,7 +5890,8 @@ async fn resolve_or_create_frontmatter_tag(
     resolved_tag_norm: &mut HashMap<String, String>,
     existing_tag_by_norm: &HashMap<String, String>,
 ) -> Result<Option<String>, AppError> {
-    let norm = agaric_core::tag_norm::normalize_tag_name(tag_name);
+    let tag_name = inbound_tag_spelling(tag_name, existing_tag_by_norm, &mut ctx.warnings);
+    let norm = agaric_core::tag_norm::normalize_tag_name(&tag_name);
     if let Some(id) = resolved_tag_norm.get(&norm) {
         return Ok(Some(id.clone()));
     }
@@ -5884,7 +5908,7 @@ async fn resolve_or_create_frontmatter_tag(
         ctx.materializer.loro_state(),
         ctx.device_id,
         "tag".into(),
-        tag_name.to_string(),
+        tag_name.clone(),
         None,
         None,
         // #2849 PR2: server-generated id.

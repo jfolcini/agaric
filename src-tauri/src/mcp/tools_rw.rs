@@ -19,7 +19,7 @@
 //! | `create_page` | [`create_block_inner_with_space`] | `block_type = "page"`, `parent_id = None`. |
 //! | `delete_block` | [`delete_block_inner`] | Soft delete. Reversible via `reverse.rs`. |
 //! | `move_page_to_space` | [`move_blocks_to_space_inner`] | Page blocks only: a page moves with its content blocks. A move that would drop properties the target space defines differently is refused until `acknowledge_property_loss` names them; a title the target space holds is refused. |
-//! | `create_tag` | [`create_block_inner_with_space`] | `block_type = "tag"`; returns the space's same-name tag when one exists. |
+//! | `create_tag` | [`create_block_inner_with_space`] | `block_type = "tag"`; returns the space's same-name tag when one exists, else refuses a name holding whitespace. |
 //! | `delete_property` | [`delete_property_inner`] | Rejects `space`; the inner refuses system-managed keys. |
 //! | `undo` | [`revert_ops_inner`] | Reverts `op_refs` as one op group. Refuses an op another origin wrote. |
 //! | `capture` | [`capture_to_journal_inner`] | #5396 — Markdown at the end of a day's journal page, creating the day with its template, in one transaction. `date` is `today` (default), `yesterday` or `YYYY-MM-DD` on the device's clock. |
@@ -730,7 +730,7 @@ fn tool_desc_create_tag() -> ToolDescription {
             "additionalProperties": false,
             "required": ["name", "space_id"],
             "properties": {
-                "name": { "type": "string", "description": "Tag name (becomes the tag's content)." },
+                "name": { "type": "string", "description": "Tag name (becomes the tag's content). A new tag's name holds no whitespace: write `deep-work`, not `deep work`." },
                 "space_id": { "type": "string", "description": "ULID of the space the tag belongs to." },
             },
         }),
