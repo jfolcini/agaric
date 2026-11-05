@@ -1126,6 +1126,20 @@ mod tests {
         }
     }
 
+    /// An import ingests a vault, Joplin or Evernote file by the type its name
+    /// guesses, so every extension the app takes must guess an allowed type,
+    /// or that file is skipped (#6032): Obsidian records audio as `.webm`.
+    #[test]
+    fn an_import_takes_every_attachment_extension_6032() {
+        for (extension, _) in ATTACHMENT_EXTENSIONS {
+            let guessed = agaric_engine::import::guess_attachment_mime(&format!("a.{extension}"));
+            assert!(
+                is_mime_allowed(&guessed),
+                "`.{extension}` guesses {guessed}, which the allow-list refuses"
+            );
+        }
+    }
+
     #[test]
     fn a_refused_type_is_told_every_allowed_pattern_5410() {
         let err = validate_new_attachment("clip.mp4", "video/mp4", 1).unwrap_err();
