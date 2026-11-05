@@ -3,7 +3,7 @@
  * `[[name]]` and `#tag` tokens `scanNameTokens` finds are resolved in one
  * space and written as ids, creating the pages and tags no name there matches.
  * Mirrors `resolve_inbound_page_links` / `resolve_tag_names` in
- * `src-tauri/src/commands/pages/markdown.rs` (#5160 N4):
+ * `src-tauri/src/commands/pages/markdown_import_links.rs` (#5160 N4):
  *
  *   - a page is the title under `nameKey`, else the alias under it, else
  *     created; where several pages hold the name, the lowest id does

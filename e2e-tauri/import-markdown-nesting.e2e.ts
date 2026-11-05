@@ -6,7 +6,7 @@
 // prove what the real importer does with an indented list and a `[[link]]`:
 // `parse_markdown_file` (agaric-engine/src/import.rs) turns two-space
 // indentation into depth, and `resolve_inbound_page_links`
-// (commands/pages/markdown.rs) creates the missing target page and rewrites
+// (commands/pages/markdown_import_links.rs) creates the missing target page and rewrites
 // the link to its ULID. Both are asserted here through the page editor AFTER a
 // navigation round-trip, i.e. on what the backend actually stored.
 //

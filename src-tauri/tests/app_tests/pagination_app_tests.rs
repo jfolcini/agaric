@@ -594,8 +594,8 @@ mod block_row_canonical_conformance {
                 include_str!("../../src/commands/journal.rs"),
             ),
             (
-                "commands/pages/markdown.rs",
-                include_str!("../../src/commands/pages/markdown.rs"),
+                "commands/pages/markdown_export.rs",
+                include_str!("../../src/commands/pages/markdown_export.rs"),
             ),
             (
                 "commands/pages/listing.rs",
@@ -695,7 +695,7 @@ mod block_row_canonical_conformance {
         // SELECT.
         // #660: export_page_markdown_inner inlined its page-row lookup as a
         // canonical-column `query_as!(BlockRow, …)` (snapshot-isolation fix),
-        // adding one site in commands/pages/markdown.rs → 16.
+        // adding one site in commands/pages/markdown_export.rs → 16.
         const EXPECTED_HITS: usize = 16;
         assert_eq!(
             total_hits, EXPECTED_HITS,

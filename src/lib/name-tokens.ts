@@ -2,7 +2,7 @@
  * The name tokens the text surfaces resolve: `[[Page]]` links, `#tag` and
  * `#[[multi word]]` tags (#5160 N1, N3). The rules are the backend's
  * (`collect_inbound_page_link_bodies` / `collect_inbound_tag_names` in
- * `src-tauri/src/commands/pages/markdown.rs`), and both sides are pinned to the
+ * `src-tauri/src/commands/pages/markdown_links.rs`), and both sides are pinned to the
  * same rows of `conformance/reference-tokens.vectors.json` by
  * `reference-tokens-conformance.test.ts`. The Tauri mock resolves names
  * through this scan, and the editor's typed tag (`completedTag` in

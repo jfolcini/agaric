@@ -4,7 +4,7 @@
 //
 // Only the real importer decides whether a second file titled like the empty
 // page an earlier file's link created adopts that page or mints a twin
-// (`create_import_page` in commands/pages/markdown.rs). The frontend imports
+// (`create_import_page` in commands/pages/markdown_import.rs). The frontend imports
 // one file per IPC, in FileList order, so both orders are driven here: A (which
 // links `[[B]]`) then B, and B then A. Each order must leave exactly one page
 // `B`, holding B's block, with A's link chip resolving to it — asserted after a

@@ -17,6 +17,9 @@ pub(crate) mod markdown_yaml;
 pub mod metadata;
 pub mod opens;
 
+// `markdown`'s seam modules name these by `super::super::` paths.
+use super::{blocks, properties};
+
 pub use aliases::*;
 pub use bibliography::*;
 pub use links::*;

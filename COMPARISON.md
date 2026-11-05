@@ -374,7 +374,7 @@ reachable from the browser, and a token-scoped REST API landed on master after 2
 | Dynamic variables | `<% today %>`, `<% time %>`, `<% current page %>` | Two grammars: legacy (`today`, `time`, `date±N`, `weekday`, … with `:FORMAT`) and `{{date}}`, `{{time}}`, `{{title}}`, `{{cursor}}`; journal weekday/month names English-only (`src-tauri/src/commands/journal.rs`) | Better |
 | Default journal template | `:default-templates` | `journal-template=true` pages, applied in the caller's transaction (#5395) | Better |
 | Template including parent | `template-including-parent:: true` | **Absent** | Gap |
-| **Block properties in templates** | Carried through; 2.0.2 tag-template fixes | **Journal templates carry them** (`copy_page_blocks_in_tx` in `src-tauri/src/commands/pages/markdown.rs`, #5395); **`/template` still drops them** (`properties: {}`) | Partial |
+| **Block properties in templates** | Carried through; 2.0.2 tag-template fixes | **Journal templates carry them** (`copy_page_blocks_in_tx` in `src-tauri/src/commands/pages/markdown_paste.rs`, #5395); **`/template` still drops them** (`properties: {}`) | Partial |
 
 ### 15. Import / Export
 
