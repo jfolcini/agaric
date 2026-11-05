@@ -215,8 +215,7 @@ function tildeFence(src: string, at: number): [string, number] | null {
   while (src[at + open] === '~') open++
   if (open < 3) return null
   const firstBreak = src.indexOf('\n', at)
-  if (firstBreak === -1) return null
-  let lineStart = firstBreak + 1
+  let lineStart = firstBreak === -1 ? src.length + 1 : firstBreak + 1
   while (lineStart <= src.length) {
     const nextBreak = src.indexOf('\n', lineStart)
     const lineEnd = nextBreak === -1 ? src.length : nextBreak
