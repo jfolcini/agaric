@@ -92,9 +92,9 @@ fn check_attachment_budget(file_count: usize, total_bytes: u64) -> Result<(), Ap
 ///
 /// #1920 — this regex (`\[\[([^\]\n]+?)\]\]`) is the one source of the inbound
 /// wiki-link grammar. Import and paste ([`paste_blocks_inner`], #1484) both
-/// resolve through it: `[[Page]]` → ULID, create-if-missing, ambiguous
-/// duplicate titles stay plain text. `page_link_re_parity_*` pins it over the
-/// fixture `conformance/reference-tokens.vectors.json`.
+/// resolve through it: `[[Page]]` → ULID, create-if-missing, a title several
+/// pages share links the lowest id (#6278). `page_link_re_parity_*` pins it
+/// over the fixture `conformance/reference-tokens.vectors.json`.
 static HUMAN_PAGE_LINK_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
     regex::Regex::new(r"\[\[([^\]\n]+?)\]\]").expect("invalid human page-link regex")
 });
@@ -238,11 +238,11 @@ fn split_wikilink_anchor(name: &str) -> (&str, Option<&str>) {
 }
 
 /// The ways a wiki-link body reads as a name and a label, in the order the
-/// name pass tries them (#5160 D9, D10 exact title first): the whole body with
-/// no label, then each prefix ending before a `|`, longest first, labelled
-/// with the text after that `|`. Names and labels are trimmed, and an empty
-/// label is none. The last reading splits on the first `|`; its name is what
-/// [`split_wikilink_anchor`] then reads, so `A#B|label` anchors `A#B`.
+/// name pass tries them (#5160 D9, D10): the whole body with no label, then
+/// each prefix ending before a `|`, longest first, labelled with the text after
+/// that `|`. Names and labels are trimmed, and an empty label is none. The last
+/// reading splits on the first `|`; its name is what [`split_wikilink_anchor`]
+/// then reads, so `A#B|label` anchors `A#B`.
 fn link_body_readings(body: &str) -> Vec<(&str, Option<&str>)> {
     let mut readings = vec![(body.trim(), None)];
     for (at, _) in body.rmatch_indices('|') {
@@ -254,19 +254,14 @@ fn link_body_readings(body: &str) -> Vec<(&str, Option<&str>)> {
 
 /// How a wiki-link body reads (#5160 D10): the first of its
 /// [`link_body_readings`] whose name names a page in `matches`, else the split
-/// on its first `|`, which the name pass resolves or creates. `None` when a
-/// reading's name ties: the link stays text.
-fn read_link_body<'a>(body: &'a str, matches: &LinkMatches) -> Option<(&'a str, Option<&'a str>)> {
+/// on its first `|`, which the name pass resolves or creates.
+fn read_link_body<'a>(body: &'a str, matches: &LinkMatches) -> (&'a str, Option<&'a str>) {
     let readings = link_body_readings(body);
     let (first_split, longer) = readings.split_last().expect("the whole body is a reading");
-    for &(name, label) in longer {
-        match matches.find_name(name) {
-            Some(LinkMatch::Unique(_)) => return Some((name, label)),
-            Some(LinkMatch::Ambiguous) => return None,
-            None => {}
-        }
-    }
-    Some(*first_split)
+    *longer
+        .iter()
+        .find(|(name, _)| matches.find_name(name).is_some())
+        .unwrap_or(first_split)
 }
 
 /// Write the stored link to `ulid`: labelled unless the label is empty or the
@@ -433,8 +428,8 @@ fn rewrite_logseq_labelled_links(content: &str) -> std::borrow::Cow<'_, str> {
 /// Rewrite human-readable `[[Page Name]]` tokens in `content` to internal
 /// `[[ULID]]` refs through `links` (#1446 Part B): each body's reading, then
 /// the reading's name's page. A body with no reading, or whose name has no page
-/// (unresolvable / ambiguous duplicate title / creation failure), is left as
-/// its original plain-text token — nothing is dropped.
+/// (unresolvable / creation failure), is left as its original plain-text
+/// token — nothing is dropped.
 /// Canonical `[[ULID]]` tokens already in the content are left untouched.
 /// Code blocks (`is_code`) are handled by the CALLER (skipped before this
 /// runs); inline-code spans are skipped here (#3605) — the exact split
@@ -776,9 +771,9 @@ fn tag_reads_back_bare(before: &str, name: &str, after: &str) -> bool {
 /// The check runs the importer's own name collection and rewrite over the
 /// named text, with `is_code` as the parser will read the block; only the
 /// resolution comes from `names` instead of the database, and nothing is
-/// created. A name can be unique and still not come back: `[[Foo|Bar]]` reads
-/// as the page `Foo|Bar` when one exists (#5160 D10), and `#v1.2` as the tag
-/// `v1`.
+/// created. A name can be the page's own and still not come back: `[[Foo|Bar]]`
+/// reads as the page `Foo|Bar` when one exists (#5160 D10), and `#v1.2` as the
+/// tag `v1`.
 fn humanise_refs_for_source(
     content: &str,
     is_code: bool,
@@ -817,18 +812,14 @@ struct NameSnapshot {
 
 impl NameSnapshot {
     /// What the importer's page-link pass would make of each link body
-    /// without creating a page: its reading ([`read_link_body`]), when the
-    /// name read is the one in-space page with exactly that title. The render
-    /// writes titles, and an exact title wins before any case or alias match
-    /// (N4), so nothing else can claim the name.
+    /// without creating a page: its reading ([`read_link_body`]) and the page
+    /// the name read names, the lowest id holding it (#6278).
     fn page_links(&self, bodies: impl IntoIterator<Item = String>) -> PageLinks {
         let mut links = PageLinks::default();
         for body in bodies {
-            let Some((name, label)) = read_link_body(&body, &self.pages) else {
-                continue;
-            };
-            if let Some([id]) = self.pages.exact.get(name).map(Vec::as_slice) {
-                links.ids.insert(name.to_string(), id.clone());
+            let (name, label) = read_link_body(&body, &self.pages);
+            if let Some(id) = self.pages.find(name) {
+                links.ids.insert(name.to_string(), id.to_string());
                 let reading = (name.to_string(), label.map(str::to_string));
                 links.readings.insert(body, reading);
             }
@@ -1001,7 +992,8 @@ enum PageRead {
 /// leaves the app, which a paste reads: a block carries its `^ID` only when it
 /// would not read back without it. `Agent` is the page an MCP agent reads
 /// (#5375): `Document`, every block with its `^ID` so the agent can name the
-/// block it edits next, but with the export's names, which may be ambiguous.
+/// block it edits next, but with the export's names, which need not read back
+/// to the page they name.
 /// `File` is the Markdown mirror's file (#5363): `Document`, with a `^ID`
 /// only on a block [`file_anchors`] names, and otherwise as the clipboard
 /// writes one.
@@ -3055,8 +3047,7 @@ fn pasted_as_text(block: &import::ParsedBlock, starts_line: bool) -> String {
 /// returned. The names in `before` and `after` are left as they are.
 ///
 /// A property line a definition refuses stays text at the end of its block,
-/// and a name that ties between two pages stays text; the reply's warnings
-/// name each (#5160 D11).
+/// and the reply's warnings name each (#5160 D11).
 ///
 /// # Errors
 ///
@@ -3234,8 +3225,8 @@ pub(crate) async fn append_markdown_in_tx(
 /// `index`, or at the end with none, as one transaction (MCP `append_block`,
 /// #5397). Its `[[Name]]` and `#name` are resolved in the parent's space as a
 /// paste resolves them, creating the page or tag no name there matches; the
-/// rest stays as written. Returns the block and the warnings naming a name
-/// left as text.
+/// rest stays as written. Returns the block and the warnings the name pass
+/// gave (a dropped anchor or label).
 pub(crate) async fn append_block_resolving_names(
     pool: &SqlitePool,
     device_id: &str,
@@ -3297,7 +3288,7 @@ pub(crate) async fn append_block_resolving_names_in_tx(
 /// `update_block_content`, #5397). A content block's `[[Name]]` and `#name`
 /// are resolved as [`append_block_resolving_names`] resolves them; a page's
 /// title and a tag's name are kept as written. Returns the block and the
-/// warnings naming a name left as text.
+/// warnings the name pass gave.
 pub(crate) async fn edit_block_resolving_names(
     pool: &SqlitePool,
     device_id: &str,
@@ -3494,8 +3485,8 @@ async fn splice_into_anchor(
 /// form ([`normalize_foreign_forms`]), then resolve the page links and tags they
 /// write as names in `anchor`'s space, creating what no name there matches,
 /// and write each block's content with their ids. Returns the pages and tags
-/// created; a name left as text is named in `warnings`. With no space, every
-/// name stays text.
+/// created; a dropped anchor or label is named in `warnings`. With no space,
+/// every name stays text.
 async fn resolve_pasted_names(
     mut tx: CommandTx,
     materializer: &Materializer,
@@ -4540,19 +4531,18 @@ async fn create_import_page(
 
     crate::commands::spaces::require_live_space_in_tx(&mut tx, space_id).await?;
 
-    // #5160 D12 — a unique page of this title with no blocks (the placeholder
-    // a `[[link]]` in an earlier file created) is adopted, so the links to it
-    // resolve. The title exact or case-folded, never an alias: an alias names
-    // a page of another title. A page with content is never touched.
+    // #5160 D12 — the page of this title, the lowest id where several share
+    // it (#6278), is adopted when it has no blocks (the placeholder a
+    // `[[link]]` in an earlier file created), so the links to it resolve. The
+    // title under `name_key`, never an alias: an alias names a page of another
+    // title. A page with content is never touched.
     let title = [page_title.to_string()];
     let matches = snapshot_page_link_matches(&mut tx, space_id, &title).await?;
-    let same_title = matches.exact.get(page_title).or_else(|| {
-        matches
-            .folded
-            .get(&agaric_core::tag_norm::normalize_tag_name(page_title))
-    });
-    match same_title.map(Vec::as_slice) {
-        Some([id]) if !page_has_blocks(&mut tx, id).await? => {
+    let same_title = matches
+        .folded
+        .get(&agaric_core::tag_norm::name_key(page_title));
+    match same_title {
+        Some(id) if !page_has_blocks(&mut tx, id).await? => {
             return Ok((tx, id.clone()));
         }
         Some(_) => warnings.push(format!(
@@ -5092,38 +5082,27 @@ fn deferred_anchor(
 }
 
 /// The in-space pages a set of link names may resolve to, read once for the
-/// whole pass (#2200: one query per map, never one per name). Each map keeps
-/// at most the [`MAX_NAME_CANDIDATES`] smallest ids per key (`ORDER BY id
-/// ASC`): a link needs only "one" or "more", an MCP name tie lists them. The
-/// importing page (created in this tx) is visible, so a self-reference
+/// whole pass (#2200: one query per map, never one per name). Where several
+/// pages hold a key, the lowest id holds it (#6278), so each map keeps that one.
+/// The importing page (created in this tx) is visible, so a self-reference
 /// resolves to it.
 #[derive(Default)]
 struct LinkMatches {
-    /// Exact title → ids.
-    exact: HashMap<String, Vec<String>>,
-    /// Title folded as a tag name is (`normalize_tag_name`: NFC, Unicode
-    /// lowercase, NFC) → ids.
-    folded: HashMap<String, Vec<String>>,
-    /// Alias folded the same way → page ids. `page_aliases.alias` is unique
-    /// only under `NOCASE`, which folds ASCII alone, so `Über` and `über` can
-    /// tie.
-    aliases: HashMap<String, Vec<String>>,
+    /// Title under [`name_key`](agaric_core::tag_norm::name_key) (trim, case,
+    /// NFC) → id.
+    folded: HashMap<String, String>,
+    /// Alias under the same key → page id.
+    aliases: HashMap<String, String>,
     /// Every matched page's title by id.
     titles: HashMap<String, String>,
 }
 
-/// One rule's answer for a name: the page it names, or that two pages tie.
-enum LinkMatch {
-    Unique(String),
-    Ambiguous,
-}
-
 impl LinkMatches {
-    fn push(map: &mut HashMap<String, Vec<String>>, key: String, id: String) {
-        let ids = map.entry(key).or_default();
-        // One page's aliases `Ärger` and `ärger` fold to one key: one page.
-        if ids.len() < MAX_NAME_CANDIDATES && !ids.contains(&id) {
-            ids.push(id);
+    /// Record that page `id` holds `key` in `map`, unless a lower id does.
+    fn push(map: &mut HashMap<String, String>, key: String, id: String) {
+        let held = map.entry(key).or_insert_with(|| id.clone());
+        if id < *held {
+            *held = id;
         }
     }
 
@@ -5131,38 +5110,24 @@ impl LinkMatches {
     /// whole name, else, when an anchor holding no `|` follows its first `#`,
     /// the page its base names. A `|` after the `#` starts a label, so it
     /// never makes an anchor.
-    fn find_name(&self, name: &str) -> Option<LinkMatch> {
+    fn find_name(&self, name: &str) -> Option<&str> {
         let (base, anchor) = split_wikilink_anchor(name);
         let anchored = !base.is_empty() && anchor.is_some_and(|a| !a.contains('|'));
         self.find(name)
             .or_else(|| anchored.then(|| self.find(base)).flatten())
     }
 
-    /// The page `name` resolves to (#5160 N4): the exact title, else a unique
-    /// case-insensitive title, else a unique alias, else none. A case tie is
-    /// never guessed. Titles are compared whole, namespace included.
-    fn find(&self, name: &str) -> Option<LinkMatch> {
-        match self.first_rule_ids(name) {
-            [] => None,
-            [single] => Some(LinkMatch::Unique(single.clone())),
-            _ => Some(LinkMatch::Ambiguous),
-        }
-    }
-
-    /// The ids the first rule of [`Self::find`] that matches `name` finds;
-    /// empty when none does.
-    fn first_rule_ids(&self, name: &str) -> &[String] {
-        let folded = agaric_core::tag_norm::normalize_tag_name(name);
-        [
-            self.exact.get(name),
-            self.folded.get(&folded),
-            self.aliases.get(&folded),
-        ]
-        .into_iter()
-        .flatten()
-        .map(Vec::as_slice)
-        .find(|ids| !ids.is_empty())
-        .unwrap_or_default()
+    /// The page `name` resolves to (#5160 N4): the title under
+    /// [`name_key`](agaric_core::tag_norm::name_key), else an alias under it,
+    /// else none. Where several pages hold the name, the lowest id does
+    /// (#6278), however `name` is spelled. Titles are compared whole,
+    /// namespace included.
+    fn find(&self, name: &str) -> Option<&str> {
+        let key = agaric_core::tag_norm::name_key(name);
+        self.folded
+            .get(&key)
+            .or_else(|| self.aliases.get(&key))
+            .map(String::as_str)
     }
 }
 
@@ -5185,79 +5150,53 @@ fn link_lookup_names(link_names: &[String]) -> Vec<String> {
     set.into_iter().collect()
 }
 
-/// The most pages a name tie lists to an MCP agent (#5397).
-const MAX_NAME_CANDIDATES: usize = 5;
-
-/// What a name an MCP agent writes in place of an id resolves to in one space
-/// (#5397).
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum NameMatch {
-    Id(String),
-    /// The pages the name ties between, up to [`MAX_NAME_CANDIDATES`], as
-    /// `(id, title)`.
-    Tie(Vec<(String, String)>),
-    Unknown,
-}
-
-/// Resolve `names` to pages of `space_id` by the rule a pasted `[[Name]]`
-/// follows ([`LinkMatches::find`]), in one snapshot: one answer per name, in
-/// order.
+/// Resolve `names` an MCP agent writes in place of ids to pages of `space_id`
+/// by the rule a pasted `[[Name]]` follows ([`LinkMatches::find`]), in one
+/// snapshot: the page each names, in order (#5397).
 pub(crate) async fn match_page_names(
     conn: &mut sqlx::SqliteConnection,
     space_id: &str,
     names: &[String],
-) -> Result<Vec<NameMatch>, AppError> {
+) -> Result<Vec<Option<String>>, AppError> {
     let names: Vec<String> = names.iter().map(|name| name.trim().to_owned()).collect();
     let matches = snapshot_page_link_matches(conn, space_id, &names).await?;
-    let answer = |name: &String| match matches.first_rule_ids(name) {
-        [] => NameMatch::Unknown,
-        [single] => NameMatch::Id(single.clone()),
-        ids => NameMatch::Tie(
-            ids.iter()
-                .map(|id| {
-                    let title = matches.titles.get(id).cloned().unwrap_or_default();
-                    (id.clone(), title)
-                })
-                .collect(),
-        ),
-    };
-    Ok(names.iter().map(answer).collect())
+    Ok(names
+        .iter()
+        .map(|name| matches.find(name).map(str::to_owned))
+        .collect())
 }
 
 /// Resolve `names` to tags of `space_id` by the rule a pasted `#name` follows
-/// (the normalised name): one answer per name, in order. A tag name never
-/// ties.
+/// (the normalised name): the tag each names, in order.
 pub(crate) async fn match_tag_names(
     conn: &mut sqlx::SqliteConnection,
     space_id: &str,
     names: &[String],
-) -> Result<Vec<NameMatch>, AppError> {
+) -> Result<Vec<Option<String>>, AppError> {
     let tags = snapshot_tags_by_norm(conn, space_id).await?;
     Ok(names
         .iter()
         .map(|name| {
             let norm = agaric_core::tag_norm::normalize_tag_name(name.trim());
-            tags.get(&norm)
-                .map_or(NameMatch::Unknown, |id| NameMatch::Id(id.clone()))
+            tags.get(&norm).cloned()
         })
         .collect())
 }
 
 /// Read the [`LinkMatches`] for `link_names` in `space_id`: the live pages
-/// whose folded title is a folded name (which covers the exact matches), then
-/// the live pages one of the names is an alias of. SQLite cannot apply the
-/// fold, so every page and alias of the space is read and folded here; with
-/// no index on `content`, SQLite reads every page row for a title filter
-/// anyway.
+/// whose title keys like one of the names, then the live pages one of the names
+/// is an alias of. SQLite cannot apply the fold, so every page and alias of the
+/// space is read and folded here; with no index on `content`, SQLite reads
+/// every page row for a title filter anyway.
 async fn snapshot_page_link_matches(
     conn: &mut sqlx::SqliteConnection,
     space_id: &str,
     link_names: &[String],
 ) -> Result<LinkMatches, AppError> {
-    use agaric_core::tag_norm::normalize_tag_name;
+    use agaric_core::tag_norm::name_key;
     let keys: HashSet<String> = link_lookup_names(link_names)
         .iter()
-        .map(|name| normalize_tag_name(name))
+        .map(|name| name_key(name))
         .collect();
     let mut matches = LinkMatches::default();
     if keys.is_empty() {
@@ -5276,13 +5215,12 @@ async fn snapshot_page_link_matches(
     .fetch_all(&mut *conn)
     .await?;
     for r in rows {
-        let key = normalize_tag_name(&r.content);
+        let key = name_key(&r.content);
         if !keys.contains(&key) {
             continue;
         }
         LinkMatches::push(&mut matches.folded, key, r.id.clone());
-        matches.titles.insert(r.id.clone(), r.content.clone());
-        LinkMatches::push(&mut matches.exact, r.content, r.id);
+        matches.titles.insert(r.id, r.content);
     }
     let rows = sqlx::query!(
         r#"SELECT a.page_id AS "page_id!", a.alias AS "alias!", b.content AS "title?"
@@ -5297,7 +5235,7 @@ async fn snapshot_page_link_matches(
     .fetch_all(&mut *conn)
     .await?;
     for r in rows {
-        let key = normalize_tag_name(&r.alias);
+        let key = name_key(&r.alias);
         if !keys.contains(&key) {
             continue;
         }
@@ -5310,9 +5248,7 @@ async fn snapshot_page_link_matches(
 }
 
 /// Resolve one wiki-link BASE name to a page ULID, creating the page when the
-/// snapshot holds no match. `None` means the name is ambiguous (two or more
-/// same-space pages carry that title): never guess which was meant — the token
-/// is left as plain text and a non-fatal warning surfaces the loss.
+/// snapshot holds no match.
 ///
 /// `resolved_base_links` remembers this pass's own resolutions so two distinct
 /// tokens sharing one base (`[[Page#h1]]`, `[[Page#h2]]`) resolve to the SAME
@@ -5321,65 +5257,45 @@ async fn resolve_or_create_link_target(
     ctx: &mut NameCtx<'_>,
     tx: &mut CommandTx,
     base: String,
-    name: &str,
     link_matches: &LinkMatches,
     resolved_base_links: &mut HashMap<String, String>,
-) -> Result<Option<String>, AppError> {
+) -> Result<String, AppError> {
     if let Some(ulid) = resolved_base_links.get(&base) {
-        return Ok(Some(ulid.clone()));
+        return Ok(ulid.clone());
     }
-    match link_matches.find(&base) {
-        Some(LinkMatch::Unique(single)) => {
-            resolved_base_links.insert(base, single.clone());
-            Ok(Some(single))
-        }
-        None => {
-            // Create the missing target page inside this chunk's tx, then
-            // stamp its `space` ref (mirrors the importing page), so the new
-            // page is a first-class member of the import's space.
-            let (new_page, new_page_op) = create_block_in_tx(
-                &mut *tx,
-                ctx.materializer.loro_state(),
-                ctx.device_id,
-                "page".into(),
-                base.clone(),
-                None,
-                None,
-                // #2849 PR2: server-generated id.
-                None,
-            )
-            .await?;
-            tx.enqueue_background(new_page_op);
-            let new_page_id = new_page.id.clone().into_string();
-            stamp_space_property(
-                tx,
-                ctx.materializer,
-                ctx.device_id,
-                new_page_id.clone(),
-                ctx.space_id,
-            )
-            .await?;
-            ctx.created.push(new_page);
-            resolved_base_links.insert(base, new_page_id.clone());
-            Ok(Some(new_page_id))
-        }
-        Some(LinkMatch::Ambiguous) => {
-            warn_ambiguous_link(ctx, name);
-            Ok(None)
-        }
+    if let Some(found) = link_matches.find(&base) {
+        let found = found.to_owned();
+        resolved_base_links.insert(base, found.clone());
+        return Ok(found);
     }
-}
-
-/// #1933 — per-occurrence diagnostic for the lossy transform an ambiguous name
-/// takes: the `[[Name]]` link is left as plain text.
-fn warn_ambiguous_link(ctx: &mut NameCtx<'_>, name: &str) {
-    tracing::debug!(
-        name = %name,
-        "import: ambiguous wiki-link left as plain text (#1933)"
-    );
-    ctx.warnings.push(format!(
-        "wiki-link '[[{name}]]' matches multiple pages in this space; left as plain text"
-    ));
+    // Create the missing target page inside this chunk's tx, then stamp its
+    // `space` ref (mirrors the importing page), so the new page is a
+    // first-class member of the import's space.
+    let (new_page, new_page_op) = create_block_in_tx(
+        &mut *tx,
+        ctx.materializer.loro_state(),
+        ctx.device_id,
+        "page".into(),
+        base.clone(),
+        None,
+        None,
+        // #2849 PR2: server-generated id.
+        None,
+    )
+    .await?;
+    tx.enqueue_background(new_page_op);
+    let new_page_id = new_page.id.clone().into_string();
+    stamp_space_property(
+        tx,
+        ctx.materializer,
+        ctx.device_id,
+        new_page_id.clone(),
+        ctx.space_id,
+    )
+    .await?;
+    ctx.created.push(new_page);
+    resolved_base_links.insert(base, new_page_id.clone());
+    Ok(new_page_id)
 }
 
 /// Resolve every collected wiki-link token against the pre-loop snapshot,
@@ -5420,33 +5336,22 @@ async fn resolve_link_names(
             links.defer_anchor(name, deferred);
             continue;
         }
-        if anchor.is_some() {
-            // #5160 D10 — a page titled with the whole token wins.
-            match link_matches.find(name.trim()) {
-                Some(LinkMatch::Unique(id)) => {
-                    links.remember_title(&id, link_matches, name.trim());
-                    links.page_links.ids.insert(name, id);
-                    continue;
-                }
-                Some(LinkMatch::Ambiguous) => {
-                    warn_ambiguous_link(ctx, &name);
-                    continue;
-                }
-                None => {}
-            }
+        // #5160 D10 — a page titled with the whole token wins.
+        if anchor.is_some()
+            && let Some(id) = link_matches.find(name.trim())
+        {
+            links.remember_title(id, link_matches, name.trim());
+            links.page_links.ids.insert(name, id.to_owned());
+            continue;
         }
-        let Some(resolved_ulid) = resolve_or_create_link_target(
+        let resolved_ulid = resolve_or_create_link_target(
             ctx,
             &mut tx,
             base.to_string(),
-            &name,
             link_matches,
             &mut resolved_base_links,
         )
-        .await?
-        else {
-            continue;
-        };
+        .await?;
         links.remember_title(&resolved_ulid, link_matches, base);
 
         if let Some(anchor) = anchor
@@ -5640,9 +5545,8 @@ fn tree_path<'a>(
 /// chunk).
 ///
 /// Resolution is [`LinkMatches::find`]'s rule (#5160 N4), scoped to the name
-/// context's space: the exact title, else a unique case-insensitive title,
-/// else a unique alias, else the page is created; a tie is left as plain
-/// text with a warning.
+/// context's space: the title under `name_key`, else an alias, else the page is
+/// created; where several pages hold the name, the lowest id does (#6278).
 ///
 /// A name we cannot resolve or create is simply absent from the map, so the
 /// rewrite leaves its original `[[Name]]` token untouched — nothing is lost.
@@ -5668,9 +5572,9 @@ async fn resolve_inbound_page_links(
 /// Resolve wiki-link `bodies` and inline-query page `names` against one
 /// snapshot of the pages they may name: each body reads by [`read_link_body`]
 /// (#5160 D10), and the names read and `names` resolve by
-/// [`resolve_link_names`], so only a name no page matches is created. A body
-/// whose reading ties stays text, with a warning, and a label on a link that
-/// became a block ref is dropped, counted for the caller to warn of.
+/// [`resolve_link_names`], so only a name no page matches is created. A label
+/// on a link that became a block ref is dropped, counted for the caller to
+/// warn of.
 async fn resolve_page_refs(
     ctx: &mut NameCtx<'_>,
     mut tx: CommandTx,
@@ -5682,15 +5586,13 @@ async fn resolve_page_refs(
     let mut readings = HashMap::new();
     let mut read_names = std::collections::BTreeSet::new();
     for body in bodies {
-        match read_link_body(&body, &matches) {
-            None => warn_ambiguous_link(ctx, &body),
-            Some(("", _)) => {}
-            Some((name, label)) => {
-                read_names.insert(name.to_string());
-                let reading = (name.to_string(), label.map(str::to_string));
-                readings.insert(body, reading);
-            }
+        let (name, label) = read_link_body(&body, &matches);
+        if name.is_empty() {
+            continue;
         }
+        read_names.insert(name.to_string());
+        let reading = (name.to_string(), label.map(str::to_string));
+        readings.insert(body, reading);
     }
     let names = read_names.into_iter().chain(names).collect();
     let (tx, mut links) = resolve_link_names(ctx, tx, names, &matches).await?;
@@ -7528,6 +7430,7 @@ mod tests {
         cases: Vec<ReferenceTokenCase>,
         name_rule_cases: Vec<NameRuleCase>,
         page_name_fold_cases: Vec<PageNameFoldCase>,
+        page_tie_cases: Vec<PageTieCase>,
         heading_anchors: HeadingAnchors,
     }
 
@@ -7550,14 +7453,35 @@ mod tests {
     }
 
     /// #6052 — whether `[[link]]` names the one page, titled `title`, when the
-    /// two differ by case or normalisation. `names.test.ts` drives the mock's
-    /// paste over the same rows.
+    /// two differ by case, normalisation or edge whitespace (#6278).
+    /// `names.test.ts` drives the mock's paste and
+    /// `block-link-picker-match.test.ts` the editor's match over the same rows.
     #[derive(serde::Deserialize)]
     struct PageNameFoldCase {
         name: String,
         title: String,
         link: String,
         resolves: bool,
+    }
+
+    /// #6278 — the page `[[link]]` names when several pages hold the name: the
+    /// lowest id under the first rule that matches. `names.test.ts` drives the
+    /// mock's paste and `block-link-picker-match.test.ts` the editor's match
+    /// over the same rows.
+    #[derive(serde::Deserialize)]
+    struct PageTieCase {
+        name: String,
+        pages: Vec<TiedPage>,
+        link: String,
+        holder: String,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct TiedPage {
+        id: String,
+        title: String,
+        #[serde(default)]
+        aliases: Vec<String>,
     }
 
     /// #5160 — what the name pass of import, paste and the buffer does with
@@ -7922,8 +7846,35 @@ mod tests {
             const PAGE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
             let matches = fixture_matches(&HashMap::from([(row.title.clone(), PAGE.into())]));
             assert_eq!(
-                matches!(matches.find(&row.link), Some(LinkMatch::Unique(id)) if id == PAGE),
+                matches.find(&row.link) == Some(PAGE),
                 row.resolves,
+                "{:?}",
+                row.name
+            );
+        }
+    }
+
+    #[test]
+    fn page_tie_vectors_pin_the_lowest_id_as_the_page_a_shared_name_links() {
+        use agaric_core::tag_norm::name_key;
+        let vectors: ReferenceTokenVectors = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../conformance/reference-tokens.vectors.json"
+        )))
+        .expect("reference-token conformance fixture must be valid JSON");
+        assert!(!vectors.page_tie_cases.is_empty());
+        for row in &vectors.page_tie_cases {
+            let mut matches = LinkMatches::default();
+            for page in &row.pages {
+                let id = page.id.clone();
+                LinkMatches::push(&mut matches.folded, name_key(&page.title), id.clone());
+                for alias in &page.aliases {
+                    LinkMatches::push(&mut matches.aliases, name_key(alias), id.clone());
+                }
+            }
+            assert_eq!(
+                matches.find(&row.link),
+                Some(row.holder.as_str()),
                 "{:?}",
                 row.name
             );
@@ -7967,10 +7918,9 @@ mod tests {
         for (title, id) in pages {
             LinkMatches::push(
                 &mut matches.folded,
-                agaric_core::tag_norm::normalize_tag_name(title),
+                agaric_core::tag_norm::name_key(title),
                 id.clone(),
             );
-            LinkMatches::push(&mut matches.exact, title.clone(), id.clone());
         }
         matches
     }
@@ -7993,10 +7943,9 @@ mod tests {
             ..PageLinks::default()
         };
         for body in collect_inbound_page_link_bodies(std::slice::from_ref(&block)) {
-            if let Some((name, label)) = read_link_body(&body, &matches) {
-                let reading = (name.to_string(), label.map(str::to_string));
-                links.readings.insert(body, reading);
-            }
+            let (name, label) = read_link_body(&body, &matches);
+            let reading = (name.to_string(), label.map(str::to_string));
+            links.readings.insert(body, reading);
         }
         links
     }
@@ -8025,9 +7974,9 @@ mod tests {
         );
     }
 
-    /// #5160 D10 — the first reading that names a page wins, a `|` after a
-    /// `#` starts the label, a tie leaves the body as text, and with no page
-    /// the body splits on its first `|`.
+    /// #5160 D10 — the first reading that names a page wins, a tie included
+    /// (#6278), a `|` after a `#` starts the label, and with no page the body
+    /// splits on its first `|`.
     #[test]
     fn a_link_body_reads_as_the_longest_name_a_page_has() {
         let pages = HashMap::from([
@@ -8046,14 +7995,14 @@ mod tests {
         ]);
         let matches = fixture_matches(&pages);
         let read = |body| read_link_body(body, &matches);
-        assert_eq!(read("A | B"), Some(("A | B", None)));
-        assert_eq!(read("a | b|see"), Some(("a | b", Some("see"))));
-        assert_eq!(read("A | B#Heading"), Some(("A | B#Heading", None)));
-        assert_eq!(read("A | B#Heading|x"), Some(("A | B#Heading", Some("x"))));
-        assert_eq!(read("A#x | B"), Some(("A#x", Some("B"))));
-        assert_eq!(read("C | D"), Some(("C", Some("D"))));
-        assert_eq!(read("X | y|see"), None);
-        assert_eq!(read("X | Y|see"), Some(("X | Y", Some("see"))));
+        assert_eq!(read("A | B"), ("A | B", None));
+        assert_eq!(read("a | b|see"), ("a | b", Some("see")));
+        assert_eq!(read("A | B#Heading"), ("A | B#Heading", None));
+        assert_eq!(read("A | B#Heading|x"), ("A | B#Heading", Some("x")));
+        assert_eq!(read("A#x | B"), ("A#x", Some("B")));
+        assert_eq!(read("C | D"), ("C", Some("D")));
+        assert_eq!(read("X | y|see"), ("X | y", Some("see")));
+        assert_eq!(read("X | Y|see"), ("X | Y", Some("see")));
     }
 
     /// #5160 D9 — the stored token keeps a label unless it is the target's

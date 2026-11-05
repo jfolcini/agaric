@@ -5,10 +5,9 @@
  * Mirrors `resolve_inbound_page_links` / `resolve_tag_names` in
  * `src-tauri/src/commands/pages/markdown.rs` (#5160 N4):
  *
- *   - a page is the exact title, else the unique title folded as a tag name
- *     is (`normalizeTagName`), else the unique alias folded so, else
- *     created; two pages that tie are never guessed: the token stays text and
- *     a warning names it;
+ *   - a page is the title under `nameKey`, else the alias under it, else
+ *     created; where several pages hold the name, the lowest id does
+ *     (#6278);
  *   - a `[[Page#anchor]]` token is the page titled `Page#anchor` when one
  *     exists (D10), else its page; the block anchors the backend resolves to
  *     `((ULID))` refs are not modelled;
@@ -16,8 +15,7 @@
  *     label is the page's title (D9);
  *   - a body holding a `|` reads as the first of its readings (whole, then
  *     each prefix before a `|`, longest first) that names a page, else splits
- *     on its first `|`; a reading that ties leaves it text with a warning
- *     (D10);
+ *     on its first `|` (D10);
  *   - a tag is the smallest-id tag of the same normalised name, else created.
  *
  * Created pages come first, in name order, then tags, each with the
@@ -28,6 +26,7 @@ import { ULID_RE } from '@/editor/markdown-common'
 import {
   type LinkReading,
   linkBodyReadings,
+  nameKey,
   normalizeTagName,
   type PageToken,
   scanNameTokens,
@@ -49,10 +48,7 @@ export interface ResolvedNames {
   contents: string[]
   /** The pages and tags created, in creation order. */
   created: Row[]
-  warnings: string[]
 }
-
-type Match = { id: string } | 'ambiguous' | null
 
 function inSpace(row: Row, spaceId: string): boolean {
   return row['deleted_at'] == null && row['space_id'] === spaceId
@@ -64,33 +60,33 @@ function livePages(spaceId: string): Row[] {
     .toSorted((a, b) => compareUtf8Bytes(a['id'] as string, b['id'] as string))
 }
 
-const only = (ids: string[]): Match =>
-  ids.length === 0 ? null : ids.length === 1 ? { id: ids[0] as string } : 'ambiguous'
+/** The lowest of `ids`, the one that holds a name several pages share (#6278). */
+const lowest = (ids: string[]): string | null => ids.toSorted(compareUtf8Bytes)[0] ?? null
 
-/** The title arms of `LinkMatches::find`: the exact title, else the case-folded one. */
-function findTitled(name: string, pages: readonly Row[]): Match {
-  const folded = normalizeTagName(name)
-  const titled = (same: (title: string) => boolean): string[] =>
-    pages.filter((p) => same((p['content'] as string | null) ?? '')).map((p) => p['id'] as string)
-  return only(titled((t) => t === name)) ?? only(titled((t) => normalizeTagName(t) === folded))
+/** `LinkMatches::find`'s title arm: the lowest id of the pages whose `nameKey` is `name`'s. */
+function findTitled(name: string, pages: readonly Row[]): string | null {
+  const key = nameKey(name)
+  return lowest(
+    pages
+      .filter((p) => nameKey((p['content'] as string | null) ?? '') === key)
+      .map((p) => p['id'] as string),
+  )
 }
 
 /** `LinkMatches::find` over the live pages of the space. */
-function findPage(name: string, pages: readonly Row[]): Match {
-  const folded = normalizeTagName(name)
+function findPage(name: string, pages: readonly Row[]): string | null {
+  const key = nameKey(name)
   const aliased = pages
-    .filter((p) =>
-      (pageAliases.get(p['id'] as string) ?? []).some((a) => normalizeTagName(a) === folded),
-    )
+    .filter((p) => (pageAliases.get(p['id'] as string) ?? []).some((a) => nameKey(a) === key))
     .map((p) => p['id'] as string)
-  return findTitled(name, pages) ?? only(aliased)
+  return findTitled(name, pages) ?? lowest(aliased)
 }
 
 /**
  * `LinkMatches::find_name`: the page titled with the whole name, else, when an
  * anchor holding no `|` follows its first `#`, the page its base names.
  */
-function findName(name: string, pages: readonly Row[]): Match {
+function findName(name: string, pages: readonly Row[]): string | null {
   const hashAt = name.indexOf('#')
   const base = hashAt < 0 ? '' : name.slice(0, hashAt).trim()
   const anchored = base !== '' && !name.slice(hashAt + 1).includes('|')
@@ -99,36 +95,36 @@ function findName(name: string, pages: readonly Row[]): Match {
 
 /**
  * `read_link_body`: the first longer reading of the token's body whose name
- * names a page, else its first-`|` split; `null` when a reading ties.
+ * names a page, else its first-`|` split.
  */
-function readLinkBody(token: PageToken, pages: readonly Row[]): LinkReading | null {
-  for (const reading of linkBodyReadings(token.body).slice(0, -1)) {
-    const match = findName(reading.name, pages)
-    if (match === 'ambiguous') return null
-    if (match) return reading
-  }
+function readLinkBody(token: PageToken, pages: readonly Row[]): LinkReading {
+  const named = linkBodyReadings(token.body)
+    .slice(0, -1)
+    .find((reading) => findName(reading.name, pages) !== null)
+  if (named) return named
   return token.label === undefined ? { name: token.name } : { name: token.name, label: token.label }
 }
 
 /**
- * The page an import of a file titled `title` adopts (#5160 D12): the one
- * page of that title, exact or case-folded, when it has no live child; never
- * a page matched by alias (`create_import_page`); `null` otherwise.
+ * The page an import of a file titled `title` adopts (#5160 D12): the page of
+ * that title under `nameKey`, the lowest id where several share it (#6278),
+ * when it has no live child; never a page matched by alias
+ * (`create_import_page`); `null` otherwise.
  */
 export function findEmptyPageTitled(title: string, spaceId: string): string | null {
   const match = findTitled(title, livePages(spaceId))
-  if (!match || match === 'ambiguous') return null
+  if (match === null) return null
   const hasChild = [...blocks.values()].some(
-    (b) => b['parent_id'] === match.id && b['deleted_at'] == null,
+    (b) => b['parent_id'] === match && b['deleted_at'] == null,
   )
-  return hasChild ? null : match.id
+  return hasChild ? null : match
 }
 
 /**
  * The block a text value under a `ref` definition names for a block of
  * `spaceId` (#5160 D11), as `read_typed_ref` reads it: `[[Title]]` less its
  * brackets, or the value, is a live block id in the space, else a page title
- * by `LinkMatches::find`. A tie, or no match, is refused.
+ * by `LinkMatches::find`. No match is refused.
  */
 export function resolveRefValue(value: string, spaceId: string | null): string {
   const trimmed = value.trim()
@@ -146,9 +142,8 @@ export function resolveRefValue(value: string, spaceId: string | null): string {
     return name
   }
   const match = spaceId === null ? null : findPage(name, livePages(spaceId))
-  if (match === 'ambiguous') throw validationRejection(`more than one page is titled '${name}'`)
   if (match === null) throw validationRejection(`no page is titled '${name}' in this space`)
-  return match.id
+  return match
 }
 
 /** A page or tag created as the backend's `create_block_in_tx` + space stamp. */
@@ -239,11 +234,6 @@ export function resolveInboundNames(
   const sorted = (names: Iterable<string>): string[] =>
     [...new Set(names)].toSorted(compareUtf8Bytes)
   const created: Row[] = []
-  const warnings: string[] = []
-  const tied = (text: string) =>
-    warnings.push(
-      `wiki-link '[[${text}]]' matches multiple pages in this space; left as plain text`,
-    )
   const pages = livePages(spaceId)
   const pageTokens = new Map<string, PageToken>()
   for (const token of scanned.flat()) {
@@ -251,18 +241,12 @@ export function resolveInboundNames(
   }
   const readings = new Map<string, LinkReading>()
   for (const [body, token] of [...pageTokens].toSorted(([a], [b]) => compareUtf8Bytes(a, b))) {
-    const reading = readLinkBody(token, pages)
-    if (reading === null) tied(body)
-    else readings.set(body, reading)
+    readings.set(body, readLinkBody(token, pages))
   }
   const pageIds = new Map<string, string>()
-  const resolvePage = (title: string): string | null => {
+  const resolvePage = (title: string): string => {
     const match = findPage(title, pages)
-    if (match === 'ambiguous') {
-      tied(title)
-      return null
-    }
-    if (match) return match.id
+    if (match !== null) return match
     const row = createNamed('page', title, spaceId, opRefs)
     pages.push(row)
     created.push(row)
@@ -273,13 +257,7 @@ export function resolveInboundNames(
     const base = hashAt < 0 ? name : name.slice(0, hashAt).trim()
     if (base === '') continue
     const whole = hashAt < 0 ? null : findPage(name, pages)
-    // A whole anchored title that ties is left as text, never its base.
-    if (whole === 'ambiguous') {
-      tied(name)
-      continue
-    }
-    const id = whole ? whole.id : resolvePage(base)
-    if (id !== null) pageIds.set(name, id)
+    pageIds.set(name, whole ?? resolvePage(base))
   }
   const tags = resolveTagNames(
     sorted(scanned.flat().flatMap((t) => (t.kind === 'tag' ? [t.name] : []))),
@@ -303,5 +281,5 @@ export function resolveInboundNames(
     }
     return out
   })
-  return { contents: rewritten, created, warnings }
+  return { contents: rewritten, created }
 }

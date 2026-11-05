@@ -89,8 +89,9 @@ pub(crate) enum Named {
 
 /// Each of `args` as an id (#5397): one that parses as a ULID is that id, as it
 /// always was; any other names a page or tag in `space_id`, matched as a
-/// pasted `[[Name]]` or `#name` is. A name that ties or matches nothing is a
-/// Validation error naming `field` and the candidates.
+/// pasted `[[Name]]` or `#name` is, so a name several pages share is the
+/// lowest id (#6278). A name that matches nothing is a Validation error naming
+/// `field`.
 pub(crate) async fn resolve_id_args(
     pool: &SqlitePool,
     tool: &str,
@@ -99,7 +100,7 @@ pub(crate) async fn resolve_id_args(
     named: Named,
     space_id: &str,
 ) -> Result<Vec<String>, AppError> {
-    use crate::commands::pages::markdown::{NameMatch, match_page_names, match_tag_names};
+    use crate::commands::pages::markdown::{match_page_names, match_tag_names};
     let names: Vec<String> = args
         .iter()
         .filter(|arg| BlockId::from_string(arg.as_str()).is_err())
@@ -121,30 +122,16 @@ pub(crate) async fn resolve_id_args(
                 return Ok(id.into_string());
             }
             let (name, found) = matches.next().expect("one match per name");
-            match found {
-                NameMatch::Id(id) => Ok(id),
-                NameMatch::Tie(pages) => {
-                    let listed: Vec<String> = pages
-                        .iter()
-                        .map(|(id, title)| format!("{id} ({title})"))
-                        .collect();
-                    Err(AppError::validation(format!(
-                        "tool `{tool}`: `{field}` '{name}' matches more than one page in space \
-                         '{space_id}': {}; pass the id",
-                        listed.join(", "),
-                    )))
-                }
-                NameMatch::Unknown => {
-                    let what = match named {
-                        Named::Page => "page has that title or alias",
-                        Named::Tag => "tag has that name",
-                    };
-                    Err(AppError::validation(format!(
-                        "tool `{tool}`: `{field}` '{name}' is not a ULID, and no {what} in \
-                         space '{space_id}'"
-                    )))
-                }
-            }
+            found.ok_or_else(|| {
+                let what = match named {
+                    Named::Page => "page has that title or alias",
+                    Named::Tag => "tag has that name",
+                };
+                AppError::validation(format!(
+                    "tool `{tool}`: `{field}` '{name}' is not a ULID, and no {what} in \
+                     space '{space_id}'"
+                ))
+            })
         })
         .collect()
 }
