@@ -747,10 +747,14 @@ fn fixed_ulid(key: &str) -> String {
     ulid::Ulid::from_bytes(bytes).to_string()
 }
 
-/// `block` as stored once its names are ids: the importer's own name
-/// collection and rewrite, with each page and tag resolved as an empty space
-/// resolves it, by creating it, here under a [`fixed_ulid`].
+/// `block` as stored: its foreign highlight and math in Agaric's form, then
+/// its names as ids by the importer's own name collection and rewrite, each
+/// page and tag resolved as an empty space resolves it, by creating it, here
+/// under a [`fixed_ulid`].
 fn stored_form(block: &import::ParsedBlock) -> String {
+    let mut block = block.clone();
+    normalize_foreign_forms(std::slice::from_mut(&mut block));
+    let block = &block;
     let blocks = std::slice::from_ref(block);
     let mut links = PageLinks::default();
     let mut titles = HashMap::new();
