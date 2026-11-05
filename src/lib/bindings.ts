@@ -663,6 +663,11 @@ export const commands = {
 	 *  [`list_quarantined_sync_slots_inner`].
 	 */
 	listQuarantinedSyncSlots: (limit: number) => typedError<QuarantinedSlotList, AppError>(__TAURI_INVOKE("list_quarantined_sync_slots", { limit })),
+	/**
+	 *  Tauri command: retry a quarantined sync delta at the next start (#6057).
+	 *  Delegates to [`readmit_quarantined_sync_slot_inner`].
+	 */
+	readmitQuarantinedSyncSlot: (id: number) => typedError<null, AppError>(__TAURI_INVOKE("readmit_quarantined_sync_slot", { id })),
 	/**  Tauri command: batch-count agenda items per (date, source). Delegates to [`count_agenda_batch_by_source_inner`]. */
 	countAgendaBatchBySource: (dates: string[], scope: SpaceScope) => typedError<{ [key in string]: { [key in string]: number } }, AppError>(__TAURI_INVOKE("count_agenda_batch_by_source", { dates, scope })),
 	/**  Tauri command: batch-count backlinks per target page. Delegates to [`count_backlinks_batch_inner`]. */
@@ -724,7 +729,10 @@ export const commands = {
 	 *  A `time` that is not `HH:MM` surfaces as [`AppError::Validation`].
 	 */
 	setReminderSettings: (settings: ReminderSettings) => typedError<null, AppError>(__TAURI_INVOKE("set_reminder_settings", { settings })),
-	speechStatus: () => typedError<SpeechStatus, AppError>(__TAURI_INVOKE("speech_status")),
+	pickMirrorFolder: () => typedError<string | null, AppError>(__TAURI_INVOKE("pick_mirror_folder")),
+	setMirrorFolder: (path: string | null) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_folder", { path })),
+	getMirrorStatus: () => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("get_mirror_status")),
+	getSpeechStatus: () => typedError<SpeechStatus, AppError>(__TAURI_INVOKE("get_speech_status")),
 	/**
 	 *  Tauri command: import a Markdown, Logseq or Org file, in the `dialect` its
 	 *  front end read it as, as a page with block hierarchy. Delegates to
@@ -2838,6 +2846,37 @@ export type MdnsStatus = {
 	reason: string | null,
 };
 
+/**  A page whose file could not be written, and why. */
+export type MirrorFailure = {
+	page_id: string,
+	path: string,
+	message: string,
+};
+
+/**  A page's file, by its path below the mirror's folder, `/`-separated. */
+export type MirrorFile = {
+	page_id: string,
+	path: string,
+};
+
+/**  What the mirror is doing (#5363). */
+export type MirrorStatus = {
+	/**  `false` where the mirror does not run, on mobile. */
+	supported: boolean,
+	/**  The folder pages are written to; `None` when the mirror is off. */
+	folder: string | null,
+	/**  Why nothing is written while the folder is set, if nothing is. */
+	paused: string | null,
+	/**
+	 *  Files changed outside Agaric, which it leaves alone: their pages are
+	 *  not written until the file is what Agaric last wrote again.
+	 */
+	diverged: MirrorFile[],
+	failed: MirrorFailure[],
+	/**  When the last pass ended, in ms since the epoch. */
+	last_pass_ms: number | null,
+};
+
 export type MoveResponse = {
 	block_id: string,
 	new_parent_id: string | null,
@@ -3845,6 +3884,13 @@ export type RecoveryStatus = {
 	 *  raise the user-visible signal.
 	 */
 	replay_errors: string[],
+	/**
+	 *  #6057: inbound sync deltas THIS boot moved to quarantine (the same as
+	 *  [`RecoveryReport::sync_inbox_quarantined`]). The frontend warns once on
+	 *  the boot that quarantined something, not on every boot with a standing
+	 *  backlog, because nothing can delete a quarantined delta.
+	 */
+	sync_quarantined_this_boot: number,
 };
 
 /**

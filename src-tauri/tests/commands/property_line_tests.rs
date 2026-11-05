@@ -504,15 +504,16 @@ async fn import_markdown_folds_a_key_to_its_canonical_spelling() {
 }
 
 /// A ref value is a page by `[[Title]]` or by a plain title, as a typed name
-/// resolves (#5160 D11); a title two pages tie on, or none has, stays text in
-/// its block with a warning naming the line.
+/// resolves (#5160 D11): a title two pages tie on, the lowest id (#6278). A
+/// title none has stays text in its block with a warning naming the line.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn import_markdown_resolves_a_ref_value_by_title() {
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let alice = dup_page(&pool, &mat, "Alice").await;
-    dup_page(&pool, &mat, "Twin").await;
-    dup_twin_page(&pool, &mat, "twin").await;
+    let twin = dup_page(&pool, &mat, "Twin").await;
+    let twin_lower = dup_twin_page(&pool, &mat, "twin").await;
+    let holder = BlockId::from_trusted(twin.as_str().min(twin_lower.as_str()));
     create_test_property_def(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();
@@ -524,45 +525,47 @@ async fn import_markdown_resolves_a_ref_value_by_title() {
     let page = page_titled(&pool, "Reviews").await;
     let children = dup_children(&pool, &page).await;
     let contents: Vec<&str> = children.iter().map(|(_, c)| c.as_str()).collect();
-    assert_eq!(
-        contents,
-        ["a", "b", "c\nreviewer:: TWIN", "d\nreviewer:: Nobody"]
-    );
+    assert_eq!(contents, ["a", "b", "c", "d\nreviewer:: Nobody"]);
     let ids = child_ids(&pool, &page).await;
     for id in &ids[..2] {
         let rows = dup_storage(&pool, id).await;
         assert_eq!(rows[1..], [BULLET_ROW.to_owned(), reviewer_row(&alice)]);
     }
-    for id in &ids[2..] {
-        let rows = dup_storage(&pool, id).await;
-        assert_eq!(rows[1..], [BULLET_ROW], "nothing is stored but the bullet");
-    }
+    let rows = dup_storage(&pool, &ids[2]).await;
+    assert_eq!(rows[1..], [BULLET_ROW.to_owned(), reviewer_row(&holder)]);
+    let rows = dup_storage(&pool, &ids[3]).await;
+    assert_eq!(rows[1..], [BULLET_ROW], "nothing is stored but the bullet");
     let named: Vec<&String> = result
         .warnings
         .iter()
         .filter(|w| w.contains("`reviewer:: TWIN`") || w.contains("`reviewer:: Nobody`"))
         .collect();
-    assert_eq!(named.len(), 2, "{:?}", result.warnings);
+    assert_eq!(named.len(), 1, "{:?}", result.warnings);
 }
 
 /// A text value under a `ref` definition names its target as a typed line
 /// does (#5160 D11), so the block editor's `reviewer:: Alice` is Alice: a
-/// block id, `[[Title]]` or a title of a page in the block's space. A title
-/// two pages tie on, or none has, is refused.
+/// block id, `[[Title]]` or a title of a page in the block's space; a title
+/// two pages tie on, the lowest id (#6278). A title none has is refused.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_property_reads_a_ref_value_typed_as_text() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let page = dup_page(&pool, &mat, "Typed").await;
     let alice = dup_page(&pool, &mat, "Alice").await;
-    dup_page(&pool, &mat, "Twin").await;
-    dup_twin_page(&pool, &mat, "twin").await;
+    let twin = dup_page(&pool, &mat, "Twin").await;
+    let twin_lower = dup_twin_page(&pool, &mat, "twin").await;
+    let holder = BlockId::from_trusted(twin.as_str().min(twin_lower.as_str()));
     create_test_property_def(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();
     let block = dup_child(&pool, &mat, &page, "task").await;
     settle(&mat).await;
 
+    try_set(&pool, &mat, &block, "reviewer", Value::Text("TWIN"))
+        .await
+        .unwrap();
+    assert_eq!(dup_storage(&pool, &block).await[1], reviewer_row(&holder));
     for typed in ["Alice", "[[alice]]", alice.as_str()] {
         try_set(&pool, &mat, &block, "reviewer", Value::Text("Typed"))
             .await
@@ -576,13 +579,11 @@ async fn set_property_reads_a_ref_value_typed_as_text() {
             "{typed}"
         );
     }
-    for refused in ["TWIN", "Nobody"] {
-        let result = try_set(&pool, &mat, &block, "reviewer", Value::Text(refused)).await;
-        assert!(
-            matches!(&result, Err(AppError::Validation { .. })),
-            "{refused}: {result:?}"
-        );
-    }
+    let result = try_set(&pool, &mat, &block, "reviewer", Value::Text("Nobody")).await;
+    assert!(
+        matches!(&result, Err(AppError::Validation { .. })),
+        "Nobody: {result:?}"
+    );
     let both = set_property_inner(
         &pool,
         DEV,
@@ -612,20 +613,13 @@ async fn a_refused_ref_value_is_inert_text() {
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let page = dup_page(&pool, &mat, "Paste").await;
-    dup_page(&pool, &mat, "Twin").await;
-    dup_twin_page(&pool, &mat, "twin").await;
     create_test_property_def(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();
     let anchor = dup_child(&pool, &mat, &page, "anchor").await;
     settle(&mat).await;
-    let md = "- a\n  reviewer:: [[Nobody]]\n- b\n  reviewer:: [[TWIN]]\n\
-              - c\n  reviewer:: \\[[Nobody]]\n";
-    let kept = [
-        "a\nreviewer:: \\[[Nobody]]",
-        "b\nreviewer:: \\[[TWIN]]",
-        "c\nreviewer:: \\[[Nobody]]",
-    ];
+    let md = "- a\n  reviewer:: [[Nobody]]\n- c\n  reviewer:: \\[[Nobody]]\n";
+    let kept = ["a\nreviewer:: \\[[Nobody]]", "c\nreviewer:: \\[[Nobody]]"];
 
     let result = import(&pool, &mat, dir.path(), md, "Refused.md").await;
     let pasted = paste_blocks_inner(&pool, DEV, &mat, anchor, paste_text(md), None)
@@ -640,7 +634,7 @@ async fn a_refused_ref_value_is_inert_text() {
     assert_eq!(contents(dup_children(&pool, &imported).await), kept);
     assert_eq!(contents(dup_children(&pool, &page).await)[1..], kept);
     for warnings in [&result.warnings, &pasted.warnings] {
-        assert_eq!(warnings.len(), 3, "one per refused line: {warnings:?}");
+        assert_eq!(warnings.len(), 2, "one per refused line: {warnings:?}");
     }
     let created: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND content = 'Nobody'",

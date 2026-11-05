@@ -191,7 +191,7 @@ describe('a typed whole `![[Name]]` in block mode (#6033)', () => {
     expect(handle.unmount()).toBe(`{{embed [[${PAGE}]]}}`)
   })
 
-  it('embeds the page an anchored body names, dropping the anchor as a typed link does', async () => {
+  it('embeds the page an anchored body names when the anchor names no block', async () => {
     const handle = await blockMode()
     await typeResolved(handle.editor as Editor, '![[Project#Goals]]')
 
@@ -230,23 +230,21 @@ describe('a typed whole `![[Name]]` in block mode (#6033)', () => {
   })
 
   it.each([
-    ['', '![[Twin]]'],
-    ['Hello', 'Hello![[Twin]]'],
-  ])('after %j, a name two pages share stays as typed', async (before, expected) => {
+    ['', '{{embed [[01PAGE0000000000000000TWNA]]}}'],
+    ['Hello', 'Hello\\![[01PAGE0000000000000000TWNA]]'],
+  ])('after %j, a name two pages share takes the lowest id (#6278)', async (before, expected) => {
     const twin = (id: string): PickerItem => ({ id, label: 'Twin', title: 'Twin' })
     const search = searchPages.getMockImplementation()
     searchPages.mockImplementation(async (query) =>
       query === 'Twin'
-        ? [twin('01PAGE0000000000000000TWNA'), twin('01PAGE0000000000000000TWNB')]
+        ? [twin('01PAGE0000000000000000TWNB'), twin('01PAGE0000000000000000TWNA')]
         : [],
     )
     try {
       const handle = await blockMode(before)
-      const editor = handle.editor as Editor
-      type(editor, '![[Twin]]')
-      await vi.waitFor(() => expect(editor.getText()).toContain(']]'))
+      await typeResolved(handle.editor as Editor, '![[Twin]]')
 
-      expect(editor.getText()).toBe(expected)
+      expect(handle.unmount()).toBe(expected)
     } finally {
       if (search) searchPages.mockImplementation(search)
     }

@@ -18,7 +18,13 @@ fn strip_for_fts_with_maps(
     tag_names: &HashMap<String, String>,
     page_titles: &HashMap<String, String>,
 ) -> String {
-    super::strip::strip_for_fts_with_maps("test-block", content, tag_names, page_titles)
+    super::strip::strip_for_fts_with_maps(
+        "test-block",
+        content,
+        tag_names,
+        page_titles,
+        &HashMap::new(),
+    )
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -303,6 +309,7 @@ fn strip_caps_pathological_block_indexed_length() {
         "just a normal note",
         &tag_names,
         &page_titles,
+        &HashMap::new(),
     );
     assert_eq!(small, "just a normal note");
 
@@ -311,7 +318,13 @@ fn strip_caps_pathological_block_indexed_length() {
     // bytes) — we assert on the truncation length behaviour rather than the log
     // line, as `tracing-test` is not a dev-dependency.
     let big = "é".repeat(512 * 1024); // 1 MiB of valid UTF-8
-    let capped = super::strip::strip_for_fts_with_maps("blk-big", &big, &tag_names, &page_titles);
+    let capped = super::strip::strip_for_fts_with_maps(
+        "blk-big",
+        &big,
+        &tag_names,
+        &page_titles,
+        &HashMap::new(),
+    );
     assert!(
         capped.len() <= 128 * 1024,
         "indexed text must be capped at 128 KiB; got {}",
@@ -4261,9 +4274,15 @@ async fn update_fts_for_block_with_maps_matches_wrapper_output() {
 
     // Path 2: explicit map load + _with_maps. Must produce the same row.
     let (tag_names, page_titles) = crate::fts::strip::load_ref_maps(&pool).await.unwrap();
-    crate::fts::update_fts_for_block_with_maps(&pool, BLOCK_A, &tag_names, &page_titles)
-        .await
-        .unwrap();
+    crate::fts::update_fts_for_block_with_maps(
+        &pool,
+        BLOCK_A,
+        &tag_names,
+        &page_titles,
+        &HashMap::new(),
+    )
+    .await
+    .unwrap();
     let stripped_via_with_maps: String =
         sqlx::query_scalar("SELECT stripped FROM fts_blocks WHERE block_id = ?")
             .bind(BLOCK_A)
@@ -4318,9 +4337,10 @@ async fn load_ref_maps_for_block_is_scoped_to_block_refs() {
     let content = format!("see [[{PAGE_ULID}]] and tag #[{TAG_ULID}]");
     insert_block(&pool, BLOCK_A, "content", &content, None, Some(0)).await;
 
-    let (tag_names, page_titles) = crate::fts::load_ref_maps_for_block(&pool, BLOCK_A)
-        .await
-        .unwrap();
+    let (tag_names, page_titles, block_titles) =
+        crate::fts::load_ref_maps_for_block(&pool, BLOCK_A)
+            .await
+            .unwrap();
 
     // Scoped: exactly the one referenced tag and page, NOT the unreferenced ones.
     assert_eq!(tag_names.len(), 1, "only the referenced tag must be loaded");
@@ -4344,9 +4364,15 @@ async fn load_ref_maps_for_block_is_scoped_to_block_refs() {
     );
 
     // The scoped maps must produce the same fts output as the full-scan loader.
-    crate::fts::update_fts_for_block_with_maps(&pool, BLOCK_A, &tag_names, &page_titles)
-        .await
-        .unwrap();
+    crate::fts::update_fts_for_block_with_maps(
+        &pool,
+        BLOCK_A,
+        &tag_names,
+        &page_titles,
+        &block_titles,
+    )
+    .await
+    .unwrap();
     let scoped_stripped: String =
         sqlx::query_scalar("SELECT stripped FROM fts_blocks WHERE block_id = ?")
             .bind(BLOCK_A)
@@ -4355,9 +4381,15 @@ async fn load_ref_maps_for_block_is_scoped_to_block_refs() {
             .unwrap();
 
     let (all_tags, all_pages) = crate::fts::strip::load_ref_maps(&pool).await.unwrap();
-    crate::fts::update_fts_for_block_with_maps(&pool, BLOCK_A, &all_tags, &all_pages)
-        .await
-        .unwrap();
+    crate::fts::update_fts_for_block_with_maps(
+        &pool,
+        BLOCK_A,
+        &all_tags,
+        &all_pages,
+        &HashMap::new(),
+    )
+    .await
+    .unwrap();
     let full_stripped: String =
         sqlx::query_scalar("SELECT stripped FROM fts_blocks WHERE block_id = ?")
             .bind(BLOCK_A)
@@ -4385,11 +4417,12 @@ async fn load_ref_maps_for_block_empty_for_no_refs() {
     )
     .await;
 
-    let (tag_names, page_titles) = crate::fts::load_ref_maps_for_block(&pool, BLOCK_A)
-        .await
-        .unwrap();
+    let (tag_names, page_titles, block_titles) =
+        crate::fts::load_ref_maps_for_block(&pool, BLOCK_A)
+            .await
+            .unwrap();
     assert!(
-        tag_names.is_empty() && page_titles.is_empty(),
+        tag_names.is_empty() && page_titles.is_empty() && block_titles.is_empty(),
         "a ref-free block must load empty maps (no whole-vault scan)"
     );
 }
@@ -4400,14 +4433,26 @@ async fn update_fts_for_block_with_maps_removes_deleted_block() {
 
     insert_block(&pool, BLOCK_A, "content", "text body", None, Some(0)).await;
     let (tag_names, page_titles) = crate::fts::strip::load_ref_maps(&pool).await.unwrap();
-    crate::fts::update_fts_for_block_with_maps(&pool, BLOCK_A, &tag_names, &page_titles)
-        .await
-        .unwrap();
+    crate::fts::update_fts_for_block_with_maps(
+        &pool,
+        BLOCK_A,
+        &tag_names,
+        &page_titles,
+        &HashMap::new(),
+    )
+    .await
+    .unwrap();
 
     soft_delete_block(&pool, BLOCK_A).await;
-    crate::fts::update_fts_for_block_with_maps(&pool, BLOCK_A, &tag_names, &page_titles)
-        .await
-        .unwrap();
+    crate::fts::update_fts_for_block_with_maps(
+        &pool,
+        BLOCK_A,
+        &tag_names,
+        &page_titles,
+        &HashMap::new(),
+    )
+    .await
+    .unwrap();
 
     let count: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM fts_blocks WHERE block_id = ?",
@@ -7988,5 +8033,205 @@ async fn reindex_fts_references_strips_a_deleted_tags_name_6242() {
     assert_eq!(
         fts_stripped(&pool, holder_id).await.as_deref(),
         Some("notes ")
+    );
+}
+
+// ======================================================================
+// #6277 B3 — the index holds the text the editor shows: escapes decoded
+// outside code, code raw, a block ref as its target's first line.
+// ======================================================================
+
+/// A block-ref target whose first line the strip maps it to.
+const REF_TARGET: &str = "01HQREFT00000000000000RT01";
+
+fn strip_with_ref_target(content: &str) -> String {
+    let block_titles = HashMap::from([(REF_TARGET.to_owned(), "First line".to_owned())]);
+    super::strip::strip_for_fts_with_maps(
+        "test-block",
+        content,
+        &HashMap::new(),
+        &HashMap::new(),
+        &block_titles,
+    )
+}
+
+#[test]
+fn strip_indexes_the_text_the_editor_shows_6277() {
+    let t = REF_TARGET;
+    // Every char `isEscapableChar` names, written out so the strip's own set
+    // cannot define the expectation.
+    let escapable = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~0123456789 \t";
+    let escaped: String = escapable.chars().map(|c| format!("\\{c}")).collect();
+    let cases: Vec<(String, String)> = [
+        // Every escape `isEscapableChar` decodes, left to right.
+        (r"arr\[0\]", "arr[0]"),
+        (r"\_\_init\_\_", "__init__"),
+        (r"a\\b", r"a\b"),
+        (
+            r"\#1 \$5 \<b\> \: \! \(x\) \1 \ x",
+            "#1 $5 <b> : ! (x) 1  x",
+        ),
+        // A backslash before anything else is a backslash.
+        (r"C:\dir \é", r"C:\dir \é"),
+        // An escaped delimiter is literal, not markup or code.
+        (r"\*a\*", "*a*"),
+        (r"\`a\`", "`a`"),
+        // Code is raw: no escape, markup or reference inside. A code span
+        // closes on its own line, a fence on any; an unclosed run leaves the
+        // rest of its line literal.
+        (r"`a\_b`", r"a\_b"),
+        ("``a`b``", "a`b"),
+        ("```\n*a* \\* x\n```", "\n*a* \\* x\n"),
+        ("a `b \\* c\nd \\* e", "a `b \\* c\nd * e"),
+        ("Use `foo\nbar` here", "Use `foo\nbar` here"),
+        // A tilde fence opens at a line start and keeps its body raw,
+        // backtick lines included, to its closing line or the end.
+        ("~~~md\n```js\nx\n```\n~~~", "md\n```js\nx\n```\n"),
+        ("a\n~~~\n\\* b", "a\n\n\\* b"),
+        ("a ~~~ \\* b", "a ~~~ * b"),
+        ("```\n~~~\n```", "\n~~~\n"),
+        ("~~~md", "md"),
+        ("~~~", ""),
+        // Text shaped like the strip's own placeholder stays text.
+        ("\u{E002}0\u{E003} `x`", "\u{E002}0\u{E003} x"),
+    ]
+    .into_iter()
+    .map(|(input, expected)| (input.to_owned(), expected.to_owned()))
+    .chain([
+        (escaped, escapable.to_owned()),
+        // A block ref is its target's first line; a missing target is empty.
+        (format!("see (({t}))"), "see First line".to_owned()),
+        (
+            "see ((01HQMISS00000000000000MS01))".to_owned(),
+            "see ".to_owned(),
+        ),
+        // Its first line is text, never markup of the block around it.
+        (format!("*see (({t}))*"), "see First line".to_owned()),
+        // An escaped opener keeps the token literal, and code keeps it raw.
+        (format!(r"\(({t}))"), format!("(({t}))")),
+        (format!("`**x** (({t}))`"), format!("**x** (({t}))")),
+    ])
+    .collect();
+    let wrong: Vec<(&str, String, &str)> = cases
+        .iter()
+        .map(|(input, expected)| {
+            (
+                input.as_str(),
+                strip_with_ref_target(input),
+                expected.as_str(),
+            )
+        })
+        .filter(|(_, got, expected)| got != expected)
+        .collect();
+    assert_eq!(wrong, Vec::new(), "(input, stripped, expected)");
+}
+
+/// A tag name shaped like the strip's placeholder is indexed as written.
+#[test]
+fn strip_keeps_a_placeholder_shaped_name_as_text_6277() {
+    let tag_names = HashMap::from([(TAG_ULID.to_owned(), "\u{E002}0\u{E003}".to_owned())]);
+    let page_titles = HashMap::from([(PAGE_ULID.to_owned(), "\u{E002}0\u{E003}".to_owned())]);
+    let got = strip_for_fts_with_maps(
+        &format!("`c` #[{TAG_ULID}] [[{PAGE_ULID}]]"),
+        &tag_names,
+        &page_titles,
+    );
+    assert_eq!(got, "c \u{E002}0\u{E003} \u{E002}0\u{E003}");
+}
+
+/// `load_block_ref_titles` reads each named target's whole first line,
+/// without a trailing `\r`, blank as `""`, and keeps a soft-deleted target's;
+/// a missing target has no entry.
+#[tokio::test]
+async fn load_block_ref_titles_reads_each_targets_first_line_6277() {
+    const LONG: &str = "01HQLONG00000000000000LG01";
+    let (pool, _dir) = test_pool().await;
+    let long_line = "word ".repeat(40);
+    for (id, content) in [
+        (BLOCK_A, "First line\nsecond".to_owned()),
+        (BLOCK_B, "crlf line\r\nsecond".to_owned()),
+        (BLOCK_C, "\nbody under a blank first line".to_owned()),
+        (BLOCK_D, "deleted but titled".to_owned()),
+        (LONG, format!("{long_line}\nrest")),
+    ] {
+        insert_block(&pool, id, "content", &content, None, None).await;
+    }
+    soft_delete_block(&pool, BLOCK_D).await;
+    let contents = [
+        format!("(({BLOCK_A})) and (({BLOCK_B}))"),
+        format!("(({BLOCK_C})) (({BLOCK_D})) (({LONG})) (({UNKNOWN_ULID}))"),
+    ];
+
+    let titles =
+        crate::fts::strip::load_block_ref_titles(&pool, contents.iter().map(String::as_str))
+            .await
+            .unwrap();
+
+    let expected: HashMap<String, String> = [
+        (BLOCK_A, "First line"),
+        (BLOCK_B, "crlf line"),
+        (BLOCK_C, ""),
+        (BLOCK_D, "deleted but titled"),
+        (LONG, long_line.as_str()),
+    ]
+    .into_iter()
+    .map(|(id, line)| (id.to_owned(), line.to_owned()))
+    .collect();
+    assert_eq!(titles, expected);
+}
+
+/// Every writer of a row resolves `((ULID))` to the target's first line: the
+/// single-block upsert and its split twin, the reference reindex and both
+/// full rebuilds. A soft-deleted target keeps its title, as its chip does.
+#[tokio::test]
+async fn every_fts_writer_resolves_a_block_ref_6277() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(
+        &pool,
+        BLOCK_A,
+        "content",
+        "First line\nsecond",
+        None,
+        Some(0),
+    )
+    .await;
+    let note = format!("see (({BLOCK_A}))");
+    insert_block(&pool, BLOCK_B, "content", &note, None, Some(1)).await;
+    crate::cache::reindex_block_links(&pool, BLOCK_B)
+        .await
+        .unwrap();
+
+    for writer in [
+        "upsert",
+        "split upsert",
+        "reference reindex",
+        "rebuild",
+        "split rebuild",
+    ] {
+        sqlx::query("DELETE FROM fts_blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        match writer {
+            "upsert" => update_fts_for_block(&pool, BLOCK_B).await,
+            "split upsert" => update_fts_for_block_split(&pool, &pool, BLOCK_B).await,
+            "reference reindex" => reindex_fts_references(&pool, BLOCK_A).await,
+            "rebuild" => rebuild_fts_index(&pool).await,
+            _ => rebuild_fts_index_split(&pool, &pool).await,
+        }
+        .unwrap();
+        assert_eq!(
+            fts_stripped(&pool, BLOCK_B).await.as_deref(),
+            Some("see First line"),
+            "{writer}"
+        );
+    }
+
+    soft_delete_block(&pool, BLOCK_A).await;
+    update_fts_for_block(&pool, BLOCK_B).await.unwrap();
+    assert_eq!(
+        fts_stripped(&pool, BLOCK_B).await.as_deref(),
+        Some("see First line"),
+        "a soft-deleted target keeps its title"
     );
 }

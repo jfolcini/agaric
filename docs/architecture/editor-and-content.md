@@ -9,7 +9,7 @@ Block content is stored as Markdown-flavoured plain text. The full grammar is pa
 
 - One block = one top-level Markdown construct (paragraph, heading, list item, code block, etc.). Multi-block markdown pasted into one block triggers an auto-split on blur.
 - Inline marks are a **locked set**: bold, italic, code, strike, highlight, external-link, inline-block-link (`[[ULID]]`), tag-ref (`#[ULID]`), block-ref (`((ULID))`), footnote-ref (`[^label]`). New marks are deliberate additions to the serializer + grammar.
-- Code blocks carry a `language` attribute (one of a curated set; matching common usage). The parser reads a fence of backticks or tildes, and a thematic break of three or more `-`, `*` or `_`, as Rust's grammar does (#6033); the serializer writes backtick fences and `---`.
+- Code blocks carry a `language` attribute: the fence's info string as written, trimmed (the language picker offers a curated set). The parser reads a fence of backticks or tildes, and a thematic break of three or more `-`, `*` or `_`, as Rust's grammar does (#6033); the serializer writes backtick fences, tildes for an info string holding a backtick, and `---`.
 - Callouts use a `> [!type]` fenced shape (tip / note / info / warning / error).
 
 ## Custom serializer
@@ -18,7 +18,7 @@ The Markdown ↔ ProseMirror serializer lives **on the frontend** (`src/editor/m
 
 The serializer is property-tested with `fast-check`: round-trip identity (`parse(serialize(parse(md))) == parse(md)`) and serialise idempotence. Off-the-shelf parsers were rejected because none of them handled the locked-mark set + our inline-ULID nodes losslessly.
 
-The backend reads/writes `blocks.content` as opaque markdown text. The **only** backend interaction with the content format is the FTS strip pass (`src-tauri/agaric-store/src/fts/strip.rs::strip_for_fts`), which removes Markdown markup and resolves `[[ULID]]` / `#[ULID]` to their target titles for full-text search. The strip path has a sync variant (`strip_for_fts_with_maps`) for materialization paths that have already prefetched tag-name + page-title hash maps.
+The backend reads/writes `blocks.content` as opaque markdown text. The **only** backend interaction with the content format is the FTS strip pass (`src-tauri/agaric-store/src/fts/strip.rs::strip_for_fts_with_maps`), which turns the content into the text the editor shows for full-text search: escapes outside code decoded, code kept raw, Markdown markup removed, `[[ULID]]` / `#[ULID]` resolved to their target titles and `((ULID))` to its target's first line. Its callers prefetch the tag-name, page-title and block-ref first-line maps.
 
 ## Roving-editor invariant
 

@@ -9,6 +9,7 @@
  * store.
  */
 
+import { isEscapableChar } from '@/editor/markdown-parse/parser'
 import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64url'
 import { pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
@@ -41,7 +42,7 @@ import { blockTags, blocks } from '@/lib/tauri-mock/seed'
 // The backend does NOT index `blocks.content`. Every FTS5 candidate set is a
 // trigram scan over `fts_blocks.stripped`, the column
 // `strip_for_fts_with_maps` writes
-// (`src-tauri/agaric-store/src/fts/strip.rs:114-163`). Until #3938 this mock
+// (`src-tauri/agaric-store/src/fts/strip.rs`). Until #3938 this mock
 // ran `matchesSearchFolded` (`@/lib/fold-for-search`) over the RAW content,
 // which was wrong in both directions at once:
 //
@@ -55,13 +56,14 @@ import { blockTags, blocks } from '@/lib/tauri-mock/seed'
 //    only in the index (a query for a linked page's title matched there,
 //    never here).
 //
-// The four steps below are `strip_for_fts_with_maps`'s own, in its order.
+// The steps below are `strip_for_fts_with_maps`'s own, in its order.
 // ---------------------------------------------------------------------------
 
 /**
- * `MARKUP_RE` — the five inline-formatting delimiters in one alternation, in
- * the backend's order (`src-tauri/agaric-store/src/fts/strip.rs:44-47`). Bold precedes italic so leftmost-first
- * alternation prefers the longer delimiter at a given position.
+ * `MARKUP_RE` — the four inline-formatting delimiters in one alternation, in
+ * the backend's order (`strip.rs`). Bold precedes italic so leftmost-first
+ * alternation prefers the longer delimiter at a given position. Code never
+ * reaches it: {@link maskShownSpans} takes every backtick first.
  *
  * Spelled `[^\n]` where the backend spells `.`, which is NOT pedantry: Rust's
  * `.` excludes `\n` alone, while JS's excludes every LINE TERMINATOR — `\n`,
@@ -69,21 +71,20 @@ import { blockTags, blocks } from '@/lib/tauri-mock/seed'
  * mock and stripped on the backend, and CRLF-pasted content is not exotic.
  * `[^\n]` is byte-for-byte Rust's `.`, so the two agree on all four.
  */
-const FTS_MARKUP_RE = /\*\*([^\n]+?)\*\*|\*([^\n]+?)\*|`([^\n]+?)`|~~([^\n]+?)~~|==([^\n]+?)==/g
+const FTS_MARKUP_RE = /\*\*([^\n]+?)\*\*|\*([^\n]+?)\*|~~([^\n]+?)~~|==([^\n]+?)==/g
 
-/** `TAG_REF_RE` — `#[ULID]` (`src-tauri/agaric-store/src/cache/mod.rs:72-73`). */
+/** `TAG_REF_RE` — `#[ULID]` (`src-tauri/agaric-store/src/cache/mod.rs`). */
 const FTS_TAG_REF_RE = /#\[([0-9A-Z]{26})\]/g
 
-// `PAGE_LINK_RE` — `[[ULID]]` (`src-tauri/agaric-store/src/cache/mod.rs:75-76`)
+// `PAGE_LINK_RE` — `[[ULID]]` (`src-tauri/agaric-store/src/cache/mod.rs`)
 // — is NOT declared here. `link-scan.ts` is its single owner in this tree
 // (#3332) and {@link linkTokenRe} hands out a fresh `g`-flagged copy; a
 // private one would fork the link grammar away from the conformance snapshot's
 // derivation, which is the failure that guard exists to prevent. The backend
-// shares one regex between `cache` and `fts::strip` for the same reason
-// (`src-tauri/agaric-store/src/fts/strip.rs:85-98`).
+// shares one regex between `cache` and `fts::strip` for the same reason.
 
 /**
- * `strip_inline_markup` (`src-tauri/agaric-store/src/fts/strip.rs:63-83`): apply {@link FTS_MARKUP_RE} until
+ * `strip_inline_markup` (`strip.rs`): apply {@link FTS_MARKUP_RE} until
  * the result stops changing, which is what preserves the nested case
  * (`**bold *italic***` ⇒ `bold italic`). Every replacement strictly shrinks the
  * string — the captured group is always shorter than its delimiters — so the
@@ -93,8 +94,8 @@ function stripInlineMarkup(content: string): string {
   let current = content
   for (;;) {
     const next = current.replace(FTS_MARKUP_RE, (...args: unknown[]): string => {
-      // Exactly one of the five groups matched; return its inner text.
-      for (let i = 1; i <= 5; i++) {
+      // Exactly one of the four groups matched; return its inner text.
+      for (let i = 1; i <= 4; i++) {
         const group = args[i]
         if (typeof group === 'string') return group
       }
@@ -106,7 +107,7 @@ function stripInlineMarkup(content: string): string {
 }
 
 /**
- * `load_ref_maps`' two maps (`src-tauri/agaric-store/src/fts/strip.rs:210-236`), resolved per lookup instead
+ * `load_ref_maps`' two maps (`strip.rs`), resolved per lookup instead
  * of pre-loaded: the name a `#[ULID]` / `[[ULID]]` token resolves to, or `''`
  * when the target is missing, tombstoned, of the wrong `block_type`, or has no
  * content — every one of which is a row the SQL's
@@ -121,11 +122,11 @@ function ftsRefName(ulid: string, blockType: 'tag' | 'page'): string {
   return (target['content'] as string | null) ?? ''
 }
 
-/** `FTS_MAX_INDEXED_BYTES` (`src-tauri/agaric-store/src/fts/strip.rs:171`) — 128 KiB of UTF-8, per block. */
+/** `FTS_MAX_INDEXED_BYTES` (`strip.rs`) — 128 KiB of UTF-8, per block. */
 const FTS_MAX_INDEXED_BYTES = 128 * 1024
 
 /**
- * `cap_indexed_text` (`src-tauri/agaric-store/src/fts/strip.rs:179-195`): truncate to at most
+ * `cap_indexed_text` (`strip.rs`): truncate to at most
  * {@link FTS_MAX_INDEXED_BYTES} UTF-8 bytes, on a char boundary.
  *
  * Modelled rather than declared-and-omitted. Nothing in this tree is within
@@ -154,31 +155,147 @@ function capIndexedText(s: string): string {
 }
 
 /**
- * `strip_for_fts_with_maps` (`src-tauri/agaric-store/src/fts/strip.rs:114-163`)
- * — the text a block contributes to `fts_blocks.stripped`, and therefore the
- * ONLY text any FTS5 candidate set in this file may match against.
+ * `load_block_ref_titles` (`strip.rs`), resolved per lookup: the first line of
+ * the block a `((ULID))` names, the text its chip shows — whole, without a
+ * trailing `\r`, and kept while the target is soft-deleted (#6277 B3). `''`
+ * when the target is missing or has no content.
+ */
+function ftsBlockRefTitle(ulid: string): string {
+  const content = blocks.get(ulid)?.['content'] as string | null | undefined
+  return content?.split('\n')[0]?.replace(/\r$/, '') ?? ''
+}
+
+/** `PIECE_OPEN` / `PIECE_CLOSE` (`strip.rs`): `\uE002<index>\uE003` stands for
+ *  `pieces[index]` while the markup and reference passes run. */
+const PIECE_OPEN = '\uE002'
+const PIECE_RE = /\uE002(\d+)\uE003/g
+
+/** `BLOCK_REF_RE` (`cache/mod.rs`), sticky so it matches at the scan position. */
+const BLOCK_REF_AT_RE = /\(\(([0-9A-Z]{26})\)\)/y
+
+/** `piece` (`strip.rs`): store `shown` and return its placeholder. */
+function piece(pieces: string[], shown: string): string {
+  pieces.push(shown)
+  return `${PIECE_OPEN}${pieces.length - 1}\uE003`
+}
+
+/** `code_span` (`strip.rs`): the code a backtick run at `at` opens and the
+ *  index after it. The next run of exactly as many backticks closes it, on the
+ *  same line for a code span and on any later line for a fence of three or
+ *  more; with none, the rest of the line is literal, backticks included. */
+function codeSpan(src: string, at: number): [string, number] {
+  const runAt = (i: number): number => {
+    let n = 0
+    while (src[i + n] === '`') n++
+    return n
+  }
+  const open = runAt(at)
+  const lineEnd = src.indexOf('\n', at)
+  const end = lineEnd === -1 ? src.length : lineEnd
+  const limit = open >= 3 ? src.length : end
+  let i = at + open
+  for (
+    let found = src.indexOf('`', i);
+    found !== -1 && found < limit;
+    found = src.indexOf('`', i)
+  ) {
+    const close = runAt(found)
+    if (close === open) return [src.slice(at + open, found), found + close]
+    i = found + close
+  }
+  return [src.slice(at, end), end]
+}
+
+/** `tilde_fence` (`strip.rs`): the code a tilde fence opening the line at
+ *  `at` holds and the index after it, as `parseCodeBlock` reads it. A run of
+ *  three or more `~` closes on a line holding only a run at least as long,
+ *  plus whitespace, or runs to the end; `null` for a run too short. */
+function tildeFence(src: string, at: number): [string, number] | null {
+  let open = 0
+  while (src[at + open] === '~') open++
+  if (open < 3) return null
+  const firstBreak = src.indexOf('\n', at)
+  let lineStart = firstBreak === -1 ? src.length + 1 : firstBreak + 1
+  while (lineStart <= src.length) {
+    const nextBreak = src.indexOf('\n', lineStart)
+    const lineEnd = nextBreak === -1 ? src.length : nextBreak
+    const line = src.slice(lineStart, lineEnd)
+    let run = 0
+    while (line[run] === '~') run++
+    if (run >= open && line.slice(run).trim() === '') {
+      return [src.slice(at + open, lineStart), lineEnd]
+    }
+    lineStart = lineEnd + 1
+  }
+  return [src.slice(at + open), src.length]
+}
+
+/** The span at `at` whose shown text no later pass may touch, and the index
+ *  after it: code, a backslash escape, a `((ULID))` as its target's first line,
+ *  or a placeholder opener already in the text. */
+function shownSpanAt(src: string, at: number): [string, number] | null {
+  const ch = src[at]
+  if (ch === '~' && (at === 0 || src[at - 1] === '\n')) return tildeFence(src, at)
+  if (ch === '`') return codeSpan(src, at)
+  if (ch === '\\') {
+    const next = src[at + 1]
+    return next !== undefined && isEscapableChar(next) ? [next, at + 2] : null
+  }
+  if (ch === '(') {
+    BLOCK_REF_AT_RE.lastIndex = at
+    const ref = BLOCK_REF_AT_RE.exec(src)
+    return ref ? [ftsBlockRefTitle(ref[1] as string), at + ref[0].length] : null
+  }
+  return ch === PIECE_OPEN ? [PIECE_OPEN, at + 1] : null
+}
+
+/** `mask_shown_spans` (`strip.rs`): `content` with each {@link shownSpanAt}
+ *  span replaced by a placeholder, scanned left to right. */
+function maskShownSpans(content: string, pieces: string[]): string {
+  let out = ''
+  let at = 0
+  while (at < content.length) {
+    const span = shownSpanAt(content, at)
+    if (span) {
+      out += piece(pieces, span[0])
+      at = span[1]
+    } else {
+      out += content[at]
+      at++
+    }
+  }
+  return out
+}
+
+/**
+ * `strip_for_fts_with_maps` (`src-tauri/agaric-store/src/fts/strip.rs`) — the
+ * text a block contributes to `fts_blocks.stripped`, and therefore the ONLY
+ * text any FTS5 candidate set in this file may match against: the text the
+ * editor shows (#6277 B3).
  *
- * Four steps, in the backend's order:
+ * Its steps, in the backend's order:
  *
- *  1. strip inline markup to a fixed point ({@link stripInlineMarkup});
- *  2. resolve `#[ULID]` tag references to the tag's name;
- *  3. resolve `[[ULID]]` page links to the page's title, or `[[ULID|label]]` to its label;
- *  4. unescape `\*` `\`` `\~` `\=`, NFC-normalise, then cap the indexed bytes
- *     ({@link capIndexedText}) — `src-tauri/agaric-store/src/fts/strip.rs:141-162`.
+ *  1. mask code (raw), backslash escapes (decoded, as the editor's
+ *     `isEscapableChar` reads them) and `((ULID))` block refs (the target's
+ *     first line) behind placeholders ({@link maskShownSpans});
+ *  2. strip inline markup to a fixed point ({@link stripInlineMarkup});
+ *  3. resolve `#[ULID]` tag references to the tag's name;
+ *  4. resolve `[[ULID]]` page links to the page's title, or `[[ULID|label]]` to its label;
+ *  5. put the masked text back, NFC-normalise, then cap the indexed bytes
+ *     ({@link capIndexedText}).
  */
 export function stripForFts(content: string | null | undefined): string {
-  let result = stripInlineMarkup(content ?? '')
-  result = result.replace(FTS_TAG_REF_RE, (_match, ulid: string) => ftsRefName(ulid, 'tag'))
+  const pieces: string[] = []
+  let result = stripInlineMarkup(maskShownSpans(content ?? '', pieces))
+  result = result.replace(FTS_TAG_REF_RE, (_match, ulid: string) =>
+    piece(pieces, ftsRefName(ulid, 'tag')),
+  )
   // A labelled link indexes its label, the text the reader sees (#5160 D9).
   result = result.replace(
     linkTokenRe(),
-    (_match, ulid: string, label?: string) => label || ftsRefName(ulid, 'page'),
+    (_match, ulid: string, label?: string) => label || piece(pieces, ftsRefName(ulid, 'page')),
   )
-  result = result
-    .replaceAll('\\*', '*')
-    .replaceAll('\\`', '`')
-    .replaceAll('\\~', '~')
-    .replaceAll('\\=', '=')
+  result = result.replace(PIECE_RE, (_match, index: string) => pieces[Number(index)] ?? '')
   return capIndexedText(result.normalize('NFC'))
 }
 

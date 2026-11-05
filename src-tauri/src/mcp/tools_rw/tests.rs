@@ -387,6 +387,63 @@ async fn append_markdown_cross_space_rejected() {
     );
 }
 
+/// #6033 S4 — Markdown an agent appends lands with Logseq's `^^` highlight and
+/// LaTeX's math in Agaric's form, as a paste writes them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_markdown_writes_foreign_highlight_and_math_in_agarics_form() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let page = mk_page(&pool, &mat, &space, "Page").await;
+    settle(&mat).await;
+
+    tools
+        .call_tool(
+            "append_markdown",
+            json!({
+                "parent_id": page,
+                "markdown": "a ^^b^^\n\n\\(x^2\\)\n\n```math\ny\n```\n",
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("happy path");
+    settle(&mat).await;
+
+    assert_eq!(
+        child_contents(&pool, &page).await,
+        ["a ==b==", "$x^2$", "$$\ny\n$$"],
+        "each foreign form is stored in Agaric's form"
+    );
+}
+
+/// #6033 S5b — content an agent writes reads an Obsidian note embed as a
+/// paste does: the whole content embeds the page, an embed among text links
+/// it, and a file embed stays text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn update_block_content_reads_obsidian_note_embeds() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let page = mk_page(&pool, &mat, &space, "Page").await;
+    let note = mk_page(&pool, &mat, &space, "Note").await;
+    let block = mk_child_of(&pool, &mat, &page, "draft").await;
+    settle(&mat).await;
+
+    for (content, expected) in [
+        ("![[Note]]", format!("{{{{embed [[{note}]]}}}}")),
+        ("see ![[Note]]", format!("see [[{note}]]")),
+        ("![[img.png]]", "![[img.png]]".to_string()),
+    ] {
+        let result = tools
+            .call_tool(
+                "update_block_content",
+                json!({"block_id": block, "content": content, "space_id": space}),
+                &test_ctx_agent(),
+            )
+            .await
+            .expect("happy path");
+        assert_eq!(result["content"], expected, "{content}");
+    }
+}
+
 // -------------------------------------------------------------------
 // update_block_content
 // -------------------------------------------------------------------
@@ -3246,6 +3303,8 @@ async fn append_block_takes_its_parent_page_by_name_5397() {
     assert_eq!(result["parent_id"], page.as_str());
     assert!(result.get("warnings").is_none(), "no warnings, no key");
 
+    // A tie links its lowest id (#6278), in content as in an argument.
+    let holder = dup_a.as_str().min(dup_b.as_str());
     let result = tools
         .call_tool(
             "append_block",
@@ -3253,28 +3312,19 @@ async fn append_block_takes_its_parent_page_by_name_5397() {
             &test_ctx_agent(),
         )
         .await
-        .expect("a tie in content is kept as text");
-    assert_eq!(result["content"], "see [[dup]]");
-    assert_eq!(
-        result["warnings"],
-        json!(["wiki-link '[[dup]]' matches multiple pages in this space; left as plain text"]),
-    );
+        .expect("a tie in content links the lowest id");
+    assert_eq!(result["content"], format!("see [[{holder}]]"));
+    assert!(result.get("warnings").is_none(), "no warnings, no key");
 
-    let err = tools
+    let result = tools
         .call_tool(
             "append_block",
             json!({"parent_id": "dup", "content": "x", "space_id": space}),
             &test_ctx_agent(),
         )
         .await
-        .expect_err("a tie must be refused");
-    let message = err.to_string();
-    assert!(
-        matches!(err, AppError::Validation { .. })
-            && message.contains(&format!("{dup_a} (Dup)"))
-            && message.contains(&format!("{dup_b} (DUP)")),
-        "the error names each candidate with its id, got {message}"
-    );
+        .expect("a tie names the lowest id");
+    assert_eq!(result["parent_id"], holder);
 
     let err = tools
         .call_tool(
@@ -3285,8 +3335,13 @@ async fn append_block_takes_its_parent_page_by_name_5397() {
         .await
         .expect_err("an unknown name must be refused");
     assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
-    assert!(child_contents(&pool, &dup_a).await.is_empty());
-    assert!(child_contents(&pool, &dup_b).await.is_empty());
+    let other = if holder == dup_a.as_str() {
+        dup_b.as_str()
+    } else {
+        dup_a.as_str()
+    };
+    assert_eq!(child_contents(&pool, holder).await, ["x"]);
+    assert!(child_contents(&pool, other).await.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

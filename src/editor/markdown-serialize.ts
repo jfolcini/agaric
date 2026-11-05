@@ -70,8 +70,9 @@ function dollarOpensMath(s: string, i: number): boolean {
  * Single-char escapes whose verdict is context-free: the char is always
  * rewritten to `\<char>` regardless of neighbours. `*`/`` ` `` are mark and
  * code delimiters, `[`/`]` open and close link labels, and `\` itself doubles.
- * `~`, `=` and `|` are escaped only where they would parse (#5160 N12): see
- * `delimiterRunNeedsEscape`, `escapeLeadingBlockMarker` and `escapeCellPipes`.
+ * `~`, `=` and `|` are escaped only where they would parse (#5160 N12), and `^`
+ * where it would pair (#6033): see `delimiterRunNeedsEscape`,
+ * `escapeLeadingBlockMarker` and `escapeCellPipes`.
  */
 const ALWAYS_ESCAPE: Record<string, string> = {
   '\\': '\\\\',
@@ -153,10 +154,13 @@ function opensBlockRefToken(s: string, i: number): boolean {
 }
 
 /**
- * Whether the `~`/`=` run `s[start, end)` would parse as a strike or highlight
- * delimiter (#5160 N12): it joins the same char just outside the text, or it
- * is two or more that could flank. Any `~~~` is escaped too, since the parser
- * and the import read one at a line start as a code fence. `x = 5` and `a == b` stay bare.
+ * Whether the `~`/`=`/`^` run `s[start, end)` would parse as a strike or
+ * highlight delimiter (#5160 N12): it joins the same char just outside the
+ * text, or it is two or more that could flank. Any `~~~` is escaped too, since
+ * the parser and the import read one at a line start as a code fence. A `^^`
+ * is Logseq's highlight, which paste and Edit as Markdown write as `==`
+ * (#6033), so a literal one must not pair there. `x = 5`, `a == b` and `x^2`
+ * stay bare.
  */
 function delimiterRunNeedsEscape(
   s: string,
@@ -177,7 +181,7 @@ function delimiterRunNeedsEscape(
 
 /**
  * Escape a text node's text. `before` and `after` are the chars emitted just
- * outside it (`''` at a line edge), which decide a `~`/`=` run at its edge.
+ * outside it (`''` at a line edge), which decide a `~`/`=`/`^` run at its edge.
  */
 function escapeText(s: string, before: string, after: string): string {
   let out = ''
@@ -189,7 +193,7 @@ function escapeText(s: string, before: string, after: string): string {
       i = url.next
       continue
     }
-    if (ch === '~' || ch === '=') {
+    if (ch === '~' || ch === '=' || ch === '^') {
       let end = i + 1
       while (s[end] === ch) end++
       const run = s.slice(i, end)
@@ -943,6 +947,15 @@ function endsWithEscapedBang(result: string): boolean {
 }
 
 /**
+ * What reads a paragraph's lines back: `block`, the block parser at a line
+ * start, which reads every line for a block marker; `behind-marker`, text after
+ * a list marker or a table cell's `| `, whose production still reads its first
+ * line for one; `inline`, a heading's text, which its production reads as
+ * inline content only.
+ */
+type LineStart = 'block' | 'behind-marker' | 'inline'
+
+/**
  * Serialize a paragraph's inline content.
  *
  * Groups consecutive nodes by link mark, wrapping linked spans in [text](url).
@@ -956,7 +969,7 @@ function endsWithEscapedBang(result: string): boolean {
 function serializeParagraph(
   node: ParagraphNode,
   onUnknownNode?: (type: string) => void,
-  atLineStart = true,
+  lineStart: LineStart = 'block',
 ): string {
   const taskPrefix = node.attrs?.todoState
     ? `- [${TASK_STATE_TO_MARKER[node.attrs.todoState]}] `
@@ -970,8 +983,8 @@ function serializeParagraph(
 
   // A task's own `- [ ] ` marker consumes the line start, so its text is never
   // dispatched as a block either — same as the callers that pass
-  // `atLineStart: false`.
-  const dispatched = atLineStart && taskPrefix === ''
+  // `behind-marker`.
+  const dispatched = lineStart === 'block' && taskPrefix === ''
 
   // #2385: a bare-URL autolink emission is only unambiguous when re-scanning
   // it in its final surroundings consumes exactly the href again. When the
@@ -1042,7 +1055,7 @@ function serializeParagraph(
   // splitting on it yields the paragraph's lines.
   const escaped = result
     .split('\n')
-    .map((line, k, lines) => finishParagraphLine(line, k, lines, dispatched))
+    .map((line, k, lines) => finishParagraphLine(line, k, lines, dispatched, lineStart))
     .join('\n')
   // The task prefix (#1435) is prepended AFTER block-marker escaping so the
   // leading-`-` escape only sees the user text, never our own `- [ ] ` marker.
@@ -1066,15 +1079,18 @@ function serializeParagraph(
  * the blank-line block separator; and every break in a heading, task or
  * list-item paragraph, whose single-line productions absorb only marker
  * continuations and would read a bare newline as the next block. Only the
- * first line of those is dispatched, so only it needs the escape.
+ * first line of a task or list-item paragraph is dispatched, so only it needs
+ * the escape; no line of a heading is.
  */
 function finishParagraphLine(
   line: string,
   k: number,
   lines: readonly string[],
   dispatched: boolean,
+  lineStart: LineStart,
 ): string {
-  const escaped = k === 0 || dispatched ? escapeLeadingBlockMarker(line) : line
+  const read = dispatched || (k === 0 && lineStart !== 'inline')
+  const escaped = read ? escapeLeadingBlockMarker(line) : line
   if (k === lines.length - 1) return escaped
   const bare = dispatched && line !== '' && lines[k + 1] !== ''
   return bare ? escaped : `${escaped}\\`
@@ -1133,29 +1149,32 @@ function escapeLeadingBlockMarker(line: string): string {
 function serializeHeading(node: HeadingNode, onUnknownNode?: (type: string) => void): string {
   const prefix = `${'#'.repeat(node.attrs.level)} `
   if (!node.content || node.content.length === 0) return prefix
-  // `atLineStart: false` — the `#{1,6} ` prefix consumes the line start, so the
-  // heading's text is never re-dispatched as a block.
+  // `inline` — the `#{1,6} ` prefix consumes the line start and `parseHeading`
+  // reads the rest as inline text, so no line of it needs a block-marker escape.
   return (
     prefix +
-    serializeParagraph({ type: 'paragraph', content: [...node.content] }, onUnknownNode, false)
+    serializeParagraph({ type: 'paragraph', content: [...node.content] }, onUnknownNode, 'inline')
   )
 }
 
 /**
- * The fence a code block of `code` is written between. CommonMark: longer
- * than the longest run of backticks in the code, so the closing fence cannot
- * collide with content, and at least 3.
+ * The fence a code block of `code` with the info string `language` is written
+ * between: backticks, or tildes when the info string holds a backtick, which a
+ * backtick fence cannot carry. CommonMark: longer than the longest run of its
+ * character in the code, so the closing fence cannot collide with content, and
+ * at least 3.
  */
-export function codeFence(code: string): string {
-  const runs = code.match(/`+/g)
+export function codeFence(code: string, language = ''): string {
+  const ch = language.includes('`') ? '~' : '`'
+  const runs = code.match(ch === '~' ? /~+/g : /`+/g)
   const longest = runs ? Math.max(...runs.map((r) => r.length)) : 0
-  return '`'.repeat(Math.max(3, longest + 1))
+  return ch.repeat(Math.max(3, longest + 1))
 }
 
 function serializeCodeBlock(node: CodeBlockNode): string {
   const code = node.content?.[0]?.text ?? ''
   const lang = node.attrs?.language ?? ''
-  const fence = codeFence(code)
+  const fence = codeFence(code, lang)
   return `${fence}${lang}\n${code}\n${fence}`
 }
 
@@ -1328,9 +1347,9 @@ function serializeTable(node: TableNode, onUnknownNode?: (type: string) => void)
           cell.content && cell.content.length > 0
             ? escapeCellPipes(
                 canonicalCellParagraphs(cell.content)
-                  // `atLineStart: false` — a cell sits behind `| `, so its text
+                  // `behind-marker` — a cell sits behind `| `, so its text
                   // is inline content the row production owns.
-                  .map((p) => serializeParagraph(p, onUnknownNode, false))
+                  .map((p) => serializeParagraph(p, onUnknownNode, 'behind-marker'))
                   .join(' ')
                   .trim(),
               )
@@ -1548,7 +1567,7 @@ function serializeBlockNode(node: BlockLevelNode, onUnknownNode?: (type: string)
  * whitespace at all (`- <tab>x` round-trips as-is) and there is no preceding
  * sibling to absorb it. Its later lines are ordinary lines again. The same
  * "the marker owns this line start" fact is what keeps that paragraph's hard
- * breaks in the legacy marker form (`serializeParagraph`'s `atLineStart`).
+ * breaks in the legacy marker form (`serializeParagraph`'s `lineStart`).
  */
 function serializeBlockSequence(
   nodes: readonly BlockLevelNode[],
@@ -1559,10 +1578,10 @@ function serializeBlockSequence(
     const onMarkerLine = idx === 0 && skipFirst
     // A paragraph on the marker line is not at a line start the parser
     // dispatches — one notion of "this text owns the start of its line", used
-    // by this defuse and by `serializeParagraph`'s `atLineStart`.
+    // by this defuse and by `serializeParagraph`'s `lineStart`.
     const serialized =
       onMarkerLine && node.type === 'paragraph'
-        ? serializeParagraph(node, onUnknownNode, false)
+        ? serializeParagraph(node, onUnknownNode, 'behind-marker')
         : serializeBlockNode(node, onUnknownNode)
     if (node.type !== 'paragraph') return serialized
     const prev = nodes[idx - 1]

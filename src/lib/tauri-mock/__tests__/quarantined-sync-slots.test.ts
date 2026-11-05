@@ -51,3 +51,30 @@ describe('list_quarantined_sync_slots (mock)', () => {
     expect(list(100)).toEqual({ slots: [], total: 0 })
   })
 })
+
+describe('readmit_quarantined_sync_slot (mock)', () => {
+  beforeEach(() => {
+    seedBlocks()
+  })
+
+  it('takes the row out of the list and leaves the others', () => {
+    const kept = addMockQuarantinedSlot({ quarantined_at_ms: 1_000 })
+    const retried = addMockQuarantinedSlot({ quarantined_at_ms: 2_000 })
+
+    dispatch('readmit_quarantined_sync_slot', { id: retried.id })
+
+    expect(list(100)).toEqual({ slots: [kept], total: 1 })
+  })
+
+  it('rejects an unknown id as not found and changes nothing', () => {
+    const kept = addMockQuarantinedSlot()
+
+    expect(() => dispatch('readmit_quarantined_sync_slot', { id: kept.id + 1 })).toThrow(
+      expect.objectContaining({
+        kind: 'not_found',
+        message: `quarantined sync slot ${kept.id + 1}`,
+      }),
+    )
+    expect(list(100)).toEqual({ slots: [kept], total: 1 })
+  })
+})

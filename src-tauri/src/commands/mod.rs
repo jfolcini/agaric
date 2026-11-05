@@ -53,6 +53,7 @@ pub mod link_metadata;
 pub mod logging;
 pub mod mcp;
 pub mod mcp_agents;
+pub mod mirror;
 pub mod notifier;
 pub mod observability;
 pub mod pages;
@@ -215,8 +216,9 @@ pub use sync_cmds::{
     delete_peer_ref_inner, get_bind_exposure_status, get_device_id, get_device_id_inner,
     get_mdns_status, get_os_network_block_status, get_sync_relay_settings,
     get_sync_relay_settings_inner, list_peer_refs, list_peer_refs_inner,
-    list_quarantined_sync_slots, list_quarantined_sync_slots_inner, set_peer_address,
-    set_peer_address_inner, set_sync_relay_settings, set_sync_relay_settings_inner, start_pairing,
+    list_quarantined_sync_slots, list_quarantined_sync_slots_inner, readmit_quarantined_sync_slot,
+    readmit_quarantined_sync_slot_inner, set_peer_address, set_peer_address_inner,
+    set_sync_relay_settings, set_sync_relay_settings_inner, start_pairing,
     start_pairing_armed_inner, start_pairing_inner, start_sync, start_sync_inner, update_peer_name,
     update_peer_name_inner,
 };

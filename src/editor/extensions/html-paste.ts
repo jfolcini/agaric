@@ -288,14 +288,24 @@ function isBlockPaste(text: string, view?: EditorView): boolean {
 }
 
 /**
- * One line naming a page (`[[Name]]`, `[[Name|label]]`, `[label]([[Name]])`):
- * only the block path resolves the name (#6033). A `#tag` needs no route, as
- * the save makes it a tag, and a list line stays inline for the reason
- * `isBlockPaste` gives.
+ * Logseq's `^^` highlight, LaTeX's `\(` / `\[` math and Obsidian's `![[` embed,
+ * which the block path rewrites.
  */
-function namesPage(text: string): boolean {
+const FOREIGN_FORM_RE = /\^\^|\\[([]|!\[\[/
+
+/**
+ * One line only the block path reads in full (#6033): one naming a page
+ * (`[[Name]]`, `[[Name|label]]`, `[label]([[Name]])`), whose name only it
+ * resolves, or holding a foreign form only it writes in Agaric's (`^^x^^`,
+ * `\(x\)`, `\[x\]`, `![[Note]]`); the block path reads any other line the
+ * same, so a false positive (a file's `![[img.png]]`) is harmless. A `#tag`
+ * needs no route, as the save makes it a tag, and a list line stays inline
+ * for the reason `isBlockPaste` gives.
+ */
+function needsBlockPath(text: string): boolean {
   const line = text.trim()
-  return !LIST_LINE_RE.test(line) && scanNameTokens(line).some((token) => token.kind === 'page')
+  if (LIST_LINE_RE.test(line)) return false
+  return FOREIGN_FORM_RE.test(line) || scanNameTokens(line).some((token) => token.kind === 'page')
 }
 
 /** Serialize a ProseMirror doc to the block's markdown. */
@@ -517,8 +527,9 @@ export const HtmlPaste = Extension.create({
             if (!body) {
               // No usable HTML → text worth reading as blocks goes to the
               // block-paste path, and one line is read inline at the caret,
-              // unless it names a page outside a table or a list.
-              if (!isBlockPaste(plainText, view) && (inside || !namesPage(plainText))) {
+              // unless only the block path reads it in full and it is outside
+              // a table or a list.
+              if (!isBlockPaste(plainText, view) && (inside || !needsBlockPath(plainText))) {
                 return pasteOneLine(view, plainText)
               }
               dispatchPasteBlocks(view, { kind: 'text', text: plainText }, plainText, targetBlockId)

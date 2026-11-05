@@ -5,6 +5,7 @@ use agaric_core::ulid::BlockId;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use std::borrow::Cow;
 use std::sync::LazyLock;
 
 /// Maximum block-tree depth permitted by the import parser.  Blocks
@@ -374,7 +375,7 @@ fn split_block_task_marker(text: &str) -> (Option<&'static str>, &str) {
 /// The Logseq and Org task keywords an import reads at the start of a bullet's
 /// text (#5160 D7), and the `todo_state` each stands for. Typing, paste and
 /// Edit as Markdown keep them as words.
-const TASK_KEYWORDS: [(&str, &str); 11] = [
+const TASK_KEYWORDS: [(&str, &str); 12] = [
     ("TODO", "TODO"),
     ("LATER", "TODO"),
     ("WAITING", "TODO"),
@@ -382,6 +383,7 @@ const TASK_KEYWORDS: [(&str, &str); 11] = [
     ("DOING", "DOING"),
     ("NOW", "DOING"),
     ("IN-PROGRESS", "DOING"),
+    ("STARTED", "DOING"),
     ("DONE", "DONE"),
     ("CANCELLED", "CANCELLED"),
     ("CANCELED", "CANCELLED"),
@@ -1049,39 +1051,433 @@ pub fn embed_names_note(name: &str) -> bool {
 /// `content` with each Obsidian note embed outside inline code written in
 /// Agaric's form (<https://obsidian.md/help/embeds>): a block that is one
 /// embed becomes the embed block `{{embed [[target]]}}`, its `|label`
-/// dropped, and an embed among other text the link `[[target|label]]`, since
-/// an Agaric embed is a whole block. The name pass then links the target, a
-/// `#heading` or `#^id` anchor to the block it names. `names_note` tells a
-/// note's name from a file's ([`embed_names_note`]); a file embed is left to
-/// the attachment pass, and an escaped one is text.
+/// dropped, and an embed among other text the link `[[target|label]]`
+/// ([`link_obsidian_note_embeds`]), since an Agaric embed is a whole block.
+/// The name pass then links the target, a `#heading` or `#^id` anchor to the
+/// block it names. `names_note` tells a note's name from a file's
+/// ([`embed_names_note`]); a file embed is left to the attachment pass, and an
+/// escaped one is text.
 pub fn rewrite_obsidian_note_embeds(content: &str, names_note: impl Fn(&str) -> bool) -> String {
+    if let Some(caps) = OBSIDIAN_EMBED_RE.captures(content)
+        && &caps[0] == content.trim()
+        && names_note(embed_target_name(&caps))
+    {
+        return format!("{{{{embed [[{}]]}}}}", caps[1].trim());
+    }
+    link_obsidian_note_embeds(content, names_note)
+}
+
+/// `content` with each Obsidian note embed outside inline code written as the
+/// link `[[target|label]]`, as an embed among other text reads, even one that
+/// is the whole of `content`: a paste joins its first and last block to the
+/// text around the cursor. `names_note` and what stays text are as in
+/// [`rewrite_obsidian_note_embeds`].
+pub fn link_obsidian_note_embeds(content: &str, names_note: impl Fn(&str) -> bool) -> String {
     if !content.contains("![[") {
         return content.to_string();
     }
     let code_spans = inline_code_spans(content);
-    let is_note_embed = |caps: &regex::Captures<'_>| {
-        let start = caps.get(0).expect("group 0 always present").start();
-        let name = caps[1].split('#').next().unwrap_or_default().trim();
-        !code_spans.iter().any(|&(s, e)| start >= s && start < e)
-            && !is_escaped(content, start)
-            && names_note(name)
-    };
-    if let Some(caps) = OBSIDIAN_EMBED_RE.captures(content)
-        && &caps[0] == content.trim()
-        && is_note_embed(&caps)
-    {
-        return format!("{{{{embed [[{}]]}}}}", caps[1].trim());
-    }
     OBSIDIAN_EMBED_RE
         .replace_all(content, |caps: &regex::Captures<'_>| {
             let whole = &caps[0];
-            if is_note_embed(caps) {
+            let start = caps.get(0).expect("group 0 always present").start();
+            if !code_spans.iter().any(|&(s, e)| start >= s && start < e)
+                && !is_escaped(content, start)
+                && names_note(embed_target_name(caps))
+            {
                 whole[1..].to_string()
             } else {
                 whole.to_string()
             }
         })
         .into_owned()
+}
+
+/// An Obsidian embed's target name: its text before any `#anchor` or `|label`.
+fn embed_target_name<'h>(caps: &regex::Captures<'h>) -> &'h str {
+    let target = caps.get(1).map_or("", |m| m.as_str());
+    target.split('#').next().unwrap_or_default().trim()
+}
+
+/// `content` with the foreign forms of highlight and math written in Agaric's
+/// own (#6033 S4): Logseq's `^^x^^` as `==x==`, `\(x\)` as `$x$`, a ```` ```math ````
+/// fence as a `$$` block, and `\[x\]` as a `$$` block when it is the whole
+/// content, else as `$x$`. A pair of `^^` reads as a `==` pair would: an
+/// opener before a non-space, a closer after one, each closing the nearest
+/// opener left of it on its line. Math mid-text stays on one line; math holds
+/// no `$`, backtick, `^^` or nested `\(` / `\[`, and a `\[` is math only when
+/// its text holds a LaTeX command, an unescaped `\` before a letter. A closed
+/// span that may not be math is kept whole. Code spans, other fences and `$$`
+/// blocks (in a quote too), a `[[…]]` link's title or label and escaped forms
+/// are left as written.
+///
+/// Agaric's own text never holds these forms: its writer escapes a `^^` that
+/// could pair, doubles a literal `\` and writes the text `[x]` as `\[x\]`,
+/// whose text holds no command. The one `\)` it writes is an unbalanced paren
+/// in a link's destination, so a `\(` before it is cut off by that link's
+/// `](`, which math may not hold.
+pub fn normalize_foreign_inline(content: &str) -> Cow<'_, str> {
+    if !["^^", "\\(", "\\[", "math"]
+        .iter()
+        .any(|form| content.contains(form))
+    {
+        return Cow::Borrowed(content);
+    }
+    if let Some(block) = display_math(content) {
+        return Cow::Owned(block);
+    }
+    let (lines, mut changed) = math_fences_as_blocks(content);
+    let mut out: Vec<Cow<'_, str>> = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        if let Some((end, _)) = literal_block(&lines, i) {
+            out.extend(lines[i..=end].iter().map(|l| Cow::Borrowed(*l)));
+            i = end + 1;
+        } else {
+            let line = normalize_inline_line(lines[i]);
+            changed |= matches!(line, Cow::Owned(_));
+            out.push(line);
+            i += 1;
+        }
+    }
+    if changed {
+        Cow::Owned(out.join("\n"))
+    } else {
+        Cow::Borrowed(content)
+    }
+}
+
+/// The lines of `content`, each closed ```` ```math ```` fence's opening and
+/// closing lines written `$$`, and whether there was one. One inside another
+/// fence or a `$$` block, or holding a line that opens a fence or is `$$`, is
+/// left as written: LaTeX holds neither, and either would pair with the `$$`
+/// lines when the text is read again. Run before the inline pass, so the `$$`
+/// lines it writes pair as they will then.
+fn math_fences_as_blocks(content: &str) -> (Vec<&str>, bool) {
+    let lines: Vec<&str> = content.split('\n').collect();
+    let mut out = Vec::with_capacity(lines.len());
+    let mut changed = false;
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        match literal_block(&lines, i) {
+            Some((end, Some(run)))
+                if fence_run(line) == Some(run)
+                    && line[run.len..].trim() == "math"
+                    && lines[i + 1..end]
+                        .iter()
+                        .all(|l| fence_opener(l).is_none() && l.trim() != "$$") =>
+            {
+                changed = true;
+                out.push("$$");
+                out.extend(&lines[i + 1..end]);
+                out.push("$$");
+                i = end + 1;
+            }
+            Some((end, _)) => {
+                out.extend(&lines[i..=end]);
+                i = end + 1;
+            }
+            None => {
+                out.push(line);
+                i += 1;
+            }
+        }
+    }
+    (out, changed)
+}
+
+/// The block starting at line `i` of `lines` that holds no Markdown: a fence,
+/// through its closing line or to the end, or a `$$` block, in a quote too
+/// (`> ```sh`). Its last line, and the fence's run when it is a closed fence.
+fn literal_block(lines: &[&str], i: usize) -> Option<(usize, Option<FenceRun>)> {
+    let closing = |closes: &dyn Fn(&str) -> bool| {
+        lines[i + 1..]
+            .iter()
+            .position(|l| closes(unquoted(l)))
+            .map(|at| i + 1 + at)
+    };
+    let first = unquoted(lines[i]);
+    if let Some(run) = fence_opener(first) {
+        return Some(match closing(&|l| closes_fence(l, run)) {
+            Some(end) => (end, Some(run)),
+            None => (lines.len() - 1, None),
+        });
+    }
+    if first.trim() != "$$" {
+        return None;
+    }
+    closing(&|l| l.trim() == "$$").map(|end| (end, None))
+}
+
+/// `line` past the `>` markers of the quote it is in and a callout's `[!type]`
+/// label, which shares the line of the callout's first block: the editor
+/// writes a code block in a quote with a `> ` before each line.
+fn unquoted(line: &str) -> &str {
+    let mut rest = line.trim_start();
+    let mut quoted = false;
+    while let Some(after) = rest.strip_prefix('>') {
+        rest = after.trim_start();
+        quoted = true;
+    }
+    match rest
+        .strip_prefix("[!")
+        .and_then(|label| label.split_once(']'))
+    {
+        Some((_, after)) if quoted => after.trim_start(),
+        _ => rest,
+    }
+}
+
+/// The `$$` block `content` is when the whole of it is one `\[…\]` holding a
+/// LaTeX command, as [`normalize_foreign_inline`] reads one.
+fn display_math(content: &str) -> Option<String> {
+    let rest = content.trim().strip_prefix("\\[")?;
+    let end = math_close(rest, b']')?;
+    let latex = math_latex(&rest[..end], true)?;
+    (end + 2 == rest.len()).then(|| format!("$$\n{latex}\n$$"))
+}
+
+/// One line of [`normalize_foreign_inline`], outside any fence or `$$` block.
+fn normalize_inline_line(line: &str) -> Cow<'_, str> {
+    if !["^^", "\\(", "\\["].iter().any(|form| line.contains(form)) {
+        return Cow::Borrowed(line);
+    }
+    let bytes = line.as_bytes();
+    let mut out = String::with_capacity(line.len());
+    // Where in `out` each `^^` that may open a highlight was written.
+    let mut openers: Vec<usize> = Vec::new();
+    let mut i = 0;
+    while i < line.len() {
+        match bytes[i] {
+            b'`' => {
+                // A code span, closed by a run of as many backticks; with
+                // none, the rest of the line is text, as the editor reads it.
+                let end = code_span_end(bytes, i).unwrap_or(line.len());
+                out.push_str(&line[i..end]);
+                i = end;
+            }
+            b'[' => {
+                // A page link's or a tag's `[[…]]` holds a title or a label,
+                // which is text, not Markdown.
+                let end = line[i..]
+                    .strip_prefix("[[")
+                    .and_then(|rest| rest.find("]]"))
+                    .map_or(i + 1, |at| i + 2 + at + 2);
+                out.push_str(&line[i..end]);
+                i = end;
+            }
+            b'\\' => {
+                // Math, or an escape: the `\` and the character it makes text.
+                let (text, next) = inline_math(line, i).unwrap_or_else(|| {
+                    let next = line[i + 1..]
+                        .chars()
+                        .next()
+                        .map_or(i + 1, |c| i + 1 + c.len_utf8());
+                    (Cow::Borrowed(&line[i..next]), next)
+                });
+                out.push_str(&text);
+                i = next;
+            }
+            b'^' => {
+                let run = bytes[i..].iter().take_while(|&&b| b == b'^').count();
+                let flanked = |c: Option<char>| c.is_some_and(|c| !c.is_whitespace());
+                let can_open = flanked(line[i + run..].chars().next());
+                let can_close = flanked(line[..i].chars().next_back());
+                if run == 2
+                    && can_close
+                    && let Some(at) = openers.pop()
+                {
+                    out.replace_range(at..at + 2, "==");
+                    out.push_str("==");
+                } else {
+                    if run == 2 && can_open {
+                        openers.push(out.len());
+                    }
+                    out.push_str(&line[i..i + run]);
+                }
+                i += run;
+            }
+            _ => {
+                let next = line[i..]
+                    .find(['\\', '^', '`', '['])
+                    .map_or(line.len(), |at| i + at);
+                out.push_str(&line[i..next]);
+                i = next;
+            }
+        }
+    }
+    if out == line {
+        Cow::Borrowed(line)
+    } else {
+        Cow::Owned(out)
+    }
+}
+
+/// The span `\(…\)` or `\[…\]` opening at byte `at` of `line`, as written
+/// back, and the byte after it: `$…$` when it may be math, else as it stands.
+/// A leading digit is grouped (`${2x}$`), as the editor writes it, since `$2`
+/// reads as currency. `None` when no `\)` or `\]` closes it.
+fn inline_math(line: &str, at: usize) -> Option<(Cow<'_, str>, usize)> {
+    let (close, command) = match line.as_bytes().get(at + 1)? {
+        b'(' => (b')', false),
+        b'[' => (b']', true),
+        _ => return None,
+    };
+    let inner = &line[at + 2..];
+    let end = math_close(inner, close)?;
+    let next = at + 2 + end + 2;
+    let Some(latex) = math_latex(&inner[..end], command) else {
+        return Some((Cow::Borrowed(&line[at..next]), next));
+    };
+    let math = if latex.starts_with(|c: char| c.is_ascii_digit()) {
+        format!("${{{latex}}}$")
+    } else {
+        format!("${latex}$")
+    };
+    Some((Cow::Owned(math), next))
+}
+
+/// Where in `text` the `\` of the `\` + `close` that closes a math span opened
+/// before it stands: the first one not escaped. `None` when a backtick, or
+/// another `\(` or `\[`, comes first.
+fn math_close(text: &str, close: u8) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut j = 0;
+    while j < bytes.len() {
+        match bytes[j] {
+            b'`' => return None,
+            b'\\' => match bytes.get(j + 1) {
+                Some(&next) if next == close => return Some(j),
+                Some(b'(' | b'[') => return None,
+                _ => j += 2,
+            },
+            _ => j += 1,
+        }
+    }
+    None
+}
+
+/// The LaTeX of a math span whose text is `inner`, trimmed, when it may be
+/// math: not empty, no `$`, `^^` or `](`, not ending in an escaping `\`, and
+/// holding a command when `command`.
+fn math_latex(inner: &str, command: bool) -> Option<&str> {
+    let latex = inner.trim();
+    let dangling = latex.bytes().rev().take_while(|&b| b == b'\\').count() % 2 == 1;
+    let refused = latex.is_empty()
+        || dangling
+        || ["$", "^^", "]("].iter().any(|form| latex.contains(form))
+        || (command && !holds_latex_command(latex));
+    (!refused).then_some(latex)
+}
+
+/// Whether `latex` holds a command: a `\` that is not escaped, before an
+/// ASCII letter.
+fn holds_latex_command(latex: &str) -> bool {
+    let bytes = latex.as_bytes();
+    let mut j = 0;
+    while j < bytes.len() {
+        if bytes[j] == b'\\' {
+            if bytes.get(j + 1).is_some_and(u8::is_ascii_alphabetic) {
+                return true;
+            }
+            j += 2;
+        } else {
+            j += 1;
+        }
+    }
+    false
+}
+
+/// The end of the code span whose backtick run starts at `start` of `bytes`:
+/// past the next run of exactly as many backticks (CommonMark § 6.1), as the
+/// editor's `scanCodeSpan` reads one. [`inline_code_spans`] pairs single
+/// backticks, which cuts a span written with a longer run at a backtick inside
+/// it, and so would let this pass rewrite the code.
+fn code_span_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let run_at = |at: usize| bytes[at..].iter().take_while(|&&b| b == b'`').count();
+    let open = run_at(start);
+    let mut j = start + open;
+    while j < bytes.len() {
+        if bytes[j] == b'`' {
+            let close = run_at(j);
+            if close == open {
+                return Some(j + close);
+            }
+            j += close;
+        } else {
+            j += 1;
+        }
+    }
+    None
+}
+
+/// The Logseq admonitions (`#+BEGIN_NOTE` … `#+END_NOTE`) an import reads as
+/// callouts of their kind.
+const ORG_ADMONITIONS: [&str; 6] = ["NOTE", "TIP", "IMPORTANT", "CAUTION", "WARNING", "PINNED"];
+
+/// `content`, a block's text, with each Logseq/Org `#+BEGIN_X` … `#+END_X`
+/// block outside a code fence in Agaric's form: an admonition
+/// (`ORG_ADMONITIONS`) as a `> [!X]` callout and `QUOTE` as a `>` quote,
+/// each line of its body quoted. The keyword and the kind are read ignoring
+/// case, as Org reads them. Any other kind, source and example blocks
+/// included, and a block with no `#+END_X` stay as written.
+pub fn rewrite_org_blocks(content: &str) -> String {
+    if !content.contains("#+") {
+        return content.to_string();
+    }
+    let lines: Vec<&str> = content.split('\n').collect();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    let mut fence: Option<FenceRun> = None;
+    let mut at = 0;
+    while at < lines.len() {
+        let line = lines[at];
+        at += 1;
+        if let Some(run) = fence {
+            if closes_fence(line, run) {
+                fence = None;
+            }
+        } else if let Some(run) = fence_run(line.trim_start()) {
+            fence = Some(run);
+        } else if let Some((kind, marker)) = org_block_kind(line) {
+            let end = format!("#+END_{kind}");
+            let close = lines[at..]
+                .iter()
+                .position(|l| l.trim().eq_ignore_ascii_case(&end));
+            if let Some(close) = close {
+                out.extend(marker);
+                let body = &lines[at..at + close];
+                out.extend(body.iter().map(|l| {
+                    if l.is_empty() {
+                        ">".to_string()
+                    } else {
+                        format!("> {l}")
+                    }
+                }));
+                at += close + 1;
+                continue;
+            }
+        }
+        out.push(line.to_string());
+    }
+    out.join("\n")
+}
+
+/// The kind of the `#+BEGIN_X` line `line` is, as written, when an import
+/// reads it, and the callout marker line it opens with, if any.
+fn org_block_kind(line: &str) -> Option<(&str, Option<String>)> {
+    let trimmed = line.trim();
+    let kind = trimmed
+        .get(..8)
+        .filter(|begin| begin.eq_ignore_ascii_case("#+BEGIN_"))
+        .map(|_| &trimmed[8..])?;
+    let upper = kind.to_ascii_uppercase();
+    if upper == "QUOTE" {
+        return Some((kind, None));
+    }
+    ORG_ADMONITIONS
+        .contains(&upper.as_str())
+        .then(|| (kind, Some(format!("> [!{upper}]"))))
 }
 
 /// `%XX` escapes decoded to their bytes, read as UTF-8; anything else, and a
@@ -3117,7 +3513,12 @@ impl<'a> FrontmatterScan<'a> {
             self.note_unread(format!("`{line}` is not a `key: value` line"));
             return;
         };
-        let key = key_raw.trim();
+        // Obsidian's older singular keys name the page's aliases and tags.
+        let key = match key_raw.trim() {
+            "alias" => "aliases",
+            "tag" => "tags",
+            key => key,
+        };
         if !is_property_key(key) {
             self.skipped_invalid += 1;
             self.note_unread(format!("`{line}` is not a `key: value` line"));
@@ -4767,7 +5168,7 @@ bare line (({UUID_B})) too"
         let mut list_items: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
         let pairs = parse_frontmatter(
-            "title: \"Quoted Value\"\nalias: 'single quoted'",
+            "title: \"Quoted Value\"\nnickname: 'single quoted'",
             &mut list_items,
             &mut warns,
         );
@@ -4775,7 +5176,7 @@ bare line (({UUID_B})) too"
             pairs,
             vec![
                 ("title".to_string(), "Quoted Value".to_string()),
-                ("alias".to_string(), "single quoted".to_string()),
+                ("nickname".to_string(), "single quoted".to_string()),
             ],
             "a single layer of matching quotes must be stripped; got {pairs:?}"
         );
@@ -5696,9 +6097,75 @@ mod parse_proptest {
 
     use super::line_soup::arb_document;
     use super::{
-        MAX_IMPORT_DEPTH, ParsedBlock, line_is_property_shaped, parse_document_outline,
-        parse_logseq_markdown, parse_pasted_text,
+        MAX_IMPORT_DEPTH, ParsedBlock, line_is_property_shaped, normalize_foreign_inline,
+        parse_document_outline, parse_logseq_markdown, parse_pasted_text,
     };
+
+    /// Pieces of text as Agaric's writer leaves it (#6033 Q3): a `^` before a
+    /// digit, an escaped `^^`, a doubled `\` before a paren or a letter, the
+    /// text `[x]` as `\[x\]`, currency, a closed code span, a fence that is not
+    /// math, in a quote too, or a link's raw label holding any form. Each is
+    /// whole escape pairs, so no two pieces join into a form.
+    const OWN_PIECES: &[&str] = &[
+        "a",
+        " ",
+        "\n",
+        "x^2",
+        r"\^\^",
+        r"\\(",
+        r"\\)",
+        r"\\alpha",
+        r"\[",
+        r"\]",
+        "(",
+        ")",
+        "$5",
+        r"\$x",
+        "==",
+        r"`^^x^^ \(y\) \[\alpha\]`",
+        "\n```\n^^x^^ \\[\\alpha\\]\n```\n",
+        "\n> [!TIP] ```\n> ^^x^^ \\(y\\) \\[\\alpha\\]\n> ```\n",
+        r"[[01HZ00000000000000000BLOCK|a ^^b^^ \(c\)]]",
+    ];
+
+    /// [`OWN_PIECES`] and every foreign form, whole and in parts.
+    const FOREIGN_PIECES: &[&str] = &[
+        "^^",
+        "^^x^^",
+        "^",
+        r"\(",
+        r"\)",
+        r"\(x^2\)",
+        r"\( 2x \)",
+        r"\[\frac{a}{b}\]",
+        r"\alpha",
+        "\\",
+        "`",
+        "$",
+        "\n$$\n",
+        "\n```math\n",
+        "\n~~~math\n",
+        "\n```\n",
+        "\n~~~\n",
+        "\n> ```\n",
+        "\n> $$\n",
+    ];
+
+    fn arb_own_text() -> impl Strategy<Value = String> {
+        proptest::collection::vec(proptest::sample::select(OWN_PIECES), 0..16)
+            .prop_map(|parts| parts.concat())
+    }
+
+    fn arb_foreign_text() -> impl Strategy<Value = String> {
+        proptest::collection::vec(
+            prop_oneof![
+                proptest::sample::select(OWN_PIECES),
+                proptest::sample::select(FOREIGN_PIECES)
+            ],
+            0..16,
+        )
+        .prop_map(|parts| parts.concat())
+    }
 
     /// The start of a line the grammar may read as syntax: a bullet of any
     /// marker, an escape, a second list marker, an escape and a checkbox.
@@ -5848,6 +6315,34 @@ mod parse_proptest {
         #[test]
         fn parse_logseq_markdown_never_panics_on_arbitrary_text(input in ".*") {
             let _ = parse_logseq_markdown(&input);
+        }
+
+        /// #6033 S4 — text with no unescaped `^^`, `\(` or `\[` holding a
+        /// command, as Agaric writes it, is left as it is.
+        #[test]
+        fn normalizing_leaves_agarics_own_text_as_it_is(text in arb_own_text()) {
+            prop_assert_eq!(normalize_foreign_inline(&text), text.as_str());
+        }
+
+        /// #6033 S4 — normalizing twice is normalizing once: what it writes
+        /// holds no form it would read again. Seeded with an open `$$` line
+        /// before a math fence holding another, which it would pair with.
+        #[test]
+        fn normalizing_is_idempotent(
+            text in prop_oneof![
+                1 => Just("\n$$\n\n```math\n\n```math\n\n```\n^^x^^\n```\n".to_string()),
+                15 => arb_foreign_text(),
+            ]
+        ) {
+            let once = normalize_foreign_inline(&text).into_owned();
+            prop_assert_eq!(normalize_foreign_inline(&once), once.as_str(), "from {:?}", text);
+        }
+
+        /// The normaliser never slices off a char boundary, which would abort
+        /// a release build: the forms' characters mixed with a two-byte one.
+        #[test]
+        fn normalizing_never_panics(input in r"[a é^\\()\[\]`$~\n]{0,40}") {
+            let _ = normalize_foreign_inline(&input);
         }
     }
 }
@@ -7550,6 +8045,19 @@ mod tests_task_syntax_5160 {
         }
     }
 
+    /// Logseq's `STARTED` is DOING, and an export escapes a block whose text
+    /// opens with it, so the escaped word reads back as text.
+    #[test]
+    fn a_logseq_started_task_is_doing() {
+        let block = &parse_logseq_markdown("- STARTED write the report").blocks[0];
+        assert_eq!(property(block, "todo_state"), Some("DOING"));
+        assert_eq!(block.content, "write the report");
+        assert!(super::needs_task_syntax_escape("STARTED x"));
+        let block = &parse_logseq_markdown("- \\STARTED x").blocks[0];
+        assert_eq!(property(block, "todo_state"), None);
+        assert_eq!(block.content, "STARTED x");
+    }
+
     /// Anything else stays text: a lowercase or glued keyword, one not at the
     /// start of the first line, a checkbox's own text, and an unknown cookie.
     #[test]
@@ -8195,6 +8703,174 @@ mod tests_obsidian_embeds {
         assert_eq!(
             link_logseq_refs("no refs", target),
             ("no refs".to_string(), 0)
+        );
+    }
+}
+
+/// #6033 S4 — [`normalize_foreign_inline`]: Logseq's highlight and LaTeX's math
+/// in Agaric's form, and everything Agaric writes itself left as it is.
+#[cfg(test)]
+mod tests_foreign_inline_6033 {
+    use super::normalize_foreign_inline;
+
+    fn normalized(content: &str) -> String {
+        normalize_foreign_inline(content).into_owned()
+    }
+
+    #[test]
+    fn each_foreign_form_is_written_in_agarics() {
+        for (foreign, agaric) in [
+            ("^^x^^", "==x=="),
+            ("a ^^b c^^ d", "a ==b c== d"),
+            ("^^a ^^b c^^ d^^", "==a ==b c== d=="),
+            (r"\(x^2\)", "$x^2$"),
+            (r"see \( x \) now", "see $x$ now"),
+            (r"\(2x\)", "${2x}$"),
+            (r"\\\(x\)", r"\\$x$"),
+            (r"\[\frac{a}{b}\]", "$$\n\\frac{a}{b}\n$$"),
+            ("\\[\n\\frac{a}{b}\n\\]", "$$\n\\frac{a}{b}\n$$"),
+            (r"area \[\pi r^2\] here", r"area $\pi r^2$ here"),
+            (r"\[\alpha\] and \[\beta\]", r"$\alpha$ and $\beta$"),
+            ("^^a [[Page]] b^^", "==a [[Page]] b=="),
+            ("```math\nx^2\n```", "$$\nx^2\n$$"),
+            (
+                "Intro ^^a^^\n```math\n\\frac{a}{b}\n```",
+                "Intro ==a==\n$$\n\\frac{a}{b}\n$$",
+            ),
+            ("> [!TIP] ^^a^^ \\(x\\)", "> [!TIP] ==a== $x$"),
+            ("> ```sh\n> x\n> ```\n^^a^^", "> ```sh\n> x\n> ```\n==a=="),
+        ] {
+            assert_eq!(normalized(foreign), agaric, "{foreign:?}");
+        }
+    }
+
+    /// An escaped form is text: an odd run of backslashes before it.
+    #[test]
+    fn an_escaped_form_is_left_as_written() {
+        for text in [
+            r"\^^x^^",
+            r"\^\^x\^\^",
+            r"\\(x\\)",
+            r"\(x\\)",
+            r"\[\\frac{a}{b}\]",
+        ] {
+            assert_eq!(normalized(text), text, "{text:?}");
+        }
+    }
+
+    /// Code, a span or a fence that is not math, and a `$$` block keep every
+    /// form they hold, in a quote or a callout too, where the editor writes a
+    /// code block with a `> ` before each line. A math fence holding a fence or
+    /// a `$$` line stays one: as a `$$` block, a `$$` line before it would pair
+    /// with it instead.
+    #[test]
+    fn code_and_math_blocks_are_left_as_written() {
+        for text in [
+            "`^^x^^`",
+            r"`\(x\)` and `\[\alpha\]`",
+            "``a ` ^^b^^``",
+            "```\n^^x^^ \\(y\\)\n```",
+            "```python\nx\n```",
+            "> ```sh\n> sed 's/\\(a\\)/\\1/' ^^x^^ ^^y^^\n> ```",
+            "> [!TIP] ```python\n> re.compile(r\"\\(\\d+\\)\")\n> ```",
+            ">> ~~~\n>> \\[\\alpha\\]\n>> ~~~",
+            "> ```math\n> x^2 ^^a^^\n> ```",
+            "$$\n\\[\\alpha\\] ^^a^^\n$$",
+            "> $$\n> \\[\\alpha\\] ^^a^^\n> $$",
+            "```math\nx",
+            "```math\n~~~\nx\n```",
+            "```math\n$$\n```",
+        ] {
+            assert_eq!(normalized(text), text, "{text:?}");
+        }
+    }
+
+    /// Q4: a `\[` is math only when its text holds a LaTeX command, so Logseq's
+    /// `\[x^2\]` and Agaric's own text `[x]` stay text; math is never empty,
+    /// holds no `$` and stays on its line.
+    #[test]
+    fn a_span_that_may_not_be_math_is_left_as_written() {
+        for text in [
+            r"\[x^2\]",
+            r"\[x\]",
+            r"see \[x\] and \[y\]",
+            r"\(\)",
+            r"\( \)",
+            r"\(a $b\)",
+            r"\(a",
+            "\\(a\nb\\)",
+            r"\(^^a^^\)",
+            "^^ x ^^",
+            "2^^3",
+            "^^^x^^^",
+        ] {
+            assert_eq!(normalized(text), text, "{text:?}");
+        }
+    }
+
+    /// Q3: text Agaric writes itself: a literal `((ULID))`, whose `(` it
+    /// escapes, two links whose destinations' unbalanced parens it escapes, and
+    /// a link's label and a page's or tag's name, which it writes raw.
+    #[test]
+    fn agarics_own_escapes_are_left_as_written() {
+        for text in [
+            r"\((01HZ00000000000000000BLOCK)) and \[x\]",
+            r"[a](https://x.org/\() and [b](https://y.org/\))",
+            r"[[01HZ00000000000000000BLOCK|a ^^b^^ \(c\)]]",
+            r"[[Page ^^x^^]] and #[[tag \(y\)]]",
+        ] {
+            assert_eq!(normalized(text), text, "{text:?}");
+        }
+    }
+}
+
+/// Logseq's and Org's `#+BEGIN_X` … `#+END_X` blocks in a block's text, read
+/// into Agaric's callout and quote.
+#[cfg(test)]
+mod tests_org_blocks {
+    use super::rewrite_org_blocks;
+
+    /// Each Logseq admonition is a callout of its kind, in Org's lowercase too.
+    #[test]
+    fn an_admonition_is_a_callout_of_its_kind() {
+        for kind in ["NOTE", "TIP", "IMPORTANT", "CAUTION", "WARNING", "PINNED"] {
+            let block = format!("#+BEGIN_{kind}\nfirst\nsecond\n#+END_{kind}");
+            let callout = format!("> [!{kind}]\n> first\n> second");
+            assert_eq!(rewrite_org_blocks(&block), callout, "{block:?}");
+        }
+        assert_eq!(
+            rewrite_org_blocks("#+begin_tip\nx\n#+end_tip"),
+            "> [!TIP]\n> x"
+        );
+    }
+
+    /// A quote is a plain quote; the text around it stays as it was.
+    #[test]
+    fn a_quote_block_is_a_quote() {
+        assert_eq!(
+            rewrite_org_blocks("said:\n#+BEGIN_QUOTE\nTo be\n\nor not\n#+END_QUOTE\nafter"),
+            "said:\n> To be\n>\n> or not\nafter"
+        );
+    }
+
+    /// Any other kind, code included, a block left open, and one inside a code
+    /// fence stay as written; one after the fence closes is read.
+    #[test]
+    fn other_blocks_stay_as_written() {
+        for block in [
+            "#+BEGIN_FOO\nx\n#+END_FOO",
+            "#+BEGIN_SRC rust\nlet x = 1;\n#+END_SRC",
+            "#+BEGIN_EXAMPLE\nx\n#+END_EXAMPLE",
+            "#+BEGIN_NOTE\nnever closed",
+            "#+BEGIN_NOTE\nx\n#+END_TIP",
+            "```\n#+BEGIN_NOTE\nx\n#+END_NOTE\n```",
+            "#+BEGIN_NOTEX\nx\n#+END_NOTEX",
+        ] {
+            assert_eq!(rewrite_org_blocks(block), block, "{block:?}");
+        }
+        assert_eq!(
+            rewrite_org_blocks("```\ncode\n```\n#+BEGIN_NOTE\nx\n#+END_NOTE"),
+            "```\ncode\n```\n> [!NOTE]\n> x"
         );
     }
 }

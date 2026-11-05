@@ -510,8 +510,10 @@ struct NamePlan {
 /// the block already held keeps the meaning its render gave it: the id it was
 /// humanised from, or none, as text, when the block rendered raw. A name new to
 /// the block is resolved in the page's space as an import resolves it,
-/// creating the page or tag no name there matches. Returns the pages and tags
-/// created.
+/// creating the page or tag no name there matches. Those blocks' note embeds,
+/// foreign highlight and math are written in Agaric's form first
+/// ([`normalize_foreign_forms`]); a block the save leaves alone keeps its
+/// text. Returns the pages and tags created.
 async fn resolve_buffer_names(
     tx: CommandTx,
     materializer: &Materializer,
@@ -524,11 +526,12 @@ async fn resolve_buffer_names(
     let stored = stored_contents(data);
     let mut plans = Vec::new();
     let mut new_names = Names::default();
-    for (row, block) in buffer.blocks.iter().enumerate() {
+    for (row, block) in buffer.blocks.iter_mut().enumerate() {
         let slot = buffer.base[row];
         if slot.is_some() && !buffer.edited[row] {
             continue;
         }
+        normalize_foreign_forms(std::slice::from_mut(block), import::embed_names_note);
         let names = Names::of(block);
         let held = slot.map_or_else(Names::default, |slot| Names::of(&base.blocks[slot]));
         let kept = names.split(&held, true);

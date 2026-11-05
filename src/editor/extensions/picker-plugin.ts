@@ -163,9 +163,9 @@ export interface ResolveAndInsertPickerTokenOptions {
   /** The name searched for and created (e.g. `myTag`, `My Page`). */
   text: string
   /**
-   * What goes back as plain text whenever no token lands (a tie, no match
-   * and no create, a failed lookup, a stale offset): the whole typed token,
-   * e.g. `[[My Page|label]]`. Defaults to `text`.
+   * What goes back as plain text whenever no token lands (no match and no
+   * create, a failed lookup, a stale offset): the whole typed token, e.g.
+   * `[[My Page|label]]`. Defaults to `text`.
    */
   typed?: string | undefined
   /** Captured insertion offset (the original `range.from`). */
@@ -174,10 +174,9 @@ export interface ResolveAndInsertPickerTokenOptions {
   items: (query: string) => PickerItem[] | Promise<PickerItem[]>
   /**
    * Per-picker exact-match predicate. Returns the matched item; `undefined`
-   * when nothing matches (create, when the picker can); `null` when the text
-   * must stay as typed (an ambiguous name, #5160 N4).
+   * when nothing matches (create, when the picker can).
    */
-  matchItem: (items: PickerItem[], text: string) => PickerItem | undefined | null
+  matchItem: (items: PickerItem[], text: string) => PickerItem | undefined
   /**
    * Builds the TipTap content descriptor for the resolved id; `item` is the
    * matched picker item, absent on the create path.
@@ -254,7 +253,7 @@ export async function resolveAndInsertPickerToken({
         .focus()
         .insertContentAt(pos, tokenFor(exactMatch.id, exactMatch), { updateSelection: false })
         .run()
-    } else if (exactMatch === undefined && onCreate) {
+    } else if (onCreate) {
       // Bail BEFORE the create IPC — minting a page/tag whose token can no
       // longer be inserted would leave an orphan entity behind.
       if (isGone()) return
@@ -273,8 +272,7 @@ export async function resolveAndInsertPickerToken({
       }
       editor.chain().focus().insertContentAt(pos, tokenFor(newId), { updateSelection: false }).run()
     } else {
-      // No match and no onCreate, or an ambiguous name (#5160 N4): the text
-      // goes back as typed.
+      // No match and no onCreate: the text goes back as typed.
       if (isGone()) return
       const pos = tracked.pos ?? insertPos
       if (isStale(pos)) {

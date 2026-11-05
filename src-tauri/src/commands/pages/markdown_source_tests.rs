@@ -89,6 +89,22 @@ fn arb_ref_id() -> impl Strategy<Value = &'static str> {
     proptest::sample::select(&REF_IDS[..])
 }
 
+/// Words outside ASCII (#5363): decomposed (NFD) accents, emoji with a skin
+/// tone and a joiner, and right-to-left scripts.
+const UNICODE_WORDS: [&str; 7] = [
+    "cafe\u{301}",
+    "Ma\u{308}rchen",
+    "🙂",
+    "👩🏽\u{200d}💻",
+    "שלום",
+    "مرحبا",
+    "漢字",
+];
+
+fn arb_unicode_word() -> impl Strategy<Value = String> {
+    proptest::sample::select(&UNICODE_WORDS[..]).prop_map(str::to_owned)
+}
+
 /// One word of prose. No backtick, so a fence only ever comes from
 /// [`arb_fence`].
 fn arb_word() -> impl Strategy<Value = String> {
@@ -99,6 +115,7 @@ fn arb_word() -> impl Strategy<Value = String> {
         arb_ref_id().prop_map(|id| format!("#[{id}]")),
         arb_ref_id().prop_map(|id| format!("(({id}))")),
         "\\^[a-z0-9]{1,4}",
+        arb_unicode_word(),
     ]
 }
 
@@ -538,20 +555,15 @@ fn data_with_names(
     .into_iter()
     .map(|(id, name)| (id.to_string(), name.to_string()))
     .collect();
-    let exact = pages
-        .iter()
-        .map(|(title, ids)| {
-            (
-                title.to_string(),
-                ids.iter().map(ToString::to_string).collect(),
-            )
-        })
-        .collect();
+    let mut matches = LinkMatches::default();
+    for (title, ids) in pages {
+        for id in *ids {
+            let key = agaric_core::tag_norm::name_key(title);
+            LinkMatches::push(&mut matches.folded, key, id.to_string());
+        }
+    }
     data.name_snapshot = NameSnapshot {
-        pages: LinkMatches {
-            exact,
-            ..LinkMatches::default()
-        },
+        pages: matches,
         tag_id_by_norm: tags
             .iter()
             .map(|(norm, id)| (norm.to_string(), id.to_string()))
@@ -573,11 +585,41 @@ fn a_name_that_reads_back_to_its_id_is_written() {
     );
 }
 
+/// A title two pages share names the lowest id (#6278): a link to that page
+/// is written as the title, and one to the other page stays raw.
 #[test]
-fn a_title_two_pages_share_stays_raw() {
-    let content = format!("see [[{PROJECT}]]");
-    let md = source_with_names(&content, &[("Project", &[PROJECT, OTHER_PROJECT])], &[]);
-    assert_eq!(md, format!("{content} ^{BLOCK}\n"));
+fn a_title_two_pages_share_names_the_lowest_id() {
+    let pages: &[(&str, &[&str])] = &[("Project", &[OTHER_PROJECT, PROJECT])];
+    let held = format!("see [[{PROJECT}]]");
+    assert_eq!(
+        source_with_names(&held, pages, &[]),
+        format!("see [[Project]] ^{BLOCK}\n")
+    );
+    let twin = format!("see [[{OTHER_PROJECT}]]");
+    let mut data = data_with_names(&twin, pages, &[]);
+    data.page_titles
+        .insert(OTHER_PROJECT.into(), "Project".into());
+    assert_eq!(render_page_document(&data).0, format!("{twin} ^{BLOCK}\n"));
+}
+
+/// Titles a case apart are one name (#6278): the page that holds it is written
+/// by its own spelling, and the other, whose spelling is exactly the one a
+/// link would type, stays raw.
+#[test]
+fn a_page_does_not_win_its_name_by_spelling_it() {
+    let pages: &[(&str, &[&str])] = &[("project", &[PROJECT]), ("Project", &[OTHER_PROJECT])];
+    let source = |linked: &str| {
+        let mut data = data_with_names(&format!("see [[{linked}]]"), pages, &[]);
+        data.page_titles.insert(PROJECT.into(), "project".into());
+        data.page_titles
+            .insert(OTHER_PROJECT.into(), "Project".into());
+        render_page_document(&data).0
+    };
+    assert_eq!(source(PROJECT), format!("see [[project]] ^{BLOCK}\n"));
+    assert_eq!(
+        source(OTHER_PROJECT),
+        format!("see [[{OTHER_PROJECT}]] ^{BLOCK}\n")
+    );
 }
 
 /// The linked page is in another space, and this space has its own page of
@@ -661,10 +703,12 @@ fn a_name_inside_code_stays_raw() {
 /// `conformance/block-content.vectors.json`: stored block content and the
 /// meaning Rust and the block editor must agree on. This side reads each
 /// content through the buffer as one block with that content and no
-/// properties, and authors each row's `rustReads`
-/// ([`the_block_content_vectors_carry_what_rust_reads`]);
+/// properties, and authors each row's `rustReads` and `fts` and the
+/// `corpusBlocks` rows ([`the_block_content_vectors_carry_what_rust_reads`]);
 /// `block-content-conformance.test.ts` runs the editor's save flush over the
-/// same rows and parses each content into the same code blocks and rules.
+/// same rows, parses each content into the same code blocks and rules, writes
+/// every row back as it was stored, and indexes each `blocks` content through
+/// the mock's search strip as Rust does.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BlockContentVectors {
@@ -719,8 +763,112 @@ fn rust_reads(content: &str) -> Vec<&'static str> {
         .collect()
 }
 
-/// Each stored block row carries `rustReads`, which Rust authors
-/// (`CONFORMANCE_UPDATE=1` writes it) and the editor's parse asserts.
+/// The id an import into an empty space gives the page or tag `key` names,
+/// fixed so the vectors stay the same from run to run.
+fn fixed_ulid(key: &str) -> String {
+    let hash = blake3::hash(key.as_bytes());
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&hash.as_bytes()[..16]);
+    ulid::Ulid::from_bytes(bytes).to_string()
+}
+
+/// `block` as stored: its foreign highlight and math in Agaric's form, then
+/// its names as ids by the importer's own name collection and rewrite, each
+/// page and tag resolved as an empty space resolves it, by creating it, here
+/// under a [`fixed_ulid`].
+fn stored_form(block: &import::ParsedBlock) -> String {
+    let mut block = block.clone();
+    normalize_foreign_forms(std::slice::from_mut(&mut block), import::embed_names_note);
+    let block = &block;
+    let blocks = std::slice::from_ref(block);
+    let mut links = PageLinks::default();
+    let mut titles = HashMap::new();
+    for body in collect_inbound_page_link_bodies(blocks) {
+        let (name, label) = read_link_body(&body, &LinkMatches::default());
+        // An anchor names no heading in a page just created, so the link
+        // links the page.
+        let page = split_wikilink_anchor(name).0;
+        if page.is_empty() {
+            continue;
+        }
+        let id = fixed_ulid(&format!("page {page}"));
+        titles.insert(id.clone(), page.to_string());
+        links.ids.insert(name.to_string(), id);
+        let reading = (name.to_string(), label.map(str::to_string));
+        links.readings.insert(body.clone(), reading);
+    }
+    let tags = collect_inbound_tag_names(blocks)
+        .into_iter()
+        .map(|name| {
+            let norm = agaric_core::tag_norm::normalize_tag_name(&name);
+            (name, fixed_ulid(&format!("tag {norm}")))
+        })
+        .collect();
+    rewrite_block_content_for_import(block, &links, &titles, &tags)
+}
+
+/// Each distinct block the Document reader reads in the import corpus, as
+/// `(name, stored content)`, in file and block order.
+fn corpus_blocks() -> Vec<(String, String)> {
+    let dir = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/agaric-engine/tests/markdown-corpus"
+    );
+    let mut paths: Vec<_> = std::fs::read_dir(dir)
+        .expect("the corpus directory")
+        .map(|entry| entry.expect("a corpus entry").path())
+        .collect();
+    paths.sort();
+    let mut seen = HashSet::new();
+    let mut rows = Vec::new();
+    for path in paths {
+        let stem = path
+            .file_stem()
+            .and_then(std::ffi::OsStr::to_str)
+            .expect("a UTF-8 file name")
+            .to_string();
+        let text = std::fs::read_to_string(&path).expect("a UTF-8 document");
+        for (n, block) in import::parse_document_outline(&text)
+            .blocks
+            .iter()
+            .enumerate()
+        {
+            let content = stored_form(block);
+            if seen.insert(content.clone()) {
+                rows.push((format!("{stem} block {}", n + 1), content));
+            }
+        }
+    }
+    rows
+}
+
+/// The text the search index holds for `content` (#6277 B3), with each
+/// `blockRefTargets` id resolving to its target's first line.
+fn fts_text(content: &str, block_ref_targets: &serde_json::Value) -> String {
+    let block_titles = block_ref_targets
+        .as_object()
+        .expect("`blockRefTargets` maps an id to its content")
+        .iter()
+        .map(|(id, target)| {
+            let first_line = target.as_str().unwrap_or_default().lines().next();
+            (id.clone(), first_line.unwrap_or_default().to_owned())
+        })
+        .collect();
+    agaric_store::fts::strip::strip_for_fts_with_maps(
+        "vector",
+        content,
+        &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
+        &block_titles,
+    )
+}
+
+/// Each stored block row carries `rustReads` and `fts`, and `corpusBlocks`
+/// holds each corpus block's stored form; Rust authors all three
+/// (`CONFORMANCE_UPDATE=1` writes them). The editor's parse asserts
+/// `rustReads`, the mock's search strip `fts`, and the editor's round trip
+/// `corpusBlocks`. A corpus row keeps the fields a reviewer wrote on it
+/// (`editorCanonical`, `knownLoss`) while its name stays.
 #[test]
 fn the_block_content_vectors_carry_what_rust_reads() {
     let written: serde_json::Value = serde_json::from_str(
@@ -728,13 +876,35 @@ fn the_block_content_vectors_carry_what_rust_reads() {
     )
     .expect("the block-content vectors are JSON");
     let mut authored = written.clone();
+    let block_ref_targets = written["blockRefTargets"].clone();
     for row in authored["blocks"]
         .as_array_mut()
         .expect("the vectors hold `blocks`")
     {
-        let content = row["content"].as_str().expect("a row has `content`");
-        row["rustReads"] = serde_json::json!(rust_reads(content));
+        let content = row["content"]
+            .as_str()
+            .expect("a row has `content`")
+            .to_owned();
+        row["rustReads"] = serde_json::json!(rust_reads(&content));
+        row["fts"] = serde_json::json!(fts_text(&content, &block_ref_targets));
     }
+    let reviewed: HashMap<&str, &serde_json::Value> = written["corpusBlocks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| Some((row["name"].as_str()?, row)))
+        .collect();
+    authored["corpusBlocks"] = corpus_blocks()
+        .into_iter()
+        .map(|(name, content)| {
+            let mut row = reviewed
+                .get(name.as_str())
+                .map_or_else(|| serde_json::json!({}), |&row| row.clone());
+            row["name"] = serde_json::json!(name);
+            row["content"] = serde_json::json!(content);
+            row
+        })
+        .collect();
     if std::env::var("CONFORMANCE_UPDATE").as_deref() == Ok("1") {
         let mut out = serde_json::to_string_pretty(&authored).expect("vectors serialise");
         out.push('\n');
@@ -743,7 +913,7 @@ fn the_block_content_vectors_carry_what_rust_reads() {
     }
     assert_eq!(
         written, authored,
-        "`rustReads` drifted from Rust's reading: re-author with CONFORMANCE_UPDATE=1"
+        "`rustReads`, `fts` or `corpusBlocks` drifted from Rust: re-author with CONFORMANCE_UPDATE=1"
     );
 }
 

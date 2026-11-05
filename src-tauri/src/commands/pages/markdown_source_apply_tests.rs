@@ -3,7 +3,7 @@
 //! saving its blocks rearranged lands exactly that tree with the fewest moves. The pages come
 //! from the render proptests' generator ([`arb_forest`]).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use proptest::prelude::*;
 use tokio::runtime::Runtime;
@@ -135,6 +135,81 @@ async fn write_metadata(pool: &SqlitePool, ids: &[String], forest: &[BlockSpec])
             .await
             .unwrap();
         }
+    }
+}
+
+/// A page's front matter (#5363): its aliases, whether it carries the
+/// fixture's tag, and its own properties.
+#[derive(Debug, Clone)]
+struct FrontSpec {
+    aliases: BTreeSet<String>,
+    tagged: bool,
+    properties: BTreeMap<String, (String, bool)>,
+}
+
+impl FrontSpec {
+    fn is_empty(&self) -> bool {
+        self.aliases.is_empty() && !self.tagged && self.properties.is_empty()
+    }
+}
+
+/// A page property's value: a block property's, but with no `\r` (#6325).
+fn arb_front_value() -> impl Strategy<Value = (String, bool)> {
+    arb_property_value().prop_filter("no carriage return", |(value, _)| !value.contains('\r'))
+}
+
+fn arb_front() -> impl Strategy<Value = FrontSpec> {
+    let alias = prop_oneof!["[A-Za-z][a-z0-9 ]{0,6}[a-z0-9]", arb_unicode_word()];
+    let key = arb_property_key().prop_filter("not a front matter list", |key| {
+        key != "aliases" && key != "tags"
+    });
+    (
+        prop::collection::btree_set(alias, 0..3),
+        any::<bool>(),
+        prop::collection::btree_map(key, arb_front_value(), 0..3),
+    )
+        .prop_map(|(aliases, tagged, properties)| FrontSpec {
+            aliases,
+            tagged,
+            properties,
+        })
+}
+
+/// `front` on the fixture's page, written to the tables.
+async fn write_front_matter(fx: &Fixture, front: &FrontSpec) {
+    for alias in &front.aliases {
+        sqlx::query("INSERT INTO page_aliases (page_id, alias) VALUES (?, ?)")
+            .bind(&fx.page)
+            .bind(alias)
+            .execute(&fx.pool)
+            .await
+            .unwrap();
+    }
+    if front.tagged {
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(&fx.page)
+            .bind(REF_IDS[2])
+            .execute(&fx.pool)
+            .await
+            .unwrap();
+    }
+    for (key, (value, is_ref)) in &front.properties {
+        let (text, reference) = if *is_ref {
+            (None, Some(value))
+        } else {
+            (Some(value), None)
+        };
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text, value_ref) \
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(&fx.page)
+        .bind(key)
+        .bind(text)
+        .bind(reference)
+        .execute(&fx.pool)
+        .await
+        .unwrap();
     }
 }
 
@@ -324,14 +399,23 @@ proptest! {
 
     /// #5691 G1 — the page's own Document buffer, saved by its line ids, writes
     /// nothing, a task whose list style the buffer hides (D3) among the blocks
-    /// the generator writes.
+    /// the generator writes, under the page's front matter (#5363).
     #[test]
-    fn saving_a_pages_own_document_by_its_line_ids_writes_nothing(forest in arb_forest()) {
+    fn saving_a_pages_own_document_by_its_line_ids_writes_nothing(
+        (forest, front) in (arb_forest(), arb_front())
+    ) {
         Runtime::new().unwrap().block_on(async {
             let fx = fixture().await;
             let ids = create_forest(&fx, &forest).await;
             write_metadata(&fx.pool, &ids, &forest).await;
+            write_front_matter(&fx, &front).await;
             let buffer = get_page_buffer_inner(&fx.pool, &fx.page).await.unwrap();
+            prop_assert_eq!(
+                buffer.text.starts_with("---\n"),
+                !front.is_empty(),
+                "text:\n{}",
+                buffer.text
+            );
             let before = op_counts(&fx.pool).await;
 
             let report = save(
@@ -560,5 +644,139 @@ fn a_pages_own_document_with_every_kind_of_block_appends_no_op() {
             (0, 0, 0, 0)
         );
         assert_eq!((report.properties_set, report.properties_deleted), (0, 0));
+    });
+}
+
+/// #6033 S4 — a save writes the foreign highlight and math of a block it
+/// rewrites or creates in Agaric's form, and leaves a block it does not touch
+/// as it is, even one holding a `^^` stored before the editor escaped it.
+#[test]
+fn a_save_normalizes_only_the_blocks_it_writes() {
+    Runtime::new().unwrap().block_on(async {
+        let fx = fixture().await;
+        let block = |content: &str| BlockSpec {
+            level: 0,
+            content: content.to_string(),
+            todo_state: None,
+            priority: None,
+            scheduled_date: None,
+            due_date: None,
+            list_style: None,
+            properties: BTreeMap::new(),
+        };
+        let forest = [block("kept ^^x^^"), block("edited ^^y^^")];
+        create_forest(&fx, &forest).await;
+        let buffer = get_page_buffer_inner(&fx.pool, &fx.page).await.unwrap();
+        let text = buffer
+            .text
+            .replacen("edited ^^y^^", r"edited ^^y^^ and \(z\)", 1)
+            + "\nnew \\[\\alpha\\]\n";
+        let mut line_ids = buffer.line_ids.clone();
+        line_ids.extend([None, None]);
+
+        let report = save(&fx, (text, line_ids), &buffer.source).await;
+
+        assert_eq!((report.created, report.edited), (1, 1));
+        let contents: Vec<String> = sqlx::query_scalar(
+            "SELECT content FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+             ORDER BY position, id",
+        )
+        .bind(&fx.page)
+        .fetch_all(&fx.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            contents,
+            ["kept ^^x^^", "edited ==y== and $z$", "new $\\alpha$"],
+            "only the edited and the new block are normalized"
+        );
+    });
+}
+
+/// #6033 — Obsidian's older singular front matter keys: a buffer's `alias:`
+/// is the page's alias and its `tag:` the page's tag, not text properties.
+#[test]
+fn a_buffers_yaml_alias_and_tag_are_the_pages_aliases_and_tags() {
+    Runtime::new().unwrap().block_on(async {
+        let fx = fixture().await;
+        let body = BlockSpec {
+            level: 0,
+            content: "body".to_string(),
+            todo_state: None,
+            priority: None,
+            scheduled_date: None,
+            due_date: None,
+            list_style: None,
+            properties: BTreeMap::new(),
+        };
+        create_forest(&fx, &[body]).await;
+        let buffer = get_page_buffer_inner(&fx.pool, &fx.page).await.unwrap();
+        let text = format!("---\nalias: Atlas\ntag: project\n---\n{}", buffer.text);
+        let line_ids = [vec![None; 4], buffer.line_ids.clone()].concat();
+
+        let report = save(&fx, (text, line_ids), &buffer.source).await;
+
+        assert_eq!(report.properties_set, 0, "no text property: {report:?}");
+        assert_eq!(
+            crate::commands::pages::get_page_aliases_inner(&fx.pool, &fx.page)
+                .await
+                .unwrap(),
+            ["Atlas"]
+        );
+        let tags: Vec<String> = sqlx::query_scalar(
+            "SELECT t.content FROM block_tags bt JOIN blocks t ON t.id = bt.tag_id \
+             WHERE bt.block_id = ?",
+        )
+        .bind(&fx.page)
+        .fetch_all(&fx.pool)
+        .await
+        .unwrap();
+        assert_eq!(tags, ["project"]);
+    });
+}
+
+/// #6033 S5b — a save reads an Obsidian note embed in a block it rewrites or
+/// creates as import does: one that is the whole block embeds the page, one
+/// among text links it. A block the save does not touch keeps its text.
+#[test]
+fn a_save_reads_note_embeds_only_in_the_blocks_it_writes() {
+    Runtime::new().unwrap().block_on(async {
+        let fx = fixture().await;
+        let block = |content: &str| BlockSpec {
+            level: 0,
+            content: content.to_string(),
+            todo_state: None,
+            priority: None,
+            scheduled_date: None,
+            due_date: None,
+            list_style: None,
+            properties: BTreeMap::new(),
+        };
+        create_forest(&fx, &[block("kept ![[Page 1]]"), block("edited")]).await;
+        let buffer = get_page_buffer_inner(&fx.pool, &fx.page).await.unwrap();
+        let text = buffer.text.replacen("edited", "![[Page 0]]", 1) + "\nnew ![[Page 1]]\n";
+        let mut line_ids = buffer.line_ids.clone();
+        line_ids.extend([None, None]);
+
+        let report = save(&fx, (text, line_ids), &buffer.source).await;
+
+        assert_eq!((report.created, report.edited), (1, 1));
+        let contents: Vec<String> = sqlx::query_scalar(
+            "SELECT content FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+             ORDER BY position, id",
+        )
+        .bind(&fx.page)
+        .fetch_all(&fx.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            contents,
+            [
+                "kept ![[Page 1]]".to_string(),
+                format!("{{{{embed [[{}]]}}}}", REF_IDS[0]),
+                format!("new [[{}]]", REF_IDS[1]),
+            ],
+            "only the edited and the new block read their embeds"
+        );
     });
 }

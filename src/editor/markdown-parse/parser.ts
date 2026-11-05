@@ -186,7 +186,7 @@ function consumeExternalLink(
  * info string may not contain backticks (CommonMark §4.5); a tilde fence's
  * may. The closing fence is a line containing only a run of the opening
  * character at least as long as the opening, optionally followed by trailing
- * whitespace. The serializer writes backtick fences only.
+ * whitespace. The info string is the language, kept as written, trimmed.
  */
 export function parseCodeBlock(lines: readonly string[], i: number): BlockParseResult | null {
   const line = lines[i] as string
@@ -197,8 +197,7 @@ export function parseCodeBlock(lines: readonly string[], i: number): BlockParseR
   const fence = openMatch[1] as string
   const info = openMatch[2] as string
   if (fence.startsWith('`') && info.includes('`')) return null
-  const rawLang = info.trim() || null
-  const language = rawLang && /^[a-zA-Z0-9_+\-#.]+$/.test(rawLang) ? rawLang : null
+  const language = info.trim() || null
   const closeRe = new RegExp(`^${fence.charAt(0)}{${fence.length},}\\s*$`)
   const codeLines: string[] = []
   let j = i + 1 // skip opening fence
@@ -1371,7 +1370,7 @@ export function scanEscape(st: InlineState): boolean {
  *    the serializer must re-emit the escape wherever it decodes
  *    (`serializeBlockSequence`, whose tab arm exists because `\<tab>` does).
  */
-function isEscapableChar(ch: string): boolean {
+export function isEscapableChar(ch: string): boolean {
   return ASCII_PUNCTUATION_RE.test(ch) || (ch >= '0' && ch <= '9') || ch === ' ' || ch === '\t'
 }
 

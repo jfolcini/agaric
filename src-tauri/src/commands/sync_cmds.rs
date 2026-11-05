@@ -19,7 +19,7 @@ use agaric_sync::sync_events::{
     BindExposureStatus, BindExposureStatusState, MdnsStatus, MdnsStatusState, OsNetworkBlockStatus,
 };
 use agaric_sync::sync_protocol::loro_sync_quarantine::{
-    QuarantinedSlot, count_quarantined_slots, list_quarantined_slots,
+    QuarantinedSlot, count_quarantined_slots, list_quarantined_slots, readmit_quarantined_slot,
 };
 use agaric_sync::sync_scheduler::SyncScheduler;
 
@@ -152,6 +152,22 @@ pub async fn list_quarantined_sync_slots_inner(
         slots: list_quarantined_slots(pool, limit).await?,
         total: count_quarantined_slots(pool).await?,
     })
+}
+
+/// Move quarantined sync delta `id` back into the boot replay's inbox (#6057).
+/// The next start retries it once and quarantines it again if it still fails.
+///
+/// Returns [`AppError::NotFound`] when no quarantined row has that id, as for a
+/// row already retried.
+#[instrument(skip(pool), err)]
+pub async fn readmit_quarantined_sync_slot_inner(
+    pool: &SqlitePool,
+    id: i64,
+) -> Result<(), AppError> {
+    readmit_quarantined_slot(pool, id)
+        .await?
+        .map(|_inbox_id| ())
+        .ok_or_else(|| AppError::NotFound(format!("quarantined sync slot {id}")))
 }
 
 /// `app_settings` key: `'1'` when the opt-in internet fallback is on (#4549),
@@ -687,6 +703,19 @@ pub async fn list_quarantined_sync_slots(
     limit: i64,
 ) -> Result<QuarantinedSlotList, AppError> {
     list_quarantined_sync_slots_inner(&pool.0, limit)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: retry a quarantined sync delta at the next start (#6057).
+/// Delegates to [`readmit_quarantined_sync_slot_inner`].
+#[tauri::command]
+#[specta::specta]
+pub async fn readmit_quarantined_sync_slot(
+    pool: State<'_, WritePool>,
+    id: i64,
+) -> Result<(), AppError> {
+    readmit_quarantined_sync_slot_inner(&pool.0, id)
         .await
         .map_err(sanitize_internal_error)
 }

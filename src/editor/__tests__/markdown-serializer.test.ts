@@ -448,6 +448,29 @@ describe('serialize', () => {
       expect(serialize(doc(paragraph(text('a = b'))))).toBe('a = b')
     })
 
+    // #6033: paste and Edit as Markdown write a `^^` pair as a `==` highlight,
+    // so a literal `^^` that could pair is escaped and comes back as text.
+    it.each([
+      ['mid-line', paragraph(text('a ^^b^^ c')), 'a \\^\\^b\\^\\^ c'],
+      ['at the line start', paragraph(text('^^b')), '\\^\\^b'],
+      ['in a run of three', paragraph(text('x^^^y')), 'x\\^\\^\\^y'],
+      ['beside a mark', paragraph(text('^^'), bold('x')), '\\^\\^**x**'],
+      [
+        'in a table cell',
+        table(tableRow(tableHeader(paragraph(text('a^^ b'))))),
+        '| a\\^\\^ b |\n| --- |',
+      ],
+    ])('escapes a ^^ run that could pair %s (#6033)', (_name, block, expected) => {
+      expect(serialize(doc(block))).toBe(expected)
+    })
+
+    it.each([
+      ['a lone caret', 'x^2'],
+      ['a ^^ between spaces', 'a ^^ b'],
+    ])('leaves %s bare (#6033)', (_name, plain) => {
+      expect(serialize(doc(paragraph(text(plain))))).toBe(plain)
+    })
+
     it('escapes literal #[', () => {
       expect(serialize(doc(paragraph(text('use #[not a tag'))))).toBe('use \\#\\[not a tag')
     })
@@ -1039,6 +1062,9 @@ describe('round-trip: serialize(parse(s)) === s', () => {
     // #5160 N12: stored bare, since a lone `~` or `=` cannot form a delimiter.
     ['bare tilde', 'a ~ b'],
     ['bare equals', 'a = b'],
+    // #6033: a `^^` that could pair is escaped, a lone `^` stays bare.
+    ['escaped caret pair', 'a \\^\\^b\\^\\^ c'],
+    ['bare caret', 'x^2'],
     ['escaped intraword tilde pair', 'a\\~\\~b'],
     ['escaped backslash', 'a \\\\ b'],
     ['escaped #[', 'use \\#\\[not a tag'],
@@ -2359,14 +2385,13 @@ describe('code blocks', () => {
     expect(result.content?.[2]?.type).toBe('paragraph')
   })
 
-  it('invalid code block language is sanitized to null', () => {
+  it('a code fence keeps its whole info string, spaces and punctuation included (#6277 C3)', () => {
     const md = '```not a language!\nconsole.log("hi")\n```'
     const result = parse(md)
     expect(result.content).toHaveLength(1)
     const block = result.content?.[0]
     expect(block?.type).toBe('codeBlock')
-    // Language should be stripped because it contains spaces / invalid chars
-    expect((block as { attrs?: { language?: string } }).attrs?.language).toBeUndefined()
+    expect((block as { attrs?: { language?: string } }).attrs?.language).toBe('not a language!')
   })
 
   it('valid code block language is preserved', () => {

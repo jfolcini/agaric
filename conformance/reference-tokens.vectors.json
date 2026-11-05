@@ -95,8 +95,202 @@
       "title": "a\u29f5b",
       "link": "a\\b",
       "resolves": false
+    },
+    {
+      "name": "#6278 a title's edge whitespace is no part of its name",
+      "title": "Weekly Review ",
+      "link": "weekly review",
+      "resolves": true
     }
   ],
+  "pageTieCases": [
+    {
+      "name": "#6278 two pages of one title: the lowest id holds it",
+      "pages": [
+        { "id": "01ARZ3NDEKTSV4RRFFQ69G5FB0", "title": "Foo" },
+        { "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "title": "Foo" }
+      ],
+      "link": "Foo",
+      "holder": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    },
+    {
+      "name": "#6278 two titles a case apart: a third spelling names the lowest id",
+      "pages": [
+        { "id": "01ARZ3NDEKTSV4RRFFQ69G5FB0", "title": "Foo" },
+        { "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "title": "foo" }
+      ],
+      "link": "FOO",
+      "holder": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    },
+    {
+      "name": "#6278 a link spelled as the higher id's own title still names the lowest id",
+      "pages": [
+        { "id": "01ARZ3NDEKTSV4RRFFQ69G5FB0", "title": "Foo" },
+        { "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "title": "foo" }
+      ],
+      "link": "Foo",
+      "holder": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    },
+    {
+      "name": "#6278 an NFC and an NFD title: the lowest id holds the name",
+      "pages": [
+        { "id": "01ARZ3NDEKTSV4RRFFQ69G5FB0", "title": "Caf\u00e9" },
+        { "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "title": "Cafe\u0301" }
+      ],
+      "link": "caf\u00e9",
+      "holder": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    },
+    {
+      "name": "#6278 two pages holding one alias in two cases: the lowest id holds it",
+      "pages": [
+        { "id": "01ARZ3NDEKTSV4RRFFQ69G5FB0", "title": "Roadmap", "aliases": ["\u00dcber"] },
+        { "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "title": "Plan", "aliases": ["\u00fcber"] }
+      ],
+      "link": "\u00dcBER",
+      "holder": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  ],
+  "headingAnchors": {
+    "blockId": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "cases": [
+      {
+        "name": "an ATX heading names its text",
+        "content": "## Second",
+        "anchor": "Second",
+        "matches": true
+      },
+      {
+        "name": "case and inner whitespace fold",
+        "content": "# Some   Heading",
+        "anchor": "some heading",
+        "matches": true
+      },
+      {
+        "name": "the anchor's outer whitespace is ignored",
+        "content": "### Spaced",
+        "anchor": "  spaced  ",
+        "matches": true
+      },
+      {
+        "name": "a tab after the hashes",
+        "content": "#\tTabbed",
+        "anchor": "Tabbed",
+        "matches": true
+      },
+      {
+        "name": "spaces before the hashes",
+        "content": "  # Indented",
+        "anchor": "Indented",
+        "matches": true
+      },
+      { "name": "six hashes", "content": "###### Six", "anchor": "Six", "matches": true },
+      {
+        "name": "seven hashes are no heading",
+        "content": "####### Seven",
+        "anchor": "Seven",
+        "matches": false
+      },
+      { "name": "a #tag is no heading", "content": "#tag", "anchor": "tag", "matches": false },
+      {
+        "name": "no space after the hashes is no heading",
+        "content": "##Heading",
+        "anchor": "Heading",
+        "matches": false
+      },
+      {
+        "name": "a no-break space after the hashes is no heading",
+        "content": "#\u00A0Heading",
+        "anchor": "Heading",
+        "matches": false
+      },
+      {
+        "name": "an empty heading names nothing",
+        "content": "## ",
+        "anchor": "",
+        "matches": false
+      },
+      {
+        "name": "only the first line is read",
+        "content": "Intro\n# Later",
+        "anchor": "Later",
+        "matches": false
+      },
+      {
+        "name": "a heading keeps its body lines",
+        "content": "# Title\nbody",
+        "anchor": "Title",
+        "matches": true
+      },
+      { "name": "a CRLF line end", "content": "# Win\r\nbody", "anchor": "Win", "matches": true },
+      {
+        "name": "closing hashes stay part of the text",
+        "content": "## Closed ##",
+        "anchor": "Closed",
+        "matches": false
+      },
+      {
+        "name": "closing hashes match when typed",
+        "content": "## Closed ##",
+        "anchor": "closed ##",
+        "matches": true
+      },
+      {
+        "name": "another heading's text",
+        "content": "# First",
+        "anchor": "Second",
+        "matches": false
+      },
+      { "name": "NEL is white space", "content": "# A\u0085B", "anchor": "a b", "matches": true },
+      {
+        "name": "a BOM is not white space",
+        "content": "# \uFEFFBOM",
+        "anchor": "bom",
+        "matches": false
+      },
+      {
+        "name": "a non-ASCII capital folds",
+        "content": "# ÜBER",
+        "anchor": "über",
+        "matches": true
+      },
+      {
+        "name": "a final capital sigma folds",
+        "content": "# Οδος",
+        "anchor": "ΟΔΟΣ",
+        "matches": true
+      },
+      {
+        "name": "a ^ULID names its block whatever its text",
+        "content": "plain text",
+        "anchor": "^01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "matches": true
+      },
+      {
+        "name": "a ^ULID is compared exactly",
+        "content": "plain text",
+        "anchor": "^01arz3ndektsv4rrffq69g5fav",
+        "matches": false
+      },
+      {
+        "name": "a ^ULID of another block never reads as a heading",
+        "content": "# ^01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "anchor": "^01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "matches": false
+      },
+      {
+        "name": "an Obsidian ^name names no block",
+        "content": "text ^name",
+        "anchor": "^name",
+        "matches": false
+      },
+      {
+        "name": "a bare ^ reads as a heading's text",
+        "content": "# ^",
+        "anchor": "^",
+        "matches": true
+      }
+    ]
+  },
   "nameKeyCases": [
     {
       "name": "an ASCII capital folds",

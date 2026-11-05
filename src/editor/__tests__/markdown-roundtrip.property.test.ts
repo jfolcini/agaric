@@ -125,16 +125,16 @@ const NUM_RUNS = Number(process.env['SWEEP_RUNS'] ?? 300)
 
 /**
  * Text alphabet: the mark/block delimiters of the locked grammar PLUS the
- * `$` / `!` / digit / paren chars behind the seam-escape fixes, a tab, and the
- * `"` and `.` of link titles and sentence ends (#5160 N9), so the fixpoint
- * property keeps re-exploring exactly the collision space the audit findings
- * came from.
+ * `$` / `!` / digit / paren chars behind the seam-escape fixes, a tab, the
+ * `"` and `.` of link titles and sentence ends (#5160 N9), and the `^` of
+ * Logseq's highlight (#6033), so the fixpoint property keeps re-exploring
+ * exactly the collision space the audit findings came from.
  *
  * The tab makes `#\t` (a heading marker) reachable, not reached: with its
  * escape removed, only the deep-list property below reddens, in about one run
  * in five. The escape's pin is its unit test in `markdown-serializer.test.ts`.
  */
-const INTERESTING_CHARS = 'abX 012*`#[\\]()_|~=<>u$!\t".'
+const INTERESTING_CHARS = 'abX 012*`#[\\]()_|~=^<>u$!\t".'
 
 const arbText: fc.Arbitrary<string> = fc
   .array(fc.constantFrom(...INTERESTING_CHARS.split('')), { minLength: 1, maxLength: 8 })
@@ -574,6 +574,13 @@ const FIXPOINT_SEEDS: readonly DocNode[] = [
   doc(paragraph(text('a'), hardBreak(), hardBreak(), text('b'))),
   doc(blockquote(paragraph(text('a')), paragraph(text('b')))),
   doc(bulletList(listItem(paragraph(text('p')), paragraph(text('a')), paragraph(text('b'))))),
+  // #6033: a literal `^^` that could pair, escaped so the backend does not
+  // read it as Logseq's highlight: mid-line, at a trimmed line's start, across
+  // a mark's seam and in a cell.
+  doc(paragraph(text('a ^^b^^ c'))),
+  doc(paragraph(text('^^b'), hardBreak(), text('  ^^c^^'))),
+  doc(paragraph(text('^^'), bold('x'), text('^^'))),
+  doc(table(tableRow(tableHeader(paragraph(text('^^a^^')))))),
   // #6033: a `~~~` fence and a `***` / `___` rule are blocks, so a paragraph
   // of that text, a dash run trailing whitespace, and code holding a tilde
   // fence must come back as written.
@@ -728,6 +735,18 @@ describe('#6277 a table keeps its GFM column alignment', () => {
       ),
     )
     expect(parse(serialize(d))).toEqual(d)
+  })
+})
+
+describe('#6277 C3 an edit writes back the stored form', () => {
+  it.each([
+    ['a heading that starts with an ordinal', '### 1. Clean up'],
+    ['a heading that starts with a dash', '### - x'],
+    ['a heading that starts with a plus', '### + x'],
+    ['a heading that starts with a quote marker', '### > x'],
+    ['a heading that starts with a hash', '## # x'],
+  ])('%s', (_name, md) => {
+    expect(serialize(parse(md))).toBe(md)
   })
 })
 

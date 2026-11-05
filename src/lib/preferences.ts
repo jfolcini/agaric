@@ -1032,8 +1032,8 @@ const TOOLTIP_DELAY_PREFERENCE: PreferenceDefinition<TooltipDelay> = {
  * to `es` resolves to `es` for a user who never opened Settings: 42 of 3,056
  * keys, so `<html lang="es">` over a ~99% English UI — the exact
  * mis-announcement `applyDocumentLang` exists to prevent. The help text that
- * explains the gap only reaches people who opened the tab. `'system'` is the right default once coverage is real;
- * it is one line here.
+ * explains the gap only reaches people who opened the tab. `'system'` is the
+ * right default once coverage is real; it is one line here.
  */
 const LANGUAGE_PREFERENCE: PreferenceDefinition<LanguagePreference> = {
   key: 'agaric-language',

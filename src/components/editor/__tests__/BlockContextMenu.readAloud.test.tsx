@@ -37,7 +37,7 @@ const BLOCKS = [
 let speech: FakeSpeech
 
 function stubStatus(status: () => SpeechStatus | Promise<SpeechStatus>) {
-  vi.mocked(invoke).mockImplementation(mockInvokeCommands({ speech_status: status }))
+  vi.mocked(invoke).mockImplementation(mockInvokeCommands({ get_speech_status: status }))
 }
 
 function renderMenu(props: Partial<React.ComponentProps<typeof BlockContextMenu>> = {}): {
@@ -103,14 +103,14 @@ describe('BlockContextMenu — Read aloud', () => {
     ).toBeInTheDocument()
   })
 
-  it('is hidden, and the failure logged, when speech_status rejects', async () => {
+  it('is hidden, and the failure logged, when get_speech_status rejects', async () => {
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     stubStatus(() => Promise.reject(new Error('ipc down')))
     renderMenu()
     await waitFor(() =>
       expect(warn).toHaveBeenCalledWith(
         'read-aloud',
-        'speech_status failed; Read aloud stays hidden',
+        'get_speech_status failed; Read aloud stays hidden',
         undefined,
         expect.anything(),
       ),
