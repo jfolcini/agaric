@@ -778,15 +778,13 @@ fn fixed_ulid(key: &str) -> String {
 /// under a [`fixed_ulid`].
 fn stored_form(block: &import::ParsedBlock) -> String {
     let mut block = block.clone();
-    normalize_foreign_forms(std::slice::from_mut(&mut block));
+    normalize_foreign_forms(std::slice::from_mut(&mut block), import::embed_names_note);
     let block = &block;
     let blocks = std::slice::from_ref(block);
     let mut links = PageLinks::default();
     let mut titles = HashMap::new();
     for body in collect_inbound_page_link_bodies(blocks) {
-        let Some((name, label)) = read_link_body(&body, &LinkMatches::default()) else {
-            continue;
-        };
+        let (name, label) = read_link_body(&body, &LinkMatches::default());
         // An anchor names no heading in a page just created, so the link
         // links the page.
         let page = split_wikilink_anchor(name).0;
