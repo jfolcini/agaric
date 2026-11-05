@@ -131,7 +131,8 @@ impl agents::McpAgentMode {
                  Files: `attach_file` copies a file on this device onto a block, by its \
                  absolute `path`. A recording's transcript and summary are Markdown files \
                  attached to its block as `<name>.transcript.md` and `<name>.summary.md`; \
-                 a transcript has one paragraph per segment, `[hh:mm:ss] **Speaker:** text`.\n",
+                 a transcript has one paragraph per segment, `[hh:mm:ss] **Speaker:** text`. \
+                 `add_meeting` makes a meeting page with its recording's files in one call.\n",
             ),
         }
     }
