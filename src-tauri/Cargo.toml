@@ -540,9 +540,8 @@ debug = "none"
 # never ships.
 #
 # `opt-level = 2` on the same dependencies: much of a test's time is spent in
-# dependency code (SQLite, which is bundled C, plus sqlx and Loro), and at
-# opt-level 0 the `agaric-store` suite took nearly twice as long. The workspace
-# members stay at opt-level 0, so debugging them is unchanged; a cold
+# dependency code (SQLite, which is bundled C, plus sqlx and Loro). The
+# workspace members stay at opt-level 0, so debugging them is unchanged; a cold
 # dependency build costs more.
 [profile.dev.package."*"]
 debug = false
