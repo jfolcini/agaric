@@ -375,6 +375,16 @@ function unquoteYaml(value: string): string {
   return quoted?.[1] ?? value
 }
 
+/**
+ * `import::front_matter_scalar`: a property's value, unquoted, a double-quoted
+ * one also losing the `\\`, `\r` and `\n` escapes the export writes (#6325).
+ */
+function readFrontMatterScalar(value: string): string {
+  const quoted = /^"(.*)"$/s.exec(value)?.[1]
+  if (quoted === undefined) return unquoteYaml(value)
+  return quoted.replace(/\\([\\rn])/g, (_, c: string) => (c === 'r' ? '\r' : c === 'n' ? '\n' : c))
+}
+
 /** A refusal at buffer line `line`, prefixed with it as the backend's are (`at_line`). */
 function refusedAt(line: number | undefined, message: string): Error {
   return validationRejection(line === undefined ? message : `line ${line}: ${message}`)
@@ -425,7 +435,7 @@ function readFrontMatter(source: string): {
         .map((item) => unquoteYaml(item.trim()))
         .filter((item) => item !== '')
     } else {
-      front.properties.set(key, unquoteYaml(value))
+      front.properties.set(key, readFrontMatterScalar(value))
     }
   }
   return { front, lines, body: rows.map((row, at) => (at > close ? row : '')).join('\n') }
