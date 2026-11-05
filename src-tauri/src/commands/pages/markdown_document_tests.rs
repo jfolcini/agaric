@@ -959,9 +959,19 @@ fn pasted_rows() -> Vec<(&'static str, &'static str, Vec<BlockSpec>)> {
             vec![with_key(task(0, "t", "TODO")), task(0, "u", "DONE")],
         ),
         (
-            "front matter is no page's: a break, a paragraph and a break",
-            "---\ntitle: x\n---\n",
-            vec![plain(0, "---"), plain(0, "title: x"), plain(0, "---")],
+            "front matter at byte 0 is no block (#6277 E4)",
+            "---\ntitle: x\n---\n\n# T\n",
+            vec![plain(0, "# T")],
+        ),
+        (
+            "front matter after text is a break, a paragraph and a break",
+            "x\n\n---\ntitle: x\n---\n",
+            vec![
+                plain(0, "x"),
+                plain(0, "---"),
+                plain(0, "title: x"),
+                plain(0, "---"),
+            ],
         ),
         (
             "a property line before any block is text",

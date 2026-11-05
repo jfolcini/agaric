@@ -5877,8 +5877,6 @@ async fn copy_tree(pool: &SqlitePool, mat: &Materializer) -> [BlockId; 6] {
 /// matter reads as no block, where it was two `---` rules and an `aliases:`
 /// paragraph.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "red until the paste reader drops a front matter block at byte 0 (#6277 E4), \
-            which lands in agaric-engine/src/import.rs"]
 async fn a_page_copy_pastes_as_its_title_heading_and_its_blocks_6277() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());

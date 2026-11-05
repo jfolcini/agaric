@@ -192,35 +192,6 @@ import:
   warnings: []
 paste:
   - block_anchor: ~
-    content: "---"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "tags:"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: reading
-    depth: 1
-    is_code: false
-    properties:
-      - - listStyle
-        - bullet
-  - block_anchor: ~
-    content: "books\naliases: [Deep Work notes]\nstatus: in-progress"
-    depth: 1
-    is_code: false
-    properties:
-      - - listStyle
-        - bullet
-  - block_anchor: ~
-    content: "---"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
     content: "# Deep Work"
     depth: 0
     is_code: false

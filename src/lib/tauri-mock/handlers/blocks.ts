@@ -9,7 +9,7 @@
  * store.
  */
 
-import { parsePastedText } from '@/editor/source-buffer-document'
+import { readPastedText } from '@/editor/source-buffer-document'
 import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64url'
 import type { PasteInput, PasteSplice } from '@/lib/bindings'
 import { INLINE_PROPERTY_RESERVED_KEYS } from '@/lib/inline-property-parse'
@@ -665,23 +665,25 @@ interface PlannedPaste {
 }
 
 /**
- * Clipboard text as `import::parse_pasted_text` reads it (#6190), in the
- * Document dialect, as the blocks the mock plans. The backend stores a block's
- * `key:: value` lines as properties, through their definitions; the mock models
- * none of that and keeps them as text lines, as the backend writes them back
- * after text (`pasted_as_text`).
+ * Clipboard text as `import::read_pasted_text` reads it (#6190), in the
+ * Document dialect, as the blocks the mock plans, and the reader's warnings.
+ * The backend stores a block's `key:: value` lines as properties, through
+ * their definitions; the mock models none of that and keeps them as text
+ * lines, as the backend writes them back after text (`pasted_as_text`).
  */
-function plannedFromText(text: string): PlannedPaste[] {
-  return parsePastedText(text).map((block) => {
+function plannedFromText(text: string): { planned: PlannedPaste[]; warnings: string[] } {
+  const read = readPastedText(text)
+  const planned = read.blocks.map((block) => {
     const lines = block.properties.map(([key, value]) => `${key}:: ${value}`)
-    const planned: PlannedPaste = {
+    const one: PlannedPaste = {
       content: [block.content, ...lines].join('\n'),
       depth: block.depth,
     }
-    if (block.listStyle !== null) planned.listStyle = block.listStyle
-    if (block.todoState !== null) planned.todoState = block.todoState
-    return planned
+    if (block.listStyle !== null) one.listStyle = block.listStyle
+    if (block.todoState !== null) one.todoState = block.todoState
+    return one
   })
+  return { planned, warnings: read.warnings }
 }
 
 /** `import::split_task_marker`: a checkbox of the shared alphabet and one space, or alone. */
@@ -1391,8 +1393,8 @@ export const blocksHandlers = {
   // `pasted_as_text` does. The backend also reads property lines (keeping a
   // value a definition refuses as text, named in the reply's `warnings`),
   // stamps a task, and refuses an over-deep or oversized paste; the mock
-  // models none of that, so its `warnings` is always empty and tests must not
-  // rely on it for them.
+  // models none of that, so its `warnings` holds only the text reader's
+  // (`readPastedText`), and tests must not rely on it for the rest.
   paste_blocks: (args) => {
     const a = args as Record<string, unknown>
     const anchorId = a['anchorBlockId'] as string
@@ -1411,14 +1413,18 @@ export const blocksHandlers = {
     // `PasteInput::into_blocks`: after text an HTML paste's first block is the
     // text it was pasted as, its `- [ ] ` included.
     const afterText = splice !== null && splice.before !== ''
-    const parsed =
+    const read =
       input.kind === 'text'
         ? plannedFromText(input.text)
-        : input.blocks.map((block, at) =>
-            at === 0 && afterText
-              ? { content: block.content, depth: block.depth }
-              : pastedBlock(block),
-          )
+        : {
+            planned: input.blocks.map((block, at) =>
+              at === 0 && afterText
+                ? { content: block.content, depth: block.depth }
+                : pastedBlock(block),
+            ),
+            warnings: [],
+          }
+    const parsed = read.planned
     if (parsed.length === 0) throw validationRejection('nothing to paste')
     const planned = splice ? joinSplice(parsed, splice) : parsed
     const parentId = (anchor['parent_id'] as string | null) ?? null
@@ -1470,7 +1476,7 @@ export const blocksHandlers = {
       open.push({ depth: block.depth, id: row['id'] as string })
       out.push(row)
     }
-    return { blocks: out, warnings: [], op_refs: opRefs }
+    return { blocks: out, warnings: read.warnings, op_refs: opRefs }
   },
 
   // ---------------------------------------------------------------------------

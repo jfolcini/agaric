@@ -412,4 +412,38 @@ test.describe('Copy/paste through the Markdown grammar (#5140 Phase 3b) @editor'
       await expect(blockRow(page, id).getByTestId('list-marker')).toBeVisible()
     }
   })
+
+  test('a page copy pastes as one title heading and its blocks, its front matter no block (#6277 E4)', async ({
+    page,
+  }) => {
+    const QUICK_NOTES = '00000000000000000000PAGE02'
+    const QN1 = '0000000000000000000BLOCK08'
+    await ipc(page, 'set_page_aliases', { pageId: PAGE_ID, aliases: ['GS alias'] })
+    await openPage(page, PAGE)
+    await page.getByRole('button', { name: 'Page actions' }).click()
+    await page.getByText('Export as Markdown').click()
+    await expect
+      .poll(() => readClipboard(page))
+      .toMatch(/^---\naliases: \[GS alias\]\n---\n\n# Getting Started\n/)
+    const before = (await childrenOf(page, QUICK_NOTES)).length
+
+    await openPage(page, 'Quick Notes')
+    await blurEditors(page)
+    await ctrlSelectById(page, QN1)
+    await page.keyboard.press('Control+v')
+    await expect
+      .poll(async () => (await childrenOf(page, QUICK_NOTES)).length)
+      .toBeGreaterThan(before)
+
+    // Navigate away and back, then re-query the backend and the rows.
+    await reopenPage(page, 'Quick Notes')
+    const contents = (await childrenOf(page, QUICK_NOTES)).map((row) => row.content ?? '')
+    expect(contents.filter((content) => content === '# Getting Started')).toHaveLength(1)
+    expect(
+      contents.filter((content) => content === '---' || content.startsWith('aliases:')),
+    ).toEqual([])
+    const rows = page.locator('[data-testid="sortable-block"]')
+    await expect(rows.locator('h1')).toHaveCount(1)
+    await expect(rows.locator('hr')).toHaveCount(0)
+  })
 })
