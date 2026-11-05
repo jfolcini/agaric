@@ -128,7 +128,7 @@ The tokeniser splits the query on whitespace, so a filter value that itself cont
 
 - `prop:KEY="VALUE WITH SPACES"` — e.g. `prop:status="in progress"` (#152).
 - `path:"GLOB WITH SPACES"` / `not-path:"GLOB WITH SPACES"` — e.g. `path:"Meeting Notes/*"` (#718).
-- `tag:#"TAG WITH SPACES"` / `under:#"TAG WITH SPACES"` — a multi-word tag name (importers create them from `#[[Tag With Space]]`) (#3288).
+- `tag:#"TAG WITH SPACES"` / `under:#"TAG WITH SPACES"` — a multi-word tag name, one named before new tag names lost whitespace (#3288, #6278).
 
 The quotes are syntax, not part of the value: the parser strips one surrounding pair, and the serialiser re-adds quotes whenever the value contains whitespace, is itself `"`-wrapped (so a stripped pair isn't stripped again on the next parse), or holds a `"` that would otherwise stay unclosed — so chips, copy-paste, and the Add filter popover all round-trip exactly. A word whose `"` never closes (`prop:status="in` while you are still typing) is free text, not a chip, until the closing quote arrives: its extent depends on whatever follows it. An unquoted value simply ends at the first space (`path:Meeting Notes/*` is the chip `path:Meeting` plus the free text `Notes/*`).
 

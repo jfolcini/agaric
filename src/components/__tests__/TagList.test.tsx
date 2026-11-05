@@ -635,6 +635,51 @@ describe('TagList', () => {
     })
   })
 
+  // #6278 I4 — a tag name holding whitespace is refused coded; the toast says
+  // to use `-`, not the generic failure.
+  describe('a name holding whitespace', () => {
+    const refusal = () =>
+      Promise.reject({
+        kind: 'validation',
+        code: 'TagNameWhitespace',
+        message: "the tag name 'deep work' holds whitespace; use '-' instead",
+      })
+
+    it('shows the use-a-dash toast when the backend refuses the create', async () => {
+      const user = userEvent.setup()
+      stubTags([], { create_block: refusal })
+
+      render(<TagList />)
+
+      await user.type(await screen.findByPlaceholderText('New tag name...'), 'deep work')
+      await user.click(screen.getByRole('button', { name: /Add Tag/i }))
+
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith(t('tags.nameHasWhitespace'))
+      })
+      expect(mockedToastError).toHaveBeenCalledTimes(1)
+    })
+
+    it('shows the use-a-dash toast when the backend refuses the rename', async () => {
+      const user = userEvent.setup()
+      stubTags([makeTag('T1', 'first-tag')], { edit_block: refusal })
+
+      render(<TagList />)
+
+      const tag = await screen.findByText('first-tag')
+      await user.click(findRenameButton(tag.closest('li') as HTMLElement))
+      const input = await screen.findByDisplayValue('first-tag')
+      await user.clear(input)
+      await user.type(input, 'deep work')
+      await user.click(screen.getByRole('button', { name: /Save/i }))
+
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith(t('tags.nameHasWhitespace'))
+      })
+      expect(mockedToastError).toHaveBeenCalledTimes(1)
+    })
+  })
+
   // UX #7: Clickable tag names
   describe('clickable tag names', () => {
     it('calls onTagClick when a tag name is clicked', async () => {

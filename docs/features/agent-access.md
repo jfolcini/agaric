@@ -72,7 +72,7 @@ Several writes at once:
 Names in place of ids:
 
 - Wherever a tool takes a page, tag or parent id (`parent_id`, `page_id`, `tag_id`, `tag_ids`), a value that is not a ULID is a name in the call's `space_id`: a page by title, ignoring case, else by alias, the oldest page (the lowest id) where several match; a tag by name, ignoring case. A name nothing has is refused with a validation error. Block ids stay ULIDs: blocks have no names. `get_page` and `get_page_markdown` take ids only.
-- `append_block` and `update_block_content` write a `[[Name]]` or `#name` as the app's paste does: linked by id, creating the page or tag in the space when nothing matches; a name several pages share links the oldest of them. A page's title and a tag's name are kept as written. Logseq's `^^x^^` highlight and LaTeX's `\(x\)` and `\[x\]` math are written in Agaric's form as a paste writes them ([import-export.md](import-export.md#import-settings--data)).
+- `append_block` and `update_block_content` write a `[[Name]]` or `#name` as the app's paste does: linked by id, creating the page or tag in the space when nothing matches; a name several pages share links the oldest of them. A page's title and a tag's name are kept as written. Logseq's `^^x^^` highlight, LaTeX's `\(x\)` and `\[x\]` math and Obsidian's `![[Note]]` embed are written in Agaric's form as a paste writes them ([import-export.md](import-export.md#import-settings--data)): content that is one `![[Note]]` is an embed of the page, one among text a link.
 - `resolve { names, space_id }` looks up many names in one call and answers each with `page_id` and `tag_id` (null when nothing matches), the oldest page where several share the name.
 
 The journal in one call:
@@ -106,9 +106,9 @@ An agent limited to some spaces is refused, before the tool runs, any call whose
 
 ### What a limited agent can still see
 
-The limit guards against an agent's mistakes; it is not isolation. Each of these shows at most a title or an id from a space the agent may not use, and only through a link or move you made:
+The limit guards against an agent's mistakes; it is not isolation. Each of these shows at most a title, a block's first line or an id from a space the agent may not use, and only through a link or move you made or an id the agent writes:
 
-1. `get_page_markdown` and `get_journal` write a link, tag, block reference or ref-typed value that points into another space with its target's title or name. A link written across spaces is refused, so such a link comes from moving one of its pages.
+1. `get_page_markdown` and `get_journal` write a link, tag, block reference or ref-typed value that points into another space with its target's title or name. A link, tag or block reference that `append_block`, `append_markdown`, `update_block_content`, `capture` or `batch` writes to another space's block is written as the text it shows, its target's title, name or first line, with a warning, and any other write of one is refused, so such a link comes from moving one of its pages.
 2. `block_history` and `page_history` show a moved block's earlier text from the space it moved out of.
 3. `list_backlinks` takes a target in another space; the sources it lists are in the agent's space.
 4. A refusal for a block or page in another space names that space's id; the next call naming it is refused.

@@ -126,7 +126,8 @@ impl agents::McpAgentMode {
                  `undo` to revert it. `delete_block` is a soft delete that `restore_block` \
                  reverses.\n\
                  Names in written content: `[[Name]]` and `#name` link the page or tag of \
-                 that name, creating it when none matches.\n\
+                 that name, creating it when none matches. A block that is one Obsidian \
+                 `![[Name]]` embeds that page, and one among other text links it.\n\
                  Files: `attach_file` copies a file on this device onto a block, by its \
                  absolute `path`. A recording's transcript and summary are Markdown files \
                  attached to its block as `<name>.transcript.md` and `<name>.summary.md`; \

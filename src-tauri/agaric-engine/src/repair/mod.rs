@@ -9,8 +9,9 @@
 //!   are re-homed under an `Unreachable` page in their space.
 //! * [`journal_duplicates`](crate::repair::journal_duplicates) — several live journal pages for one date in one
 //!   space, minted while the journal lookup could not see a space-less page
-//!   (#4715). Their children are folded onto the oldest page and the emptied
-//!   duplicates are soft-deleted.
+//!   (#4715), or by two devices that each created the day (#6278, which also
+//!   runs this after each sync). Their children are folded onto the oldest
+//!   page and the emptied duplicates are soft-deleted.
 //! * [`completed_at`](crate::repair::completed_at) — blocks on the wrong side
 //!   of "`completed_at` present iff DONE", left there by an edge the
 //!   timestamp writer did not cover (#5074). A DONE task with no stamp gets

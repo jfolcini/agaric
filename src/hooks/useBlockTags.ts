@@ -6,6 +6,7 @@ import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notifyTagAdded, subscribeToNameChanges } from '@/lib/name-change-bus'
+import { dashedTagName } from '@/lib/name-tokens'
 import { notify } from '@/lib/notify'
 import { requireActiveScope } from '@/lib/space-scope'
 import { usePageBlockStoreApi } from '@/stores/page-blocks'
@@ -205,7 +206,9 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
 
   const handleCreateTag = useCallback(
     async (name: string) => {
-      const trimmed = name.trim()
+      // #6278 I4 — a new tag name holds no whitespace; the picker's Create row
+      // shows this name.
+      const trimmed = dashedTagName(name)
       if (!trimmed) return
       // #3081 — create the tag ATOMICALLY space-scoped (thread the active
       // spaceId) so the backend stamps `blocks.space_id` in the same

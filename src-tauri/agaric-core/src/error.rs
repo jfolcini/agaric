@@ -115,6 +115,10 @@ pub enum ValidationCode {
     /// definition since the preview, so the caller previews again and asks
     /// once more.
     UnacknowledgedPropertyLoss,
+    /// Creating or renaming a tag to a name holding whitespace (#6278 I4),
+    /// which Obsidian's `#tag` cannot spell. Coded so the tag surfaces can
+    /// suggest `-`.
+    TagNameWhitespace,
 }
 
 /// Helper struct matching the `{ kind, message, code? }` JSON shape that
@@ -808,7 +812,7 @@ mod tests {
         // The exact strings the old `"<Code>: …"` message prefixes spelled —
         // and the strings the TS `ValidationCode` union in bindings.ts (and
         // its runtime mirror in validation-codes.ts) discriminates on.
-        let cases: [(ValidationCode, &str); 13] = [
+        let cases: [(ValidationCode, &str); 14] = [
             (ValidationCode::InvalidGlob, "InvalidGlob"),
             (ValidationCode::InvalidRegex, "InvalidRegex"),
             (ValidationCode::InvalidDateFilter, "InvalidDateFilter"),
@@ -828,6 +832,7 @@ mod tests {
                 ValidationCode::UnacknowledgedPropertyLoss,
                 "UnacknowledgedPropertyLoss",
             ),
+            (ValidationCode::TagNameWhitespace, "TagNameWhitespace"),
         ];
         for (code, expected) in cases {
             assert_eq!(
@@ -871,6 +876,7 @@ mod tests {
                 ValidationCode::DuplicateAgentName => "DuplicateAgentName",
                 ValidationCode::BuiltinPropertyLocked => "BuiltinPropertyLocked",
                 ValidationCode::UnacknowledgedPropertyLoss => "UnacknowledgedPropertyLoss",
+                ValidationCode::TagNameWhitespace => "TagNameWhitespace",
             }
         }
         for code in [
@@ -887,6 +893,7 @@ mod tests {
             ValidationCode::DuplicateAgentName,
             ValidationCode::BuiltinPropertyLocked,
             ValidationCode::UnacknowledgedPropertyLoss,
+            ValidationCode::TagNameWhitespace,
         ] {
             assert_eq!(
                 serde_json::to_value(code).expect("code serializes"),

@@ -19,7 +19,8 @@ use agaric_core::error::AppError;
 use agaric_core::ulid::{BlockId, PageId};
 use agaric_engine::import;
 use agaric_engine::import::{
-    ImportAnchor, ImportProgressUpdate, ImportResult, VaultFile, is_escaped, percent_decode,
+    ImportAnchor, ImportDialect, ImportProgressUpdate, ImportResult, VaultFile, is_escaped,
+    percent_decode,
 };
 use agaric_store::pagination::{BlockRow, Cursor, NULL_POSITION_SENTINEL, PageRequest};
 use agaric_store::space::SpaceId;
@@ -1696,12 +1697,15 @@ fn agent_markdown_stretch(
 /// goes. Everything else is kept as written, so the parse by id reads the text
 /// back as the blocks the anchors named. What is not an anchor, a `^word` that
 /// is no block id, stays. Public so the command tests can write an edited
-/// buffer as the source it was loaded from, anchors and all.
+/// buffer as the source it was loaded from, anchors and all. CRLF and CR line
+/// ends, as some clients send text, are read as the parser reads them, or a
+/// line keeps its anchor behind a `\r` (#6277 B1); the parser drops a BOM.
 pub fn anchor_free(source: &str) -> (String, Vec<Option<String>>) {
+    let source = source.replace("\r\n", "\n").replace('\r', "\n");
     let mut lines: Vec<(&str, Option<String>)> =
         source.split('\n').map(|line| (line, None)).collect();
     let mut own_lines = HashSet::new();
-    for block in import::parse_document_outline(source).blocks {
+    for block in import::parse_document_outline(&source).blocks {
         let (Some(word), Some(start)) = (block.block_anchor, block.line) else {
             continue;
         };
@@ -2111,32 +2115,44 @@ async fn resolve_tag_and_page_names(
     let mut page_titles: HashMap<String, String> = HashMap::new();
     if !ulid_set.is_empty() {
         let ulids: Vec<String> = ulid_set.into_iter().collect();
-        // sqlx requires `String` (NOT `Vec<String>`) for `json_each(?)`
-        // binds — encode the set as a JSON array text and bind that.
-        let ids_json = serde_json::to_string(&ulids)?;
-        let rows = sqlx::query!(
-            r#"SELECT id, block_type, content FROM blocks
-               WHERE id IN (SELECT value FROM json_each(?1))
-                 AND deleted_at IS NULL"#,
-            ids_json,
-        )
-        .fetch_all(&mut *conn)
-        .await?;
-        for r in rows {
-            match r.block_type.as_str() {
+        for (id, block_type, content) in load_live_blocks(conn, &ulids).await? {
+            match block_type.as_str() {
                 "tag" => {
-                    if let Some(c) = r.content {
-                        tag_names.insert(r.id, c);
+                    if let Some(c) = content {
+                        tag_names.insert(id, c);
                     }
                 }
                 "page" => {
-                    page_titles.insert(r.id, r.content.unwrap_or_else(|| "Untitled".to_string()));
+                    page_titles.insert(id, content.unwrap_or_else(|| "Untitled".to_string()));
                 }
                 _ => {}
             }
         }
     }
     Ok((tag_names, page_titles))
+}
+
+/// The live blocks of `ids`, in one `json_each(?)` query: each one's id,
+/// type and content.
+async fn load_live_blocks(
+    conn: &mut sqlx::SqliteConnection,
+    ids: &[String],
+) -> Result<Vec<(String, String, Option<String>)>, AppError> {
+    // sqlx requires `String` (NOT `Vec<String>`) for `json_each(?)`
+    // binds — encode the set as a JSON array text and bind that.
+    let ids_json = serde_json::to_string(ids)?;
+    let rows = sqlx::query!(
+        r#"SELECT id, block_type, content FROM blocks
+               WHERE id IN (SELECT value FROM json_each(?1))
+                 AND deleted_at IS NULL"#,
+        ids_json,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.id, r.block_type, r.content))
+        .collect())
 }
 
 /// Step 3b: resolve `((ULID))` targets to a roundtrip-safe link, and record
@@ -2986,6 +3002,32 @@ pub struct PasteSplice {
 }
 
 impl PasteSplice {
+    /// Write the blocks [`Self::join`] joins to text, the first after `before`
+    /// and the last before `after`, as they read among text, even one that is
+    /// a whole block as pasted: each Obsidian note embed as the link
+    /// ([`import::link_obsidian_note_embeds`]), and display math of one line
+    /// as inline math ([`display_math_as_inline`]).
+    fn inline_joined_blocks(&self, blocks: &mut [import::ParsedBlock]) {
+        let last = blocks.len().saturating_sub(1);
+        for (at, block) in blocks.iter_mut().enumerate() {
+            let joined =
+                (at == 0 && !self.before.is_empty()) || (at == last && !self.after.is_empty());
+            if !joined {
+                continue;
+            }
+            if !block.is_code {
+                block.content =
+                    import::link_obsidian_note_embeds(&block.content, import::embed_names_note);
+            }
+            if let Some(math) =
+                display_math_as_inline(&import::normalize_foreign_inline(&block.content))
+            {
+                block.content = math;
+                block.is_code = false;
+            }
+        }
+    }
+
     /// Join the pasted blocks into the anchor's text as a text editor does:
     /// the text before the cursor starts the first block, the text after it
     /// ends the last. After text, the first block joins as the text it was
@@ -3012,6 +3054,22 @@ impl PasteSplice {
             first.content.insert_str(0, &before);
         }
     }
+}
+
+/// `content` as inline math when it is a `$$` block of one line of LaTeX, for
+/// a block joined to text (#6033): mid-text a `$$` line opens no block, so the
+/// editor would show both fences as text. A digit first is braced, as import
+/// writes `\(2x\)`, since `$2` reads as currency.
+fn display_math_as_inline(content: &str) -> Option<String> {
+    let latex = content.strip_prefix("$$\n")?.strip_suffix("\n$$")?.trim();
+    if latex.is_empty() || latex.contains(['\n', '$']) {
+        return None;
+    }
+    Some(if latex.starts_with(|c: char| c.is_ascii_digit()) {
+        format!("${{{latex}}}$")
+    } else {
+        format!("${latex}$")
+    })
 }
 
 /// `block` as the text it was pasted as, for a paste after text (#5160 D4):
@@ -3061,12 +3119,13 @@ fn pasted_as_text(block: &import::ParsedBlock, starts_line: bool) -> String {
 /// so one undo. Text is read by [`import::parse_pasted_text`]; each of
 /// `blocks` is one block as it comes. A page link or tag written as a name is
 /// resolved in the anchor's space as an import resolves it, creating the page
-/// or tag when no name there matches; ids and block refs stay as written, and
-/// an `^anchor` in the text never pairs with a block. The top-level blocks
-/// land in order right after the anchor among its siblings, each deeper one
-/// under its parsed parent, with its task state, priority, dates, list style
-/// and properties. Returns the pages and tags the names created, then the
-/// pasted blocks in document order.
+/// or tag when no name there matches; ids and block refs stay as written, but
+/// one whose target is in another space is written as the text its chip shows
+/// (#6277 B2), and an `^anchor` in the text never pairs with a block. The
+/// top-level blocks land in order right after the anchor among its siblings,
+/// each deeper one under its parsed parent, with its task state, priority,
+/// dates, list style and properties. Returns the pages and tags the names
+/// created, then the pasted blocks in document order.
 ///
 /// With a `splice`, the paste goes into the anchor's text (#5160 D4). The
 /// anchor becomes the first block, `before` + its content, and keeps its id,
@@ -3080,7 +3139,8 @@ fn pasted_as_text(block: &import::ParsedBlock, starts_line: bool) -> String {
 /// returned. The names in `before` and `after` are left as they are.
 ///
 /// A property line a definition refuses stays text at the end of its block,
-/// and the reply's warnings name each (#5160 D11).
+/// and the reply's warnings name each (#5160 D11) and count the refs
+/// written as text.
 ///
 /// # Errors
 ///
@@ -3103,6 +3163,9 @@ pub async fn paste_blocks_inner(
         input.into_blocks(splice.as_ref().is_some_and(|s| !s.before.is_empty()));
     if blocks.is_empty() {
         return Err(AppError::validation("there is nothing to paste".into()));
+    }
+    if let Some(splice) = &splice {
+        splice.inline_joined_blocks(&mut blocks);
     }
     let mut tx = CommandTx::begin_immediate(pool, "paste_blocks").await?;
     // #2604 — rollback-safe engine apply (rewind on tx abort).
@@ -3516,12 +3579,13 @@ async fn splice_into_anchor(
     Ok(rows)
 }
 
-/// Write the foreign highlight and math of `blocks` in Agaric's form
-/// ([`normalize_foreign_forms`]), then resolve the page links and tags they
+/// Write the note embeds, foreign highlight and math of `blocks` in Agaric's
+/// form ([`normalize_foreign_forms`]), then resolve the page links and tags they
 /// write as names in `anchor`'s space, creating what no name there matches,
-/// and write each block's content with their ids. Returns the pages and tags
-/// created; a dropped anchor or label is named in `warnings`. With no space,
-/// every name stays text.
+/// and write each block's content with their ids, once each ref to another
+/// space is written as the text it shows ([`write_foreign_refs_as_text`]).
+/// Returns the pages and tags created; a dropped anchor or label is named in
+/// `warnings`. With no space, every name stays text.
 async fn resolve_pasted_names(
     mut tx: CommandTx,
     materializer: &Materializer,
@@ -3530,10 +3594,11 @@ async fn resolve_pasted_names(
     blocks: &mut [import::ParsedBlock],
     warnings: &mut Vec<String>,
 ) -> Result<(CommandTx, Vec<BlockRow>), AppError> {
-    normalize_foreign_forms(blocks);
+    normalize_foreign_forms(blocks, import::embed_names_note);
     let Some(space) = agaric_store::space::resolve_block_space(&mut **tx, anchor).await? else {
         return Ok((tx, Vec::new()));
     };
+    write_foreign_refs_as_text(&mut tx, &space, anchor, blocks, warnings).await?;
     let mut names = NameCtx {
         materializer,
         device_id,
@@ -3562,6 +3627,86 @@ fn stamped_todo_state(block: &import::ParsedBlock) -> Option<&str> {
         .iter()
         .any(|(key, _)| key == "completed_at");
     parsed_todo_state(block).filter(|state| !(completed && *state == "DONE"))
+}
+
+/// Write each raw `[[ULID]]`, `#[ULID]` and `((ULID))` of `blocks` that the
+/// create would refuse, its target being in another space than `space`, as
+/// the text its chip shows (#6277 B2), with one warning counting them: a link
+/// as `[[Title]]` and a tag as `#name`, which the paste then resolves in
+/// `space` as any name, and a block ref as its target's first line. That line
+/// may hold refs of its own, so the pass repeats over what it wrote: a link or
+/// tag is written as its name each time it is met, a block ref only in one
+/// pass, so a block ref met again stays, and the create refuses it.
+async fn write_foreign_refs_as_text(
+    tx: &mut CommandTx,
+    space: &SpaceId,
+    anchor: &BlockId,
+    blocks: &mut [import::ParsedBlock],
+    warnings: &mut Vec<String>,
+) -> Result<(), AppError> {
+    use agaric_store::cross_space_validation::foreign_content_refs;
+    let mut shown: HashMap<String, String> = HashMap::new();
+    let mut expanded: HashSet<String> = HashSet::new();
+    loop {
+        let all: Vec<&str> = blocks.iter().map(|block| block.content.as_str()).collect();
+        let ids = foreign_content_refs(tx, space, &all.join("\n"), anchor.as_str()).await?;
+        if ids.is_empty() {
+            break;
+        }
+        let fresh: Vec<String> = ids
+            .into_iter()
+            .map(|(id, _)| id)
+            .filter(|id| !shown.contains_key(id))
+            .collect();
+        shown.extend(
+            load_live_blocks(tx, &fresh)
+                .await?
+                .into_iter()
+                .map(|(id, _, content)| {
+                    let first = content.as_deref().unwrap_or_default().lines().next();
+                    (id, first.unwrap_or_default().to_owned())
+                }),
+        );
+        let newly = write_shown_text(blocks, &shown, &expanded);
+        if fresh.is_empty() && newly.is_empty() {
+            break;
+        }
+        expanded.extend(newly);
+    }
+    if !shown.is_empty() {
+        warnings.push(format!(
+            "references to {} target(s) in another space were written as the text they \
+             show: a block cannot reference another space",
+            shown.len()
+        ));
+    }
+    Ok(())
+}
+
+/// Write each `[[ULID]]` and `#[ULID]` of `blocks` whose target `shown` holds
+/// as its name, and each such `((ULID))` as its first line unless an earlier
+/// pass wrote it (`expanded`). Returns the block refs written.
+fn write_shown_text(
+    blocks: &mut [import::ParsedBlock],
+    shown: &HashMap<String, String>,
+    expanded: &HashSet<String>,
+) -> HashSet<String> {
+    let mut written = HashSet::new();
+    for block in blocks.iter_mut() {
+        let named = humanise_tag_and_page_refs(&block.content, shown, shown);
+        block.content = agaric_store::cache::BLOCK_REF_RE
+            .replace_all(&named, |caps: &regex::Captures<'_>| {
+                match shown.get(&caps[1]).filter(|_| !expanded.contains(&caps[1])) {
+                    Some(line) => {
+                        written.insert(caps[1].to_owned());
+                        line.clone()
+                    }
+                    None => caps[0].to_owned(),
+                }
+            })
+            .into_owned();
+    }
+    written
 }
 
 /// The `todo_state` a parsed block carries, from its checkbox or a property
@@ -4056,6 +4201,7 @@ pub async fn import_markdown_inner(
         content,
         filename,
         space_id,
+        ImportDialect::Markdown,
         vault_files,
         None,
         None,
@@ -4169,6 +4315,7 @@ pub async fn import_markdown_with_progress(
     content: String,
     filename: Option<String>,
     space_id: String,
+    dialect: ImportDialect,
     // #1925 — referenced sibling files' bytes. `None`/empty ⇒ no attachment
     // ingest (exact pre-#1925 behaviour).
     vault_files: Option<Vec<VaultFile>>,
@@ -4190,6 +4337,7 @@ pub async fn import_markdown_with_progress(
     let (mut parse_output, page_title) = parse_import_payload(
         &content,
         filename,
+        dialect,
         vault_files.as_deref(),
         vault_notes.as_deref(),
     )?;
@@ -4199,6 +4347,7 @@ pub async fn import_markdown_with_progress(
         &page_title,
         blocks_total,
         &space_id,
+        dialect,
         parse_output.warnings.len(),
     );
 
@@ -4323,6 +4472,7 @@ fn marked_blocks(
 fn parse_import_payload(
     content: &str,
     filename: Option<String>,
+    dialect: ImportDialect,
     vault_files: Option<&[VaultFile]>,
     vault_notes: Option<&[String]>,
 ) -> Result<(import::ParseOutput, String), AppError> {
@@ -4340,14 +4490,12 @@ fn parse_import_payload(
     // folder import keeps its `((uuid))` refs to other notes for
     // `link_import_anchors`.
     let text = import::strip_title_heading(content, &page_title);
-    let mut parse_output = if vault_notes.is_some() {
-        import::parse_vault_markdown(&text)
-    } else {
-        import::parse_logseq_markdown(&text)
-    };
+    let mut parse_output = import::parse_import(&text, vault_notes.is_some(), dialect);
     // Every block, code too: the rewrite skips the lines of its code fences.
-    for block in &mut parse_output.blocks {
-        block.content = import::rewrite_org_blocks(&block.content);
+    if dialect == ImportDialect::LogseqOrg {
+        for block in &mut parse_output.blocks {
+            block.content = import::rewrite_org_blocks(&block.content);
+        }
     }
     // A folder import links its notes by relative path (#5160 N10); a lone
     // file has no vault to be relative to. The title is the note's path below
@@ -4362,10 +4510,7 @@ fn parse_import_payload(
     // A note of the folder is a note whatever its name looks like.
     let names_note =
         |name: &str| import::embed_names_note(name) || notes.contains_key(&name.to_lowercase());
-    for block in parse_output.blocks.iter_mut().filter(|b| !b.is_code) {
-        block.content = import::rewrite_obsidian_note_embeds(&block.content, names_note);
-    }
-    normalize_foreign_forms(&mut parse_output.blocks);
+    normalize_foreign_forms(&mut parse_output.blocks, names_note);
     if !notes.is_empty() {
         for block in parse_output.blocks.iter_mut().filter(|b| !b.is_code) {
             block.content = rewrite_vault_wikilinks(&block.content, &notes);
@@ -4374,11 +4519,16 @@ fn parse_import_payload(
     Ok((parse_output, page_title))
 }
 
-/// Each block's foreign highlight and math in Agaric's form
-/// ([`import::normalize_foreign_inline`]), as import, paste, every MCP content
-/// write and Edit as Markdown take text in (#6033).
-fn normalize_foreign_forms(blocks: &mut [import::ParsedBlock]) {
+/// Each block's Obsidian note embeds ([`import::rewrite_obsidian_note_embeds`],
+/// `names_note` telling a note from a file) and foreign highlight and math
+/// ([`import::normalize_foreign_inline`]) in Agaric's form, as import, paste,
+/// every MCP content write and Edit as Markdown take text in (#6033). A code
+/// block keeps its embeds.
+fn normalize_foreign_forms(blocks: &mut [import::ParsedBlock], names_note: impl Fn(&str) -> bool) {
     for block in blocks {
+        if !block.is_code {
+            block.content = import::rewrite_obsidian_note_embeds(&block.content, &names_note);
+        }
         if let std::borrow::Cow::Owned(content) = import::normalize_foreign_inline(&block.content) {
             block.content = content;
         }
@@ -4515,6 +4665,7 @@ fn announce_import_start(
     page_title: &str,
     blocks_total: u64,
     space_id: &str,
+    dialect: ImportDialect,
     parse_warnings: usize,
 ) {
     let span = tracing::Span::current();
@@ -4524,6 +4675,7 @@ fn announce_import_start(
         page = %page_title,
         blocks_total,
         space = %space_id,
+        ?dialect,
         parse_warnings,
         "import: starting markdown import"
     );
@@ -5695,6 +5847,27 @@ pub(crate) async fn snapshot_tags_by_norm(
     Ok(map)
 }
 
+/// The spelling an inbound tag `token` (`#[[multi word]]`, a front-matter
+/// item) is stored under (#6278 I4): as written when the space already holds
+/// that name, as a tag named before the rule may; else with each whitespace
+/// run a `-`, named in `warnings`, since a new tag name holds none.
+fn inbound_tag_spelling(
+    token: &str,
+    existing: &HashMap<String, String>,
+    warnings: &mut Vec<String>,
+) -> String {
+    if existing.contains_key(&agaric_core::tag_norm::normalize_tag_name(token)) {
+        return token.to_owned();
+    }
+    let dashed = token.split_whitespace().collect::<Vec<_>>().join("-");
+    if dashed != token {
+        warnings.push(format!(
+            "tag '{token}' was read as '{dashed}': a tag name holds no whitespace"
+        ));
+    }
+    dashed
+}
+
 /// The resolved tag state [`resolve_tag_names`] returns with the
 /// transaction: by normalised name, by token, and the pre-pass snapshot.
 type ResolvedTags = (
@@ -5737,8 +5910,9 @@ async fn resolve_tag_names(
     // (resolve-or-create). This mirrors the wiki-link pre-pass above: resolve a
     // tag by its NORMALIZED name
     // (`tag_norm::normalize_tag_name` — the engine's tag identity key) else
-    // create a new `block_type='tag'` block whose content is the display name,
-    // and return its ULID. NO explicit `block_tags` association is written:
+    // create a new `block_type='tag'` block whose content is the display name
+    // (each whitespace run a `-`, #6278 I4), and return its ULID. NO explicit
+    // `block_tags` association is written:
     // typing/pasting `#tag` in the editor creates an INLINE ref (materialized
     // into `block_tag_refs` from the `#[ULID]` content by the `CreateBlock`
     // dispatch's `ReindexBlockTagRefs` task — identical to how `[[ULID]]` page
@@ -5759,7 +5933,8 @@ async fn resolve_tag_names(
     let mut resolved_tag_tokens: HashMap<String, String> = HashMap::new();
     let existing_tag_by_norm = snapshot_tags_by_norm(&mut tx, space_id).await?;
     for token_name in tag_token_names {
-        let norm = agaric_core::tag_norm::normalize_tag_name(&token_name);
+        let name = inbound_tag_spelling(&token_name, &existing_tag_by_norm, ctx.warnings);
+        let norm = agaric_core::tag_norm::normalize_tag_name(&name);
 
         // Already resolved/created in this pass (case/dedup convergence).
         if let Some(ulid) = resolved_tag_norm.get(&norm) {
@@ -5788,7 +5963,7 @@ async fn resolve_tag_names(
             materializer.loro_state(),
             device_id,
             "tag".into(),
-            token_name.clone(),
+            name,
             None,
             None,
             // #2849 PR2: server-generated id.
@@ -5911,7 +6086,8 @@ async fn resolve_or_create_frontmatter_tag(
     resolved_tag_norm: &mut HashMap<String, String>,
     existing_tag_by_norm: &HashMap<String, String>,
 ) -> Result<Option<String>, AppError> {
-    let norm = agaric_core::tag_norm::normalize_tag_name(tag_name);
+    let tag_name = inbound_tag_spelling(tag_name, existing_tag_by_norm, &mut ctx.warnings);
+    let norm = agaric_core::tag_norm::normalize_tag_name(&tag_name);
     if let Some(id) = resolved_tag_norm.get(&norm) {
         return Ok(Some(id.clone()));
     }
@@ -5928,7 +6104,7 @@ async fn resolve_or_create_frontmatter_tag(
         ctx.materializer.loro_state(),
         ctx.device_id,
         "tag".into(),
-        tag_name.to_string(),
+        tag_name.clone(),
         None,
         None,
         // #2849 PR2: server-generated id.
@@ -7356,11 +7532,14 @@ pub struct VaultImport {
 /// best-effort, so a dropped channel never aborts the import.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn import_markdown(
     app: tauri::AppHandle,
     content: String,
     filename: Option<String>,
     space_id: SpaceId,
+    // Which reading the source is for (#6277 E1).
+    dialect: ImportDialect,
     // `None`/omitted ⇒ no attachment ingest and no note names (a plain pick).
     vault: Option<VaultImport>,
     progress: tauri::ipc::Channel<ImportProgressUpdate>,
@@ -7384,6 +7563,7 @@ pub async fn import_markdown(
         content,
         filename,
         space_id.into_string(),
+        dialect,
         vault_files,
         vault_notes,
         Some(&crate::main_thread::UiChannel::new(app, progress)),
@@ -8245,6 +8425,7 @@ mod tests {
              - ![[Topic]] ![[topic.png]] #[[Topic]] \\[[Topic]] `[[Topic]]`\n\
              - ````\n  ![[Topic]] [[Topic]]\n  ````\n",
             Some("v/home.md".into()),
+            ImportDialect::Markdown,
             None,
             Some(&notes),
         )

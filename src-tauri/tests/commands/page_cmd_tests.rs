@@ -1,4 +1,5 @@
 use crate::prelude::*;
+use agaric_engine::import::ImportDialect;
 use agaric_lib::commands::pages::anchor_free;
 use agaric_store::space::{SpaceId, SpaceScope};
 
@@ -5983,6 +5984,209 @@ async fn get_blocks_source_of_nothing_is_empty_and_of_too_many_is_refused() {
     );
 }
 
+/// A copy out of one space pastes into another (#6277 B2): a raw page link
+/// and a block ref whose targets stay behind are written as the text their
+/// chips show, with one warning, instead of refusing the paste. The link
+/// becomes its title, which the paste resolves in the destination as it
+/// resolves any name, and the block ref its target's first line, whose own
+/// link is written so in turn.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_copy_into_another_space_pastes_its_foreign_refs_as_their_text_6277() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let source = dup_page(&pool, &mat, "Source").await;
+    // Two pages of one title: the name reads back as the lower id, so the
+    // copy writes the link to the other one raw.
+    for (id, position) in [(SOURCE_PROJECT, 10), (SOURCE_PROJECT_TWIN, 11)] {
+        insert_block(&pool, id, "page", "Twin", None, Some(position)).await;
+        assign_to_space(&pool, id, TEST_SPACE_ID).await;
+    }
+    let twin = SOURCE_PROJECT_TWIN;
+    let other = dup_page(&pool, &mat, "Other").await;
+    let target = dup_child(
+        &pool,
+        &mat,
+        &source,
+        &format!("target of [[{other}]]\nsecond line"),
+    )
+    .await;
+    let held = dup_child(
+        &pool,
+        &mat,
+        &source,
+        &format!("see [[{twin}]] and (({target}))"),
+    )
+    .await;
+    dup_child(&pool, &mat, &held, "under it").await;
+    ensure_test_space_b(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_B_ID).await;
+    let dest = create_page_in_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        None,
+        "Dest".into(),
+        TEST_SPACE_B_ID.into(),
+    )
+    .await
+    .unwrap();
+    let anchor = dup_child(&pool, &mat, &dest, "anchor").await;
+    settle(&mat).await;
+    let copied = copy_source(&pool, &[&held], true).await;
+    assert_eq!(
+        copied,
+        format!("see [[{twin}]] and (({target}))\n\n  + under it\n"),
+        "the copy writes both refs raw"
+    );
+
+    let pasted = paste_blocks_inner(&pool, DEV, &mat, anchor.clone(), paste_text(&copied), None)
+        .await
+        .expect("a paste into another space lands");
+    settle(&mat).await;
+
+    let mut in_b = Vec::new();
+    for title in ["Twin", "Other"] {
+        let id: String = sqlx::query_scalar(
+            "SELECT id FROM blocks WHERE block_type = 'page' AND content = ? AND space_id = ?",
+        )
+        .bind(title)
+        .bind(TEST_SPACE_B_ID)
+        .fetch_one(&pool)
+        .await
+        .expect("each title made a page in the destination");
+        in_b.push(id);
+    }
+    let children = dup_children(&pool, &dest).await;
+    assert_eq!(
+        children.iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(),
+        [
+            "anchor",
+            &format!("see [[{}]] and target of [[{}]]", in_b[0], in_b[1])
+        ],
+        "each link names the destination's page and the block ref is its target's first line"
+    );
+    let pasted_root = BlockId::from_trusted(&children[1].0);
+    assert_eq!(
+        dup_children(&pool, &pasted_root)
+            .await
+            .into_iter()
+            .map(|(_, c)| c)
+            .collect::<Vec<_>>(),
+        ["under it"],
+        "the subtree came along"
+    );
+    assert_eq!(
+        pasted.warnings,
+        [
+            "references to 3 target(s) in another space were written as the text they show: \
+          a block cannot reference another space"
+        ],
+        "one warning counts the targets"
+    );
+}
+
+/// A page the paste links and a block it refs links too is written as its
+/// title both times, so the paste lands (#6277 B2): the second link is met a
+/// pass after the first was written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_foreign_page_met_again_in_a_block_ref_line_is_written_as_its_title_6277() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let linked = dup_page(&pool, &mat, "Linked").await;
+    let source = dup_page(&pool, &mat, "Source").await;
+    let about = dup_child(&pool, &mat, &source, &format!("about [[{linked}]]")).await;
+    ensure_test_space_b(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_B_ID).await;
+    let dest = create_page_in_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        None,
+        "Dest".into(),
+        TEST_SPACE_B_ID.into(),
+    )
+    .await
+    .unwrap();
+    let anchor = dup_child(&pool, &mat, &dest, "anchor").await;
+    settle(&mat).await;
+
+    let text = format!("see [[{linked}]] and (({about}))");
+    let pasted = paste_blocks_inner(&pool, DEV, &mat, anchor, paste_text(&text), None)
+        .await
+        .expect("a paste into another space lands");
+    settle(&mat).await;
+
+    let in_b: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Linked' AND space_id = ?",
+    )
+    .bind(TEST_SPACE_B_ID)
+    .fetch_one(&pool)
+    .await
+    .expect("the title made a page in the destination");
+    let children = dup_children(&pool, &dest).await;
+    assert_eq!(
+        children.iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(),
+        ["anchor", &format!("see [[{in_b}]] and about [[{in_b}]]")],
+        "both links name the destination's page"
+    );
+    assert_eq!(
+        pasted.warnings,
+        [
+            "references to 2 target(s) in another space were written as the text they show: \
+          a block cannot reference another space"
+        ],
+        "one warning counts the targets"
+    );
+}
+
+/// A block ref whose target's first line refers back to it is written as text
+/// once: the ref met again stays, and the paste is refused as before rather
+/// than writing the line forever (#6277 B2).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_foreign_block_ref_to_itself_is_written_once_and_then_refused_6277() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let source = dup_page(&pool, &mat, "Source").await;
+    let looped = dup_child(&pool, &mat, &source, "placeholder").await;
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        looped.clone(),
+        format!("see (({looped}))"),
+    )
+    .await
+    .unwrap();
+    ensure_test_space_b(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_B_ID).await;
+    let dest = create_page_in_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        None,
+        "Dest".into(),
+        TEST_SPACE_B_ID.into(),
+    )
+    .await
+    .unwrap();
+    let anchor = dup_child(&pool, &mat, &dest, "anchor").await;
+    settle(&mat).await;
+    let before = dup_counts(&pool).await;
+
+    let text = format!("(({looped}))");
+    let result = paste_blocks_inner(&pool, DEV, &mat, anchor, paste_text(&text), None).await;
+
+    assert!(
+        matches!(&result, Err(AppError::Validation { message, .. }) if message.contains("cross-space")),
+        "the ref left after one pass is refused, got {result:?}"
+    );
+    assert_eq!(
+        dup_counts(&pool).await,
+        before,
+        "the refused paste wrote nothing"
+    );
+}
+
 /// Everything a copy carries lands where the original keeps it: content
 /// verbatim, with a closed fence, an open fence and its child, a trailing
 /// ` ^word` and a raw block ref; each task state, with the stamp a new task
@@ -6135,6 +6339,114 @@ async fn a_paste_writes_foreign_highlight_and_math_in_agarics_form() {
         ],
         "each foreign form is stored in Agaric's form"
     );
+}
+
+/// #6033 S5b — a paste reads Obsidian's note embeds as import does: a block
+/// that is one `![[Note]]` embeds the page, created when none has that name,
+/// `![[Note#Heading]]` and `![[Note#^id]]` the block they name, one among text
+/// links the page, and a file embed, whose bytes a paste does not have, stays
+/// text, as does code.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_paste_reads_obsidian_note_embeds_as_import_does() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Paste").await;
+    let note = dup_page(&pool, &mat, "Note").await;
+    let part = dup_child(&pool, &mat, &note, "## Part").await;
+    let other = dup_child(&pool, &mat, &note, "other").await;
+    let anchor = dup_child(&pool, &mat, &page, "the anchor").await;
+    settle(&mat).await;
+    let text = format!(
+        "![[Fresh]]\n\n![[Note#Part]]\n\n![[Note#^{other}]]\n\n\
+         see ![[Note|it]] and ![[Note]]\n\n![[img.png]]\n\n`![[Note]]`\n"
+    );
+
+    let rows = paste(&pool, &mat, &anchor, paste_text(&text)).await;
+
+    let [fresh] = <[String; 1]>::try_from(pages_titled(&pool, "Fresh").await).unwrap();
+    let contents: Vec<&str> = rows
+        .iter()
+        .filter(|r| r.block_type == "content")
+        .filter_map(|r| r.content.as_deref())
+        .collect();
+    assert_eq!(
+        contents,
+        [
+            format!("{{{{embed [[{fresh}]]}}}}"),
+            format!("{{{{embed (({part}))}}}}"),
+            format!("{{{{embed (({other}))}}}}"),
+            format!("see [[{note}|it]] and [[{note}]]"),
+            "![[img.png]]".to_string(),
+            "`![[Note]]`".to_string(),
+        ],
+        "each note embed is read as import reads it; a file embed and code stay text"
+    );
+}
+
+/// #6033 S5b — a `![[Note]]` pasted into a block's text is among that text, so
+/// it links the page; pasted into an empty block it embeds it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_note_embed_pasted_into_text_links_the_page() {
+    for (case, stored, cursor, expected) in [
+        (
+            "mid-block",
+            "Hello world",
+            ("Hello ", "world"),
+            "Hello [[NOTE]]world",
+        ),
+        ("at the start", "world", ("", "world"), "[[NOTE]]world"),
+        ("at the end", "Hello", ("Hello", ""), "Hello[[NOTE]]"),
+        ("into an empty block", "", ("", ""), "{{embed [[NOTE]]}}"),
+    ] {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let page = dup_page(&pool, &mat, "Dest").await;
+        let note = dup_page(&pool, &mat, "Note").await;
+        let anchor = dup_child(&pool, &mat, &page, stored).await;
+        settle(&mat).await;
+
+        paste_into(&pool, &mat, &anchor, "![[Note]]", cursor).await;
+
+        assert_eq!(
+            dup_children(&pool, &page).await[0].1,
+            expected.replace("NOTE", note.as_str()),
+            "{case}"
+        );
+    }
+}
+
+/// #6033 S4 — display math pasted into a block's text is among that text, so
+/// it is inline math: a `$$` line mid-text opens no block, and the editor
+/// would show both fences as text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn display_math_pasted_into_text_is_inline_math() {
+    for (case, text, expected) in [
+        (
+            "a whole-block \\[x\\]",
+            "\\[\\frac{a}{b}\\]",
+            "Hello $\\frac{a}{b}$world",
+        ),
+        (
+            "a math fence",
+            "```math\ne^{i\\pi}\n```",
+            "Hello $e^{i\\pi}$world",
+        ),
+    ] {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let page = dup_page(&pool, &mat, "Dest").await;
+        let anchor = dup_child(&pool, &mat, &page, "Hello world").await;
+        settle(&mat).await;
+
+        paste_into(&pool, &mat, &anchor, text, ("Hello ", "world")).await;
+
+        let contents: Vec<String> = dup_children(&pool, &page)
+            .await
+            .into_iter()
+            .map(|(_, content)| content)
+            .collect();
+        assert_eq!(contents, [expected], "{case}");
+    }
 }
 
 /// #6033 Q3 — a copy of blocks whose text holds `^^`, `\(` and `[x]` literally,
@@ -8297,6 +8609,7 @@ async fn import_markdown_emits_started_progress_complete() {
         content.into(),
         Some("Streamed.md".into()),
         TEST_SPACE_ID.into(),
+        ImportDialect::Markdown,
         None,
         None,
         Some(&sink),
@@ -8371,6 +8684,7 @@ async fn import_markdown_progress_empty_file_started_then_complete() {
         String::new(),
         Some("Empty.md".into()),
         TEST_SPACE_ID.into(),
+        ImportDialect::Markdown,
         None,
         None,
         Some(&sink),
@@ -8431,6 +8745,7 @@ async fn import_markdown_progress_failure_emits_no_complete() {
         "- Block 1\n- Block 2".into(),
         Some("Fails.md".into()),
         TEST_SPACE_ID.into(),
+        ImportDialect::Markdown,
         None,
         None,
         Some(&sink),
@@ -8856,6 +9171,7 @@ async fn import_markdown_commits_chunks_visible_to_separate_reader_662() {
         content,
         Some("LockRelease.md".into()),
         TEST_SPACE_ID.into(),
+        ImportDialect::Markdown,
         None,
         None,
         None,
@@ -12335,6 +12651,7 @@ async fn import_reads_a_bare_wikilink_as_the_vault_note_of_that_name() {
                 md.into(),
                 Some(path.into()),
                 TEST_SPACE_ID.into(),
+                ImportDialect::Markdown,
                 None,
                 Some(notes.clone()),
                 None,
@@ -13715,13 +14032,15 @@ async fn a_logseq_page_imports_its_page_properties_and_bookkeeping() {
     .fetch_all(&pool)
     .await
     .unwrap();
-    assert_eq!(tags, ["Q3 plans", "project"]);
+    // #6278 I4 — a new tag name holds no whitespace.
+    assert_eq!(tags, ["Q3-plans", "project"]);
     assert_eq!(
         result.warnings,
         [
             "1 ((block-ref)) reference(s) were stripped from imported content and could not be \
              preserved",
             "1 Logseq :LOGBOOK: drawer(s) were dropped",
+            "tag 'Q3 plans' was read as 'Q3-plans': a tag name holds no whitespace",
         ]
     );
     mat.shutdown();
@@ -14006,7 +14325,7 @@ async fn an_unmatched_anchor_into_the_file_drops_a_label_equal_to_its_title() {
 ///   - `#project` — a bare hashtag — resolves-or-creates a `block_type='tag'`
 ///     block "project" and rewrites the token to a canonical `#[ULID]` ref.
 ///   - `#[[My Topic]]` — the multi-word form (#1950) — resolves-or-creates a
-///     TAG "My Topic" (NOT a page) and likewise rewrites to `#[ULID]`. The
+///     TAG "My-Topic" (#6278 I4; NOT a page) and likewise rewrites to `#[ULID]`. The
 ///     wiki-link pre-pass's `#`-prefix guard leaves the `[[…]]` for the tag
 ///     pass, so NO "My Topic" PAGE is created.
 /// The created tags materialize as INLINE refs (`block_tag_refs` from the
@@ -14054,7 +14373,7 @@ async fn import_markdown_hashtags_no_tag_rows_1922() {
 
     // #1950 — "My Topic" is a TAG, NOT a page.
     let my_topic_tags: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM blocks WHERE block_type = 'tag' AND content = 'My Topic' \
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'tag' AND content = 'My-Topic' \
          AND deleted_at IS NULL",
     )
     .fetch_one(&pool)
@@ -14173,8 +14492,9 @@ async fn import_inline_bare_tag_links_and_round_trips_1924() {
     mat.shutdown();
 }
 
-/// #1924/#1950 — multi-word `#[[my tag]]` is linked as a TAG (block_type='tag',
-/// content 'my tag'); it round-trips LOSSLESSLY: the exporter emits the
+/// #1924/#1950 — multi-word `#[[my tag]]` is linked as the TAG of that name
+/// (block_type='tag', content 'my tag', one from before #6278 I4); it
+/// round-trips LOSSLESSLY: the exporter emits the
 /// `#[[my tag]]` bracket form for whitespace names, and re-importing that
 /// resolves back to the SAME tag instead of splitting at the first space.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -14184,6 +14504,10 @@ async fn import_inline_multiword_tag_links_and_round_trips_1924() {
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
     agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+    let seeded = create_block_inner(&pool, DEV, &mat, "tag".into(), "my tag".into(), None, None)
+        .await
+        .unwrap();
+    assign_to_space(&pool, seeded.id.as_str(), TEST_SPACE_ID).await;
 
     import_markdown_inner(
         &pool,
@@ -14275,6 +14599,155 @@ async fn import_inline_multiword_tag_links_and_round_trips_1924() {
     );
 
     mat.shutdown();
+}
+
+/// The live tags named `name`, any space.
+async fn tag_ids_named(pool: &SqlitePool, name: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'tag' AND content = ? AND deleted_at IS NULL",
+    )
+    .bind(name)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// #6278 I4 — an imported `#[[multi word]]` naming no tag creates `multi-word`,
+/// since a new tag name holds no whitespace, links it, and says so; a
+/// front-matter tag (as ENEX and Joplin write theirs) reads the same way.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_dashes_a_multi_word_tag_naming_no_tag_6278() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "---\ntags: [\"deep  work\"]\n---\n- a #[[multi word]] here".into(),
+        Some("Dashed.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let dashed = tag_ids_named(&pool, "multi-word").await;
+    assert_eq!(
+        dashed.len(),
+        1,
+        "`#[[multi word]]` creates the tag `multi-word`"
+    );
+    assert_eq!(
+        tag_ids_named(&pool, "multi word").await,
+        Vec::<String>::new(),
+        "and no tag holding a space"
+    );
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        content,
+        format!("a #[{}] here", dashed[0]),
+        "the block links the tag it created"
+    );
+
+    let page_tags: Vec<String> = sqlx::query_scalar(
+        "SELECT t.content FROM block_tags bt JOIN blocks t ON t.id = bt.tag_id \
+         JOIN blocks p ON p.id = bt.block_id WHERE p.content = 'Dashed'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        page_tags,
+        vec!["deep-work".to_string()],
+        "a front-matter tag's whitespace run is one `-`"
+    );
+    let mut warnings = result.warnings.clone();
+    warnings.sort();
+    assert_eq!(
+        warnings,
+        vec![
+            "tag 'deep  work' was read as 'deep-work': a tag name holds no whitespace".to_string(),
+            "tag 'multi word' was read as 'multi-word': a tag name holds no whitespace".to_string(),
+        ],
+        "each respelled tag is named in the warnings"
+    );
+
+    mat.shutdown();
+}
+
+/// #6278 I4 — a pasted `#[[Multi Word]]` resolves to an existing `multi-word`,
+/// and to an existing tag holding the space when there is one, which keeps
+/// working under its name until it is renamed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_resolves_a_multi_word_tag_to_its_existing_tag_6278() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let dashed = create_block_inner_with_space(
+        &pool,
+        DEV,
+        &mat,
+        "tag".into(),
+        "multi-word".into(),
+        None,
+        None,
+        &test_space_scope(),
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    let spaced = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "tag".into(),
+        "deep work".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    assign_to_space(&pool, spaced.as_str(), TEST_SPACE_ID).await;
+    let anchor = dup_child(&pool, &mat, &page, "anchor").await;
+    settle(&mat).await;
+
+    let pasted = paste_blocks_inner(
+        &pool,
+        DEV,
+        &mat,
+        anchor.clone(),
+        paste_text("- see #[[Multi Word]] and #[[Deep Work]]\n- more"),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let contents: Vec<Option<&str>> = pasted.blocks.iter().map(|r| r.content.as_deref()).collect();
+    assert_eq!(
+        contents,
+        [
+            Some(format!("see #[{dashed}] and #[{spaced}]").as_str()),
+            Some("more")
+        ],
+        "both resolve to the existing tags; nothing is created"
+    );
+    assert_eq!(
+        pasted.warnings,
+        vec!["tag 'Multi Word' was read as 'Multi-Word': a tag name holds no whitespace"],
+        "only the respelled name is named"
+    );
 }
 
 /// #1924/#1950 regression — a same-name tag living in ANOTHER space must NOT be
@@ -15348,14 +15821,18 @@ async fn import_keeps_an_org_planning_date_past_a_warning_period_or_a_foreign_da
     mat.shutdown();
 }
 
-/// The content and `todo_state` of each block `md` imports as, in order, on the
-/// page `title`.
-async fn imported_blocks(md: &str, title: &str) -> Vec<(String, Option<String>)> {
+/// The content and `todo_state` of each block `md` imports as under `dialect`,
+/// in order, on the page `title`.
+async fn imported_blocks(
+    md: &str,
+    title: &str,
+    dialect: ImportDialect,
+) -> Vec<(String, Option<String>)> {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    import_markdown_inner(
+    import_markdown_with_progress(
         &pool,
         DEV,
         &mat,
@@ -15363,6 +15840,9 @@ async fn imported_blocks(md: &str, title: &str) -> Vec<(String, Option<String>)>
         md.into(),
         Some(format!("{title}.md")),
         TEST_SPACE_ID.into(),
+        dialect,
+        None,
+        None,
         None,
     )
     .await
@@ -15380,22 +15860,33 @@ async fn imported_blocks(md: &str, title: &str) -> Vec<(String, Option<String>)>
     rows
 }
 
-/// #6033 — Logseq's `STARTED` keyword is a DOING task.
+/// A Logseq `STARTED` task and `#+BEGIN_NOTE` block.
+const LOGSEQ_STARTED_AND_NOTE: &str =
+    "- STARTED Write the report\n- #+BEGIN_NOTE\n  Mind the gap\n  #+END_NOTE\n";
+
+/// #6033 — under `LogseqOrg`, Logseq's `STARTED` keyword is a DOING task and a
+/// `#+BEGIN_NOTE` block a note callout.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn import_reads_a_logseq_started_task_as_doing() {
+async fn a_logseq_org_import_reads_started_and_a_note_block() {
     assert_eq!(
-        imported_blocks("- STARTED Write the report\n", "Started").await,
-        [("Write the report".to_string(), Some("DOING".to_string()))]
+        imported_blocks(LOGSEQ_STARTED_AND_NOTE, "Started", ImportDialect::LogseqOrg).await,
+        [
+            ("Write the report".to_string(), Some("DOING".to_string())),
+            ("> [!NOTE]\n> Mind the gap".to_string(), None),
+        ]
     );
 }
 
-/// #6033 — a Logseq `#+BEGIN_NOTE` block is a note callout.
+/// #6277 E1 — under `Markdown`, the same `STARTED` and `#+BEGIN_NOTE` stay as
+/// written.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_logseq_note_block_imports_as_a_note_callout() {
-    let md = "- #+BEGIN_NOTE\n  Mind the gap\n  #+END_NOTE\n";
+async fn a_markdown_import_keeps_started_and_a_note_block_as_written() {
     assert_eq!(
-        imported_blocks(md, "Note Block").await,
-        [("> [!NOTE]\n> Mind the gap".to_string(), None)]
+        imported_blocks(LOGSEQ_STARTED_AND_NOTE, "Started", ImportDialect::Markdown).await,
+        [
+            ("STARTED Write the report".to_string(), None),
+            ("#+BEGIN_NOTE\nMind the gap\n#+END_NOTE".to_string(), None),
+        ]
     );
 }
 
@@ -15404,7 +15895,7 @@ async fn a_logseq_note_block_imports_as_a_note_callout() {
 async fn a_logseq_quote_block_imports_as_a_quote() {
     let md = "- Hamlet said:\n  #+BEGIN_QUOTE\n  To be\n  #+END_QUOTE\n";
     assert_eq!(
-        imported_blocks(md, "Quote Block").await,
+        imported_blocks(md, "Quote Block", ImportDialect::LogseqOrg).await,
         [("Hamlet said:\n> To be".to_string(), None)]
     );
 }
@@ -17169,7 +17660,9 @@ async fn import_markdown_alias_and_tag_with_embedded_comma_not_split_2829() {
     // Hand-authored frontmatter mirroring the exporter's quoting shape: a
     // flow-sequence item containing a literal comma, quoted, alongside a
     // second, ordinary item — for BOTH `aliases` and `tags`.
-    let md = "# Comma Page\n\n---\naliases: [\"Beta, Inc\", Gamma]\ntags: [\"billing, invoices\", \
+    // The tag's comma has no space after it: a new tag name holds no whitespace
+    // (#6278 I4).
+    let md = "# Comma Page\n\n---\naliases: [\"Beta, Inc\", Gamma]\ntags: [\"billing,invoices\", \
               urgent]\n---\n";
 
     let result = import_markdown_inner(
@@ -17226,7 +17719,7 @@ async fn import_markdown_alias_and_tag_with_embedded_comma_not_split_2829() {
     tag_names.sort();
     assert_eq!(
         tag_names,
-        vec!["billing, invoices".to_string(), "urgent".to_string()],
+        vec!["billing,invoices".to_string(), "urgent".to_string()],
         "a tag containing a literal comma must survive as ONE tag, not be split \
          on every comma; got {tag_names:?}"
     );
@@ -18438,6 +18931,7 @@ async fn import_folder(
             (*md).to_string(),
             Some((*path).to_string()),
             TEST_SPACE_ID.into(),
+            ImportDialect::Markdown,
             Some(files.to_vec()),
             Some(paths.clone()),
             None,

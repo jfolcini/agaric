@@ -55,7 +55,7 @@ import {
 import { clearListStyles } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notifyTagAdded } from '@/lib/name-change-bus'
-import type { TagToken } from '@/lib/name-tokens'
+import { dashedTagName, type TagToken } from '@/lib/name-tokens'
 import { notify } from '@/lib/notify'
 import { listAllPropertyDefs } from '@/lib/property-save-utils'
 import { invalidRepeatRuleMessage, reloadIfRepeating } from '@/lib/repeat-utils'
@@ -352,9 +352,10 @@ async function saved(outcome: Promise<boolean> | void, blockId: string): Promise
 
 /**
  * The id of each of `names` in `spaceId`, keyed lowercased: the existing tag
- * of that name in any case, as the typed tag picks one, else a new tag. A name
- * whose lookup or create fails is missing. Stops creating once `current` says
- * a newer save of the block took over.
+ * of that name in any case, as the typed tag picks one, else the create's
+ * answer for its dashed name (#6278 I4). A name whose lookup or create fails
+ * is missing. Stops creating once `current` says a newer save of the block
+ * took over.
  */
 async function tagIds(
   names: string[],
@@ -371,10 +372,11 @@ async function tagIds(
     logger.warn('unmount-flush', 'tag lookup failed, the tags stay text', { spaceId }, err)
     return ids
   }
-  for (const name of names) {
-    const key = name.toLowerCase()
+  for (const typed of names) {
+    const key = typed.toLowerCase()
     if (ids.has(key)) continue
     if (!current()) break
+    const name = dashedTagName(typed)
     try {
       const scope = requireActiveScope(spaceId)
       const row = unwrap(await commands.createBlock('tag', name, null, null, scope, null))

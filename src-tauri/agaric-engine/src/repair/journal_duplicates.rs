@@ -6,7 +6,9 @@
 //! race required. The write side has been closed (#3081 stamps the space
 //! atomically), but a measured vault still carries the damage: four dates in
 //! one space split across 31 extra pages holding 37 live blocks, of which the
-//! UI shows one page's worth.
+//! UI shows one page's worth. Two devices that each create the day while apart
+//! still make one more each, so the app also runs this after each sync session
+//! that changed something (#6278).
 //!
 //! # The predicate
 //!
@@ -62,9 +64,7 @@ struct DuplicateGroup {
 
 /// Every `(space, date)` holding more than one live journal page, with its
 /// keeper, in a stable order.
-async fn select_groups(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-) -> Result<Vec<DuplicateGroup>, AppError> {
+async fn select_groups(conn: &mut sqlx::SqliteConnection) -> Result<Vec<DuplicateGroup>, AppError> {
     let rows = sqlx::query!(
         r#"SELECT b.space_id, b.content AS "date!: String", MIN(b.id) AS "keeper!: String"
            FROM blocks b
@@ -77,7 +77,7 @@ async fn select_groups(
            HAVING COUNT(*) > 1
            ORDER BY b.space_id, b.content"#,
     )
-    .fetch_all(&mut **tx)
+    .fetch_all(conn)
     .await?;
     Ok(rows
         .into_iter()
@@ -163,6 +163,14 @@ async fn merge_group(
     }
     report.dates_merged += 1;
     Ok(())
+}
+
+/// Whether any date has a duplicate journal page: the read a sync session
+/// probes on before the repair takes the writer (#6278).
+pub async fn journal_duplicates_pending(
+    conn: &mut sqlx::SqliteConnection,
+) -> Result<bool, AppError> {
+    Ok(!select_groups(conn).await?.is_empty())
 }
 
 /// Merge every duplicate journal page onto its date's oldest page.
