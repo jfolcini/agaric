@@ -2341,10 +2341,25 @@ pub fn parse_pasted_text(text: &str) -> Vec<ParsedBlock> {
 }
 
 /// [`parse_pasted_text`] with the warnings of what it read lossily, such as a
-/// Tasks signifier it kept as text (#6277 D2).
+/// Tasks signifier it kept as text (#6277 D2). A front matter block at byte 0,
+/// which a page copy opens with, is no block, with one warning (#6277 E4); its
+/// lines stay blank, so a block after it names its own line.
 pub fn read_pasted_text(text: &str) -> ParseOutput {
-    let mut output = source_outline(text, ParseMode::Document, true, None);
+    let normalized = without_bom(text).replace("\r\n", "\n").replace('\r', "\n");
+    let front = front_matter_fence(&normalized).map(|(_, len)| len);
+    let body = match front {
+        Some(len) => {
+            let lines = normalized[..len].matches('\n').count();
+            format!("{}{}", "\n".repeat(lines), &normalized[len..])
+        }
+        None => normalized,
+    };
+    let mut output = source_outline(&body, ParseMode::Document, true, None);
     output.blocks.iter_mut().for_each(restore_text_anchor);
+    if front.is_some() {
+        let why = "the front matter the text opens with is a page's, so it was not pasted";
+        output.warnings.push(why.to_string());
+    }
     output
 }
 
@@ -7777,7 +7792,7 @@ mod tests_pasted_text_5140 {
 mod tests_block_grammar_5160 {
     use super::{
         ParsedBlock, parse_document_outline, parse_logseq_markdown, parse_markdown_file,
-        parse_pasted_text,
+        parse_pasted_text, read_pasted_text,
     };
 
     /// `(depth, content)` of each block.
@@ -8390,6 +8405,34 @@ mod tests_block_grammar_5160 {
         let md = "- ```\n  code\n- c\n";
         assert_eq!(shape(&parse_pasted_text(md)), [(0, "```\ncode"), (0, "c")]);
         assert_eq!(by_line(md, &[1]).blocks.len(), 1, "no id on line 3: code");
+    }
+
+    /// #6277 E4 — a paste drops a front matter block at byte 0, as a page
+    /// copy opens with one, with one warning, and its blocks keep their line
+    /// numbers. A `---` anywhere else, or one no `---` line closes, is text.
+    #[test]
+    fn a_paste_drops_the_front_matter_it_opens_with_6277() {
+        let read = read_pasted_text("---\naliases: [a]\n---\n\n# T\n\nx\n");
+        let contents: Vec<&str> = read.blocks.iter().map(|b| b.content.as_str()).collect();
+        assert_eq!(contents, ["# T", "x"]);
+        assert_eq!(
+            read.blocks[0].line,
+            Some(5),
+            "the dropped lines still count"
+        );
+        assert_eq!(read.warnings.len(), 1, "{:?}", read.warnings);
+
+        for text in ["x\n\n---\naliases: [a]\n---\n", "---\naliases: [a]\n"] {
+            let read = read_pasted_text(text);
+            assert!(
+                read.blocks
+                    .iter()
+                    .any(|b| b.content.starts_with("aliases:")),
+                "{text:?} reads its lines as text: {:?}",
+                read.blocks
+            );
+            assert!(read.warnings.is_empty(), "{:?}", read.warnings);
+        }
     }
 }
 

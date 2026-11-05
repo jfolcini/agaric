@@ -1,6 +1,6 @@
 //! Rendering a page or a block run as Markdown and the loaders that feed it:
 //! [`PageExportData`] and [`load_page_export_data`], [`render_page_markdown`],
-//! [`render_page_document`], [`render_clipboard_source`], [`push_export_bullet`],
+//! [`render_page_document`], [`render_clipboard_source`], [`push_bullet`],
 //! [`push_block_bullet`] and [`render_frontmatter`].
 
 use super::*;
@@ -70,10 +70,10 @@ pub(super) struct PageExportData {
     pub(super) tag_names: HashMap<String, String>,
     pub(super) page_titles: HashMap<String, String>,
     pub(super) block_ref_replacement: HashMap<String, String>,
-    /// The page's blocks an export anchors with their `^ID` (#6277): those a
+    /// The page's blocks a file anchors with their `^ID` (#6277): those a
     /// block ref or embed from any page, a ref-typed property value or an
     /// attachment addresses, so a link to one reads back as the block. Read
-    /// by an export only.
+    /// under [`Anchors::Addressed`] only.
     pub(super) addressed_blocks: HashSet<String>,
     pub(super) descendant_properties: HashMap<String, Vec<FrontmatterRow>>,
     pub(super) list_styles: HashMap<String, String>,
@@ -104,40 +104,57 @@ pub(super) enum PageRead {
     File,
 }
 
-/// The renderings of a page's block tree, each laid out as a Document buffer
-/// (#5691), which `import::parse_document_outline` reads back as exactly this
-/// tree: a plain block is its own paragraph, a list block carries its marker
-/// and a task is `- [ ] x`, which has no list style (D3), or a `todo_state::`
-/// line for a state outside the checkbox alphabet; a blank line separates
-/// blocks but neighbouring list lines (D1), a plain block under another block
-/// is a `+` item and a line holding only `\` an empty line (D4). `Document` is
-/// the buffer Edit as Markdown edits: every block carries its `^ID`, and ids
-/// stay raw unless a name reads back to the same id. Duplicate, journal
-/// templates and the MCP page tools write and read it too, as a paste reads it
-/// (#6190). `Clipboard` is `Document` for text that leaves the app, which a
-/// paste reads: a block carries its `^ID` only when it would not read back
-/// without it. `Agent` is the page an MCP agent reads (#5375): `Document`,
-/// every block with its `^ID` so the agent can name the block it edits next,
-/// but with the export's names, which need not read back to the page they
-/// name. `File` is the Markdown mirror's file (#5363): `Document`, with a
-/// `^ID` only on a block [`file_anchors`] names, and otherwise as the
-/// clipboard writes one. `Export` writes a file
-/// for other tools, which a `Markdown` file import reads as a paste does
-/// (#6277 decision 1): ids become names and links, and a block carries its
-/// `^ID` only when something addresses it or it leaves a fence open.
+/// How a render writes a page's block tree, each block laid out as a Document
+/// buffer lays it out (#5691), which `import::parse_document_outline` reads
+/// back as exactly this tree: a plain block is its own paragraph, a list block
+/// carries its marker and a task is `- [ ] x`, which has no list style (D3), or
+/// a `todo_state::` line for a state outside the checkbox alphabet; a blank
+/// line separates blocks but neighbouring list lines (D1), a plain block under
+/// another block is a `+` item and a line holding only `\` an empty line (D4).
+/// Two policies tell the renderings apart (#6277 E4): which ids it writes as
+/// names, and which blocks carry their `^ID`.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum RenderMode {
-    Export,
-    Clipboard,
-    Agent,
-    Document,
-    File,
+pub(super) struct RenderMode {
+    pub(super) names: Names,
+    pub(super) anchors: Anchors,
 }
 
-/// Whether the mirror's file writes block `id` with its `^ID`: only when
-/// something addresses it (#6277 decision 6).
-fn file_anchors(data: &PageExportData, id: &str) -> bool {
-    data.addressed_blocks.contains(id)
+/// Which tag, page and block ids a render writes as names and links.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Names {
+    /// Every id that resolves, and ref-typed values as their pages' titles:
+    /// an export, for other tools, which a `Markdown` file import reads as a
+    /// paste does (#6277 decision 1).
+    Always,
+    /// Only a name that reads back as the same id ([`humanise_refs_for_source`]),
+    /// ref-typed values raw: text that comes back to Agaric, the buffer, the
+    /// clipboard, the mirror's file and the page an MCP agent reads.
+    ReadBack,
+}
+
+/// Which blocks a render writes with their `^ID`. A block that leaves a fence
+/// open, or that alone reads back as other content, as one ending in ` ^` and
+/// a block id does, carries it under every policy.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Anchors {
+    /// Those something addresses (#6277 decision 6), so a link to one reads
+    /// back as the block: the files, an export and the mirror's, which an
+    /// import reads with its title rules ([`DocumentLayout::place`]).
+    Addressed,
+    /// Only those that need one: a block copy.
+    Needed,
+    /// Every block, so a save or an agent can name it: the buffer Edit as
+    /// Markdown edits, which an MCP agent reads and saves too, and the
+    /// renderings Duplicate and a template copy read back.
+    Every,
+}
+
+impl RenderMode {
+    /// The buffer: [`Names::ReadBack`] and [`Anchors::Every`].
+    pub(super) const DOCUMENT: Self = Self {
+        names: Names::ReadBack,
+        anchors: Anchors::Every,
+    };
 }
 
 /// A page as the Markdown mirror writes its file (#5363): the text, and for
@@ -149,11 +166,16 @@ pub struct PageFile {
     pub line_ids: Vec<Option<String>>,
 }
 
-/// The page's file: its front matter and block tree in [`RenderMode::File`].
+/// The page's file: its front matter and block tree, with
+/// [`Names::ReadBack`] and [`Anchors::Addressed`].
 pub(super) fn render_page_file(data: &PageExportData) -> PageFile {
     let mut text = String::new();
     render_frontmatter(&mut text, data);
-    let starts = render_block_tree(&mut text, data.page.id.as_str(), data, RenderMode::File);
+    let mode = RenderMode {
+        names: Names::ReadBack,
+        anchors: Anchors::Addressed,
+    };
+    let starts = render_block_tree(&mut text, data.page.id.as_str(), data, mode);
     let line_ids = block_start_lines(&text, &starts);
     PageFile { text, line_ids }
 }
@@ -175,27 +197,31 @@ fn block_start_lines(text: &str, starts: &[(String, usize)]) -> Vec<Option<Strin
 }
 
 /// The page's buffer, its front matter and then its block tree in
-/// [`RenderMode::Document`], every block with its `^ID`, and the ids of the
+/// [`RenderMode::DOCUMENT`], every block with its `^ID`, and the ids of the
 /// blocks it holds, in order.
 pub(super) fn render_page_document(data: &PageExportData) -> (String, Vec<String>) {
+    let (output, starts) = render_page_document_spans(data);
+    (output, starts.into_iter().map(|(id, _)| id).collect())
+}
+
+/// [`render_page_document`], with each block's id and the byte offset it
+/// starts at, the blank line before it included, in render order.
+pub(super) fn render_page_document_spans(data: &PageExportData) -> (String, Vec<(String, usize)>) {
     let mut output = String::new();
     render_frontmatter(&mut output, data);
-    let ids = render_block_tree(
+    let starts = render_block_tree(
         &mut output,
         data.page.id.as_str(),
         data,
-        RenderMode::Document,
-    )
-    .into_iter()
-    .map(|(id, _)| id)
-    .collect();
-    (output, ids)
+        RenderMode::DOCUMENT,
+    );
+    (output, starts)
 }
 
 /// Writes one block where `layout` places it ([`DocumentLayout::place`]),
 /// then, at its text's column, the reserved-column task metadata, the block's
-/// custom `key:: value` properties, and, in an export, its non-inline
-/// attachments. The orphan safety net renders a stray through this same path
+/// custom `key:: value` properties, and its non-inline attachments, which an
+/// export's read alone loads. The orphan safety net renders a stray through this same path
 /// at depth 0, so a stray and a walked block cannot drift apart.
 fn render_block(
     output: &mut String,
@@ -217,21 +243,14 @@ fn render_block(
     let content = block.content.as_deref().unwrap_or("");
     let list_marker = list_marker_for(&id, list_styles, list_ordinals);
     let task_marker = task_marker(block);
-    let file = matches!(mode, RenderMode::Export | RenderMode::File);
+    let file = mode.anchors == Anchors::Addressed;
     let (indent, list_marker, prop_indent) = layout.place(output, block, depth, list_marker, file);
     let props = descendant_properties
         .get(&id)
         .map_or(&[][..], Vec::as_slice);
     let task = (!task_marker.is_empty()).then(|| TaskLine::of(block, props));
     let markers = (indent.as_str(), list_marker.as_str(), task_marker.as_str());
-    match mode {
-        RenderMode::Export => {
-            push_export_bullet(output, block, markers, task.as_ref(), data);
-        }
-        RenderMode::Clipboard | RenderMode::Agent | RenderMode::Document | RenderMode::File => {
-            push_buffer_bullet(output, block, markers, task.as_ref(), data, mode);
-        }
-    }
+    push_bullet(output, block, markers, task.as_ref(), data, mode);
     let written = task.as_ref().map_or(&[][..], |task| task.keys.as_slice());
 
     // #1916 — task metadata (TODO/DONE state, priority, scheduled/due
@@ -256,13 +275,13 @@ fn render_block(
     // one `key:: value` line per property at the block's text column, which
     // the readers read back into `block.properties`. `descendant_properties` was
     // batch-read once for the whole subtree, so this is a HashMap lookup,
-    // not a per-block query. The buffer writes a ref-typed value as its raw
-    // id, which is what the value is. Every mode quotes a value its line
-    // cannot carry as it is (#5160 X5, #6277 A2).
+    // not a per-block query. Text that comes back writes a ref-typed value
+    // as its raw id, which is what the value is. Every mode quotes a value
+    // its line cannot carry as it is (#5160 X5, #6277 A2).
     let no_titles = HashMap::new();
-    let ref_titles = match mode {
-        RenderMode::Export | RenderMode::Agent => ref_titles,
-        RenderMode::Clipboard | RenderMode::Document | RenderMode::File => &no_titles,
+    let ref_titles = match mode.names {
+        Names::Always => ref_titles,
+        Names::ReadBack => &no_titles,
     };
     // `completed_at` is the app's: only a done task's `✅` writes it.
     for prop in props
@@ -277,13 +296,11 @@ fn render_block(
     // attachment, a plain `+` child of this block. Skips any
     // attachment whose id already appears as an `attachment:<id>` token
     // in `content` — that's an inline image, already rendered above by
-    // `push_export_bullet` — so only
+    // `push_bullet` — so only
     // genuine file attachments (PDFs/docs/images with no inline token)
-    // get a line here. The buffer has no attachment lines: attachments
-    // have their own UI.
-    if mode == RenderMode::Export
-        && let Some(atts) = attachments_by_block.get(&id)
-    {
+    // get a line here. Only an export's read loads them: in the buffer,
+    // attachments have their own UI.
+    if let Some(atts) = attachments_by_block.get(&id) {
         for (att_id, filename) in atts {
             if content.contains(&format!("attachment:{att_id}")) {
                 continue;
@@ -386,34 +403,6 @@ pub(super) fn task_marker(block: &BlockRow) -> String {
         .unwrap_or_default()
 }
 
-/// A block as an export writes it: its text with names ([`named_block_text`]),
-/// and its `^ID` when something addresses it ([`PageExportData::addressed_blocks`],
-/// #6277), so a link to it reads back as the block, or when it leaves a fence
-/// open, which the anchor's line ends before the next block. A checkbox task's
-/// first line is its [`TaskLine`].
-fn push_export_bullet(
-    output: &mut String,
-    block: &BlockRow,
-    (indent, list_marker, task_marker): (&str, &str, &str),
-    task: Option<&TaskLine>,
-    data: &PageExportData,
-) {
-    let id = block.id.as_str();
-    let named = named_block_text(block.content.as_deref().unwrap_or(""), data);
-    let named = match task {
-        Some(task) => task.write(&named),
-        None => named,
-    };
-    if !data.addressed_blocks.contains(id) {
-        let start = output.len();
-        if !push_block_bullet(output, indent, list_marker, task_marker, &named).open {
-            return;
-        }
-        output.truncate(start);
-    }
-    push_anchored_bullet(output, indent, list_marker, task_marker, &named, id);
-}
-
 /// How a checkbox task's first line is written (#6277 D3): its fields as the
 /// Tasks signifiers at its end, and its own signifiers escaped where they
 /// would not read back as its text ([`import::write_task_fields`]).
@@ -486,13 +475,15 @@ pub(super) fn named_block_text(content: &str, data: &PageExportData) -> String {
     )
 }
 
-/// A block as its buffer writes it, with its own `^ID`, or as the clipboard
-/// does, or, for an agent, with its `^ID` and the export's names.
+/// A block as `mode` writes it: its text with every name
+/// ([`named_block_text`]) or with those that read back, and its `^ID` where
+/// [`Anchors`] puts one. A checkbox task's first line is its [`TaskLine`].
 ///
-/// Whether a name may replace an id depends on whether the parser will read
-/// the block as code, which the bullet's fence tracking decides; so the raw
-/// bullet is written first, and rewritten with names when they read back.
-fn push_buffer_bullet(
+/// Whether a name may replace an id that must read back depends on whether
+/// the parser will read the block as code, which the bullet's fence tracking
+/// decides; so the raw bullet is written first, and rewritten with names when
+/// they read back.
+fn push_bullet(
     output: &mut String,
     block: &BlockRow,
     (indent, list_marker, task_marker): (&str, &str, &str),
@@ -502,19 +493,13 @@ fn push_buffer_bullet(
 ) {
     let id = block.id.as_str();
     let content = block.content.as_deref().unwrap_or("");
-    let written = |text: &str| task.map_or_else(|| text.to_string(), |task| task.write(text));
-    if mode == RenderMode::Agent {
-        let named = written(&named_block_text(content, data));
-        push_anchored_bullet(output, indent, list_marker, task_marker, &named, id);
-        return;
-    }
-    let anchored = match mode {
-        RenderMode::Clipboard => false,
-        RenderMode::File => file_anchors(data, id),
-        _ => true,
+    let anchored = match mode.anchors {
+        Anchors::Every => true,
+        Anchors::Addressed => data.addressed_blocks.contains(id),
+        Anchors::Needed => false,
     };
     let push = |output: &mut String, content: &str| {
-        let line = written(content);
+        let line = task.map_or_else(|| content.to_string(), |task| task.write(content));
         if anchored {
             push_anchored_bullet(output, indent, list_marker, task_marker, &line, id)
         } else {
@@ -522,6 +507,10 @@ fn push_buffer_bullet(
             push_clipboard_bullet(output, markers, &line, content, id)
         }
     };
+    if mode.names == Names::Always {
+        push(output, &named_block_text(content, data));
+        return;
+    }
     let start = output.len();
     let is_code = push(output, content);
     let Some(named) = humanise_refs_for_source(
@@ -737,36 +726,21 @@ fn group_children_by_parent<'a>(
 /// does a ZIP, so a first block opening with `---` or `# ` is a `+` item there
 /// too, not front matter or the title ([`DocumentLayout::place`]).
 pub(super) fn render_page_markdown(page_id: &str, data: &PageExportData) -> String {
+    // The front matter, at byte 0 where Obsidian and GitHub read it, then the
+    // `# Title` line (#6277 A1).
     let mut output = String::new();
-    render_page_head(&mut output, data);
-    render_page_attachments(&mut output, page_id, data);
-    let mut blocks = String::new();
-    render_block_tree(&mut blocks, page_id, data, RenderMode::Export);
-    output.push_str(&blocks);
-    output
-}
-
-/// The front matter, at byte 0 where Obsidian and GitHub read it, then the
-/// `# Title` line (#6277 A1).
-fn render_page_head(output: &mut String, data: &PageExportData) {
-    render_frontmatter(output, data);
+    render_frontmatter(&mut output, data);
     let title = data.page.content.as_deref().unwrap_or("Untitled");
     output.push_str(&format!("# {title}\n\n"));
-}
-
-/// The page as an MCP agent reads it (#5375): the export's front matter and
-/// `# Title`, then the block tree in [`RenderMode::Agent`].
-pub(super) fn render_page_for_agent(data: &PageExportData) -> String {
-    render_page_for_agent_spans(data).0
-}
-
-/// [`render_page_for_agent`], with each block's id and the byte offset it
-/// starts at, the blank line before it included, in render order.
-pub(super) fn render_page_for_agent_spans(data: &PageExportData) -> (String, Vec<(String, usize)>) {
-    let mut output = String::new();
-    render_page_head(&mut output, data);
-    let starts = render_block_tree(&mut output, data.page.id.as_str(), data, RenderMode::Agent);
-    (output, starts)
+    render_page_attachments(&mut output, page_id, data);
+    let mut blocks = String::new();
+    let mode = RenderMode {
+        names: Names::Always,
+        anchors: Anchors::Addressed,
+    };
+    render_block_tree(&mut blocks, page_id, data, mode);
+    output.push_str(&blocks);
+    output
 }
 
 /// The stretch of `markdown` that starts at `cursor`'s block, or at the top,
@@ -794,7 +768,7 @@ pub(super) fn agent_markdown_stretch(
             })?,
     };
     // A stretch stops where a block starts, never before the first block:
-    // the title and front matter come with it.
+    // the front matter comes with it.
     let mut stops = starts
         .iter()
         .skip(1)
@@ -961,7 +935,7 @@ pub(super) fn render_subtree(data: &PageExportData, root: &BlockRow) -> (String,
         &children_by_parent,
         &list_ordinals,
         data,
-        RenderMode::Document,
+        RenderMode::DOCUMENT,
         &mut DocumentLayout::default(),
     )
     .into_iter()
@@ -1703,7 +1677,10 @@ pub(super) fn render_clipboard_source(
         children,
         &list_ordinals,
         data,
-        RenderMode::Clipboard,
+        RenderMode {
+            names: Names::ReadBack,
+            anchors: Anchors::Needed,
+        },
         &mut DocumentLayout::default(),
     );
     output
