@@ -188,15 +188,13 @@ afterEach(() => {
   // timer that, firing after the file's environment is torn down, throws
   // `document is not defined` as an unhandled error.
   __resetAnnouncerForTests()
-})
-
-// #2596 — the read-path TanStack Query client is a module-level singleton
-// shared process-wide (see `src/lib/query-client.ts`), so its cache would
-// otherwise leak across tests: a query cached in one test would resolve
-// instantly (no mocked-IPC call, no `loading` phase) in the next. Clearing it
-// after every test restores the same per-test isolation the module-level `Map`
-// caches had via their `_reset*ForTest` helpers.
-afterEach(() => {
+  // #2596 — the read-path TanStack Query client is a module-level singleton
+  // shared process-wide (see `src/lib/query-client.ts`), so its cache would
+  // otherwise leak across tests: a query cached in one test would resolve
+  // instantly (no mocked-IPC call, no `loading` phase) in the next. Cleared
+  // after `cleanup()`, never before: a still-mounted observer rebuilds the
+  // query it is subscribed to, and the next test with the same key renders
+  // that leftover page instead of its own fetch (#6352).
   queryClient.clear()
 })
 

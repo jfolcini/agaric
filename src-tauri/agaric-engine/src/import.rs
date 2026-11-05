@@ -1671,6 +1671,12 @@ pub fn parse_vault_markdown(content: &str) -> ParseOutput {
     parse_import(content, true)
 }
 
+/// `text` less a leading byte order mark, which some editors and clients
+/// write: left in, it is text, and front matter after it is not read (#6277).
+fn without_bom(text: &str) -> &str {
+    text.strip_prefix('\u{feff}').unwrap_or(text)
+}
+
 /// The import reading of [`parse_logseq_markdown`], keeping every `((uuid))`
 /// reference when `keep_refs`.
 fn parse_import(content: &str, keep_refs: bool) -> ParseOutput {
@@ -1683,7 +1689,9 @@ fn parse_import(content: &str, keep_refs: bool) -> ParseOutput {
     // Lines without stray `\r` characters.
     // Tabs stay: `indent_columns` reads one to its tab stop, and a fence keeps
     // its lines verbatim (#5160 follow-up, item 9).
-    let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
+    let normalized = without_bom(content)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
 
     // Capture + parse a leading YAML frontmatter block (#1432). The exporter
     // (`export_page_markdown_inner`) emits page properties as scalar
@@ -1926,7 +1934,9 @@ fn source_outline(
     foreign: bool,
     id_lines: Option<&std::collections::HashSet<usize>>,
 ) -> ParseOutput {
-    let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
+    let normalized = without_bom(content)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
     let mut output = ParseOutput {
         blocks: Vec::new(),
         frontmatter: Vec::new(),
@@ -5947,6 +5957,30 @@ mod tests_l9 {
             assert_eq!(m.properties, l.properties);
         }
         assert_eq!(mixed_out.warnings, lf_out.warnings);
+    }
+
+    /// A leading BOM is no text: the front matter after it is read, by an
+    /// import and by a Document buffer, and a paste does not keep it (#6277).
+    #[test]
+    fn a_leading_bom_is_dropped_by_every_reader() {
+        let contents = |blocks: &[ParsedBlock]| -> Vec<String> {
+            blocks.iter().map(|b| b.content.clone()).collect()
+        };
+        let text = "---\nstatus: hello\n---\n- body";
+        for (reader, read) in [
+            ("import", parse_logseq_markdown as fn(&str) -> ParseOutput),
+            ("document", parse_document_outline),
+        ] {
+            let with_bom = read(&format!("\u{feff}{text}"));
+            assert_eq!(
+                with_bom.frontmatter,
+                [("status".to_string(), "hello".to_string())],
+                "{reader}: the front matter is read past the BOM"
+            );
+            assert_eq!(contents(&with_bom.blocks), ["body"], "{reader}: one block");
+        }
+        let pasted = parse_pasted_text("\u{feff}body");
+        assert_eq!(contents(&pasted), ["body"], "a paste drops the BOM");
     }
 
     #[test]

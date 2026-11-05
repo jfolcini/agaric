@@ -5983,6 +5983,209 @@ async fn get_blocks_source_of_nothing_is_empty_and_of_too_many_is_refused() {
     );
 }
 
+/// A copy out of one space pastes into another (#6277 B2): a raw page link
+/// and a block ref whose targets stay behind are written as the text their
+/// chips show, with one warning, instead of refusing the paste. The link
+/// becomes its title, which the paste resolves in the destination as it
+/// resolves any name, and the block ref its target's first line, whose own
+/// link is written so in turn.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_copy_into_another_space_pastes_its_foreign_refs_as_their_text_6277() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let source = dup_page(&pool, &mat, "Source").await;
+    // Two pages of one title: the name reads back as the lower id, so the
+    // copy writes the link to the other one raw.
+    for (id, position) in [(SOURCE_PROJECT, 10), (SOURCE_PROJECT_TWIN, 11)] {
+        insert_block(&pool, id, "page", "Twin", None, Some(position)).await;
+        assign_to_space(&pool, id, TEST_SPACE_ID).await;
+    }
+    let twin = SOURCE_PROJECT_TWIN;
+    let other = dup_page(&pool, &mat, "Other").await;
+    let target = dup_child(
+        &pool,
+        &mat,
+        &source,
+        &format!("target of [[{other}]]\nsecond line"),
+    )
+    .await;
+    let held = dup_child(
+        &pool,
+        &mat,
+        &source,
+        &format!("see [[{twin}]] and (({target}))"),
+    )
+    .await;
+    dup_child(&pool, &mat, &held, "under it").await;
+    ensure_test_space_b(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_B_ID).await;
+    let dest = create_page_in_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        None,
+        "Dest".into(),
+        TEST_SPACE_B_ID.into(),
+    )
+    .await
+    .unwrap();
+    let anchor = dup_child(&pool, &mat, &dest, "anchor").await;
+    settle(&mat).await;
+    let copied = copy_source(&pool, &[&held], true).await;
+    assert_eq!(
+        copied,
+        format!("see [[{twin}]] and (({target}))\n\n  + under it\n"),
+        "the copy writes both refs raw"
+    );
+
+    let pasted = paste_blocks_inner(&pool, DEV, &mat, anchor.clone(), paste_text(&copied), None)
+        .await
+        .expect("a paste into another space lands");
+    settle(&mat).await;
+
+    let mut in_b = Vec::new();
+    for title in ["Twin", "Other"] {
+        let id: String = sqlx::query_scalar(
+            "SELECT id FROM blocks WHERE block_type = 'page' AND content = ? AND space_id = ?",
+        )
+        .bind(title)
+        .bind(TEST_SPACE_B_ID)
+        .fetch_one(&pool)
+        .await
+        .expect("each title made a page in the destination");
+        in_b.push(id);
+    }
+    let children = dup_children(&pool, &dest).await;
+    assert_eq!(
+        children.iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(),
+        [
+            "anchor",
+            &format!("see [[{}]] and target of [[{}]]", in_b[0], in_b[1])
+        ],
+        "each link names the destination's page and the block ref is its target's first line"
+    );
+    let pasted_root = BlockId::from_trusted(&children[1].0);
+    assert_eq!(
+        dup_children(&pool, &pasted_root)
+            .await
+            .into_iter()
+            .map(|(_, c)| c)
+            .collect::<Vec<_>>(),
+        ["under it"],
+        "the subtree came along"
+    );
+    assert_eq!(
+        pasted.warnings,
+        [
+            "references to 3 target(s) in another space were written as the text they show: \
+          a block cannot reference another space"
+        ],
+        "one warning counts the targets"
+    );
+}
+
+/// A page the paste links and a block it refs links too is written as its
+/// title both times, so the paste lands (#6277 B2): the second link is met a
+/// pass after the first was written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_foreign_page_met_again_in_a_block_ref_line_is_written_as_its_title_6277() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let linked = dup_page(&pool, &mat, "Linked").await;
+    let source = dup_page(&pool, &mat, "Source").await;
+    let about = dup_child(&pool, &mat, &source, &format!("about [[{linked}]]")).await;
+    ensure_test_space_b(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_B_ID).await;
+    let dest = create_page_in_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        None,
+        "Dest".into(),
+        TEST_SPACE_B_ID.into(),
+    )
+    .await
+    .unwrap();
+    let anchor = dup_child(&pool, &mat, &dest, "anchor").await;
+    settle(&mat).await;
+
+    let text = format!("see [[{linked}]] and (({about}))");
+    let pasted = paste_blocks_inner(&pool, DEV, &mat, anchor, paste_text(&text), None)
+        .await
+        .expect("a paste into another space lands");
+    settle(&mat).await;
+
+    let in_b: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Linked' AND space_id = ?",
+    )
+    .bind(TEST_SPACE_B_ID)
+    .fetch_one(&pool)
+    .await
+    .expect("the title made a page in the destination");
+    let children = dup_children(&pool, &dest).await;
+    assert_eq!(
+        children.iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(),
+        ["anchor", &format!("see [[{in_b}]] and about [[{in_b}]]")],
+        "both links name the destination's page"
+    );
+    assert_eq!(
+        pasted.warnings,
+        [
+            "references to 2 target(s) in another space were written as the text they show: \
+          a block cannot reference another space"
+        ],
+        "one warning counts the targets"
+    );
+}
+
+/// A block ref whose target's first line refers back to it is written as text
+/// once: the ref met again stays, and the paste is refused as before rather
+/// than writing the line forever (#6277 B2).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_foreign_block_ref_to_itself_is_written_once_and_then_refused_6277() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let source = dup_page(&pool, &mat, "Source").await;
+    let looped = dup_child(&pool, &mat, &source, "placeholder").await;
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        looped.clone(),
+        format!("see (({looped}))"),
+    )
+    .await
+    .unwrap();
+    ensure_test_space_b(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_B_ID).await;
+    let dest = create_page_in_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        None,
+        "Dest".into(),
+        TEST_SPACE_B_ID.into(),
+    )
+    .await
+    .unwrap();
+    let anchor = dup_child(&pool, &mat, &dest, "anchor").await;
+    settle(&mat).await;
+    let before = dup_counts(&pool).await;
+
+    let text = format!("(({looped}))");
+    let result = paste_blocks_inner(&pool, DEV, &mat, anchor, paste_text(&text), None).await;
+
+    assert!(
+        matches!(&result, Err(AppError::Validation { message, .. }) if message.contains("cross-space")),
+        "the ref left after one pass is refused, got {result:?}"
+    );
+    assert_eq!(
+        dup_counts(&pool).await,
+        before,
+        "the refused paste wrote nothing"
+    );
+}
+
 /// Everything a copy carries lands where the original keeps it: content
 /// verbatim, with a closed fence, an open fence and its child, a trailing
 /// ` ^word` and a raw block ref; each task state, with the stamp a new task
