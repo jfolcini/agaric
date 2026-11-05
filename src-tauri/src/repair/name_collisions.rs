@@ -29,7 +29,9 @@
 //!   and the emptied tag is soft-deleted (`DeleteBlock`). The holders and the
 //!   referrers move `TAG_MERGE_CHUNK` to a transaction behind a cursor, so a
 //!   large tag never holds the writer long; a failure keeps the chunks before
-//!   it, and the next run carries on from what is left.
+//!   it, and the next run carries on from what is left. A tie whose later tag
+//!   a block of another space holds or names is left whole
+//!   (`used_outside_its_space`).
 //!
 //! Every op is appended under [`Actor::Housekeeping`], so it syncs and lists
 //! in History but is outside positional undo. Each transaction re-reads the
@@ -157,7 +159,17 @@ async fn collisions_due(
         let names = SpacePageNames::read(&mut conn, &space.id).await?;
         let renames = !renames_due(&names, registry, &space_id).is_empty();
         let tags = space_tag_names(&mut conn, &space.id).await?;
-        let merges = merges_due(&space.id, tags, registry);
+        let mut merges = Vec::new();
+        for tie in merges_due(&space.id, tags, registry) {
+            if used_outside_its_space(&mut conn, &tie).await? {
+                tracing::debug!(
+                    tag_id = %tie.later, keeper = %tie.keeper,
+                    "left a tag name tie: a block of another space holds or names the later tag (#6278)"
+                );
+            } else {
+                merges.push(tie);
+            }
+        }
         if renames || !merges.is_empty() {
             due.push(SpaceDue {
                 id: space.id,
@@ -197,6 +209,11 @@ fn is_journal_title(title: &str) -> bool {
 
 /// The first `Title (n)`, from 2, no live page of the space holds as a title
 /// or an alias.
+///
+/// Three devices that each renamed to `Foo (2)` before they met tie there
+/// again, and the later page becomes `Foo (2) (2)`: still unique, and not worth
+/// guessing whether a trailing `(n)` is the pass's own or the user's, as in
+/// `Report (2024)`.
 fn first_free_title(names: &SpacePageNames, title: &str) -> String {
     let base = title.trim();
     let mut n: u64 = 2;
@@ -291,6 +308,36 @@ fn merges_due(
         }
     }
     due
+}
+
+/// Whether a live block outside `tie`'s space holds or names the later tag, as
+/// [`resolve_block_space`](agaric_store::space::resolve_block_space) places it.
+/// A tag may not cross spaces, so the keeper cannot be applied there and an
+/// edit naming it is refused; such a tie is left whole, since a partial merge
+/// would split the holders and still keep the later tag live.
+async fn used_outside_its_space(
+    conn: &mut sqlx::SqliteConnection,
+    tie: &TagTie,
+) -> Result<bool, AppError> {
+    let token = format!("#[{}]", tie.later);
+    Ok(sqlx::query_scalar!(
+        r#"SELECT EXISTS (
+               SELECT 1 FROM block_tags bt
+               JOIN blocks b ON b.id = bt.block_id AND b.deleted_at IS NULL
+               LEFT JOIN blocks p ON p.id = b.page_id AND p.deleted_at IS NULL
+               WHERE bt.tag_id = ?1 AND COALESCE(b.space_id, p.space_id) IS NOT ?2
+           ) OR EXISTS (
+               SELECT 1 FROM blocks b
+               LEFT JOIN blocks p ON p.id = b.page_id AND p.deleted_at IS NULL
+               WHERE b.deleted_at IS NULL AND instr(b.content, ?3) > 0
+                 AND COALESCE(b.space_id, p.space_id) IS NOT ?2
+           ) AS "outside!: bool""#,
+        tie.later,
+        tie.space_id,
+        token,
+    )
+    .fetch_one(conn)
+    .await?)
 }
 
 /// Merge `tie.later` into `tie.keeper`: holders, then referrers, a chunk per

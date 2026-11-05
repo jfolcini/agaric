@@ -44,8 +44,8 @@ pub trait ViewChangeEmitter: Send + Sync {
     fn emit_property_changed(&self, block_id: String, changed_keys: Vec<String>);
 
     /// Emit [`EVENT_PAGES_RENAMED`] for the pages this device's collision pass
-    /// renamed after a sync (#6278). No MCP tool renames for a collision, so
-    /// only the post-sync sink overrides the no-op.
+    /// renamed after a sync (#6278). Only the post-sync sink calls it, never an
+    /// MCP tool, so it defaults to a no-op.
     fn emit_pages_renamed(&self, _renamed: Vec<PageRenamed>) {}
 }
 
@@ -192,7 +192,7 @@ mod tests {
     use agaric_sync::sync_events::EVENT_BLOCKS_CHANGED;
     use tauri::Listener;
 
-    use super::{TauriViewChangeEmitter, ViewChangeEmitter};
+    use super::{PageRenamed, TauriViewChangeEmitter, ViewChangeEmitter};
 
     /// An MCP write emits from a tokio worker. Off the main thread, Tauri's
     /// `emit` holds its webview lock while waiting for the main thread to run
@@ -215,5 +215,31 @@ mod tests {
             .recv_timeout(Duration::from_secs(10))
             .expect("blocks:changed was never emitted");
         assert_eq!(emitted_on, main_thread);
+    }
+
+    /// The renames notice's wire shape, which `usePageRenameNotices` reads by
+    /// the literal event name and the `{ page_id, from, to }` entries (#6278).
+    #[test]
+    fn pages_renamed_is_emitted_under_the_name_and_shape_the_hook_reads() {
+        let (app, _main_thread) = crate::main_thread::test_support::running_mock_app();
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.listen("pages:renamed", move |event| {
+            let _ = tx.send(event.payload().to_owned());
+        });
+        let emitter = TauriViewChangeEmitter::new(app.clone());
+
+        emitter.emit_pages_renamed(vec![PageRenamed {
+            page_id: "PAGE".into(),
+            from: "Foo".into(),
+            to: "Foo (2)".into(),
+        }]);
+
+        let payload = rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("pages:renamed was never emitted");
+        assert_eq!(
+            payload,
+            r#"[{"page_id":"PAGE","from":"Foo","to":"Foo (2)"}]"#
+        );
     }
 }

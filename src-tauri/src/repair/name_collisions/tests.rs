@@ -13,11 +13,11 @@ use tempfile::TempDir;
 use super::*;
 use crate::commands::{
     add_tag_inner, create_block_inner, create_block_inner_with_space, create_page_in_space_inner,
-    create_space_inner,
+    create_space_inner, move_blocks_to_space_inner,
 };
 use crate::db::init_pool;
 use crate::mcp::view_notify::RecordingViewChangeEmitter;
-use crate::spaces::SpacePlacementSink;
+use crate::spaces::{SPACE_WORK_ULID, SpacePlacementSink};
 use agaric_store::space::SpaceScope;
 use agaric_sync::sync_events::{RecordingEventSink, SyncEvent, SyncEventSink};
 use agaric_sync::sync_protocol::loro_sync::{
@@ -98,6 +98,36 @@ impl Device {
         .unwrap()
         .id
         .into_string()
+    }
+
+    /// One block of `content` on each of two pages of `space`, as `(inside,
+    /// outside, outside_page)` with the larger id outside: a merge walks ids in
+    /// order, so one with no guard reaches the inside block first and a
+    /// partial merge shows.
+    async fn two_blocks(&self, space: &str, content: &str) -> (String, String, String) {
+        let first_page = self.page(space, "First").await;
+        let second_page = self.page(space, "Second").await;
+        let first = self.block(&first_page, content).await;
+        let second = self.block(&second_page, content).await;
+        if first < second {
+            (first, second, second_page)
+        } else {
+            (second, first, first_page)
+        }
+    }
+
+    /// Move `page`, with its blocks, to the Work space.
+    async fn move_to_work(&self, page: &str) {
+        move_blocks_to_space_inner(
+            &self.pool,
+            self.id,
+            &self.mat,
+            vec![BlockId::from_trusted(page)],
+            SPACE_WORK_ULID.to_owned(),
+            &[],
+        )
+        .await
+        .unwrap();
     }
 
     async fn add_tag(&self, block: &str, tag: &str) {
@@ -250,6 +280,15 @@ async fn page_tie(pair: &Pair, title_a: &str, title_b: &str) -> (String, String)
     let page_b = pair.b.page(&pair.space, title_b).await;
     sync_both(&pair.a, &pair.b, &pair.space).await;
     (page_a, page_b)
+}
+
+/// Each device names a tag of the shared space under one fold while the other
+/// cannot see it. Returns `(tag_a, tag_b)`.
+async fn tag_tie(pair: &Pair, name_a: &str, name_b: &str) -> (String, String) {
+    let tag_a = pair.a.tag(&pair.space, name_a).await;
+    let tag_b = pair.b.tag(&pair.space, name_b).await;
+    sync_both(&pair.a, &pair.b, &pair.space).await;
+    (tag_a, tag_b)
 }
 
 /// The tie's later page is renamed by the device that created it and by no
@@ -546,6 +585,120 @@ async fn a_failed_chunk_keeps_the_ones_before_it_and_the_next_run_finishes() {
     assert_eq!(report.tags_merged, 1);
     assert_eq!(creator.tags_of(&holders[2]).await, vec![keeper.clone()]);
     assert!(creator.deleted(later).await);
+    pair.shutdown();
+}
+
+/// A block of another space holds the later tag: the keeper cannot be applied
+/// there (a tag may not cross spaces), so the tie is left whole. A merge that
+/// went as far as it could would move the inside holder and leave the later tag
+/// live and held, and fail on the outside one at every run.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_tie_whose_later_tag_a_block_of_another_space_holds_is_left_whole() {
+    let pair = pair().await;
+    let (tag_a, tag_b) = tag_tie(&pair, "ideas", "Ideas").await;
+    let (creator, _) = pair.creator_of_later(&tag_a, &tag_b);
+    let later = tag_a.clone().max(tag_b.clone());
+    let (inside, outside, outside_page) = creator.two_blocks(&pair.space, "held").await;
+    creator.add_tag(&inside, &later).await;
+    creator.add_tag(&outside, &later).await;
+    creator.move_to_work(&outside_page).await;
+    assert_eq!(
+        creator.tags_of(&outside).await,
+        vec![later.clone()],
+        "fixture: the moved block still holds the tag"
+    );
+    let ops = creator.op_count().await;
+
+    let report = repair_in_chunks(&creator.pool, &creator.pool, creator.id, &creator.mat, 1).await;
+
+    assert_eq!(report.tags_merged, 0, "the tie is not merged");
+    for holder in [&inside, &outside] {
+        assert_eq!(
+            creator.tags_of(holder).await,
+            vec![later.clone()],
+            "no holder moves, the one in the tag's own space included"
+        );
+    }
+    assert!(!creator.deleted(&later).await, "the later tag stays");
+    assert_eq!(creator.op_count().await, ops, "nothing is written");
+    pair.shutdown();
+}
+
+/// A block of another space names the later tag: an edit naming the keeper
+/// there is refused, so the tie is left whole, as for a holder.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_tie_whose_later_tag_a_block_of_another_space_names_is_left_whole() {
+    let pair = pair().await;
+    let (tag_a, tag_b) = tag_tie(&pair, "ideas", "Ideas").await;
+    let (creator, _) = pair.creator_of_later(&tag_a, &tag_b);
+    let later = tag_a.clone().max(tag_b.clone());
+    let text = format!("see #[{later}]");
+    let (inside, outside, outside_page) = creator.two_blocks(&pair.space, &text).await;
+    creator.move_to_work(&outside_page).await;
+    let ops = creator.op_count().await;
+
+    let report = repair_in_chunks(&creator.pool, &creator.pool, creator.id, &creator.mat, 1).await;
+
+    assert_eq!(report.tags_merged, 0, "the tie is not merged");
+    for block in [&inside, &outside] {
+        assert_eq!(
+            creator.content(block).await,
+            text,
+            "no reference is rewritten, the one in the tag's own space included"
+        );
+    }
+    assert!(!creator.deleted(&later).await, "the later tag stays");
+    assert_eq!(creator.op_count().await, ops, "nothing is written");
+    pair.shutdown();
+}
+
+/// A run that raced another finds the tie already merged: each transaction
+/// reads the tie again, so the stale run changes nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stale_tie_is_a_no_op() {
+    let pair = pair().await;
+    let (tag_a, tag_b) = tag_tie(&pair, "ideas", "Ideas").await;
+    let (creator, _) = pair.creator_of_later(&tag_a, &tag_b);
+    let tie = TagTie {
+        space_id: pair.space.clone(),
+        keeper: tag_a.clone().min(tag_b.clone()),
+        later: tag_a.clone().max(tag_b.clone()),
+    };
+    let page = creator.page(&pair.space, "Notes").await;
+    let held = creator.block(&page, "one").await;
+    creator.add_tag(&held, &tie.later).await;
+    let merged = merge_tag(
+        &creator.pool,
+        creator.id,
+        &creator.mat,
+        &tie,
+        TAG_MERGE_CHUNK,
+    )
+    .await;
+    assert!(
+        matches!(merged, Ok(true)),
+        "the first run merges: {merged:?}"
+    );
+    let ops = creator.op_count().await;
+
+    let stale = merge_tag(
+        &creator.pool,
+        creator.id,
+        &creator.mat,
+        &tie,
+        TAG_MERGE_CHUNK,
+    )
+    .await;
+
+    assert!(
+        matches!(stale, Ok(false)),
+        "the stale run finds it gone: {stale:?}"
+    );
+    assert_eq!(
+        creator.op_count().await,
+        ops,
+        "the stale run writes nothing"
+    );
     pair.shutdown();
 }
 
