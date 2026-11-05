@@ -1578,3 +1578,27 @@ describe('PropertyField', () => {
     expect(results).toHaveNoViolations()
   })
 })
+
+// #5364: `meeting_date` is a built-in the user sets by hand, so the drawer's
+// add-property list offers it, while the app's own built-ins stay out.
+describe('BlockPropertyDrawer offers the user-set built-ins', () => {
+  it('lists meeting_date when adding a property but not repeat-until', async () => {
+    const user = userEvent.setup()
+    setupMock(
+      [],
+      [
+        { ...makeDef('meeting_date', 'date'), builtin: true },
+        { ...makeDef('repeat-until', 'date'), builtin: true },
+      ],
+    )
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
+    await waitFor(() => {
+      expect(screen.queryByTestId('block-property-drawer-loading')).not.toBeInTheDocument()
+    })
+    await user.click(screen.getByRole('button', { name: 'Add property' }))
+
+    expect(await screen.findByText('Meeting Date')).toBeInTheDocument()
+    expect(screen.queryByText('Repeat Until')).not.toBeInTheDocument()
+  })
+})

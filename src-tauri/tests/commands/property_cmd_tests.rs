@@ -10190,3 +10190,41 @@ async fn a_new_spaces_doc_holds_the_default_definitions_5841() {
     defaults.sort();
     assert_eq!(held, defaults, "the doc holds every default");
 }
+
+// ─── meeting_date is a built-in Date (#5364) ─────────────────
+
+/// #5364: `meeting_date` is a built-in Date, so "meetings in October" is a
+/// date range in every space. A space that defined `meeting_date` itself
+/// before it was built in still lists it once, as the built-in.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn meeting_date_is_a_builtin_date_listed_once_over_a_users_row_5364() {
+    let (pool, _dir) = test_pool().await;
+    sqlx::query(
+        "INSERT INTO property_definitions (space_id, key, value_type, options, created_at) \
+         VALUES (?, 'meeting_date', 'text', NULL, '2025-01-01T00:00:00Z')",
+    )
+    .bind(TEST_SPACE_ID)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let listed = list_property_defs_inner(&pool, TEST_SPACE_ID, None, None)
+        .await
+        .unwrap();
+    let meeting: Vec<_> = listed
+        .items
+        .iter()
+        .filter(|def| def.key == "meeting_date")
+        .map(|def| (def.value_type.as_str(), def.builtin))
+        .collect();
+    assert_eq!(
+        meeting,
+        vec![("date", true)],
+        "listed once, as the built-in"
+    );
+    let got = get_property_def_inner(&pool, TEST_SPACE_ID, "meeting_date")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!((got.value_type.as_str(), got.builtin), ("date", true));
+}

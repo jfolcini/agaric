@@ -122,6 +122,8 @@ beforeEach(() => {
   stubInvoke(vi.mocked(invoke), {
     batch_resolve: () => [],
     list_all_tags_in_space: () => [],
+    // A Markdown file's run first asks which existing pages it updates (#6277 G5).
+    list_import_merges: () => [],
     get_mirror_status: () => ({
       supported: false,
       folder: null,
@@ -243,6 +245,8 @@ describe('DataTab', () => {
         null,
         // #5740 — nor notes for its links to name.
         null,
+        // #6277 G5 — no earlier file of the run wrote a page.
+        [],
       )
     })
   })
@@ -1292,6 +1296,8 @@ describe('DataTab', () => {
         // No attachment refs in the content ⇒ null vaultFiles payload.
         null,
         // No `[[Name]]` links ⇒ no vault notes, which still marks a folder's note.
+        [],
+        // #6277 G5 — no earlier file of the run wrote a page.
         [],
       )
     })

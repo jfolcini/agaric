@@ -757,7 +757,12 @@ export const commands = {
 	 *  note may name (#5740).
 	 */
 	notes?: string[],
-} | null, progress: Channel<ImportProgressUpdate>) => typedError<ImportResult, AppError>(__TAURI_INVOKE("import_markdown", { content, filename, spaceId, dialect, vault, progress })),
+} | null, runPages: PageId[], progress: Channel<ImportProgressUpdate>) => typedError<ImportResult, AppError>(__TAURI_INVOKE("import_markdown", { content, filename, spaceId, dialect, vault, runPages, progress })),
+	/**
+	 *  Tauri command: the pages an import of `filenames` merges into. Delegates to
+	 *  [`list_import_merges_inner`].
+	 */
+	listImportMerges: (spaceId: SpaceId, filenames: string[]) => typedError<ImportMerge[], AppError>(__TAURI_INVOKE("list_import_merges", { spaceId, filenames })),
 	/**
 	 *  Tauri command: the end of a folder import, linking the references its notes
 	 *  left (`ImportResult::deferred`) to the blocks their anchors name
@@ -2514,6 +2519,12 @@ export type ImportBibliographyResult = {
  */
 export type ImportDialect = "Markdown" | "LogseqOrg";
 
+/**  A page an import merges a file into (#6277 decision 7). */
+export type ImportMerge = {
+	page_id: string,
+	title: string,
+};
+
 /**
  *  Streaming progress payload for a single `import_markdown` call (#128).
  * 
@@ -2606,6 +2617,13 @@ export type ImportResult = {
 	 *  note, which `link_import_anchors` links once every note is imported.
 	 */
 	deferred: string[],
+	/**
+	 *  `Some` when the file merged into the page of its title, which held
+	 *  blocks, as an Edit as Markdown save writes it (#6277 decision 7): the
+	 *  ops that merge appended, the page's undo step, and `blocks_created`
+	 *  the blocks it added.
+	 */
+	merged: OpRef[] | null,
 };
 
 /**

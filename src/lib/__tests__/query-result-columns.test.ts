@@ -97,3 +97,15 @@ describe('columnValue', () => {
     expect(columnValue(makeBlock({ id: 'B2' }), 'prop:area', customProps)).toBeNull()
   })
 })
+
+describe('the user-set built-ins (#5364)', () => {
+  it('keeps meeting_date as a column and drops the app-managed repeat-until', () => {
+    const map = buildCustomPropsMap({
+      B1: [
+        row({ key: 'meeting_date', value_date: '2026-10-17' }),
+        row({ key: 'repeat-until', value_date: '2026-12-31' }),
+      ],
+    })
+    expect(map.get('B1')).toEqual(new Map([['meeting_date', '2026-10-17']]))
+  })
+})

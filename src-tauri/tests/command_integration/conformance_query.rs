@@ -1964,6 +1964,30 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 next_cursor: None,
             }
         }
+        // The import dialog's pages (#6277 G5): each page's id, its title the
+        // attribute, since a mock matching another spelling lists that one.
+        "list_import_merges" => {
+            let merges = list_import_merges_inner(
+                pool,
+                &arg_req::<String>(args, "spaceId"),
+                arg_req(args, "filenames"),
+            )
+            .await?;
+            let v = serde_json::to_value(&merges).expect("serialize Vec<ImportMerge>");
+            RawResult {
+                rows: v
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .map(|r| row_token(r, "page_id", &["title"]))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
         // ── Rendered documents (#5071) ──
         //
         // The two renders of the markdown grammar, each compared out of band
@@ -3162,7 +3186,12 @@ pub(super) mod reader_delegation_tests {
     // `block_properties JOIN blocks` (`commands/property_keys.rs`). The move
     // it previews is `move_unfit_property_values`, not a read arm. Writer set
     // unchanged.
-    const SWEPT_ARM_COUNT: usize = 68;
+    // #6277 G5 wired `list_import_merges`: `snapshot_page_link_matches`' two
+    // SELECTs over `blocks` and `page_aliases` and one `query_scalar!` SELECT
+    // over `blocks`, in a plain `pool.begin()` tx
+    // (`commands/pages/markdown_import_merge.rs`). The merge it lists for is
+    // `import_markdown`, not a read arm. Writer set unchanged.
+    const SWEPT_ARM_COUNT: usize = 69;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

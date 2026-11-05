@@ -1,0 +1,503 @@
+//! #6277 G5 — a file whose title names a page with blocks merges into that
+//! page as an Edit as Markdown save writes its buffer (decision 7).
+
+use crate::prelude::*;
+use agaric_engine::import::{ImportDialect, ImportResult, VaultFile};
+
+use super::page_cmd_tests::{dup_child, dup_page};
+
+/// `md` imported as `name` into the test space, as a single file is.
+async fn import(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    dir: &std::path::Path,
+    name: &str,
+    md: &str,
+) -> Result<ImportResult, AppError> {
+    let result = import_markdown_inner(
+        pool,
+        DEV,
+        mat,
+        dir,
+        md.into(),
+        Some(name.into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await;
+    settle(mat).await;
+    result
+}
+
+/// The live pages of the test space titled `title`.
+async fn pages_titled(pool: &SqlitePool, title: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND deleted_at IS NULL \
+         AND content = ? AND space_id = ? ORDER BY id",
+    )
+    .bind(title)
+    .bind(TEST_SPACE_ID)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// A block's id, parent, slot and text.
+type StoredBlock = (String, Option<String>, Option<i64>, Option<String>);
+
+/// Everything a re-import may change on `page`: each live block's id,
+/// parent, slot and text, its property rows, the links it writes, and the
+/// page's aliases.
+async fn page_state(pool: &SqlitePool, page: &str) -> Vec<String> {
+    let blocks: Vec<StoredBlock> = sqlx::query_as(
+        "SELECT id, parent_id, position, content FROM blocks \
+         WHERE page_id = ?1 AND id != ?1 AND deleted_at IS NULL ORDER BY id",
+    )
+    .bind(page)
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    let properties: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT p.block_id, p.key, p.value_text FROM block_properties p \
+         JOIN blocks b ON b.id = p.block_id WHERE b.page_id = ?1 ORDER BY p.block_id, p.key",
+    )
+    .bind(page)
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    let links: Vec<(String, String)> = sqlx::query_as(
+        "SELECT l.source_id, l.target_id FROM block_links l \
+         JOIN blocks b ON b.id = l.source_id WHERE b.page_id = ?1 ORDER BY 1, 2",
+    )
+    .bind(page)
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    let aliases: Vec<String> =
+        sqlx::query_scalar("SELECT alias FROM page_aliases WHERE page_id = ? ORDER BY alias")
+            .bind(page)
+            .fetch_all(pool)
+            .await
+            .unwrap();
+    let mut state: Vec<String> = blocks.iter().map(|b| format!("block {b:?}")).collect();
+    state.extend(properties.iter().map(|p| format!("property {p:?}")));
+    state.extend(links.iter().map(|l| format!("link {l:?}")));
+    state.extend(aliases.iter().map(|a| format!("alias {a}")));
+    state
+}
+
+/// The live contents under `page`, in document order.
+async fn contents(pool: &SqlitePool, page: &str) -> Vec<String> {
+    let id = BlockId::from_trusted(page);
+    super::page_cmd_tests::dup_children(pool, &id)
+        .await
+        .into_iter()
+        .map(|(_, content)| content)
+        .collect()
+}
+
+/// The live content blocks under `page` as `(id, content)`, in document order.
+async fn children(pool: &SqlitePool, page: &str) -> Vec<(String, String)> {
+    super::page_cmd_tests::dup_children(pool, &BlockId::from_trusted(page)).await
+}
+
+const NOTES: &str = "---\naliases: [nb]\n---\n- see [[Target]]\n  - child #work\n\nlast line\n";
+
+/// Red: importing a file twice leaves one page, its blocks' ids, its aliases
+/// and its links as the first import wrote them, and so does importing the
+/// page's own export, whose anchor names the block another page refers to.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn importing_a_file_twice_keeps_its_page_ids_aliases_links_and_anchors() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    dup_page(&pool, &mat, "Target").await;
+    let first = import(&pool, &mat, dir.path(), "Notes.md", NOTES)
+        .await
+        .unwrap();
+    let before = page_state(&pool, &first.page_id).await;
+    assert_eq!(before.iter().filter(|s| s.starts_with("block")).count(), 3);
+
+    let again = import(&pool, &mat, dir.path(), "Notes.md", NOTES)
+        .await
+        .unwrap();
+
+    assert_eq!(pages_titled(&pool, "Notes").await, [first.page_id.as_str()]);
+    assert_eq!(again.page_id, first.page_id, "the import reports that page");
+    assert_eq!(page_state(&pool, &first.page_id).await, before);
+    assert_eq!(again.warnings, Vec::<String>::new());
+
+    // An anchor is written on a block something addresses (decision 6).
+    let (last, _) = children(&pool, &first.page_id).await.pop().unwrap();
+    let other = dup_page(&pool, &mat, "Other").await;
+    let referrer = dup_child(&pool, &mat, &other, &format!("see (({last}))")).await;
+    settle(&mat).await;
+    let export = export_page_markdown_inner(&pool, &first.page_id)
+        .await
+        .unwrap();
+    assert!(export.contains(&format!("last line ^{last}")), "{export}");
+    let before = page_state(&pool, &first.page_id).await;
+
+    let restored = import(&pool, &mat, dir.path(), "Notes.md", &export)
+        .await
+        .unwrap();
+
+    assert_eq!(restored.page_id, first.page_id);
+    assert_eq!(page_state(&pool, &first.page_id).await, before);
+    let content: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(referrer.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(content, format!("see (({last}))"));
+    mat.shutdown();
+}
+
+/// Red: a file edited elsewhere updates its page in place: a line edited
+/// between unchanged ones keeps its block, a dropped line goes to the Trash
+/// and a new one adds a block.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reimporting_an_edited_file_updates_its_page_in_place() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let md = "alpha\n\nbeta\n\ngamma\n\ndelta\n";
+    let first = import(&pool, &mat, dir.path(), "Log.md", md).await.unwrap();
+    let ids: Vec<String> = children(&pool, &first.page_id)
+        .await
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+
+    let edited = "alpha\n\nbeta edited\n\ngamma\n\nepsilon\n\nzeta\n";
+    let result = import(&pool, &mat, dir.path(), "Log.md", edited)
+        .await
+        .unwrap();
+
+    assert_eq!(pages_titled(&pool, "Log").await, [first.page_id.as_str()]);
+    let now = children(&pool, &first.page_id).await;
+    let texts: Vec<&str> = now.iter().map(|(_, c)| c.as_str()).collect();
+    assert_eq!(texts, ["alpha", "beta edited", "gamma", "epsilon", "zeta"]);
+    let kept: Vec<&str> = now[..3].iter().map(|(id, _)| id.as_str()).collect();
+    assert_eq!(kept, [&ids[0], &ids[1], &ids[2]], "edited in place");
+    assert!(
+        !ids.contains(&now[3].0) && !ids.contains(&now[4].0),
+        "new blocks"
+    );
+    let trashed: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(&ids[3])
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(trashed.is_some(), "delta went to the Trash");
+    assert_eq!(result.page_id, first.page_id);
+    assert_eq!(result.blocks_created, 2);
+    mat.shutdown();
+}
+
+/// Red: the op cap that refuses an oversize Edit as Markdown save refuses an
+/// oversize merge, and the page is left as it was.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_oversize_merge_is_refused_by_the_op_cap() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Big").await;
+    dup_child(&pool, &mat, &page, "only").await;
+    settle(&mat).await;
+    let md: String = (0..=pagination::MAX_BATCH_BLOCK_IDS)
+        .map(|i| format!("p{i}\n\n"))
+        .collect();
+
+    let err = import(&pool, &mat, dir.path(), "Big.md", &md)
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(&err, AppError::Validation { message, .. } if message.contains("exceeds maximum")),
+        "{err:?}"
+    );
+    assert_eq!(pages_titled(&pool, "Big").await, [page.as_str().to_owned()]);
+    assert_eq!(contents(&pool, page.as_str()).await, ["only"]);
+    mat.shutdown();
+}
+
+/// Red: a file the save cannot read as its import does (a Logseq or Org
+/// file, a folder's note, a note with attachments) does not merge, and makes
+/// no twin either: it is the page `Title (2)`, with a warning, and the page of
+/// its title is left as it was.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_that_cannot_merge_is_imported_as_title_2() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Plan").await;
+    dup_child(&pool, &mat, &page, "kept").await;
+    settle(&mat).await;
+
+    let outline = import_markdown_with_progress(
+        &pool,
+        DEV,
+        &mat,
+        dir.path(),
+        "- outline".into(),
+        Some("Plan.md".into()),
+        TEST_SPACE_ID.into(),
+        ImportDialect::LogseqOrg,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let note = import_markdown_with_progress(
+        &pool,
+        DEV,
+        &mat,
+        dir.path(),
+        "note".into(),
+        Some("Plan.md".into()),
+        TEST_SPACE_ID.into(),
+        ImportDialect::Markdown,
+        None,
+        Some(Vec::new()),
+        None,
+    )
+    .await
+    .unwrap();
+    let scan = import_markdown_with_progress(
+        &pool,
+        DEV,
+        &mat,
+        dir.path(),
+        "scan ![[pic.png]]".into(),
+        Some("Plan.md".into()),
+        TEST_SPACE_ID.into(),
+        ImportDialect::Markdown,
+        Some(vec![VaultFile {
+            path: "pic.png".into(),
+            bytes: vec![0x89, b'P', b'N', b'G', 1, 2, 3, 4],
+        }]),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(contents(&pool, page.as_str()).await, ["kept"]);
+    assert_eq!(
+        pages_titled(&pool, "Plan").await,
+        [page.as_str().to_owned()]
+    );
+    assert_eq!(outline.page_title, "Plan (2)");
+    assert_eq!(contents(&pool, &outline.page_id).await, ["outline"]);
+    assert_eq!(note.page_title, "Plan (3)");
+    assert_eq!(contents(&pool, &note.page_id).await, ["note"]);
+    assert_eq!(scan.page_title, "Plan (4)");
+    assert_eq!(scan.merged, None);
+    let why = "a page titled 'Plan' is in this space, and a Logseq or Org file, a folder's note \
+               or a note with attachments does not merge into it";
+    assert_eq!(
+        outline.warnings,
+        [format!("{why}; the file was imported as 'Plan (2)'")]
+    );
+    assert_eq!(
+        note.warnings,
+        [format!("{why}; the file was imported as 'Plan (3)'")]
+    );
+    assert_eq!(
+        scan.warnings,
+        [format!("{why}; the file was imported as 'Plan (4)'")]
+    );
+    mat.shutdown();
+}
+
+/// Red: an anchor names the block a line updates, whatever the line says:
+/// two blocks that swap places and change their text keep their ids, which
+/// only their anchors tell apart (by text they would pair the other way).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_anchored_line_updates_the_block_its_anchor_names() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Anchors").await;
+    let alpha = dup_child(&pool, &mat, &page, "alpha").await;
+    let beta = dup_child(&pool, &mat, &page, "beta").await;
+    settle(&mat).await;
+
+    let md = format!("two ^{beta}\n\none ^{alpha}\n");
+    let result = import(&pool, &mat, dir.path(), "Anchors.md", &md)
+        .await
+        .unwrap();
+
+    assert_eq!(result.warnings, Vec::<String>::new());
+    assert_eq!(
+        children(&pool, page.as_str()).await,
+        [
+            (beta.as_str().to_owned(), "two".to_owned()),
+            (alpha.as_str().to_owned(), "one".to_owned())
+        ]
+    );
+    mat.shutdown();
+}
+
+/// One file of an import run, after the files that wrote `run_pages`.
+async fn import_in_run(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    dir: &std::path::Path,
+    (name, md): (&str, &str),
+    run_pages: &[String],
+) -> ImportResult {
+    let result = import_markdown_in_run(
+        pool,
+        DEV,
+        mat,
+        dir,
+        md.into(),
+        Some(name.into()),
+        TEST_SPACE_ID.into(),
+        ImportDialect::Markdown,
+        None,
+        None,
+        run_pages,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(mat).await;
+    result
+}
+
+/// Red: a title an earlier file of the same run created or merged into is
+/// not merged again: two notes called "Meeting" in one run are two pages, the
+/// second `Meeting (2)`, with a warning, and the first keeps its blocks.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_title_an_earlier_file_of_the_run_wrote_is_imported_as_title_2() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let standup = dup_page(&pool, &mat, "Standup").await;
+    dup_child(&pool, &mat, &standup, "old").await;
+    settle(&mat).await;
+    let dir = dir.path();
+
+    let created = import_in_run(&pool, &mat, dir, ("Meeting.md", "first note"), &[]).await;
+    let merged = import_in_run(&pool, &mat, dir, ("Standup.md", "new"), &[]).await;
+    let run = [created.page_id.clone(), merged.page_id.clone()];
+    let second = import_in_run(&pool, &mat, dir, ("Meeting.md", "second note"), &run).await;
+    let again = import_in_run(&pool, &mat, dir, ("Standup.md", "again"), &run).await;
+
+    assert_eq!(merged.page_id, standup.as_str(), "the first Standup merged");
+    assert_eq!(contents(&pool, &created.page_id).await, ["first note"]);
+    assert_eq!(contents(&pool, standup.as_str()).await, ["new"]);
+    assert_eq!(second.page_title, "Meeting (2)");
+    assert_eq!(contents(&pool, &second.page_id).await, ["second note"]);
+    assert_eq!(again.page_title, "Standup (2)");
+    assert_eq!(contents(&pool, &again.page_id).await, ["again"]);
+    assert_eq!(
+        second.warnings,
+        [
+            "an earlier file of this import wrote the page 'Meeting'; the file was imported as \
+             'Meeting (2)'"
+        ]
+    );
+    assert_eq!((second.merged, again.merged), (None, None));
+    mat.shutdown();
+}
+
+/// The import dialog's read lists the pages an import of the files merges
+/// into: each file's title's page that holds blocks, matched as the import
+/// matches it (case-folded, never by alias), once each, in file order.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_import_merges_lists_the_pages_with_blocks_the_files_name() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let plan = dup_page(&pool, &mat, "Plan").await;
+    dup_child(&pool, &mat, &plan, "body").await;
+    let sub = dup_page(&pool, &mat, "dir/Sub").await;
+    dup_child(&pool, &mat, &sub, "body").await;
+    dup_page(&pool, &mat, "Empty").await;
+    let roadmap = dup_page(&pool, &mat, "Roadmap").await;
+    dup_child(&pool, &mat, &roadmap, "body").await;
+    set_page_aliases_inner(&pool, DEV, &mat, roadmap.as_str(), vec!["Later".into()])
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let files = [
+        "dir/Sub.md",
+        "Plan.md",
+        "plan.md",
+        "Empty.md",
+        "Later.md",
+        "New.md",
+    ];
+
+    let merges = list_import_merges_inner(&pool, TEST_SPACE_ID, files.map(String::from).to_vec())
+        .await
+        .unwrap();
+
+    let listed: Vec<(&str, &str)> = merges
+        .iter()
+        .map(|m| (m.page_id.as_str(), m.title.as_str()))
+        .collect();
+    assert_eq!(listed, [(sub.as_str(), "dir/Sub"), (plan.as_str(), "Plan")]);
+    mat.shutdown();
+}
+
+/// A merge is one undo step, as an Edit as Markdown save is: undoing the ops
+/// it reports gives the page back its blocks.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undoing_a_merges_ops_restores_its_page() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Draft").await;
+    dup_child(&pool, &mat, &page, "one").await;
+    dup_child(&pool, &mat, &page, "two").await;
+    settle(&mat).await;
+    let before = children(&pool, page.as_str()).await;
+
+    let result = import(&pool, &mat, dir.path(), "Draft.md", "uno\n\nthree\n")
+        .await
+        .unwrap();
+    let ops = result.merged.expect("the file merged into Draft");
+    assert_eq!(contents(&pool, page.as_str()).await, ["uno", "three"]);
+
+    undo_ops_inner(&pool, DEV, &mat, ops).await.unwrap();
+    settle(&mat).await;
+
+    assert_eq!(children(&pool, page.as_str()).await, before);
+    mat.shutdown();
+}
+
+/// An anchor naming a block of another page carries no identity on this one:
+/// a file whose anchors name another page's blocks, imported twice, pairs its
+/// lines by their text the second time and changes nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_whose_anchors_name_another_page_reimports_unchanged() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let src = dup_page(&pool, &mat, "Src").await;
+    let anchored = dup_child(&pool, &mat, &src, "anchored line").await;
+    let other = dup_page(&pool, &mat, "Other").await;
+    dup_child(&pool, &mat, &other, &format!("see (({anchored}))")).await;
+    settle(&mat).await;
+    let export = export_page_markdown_inner(&pool, src.as_str())
+        .await
+        .unwrap();
+    assert!(
+        export.contains(&format!("anchored line ^{anchored}")),
+        "{export}"
+    );
+    let first = import(&pool, &mat, dir.path(), "Copy.md", &export)
+        .await
+        .unwrap();
+    let before = page_state(&pool, &first.page_id).await;
+
+    let again = import(&pool, &mat, dir.path(), "Copy.md", &export)
+        .await
+        .unwrap();
+
+    assert_eq!(again.page_id, first.page_id);
+    assert_eq!(page_state(&pool, &first.page_id).await, before);
+    assert_eq!(again.warnings, Vec::<String>::new());
+    assert_eq!(again.merged, Some(Vec::new()), "the merge appended nothing");
+    mat.shutdown();
+}

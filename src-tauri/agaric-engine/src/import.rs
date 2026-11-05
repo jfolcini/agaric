@@ -103,6 +103,11 @@ pub struct ImportResult {
     /// On a folder import, the blocks still holding a reference into another
     /// note, which `link_import_anchors` links once every note is imported.
     pub deferred: Vec<String>,
+    /// `Some` when the file merged into the page of its title, which held
+    /// blocks, as an Edit as Markdown save writes it (#6277 decision 7): the
+    /// ops that merge appended, the page's undo step, and `blocks_created`
+    /// the blocks it added.
+    pub merged: Option<Vec<agaric_store::op::OpRef>>,
 }
 
 /// A block an imported note's anchor names: its trailing Obsidian `^id`
@@ -6218,6 +6223,10 @@ bare line (({UUID_B})) too"
                 block_id: "01J00000000000000000BLOCK2".into(),
             }],
             deferred: vec!["01J00000000000000000BLOCK3".into()],
+            merged: Some(vec![agaric_store::op::OpRef {
+                device_id: "device-a".into(),
+                seq: 7,
+            }]),
         };
         insta::assert_yaml_snapshot!(result);
     }
