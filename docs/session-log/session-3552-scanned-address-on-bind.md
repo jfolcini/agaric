@@ -1,0 +1,9 @@
+# Session 3552 — The joiner's pairing bind keeps the scanned address
+
+#6353 came back after #6355: `sync-two-device.e2e.ts` failed on #6344 (run 41998095148, job 127148506962). #6355's Busy path ran, but the vault's write failed with `failed to save peer address … Not found`. The vault (the joiner) had no row for the app yet. The app was dialling the vault at the same moment, and the vault's responder creates and binds that row only when its session ends. That bind closes the pairing window, and the scanned QR peer is offered to a change round only while the window is open (`peers_for_change_round`). The vault was left with a bound key, no `last_address`, and with no mDNS no path back to the app.
+
+**Fix.** In `handle_incoming_sync_inner`, a pairing-window bind now calls `cache_scanned_address`. It writes the scheduler's scanned peer's address when the scan names the key the handshake authenticated. It is gated on the pairing bind because `scanned_peer` is never cleared, and a later routine session must not put the QR's address back over one a completed dial cached since. The address format moved to `session_supervisor::last_address_of`, shared with `cache_peer_address`.
+
+**Test.** `a_joiner_binding_its_scanned_host_caches_the_scanned_address_6353`: the host dials a joiner that scanned its QR, and the joiner binds as responder. Before the fix `last_address` was `None`. Inverting the key check reddens the same assertion.
+
+**Ran.** `cargo test -p agaric-sync --lib -- _6353`; `cargo clippy --workspace --all-targets -- -D warnings`; `SQLX_OFFLINE=true cargo check --workspace --all-targets`; `cargo test --workspace -- sync_daemon transport pairing` with wildcard `NO_PROXY`. These used `cargo test` because cargo-nextest can't be installed in this container. The e2e-tauri race itself can't run here, so the PR's e2e-tauri lane is the check for it.

@@ -11786,6 +11786,104 @@ async fn a_host_that_dials_the_first_pair_closes_its_pairing_window() {
     joiner_mat.shutdown();
 }
 
+/// #6353: a joiner whose host dials it first binds the host as the responder,
+/// and that bind closes the window the scanned QR peer was offered in. With no
+/// mDNS, the scan's address is the only path the joiner has back to the host,
+/// so the bind keeps it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_joiner_binding_its_scanned_host_caches_the_scanned_address_6353() {
+    let (host_pool, _host_dir) = test_pool().await;
+    let host_mat = Materializer::new(host_pool.clone());
+    let host_sched = Arc::new(SyncScheduler::new());
+    publish_daemon_endpoint(&host_sched, DIALLING_HOST);
+    let host_passphrase = crate::pairing::start_pairing_armed(
+        &host_pool,
+        &std::sync::Mutex::new(None),
+        &host_sched,
+        DIALLING_HOST,
+    )
+    .await
+    .expect("the host arms its pairing window")
+    .passphrase;
+
+    let harness = ServiceHarness::new().await;
+    let (joiner_pool, _joiner_dir) = test_pool().await;
+    let joiner_mat = Materializer::new(joiner_pool.clone());
+    let joiner_sched = Arc::new(SyncScheduler::new());
+    let scanned_address = "127.0.0.1:4242";
+    crate::pairing::confirm_pairing(
+        &joiner_pool,
+        &std::sync::Mutex::new(None),
+        &joiner_sched,
+        host_passphrase,
+        Some(crate::pairing::ScannedPeerCandidate {
+            device_id: DIALLING_HOST.to_owned(),
+            endpoint_id: client_key(&harness),
+            addrs: vec![scanned_address.to_owned()],
+        }),
+    )
+    .await
+    .expect("the joiner arms its window with the host's code and QR");
+
+    let joiner_task = spawn_responder(
+        &harness,
+        joiner_pool.clone(),
+        DIALLED_JOINER,
+        joiner_mat.clone(),
+        joiner_sched,
+        Arc::new(RecordingEventSink::new()),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let host_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let host_apply: Arc<dyn crate::apply_host::ApplyHost> = Arc::new(host_mat.clone());
+    let host_cancel = AtomicBool::new(false);
+    let ctx = SyncSessionContext {
+        pool: &host_pool,
+        device_id: DIALLING_HOST,
+        materializer: &host_apply,
+        scheduler: &host_sched,
+        event_sink: &host_sink,
+        cancel: &host_cancel,
+        endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
+        relay_url: None,
+    };
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        try_sync_with_peer(
+            &ctx,
+            &discovered_service_peer(DIALLED_JOINER, &harness),
+            &[],
+            None,
+        ),
+    )
+    .await
+    .expect("try_sync_with_peer timed out");
+    tokio::time::timeout(std::time::Duration::from_secs(40), joiner_task)
+        .await
+        .expect("responder task timed out")
+        .expect("responder task panicked")
+        .expect("the joiner's responder session succeeds");
+
+    let row = peer_refs::get_peer_ref(&joiner_pool, DIALLING_HOST)
+        .await
+        .unwrap()
+        .expect("the joiner holds a row for the host");
+    assert_eq!(
+        row.endpoint_id,
+        Some(client_key(&harness)),
+        "precondition: the joiner's responder bound the host's key"
+    );
+    assert_eq!(
+        row.last_address.as_deref(),
+        Some(scanned_address),
+        "the scanned address must survive the bind that closes the window"
+    );
+
+    host_mat.shutdown();
+    joiner_mat.shutdown();
+}
+
 /// The clear's other half: a session that binds nothing leaves the window
 /// alone. `record_session_success` runs after every successful session, and a
 /// window opened to pair a second device has to survive the host's routine

@@ -334,17 +334,16 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
             const anchor = ownPageAnchor(body)
             if (anchor === undefined || !findAnchor) return
             const { embed, insertPos, typed } = takeTyped(state, range, match[0])
-            let block: string | undefined
             void resolveAndInsertPickerToken({
               editor,
               text: anchor,
               typed,
               insertPos,
               items: async () => {
-                block = await findAnchor(undefined, anchor)
-                return []
+                const block = await findAnchor(undefined, anchor)
+                return block === undefined ? [] : [{ id: block, label: anchor }]
               },
-              matchItem: () => (block === undefined ? undefined : { id: block, label: anchor }),
+              matchItem: (blocks) => blocks[0],
               tokenFor: (id) => blockRefContent(id, embed),
               loggerComponent: 'BlockLinkPicker',
               errorMessage:

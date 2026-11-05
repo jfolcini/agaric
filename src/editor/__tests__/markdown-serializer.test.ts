@@ -2524,6 +2524,11 @@ describe('code blocks', () => {
     const result = parse(md)
     expect(result.content?.[0]?.type).not.toBe('codeBlock')
   })
+
+  it('writes back an info string that starts with a tilde and holds a backtick', () => {
+    const md = '~~~ ~`x\ncode\n~~~\nafter'
+    expect(serialize(parse(md))).toBe(md)
+  })
 })
 
 // -- hardening: link scan depth -----------------------------------------------
