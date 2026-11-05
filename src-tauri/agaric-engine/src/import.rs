@@ -5639,7 +5639,7 @@ mod tests_l9 {
         let contents = |blocks: &[ParsedBlock]| -> Vec<String> {
             blocks.iter().map(|b| b.content.clone()).collect()
         };
-        let text = "---\nalias: hello\n---\n- body";
+        let text = "---\nstatus: hello\n---\n- body";
         for (reader, read) in [
             ("import", parse_logseq_markdown as fn(&str) -> ParseOutput),
             ("document", parse_document_outline),
@@ -5647,7 +5647,7 @@ mod tests_l9 {
             let with_bom = read(&format!("\u{feff}{text}"));
             assert_eq!(
                 with_bom.frontmatter,
-                [("alias".to_string(), "hello".to_string())],
+                [("status".to_string(), "hello".to_string())],
                 "{reader}: the front matter is read past the BOM"
             );
             assert_eq!(contents(&with_bom.blocks), ["body"], "{reader}: one block");
