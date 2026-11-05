@@ -416,6 +416,34 @@ async fn append_markdown_writes_foreign_highlight_and_math_in_agarics_form() {
     );
 }
 
+/// #6033 S5b — content an agent writes reads an Obsidian note embed as a
+/// paste does: the whole content embeds the page, an embed among text links
+/// it, and a file embed stays text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn update_block_content_reads_obsidian_note_embeds() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let page = mk_page(&pool, &mat, &space, "Page").await;
+    let note = mk_page(&pool, &mat, &space, "Note").await;
+    let block = mk_child_of(&pool, &mat, &page, "draft").await;
+    settle(&mat).await;
+
+    for (content, expected) in [
+        ("![[Note]]", format!("{{{{embed [[{note}]]}}}}")),
+        ("see ![[Note]]", format!("see [[{note}]]")),
+        ("![[img.png]]", "![[img.png]]".to_string()),
+    ] {
+        let result = tools
+            .call_tool(
+                "update_block_content",
+                json!({"block_id": block, "content": content, "space_id": space}),
+                &test_ctx_agent(),
+            )
+            .await
+            .expect("happy path");
+        assert_eq!(result["content"], expected, "{content}");
+    }
+}
+
 // -------------------------------------------------------------------
 // update_block_content
 // -------------------------------------------------------------------
