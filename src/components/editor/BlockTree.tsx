@@ -78,6 +78,7 @@ import { useFocusedBlockActions } from '@/components/editor/useFocusedBlockActio
 import { useLazyRovingEditor } from '@/components/editor/useLazyRovingEditor'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getActiveEditor, setActiveEditor } from '@/editor/active-editor'
+import { findAnchorBlock } from '@/editor/anchor-block'
 import { pageFootnotes } from '@/editor/footnotes'
 import { INERT_BLOCK_KEYBOARD_CALLBACKS, useBlockKeyboard } from '@/editor/use-block-keyboard'
 import { useEditorEventDispatch } from '@/editor/use-editor-event-dispatch'
@@ -624,6 +625,10 @@ export function BlockTree({
     searchBlockRefs: resolve.searchBlockRefs,
     onCreatePage: resolve.onCreatePage,
     onCreateTag: resolve.onCreateTag,
+    findAnchor: (pageId, anchor) => {
+      const page = pageId ?? pageStore.getState().rootParentId
+      return page === null ? Promise.resolve(undefined) : findAnchorBlock(page, anchor)
+    },
     searchSlashCommands: searchSlashMenu,
     onSlashCommand: dispatch.thunks.slashCommand,
     onCheckbox: dispatch.thunks.checkbox,

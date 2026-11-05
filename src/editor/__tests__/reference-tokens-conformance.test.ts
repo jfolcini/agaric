@@ -10,6 +10,9 @@
  * finding, so the phase that fixes it flips exactly that row; a row where the
  * two sides disagree (Rust asked for a name the editor does not show as a tag
  * or page, or the reverse) must carry one.
+ *
+ * The `headingAnchors` rows (#6033), which `heading_anchor_vectors_pin_which_block_an_anchor_names`
+ * asserts against `anchor_block`, pin which block a typed `[[Page#anchor]]` names.
  */
 
 import { readFileSync } from 'node:fs'
@@ -17,6 +20,8 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
+import { makeBlockRow } from '@/__tests__/fixtures'
+import { anchorBlockIn } from '@/editor/anchor-block'
 import { parse } from '@/editor/markdown-parse'
 import type { DocNode, InlineNode, LinkMark } from '@/editor/types'
 import { scanNameTokens } from '@/lib/name-tokens'
@@ -42,11 +47,20 @@ interface ReferenceTokenCase {
   expected: { requestedPageNames: string[]; requestedTagNames: string[] }
 }
 
+/** #6033 — whether `anchor` names the page's one block, `blockId`, holding `content`. */
+interface HeadingAnchorCase {
+  name: string
+  content: string
+  anchor: string
+  matches: boolean
+}
+
 interface Vectors {
   pageResolutions: Record<string, string>
   tagResolutions: Record<string, string>
   nameRuleCases: NameRuleCase[]
   cases: ReferenceTokenCase[]
+  headingAnchors: { blockId: string; cases: HeadingAnchorCase[] }
 }
 
 const VECTORS_PATH = path.resolve(
@@ -149,5 +163,19 @@ describe('name-rule vectors through the mock scanner (#5160)', () => {
   it.each(regexRows.map((row) => [row.name, row] as const))('%s', (_name, row) => {
     expect(scannedNames(row.input, 'page')).toEqual(row.expected.requestedPageNames.toSorted())
     expect(scannedNames(row.input, 'tag')).toEqual(row.expected.requestedTagNames.toSorted())
+  })
+})
+
+describe('heading-anchor vectors through the typed-anchor matcher (#6033)', () => {
+  const { blockId, cases } = vectors.headingAnchors
+  it.each(cases.map((row) => [row.name, row] as const))('%s', (_name, row) => {
+    const page = '01ARZ3NDEKTSV4RRFFQ69G5FB0'
+    const block = makeBlockRow({
+      id: blockId,
+      content: row.content,
+      parent_id: page,
+      page_id: page,
+    })
+    expect(anchorBlockIn([block], page, row.anchor) !== undefined).toBe(row.matches)
   })
 })
