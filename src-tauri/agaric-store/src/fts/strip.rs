@@ -256,7 +256,7 @@ fn tilde_fence(rest: &str) -> Option<(String, usize)> {
     if open < 3 {
         return None;
     }
-    let mut line_start = rest.find('\n')? + 1;
+    let mut line_start = rest.find('\n').map_or(rest.len() + 1, |at| at + 1);
     while line_start <= rest.len() {
         let line_end = rest[line_start..]
             .find('\n')

@@ -8090,6 +8090,8 @@ fn strip_indexes_the_text_the_editor_shows_6277() {
         ("a\n~~~\n\\* b", "a\n\n\\* b"),
         ("a ~~~ \\* b", "a ~~~ * b"),
         ("```\n~~~\n```", "\n~~~\n"),
+        ("~~~md", "md"),
+        ("~~~", ""),
         // Text shaped like the strip's own placeholder stays text.
         ("\u{E002}0\u{E003} `x`", "\u{E002}0\u{E003} x"),
     ]

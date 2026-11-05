@@ -2826,13 +2826,23 @@ async fn get_page_buffer_writes_in_space_names() {
     );
 }
 
+/// A title two in-space pages share, a case apart, names the lowest id
+/// (#6278): a link to that page is written as the title, and a link to the
+/// other stays raw even though the title is spelled as its own, since it would
+/// read back to the lowest id.
 #[tokio::test]
-async fn get_page_buffer_keeps_a_title_two_in_space_pages_share_raw() {
+async fn get_page_buffer_names_the_lowest_id_of_a_shared_title_6278() {
     let (pool, _dir) = test_pool().await;
-    let content = format!("see [[{SOURCE_PROJECT}]]");
-    seed_source_page(&pool, &content).await;
-    insert_block(&pool, SOURCE_PROJECT_TWIN, "page", "Project", None, Some(3)).await;
+    seed_source_page(&pool, &format!("see [[{SOURCE_PROJECT}]]")).await;
+    insert_block(&pool, SOURCE_PROJECT_TWIN, "page", "project", None, Some(3)).await;
     assign_to_space(&pool, SOURCE_PROJECT_TWIN, TEST_SPACE_ID).await;
+    let twin_link = format!("and [[{SOURCE_PROJECT_TWIN}]]");
+    sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
+        .bind(&twin_link)
+        .bind(SOURCE_TARGET)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     let md = get_page_buffer_inner(&pool, SOURCE_PAGE)
         .await
@@ -2841,8 +2851,7 @@ async fn get_page_buffer_keeps_a_title_two_in_space_pages_share_raw() {
 
     assert_eq!(
         md,
-        format!("{content} ^{SOURCE_BLOCK}\n\ntarget ^{SOURCE_TARGET}\n"),
-        "an ambiguous title would read back to neither page, so the id must stay raw"
+        format!("see [[Project]] ^{SOURCE_BLOCK}\n\n{twin_link} ^{SOURCE_TARGET}\n"),
     );
 }
 
@@ -2992,7 +3001,7 @@ async fn everything_page(pool: &SqlitePool, mat: &Materializer) -> BlockId {
         &format!("see [[{project}]] #[{SOURCE_WORK}]"),
     )
     .await;
-    dup_child(pool, mat, &page, &format!("twin [[{SOURCE_PROJECT}]]")).await;
+    dup_child(pool, mat, &page, &format!("twin [[{SOURCE_PROJECT_TWIN}]]")).await;
     create_page_in_space_inner(
         pool,
         DEV,
@@ -3195,65 +3204,57 @@ async fn apply_page_source_sets_and_deletes_properties() {
 }
 
 /// A value typed under a `ref`-declared key is a live block's id, or a page
-/// title in the space as a typed `[[name]]` resolves (#5160 D11). A title two
-/// pages tie on refuses the save naming the line, and nothing is written.
+/// title in the space as a typed `[[name]]` resolves (#5160 D11); a title two
+/// pages tie on, the lowest id (#6278).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn apply_page_source_reads_a_ref_value_as_an_id_or_a_title() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let page = dup_page(&pool, &mat, "Refs").await;
     let project = dup_page(&pool, &mat, "Project").await;
-    dup_page(&pool, &mat, "Twin").await;
-    dup_twin_page(&pool, &mat, "twin").await;
+    let twin = dup_page(&pool, &mat, "Twin").await;
+    let twin_lower = dup_twin_page(&pool, &mat, "twin").await;
     create_test_property_def(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();
     let plain = dup_child(&pool, &mat, &page, "plain").await;
     let linked = dup_child(&pool, &mat, &page, "linked").await;
+    let tied = dup_child(&pool, &mat, &page, "tied").await;
     settle(&mat).await;
     let base = page_source(&pool, &page).await;
-    let plain_line = format!("plain ^{plain}\n");
-    let linked_line = format!("linked ^{linked}\n");
-    let before = last_seq(&pool).await;
-
-    let tied = with(
-        &base,
-        &plain_line,
-        &format!("{plain_line}  reviewer:: TWIN\n"),
-    );
-    let result = save_source(&pool, &mat, &page, &tied, &base).await;
-    assert!(
-        matches!(&result, Err(AppError::Validation { message, .. })
-            if message.contains("`reviewer:: TWIN`") && message.contains("more than one page")),
-        "a tie is never guessed, and the refusal names the line: {result:?}"
-    );
-    assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
-
-    let source = with(
-        &with(
-            &base,
-            &plain_line,
-            &format!("{plain_line}  reviewer:: Project\n"),
-        ),
-        &linked_line,
-        &format!("{linked_line}  reviewer:: [[project]]\n"),
-    );
+    let source = [
+        ("plain", &plain, "Project"),
+        ("linked", &linked, "[[project]]"),
+        ("tied", &tied, "TWIN"),
+    ]
+    .iter()
+    .fold(base.clone(), |source, (text, id, value)| {
+        let line = format!("{text} ^{id}\n");
+        with(&source, &line, &format!("{line}  reviewer:: {value}\n"))
+    });
     let report = save_source(&pool, &mat, &page, &source, &base)
         .await
         .unwrap();
 
-    assert_eq!(counts(&report), [0, 0, 0, 0, 2, 0], "both are set");
-    let reviewer = format!(
-        "reviewer text=None num=None date=None ref={:?} bool=None",
-        Some(project.as_str())
-    );
+    assert_eq!(counts(&report), [0, 0, 0, 0, 3, 0], "all three are set");
+    let reviewer = |target: &str| {
+        format!(
+            "reviewer text=None num=None date=None ref={:?} bool=None",
+            Some(target)
+        )
+    };
     for block in [&plain, &linked] {
         assert_eq!(
             dup_storage(&pool, block).await[1],
-            reviewer,
+            reviewer(project.as_str()),
             "the page, by its title"
         );
     }
+    assert_eq!(
+        dup_storage(&pool, &tied).await[1],
+        reviewer(twin.as_str().min(twin_lower.as_str())),
+        "a title two pages tie on is the lowest id"
+    );
 }
 
 /// What the user types is checked against the key's options, as the property
@@ -4067,35 +4068,36 @@ async fn apply_page_source_resolves_only_the_names_a_block_newly_writes() {
     assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
 }
 
-/// A title two pages of the space share names neither: it stays text, with a
-/// warning.
+/// A title two pages of the space share, a case apart, names the one with the
+/// lowest id (#6278): the save links it for either spelling, creates nothing
+/// and warns of nothing. The higher id is seeded first, so the order the rows
+/// were written in decides nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn apply_page_source_leaves_an_ambiguous_title_as_text_with_a_warning() {
+async fn apply_page_source_links_a_shared_title_to_its_lowest_id_6278() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    let page = dup_page(&pool, &mat, "Ambiguous").await;
-    for (id, position) in [(SOURCE_PROJECT, 10), (SOURCE_PROJECT_TWIN, 11)] {
-        insert_block(&pool, id, "page", "Twin", None, Some(position)).await;
+    let page = dup_page(&pool, &mat, "Shared").await;
+    for (id, title, position) in [
+        (SOURCE_PROJECT_TWIN, "Twin", 11),
+        (SOURCE_PROJECT, "twin", 10),
+    ] {
+        insert_block(&pool, id, "page", title, None, Some(position)).await;
         assign_to_space(&pool, id, TEST_SPACE_ID).await;
     }
     settle(&mat).await;
     let base = page_source(&pool, &page).await;
 
-    let report = save_source(&pool, &mat, &page, "see [[Twin]]\n", &base)
+    let report = save_source(&pool, &mat, &page, "see [[twin]] [[Twin]]\n", &base)
         .await
         .unwrap();
 
     assert_eq!(
         dup_children(&pool, &page).await[0].1,
-        "see [[Twin]]",
-        "the title stays text"
+        format!("see [[{SOURCE_PROJECT}]] [[{SOURCE_PROJECT}]]"),
+        "each page's own spelling of the title links the lowest id"
     );
     assert!(report.names_created.is_empty(), "nothing is created");
-    assert_eq!(
-        report.warnings,
-        vec!["wiki-link '[[Twin]]' matches multiple pages in this space; left as plain text"],
-        "the warning names it"
-    );
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
 }
 
 /// A refusal at the last block undoes every write before it, the engine's
@@ -4576,7 +4578,7 @@ async fn apply_page_source_by_line_ids_of_its_own_text_writes_nothing() {
         "\\- not a bullet",
         "[ ] not a task",
         "see [[Project]] #work ^",
-        "twin [[01J5140PR0JECT000000000001]] ^",
+        "twin [[01J5140PR0JECT000000000002]] ^",
         "issue #42 ^",
     ] {
         assert!(
@@ -6360,8 +6362,9 @@ async fn a_copy_of_literal_foreign_forms_pastes_back_byte_for_byte() {
 }
 
 /// `[[Name]]` and `#tag` resolve in the anchor's space as an import resolves
-/// them: an existing unique page or tag is linked, a missing one is created in
-/// the space, an ambiguous title and anything in code stay text.
+/// them: an existing page or tag is linked (a title two pages share, the
+/// lowest id, #6278), a missing one is created in the space, and anything in
+/// code stays text.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn paste_blocks_resolves_names_in_the_anchors_space() {
     let (pool, _dir) = test_pool().await;
@@ -6403,7 +6406,7 @@ async fn paste_blocks_resolves_names_in_the_anchors_space() {
                 Some(
                     format!(
                         "see [[{new_page}]] [[{project}]] #[{SOURCE_WORK}] #[{fresh}] `#code` \
-                         [[Twin]]"
+                         [[{SOURCE_PROJECT}]]"
                     )
                     .as_str()
                 )
@@ -6794,15 +6797,16 @@ async fn import_reads_a_title_holding_a_pipe_before_its_label() {
     mat.shutdown();
 }
 
-/// #5160 D10 — a reading that ties stops the search: the link stays text with
-/// the ambiguity warning, and the shorter reading creates nothing.
+/// #5160 D10 — a reading that ties stops the search at the lowest id (#6278):
+/// the link names that page, and the shorter reading creates nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn import_leaves_a_link_whose_pipe_reading_ties_as_text() {
+async fn import_links_the_lowest_id_a_pipe_reading_ties_on() {
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    dup_page(&pool, &mat, "X | Y").await;
-    dup_twin_page(&pool, &mat, "x | y").await;
+    let upper = dup_page(&pool, &mat, "X | Y").await;
+    let lower = dup_twin_page(&pool, &mat, "x | y").await;
     settle(&mat).await;
+    let holder = upper.as_str().min(lower.as_str());
 
     let result = import_file(
         &pool,
@@ -6813,21 +6817,15 @@ async fn import_leaves_a_link_whose_pipe_reading_ties_as_text() {
     )
     .await;
 
-    assert_eq!(block_starting(&pool, "tie").await, "tie [[X | y]]");
+    assert_eq!(
+        block_starting(&pool, "tie").await,
+        format!("tie [[{holder}]]")
+    );
     assert_eq!(
         block_starting(&pool, "labelled").await,
-        "labelled [[X | y|see]]"
+        format!("labelled [[{holder}|see]]")
     );
-    for body in ["[[X | y]]", "[[X | y|see]]"] {
-        assert!(
-            result
-                .warnings
-                .iter()
-                .any(|w| w.contains(body) && w.contains("multiple")),
-            "{body}: {:?}",
-            result.warnings
-        );
-    }
+    assert!(result.warnings.is_empty(), "{:?}", result.warnings);
     assert_eq!(pages_titled(&pool, "X").await, Vec::<String>::new());
     mat.shutdown();
 }
@@ -11588,10 +11586,10 @@ async fn import_creates_missing_wikilink_target_and_links_1446() {
     mat.shutdown();
 }
 
-/// #1446 Part B — an ambiguous `[[Name]]` (two same-space pages share the
-/// title) is left as plain text (never guess) and warns.
+/// #1446 Part B — a `[[Name]]` two same-space pages share the title of links
+/// the lowest id, and warns of nothing (#6278).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn import_ambiguous_wikilink_left_plain_1446() {
+async fn import_wikilink_two_pages_share_links_the_lowest_id_1446() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
@@ -11625,16 +11623,10 @@ async fn import_ambiguous_wikilink_left_plain_1446() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(
-        content, "ref to [[Dup Title]] stays plain",
-        "ambiguous wiki-link must stay literal text"
-    );
+    assert_eq!(content, format!("ref to [[{DUP1}]] stays plain"));
     assert!(
-        result
-            .warnings
-            .iter()
-            .any(|w| w.contains("Dup Title") && w.contains("multiple")),
-        "ambiguous wiki-link must surface a warning; got {:?}",
+        !result.warnings.iter().any(|w| w.contains("Dup Title")),
+        "nothing warns of the shared title; got {:?}",
         result.warnings
     );
 
@@ -11643,7 +11635,7 @@ async fn import_ambiguous_wikilink_left_plain_1446() {
 
 /// #2200 — the wiki-link pre-pass now snapshots resolution matches for ALL
 /// distinct link names in ONE query (no per-link N+1). This exercises a single
-/// import citing every branch at once — a UNIQUE match, an AMBIGUOUS
+/// import citing every branch at once — a UNIQUE match, a SHARED
 /// (duplicate-title) name, and an UNRESOLVED (missing → create) name — plus a
 /// CASE-SENSITIVITY probe, asserting each resolves BYTE-IDENTICALLY to the
 /// pre-batch per-name behavior.
@@ -11658,7 +11650,7 @@ async fn import_wikilink_batch_resolution_preserves_semantics_2200() {
     const UNIQUE: &str = "01AAAAAAAAAAAAAAAAAA2200UQ";
     insert_block(&pool, UNIQUE, "page", "Uniq Page", None, Some(1)).await;
     assign_to_space(&pool, UNIQUE, TEST_SPACE_ID).await;
-    // Two pages sharing a title → ambiguous.
+    // Two pages sharing a title → the lowest id holds it (#6278).
     const AMB1: &str = "01AAAAAAAAAAAAAAAAA2200AM1";
     const AMB2: &str = "01AAAAAAAAAAAAAAAAA2200AM2";
     insert_block(&pool, AMB1, "page", "Amb Page", None, Some(1)).await;
@@ -11696,7 +11688,7 @@ async fn import_wikilink_batch_resolution_preserves_semantics_2200() {
         "unique wiki-link must resolve to the existing target ULID"
     );
 
-    // AMBIGUOUS → left literal + warns.
+    // SHARED → rewritten to the lowest id, with no warning.
     let amb_content: String = sqlx::query_scalar(
         "SELECT content FROM blocks WHERE block_type = 'content' AND content LIKE 'ambiguous%'",
     )
@@ -11704,15 +11696,13 @@ async fn import_wikilink_batch_resolution_preserves_semantics_2200() {
     .await
     .unwrap();
     assert_eq!(
-        amb_content, "ambiguous [[Amb Page]]",
-        "ambiguous wiki-link must stay literal text"
+        amb_content,
+        format!("ambiguous [[{AMB1}]]"),
+        "a shared title must resolve to its lowest id"
     );
     assert!(
-        result
-            .warnings
-            .iter()
-            .any(|w| w.contains("Amb Page") && w.contains("multiple")),
-        "ambiguous wiki-link must surface a warning; got {:?}",
+        !result.warnings.iter().any(|w| w.contains("Amb Page")),
+        "a shared title warns of nothing; got {:?}",
         result.warnings
     );
 
@@ -11928,10 +11918,10 @@ async fn block_starting(pool: &SqlitePool, prefix: &str) -> String {
     .unwrap()
 }
 
-/// N4 — `[[name]]` resolves to the exact title, else a unique case-insensitive
-/// title, else a unique alias, else a new page; a case tie is never guessed.
+/// N4 — `[[name]]` resolves to the title under `name_key`, else an alias, else
+/// a new page; where several pages hold the name, its lowest id (#6278).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn import_resolves_a_name_by_exact_title_then_case_then_alias_then_creates() {
+async fn import_resolves_a_name_by_title_then_alias_then_creates() {
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let plan = dup_page(&pool, &mat, "Project Plan").await;
@@ -11940,7 +11930,7 @@ async fn import_resolves_a_name_by_exact_title_then_case_then_alias_then_creates
         .await
         .unwrap();
     let foo = dup_page(&pool, &mat, "Foo").await;
-    dup_twin_page(&pool, &mat, "foo").await;
+    let twin = dup_twin_page(&pool, &mat, "foo").await;
     settle(&mat).await;
 
     let result = import_file(
@@ -11949,7 +11939,7 @@ async fn import_resolves_a_name_by_exact_title_then_case_then_alias_then_creates
         dir.path(),
         "Notes.md",
         "- exact [[Project Plan]]\n- folded [[project plan]]\n- alias [[RM]]\n\
-         - tie [[FOO]]\n- exactcase [[Foo]]\n- fresh [[Brand New]]",
+         - tie [[FOO]]\n- spelled [[Foo]] [[foo]]\n- fresh [[Brand New]]",
     )
     .await;
 
@@ -11967,20 +11957,18 @@ async fn import_resolves_a_name_by_exact_title_then_case_then_alias_then_creates
         block_starting(&pool, "alias").await,
         format!("alias [[{roadmap}]]")
     );
-    assert_eq!(block_starting(&pool, "tie").await, "tie [[FOO]]");
-    assert!(
-        result
-            .warnings
-            .iter()
-            .any(|w| w.contains("[[FOO]]") && w.contains("multiple")),
-        "{:?}",
-        result.warnings
+    let holder = foo.as_str().min(twin.as_str());
+    assert_eq!(
+        block_starting(&pool, "tie").await,
+        format!("tie [[{holder}]]"),
+        "a case tie links the lowest id"
     );
+    assert!(result.warnings.is_empty(), "{:?}", result.warnings);
     assert_eq!(pages_titled(&pool, "FOO").await, Vec::<String>::new());
     assert_eq!(
-        block_starting(&pool, "exactcase").await,
-        format!("exactcase [[{foo}]]"),
-        "the exact spelling picks between the two"
+        block_starting(&pool, "spelled").await,
+        format!("spelled [[{holder}]] [[{holder}]]"),
+        "a page's own spelling of the name does not win it"
     );
     let fresh = pages_titled(&pool, "Brand New").await;
     assert_eq!(fresh.len(), 1);
@@ -11988,6 +11976,82 @@ async fn import_resolves_a_name_by_exact_title_then_case_then_alias_then_creates
         block_starting(&pool, "fresh").await,
         format!("fresh [[{}]]", fresh[0])
     );
+    mat.shutdown();
+}
+
+/// #6278 — a create of a name and a link to it meet one page, whichever
+/// spelling either uses: the create resolves by `name_key`, lowest id first,
+/// and an imported `[[name]]` links by the same rule, so neither takes the
+/// newer page for being spelled as typed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_create_and_an_imported_link_of_one_name_meet_the_same_page_6278() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let lower = dup_page(&pool, &mat, "foo").await;
+    let upper = dup_twin_page(&pool, &mat, "Foo").await;
+    settle(&mat).await;
+    let holder = lower.as_str().min(upper.as_str());
+
+    import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Notes.md",
+        "- link [[Foo]] [[foo]] [[ FOO ]]",
+    )
+    .await;
+
+    assert_eq!(
+        block_starting(&pool, "link").await,
+        format!("link [[{holder}]] [[{holder}]] [[{holder}]]")
+    );
+    for spelling in ["Foo", "foo", " FOO "] {
+        let created = create_page_in_space_inner(
+            &pool,
+            DEV,
+            &mat,
+            None,
+            spelling.into(),
+            TEST_SPACE_ID.into(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(created.as_str(), holder, "a create of {spelling:?}");
+    }
+    mat.shutdown();
+}
+
+/// #6278 — a title's edge whitespace is no part of its name (`name_key`, as a
+/// create compares it): a link to the name links the page whose title pads
+/// it, and creates no twin.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_links_the_page_whose_title_pads_the_name_6278() {
+    const PADDED: &str = "01J6278PADDEDT1T0000000001";
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    insert_block(&pool, PADDED, "page", "Weekly Review ", None, Some(1)).await;
+    assign_to_space(&pool, PADDED, TEST_SPACE_ID).await;
+
+    let result = import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Notes.md",
+        "- see [[weekly review]]",
+    )
+    .await;
+
+    assert_eq!(
+        block_starting(&pool, "see").await,
+        format!("see [[{PADDED}]]")
+    );
+    assert_eq!(
+        pages_titled(&pool, "weekly review").await,
+        Vec::<String>::new()
+    );
+    assert!(result.warnings.is_empty(), "{:?}", result.warnings);
     mat.shutdown();
 }
 

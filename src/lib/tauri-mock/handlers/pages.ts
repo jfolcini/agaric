@@ -1891,7 +1891,6 @@ export const pagesHandlers = {
         bullet.content = names.contents[i] as string
       })
       namesCreated.push(...names.created)
-      edit.warnings.push(...names.warnings)
     }
     opRefs.push(...placeSourceBullets(pageId, edit.t1, report))
     const marks = { set: 0, deleted: 0 }
@@ -2116,7 +2115,6 @@ export const pagesHandlers = {
     ]
     const names = spaceId ? resolveInboundNames(parsedLines, spaceId, []) : null
     const contentLines = names?.contents ?? parsedLines
-    warnings.push(...(names?.warnings ?? []))
 
     let blocksCreated = 0
     let position = nextDenseRank(pageId, null)

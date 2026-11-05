@@ -1,11 +1,10 @@
 /**
  * #5160 Phase 3a — the mock's name pass (`resolveInboundNames`), through the
  * commands that run it: `paste_blocks` and `apply_page_source`. The rule is the
- * backend's (N4): exact title, then a unique case-insensitive title, then a
- * unique alias, else a new page, and a case tie is never guessed; tags resolve
- * by normalised name. Everything is read back through the mock's stores;
- * backend parity for the paste is pinned by
- * `conformance/fixtures/paste_blocks.json`.
+ * backend's (N4): the title under `nameKey`, then an alias, else a new page,
+ * and where several pages hold the name, the lowest id (#6278); tags resolve by
+ * normalised name. Everything is read back through the mock's stores; backend
+ * parity for the paste is pinned by `conformance/fixtures/paste_blocks.json`.
  */
 
 import { readFileSync } from 'node:fs'
@@ -96,6 +95,36 @@ const { pageNameFoldCases } = JSON.parse(
   ),
 ) as { pageNameFoldCases: PageNameFoldCase[] }
 
+interface PageTieCase {
+  name: string
+  pages: Array<{ id: string; title: string; aliases?: string[] }>
+  link: string
+  holder: string
+}
+
+const { pageTieCases } = JSON.parse(
+  readFileSync(
+    path.resolve(import.meta.dirname, '../../../../conformance/reference-tokens.vectors.json'),
+    'utf8',
+  ),
+) as { pageTieCases: PageTieCase[] }
+
+// #6278 — the rows `page_tie_vectors_pin_the_lowest_id_as_the_page_a_shared_name_links`
+// reads in Rust.
+describe('paste_blocks links the lowest id of a name pages share (#6278)', () => {
+  it.each(pageTieCases.map((row) => [row.name, row] as const))('%s', (_name, row) => {
+    // The fixture's own `Foo` pages would join the tie.
+    blocks.delete(FOO)
+    blocks.delete(FOO_LOWER)
+    for (const p of row.pages) {
+      put(p.id, 'page', p.title, null)
+      if (p.aliases) pageAliases.set(p.id, p.aliases)
+    }
+    const rows = paste(ANCHOR, `- [[${row.link}]]`)
+    expect(rows.map((r) => [r.block_type, r.content])).toEqual([['content', `[[${row.holder}]]`]])
+  })
+})
+
 // #6052 — the rows `page_name_fold_vectors_pin_which_titles_a_link_names` reads in Rust.
 describe('paste_blocks folds a page name as the backend does (#6052)', () => {
   it.each(pageNameFoldCases.map((row) => [row.name, row] as const))('%s', (_name, row) => {
@@ -123,10 +152,10 @@ describe('paste_blocks resolves names in the anchor’s space (#5160 N4)', () =>
     expect(rows[1]?.content).toBe(`see [[${fresh.id}]]`)
   })
 
-  it('never guesses between two pages that differ only by case', () => {
-    const rows = paste(ANCHOR, '- tie [[FOO]] and exact [[Foo]]')
+  it('links the lowest id of two pages that differ only by case, whichever spelling is typed (#6278)', () => {
+    const rows = paste(ANCHOR, '- tie [[FOO]] and the higher id’s own spelling [[foo]]')
     expect(rows.map((r) => r.block_type)).toEqual(['content'])
-    expect(rows[0]?.content).toBe(`tie [[FOO]] and exact [[${FOO}]]`)
+    expect(rows[0]?.content).toBe(`tie [[${FOO}]] and the higher id’s own spelling [[${FOO}]]`)
     expect(livePages('FOO')).toHaveLength(0)
   })
 
@@ -180,18 +209,20 @@ describe('paste_blocks resolves names in the anchor’s space (#5160 N4)', () =>
     const c = rows[0] as Row
     expect(c.content).toBe('C')
     expect(rows[1]?.content).toBe(
-      `[[${ab}]] [[${ab}|see]] [[${ab}|see]] [[${ab}|x]] [[X | y|z]] [[${c.id}|D]] [[|e]]`,
+      `[[${ab}]] [[${ab}|see]] [[${ab}|see]] [[${ab}|x]] [[${id('XY')}|z]] [[${c.id}|D]] [[|e]]`,
     )
     expect(livePages('')).toHaveLength(0)
     expect(livePages('A')).toHaveLength(0)
     expect(livePages('X')).toHaveLength(0)
   })
 
-  it('leaves an anchored link whose whole title ties by case as text, as the backend does', () => {
+  it('links the lowest id an anchored link’s whole title ties on by case, as the backend does', () => {
     put(id('HASHLOWER'), 'page', 'page#h', null)
     put(id('HASHUPPER'), 'page', 'PAGE#h', null)
     const rows = paste(ANCHOR, '- see [[Page#h]]')
-    expect(rows.map((r) => [r.block_type, r.content])).toEqual([['content', 'see [[Page#h]]']])
+    expect(rows.map((r) => [r.block_type, r.content])).toEqual([
+      ['content', `see [[${id('HASHLOWER')}]]`],
+    ])
     expect(livePages('Page')).toHaveLength(0)
   })
 
