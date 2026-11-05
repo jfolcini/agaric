@@ -128,18 +128,18 @@ fn yaml_scalar_is_plain_safe(value: &str) -> bool {
 /// re-imports to the byte-identical `value`. Three shapes, in agreement with
 /// the import-side `parse_frontmatter` grammar:
 ///
-/// * `value` contains a newline → a YAML **literal block scalar** (`key: |`
+/// * `value` contains a newline and no carriage return → a YAML **literal
+///   block scalar** (`key: |`
 ///   then each line indented two spaces). `parse_frontmatter` re-joins the
 ///   literal-block lines with `\n` after stripping the uniform two-space
 ///   content indent, recovering `value` exactly. This is the shape that stops
 ///   an embedded `\n---` from breaking out of the frontmatter fence, or an
 ///   embedded `\nkey: v` from injecting a spurious property (#2715).
-/// * single-line but not [`yaml_scalar_is_plain_safe`] → a **double-quoted**
-///   scalar, emitted WITHOUT escaping the interior. The import-side inverse
-///   ([`strip_yaml_quotes`](agaric_core::text_utils::strip_yaml_quotes))
-///   removes exactly the outer quote pair and decodes nothing, so a verbatim
-///   double-wrapped value round-trips for ANY single-line interior — colons,
-///   quotes, backslashes, a leading `---`, surrounding spaces.
+/// * otherwise, unless [`yaml_scalar_is_plain_safe`] → a **double-quoted**
+///   scalar whose `\\`, `\r` and `\n` are YAML escapes and whose quotes stay
+///   as written. The importer takes off the outer quote pair and decodes those
+///   three escapes, so the value round-trips for any interior, and a carriage
+///   return never reaches the buffer as a line end (#6325).
 /// * otherwise → verbatim `key: value`.
 ///
 /// NOTE (reconciliation): the importer's block-scalar reader auto-detects the
@@ -149,7 +149,7 @@ fn yaml_scalar_is_plain_safe(value: &str) -> bool {
 /// whitespace; such values are pathological for a page property and are not a
 /// regression target here.
 pub(crate) fn yaml_scalar_emit(key: &str, value: &str) -> String {
-    if value.contains('\n') {
+    if value.contains('\n') && !value.contains('\r') {
         let mut out = format!("{key}: |\n");
         for line in value.split('\n') {
             out.push_str("  ");
@@ -160,7 +160,11 @@ pub(crate) fn yaml_scalar_emit(key: &str, value: &str) -> String {
     } else if yaml_scalar_is_plain_safe(value) {
         format!("{key}: {value}\n")
     } else {
-        format!("{key}: \"{value}\"\n")
+        let escaped = value
+            .replace('\\', "\\\\")
+            .replace('\r', "\\r")
+            .replace('\n', "\\n");
+        format!("{key}: \"{escaped}\"\n")
     }
 }
 
