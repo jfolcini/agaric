@@ -72,7 +72,7 @@ async fn test_pool() -> (SqlitePool, TempDir) {
 
 Bind `let (pool, _dir) = test_pool().await;`: `let (pool, _) = …` drops the `TempDir` at once and the SQLite file vanishes. Split read/write pools: `test_pools()` in `src-tauri/src/db/tests.rs`.
 
-A test or proptest that builds many pools copies a per-process migrated template instead, `init_pool_from_template` (`commands::tests::common`) or `test_pool_from_template` (`src-tauri/agaric-store/src/test_support.rs`): migrating is most of what a fresh pool costs.
+Every test `init_pool` gives a new file a copy of a migrated template that lives on disk (`seed_from_migrated_template`, `src-tauri/agaric-store/src/test_support.rs`), because migrating is most of what a fresh pool costs and nextest runs each test in its own process. A test that builds many pools needs nothing extra.
 
 ### Async attribute
 

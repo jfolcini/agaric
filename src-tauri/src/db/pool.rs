@@ -547,6 +547,9 @@ async fn open_read_pool(db_path: &Path) -> Result<SqlitePool, agaric_core::error
 /// `query_only` pragma rejects accidental writes through the read
 /// pool at the SQLite engine level.
 pub async fn init_pool(db_path: &Path) -> Result<SqlitePool, agaric_core::error::AppError> {
+    #[cfg(feature = "test-util")]
+    agaric_store::test_support::seed_from_migrated_template(db_path).await;
+
     let connect_options = base_connect_options(db_path);
 
     let pool = SqlitePoolOptions::new()
