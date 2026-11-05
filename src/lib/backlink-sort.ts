@@ -7,7 +7,7 @@
 
 import type { BacklinkSort, PropertyDefinition, SortDir } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS, isSortablePropertyType } from '@/lib/block-utils'
-import { NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
+import { APP_MANAGED_BUILTIN_KEYS } from '@/lib/property-save-utils'
 
 /** The backend's order when no sort is sent: creation time, oldest first. */
 export const DEFAULT_BACKLINK_SORT: BacklinkSort = { type: 'Created', dir: 'Asc' }
@@ -66,7 +66,7 @@ export function propertySortFields(defs: readonly PropertyDefinition[]): Propert
       (def) =>
         isSortablePropertyType(def.value_type) &&
         !INTERNAL_PROPERTY_KEYS.has(def.key) &&
-        !NON_DELETABLE_PROPERTIES.has(def.key),
+        !APP_MANAGED_BUILTIN_KEYS.has(def.key),
     )
     .map((def) => {
       const key = def.key

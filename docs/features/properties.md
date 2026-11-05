@@ -29,10 +29,13 @@ These back specific features. Their definitions are fixed: the same in every vau
 | `scheduled_date` | Date | Agenda Due panel; date-property colour |
 | `completed_at` | Date | Done panel; Agenda filter |
 | `created_at` | Date | Agenda filter; History timestamps |
+| `meeting_date` | Date | A meeting page's date, so *meetings in October* is a date range in Advanced Query |
 
 The repeat properties below, the list style (`listStyle`: bullet / ordered) and the space keys (`space`, `is_space`) are built in too.
 
 A block that holds a priority level or task state from before these options were fixed keeps it, and an out-of-range priority shows a neutral badge and sorts after the three levels. Writing such a value again is refused.
+
+A space that defined `meeting_date` itself before it was built in sees the built-in Date instead; a value it holds that is not a date shows among the values that don't fit.
 
 A new vault also starts with a few ordinary definitions you can edit or delete: `status`, `url`, `effort`, `assignee` and `location`. The `due` definition, which duplicated `due_date`, is gone from every vault; a value a block holds under `due` stays, as an undeclared property.
 

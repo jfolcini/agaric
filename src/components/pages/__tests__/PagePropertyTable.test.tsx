@@ -2290,3 +2290,22 @@ describe("PagePropertyTable values that don't fit against the real tauri-mock (#
     })
   })
 })
+
+// #5364: `meeting_date` is a built-in the user sets by hand, so the popover
+// offers it, while the app's own built-ins stay out.
+describe('PagePropertyTable offers the user-set built-ins', () => {
+  it('lists meeting_date in the add-property popover but not repeat-until', async () => {
+    setupMock(
+      [],
+      [
+        { ...makeDef('meeting_date', 'date'), builtin: true },
+        { ...makeDef('repeat-until', 'date'), builtin: true },
+      ],
+    )
+
+    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+
+    expect(await screen.findByText('Meeting Date')).toBeInTheDocument()
+    expect(screen.queryByText('Repeat Until')).not.toBeInTheDocument()
+  })
+})

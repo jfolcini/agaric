@@ -12,7 +12,7 @@
 
 import type { BlockRow, PropertyRow } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
-import { NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
+import { APP_MANAGED_BUILTIN_KEYS } from '@/lib/property-save-utils'
 
 /** Prefix that marks a custom-property column key, keeping it distinct from
  * `BlockRow` field keys (so a custom property literally named `content` or
@@ -23,7 +23,7 @@ export const CUSTOM_COLUMN_PREFIX = 'prop:'
  * shown as `KNOWN_PROPERTY_KEYS`), the app's bookkeeping keys, and the space
  * membership. */
 const EXCLUDED_COLUMN_KEYS: ReadonlySet<string> = new Set<string>([
-  ...NON_DELETABLE_PROPERTIES,
+  ...APP_MANAGED_BUILTIN_KEYS,
   ...INTERNAL_PROPERTY_KEYS,
 ])
 
