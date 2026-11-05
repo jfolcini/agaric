@@ -2979,7 +2979,7 @@ fn indent_columns(line: &str) -> usize {
 /// it (#2716). Leading whitespace and backslashes are looked past, so the
 /// escape is injective: `\- x` is escaped again rather than losing its
 /// backslash on the way back.
-pub fn continuation_line_is_ambiguous(line: &str) -> bool {
+fn continuation_line_is_ambiguous(line: &str) -> bool {
     let body = line.trim_start_matches(|c: char| c.is_whitespace() || c == '\\');
     is_bullet_line(body) || heading_level(body).is_some() || line_is_property_shaped(body)
 }
@@ -2997,7 +2997,7 @@ fn needs_planning_line_escape(line: &str) -> bool {
 /// a block, so it does not read as a blank line, which would end the block or
 /// be dropped: it holds nothing but whitespace and backslashes. A line holding
 /// only `\` is an interior blank line (#5691 D4). Injective as
-/// [`continuation_line_is_ambiguous`] is.
+/// `continuation_line_is_ambiguous` is.
 pub fn needs_blank_line_escape(line: &str) -> bool {
     line.trim_start_matches(|c: char| c.is_whitespace() || c == '\\')
         .is_empty()
@@ -3006,9 +3006,9 @@ pub fn needs_blank_line_escape(line: &str) -> bool {
 /// `true` when a Document buffer must backslash-escape `line`, a line inside a
 /// block and outside a fence, so it reads back as that line of the block: it
 /// would read as blank ([`needs_blank_line_escape`]), as a list item or a
-/// property ([`continuation_line_is_ambiguous`]), or as a heading, a fence or
+/// property (`continuation_line_is_ambiguous`), or as a heading, a fence or
 /// a thematic break, each of which starts a block of its own (#5691 D1 as
-/// amended). Injective as [`continuation_line_is_ambiguous`] is.
+/// amended). Injective as `continuation_line_is_ambiguous` is.
 pub fn needs_document_line_escape(line: &str) -> bool {
     let body = line.trim_start_matches(|c: char| c.is_whitespace() || c == '\\');
     needs_blank_line_escape(line)

@@ -656,15 +656,16 @@ export class DocumentLayout {
    * none. A plain block is bare at the top, but a `+` item under any block,
    * where an indented bare line would continue a list block (D4) and read as
    * code to other tools past four columns (decision 2, #6277), and where
-   * `opensRule`, a first block opening the buffer with `---`, which would open
-   * front matter. A bare parent's children sit two columns in, the `+ `
-   * marker's width.
+   * `opensMisread`, a first block an import would misread bare: one opening
+   * the buffer with `---`, which would open front matter, or a file with `# `,
+   * which a file import takes for the page's title. A bare parent's children
+   * sit two columns in, the `+ ` marker's width.
    */
   place(
     depth: number,
     listMarker: string,
     todoState: string | null,
-    opensRule: boolean,
+    opensMisread: boolean,
   ): DocumentPlace {
     if (this.open.length > depth) this.open.length = depth
     const parent = this.open.at(-1)
@@ -673,7 +674,7 @@ export class DocumentLayout {
     let marker = ''
     if (checkbox !== null) marker = '- '
     else if (todoState === null && listMarker !== '') marker = listMarker
-    else if (parent !== undefined || opensRule) marker = '+ '
+    else if (parent !== undefined || opensMisread) marker = '+ '
     const marked = marker !== ''
     const blank = this.previous !== null && !(this.previous && marked)
     this.previous = marked

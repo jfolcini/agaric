@@ -1054,7 +1054,8 @@ fn render_block(
     let content = block.content.as_deref().unwrap_or("");
     let list_marker = list_marker_for(&id, list_styles, list_ordinals);
     let task_marker = task_marker(block);
-    let (indent, list_marker, prop_indent) = layout.place(output, block, depth, list_marker);
+    let file = matches!(mode, RenderMode::Export | RenderMode::File);
+    let (indent, list_marker, prop_indent) = layout.place(output, block, depth, list_marker, file);
     match mode {
         RenderMode::Export => {
             push_export_bullet(output, block, &indent, &list_marker, &task_marker, data);
@@ -1156,7 +1157,11 @@ impl DocumentLayout {
     /// has no marker. A plain block is bare at the top, but a `+` item under
     /// any block, where an indented bare line would continue a list block (D4)
     /// and read as code to other tools past four columns (decision 2, #6277),
-    /// and where it opens the buffer with `---`, which would open front matter.
+    /// where it opens the buffer with `---`, which would open front matter,
+    /// and where it is the first block of a `file` (an export or the mirror's)
+    /// and opens with `# `, which an import takes for the page's title
+    /// (`import::strip_title_heading`) or, over `---` lines, for an older
+    /// export's title over its front matter.
     /// A bare parent's children sit two columns in, the `+ ` marker's width.
     fn place(
         &mut self,
@@ -1164,19 +1169,18 @@ impl DocumentLayout {
         block: &BlockRow,
         depth: usize,
         list_marker: String,
+        file: bool,
     ) -> (String, String, String) {
         self.open.truncate(depth);
         let parent = self.open.last().copied();
         let column = parent.unwrap_or(0);
-        let opens_rule = output.is_empty()
-            && block
-                .content
-                .as_deref()
-                .is_some_and(|c| c.starts_with("---"));
+        let content = block.content.as_deref().unwrap_or("");
+        let opens_misread = (output.is_empty() && content.starts_with("---"))
+            || (file && self.previous_marked.is_none() && content.starts_with("# "));
         let marker = match block.todo_state.as_deref() {
             Some(state) if import::task_marker_for(state).is_some() => "- ".to_string(),
             None if !list_marker.is_empty() => list_marker,
-            _ if parent.is_some() || opens_rule => "+ ".to_string(),
+            _ if parent.is_some() || opens_misread => "+ ".to_string(),
             _ => String::new(),
         };
         let marked = !marker.is_empty();
@@ -1493,8 +1497,8 @@ fn group_children_by_parent<'a>(
 ///
 /// The block tree is laid out on its own, as if it opened the file: an import
 /// drops the `# Title` line before it (`import::strip_title_heading`), and so
-/// does a ZIP, so a first block opening with `---` is a `+` item there too,
-/// not front matter ([`DocumentLayout::place`]).
+/// does a ZIP, so a first block opening with `---` or `# ` is a `+` item there
+/// too, not front matter or the title ([`DocumentLayout::place`]).
 fn render_page_markdown(page_id: &str, data: &PageExportData) -> String {
     let mut output = String::new();
     render_page_head(&mut output, data);

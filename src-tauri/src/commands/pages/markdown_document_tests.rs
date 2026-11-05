@@ -421,6 +421,40 @@ fn an_export_ends_a_blocks_open_fence_with_its_anchor() {
     assert_eq!(read, expected, "md:\n{md}");
 }
 
+/// A file's first block that opens with `# ` reads back as written, from the
+/// export, the export less its title line as a ZIP writes it, and the mirror's
+/// file (#6277 E2): an import takes a bare `# Title` there for the page's title
+/// (`import::strip_title_heading`), and a bare heading over `---` rules for an
+/// older export's title over its front matter.
+#[test]
+fn a_file_opening_with_a_heading_imports_back_to_its_blocks() {
+    let pages: [&[&str]; 2] = [
+        &["# Title", "Intro"],
+        &["# Weekly sync", "---", "Date: 2026-11-05", "---", "Agenda"],
+    ];
+    let mut lost = Vec::new();
+    for contents in pages {
+        let ids = ["A", "B", "C", "D", "E"].map(|tail| format!("01J0000000000000000000000{tail}"));
+        let rows = contents
+            .iter()
+            .zip(&ids)
+            .zip(1..)
+            .map(|((content, id), position)| row(id, PAGE, position, content))
+            .collect();
+        let data = page_data(rows);
+        let export = render_page_markdown(PAGE, &data);
+        let zip = export.replacen("# Title\n\n", "", 1);
+        for md in [export, zip, render_page_file(&data).text] {
+            let read = import_as_markdown_file(&md);
+            let blocks: Vec<String> = read.blocks.into_iter().map(|b| b.content).collect();
+            if blocks != contents || !read.frontmatter.is_empty() {
+                lost.push((md, blocks, read.frontmatter));
+            }
+        }
+    }
+    assert!(lost.is_empty(), "{lost:#?}");
+}
+
 /// `md`, a page's export, read as a file import reads a `Markdown` file named
 /// after the page.
 fn import_as_markdown_file(md: &str) -> import::ParseOutput {

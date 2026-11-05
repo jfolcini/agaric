@@ -3050,6 +3050,26 @@ describe('export_page_markdown', () => {
 
     expect(children).toContain(content)
   })
+
+  // A first block repeating the title is a `+` item, so the file a ZIP writes,
+  // with no title line, still imports it as a block (#6277 E2).
+  it('round-trips a first block that repeats the title through a ZIP file', () => {
+    blocks.set('PLAN_PAGE', makeBlock('PLAN_PAGE', 'page', 'Plan', null, 92))
+    blocks.set('PLAN_HEAD', makeBlock('PLAN_HEAD', 'content', '# Plan', 'PLAN_PAGE', 1))
+    blocks.set('PLAN_BODY', makeBlock('PLAN_BODY', 'content', 'Intro', 'PLAN_PAGE', 2))
+    const md = invoke('export_page_markdown', { pageId: 'PLAN_PAGE' }) as string
+    const zipped = md.replace('# Plan\n\n', '')
+    const { page_id } = invoke('import_markdown', {
+      content: zipped,
+      filename: 'Plan.md',
+      spaceId: 'SPACE_PERSONAL',
+    }) as { page_id: string }
+    const children = (
+      invoke('list_blocks', { parentId: page_id }) as { items: Record<string, unknown>[] }
+    ).items.map((b) => b['content'])
+
+    expect(children).toEqual(['# Plan', 'Intro'])
+  })
 })
 
 // ---------------------------------------------------------------------------

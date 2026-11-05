@@ -8176,8 +8176,9 @@ async fn import_markdown_due_date_stores_as_date() {
     mat.shutdown();
 }
 
+/// A file with no name imports as one page titled `Imported Page`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn import_markdown_strips_block_refs() {
+async fn import_markdown_without_a_filename_titles_the_page_imported_page() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
@@ -8197,10 +8198,7 @@ async fn import_markdown_strips_block_refs() {
     .await
     .unwrap();
 
-    assert_eq!(
-        result.blocks_created, 1,
-        "should create 1 block after stripping refs"
-    );
+    assert_eq!(result.blocks_created, 1, "one block");
     assert_eq!(
         result.page_title, "Imported Page",
         "default page title should be used"
@@ -12461,7 +12459,8 @@ async fn import_reads_a_bare_wikilink_as_the_vault_note_of_that_name() {
 /// Every Markdown source reads as paste and Edit as Markdown read (decision 1,
 /// #6277): one note, `# Plan\nIntro\n- milk\n* [x] done`, as each front end
 /// sends it, is four blocks under the page: a heading that owns nothing, a
-/// paragraph, a bulleted block and a task with no list style.
+/// paragraph, a bulleted block and a task with no list style. A `key::` line
+/// before them, as a Notion export's properties come, is the page's property.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn every_markdown_source_stores_a_note_as_the_document_reader_reads_it() {
     const NOTE: &str = "# Plan\nIntro\n- milk\n* [x] done";
@@ -12469,8 +12468,14 @@ async fn every_markdown_source_stores_a_note_as_the_document_reader_reads_it() {
     let sources: [(&str, &str, String, Option<Vec<String>>); 5] = [
         ("plain", "notes.md", NOTE.into(), None),
         ("Obsidian", "notes.md", NOTE.into(), folder.clone()),
-        // `notionToMarkdown` keeps a heading other than the title, then a blank line.
-        ("Notion", "notes.md", NOTE.replacen('\n', "\n\n", 1), folder),
+        // `notionToMarkdown` writes the page's properties as `key::` lines, then
+        // a heading other than the title and a blank line.
+        (
+            "Notion",
+            "notes.md",
+            format!("status:: Done\n\n{}", NOTE.replacen('\n', "\n\n", 1)),
+            folder,
+        ),
         // `enexNoteToMarkdown` and `jexNoteToMarkdown` lead with front matter.
         (
             "Evernote",
@@ -12508,6 +12513,15 @@ async fn every_markdown_source_stores_a_note_as_the_document_reader_reads_it() {
         settle(&mat).await;
 
         let page = BlockId::from_trusted(&result.page_id);
+        let status: Option<String> = sqlx::query_scalar(
+            "SELECT value_text FROM block_properties WHERE block_id = ? AND key = 'status'",
+        )
+        .bind(page.as_str())
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        let expected = (source == "Notion").then(|| "Done".to_string());
+        assert_eq!(status, expected, "{source}: the page's properties");
         let children = dup_children(&pool, &page).await;
         let contents: Vec<&str> = children.iter().map(|(_, text)| text.as_str()).collect();
         assert_eq!(contents, ["# Plan", "Intro", "milk", "done"], "{source}");

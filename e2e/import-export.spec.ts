@@ -637,11 +637,13 @@ test.describe('Round-trip fidelity @markdown', () => {
     // The export header is the (filename-derived) page title (#1919).
     expect(exportedMd).toMatch(/^# round-trip\n\n/)
     // The original `# Round Trip Test` heading is now ordinary content, so it
-    // round-trips as a heading block rather than the page title, and the body
-    // content still round-trips faithfully. The mock stamps no list style, so
-    // its blocks come back as paragraphs.
+    // round-trips as a heading block rather than the page title, written as a
+    // `+` item, being the first block, so a file without the title line does
+    // not read it as the title (#6277 E2), and the body content still
+    // round-trips faithfully. The mock stamps no list style, so its blocks come
+    // back as paragraphs.
     expect(exportedBlockLines(exportedMd)).toEqual([
-      '# Round Trip Test',
+      '+ # Round Trip Test',
       'Alpha block',
       'Beta block',
       'Gamma block',

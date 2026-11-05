@@ -232,9 +232,12 @@ function renderPageDocument(pid: string, exported = false): { source: string; id
       const style = storedListStyle(id)
       run = style === 'ordered' && todo === null ? run + 1 : 0
       const listMarker = style === null ? '' : style === 'bullet' ? '- ' : `${run}. `
-      const opensRule =
-        (exported || front === '') && lines.length === 0 && content.startsWith('---')
-      const place = layout.place(depth, listMarker, todo, opensRule)
+      const opensMisread =
+        lines.length === 0 &&
+        (content.startsWith('---')
+          ? exported || front === ''
+          : exported && content.startsWith('# '))
+      const place = layout.place(depth, listMarker, todo, opensMisread)
       if (place.blank) lines.push('')
       if (exported) pushDocumentLines(lines, place.indent, place.marker, place.taskMarker, content)
       else
