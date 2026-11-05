@@ -856,6 +856,13 @@ describe('tauri-mock apply_page_source front matter (#5160 S8)', () => {
     expect(pageKeys()).toEqual({ stage: 'open', template: 'x' })
   })
 
+  it('reads the backslash, return and newline escapes of a double-quoted value (#6325)', () => {
+    const report = apply(source().replace('stage: open', 'stage: "a\\r\\nb \\\\r \\t"'))
+
+    expect(report).toMatchObject({ properties_set: 1 })
+    expect(pageKeys()).toEqual({ stage: 'a\r\nb \\r \\t', template: 'x' })
+  })
+
   it('refuses unreadable front matter or a refused value by its line, writing nothing', () => {
     const typed = (line: string) => source().replace('stage: open\n', `stage: open\n${line}\n`)
 

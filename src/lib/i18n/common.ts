@@ -398,6 +398,11 @@ export const common: Record<string, string> = {
   'data.importJexButton': 'Import Joplin (.jex)',
   // #2513 (part 2) — a `.jex` archive whose tar could not be read / had no notes.
   'data.importJexParseFailed': 'Could not read {{name}}: not a valid Joplin export.',
+  // #6032 — Evernote note links whose text names no note of their file.
+  'data.importEnexNoteLinks_one':
+    '{{count}} Evernote note link stays an Evernote link: its text names no note in its file.',
+  'data.importEnexNoteLinks_other':
+    '{{count}} Evernote note links stay Evernote links: their text names no note in their file.',
   // #2513 (part 2) — items skipped during a `.jex` import (encrypted or
   // unreadable metadata), surfaced as a soft warning in the result panel.
   'data.importJexSkipped_one': 'Skipped {{count}} unreadable or encrypted item.',

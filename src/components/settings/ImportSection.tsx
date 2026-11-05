@@ -25,7 +25,7 @@ import { type FailedFile, useImportRunner } from '@/components/settings/useImpor
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { SettingRow } from '@/components/ui/setting-row'
-import { parseEnex } from '@/lib/enex-import'
+import { countEvernoteNoteLinks, parseEnex } from '@/lib/enex-import'
 import { formatBytes } from '@/lib/format'
 import { NOTE_EXTENSIONS } from '@/lib/import-attachments'
 import { parseJex } from '@/lib/jex-import'
@@ -216,9 +216,12 @@ export function ImportSection(): React.ReactElement {
       const parseFailures: FailedFile[] = []
       // Flatten every note across every picked file into a single unit list.
       const units: ImportUnit[] = []
+      let noteLinks = 0
       for (const file of fileArray) {
         try {
-          units.push(...enexNotesToUnits(parseEnex(await file.text()), file.name))
+          const notes = parseEnex(await file.text(), file.name)
+          noteLinks += countEvernoteNoteLinks(notes)
+          units.push(...enexNotesToUnits(notes, file.name))
         } catch (err) {
           logger.error(
             'DataSettingsTab',
@@ -237,6 +240,7 @@ export function ImportSection(): React.ReactElement {
         units,
         notes: true,
         loggerFailLabel: 'enex note failed',
+        initialWarnings: noteLinks > 0 ? [t('data.importEnexNoteLinks', { count: noteLinks })] : [],
         initialFailures: parseFailures,
       })
 

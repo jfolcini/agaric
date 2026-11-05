@@ -40,8 +40,16 @@ export function renderImage(node: ImageNode, key: string, ctx: RenderContext): R
   // (#6342), and has no fold toggle: a click on it is the link's.
   const link = node.marks?.[0]
   if (link) {
-    const image = <GatedImage src={node.attrs.src} alt={text} width={width} />
-    return <span key={key}>{applyLinkMark(image, link, ctx, key)}</span>
+    return (
+      <span key={key}>
+        <GatedImage
+          src={node.attrs.src}
+          alt={text}
+          width={width}
+          link={(content) => applyLinkMark(content, link, ctx, key)}
+        />
+      </span>
+    )
   }
   if (ctx.interactive !== true) {
     return <GatedImage key={key} src={node.attrs.src} alt={text} width={width} />
