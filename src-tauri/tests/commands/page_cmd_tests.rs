@@ -5872,6 +5872,65 @@ async fn copy_tree(pool: &SqlitePool, mat: &Materializer) -> [BlockId; 6] {
     [a, a1, a1x, a2, b, c]
 }
 
+/// #6277 E4 — the page copy, Export as Markdown, pasted into another page is
+/// the page's title as one `# Title` heading, then its blocks: its front
+/// matter reads as no block, where it was two `---` rules and an `aliases:`
+/// paragraph.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "red until the paste reader drops a front matter block at byte 0 (#6277 E4), \
+            which lands in agaric-engine/src/import.rs"]
+async fn a_page_copy_pastes_as_its_title_heading_and_its_blocks_6277() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Plan").await;
+    set_page_aliases_inner(&pool, DEV, &mat, page.as_str(), vec!["Plan B".into()])
+        .await
+        .unwrap();
+    let milk = dup_child(&pool, &mat, &page, "milk").await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        milk.as_str().into(),
+        "listStyle".into(),
+        Some("bullet".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    dup_child(&pool, &mat, &milk, "two litres").await;
+    dup_child(&pool, &mat, &page, "intro").await;
+    let dest = dup_page(&pool, &mat, "Dest").await;
+    let anchor = dup_child(&pool, &mat, &dest, "the anchor").await;
+    settle(&mat).await;
+    let copy = export_page_markdown_inner(&pool, page.as_str())
+        .await
+        .unwrap();
+    assert!(
+        copy.starts_with("---\naliases: [Plan B]\n---\n\n# Plan\n"),
+        "{copy}"
+    );
+
+    let rows = paste(&pool, &mat, &anchor, paste_text(&copy)).await;
+
+    let contents =
+        |rows: Vec<(String, String)>| rows.into_iter().map(|(_, c)| c).collect::<Vec<_>>();
+    assert_eq!(
+        contents(dup_children(&pool, &dest).await),
+        ["the anchor", "# Plan", "milk", "intro"],
+        "copy:\n{copy}"
+    );
+    let pasted_milk = BlockId::from_trusted(rows[1].id.as_str());
+    assert_eq!(
+        contents(dup_children(&pool, &pasted_milk).await),
+        ["two litres"]
+    );
+}
+
 /// The names come from the page's space in the database, as in the page's
 /// source buffer, and a block needing no `^ID` gets none. The copy is written
 /// in the Document dialect a paste reads (#6190): a plain block is bare.

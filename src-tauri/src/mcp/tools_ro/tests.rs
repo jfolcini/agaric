@@ -3533,10 +3533,11 @@ async fn get_block_without_properties_tags_or_aliases_returns_empty_arrays_5377(
 // #5375 — `get_page_markdown`
 // -------------------------------------------------------------------
 
-/// The page as an agent reads it: the front matter, the title, a link as the
-/// linked page's title, and the block's `^ID`. The id is accepted in lower
-/// case and echoed canonical, and the activity summary has the id prefix and
-/// the line count, never the text.
+/// The page as an agent reads it (#6277 E4): its title as a field, then the
+/// buffer, the front matter, a link as the linked page's title, which reads
+/// back to it, and the block's `^ID`. The id is accepted in lower case and
+/// echoed canonical, and the activity summary has the id prefix and the line
+/// count, never the text.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_page_markdown_happy_path_5375() {
     let (tools, mat, _dir) = mk_tools().await;
@@ -3591,16 +3592,17 @@ async fn get_page_markdown_happy_path_5375() {
         .await
         .expect("happy path");
     assert_eq!(result["page_id"], page.id.as_str());
+    assert_eq!(result["title"], "Plan");
     assert_eq!(
         result["markdown"],
         format!(
-            "---\naliases: [Plan B]\n---\n\n# Plan\n\nsee [[Other]] ^{}\n",
+            "---\naliases: [Plan B]\n---\n\nsee [[Other]] ^{}\n",
             child.id.as_str()
         )
     );
     assert_eq!(
         crate::mcp::summarise::summarise("get_page_markdown", &args, &result),
-        format!("get_page_markdown — {} (7 lines)", &page.id.as_str()[..8])
+        format!("get_page_markdown — {} (5 lines)", &page.id.as_str()[..8])
     );
 }
 
@@ -3954,10 +3956,11 @@ async fn get_journal_reads_a_day_and_never_creates_one_5396() {
     let space = mk_space(&tools.pool, "S").await;
     let page = mk_day(&tools, &mat, &space, "2026-03-01", 1).await;
     settle(&mat).await;
-    let markdown = get_page_for_agent_inner(&tools.pool, page.as_str())
+    let markdown = get_page_buffer_inner(&tools.pool, page.as_str())
         .await
-        .unwrap();
-    assert!(markdown.contains("\nnote 0 ^"), "got {markdown:?}");
+        .unwrap()
+        .source;
+    assert!(markdown.starts_with("note 0 ^"), "got {markdown:?}");
 
     for (date, today) in [(None, "2026-03-01"), (Some("yesterday"), "2026-03-02")] {
         let mut args = json!({ "space_id": space.to_lowercase() });
@@ -5112,8 +5115,8 @@ async fn list_backlinks_stops_at_the_byte_cap_and_continues_5402() {
     );
 }
 
-/// Read in turn, the stretches are the whole page; the first carries the
-/// title with its block; a cursor whose block left the page is refused.
+/// Read in turn, the stretches are the page's buffer; each carries the title;
+/// a cursor whose block left the page is refused.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_page_markdown_stops_at_the_byte_cap_and_continues_5402() {
     let (tools, mat, _dir) = mk_tools().await;
@@ -5121,7 +5124,10 @@ async fn get_page_markdown_stops_at_the_byte_cap_and_continues_5402() {
         mk_page_of_sizes(&tools, &mat, "Big", &[OVER_CAP, HALF_CAP, HALF_CAP]).await;
     settle(&mat).await;
     crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
-    let whole = get_page_for_agent_inner(&tools.pool, &page).await.unwrap();
+    let whole = get_page_buffer_inner(&tools.pool, &page)
+        .await
+        .unwrap()
+        .source;
 
     let args = json!({"page_id": page, "space_id": TEST_SPACE_ID});
     let first = tools
@@ -5143,7 +5149,10 @@ async fn get_page_markdown_stops_at_the_byte_cap_and_continues_5402() {
         [&json!(false), &Value::Null]
     );
     let first_md = first["markdown"].as_str().unwrap();
-    assert!(first_md.starts_with("# Big\n"), "got {first_md:.40}");
+    assert_eq!(
+        [&first["title"], &rest["title"]],
+        [&json!("Big"), &json!("Big")]
+    );
     assert_eq!(
         format!("{first_md}{}", rest["markdown"].as_str().unwrap()),
         whole
@@ -5234,7 +5243,7 @@ async fn get_page_markdown_writes_list_blocks_as_append_markdown_reads_them_6190
     assert_eq!(
         result["markdown"],
         format!(
-            "# P\n\nintro ^{intro}\n\n- x ^{x}\n  + y ^{y}\n1. one ^{one}\n2. two ^{two}\n\n\
+            "intro ^{intro}\n\n- x ^{x}\n  + y ^{y}\n1. one ^{one}\n2. two ^{two}\n\n\
              outro ^{outro}\n"
         ),
         "each block as append_markdown reads it, with its `^ID`"
@@ -5248,18 +5257,20 @@ async fn get_page_markdown_writes_list_blocks_as_append_markdown_reads_them_6190
 async fn get_page_markdown_stretches_cut_mid_list_are_the_uncut_page_6190() {
     let (tools, mat, _dir) = mk_tools().await;
     let (page, ids) = mk_list_page(&tools, &mat).await;
-    let whole = get_page_for_agent_inner(&tools.pool, &page).await.unwrap();
+    let whole = get_page_buffer_inner(&tools.pool, &page)
+        .await
+        .unwrap()
+        .source;
 
     let mut stretches = Vec::new();
     let mut cursor: Option<String> = None;
     loop {
         // One block a stretch: a stretch is never short of one block.
-        let (markdown, next) =
-            get_page_for_agent_paged_inner(&tools.pool, &page, cursor.as_deref(), 1)
-                .await
-                .unwrap();
-        stretches.push(markdown);
-        match next {
+        let read = get_page_for_agent_inner(&tools.pool, &page, cursor.as_deref(), 1)
+            .await
+            .unwrap();
+        stretches.push(read.markdown);
+        match read.next_cursor {
             Some(next) => cursor = Some(next),
             None => break,
         }
