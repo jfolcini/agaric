@@ -874,7 +874,7 @@ describe('parse — tilde fences and `***` / `___` rules, as Rust reads them (#6
   })
 
   it("a `~~~` fence's info string may hold backticks, which a backtick fence's may not", () => {
-    expect(parse('~~~ a`b\ncode\n~~~')).toEqual(doc(codeBlock('code')))
+    expect(parse('~~~ a`b\ncode\n~~~')).toEqual(doc(codeBlock('code', 'a`b')))
     expect(parse('``` a`b')).toEqual(doc(paragraph(text('``` a`b'))))
   })
 

@@ -2911,6 +2911,32 @@ pub struct PasteSplice {
 }
 
 impl PasteSplice {
+    /// Write the blocks [`Self::join`] joins to text, the first after `before`
+    /// and the last before `after`, as they read among text, even one that is
+    /// a whole block as pasted: each Obsidian note embed as the link
+    /// ([`import::link_obsidian_note_embeds`]), and display math of one line
+    /// as inline math ([`display_math_as_inline`]).
+    fn inline_joined_blocks(&self, blocks: &mut [import::ParsedBlock]) {
+        let last = blocks.len().saturating_sub(1);
+        for (at, block) in blocks.iter_mut().enumerate() {
+            let joined =
+                (at == 0 && !self.before.is_empty()) || (at == last && !self.after.is_empty());
+            if !joined {
+                continue;
+            }
+            if !block.is_code {
+                block.content =
+                    import::link_obsidian_note_embeds(&block.content, import::embed_names_note);
+            }
+            if let Some(math) =
+                display_math_as_inline(&import::normalize_foreign_inline(&block.content))
+            {
+                block.content = math;
+                block.is_code = false;
+            }
+        }
+    }
+
     /// Join the pasted blocks into the anchor's text as a text editor does:
     /// the text before the cursor starts the first block, the text after it
     /// ends the last. After text, the first block joins as the text it was
@@ -2937,6 +2963,22 @@ impl PasteSplice {
             first.content.insert_str(0, &before);
         }
     }
+}
+
+/// `content` as inline math when it is a `$$` block of one line of LaTeX, for
+/// a block joined to text (#6033): mid-text a `$$` line opens no block, so the
+/// editor would show both fences as text. A digit first is braced, as import
+/// writes `\(2x\)`, since `$2` reads as currency.
+fn display_math_as_inline(content: &str) -> Option<String> {
+    let latex = content.strip_prefix("$$\n")?.strip_suffix("\n$$")?.trim();
+    if latex.is_empty() || latex.contains(['\n', '$']) {
+        return None;
+    }
+    Some(if latex.starts_with(|c: char| c.is_ascii_digit()) {
+        format!("${{{latex}}}$")
+    } else {
+        format!("${latex}$")
+    })
 }
 
 /// `block` as the text it was pasted as, for a paste after text (#5160 D4):
@@ -3027,6 +3069,9 @@ pub async fn paste_blocks_inner(
     let mut blocks = input.into_blocks(splice.as_ref().is_some_and(|s| !s.before.is_empty()));
     if blocks.is_empty() {
         return Err(AppError::validation("there is nothing to paste".into()));
+    }
+    if let Some(splice) = &splice {
+        splice.inline_joined_blocks(&mut blocks);
     }
     let mut tx = CommandTx::begin_immediate(pool, "paste_blocks").await?;
     // #2604 — rollback-safe engine apply (rewind on tx abort).
@@ -3436,8 +3481,8 @@ async fn splice_into_anchor(
     Ok(rows)
 }
 
-/// Write the foreign highlight and math of `blocks` in Agaric's form
-/// ([`normalize_foreign_forms`]), then resolve the page links and tags they
+/// Write the note embeds, foreign highlight and math of `blocks` in Agaric's
+/// form ([`normalize_foreign_forms`]), then resolve the page links and tags they
 /// write as names in `anchor`'s space, creating what no name there matches,
 /// and write each block's content with their ids. Returns the pages and tags
 /// created; a dropped anchor or label is named in `warnings`. With no space,
@@ -3450,7 +3495,7 @@ async fn resolve_pasted_names(
     blocks: &mut [import::ParsedBlock],
     warnings: &mut Vec<String>,
 ) -> Result<(CommandTx, Vec<BlockRow>), AppError> {
-    normalize_foreign_forms(blocks);
+    normalize_foreign_forms(blocks, import::embed_names_note);
     let Some(space) = agaric_store::space::resolve_block_space(&mut **tx, anchor).await? else {
         return Ok((tx, Vec::new()));
     };
@@ -4272,10 +4317,9 @@ fn parse_import_payload(
     let names_note =
         |name: &str| import::embed_names_note(name) || notes.contains_key(&name.to_lowercase());
     for block in parse_output.blocks.iter_mut().filter(|b| !b.is_code) {
-        block.content = import::rewrite_obsidian_note_embeds(&block.content, names_note);
         block.content = import::rewrite_logseq_image_sizes(&block.content);
     }
-    normalize_foreign_forms(&mut parse_output.blocks);
+    normalize_foreign_forms(&mut parse_output.blocks, names_note);
     if !notes.is_empty() {
         for block in parse_output.blocks.iter_mut().filter(|b| !b.is_code) {
             block.content = rewrite_vault_wikilinks(&block.content, &notes);
@@ -4284,11 +4328,16 @@ fn parse_import_payload(
     Ok((parse_output, page_title))
 }
 
-/// Each block's foreign highlight and math in Agaric's form
-/// ([`import::normalize_foreign_inline`]), as import, paste, every MCP content
-/// write and Edit as Markdown take text in (#6033).
-fn normalize_foreign_forms(blocks: &mut [import::ParsedBlock]) {
+/// Each block's Obsidian note embeds ([`import::rewrite_obsidian_note_embeds`],
+/// `names_note` telling a note from a file) and foreign highlight and math
+/// ([`import::normalize_foreign_inline`]) in Agaric's form, as import, paste,
+/// every MCP content write and Edit as Markdown take text in (#6033). A code
+/// block keeps its embeds.
+fn normalize_foreign_forms(blocks: &mut [import::ParsedBlock], names_note: impl Fn(&str) -> bool) {
     for block in blocks {
+        if !block.is_code {
+            block.content = import::rewrite_obsidian_note_embeds(&block.content, &names_note);
+        }
         if let std::borrow::Cow::Owned(content) = import::normalize_foreign_inline(&block.content) {
             block.content = content;
         }
