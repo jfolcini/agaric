@@ -39,3 +39,8 @@ A ref-typed property value is now written as a link to its page: `owner: "[[Titl
   - nextest in two partitions: 7669 run, 7665 passed, and the four above failed.
   - vitest over `src/editor`, `src/lib/tauri-mock` and the conformance tests; `npm run typecheck`; `npm run lint`.
   - `e2e-related` picks no Playwright spec for this change. The 55 e2e-tauri specs it picks were not run here.
+- **e2e-tauri spec** (`e2e-tauri/ref-property-export-roundtrip.e2e.ts`, added after the coordinator asked for one under testing invariant 5, since the mock writes no names):
+  - It sets a ref property on a page and checks that `export_page_markdown` writes `wdioowner: "[[<target>]]"`.
+  - It then imports that text as a new page, navigates away and back, and checks two things: the property table shows the target's title, and `get_properties` returns the target's id.
+  - Not run here: the real-backend lane needs a native build. `npm run typecheck:e2e-tauri`, `npm run lint` and `node --test scripts/e2e-related.test.mjs` pass.
+  - Why it fails on main, from the code: main's `render_frontmatter` writes the target's bare title (`wdioowner: <target>`), so the `[[<target>]]` assertion fails before the import.
