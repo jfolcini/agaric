@@ -1,0 +1,242 @@
+//! #6277 F4 — a ref to a heading whose text is unique on its page is written
+//! `[[Title#Heading]]`, and a whole-block embed of one `![[Title#Heading]]`,
+//! on its own page too; a heading that repeats on its page, or whose text the
+//! link would not carry, keeps `[[Title#^id]]`. Each surface reads the links
+//! back as the refs it stored: export → import, buffer → save, copy → paste
+//! and the mirror's file → re-import.
+
+use crate::prelude::*;
+
+use super::page_cmd_tests::{
+    counts, dup_child, dup_children, dup_page, page_source, paste, paste_text, save_source, with,
+};
+
+/// The page "Other" holding a unique heading, a heading twice and a heading
+/// holding a colon, and the page "Notes" holding a unique heading of its own,
+/// a block referring to each, and an embed of Other's unique heading.
+struct Headings {
+    notes: BlockId,
+    other: BlockId,
+    intro: BlockId,
+    dup: BlockId,
+    colon: BlockId,
+    own: BlockId,
+    /// The block holding the refs, then the embed.
+    blocks: [BlockId; 2],
+}
+
+async fn headings(pool: &SqlitePool, mat: &Materializer) -> Headings {
+    let other = dup_page(pool, mat, "Other").await;
+    let intro = dup_child(pool, mat, &other, "## Intro").await;
+    let dup = dup_child(pool, mat, &other, "## Dup").await;
+    dup_child(pool, mat, &other, "### dup").await;
+    let colon = dup_child(pool, mat, &other, "## Day 1: plan").await;
+    let notes = dup_page(pool, mat, "Notes").await;
+    let own = dup_child(pool, mat, &notes, "# Own heading").await;
+    let refs = dup_child(
+        pool,
+        mat,
+        &notes,
+        &format!("see (({intro})), (({dup})), (({colon})) and (({own}))"),
+    )
+    .await;
+    let embed = dup_child(pool, mat, &notes, &format!("{{{{embed (({intro}))}}}}")).await;
+    settle(mat).await;
+    Headings {
+        notes,
+        other,
+        intro,
+        dup,
+        colon,
+        own,
+        blocks: [refs, embed],
+    }
+}
+
+/// What `headings` stores under Notes.
+fn stored(h: &Headings) -> Vec<String> {
+    let (intro, dup, colon, own) = (&h.intro, &h.dup, &h.colon, &h.own);
+    vec![
+        "# Own heading".to_owned(),
+        format!("see (({intro})), (({dup})), (({colon})) and (({own}))"),
+        format!("{{{{embed (({intro}))}}}}"),
+    ]
+}
+
+/// The refs line as written: a unique heading by its text, its own page's
+/// included, the others by id.
+fn written_refs(h: &Headings) -> String {
+    let (dup, colon) = (&h.dup, &h.colon);
+    format!("see [[Other#Intro]], [[Other#^{dup}]], [[Other#^{colon}]] and [[Notes#Own heading]]")
+}
+
+/// The contents under `page`, in document order.
+async fn contents(pool: &SqlitePool, page: &BlockId) -> Vec<String> {
+    dup_children(pool, page)
+        .await
+        .into_iter()
+        .map(|(_, content)| content)
+        .collect()
+}
+
+/// Edit as Markdown writes a unique heading's ref and embed by its text; the
+/// buffer saved as it was changes nothing, and edited, the link saves as the
+/// ref it names.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_buffer_writes_a_heading_ref_by_its_heading_and_saves_it_back() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let h = headings(&pool, &mat).await;
+
+    let buffer = page_source(&pool, &h.notes).await;
+
+    let [block, embed] = &h.blocks;
+    for written in [
+        format!("\n{} ^{block}\n", written_refs(&h)),
+        format!("\n![[Other#Intro]] ^{embed}\n"),
+    ] {
+        assert!(buffer.contains(&written), "{written}\n{buffer}");
+    }
+
+    let report = save_source(&pool, &mat, &h.notes, &buffer, &buffer)
+        .await
+        .unwrap();
+    assert_eq!(counts(&report), [0; 6]);
+    assert_eq!(contents(&pool, &h.notes).await, stored(&h));
+
+    let edited = with(
+        &buffer,
+        &format!("[[Notes#Own heading]] ^{block}"),
+        &format!("[[Notes#Own heading]] too ^{block}"),
+    );
+    save_source(&pool, &mat, &h.notes, &edited, &buffer)
+        .await
+        .unwrap();
+    let mut expected = stored(&h);
+    expected[1] = format!("{} too", expected[1]);
+    assert_eq!(contents(&pool, &h.notes).await, expected);
+    mat.shutdown();
+}
+
+/// A copy writes a unique heading's ref and embed by its text, and a paste
+/// under another page reads them back as the refs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_copied_heading_ref_pastes_back_as_the_ref() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let h = headings(&pool, &mat).await;
+    let dest = dup_page(&pool, &mat, "Dest").await;
+    let anchor = dup_child(&pool, &mat, &dest, "anchor").await;
+    settle(&mat).await;
+
+    let copy = get_blocks_source_inner(&pool, h.blocks.to_vec(), false)
+        .await
+        .unwrap();
+
+    assert_eq!(copy, format!("{}\n\n![[Other#Intro]]\n", written_refs(&h)));
+    let pasted: Vec<_> = paste(&pool, &mat, &anchor, paste_text(&copy))
+        .await
+        .into_iter()
+        .filter_map(|row| row.content)
+        .collect();
+    assert_eq!(pasted, stored(&h)[1..]);
+    mat.shutdown();
+}
+
+/// The mirror's file writes a unique heading's ref and embed by its text, and
+/// the file imported over its page, as a re-import reads it back, changes
+/// nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_mirrors_file_writes_a_heading_ref_by_its_heading_and_reads_it_back() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let h = headings(&pool, &mat).await;
+
+    let file = agaric_lib::commands::pages::get_page_file_inner(&pool, h.notes.as_str())
+        .await
+        .unwrap()
+        .text;
+
+    for written in [
+        format!("\n{}\n", written_refs(&h)),
+        "\n![[Other#Intro]]\n".to_owned(),
+    ] {
+        assert!(file.contains(&written), "{written}\n{file}");
+    }
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        dir.path(),
+        file.clone(),
+        Some("Notes.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert_eq!(result.page_id, h.notes.as_str());
+    assert_eq!(result.merged, Some(Vec::new()), "file:\n{file}");
+    assert_eq!(contents(&pool, &h.notes).await, stored(&h));
+    mat.shutdown();
+}
+
+/// The export writes a unique heading's ref and embed by its text, and
+/// imported as a file they are the refs they were.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_export_writes_a_heading_ref_by_its_heading_and_imports_it_back() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let h = headings(&pool, &mat).await;
+
+    let md = export_page_markdown_inner(&pool, h.notes.as_str())
+        .await
+        .unwrap();
+
+    let written = format!("\n\n{}\n\n![[Other#Intro]]\n", written_refs(&h));
+    assert!(md.ends_with(&written), "{md}");
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        dir.path(),
+        md.clone(),
+        Some("Notes copy.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert_eq!(result.warnings, Vec::<String>::new());
+    let copy = BlockId::from_trusted(&result.page_id);
+    let mut expected = vec!["# Notes".to_owned()];
+    expected.extend(stored(&h));
+    assert_eq!(contents(&pool, &copy).await, expected, "md:\n{md}");
+    mat.shutdown();
+}
+
+/// A heading whose text a second heading of its page repeats, once the ref is
+/// written by its text, is written by id from then on.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_heading_repeated_on_its_page_is_written_by_id() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let h = headings(&pool, &mat).await;
+    let intro = &h.intro;
+    let line = |link: &str| format!("\nsee {link}, ");
+    let buffer = page_source(&pool, &h.notes).await;
+    assert!(buffer.contains(&line("[[Other#Intro]]")), "{buffer}");
+
+    dup_child(&pool, &mat, &h.other, "#### intro").await;
+    settle(&mat).await;
+
+    let buffer = page_source(&pool, &h.notes).await;
+    assert!(
+        buffer.contains(&line(&format!("[[Other#^{intro}]]"))),
+        "{buffer}"
+    );
+    mat.shutdown();
+}

@@ -4654,6 +4654,43 @@ async fn an_appended_read_keeps_a_ref_to_a_block_of_its_page() {
     assert_eq!(stored, ["target".to_owned(), format!("see (({target}))")]);
 }
 
+/// A ref to a heading unique on the read page is read as `[[Title#Heading]]`,
+/// and appended under another page it is still the ref to that heading
+/// (#6277 F4).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_appended_read_keeps_a_ref_to_a_heading_of_its_page() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let page = mk_page(&pool, &mat, &space, "P").await;
+    let target = mk_child_of(&pool, &mat, &page, "## Target").await;
+    mk_child_of(&pool, &mat, &page, &format!("see (({target}))")).await;
+    let copy = mk_page(&pool, &mat, &space, "Copy").await;
+    settle(&mat).await;
+    let read = agent_read(&tools, &page, &space).await;
+    assert!(read.contains("see [[P#Target]]"), "{read}");
+
+    tools
+        .call_tool(
+            "append_markdown",
+            json!({ "parent_id": copy, "markdown": read, "space_id": space }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("append what was read");
+    settle(&mat).await;
+
+    let stored: Vec<String> = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE parent_id = ? AND deleted_at IS NULL ORDER BY position",
+    )
+    .bind(&copy)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        stored,
+        ["## Target".to_owned(), format!("see (({target}))")]
+    );
+}
+
 // -------------------------------------------------------------------
 // set_page_aliases (#5378)
 // -------------------------------------------------------------------
