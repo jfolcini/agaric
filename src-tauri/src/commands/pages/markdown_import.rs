@@ -408,9 +408,9 @@ pub(super) async fn create_import_page(
     })))
 }
 
-/// How the file's property lines read against the space's definitions: each
-/// ref value resolved, and each value a definition refuses kept as text in
-/// its block, with a warning (#5160 D11).
+/// How the file's property lines and front matter read against the space's
+/// definitions: each ref value resolved, and each value a definition refuses
+/// kept as text in its block, with a warning (#5160 D11).
 pub(super) async fn import_property_lines(
     tx: &mut CommandTx,
     space_id: &str,
@@ -420,7 +420,8 @@ pub(super) async fn import_property_lines(
     let values = parse_output
         .blocks
         .iter()
-        .flat_map(|block| &block.properties);
+        .flat_map(|block| &block.properties)
+        .chain(&parse_output.frontmatter);
     lines.resolve_refs(tx, Some(space_id), values).await?;
     lines.keep_refused_as_text(&mut parse_output.blocks, &mut parse_output.warnings);
     Ok(lines)

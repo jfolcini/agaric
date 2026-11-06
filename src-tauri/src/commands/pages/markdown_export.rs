@@ -23,22 +23,21 @@ pub(super) struct FrontmatterRow {
 /// `key:: value` property emit loop in [`export_page_markdown_inner`] so both
 /// paths resolve a `block_properties` row identically.
 ///
-/// Precedence: date, then text, then ref (resolved to a page title via
-/// `ref_titles`, falling back to the raw ULID when unresolved), then numeric,
-/// then bool. A `block_properties` row stores its value in exactly one
-/// column (enforced by the `exactly_one_value` CHECK), so at most one branch
-/// ever fires; the ordering is a defensive fallback, not a real precedence
-/// rule.
-fn frontmatter_row_value(prop: &FrontmatterRow, ref_titles: &HashMap<String, String>) -> String {
+/// Precedence: date, then text, then ref (`[[Title]]` where `link` gives the
+/// target's title, else the raw id, #6277 F3), then numeric, then bool. A
+/// `block_properties` row stores its value in exactly one column (enforced by
+/// the `exactly_one_value` CHECK), so at most one branch ever fires; the
+/// ordering is a defensive fallback, not a real precedence rule.
+fn frontmatter_row_value<'a>(
+    prop: &FrontmatterRow,
+    link: impl Fn(&str) -> Option<&'a str>,
+) -> String {
     if let Some(d) = prop.value_date.as_deref() {
         d.to_string()
     } else if let Some(t) = prop.value_text.as_deref() {
         t.to_string()
     } else if let Some(rf) = prop.value_ref.as_deref().filter(|s| !s.is_empty()) {
-        ref_titles
-            .get(rf)
-            .cloned()
-            .unwrap_or_else(|| rf.to_string())
+        link(rf).map_or_else(|| rf.to_string(), |title| format!("[[{title}]]"))
     } else if let Some(n) = prop.value_num {
         // Render integers without a trailing ".0"; keep fractional values
         // as-is. `{n}` on an f64 already emits "3" for 3.0 in Rust's default
@@ -53,6 +52,30 @@ fn frontmatter_row_value(prop: &FrontmatterRow, ref_titles: &HashMap<String, Str
     } else {
         String::new()
     }
+}
+
+/// The title `names` writes the ref-typed value `id` with, as `[[Title]]`
+/// (#6277 F3): the target page's under [`Names::Always`], and under
+/// [`Names::ReadBack`] only where the link reads back as that page, both as a
+/// ref value is read (`ref_name`, then the link rule in the page's space) and
+/// as one link: so not for a title two pages share and the lower id holds, a
+/// page of another space, or a title holding `]` or a line break. Under
+/// either policy, not for a title shaped like a block id, which reads back as
+/// that id.
+fn ref_link<'a>(data: &'a PageExportData, names: Names, id: &str) -> Option<&'a str> {
+    let title = data.ref_titles.get(id)?;
+    let name = title.trim();
+    if BlockId::from_string(name).is_ok_and(|block| block.as_str() == name) {
+        return None;
+    }
+    let link = format!("[[{title}]]");
+    let reads_back = || {
+        HUMAN_PAGE_LINK_RE
+            .find(&link)
+            .is_some_and(|m| m.as_str() == link)
+            && data.name_snapshot.pages.find(title) == Some(id)
+    };
+    (names == Names::Always || reads_back()).then_some(title.as_str())
 }
 
 /// Everything [`export_page_markdown_inner`] reads from the database, resolved
@@ -91,11 +114,11 @@ pub(super) struct PageExportData {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum PageRead {
     /// An export: the attachments, the page's own properties, aliases and
-    /// tags, and the titles of ref-typed property values.
+    /// tags, and the titles of the pages ref-typed property values name.
     Export,
     /// The buffer, the clipboard and a buffer save: the page's own
-    /// properties, aliases and tags (#5160 S8), and the names a block may be
-    /// written with.
+    /// properties, aliases and tags (#5160 S8), and the names a block and a
+    /// ref-typed value may be written with.
     Buffer,
     /// A duplicate, which writes every id raw: nothing more.
     Duplicate,
@@ -122,12 +145,12 @@ pub(super) struct RenderMode {
 /// Which tag, page and block ids a render writes as names and links.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Names {
-    /// Every id that resolves, and ref-typed values as their pages' titles:
+    /// Every id that resolves, and a ref-typed value as a link to its page:
     /// an export, for other tools, which a `Markdown` file import reads as a
     /// paste does (#6277 decision 1).
     Always,
-    /// Only a name that reads back as the same id ([`humanise_refs_for_source`]),
-    /// ref-typed values raw: text that comes back to Agaric, the buffer, the
+    /// Only a name that reads back as the same id ([`humanise_refs_for_source`],
+    /// [`ref_link`]): text that comes back to Agaric, the buffer, the
     /// clipboard, the mirror's file and the page an MCP agent reads.
     ReadBack,
 }
@@ -170,11 +193,11 @@ pub struct PageFile {
 /// [`Names::ReadBack`] and [`Anchors::Addressed`].
 pub(super) fn render_page_file(data: &PageExportData) -> PageFile {
     let mut text = String::new();
-    render_frontmatter(&mut text, data);
     let mode = RenderMode {
         names: Names::ReadBack,
         anchors: Anchors::Addressed,
     };
+    render_frontmatter(&mut text, data, mode.names);
     let starts = render_block_tree(&mut text, data.page.id.as_str(), data, mode);
     let line_ids = block_start_lines(&text, &starts);
     PageFile { text, line_ids }
@@ -208,7 +231,7 @@ pub(super) fn render_page_document(data: &PageExportData) -> (String, Vec<String
 /// starts at, the blank line before it included, in render order.
 pub(super) fn render_page_document_spans(data: &PageExportData) -> (String, Vec<(String, usize)>) {
     let mut output = String::new();
-    render_frontmatter(&mut output, data);
+    render_frontmatter(&mut output, data, RenderMode::DOCUMENT.names);
     let starts = render_block_tree(
         &mut output,
         data.page.id.as_str(),
@@ -236,7 +259,6 @@ fn render_block(
         attachments_by_block,
         descendant_properties,
         list_styles,
-        ref_titles,
         ..
     } = data;
     let id = block.id.clone().into_string();
@@ -275,20 +297,16 @@ fn render_block(
     // one `key:: value` line per property at the block's text column, which
     // the readers read back into `block.properties`. `descendant_properties` was
     // batch-read once for the whole subtree, so this is a HashMap lookup,
-    // not a per-block query. Text that comes back writes a ref-typed value
-    // as its raw id, which is what the value is. Every mode quotes a value
-    // its line cannot carry as it is (#5160 X5, #6277 A2).
-    let no_titles = HashMap::new();
-    let ref_titles = match mode.names {
-        Names::Always => ref_titles,
-        Names::ReadBack => &no_titles,
-    };
+    // not a per-block query. A ref-typed value is a link where `mode` writes
+    // its name ([`ref_link`]). Every mode quotes a value its line cannot carry
+    // as it is (#5160 X5, #6277 A2).
+    let link = |id: &str| ref_link(data, mode.names, id);
     // `completed_at` is the app's: only a done task's `✅` writes it.
     for prop in props
         .iter()
         .filter(|prop| prop.key != "completed_at" && !written.contains(&prop.key.as_str()))
     {
-        let value = import::write_source_property_value(&frontmatter_row_value(prop, ref_titles));
+        let value = import::write_source_property_value(&frontmatter_row_value(prop, link));
         output.push_str(&format!("{prop_indent}{}:: {value}\n", prop.key));
     }
 
@@ -421,7 +439,7 @@ impl TaskLine {
         let done = block.todo_state.as_deref() == Some("DONE");
         let prop = |key: &str| {
             let row = props.iter().find(|row| row.key == key)?;
-            Some(frontmatter_row_value(row, &HashMap::new()))
+            Some(frontmatter_row_value(row, |_| None))
         };
         let bounded = prop("repeat-until").is_some() || prop("repeat-count").is_some();
         let mut line = Self {
@@ -590,14 +608,13 @@ fn continuation_indent(indent: &str, list_marker: &str) -> String {
 }
 
 /// The `---` YAML frontmatter block, emitted only when the page carries
-/// properties, aliases or tags. A ref value is its page's title where
-/// `ref_titles` has one, else its id.
-fn render_frontmatter(output: &mut String, data: &PageExportData) {
+/// properties, aliases or tags. A ref value is `"[[Title]]"` where `names`
+/// writes its name ([`ref_link`]), else its id.
+fn render_frontmatter(output: &mut String, data: &PageExportData, names: Names) {
     let PageExportData {
         properties,
         aliases,
         tag_names_fm,
-        ref_titles,
         ..
     } = data;
     // Frontmatter (if properties, aliases, or tags exist)
@@ -624,7 +641,7 @@ fn render_frontmatter(output: &mut String, data: &PageExportData) {
             output.push_str(&format!("tags: {}\n", yaml_flow_sequence(tag_names_fm)));
         }
         for prop in properties {
-            let value = frontmatter_row_value(prop, ref_titles);
+            let value = frontmatter_row_value(prop, |id| ref_link(data, names, id));
             // #2715 — route the scalar through the YAML emit helper so a value
             // carrying a newline, a leading `---`, quotes, or other
             // YAML-significant content is quoted / block-scalar-encoded instead
@@ -729,7 +746,7 @@ pub(super) fn render_page_markdown(page_id: &str, data: &PageExportData) -> Stri
     // The front matter, at byte 0 where Obsidian and GitHub read it, then the
     // `# Title` line (#6277 A1).
     let mut output = String::new();
-    render_frontmatter(&mut output, data);
+    render_frontmatter(&mut output, data, Names::Always);
     let title = data.page.content.as_deref().unwrap_or("Untitled");
     output.push_str(&format!("# {title}\n\n"));
     render_page_attachments(&mut output, page_id, data);
@@ -1555,16 +1572,15 @@ async fn load_descendant_properties(
 }
 
 /// Resolves every `value_ref` reached by the page's and its descendants'
-/// properties to a page title.
+/// properties to the title of the live page it names; a ref to any other
+/// block, or to a deleted one, has none and is written as its id.
 async fn resolve_property_ref_titles(
     conn: &mut sqlx::SqliteConnection,
     page_properties: &[FrontmatterRow],
     descendant_properties: &HashMap<String, Vec<FrontmatterRow>>,
 ) -> Result<HashMap<String, String>, AppError> {
-    // Resolve value_ref ULIDs to page titles where possible. Unresolved
-    // refs (target missing/deleted) fall back to the raw ULID so the value
-    // never renders empty. Covers BOTH the page's own properties and every
-    // descendant block's properties in the single batched lookup below.
+    // Covers BOTH the page's own properties and every descendant block's
+    // properties in the single batched lookup below.
     let mut ref_ids: HashSet<String> = HashSet::new();
     for r in page_properties {
         if let Some(rf) = r.value_ref.as_deref()
@@ -1589,6 +1605,7 @@ async fn resolve_property_ref_titles(
         let rows = sqlx::query!(
             r#"SELECT id, content FROM blocks
                WHERE id IN (SELECT value FROM json_each(?1))
+                 AND block_type = 'page'
                  AND deleted_at IS NULL"#,
             ids_json,
         )
@@ -1713,7 +1730,7 @@ pub(super) async fn load_page_export_data(
         Vec::new()
     };
     let descendant = load_descendant_properties(conn, &descendants).await?;
-    let ref_titles = if export {
+    let ref_titles = if front_matter {
         resolve_property_ref_titles(conn, &properties, &descendant.properties).await?
     } else {
         HashMap::new()
@@ -1724,7 +1741,8 @@ pub(super) async fn load_page_export_data(
         (Vec::new(), Vec::new())
     };
     let name_snapshot = if matches!(read, PageRead::Buffer | PageRead::File) {
-        load_name_snapshot(conn, &page.id, &descendants, &refs.page_titles).await?
+        let names = (&refs.page_titles, &ref_titles);
+        load_name_snapshot(conn, &page.id, &descendants, names).await?
     } else {
         NameSnapshot::default()
     };
@@ -1747,18 +1765,20 @@ pub(super) async fn load_page_export_data(
 }
 
 /// What the importer would resolve the page's referenced names against: its
-/// space's pages the link bodies the render writes may name, and its space's
-/// tags. A page in no space gets the empty snapshot, so every name stays raw.
+/// space's pages the link bodies the render writes may name, the titles of
+/// ref-typed values among them, and its space's tags. A page in no space gets
+/// the empty snapshot, so every name stays raw.
 async fn load_name_snapshot(
     conn: &mut sqlx::SqliteConnection,
     page_id: &BlockId,
     descendants: &[BlockRow],
-    page_titles: &HashMap<String, String>,
+    (page_titles, ref_titles): (&HashMap<String, String>, &HashMap<String, String>),
 ) -> Result<NameSnapshot, AppError> {
     let Some(space) = agaric_store::space::resolve_block_space(&mut *conn, page_id).await? else {
         return Ok(NameSnapshot::default());
     };
-    let bodies = rendered_link_bodies(descendants, page_titles);
+    let mut bodies = rendered_link_bodies(descendants, page_titles);
+    bodies.extend(ref_titles.values().cloned());
     Ok(NameSnapshot {
         pages: snapshot_page_link_matches(conn, space.as_str(), &bodies).await?,
         tag_id_by_norm: snapshot_tags_by_norm(conn, space.as_str()).await?,

@@ -1,0 +1,51 @@
+# Session 3632 — ref-typed values are written as links (#6277 F3)
+
+A ref-typed property value is now written as a link to its page: `owner: "[[Title]]"` in front matter, `owner:: [[Title]]` on a block's line. Before, an export wrote the bare title, which Obsidian reads as text, and every other surface wrote the raw id.
+
+- **Writer** (`markdown_export.rs`):
+  - `frontmatter_row_value` takes a `link` lookup and writes `[[Title]]` when it gives a title.
+  - `ref_link` decides by the `Names` policy:
+    - `Always` (the export) links every live page target.
+    - `ReadBack` (the buffer, the mirror's file, a copy, the agent read) links only where `[[Title]]` is one link token (`HUMAN_PAGE_LINK_RE`) and the title names that page in the page's space (`NameSnapshot::pages.find`, the rule a ref value is read by).
+    - So a title the lower id of two pages holds, a page of another space, a title holding `]`, and a deleted or non-page target all keep the id. The ref titles join the name snapshot's link bodies.
+  - `ref_titles` now loads only live pages (`block_type = 'page'`), and loads for every read but Duplicate. Duplicate and template copies still write raw ids, which `PropertyWrite::Copy` reads back.
+  - The front matter now follows the render's policy. Before, it wrote `ref_titles` whatever the mode.
+- **Reader:** an import's front matter ref used to match its value against a page's or tag's content exactly. It now goes through `PropertyLines::read`, as a `key::` line does: `import_property_lines` resolves the front matter's values with the blocks', and `frontmatter_ref_args` is gone. So `"[[Title]]"`, a title by the link rule and a live block id of the space all read back. A tag is no longer a front matter ref target; no writer writes one. The buffer save, paste and the re-import merge already read `[[Title]]` and ids. No change to `import.rs` or `markdown_paste.rs`.
+- **Mock:** unchanged. It writes no names, and that approximation is documented.
+- **Reds:**
+  - `a_ref_value_is_written_as_a_link_where_it_reads_back`: rows for each case on the buffer, the file, a copy and the export.
+  - Five command tests in `page_front_matter_tests.rs`:
+    - the buffer saves as nothing and an edited link moves the target;
+    - the mirror's file re-imports as nothing;
+    - a copy pastes as the same target;
+    - an export imports as the same target;
+    - a ref to a block is written and imported as its id.
+  - The `markdown_yaml` row is green on main: `yaml_scalar_emit` already quotes a leading `[`.
+- **Falsified:** five mutations, each run in one command with a backup and a trap restore. Each failed on the assertion predicted:
+  - `ReadBack` writes every link;
+  - the one-link check dropped;
+  - front matter refs not resolved on import;
+  - non-page targets titled;
+  - ref titles left out of the snapshot.
+- **Existing-test edits (approved by the maintainer):** four existing tests pinned the bare title in an export, and now expect `[[Title]]`:
+  - `a_property_value_survives_the_export_and_the_agent_read`;
+  - `an_export_with_every_block_anchored_imports_as_its_tree`;
+  - `export_page_markdown_frontmatter_filters_internal_and_renders_ref_num`;
+  - `export_then_import_keeps_a_ref_property_and_the_recurrence_rule`.
+  - The first, second and fourth say so in their doc comments too, which now say a link.
+- **Docs:** `editor-and-content.md` (the page and block property rows, the `Names` bullet), `import-export.md`, `agent-access.md`, and the MCP `get_page_markdown` description and its snapshot.
+- **Ran:**
+  - `cargo fmt`, `clippy --workspace --all-targets -D warnings`, `just gen-sqlx`.
+  - nextest in two partitions: 7669 run, 7665 passed, and the four above failed.
+  - vitest over `src/editor`, `src/lib/tauri-mock` and the conformance tests; `npm run typecheck`; `npm run lint`.
+  - `e2e-related` picks no Playwright spec for this change. The 55 e2e-tauri specs it picks were not run here.
+- **e2e-tauri spec** (`e2e-tauri/ref-property-export-roundtrip.e2e.ts`, added after the coordinator asked for one under testing invariant 5, since the mock writes no names):
+  - It sets a ref property on a page and checks that `export_page_markdown` writes `wdioowner: "[[<target>]]"`.
+  - It then imports that text as a new page, navigates away and back, and checks two things: the property table shows a page picker for the key, and `get_properties` returns the target's id.
+  - Not run here: the real-backend lane needs a native build. `npm run typecheck:e2e-tauri`, `npm run lint` and `node --test scripts/e2e-related.test.mjs` pass.
+  - Why it fails on main, from the code: main's `render_frontmatter` writes the target's bare title (`wdioowner: <target>`), so the `[[<target>]]` assertion fails before the import.
+- **CI fix:** the spec first also read the picker's label, which showed `[[01M6…]]` rather than the target's title on the real backend (#6425, job 127773277218), while `get_properties` on the same import returns the target. A Rust probe of the spec's exact calls stores the right `value_ref`, so the label is the frontend's resolve cache, which this change does not touch. The spec now checks the picker is there and the stored ref.
+- **Review fixes** (after the independent review of the first commit):
+  - **Block-id-shaped titles:** a page titled as a canonical ULID passed `ref_link`'s check, but `ref_name` and the `resolve_ref_values` partition read the written `[[ULID]]` back as a block id. So an import skipped the value, a `key::` line stayed text and a paste dropped it. `ref_link` now keeps the raw id for a title that parses as a canonical `BlockId`, under both policies. Red: the new "a block id title" row of `a_ref_value_is_written_as_a_link_where_it_reads_back`, which wrote `[[01J…PAGEP4]]` before the fix. Removing the guard reddens it again.
+  - **A masked import test:** in `a_ref_value_in_an_export_imports_as_the_same_target_6277` the block's `owner:: [[Linked Target]]` put the front matter's name into the shared ref map, so the test stayed green with `.chain(&parse_output.frontmatter)` removed. The block now names `Other Target`, and that mutation now fails the warnings assertion (`'[[Linked Target]]' names no block`).
+  - Ran: `cargo fmt --check`, clippy, and nextest over the ref, markdown, source, export, import, paste, front matter and conformance filters: 1572 run, 1568 passed, and the four tests awaiting approval failed.

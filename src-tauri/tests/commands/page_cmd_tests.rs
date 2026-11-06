@@ -2234,9 +2234,9 @@ async fn export_page_markdown_frontmatter_filters_internal_and_renders_ref_num()
         md.contains("effort: 3\n"),
         "numeric prop must render, got:\n{md}"
     );
-    // Ref resolves to the target page title (non-empty).
+    // Ref resolves to a link to the target page's title.
     assert!(
-        md.contains("parent: Linked Page"),
+        md.contains("parent: \"[[Linked Page]]\""),
         "value_ref must resolve to the referenced page title, got:\n{md}"
     );
 }
