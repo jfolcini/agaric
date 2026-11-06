@@ -380,6 +380,22 @@ describe('mdFilesToUnits', () => {
     expect((await paddedUnit?.load())?.vaultNotes).toEqual(['Note.md'])
   })
 
+  // A table cell escapes an aliased link's pipe, as Obsidian requires there;
+  // the name ends before the escape, so the note it names ships.
+  it("ships the note a table cell's `[[Name\\|alias]]` names", async () => {
+    const home = folderFile(
+      ['| [[Note\\|alias]] | x |', '| --- | --- |'],
+      'home.md',
+      'Vault/home.md',
+    )
+    const note = folderFile(['- body'], 'Note.md', 'Vault/Note.md')
+    const files = [home, note]
+
+    const [homeUnit] = mdFilesToUnits(files, indexVaultFiles(files), false)
+
+    expect((await homeUnit?.load())?.vaultNotes).toEqual(['Note.md'])
+  })
+
   it('ships no note paths on a plain pick, whose links already name its titles', async () => {
     const home = new File(['- [[topic]]'], 'home.md', { type: 'text/markdown' })
     const topic = new File(['- body'], 'topic.md', { type: 'text/markdown' })

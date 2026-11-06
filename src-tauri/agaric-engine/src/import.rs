@@ -2366,29 +2366,6 @@ pub fn read_pasted_text(text: &str) -> ParseOutput {
     output
 }
 
-/// A block HTML paste sends, at `depth`: a checkbox after the list marker on
-/// its first line (`- [ ] text`, a task list item) is its `todo_state` (D6);
-/// the rest is kept as it comes.
-pub fn pasted_block(content: String, depth: usize) -> ParsedBlock {
-    let (first, rest) = content.split_once('\n').unzip();
-    let Some((state, text)) = first
-        .unwrap_or(&content)
-        .strip_prefix("- ")
-        .and_then(split_task_marker)
-    else {
-        return verbatim_block(content, depth);
-    };
-    let text = match rest {
-        Some(rest) => format!("{text}\n{rest}"),
-        None => text.to_string(),
-    };
-    let mut block = verbatim_block(text, depth);
-    block
-        .properties
-        .push(("todo_state".to_string(), state.to_string()));
-    block
-}
-
 /// A block holding `content` as it comes, at `depth`. Like an imported block,
 /// it is code when a line of it opens a fence.
 pub fn verbatim_block(content: String, depth: usize) -> ParsedBlock {
@@ -7598,7 +7575,7 @@ mod tests_source_outline_5140 {
 
 #[cfg(test)]
 mod tests_pasted_text_5140 {
-    use super::{MAX_IMPORT_DEPTH, parse_document_outline, parse_pasted_text, pasted_block};
+    use super::{MAX_IMPORT_DEPTH, parse_document_outline, parse_pasted_text};
 
     /// `(depth, content, properties)` of a block.
     type Shape = (usize, String, Vec<(String, String)>);
@@ -7749,51 +7726,6 @@ mod tests_pasted_text_5140 {
         let blocks = parse_pasted_text("- press ^C\n- copied ^01ARZ3NDEKTSV4RRFFQ69G5FAV\n");
         let contents: Vec<&str> = blocks.iter().map(|b| b.content.as_str()).collect();
         assert_eq!(contents, ["press ^C", "copied"]);
-    }
-
-    #[test]
-    fn a_pasted_block_with_a_fence_line_is_code() {
-        assert!(pasted_block("```js\nx".to_string(), 0).is_code);
-        assert!(pasted_block("a\n  ```".to_string(), 0).is_code);
-        assert!(!pasted_block("a `b` c".to_string(), 0).is_code);
-    }
-
-    /// HTML paste sends a task list item as `- [ ] text` (D6): the checkbox is
-    /// the block's `todo_state`, the `- ` goes with it, and the rest of the
-    /// block is kept as it comes. Any other block, a `- ` bullet included, is
-    /// verbatim.
-    #[test]
-    fn a_pasted_task_list_item_has_its_state() {
-        for (content, state, text) in [
-            ("- [ ] open task", "TODO", "open task"),
-            ("- [x] finished task", "DONE", "finished task"),
-            ("- [X] finished task", "DONE", "finished task"),
-            ("- [/] wip", "DOING", "wip"),
-            ("- [-] dropped", "CANCELLED", "dropped"),
-            ("- [ ]", "TODO", ""),
-            ("- [ ] first\nsecond", "TODO", "first\nsecond"),
-        ] {
-            let block = pasted_block(content.to_string(), 1);
-            assert_eq!(block.content, text, "{content:?}");
-            assert_eq!(
-                block.properties,
-                [("todo_state".to_string(), state.to_string())],
-                "{content:?}"
-            );
-            assert_eq!(block.depth, 1);
-        }
-        for content in [
-            "- plain item",
-            "[ ] no marker",
-            "- [?] x",
-            "a\n- [ ] b",
-            "1. [ ] x",
-        ] {
-            let block = pasted_block(content.to_string(), 0);
-            assert_eq!(block.content, content, "{content:?}");
-            assert!(block.properties.is_empty(), "{content:?}");
-        }
-        assert!(pasted_block("- [ ] ```sh\necho".to_string(), 0).is_code);
     }
 }
 

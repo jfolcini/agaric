@@ -1,4 +1,4 @@
-import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
+import { expect, focusBlock, ipc, openPage, reopenPage, test, waitForBoot } from './helpers'
 
 /**
  * E2E for #1439 — convert pasted clipboard HTML to Agaric markdown.
@@ -84,6 +84,27 @@ async function persistedRow(
   }, blockId)
 }
 
+/**
+ * The PERSISTED content and `listStyle` of the block whose text is exactly
+ * `text`, read back over IPC.
+ */
+async function persistedListBlock(
+  page: import('@playwright/test').Page,
+  text: string,
+): Promise<{ content: string; listStyle: string | null }> {
+  const row = page.locator('[data-testid="sortable-block"]').filter({ hasText: text })
+  await expect(row).toHaveCount(1)
+  const blockId = (await row.getAttribute('data-block-id')) ?? ''
+  const block = await ipc<{ content: string }>(page, 'get_block', { blockId })
+  const props = await ipc<Array<{ key: string; value_text: string | null }>>(
+    page,
+    'get_properties',
+    { blockId },
+  )
+  const listStyle = props.find((p) => p.key === 'listStyle')?.value_text ?? null
+  return { content: block.content, listStyle }
+}
+
 test.describe('HTML paste → markdown blocks (#1439) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
@@ -122,6 +143,31 @@ test.describe('HTML paste → markdown blocks (#1439) @editor', () => {
     await expect(
       page.locator('[data-testid="sortable-block"]').filter({ hasText: '## My Heading' }),
     ).toHaveCount(0)
+  })
+
+  // #6277 E5 — a pasted list's items are list blocks: each holds its text and
+  // carries its `listStyle`, rather than a `- a` / `1. a` one-item list.
+  test('a pasted <ul> and <ol> land as bullet and numbered blocks holding only their text', async ({
+    page,
+  }) => {
+    const editor = await freshBlock(page)
+    await pasteHtml(
+      editor,
+      '<ul><li>html bullet one</li><li>html bullet two</li></ul>' +
+        '<ol><li>html step one</li><li>html step two</li></ol>',
+      'html bullet one\nhtml bullet two\nhtml step one\nhtml step two',
+    )
+    await expect(rowsWithText(page, 'html step two')).toHaveCount(1)
+
+    await reopenPage(page, PAGE)
+    for (const [text, listStyle] of [
+      ['html bullet one', 'bullet'],
+      ['html bullet two', 'bullet'],
+      ['html step one', 'ordered'],
+      ['html step two', 'ordered'],
+    ] as const) {
+      expect(await persistedListBlock(page, text)).toEqual({ content: text, listStyle })
+    }
   })
 
   test('a javascript: link is de-linked to plain text (security)', async ({ page }) => {

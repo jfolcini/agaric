@@ -499,7 +499,7 @@ describe('useBlockTreeEventListeners', () => {
   // the paste when focus has since moved, rather than dumping the content into
   // whatever block is focused at resolution time.
   describe('PASTE_BLOCKS captured-target guard (#2033)', () => {
-    const INPUT: PasteInput = { kind: 'blocks', blocks: [{ content: 'a', depth: 0 }] }
+    const INPUT: PasteInput = { kind: 'text', text: 'a' }
 
     function pasteOpts() {
       const pasteBlocks = vi.fn().mockResolvedValue([])

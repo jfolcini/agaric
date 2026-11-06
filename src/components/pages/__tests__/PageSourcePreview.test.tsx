@@ -52,6 +52,18 @@ describe('withNameIds', () => {
     expect(withNameIds('[[Brand New]]', lookup, newNames)).toBe(once)
     expect(withNameIds('[[Other]]', lookup, newNames)).not.toBe(once)
   })
+
+  it('keeps the pipes of a table cell link escaped, where a bare one would split the cell', () => {
+    expect(withNameIds('| [[Quick Notes\\|a\\|b]] | x |', lookup, emptyNewNames())).toBe(
+      `| [[${NOTES}\\|a\\|b]] | x |`,
+    )
+  })
+
+  it('writes the pipe of a link outside a table row bare, as the save stores it', () => {
+    expect(withNameIds('see [[Quick Notes\\|these]]', lookup, emptyNewNames())).toBe(
+      `see [[${NOTES}|these]]`,
+    )
+  })
 })
 
 describe('PageSourcePreview', () => {
@@ -97,6 +109,20 @@ describe('PageSourcePreview', () => {
     render(<PageSourcePreview lines={{ text: '- see [[Twin]]', lineIds: [BLOCK] }} />)
 
     expect(screen.getByTestId('block-link-chip')).toHaveTextContent('twin')
+  })
+
+  it('shows a table cell link as the chip of its own cell', () => {
+    render(
+      <PageSourcePreview
+        lines={{
+          text: '- | [[Quick Notes\\|these]] | x |\n  | --- | --- |',
+          lineIds: [BLOCK, null],
+        }}
+      />,
+    )
+
+    expect(screen.getAllByRole('columnheader')).toHaveLength(2)
+    expect(screen.getByTestId('block-link-chip')).toHaveTextContent('these')
   })
 
   it('reads the buffer as the save does: a heading owns nothing, the line under it is a block, an indented paragraph a child', () => {

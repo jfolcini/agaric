@@ -13,7 +13,8 @@
  *
  * The token grammar mirrors `fakeId()` in `seed.ts` and the backend's
  * `[[<26-char Crockford base32>]]` reference form (#762), with the optional
- * `|label` of #5160 D9 (`linkTokenRe` captures it as group 2).
+ * `|label` of #5160 D9 (`linkTokenRe` captures it as group 2), or `\|label` as
+ * a table cell escapes it.
  *
  * #4551 — TWO token regexes live here now, mirroring the backend's split
  * between `PAGE_LINK_RE` (`[[ULID]]` only) and `ULID_LINK_RE` (`[[ULID]]` OR
@@ -51,7 +52,7 @@
  * clones internally, but the callers here should not have to know that.
  */
 export function linkTokenRe(): RegExp {
-  return /\[\[([0-9A-Z]{26})(?:\|([^\]\n]*))?\]\]/g
+  return /\[\[([0-9A-Z]{26})(?:\\?\|([^\]\n]*))?\]\]/g
 }
 
 /**
@@ -65,7 +66,7 @@ export function linkTokenRe(): RegExp {
  * {@link linkTokenRe}.
  */
 export function ulidLinkTokenRe(): RegExp {
-  return /(?:\[\[|\(\()([0-9A-Z]{26})(?:\|[^\]\n]*)?(?:\]\]|\)\))/g
+  return /(?:\[\[|\(\()([0-9A-Z]{26})(?:\\?\|[^\]\n]*)?(?:\]\]|\)\))/g
 }
 
 /**

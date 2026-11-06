@@ -17,7 +17,7 @@ import { LIST_STYLE_KEY } from '@/lib/list-style'
 import { nameKey } from '@/lib/name-tokens'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import type { TodoState } from '@/lib/task-states'
-import { TASK_STATE_TO_MARKER, taskStateFromMarker } from '@/lib/task-states'
+import { TASK_STATE_TO_MARKER } from '@/lib/task-states'
 import {
   type TypedHandlers,
   appErrorRejection,
@@ -684,28 +684,6 @@ function plannedFromText(text: string): { planned: PlannedPaste[]; warnings: str
     return one
   })
   return { planned, warnings: read.warnings }
-}
-
-/** `import::split_task_marker`: a checkbox of the shared alphabet and one space, or alone. */
-const CHECKBOX_RE = /^\[([ xX/-])\](?: |$)/
-
-/** The `todo_state` of a checkbox opening `text`, and the text after it. */
-function splitTaskMarker(text: string): { todoState: TodoState; text: string } | null {
-  const match = CHECKBOX_RE.exec(text)
-  const todoState = match ? taskStateFromMarker(match[1] ?? '') : null
-  return match && todoState ? { todoState, text: text.slice(match[0].length) } : null
-}
-
-/**
- * `import::pasted_block`: an HTML-paste block whose first line opens with
- * `- [ ] ` is a task, the `- ` going with the checkbox; any other block is
- * verbatim.
- */
-function pastedBlock(block: { content: string; depth: number }): PlannedPaste {
-  const [first = '', ...rest] = block.content.split('\n')
-  const task = first.startsWith('- ') ? splitTaskMarker(first.slice(2)) : null
-  if (!task) return { content: block.content, depth: block.depth }
-  return { content: [task.text, ...rest].join('\n'), depth: block.depth, todoState: task.todoState }
 }
 
 /** `import::fence_opener`, for the shapes the mock models: a line opening with ``` or ~~~. */
@@ -1375,8 +1353,8 @@ export const blocksHandlers = {
     return { blocks: out, op_refs: opRefs }
   },
 
-  // #5140 Phase 3b — paste clipboard text or HTML-paste blocks right after the
-  // anchor: the k-th top-level block at the anchor's slot + 1 + k, deeper ones
+  // #5140 Phase 3b — paste clipboard text (an HTML paste's too, written as
+  // Document text, #6277 E5) right after the anchor: the k-th top-level block at the anchor's slot + 1 + k, deeper ones
   // under the block the outline nests them in. Returns the created rows in
   // document order. With a `splice` (#5160 D4) the anchor becomes the first
   // block (`before` + its content, one `edit_block`), the first block's
@@ -1387,8 +1365,8 @@ export const blocksHandlers = {
   // ahead of the content rows as the backend does; with no space every name
   // stays text. Text reads as the backend reads it (`plannedFromText`, #6190):
   // a list marker is the row's `listStyle` (`-` and `*` a bullet, `N.`
-  // numbered, `+` none), and a checkbox after it, in text or in an HTML-paste
-  // block (`- [ ] text`), its `todo_state` (#5160 D6); after text the first
+  // numbered, `+` none), and a checkbox after it its `todo_state` (#5160 D6);
+  // after text the first
   // block's marker and checkbox are written back as text, as the backend's
   // `pasted_as_text` does. The backend also reads property lines (keeping a
   // value a definition refuses as text, named in the reply's `warnings`),
@@ -1410,20 +1388,7 @@ export const blocksHandlers = {
         `can only paste after a content block, not a '${String(anchor['block_type'])}'`,
       )
     }
-    // `PasteInput::into_blocks`: after text an HTML paste's first block is the
-    // text it was pasted as, its `- [ ] ` included.
-    const afterText = splice !== null && splice.before !== ''
-    const { planned: parsed, warnings } =
-      input.kind === 'text'
-        ? plannedFromText(input.text)
-        : {
-            planned: input.blocks.map((block, at) =>
-              at === 0 && afterText
-                ? { content: block.content, depth: block.depth }
-                : pastedBlock(block),
-            ),
-            warnings: [],
-          }
+    const { planned: parsed, warnings } = plannedFromText(input.text)
     if (parsed.length === 0) throw validationRejection('nothing to paste')
     const planned = splice ? joinSplice(parsed, splice) : parsed
     const parentId = (anchor['parent_id'] as string | null) ?? null

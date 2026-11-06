@@ -6206,6 +6206,35 @@ async fn backfill_block_links_runs_once_per_vault() {
     );
 }
 
+/// A vault that ran the first pass (`.v1`) read a table cell's
+/// `[[ULID\|label]]` as no link, so it holds cells with no row: the second
+/// marker scans it once more.
+#[tokio::test]
+async fn backfill_block_links_scans_again_a_vault_that_ran_the_first_pass() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "01HZ00000000000000000000AB", "page", "Target A").await;
+    insert_block(
+        &pool,
+        "01HZ0000000000000000000SRC",
+        "content",
+        r"| [[01HZ00000000000000000000AB\|the plan]] | x |",
+    )
+    .await;
+    sqlx::query("INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)")
+        .bind("repair.block_links_backfill.v1")
+        .bind("1")
+        .bind(0_i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert!(
+        backfill_block_links(&pool).await.unwrap(),
+        "the first pass's marker must not retire this one"
+    );
+    assert_eq!(count_rows(&pool, "block_links").await, 1);
+}
+
 // ====================================================================
 // block_links.kind (#4551)
 // ====================================================================

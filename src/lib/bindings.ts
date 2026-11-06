@@ -3324,8 +3324,11 @@ export type PartitionedSearchResponse = {
 	blocks: PageResponse<SearchBlockRow>,
 };
 
-/**  What a paste carries: clipboard text, or blocks already split. */
-export type PasteInput = { kind: "text"; text: string } | { kind: "blocks"; blocks: PastedBlock[] };
+/**
+ *  What a paste carries: clipboard text, an HTML paste's written as Document
+ *  text (#6277 E5).
+ */
+export type PasteInput = { kind: "text"; text: string };
 
 /**
  *  A paste into the anchor block's text (#5160 D4): its content before and
@@ -3334,12 +3337,6 @@ export type PasteInput = { kind: "text"; text: string } | { kind: "blocks"; bloc
 export type PasteSplice = {
 	before: string,
 	after: string,
-};
-
-/**  One pasted block: its content verbatim and its depth under the paste. */
-export type PastedBlock = {
-	content: string,
-	depth: number,
 };
 
 /**  Reply of [`paste_blocks`], in the envelope [`CreatedBlocks`] uses. */

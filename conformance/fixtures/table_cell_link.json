@@ -1,0 +1,193 @@
+{
+  "description": "A table cell writes a labelled link as `[[ULID\\|label]]`, its pipe escaped so the row keeps its columns. Every reader of stored link tokens reads that separator as `|`: the edit writes the `block_links` edge (`page_links`), `get_backlinks` and `count_backlinks_batch` list it, and the indexed text is the label, not the id.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "| [[000000000000000000000000S3\\|the target]] | x |\n| --- | --- |",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Target",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 1,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [
+      {
+        "kind": "page_link",
+        "source_id": "B2",
+        "source_page_id": "B1",
+        "target_id": "B3"
+      }
+    ],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_of_the_linked_page",
+      "rows": ["B2#parent_id=B1#page_id=B1#position=1#deleted_at=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "badge_of_the_linked_page",
+      "rows": ["B3#count=1"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_the_label",
+      "rows": ["B2"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_the_link_id",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "table_cell_link",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "| [[000000000000000000000000S3\\|the target]] | x |\n| --- | --- |"
+      },
+      "command": "edit_block"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockId": "S3",
+        "limit": 50,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "get_backlinks",
+      "comment": "the cell's link is a backlink of its page",
+      "name": "backlinks_of_the_linked_page"
+    },
+    {
+      "args": {
+        "pageIds": ["S3"],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "count_backlinks_batch",
+      "comment": "the badge counts it",
+      "name": "badge_of_the_linked_page"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "limit": 50,
+        "query": "the target"
+      },
+      "command": "search_blocks",
+      "comment": "the label is indexed text",
+      "name": "search_the_label"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "limit": 50,
+        "query": "0000S3"
+      },
+      "command": "search_blocks",
+      "comment": "the link's id is not: the strip read the token as a link",
+      "expect_empty": true,
+      "name": "search_the_link_id"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Target",
+        "id": "S3",
+        "parent_id": null,
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

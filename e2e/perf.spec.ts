@@ -1718,3 +1718,108 @@ test('perf: page mode next to block mode (#5691) @editor @pages @journal @search
   console.table(saves)
   expect(samples).toHaveLength(MODE_SIZES.length * MODE_REPEATS * 2)
 })
+
+/** BLOCK_GS_1, the first child of "Getting Started" in the mock seed. */
+const TRANSCRIPT_BLOCK = '0000000000000000000BLOCK01'
+const TRANSCRIPT_SEGMENTS = Number(process.env['AGARIC_PERF_SEGMENTS'] ?? 1500)
+
+/** A two-hour meeting's transcript: `segments` timed paragraphs, three speakers. */
+function twoHourTranscript(segments: number): string {
+  const words = 'we should ship the release on monday once the build is green and docs land'.split(
+    ' ',
+  )
+  const speakers = ['Alice', 'Bob', 'Carol']
+  const stamp = (seconds: number): string => {
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${Math.floor(seconds / 3600)}:${pad(Math.floor(seconds / 60) % 60)}:${pad(seconds % 60)}`
+  }
+  return Array.from({ length: segments }, (_, i) => {
+    const text = Array.from({ length: 14 }, (_word, w) => words[(i + w) % words.length]).join(' ')
+    const at = Math.floor((i * 2 * 3600) / segments)
+    return `[${stamp(at)}] **${speakers[i % speakers.length]}:** ${text}.`
+  }).join('\n\n')
+}
+
+/**
+ * #5364 — opening a recording's transcript. A transcript under a recording is
+ * never capped (`MARKDOWN_PREVIEW_CHAR_CAP` is `MarkdownAttachment`'s): a
+ * two-hour meeting's is about 1,500 rows of rich text with a seek button each,
+ * around 140 KB, of which only the rows near the view mount. Each repeat seeds
+ * a fresh vault with an audio file and that transcript on one block, opens the
+ * page, and times the click on *Transcript* to its first row in the DOM, with
+ * the commits, worst frame and peak DOM nodes of that click. Run it at CPU 1
+ * and 4; each cell is the median with the band the repeats fell in.
+ *
+ *   AGARIC_PERF=1 npx playwright test e2e/perf.spec.ts -g 'transcript'
+ *   AGARIC_PERF=1 AGARIC_PERF_CPU=4 npx playwright test e2e/perf.spec.ts -g 'transcript'
+ */
+test('perf: opening a two-hour transcript (#5364) @attachments', async ({ page }) => {
+  test.skip(!process.env['AGARIC_PERF'], 'opt-in: AGARIC_PERF=1')
+  test.setTimeout(30 * 60_000)
+
+  const rows: Row[] = []
+  await page.addInitScript(installProbes)
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Performance.enable')
+  await cdp.send('Profiler.enable')
+  if (CPU > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: CPU })
+  const measure = makeMeasure(page, cdp, rows)
+  const transcript = twoHourTranscript(TRANSCRIPT_SEGMENTS)
+  // A row, not the list: the windowed list commits empty before it finds its
+  // scroller. A transcript that did not parse shows as plain Markdown, so the
+  // count below reds, not hangs.
+  const segment = '[data-testid="transcript-segment"]'
+  const shown = `${segment}, [data-testid="transcript-attachment-body"] > div`
+  const samples: Array<{ openMs: number; commits: number; worstFrame: number; peakNodes: number }> =
+    []
+
+  for (let repeat = 0; repeat < MODE_REPEATS; repeat += 1) {
+    await waitForBoot(page)
+    await page.evaluate(
+      ({ blockId, text }) => {
+        const w = window as unknown as Record<string, (...args: unknown[]) => unknown>
+        w['__addMockAttachmentWithBytes']?.(blockId, 'standup.ogg', 'audio/ogg', [79, 103, 103, 83])
+        w['__addMockAttachment']?.(blockId, 'standup.transcript.md', 'text/markdown', 0, text)
+      },
+      { blockId: TRANSCRIPT_BLOCK, text: transcript },
+    )
+    await openPage(page, 'Getting Started')
+    const toggle = page
+      .getByTestId('transcript-attachment')
+      .getByRole('button', { name: 'Transcript', exact: true })
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+
+    let openMs = 0
+    await measure(`transcript ${repeat + 1}: open`, async () => {
+      openMs = await timeToReady(page, shown, () => toggle.click())
+    })
+    const mounted = await page.locator(segment).count()
+    expect(mounted).toBeGreaterThan(0)
+    expect(mounted).toBeLessThan(TRANSCRIPT_SEGMENTS)
+    const row = rows.at(-1) as Row
+    samples.push({
+      openMs,
+      commits: row.commits,
+      worstFrame: row.worstFrame,
+      peakNodes: row.peakNodes,
+    })
+  }
+
+  const table = {
+    [`${TRANSCRIPT_SEGMENTS} segments, ${Math.round(transcript.length / 1024)} KiB`]: {
+      'open, ms': band(samples.map((s) => s.openMs)),
+      'worst frame, ms': band(samples.map((s) => s.worstFrame)),
+      commits: band(samples.map((s) => s.commits)),
+      'peak DOM nodes': band(samples.map((s) => s.peakNodes)),
+    },
+  }
+  await saveOutput(
+    'perf-transcript.json',
+    JSON.stringify({ cpuThrottle: CPU, repeats: MODE_REPEATS, samples, rows }, null, 2),
+  )
+  console.log(
+    `\nopening a two-hour transcript (CPU ×${CPU}, ${MODE_REPEATS} repeats: median [min–max])`,
+  )
+  console.table(table)
+  expect(samples).toHaveLength(MODE_REPEATS)
+})

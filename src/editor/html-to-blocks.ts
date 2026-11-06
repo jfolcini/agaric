@@ -1,19 +1,20 @@
 /**
- * Clipboard-HTML → Agaric-Markdown block outline (#1439, MVP).
+ * Clipboard-HTML → Agaric-Markdown blocks (#1439, MVP), written as Document text
+ * (#6277 E5).
  *
  * Pasting from a web page (or another rich editor) puts an HTML fragment on the
- * clipboard under `text/html`. This module walks that fragment and emits the
- * blocks `pasteBlocks` creates (`{ kind: 'blocks' }`, #5140): one block per
- * block-level element, each with its nesting depth.
+ * clipboard under `text/html`. This module walks that fragment into one
+ * {@link OutlineBlock} per block-level element, each with its nesting depth and,
+ * for a list item, its marker and checkbox, then writes them as the Document
+ * text a copy writes ({@link outlineToDocument}), which `pasteBlocks` sends as
+ * `{ kind: 'text' }`. The backend reads it as it reads any pasted text, so a
+ * pasted `<ul>` / `<ol>` item is a bulleted or numbered block with its
+ * `listStyle`, and a heading owns nothing.
  *
  * The walk is deliberately a DOM walk rather than a single `turndown(html)`
- * call: Turndown emits a multi-line markdown document (lists on their own
- * lines, a heading then a blank line, …), but an Agaric block's content is
- * SINGLE-LINE markdown — one block per heading / paragraph / list item. So we
- * split the document into blocks ourselves and run Turndown only on each
- * element's INLINE content (bold/italic/code/strike/links). The block STRUCTURE
- * (which line, how deeply nested) is each block's depth, which `pasteBlocks`
- * turns into real parent/child blocks.
+ * call: the block STRUCTURE (which block, how deeply nested, which list) is the
+ * walk's, and Turndown renders only each element's INLINE content
+ * (bold/italic/code/strike/links).
  *
  * MVP scope (#1439): headings (`h1`–`h6`), paragraphs, lists (`ul`/`ol`, incl.
  * nesting), links, and the `bold`/`italic`/`code`/`strike` inline marks.
@@ -26,8 +27,8 @@
  *
  * Tables and code fences are MULTI-LINE markdown but each stays ONE block (the
  * parser builds a single `table` / `codeBlock` node from the multi-line
- * string); a block's content travels verbatim, newlines included. Anything
- * still not recognised contributes its text only.
+ * string); the Document writer keeps a block's lines together. Anything still
+ * not recognised contributes its text only.
  *
  * Security: the HTML is UNTRUSTED and there is no sanitizer in the paste path,
  * so the Turndown instance must be built via {@link createInlineTurndown},
@@ -38,7 +39,9 @@
 
 import { isValidHttpUrl } from '@/editor/extensions/external-link'
 import { tableDelimiterCell } from '@/editor/markdown-common'
+import { DocumentLayout, pushDocumentLines } from '@/editor/source-buffer-document'
 import type { TableCellAlign } from '@/editor/types'
+import { TASK_STATE_TO_MARKER } from '@/lib/task-states'
 
 /**
  * Converts one element's INLINE content to single-line Agaric markdown
@@ -48,12 +51,22 @@ import type { TableCellAlign } from '@/editor/types'
  */
 export type InlineToMarkdown = (el: Element) => string
 
-/** A block produced by the walk: its single-line markdown content + nesting depth. */
+/** A block produced by the walk: its markdown content, nesting depth and list marker. */
 export interface OutlineBlock {
-  /** Single-line Agaric markdown (already carrying any list marker). */
+  /** Agaric markdown, with no list marker or checkbox. */
   content: string
   /** 0 = top-level paste block; each nested list level adds one. */
   depth: number
+  /** A list item's marker, `- ` or `N. `; a task item's is `- `. */
+  listMarker?: string
+  /** A task list item's state, from its checkbox. */
+  todoState?: 'TODO' | 'DONE'
+}
+
+/** The block as one line of Markdown: its list marker and checkbox, then its content. */
+export function outlineLine(block: OutlineBlock): string {
+  const checkbox = block.todoState ? `[${TASK_STATE_TO_MARKER[block.todoState]}] ` : ''
+  return `${block.listMarker ?? ''}${checkbox}${block.content}`
 }
 
 const HEADING_TAGS = new Set(['H1', 'H2', 'H3', 'H4', 'H5', 'H6'])
@@ -207,7 +220,7 @@ function walkBlockquote(
   // blockquote is a single block here), so all inner lines sit at depth 0.
   const inner: OutlineBlock[] = []
   walkChildren(quote, 0, inline, inner)
-  const lines = inner.map((b) => b.content)
+  const lines = inner.map(outlineLine)
   if (lines.length === 0) {
     // No block children — fall back to the quote's own inline text.
     const text = squashWhitespace(inline(quote))
@@ -252,8 +265,8 @@ function nearestNestedLists(li: Element): Element[] {
 
 /**
  * Detect whether a `<ul>`/`<ol>` is a GFM task list — at least one `<li>`
- * directly containing a `<input type="checkbox">`. Such lists emit `- [ ]` /
- * `- [x]` task blocks (one per item) rather than plain bullets.
+ * directly containing a `<input type="checkbox">`. Such lists emit task blocks
+ * (one per item) rather than plain bullets.
  */
 function isTaskList(list: Element): boolean {
   for (const li of Array.from(list.children)) {
@@ -264,7 +277,7 @@ function isTaskList(list: Element): boolean {
 }
 
 /**
- * Walk a task `<ul>`/`<ol>`, emitting `- [ ]` (unchecked) / `- [x]` (checked)
+ * Walk a task `<ul>`/`<ol>`, emitting a TODO (unchecked) / DONE (checked) task
  * per item (Phase 2). The checkbox `<input>` is stripped from the item's text
  * so only the label remains. Nested lists recurse one level deeper (preserving
  * the outline nesting model); a nested task list stays a task list, a nested
@@ -283,14 +296,13 @@ function walkTaskList(
 
     const checkbox = el.querySelector(':scope > input[type="checkbox"]')
     const checked = checkbox instanceof HTMLInputElement ? checkbox.checked : false
-    const marker = checked ? '- [x]' : '- [ ]'
 
     // The item's OWN text excludes nested lists and the checkbox input.
     const clone = el.cloneNode(true) as Element
     for (const nested of Array.from(clone.querySelectorAll('ul, ol'))) nested.remove()
     for (const box of Array.from(clone.querySelectorAll('input'))) box.remove()
     const text = squashWhitespace(inline(clone))
-    out.push({ content: text.length > 0 ? `${marker} ${text}` : marker, depth })
+    out.push({ content: text, depth, listMarker: '- ', todoState: checked ? 'DONE' : 'TODO' })
 
     // Recurse into the NEAREST nested lists inside this `<li>` (including ones
     // wrapped in a non-list element) so they match the lists stripped from the
@@ -440,9 +452,9 @@ function walkList(
     const clone = el.cloneNode(true) as Element
     for (const nested of Array.from(clone.querySelectorAll('ul, ol'))) nested.remove()
     const text = squashWhitespace(inline(clone))
-    const marker = ordered ? `${ordinal}. ` : '- '
+    const listMarker = ordered ? `${ordinal}. ` : '- '
     // Always emit the item (even when empty) so a nested list keeps a parent.
-    out.push({ content: `${marker}${text}`, depth })
+    out.push({ content: text, depth, listMarker })
     ordinal += 1
 
     // Recurse into the NEAREST nested lists inside this `<li>` (including ones
@@ -457,37 +469,11 @@ function walkList(
   }
 }
 
-/** A top-level heading block's level (`# ` → 1 … `###### ` → 6), or 0. */
-function headingLevel(block: OutlineBlock): number {
-  if (block.depth !== 0) return 0
-  return /^(#{1,6}) /.exec(block.content)?.[1]?.length ?? 0
-}
-
-/**
- * Nest the blocks under the headings that own them (#5160 D16), as an import
- * reads the same document: a heading owns what follows it until a
- * heading of its level or higher, and a deeper heading nests inside a
- * shallower one. Headings inside lists are never blocks here, so they own
- * nothing.
- */
-function nestUnderHeadings(blocks: OutlineBlock[]): OutlineBlock[] {
-  const open: number[] = []
-  return blocks.map((block) => {
-    const level = headingLevel(block)
-    if (level === 0) return { content: block.content, depth: block.depth + open.length }
-    while ((open.at(-1) ?? 0) >= level) open.pop()
-    const nested = { content: block.content, depth: open.length }
-    open.push(level)
-    return nested
-  })
-}
-
 /**
  * Convert a clipboard HTML fragment into a list of {@link OutlineBlock}s in
- * document order, nested under their headings. `inline` renders each
- * element's inline content (see {@link createInlineTurndown}). The `body` is
- * parsed from `html` by the caller (so this stays DOM-agnostic and testable
- * with any `DOMParser`).
+ * document order. `inline` renders each element's inline content (see
+ * {@link createInlineTurndown}). The `body` is parsed from `html` by the caller
+ * (so this stays DOM-agnostic and testable with any `DOMParser`).
  *
  * Returns `[]` when nothing block-like (and no text) is present — the caller
  * treats that as "not usable HTML" and falls back to the normal paste path.
@@ -495,5 +481,29 @@ function nestUnderHeadings(blocks: OutlineBlock[]): OutlineBlock[] {
 export function htmlBodyToOutline(body: ParentNode, inline: InlineToMarkdown): OutlineBlock[] {
   const out: OutlineBlock[] = []
   walkChildren(body, 0, inline, out)
-  return nestUnderHeadings(out)
+  return out
+}
+
+/**
+ * `blocks` as the Document text a copy writes (`get_blocks_source`), which a
+ * paste reads back as these blocks: each list item with its marker and
+ * checkbox, nested under its item, every block escaped where its text would
+ * read as something else. A first block opening with `---` is a `+` item, as
+ * bare it would open front matter.
+ */
+export function outlineToDocument(blocks: readonly OutlineBlock[]): string {
+  const lines: string[] = []
+  const layout = new DocumentLayout()
+  for (const block of blocks) {
+    const opensRule = lines.length === 0 && block.content.startsWith('---')
+    const place = layout.place(
+      block.depth,
+      block.listMarker ?? '',
+      block.todoState ?? null,
+      opensRule,
+    )
+    if (place.blank) lines.push('')
+    pushDocumentLines(lines, place.indent, place.marker, place.taskMarker, block.content)
+  }
+  return lines.map((line) => `${line}\n`).join('')
 }

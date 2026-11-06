@@ -67,10 +67,11 @@
  * extension-detect anchor — survive on well-formed input by construction.
  */
 
-import TurndownService from 'turndown'
+import type TurndownService from 'turndown'
 import { gfm } from 'turndown-plugin-gfm'
 
 import { formatDate } from '@/lib/date-utils'
+import { createMarkdownTurndown } from '@/lib/markdown-turndown'
 import { nameKey } from '@/lib/name-tokens'
 
 /**
@@ -183,24 +184,7 @@ const TASK_GROUP_SENTINEL_CLOSE = '\uE006'
  * just GFM with the project's markdown style.
  */
 export function createHtmlTurndown(): TurndownService {
-  const td = new TurndownService({
-    // Any value but `'setext'` behaves identically — every Turndown check is
-    // against that one (#4815).
-    headingStyle: 'atx',
-    codeBlockStyle: 'fenced',
-    bulletListMarker: '-',
-    // The importer reads a rule only when every character is the same, so
-    // Turndown's `* * *` would land as a list item.
-    hr: '---',
-  })
-  td.use(gfm)
-  // The plugin writes `~x~`, and the editor strikes only `~~x~~`. Added after
-  // the plugin, so it wins.
-  td.addRule('strikethrough', {
-    // The tag-name filter type omits the obsolete `<strike>`.
-    filter: (node) => ['del', 's', 'strike'].includes(node.nodeName.toLowerCase()),
-    replacement: (text) => `~~${text}~~`,
-  })
+  const td = createMarkdownTurndown(gfm)
   // A pipe-table row is one line, and Evernote wraps each cell's text in
   // `<div>`s, whose line breaks would end the row mid-cell; a `|` in the text
   // would open a column, and so would one after an odd backslash run, which

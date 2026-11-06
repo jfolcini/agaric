@@ -645,7 +645,7 @@ async fn a_refused_ref_value_is_inert_text() {
     assert_eq!(created, 0, "no page is created for a refused name");
 }
 
-/// Export → Import keeps a body ref property, written as its target's title,
+/// Export → Import keeps a body ref property, written as a link to its target,
 /// and a repeating task's rule (#5160 P4).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn export_then_import_keeps_a_ref_property_and_the_recurrence_rule() {
@@ -662,7 +662,7 @@ async fn export_then_import_keeps_a_ref_property_and_the_recurrence_rule() {
     let md = export_page_markdown_inner(&pool, page.as_str())
         .await
         .unwrap();
-    assert!(md.contains("  reviewer:: Alice\n"), "{md}");
+    assert!(md.contains("  reviewer:: [[Alice]]\n"), "{md}");
 
     let result = import(&pool, &mat, dir.path(), &md, "Weekly copy.md").await;
 

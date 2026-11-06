@@ -2234,9 +2234,9 @@ async fn export_page_markdown_frontmatter_filters_internal_and_renders_ref_num()
         md.contains("effort: 3\n"),
         "numeric prop must render, got:\n{md}"
     );
-    // Ref resolves to the target page title (non-empty).
+    // Ref resolves to a link to the target page's title.
     assert!(
-        md.contains("parent: Linked Page"),
+        md.contains("parent: \"[[Linked Page]]\""),
         "value_ref must resolve to the referenced page title, got:\n{md}"
     );
 }
@@ -7057,6 +7057,88 @@ async fn edit_as_markdown_keeps_an_escaped_pipe_link_in_a_table_cell() {
     mat.shutdown();
 }
 
+/// Edit as Markdown writes a table cell's `[[ULID\|alias]]` as its page's
+/// title, the pipe still escaped, and reads an edited label back to the link.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_source_writes_a_table_cell_link_as_its_title() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let note = dup_page(&pool, &mat, "Note").await;
+    let page = dup_page(&pool, &mat, "Table").await;
+    dup_child(
+        &pool,
+        &mat,
+        &page,
+        &format!("| [[{note}\\|alias]] | x |\n| --- | --- |"),
+    )
+    .await;
+    settle(&mat).await;
+
+    let base = page_source(&pool, &page).await;
+    let edited = with(
+        &base,
+        "| [[Note\\|alias]] | x |",
+        "| [[Note\\|renamed]] | x |",
+    );
+    save_source(&pool, &mat, &page, &edited, &base)
+        .await
+        .unwrap();
+
+    let contents: Vec<String> = dup_children(&pool, &page)
+        .await
+        .into_iter()
+        .map(|(_, content)| content)
+        .collect();
+    assert_eq!(
+        contents,
+        [format!("| [[{note}\\|renamed]] | x |\n| --- | --- |")]
+    );
+    mat.shutdown();
+}
+
+/// Export writes a table cell's `[[ULID\|label]]` as its page's title with the
+/// label, the pipe still escaped so the row keeps its columns.
+#[tokio::test]
+async fn export_page_markdown_writes_a_table_cell_link_as_its_title() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(
+        &pool,
+        "01LINKPAGE000000000000LNK1",
+        "page",
+        "Linked Page",
+        None,
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01AAAAAAAAAAAAAAAAAAAAPAGE",
+        "page",
+        "Source Page",
+        None,
+        Some(2),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01AAAAAAAAAAAAAAAAAAAABLK1",
+        "content",
+        "| [[01LINKPAGE000000000000LNK1\\|the link]] | x |\n| --- | --- |",
+        Some("01AAAAAAAAAAAAAAAAAAAAPAGE"),
+        Some(1),
+    )
+    .await;
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
+        .await
+        .unwrap();
+    assert!(
+        md.contains("| [[Linked Page\\|the link]] | x |\n"),
+        "the cell's link is written as its title: {md}"
+    );
+}
+
 /// Outside a table the editor reads only a bare pipe in `[[ULID|label]]`, so
 /// an escaped-pipe link there is stored with its pipe unescaped.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -7517,54 +7599,6 @@ async fn paste_blocks_lands_top_level_blocks_in_order_after_the_anchor() {
     );
 }
 
-/// HTML paste hands over blocks already split: each is one block, verbatim.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn paste_blocks_keeps_each_given_block_whole() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-    let page = dup_page(&pool, &mat, "Dest").await;
-    let anchor = dup_child(&pool, &mat, &page, "anchor").await;
-    settle(&mat).await;
-    let blocks = vec![
-        PastedBlock {
-            content: "line one\n- line two\nkey:: v".into(),
-            depth: 0,
-        },
-        PastedBlock {
-            content: "child".into(),
-            depth: 1,
-        },
-    ];
-
-    let rows = paste(&pool, &mat, &anchor, PasteInput::Blocks { blocks }).await;
-
-    let shape: Vec<(Option<&str>, Option<String>)> = rows
-        .iter()
-        .map(|r| {
-            (
-                r.content.as_deref(),
-                r.parent_id.clone().map(BlockId::into_string),
-            )
-        })
-        .collect();
-    assert_eq!(
-        shape,
-        vec![
-            (
-                Some("line one\n- line two\nkey:: v"),
-                Some(page.clone().into_string())
-            ),
-            (Some("child"), Some(rows[0].id.clone().into_string())),
-        ],
-        "a multi-line block stays one block, and the deeper one nests under it"
-    );
-    assert_eq!(
-        dup_storage(&pool, &rows[0].id).await,
-        vec!["columns todo=None priority=None scheduled=None due=None".to_owned()],
-        "a given block's lines are its text, not properties"
-    );
-}
-
 /// A pasted `^ID` naming an existing block does not make the paste that
 /// block: the paste is a new block, and the original is left alone.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -7783,11 +7817,7 @@ async fn paste_blocks_refusals() {
             "{what} is refused as an anchor, got {result:?}"
         );
     }
-    for input in [
-        paste_text(""),
-        paste_text(" \n\t\n"),
-        PasteInput::Blocks { blocks: Vec::new() },
-    ] {
+    for input in [paste_text(""), paste_text(" \n\t\n")] {
         let result =
             paste_blocks_inner(&pool, DEV, &mat, anchor.clone(), input.clone(), None).await;
         assert!(
@@ -8407,32 +8437,27 @@ async fn paste_blocks_splice_mid_text_joins_the_first_block_as_text() {
     }
 }
 
-/// An HTML paste's task item joins text before the cursor as the text it was
-/// pasted as, `- ` and checkbox included, as a plain item keeps its `- `; at
-/// the start of a line the `- ` is escaped, as there it would open a list.
-/// The next item is a task block as ever.
+/// An HTML paste's task item, sent as the Document text `- [ ] open task`,
+/// joins text before the cursor as a plain-text task line does: its checkbox
+/// stays text and its `- ` goes; at the start of a line the checkbox is
+/// escaped, as there it would open a task. The next item is a task block as
+/// ever.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn paste_blocks_splice_after_text_keeps_an_html_task_items_marker() {
+async fn paste_blocks_splice_after_text_joins_an_html_task_item_as_a_task_line() {
     for (before, joined) in [
-        ("Hello ", "Hello - [ ] open task"),
-        ("para\n", "para\n\\- [ ] open task"),
+        ("Hello ", "Hello [ ] open task"),
+        ("para\n", "para\n\\[ ] open task"),
     ] {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
         let page = dup_page(&pool, &mat, "Dest").await;
         let anchor = dup_child(&pool, &mat, &page, "stored").await;
         settle(&mat).await;
-        let blocks = ["- [ ] open task", "- [x] done task"]
-            .map(|content| PastedBlock {
-                content: content.into(),
-                depth: 0,
-            })
-            .to_vec();
         let splice = PasteSplice {
             before: before.into(),
             after: String::new(),
         };
-        let input = PasteInput::Blocks { blocks };
+        let input = paste_text("- [ ] open task\n- [x] done task\n");
         paste_blocks_inner(&pool, DEV, &mat, anchor.clone(), input, Some(splice))
             .await
             .unwrap();
@@ -15827,9 +15852,9 @@ async fn export_import_round_trip_keeps_every_task_state() {
     mat.shutdown();
 }
 
-/// #5160 D6 — HTML paste sends a task list item as `- [ ] text`: the block
-/// lands with the state in its column and the marker out of its text, like a
-/// typed task, with its stamp.
+/// #5160 D6 — HTML paste sends a task list item as the Document line
+/// `- [ ] text`: the block lands with the state in its column and the marker
+/// out of its text, like a typed task, with its stamp.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn paste_blocks_reads_the_checkbox_of_an_html_task_item() {
     let (pool, _dir) = test_pool().await;
@@ -15837,24 +15862,14 @@ async fn paste_blocks_reads_the_checkbox_of_an_html_task_item() {
     let page = dup_page(&pool, &mat, "Dest").await;
     let anchor = dup_child(&pool, &mat, &page, "anchor").await;
     settle(&mat).await;
-    let blocks = ["- [ ] open task", "- [x] finished task", "- plain item"]
-        .into_iter()
-        .map(|content| PastedBlock {
-            content: content.into(),
-            depth: 0,
-        })
-        .collect();
+    let input = paste_text("- [ ] open task\n- [x] finished task\n- plain item");
 
-    let rows = paste(&pool, &mat, &anchor, PasteInput::Blocks { blocks }).await;
+    let rows = paste(&pool, &mat, &anchor, input).await;
 
     let contents: Vec<Option<&str>> = rows.iter().map(|r| r.content.as_deref()).collect();
     assert_eq!(
         contents,
-        [
-            Some("open task"),
-            Some("finished task"),
-            Some("- plain item")
-        ]
+        [Some("open task"), Some("finished task"), Some("plain item")]
     );
     for (row, todo, stamp) in [
         (&rows[0], "Some(\"TODO\")", "created_at="),
@@ -15874,7 +15889,11 @@ async fn paste_blocks_reads_the_checkbox_of_an_html_task_item() {
     }
     assert_eq!(
         dup_storage(&pool, &rows[2].id).await,
-        vec!["columns todo=None priority=None scheduled=None due=None"]
+        vec![
+            "columns todo=None priority=None scheduled=None due=None",
+            "listStyle text=Some(\"bullet\") num=None date=None ref=None bool=None"
+        ],
+        "a plain item is a bulleted block, not a task"
     );
 }
 

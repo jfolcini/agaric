@@ -107,6 +107,11 @@ describe('collectUncachedLinkIds', () => {
     expect(ids).toEqual(new Set([ULID_A, ULID_B]))
   })
 
+  it('extracts the id of a table cell link, whose label pipe is escaped', () => {
+    const blocks = [{ content: `| [[${ULID_A}\\|label]] | x |` }]
+    expect(collectUncachedLinkIds(blocks, TEST_SPACE_ID)).toEqual(new Set([ULID_A]))
+  })
+
   it('extracts the ids of `#[…]` tag refs, which the preload can miss', () => {
     const blocks = [{ content: `tagged #[${ULID_A}] and [[${ULID_B}]]` }]
     const ids = collectUncachedLinkIds(blocks, TEST_SPACE_ID)

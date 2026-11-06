@@ -1,0 +1,9 @@
+# Session 3641 — a ref property's label follows its target's title
+
+The page property table's ref picker read its label from the resolve cache without subscribing to it (`RefEditor`'s `useResolveStore((s) => s.resolveTitle)` selects a stable function). The app build runs the React Compiler, which keeps the trigger's props stable, so a title that reached the cache after the row mounted never reached the label. Unit tests run without the compiler, so only the real-backend lane showed it.
+
+- Premise: the `e2e-tauri/ref-property-export-roundtrip.e2e.ts` failure on #6425 reproduced on `origin/main` (a scratch copy run through `scripts/e2e-tauri-local.sh`). Probing the store at the failure showed the cache held the target under the active space with `resolved: true` and its real title, and `batch_resolve` returned it. So it was no placeholder: the label was stale. That spec created the target through IPC after boot, so the title first arrived through `useRefTitle`'s fetch after mount.
+- User path: an MCP agent (or a synced device) renames a page while another page's ref property to it is open. The resolve cache takes the new title, and the label kept the old one.
+- Fix: `RefEditor` reads the title through `useRefTitle`, which subscribes to it. The block property drawer renders the same `PropertyRowEditor`, so it is covered too. `InlinePropertyChip` already used `useRefTitle`.
+- Tests: `e2e-tauri/ref-property-title-follows-rename.e2e.ts` (agent renames the target while the holder's table is open), red locally without the fix on the "after the agent renamed the target" wait; `RefEditor.test.tsx`, red without the fix on the `New title` assertion.
+- Ran: vitest over `src/components/properties`, `PagePropertyTable`, `BlockPropertyDrawer`; typecheck; oxlint; oxfmt; both real-backend specs locally.

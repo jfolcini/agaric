@@ -393,6 +393,78 @@ async fn get_backlinks_returns_linking_blocks() {
     );
 }
 
+/// A table cell escapes a labelled link's pipe, `[[ULID\|label]]`, so the
+/// row keeps its columns; the saved link is a backlink like a bare-pipe one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_table_cell_link_with_an_escaped_pipe_is_a_backlink() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "target-page".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let source = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "plain content".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        source.id.clone(),
+        format!("| [[{}\\|label]] | x |\n| --- | --- |", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let edges: Vec<(String, String)> =
+        sqlx::query_as("SELECT source_id, target_id FROM block_links")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        edges,
+        [(source.id.to_string(), target.id.to_string())],
+        "the cell's link is the block's one block_links row"
+    );
+    assign_all_to_test_space(&pool).await;
+    let scope = SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID));
+    let resp = get_backlinks_inner(&pool, target.id.clone(), None, None, &scope)
+        .await
+        .unwrap();
+    let ids: Vec<&str> = resp.items.iter().map(|row| row.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [source.id.as_str()],
+        "the target lists the cell's block"
+    );
+    let counts = count_backlinks_batch_inner(&pool, vec![target.id.as_str().into()], &scope)
+        .await
+        .unwrap();
+    assert_eq!(
+        counts.get(target.id.as_str()),
+        Some(&1),
+        "the badge counts the cell's link"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_backlinks_empty_when_no_links() {
     let (pool, _dir) = test_pool().await;
