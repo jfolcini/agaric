@@ -373,6 +373,8 @@ async fn resolve_link_names(
 ) -> Result<(CommandTx, InboundLinks), AppError> {
     let file_page = ctx.file_page;
     let mut links = InboundLinks::default();
+    let link_names =
+        link_global_block_anchors(&mut tx, ctx, link_names, &mut links.page_links).await?;
     let mut resolved_base_links: HashMap<String, String> = HashMap::new();
     let mut cross_page = Vec::new();
     for name in link_names {
@@ -441,6 +443,54 @@ async fn resolve_link_names(
     )
     .await?;
     Ok((tx, links))
+}
+
+/// Link each anchor-only `[[#^id]]` among `names` to the live block of that id
+/// in the space, where no file of its own holds the text, as in a paste or an
+/// append (#6277 F2): a block id is global, so the link names that block
+/// wherever the text lands. Returns the other names, for the name pass.
+async fn link_global_block_anchors(
+    conn: &mut sqlx::SqliteConnection,
+    ctx: &NameCtx<'_>,
+    names: Vec<String>,
+    links: &mut PageLinks,
+) -> Result<Vec<String>, AppError> {
+    if ctx.file_page.is_some() {
+        return Ok(names);
+    }
+    let anchored: HashMap<String, String> = names
+        .iter()
+        .filter_map(|name| {
+            let (base, anchor) = split_wikilink_anchor(name);
+            let id = anchor.and_then(obsidian_block_anchor_id)?;
+            base.is_empty().then(|| (name.clone(), id.to_owned()))
+        })
+        .collect();
+    if anchored.is_empty() {
+        return Ok(names);
+    }
+    let ids = serde_json::to_string(&anchored.values().collect::<Vec<_>>())?;
+    let pages: HashMap<String, String> = sqlx::query!(
+        r#"SELECT id AS "id!", page_id AS "page_id!" FROM blocks
+           WHERE id IN (SELECT value FROM json_each(?1))
+             AND block_type = 'content' AND deleted_at IS NULL AND space_id = ?2"#,
+        ids,
+        ctx.space_id,
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .map(|row| (row.id, row.page_id))
+    .collect();
+    let (linked, rest): (Vec<String>, Vec<String>) = names
+        .into_iter()
+        .partition(|name| anchored.get(name).is_some_and(|id| pages.contains_key(id)));
+    for name in linked {
+        let id = &anchored[&name];
+        links.blocks.insert(name.clone(), id.clone());
+        links.ids.insert(name, pages[id].clone());
+    }
+    Ok(rest)
 }
 
 /// #1446 Part B / #1921 — resolve inbound `[[Page Name]]` wiki-links to internal

@@ -216,7 +216,8 @@ async fn a_ref_to_a_deleted_block_stays_raw() {
 
 /// Block ids are global, so an anchor-only `[[#^id]]`, as the buffer and an
 /// agent's read write a ref to a block of their own page, pasted or appended
-/// under another page still names that block, and `![[#^id]]` its embed.
+/// under another page still names that block, and `![[#^id]]` its embed; a
+/// block of another space is not one of the paste's, so its link stays text.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_anchor_only_link_pasted_under_another_page_is_the_ref() {
     let (pool, _dir) = test_pool().await;
@@ -226,8 +227,22 @@ async fn an_anchor_only_link_pasted_under_another_page_is_the_ref() {
     let anchor = dup_child(&pool, &mat, &dest, "anchor").await;
     settle(&mat).await;
     let own = &r.own;
+    // A block of another space is no block of this paste's: its link stays text.
+    ensure_test_space_b(&pool).await;
+    insert_block(&pool, "FOREIGNPAGE", "page", "Away", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "FOREIGNBLOCK",
+        "content",
+        "away",
+        Some("FOREIGNPAGE"),
+        Some(1),
+    )
+    .await;
+    assign_to_space(&pool, "FOREIGNPAGE", TEST_SPACE_B_ID).await;
+    assign_to_space(&pool, "FOREIGNBLOCK", TEST_SPACE_B_ID).await;
 
-    let text = format!("see [[#^{own}]]\n\n![[#^{own}]]\n");
+    let text = format!("see [[#^{own}]]\n\n![[#^{own}]]\n\nnot [[#^FOREIGNBLOCK]]\n");
     let pasted: Vec<_> = paste(&pool, &mat, &anchor, paste_text(&text))
         .await
         .into_iter()
@@ -236,7 +251,11 @@ async fn an_anchor_only_link_pasted_under_another_page_is_the_ref() {
 
     assert_eq!(
         pasted,
-        [format!("see (({own}))"), format!("{{{{embed (({own}))}}}}")]
+        [
+            format!("see (({own}))"),
+            format!("{{{{embed (({own}))}}}}"),
+            "not [[#^FOREIGNBLOCK]]".to_owned(),
+        ]
     );
     mat.shutdown();
 }
