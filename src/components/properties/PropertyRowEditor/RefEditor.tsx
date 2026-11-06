@@ -14,13 +14,13 @@ import { useTranslation } from 'react-i18next'
 import { EmptyState } from '@/components/common/EmptyState'
 import { readCurrentValue } from '@/components/properties/PropertyRowEditor/shared'
 import type { RefPickerEditorState } from '@/components/properties/PropertyRowEditor/usePropertyRowEditor'
+import { useRefTitle } from '@/components/properties/useRefTitle'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import type { PropertyRow } from '@/lib/bindings'
-import { useResolveStore } from '@/stores/resolve'
 
 export interface RefEditorProps {
   prop: PropertyRow
@@ -31,7 +31,6 @@ export interface RefEditorProps {
 
 export function RefEditor({ prop, state, ariaLabel, hasCreateNewPage }: RefEditorProps) {
   const { t } = useTranslation()
-  const resolveTitle = useResolveStore((s) => s.resolveTitle)
   const {
     open,
     setOpen,
@@ -43,7 +42,7 @@ export function RefEditor({ prop, state, ariaLabel, hasCreateNewPage }: RefEdito
     handleSelectPage,
     handleCreateNewPage,
   } = state
-  const refDisplayTitle = prop.value_ref ? resolveTitle(prop.value_ref) : null
+  const refDisplayTitle = useRefTitle(prop.value_ref)
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
