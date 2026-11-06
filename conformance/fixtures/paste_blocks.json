@@ -83,7 +83,7 @@
       },
       {
         "block_type": "content",
-        "content": "one - [ ] open task",
+        "content": "one [ ] open task",
         "deleted_at": null,
         "due_date": null,
         "id": "B8",
@@ -174,7 +174,7 @@
       },
       {
         "block_type": "content",
-        "content": "para\n\\- [ ] task",
+        "content": "para\n\\[ ] task",
         "deleted_at": null,
         "due_date": null,
         "id": "B15",
@@ -369,7 +369,7 @@
       },
       {
         "block_type": "content",
-        "content": "- plain item",
+        "content": "plain item",
         "deleted_at": null,
         "due_date": null,
         "id": "B30",
@@ -642,7 +642,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 65,
+      "count": 66,
       "ops": [
         {
           "op_type": "delete_block"
@@ -718,6 +718,10 @@
         },
         {
           "op_type": "create_block"
+        },
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
         },
         {
           "op_type": "create_block"
@@ -951,6 +955,12 @@
         "value_type": "Text"
       },
       {
+        "block_id": "B30",
+        "key": "listStyle",
+        "value": "bullet",
+        "value_type": "Text"
+      },
+      {
         "block_id": "B34",
         "key": "listStyle",
         "value": "bullet",
@@ -1052,7 +1062,7 @@
       "returns": [
         "B28#block_type=content#content=open task#parent_id=B1#position=10",
         "B29#block_type=content#content=finished task#parent_id=B28#position=1",
-        "B30#block_type=content#content=- plain item#parent_id=B1#position=11"
+        "B30#block_type=content#content=plain item#parent_id=B1#position=11"
       ]
     },
     {
@@ -1117,7 +1127,7 @@
       "code": null,
       "error": null,
       "name": "paste_an_html_task_item_after_text_keeps_its_checkbox_as_text",
-      "returns": ["B8#block_type=content#content=one - [ ] open task#parent_id=B1#position=22"]
+      "returns": ["B8#block_type=content#content=one [ ] open task#parent_id=B1#position=22"]
     },
     {
       "code": null,
@@ -1142,7 +1152,7 @@
       "code": null,
       "error": null,
       "name": "paste_an_html_task_item_on_a_new_line_escapes_its_checkbox",
-      "returns": ["B15#block_type=content#content=para\n\\- [ ] task#parent_id=B1#position=29"]
+      "returns": ["B15#block_type=content#content=para\n\\[ ] task#parent_id=B1#position=29"]
     },
     {
       "code": null,
