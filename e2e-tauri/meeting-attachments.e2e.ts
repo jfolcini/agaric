@@ -147,18 +147,20 @@ describe('Agaric real-backend meeting pages (#5364) @attachments @pages @mcp', (
     await toggle.waitForDisplayed({ timeout: NAV_TIMEOUT })
     expect(await toggle.getAttribute('aria-expanded')).toBe('false')
 
-    // A timestamp seeks the real player: the fixture is about a second long.
+    // A timestamp seeks the real player. The fixture is about a second long, so
+    // its one later segment sits at its end, where WebKit may clamp the seek
+    // onto the duration: the player has moved when it is past 0 and inside it.
     await toggle.click()
     const seek = $('button[aria-label="Seek to 00:00:01"]')
     await seek.waitForClickable({ timeout: ACTION_TIMEOUT })
     await seek.click()
     await browser.waitUntil(
       async () =>
-        browser.execute(
-          (selector: string) =>
-            (document.querySelector<HTMLAudioElement>(selector)?.currentTime ?? 0) >= 0.9,
-          player,
-        ),
+        browser.execute((selector: string) => {
+          const audio = document.querySelector<HTMLAudioElement>(selector)
+          if (audio === null) return false
+          return audio.currentTime > 0.5 && audio.currentTime <= audio.duration
+        }, player),
       { timeout: ACTION_TIMEOUT, timeoutMsg: 'the timestamp never moved the player' },
     )
   })
