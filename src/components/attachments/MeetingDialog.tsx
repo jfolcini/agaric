@@ -10,7 +10,7 @@
 
 import { format } from 'date-fns'
 import type React from 'react'
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -84,6 +84,8 @@ export function MeetingDialog({
   const id = useId()
   const [title, setTitle] = useState('')
   const [date, setDate] = useState(() => format(new Date(), 'yyyy-MM-dd'))
+  // The block's day lands a round trip after mount; a date picked by then wins.
+  const dateTouched = useRef(false)
   const [templates, setTemplates] = useState<BlockRow[]>([])
   const [templateId, setTemplateId] = useState(NO_TEMPLATE)
   const [audio, setAudio] = useState<File | null>(null)
@@ -97,7 +99,7 @@ export function MeetingDialog({
     let live = true
     defaultMeetingDate(linkBlockId).then(
       (day) => {
-        if (live) setDate(day)
+        if (live && !dateTouched.current) setDate(day)
       },
       (err: unknown) =>
         logger.warn('MeetingDialog', 'could not read the block’s day', undefined, err),
@@ -192,7 +194,10 @@ export function MeetingDialog({
               type="date"
               required
               value={date}
-              onChange={(e) => setDate(e.target.value)}
+              onChange={(e) => {
+                dateTouched.current = true
+                setDate(e.target.value)
+              }}
             />
           </div>
           <div className="flex flex-col gap-1">

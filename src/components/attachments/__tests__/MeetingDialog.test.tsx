@@ -111,6 +111,27 @@ describe('MeetingDialog', () => {
     await waitFor(() => expect(input.value).toBe('2030-01-02'))
   })
 
+  it('keeps a date picked before the block’s day arrives', async () => {
+    const blockId = blockOnDay('2031-03-14')
+    let releaseBlock = (): void => {}
+    const blockRead = new Promise<void>((resolve) => {
+      releaseBlock = resolve
+    })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'get_block') await blockRead
+      return dispatch(cmd, args)
+    })
+    render(<Harness blockId={blockId} />)
+
+    fireEvent.change(await dateInput(), { target: { value: '2031-05-01' } })
+    releaseBlock()
+
+    await waitFor(() =>
+      expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'get_block')).toHaveLength(2),
+    )
+    await waitFor(async () => expect((await dateInput()).value).toBe('2031-05-01'))
+  })
+
   it('makes the page from the template, attaches the files and links it from the block', async () => {
     const user = userEvent.setup()
     const blockId = blockOnDay('2031-03-14')
