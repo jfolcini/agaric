@@ -705,7 +705,8 @@ function PropertyRefValueInput({
   onChange: (id: string) => void
 }): React.ReactElement {
   const { t } = useTranslation()
-  const resolveTitle = useResolveStore((s) => s.resolveTitle)
+  // Selected as a string, so the line follows a title that changes or arrives after it mounts.
+  const selectedTitle = useResolveStore((s) => (value ? s.resolveTitle(value) : ''))
   const [search, setSearch] = useState('')
   const { filtered, loading, labelFor } = usePagePicker(search)
 
@@ -726,7 +727,7 @@ function PropertyRefValueInput({
       />
       {value && (
         <p className="px-1 text-xs text-muted-foreground" data-testid="property-ref-selected">
-          {t('pageBrowser.filter.propertyRefSelected', { title: resolveTitle(value) })}
+          {t('pageBrowser.filter.propertyRefSelected', { title: selectedTitle })}
         </p>
       )}
     </div>
