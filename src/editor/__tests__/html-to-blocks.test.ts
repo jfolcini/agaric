@@ -3,9 +3,9 @@
  *
  * Drives the REAL Turndown configuration (`createInlineTurndown`) through the
  * DOM walk (`htmlBodyToOutline`) so the assertions cover the production
- * conversion, then verifies each emitted block — which `paste_blocks` creates
- * verbatim (`{ kind: 'blocks' }`, #5140) — re-parses into the expected node via
- * the editor's `parse`.
+ * conversion, then verifies each emitted block's content re-parses into the
+ * expected node via the editor's `parse`. How the blocks are written as the
+ * Document text a paste sends is `html-to-document.test.ts`.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -70,43 +70,6 @@ describe('parseUsableHtmlBody — handlePaste’s usability gate', () => {
 })
 
 describe('htmlBodyToOutline — block structure', () => {
-  it('converts headings to ATX heading blocks, a deeper one nested in a shallower one', () => {
-    expect(convert('<h1>Title</h1><h3>Sub</h3>')).toEqual([
-      { content: '# Title', depth: 0 },
-      { content: '### Sub', depth: 1 },
-    ])
-  })
-
-  // #5160 D16 — a heading owns what follows it until a heading of its level or
-  // higher, so HTML paste gives the tree import gives.
-  it('nests the blocks after a heading under it, lists keeping their own nesting', () => {
-    const html =
-      '<h1>Title</h1><p>Intro</p><h2>Part A</h2><ul><li>x<ul><li>y</li></ul></li></ul>' +
-      '<h2>Part B</h2><p>b</p><h1>Next</h1><p>last</p>'
-    expect(convert(html)).toEqual([
-      { content: '# Title', depth: 0 },
-      { content: 'Intro', depth: 1 },
-      { content: '## Part A', depth: 1 },
-      { content: '- x', depth: 2 },
-      { content: '- y', depth: 3 },
-      { content: '## Part B', depth: 1 },
-      { content: 'b', depth: 2 },
-      { content: '# Next', depth: 0 },
-      { content: 'last', depth: 1 },
-    ])
-  })
-
-  it('closes a deeper heading at a shallower one and leaves what precedes any heading alone', () => {
-    const html = '<p>before</p><h3>Deep</h3><p>d</p><h2>Shallower</h2><p>s</p>'
-    expect(convert(html)).toEqual([
-      { content: 'before', depth: 0 },
-      { content: '### Deep', depth: 0 },
-      { content: 'd', depth: 1 },
-      { content: '## Shallower', depth: 0 },
-      { content: 's', depth: 1 },
-    ])
-  })
-
   it('converts paragraphs to plain blocks', () => {
     expect(convert('<p>First</p><p>Second</p>')).toEqual([
       { content: 'First', depth: 0 },
@@ -116,25 +79,25 @@ describe('htmlBodyToOutline — block structure', () => {
 
   it('converts an unordered list to one bullet block per item', () => {
     expect(convert('<ul><li>a</li><li>b</li></ul>')).toEqual([
-      { content: '- a', depth: 0 },
-      { content: '- b', depth: 0 },
+      { content: 'a', depth: 0, listMarker: '- ' },
+      { content: 'b', depth: 0, listMarker: '- ' },
     ])
   })
 
   it('converts an ordered list to numbered blocks', () => {
     expect(convert('<ol><li>one</li><li>two</li></ol>')).toEqual([
-      { content: '1. one', depth: 0 },
-      { content: '2. two', depth: 0 },
+      { content: 'one', depth: 0, listMarker: '1. ' },
+      { content: 'two', depth: 0, listMarker: '2. ' },
     ])
   })
 
   it('nests a child list one depth under its parent item', () => {
     const html = '<ul><li>parent<ul><li>child</li><li>child2</li></ul></li><li>sibling</li></ul>'
     expect(convert(html)).toEqual([
-      { content: '- parent', depth: 0 },
-      { content: '- child', depth: 1 },
-      { content: '- child2', depth: 1 },
-      { content: '- sibling', depth: 0 },
+      { content: 'parent', depth: 0, listMarker: '- ' },
+      { content: 'child', depth: 1, listMarker: '- ' },
+      { content: 'child2', depth: 1, listMarker: '- ' },
+      { content: 'sibling', depth: 0, listMarker: '- ' },
     ])
   })
 
@@ -146,18 +109,18 @@ describe('htmlBodyToOutline — block structure', () => {
     const html =
       '<ul><li>parent<div><ul><li>child</li><li>child2</li></ul></div></li><li>sibling</li></ul>'
     expect(convert(html)).toEqual([
-      { content: '- parent', depth: 0 },
-      { content: '- child', depth: 1 },
-      { content: '- child2', depth: 1 },
-      { content: '- sibling', depth: 0 },
+      { content: 'parent', depth: 0, listMarker: '- ' },
+      { content: 'child', depth: 1, listMarker: '- ' },
+      { content: 'child2', depth: 1, listMarker: '- ' },
+      { content: 'sibling', depth: 0, listMarker: '- ' },
     ])
   })
 
   it('nests a doubly-wrapped child list at the right depth (#2024)', () => {
     const html = '<ol><li>parent<section><div><ol><li>child</li></ol></div></section></li></ol>'
     expect(convert(html)).toEqual([
-      { content: '1. parent', depth: 0 },
-      { content: '1. child', depth: 1 },
+      { content: 'parent', depth: 0, listMarker: '1. ' },
+      { content: 'child', depth: 1, listMarker: '1. ' },
     ])
   })
 
@@ -166,9 +129,9 @@ describe('htmlBodyToOutline — block structure', () => {
     // each level must add exactly one depth, recursed once at the right level.
     const html = '<ul><li>a<div><ul><li>b<div><ul><li>c</li></ul></div></li></ul></div></li></ul>'
     expect(convert(html)).toEqual([
-      { content: '- a', depth: 0 },
-      { content: '- b', depth: 1 },
-      { content: '- c', depth: 2 },
+      { content: 'a', depth: 0, listMarker: '- ' },
+      { content: 'b', depth: 1, listMarker: '- ' },
+      { content: 'c', depth: 2, listMarker: '- ' },
     ])
   })
 
@@ -227,8 +190,8 @@ describe('security guards', () => {
 describe('outline → pasted blocks', () => {
   it('gives a nested list its parent/child depths', () => {
     expect(convert('<ul><li>parent<ul><li>child</li></ul></li></ul>')).toEqual([
-      { content: '- parent', depth: 0 },
-      { content: '- child', depth: 1 },
+      { content: 'parent', depth: 0, listMarker: '- ' },
+      { content: 'child', depth: 1, listMarker: '- ' },
     ])
   })
 
@@ -256,9 +219,8 @@ describe('outline → pasted blocks', () => {
 // ── #1439 Phase 2: tables, code fences, images, blockquotes, task lists ───────
 
 /**
- * Drive a single fragment through the paste path — DOM walk → the blocks
- * `paste_blocks` creates verbatim → per-block `parse` — and return each block's
- * content with its reparsed top-level node.
+ * Drive a single fragment through the DOM walk, then `parse` each block's
+ * content, and return each block's content with its reparsed top-level node.
  */
 function pasteRoundTrip(html: string): { content: string; node: ReturnType<typeof parse> }[] {
   return convert(html).map((b) => ({ content: b.content, node: parse(b.content) }))
@@ -413,27 +375,16 @@ describe('htmlBodyToOutline — blockquotes (Phase 2)', () => {
 })
 
 describe('htmlBodyToOutline — task lists (Phase 2)', () => {
-  it('emits - [ ] / - [x] items for a checkbox list (checked + unchecked)', () => {
+  it('emits TODO / DONE task items for a checkbox list (checked + unchecked)', () => {
     const html =
       '<ul>' +
       '<li><input type="checkbox"> todo item</li>' +
       '<li><input type="checkbox" checked> done item</li>' +
       '</ul>'
     expect(convert(html)).toEqual([
-      { content: '- [ ] todo item', depth: 0 },
-      { content: '- [x] done item', depth: 0 },
+      { content: 'todo item', depth: 0, listMarker: '- ', todoState: 'TODO' },
+      { content: 'done item', depth: 0, listMarker: '- ', todoState: 'DONE' },
     ])
-  })
-
-  it('each task line re-parses to a paragraph carrying the right todoState', () => {
-    const html =
-      '<ul><li><input type="checkbox"> a</li><li><input type="checkbox" checked> b</li></ul>'
-    const round = pasteRoundTrip(html)
-    expect(round).toHaveLength(2)
-    const a = round[0]?.node.content?.[0]
-    const b = round[1]?.node.content?.[0]
-    expect((a as unknown as { attrs?: { todoState?: string } }).attrs?.todoState).toBe('TODO')
-    expect((b as unknown as { attrs?: { todoState?: string } }).attrs?.todoState).toBe('DONE')
   })
 
   it('recurses into a task list WRAPPED in a div inside a task item (#2024)', () => {
@@ -446,8 +397,8 @@ describe('htmlBodyToOutline — task lists (Phase 2)', () => {
       '</li>' +
       '</ul>'
     expect(convert(html)).toEqual([
-      { content: '- [ ] parent', depth: 0 },
-      { content: '- [x] child', depth: 1 },
+      { content: 'parent', depth: 0, listMarker: '- ', todoState: 'TODO' },
+      { content: 'child', depth: 1, listMarker: '- ', todoState: 'DONE' },
     ])
   })
 
@@ -459,15 +410,15 @@ describe('htmlBodyToOutline — task lists (Phase 2)', () => {
       '</li>' +
       '</ul>'
     expect(convert(html)).toEqual([
-      { content: '- [x] parent', depth: 0 },
-      { content: '- plain child', depth: 1 },
+      { content: 'parent', depth: 0, listMarker: '- ', todoState: 'DONE' },
+      { content: 'plain child', depth: 1, listMarker: '- ' },
     ])
   })
 
   it('a non-task <ul> still produces plain bullets (no regression)', () => {
     expect(convert('<ul><li>a</li><li>b</li></ul>')).toEqual([
-      { content: '- a', depth: 0 },
-      { content: '- b', depth: 0 },
+      { content: 'a', depth: 0, listMarker: '- ' },
+      { content: 'b', depth: 0, listMarker: '- ' },
     ])
   })
 })
@@ -488,7 +439,8 @@ describe('multi-line blocks (Phase 2)', () => {
 // constraint covers the HTML paste/export path, not just markdown). Callout has
 // no standard HTML element, so it is intentionally absent here — it is reached
 // via markdown (`> [!INFO]`) and the slash/turn-into path, both covered by the
-// markdown round-trip suite.
+// markdown round-trip suite. A list item's style is its `listStyle`, not a node
+// in its content: `html-to-document.test.ts` pins `<ul>` and `<ol>`.
 describe('"Turn into" styles — HTML paste parity (#1960)', () => {
   /** First top-level node type produced by pasting a single-block fragment. */
   function firstNodeType(html: string): string | undefined {
@@ -506,14 +458,6 @@ describe('"Turn into" styles — HTML paste parity (#1960)', () => {
       expect(node?.type).toBe('heading')
       expect((node as { attrs?: { level?: number } }).attrs?.level).toBe(level)
     }
-  })
-
-  it('bullet list: <ul><li> → bulletList node', () => {
-    expect(firstNodeType('<ul><li>item</li></ul>')).toBe('bulletList')
-  })
-
-  it('ordered list: <ol><li> → orderedList node', () => {
-    expect(firstNodeType('<ol><li>item</li></ol>')).toBe('orderedList')
   })
 
   it('quote: <blockquote> → blockquote node (no callout type)', () => {

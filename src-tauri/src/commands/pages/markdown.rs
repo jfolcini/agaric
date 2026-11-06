@@ -304,8 +304,7 @@ pub async fn duplicate_block_inner(
 }
 
 /// Paste `input` right after the anchor block (#5140), as one transaction and
-/// so one undo. Text is read by [`import::parse_pasted_text`]; each of
-/// `blocks` is one block as it comes. A page link or tag written as a name is
+/// so one undo. Text is read by [`import::parse_pasted_text`]. A page link or tag written as a name is
 /// resolved in the anchor's space as an import resolves it, creating the page
 /// or tag when no name there matches; ids and block refs stay as written, but
 /// one whose target is in another space is written as the text its chip shows
@@ -347,8 +346,7 @@ pub async fn paste_blocks_inner(
     splice: Option<PasteSplice>,
 ) -> Result<PastedBlocks, AppError> {
     let anchor_id = BlockId::from_string(anchor_block_id.into_string())?;
-    let (mut blocks, read_warnings) =
-        input.into_blocks(splice.as_ref().is_some_and(|s| !s.before.is_empty()));
+    let (mut blocks, read_warnings) = input.into_blocks();
     if blocks.is_empty() {
         return Err(AppError::validation("there is nothing to paste".into()));
     }

@@ -30,7 +30,7 @@ export const BLOCK_EVENTS = {
   // a BlockTypeToken; the handler runs `convertBlockContent` + `applyContentEdit`.
   TURN_INTO_BLOCK: 'turn-into-block',
   // #1439 / #5140 — a paste the editor hands to the block path: converted
-  // clipboard HTML (`kind: 'blocks'`) or a pasted outline (`kind: 'text'`).
+  // pasted text or clipboard HTML written as Document text (`kind: 'text'`).
   // The focused BlockTree materializes it via `pasteBlocks(focusedBlockId, input)`.
   PASTE_BLOCKS: 'paste-blocks',
   // #6156 — the editor's undo took back a change that cleared the focused

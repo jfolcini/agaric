@@ -78,44 +78,20 @@ pub(crate) async fn copy_page_blocks_in_tx(
     .map(Ok)
 }
 
-/// What a paste carries: clipboard text, or blocks already split.
+/// What a paste carries: clipboard text, an HTML paste's written as Document
+/// text (#6277 E5).
 #[derive(Debug, Clone, Deserialize, Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PasteInput {
     Text { text: String },
-    Blocks { blocks: Vec<PastedBlock> },
-}
-
-/// One pasted block: its content verbatim and its depth under the paste.
-#[derive(Debug, Clone, Deserialize, Type)]
-pub struct PastedBlock {
-    pub content: String,
-    pub depth: u32,
 }
 
 impl PasteInput {
-    /// The blocks the input holds, and the warnings of reading them. After
-    /// text (#5160 D4) the first of an HTML paste's blocks is the text it was
-    /// pasted as, so its `- [ ] ` checkbox stays text as a plain item's `- `
-    /// does.
-    pub(super) fn into_blocks(self, after_text: bool) -> (Vec<import::ParsedBlock>, Vec<String>) {
-        match self {
-            Self::Text { text } => {
-                let read = import::read_pasted_text(&text);
-                (read.blocks, read.warnings)
-            }
-            Self::Blocks { blocks } => {
-                let blocks = blocks.into_iter().enumerate().map(|(at, block)| {
-                    let depth = block.depth as usize;
-                    if at == 0 && after_text {
-                        import::verbatim_block(block.content, depth)
-                    } else {
-                        import::pasted_block(block.content, depth)
-                    }
-                });
-                (blocks.collect(), Vec::new())
-            }
-        }
+    /// The blocks the input holds, and the warnings of reading them.
+    pub(super) fn into_blocks(self) -> (Vec<import::ParsedBlock>, Vec<String>) {
+        let Self::Text { text } = self;
+        let read = import::read_pasted_text(&text);
+        (read.blocks, read.warnings)
     }
 }
 

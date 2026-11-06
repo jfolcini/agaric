@@ -63,7 +63,8 @@ vi.mock('@/editor/inline-turndown', () => ({
   createInlineTurndown: () => ({ inline: (el: Element) => el.textContent ?? '' }),
 }))
 
-vi.mock('@/editor/html-to-blocks', () => ({
+vi.mock('@/editor/html-to-blocks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/editor/html-to-blocks')>()),
   htmlBodyToOutline: (...args: unknown[]) => htmlBodyToOutline(...args),
 }))
 
@@ -303,20 +304,35 @@ describe('convertAndInsert — captured paste target (#2033)', () => {
     // A multi-line block and a nested one → routes through the block-paste path.
     const blocks = [
       { content: '```js\nconst a = 1\n```', depth: 0 },
-      { content: '- two', depth: 1 },
+      { content: 'two', depth: 1, listMarker: '- ' },
     ]
     htmlBodyToOutline.mockReturnValue(blocks)
 
     await convertAndInsert(editor.view, '<p>one</p><p>two</p>', 'one\ntwo', 'BLOCK_A')
 
     expect(dispatchBlockCommand).toHaveBeenCalledWith('PASTE_BLOCKS', {
-      input: { kind: 'blocks', blocks },
+      input: { kind: 'text', text: '```js\nconst a = 1\n```\n\n  - two\n' },
       targetBlockId: 'BLOCK_A',
       splice: { before: 'Hello ', after: 'world' },
       asText: expect.any(String),
     })
     // Block content must never be force-inserted into the editor view.
     expect(editor.state.doc.textContent).toBe('Hello world')
+  })
+
+  it('sends a single list item as its block, not inline text', async () => {
+    const { convertAndInsert } = await loadModule()
+    editor = await buildEditor(EMPTY_PARAGRAPH)
+    htmlBodyToOutline.mockReturnValue([{ content: 'item', depth: 0, listMarker: '- ' }])
+
+    await convertAndInsert(editor.view, '<ul><li>item</li></ul>', 'item', null)
+
+    expect(dispatchBlockCommand).toHaveBeenCalledWith('PASTE_BLOCKS', {
+      input: { kind: 'text', text: '- item\n' },
+      targetBlockId: null,
+      splice: { before: '', after: '' },
+      asText: expect.any(String),
+    })
   })
 
   it('forwards a null targetBlockId (no focused block) unchanged', async () => {
@@ -332,7 +348,7 @@ describe('convertAndInsert — captured paste target (#2033)', () => {
     await convertAndInsert(editor.view, '<p>one</p><p>two</p>', 'one\ntwo', null)
 
     expect(dispatchBlockCommand).toHaveBeenCalledWith('PASTE_BLOCKS', {
-      input: { kind: 'blocks', blocks },
+      input: { kind: 'text', text: 'one\n\ntwo\n' },
       targetBlockId: null,
       splice: { before: '', after: '' },
       asText: expect.any(String),
@@ -749,6 +765,26 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
     expect(dispatchBlockCommand).not.toHaveBeenCalled()
     expect(ed.state.doc.child(0).child(1).child(0).child(0).toJSON().content).toEqual([
       { type: 'text', text: '# Title' },
+      { type: 'hardBreak' },
+      { type: 'text', text: 'Body' },
+    ])
+  })
+
+  it('keeps a list item’s marker in the blocks’ text pasted into a table cell', async () => {
+    const ed = await buildEditor(TABLE_DOC)
+    editor = ed
+    ed.commands.setTextSelection(endOf(ed, 'one'))
+    htmlBodyToOutline.mockReturnValue([
+      { content: 'item', depth: 0, listMarker: '- ' },
+      { content: 'Body', depth: 0 },
+    ])
+
+    expect(paste(ed, '', '<ul><li>item</li></ul><p>Body</p>')).toBe(true)
+    await vi.waitFor(() => expect(ed.state.doc.textContent).toContain('Body'))
+
+    expect(dispatchBlockCommand).not.toHaveBeenCalled()
+    expect(ed.state.doc.child(0).child(1).child(0).child(0).toJSON().content).toEqual([
+      { type: 'text', text: 'one- item' },
       { type: 'hardBreak' },
       { type: 'text', text: 'Body' },
     ])

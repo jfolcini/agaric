@@ -144,7 +144,7 @@ export interface PageBlockState {
   moveDown: (blockId: string) => Promise<boolean>
 
   /**
-   * #913 / #5140 — paste clipboard text or HTML-paste blocks right after
+   * #913 / #5140 — paste clipboard text (an HTML paste's as Document text) right after
    * `anchorBlockId`, as one `paste_blocks` command and one undo entry, then
    * reload the tree. The backend parses the text, lands the top-level blocks
    * as siblings after the anchor and nests the rest under them. Resolves the

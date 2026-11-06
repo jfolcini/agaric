@@ -297,21 +297,6 @@ describe('tauri-mock clipboard pair', () => {
       expect(pasted.map((r) => [r.content, parentContent(r)])).toEqual(want)
     })
 
-    it('creates `blocks` input verbatim, a multi-line block staying ONE block', () => {
-      const pasted = paste(B, {
-        kind: 'blocks',
-        blocks: [
-          { content: FENCED, depth: 0 },
-          { content: '- item', depth: 1 },
-        ],
-      })
-
-      expect(pasted.map((r) => [r.content, r.parent_id])).toEqual([
-        [FENCED, PAGE],
-        ['- item', pasted[0]?.id],
-      ])
-    })
-
     it('lands the top-level blocks in order right after the anchor, before its next sibling', () => {
       paste(A, { kind: 'text', text: '- one\n- two\n- three' })
 
@@ -397,7 +382,7 @@ describe('tauri-mock clipboard pair', () => {
       expect(opLog.map((op) => op.op_type)).toEqual(['edit_block'])
     })
 
-    it("reads a checkbox after the bullet as the row's todo_state, in text and in HTML-paste blocks (#5160 D6)", () => {
+    it("reads a checkbox after the bullet as the row's todo_state, in pasted text (#5160 D6)", () => {
       const text = paste(A, {
         kind: 'text',
         text: '- [ ] open\n  - [x] done\n- [/] wip\n- [-] gone\n- [X] loud\n- [?] text',
@@ -412,27 +397,11 @@ describe('tauri-mock clipboard pair', () => {
         ['loud', 'DONE'],
         ['[?] text', null],
       ])
-      const html = paste(A, {
-        kind: 'blocks',
-        blocks: [
-          { content: '- [ ] open task', depth: 0 },
-          { content: '- [x] finished\nsecond line', depth: 1 },
-          { content: '- plain item', depth: 0 },
-        ],
-      })
-      expect(
-        html.map((r) => [r.content, (r as Row & { todo_state: string | null }).todo_state]),
-      ).toEqual([
-        ['open task', 'TODO'],
-        ['finished\nsecond line', 'DONE'],
-        ['- plain item', null],
-      ])
-      // Re-queried: the state is on the stored row (the second paste landed
-      // right after the anchor, ahead of the first), and each task wrote its
+      // Re-queried: the state is on the stored row, and each task wrote its
       // state op after its create.
       expect(
         childrenOf(PAGE).map((r) => (r as Row & { todo_state: string | null }).todo_state),
-      ).toEqual([null, 'TODO', null, 'TODO', 'DOING', 'CANCELLED', 'DONE', null, null, null])
+      ).toEqual([null, 'TODO', 'DOING', 'CANCELLED', 'DONE', null, null, null])
       expect(opLog.map((op) => op.op_type).slice(0, 4)).toEqual([
         'create_block',
         'set_property',
@@ -466,7 +435,6 @@ describe('tauri-mock clipboard pair', () => {
       expect(refusal(PAGE, text)).toBe('validation')
       expect(refusal(TRASHED, text)).toBe('validation')
       expect(refusal(A, { kind: 'text', text: ' \n\n ' })).toBe('validation')
-      expect(refusal(A, { kind: 'blocks', blocks: [] })).toBe('validation')
       // Nothing was written by any refusal.
       expect(opLog).toHaveLength(0)
     })

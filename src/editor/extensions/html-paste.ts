@@ -9,9 +9,11 @@
  *
  *   - single inline run (one heading/paragraph/list-item, no nesting) → inserted
  *     inline at the caret as real marks (bold/italic/code/strike/links);
- *   - multi-block (several blocks, or any nesting) → routed through the
- *     block-creation path: `dispatchBlockCommand('PASTE_BLOCKS', …)` → the
- *     focused BlockTree's `pasteBlocks(focusedBlockId, { kind: 'blocks', … })`.
+ *   - multi-block (several blocks, or any nesting) → written as Document text
+ *     (`outlineToDocument`, #6277 E5) and routed through the block-creation
+ *     path: `dispatchBlockCommand('PASTE_BLOCKS', …)` → the focused BlockTree's
+ *     `pasteBlocks(focusedBlockId, { kind: 'text', … })`, which the backend
+ *     reads as it reads pasted text, list markers as list styles.
  *
  * With no usable HTML, plain text of more than one line — or one list line
  * where it starts the block, our own copy of one block — takes the same route
@@ -176,7 +178,7 @@ function parseHtmlBody(html: string): ParentNode | null {
  * block path's splice would cut it in two: what would become blocks goes in as
  * the plain text's literal lines instead, as a text paste does there. With no
  * plain text (a clipboard carrying only `text/html`) the blocks' text goes in,
- * one line each.
+ * one line each, list markers included.
  *
  * @internal Exported for testing.
  */
@@ -193,7 +195,7 @@ export async function convertAndInsert(
   try {
     // Lazy-load Turndown + the converter so they stay out of the main chunk and
     // only load on the first HTML paste (#750).
-    const [{ createInlineTurndown }, { htmlBodyToOutline }] = await Promise.all([
+    const [{ createInlineTurndown }, outline] = await Promise.all([
       import('@/editor/inline-turndown'),
       import('@/editor/html-to-blocks'),
     ])
@@ -208,7 +210,7 @@ export async function convertAndInsert(
     }
 
     const { inline } = createInlineTurndown()
-    const blocks = htmlBodyToOutline(body, inline)
+    const blocks = outline.htmlBodyToOutline(body, inline)
 
     if (blocks.length === 0) {
       // Usable-looking HTML that yielded no blocks (e.g. only unsupported
@@ -227,6 +229,7 @@ export async function convertAndInsert(
       blocks.length === 1 &&
       first !== undefined &&
       first.depth === 0 &&
+      first.listMarker === undefined &&
       !isStructuralLine(first.content)
     if (single || literal) {
       // #2454 — the single roving TipTap view can be handed to a DIFFERENT block
@@ -247,17 +250,19 @@ export async function convertAndInsert(
       }
       if (single) insertInlineMarkdown(view, first.content)
       else {
-        const lines = plainText.length > 0 ? plainText : blocks.map((b) => b.content).join('\n')
+        const lines = plainText.length > 0 ? plainText : blocks.map(outline.outlineLine).join('\n')
         insertLiteralLines(view, lines)
       }
       return
     }
 
     // Multi-block (or nested / heading / list) → materialize via the focused
-    // BlockTree's `pasteBlocks`. Routed through the focus-keyed block command
-    // bus so exactly the owning tree handles it. The captured `targetBlockId`
-    // lets the receiver reject the paste if focus has since moved (#2033).
-    dispatchPasteBlocks(view, { kind: 'blocks', blocks }, plainText, targetBlockId)
+    // BlockTree's `pasteBlocks`, as the Document text a copy of those blocks
+    // writes. Routed through the focus-keyed block command bus so exactly the
+    // owning tree handles it. The captured `targetBlockId` lets the receiver
+    // reject the paste if focus has since moved (#2033).
+    const text = outline.outlineToDocument(blocks)
+    dispatchPasteBlocks(view, { kind: 'text', text }, plainText, targetBlockId)
   } catch (err) {
     logger.warn('htmlPaste', 'conversion failed; falling back to plain text', undefined, err)
     insertPlainText(view, plainText)
