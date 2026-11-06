@@ -169,9 +169,13 @@ describe('Agaric real-backend meeting pages (#5364) @attachments @pages @mcp', (
     await navigateTo('Journal')
     await $('[data-testid="header-search-button"]').click()
     await typeInputVerified('[data-testid="command-palette-input"]', '>New meeting')
-    const command = $('[role="option"]*=New meeting')
-    await command.waitForClickable({ timeout: ACTION_TIMEOUT })
-    await command.click()
+    // The palette runs its selected command on Enter; WebKitGTK never reported
+    // the option row itself as clickable.
+    await $('[role="option"][aria-selected="true"]*=New meeting').waitForExist({
+      timeout: ACTION_TIMEOUT,
+    })
+    await browser.keys(['Enter'])
+    await $('[data-testid="meeting-dialog"]').waitForDisplayed({ timeout: ACTION_TIMEOUT })
     await typeInputVerified(
       '[data-testid="meeting-dialog"] input[placeholder="Meeting"]',
       PALETTE_TITLE,
