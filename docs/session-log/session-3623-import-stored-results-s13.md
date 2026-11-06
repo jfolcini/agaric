@@ -1,4 +1,4 @@
-# Session 3617 — stored-result import tests for the constructs no slice pinned (#6033 S13)
+# Session 3623 — stored-result import tests for the constructs no slice pinned (#6033 S13)
 
 Closes #6033 with its last slice: one stored-result import test per construct the earlier slices and #6277 items left pinned only at parse level or not at all. Read against main 98587cb; #6277 E3 turned out to be true already, so these pin today's reading.
 
