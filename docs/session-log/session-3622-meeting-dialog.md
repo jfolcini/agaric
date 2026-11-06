@@ -1,0 +1,12 @@
+# Session 3622 — the `/meeting` dialog
+
+The fifth PR of #5364 slice 2 (S5a-2 in the build plan on #5410): the *New meeting* dialog and the `/meeting` slash command that opens it, on top of the `add_meeting` command from S5a-1.
+
+- `MeetingDialog` (`src/components/attachments/`) takes a title, a date, a template, and the audio, transcript and summary, each optional, the summary as text or a file. The date defaults to the journal day the block is on, else today. It calls `add_meeting` with the block as the link, so the success toast's Undo reverts the meeting through `revert_ops`. A refusal or a failed call keeps the dialog open with a toast.
+- `/meeting` opens it through `useBlockDialogs`, which keeps an empty block alive while the dialog is up (#4729). A tree without the opener logs a warning instead of doing nothing; a new `useSlashCommandProperty` test pins both arms. Page mode does not offer it: the link is written into a block from the backend, under the page's one document, which would write its own copy of the block back over it.
+- After the meeting the dialog calls `invalidateDerivedCaches()`: the page, its tag and its files reach the backend past every page store, and without it the new page's header could not name its `#meeting` tag.
+- #6410's two review notes on the mock twin, as their own commit: `assertLiveBlockInSpace` returns nothing, and `link_block_id ?? null`.
+- Three pinned-list tests move with the new command, approved by the coordinator: the two slash-command lists and counts in `BlockTree.test.tsx`, and the exact surface in `useSlashCommandProperty.test.ts`.
+- Specs: `e2e/meeting-attachments.spec.ts` (the dialog with a template, files and a summary; follows the link, then leaves and comes back) and `e2e-tauri/meeting-attachments.e2e.ts` (the dialog against the real backend, and MCP `add_meeting` with audio that plays and a collapsed transcript). The e2e-tauri spec cannot run in this container, which has no tauri-driver; it type-checks and passes the tag test.
+- Red: the Playwright spec failed with the dialog never opening when `BlockTree` stopped passing the opener, and failed on the tag chip without `invalidateDerivedCaches()`. The dialog's vitest suite killed 7 mutations.
+- The affected vitest directories, typecheck, oxlint and oxfmt pass, and so do the Playwright meeting and slash-command specs. The mock change selects the whole Playwright lane, which is left to CI.

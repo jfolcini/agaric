@@ -149,6 +149,7 @@ export function useBlockSlashCommands({
   openEmojiPicker,
   openPropertyDrawer,
   openVoiceNoteRecorder,
+  openMeetingDialog,
 }: UseBlockSlashCommandsParams): UseBlockSlashCommandsReturn {
   const template = useSlashCommandTemplate({ focusedBlockId, rootParentId, blocks, load, t })
   const handlers = useSlashHandlers()
@@ -187,6 +188,7 @@ export function useBlockSlashCommands({
     openTablePicker,
     openPropertyDrawer,
     openVoiceNoteRecorder,
+    openMeetingDialog,
     tables,
   })
   useLayoutEffect(() => {
@@ -204,6 +206,7 @@ export function useBlockSlashCommands({
       openTablePicker,
       openPropertyDrawer,
       openVoiceNoteRecorder,
+      openMeetingDialog,
       tables,
     }
   })
