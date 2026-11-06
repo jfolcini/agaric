@@ -288,6 +288,12 @@ export function expandTemplateVariables(content: string, context: LegacyTemplate
   })
 }
 
+/** A block reading `<% recording %>`, as `is_recording_placeholder` (Rust) reads it. */
+function isRecordingPlaceholder(content: string): boolean {
+  const m = /^<%(.*)%>$/.exec(content.trim())
+  return m?.[1]?.trim().toLowerCase() === 'recording'
+}
+
 /**
  * Insert a template's children as new blocks under the given parent.
  * Recursively copies content, ordering, and nested structure from the
@@ -381,6 +387,12 @@ export async function insertTemplateBlocks(
     const children = childrenByParent.get(sourceParentId)
     if (!children) return
     for (const child of children) {
+      // The placeholder marks where `/meeting` puts the recording; a plain
+      // insert has no recording, so its children take its place.
+      if (isRecordingPlaceholder(child.content ?? '')) {
+        walkChildren(child.id, destParentIndex)
+        continue
+      }
       // Two-stage expansion: legacy `<% %>` first, then the #1442 `{{ }}`
       // grammar (which also strips any `{{cursor}}` marker and reports it).
       const legacyExpanded = expandTemplateVariables(child.content ?? '', context ?? {})

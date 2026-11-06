@@ -135,6 +135,16 @@ describe('TemplatesView', () => {
     expect(screen.getByText('Dynamic variables:')).toBeInTheDocument()
   })
 
+  it('lists the `<% recording %>` placeholder among the variables (#5364)', async () => {
+    stubTemplates()
+
+    render(<TemplatesView />)
+
+    expect(await screen.findByTestId('template-variable-recording')).toHaveTextContent(
+      '<% recording %>',
+    )
+  })
+
   it('renders template list with preview', async () => {
     // Preview fetches go through the
     // `first_child_for_blocks` batch IPC, not per-template `list_blocks`.

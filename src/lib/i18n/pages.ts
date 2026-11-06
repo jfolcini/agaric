@@ -140,6 +140,8 @@ export const pages: Record<string, string> = {
   'templates.variableWeekday': 'Current day name (e.g. Monday)',
   'templates.variableMonth': 'Current month name (e.g. June)',
   'templates.variableIsoweek': 'ISO week number',
+  'templates.variableRecording':
+    'On a block of its own, where a new meeting puts its recording; other inserts leave it out',
   'pageHeader.exportMarkdown': 'Export as Markdown',
   'pageHeader.deletePage': 'Delete page',
   'pageHeader.deletePageTitle': 'Delete page',
