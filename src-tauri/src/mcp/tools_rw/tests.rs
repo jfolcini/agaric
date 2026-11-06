@@ -5183,6 +5183,18 @@ async fn attached(pool: &SqlitePool, block: &str) -> Vec<(String, String)> {
     .unwrap()
 }
 
+/// The title of the page holding `block`, a journal day for a meeting's link.
+async fn journal_day_of(pool: &SqlitePool, block: &str) -> String {
+    sqlx::query_scalar(
+        "SELECT COALESCE(p.content, '') FROM blocks b JOIN blocks p ON p.id = b.parent_id \
+         WHERE b.id = ?",
+    )
+    .bind(block)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
 async fn live_pages_titled(pool: &SqlitePool, space: &str, title: &str) -> i64 {
     sqlx::query_scalar(
         "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND content = ? \
@@ -5507,6 +5519,94 @@ async fn add_meeting_on_a_block_of_another_space_is_refused_and_stores_nothing_5
     assert_eq!(attached(&pool, &block).await, vec![]);
     let stored = std::fs::read_dir(vault.path().join("attachments")).map_or(0, Iterator::count);
     assert_eq!(stored, 0, "the written bytes are removed");
+}
+
+/// The tool and the app's `add_meeting` command, given the same meeting, make
+/// the same page: the command's input goes through `into_request` to the
+/// inner the tool calls.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_meeting_makes_what_the_app_command_makes_5364() {
+    use crate::commands::meeting_attachments as meeting;
+
+    let (tools, mat, pool, space, vault) = mk_tools().await;
+    let other = mk_space(&pool, "other").await;
+    let contents = [
+        "Attendees of <% page title %>",
+        "<% recording %>",
+        "Actions",
+    ];
+    mk_template(&pool, &mat, &space, "T", &contents).await;
+    let other_template = mk_template(&pool, &mat, &other, "T", &contents).await;
+    settle(&mat).await;
+    let outside = TempDir::new().unwrap();
+    let audio = b"OggS audio";
+    let transcript = b"[00:00:04] Hi.";
+
+    let tool = add_meeting(
+        &tools,
+        json!({
+            "space_id": space,
+            "title": "Sync",
+            "date": "2031-03-14",
+            "template": "T",
+            "audio_path": source_file(&outside, "call.ogg", audio),
+            "transcript_path": source_file(&outside, "call.md", transcript),
+            "summary_markdown": "Recap.",
+        }),
+    )
+    .await
+    .unwrap();
+    let input = meeting::AddMeetingInput {
+        space_id: other.clone(),
+        title: "Sync".into(),
+        date: "2031-03-14".into(),
+        template_id: Some(BlockId::from_trusted(&other_template)),
+        link_block_id: None,
+        audio: Some(meeting::MeetingFileInput {
+            filename: "call.ogg".into(),
+            bytes: audio.to_vec(),
+        }),
+        transcript: Some(meeting::MeetingFileInput {
+            filename: "call.md".into(),
+            bytes: transcript.to_vec(),
+        }),
+        summary_text: Some("Recap.".into()),
+        summary_file: None,
+    };
+    let app = meeting::add_meeting_inner(
+        &pool,
+        DEV,
+        &mat,
+        vault.path(),
+        input.into_request().unwrap(),
+    )
+    .await
+    .unwrap();
+
+    let tool_page = tool["page_id"].as_str().unwrap();
+    assert_eq!(
+        child_texts(&pool, tool_page).await,
+        child_texts(&pool, app.page_id.as_str()).await,
+    );
+    assert_eq!(
+        attached(&pool, tool["recording_block_id"].as_str().unwrap()).await,
+        attached(&pool, app.recording_block_id.as_str()).await,
+    );
+    assert_eq!(
+        child_texts(&pool, tool_page).await,
+        vec![
+            "Attendees of Sync 2031-03-14".to_owned(),
+            "Recap.".to_owned(),
+            String::new(),
+            "Actions".to_owned(),
+        ]
+    );
+    let tool_link = tool["link_block_id"].as_str().unwrap();
+    let app_link = app.link_block_id.expect("a new meeting is linked");
+    assert_eq!(
+        journal_day_of(&pool, tool_link).await,
+        journal_day_of(&pool, app_link.as_str()).await,
+    );
 }
 
 /// The tool and the inner, given the same meeting, make the same page: the

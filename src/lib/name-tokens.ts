@@ -172,7 +172,8 @@ export function scanNameTokens(content: string): NameToken[] {
     let start = m.index
     let end = start + m[0].length
     links.push([start, end])
-    const inner = m[1] ?? ''
+    // A table cell escapes a link's pipe as `\|` (`unescape_link_pipes`).
+    const inner = (m[1] ?? '').replaceAll('\\|', '|')
     const rawName = inner.split('|', 1)[0] ?? ''
     let body = trimWhiteSpace(inner)
     // Logseq's `[label]([[Page]])` is one token when its own `[` is one, read

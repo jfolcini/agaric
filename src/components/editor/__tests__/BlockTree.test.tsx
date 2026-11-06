@@ -1522,7 +1522,7 @@ describe('BlockTree slash command wiring', () => {
 
     const results = await capturedSearchSlashCommands?.('')
 
-    expect(results).toHaveLength(34)
+    expect(results).toHaveLength(35)
     expect(results?.map((r) => r.id)).toEqual([
       'todo',
       'doing',
@@ -1558,6 +1558,7 @@ describe('BlockTree slash command wiring', () => {
       'embed',
       'attach',
       'voice',
+      'meeting',
       'emoji',
     ])
   })
@@ -1576,7 +1577,7 @@ describe('BlockTree slash command wiring', () => {
       const typed = await capturedSearchSlashCommands?.('voice')
 
       expect(empty?.map((r) => r.id)).not.toContain('voice')
-      expect(empty).toHaveLength(33)
+      expect(empty).toHaveLength(34)
       expect(typed?.map((r) => r.id)).not.toContain('voice')
     } finally {
       removePreference(PREFERENCES.recentCommandsSlash, 'SPACE_TEST')

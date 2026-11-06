@@ -6,6 +6,7 @@
  *   - visual query builder (#215)
  *   - emoji picker (#286)
  *   - voice-note recorder (#5364)
+ *   - *New meeting* dialog (#5364)
  *
  * Extracted verbatim from BlockTree (#2930) — a mechanical move with zero
  * behavior change. The dialog MOUNTS themselves render in `<BlockTreeDialogs/>`,
@@ -74,11 +75,14 @@ export interface UseBlockDialogsResult {
   setEmojiPickerOpen: Dispatch<SetStateAction<boolean>>
   voiceNoteBlockId: string | null
   setVoiceNoteBlockId: Dispatch<SetStateAction<string | null>>
+  meetingBlockId: string | null
+  setMeetingBlockId: Dispatch<SetStateAction<string | null>>
   handleShowHistory: (blockId: string) => void
   handleShowProperties: (blockId: string) => void
   openQueryBuilder: () => void
   openEmojiPicker: () => void
   openVoiceNoteRecorder: (blockId: string) => void
+  openMeetingDialog: (blockId: string) => void
   handleEmojiSelect: (char: string) => void
   handleQuerySave: (expression: string) => Promise<void>
 }
@@ -107,6 +111,9 @@ export function useBlockDialogs({
   // ── Voice note (#5364): /voice records an audio attachment onto the block
   // it was opened for. ──────────────────────────────────────────────────────
   const [voiceNoteBlockId, setVoiceNoteBlockId] = useState<string | null>(null)
+
+  // ── New meeting (#5364): /meeting links a new meeting page from the block. ─
+  const [meetingBlockId, setMeetingBlockId] = useState<string | null>(null)
 
   /**
    * #4729 — exempt `blockId` from the ONE focus-leave that opening a dialog
@@ -182,6 +189,14 @@ export function useBlockDialogs({
     },
     [preserveEmptyBlock],
   )
+  const openMeetingDialog = useCallback(
+    (blockId: string) => {
+      // #4729 — the meeting's link is written into this block.
+      preserveEmptyBlock(blockId)
+      startTransition(() => setMeetingBlockId(blockId))
+    },
+    [preserveEmptyBlock],
+  )
   // Insert the chosen native emoji at the caret via the active roving editor.
   // The dialog dismisses itself on select (closeOnSelect default).
   const handleEmojiSelect = useCallback((char: string) => {
@@ -217,11 +232,14 @@ export function useBlockDialogs({
     setEmojiPickerOpen,
     voiceNoteBlockId,
     setVoiceNoteBlockId,
+    meetingBlockId,
+    setMeetingBlockId,
     handleShowHistory,
     handleShowProperties,
     openQueryBuilder,
     openEmojiPicker,
     openVoiceNoteRecorder,
+    openMeetingDialog,
     handleEmojiSelect,
     handleQuerySave,
   }

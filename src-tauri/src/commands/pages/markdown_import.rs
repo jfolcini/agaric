@@ -206,6 +206,11 @@ fn rewrite_vault_wikilinks(content: &str, notes: &HashMap<String, String>) -> St
             let m = caps.get(0).expect("group 0 always present");
             let body = &caps[1];
             let (name, rest) = body.split_at(body.find(['|', '#']).unwrap_or(body.len()));
+            // A table cell's `\|` (`unescape_link_pipes`) keeps its backslash.
+            let (name, rest) = match name.strip_suffix('\\') {
+                Some(name) if rest.starts_with('|') => (name, &body[name.len()..]),
+                _ => (name, rest),
+            };
             match notes.get(&name.trim().to_lowercase()) {
                 Some(title) if page_link_is_token(content, m.start(), &code_spans) => {
                     format!("[[{title}{rest}]]")

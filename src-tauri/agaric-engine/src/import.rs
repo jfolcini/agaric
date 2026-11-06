@@ -1023,9 +1023,10 @@ impl AttachmentRef {
 
 /// Obsidian embed `![[file.png]]` — group 1 is the inner ref (path or basename,
 /// any run of chars that is neither `]`, `|`, nor newline), group 2 the
-/// optional `|…` suffix after it. Non-greedy.
+/// optional suffix after a `|`, or after the `\|` a GFM table cell escapes it
+/// as. Non-greedy.
 static OBSIDIAN_EMBED_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"!\[\[([^\]\|\n]+?)(?:\|([^\]\n]*))?\]\]").expect("invalid obsidian-embed regex")
+    Regex::new(r"!\[\[([^\]\|\n]+?)(?:\\?\|([^\]\n]*))?\]\]").expect("invalid obsidian-embed regex")
 });
 
 /// An embed suffix that sizes the image, `300` or `300x200`, in the grammar
@@ -9131,6 +9132,24 @@ mod tests_obsidian_embeds {
             assert_eq!(embeds(block), block, "{block:?}");
         }
         assert_eq!(embeds("![[img.png]] ![[Note]]"), "![[img.png]] [[Note]]");
+    }
+
+    /// A GFM table cell escapes an embed's pipe as `\|`, which reads as the
+    /// `|`: the name ends before it, so a sized file embed is the file's, with
+    /// its size, and a note embed is the note's.
+    #[test]
+    fn an_escaped_pipe_ends_an_embed_name() {
+        let row = embeds(r"| ![[pic.png\|300]] | ![[Note\|x]] |");
+        assert_eq!(row, r"| ![[pic.png\|300]] | [[Note\|x]] |");
+        assert_eq!(embeds(r"![[Note\|x]]"), "{{embed [[Note]]}}");
+        assert_eq!(
+            detect_attachment_refs(&row, &[]),
+            [AttachmentRef {
+                alt: "|300".into(),
+                original_ref: "pic.png".into(),
+                full_match: r"![[pic.png\|300]]".into(),
+            }]
+        );
     }
 
     /// An embed in inline code, or escaped, is text.

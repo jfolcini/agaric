@@ -86,13 +86,12 @@ function fileIdentity(file: MeetingFileInput, role: Role): { filename: string; m
 }
 
 /** The live block `blockId` of `spaceId`, as `require_block_in_space_in_tx` reads it. */
-function liveBlockInSpace(blockId: string, spaceId: string): Record<string, unknown> {
+function assertLiveBlockInSpace(blockId: string, spaceId: string): void {
   const b = blocks.get(blockId)
   if (!b || b['deleted_at'] != null) throw notFoundRejection(`block '${blockId}'`)
   if (definitionSpaceOf(blockId) !== spaceId) {
     throw validationRejection(`block '${blockId}' is not in space '${spaceId}'`)
   }
-  return b
 }
 
 /** `require_template_in_tx`: a live template page of the space. */
@@ -155,8 +154,8 @@ export const meetingsHandlers = {
       throw validationRejection(`a page named '${pageTitle}' already exists in the space`)
     }
     if (input.template_id != null) assertTemplatePage(input.template_id, spaceId)
-    const linkBlock = input.link_block_id == null ? null : input.link_block_id
-    if (linkBlock !== null) liveBlockInSpace(linkBlock, spaceId)
+    const linkBlock = input.link_block_id ?? null
+    if (linkBlock !== null) assertLiveBlockInSpace(linkBlock, spaceId)
     const files = checkedFiles(input)
 
     const firstOp = opLog.length

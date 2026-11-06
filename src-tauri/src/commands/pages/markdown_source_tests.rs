@@ -679,6 +679,95 @@ fn a_labelled_link_is_written_only_when_no_longer_title_claims_it() {
     );
 }
 
+/// #6277 F1 — a block that is one page embed whose name reads back is written
+/// as Obsidian's embed, in the buffer, a copy and the mirror's file; an embed
+/// among text, a block embed, which these write by id as they write a block
+/// ref, and one whose name stays raw are written as stored, bar their names.
+#[test]
+fn a_page_embed_block_is_written_as_obsidians_embed_when_its_name_reads_back() {
+    let pages: &[(&str, &[&str])] = &[("Project", &[PROJECT])];
+    let data = data_with_names(&format!("{{{{embed [[{PROJECT}]]}}}}"), pages, &[]);
+    assert_eq!(
+        render_page_document(&data).0,
+        format!("![[Project]] ^{BLOCK}\n")
+    );
+    assert_eq!(
+        render_clipboard_source(&data, &[BLOCK.into()], true),
+        "![[Project]]\n"
+    );
+    assert_eq!(render_page_file(&data).text, "![[Project]]\n");
+    for (content, written) in [
+        (
+            format!("see {{{{embed [[{PROJECT}]]}}}}"),
+            "see {{embed [[Project]]}}".to_owned(),
+        ),
+        (
+            format!("{{{{embed (({PROJECT}))}}}}"),
+            format!("{{{{embed (({PROJECT}))}}}}"),
+        ),
+        (
+            format!("{{{{embed [[{OTHER_PROJECT}]]}}}}"),
+            format!("{{{{embed [[{OTHER_PROJECT}]]}}}}"),
+        ),
+    ] {
+        assert_eq!(
+            source_with_names(&content, pages, &[]),
+            format!("{written} ^{BLOCK}\n"),
+            "{content}"
+        );
+    }
+}
+
+/// #6277 F1 — the export writes a block that is one embed, of a page or of a
+/// block on another page or its own, as Obsidian's; one whose target would
+/// read back as a file, a label or no embed, an embed among text and one
+/// whose target has no name are written as the export writes them otherwise.
+#[test]
+fn the_export_writes_an_embed_block_as_obsidians_embed() {
+    let titles: HashMap<String, String> = [
+        (PROJECT, "Project"),
+        (OTHER_PROJECT, "paper.pdf"),
+        (C_SHARP, "A|B"),
+    ]
+    .into_iter()
+    .map(|(id, title)| (id.to_string(), title.to_string()))
+    .collect();
+    let refs: HashMap<String, String> = [
+        (BLOCK.to_string(), format!("[[#^{BLOCK}]]")),
+        (ELSEWHERE.to_string(), format!("[[Project#^{ELSEWHERE}]]")),
+    ]
+    .into();
+    let export = |content: &str| resolve_ulids_for_export(content, &HashMap::new(), &titles, &refs);
+    let embed = |inner: &str| format!("{{{{embed {inner}}}}}");
+    for (content, written) in [
+        (embed(&format!("[[{PROJECT}]]")), "![[Project]]".to_owned()),
+        (
+            embed(&format!("(({ELSEWHERE}))")),
+            format!("![[Project#^{ELSEWHERE}]]"),
+        ),
+        (embed(&format!("(({BLOCK}))")), format!("![[#^{BLOCK}]]")),
+        (
+            embed(&format!("[[{OTHER_PROJECT}]]")),
+            embed("[[paper.pdf]]"),
+        ),
+        (embed(&format!("[[{C_SHARP}]]")), embed("[[A|B]]")),
+        (
+            format!("see {}", embed(&format!("[[{PROJECT}]]"))),
+            format!("see {}", embed("[[Project]]")),
+        ),
+        (
+            embed(&format!("[[{IN_SPACE_ELSEWHERE}]]")),
+            embed(&format!("[[{IN_SPACE_ELSEWHERE}]]")),
+        ),
+        (
+            embed(&format!("(({WORK}))")),
+            embed("(unresolved block reference)"),
+        ),
+    ] {
+        assert_eq!(export(&content), written, "{content}");
+    }
+}
+
 /// `Work` and `work` normalise alike, and the importer resolves both to the
 /// smallest-id tag (#1990), which is not this one.
 #[test]
