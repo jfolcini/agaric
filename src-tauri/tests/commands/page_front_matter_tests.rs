@@ -7,7 +7,7 @@
 //! too.
 
 use crate::prelude::*;
-use agaric_lib::commands::pages::anchor_free;
+use agaric_lib::commands::pages::{anchor_free, get_page_file_inner};
 
 use super::page_cmd_tests::{
     buffer_lines, counts, dup_child, dup_page, dup_storage, last_seq, ops_after, page_source,
@@ -575,4 +575,246 @@ async fn a_yaml_alias_and_tag_are_the_pages_aliases_and_tags() {
     .unwrap();
     assert_eq!(keys, Vec::<String>::new(), "no text property");
     mat.shutdown();
+}
+
+// ── ref-typed values as links (#6277 F3) ────────────────────────────────────
+
+/// A page in the test space, `Holder`, whose front matter and block `held`
+/// both hold `owner`, a ref to the page `Linked Target`; the page `Other
+/// Target` is in the space too. Returns the page, the block and the two
+/// targets.
+async fn ref_page(pool: &SqlitePool, mat: &Materializer) -> [BlockId; 4] {
+    let page = dup_page(pool, mat, "Holder").await;
+    let target = dup_page(pool, mat, "Linked Target").await;
+    let other = dup_page(pool, mat, "Other Target").await;
+    create_test_property_def(pool, "owner".into(), "ref".into(), None)
+        .await
+        .unwrap();
+    let block = dup_child(pool, mat, &page, "held").await;
+    for holder in [&page, &block] {
+        set_property_inner(
+            pool,
+            DEV,
+            mat,
+            holder.as_str().into(),
+            "owner".into(),
+            None,
+            None,
+            None,
+            Some(target.as_str().into()),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    settle(mat).await;
+    [page, block, target, other]
+}
+
+/// The block `owner` names on `holder`.
+async fn owner(pool: &SqlitePool, holder: &str) -> Option<String> {
+    sqlx::query_scalar(
+        "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'owner'",
+    )
+    .bind(holder)
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+    .flatten()
+}
+
+/// Whether `md` writes `owner` as the link to `Linked Target` in its front
+/// matter and on the block's line.
+fn writes_the_link(md: &str) -> bool {
+    md.contains("owner: \"[[Linked Target]]\"\n") && md.contains("\n  owner:: [[Linked Target]]\n")
+}
+
+/// The buffer writes the ref as a link: its own text saves as nothing, and a
+/// link typed over it names the new target.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_ref_value_is_a_link_in_the_buffer_which_saves_back_to_its_target_6277() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let [page, block, _, other] = ref_page(&pool, &mat).await;
+    let base = page_source(&pool, &page).await;
+    assert!(writes_the_link(&base), "{base}");
+    let before = last_seq(&pool).await;
+
+    save_source(&pool, &mat, &page, &base, &base).await.unwrap();
+    assert_eq!(
+        ops_after(&pool, before).await,
+        Vec::<String>::new(),
+        "its own text"
+    );
+
+    let edited = base.replace("[[Linked Target]]", "[[Other Target]]");
+    save_source(&pool, &mat, &page, &edited, &base)
+        .await
+        .unwrap();
+    for holder in [&page, &block] {
+        assert_eq!(
+            owner(&pool, holder.as_str()).await.as_deref(),
+            Some(other.as_str())
+        );
+    }
+}
+
+/// The mirror's file writes the ref as a link, and the file imported over its
+/// page writes nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_ref_value_in_the_mirrors_file_reimports_as_nothing_6277() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let [page, ..] = ref_page(&pool, &mat).await;
+    let file = get_page_file_inner(&pool, page.as_str())
+        .await
+        .unwrap()
+        .text;
+    assert!(writes_the_link(&file), "{file}");
+    let before = last_seq(&pool).await;
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        dir.path(),
+        file,
+        Some("Holder.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    assert!(result.merged.is_some(), "the file merges into its page");
+    assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
+}
+
+/// A copy writes the ref as a link, which the paste reads back as the same
+/// target.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_ref_value_in_a_copy_pastes_as_the_same_target_6277() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let [_, block, target, _] = ref_page(&pool, &mat).await;
+    let copied = get_blocks_source_inner(&pool, vec![block.clone()], true)
+        .await
+        .unwrap();
+    assert_eq!(copied, "held\n  owner:: [[Linked Target]]\n");
+
+    let pasted = paste_blocks_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.clone(),
+        PasteInput::Text { text: copied },
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let [copy] = pasted.blocks.as_slice() else {
+        panic!("one block pasted: {pasted:?}");
+    };
+    assert_eq!(
+        owner(&pool, copy.id.as_str()).await.as_deref(),
+        Some(target.as_str())
+    );
+}
+
+/// An export writes the ref as a link, which an import reads back as the same
+/// target, in the front matter and on the block's line.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_ref_value_in_an_export_imports_as_the_same_target_6277() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let [page, _, target, _] = ref_page(&pool, &mat).await;
+    let md = export_page_markdown_inner(&pool, page.as_str())
+        .await
+        .unwrap();
+    assert!(writes_the_link(&md), "{md}");
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        dir.path(),
+        md,
+        Some("Copy.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(result.warnings, Vec::<String>::new());
+    // `Copy.md` is not titled `Holder`, so the export's `# Holder` line is a
+    // heading block beside `held`.
+    let imported: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE parent_id = ? AND content = 'held' AND deleted_at IS NULL",
+    )
+    .bind(&result.page_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(imported.len(), 1, "the page's block");
+    for holder in [&result.page_id, &imported[0]] {
+        assert_eq!(owner(&pool, holder).await.as_deref(), Some(target.as_str()));
+    }
+}
+
+/// A ref to a block that is no page has no title to link, so every surface
+/// writes its id, which an import reads back as that block.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_ref_value_naming_a_block_is_written_and_imported_as_its_id_6277() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let [page, block, ..] = ref_page(&pool, &mat).await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.as_str().into(),
+        "owner".into(),
+        None,
+        None,
+        None,
+        Some(block.as_str().into()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let line = format!("owner: {block}\n");
+    let buffer = page_source(&pool, &page).await;
+    assert!(buffer.contains(&line), "{buffer}");
+    let md = export_page_markdown_inner(&pool, page.as_str())
+        .await
+        .unwrap();
+    assert!(md.contains(&line), "{md}");
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        dir.path(),
+        md,
+        Some("Copy.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(result.warnings, Vec::<String>::new());
+    assert_eq!(
+        owner(&pool, &result.page_id).await.as_deref(),
+        Some(block.as_str())
+    );
 }

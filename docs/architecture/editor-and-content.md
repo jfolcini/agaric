@@ -26,7 +26,7 @@ A Document text is a page's front matter, then its blocks. A reader accepts more
 | Construct | Written | Also read |
 |---|---|---|
 | File | UTF-8, LF | CRLF, a lone CR, a leading BOM |
-| Page properties | YAML front matter at byte 0: `aliases: [a, b]`, `tags: [a, b]`, then one `key: value` per property, quoted where YAML needs it; a ref-typed value is its page's title in an export, else its id | `alias:` and `tag:`; leading `key:: value` lines (`alias::`, `tags::` too); front matter after a leading `# Title` (older exports). TOML and JSON front matter are text |
+| Page properties | YAML front matter at byte 0: `aliases: [a, b]`, `tags: [a, b]`, then one `key: value` per property, quoted where YAML needs it; a ref-typed value is `"[[Title]]"` where the writer's Names policy writes its name, else its id | `alias:` and `tag:`; leading `key:: value` lines (`alias::`, `tags::` too); front matter after a leading `# Title` (older exports). TOML and JSON front matter are text |
 | Title | none in a ZIP entry, whose path names the page; in a page export and a page copy `# Title` after the front matter; the agent read returns it as a field (`AgentPage`) | a leading `# Title` equal to the title derived from the file name, first or first after the front matter, is dropped (`strip_title_heading`), so an export imports as the page it was |
 | Plain block | a paragraph; a blank line between blocks unless both open with a list marker | CommonMark paragraphs |
 | Plain child | a `+` item at its parent's child column, the parent's line unchanged; a `+` item too for a first block that would read as front matter (`---`) or, in a file, as the title (`# Title`) | an indented paragraph after a blank line |
@@ -36,7 +36,7 @@ A Document text is a page's front matter, then its blocks. A reader accepts more
 | Task | `- [ ]` TODO, `- [/]` DOING, `- [x]` DONE, `- [-]` CANCELLED; any other state is a `todo_state::` line | `[X]`; `TODO`, `DOING`, `[#A]`, `SCHEDULED:` and `DEADLINE:` under `LogseqOrg` only |
 | Task fields | at the end of a task's first line, before its anchor, in the order `TASK_SIGNIFIER_KEYS` gives: `⏫` `🔼` `🔽`, `🔁 every …`, `⏳ YYYY-MM-DD`, `📅 YYYY-MM-DD`, and a done task's `✅ YYYY-MM-DD`; a field no signifier reads back as (a rule with a bound, a priority outside the levels) stays its `key::` line; a task's own text ending in a signifier is written with a `\` before it | the same on every surface; `🔺` as the first priority and `⏬` as the third |
 | Non-task fields | `priority::`, `scheduled_date::`, `due_date::` and `repeat*::` lines | the same |
-| Block property | a `key:: value` line at the block's text column; a value its line cannot carry (a line break, a space at either end, one already quoted) is a JSON string | the same; `key::` with no value deletes in a buffer save |
+| Block property | a `key:: value` line at the block's text column; a value its line cannot carry (a line break, a space at either end, one already quoted) is a JSON string; a ref-typed value is `[[Title]]` as in front matter, else its id | the same; `key::` with no value deletes in a buffer save |
 | Empty block | a line holding only `\` | the same |
 | Anchor | `^ULID` after a space, ending the block's last line, or alone on the line after when the last line is code or empty | any `^word` in a Markdown file; only a block id in a paste or a buffer |
 | Block-scoped file | in an export, a `+ [name](attachment:<id>)` child under its block; the page's own as paragraphs before the blocks | the same |
@@ -75,7 +75,7 @@ Every reader is in `src-tauri/agaric-engine/src/import.rs` and reads CRLF, CR an
 
 `src-tauri/src/commands/pages/markdown_export.rs` is the one writer. A `RenderMode` is two policies:
 
-- **Names.** `Names::Always` writes every id that resolves as a name, and a ref-typed value as its page's title. `Names::ReadBack` writes a name only where it reads back as the same id (`humanise_refs_for_source`), and a ref-typed value as its id.
+- **Names.** `Names::Always` writes every id that resolves as a name, and a ref-typed value as `[[Title]]` when its target is a live page. `Names::ReadBack` writes a name only where it reads back as the same id (`humanise_refs_for_source`), and a ref-typed value as `[[Title]]` only where that is one link and its title names that page in the page's space (`ref_link`); a title the lower id of two pages holds, a page of another space, a deleted or non-page target and a title holding `]` keep the id. Every reader of a ref value takes a block id, `[[Title]]` or a title (`PropertyLines::read`), front matter on import as a `key::` line.
 - **Anchors.** `Anchors::Addressed` writes `^ULID` on the blocks something addresses: a block ref or embed from any page, a ref-typed value, an attachment. `Anchors::Every` writes it on every block. `Anchors::Needed` writes none beyond what every policy writes: a block that leaves a fence open, or whose own text ends in a space, `^` and a block id, carries its anchor because it cannot read back without.
 
 | Surface | Entry point | Names | Anchors |

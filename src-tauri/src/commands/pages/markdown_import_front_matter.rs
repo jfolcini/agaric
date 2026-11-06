@@ -26,55 +26,6 @@ pub(super) async fn apply_frontmatter_aliases<S: AsRef<str>>(
     Ok(())
 }
 
-/// A `ref`-declared frontmatter value's typed property arguments, or `None`
-/// when the property must be skipped with a warning.
-///
-/// The value arrives as the resolved target *title* (that is what
-/// `export_page_markdown_inner` emits), so it is reverse-resolved to a live
-/// page/tag block id. Resolution is SAME-SPACE-SCOPED (`AND space_id = ?`): a
-/// title that collides with a page/tag in a DIFFERENT space must NOT resolve
-/// here, or the foreign block id would flow into `set_property_in_tx` →
-/// `validate_ref_property_cross_space`, which hard-rejects with
-/// `AppError::Validation` and rolls back the entire import. With no same-space
-/// match the value can be persisted neither as a `ref` (no live target) nor as
-/// `text` (the typed def would reject text), so the single property is skipped
-/// with the human-readable title surfaced in the warning.
-async fn frontmatter_ref_args(
-    tx: &mut CommandTx,
-    space_id: &str,
-    key: &str,
-    value: &str,
-    warnings: &mut Vec<String>,
-) -> Result<Option<agaric_engine::block_ops::TypedPropertyArgs>, AppError> {
-    let resolved: Option<String> = sqlx::query_scalar!(
-        r#"SELECT id FROM blocks
-                       WHERE content = ?
-                         AND block_type IN ('page', 'tag')
-                         AND deleted_at IS NULL
-                         AND space_id = ?
-                       ORDER BY id ASC
-                       LIMIT 1"#,
-        value,
-        space_id,
-    )
-    .fetch_optional(&mut ***tx)
-    .await?;
-    let Some(id) = resolved else {
-        // #1933 — per-occurrence diagnostic for this lossy skip.
-        tracing::debug!(
-            key = %key,
-            value = %value,
-            "import: frontmatter ref property could not resolve; skipped (#1933)"
-        );
-        warnings.push(format!(
-            "frontmatter ref property '{key}' could not resolve target \
-             '{value}' to a page in this space; skipped"
-        ));
-        return Ok(None);
-    };
-    Ok(Some((None, None, None, Some(id), None)))
-}
-
 /// Front matter `aliases:` on import, added to the aliases the page holds: an
 /// adopted page (D12) may hold some.
 async fn import_frontmatter_aliases(
@@ -107,7 +58,6 @@ pub(super) async fn apply_frontmatter_properties(
 ) -> Result<CommandTx, AppError> {
     let materializer = ctx.materializer;
     let device_id = ctx.device_id;
-    let space_id = ctx.space_id.clone();
     let page_id = ctx.page_id.clone();
     let lines = &ctx.lines;
     let warnings = &mut ctx.warnings;
@@ -149,23 +99,17 @@ pub(super) async fn apply_frontmatter_properties(
         }
         let key = lines.canonical_key(key);
         // #1921 (B1) — the declaration read once for the whole import. A key
-        // with no `property_definitions` row stays undeclared (`None`).
+        // with no `property_definitions` row stays undeclared (`None`). A ref
+        // value reads as a `key::` line's does: a live block id of the space,
+        // or `[[Title]]` or a title by the link rule (#6277 F3).
         let declaration = lines.declaration(&key);
-        let args = if declaration.as_ref().is_some_and(|d| d.value_type == "ref") {
-            let args = frontmatter_ref_args(&mut tx, &space_id, &key, value, warnings).await?;
-            let Some(args) = args else {
+        let args = match lines.read(&key, value) {
+            Ok(args) => args,
+            Err(reason) => {
+                warnings.push(format!(
+                    "front matter `{key}: {value}` was skipped: {reason}"
+                ));
                 continue;
-            };
-            args
-        } else {
-            match lines.read(&key, value) {
-                Ok(args) => args,
-                Err(reason) => {
-                    warnings.push(format!(
-                        "front matter `{key}: {value}` was skipped: {reason}"
-                    ));
-                    continue;
-                }
             }
         };
         let (value_text, value_num, value_date, value_ref, value_bool) = args;
