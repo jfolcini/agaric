@@ -6,8 +6,10 @@
 // transaction (page, `#meeting`, `meeting_date`, link, files), its files are
 // bytes on disk, and the player decodes them in WebKitGTK. The dialog case
 // makes a meeting without files, since the driver's file uploads are not
-// relied on here; the agent case carries the audio and the transcript. Each is
-// checked after leaving the page and coming back.
+// relied on here; the agent case carries the audio, the transcript and the
+// summary, and seeks the real player from a timestamp. *New meeting* from the
+// palette links today's journal, which is on screen. Each is checked after
+// leaving the page and coming back.
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -40,6 +42,7 @@ const BLOCK = runScopedMarker('wdio-meeting-block')
 const DIALOG_TITLE = runScopedMarker('wdio-sync')
 const AGENT = runScopedMarker('wdio-meeting-agent')
 const AGENT_TITLE = runScopedMarker('wdio-retro')
+const PALETTE_TITLE = runScopedMarker('wdio-planning')
 
 interface PropertyRow {
   key: string
@@ -98,6 +101,8 @@ describe('Agaric real-backend meeting pages (#5364) @attachments @pages @mcp', (
     const dir = mkdtempSync(path.join(tmpdir(), 'wdio-meeting-'))
     const transcript = path.join(dir, 'retro.md')
     writeFileSync(transcript, '[00:00:00] **Alice:** Hi.\n\n[00:00:01] **Bob:** Bye.\n')
+    const summary = path.join(dir, 'recap.md')
+    writeFileSync(summary, `Recap of ${AGENT_TITLE}\n`)
     const { socketPath, token } = await startReadWriteAgent(AGENT)
     const agent = await McpClient.connect(socketPath, token)
     let recordingId: string
@@ -109,7 +114,7 @@ describe('Agaric real-backend meeting pages (#5364) @attachments @pages @mcp', (
         date: '2031-03-14',
         audio_path: path.resolve(import.meta.dirname, 'fixtures', 'tone-opus.ogg'),
         transcript_path: transcript,
-        summary_markdown: `Summary of ${AGENT_TITLE}`,
+        summary_path: summary,
       })) as { recording_block_id: string }
       recordingId = made.recording_block_id
     } finally {
@@ -117,13 +122,15 @@ describe('Agaric real-backend meeting pages (#5364) @attachments @pages @mcp', (
     }
     const rows = await invoke<AttachmentRow[]>('list_attachments', { blockId: recordingId })
     expect(rows.map((row) => row.filename).toSorted()).toEqual([
+      'recap.summary.md',
       'retro.transcript.md',
       'tone-opus.ogg',
     ])
 
     await navigateTo('Journal')
     await reopenPageByTitle(`${AGENT_TITLE} 2031-03-14`)
-    await blockStaticByMarker(`Summary of ${AGENT_TITLE}`).waitForDisplayed({
+    // The summary is open: its text shows without a click.
+    await $(`[data-testid="markdown-attachment-body"]*=Recap of ${AGENT_TITLE}`).waitForDisplayed({
       timeout: NAV_TIMEOUT,
     })
     const player = 'audio[aria-label="Audio tone-opus.ogg"]'
@@ -139,5 +146,68 @@ describe('Agaric real-backend meeting pages (#5364) @attachments @pages @mcp', (
     const toggle = $('[data-testid="transcript-attachment"] button[aria-expanded]')
     await toggle.waitForDisplayed({ timeout: NAV_TIMEOUT })
     expect(await toggle.getAttribute('aria-expanded')).toBe('false')
+
+    // A timestamp seeks the real player. The fixture is about a second long, so
+    // its one later segment sits at its end, where WebKit may clamp the seek
+    // onto the duration: the player has moved when it is past 0 and inside it.
+    await toggle.click()
+    const seek = $('button[aria-label="Seek to 00:00:01"]')
+    await seek.waitForClickable({ timeout: ACTION_TIMEOUT })
+    await seek.click()
+    await browser.waitUntil(
+      async () =>
+        browser.execute((selector: string) => {
+          const audio = document.querySelector<HTMLAudioElement>(selector)
+          if (audio === null) return false
+          return audio.currentTime > 0.5 && audio.currentTime <= audio.duration
+        }, player),
+      { timeout: ACTION_TIMEOUT, timeoutMsg: 'the timestamp never moved the player' },
+    )
+  })
+
+  it('New meeting from the palette links it from today’s journal on screen', async () => {
+    await navigateTo('Journal')
+    await $('[data-testid="header-search-button"]').click()
+    // A typed `>` switches the palette to its commands and leaves the input
+    // empty, so it goes alone; typed again it is literal and matches nothing.
+    await $('[data-testid="command-palette-input"]').waitForDisplayed({ timeout: ACTION_TIMEOUT })
+    await browser.keys(['>'])
+    await $('[data-testid="palette-mode-chip"]*=Commands').waitForDisplayed({
+      timeout: ACTION_TIMEOUT,
+    })
+    await typeInputVerified('[data-testid="command-palette-input"]', 'New meeting')
+    // XPath, as `*=` text matching takes no attribute selector before it.
+    const selected =
+      '//*[@role="option" and @aria-selected="true"][contains(normalize-space(.), "New meeting")]'
+    await $(selected)
+      .waitForExist({ timeout: ACTION_TIMEOUT })
+      .catch(async (error: unknown) => {
+        const options = await browser.execute(() =>
+          [...document.querySelectorAll('[role="option"]')].map(
+            (option) => `${option.textContent ?? ''}|${option.getAttribute('aria-selected')}`,
+          ),
+        )
+        throw new Error(`the palette held ${JSON.stringify(options)}: ${String(error)}`)
+      })
+    // The palette runs its selected command on Enter; WebKitGTK never reported
+    // the option row itself as clickable.
+    await browser.keys(['Enter'])
+    await $('[data-testid="meeting-dialog"]').waitForDisplayed({ timeout: ACTION_TIMEOUT })
+    await typeInputVerified(
+      '[data-testid="meeting-dialog"] input[placeholder="Meeting"]',
+      PALETTE_TITLE,
+    )
+    await $('[data-testid="meeting-dialog"]').$('button=Create meeting').click()
+    const title = `${PALETTE_TITLE} ${isoDay(new Date())}`
+    await waitForToast(`Meeting ${title} created`)
+
+    // The journal was on screen the whole time; its link shows without leaving.
+    const link = blockStaticByMarker(title)
+    await link.waitForDisplayed({ timeout: NAV_TIMEOUT })
+
+    await reopenPageByTitle(title)
+    await $('button[aria-label="Remove tag meeting"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await navigateTo('Journal')
+    await blockStaticByMarker(title).waitForDisplayed({ timeout: NAV_TIMEOUT })
   })
 })
