@@ -65,7 +65,7 @@ Every reader is in `src-tauri/agaric-engine/src/import.rs` and reads CRLF, CR an
 | Reader | Reads | Differs |
 |---|---|---|
 | `parse_markdown_file` | a `Markdown` file import (`parse_import_payload` in `src-tauri/src/commands/pages/markdown_import.rs`) | front matter and leading `key::` lines are the page's properties; a trailing `^word` is the block's anchor |
-| `read_pasted_text` | a paste of text (`paste_blocks`), MCP `append_markdown` | no page properties; a front matter block at byte 0 is dropped with one warning; a trailing `^word` that is no block id stays text; depth is flattened past the import limit |
+| `read_pasted_text` | a paste of text (`paste_blocks`), MCP `append_markdown` | no page properties; a front matter block at byte 0 is dropped with one warning; a trailing `^word` that is no block id stays text; an anchor-only `[[#^ULID]]` is the ref to the live block of that id in the paste's space, wherever it lands (`link_global_block_anchors`); depth is flattened past the import limit |
 | `parse_document_outline`, `parse_document_text` | a page's own buffer: the *Edit as Markdown* save and MCP `edit_page_markdown` (`apply_page_source_inner`), Duplicate and the journal and meeting template copies; `parse_document_text` takes the ids that travel beside the lines | not foreign text: nothing is flattened, so a save refuses a depth past the limit; the page's properties come from the buffer's front matter |
 | `parse_logseq_markdown` | a `LogseqOrg` file; `parse_vault_markdown` for a folder import's note | the outline reading above, then `read_logseq_bookkeeping` over the scanned blocks |
 
