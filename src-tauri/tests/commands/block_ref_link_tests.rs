@@ -213,3 +213,30 @@ async fn a_ref_to_a_deleted_block_stays_raw() {
     );
     mat.shutdown();
 }
+
+/// Block ids are global, so an anchor-only `[[#^id]]`, as the buffer and an
+/// agent's read write a ref to a block of their own page, pasted or appended
+/// under another page still names that block, and `![[#^id]]` its embed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_anchor_only_link_pasted_under_another_page_is_the_ref() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let r = refs(&pool, &mat).await;
+    let dest = dup_page(&pool, &mat, "Dest").await;
+    let anchor = dup_child(&pool, &mat, &dest, "anchor").await;
+    settle(&mat).await;
+    let own = &r.own;
+
+    let text = format!("see [[#^{own}]]\n\n![[#^{own}]]\n");
+    let pasted: Vec<_> = paste(&pool, &mat, &anchor, paste_text(&text))
+        .await
+        .into_iter()
+        .filter_map(|row| row.content)
+        .collect();
+
+    assert_eq!(
+        pasted,
+        [format!("see (({own}))"), format!("{{{{embed (({own}))}}}}")]
+    );
+    mat.shutdown();
+}
