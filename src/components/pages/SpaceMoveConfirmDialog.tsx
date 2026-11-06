@@ -18,6 +18,7 @@ import { useTranslation } from 'react-i18next'
 import { fetchAndCacheLinks } from '@/components/block-tree/use-block-link-resolve'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
+import { useRefTitle } from '@/components/properties/useRefTitle'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -155,7 +156,6 @@ function LossValues({ id, ids, targetSpaceId, propertyKey }: LossValuesProps): R
       },
       queryClient,
     )
-  const resolveTitle = useResolveStore((s) => s.resolveTitle)
   const rows = data?.pages.flatMap((page) => page.items) ?? []
   return (
     <div id={id} className="flex flex-col gap-1 px-3 pb-2">
@@ -176,9 +176,11 @@ function LossValues({ id, ids, targetSpaceId, propertyKey }: LossValuesProps): R
                 </span>
               )}
               <span className="max-w-[40%] shrink-0 truncate text-muted-foreground">
-                {row.value_ref === null
-                  ? (propertyRowDisplay(row) ?? '')
-                  : resolveTitle(row.value_ref)}
+                {row.value_ref === null ? (
+                  (propertyRowDisplay(row) ?? '')
+                ) : (
+                  <RefTitle id={row.value_ref} />
+                )}
               </span>
             </li>
           ))}
@@ -193,6 +195,11 @@ function LossValues({ id, ids, targetSpaceId, propertyKey }: LossValuesProps): R
       />
     </div>
   )
+}
+
+/** A ref value's target title as the cache holds it now. */
+function RefTitle({ id }: { id: string }): React.ReactElement {
+  return <>{useRefTitle(id)}</>
 }
 
 /** Asks the backend for the titles of the referenced blocks the resolve store has no answer for. */
