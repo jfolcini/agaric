@@ -343,3 +343,211 @@ describe('MeetingDialog — the palette’s New meeting and the remembered templ
     expect(links.map((b) => b['content'])).toEqual([`[[${pageId}]]`])
   })
 })
+
+describe('MeetingDialog — mutation triage (#5364)', () => {
+  function templatePage(title: string): string {
+    const id = dispatch('create_page_in_space', {
+      parentId: null,
+      content: title,
+      spaceId: 'SPACE_PERSONAL',
+    }) as string
+    dispatch('set_property', {
+      blockId: id,
+      key: 'template',
+      value: {
+        value_text: 'true',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    return id
+  }
+
+  async function created(onClose: ReturnType<typeof vi.fn>) {
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+  }
+
+  it('dates the meeting on a page titled only by a day, not on one that holds a day', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2030, 0, 2, 10, 0))
+    for (const title of ['Notes 2031-03-14', '2031-03-14 notes']) {
+      const blockId = blockOnDay(title)
+      const { unmount } = render(<Harness blockId={blockId} />)
+      await waitFor(() =>
+        expect(
+          mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'get_block').length,
+        ).toBeGreaterThan(0),
+      )
+      await waitFor(async () => expect((await dateInput()).value).toBe('2030-01-02'))
+      unmount()
+      mockedInvoke.mockClear()
+    }
+  })
+
+  it('keeps today on a page that is no day once the block’s page has been read', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2030, 0, 2, 10, 0))
+    let read = (): void => {}
+    const pageRead = new Promise<void>((resolve) => {
+      read = resolve
+    })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      const result = dispatch(cmd, args)
+      if (cmd === 'get_block') read()
+      return result
+    })
+    render(<Harness blockId={SEED_IDS.BLOCK_GS_1} />)
+    await pageRead
+    await waitFor(async () => expect((await dateInput()).value).toBe('2030-01-02'))
+  })
+
+  it('opens on the remembered template among several, and remembers no template too', async () => {
+    const user = userEvent.setup()
+    const other = templatePage('Retro Template')
+    writePreference(PREFERENCES.meetingTemplate, other, 'SPACE_PERSONAL')
+    const onClose = vi.fn()
+    const first = render(<Harness blockId={blockOnDay('2031-03-14')} onClose={onClose} />)
+    const select = first.container.ownerDocument.querySelector('select')
+    await waitFor(() => expect(select?.value).toBe(other))
+
+    if (select === null) throw new Error('no template select')
+    await user.selectOptions(select, 'none')
+    await user.click(screen.getByRole('button', { name: t('meeting.create') }))
+    await created(onClose)
+    first.unmount()
+
+    const second = render(<Harness blockId={blockOnDay('2031-03-21')} />)
+    const again = second.container.ownerDocument.querySelector('select')
+    await waitFor(() => expect(again?.querySelector(`option[value="${other}"]`)).not.toBeNull())
+    expect(again?.value).toBe('none')
+  })
+
+  it('trims the title, and sends written text only as a written summary', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    render(<Harness blockId={blockOnDay('2031-03-14')} onClose={onClose} />)
+    await waitFor(async () => expect((await dateInput()).value).toBe('2031-03-14'))
+
+    await user.type(screen.getByLabelText(t('meeting.titleLabel')), '  Sync  ')
+    await user.type(screen.getByLabelText(t('meeting.summaryTextLabel')), 'Written.')
+    await user.click(screen.getByRole('radio', { name: t('meeting.summaryAsFile') }))
+    await user.upload(screen.getByLabelText(t('meeting.summaryFileLabel')), file('recap.txt', [83]))
+    await user.click(screen.getByRole('button', { name: t('meeting.create') }))
+    await created(onClose)
+
+    const pageId = pageTitled('Sync 2031-03-14')?.['id']
+    const children = [...blocks.values()].filter(
+      (b) => b['parent_id'] === pageId && b['deleted_at'] == null,
+    )
+    expect(children.map((b) => b['content'])).not.toContain('Written.')
+    expect(attachedNames(children[0]?.['id'] as string)).toEqual(['recap.summary.md'])
+  })
+
+  it('makes no summary of whitespace, and keeps its summary mode when the active one is pressed', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    render(<Harness blockId={blockOnDay('2031-03-14')} onClose={onClose} />)
+    await waitFor(async () => expect((await dateInput()).value).toBe('2031-03-14'))
+
+    await user.click(screen.getByRole('radio', { name: t('meeting.summaryAsText') }))
+    expect(screen.getByLabelText(t('meeting.summaryTextLabel'))).toBeInTheDocument()
+    await user.type(screen.getByLabelText(t('meeting.summaryTextLabel')), '   ')
+    await user.click(screen.getByRole('button', { name: t('meeting.create') }))
+    await created(onClose)
+
+    const pageId = pageTitled('Meeting 2031-03-14')?.['id']
+    const children = [...blocks.values()].filter(
+      (b) => b['parent_id'] === pageId && b['deleted_at'] == null,
+    )
+    expect(children).toHaveLength(1)
+  })
+
+  it('shows it is saving and cannot be sent again or closed until the meeting is made', async () => {
+    const user = userEvent.setup()
+    let finish = (): void => {}
+    const held = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'add_meeting') await held
+      return dispatch(cmd, args)
+    })
+    const onClose = vi.fn()
+    render(<Harness blockId={blockOnDay('2031-03-14')} onClose={onClose} />)
+    await waitFor(async () => expect((await dateInput()).value).toBe('2031-03-14'))
+
+    await user.click(screen.getByRole('button', { name: t('meeting.create') }))
+    const saving = await screen.findByRole('button', { name: t('meeting.creating') })
+    expect(saving).toBeDisabled()
+    expect(saving.querySelector('[role="status"], svg')).not.toBeNull()
+    await user.keyboard('{Escape}')
+    expect(onClose).not.toHaveBeenCalled()
+
+    finish()
+    await created(onClose)
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'add_meeting')).toHaveLength(1)
+  })
+
+  it('closes on Escape', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    render(<Harness blockId={blockOnDay('2031-03-14')} onClose={onClose} />)
+    await dateInput()
+
+    await user.keyboard('{Escape}')
+
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(pageTitled('Meeting 2031-03-14')).toBeUndefined()
+  })
+
+  it('names the meeting it made in the toast, the default title included', async () => {
+    const user = userEvent.setup()
+    for (const [typed, title] of [
+      ['Sync', 'Sync 2031-03-14'],
+      ['', 'Meeting 2031-03-21'],
+    ] as const) {
+      vi.mocked(toast.success).mockClear()
+      const onClose = vi.fn()
+      const day = title.slice(-10)
+      const { unmount } = render(<Harness blockId={blockOnDay(day)} onClose={onClose} />)
+      await waitFor(async () => expect((await dateInput()).value).toBe(day))
+      if (typed !== '') await user.type(screen.getByLabelText(t('meeting.titleLabel')), typed)
+      await user.click(screen.getByRole('button', { name: t('meeting.create') }))
+      await created(onClose)
+      const [message, options] = vi.mocked(toast.success).mock.calls[0] ?? []
+      expect(message).toBe(t('meeting.created', { title }))
+      expect((options as { action?: { label: string } } | undefined)?.action?.label).toBe(
+        t('action.undo'),
+      )
+      unmount()
+    }
+  })
+
+  it('reloads the link’s page after Undo, and says so when Undo fails', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    const onCreated = vi.fn()
+    render(<Harness blockId={blockOnDay('2031-03-14')} onClose={onClose} onCreated={onCreated} />)
+    await waitFor(async () => expect((await dateInput()).value).toBe('2031-03-14'))
+    await user.click(screen.getByRole('button', { name: t('meeting.create') }))
+    await created(onClose)
+    const [, options] = vi.mocked(toast.success).mock.calls[0] ?? []
+    const undo = (options as { action?: { onClick: () => void } } | undefined)?.action
+
+    undo?.onClick()
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(2))
+    expect(pageTitled('Meeting 2031-03-14')).toBeUndefined()
+
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'revert_ops') throw new Error('backend down')
+      return dispatch(cmd, args)
+    })
+    undo?.onClick()
+    await waitFor(() =>
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('meeting.undoFailed')),
+    )
+    expect(onCreated).toHaveBeenCalledTimes(2)
+  })
+})
