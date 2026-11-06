@@ -5,7 +5,9 @@
   "permissions": {
     "allow": [
       "Bash(gh api -X PATCH repos/jfolcini/agaric/dependabot/alerts/*)",
-      "Bash(gh api -X PATCH repos/jfolcini/agaric/code-scanning/alerts/*)"
+      "Bash(gh api -X PATCH repos/jfolcini/agaric/code-scanning/alerts/*)",
+      "Bash(gh api -X PATCH /repos/jfolcini/agaric/dependabot/alerts/*)",
+      "Bash(gh api -X PATCH /repos/jfolcini/agaric/code-scanning/alerts/*)"
     ]
   },
   "hooks": {
