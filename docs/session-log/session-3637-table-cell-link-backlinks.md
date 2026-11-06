@@ -1,4 +1,4 @@
-# Session 3633 — a labelled link in a table cell is a backlink
+# Session 3637 — a labelled link in a table cell is a backlink
 
 Inside a GFM table cell the editor stores a labelled link as `[[ULID\|label]]` (`escapeCellPipes` writes it, `buildTableRows` reads it), and #6418 made the import read that form. Every reader of stored tokens still wanted a bare `|`, so a link in a table cell, typed or imported, got no `block_links` row: the target's linked references listed the block under Unlinked References instead, export wrote the raw ULID and search indexed the id.
 
@@ -13,3 +13,4 @@ Inside a GFM table cell the editor stores a labelled link as `[[ULID\|label]]` (
 - Conformance: a new backend-authored `table_cell_link.json` (page link, backlinks, backlink count, search); `paste_blocks.json` gains one `page_links` row for the table-cell step #6418 added, the fix's own effect, approved by the coordinator.
 - Left open: no WebdriverIO spec, which needs a native build and could not be shown red here; `table_cell_link.json` pins the backend side. `fts_blocks` rows of cell links indexed before this fix keep their old text until the block is next indexed, as no pass re-strips the index. `WIKILINK_NAME_RE` (`vault-import.ts`) reads an Obsidian file's `[[Note\|alias]]` as the note `Note\`, so a folder import does not ship that note with the link; it reads a source file, not a stored token.
 - Ran: each new test shown red against the code it covers (the cache regexes, the FTS mask, the humaniser, the SQL guard, the marker, every frontend reader, the mock's scan and mask, the e2e spec); `SQLX_OFFLINE=true cargo check --workspace --all-targets` and `just gen-sqlx` (no diff); nextest over the workspace in two partitions; clippy; fmt; the whole vitest suite; typecheck; lint; prek in both stages; Playwright over the new spec and the `@pages`, `@search` and `@markdown` specs.
+- `e2e-tauri/table-cell-link-backlink.e2e.ts` pins the same happy path on the real backend (a bug that reached users, testing invariant 4). The lane cannot run here, so the coordinator runs it on a spec-only branch off main (red) and on this branch (green).
