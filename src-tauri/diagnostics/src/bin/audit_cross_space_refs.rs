@@ -42,30 +42,10 @@
 
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::LazyLock;
 
-use regex::Regex;
+use agaric_store::cache::{TAG_REF_RE, ULID_LINK_RE};
 use rustc_hash::FxHashMap;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
-
-// ---------------------------------------------------------------------------
-// Local copies of the canonical ULID-token regexes
-// ---------------------------------------------------------------------------
-//
-// The canonical regexes live in `agaric_store::cache` as `pub(crate)` items
-// (see `src-tauri/src/cache/mod.rs`). The audit binary re-declares them
-// locally — three lines — instead of widening the `cache` module's API
-// surface. If the canonical regexes ever change, this file must be kept
-// in sync; the regex strings are intentionally identical so a `grep`
-// across the repo will find both copies.
-
-static ULID_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:\[\[|\(\()([0-9A-Z]{26})(?:\|[^\]\n]*)?(?:\]\]|\)\))")
-        .expect("invalid ULID link regex")
-});
-
-static TAG_REF_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"#\[([0-9A-Z]{26})\]").expect("invalid tag-ref regex"));
 
 // ---------------------------------------------------------------------------
 // CLI argument parsing (hand-rolled — mirrors `agaric-mcp`)

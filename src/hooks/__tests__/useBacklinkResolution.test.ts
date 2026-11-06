@@ -148,6 +148,19 @@ describe('useBacklinkResolution', () => {
     expect(result.current.resolveBlockStatus(ULID_A)).toBe('active')
   })
 
+  it('resolves a table cell link, whose label pipe is escaped', async () => {
+    mockedBatchResolve.mockResolvedValue([
+      { id: ULID_A, title: 'My Page', block_type: 'page', deleted: false },
+    ])
+    const groups = [makeGroup([{ id: 'B1', content: `| [[${ULID_A}\\|label]] | x |` }])]
+
+    const { result } = renderHook(() => useBacklinkResolution(groups))
+
+    await waitFor(() => {
+      expect(result.current.resolveBlockTitle(ULID_A)).toBe('My Page')
+    })
+  })
+
   it('writes real resolutions into the shared useResolveStore (single cache)', async () => {
     mockedBatchResolve.mockResolvedValue([
       { id: ULID_A, title: 'Shared Title', block_type: 'page', deleted: false },

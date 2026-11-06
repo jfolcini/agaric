@@ -813,6 +813,33 @@ describe('UnlinkedReferences', () => {
     )
   })
 
+  it('"Link it" leaves a table cell link\'s label alone, its pipe escaped', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [
+        makeGroup('P1', 'Page One', [
+          { id: 'B1', content: '| [[01ARZ3NDEKTSV4RRFFQ69G5FAV\\|My Page notes]] | My Page |' },
+        ]),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    await user.click(await screen.findByRole('button', { name: /link it/i }))
+
+    expect(mockedEditBlock).toHaveBeenCalledWith(
+      'B1',
+      '| [[01ARZ3NDEKTSV4RRFFQ69G5FAV\\|My Page notes]] | [[PAGE1]] |',
+    )
+  })
+
   // 9. Load more button fetches next page
   it('load more button fetches next page', async () => {
     const user = userEvent.setup()

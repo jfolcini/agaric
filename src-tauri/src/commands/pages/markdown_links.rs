@@ -443,7 +443,7 @@ pub(super) fn unescape_link_pipes(text: &str) -> std::borrow::Cow<'_, str> {
 /// Whether the `[[…]]` token `whole` is already an internal `[[ULID]]` ref,
 /// its label pipe escaped or not.
 pub(super) fn is_internal_page_link(whole: &str) -> bool {
-    agaric_store::cache::PAGE_LINK_RE.is_match(&unescape_link_pipes(whole))
+    agaric_store::cache::PAGE_LINK_RE.is_match(whole)
 }
 
 /// `stored`, the ref written for the link body `body` at byte `at` of
@@ -731,10 +731,18 @@ pub(super) fn humanise_tag_and_page_refs(
             if is_escaped(&result, m.start()) {
                 return m.as_str().to_owned();
             }
-            let ulid = &caps[1];
-            let target = page_titles.get(ulid).map_or(ulid, String::as_str);
+            let id = caps.get(1).expect("group 1 always present");
+            let target = page_titles
+                .get(id.as_str())
+                .map_or(id.as_str(), String::as_str);
+            // A table cell's `\|` stays escaped: a bare pipe would split the cell.
+            let pipe = if result[id.end()..].starts_with('\\') {
+                r"\|"
+            } else {
+                "|"
+            };
             match agaric_store::cache::page_link_label(caps) {
-                Some(label) => format!("[[{target}|{label}]]"),
+                Some(label) => format!("[[{target}{pipe}{label}]]"),
                 None => format!("[[{target}]]"),
             }
         })

@@ -277,6 +277,12 @@ describe('resolveBlockDisplay — the name resolves inline references (#4719)', 
     expect(resolveBlockDisplay(block, new Map(), resolver).title).toBe('follow up on the plan')
   })
 
+  it('names a table cell link by its label, each escaped pipe a `|`', () => {
+    const block = makeBlock({ id: 'B6', content: `| [[${LINK_ID}\\|a\\|b]] | x |` })
+
+    expect(resolveBlockDisplay(block, new Map(), resolver).title).toBe('| a|b | x |')
+  })
+
   it('covers block refs and tag refs too, and leaves a non-ULID alone', () => {
     // All three shapes carry a bare 26-char ULID that `truncateContent` would
     // otherwise expose (it strips `#` and `[[…]]`, and does not touch `((…))`

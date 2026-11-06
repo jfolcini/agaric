@@ -98,9 +98,16 @@ export function blockLinkToken(id: string, label?: string): string {
   return label ? `[[${id}|${label}]]` : `[[${id}]]`
 }
 
-/** `text` with each stored `[[ULID|label]]` read as its label (#5160 D9). */
+/**
+ * `text` with each stored `[[ULID|label]]` read as its label (#5160 D9). A table
+ * cell escapes every pipe, so its `[[ULID\|label]]` reads the `\|` of its label
+ * as `|`; a label elsewhere is written as typed.
+ */
 export function readLinkLabels(text: string): string {
-  return text.replace(/\[\[[0-9A-Z]{26}\|([^\]\n]+)\]\]/g, '$1')
+  return text.replace(
+    /\[\[[0-9A-Z]{26}(\\?)\|([^\]\n]+)\]\]/g,
+    (_link, escaped: string, label: string) => (escaped ? label.replaceAll('\\|', '|') : label),
+  )
 }
 
 /**
