@@ -149,10 +149,17 @@ describe('Agaric real-backend labelled link in a table cell is a backlink @edito
     // Away and back: the table is re-read from the stored text, chip and all.
     await navigateTo('Journal')
     await reopenPageByTitle(SOURCE)
-    const chip = $(
-      `[data-testid="rich-table"] th [data-testid="block-link-chip"][data-label="${LABEL}"]`,
+    // The static chip carries no data-label, so it is found by the label it shows.
+    await browser.waitUntil(
+      async () => {
+        const chips = await $$('[data-testid="rich-table"] th [data-testid="block-link-chip"]')
+        for (const chip of chips) {
+          if ((await chip.getText()).includes(LABEL)) return true
+        }
+        return false
+      },
+      { timeout: NAV_TIMEOUT, timeoutMsg: `the static table never showed the chip ${LABEL}` },
     )
-    await chip.waitForDisplayed({ timeout: NAV_TIMEOUT })
     expect(await owningBlockId('[data-testid="rich-table"]')).toBe(edited)
 
     // The target's panel lists that block. The links are indexed after the save
