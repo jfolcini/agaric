@@ -825,6 +825,15 @@ fn document_rows() -> Vec<(&'static str, Vec<BlockSpec>, &'static str)> {
             "- [ ] call \\📅 2026-01-01\n- [ ] go \\⏫ 📅 2026-10-05\n\
              - [ ] start \\🛫 2026-01-01\n- [ ] \\\\📅 x\n",
         ),
+        (
+            "#6277 F1: an embed of a page or a block whose name does not read back is written \
+             as stored",
+            vec![
+                plain(0, "{{embed [[01J00000000000000000000RF1]]}}"),
+                plain(0, "{{embed ((01J00000000000000000000RF2))}}"),
+            ],
+            "{{embed [[01J00000000000000000000RF1]]}}\n\n{{embed ((01J00000000000000000000RF2))}}\n",
+        ),
     ]
 }
 

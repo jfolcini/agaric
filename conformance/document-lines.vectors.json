@@ -1133,6 +1133,25 @@
           }
         }
       ]
+    },
+    {
+      "lineIds": ["01J00000000000000000000000", null, "01J00000000000000000000001", null],
+      "name": "#6277 F1: an embed of a page or a block whose name does not read back is written as stored",
+      "text": "{{embed [[01J00000000000000000000RF1]]}}\n\n{{embed ((01J00000000000000000000RF2))}}\n",
+      "tree": [
+        {
+          "content": "{{embed [[01J00000000000000000000RF1]]}}",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        },
+        {
+          "content": "{{embed ((01J00000000000000000000RF2))}}",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {}
+        }
+      ]
     }
   ],
   "description": "#5691 — Edit as Markdown's Document dialect, one case per hard case of the line-split format: the tree, each block under its id, the text a page holding it is written as, and the id each line of that text carries; under `typed`, text typed with no blank line between blocks and the tree it reads as, ids aside; and under `pasted`, text pasted from outside and the tree a paste reads it as (#6190). Authored by `markdown_document_tests.rs` with CONFORMANCE_UPDATE=1; never hand-edit.",
