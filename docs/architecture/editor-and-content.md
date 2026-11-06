@@ -5,20 +5,109 @@ Companion to `docs/UI-MAP.md § Editor surfaces` (what the user sees) and `docs/
 
 ## Storage format
 
-Block content is stored as Markdown-flavoured plain text. The full grammar is parsed by the FE serializer (round-tripped to ProseMirror, then back). Key rules:
+Block text is stored and exchanged as Markdown, in two forms that share one grammar: the **stored content** of one block, and the **Document form**, the text of a page or of a run of blocks: the file an export writes, the buffer *Edit as Markdown* edits and an agent reads, the clipboard, the mirror's file, and what a Markdown import or a paste reads. The Document form is Obsidian's: YAML front matter for page properties, CommonMark and GFM for blocks, and the `key:: value` lines (Dataview) and signifiers (Tasks) those tools already use. Neither form changes the op log or sync: a Document text is a projection of the blocks, and stored content keeps its tokens.
 
-- One block = one top-level Markdown construct (paragraph, heading, list item, code block, etc.). Multi-block markdown pasted into one block triggers an auto-split on blur.
-- Inline marks are a **locked set**: bold, italic, code, strike, highlight, external-link, inline-block-link (`[[ULID]]`), tag-ref (`#[ULID]`), block-ref (`((ULID))`), footnote-ref (`[^label]`). New marks are deliberate additions to the serializer + grammar.
-- Code blocks carry a `language` attribute: the fence's info string as written, trimmed (the language picker offers a curated set). The parser reads a fence of backticks or tildes, and a thematic break of three or more `-`, `*` or `_`, as Rust's grammar does (#6033); the serializer writes backtick fences, tildes for an info string holding a backtick, and `---`.
-- Callouts use a `> [!type]` fenced shape (tip / note / info / warning / error).
+### Stored block content
+
+`blocks.content` is one block's text, written by the editor serializer:
+
+- **Inline marks are a locked set:** bold, italic, code, strike (`~~x~~`), highlight (`==x==`), underline (`<u>x</u>`) and external link. A new mark is a deliberate addition to the serializer and its grammar.
+- **Tokens:** `[[ULID]]` and `[[ULID|label]]` (page link), `#[ULID]` (tag), `((ULID))` (block ref), `[^label]` (footnote ref; a block whose text starts `[^label]:` defines the label), `$x$` (math) and `![alt|W](url)` with an `attachment:<id>` url for an attached image. `{{embed [[ULID]]}}`, `{{embed ((ULID))}}` and `{{query …}}` are text the renderer recognises.
+- **Block constructs inside one block:** an ATX heading, a fence (the `language` attribute is the info string as written, trimmed), a `$$` math block, a quote, a callout `> [!TYPE]` with its `-` or `+` fold marker (the editor writes the type upper case and reads it in any case; the renderer maps every Obsidian, GitHub and GitLab type and alias onto its nearest style), a GFM table with its alignment, a `---` rule, and line breaks.
+- **Not content:** a list marker (the `listStyle` property), a task checkbox and its priority and dates (the `blocks` columns), `key:: value` lines (`block_properties`) and the block's anchor. Text that opens like a list marker is stored after a `\`.
+- **Escapes:** a character that would read as syntax is written after a `\`. Every escape the serializer writes has its decode in `src/editor/markdown-parse.ts`, in Rust's `is_escaped` and in the FTS strip.
+
+Among the backend's readers of stored content are the FTS strip (`strip_for_fts_with_maps` in `src-tauri/agaric-store/src/fts/strip.rs`), which turns it into the text the editor shows, with escapes outside code decoded, markup removed, `[[ULID]]` and `#[ULID]` resolved to their targets' titles and `((ULID))` to its target's first line; the token regexes in `src-tauri/agaric-store/src/cache/mod.rs` (`ULID_LINK_RE`, `PAGE_LINK_RE`, `TAG_REF_RE`, `BLOCK_REF_RE`), which derive the link, tag and ref edges; and the writer and readers below, which turn tokens into names and back.
+
+### The Document form
+
+A Document text is a page's front matter, then its blocks. A reader accepts more than a writer writes: the second column is what every writer writes, the third what a reader also takes. A construct read only under the `LogseqOrg` dialect is marked so.
+
+| Construct | Written | Also read |
+|---|---|---|
+| File | UTF-8, LF | CRLF, a lone CR, a leading BOM |
+| Page properties | YAML front matter at byte 0: `aliases: [a, b]`, `tags: [a, b]`, then one `key: value` per property, quoted where YAML needs it; a ref-typed value is its page's title in an export, else its id | `alias:` and `tag:`; leading `key:: value` lines (`alias::`, `tags::` too); front matter after a leading `# Title` (older exports). TOML and JSON front matter are text |
+| Title | none in a ZIP entry, whose path names the page; in a page export and a page copy `# Title` after the front matter; the agent read returns it as a field (`AgentPage`) | a leading `# Title` equal to the title derived from the file name, first or first after the front matter, is dropped (`strip_title_heading`), so an export imports as the page it was |
+| Plain block | a paragraph; a blank line between blocks unless both open with a list marker | CommonMark paragraphs |
+| Plain child | a `+` item at its parent's child column, the parent's line unchanged; a `+` item too for a first block that would read as front matter (`---`) or, in a file, as the title (`# Title`) | an indented paragraph after a blank line |
+| List block | `- x`, and `N. x` numbered by its place in its run of siblings | `* x`, `N) x`; `+ x` is a plain block, never a bullet |
+| Indent | spaces | tabs, at CommonMark tab stops |
+| Heading | ATX; owns nothing, and starts a block wherever it stands | the same; under `LogseqOrg` outside a list it owns what follows it. Setext headings are text |
+| Task | `- [ ]` TODO, `- [/]` DOING, `- [x]` DONE, `- [-]` CANCELLED; any other state is a `todo_state::` line | `[X]`; `TODO`, `DOING`, `[#A]`, `SCHEDULED:` and `DEADLINE:` under `LogseqOrg` only |
+| Task fields | at the end of a task's first line, before its anchor, in the order `TASK_SIGNIFIER_KEYS` gives: `⏫` `🔼` `🔽`, `🔁 every …`, `⏳ YYYY-MM-DD`, `📅 YYYY-MM-DD`, and a done task's `✅ YYYY-MM-DD`; a field no signifier reads back as (a rule with a bound, a priority outside the levels) stays its `key::` line; a task's own text ending in a signifier is written with a `\` before it | the same on every surface; `🔺` as the first priority and `⏬` as the third |
+| Non-task fields | `priority::`, `scheduled_date::`, `due_date::` and `repeat*::` lines | the same |
+| Block property | a `key:: value` line at the block's text column; a value its line cannot carry (a line break, a space at either end, one already quoted) is a JSON string | the same; `key::` with no value deletes in a buffer save |
+| Empty block | a line holding only `\` | the same |
+| Anchor | `^ULID` after a space, ending the block's last line, or alone on the line after when the last line is code or empty | any `^word` in a Markdown file; only a block id in a paste or a buffer |
+| Block-scoped file | in an export, a `+ [name](attachment:<id>)` child under its block; the page's own as paragraphs before the blocks | the same |
+| Page link, tag, ref | `[[Title]]`, `[[Title\|label]]`, `#name` (`#[[name]]` where the bare form would not read back), a block ref `((ULID))` in a buffer, a file and a copy and `[[#^ULID]]` or `[[Title#^ULID]]` in an export; an embed `{{embed …}}`, its target named as a ref is in an export and as stored elsewhere; a `[[ULID]]` or `#[ULID]` where the name would not read back as the same page or tag | all of these, Obsidian `![[Note]]` embeds, and `((uuid))` under `LogseqOrg` |
+| Code | a backtick fence, tildes for an info string holding a backtick | `~~~` fences |
+| Rule | `---` | `***`, `___` |
+
+A line inside a block that would read as anything but that line of the block is written after a `\` (`needs_document_line_escape`): a blank line, a list item, a `key::` line, a heading, a fence or a rule. Code lines are written as they are, but for one that would end its fence early. A fence is closed only by a run of its character at least as long, and nothing inside one is a bullet, heading or property; one left open ends with its list item, or with the document, and in a buffer before the next line that carries a block id.
+
+### The `LogseqOrg` dialect
+
+`ImportDialect` tells a file import which reading its source gets: a Logseq graph's pages and every `.org` file are `LogseqOrg`, everything else `Markdown`. Org files are first turned into outline text by `src/lib/org-import.ts`. `LogseqOrg` keeps the outline reading Logseq and Org files are written for: `-`, `*`, `+`, `1.` and `1)` all start a block and any indentation width nests by the marker's text column; a paragraph is one block, with a blank line between blocks and a single line break inside one; a heading outside a list owns what follows until the next of its level or higher, and one inside a list item owns nothing; Logseq's `key:: value` and continuation lines attach to their bullet, and an indented line after a blank line continues it, the blank line kept; a `TODO` keyword, a `[#A]` cookie, `SCHEDULED:` and `DEADLINE:` lines are read as task state, priority and dates; `#+BEGIN_X` blocks and a `:LOGBOOK:` drawer are rewritten or dropped; `id::`, `collapsed::` and `heading::` are bookkeeping, read after the scan by `read_logseq_bookkeeping`. A `Markdown` file is read as the Document form is, so an export imports as the blocks it was.
 
 ## Custom serializer
 
-The Markdown ↔ ProseMirror serializer lives **on the frontend** (`src/editor/markdown-parse.ts` + `src/editor/markdown-serialize.ts`, surfaced via a `markdown-serializer.ts` barrel). It is FE-only because the editor needs lossless round-trips on every keystroke; pushing through IPC for every transaction would destroy typing fluency.
+Four parts own the formats: the editor serializer for stored content, the Rust readers and writer for the Document form, their TypeScript mirrors, and the vector files that pin them.
 
-The serializer is property-tested with `fast-check`: round-trip identity (`parse(serialize(parse(md))) == parse(md)`) and serialise idempotence. Off-the-shelf parsers were rejected because none of them handled the locked-mark set + our inline-ULID nodes losslessly.
+### Stored content: the editor
 
-The backend reads/writes `blocks.content` as opaque markdown text. The **only** backend interaction with the content format is the FTS strip pass (`src-tauri/agaric-store/src/fts/strip.rs::strip_for_fts_with_maps`), which turns the content into the text the editor shows for full-text search: escapes outside code decoded, code kept raw, Markdown markup removed, `[[ULID]]` / `#[ULID]` resolved to their target titles and `((ULID))` to its target's first line. Its callers prefetch the tag-name, page-title and block-ref first-line maps.
+The Markdown ↔ ProseMirror serializer lives on the frontend (`src/editor/markdown-parse.ts` and `src/editor/markdown-serialize.ts`, surfaced through the `markdown-serializer.ts` barrel). The editor needs lossless round-trips on every keystroke, and an IPC call per transaction would destroy typing fluency. It is property-tested with `fast-check` (`parse(serialize(parse(md))) == parse(md)`, and serialise idempotence); off-the-shelf parsers were rejected because none handled the locked mark set and the inline-ULID nodes losslessly.
+
+### Document form: the Rust readers
+
+Every reader is in `src-tauri/agaric-engine/src/import.rs` and reads CRLF, CR and a BOM. They differ in what they take from outside Agaric:
+
+| Reader | Reads | Differs |
+|---|---|---|
+| `parse_markdown_file` | a `Markdown` file import (`parse_import_payload` in `src-tauri/src/commands/pages/markdown_import.rs`) | front matter and leading `key::` lines are the page's properties; a trailing `^word` is the block's anchor |
+| `read_pasted_text` | a paste of text (`paste_blocks`), MCP `append_markdown` | no page properties; a front matter block at byte 0 is dropped with one warning; a trailing `^word` that is no block id stays text; depth is flattened past the import limit |
+| `parse_document_outline`, `parse_document_text` | a page's own buffer: the *Edit as Markdown* save and MCP `edit_page_markdown` (`apply_page_source_inner`), Duplicate and the journal and meeting template copies; `parse_document_text` takes the ids that travel beside the lines | not foreign text: nothing is flattened, so a save refuses a depth past the limit; the page's properties come from the buffer's front matter |
+| `parse_logseq_markdown` | a `LogseqOrg` file; `parse_vault_markdown` for a folder import's note | the outline reading above, then `read_logseq_bookkeeping` over the scanned blocks |
+
+`pair_unanchored_lines` (`src-tauri/src/commands/pages/markdown_source_pair.rs`) gives the blocks of a text edited outside Agaric the ids they had when it was last written: an anchor names its block, and the rest pair against the last written text by their content. A re-import (`merge_into_page` in `src-tauri/src/commands/pages/markdown_import_merge.rs`) uses it to save a file over its page as an *Edit as Markdown* save does.
+
+### Document form: the writer
+
+`src-tauri/src/commands/pages/markdown_export.rs` is the one writer. A `RenderMode` is two policies:
+
+- **Names.** `Names::Always` writes every id that resolves as a name, and a ref-typed value as its page's title. `Names::ReadBack` writes a name only where it reads back as the same id (`humanise_refs_for_source`), and a ref-typed value as its id.
+- **Anchors.** `Anchors::Addressed` writes `^ULID` on the blocks something addresses: a block ref or embed from any page, a ref-typed value, an attachment. `Anchors::Every` writes it on every block. `Anchors::Needed` writes none beyond what every policy writes: a block that leaves a fence open, or whose own text ends in a space, `^` and a block id, carries its anchor because it cannot read back without.
+
+| Surface | Entry point | Names | Anchors |
+|---|---|---|---|
+| Export as Markdown, page copy, ZIP entry | `export_page_markdown_inner` (`render_page_markdown`) | Always | Addressed |
+| Markdown mirror's file | `get_page_file_inner` (`render_page_file`) | ReadBack | Addressed |
+| Copy blocks | `get_blocks_source_inner` (`render_clipboard_source`) | ReadBack | Needed |
+| Edit as Markdown buffer, MCP `get_page_markdown` and `get_journal` | `get_page_buffer_inner`, `get_page_for_agent_inner` (`RenderMode::DOCUMENT`) | ReadBack | Every |
+| Duplicate, template copies | `duplicate_block_inner`, `copy_page_blocks_in_tx` | ReadBack, with no name snapshot, so every id stays raw | Every |
+
+The page copy and ZIP entry are one call: the ZIP drops the `# Title` line (`dropTitleLine` in `src/lib/export-graph.ts`) and resolves `attachment:<id>` refs to file paths, and the page copy resolves them to file names (`resolveAttachmentRefsForCopy`).
+
+### HTML paste
+
+HTML on the clipboard does not go through the Document reader. `src/editor/extensions/html-paste.ts` converts it with `htmlBodyToOutline` (`src/editor/html-to-blocks.ts`, inline marks through `createInlineTurndown` in `src/editor/inline-turndown.ts`) into blocks with depths and sends them as `PasteInput::Blocks`. Each block's content is kept as it comes; only a leading `- [ ]` checkbox is read as task state (`pasted_block`), and the first block pasted after text is taken verbatim.
+
+### Mirrors
+
+- **The TypeScript reader and writer:** `src/editor/source-buffer-document.ts` holds the Document grammar's twins: `parseDocument` for a buffer, `readPastedText` and `parsePastedText` for a paste, `parseMarkdownFile` for a Markdown file, and the writer's `DocumentLayout`, `pushDocumentLines`, `taskSignifier` and `writeTaskFields`. It follows the Rust grammar and defines none. The buffer editor (`src/editor/source-buffer-blocks.ts`) writes edited blocks with it, and page mode's paste reads text with it.
+- **The Tauri mock** (`src/lib/tauri-mock/handlers/pages.ts`, `src/lib/tauri-mock/handlers/blocks.ts`) writes the export and the buffer with `renderPageDocument` and the copy (`get_blocks_source`) with the same layout, and reads with the mirrors above, `paste_blocks` through `readPastedText`. It writes no names, no attachment lines, and anchors only in the buffer. Its `import_markdown` models the `Markdown` reading alone.
+- **Names and attachments:** `src/lib/name-tokens.ts` mirrors the name scan of `src-tauri/src/commands/pages/markdown_links.rs`, and `scanAttachmentRefs` in `src/lib/import-attachments.ts` the attachment refs of `detect_attachment_refs`.
+
+### Pinned by
+
+- `conformance/document-lines.vectors.json`: one case per hard case of the Document form, as the tree, the text a page holding it is written as and the id each line carries, plus `typed` and `pasted` texts with the tree they read as. Rust authors it (`the_document_lines_vectors_are_the_rows` in `src-tauri/src/commands/pages/markdown_document_tests.rs`, `CONFORMANCE_UPDATE=1`); `src/editor/__tests__/source-buffer-document.test.ts` asserts the TS reader and `src/lib/tauri-mock/__tests__/document-lines.test.ts` the mock's buffer.
+- `conformance/block-content.vectors.json`: stored content and what Rust and the editor must agree it means. `src-tauri/src/commands/pages/markdown_source_tests.rs` authors the rows' reading and FTS text; `src/lib/__tests__/block-content-conformance.test.ts` runs the editor's save flush, parse and write-back over them.
+- `conformance/reference-tokens.vectors.json` pins the name rules (`[[Name]]`, `#name`, heading anchors) and `conformance/attachment-refs.vectors.json` the attachment refs, each on both stacks.
+- `conformance/fixtures/markdown_documents.json`, with the backend's renders beside it (`markdown_documents.export.txt`, `markdown_documents.clipboard.txt`): the export and the copy over one page. `markdown_imports.json` runs a Markdown import and a bibliography import on the backend alone; `import_markdown_plain.json` and `import_markdown_dialects.json` run one input on both stacks; `paste_blocks.json` and the `apply_page_source*.json` fixtures pin paste and the buffer save.
+- The corpus under `src-tauri/agaric-engine/tests/markdown-corpus/`: real-shaped documents from each source tool. `corpus_documents_read_as_snapshotted` in `import.rs` snapshots each one's reading under `LogseqOrg`, as a buffer and as a paste (`src-tauri/agaric-engine/src/snapshots/`); the editor's property test round-trips each through the serializer.
+- Property tests: `arb_document_forest` in `markdown_document_tests.rs` renders a page, reads it back and imports its export as a `Markdown` file; `src/editor/__tests__/markdown-roundtrip.property.test.ts` and `markdown-serializer.property.test.ts` hold the serializer's round trip.
+
+A change to a written or read construct changes the Rust reader or writer, its TypeScript twin and the vector rows in one commit; `CONFORMANCE_UPDATE=1` re-authors the rows.
 
 ## Roving-editor invariant
 

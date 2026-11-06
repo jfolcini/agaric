@@ -54,7 +54,7 @@ const ALLOWED_MIME_PATTERNS = [
   'application/x-tar',
 ]
 
-function isMimeAllowed(mime: string): boolean {
+export function isMimeAllowed(mime: string): boolean {
   return ALLOWED_MIME_PATTERNS.some((pattern) => {
     if (!pattern.endsWith('/*')) return pattern === mime
     const subtype = mime.startsWith(pattern.slice(0, -1)) ? mime.slice(pattern.length - 1) : null
@@ -62,7 +62,7 @@ function isMimeAllowed(mime: string): boolean {
   })
 }
 
-function validateAttachmentFilename(filename: string): string {
+export function validateAttachmentFilename(filename: string): string {
   const trimmed = filename.trim()
   if (trimmed === '') throw validationRejection('attachment filename may not be empty')
   if (new TextEncoder().encode(trimmed).length > MAX_ATTACHMENT_FILENAME_BYTES) {
