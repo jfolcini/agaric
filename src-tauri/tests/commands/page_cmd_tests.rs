@@ -7057,6 +7057,88 @@ async fn edit_as_markdown_keeps_an_escaped_pipe_link_in_a_table_cell() {
     mat.shutdown();
 }
 
+/// Edit as Markdown writes a table cell's `[[ULID\|alias]]` as its page's
+/// title, the pipe still escaped, and reads an edited label back to the link.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_source_writes_a_table_cell_link_as_its_title() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let note = dup_page(&pool, &mat, "Note").await;
+    let page = dup_page(&pool, &mat, "Table").await;
+    dup_child(
+        &pool,
+        &mat,
+        &page,
+        &format!("| [[{note}\\|alias]] | x |\n| --- | --- |"),
+    )
+    .await;
+    settle(&mat).await;
+
+    let base = page_source(&pool, &page).await;
+    let edited = with(
+        &base,
+        "| [[Note\\|alias]] | x |",
+        "| [[Note\\|renamed]] | x |",
+    );
+    save_source(&pool, &mat, &page, &edited, &base)
+        .await
+        .unwrap();
+
+    let contents: Vec<String> = dup_children(&pool, &page)
+        .await
+        .into_iter()
+        .map(|(_, content)| content)
+        .collect();
+    assert_eq!(
+        contents,
+        [format!("| [[{note}\\|renamed]] | x |\n| --- | --- |")]
+    );
+    mat.shutdown();
+}
+
+/// Export writes a table cell's `[[ULID\|label]]` as its page's title with the
+/// label, the pipe still escaped so the row keeps its columns.
+#[tokio::test]
+async fn export_page_markdown_writes_a_table_cell_link_as_its_title() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(
+        &pool,
+        "01LINKPAGE000000000000LNK1",
+        "page",
+        "Linked Page",
+        None,
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01AAAAAAAAAAAAAAAAAAAAPAGE",
+        "page",
+        "Source Page",
+        None,
+        Some(2),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01AAAAAAAAAAAAAAAAAAAABLK1",
+        "content",
+        "| [[01LINKPAGE000000000000LNK1\\|the link]] | x |\n| --- | --- |",
+        Some("01AAAAAAAAAAAAAAAAAAAAPAGE"),
+        Some(1),
+    )
+    .await;
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
+        .await
+        .unwrap();
+    assert!(
+        md.contains("| [[Linked Page\\|the link]] | x |\n"),
+        "the cell's link is written as its title: {md}"
+    );
+}
+
 /// Outside a table the editor reads only a bare pipe in `[[ULID|label]]`, so
 /// an escaped-pipe link there is stored with its pipe unescaped.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

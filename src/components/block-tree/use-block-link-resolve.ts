@@ -38,7 +38,8 @@ import { useSpaceStore } from '@/stores/space'
  * backend's. Group 2 is the `#[ULID]` tag ref, whose chip otherwise reads its
  * name only from the preload.
  */
-const ULID_LINK_RE = /(?:\[\[|\(\()([0-9A-Z]{26})(?:\|[^\]\n]*)?(?:\]\]|\)\))|#\[([0-9A-Z]{26})\]/g
+const ULID_LINK_RE =
+  /(?:\[\[|\(\()([0-9A-Z]{26})(?:\\?\|[^\]\n]*)?(?:\]\]|\)\))|#\[([0-9A-Z]{26})\]/g
 
 /**
  * Scan the provided blocks for `[[ULID]]` / `((ULID))` / `#[ULID]` tokens whose ids are

@@ -94,8 +94,11 @@ function buildBoundaryRegex(term: string): RegExp {
   )
 }
 
-/** A stored `[[ULID]]` or `[[ULID|label]]` token (#5160 D9). */
-const STORED_LINK_RE = /\[\[[0-9A-Z]{26}(?:\|[^\]\n]*)?\]\]/g
+/**
+ * A stored `[[ULID]]` or `[[ULID|label]]` token (#5160 D9), or a table cell's
+ * `[[ULID\|label]]`.
+ */
+const STORED_LINK_RE = /\[\[[0-9A-Z]{26}(?:\\?\|[^\]\n]*)?\]\]/g
 
 /**
  * The first whole-word mention of `term` in `content` that is not inside a

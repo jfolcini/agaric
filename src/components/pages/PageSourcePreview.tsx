@@ -24,7 +24,7 @@ import type { SourceLines } from '@/editor/source-buffer'
 import { frontMatterProperties, readBlocks } from '@/editor/source-buffer-blocks'
 import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import { contentShowsListMarker, shownListStyle } from '@/lib/list-style'
-import { linkBodyReadings, nameKey, scanNameTokens } from '@/lib/name-tokens'
+import { linkBodyReadings, nameKey, type PageToken, scanNameTokens } from '@/lib/name-tokens'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -66,9 +66,19 @@ export function withNameIds(
     const name = reading?.name ?? token.name
     const label = reading === undefined ? token.label : reading.label
     const id = idOf(name) ?? newNameId(newNames, name)
-    out += label === undefined ? `[[${id}]]` : `[[${id}|${label}]]`
+    const ref = label === undefined ? `[[${id}]]` : `[[${id}|${label}]]`
+    out += keepsPipesEscaped(content, token) ? ref.replaceAll('|', '\\|') : ref
   }
   return out + content.slice(at)
+}
+
+/**
+ * `escape_pipes_as`: a link that escaped its pipe in a table row keeps every
+ * pipe escaped there, where a bare one would split the cell.
+ */
+function keepsPipesEscaped(content: string, token: PageToken): boolean {
+  const inRow = content.startsWith('|', content.lastIndexOf('\n', token.start) + 1)
+  return inRow && content.slice(token.start, token.end).includes('\\|')
 }
 
 /** The id a name the save would create shows under, the same one each time. */

@@ -151,7 +151,6 @@ dependencies = [
  "agaric-core",
  "agaric-store",
  "agaric-sync",
- "regex",
  "rustc-hash",
  "serde",
  "serde_json",

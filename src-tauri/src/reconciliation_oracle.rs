@@ -963,10 +963,10 @@ async fn read_page_link_cache(
 /// than a wave of unexplained divergences.
 ///
 /// Crockford base-32, exactly 26 uppercase alphanumerics, an optional
-/// `|label` (#5160 D9); mixed delimiters (`[[ULID))`) match, exactly as
-/// production's does.
+/// `|label` (#5160 D9), or `\|label` as a table cell escapes it; mixed
+/// delimiters (`[[ULID))`) match, exactly as production's does.
 static ORACLE_LINK_TOKEN_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:\[\[|\(\()([0-9A-Z]{26})(?:\|[^\]\n]*)?(?:\]\]|\)\))")
+    Regex::new(r"(?:\[\[|\(\()([0-9A-Z]{26})(?:\\?\|[^\]\n]*)?(?:\]\]|\)\))")
         .expect("invalid oracle link regex")
 });
 

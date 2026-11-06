@@ -215,6 +215,14 @@ fn mask_shown_spans(
     let mut out = String::with_capacity(content.len());
     let mut rest = content;
     while let Some(ch) = rest.chars().next() {
+        // An escaped pipe shows as `|` and stays bare, so the page-link pass
+        // reads a table cell's `[[ULID\|label]]` as the editor's table reader
+        // does, label pipes included.
+        if let Some(after) = rest.strip_prefix("\\|") {
+            out.push('|');
+            rest = after;
+            continue;
+        }
         let at_line_start = rest.len() == content.len() || out.ends_with('\n');
         let span = match ch {
             '~' if at_line_start => tilde_fence(rest),

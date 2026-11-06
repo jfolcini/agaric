@@ -339,8 +339,10 @@ pub async fn rebuild_block_links_unresolved(pool: &SqlitePool) -> Result<(), App
 /// `app_settings` key recording that [`backfill_block_links`] has run.
 ///
 /// Versioned so a future correction can re-arm the pass by bumping the
-/// suffix, the way `repair.tag_space_misfiled.v1` does.
-const BLOCK_LINKS_BACKFILL_MARKER: &str = "repair.block_links_backfill.v1";
+/// suffix, the way `repair.tag_space_misfiled.v1` does. v2: v1 read the
+/// `[[ULID\|label]]` of a table cell as no link, so a vault that ran it still
+/// lacks those rows.
+const BLOCK_LINKS_BACKFILL_MARKER: &str = "repair.block_links_backfill.v2";
 
 /// One-shot vault-wide backfill of `block_links` (and, through the reindexer,
 /// `block_links_unresolved`) from block content.

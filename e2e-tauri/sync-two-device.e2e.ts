@@ -3,7 +3,8 @@
 //
 // The app pairs with a second device through its own pairing dialog, and one
 // edit crosses in each direction, then a property and a move, then two
-// concurrent edits to one block, then an image each way, then a sync cancelled
+// concurrent edits to one block, then an image each way, then a meeting with
+// its files (#5364), then a sync cancelled
 // while the peer does not answer, and last an unpair.
 // The second device is `e2e_sync_peer`, a headless vault on the app's sync daemon
 // (sync-peer.ts). It reads the dialog's QR as a phone's camera would; the QR
@@ -31,6 +32,7 @@ import {
   enterBlankSibling,
   expectAbsent,
   expectImageRendered,
+  invoke,
   navigateTo,
   openNewPage,
   pasteFileIntoFocusedBlock,
@@ -64,6 +66,17 @@ const AFTER_CANCEL = runScopedMarker('wdio-sync-after-cancel')
 const APP_IMAGE = runScopedMarker('wdio-sync-app-image')
 const PEER_IMAGE = runScopedMarker('wdio-sync-remote-image')
 const FILENAME = 'wdio-sync-image.png'
+const MEETING = runScopedMarker('wdio-sync-meeting')
+// A meeting's files, as the dialog sends them: audio is checked by its name.
+const MEETING_FILES = {
+  audio: { name: 'call.ogg', stored: 'call.ogg', bytes: Buffer.from('OggS meeting audio') },
+  transcript: {
+    name: 'call.md',
+    stored: 'call.transcript.md',
+    bytes: Buffer.from('[00:00:04] **Alice:** Hi.\n'),
+  },
+  summary: { name: 'recap.md', stored: 'recap.summary.md', bytes: Buffer.from('Shipped.\n') },
+}
 // A 1x1 transparent PNG, and a 2x1 red and blue one. The peer's image must not
 // be the app's: the peer would store bytes it already holds at the path of the
 // copy it pulled, which the app holds too, and nothing would cross.
@@ -558,6 +571,43 @@ describe('Agaric real-backend two-device sync (#5365) @sync', () => {
       await reopenSharedPage()
       await blockStaticByMarker(PEER_IMAGE).waitForDisplayed({ timeout: NAV_TIMEOUT })
       await expectImageRendered(imageBlockId, "after the app's pull")
+    })
+
+    it('a meeting made in the app reaches the peer with its files on the recording block', async () => {
+      if (peer === undefined || paired === undefined) throw new Error('the pairing test failed')
+      const spaces = await invoke<{ id: string; name: string }[]>('list_spaces')
+      const spaceId = (spaces.find((space) => space.name === 'Personal') ?? spaces[0])?.id
+      const file = ({ name, bytes }: { name: string; bytes: Buffer }) => ({
+        filename: name,
+        bytes: [...bytes],
+      })
+      // The dialog's call, linked from the block both devices share.
+      const made = await invoke<{ page_id: string; recording_block_id: string }>('add_meeting', {
+        input: {
+          space_id: spaceId,
+          title: MEETING,
+          date: '2031-03-14',
+          link_block_id: paired.appBlockId,
+          audio: file(MEETING_FILES.audio),
+          transcript: file(MEETING_FILES.transcript),
+          summary_file: file(MEETING_FILES.summary),
+        },
+      })
+
+      await peer.sync()
+      const held = await peer.listAttachments(made.recording_block_id)
+      expect(held.map((row) => row.filename).toSorted()).toEqual(
+        Object.values(MEETING_FILES)
+          .map((one) => one.stored)
+          .toSorted(),
+      )
+      for (const one of Object.values(MEETING_FILES)) {
+        const row = held.find((candidate) => candidate.filename === one.stored)
+        if (row === undefined) throw new Error(`the peer holds no ${one.stored}`)
+        await waitForPeerBytes(peer, row.id, one.bytes)
+      }
+      expect((await peer.getBlock(made.recording_block_id)).parentId).toBe(made.page_id)
+      expect((await peer.getBlock(paired.appBlockId)).content).toContain(`[[${made.page_id}]]`)
     })
 
     it('the Settings state card shows Idle, a last-sync time and one peer after the syncs', async () => {
