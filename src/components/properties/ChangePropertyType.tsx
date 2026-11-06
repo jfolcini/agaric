@@ -19,6 +19,7 @@ import { fetchAndCacheLinks } from '@/components/block-tree/use-block-link-resol
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { holderLabel } from '@/components/pages/SpaceMoveConfirmDialog'
 import { notifyDefinitionWrite } from '@/components/properties/notify-definition-write'
+import { useRefTitle } from '@/components/properties/useRefTitle'
 import { Button } from '@/components/ui/button'
 import { DialogBody } from '@/components/ui/dialog'
 import { IconButton } from '@/components/ui/icon-button'
@@ -390,8 +391,6 @@ function TypeChangeValues({
       },
       queryClient,
     )
-  const resolveTitle = useResolveStore((s) => s.resolveTitle)
-  const shown = (text: string, isRef: boolean): string => (isRef ? resolveTitle(text) : text)
   const rows = data?.pages.flatMap((page) => page.items) ?? []
   if (isPending) return <Spinner label />
   if (isError) {
@@ -412,11 +411,7 @@ function TypeChangeValues({
                 {t('spaceMove.inTrash')}
               </span>
             )}
-            <span className="max-w-[40%] shrink-0 truncate text-muted-foreground">
-              {row.converted === null
-                ? shown(row.value, refs.value)
-                : `${shown(row.value, refs.value)} → ${shown(row.converted, refs.converted)}`}
-            </span>
+            <ValueText row={row} refs={refs} />
           </li>
         ))}
       </ul>
@@ -428,6 +423,24 @@ function TypeChangeValues({
         }}
       />
     </div>
+  )
+}
+
+/** A row's value, and what it becomes; a ref shows its target's title as the cache holds it now. */
+function ValueText({
+  row,
+  refs,
+}: {
+  row: PropertyTypeChangeValue
+  refs: { value: boolean; converted: boolean }
+}): React.ReactElement {
+  const valueTitle = useRefTitle(refs.value ? row.value : null)
+  const convertedTitle = useRefTitle(refs.converted ? row.converted : null)
+  const value = valueTitle ?? row.value
+  return (
+    <span className="max-w-[40%] shrink-0 truncate text-muted-foreground">
+      {row.converted === null ? value : `${value} → ${convertedTitle ?? row.converted}`}
+    </span>
   )
 }
 
