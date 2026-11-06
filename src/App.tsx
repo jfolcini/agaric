@@ -861,7 +861,7 @@ function App() {
           <Suspense fallback={null}>
             <MeetingDialog
               onClose={() => setNewMeetingOpen(false)}
-              // RED PROOF (#5364): the journal reload is broken on purpose; do not merge.
+              // RED PROOF (#5364): the journal reload is broken on purpose, for a dispatched real-backend run with no PR; do not merge.
               onCreated={(created) => void [reloadMeetingLink, created]}
             />
           </Suspense>
