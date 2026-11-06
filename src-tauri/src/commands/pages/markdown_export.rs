@@ -1738,6 +1738,12 @@ pub(super) async fn load_page_export_data(
         HashMap::new()
     };
     let mut refs = resolve_references(conn, page_id, &descendants).await?;
+    let headings = resolve_heading_refs(
+        conn,
+        &mut refs.block_ref_replacement,
+        &refs.block_ref_titles,
+    )
+    .await?;
     if export || read == PageRead::File {
         refs.addressed_blocks
             .extend(load_addressed_blocks(conn, &descendants).await?);
@@ -1759,7 +1765,7 @@ pub(super) async fn load_page_export_data(
         (Vec::new(), Vec::new())
     };
     let name_snapshot = if matches!(read, PageRead::Buffer | PageRead::File) {
-        load_name_snapshot(conn, &page.id, &descendants, &refs, &ref_titles).await?
+        load_name_snapshot(conn, &page.id, &descendants, &refs, &ref_titles, headings).await?
     } else {
         NameSnapshot::default()
     };
@@ -1781,17 +1787,52 @@ pub(super) async fn load_page_export_data(
     })
 }
 
+/// The block refs among `titles`' targets a link may name by heading (#6277
+/// F4), each with its text ([`unique_headings`]), read through the anchor
+/// pass's own query for the pages holding a heading target. Each one's export
+/// link in `replacement` becomes `[[Title#Heading]]`, its own page's too.
+async fn resolve_heading_refs(
+    conn: &mut sqlx::SqliteConnection,
+    replacement: &mut HashMap<String, String>,
+    titles: &HashMap<String, String>,
+) -> Result<HashMap<String, String>, AppError> {
+    if titles.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let ids = serde_json::to_string(&titles.keys().collect::<Vec<_>>())?;
+    let pages = sqlx::query_scalar!(
+        r#"SELECT DISTINCT page_id AS "page_id!" FROM blocks
+           WHERE id IN (SELECT value FROM json_each(?1))
+             AND block_type = 'content' AND deleted_at IS NULL
+             AND page_id IS NOT NULL AND ltrim(content) LIKE '#%'"#,
+        ids,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    if pages.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let pages = pages.iter().map(String::as_str).collect();
+    let headings = unique_headings(&load_anchor_candidates(conn, &pages).await?, titles);
+    for (id, heading) in &headings {
+        replacement.insert(id.clone(), format!("[[{}#{heading}]]", titles[id]));
+    }
+    Ok(headings)
+}
+
 /// What the importer would resolve the page's referenced names against: its
 /// space's pages the link bodies the render writes may name, the titles of
 /// ref-typed values among them, the blocks its block links may name
-/// ([`read_ref_blocks`]), and its space's tags. A page in no space gets the
-/// empty snapshot, so every name stays raw.
+/// ([`read_ref_blocks`]) and the `headings` they may name by text, and its
+/// space's tags. A page in no space gets the empty snapshot, so every name
+/// stays raw.
 async fn load_name_snapshot(
     conn: &mut sqlx::SqliteConnection,
     page_id: &BlockId,
     descendants: &[BlockRow],
     refs: &PageReferences,
     ref_titles: &HashMap<String, String>,
+    headings: HashMap<String, String>,
 ) -> Result<NameSnapshot, AppError> {
     let Some(space) = agaric_store::space::resolve_block_space(&mut *conn, page_id).await? else {
         return Ok(NameSnapshot::default());
@@ -1800,8 +1841,15 @@ async fn load_name_snapshot(
     bodies.extend(ref_titles.values().cloned());
     let block_links = refs.block_ref_titles.iter();
     bodies.extend(block_links.map(|(id, title)| format!("{title}#^{id}")));
+    let titles = &refs.block_ref_titles;
+    bodies.extend(
+        headings
+            .iter()
+            .map(|(id, text)| format!("{}#{text}", titles[id])),
+    );
     let mut pages = snapshot_page_link_matches(conn, space.as_str(), &bodies).await?;
     read_ref_blocks(conn, &mut pages, page_id.as_str(), &refs.block_ref_titles).await?;
+    pages.headings = headings;
     Ok(NameSnapshot {
         pages,
         tag_id_by_norm: snapshot_tags_by_norm(conn, space.as_str()).await?,
