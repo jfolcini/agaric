@@ -8,6 +8,7 @@ import {
   ipc,
   openPage,
   reopenPage,
+  showJournalPages,
   test,
   typeSlashCommand,
   waitForBoot,
@@ -156,5 +157,79 @@ test.describe('New meeting from the palette links the meeting from today’s jou
     await expect(activeDialog(page).getByRole('combobox', { name: 'Template' })).toHaveText(
       'Meeting Notes Template',
     )
+  })
+})
+
+test.describe('/meeting on a journal day dates the meeting that day and lays out its recording @attachments @pages', () => {
+  test('the day’s date, then the audio, the summary open and the transcript closed, after leaving too', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    const day = '2031-03-14'
+    const dayId = await ipc<string>(page, 'create_page_in_space', {
+      parentId: null,
+      content: day,
+      spaceId: 'SPACE_PERSONAL',
+    })
+    const { id: blockId } = await ipc<{ id: string }>(page, 'create_block', {
+      blockType: 'content',
+      content: 'Standup notes',
+      parentId: dayId,
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    })
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Pages', exact: true })
+      .click()
+    await showJournalPages(page)
+    await page.getByText(day, { exact: true }).click()
+    await focusBlockById(page, blockId)
+    await typeSlashCommand(page, 'meeting')
+    await activeSuggestionList(page)
+      .locator('[data-testid="suggestion-item"]', { hasText: 'MEETING' })
+      .click()
+    const dialog = activeDialog(page)
+    await expect(dialog.getByLabel('Date')).toHaveValue(day)
+    await dialog.getByLabel('Title').fill('Standup')
+    await dialog.getByLabel('Audio').setInputFiles({
+      name: 'call.ogg',
+      mimeType: 'audio/ogg',
+      buffer: Buffer.from('OggS'),
+    })
+    await dialog.getByLabel('Transcript').setInputFiles({
+      name: 'call.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from('[00:00] **Alice:** Hi.\n\n[00:04] **Bob:** Bye.'),
+    })
+    await dialog.getByRole('radio', { name: 'Attach a file' }).click()
+    await dialog.getByLabel('Summary file').setInputFiles({
+      name: 'recap.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from('Shipped it.'),
+    })
+    await dialog.getByRole('button', { name: 'Create meeting' }).click()
+    await expect(dialog).toBeHidden()
+
+    const title = `Standup ${day}`
+    expect((await meetingPage(page, title))?.meetingDate).toBe(day)
+    const link = page.locator(`[data-block-id="${blockId}"]`).getByText(title, { exact: true })
+    await expect(link).toBeVisible()
+    await link.click()
+
+    const layout = async () => {
+      const section = page.getByTestId('attachment-section')
+      const parts = section.locator(':scope > *')
+      await expect(parts.nth(0)).toContainText('call.ogg')
+      await expect(parts.nth(1)).toHaveAttribute('data-testid', 'markdown-attachment')
+      await expect(parts.nth(1).getByTestId('markdown-attachment-body')).toHaveText('Shipped it.')
+      await expect(parts.nth(2)).toHaveAttribute('data-testid', 'transcript-attachment')
+      const toggle = parts.nth(2).getByRole('button', { name: 'Transcript', exact: true })
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+      await toggle.click()
+      await expect(parts.nth(2).getByRole('button', { name: 'Seek to 00:04' })).toBeVisible()
+    }
+    await layout()
+    await reopenPage(page, title)
+    await layout()
   })
 })

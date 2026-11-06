@@ -366,6 +366,19 @@ export const MODULES = {
     src: 'src/components/attachments/recording-attachments.ts',
     tests: ['src/components/attachments/__tests__/recording-attachments.test.ts'],
   },
+  // The *New meeting* dialog (#5364): a survivor is a meeting on the wrong
+  // day, from a template the user did not pick, or linked from nowhere.
+  'meeting-dialog': {
+    src: 'src/components/attachments/MeetingDialog.tsx',
+    tests: ['src/components/attachments/__tests__/MeetingDialog.test.tsx'],
+    setup: true,
+  },
+  // A palette meeting's journal reload: a survivor is a link that never shows.
+  'meeting-link': {
+    src: 'src/components/attachments/meeting-link.ts',
+    tests: ['src/components/attachments/__tests__/meeting-link.test.ts'],
+    setup: true,
+  },
 }
 
 /**
