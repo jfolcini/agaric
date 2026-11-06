@@ -168,13 +168,29 @@ describe('Agaric real-backend meeting pages (#5364) @attachments @pages @mcp', (
   it('New meeting from the palette links it from today’s journal on screen', async () => {
     await navigateTo('Journal')
     await $('[data-testid="header-search-button"]').click()
-    await typeInputVerified('[data-testid="command-palette-input"]', '>New meeting')
+    // A typed `>` switches the palette to its commands and leaves the input
+    // empty, so it goes alone; typed again it is literal and matches nothing.
+    await $('[data-testid="command-palette-input"]').waitForDisplayed({ timeout: ACTION_TIMEOUT })
+    await browser.keys(['>'])
+    await $('[data-testid="palette-mode-chip"]*=Commands').waitForDisplayed({
+      timeout: ACTION_TIMEOUT,
+    })
+    await typeInputVerified('[data-testid="command-palette-input"]', 'New meeting')
+    // XPath, as `*=` text matching takes no attribute selector before it.
+    const selected =
+      '//*[@role="option" and @aria-selected="true"][contains(normalize-space(.), "New meeting")]'
+    await $(selected)
+      .waitForExist({ timeout: ACTION_TIMEOUT })
+      .catch(async (error: unknown) => {
+        const options = await browser.execute(() =>
+          [...document.querySelectorAll('[role="option"]')].map(
+            (option) => `${option.textContent ?? ''}|${option.getAttribute('aria-selected')}`,
+          ),
+        )
+        throw new Error(`the palette held ${JSON.stringify(options)}: ${String(error)}`)
+      })
     // The palette runs its selected command on Enter; WebKitGTK never reported
     // the option row itself as clickable.
-    // XPath, as `*=` text matching takes no attribute selector before it.
-    await $(
-      '//*[@role="option" and @aria-selected="true"][contains(normalize-space(.), "New meeting")]',
-    ).waitForExist({ timeout: ACTION_TIMEOUT })
     await browser.keys(['Enter'])
     await $('[data-testid="meeting-dialog"]').waitForDisplayed({ timeout: ACTION_TIMEOUT })
     await typeInputVerified(
