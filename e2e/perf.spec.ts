@@ -1742,11 +1742,11 @@ function twoHourTranscript(segments: number): string {
 
 /**
  * #5364 — opening a recording's transcript. A transcript under a recording is
- * never capped (`MARKDOWN_PREVIEW_CHAR_CAP` is `MarkdownAttachment`'s), so
- * opening a two-hour meeting's mounts every segment at once: about 1,500 rows
- * of rich text with a seek button each, around 140 KB. Each repeat seeds a
- * fresh vault with an audio file and that transcript on one block, opens the
- * page, and times the click on *Transcript* to its rows in the DOM, with
+ * never capped (`MARKDOWN_PREVIEW_CHAR_CAP` is `MarkdownAttachment`'s): a
+ * two-hour meeting's is about 1,500 rows of rich text with a seek button each,
+ * around 140 KB, of which only the rows near the view mount. Each repeat seeds
+ * a fresh vault with an audio file and that transcript on one block, opens the
+ * page, and times the click on *Transcript* to its first row in the DOM, with
  * the commits, worst frame and peak DOM nodes of that click. Run it at CPU 1
  * and 4; each cell is the median with the band the repeats fell in.
  *
@@ -1765,9 +1765,11 @@ test('perf: opening a two-hour transcript (#5364) @attachments', async ({ page }
   if (CPU > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: CPU })
   const measure = makeMeasure(page, cdp, rows)
   const transcript = twoHourTranscript(TRANSCRIPT_SEGMENTS)
-  // The body's content: the list mounts with every row in one commit, and a
-  // transcript that did not parse still shows, so the count below reds, not hangs.
-  const shown = '[data-testid="transcript-attachment-body"] > *'
+  // A row, not the list: the windowed list commits empty before it finds its
+  // scroller. A transcript that did not parse shows as plain Markdown, so the
+  // count below reds, not hangs.
+  const segment = '[data-testid="transcript-segment"]'
+  const shown = `${segment}, [data-testid="transcript-attachment-body"] > div`
   const samples: Array<{ openMs: number; commits: number; worstFrame: number; peakNodes: number }> =
     []
 
@@ -1791,9 +1793,9 @@ test('perf: opening a two-hour transcript (#5364) @attachments', async ({ page }
     await measure(`transcript ${repeat + 1}: open`, async () => {
       openMs = await timeToReady(page, shown, () => toggle.click())
     })
-    await expect(page.locator('[data-testid="transcript-segment"]')).toHaveCount(
-      TRANSCRIPT_SEGMENTS,
-    )
+    const mounted = await page.locator(segment).count()
+    expect(mounted).toBeGreaterThan(0)
+    expect(mounted).toBeLessThan(TRANSCRIPT_SEGMENTS)
     const row = rows.at(-1) as Row
     samples.push({
       openMs,
