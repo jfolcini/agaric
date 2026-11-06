@@ -387,16 +387,44 @@ async fn add_meeting_in_new_tx(
         _ => tx,
     };
     let mut attachments = Vec::with_capacity(written.len());
+    // RED PROOF (#5364): the rows without their `AddAttachment` ops, so the
+    // files never reach the op log or the paired device. Never merge.
+    let _ = persist_attachment_in_tx;
     for file in written {
-        let row = persist_attachment_in_tx(
-            &mut tx,
-            materializer,
-            device_id,
-            recording.id.clone(),
-            file.stored,
+        let StoredBytes {
+            filename,
+            mime_type,
+            size_bytes,
+            fs_path,
+            content_hash,
+        } = file.stored;
+        let id = ulid::Ulid::generate().to_string().to_uppercase();
+        let now = crate::db::now_ms();
+        sqlx::query(
+            "INSERT INTO attachments \
+             (id, block_id, mime_type, filename, size_bytes, fs_path, created_at, content_hash) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
+        .bind(&id)
+        .bind(recording.id.as_str())
+        .bind(&mime_type)
+        .bind(&filename)
+        .bind(size_bytes)
+        .bind(&fs_path)
+        .bind(now)
+        .bind(&content_hash)
+        .execute(&mut **tx)
         .await?;
-        attachments.push(row);
+        attachments.push(AttachmentRow {
+            id: BlockId::from_trusted(&id),
+            block_id: recording.id.clone(),
+            mime_type,
+            filename,
+            size_bytes,
+            fs_path,
+            created_at: now,
+            content_hash: Some(content_hash),
+        });
     }
     tx.commit_and_dispatch(materializer).await?;
     Ok(MeetingResult {
