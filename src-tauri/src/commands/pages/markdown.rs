@@ -304,15 +304,15 @@ pub async fn duplicate_block_inner(
 }
 
 /// Paste `input` right after the anchor block (#5140), as one transaction and
-/// so one undo. Text is read by [`import::parse_pasted_text`]. A page link or tag written as a name is
-/// resolved in the anchor's space as an import resolves it, creating the page
-/// or tag when no name there matches; ids and block refs stay as written, but
-/// one whose target is in another space is written as the text its chip shows
-/// (#6277 B2), and an `^anchor` in the text never pairs with a block. The
-/// top-level blocks land in order right after the anchor among its siblings,
-/// each deeper one under its parsed parent, with its task state, priority,
-/// dates, list style and properties. Returns the pages and tags the names
-/// created, then the pasted blocks in document order.
+/// so one undo. Text is read by [`import::parse_pasted_text`]. A page link or
+/// tag written as a name is resolved in the anchor's space as an import
+/// resolves it, creating the page or tag when no name there matches; ids and
+/// block refs stay as written, but one whose target is in another space is
+/// written as the text its chip shows (#6277 B2), and an `^anchor` in the text
+/// never pairs with a block. The top-level blocks land in order right after the
+/// anchor among its siblings, each deeper one under its parsed parent, with its
+/// task state, priority, dates, list style and properties. Returns the pages
+/// and tags the names created, then the pasted blocks in document order.
 ///
 /// With a `splice`, the paste goes into the anchor's text (#5160 D4). The
 /// anchor becomes the first block, `before` + its content, and keeps its id,

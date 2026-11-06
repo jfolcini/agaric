@@ -561,7 +561,6 @@ async fn resolve_buffer_names(
             new,
         });
     }
-    let own = own_anchor_links(&data.name_snapshot, &new_names.links);
     let (tx, resolved) = Box::pin(resolve_new_names(
         tx,
         materializer,
@@ -578,8 +577,6 @@ async fn resolve_buffer_names(
     for mut plan in plans {
         plan.links
             .extend_from(&resolved.links, &plan.new.links, &plan.new.queries);
-        plan.links
-            .extend_from(&own, &plan.new.links, &BTreeSet::new());
         plan.tags.extend(
             plan.new
                 .tags
@@ -590,16 +587,6 @@ async fn resolve_buffer_names(
         block.content = rewrite_block_content_for_import(block, &plan.links, &titles, &plan.tags);
     }
     Ok((tx, resolved.created))
-}
-
-/// The anchor-only links `[[#^id]]` among `bodies`, each the block of the
-/// page its `^id` names, as `snapshot` holds them (#6277 F2): the name pass
-/// leaves one to an import's anchor pass, which a save has not.
-fn own_anchor_links(snapshot: &NameSnapshot, bodies: &BTreeSet<String>) -> PageLinks {
-    let own = bodies
-        .iter()
-        .filter(|body| split_wikilink_anchor(body).0.is_empty());
-    snapshot.page_links(own.cloned())
 }
 
 /// Each rendered block's stored content, by id.

@@ -102,6 +102,16 @@ describe('outlineToDocument — HTML paste as Document text (#6277 E5)', () => {
     expect(pasted(text)).toEqual([item(0, '\\- not a list', null), item(0, '1\\. nor this', null)])
   })
 
+  it('escapes a paragraph that reads as a property line, so it stays its own block', () => {
+    const text = documentOf('<p>intro</p><p>key:: value</p>')
+    expect(text).toBe('intro\n\n\\key:: value\n')
+    const blocks = parsePastedText(text)
+    expect(blocks.map((b) => [b.content, b.properties])).toEqual([
+      ['intro', []],
+      ['key:: value', []],
+    ])
+  })
+
   it('keeps a table and a code block one block each', () => {
     const text = documentOf(
       '<table><tr><th>a</th><th>b</th></tr><tr><td>1</td><td>2</td></tr></table>' +
