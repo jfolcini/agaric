@@ -33,7 +33,7 @@ export interface UlidToken {
 const ULID = '[0-9A-Z]{26}'
 /** A link's label runs to the first `]`, which must close it, as `tryConsumeBlockLink` reads it. */
 const BRACKET_TOKEN_RE = new RegExp(
-  String.raw`\[\[(${ULID})(?:\|[^\]\n]*)?\]\]|#\[(${ULID})\]|\(\((${ULID})\)\)`,
+  String.raw`\[\[(${ULID})(?:\\?\|[^\]\n]*)?\]\]|#\[(${ULID})\]|\(\((${ULID})\)\)`,
   'g',
 )
 /** A property line (`split_property_line` in `import.rs`) whose value is one ULID. */

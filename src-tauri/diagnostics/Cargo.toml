@@ -77,7 +77,6 @@ agaric-core = { path = "../agaric-core" }
 # diagnostics bins resolve to the exact same crate versions they linked
 # against in the app crate.
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
-regex = "1"
 rustc-hash = "2.1.2"
 # `rt-multi-thread`: the sync apply path calls `block_in_place`. `io-std`,
 # `io-util`, `time`: `e2e_sync_peer`'s stdin/stdout protocol and its waits.

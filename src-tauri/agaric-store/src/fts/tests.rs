@@ -214,6 +214,18 @@ fn strip_labelled_page_link_indexes_the_label() {
     assert_eq!(result, "see the plan and My Page");
 }
 
+/// A table cell escapes every pipe, its link's separator too: the link indexes
+/// its label, and each escaped pipe, in the label or not, is a `|`.
+#[test]
+fn strip_table_cell_link_indexes_its_label() {
+    let mut page_titles = HashMap::new();
+    page_titles.insert(PAGE_ULID.to_string(), "My Page".to_string());
+
+    let input = format!(r"| [[{PAGE_ULID}\|a\|b]] | x\|y |");
+    let result = strip_for_fts_with_maps(&input, &HashMap::new(), &page_titles);
+    assert_eq!(result, "| a|b | x|y |");
+}
+
 #[test]
 fn strip_unknown_tag_ref_becomes_empty() {
     let input = format!("task #[{UNKNOWN_ULID}]");

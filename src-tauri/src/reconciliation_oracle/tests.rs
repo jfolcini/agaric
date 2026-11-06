@@ -2023,6 +2023,29 @@ fn oracle_link_grammar_matches_production_3955() {
     assert!(super::ORACLE_LINK_TOKEN_RE.captures(&corpus[12]).is_none());
 }
 
+/// A table cell writes a labelled link as `[[ULID\|label]]`; the oracle reads
+/// it as production does, and an escaped backslash before a bare pipe is no
+/// separator for either.
+#[test]
+fn oracle_link_grammar_reads_a_table_cells_escaped_pipe() {
+    const OK: &str = "01ABCDEFGHJKMNPQRSTVWXYZ00";
+    for (text, expected) in [
+        (format!(r"| [[{OK}\|a\|b]] | x |"), vec![OK]),
+        (format!(r"[[{OK}\\|x]]"), vec![]),
+    ] {
+        let mine: Vec<String> = super::ORACLE_LINK_TOKEN_RE
+            .captures_iter(&text)
+            .map(|c| c[1].to_owned())
+            .collect();
+        let theirs: Vec<String> = agaric_store::cache::ULID_LINK_RE
+            .captures_iter(&text)
+            .map(|c| c[1].to_owned())
+            .collect();
+        assert_eq!(mine, expected, "the oracle's targets in {text:?}");
+        assert_eq!(theirs, expected, "production's targets in {text:?}");
+    }
+}
+
 /// The measurement behind the LANE decision (#3955), kept `#[ignore]`d so the
 /// per-PR suite does not pay for it — `scheduled-deep-checks.yml`'s
 /// `--run-ignored=only` sweep runs it, where it is expected to PASS.

@@ -832,6 +832,16 @@ mod tests {
         assert_eq!(role_filename(" call.ogg ", Role::Audio), "call.ogg");
     }
 
+    /// A name whose suffix-length tail starts inside a character: `aéxy` is
+    /// five bytes, so the `.md` check would slice from byte 2, inside `é`.
+    #[test]
+    fn role_filename_keeps_a_name_whose_tail_splits_a_character_5364() {
+        assert_eq!(
+            role_filename("aéxy", Role::Transcript),
+            "aéxy.transcript.md"
+        );
+    }
+
     fn input(date: &str, link_block_id: Option<&str>) -> AddMeetingInput {
         AddMeetingInput {
             space_id: "S".into(),
