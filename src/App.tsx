@@ -861,7 +861,8 @@ function App() {
           <Suspense fallback={null}>
             <MeetingDialog
               onClose={() => setNewMeetingOpen(false)}
-              onCreated={(created) => void reloadMeetingLink(created)}
+              // RED PROOF (#5364): the journal reload is broken on purpose; do not merge.
+              onCreated={(created) => void [reloadMeetingLink, created]}
             />
           </Suspense>
         </FeatureErrorBoundary>

@@ -52,7 +52,8 @@ const TranscriptRow = memo(
             aria-label={t('attachment.seekTo', { time: label })}
             onClick={(e) => {
               e.stopPropagation()
-              onSeek(start)
+              // RED PROOF (#5364): the seek is broken on purpose; do not merge.
+              void [onSeek, start]
             }}
           >
             {label}
