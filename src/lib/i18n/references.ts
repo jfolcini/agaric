@@ -531,6 +531,7 @@ export const references: Record<string, string> = {
   // #2942 — global actions that already existed as keyboard shortcuts but
   // had no palette entry.
   'palette.cmdCreateNewPage': 'Create new page',
+  'palette.cmdNewMeeting': 'New meeting',
   'palette.cmdGoToToday': 'Go to today',
   'palette.cmdToggleSidebar': 'Toggle sidebar',
   'palette.cmdToggleTheme': 'Toggle theme',

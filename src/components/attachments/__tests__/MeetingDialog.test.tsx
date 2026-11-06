@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from '@/__tests__/helpers/axe'
 import { MeetingDialog } from '@/components/attachments/MeetingDialog'
 import { t } from '@/lib/i18n'
+import { PREFERENCES, writePreference } from '@/lib/preferences'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, blockTags, properties, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { useSpaceStore } from '@/stores/space'
@@ -81,6 +82,7 @@ async function dateInput(): Promise<HTMLInputElement> {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  localStorage.clear()
   seedBlocks()
   useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
   mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
@@ -109,6 +111,27 @@ describe('MeetingDialog', () => {
 
     const input = await dateInput()
     await waitFor(() => expect(input.value).toBe('2030-01-02'))
+  })
+
+  it('keeps a date picked before the block’s day arrives', async () => {
+    const blockId = blockOnDay('2031-03-14')
+    let releaseBlock = (): void => {}
+    const blockRead = new Promise<void>((resolve) => {
+      releaseBlock = resolve
+    })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'get_block') await blockRead
+      return dispatch(cmd, args)
+    })
+    render(<Harness blockId={blockId} />)
+
+    fireEvent.change(await dateInput(), { target: { value: '2031-05-01' } })
+    releaseBlock()
+
+    await waitFor(() =>
+      expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'get_block')).toHaveLength(2),
+    )
+    await waitFor(async () => expect((await dateInput()).value).toBe('2031-05-01'))
   })
 
   it('makes the page from the template, attaches the files and links it from the block', async () => {
@@ -257,5 +280,66 @@ describe('MeetingDialog', () => {
     await waitFor(async () => {
       expect(await axe(dialog)).toHaveNoViolations()
     })
+  })
+})
+
+describe('MeetingDialog — the palette’s New meeting and the remembered template', () => {
+  async function templateSelect(container: HTMLElement): Promise<HTMLSelectElement> {
+    const select = container.ownerDocument.querySelector('select')
+    if (select === null) throw new Error('no template select')
+    await waitFor(() =>
+      expect(select.querySelector(`option[value="${SEED_IDS.PAGE_TMPL_MEETING}"]`)).not.toBeNull(),
+    )
+    return select
+  }
+
+  it('opens on the template the last meeting in this space was made from', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    const first = render(<Harness blockId={blockOnDay('2031-03-14')} onClose={onClose} />)
+    await user.selectOptions(await templateSelect(first.container), SEED_IDS.PAGE_TMPL_MEETING)
+    await user.click(screen.getByRole('button', { name: t('meeting.create') }))
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+    first.unmount()
+
+    const second = render(<Harness blockId={blockOnDay('2031-03-21')} />)
+    const select = await templateSelect(second.container)
+    await waitFor(() => expect(select.value).toBe(SEED_IDS.PAGE_TMPL_MEETING))
+  })
+
+  it('makes the meeting with no template when the remembered one is no longer a template', async () => {
+    const user = userEvent.setup()
+    writePreference(PREFERENCES.meetingTemplate, SEED_IDS.BLOCK_GS_1, 'SPACE_PERSONAL')
+    const onClose = vi.fn()
+    const { container } = render(<Harness blockId={blockOnDay('2031-03-14')} onClose={onClose} />)
+    await templateSelect(container)
+
+    await user.click(screen.getByRole('button', { name: t('meeting.create') }))
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+    const pageId = pageTitled('Meeting 2031-03-14')?.['id']
+    const children = [...blocks.values()].filter(
+      (b) => b['parent_id'] === pageId && b['deleted_at'] == null,
+    )
+    expect(children).toHaveLength(1)
+  })
+
+  it('links a meeting with no block from its day’s journal', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    const onCreated = vi.fn()
+    render(<MeetingDialog onClose={onClose} onCreated={onCreated} />)
+    fireEvent.change(await dateInput(), { target: { value: '2031-04-01' } })
+
+    await user.click(screen.getByRole('button', { name: t('meeting.create') }))
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+    const pageId = pageTitled('Meeting 2031-04-01')?.['id'] as string
+    expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ page_id: pageId }))
+    const day = pageTitled('2031-04-01')?.['id']
+    const links = [...blocks.values()].filter(
+      (b) => b['parent_id'] === day && b['deleted_at'] == null,
+    )
+    expect(links.map((b) => b['content'])).toEqual([`[[${pageId}]]`])
   })
 })

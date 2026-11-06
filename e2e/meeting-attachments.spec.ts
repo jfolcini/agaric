@@ -118,3 +118,43 @@ test.describe('/meeting makes a meeting page linked from the block @attachments 
     await expect(page.getByText('Shipped it.')).toBeVisible()
   })
 })
+
+test.describe('New meeting from the palette links the meeting from today’s journal @attachments @pages @search', () => {
+  test('the open journal shows the link, and the dialog remembers the template', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    const day = await today(page)
+    const title = `Retro ${day}`
+
+    await page.getByTestId('header-search-button').click()
+    await page.getByTestId('command-palette-input').fill('>New meeting')
+    await page.getByRole('option', { name: 'New meeting' }).click()
+    const dialog = activeDialog(page)
+    await expect(dialog.getByRole('heading', { name: 'New meeting' })).toBeVisible()
+    await expect(dialog.getByLabel('Date')).toHaveValue(day)
+    await dialog.getByLabel('Title').fill('Retro')
+    await dialog.getByRole('combobox', { name: 'Template' }).click()
+    await page.getByRole('option', { name: 'Meeting Notes Template', exact: true }).click()
+    await dialog.getByRole('button', { name: 'Create meeting' }).click()
+    await expect(dialog).toBeHidden()
+
+    const meeting = await meetingPage(page, title)
+    expect(meeting?.meetingDate).toBe(day)
+    const link = page.locator('[data-block-id]').getByText(title, { exact: true })
+    await expect(link).toBeVisible()
+    await link.click()
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText(title)
+    await expect(page.getByText(`Action items for ${title}`)).toBeVisible()
+
+    await reopenPage(page, title)
+    await expect(page.getByText(`Action items for ${title}`)).toBeVisible()
+
+    await page.getByTestId('header-search-button').click()
+    await page.getByTestId('command-palette-input').fill('>New meeting')
+    await page.getByRole('option', { name: 'New meeting' }).click()
+    await expect(activeDialog(page).getByRole('combobox', { name: 'Template' })).toHaveText(
+      'Meeting Notes Template',
+    )
+  })
+})

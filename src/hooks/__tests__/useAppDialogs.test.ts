@@ -10,8 +10,9 @@
  */
 
 import { act, renderHook } from '@testing-library/react'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { getPaletteCommand } from '@/hooks/palette-commands'
 import { useAppDialogs } from '@/hooks/useAppDialogs'
 import { BUG_REPORT_EVENT, type BugReportEventDetail } from '@/lib/bug-report-events'
 import { setCustomShortcut } from '@/lib/keyboard-config/storage'
@@ -382,5 +383,23 @@ describe('useAppDialogs — cleanup', () => {
     const { result: next } = renderHook(() => useAppDialogs())
     expect(next.current.bugReportOpen).toBe(false)
     expect(next.current.bugReportPrefill).toBeNull()
+  })
+})
+
+describe('useAppDialogs — the palette’s New meeting (#5364)', () => {
+  it('opens the New meeting dialog and closes the palette', () => {
+    const { result } = renderHook(() => useAppDialogs())
+    const onClose = vi.fn()
+
+    act(() => {
+      getPaletteCommand('new-meeting')?.run({ onClose, onEscalate: vi.fn() })
+    })
+
+    expect(result.current.newMeetingOpen).toBe(true)
+    expect(onClose).toHaveBeenCalledOnce()
+    act(() => {
+      result.current.setNewMeetingOpen(false)
+    })
+    expect(result.current.newMeetingOpen).toBe(false)
   })
 })

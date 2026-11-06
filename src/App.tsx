@@ -1,6 +1,7 @@
 import { lazy, type ReactElement, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { reloadMeetingLink } from '@/components/attachments/meeting-link'
 import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
 import { HeaderSearchButton } from '@/components/common/HeaderSearchButton'
 import { HistoryNavButtons } from '@/components/common/HistoryNavButtons'
@@ -93,6 +94,9 @@ const QuickCaptureDialog = lazy(() =>
 )
 const NewPageDialog = lazy(() =>
   import('@/components/dialogs/NewPageDialog').then((m) => ({ default: m.NewPageDialog })),
+)
+const MeetingDialog = lazy(() =>
+  import('@/components/attachments/MeetingDialog').then((m) => ({ default: m.MeetingDialog })),
 )
 const NoPeersDialog = lazy(() =>
   import('@/components/dialogs/NoPeersDialog').then((m) => ({ default: m.NoPeersDialog })),
@@ -319,6 +323,8 @@ function App() {
     setShortcutsOpen,
     newPageTitle,
     setNewPageTitle,
+    newMeetingOpen,
+    setNewMeetingOpen,
   } = useAppDialogs()
   // #754 — first-run gate for the lazy `WelcomeModal`. Read once per
   // session: when onboarding is already done the modal (and its chunk)
@@ -844,6 +850,18 @@ function App() {
               }}
               initialTitle={newPageTitle}
               onOpenPage={handlePageSelect}
+            />
+          </Suspense>
+        </FeatureErrorBoundary>
+      )}
+      {/* The palette's New meeting (#5364): no block to link from, so the
+          meeting is linked from its day's journal. */}
+      {newMeetingOpen && (
+        <FeatureErrorBoundary name="New meeting" nameKey="errorBoundary.section.newMeeting">
+          <Suspense fallback={null}>
+            <MeetingDialog
+              onClose={() => setNewMeetingOpen(false)}
+              onCreated={(created) => void reloadMeetingLink(created)}
             />
           </Suspense>
         </FeatureErrorBoundary>
