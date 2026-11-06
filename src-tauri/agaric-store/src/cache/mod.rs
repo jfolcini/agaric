@@ -43,10 +43,12 @@ mod tests;
 // `((ULID))` tokens.
 //
 // A page link may carry a label (#5160 D9): `[[ULID|label]]`. The label is
-// the text after the first `|`, any run holding neither `]` nor a newline,
-// with no escaping; `PAGE_LINK_RE` captures it as group 2 (empty when the
-// token has none). Only the ULID decides what a token links, so every
-// reader that wants the target ignores the label.
+// the text after the first `|`, any run holding neither `]` nor a newline;
+// `PAGE_LINK_RE` captures it as group 2 (empty when the token has none). In a
+// GFM table cell the editor escapes every pipe, so the token reads
+// `[[ULID\|label]]` there: the separator is `\|` or `|`, and a label shown
+// as text reads its own `\|` as `|`. Only the ULID decides what a token
+// links, so every reader that wants the target ignores the label.
 //
 // `TAG_REF_RE` captures the inner ULID from inline tag-reference
 // `#[ULID]` tokens. The `#` prefix is intentionally tight — this matches
@@ -72,7 +74,7 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 pub static ULID_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:\[\[|\(\()([0-9A-Z]{26})(?:\|[^\]\n]*)?(?:\]\]|\)\))")
+    Regex::new(r"(?:\[\[|\(\()([0-9A-Z]{26})(?:\\?\|[^\]\n]*)?(?:\]\]|\)\))")
         .expect("invalid ULID link regex")
 });
 
@@ -80,7 +82,7 @@ pub static TAG_REF_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"#\[([0-9A-Z]{26})\]").expect("invalid tag-ref regex"));
 
 pub static PAGE_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\[\[([0-9A-Z]{26})(?:\|([^\]\n]*))?\]\]").expect("invalid page-link regex")
+    Regex::new(r"\[\[([0-9A-Z]{26})(?:\\?\|([^\]\n]*))?\]\]").expect("invalid page-link regex")
 });
 
 /// The label a [`PAGE_LINK_RE`] match carries, if any (#5160 D9): group 2 when

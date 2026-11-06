@@ -69,6 +69,14 @@ describe('findUlidTokens', () => {
     ])
   })
 
+  it('reads a labelled link whole, its pipe escaped in a table cell or not', () => {
+    const text = `| [[${PAGE}\\|the plan]] | [[${PAGE}|x]] |`
+    expect(findUlidTokens(text).map((t) => [t.kind, t.id, text.slice(t.from, t.to)])).toEqual([
+      ['link', PAGE, `[[${PAGE}\\|the plan]]`],
+      ['link', PAGE, `[[${PAGE}|x]]`],
+    ])
+  })
+
   it('reads no token in a title, a short id or a value with more text', () => {
     const text = [
       '[[Project Plan]] #urgent ((01K00))',

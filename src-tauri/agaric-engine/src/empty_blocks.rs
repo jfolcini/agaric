@@ -299,7 +299,8 @@ async fn select_candidates(
 }
 
 /// Guard 7 — candidate ids that some live block's content names as
-/// `((id))`, `[[id]]` or `[[id|label]]` (#5160 D9).
+/// `((id))`, `[[id]]`, `[[id|label]]` (#5160 D9) or, in a table cell,
+/// `[[id\|label]]`.
 ///
 /// One pass over the blocks that contain a link opener at all, driven as
 /// the outer loop (`CROSS JOIN` pins the order) against the candidate set,
@@ -320,7 +321,8 @@ async fn referenced_candidate_ids(
              AND (r.content LIKE '%((%' OR r.content LIKE '%[[%')
              AND (instr(r.content, '((' || c.value || '))') > 0
                   OR instr(r.content, '[[' || c.value || ']]') > 0
-                  OR instr(r.content, '[[' || c.value || '|') > 0)"#,
+                  OR instr(r.content, '[[' || c.value || '|') > 0
+                  OR instr(r.content, '[[' || c.value || '\|') > 0)"#,
         ids_json,
     )
     .fetch_all(&mut **tx)
@@ -894,6 +896,19 @@ mod tests {
         run_sweep(&pool).await;
 
         assert_survives(&pool, &id, "guard 7: [[id|label]] link").await;
+    }
+
+    // Guard 7d, against data loss: a table cell escapes the label's pipe.
+    #[tokio::test]
+    async fn an_empty_block_linked_only_from_a_table_cell_is_not_deleted() {
+        let (pool, _tmp) = fresh_pool().await;
+        let page = page_with_a_real_block(&pool).await;
+        let id = insert_old_empty(&pool, &page, 2).await;
+        insert_referrer(&pool, &page, &format!(r"| [[{id}\|the label]] | x |")).await;
+
+        run_sweep(&pool).await;
+
+        assert_survives(&pool, &id, r"guard 7: [[id\|label]] link").await;
     }
 
     #[tokio::test]

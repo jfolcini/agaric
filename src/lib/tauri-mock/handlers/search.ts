@@ -250,11 +250,17 @@ function shownSpanAt(src: string, at: number): [string, number] | null {
 }
 
 /** `mask_shown_spans` (`strip.rs`): `content` with each {@link shownSpanAt}
- *  span replaced by a placeholder, scanned left to right. */
+ *  span replaced by a placeholder, scanned left to right. An escaped pipe is a
+ *  bare `|`, so a table cell's `[[ULID\|label]]` reads as its link. */
 function maskShownSpans(content: string, pieces: string[]): string {
   let out = ''
   let at = 0
   while (at < content.length) {
+    if (content.startsWith('\\|', at)) {
+      out += '|'
+      at += 2
+      continue
+    }
     const span = shownSpanAt(content, at)
     if (span) {
       out += piece(pieces, span[0])

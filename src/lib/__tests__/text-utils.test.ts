@@ -29,6 +29,10 @@ describe('truncateContent', () => {
     )
   })
 
+  it('reads a table cell link as its label, each escaped pipe a `|`', () => {
+    expect(truncateContent('| [[01ARZ3NDEKTSV4RRFFQ69G5FAV\\|a\\|b]] | x |')).toBe('| a|b | x |')
+  })
+
   // A human link left as text (no space resolved it) is not a stored link: its
   // `|` belongs to the title (`Article | Medium`), not to a label.
   it('keeps the whole text of an unresolved [[A | B]]', () => {

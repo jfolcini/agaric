@@ -163,4 +163,10 @@ describe('extractUlidRefs (regression guard for helper cohabitation)', () => {
   it('returns an empty array for plain text', () => {
     expect(extractUlidRefs('plain text content')).toHaveLength(0)
   })
+
+  it('extracts the id of a table cell link, whose label pipe is escaped', () => {
+    expect(extractUlidRefs('| [[01ABCDEFGHJKLMNPQRSTUVWXYZ\\|label]] | x |')).toEqual([
+      '01ABCDEFGHJKLMNPQRSTUVWXYZ',
+    ])
+  })
 })
