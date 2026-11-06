@@ -295,7 +295,14 @@ export function resolveInboundNames(
       const tagId = token.kind === 'tag' ? tagIds.get(token.name) : undefined
       const ref = token.kind === 'page' ? linkRef(token) : tagId && `#[${tagId}]`
       if (ref === undefined) continue
-      out = out.slice(0, token.start) + ref + out.slice(token.end)
+      // `escape_pipes_as`: in a table row a token whose pipe was escaped keeps
+      // its pipes escaped, where a bare `|` would split the cell.
+      const inRow = content.startsWith('|', content.lastIndexOf('\n', token.start) + 1)
+      const escaped = inRow && content.slice(token.start, token.end).includes('\\|')
+      out =
+        out.slice(0, token.start) +
+        (escaped ? ref.replaceAll('|', '\\|') : ref) +
+        out.slice(token.end)
     }
     return out
   })

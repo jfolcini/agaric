@@ -30,10 +30,10 @@ import { closesFence, documentFenceOpener, type FenceRun } from '@/editor/source
 /**
  * Obsidian embed `![[file.png]]` — group 1 is the inner ref (path or basename:
  * any run of chars that is neither `]`, `|`, nor newline; the optional `|alt`
- * display suffix Obsidian allows is dropped). Non-greedy. Mirrors
- * `OBSIDIAN_EMBED_RE`.
+ * display suffix Obsidian allows is dropped, after a `|` or the `\|` a GFM
+ * table cell escapes it as). Non-greedy. Mirrors `OBSIDIAN_EMBED_RE`.
  */
-const OBSIDIAN_EMBED_RE = /!\[\[([^\]|\n]+?)(?:\|[^\]\n]*)?\]\]/g
+const OBSIDIAN_EMBED_RE = /!\[\[([^\]|\n]+?)(?:\\?\|[^\]\n]*)?\]\]/g
 
 /**
  * The opening of a standard markdown image `![alt](` — group 1 is the alt text

@@ -12,6 +12,11 @@
       "refs": ["diagram.png"]
     },
     {
+      "name": "a table cell's escaped pipe ends an Obsidian embed's name",
+      "input": "| ![[pic.png\\|300]] | x |",
+      "refs": ["pic.png"]
+    },
+    {
       "name": "an Obsidian embed's name may hold a space",
       "input": "![[my image.png]]",
       "refs": ["my image.png"]

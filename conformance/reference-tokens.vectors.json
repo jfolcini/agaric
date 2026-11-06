@@ -768,6 +768,17 @@
       }
     },
     {
+      "name": "a table cell's escaped pipe splits the label as a bare one does, and stays escaped",
+      "input": "| [[Page\\|label]] | [[01ARZ3NDEKTSV4RRFFQ69G5FAV\\|kept]] |",
+      "expected": {
+        "pageCaptures": ["Page\\|label", "01ARZ3NDEKTSV4RRFFQ69G5FAV\\|kept"],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": ["Page"],
+        "requestedTagNames": [],
+        "transformed": "| [[01ARZ3NDEKTSV4RRFFQ69G5FAV\\|label]] | [[01ARZ3NDEKTSV4RRFFQ69G5FAV\\|kept]] |"
+      }
+    },
+    {
       "name": "page resolution trims Rust U+0085 whitespace",
       "input": "[[Page]]",
       "expected": {
