@@ -27,6 +27,11 @@ const VoiceNoteDialog = lazy(() =>
     default: m.VoiceNoteDialog,
   })),
 )
+const MeetingDialog = lazy(() =>
+  import('@/components/attachments/MeetingDialog').then((m) => ({
+    default: m.MeetingDialog,
+  })),
+)
 const BlockHistorySheet = lazy(() =>
   import('@/components/editor/BlockHistorySheet').then((m) => ({
     default: m.BlockHistorySheet,
@@ -47,6 +52,11 @@ interface BlockTreeDialogsProps {
   handleEmojiSelect: (char: string) => void
   voiceNoteBlockId: string | null
   setVoiceNoteBlockId: Dispatch<SetStateAction<string | null>>
+  /** The block `/meeting` ran in; a tree without the dialog leaves these out. */
+  meetingBlockId?: string | null
+  setMeetingBlockId?: Dispatch<SetStateAction<string | null>>
+  /** Reload the blocks once a meeting's link is written into one. */
+  onMeetingCreated?: () => void
   historyBlockId: string | null
   setHistoryBlockId: Dispatch<SetStateAction<string | null>>
   propertyDrawerBlockId: string | null
@@ -62,6 +72,9 @@ export function BlockTreeDialogs({
   handleEmojiSelect,
   voiceNoteBlockId,
   setVoiceNoteBlockId,
+  meetingBlockId,
+  setMeetingBlockId,
+  onMeetingCreated,
   historyBlockId,
   setHistoryBlockId,
   propertyDrawerBlockId,
@@ -95,6 +108,17 @@ export function BlockTreeDialogs({
       {voiceNoteBlockId && (
         <Suspense fallback={null}>
           <VoiceNoteDialog blockId={voiceNoteBlockId} onClose={() => setVoiceNoteBlockId(null)} />
+        </Suspense>
+      )}
+
+      {/* New meeting dialog for the /meeting slash command (#5364) */}
+      {meetingBlockId && (
+        <Suspense fallback={null}>
+          <MeetingDialog
+            linkBlockId={meetingBlockId}
+            onClose={() => setMeetingBlockId?.(null)}
+            onCreated={() => onMeetingCreated?.()}
+          />
         </Suspense>
       )}
 

@@ -559,11 +559,14 @@ export function BlockTree({
     setEmojiPickerOpen,
     voiceNoteBlockId,
     setVoiceNoteBlockId,
+    meetingBlockId,
+    setMeetingBlockId,
     handleShowHistory,
     handleShowProperties,
     openQueryBuilder,
     openEmojiPicker,
     openVoiceNoteRecorder,
+    openMeetingDialog,
     handleEmojiSelect,
     handleQuerySave,
   } = useBlockDialogs({ focusedBlockId, pageStore, load, preserveEmptyBlockIds })
@@ -744,6 +747,7 @@ export function BlockTree({
     openEmojiPicker,
     openPropertyDrawer: handleShowProperties,
     openVoiceNoteRecorder,
+    openMeetingDialog,
   })
 
   // ── Multi-select hook ──────────────────────────────────────────────
@@ -1655,6 +1659,9 @@ export function BlockTree({
               handleEmojiSelect={handleEmojiSelect}
               voiceNoteBlockId={voiceNoteBlockId}
               setVoiceNoteBlockId={setVoiceNoteBlockId}
+              meetingBlockId={meetingBlockId}
+              setMeetingBlockId={setMeetingBlockId}
+              onMeetingCreated={() => void load()}
               historyBlockId={historyBlockId}
               setHistoryBlockId={setHistoryBlockId}
               propertyDrawerBlockId={propertyDrawerBlockId}
