@@ -711,13 +711,12 @@ function normalizeCdata(xmlText: string): string {
 
 /**
  * Parse an Evernote `.enex` export into {@link EnexNote}s. A link to another
- * note of the file names its page under `fileName` ({@link enexPageName}), or
- * its title alone when there is none.
+ * note of the file names its page under `fileName` ({@link enexPageName}).
  *
  * @throws {Error} when the XML is malformed (DOMParser produces a
  *   `<parsererror>` element). The caller surfaces this via a notify/error.
  */
-export function parseEnex(xmlText: string, fileName?: string): EnexNote[] {
+export function parseEnex(xmlText: string, fileName: string): EnexNote[] {
   const doc = new DOMParser().parseFromString(normalizeCdata(xmlText), 'application/xml')
   // `application/xml` does not throw on malformed input; it embeds a
   // `<parsererror>` element in the returned document instead.
@@ -768,11 +767,10 @@ const EVERNOTE_NOTE_LINK = 'evernote:///view/'
  * Teach `td` to write an Evernote note link whose text is one of `titles` as a
  * link to that note's page. Any other link falls through to Turndown's own.
  */
-function addNoteLinkRule(td: TurndownService, titles: string[], fileName?: string): void {
+function addNoteLinkRule(td: TurndownService, titles: string[], fileName: string): void {
   const pages = new Map<string, string>()
   for (const title of titles) {
-    const page =
-      fileName === undefined ? sanitizeNoteTitleToFilename(title) : enexPageName(fileName, title)
+    const page = enexPageName(fileName, title)
     if (!pages.has(nameKey(title))) pages.set(nameKey(title), page)
   }
   const pageOf = (node: HTMLElement) =>

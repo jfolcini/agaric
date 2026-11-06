@@ -470,6 +470,7 @@ export const common: Record<string, string> = {
   'data.importResultNotesTitle_other': '{{count}} notes',
   // Failure / warning surfacing (#1928).
   'data.importNoContent': 'No content was imported.',
+  'data.importUpToDate': 'Already up to date',
   'data.importAllFailed_one': 'All {{count}} file failed to import.',
   'data.importAllFailed_other': 'All {{count}} files failed to import.',
   'data.importFailuresHeading_one': '{{count}} file failed to import',
@@ -489,6 +490,8 @@ export const common: Record<string, string> = {
   // #6277 decision 7 — a file whose title names an existing page merges into it.
   'data.importResultUpdated_one': '{{count}} existing page updated',
   'data.importResultUpdated_other': '{{count}} existing pages updated',
+  'data.importResultUpToDate_one': '{{count}} existing page already up to date',
+  'data.importResultUpToDate_other': '{{count}} existing pages already up to date',
   'data.importMergeTitle_one': 'Update an existing page?',
   'data.importMergeTitle_other': 'Update {{count}} existing pages?',
   'data.importMergeDescription_one':
