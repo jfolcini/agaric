@@ -17888,6 +17888,62 @@ async fn import_reads_an_escaped_pipe_embed_in_a_table_cell() {
     mat.shutdown();
 }
 
+/// A markdown image's alt, or a file link's label, is copied as written, so
+/// the `\|` a table cell escapes it with is kept once, never escaped again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_keeps_an_escaped_pipe_image_alt_in_a_table_cell() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "| ![pic\\|300](pic.png) | [a\\|b](doc.pdf) |\n| --- | --- |\n".into(),
+        Some("note.md".into()),
+        TEST_SPACE_ID.into(),
+        Some(vec![
+            VaultFile {
+                path: "pic.png".into(),
+                bytes: vec![0x89, b'P', b'N', b'G'],
+            },
+            VaultFile {
+                path: "doc.pdf".into(),
+                bytes: b"%PDF-1.4".to_vec(),
+            },
+        ]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.warnings, Vec::<String>::new());
+    settle(&mat).await;
+
+    let files: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, filename FROM attachments WHERE deleted_at IS NULL ORDER BY filename",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let [(doc, doc_name), (pic, pic_name)] = files.as_slice() else {
+        panic!("two attachments, got {files:?}");
+    };
+    assert_eq!(
+        (doc_name.as_str(), pic_name.as_str()),
+        ("doc.pdf", "pic.png")
+    );
+    assert_eq!(
+        content_block_texts(&pool).await,
+        vec![format!(
+            "| ![pic\\|300](attachment:{pic}) | [a\\|b](attachment:{doc}) |\n| --- | --- |"
+        )]
+    );
+
+    mat.shutdown();
+}
+
 /// #6033 S6 — Logseq's `{:width N}` map after an image, ingested or remote,
 /// is stored as the alt's size suffix, a height kept as `|WxH` and a dragged
 /// size's fraction dropped. Code keeps the map as written.

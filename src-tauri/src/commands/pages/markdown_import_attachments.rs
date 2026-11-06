@@ -273,8 +273,8 @@ async fn ingest_block_attachments(
 
 /// Rewrite one block's content: each matched ref's full token (`![[file]]`,
 /// `![alt](path)`, `[label](path)`) → its canonical `attachment:<id>` token
-/// ([`attachment_token`]), its pipe escaped as an embed's `\|` in a table row
-/// was ([`escape_pipes_as`]). The CURRENT content is fetched first (it is the
+/// ([`attachment_token`]), an embed's size pipe escaped where its `\|` in a
+/// table row was ([`escape_pipes_as`]). The CURRENT content is fetched first (it is the
 /// durable, tag/link-rewritten version) and tokens are replaced in it.
 ///
 /// A transient DB read error, a vanished block, or a failed edit must NOT abort
@@ -312,7 +312,13 @@ async fn rewrite_block_attachment_refs(
     };
     for (att, token) in block_rewrites {
         if let Some(at) = new_content.find(&att.full_match) {
-            let token = escape_pipes_as(&new_content, at, &att.full_match, token);
+            // An image's alt and a link's label are copied as written, escape
+            // and all; only an embed's size is re-written after a bare `|`.
+            let token = if att.full_match.starts_with("![[") {
+                escape_pipes_as(&new_content, at, &att.full_match, token)
+            } else {
+                token.clone()
+            };
             new_content.replace_range(at..at + att.full_match.len(), &token);
         }
     }
