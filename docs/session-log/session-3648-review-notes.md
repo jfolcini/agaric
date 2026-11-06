@@ -1,6 +1,6 @@
-# Session 3648 — review notes from #6406, #6411, #6425, #6431, #6432 and #6433
+# Session 3648 — review notes from #6390, #6396, #6406, #6411, #6425, #6431, #6432 and #6433
 
-The batched follow-up for those PRs' non-blocking notes. Each note was weighed on the review terms: a concrete failure and someone it hurts, or code that doesn't earn its keep.
+The batched follow-up for the non-blocking notes on every PR merged in the 24 hours from 2026-11-05 15:00 UTC (the table at the end). Each note was weighed on the review terms: a concrete failure and someone it hurts, or code that doesn't earn its keep.
 
 ## Taken
 
@@ -27,6 +27,15 @@ The batched follow-up for those PRs' non-blocking notes. Each note was weighed o
 
 ## Not taken
 
+- **#6396, `title_pages`' `.unwrap_or_default()` on `matches.titles.get(id)`.** Moot: #6402 (review notes from #6396) already made it `matches.titles[id].clone()`.
+- **#6390, `GatedImage`'s Load button inside a link.** Moot: #6393 moved the Load button out of the link while the badge is withheld, and `linked-image.test.tsx` checks it with axe and a no-`[role="link"]`-ancestor assertion.
+- **#6392:** the stale nextest claim sits in a merged session log, which is immutable.
+- **#6395:**
+  - the fixture key-reorder churn is already merged, so the note is moot;
+  - the `userSet` flag on `BuiltinPropertyDef` is speculative, with one key today;
+  - the e2e happy path it asked for exists: `e2e/meeting-attachments.spec.ts` and `e2e-tauri/meeting-attachments.e2e.ts`.
+- **#6394:** making `parseEnex`'s `fileName` required, to drop its test-only `undefined` branch, means editing about 77 existing test call sites, and no production path reaches the branch.
+- **#6398 and #6410:** already addressed, in #6404 and #6411.
 - **#6425 (F3), `load_name_snapshot`'s tuple param.** Moot: since F2 it takes plain `refs` and `ref_titles` arguments.
 - **#6433 (F2), from G's review:**
   - **Mirror timing against the `block_links` reindex.** The premise is false. `edit_block` reindexes `block_links` in its own transaction (`affected_pages_for_edit` → `reindex_block_links_conn`, #1548), as create does, so the mirror can't read before the row exists.
@@ -37,3 +46,12 @@ The batched follow-up for those PRs' non-blocking notes. Each note was weighed o
 - **#6415:** the pinned list.
 - **#6420:** the palette dump.
 - **F3:** case-variant twin titles and the cross-space copy; no concrete failure found.
+
+## The sweep
+
+Every PR merged from 2026-11-05 15:00 UTC, with what became of its non-blocking notes:
+
+- **Taken here:** #6406, #6411, #6425 (one note moot), #6431, #6432, #6433.
+- **Notes moot or not taken (reasons above):** #6390, #6392, #6394, #6395, #6396 (`pagesUpdated`: ITEM1), #6398, #6410, #6423, #6424, #6415, #6420.
+- **Notes already batched by their own follow-ups:** #6391, #6402, #6404.
+- **No non-blocking notes, per the coordinator's sweep of all 41:** #6393, #6397, #6399, #6400, #6401, #6403, #6405, #6407, #6408, #6409, #6412, #6413, #6414, #6418, #6421, #6422, #6426, #6427, #6428, #6429, #6430.
