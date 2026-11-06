@@ -53,6 +53,7 @@ pub mod link_metadata;
 pub mod logging;
 pub mod mcp;
 pub mod mcp_agents;
+pub mod meeting_attachments;
 pub mod mirror;
 pub mod notifier;
 pub mod observability;

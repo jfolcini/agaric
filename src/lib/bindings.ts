@@ -785,6 +785,12 @@ export const commands = {
 	 */
 	addAttachmentWithBytes: (blockId: BlockId, filename: string, mimeType: string, bytes: number[]) => typedError<AttachmentRow, AppError>(__TAURI_INVOKE("add_attachment_with_bytes", { blockId, filename, mimeType, bytes })),
 	/**
+	 *  Tauri command: the app's *New meeting* (#5364). Delegates to
+	 *  [`add_meeting_inner`], and returns the ops it wrote so one Undo reverts
+	 *  the whole meeting.
+	 */
+	addMeeting: (input: AddMeetingInput) => typedError<WithOps<MeetingResult>, AppError>(__TAURI_INVOKE("add_meeting", { input })),
+	/**
 	 *  Tauri command: read an attachment's metadata row (filename, mime, etc.).
 	 *  Delegates to [`read_attachment_meta_inner`]. Used by the graph-export ZIP
 	 *  builder (#1490) to resolve an inline-image `attachment:<id>` ref to a
@@ -1376,6 +1382,24 @@ export type ActorKind =
  *  socket.
  */
 "agent";
+
+/**
+ *  The app's *New meeting* (#5364): a new meeting page, linked from
+ *  `link_block_id` or, without one, from the day's journal. Every file is
+ *  optional; `summary_text` and `summary_file` are one or the other.
+ */
+export type AddMeetingInput = {
+	space_id: string,
+	title?: string,
+	/**  `YYYY-MM-DD`. */
+	date: string,
+	template_id?: BlockId | null,
+	link_block_id?: BlockId | null,
+	audio?: MeetingFileInput | null,
+	transcript?: MeetingFileInput | null,
+	summary_text?: string | null,
+	summary_file?: MeetingFileInput | null,
+};
 
 /**
  *  A composable advanced query: a boolean [`FilterExpr`] tree over the
@@ -2862,6 +2886,22 @@ export type MdnsStatus = {
 	 *  `disabled` is `false`.
 	 */
 	reason: string | null,
+};
+
+/**  One file of [`AddMeetingInput`]. */
+export type MeetingFileInput = {
+	filename: string,
+	bytes: number[],
+};
+
+/**  What [`add_meeting_inner`] wrote. */
+export type MeetingResult = {
+	page_id: BlockId,
+	recording_block_id: BlockId,
+	/**  The block linking the page, for a new meeting. */
+	link_block_id: BlockId | null,
+	/**  The audio, then the transcript, then the summary, those given. */
+	attachments: AttachmentRow[],
 };
 
 /**  A page whose file could not be written, and why. */

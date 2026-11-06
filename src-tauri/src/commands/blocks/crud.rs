@@ -314,13 +314,58 @@ async fn create_tag_in_space_inner(
     let mut tx = CommandTx::begin_immediate(pool, "create_tag_in_space").await?;
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
+    match Box::pin(create_tag_in_space_in_tx(
+        &mut tx,
+        device_id,
+        materializer,
+        content,
+        parent_id,
+        index,
+        &space_id,
+        client_id,
+    ))
+    .await?
+    {
+        TagInSpace::Existing(existing) => {
+            tx.commit_without_dispatch().await?;
+            get_active_block_inner(pool, BlockId::from_trusted(&existing)).await
+        }
+        TagInSpace::Created(block) => {
+            tx.commit_and_dispatch(materializer).await?;
+            // The create-step BlockRow: its content is authoritative; the
+            // space membership lives in `blocks.space_id`, not on `BlockRow`.
+            Ok(*block)
+        }
+    }
+}
 
+/// The tag [`create_tag_in_space_in_tx`] resolved to.
+pub(crate) enum TagInSpace {
+    /// The live tag of the space already holding the name.
+    Existing(String),
+    /// A tag it created.
+    Created(Box<BlockRow>),
+}
+
+/// [`create_tag_in_space_inner`] inside the caller's rollback-armed
+/// transaction (`add_meeting_inner`'s `#meeting`, #5364).
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn create_tag_in_space_in_tx(
+    tx: &mut CommandTx,
+    device_id: &str,
+    materializer: &Materializer,
+    content: String,
+    parent_id: Option<String>,
+    index: Option<i64>,
+    space_id: &str,
+    client_id: Option<BlockId>,
+) -> Result<TagInSpace, AppError> {
     // 1. Validate `space_id` up front, inside the tx (TOCTOU-safe against a
     //    concurrent delete). The target must be a live, non-conflict block
     //    carrying `is_space = 'true'` — i.e. a registered space, so the
     //    `SetProperty(space)` projection below is guaranteed to pass the #708
     //    gate instead of being silently skipped.
-    crate::commands::spaces::require_live_space_in_tx(&mut tx, &space_id).await?;
+    crate::commands::spaces::require_live_space_in_tx(tx, space_id).await?;
 
     // #5236 — the header's "Create" and the `#name` input rule both land
     // here, each trusting its own picker cache; the backend is the one place
@@ -328,21 +373,20 @@ async fn create_tag_in_space_inner(
     // smallest-id one under `name_key`, the key a rename compares by, #6278)
     // IS the answer: resolve to it, create nothing, append nothing.
     let key = agaric_core::tag_norm::name_key(&content);
-    let existing = space_tag_names(&mut tx, &space_id)
+    let existing = space_tag_names(tx, space_id)
         .await?
         .into_iter()
         .filter(|(_, held)| *held == key)
         .map(|(id, _)| id)
         .min();
     if let Some(existing) = existing {
-        tx.commit_without_dispatch().await?;
-        return get_active_block_inner(pool, BlockId::from_trusted(&existing)).await;
+        return Ok(TagInSpace::Existing(existing));
     }
     reject_spaced_tag_name(&content)?;
 
     // 2. Create the tag block (`CreateBlock` op + materialized row).
     let (block, tag_op_record) = create_block_in_tx(
-        &mut tx,
+        tx,
         materializer.loro_state(),
         device_id,
         "tag".to_string(),
@@ -360,7 +404,7 @@ async fn create_tag_in_space_inner(
     //    block has nothing to re-scope (#5275, the `space` arm of
     //    `push_property_op_invalidations`).
     let (_block, _space_op_record) = set_property_in_tx(
-        &mut tx,
+        tx,
         materializer.loro_state(),
         device_id,
         tag_id.clone().into_string(),
@@ -368,15 +412,12 @@ async fn create_tag_in_space_inner(
         None,
         None,
         None,
-        Some(space_id),
+        Some(space_id.to_owned()),
         None,
     )
     .await?;
 
-    tx.commit_and_dispatch(materializer).await?;
-    // Return the create-step BlockRow (its content is authoritative; the
-    // space membership lives in `blocks.space_id`, not on `BlockRow`).
-    Ok(block)
+    Ok(TagInSpace::Created(Box::new(block)))
 }
 
 /// Edit a block's content.

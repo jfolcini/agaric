@@ -59,7 +59,9 @@ const BlockTablePicker = lazy(() =>
   })),
 )
 
-const NOT_IN_PAGE_MODE = new Set(['duplicate', 'template'])
+// `meeting` writes its link into a block from the backend, under the page's one
+// document, which would write its own copy of that block back over it.
+const NOT_IN_PAGE_MODE = new Set(['duplicate', 'template', 'meeting'])
 
 /** Block mode's menu for `query`, less what page mode does not offer. */
 export function searchPageSlashCommands(query: string): PickerItem[] {

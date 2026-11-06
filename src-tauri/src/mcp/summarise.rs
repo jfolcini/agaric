@@ -41,10 +41,10 @@ use agaric_core::ulid::BlockId;
 use serde_json::Value;
 
 use super::registry::{
-    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_ATTACH_FILE, TOOL_BATCH,
-    TOOL_BLOCK_HISTORY, TOOL_CAPTURE, TOOL_CREATE_PAGE, TOOL_CREATE_TAG, TOOL_DELETE_BLOCK,
-    TOOL_DELETE_PROPERTY, TOOL_EDIT_PAGE_MARKDOWN, TOOL_GET_AGENDA, TOOL_GET_BLOCK,
-    TOOL_GET_JOURNAL, TOOL_GET_PAGE, TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE,
+    TOOL_ADD_MEETING, TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_ATTACH_FILE,
+    TOOL_BATCH, TOOL_BLOCK_HISTORY, TOOL_CAPTURE, TOOL_CREATE_PAGE, TOOL_CREATE_TAG,
+    TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY, TOOL_EDIT_PAGE_MARKDOWN, TOOL_GET_AGENDA,
+    TOOL_GET_BLOCK, TOOL_GET_JOURNAL, TOOL_GET_PAGE, TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE,
     TOOL_LIST_ATTACHMENTS, TOOL_LIST_BACKLINKS, TOOL_LIST_JOURNAL, TOOL_LIST_PAGES,
     TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_LIST_TRASH, TOOL_MOVE_BLOCKS,
     TOOL_MOVE_PAGE_TO_SPACE, TOOL_PAGE_HISTORY, TOOL_QUERY, TOOL_REMOVE_TAG, TOOL_RESOLVE,
@@ -141,6 +141,7 @@ pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
         TOOL_EDIT_PAGE_MARKDOWN => summarise_edit_page_markdown(args, result),
         TOOL_SET_PAGE_ALIASES => summarise_set_page_aliases(args, result),
         TOOL_ATTACH_FILE => summarise_attach_file(args, result),
+        TOOL_ADD_MEETING => summarise_add_meeting(args, result),
         // Defensive default — keeps the activity feed working when
         // someone adds a new tool without a summariser. This is the
         // pre-existing behaviour for every entry. The privacy
@@ -678,6 +679,18 @@ pub fn summarise_attach_file(_args: &Value, result: &Value) -> String {
     } else {
         format!("attach_file — {mime}, {size} bytes on {block}")
     }
+}
+
+/// `add_meeting — N file(s) on <recording-prefix>, page <page-prefix>`. No
+/// title or filename: both are user text.
+pub fn summarise_add_meeting(_args: &Value, result: &Value) -> String {
+    let n = array_len(result, "attachments").unwrap_or(0);
+    let recording = ulid_prefix(str_field(result, "recording_block_id").unwrap_or(""));
+    let page = ulid_prefix(str_field(result, "page_id").unwrap_or(""));
+    format!(
+        "add_meeting — {n} {} on {recording}, page {page}",
+        if n == 1 { "file" } else { "files" }
+    )
 }
 
 /// `undo — reverted N op(s)`.
@@ -1592,6 +1605,20 @@ mod tests {
         assert_eq!(block, "block_history — 2 ops on 01HZTEST (more)");
         assert_no_secrets(&page);
         assert_no_secrets(&block);
+    }
+
+    #[test]
+    fn add_meeting_counts_the_files_and_names_no_title_5364() {
+        let args = json!({ "title": "SECRET_TITLE", "audio_path": "/home/SECRET_PATH/a.ogg" });
+        let result = json!({
+            "page_id": "01MEETPG000000000000000001",
+            "recording_block_id": "01RECBLK000000000000000002",
+            "link_block_id": null,
+            "attachments": [{ "filename": "SECRET_FILENAME" }, { "filename": "SECRET_FILENAME" }],
+        });
+        let s = summarise(TOOL_ADD_MEETING, &args, &result);
+        assert_eq!(s, "add_meeting — 2 files on 01RECBLK, page 01MEETPG");
+        assert_no_secrets(&s);
     }
 
     #[test]

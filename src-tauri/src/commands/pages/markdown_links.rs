@@ -317,9 +317,10 @@ pub(super) fn collect_inbound_page_link_bodies(blocks: &[import::ParsedBlock]) -
             if !page_link_is_token(&content, whole.start(), &code_spans) {
                 continue;
             }
-            let body = cap[1].trim();
+            let body = unescape_link_pipes(&cap[1]);
+            let body = body.trim();
             // Skip canonical `[[ULID]]` bodies — they are already internal refs.
-            if body.is_empty() || agaric_store::cache::PAGE_LINK_RE.is_match(&cap[0]) {
+            if body.is_empty() || is_internal_page_link(&cap[0]) {
                 continue;
             }
             bodies.insert(body.to_string());
@@ -394,42 +395,77 @@ pub(super) fn rewrite_inbound_page_links(
             // inside an inline-code span (#3605), the `#[[Tag]]` multi-word tag
             // form (#1950), the `![[file]]` embed (#1925) and an escaped token
             // stay byte-identical.
-            if !page_link_is_token(&content, m.start(), &code_spans) {
+            if !page_link_is_token(&content, m.start(), &code_spans) || is_internal_page_link(whole)
+            {
                 return whole.to_string();
             }
-            // Already an internal `[[ULID]]` ref — keep verbatim.
-            if agaric_store::cache::PAGE_LINK_RE.is_match(whole) {
-                return whole.to_string();
-            }
-            let Some((name, label)) = links.readings.get(caps[1].trim()) else {
-                return whole.to_string();
-            };
-            if let Some(block) = links.blocks.get(name) {
-                return format!("(({block}))");
-            }
-            match links.ids.get(name) {
-                Some(ulid) => {
-                    let title = titles.get(ulid).map(String::as_str);
-                    // A deferred anchor rides with the page: `[[ULID#anchor]]`.
-                    let target = links
-                        .deferred
-                        .get(name)
-                        .map_or_else(|| ulid.clone(), |anchor| format!("{ulid}#{anchor}"));
-                    stored_page_link(&target, label.as_deref(), title)
-                }
+            match internal_ref_for(&caps[1], links, titles) {
+                Some(stored) => escape_pipes_as(&content, m.start(), &caps[1], &stored),
                 None => whole.to_string(),
             }
         })
         .into_owned()
 }
 
+/// The stored ref the link body `body` rewrites to: its reading's block as a
+/// `((ULID))`, else its page as a link; `None` for a body with no reading, or
+/// whose name has no page.
+fn internal_ref_for(
+    body: &str,
+    links: &PageLinks,
+    titles: &HashMap<String, String>,
+) -> Option<String> {
+    let (name, label) = links.readings.get(unescape_link_pipes(body).trim())?;
+    if let Some(block) = links.blocks.get(name) {
+        return Some(format!("(({block}))"));
+    }
+    let ulid = links.ids.get(name)?;
+    let title = titles.get(ulid).map(String::as_str);
+    // A deferred anchor rides with the page: `[[ULID#anchor]]`.
+    let target = links
+        .deferred
+        .get(name)
+        .map_or_else(|| ulid.clone(), |anchor| format!("{ulid}#{anchor}"));
+    Some(stored_page_link(&target, label.as_deref(), title))
+}
+
+/// `text` with each `\|` read as `|`. A GFM table cell must escape every pipe
+/// it holds, so Obsidian writes an aliased link there as `[[Note\|alias]]`,
+/// and the editor's table reader unescapes a cell the same way.
+pub(super) fn unescape_link_pipes(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.contains("\\|") {
+        std::borrow::Cow::Owned(text.replace("\\|", "|"))
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
+}
+
+/// Whether the `[[…]]` token `whole` is already an internal `[[ULID]]` ref,
+/// its label pipe escaped or not.
+pub(super) fn is_internal_page_link(whole: &str) -> bool {
+    agaric_store::cache::PAGE_LINK_RE.is_match(&unescape_link_pipes(whole))
+}
+
+/// `stored`, the ref written for the link body `body` at byte `at` of
+/// `content`, with every pipe escaped when `body` escaped one in a table row:
+/// there the editor's table writer escapes them all and a bare `|` would split
+/// the cell, while elsewhere the editor reads `[[ULID\|label]]` as no link.
+pub(super) fn escape_pipes_as(content: &str, at: usize, body: &str, stored: &str) -> String {
+    let line = &content[content[..at].rfind('\n').map_or(0, |nl| nl + 1)..];
+    if body.contains("\\|") && line.starts_with('|') {
+        stored.replace('|', "\\|")
+    } else {
+        stored.to_string()
+    }
+}
+
 /// A link a folder import leaves for [`link_import_anchors_inner`]:
 /// `[[ULID#anchor]]` or `[[ULID#anchor|label]]`, an anchor into the page
 /// `ULID` that named none of its blocks when the link was imported. Group 1 is
-/// the page, 2 the anchor and 3 the label.
+/// the page, 2 the anchor and 3 the label, after a `|` or a table cell's `\|`.
 pub(super) static DEFERRED_LINK_RE: std::sync::LazyLock<regex::Regex> =
     std::sync::LazyLock::new(|| {
-        regex::Regex::new(r"\[\[([0-9A-Z]{26})#([^\]|\n]+)(?:\|([^\]\n]*))?\]\]")
+        regex::Regex::new(r"\[\[([0-9A-Z]{26})#([^\]|\n]+?)(?:\\?\|([^\]\n]*))?\]\]")
             .expect("invalid deferred link regex")
     });
 
@@ -594,7 +630,8 @@ pub(super) fn rewrite_inbound_tags(content: &str, resolved: &HashMap<String, Str
 /// is missing from the map (deleted / dangling) is NOT left as a raw ULID: it
 /// degrades to a clearly-marked, human-readable `(unresolved block reference)`
 /// literal that survives re-import as plain text (the raw `((ULID))` would come
-/// back as a dangling ref).
+/// back as a dangling ref). A block that is one embed is then written as
+/// Obsidian's ([`as_obsidian_embed`]): `![[Page]]`, `![[Page#^ULID]]`.
 pub(super) fn resolve_ulids_for_export(
     content: &str,
     tag_names: &HashMap<String, String>,
@@ -608,7 +645,7 @@ pub(super) fn resolve_ulids_for_export(
     // cross-page `[[Page#^ULID]]`), falling back to a clearly-marked literal
     // for a dangling target rather than leaking an opaque `((ULID))` that no
     // external tool renders and that the importer would strip on re-import.
-    agaric_store::cache::BLOCK_REF_RE
+    let named = agaric_store::cache::BLOCK_REF_RE
         .replace_all(&result, |caps: &regex::Captures| {
             let ulid = &caps[1];
             block_refs
@@ -616,7 +653,32 @@ pub(super) fn resolve_ulids_for_export(
                 .cloned()
                 .unwrap_or_else(|| "(unresolved block reference)".to_string())
         })
-        .into_owned()
+        .into_owned();
+    if named == content {
+        named
+    } else {
+        as_obsidian_embed(named)
+    }
+}
+
+/// `named`, a block's text with its names written, as Obsidian's embed
+/// `![[target]]` when it is one embed block `{{embed [[target]]}}` that the
+/// embed reader ([`import::rewrite_obsidian_note_embeds`]) reads back as
+/// `named` (#6277 F1); else `named`. An embed among other text, or one whose
+/// target would read as a file, a label or other text, stays as it is.
+pub(super) fn as_obsidian_embed(named: String) -> String {
+    let Some(target) = named
+        .strip_prefix("{{embed [[")
+        .and_then(|rest| rest.strip_suffix("]]}}"))
+    else {
+        return named;
+    };
+    let embed = format!("![[{target}]]");
+    if import::rewrite_obsidian_note_embeds(&embed, import::embed_names_note) == named {
+        embed
+    } else {
+        named
+    }
 }
 
 /// Replace `#[ULID]` with `#tagname` and `[[ULID]]` with `[[Page Title]]`; an
@@ -706,7 +768,8 @@ pub(super) fn tag_reads_back_bare(before: &str, name: &str, after: &str) -> bool
 /// resolution comes from `names` instead of the database, and nothing is
 /// created. A name can be the page's own and still not come back: `[[Foo|Bar]]`
 /// reads as the page `Foo|Bar` when one exists (#5160 D10), and `#v1.2` as the
-/// tag `v1`.
+/// tag `v1`. A block that is one embed whose name reads back is written as
+/// Obsidian's `![[Page]]` ([`as_obsidian_embed`]).
 pub(super) fn humanise_refs_for_source(
     content: &str,
     is_code: bool,
@@ -730,7 +793,15 @@ pub(super) fn humanise_refs_for_source(
     let page_links = names.page_links(collect_inbound_page_link_bodies(blocks));
     let tags = names.tags(collect_inbound_tag_names(blocks));
     let internalised = rewrite_block_content_for_import(&block, &page_links, page_titles, &tags);
-    (internalised == content).then_some(block.content)
+    // A save reads a block's `![[target]]` back as its embed before its names
+    // (`normalize_foreign_forms`), and a code block's as text.
+    (internalised == content).then(|| {
+        if is_code {
+            block.content
+        } else {
+            as_obsidian_embed(block.content)
+        }
+    })
 }
 
 /// The in-space names the importer resolves against, as its snapshots read

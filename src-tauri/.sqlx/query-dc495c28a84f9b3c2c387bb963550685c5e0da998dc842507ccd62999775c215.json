@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE tree(id, path, depth) AS (\n               SELECT b.id, printf('%020d', b.position) || b.id, 0\n                 FROM blocks b\n                WHERE b.parent_id = ?1 AND b.deleted_at IS NULL\n               UNION ALL\n               SELECT c.id, t.path || '/' || printf('%020d', c.position) || c.id, t.depth + 1\n                 FROM blocks c JOIN tree t ON c.parent_id = t.id\n                WHERE c.deleted_at IS NULL AND t.depth < 100\n           )\n           SELECT t.id AS \"id!: String\"\n             FROM tree t\n            WHERE EXISTS (SELECT 1 FROM attachments a WHERE a.block_id = t.id)\n            ORDER BY t.path\n            LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "dc495c28a84f9b3c2c387bb963550685c5e0da998dc842507ccd62999775c215"
+}

@@ -30,6 +30,7 @@
 //! | `edit_page_markdown` | [`apply_page_source_inner`] | #5399 — the page's Markdown as `get_page_markdown` reads it, edited, saved as the app's Edit as Markdown saves it. A stale `base` is refused. |
 //! | `set_page_aliases` | [`set_page_aliases_inner`] | Replaces the page's whole alias list in one transaction. An alias another page holds is refused, nothing written. |
 //! | `attach_file` | [`add_attachment_with_bytes_inner`] | #5410 — copies the regular file at an absolute `path` onto a block, as the app attaches a file: size cap, type allow-list, dedup, undo, sync. The type is the extension's. A symlink, a directory or a file over the cap is refused before it is read. |
+//! | `add_meeting` | [`add_meeting_inner`] | #5364 — a meeting page `<Title> <YYYY-MM-DD>` with `#meeting`, `meeting_date`, a template and the recording's audio, transcript and summary, linked from the day's journal, in one transaction; or the files onto an existing meeting (`page` / `block_id`). Paths are checked as `attach_file` checks them. |
 //!
 //! Every `tools_ro` tool follows the write tools, served by the
 //! [`ReadOnlyTools`] this registry holds (#5379).
@@ -71,10 +72,10 @@ use super::handler_utils::{
     with_space_guard,
 };
 use super::registry::{
-    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_ATTACH_FILE, TOOL_BATCH,
-    TOOL_CAPTURE, TOOL_CREATE_PAGE, TOOL_CREATE_TAG, TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY,
-    TOOL_EDIT_PAGE_MARKDOWN, TOOL_MOVE_BLOCKS, TOOL_MOVE_PAGE_TO_SPACE, TOOL_REMOVE_TAG,
-    TOOL_RESTORE_BLOCK, TOOL_SET_PAGE_ALIASES, TOOL_SET_PROPERTY, TOOL_UNDO,
+    TOOL_ADD_MEETING, TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_ATTACH_FILE,
+    TOOL_BATCH, TOOL_CAPTURE, TOOL_CREATE_PAGE, TOOL_CREATE_TAG, TOOL_DELETE_BLOCK,
+    TOOL_DELETE_PROPERTY, TOOL_EDIT_PAGE_MARKDOWN, TOOL_MOVE_BLOCKS, TOOL_MOVE_PAGE_TO_SPACE,
+    TOOL_REMOVE_TAG, TOOL_RESTORE_BLOCK, TOOL_SET_PAGE_ALIASES, TOOL_SET_PROPERTY, TOOL_UNDO,
     TOOL_UPDATE_BLOCK_CONTENT, ToolDescription, ToolRegistry,
 };
 use super::tools_ro::{self, AttachmentListRow, ReadOnlyTools};
@@ -83,6 +84,9 @@ use crate::commands::attachments::{ATTACHMENT_EXTENSIONS, mime_for_extension};
 use crate::commands::blocks::crud::{DeleteInTx, delete_block_in_tx, dispatch_deletes};
 use crate::commands::blocks::move_ops::move_blocks_batch_in_tx;
 use crate::commands::blocks::space_move::describe_losses;
+use crate::commands::meeting_attachments::{
+    AddMeetingRequest, MeetingFile, MeetingLink, MeetingSummary, MeetingTarget, add_meeting_inner,
+};
 use crate::commands::pages::markdown::{
     anchor_free, append_block_resolving_names, append_block_resolving_names_in_tx,
     apply_page_source_inner, edit_block_resolving_names, edit_block_resolving_names_in_tx,
@@ -292,6 +296,30 @@ struct SetPageAliasesArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct AddMeetingArgs {
+    space_id: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    date: Option<String>,
+    #[serde(default)]
+    template: Option<String>,
+    #[serde(default)]
+    page: Option<String>,
+    #[serde(default)]
+    block_id: Option<String>,
+    #[serde(default)]
+    audio_path: Option<String>,
+    #[serde(default)]
+    transcript_path: Option<String>,
+    #[serde(default)]
+    summary_markdown: Option<String>,
+    #[serde(default)]
+    summary_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct AttachFileArgs {
     space_id: String,
     block_id: String,
@@ -392,6 +420,7 @@ pub(crate) fn write_tool_descriptions() -> Vec<ToolDescription> {
         tool_desc_edit_page_markdown(),
         tool_desc_set_page_aliases(),
         tool_desc_attach_file(),
+        tool_desc_add_meeting(),
     ]
 }
 
@@ -405,6 +434,17 @@ pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
     let mut descriptions = write_tool_descriptions();
     descriptions.extend(tools_ro::list_tool_descriptions());
     descriptions
+}
+
+impl ReadWriteTools {
+    fn file_tools(&self) -> FileTools {
+        FileTools {
+            pool: self.pool.clone(),
+            materializer: self.materializer.clone(),
+            device_id: self.device_id.clone(),
+            app_data_dir: self.app_data_dir.clone(),
+        }
+    }
 }
 
 impl ToolRegistry for ReadWriteTools {
@@ -426,7 +466,7 @@ impl ToolRegistry for ReadWriteTools {
         let materializer = self.materializer.clone();
         let device_id = self.device_id.clone();
         let emitter = self.view_emitter.clone();
-        let app_data_dir = self.app_data_dir.clone();
+        let files = self.file_tools();
         scoped_dispatch(ctx, name, move |name| async move {
             let emitter: &dyn ViewChangeEmitter = emitter.as_ref();
             match name.as_str() {
@@ -482,10 +522,7 @@ impl ToolRegistry for ReadWriteTools {
                 TOOL_SET_PAGE_ALIASES => {
                     handle_set_page_aliases(&pool, &materializer, &device_id, emitter, args).await
                 }
-                TOOL_ATTACH_FILE => {
-                    let dir = app_data_dir.as_path();
-                    handle_attach_file(&pool, &materializer, &device_id, dir, emitter, args).await
-                }
+                TOOL_ATTACH_FILE | TOOL_ADD_MEETING => files.call(&name, emitter, args).await,
                 // Every read tool, and the unknown-tool error (#5379).
                 other => reads.call_tool(other, args, &read_ctx).await,
             }
@@ -1075,6 +1112,48 @@ fn tool_desc_attach_file() -> ToolDescription {
                     "type": "string",
                     "description": "The attachment's name, its extension giving its type. Defaults to the file name of `path`.",
                 },
+            },
+        }),
+    }
+}
+
+fn tool_desc_add_meeting() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_ADD_MEETING.to_string(),
+        description: "Add a meeting in one call, as one undo, as the app's New meeting does: \
+             the page `<title> <YYYY-MM-DD>` tagged `#meeting` with the `meeting_date` \
+             property, a link to it at the end of that day's journal (created if missing), \
+             and a recording block holding the audio, transcript and summary. Every file is \
+             optional. A `template` page is copied under the page with its variables read \
+             against the meeting's date and title; its block reading `<% recording %>` \
+             becomes the recording block, else the recording block opens the page. A \
+             `summary_markdown` is written as blocks just above the recording block; a \
+             `summary_path` is attached instead. The transcript is stored as \
+             `<name>.transcript.md` and an attached summary as `<name>.summary.md`; a \
+             transcript has one paragraph per segment, `[hh:mm:ss] **Speaker:** text`. Pass \
+             `page` or `block_id` to add the files to an existing meeting instead: a page's \
+             recording block is its first block holding a file. Paths are checked as \
+             `attach_file` checks them. Returns the page, the recording block, the link \
+             block and the attachments."
+            .to_string(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["space_id"],
+            "properties": {
+                "space_id": { "type": "string", "description": "ULID of the space the meeting belongs to." },
+                "title": { "type": "string", "description": "The meeting's title before its date; `Meeting` when omitted. A new meeting only." },
+                "date": {
+                    "type": "string",
+                    "description": "`today` (the default), `yesterday`, or YYYY-MM-DD, on this device's clock. A new meeting only.",
+                },
+                "template": { "type": "string", "description": "A template page of the space, by ULID or title. A new meeting only." },
+                "page": { "type": "string", "description": "An existing meeting page, by ULID or title, to add the files to." },
+                "block_id": { "type": "string", "description": "ULID of an existing recording block to add the files to." },
+                "audio_path": { "type": "string", "description": "Absolute path of the recording's audio file." },
+                "transcript_path": { "type": "string", "description": "Absolute path of the transcript, a Markdown or text file." },
+                "summary_markdown": { "type": "string", "description": "The summary as Markdown, written as page content. Not with `summary_path`." },
+                "summary_path": { "type": "string", "description": "Absolute path of the summary, a Markdown or text file, attached. Not with `summary_markdown`." },
             },
         }),
     }
@@ -1686,15 +1765,15 @@ async fn handle_attach_file(
     let space_id = SpaceId::from_string(args.space_id)?;
     let block_id = BlockId::from_string(args.block_id)?;
     let path = PathBuf::from(args.path);
-    check_source_file(&path).await?;
+    check_source_file(TOOL_ATTACH_FILE, &path).await?;
     let filename = match args.filename {
         Some(filename) => filename,
-        None => source_file_name(&path)?,
+        None => source_file_name(TOOL_ATTACH_FILE, &path)?,
     };
     let mime_type = attachment_mime_type(&filename)?;
     let bytes = tokio::fs::read(&path)
         .await
-        .map_err(|e| source_refused(&path, &format!("could not be read: {e}")))?;
+        .map_err(|e| source_refused(TOOL_ATTACH_FILE, &path, &format!("could not be read: {e}")))?;
     let row = with_space_guard(
         space_id.as_str(),
         vec![block_id.as_str().to_owned()],
@@ -1714,10 +1793,10 @@ async fn handle_attach_file(
     to_tool_result(&AttachmentListRow::new(app_data_dir, row)?)
 }
 
-/// `attach_file`'s `path` refused, naming its `problem`.
-fn source_refused(path: &Path, problem: &str) -> AppError {
+/// A `tool`'s file path refused, naming its `problem`.
+fn source_refused(tool: &str, path: &Path, problem: &str) -> AppError {
     AppError::validation(format!(
-        "tool `{TOOL_ATTACH_FILE}`: `path` '{}' {problem}",
+        "tool `{tool}`: `path` '{}' {problem}",
         path.display()
     ))
 }
@@ -1725,33 +1804,35 @@ fn source_refused(path: &Path, problem: &str) -> AppError {
 /// Refuses `path`, from its metadata and before a byte is read, unless it is
 /// absolute and names a regular file within the attachment cap. A symlink is
 /// refused, not followed, so what is copied is the file the path names.
-async fn check_source_file(path: &Path) -> Result<(), AppError> {
+async fn check_source_file(tool: &str, path: &Path) -> Result<(), AppError> {
     if !path.is_absolute() {
-        return Err(source_refused(path, "is not an absolute path"));
+        return Err(source_refused(tool, path, "is not an absolute path"));
     }
     let metadata = tokio::fs::symlink_metadata(path).await.map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
-            source_refused(path, "does not exist")
+            source_refused(tool, path, "does not exist")
         } else {
-            source_refused(path, &format!("could not be read: {e}"))
+            source_refused(tool, path, &format!("could not be read: {e}"))
         }
     })?;
     let kind = metadata.file_type();
     if kind.is_symlink() {
         return Err(source_refused(
+            tool,
             path,
             "is a symbolic link; pass the path of the file it points to",
         ));
     }
     if kind.is_dir() {
-        return Err(source_refused(path, "is a directory, not a file"));
+        return Err(source_refused(tool, path, "is a directory, not a file"));
     }
     // A pipe or a device has no end to read to.
     if !kind.is_file() {
-        return Err(source_refused(path, "is not a regular file"));
+        return Err(source_refused(tool, path, "is not a regular file"));
     }
     if metadata.len() > MAX_ATTACHMENT_SIZE.unsigned_abs() {
         return Err(source_refused(
+            tool,
             path,
             &format!(
                 "is {} bytes, over the {MAX_ATTACHMENT_MB} MB attachment cap",
@@ -1763,11 +1844,11 @@ async fn check_source_file(path: &Path) -> Result<(), AppError> {
 }
 
 /// The file name of `path`: the attachment's name when the agent gives none.
-fn source_file_name(path: &Path) -> Result<String, AppError> {
+fn source_file_name(tool: &str, path: &Path) -> Result<String, AppError> {
     path.file_name()
         .and_then(std::ffi::OsStr::to_str)
         .map(str::to_owned)
-        .ok_or_else(|| source_refused(path, "has no UTF-8 file name; pass `filename`"))
+        .ok_or_else(|| source_refused(tool, path, "has no UTF-8 file name; pass `filename`"))
 }
 
 /// The MIME type of `filename`'s extension, refused naming the extension when
@@ -1785,6 +1866,160 @@ fn attachment_mime_type(filename: &str) -> Result<&'static str, AppError> {
             known_extensions()
         ))
     })
+}
+
+/// What the tools that read a file on this device write with.
+struct FileTools {
+    pool: SqlitePool,
+    materializer: Materializer,
+    device_id: String,
+    app_data_dir: PathBuf,
+}
+
+impl FileTools {
+    /// `attach_file` or `add_meeting`.
+    async fn call(
+        &self,
+        name: &str,
+        emitter: &dyn ViewChangeEmitter,
+        args: Value,
+    ) -> Result<Value, AppError> {
+        let (pool, mat, device_id) = (&self.pool, &self.materializer, self.device_id.as_str());
+        let dir = self.app_data_dir.as_path();
+        if name == TOOL_ATTACH_FILE {
+            return handle_attach_file(pool, mat, device_id, dir, emitter, args).await;
+        }
+        let today = chrono::Local::now().date_naive();
+        handle_add_meeting(pool, mat, device_id, dir, emitter, args, today).await
+    }
+}
+
+/// `add_meeting`'s file at `path`, checked and read as `attach_file` reads one.
+async fn meeting_file(path: Option<String>) -> Result<Option<MeetingFile>, AppError> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let path = PathBuf::from(path);
+    check_source_file(TOOL_ADD_MEETING, &path).await?;
+    let filename = source_file_name(TOOL_ADD_MEETING, &path)?;
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| source_refused(TOOL_ADD_MEETING, &path, &format!("could not be read: {e}")))?;
+    Ok(Some(MeetingFile { filename, bytes }))
+}
+
+/// `add_meeting`'s refusal of two arguments given together.
+fn exclusive(first: &str, second: &str) -> AppError {
+    AppError::validation(format!(
+        "tool `{TOOL_ADD_MEETING}`: pass `{first}` or `{second}`, not both"
+    ))
+}
+
+/// What `add_meeting` writes to, and the ids its space guard checks.
+async fn meeting_target(
+    pool: &SqlitePool,
+    args: &AddMeetingArgs,
+    space_id: &str,
+    today: chrono::NaiveDate,
+) -> Result<(MeetingTarget, Vec<String>), AppError> {
+    let existing = match (&args.page, &args.block_id) {
+        (Some(_), Some(_)) => return Err(exclusive("page", "block_id")),
+        (Some(page), None) => {
+            let id =
+                resolve_id_arg(pool, TOOL_ADD_MEETING, "page", page, Named::Page, space_id).await?;
+            Some((MeetingTarget::Page(BlockId::from_trusted(&id)), id))
+        }
+        (None, Some(block)) => {
+            let id = BlockId::from_string(block.clone())?;
+            let guarded = id.as_str().to_owned();
+            Some((MeetingTarget::Block(id), guarded))
+        }
+        (None, None) => None,
+    };
+    if let Some((target, id)) = existing {
+        if args.title.is_some() || args.date.is_some() || args.template.is_some() {
+            return Err(AppError::validation(format!(
+                "tool `{TOOL_ADD_MEETING}`: `title`, `date` and `template` make a new meeting; \
+                 leave them out with `page` or `block_id`"
+            )));
+        }
+        return Ok((target, vec![id]));
+    }
+    let date = resolve_journal_date(TOOL_ADD_MEETING, args.date.as_deref(), today)?;
+    let template_id = match &args.template {
+        Some(template) => Some(
+            resolve_id_arg(
+                pool,
+                TOOL_ADD_MEETING,
+                "template",
+                template,
+                Named::Page,
+                space_id,
+            )
+            .await?,
+        ),
+        None => None,
+    };
+    let guarded = template_id.iter().cloned().collect();
+    let target = MeetingTarget::New {
+        title: args.title.clone().unwrap_or_default(),
+        date,
+        template_id: template_id.map(|id| BlockId::from_trusted(&id)),
+        link: MeetingLink::Journal(date),
+    };
+    Ok((target, guarded))
+}
+
+async fn handle_add_meeting(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    device_id: &str,
+    app_data_dir: &Path,
+    emitter: &dyn ViewChangeEmitter,
+    args: Value,
+    today: chrono::NaiveDate,
+) -> Result<Value, AppError> {
+    let args: AddMeetingArgs = parse_args(TOOL_ADD_MEETING, args)?;
+    let space_id = SpaceId::from_string(args.space_id.clone())?;
+    if args.summary_markdown.is_some() && args.summary_path.is_some() {
+        return Err(exclusive("summary_markdown", "summary_path"));
+    }
+    let (target, guarded) = meeting_target(pool, &args, space_id.as_str(), today).await?;
+    let summary = match (
+        args.summary_markdown,
+        meeting_file(args.summary_path).await?,
+    ) {
+        (Some(text), _) => Some(MeetingSummary::Text(text)),
+        (None, Some(file)) => Some(MeetingSummary::File(file)),
+        (None, None) => None,
+    };
+    let req = AddMeetingRequest {
+        space_id: space_id.as_str().to_owned(),
+        target,
+        audio: meeting_file(args.audio_path).await?,
+        transcript: meeting_file(args.transcript_path).await?,
+        summary,
+    };
+    let meeting = with_space_guard(
+        space_id.as_str(),
+        guarded,
+        add_meeting_inner(pool, device_id, materializer, app_data_dir, req),
+    )
+    .await?;
+    let mut seeds = vec![meeting.recording_block_id.clone()];
+    seeds.extend(meeting.link_block_id.clone());
+    emit_blocks_changed_for_all(pool, emitter, &seeds).await;
+    let attachments = meeting
+        .attachments
+        .into_iter()
+        .map(|row| AttachmentListRow::new(app_data_dir, row))
+        .collect::<Result<Vec<_>, _>>()?;
+    to_tool_result(&json!({
+        "page_id": meeting.page_id,
+        "recording_block_id": meeting.recording_block_id,
+        "link_block_id": meeting.link_block_id,
+        "attachments": attachments,
+    }))
 }
 
 /// Reverts through the same inner as the Activity feed's Undo, so the revert

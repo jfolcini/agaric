@@ -313,6 +313,15 @@ export function useSlashCommandProperty(): SlashHandlerTables {
         location: (ctx) => handleAssigneeOrLocation(ctx),
         attach: (ctx) => handleAttach(ctx),
         voice: (ctx) => ctx.openVoiceNoteRecorder(ctx.blockId),
+        meeting: (ctx) => {
+          if (ctx.openMeetingDialog === undefined) {
+            logger.warn('useSlashCommandProperty', '/meeting has no dialog to open', {
+              blockId: ctx.blockId,
+            })
+            return
+          }
+          ctx.openMeetingDialog(ctx.blockId)
+        },
       },
       prefix: [
         // Order matters: more specific prefixes (`repeat-limit-`) must be
