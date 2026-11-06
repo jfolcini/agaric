@@ -24,6 +24,7 @@ mod edge_case_tests;
 mod engine_parity_tests;
 mod glob_filter_tests;
 mod history_cmd_tests;
+mod import_stored_construct_tests;
 mod list_pages_with_metadata_tests;
 mod mcp_agents_tests;
 mod meeting_cmd_tests;

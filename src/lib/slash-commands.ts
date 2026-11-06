@@ -56,6 +56,7 @@ import {
   Tag,
   Timer,
   UserCircle,
+  Users,
   XCircle,
 } from 'lucide-react'
 import { matchSorter } from 'match-sorter'
@@ -338,6 +339,12 @@ export const SLASH_COMMANDS: PickerItem[] = [
     label: 'VOICE — Record a voice note',
     category: 'slashCommand.categories.references',
     icon: Mic,
+  },
+  {
+    id: 'meeting',
+    label: 'MEETING — Add a meeting page with its recording',
+    category: 'slashCommand.categories.references',
+    icon: Users,
   },
   {
     // #286 — the browse-grid emoji picker. The inline `:` typeahead (#281)

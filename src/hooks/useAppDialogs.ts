@@ -13,6 +13,7 @@
  * `showNoPeersDialog` — sync-with-no-peers warning gate.
  * `shortcutsOpen` — keyboard-shortcuts reference sheet.
  * `newPageTitle` — the New page dialog's pre-filled title; `null` = closed.
+ * `newMeetingOpen` — the New meeting dialog opened from the palette.
  *
  * Also installs the global `showShortcuts` keydown listener (default `?`)
  * that opens the shortcuts sheet — moved here from `KeyboardShortcuts`
@@ -26,6 +27,7 @@
  *   App shell mounts the dialog and listens here.
  * - `OPEN_NEW_PAGE_DIALOG_EVENT` (window) — opens the New page dialog,
  *   pre-filled with the event detail. Every new-page entry point sends it.
+ * - `OPEN_NEW_MEETING_DIALOG_EVENT` (window) — opens the New meeting dialog.
  * - `CLOSE_ALL_OVERLAYS_EVENT` (window) — Esc-key bridge that closes the
  *   shortcuts sheet. The sheet is Radix-managed and already closes on
  *   Escape *inside* it; this listener is the secondary dismiss path for
@@ -43,6 +45,7 @@ import { BUG_REPORT_EVENT, type BugReportEventDetail } from '@/lib/bug-report-ev
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import {
   CLOSE_ALL_OVERLAYS_EVENT,
+  OPEN_NEW_MEETING_DIALOG_EVENT,
   OPEN_NEW_PAGE_DIALOG_EVENT,
   SHOW_SHORTCUTS_EVENT,
 } from '@/lib/overlay-events'
@@ -65,6 +68,9 @@ export interface UseAppDialogsReturn {
   // New page dialog: the title to pre-fill, `null` while closed
   newPageTitle: string | null
   setNewPageTitle: React.Dispatch<React.SetStateAction<string | null>>
+  // New meeting dialog, linked from the day's journal
+  newMeetingOpen: boolean
+  setNewMeetingOpen: React.Dispatch<React.SetStateAction<boolean>>
 }
 
 export function useAppDialogs(): UseAppDialogsReturn {
@@ -74,6 +80,7 @@ export function useAppDialogs(): UseAppDialogsReturn {
   const [showNoPeersDialog, setShowNoPeersDialog] = useState<boolean>(false)
   const [shortcutsOpen, setShortcutsOpen] = useState<boolean>(false)
   const [newPageTitle, setNewPageTitle] = useState<string | null>(null)
+  const [newMeetingOpen, setNewMeetingOpen] = useState<boolean>(false)
 
   // ── Bug-report event listener ────────────────────────────
   // FeatureErrorBoundary dispatches `BUG_REPORT_EVENT` from its "Report
@@ -136,6 +143,15 @@ export function useAppDialogs(): UseAppDialogsReturn {
     return () => window.removeEventListener(OPEN_NEW_PAGE_DIALOG_EVENT, handleOpenNewPageDialog)
   }, [])
 
+  useEffect(() => {
+    function handleOpenNewMeetingDialog() {
+      setNewMeetingOpen(true)
+    }
+    window.addEventListener(OPEN_NEW_MEETING_DIALOG_EVENT, handleOpenNewMeetingDialog)
+    return () =>
+      window.removeEventListener(OPEN_NEW_MEETING_DIALOG_EVENT, handleOpenNewMeetingDialog)
+  }, [])
+
   // ── Close the shortcuts sheet when "close all overlays" fires ───────
   // The sheet is Radix-managed and already closes when Escape is
   // pressed *inside* it, but if focus has drifted elsewhere the global
@@ -161,5 +177,7 @@ export function useAppDialogs(): UseAppDialogsReturn {
     setShortcutsOpen,
     newPageTitle,
     setNewPageTitle,
+    newMeetingOpen,
+    setNewMeetingOpen,
   }
 }

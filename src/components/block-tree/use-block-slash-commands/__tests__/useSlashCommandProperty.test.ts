@@ -719,6 +719,7 @@ describe('useSlashCommandProperty — table identity', () => {
         'location',
         'attach',
         'voice',
+        'meeting',
       ].toSorted(),
     )
     expect(result.current.prefix.map(([p]) => p)).toEqual([
@@ -728,5 +729,29 @@ describe('useSlashCommandProperty — table identity', () => {
       'repeat-limit-',
       'repeat-',
     ])
+  })
+})
+
+describe('useSlashCommandProperty — /meeting (#5364)', () => {
+  it('opens the meeting dialog for the block', async () => {
+    const { result } = renderHook(() => useSlashCommandProperty())
+    const { ctx } = makeSyntheticCtx()
+    const openMeetingDialog = vi.fn()
+    await result.current.exact['meeting']?.(
+      { ...ctx, openMeetingDialog },
+      { id: 'meeting', label: 'MEETING' },
+    )
+    expect(openMeetingDialog).toHaveBeenCalledWith('BLOCK_1')
+  })
+
+  it('warns in a tree that offers no meeting dialog', async () => {
+    const { result } = renderHook(() => useSlashCommandProperty())
+    const { ctx } = makeSyntheticCtx()
+    await result.current.exact['meeting']?.(ctx, { id: 'meeting', label: 'MEETING' })
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      'useSlashCommandProperty',
+      '/meeting has no dialog to open',
+      { blockId: 'BLOCK_1' },
+    )
   })
 })

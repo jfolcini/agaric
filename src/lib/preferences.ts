@@ -1252,6 +1252,20 @@ const PATH_HISTORY_PREFERENCE: PreferenceDefinition<string[]> = {
   serialize: jsonSerialize<string[]>,
 }
 
+/**
+ * `agaric:meeting-template:<spaceId>` — the template the *New meeting* dialog
+ * last made a meeting from in that space, on this device (#5364). Empty means
+ * none.
+ */
+const MEETING_TEMPLATE_PREFERENCE: PreferenceDefinition<string> = {
+  key: 'agaric:meeting-template',
+  scope: 'space',
+  version: 1,
+  defaultValue: '',
+  parse: (raw) => raw,
+  serialize: (value) => value,
+}
+
 /** The graph's local mode and its hop depth (#5433). */
 export interface LocalGraphPreference {
   active: boolean
@@ -1623,6 +1637,7 @@ export const PREFERENCES = {
   settingsActiveTab: SETTINGS_ACTIVE_TAB_PREFERENCE,
   blockCollapseLegacy: BLOCK_COLLAPSE_LEGACY_PREFERENCE,
   pathHistory: PATH_HISTORY_PREFERENCE,
+  meetingTemplate: MEETING_TEMPLATE_PREFERENCE,
   graphLocal: GRAPH_LOCAL_PREFERENCE,
   recentSearches: RECENT_SEARCHES_PREFERENCE,
   recentCommandsPalette: RECENT_COMMANDS_PALETTE_PREFERENCE,

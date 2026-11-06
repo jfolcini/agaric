@@ -66,6 +66,17 @@ export function openNewPageDialog(initialTitle = ''): void {
 }
 
 /**
+ * Global "open the New meeting dialog" DOM event, sent by the palette's
+ * *New meeting* (#5364). The meeting is linked from that day's journal.
+ * `useAppDialogs` opens the dialog.
+ */
+export const OPEN_NEW_MEETING_DIALOG_EVENT = 'agaric:openNewMeetingDialog'
+
+export function openNewMeetingDialog(): void {
+  window.dispatchEvent(new CustomEvent(OPEN_NEW_MEETING_DIALOG_EVENT))
+}
+
+/**
  * Global "switch the page on screen between blocks and page mode" DOM event:
  * the command palette's entry for `togglePageMode`. The page on screen
  * (`useEditModeShortcut`) listens.
