@@ -36,10 +36,17 @@ import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { unwrap } from '@/lib/app-error'
-import type { AddMeetingInput, BlockRow, MeetingFileInput, OpRef } from '@/lib/bindings'
+import type {
+  AddMeetingInput,
+  BlockRow,
+  MeetingFileInput,
+  MeetingResult,
+  WithOps,
+} from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 import { loadTemplatePages } from '@/lib/template-utils'
 import { useSpaceStore } from '@/stores/space'
@@ -53,7 +60,8 @@ type SummaryMode = 'text' | 'file'
  * The day the meeting defaults to: the journal day the block is on, else
  * today.
  */
-async function defaultMeetingDate(blockId: string): Promise<string> {
+async function defaultMeetingDate(blockId: string | undefined): Promise<string> {
+  if (blockId === undefined) return format(new Date(), 'yyyy-MM-dd')
   const block = unwrap(await commands.getBlock(blockId))
   const pageId = block.page_id ?? block.id
   const page = pageId === block.id ? block : unwrap(await commands.getBlock(pageId))
@@ -67,11 +75,11 @@ async function fileInput(file: File | null): Promise<MeetingFileInput | null> {
 }
 
 export interface MeetingDialogProps {
-  /** The block the meeting is linked from. */
-  linkBlockId: string
+  /** The block the meeting is linked from; without one, its day's journal. */
+  linkBlockId?: string
   onClose: () => void
-  /** Called once the meeting exists, so the link's block reloads. */
-  onCreated: () => void
+  /** Called once the meeting exists, and again after its Undo, so the link's page reloads. */
+  onCreated: (created: MeetingResult) => void
 }
 
 export function MeetingDialog({
@@ -106,7 +114,11 @@ export function MeetingDialog({
     )
     loadTemplatePages(spaceId).then(
       (pages) => {
-        if (live) setTemplates(pages)
+        if (!live) return
+        setTemplates(pages)
+        // The last template made from here, unless it is no longer a template.
+        const last = spaceId === null ? '' : readPreference(PREFERENCES.meetingTemplate, spaceId)
+        if (pages.some((page) => page.id === last)) setTemplateId(last)
       },
       (err: unknown) =>
         logger.warn('MeetingDialog', 'could not list the templates', undefined, err),
@@ -116,11 +128,11 @@ export function MeetingDialog({
     }
   }, [linkBlockId, spaceId])
 
-  const undo = async (opRefs: OpRef[]) => {
+  const undo = async (created: WithOps<MeetingResult>) => {
     try {
-      unwrap(await commands.revertOps(opRefs))
+      unwrap(await commands.revertOps(created.op_refs))
       invalidateDerivedCaches()
-      onCreated()
+      onCreated(created)
     } catch (err) {
       reportIpcError('MeetingDialog', 'meeting.undoFailed', err, t)
     }
@@ -135,7 +147,7 @@ export function MeetingDialog({
         title: title.trim(),
         date,
         template_id: templateId === NO_TEMPLATE ? null : templateId,
-        link_block_id: linkBlockId,
+        link_block_id: linkBlockId ?? null,
         audio: await fileInput(audio),
         transcript: await fileInput(transcript),
         summary_text: summaryMode === 'text' && summaryText.trim() !== '' ? summaryText : null,
@@ -145,10 +157,15 @@ export function MeetingDialog({
       // The meeting's page, tag and files reached the backend past every page
       // store, so the name lists and attachment caches drop what they hold.
       invalidateDerivedCaches()
-      onCreated()
+      onCreated(created)
+      writePreference(
+        PREFERENCES.meetingTemplate,
+        templateId === NO_TEMPLATE ? '' : templateId,
+        spaceId,
+      )
       notify.success(
         t('meeting.created', { title: `${input.title || t('meeting.defaultTitle')} ${date}` }),
-        { action: { label: t('action.undo'), onClick: () => void undo(created.op_refs) } },
+        { action: { label: t('action.undo'), onClick: () => void undo(created) } },
       )
       onClose()
     } catch (err) {
