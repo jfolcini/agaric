@@ -726,16 +726,35 @@ async fn a_ref_value_in_a_copy_pastes_as_the_same_target_6277() {
 }
 
 /// An export writes the ref as a link, which an import reads back as the same
-/// target, in the front matter and on the block's line.
+/// target, in the front matter and on the block's line, each naming its own.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_ref_value_in_an_export_imports_as_the_same_target_6277() {
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    let [page, _, target, _] = ref_page(&pool, &mat).await;
+    let [page, block, target, other] = ref_page(&pool, &mat).await;
+    // The block names another page than the front matter, so neither's name
+    // reads back by the other's.
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.as_str().into(),
+        "owner".into(),
+        None,
+        None,
+        None,
+        Some(other.as_str().into()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
     let md = export_page_markdown_inner(&pool, page.as_str())
         .await
         .unwrap();
-    assert!(writes_the_link(&md), "{md}");
+    assert!(md.contains("owner: \"[[Linked Target]]\"\n"), "{md}");
+    assert!(md.contains("\n  owner:: [[Other Target]]\n"), "{md}");
 
     let result = import_markdown_inner(
         &pool,
@@ -762,9 +781,14 @@ async fn a_ref_value_in_an_export_imports_as_the_same_target_6277() {
     .await
     .unwrap();
     assert_eq!(imported.len(), 1, "the page's block");
-    for holder in [&result.page_id, &imported[0]] {
-        assert_eq!(owner(&pool, holder).await.as_deref(), Some(target.as_str()));
-    }
+    assert_eq!(
+        owner(&pool, &result.page_id).await.as_deref(),
+        Some(target.as_str())
+    );
+    assert_eq!(
+        owner(&pool, &imported[0]).await.as_deref(),
+        Some(other.as_str())
+    );
 }
 
 /// A ref to a block that is no page has no title to link, so every surface

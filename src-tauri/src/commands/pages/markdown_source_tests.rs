@@ -758,7 +758,8 @@ fn assert_ref_value_written(data: &PageExportData, case: &str, buffer: &str, exp
 /// matter and `[[Title]]` on a `key::` line, where the name reads back as its
 /// target, and as the raw id where it would not: a title the lower id of two
 /// pages holds, a page of another space, a deleted target, a title holding a
-/// `]`. The export writes every page's title, as it writes page links.
+/// `]`, a title shaped like a block id. The export writes every other page's
+/// title, as it writes page links.
 #[test]
 fn a_ref_value_is_written_as_a_link_where_it_reads_back() {
     let data = ref_value_page(PROJECT, Some("Project"), &[("Project", &[PROJECT])]);
@@ -773,6 +774,9 @@ fn a_ref_value_is_written_as_a_link_where_it_reads_back() {
     assert_ref_value_written(&data, "deleted", PROJECT, PROJECT);
     let data = ref_value_page(C_SHARP, Some("C]"), &[("C]", &[C_SHARP])]);
     assert_ref_value_written(&data, "a bracket", C_SHARP, "[[C]]]");
+    // A title shaped like a block id reads back as that id, not as the page.
+    let data = ref_value_page(PROJECT, Some(ELSEWHERE), &[(ELSEWHERE, &[PROJECT])]);
+    assert_ref_value_written(&data, "a block id title", PROJECT, PROJECT);
 }
 
 // ── shared stored-content vectors (#5160) ───────────────────────────────────

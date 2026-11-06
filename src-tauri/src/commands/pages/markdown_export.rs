@@ -59,9 +59,15 @@ fn frontmatter_row_value<'a>(
 /// [`Names::ReadBack`] only where the link reads back as that page, both as a
 /// ref value is read (`ref_name`, then the link rule in the page's space) and
 /// as one link: so not for a title two pages share and the lower id holds, a
-/// page of another space, or a title holding `]` or a line break.
+/// page of another space, or a title holding `]` or a line break. Under
+/// either policy, not for a title shaped like a block id, which reads back as
+/// that id.
 fn ref_link<'a>(data: &'a PageExportData, names: Names, id: &str) -> Option<&'a str> {
     let title = data.ref_titles.get(id)?;
+    let name = title.trim();
+    if BlockId::from_string(name).is_ok_and(|block| block.as_str() == name) {
+        return None;
+    }
     let link = format!("[[{title}]]");
     let reads_back = || {
         HUMAN_PAGE_LINK_RE
