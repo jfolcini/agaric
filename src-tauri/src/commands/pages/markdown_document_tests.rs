@@ -405,7 +405,7 @@ proptest! {
 
     /// With every block addressed, so each carries its `^ID`, a page's export
     /// imported as a `Markdown` file is the page's tree in the export's names:
-    /// a ref and a ref-typed value as titles, and a task with no list style
+    /// a ref as its title, a ref-typed value as a link to it, and a task with no list style
     /// ([`as_document`]).
     #[test]
     fn an_export_with_every_block_anchored_imports_as_its_tree(forest in arb_document_forest()) {
@@ -417,7 +417,7 @@ proptest! {
             .map(|((depth, content, id, mut properties), spec)| {
                 for (key, (value, is_ref)) in &spec.properties {
                     if *is_ref {
-                        properties.insert(key.clone(), data.ref_titles[value].clone());
+                        properties.insert(key.clone(), format!("[[{}]]", data.ref_titles[value]));
                     }
                 }
                 (depth, named_block_text(&content, &data), id, properties)

@@ -27,12 +27,12 @@ A ref-typed property value is now written as a link to its page: `owner: "[[Titl
   - front matter refs not resolved on import;
   - non-page targets titled;
   - ref titles left out of the snapshot.
-- **Waiting for approval:** four existing tests pin the bare title in an export and now fail:
+- **Existing-test edits (approved by the maintainer):** four existing tests pinned the bare title in an export, and now expect `[[Title]]`:
   - `a_property_value_survives_the_export_and_the_agent_read`;
   - `an_export_with_every_block_anchored_imports_as_its_tree`;
   - `export_page_markdown_frontmatter_filters_internal_and_renders_ref_num`;
   - `export_then_import_keeps_a_ref_property_and_the_recurrence_rule`.
-  - The second and fourth also say so in their doc comments.
+  - The first, second and fourth say so in their doc comments too, which now say a link.
 - **Docs:** `editor-and-content.md` (the page and block property rows, the `Names` bullet), `import-export.md`, `agent-access.md`, and the MCP `get_page_markdown` description and its snapshot.
 - **Ran:**
   - `cargo fmt`, `clippy --workspace --all-targets -D warnings`, `just gen-sqlx`.

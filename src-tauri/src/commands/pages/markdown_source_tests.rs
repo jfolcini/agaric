@@ -1149,8 +1149,8 @@ fn the_checkbox_alphabet_vector_is_read_by_the_buffer_and_import() {
 }
 
 proptest! {
-    /// A block property's value reads back from the export, a ref's as its
-    /// title, as an import reads it, and from the buffer an agent reads, a
+    /// A block property's value reads back from the export, a ref's as a link
+    /// to its title, as an import reads it, and from the buffer an agent reads, a
     /// ref's as its id, as a paste reads it: one with a line break or
     /// surrounding spaces is quoted, or its later lines would become blocks of
     /// their own (#6277 A2, E4).
@@ -1173,8 +1173,12 @@ proptest! {
             spec.properties
                 .iter()
                 .map(|(key, (value, is_ref))| {
-                    let value = if *is_ref && named { &data.ref_titles[value] } else { value };
-                    (key.clone(), value.clone())
+                    let value = if *is_ref && named {
+                        format!("[[{}]]", data.ref_titles[value])
+                    } else {
+                        value.clone()
+                    };
+                    (key.clone(), value)
                 })
                 .collect()
         };
