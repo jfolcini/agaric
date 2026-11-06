@@ -49,7 +49,8 @@ interface TemplateItem {
  * hint row beneath the create form so users discover them without reading
  * source comments. `token` is the literal syntax; `descKey` names the i18n
  * description shown in the tooltip. Keep in sync with the `LEGACY_RESOLVERS`
- * token → resolver map in `expandTemplateVariables` (#1450 Phase 1).
+ * token → resolver map in `expandTemplateVariables` (#1450 Phase 1), plus the
+ * `<% recording %>` placeholder, which `insertTemplateBlocks` reads.
  */
 const TEMPLATE_VARIABLES: ReadonlyArray<{ token: string; descKey: string }> = [
   { token: '<% today %>', descKey: 'templates.variableToday' },
@@ -61,6 +62,7 @@ const TEMPLATE_VARIABLES: ReadonlyArray<{ token: string; descKey: string }> = [
   { token: '<% weekday %>', descKey: 'templates.variableWeekday' },
   { token: '<% month %>', descKey: 'templates.variableMonth' },
   { token: '<% isoweek %>', descKey: 'templates.variableIsoweek' },
+  { token: '<% recording %>', descKey: 'templates.variableRecording' },
 ]
 
 export function TemplatesView(): React.ReactElement {

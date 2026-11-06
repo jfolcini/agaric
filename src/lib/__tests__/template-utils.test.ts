@@ -1068,3 +1068,63 @@ describe('template lookups — no active space', () => {
     expect(mockedInvoke).not.toHaveBeenCalled()
   })
 })
+
+describe('insertTemplateBlocks — the `<% recording %>` placeholder (#5364)', () => {
+  it('drops the placeholder and keeps its children in its place', async () => {
+    stubTemplates({
+      load_page_subtree: () => ({
+        blocks: [
+          makeBlockRow({ id: 'TC1', content: '## Agenda', parent_id: 'TMPL', position: 0 }),
+          makeBlockRow({ id: 'P', content: '  <%  Recording %> ', parent_id: 'TMPL', position: 1 }),
+          makeBlockRow({ id: 'C', content: 'Under the placeholder', parent_id: 'P', position: 0 }),
+          makeBlockRow({ id: 'TC3', content: '## Notes', parent_id: 'TMPL', position: 2 }),
+        ],
+        truncated: false,
+        total: 4,
+      }),
+      create_blocks_batch: () =>
+        withOps({
+          blocks: [
+            makeBlockRow({ id: 'NEW1', content: '## Agenda' }),
+            makeBlockRow({ id: 'NEW2', content: 'Under the placeholder' }),
+            makeBlockRow({ id: 'NEW3', content: '## Notes' }),
+          ],
+        }),
+    })
+
+    const ids = await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST')
+
+    expect(ids).toEqual(['NEW1', 'NEW2', 'NEW3'])
+    const batches = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
+    expect(batches).toHaveLength(1)
+    const args = batches[0]?.[1] as
+      | { specs: Array<{ content: string; parentId: string }> }
+      | undefined
+    expect(args?.specs.map((s) => [s.content, s.parentId])).toEqual([
+      ['## Agenda', 'PARENT'],
+      ['Under the placeholder', 'PARENT'],
+      ['## Notes', 'PARENT'],
+    ])
+  })
+
+  it('copies a block that only mentions the placeholder', async () => {
+    stubTemplates({
+      load_page_subtree: () => ({
+        blocks: [
+          makeBlockRow({
+            id: 'TC1',
+            content: 'Play <% recording %> here',
+            parent_id: 'TMPL',
+            position: 0,
+          }),
+        ],
+        truncated: false,
+        total: 1,
+      }),
+      create_blocks_batch: () =>
+        withOps({ blocks: [makeBlockRow({ id: 'NEW1', content: 'Play <% recording %> here' })] }),
+    })
+
+    expect(await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST')).toEqual(['NEW1'])
+  })
+})

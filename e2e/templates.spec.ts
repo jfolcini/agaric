@@ -396,3 +396,38 @@ test.describe('Journal template button @editor @pages', () => {
     expect(nested?.parent_id).toBe(attendees?.id)
   })
 })
+
+test.describe('The recording placeholder @editor @pages', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('/template leaves out a `<% recording %>` block', async ({ page }) => {
+    const scope = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+    await ipc(page, 'create_block', {
+      blockType: 'content',
+      content: '<% recording %>',
+      parentId: '00000000000000000000PAGE06',
+      index: null,
+      scope,
+      blockId: null,
+    })
+
+    await openPage(page, 'Getting Started')
+    await focusBlock(page)
+    const dialog = await openTemplatePicker(page)
+    await dialog.getByText('Meeting Notes Template').click()
+    await expect(page.getByText('Template inserted')).toBeVisible({ timeout: 5000 })
+
+    await navigateToView(page, 'Pages')
+    await openPage(page, 'Getting Started')
+    const { blocks } = await ipc<{ blocks: Array<{ content: string | null }> }>(
+      page,
+      'load_page_subtree',
+      { rootBlockId: '00000000000000000000PAGE01', scope },
+    )
+    const contents = blocks.map((b) => b.content)
+    expect(contents).toContain('## Attendees')
+    expect(contents).not.toContain('<% recording %>')
+  })
+})
