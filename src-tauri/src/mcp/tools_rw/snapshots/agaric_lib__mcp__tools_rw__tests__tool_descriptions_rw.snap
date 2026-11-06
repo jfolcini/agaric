@@ -543,3 +543,41 @@ expression: wire
       - path
     type: object
   name: attach_file
+- description: "Add a meeting in one call, as one undo, as the app's New meeting does: the page `<title> <YYYY-MM-DD>` tagged `#meeting` with the `meeting_date` property, a link to it at the end of that day's journal (created if missing), and a recording block holding the audio, transcript and summary. Every file is optional. A `template` page is copied under the page with its variables read against the meeting's date and title; its block reading `<% recording %>` becomes the recording block, else the recording block opens the page. A `summary_markdown` is written as blocks just above the recording block; a `summary_path` is attached instead. The transcript is stored as `<name>.transcript.md` and an attached summary as `<name>.summary.md`; a transcript has one paragraph per segment, `[hh:mm:ss] **Speaker:** text`. Pass `page` or `block_id` to add the files to an existing meeting instead: a page's recording block is its first block holding a file. Paths are checked as `attach_file` checks them. Returns the page, the recording block, the link block and the attachments."
+  inputSchema:
+    additionalProperties: false
+    properties:
+      audio_path:
+        description: "Absolute path of the recording's audio file."
+        type: string
+      block_id:
+        description: ULID of an existing recording block to add the files to.
+        type: string
+      date:
+        description: "`today` (the default), `yesterday`, or YYYY-MM-DD, on this device's clock. A new meeting only."
+        type: string
+      page:
+        description: "An existing meeting page, by ULID or title, to add the files to."
+        type: string
+      space_id:
+        description: ULID of the space the meeting belongs to.
+        type: string
+      summary_markdown:
+        description: "The summary as Markdown, written as page content. Not with `summary_path`."
+        type: string
+      summary_path:
+        description: "Absolute path of the summary, a Markdown or text file, attached. Not with `summary_markdown`."
+        type: string
+      template:
+        description: "A template page of the space, by ULID or title. A new meeting only."
+        type: string
+      title:
+        description: "The meeting's title before its date; `Meeting` when omitted. A new meeting only."
+        type: string
+      transcript_path:
+        description: "Absolute path of the transcript, a Markdown or text file."
+        type: string
+    required:
+      - space_id
+    type: object
+  name: add_meeting

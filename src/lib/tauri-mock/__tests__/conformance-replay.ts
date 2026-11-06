@@ -449,6 +449,18 @@ export function expandOpArgs(
       }
     }
   }
+  // #5364 — `add_meeting` takes one `input` object: its space and its two
+  // block ids are labels, as the scalar keys are. Mirror of the Rust
+  // runner's `add_meeting` arm.
+  const input = out['input']
+  if (input != null && typeof input === 'object' && !Array.isArray(input)) {
+    const copy = { ...(input as Record<string, unknown>) }
+    for (const key of ['space_id', 'template_id', 'link_block_id']) {
+      if (copy[key] === '$SPACE') copy[key] = CONFORMANCE_SPACE_ID
+      else if (typeof copy[key] === 'string') copy[key] = resolveOpArgId(copy[key], createdIds)
+    }
+    out['input'] = copy
+  }
   // #5057 — a batch command takes the SAME labels as a list, so each entry
   // expands exactly as the scalar keys above do. Mirror of the Rust runner's
   // `block_ids()`; without it the mock is handed raw labels, matches no block,

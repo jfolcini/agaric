@@ -273,6 +273,13 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     attrs: ['block_id', 'filename', 'mime_type', 'size_bytes'],
     lists: [],
   },
+  // #5364 — the meeting's ids; its attachments are observed by a
+  // `list_attachments` step, each row being half stack-local as above.
+  add_meeting: {
+    idKey: 'page_id',
+    attrs: ['recording_block_id', 'link_block_id'],
+    lists: [],
+  },
   // #5071 — the markdown import, driven on the mock only with input its
   // approximation reads as the backend does (`import_markdown_plain.json`).
   // `warnings` stay off: they are prose that may carry `#`.

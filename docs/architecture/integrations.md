@@ -31,7 +31,7 @@ One socket, one marker file (`mcp-enabled`):
 
 `list_spaces` returns `{ id, name, is_default }` for every space the agent may use; it is the discovery surface for the `space_id` every tool but `list_spaces` requires. Wire names live as `TOOL_*` constants in `src-tauri/src/mcp/registry.rs`; the authoritative advertised and dispatched sets are `list_tool_descriptions()` and the `call_tool()` match arms in `tools_ro.rs` / `tools_rw.rs`.
 
-`ReadOnlyTools::new` and `ReadWriteTools::new` take the app data directory, which `spawn_mcp_task` passes from the same `app_paths` seam attachment writes use: `list_attachments` returns each attachment's `fs_path` joined to it, an absolute path the agent reads the file from. `attach_file` reads a file by absolute path and stores it there through `add_attachment_with_bytes_inner`, the app's own attachment write, so the cap, the type allow-list, dedup, undo and sync are the app's.
+`ReadOnlyTools::new` and `ReadWriteTools::new` take the app data directory, which `spawn_mcp_task` passes from the same `app_paths` seam attachment writes use: `list_attachments` returns each attachment's `fs_path` joined to it, an absolute path the agent reads the file from. `attach_file` reads a file by absolute path and stores it there through `add_attachment_with_bytes_inner`, the app's own attachment write, so the cap, the type allow-list, dedup, undo and sync are the app's. `add_meeting` reads its paths the same way and hands the bytes to `add_meeting_inner`, which the app's *New meeting* dialog calls too, so a meeting an agent makes is the app's: one transaction, one undo.
 
 ### `ToolRegistry` trait
 

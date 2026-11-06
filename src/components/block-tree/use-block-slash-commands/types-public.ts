@@ -33,6 +33,8 @@ export interface UseBlockSlashCommandsParams {
   openPropertyDrawer: (blockId: string) => void
   /** Open the voice-note recorder for a block (#5364). */
   openVoiceNoteRecorder: (blockId: string) => void
+  /** Open the *New meeting* dialog, linking the meeting from `blockId` (#5364). */
+  openMeetingDialog?: (blockId: string) => void
 }
 
 export interface UseBlockSlashCommandsReturn {

@@ -314,6 +314,13 @@ jobs:
       - name: Prepare apt (free dpkg lock, bound downloads)
         uses: ./.github/actions/prepare-apt
 
+      - name: Restore apt archives (Tauri system deps)
+        # The shared key main's Rust lanes save for exactly the list below.
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /var/cache/apt/archives/*.deb
+          key: apt-tauri-${{ runner.os }}-v1
+
       - name: Install system dependencies
         # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
         # that cannot serve the index no longer reds this job as a code
@@ -412,6 +419,13 @@ jobs:
 
       - name: Prepare apt (free dpkg lock, bound downloads)
         uses: ./.github/actions/prepare-apt
+
+      - name: Restore apt archives (Tauri system deps)
+        # The shared key main's Rust lanes save for exactly the list below.
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /var/cache/apt/archives/*.deb
+          key: apt-tauri-${{ runner.os }}-v1
 
       - name: Install system dependencies
         # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
@@ -715,6 +729,13 @@ jobs:
       - name: Prepare apt (free dpkg lock, bound downloads)
         uses: ./.github/actions/prepare-apt
 
+      - name: Restore apt archives (Tauri system deps)
+        # The shared key main's Rust lanes save for exactly the list below.
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /var/cache/apt/archives/*.deb
+          key: apt-tauri-${{ runner.os }}-v1
+
       - name: Install system dependencies
         # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
         # that cannot serve the index no longer reds this job as a code
@@ -911,6 +932,13 @@ jobs:
 
       - name: Prepare apt (free dpkg lock, bound downloads)
         uses: ./.github/actions/prepare-apt
+
+      - name: Restore apt archives (Tauri system deps)
+        # The shared key main's Rust lanes save for exactly the list below.
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /var/cache/apt/archives/*.deb
+          key: apt-tauri-${{ runner.os }}-v1
 
       - name: Install system dependencies
         # #4163: see the same step in `bench-slo`.
@@ -1131,6 +1159,13 @@ jobs:
 
       - name: Prepare apt (free dpkg lock, bound downloads)
         uses: ./.github/actions/prepare-apt
+
+      - name: Restore apt archives (Tauri system deps)
+        # The shared key main's Rust lanes save for exactly the list below.
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /var/cache/apt/archives/*.deb
+          key: apt-tauri-${{ runner.os }}-v1
 
       - name: Install system dependencies
         # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
@@ -2313,6 +2348,13 @@ jobs:
 
       - name: Prepare apt (free dpkg lock, bound downloads)
         uses: ./.github/actions/prepare-apt
+
+      - name: Restore apt archives (Tauri system deps)
+        # The shared key main's Rust lanes save for exactly the list below.
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /var/cache/apt/archives/*.deb
+          key: apt-tauri-${{ runner.os }}-v1
 
       - name: Install system dependencies
         # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
