@@ -386,7 +386,8 @@ async fn resolve_link_names(
             && base.is_empty()
         {
             // An anchor-only link (`[[#^blockId]]` / `[[#Heading]]`): the
-            // implicit target page IS the page being imported. On an
+            // implicit target page IS the page being imported. Without one,
+            // `link_global_block_anchors` took those naming a block. On an
             // UNRESOLVED heading the deferred pass restores #1282's "no page
             // target" literal behaviour (`empty_base = true`).
             let deferred = deferred_anchor(anchor, block_anchor_id, true);
