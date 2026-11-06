@@ -45,6 +45,7 @@ import {
   SunMoon,
   Tag as TagIcon,
   Trash2,
+  Users,
   Volume2,
   VolumeX,
 } from 'lucide-react'
@@ -58,6 +59,7 @@ import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import {
+  openNewMeetingDialog,
   openNewPageDialog,
   SHOW_SHORTCUTS_EVENT,
   TOGGLE_PAGE_MODE_EVENT,
@@ -273,6 +275,16 @@ export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
     run: ({ onClose }) => {
       onClose()
       openNewPageDialog()
+    },
+  },
+  {
+    id: 'new-meeting',
+    labelKey: 'palette.cmdNewMeeting',
+    category: 'action',
+    icon: Users,
+    run: ({ onClose }) => {
+      onClose()
+      openNewMeetingDialog()
     },
   },
   {
