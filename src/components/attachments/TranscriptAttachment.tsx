@@ -1,5 +1,15 @@
+import { useVirtualizer } from '@tanstack/react-virtual'
 import type React from 'react'
-import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { RecordingPlayer } from '@/components/attachments/AttachmentAudio'
@@ -14,9 +24,13 @@ import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import type { AttachmentRow } from '@/lib/bindings'
 import { readAttachment } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
+import { scrollParentY } from '@/lib/scroll-parent'
 import { cn } from '@/lib/utils'
+import { useInPageFindStore } from '@/stores/useInPageFindStore'
 
 const unsubscribeNothing = () => {}
+const ESTIMATED_ROW_HEIGHT = 26
+const OVERSCAN = 20
 
 /**
  * Memoized so a `timeupdate` that moves the playhead to the next segment
@@ -28,21 +42,32 @@ const TranscriptRow = memo(
     segment,
     current,
     onSeek,
+    index,
+    offset,
+    measureRef,
   }: {
     segment: TranscriptSegment
     current: boolean
     onSeek: (seconds: number) => void
+    index: number
+    /** Where a windowed row sits in the list; a row in flow has none. */
+    offset?: number
+    measureRef?: (el: Element | null) => void
   }): React.ReactElement => {
     const { t } = useTranslation()
     const { start, label, markdown } = segment
     return (
       <li
+        ref={measureRef}
+        data-index={index}
         data-testid="transcript-segment"
         aria-current={current ? 'true' : undefined}
         className={cn(
-          'flex items-baseline gap-2 rounded-md px-1',
+          'flex items-baseline gap-2 rounded-md px-1 pb-0.5',
+          offset !== undefined && 'absolute top-0 left-0 w-full',
           current && 'bg-accent text-accent-foreground',
         )}
+        style={offset === undefined ? undefined : { transform: `translateY(${offset}px)` }}
       >
         {start !== null && (
           <Button
@@ -164,20 +189,104 @@ export function TranscriptAttachment({
               {renderRichContent(text, { interactive: false })}
             </div>
           ) : (
-            <ol className="m-0 flex list-none flex-col gap-0.5 p-0">
-              {segments.map((segment, row) => (
-                <TranscriptRow
-                  // oxlint-disable-next-line react/no-array-index-key -- a paragraph has no id, and the list is rebuilt only when the text changes
-                  key={row}
-                  segment={segment}
-                  current={row === currentRow}
-                  onSeek={seek}
-                />
-              ))}
-            </ol>
+            <TranscriptRows segments={segments} currentRow={currentRow} onSeek={seek} />
           )}
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * A transcript's rows, windowed against the page's own scroller: a two-hour
+ * meeting has about 1,500, and mounting them all at once lays out for about a
+ * second on a mid-range device (`perf: opening a two-hour transcript`). Every
+ * row mounts while find-in-page is open, because find walks the rendered DOM,
+ * and when no ancestor scrolls, since then nothing can tell which rows show.
+ */
+function TranscriptRows({
+  segments,
+  currentRow,
+  onSeek,
+}: {
+  segments: TranscriptSegment[]
+  currentRow: number
+  onSeek: (seconds: number) => void
+}): React.ReactElement {
+  const findOpen = useInPageFindStore((s) => s.open)
+  const listRef = useRef<HTMLOListElement>(null)
+  // `undefined` until the list has looked for its scroller, so the first
+  // render mounts no rows rather than all of them.
+  const [scroller, setScroller] = useState<HTMLElement | null | undefined>(undefined)
+  const [margin, setMargin] = useState(0)
+  useLayoutEffect(() => {
+    const list = listRef.current
+    if (list === null) return
+    const parent = scrollParentY(list)
+    setScroller(parent)
+    if (parent === null) return
+    const measure = () =>
+      setMargin(
+        Math.round(
+          list.getBoundingClientRect().top - parent.getBoundingClientRect().top + parent.scrollTop,
+        ),
+      )
+    measure()
+    // Anything above the list that changes height moves where its rows start.
+    const observer = new ResizeObserver(measure)
+    observer.observe(parent.firstElementChild ?? parent)
+    return () => observer.disconnect()
+  }, [])
+
+  const windowed = scroller !== null && !findOpen
+  // oxlint-disable-next-line react/incompatible-library -- as in VirtualizedBlockList (#4409): only numbers and the constructor-bound `measureElement` reach the memoised rows.
+  const virtualizer = useVirtualizer({
+    count: segments.length,
+    getScrollElement: () => scroller ?? null,
+    estimateSize: () => ESTIMATED_ROW_HEIGHT,
+    overscan: OVERSCAN,
+    scrollMargin: margin,
+    enabled: windowed && scroller !== undefined,
+  })
+
+  if (!windowed) {
+    return (
+      <ol ref={listRef} className="m-0 flex list-none flex-col p-0">
+        {segments.map((segment, row) => (
+          <TranscriptRow
+            // oxlint-disable-next-line react/no-array-index-key -- a paragraph has no id, and the list is rebuilt only when the text changes
+            key={row}
+            index={row}
+            segment={segment}
+            current={row === currentRow}
+            onSeek={onSeek}
+          />
+        ))}
+      </ol>
+    )
+  }
+  return (
+    <ol
+      ref={listRef}
+      className="relative m-0 list-none p-0"
+      style={{ height: virtualizer.getTotalSize() }}
+    >
+      {scroller !== undefined &&
+        virtualizer.getVirtualItems().map((item) => {
+          const segment = segments[item.index]
+          if (segment === undefined) return null
+          return (
+            <TranscriptRow
+              key={item.index}
+              index={item.index}
+              offset={item.start - margin}
+              measureRef={virtualizer.measureElement}
+              segment={segment}
+              current={item.index === currentRow}
+              onSeek={onSeek}
+            />
+          )
+        })}
+    </ol>
   )
 }
