@@ -29,6 +29,7 @@ mod mcp_agents_tests;
 mod meeting_cmd_tests;
 mod metadata_filter_tests;
 mod name_key_tests;
+mod obsidian_embed_tests;
 mod page_alias_ops_tests;
 mod page_cmd_tests;
 mod page_front_matter_tests;

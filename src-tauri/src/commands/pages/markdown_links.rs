@@ -594,7 +594,8 @@ pub(super) fn rewrite_inbound_tags(content: &str, resolved: &HashMap<String, Str
 /// is missing from the map (deleted / dangling) is NOT left as a raw ULID: it
 /// degrades to a clearly-marked, human-readable `(unresolved block reference)`
 /// literal that survives re-import as plain text (the raw `((ULID))` would come
-/// back as a dangling ref).
+/// back as a dangling ref). A block that is one embed is then written as
+/// Obsidian's ([`as_obsidian_embed`]): `![[Page]]`, `![[Page#^ULID]]`.
 pub(super) fn resolve_ulids_for_export(
     content: &str,
     tag_names: &HashMap<String, String>,
@@ -608,7 +609,7 @@ pub(super) fn resolve_ulids_for_export(
     // cross-page `[[Page#^ULID]]`), falling back to a clearly-marked literal
     // for a dangling target rather than leaking an opaque `((ULID))` that no
     // external tool renders and that the importer would strip on re-import.
-    agaric_store::cache::BLOCK_REF_RE
+    let named = agaric_store::cache::BLOCK_REF_RE
         .replace_all(&result, |caps: &regex::Captures| {
             let ulid = &caps[1];
             block_refs
@@ -616,7 +617,32 @@ pub(super) fn resolve_ulids_for_export(
                 .cloned()
                 .unwrap_or_else(|| "(unresolved block reference)".to_string())
         })
-        .into_owned()
+        .into_owned();
+    if named == content {
+        named
+    } else {
+        as_obsidian_embed(named)
+    }
+}
+
+/// `named`, a block's text with its names written, as Obsidian's embed
+/// `![[target]]` when it is one embed block `{{embed [[target]]}}` that the
+/// embed reader ([`import::rewrite_obsidian_note_embeds`]) reads back as
+/// `named` (#6277 F1); else `named`. An embed among other text, or one whose
+/// target would read as a file, a label or other text, stays as it is.
+pub(super) fn as_obsidian_embed(named: String) -> String {
+    let Some(target) = named
+        .strip_prefix("{{embed [[")
+        .and_then(|rest| rest.strip_suffix("]]}}"))
+    else {
+        return named;
+    };
+    let embed = format!("![[{target}]]");
+    if import::rewrite_obsidian_note_embeds(&embed, import::embed_names_note) == named {
+        embed
+    } else {
+        named
+    }
 }
 
 /// Replace `#[ULID]` with `#tagname` and `[[ULID]]` with `[[Page Title]]`; an
@@ -706,7 +732,8 @@ pub(super) fn tag_reads_back_bare(before: &str, name: &str, after: &str) -> bool
 /// resolution comes from `names` instead of the database, and nothing is
 /// created. A name can be the page's own and still not come back: `[[Foo|Bar]]`
 /// reads as the page `Foo|Bar` when one exists (#5160 D10), and `#v1.2` as the
-/// tag `v1`.
+/// tag `v1`. A block that is one embed whose name reads back is written as
+/// Obsidian's `![[Page]]` ([`as_obsidian_embed`]).
 pub(super) fn humanise_refs_for_source(
     content: &str,
     is_code: bool,
@@ -730,7 +757,15 @@ pub(super) fn humanise_refs_for_source(
     let page_links = names.page_links(collect_inbound_page_link_bodies(blocks));
     let tags = names.tags(collect_inbound_tag_names(blocks));
     let internalised = rewrite_block_content_for_import(&block, &page_links, page_titles, &tags);
-    (internalised == content).then_some(block.content)
+    // A save reads a block's `![[target]]` back as its embed before its names
+    // (`normalize_foreign_forms`), and a code block's as text.
+    (internalised == content).then(|| {
+        if is_code {
+            block.content
+        } else {
+            as_obsidian_embed(block.content)
+        }
+    })
 }
 
 /// The in-space names the importer resolves against, as its snapshots read
