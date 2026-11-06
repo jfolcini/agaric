@@ -320,6 +320,21 @@ describe('convertAndInsert — captured paste target (#2033)', () => {
     expect(editor.state.doc.textContent).toBe('Hello world')
   })
 
+  it('sends a single list item as its block, not inline text', async () => {
+    const { convertAndInsert } = await loadModule()
+    editor = await buildEditor(EMPTY_PARAGRAPH)
+    htmlBodyToOutline.mockReturnValue([{ content: 'item', depth: 0, listMarker: '- ' }])
+
+    await convertAndInsert(editor.view, '<ul><li>item</li></ul>', 'item', null)
+
+    expect(dispatchBlockCommand).toHaveBeenCalledWith('PASTE_BLOCKS', {
+      input: { kind: 'text', text: '- item\n' },
+      targetBlockId: null,
+      splice: { before: '', after: '' },
+      asText: expect.any(String),
+    })
+  })
+
   it('forwards a null targetBlockId (no focused block) unchanged', async () => {
     const { convertAndInsert } = await loadModule()
     editor = await buildEditor(EMPTY_PARAGRAPH)
@@ -750,6 +765,26 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
     expect(dispatchBlockCommand).not.toHaveBeenCalled()
     expect(ed.state.doc.child(0).child(1).child(0).child(0).toJSON().content).toEqual([
       { type: 'text', text: '# Title' },
+      { type: 'hardBreak' },
+      { type: 'text', text: 'Body' },
+    ])
+  })
+
+  it('keeps a list item’s marker in the blocks’ text pasted into a table cell', async () => {
+    const ed = await buildEditor(TABLE_DOC)
+    editor = ed
+    ed.commands.setTextSelection(endOf(ed, 'one'))
+    htmlBodyToOutline.mockReturnValue([
+      { content: 'item', depth: 0, listMarker: '- ' },
+      { content: 'Body', depth: 0 },
+    ])
+
+    expect(paste(ed, '', '<ul><li>item</li></ul><p>Body</p>')).toBe(true)
+    await vi.waitFor(() => expect(ed.state.doc.textContent).toContain('Body'))
+
+    expect(dispatchBlockCommand).not.toHaveBeenCalled()
+    expect(ed.state.doc.child(0).child(1).child(0).child(0).toJSON().content).toEqual([
+      { type: 'text', text: 'one- item' },
       { type: 'hardBreak' },
       { type: 'text', text: 'Body' },
     ])

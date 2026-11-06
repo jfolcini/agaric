@@ -1,6 +1,6 @@
 # Session 3641 — HTML paste sends Document text (#6277 E5)
 
-A list pasted from a browser or Google Docs landed as one block per item holding `- a` / `1. a`, a one-item list inside each block, so Enter, Tab, ordinals and `listStyle` filters did not apply to it.
+A list pasted from a browser landed as one block per item holding `- a` / `1. a`, a one-item list inside each block, so Enter, Tab, ordinals and `listStyle` filters did not apply to it.
 
 - `htmlBodyToOutline` now gives each list item its text alone, with its marker (`listMarker`) and checkbox state (`todoState`) beside it; `outlineToDocument` writes the blocks with `DocumentLayout` and `pushDocumentLines`, as a copy does, and `html-paste.ts` sends that as `{ kind: 'text' }`. The backend reads it as any pasted text: a `<ul>` item is a bulleted block, an `<ol>` item a numbered one, a checkbox item a task, and a heading owns nothing (`nestUnderHeadings` is gone).
 - `PasteInput::Blocks`, `PastedBlock` and `import::pasted_block` are gone, with the mock's `pastedBlock`. `into_blocks` lost its `after_text` flag. Bindings regenerated.
