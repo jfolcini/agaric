@@ -5347,6 +5347,31 @@ async fn add_meeting_makes_the_page_links_the_day_and_attaches_the_files_5364() 
     let _ = template;
 }
 
+/// `date` or `template` alone, not only `title`, makes a new meeting, so each
+/// is refused with `page` or `block_id` too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_meeting_refuses_a_date_or_a_template_alone_with_a_target_5364() {
+    let (tools, mat, pool, space, _vault) = mk_tools().await;
+    let page = mk_page(&pool, &mat, &space, "Old").await;
+    settle(&mat).await;
+
+    for extra in [json!({ "date": "2031-03-14" }), json!({ "template": "T" })] {
+        for target in ["page", "block_id"] {
+            let mut args = json!({ "space_id": space, target: page });
+            args.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            let err = add_meeting(&tools, args).await.unwrap_err();
+            assert!(
+                matches!(&err, AppError::Validation { .. })
+                    && err
+                        .to_string()
+                        .contains("`title`, `date` and `template` make a new meeting"),
+                "{target} with {extra}: got {err:?}"
+            );
+        }
+    }
+}
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn add_meeting_refuses_both_summaries_and_both_targets_5364() {
     let (tools, mat, pool, space, _vault) = mk_tools().await;
