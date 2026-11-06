@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT t.page_id AS \"page_id!: String\"\n                 FROM block_links l\n                 JOIN blocks s ON s.id = l.source_id\n                 JOIN blocks t ON t.id = l.target_id\n                WHERE l.kind = 'block_ref'\n                  AND s.page_id IN (SELECT value FROM json_each(?1))\n                  AND t.deleted_at IS NULL AND t.page_id IS NOT NULL\n               UNION\n               SELECT s.page_id\n                 FROM block_links l\n                 JOIN blocks s ON s.id = l.source_id\n                 JOIN blocks t ON t.id = l.target_id\n                WHERE l.kind = 'block_ref'\n                  AND t.page_id IN (SELECT value FROM json_each(?1))\n                  AND s.deleted_at IS NULL AND s.page_id IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "page_id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "page_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "eefba6b6e1c9cb98e4ab35930614297a5a7de21d8db54c4e7a1053657fb3fc41"
+}

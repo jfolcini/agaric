@@ -716,3 +716,87 @@ async fn a_marker_lost_mid_pass_stops_it_before_any_folder_is_created() {
     assert!(fx.status().await.paused.is_some(), "the mirror is paused");
     assert!(fx.mirror.full_due, "and resumes with a full pass");
 }
+
+/// A block ref is written as `[[Title#^ID]]` (#6277 F2), so it resolves only
+/// while the target's file carries `^ID` and the link names the target's
+/// page: a new ref rewrites the target's page, and the target's page rename
+/// or move rewrites the referring page.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_new_block_ref_anchors_its_target_in_the_next_pass() {
+    let mut fx = Fx::new().await;
+    let (alpha, blocks) = fx.page("Alpha", &["target"]).await;
+    let (_, refs) = fx.page("Beta", &["plain"]).await;
+    fx.tick().await;
+    assert!(
+        !fx.read(ALPHA).unwrap().contains('^'),
+        "{:?}",
+        fx.read(ALPHA)
+    );
+
+    fx.edit(&refs[0], &format!("see (({}))", blocks[0])).await;
+    fx.tick().await;
+
+    assert_eq!(fx.read(ALPHA), Some(fx.render(&alpha).await));
+    assert!(
+        fx.read(ALPHA)
+            .unwrap()
+            .contains(&format!("target ^{}", blocks[0])),
+        "{:?}",
+        fx.read(ALPHA)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_rename_rewrites_the_pages_referring_to_its_blocks() {
+    let mut fx = Fx::new().await;
+    let (alpha, blocks) = fx.page("Alpha", &["target"]).await;
+    let (beta, _) = fx.page("Beta", &[&format!("see (({}))", blocks[0])]).await;
+    fx.tick().await;
+    let before = format!("[[Alpha#^{}]]", blocks[0]);
+    assert!(
+        fx.read(BETA).unwrap().contains(&before),
+        "{:?}",
+        fx.read(BETA)
+    );
+
+    fx.edit(&alpha, "Gamma").await;
+    fx.tick().await;
+
+    assert_eq!(fx.read(BETA), Some(fx.render(&beta).await));
+    let after = format!("[[Gamma#^{}]]", blocks[0]);
+    assert!(
+        fx.read(BETA).unwrap().contains(&after),
+        "{:?}",
+        fx.read(BETA)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_moved_block_rewrites_the_pages_referring_to_it() {
+    let mut fx = Fx::new().await;
+    let (_, blocks) = fx.page("Alpha", &["target"]).await;
+    let (gamma, _) = fx.page("Gamma", &["there"]).await;
+    let (beta, _) = fx.page("Beta", &[&format!("see (({}))", blocks[0])]).await;
+    fx.tick().await;
+
+    let to = Some(BlockId::from_trusted(&gamma));
+    move_block_inner(
+        &fx.pool,
+        DEV,
+        &fx.mat,
+        BlockId::from_trusted(&blocks[0]),
+        to,
+        0,
+    )
+    .await
+    .unwrap();
+    fx.tick().await;
+
+    assert_eq!(fx.read(BETA), Some(fx.render(&beta).await));
+    let after = format!("[[Gamma#^{}]]", blocks[0]);
+    assert!(
+        fx.read(BETA).unwrap().contains(&after),
+        "{:?}",
+        fx.read(BETA)
+    );
+}
