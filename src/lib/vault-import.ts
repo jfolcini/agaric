@@ -361,8 +361,11 @@ export interface ImportUnit {
   }>
 }
 
-/** `[[Name` — the name a wiki-link opens with, before any `#anchor` or `|label`. */
-const WIKILINK_NAME_RE = /\[\[([^\]|#\n]+)/g
+/**
+ * `[[Name` — the name a wiki-link opens with, before any `#anchor` or `|label`,
+ * or the `\|` a table cell writes for one, as the backend reads it.
+ */
+const WIKILINK_NAME_RE = /\[\[((?:[^\]|#\n\\]|\\(?!\|))+)/g
 
 /**
  * The paths of the notes in `notesByName` (keyed by lowercased file stem) that
