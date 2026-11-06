@@ -280,6 +280,24 @@ mod tests {
         assert_eq!(multi, "k: |\n  line one\n  ---\n  tail: end\n");
     }
 
+    /// #6277 F3 — a ref value's link is quoted, or YAML reads `[[Title]]` as
+    /// a nested flow sequence, and a raw id is written bare; the front matter
+    /// reader gives each back as written.
+    #[test]
+    fn a_ref_value_is_a_quoted_link_or_a_bare_id() {
+        for (value, line) in [
+            ("[[Linked Target]]", "owner: \"[[Linked Target]]\"\n"),
+            (
+                "01J00000000000000000PAGEP1",
+                "owner: 01J00000000000000000PAGEP1\n",
+            ),
+        ] {
+            assert_eq!(yaml_scalar_emit("owner", value), line);
+            let read = agaric_engine::import::parse_markdown_file(&format!("---\n{line}---\n"));
+            assert_eq!(read.frontmatter, [("owner".to_string(), value.to_string())]);
+        }
+    }
+
     /// #1920 — `yaml_flow_sequence` joins quoted/bare items with `, ` inside
     /// `[...]`.
     #[test]

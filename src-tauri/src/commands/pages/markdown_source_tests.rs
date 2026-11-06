@@ -800,6 +800,74 @@ fn a_name_inside_code_stays_raw() {
     );
 }
 
+/// A one-block page whose front matter and block both hold `owner`, a ref to
+/// `target` titled `title` (none: no live page), with `pages` as what the
+/// importer resolves against.
+fn ref_value_page(target: &str, title: Option<&str>, pages: &[(&str, &[&str])]) -> PageExportData {
+    let mut data = data_with_names("a", pages, &[]);
+    data.properties = vec![ref_property("owner", target)];
+    data.descendant_properties
+        .insert(BLOCK.into(), vec![ref_property("owner", target)]);
+    if let Some(title) = title {
+        data.ref_titles.insert(target.into(), title.into());
+    }
+    data
+}
+
+/// `ref_value_page`'s value as each surface writes it: `buffer` in the
+/// buffer, the file and a copy, `export` in the export, in front matter and
+/// on the block's line.
+fn assert_ref_value_written(data: &PageExportData, case: &str, buffer: &str, export: &str) {
+    // The buffer anchors every block, the file and the export only an
+    // addressed one, and the export follows its front matter with the title.
+    let written = |value: &str, anchor: &str, title: &str| {
+        let front = if value.starts_with("[[") {
+            format!("\"{value}\"")
+        } else {
+            value.to_string()
+        };
+        format!("---\nowner: {front}\n---\n\n{title}a{anchor}\n  owner:: {value}\n")
+    };
+    let anchor = format!(" ^{BLOCK}");
+    let document = render_page_document(data).0;
+    assert_eq!(document, written(buffer, &anchor, ""), "{case}: the buffer");
+    let file = render_page_file(data).text;
+    assert_eq!(file, written(buffer, "", ""), "{case}: the file");
+    let copy = render_clipboard_source(data, &[BLOCK.into()], true);
+    assert_eq!(copy, format!("a\n  owner:: {buffer}\n"), "{case}: a copy");
+    let export_md = render_page_markdown(PAGE, data);
+    assert_eq!(
+        export_md,
+        written(export, "", "# Title\n\n"),
+        "{case}: the export"
+    );
+}
+
+/// #6277 F3 — a ref-typed value is written as a link, `"[[Title]]"` in front
+/// matter and `[[Title]]` on a `key::` line, where the name reads back as its
+/// target, and as the raw id where it would not: a title the lower id of two
+/// pages holds, a page of another space, a deleted target, a title holding a
+/// `]`, a title shaped like a block id. The export writes every other page's
+/// title, as it writes page links.
+#[test]
+fn a_ref_value_is_written_as_a_link_where_it_reads_back() {
+    let data = ref_value_page(PROJECT, Some("Project"), &[("Project", &[PROJECT])]);
+    assert_ref_value_written(&data, "reads back", "[[Project]]", "[[Project]]");
+    let twins: &[(&str, &[&str])] = &[("Project", &[PROJECT, OTHER_PROJECT])];
+    let data = ref_value_page(OTHER_PROJECT, Some("Project"), twins);
+    assert_ref_value_written(&data, "a shared title", OTHER_PROJECT, "[[Project]]");
+    let here: &[(&str, &[&str])] = &[("Elsewhere", &[IN_SPACE_ELSEWHERE])];
+    let data = ref_value_page(ELSEWHERE, Some("Elsewhere"), here);
+    assert_ref_value_written(&data, "another space", ELSEWHERE, "[[Elsewhere]]");
+    let data = ref_value_page(PROJECT, None, &[]);
+    assert_ref_value_written(&data, "deleted", PROJECT, PROJECT);
+    let data = ref_value_page(C_SHARP, Some("C]"), &[("C]", &[C_SHARP])]);
+    assert_ref_value_written(&data, "a bracket", C_SHARP, "[[C]]]");
+    // A title shaped like a block id reads back as that id, not as the page.
+    let data = ref_value_page(PROJECT, Some(ELSEWHERE), &[(ELSEWHERE, &[PROJECT])]);
+    assert_ref_value_written(&data, "a block id title", PROJECT, PROJECT);
+}
+
 // ── shared stored-content vectors (#5160) ───────────────────────────────────
 
 /// `conformance/block-content.vectors.json`: stored block content and the
@@ -1081,8 +1149,8 @@ fn the_checkbox_alphabet_vector_is_read_by_the_buffer_and_import() {
 }
 
 proptest! {
-    /// A block property's value reads back from the export, a ref's as its
-    /// title, as an import reads it, and from the buffer an agent reads, a
+    /// A block property's value reads back from the export, a ref's as a link
+    /// to its title, as an import reads it, and from the buffer an agent reads, a
     /// ref's as its id, as a paste reads it: one with a line break or
     /// surrounding spaces is quoted, or its later lines would become blocks of
     /// their own (#6277 A2, E4).
@@ -1105,8 +1173,12 @@ proptest! {
             spec.properties
                 .iter()
                 .map(|(key, (value, is_ref))| {
-                    let value = if *is_ref && named { &data.ref_titles[value] } else { value };
-                    (key.clone(), value.clone())
+                    let value = if *is_ref && named {
+                        format!("[[{}]]", data.ref_titles[value])
+                    } else {
+                        value.clone()
+                    };
+                    (key.clone(), value)
                 })
                 .collect()
         };
