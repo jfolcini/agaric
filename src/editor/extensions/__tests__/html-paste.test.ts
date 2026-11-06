@@ -63,7 +63,8 @@ vi.mock('@/editor/inline-turndown', () => ({
   createInlineTurndown: () => ({ inline: (el: Element) => el.textContent ?? '' }),
 }))
 
-vi.mock('@/editor/html-to-blocks', () => ({
+vi.mock('@/editor/html-to-blocks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/editor/html-to-blocks')>()),
   htmlBodyToOutline: (...args: unknown[]) => htmlBodyToOutline(...args),
 }))
 
@@ -303,14 +304,14 @@ describe('convertAndInsert — captured paste target (#2033)', () => {
     // A multi-line block and a nested one → routes through the block-paste path.
     const blocks = [
       { content: '```js\nconst a = 1\n```', depth: 0 },
-      { content: '- two', depth: 1 },
+      { content: 'two', depth: 1, listMarker: '- ' },
     ]
     htmlBodyToOutline.mockReturnValue(blocks)
 
     await convertAndInsert(editor.view, '<p>one</p><p>two</p>', 'one\ntwo', 'BLOCK_A')
 
     expect(dispatchBlockCommand).toHaveBeenCalledWith('PASTE_BLOCKS', {
-      input: { kind: 'blocks', blocks },
+      input: { kind: 'text', text: '```js\nconst a = 1\n```\n\n  - two\n' },
       targetBlockId: 'BLOCK_A',
       splice: { before: 'Hello ', after: 'world' },
       asText: expect.any(String),
@@ -332,7 +333,7 @@ describe('convertAndInsert — captured paste target (#2033)', () => {
     await convertAndInsert(editor.view, '<p>one</p><p>two</p>', 'one\ntwo', null)
 
     expect(dispatchBlockCommand).toHaveBeenCalledWith('PASTE_BLOCKS', {
-      input: { kind: 'blocks', blocks },
+      input: { kind: 'text', text: 'one\n\ntwo\n' },
       targetBlockId: null,
       splice: { before: '', after: '' },
       asText: expect.any(String),

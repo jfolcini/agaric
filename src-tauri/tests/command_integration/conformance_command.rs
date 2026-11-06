@@ -1237,7 +1237,7 @@ pub(super) async fn apply_op_via_command(
         "revoke_mcp_agent" => to_json(
             agaric_lib::commands::mcp_agents::revoke_mcp_agent_inner(pool, req_str("id")).await,
         ),
-        // `input` and `splice` are the caller's own text or blocks, so they
+        // `input` and `splice` are the caller's own text, so they
         // take no label expansion; only the anchor is a label. `splice` came
         // after the first fixture's steps, so it is `None` when absent.
         "paste_blocks" => to_json(
