@@ -7057,6 +7057,44 @@ async fn edit_as_markdown_keeps_an_escaped_pipe_link_in_a_table_cell() {
     mat.shutdown();
 }
 
+/// Outside a table the editor reads only a bare pipe in `[[ULID|label]]`, so
+/// an escaped-pipe link there is stored with its pipe unescaped.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_unescapes_an_escaped_pipe_link_outside_a_table() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+    let note = import_file(&pool, &mat, dir.path(), "Note.md", "body\n").await;
+
+    let para = import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Para.md",
+        "see [[Note\\|alias]] and [[Para#G\\|gone]]\n",
+    )
+    .await;
+
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND parent_id = ? \
+         AND deleted_at IS NULL",
+    )
+    .bind(&para.page_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        content,
+        format!(
+            "see [[{}|alias]] and [[{}|gone]]",
+            note.page_id, para.page_id
+        )
+    );
+    mat.shutdown();
+}
+
 /// #5160 D9 — a `#tag` in a Logseq `[label]([[Page]])` label lands inside the
 /// stored `[[ULID|label]]`, where it stays text, so the import mints no tag for
 /// it; a `#tag` outside the link is still one.

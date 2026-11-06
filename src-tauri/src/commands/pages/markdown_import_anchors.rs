@@ -248,6 +248,8 @@ fn rewrite_anchor_tokens(
             let label = label.as_deref();
             let page_link = || {
                 escape_pipes_as(
+                    current_content,
+                    m.start(),
                     &caps[1],
                     &stored_page_link(page_id, label, Some(page_title)),
                 )
@@ -473,7 +475,12 @@ pub(super) fn link_deferred_links(
                 return format!("(({block}))");
             }
             outcomes.dropped_anchors += 1;
-            escape_pipes_as(m.as_str(), &stored_page_link(&caps[1], label, None))
+            escape_pipes_as(
+                content,
+                m.start(),
+                m.as_str(),
+                &stored_page_link(&caps[1], label, None),
+            )
         })
         .into_owned()
 }

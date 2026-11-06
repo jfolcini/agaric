@@ -400,7 +400,7 @@ pub(super) fn rewrite_inbound_page_links(
                 return whole.to_string();
             }
             match internal_ref_for(&caps[1], links, titles) {
-                Some(stored) => escape_pipes_as(&caps[1], &stored),
+                Some(stored) => escape_pipes_as(&content, m.start(), &caps[1], &stored),
                 None => whole.to_string(),
             }
         })
@@ -446,11 +446,13 @@ pub(super) fn is_internal_page_link(whole: &str) -> bool {
     agaric_store::cache::PAGE_LINK_RE.is_match(&unescape_link_pipes(whole))
 }
 
-/// `stored`, the ref written for the link body `body`, with every pipe escaped
-/// when `body` escaped one: the link sits in a table cell, where the editor's
-/// table writer escapes them all and a bare `|` would split the cell.
-pub(super) fn escape_pipes_as(body: &str, stored: &str) -> String {
-    if body.contains("\\|") {
+/// `stored`, the ref written for the link body `body` at byte `at` of
+/// `content`, with every pipe escaped when `body` escaped one in a table row:
+/// there the editor's table writer escapes them all and a bare `|` would split
+/// the cell, while elsewhere the editor reads `[[ULID\|label]]` as no link.
+pub(super) fn escape_pipes_as(content: &str, at: usize, body: &str, stored: &str) -> String {
+    let line = &content[content[..at].rfind('\n').map_or(0, |nl| nl + 1)..];
+    if body.contains("\\|") && line.starts_with('|') {
         stored.replace('|', "\\|")
     } else {
         stored.to_string()
