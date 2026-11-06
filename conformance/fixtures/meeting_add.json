@@ -1,0 +1,650 @@
+{
+  "description": "#5364 — `add_meeting`, the app's *New meeting*: one transaction that makes the meeting page `<Title> <YYYY-MM-DD>` tagged `#meeting` with `meeting_date`, copies the chosen template with its variables read against the meeting, places the recording block at the template's `<% recording %>` block or at the top, writes a text summary just above it, attaches the audio and the transcript (`<name>.transcript.md`) to it, and links the page from the block `/meeting` ran in or from the end of the day's journal. The refusals write nothing. The mock's twin copies template content only and writes a text summary as one block, so the summary here is one line. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [
+      {
+        "block_id": "B7",
+        "tag_id": "B8"
+      },
+      {
+        "block_id": "B12",
+        "tag_id": "B8"
+      }
+    ],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Meeting template",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Attendees of <% page title %>",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "<% recording %>",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Notes",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Standup [[C7]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B5",
+        "parent_id": "B5",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Sync 2031-03-14",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B7",
+        "parent_id": null,
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "meeting",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B8",
+        "parent_id": null,
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Attendees of Sync 2031-03-14",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B7",
+        "parent_id": "B7",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B10",
+        "page_id": "B7",
+        "parent_id": "B7",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Recap.",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B11",
+        "page_id": "B7",
+        "parent_id": "B7",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Meeting 2031-03-14",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B12",
+        "page_id": "B12",
+        "parent_id": null,
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B13",
+        "page_id": "B12",
+        "parent_id": "B12",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "2031-03-14",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B14",
+        "page_id": "B14",
+        "parent_id": null,
+        "position": 7,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "[[C12]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B15",
+        "page_id": "B14",
+        "parent_id": "B14",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 36,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "template",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "meeting_date",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "add_attachment"
+        },
+        {
+          "op_type": "add_attachment"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "meeting_date",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        }
+      ]
+    },
+    "page_links": [
+      {
+        "kind": "page_link",
+        "source_id": "B6",
+        "source_page_id": "B5",
+        "target_id": "B7"
+      },
+      {
+        "kind": "page_link",
+        "source_id": "B15",
+        "source_page_id": "B14",
+        "target_id": "B12"
+      }
+    ],
+    "properties": [
+      {
+        "block_id": "B1",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B2",
+        "key": "template",
+        "value": "true",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B7",
+        "key": "meeting_date",
+        "value": "2031-03-14",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B12",
+        "key": "meeting_date",
+        "value": "2031-03-14",
+        "value_type": "Date"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_space",
+      "returns": ["create_space#space_id=B1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_template_page",
+      "returns": ["create_page_in_space#page_id=B2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_notes_page",
+      "returns": ["create_page_in_space#page_id=B5"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_meeting_from_a_block",
+      "returns": ["B7#recording_block_id=B10#link_block_id=B6"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_taken_title_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_page_that_is_no_template_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "both_summaries_are_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "audio_that_is_not_audio_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_meeting_from_the_palette",
+      "returns": ["B12#recording_block_id=B13#link_block_id=B15"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "the_recording_blocks_files",
+      "rows": [
+        "A1#block_id=B10#filename=call.ogg#mime_type=audio/ogg#size_bytes=4",
+        "A2#block_id=B10#filename=call.transcript.md#mime_type=text/markdown#size_bytes=10"
+      ],
+      "total_count": null
+    }
+  ],
+  "name": "meeting_add",
+  "ops": [
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Work"
+      },
+      "command": "create_space",
+      "comment": "The space the meeting is made in, `C1`.",
+      "name": "a_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "Meeting template",
+        "parentId": null,
+        "spaceId": "C1"
+      },
+      "command": "create_page_in_space",
+      "comment": "The template page, `C2`.",
+      "name": "the_template_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C2",
+        "key": "template",
+        "value": {
+          "value_text": "true"
+        }
+      },
+      "command": "set_property",
+      "comment": "What makes `C2` a template page."
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "Attendees of <% page title %>",
+        "index": 0,
+        "parentId": "C2",
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "create_block",
+      "comment": "`C3`: the title variable reads the meeting's title, not the day."
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "<% recording %>",
+        "index": 1,
+        "parentId": "C2",
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "create_block",
+      "comment": "`C4`: the placeholder the recording block takes the place of."
+    },
+    {
+      "args": {
+        "content": "Notes",
+        "parentId": null,
+        "spaceId": "C1"
+      },
+      "command": "create_page_in_space",
+      "comment": "`C5`, the page the meeting is linked from.",
+      "name": "the_notes_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "Standup",
+        "index": 0,
+        "parentId": "C5",
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "create_block",
+      "comment": "`C6`: `/meeting` ran in this block, so the link lands at its end."
+    },
+    {
+      "args": {
+        "input": {
+          "audio": {
+            "bytes": [79, 103, 103, 83],
+            "filename": "call.ogg"
+          },
+          "date": "2031-03-14",
+          "link_block_id": "C6",
+          "space_id": "C1",
+          "summary_text": "Recap.",
+          "template_id": "C2",
+          "title": " Sync ",
+          "transcript": {
+            "bytes": [91, 48, 48, 58, 48, 49, 93, 32, 72, 105],
+            "filename": "call.md"
+          }
+        }
+      },
+      "command": "add_meeting",
+      "comment": "The page `Sync 2031-03-14` with `#meeting` (a new tag) and `meeting_date`, the template copied with its title expanded, the summary just above the placeholder that became the recording block, the audio and `call.transcript.md` on it, and `[[page]]` at the end of `C6`.",
+      "name": "a_meeting_from_a_block",
+      "via": "command"
+    },
+    {
+      "args": {
+        "input": {
+          "date": "2031-03-14",
+          "space_id": "C1",
+          "title": "Sync"
+        }
+      },
+      "command": "add_meeting",
+      "comment": "The title is taken in the space, so nothing is written.",
+      "expect_error": "validation",
+      "name": "a_taken_title_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "input": {
+          "date": "2031-03-14",
+          "space_id": "C1",
+          "template_id": "C5",
+          "title": "Other"
+        }
+      },
+      "command": "add_meeting",
+      "comment": "`C5` is not flagged `template`.",
+      "expect_error": "validation",
+      "name": "a_page_that_is_no_template_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "input": {
+          "date": "2031-03-14",
+          "space_id": "C1",
+          "summary_file": {
+            "bytes": [120],
+            "filename": "s.md"
+          },
+          "summary_text": "x",
+          "title": "Other"
+        }
+      },
+      "command": "add_meeting",
+      "comment": "A summary is text or a file.",
+      "expect_error": "validation",
+      "name": "both_summaries_are_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "input": {
+          "audio": {
+            "bytes": [37],
+            "filename": "slides.pdf"
+          },
+          "date": "2031-03-14",
+          "space_id": "C1",
+          "title": "Other"
+        }
+      },
+      "command": "add_meeting",
+      "comment": "Refused before a byte is written.",
+      "expect_error": "validation",
+      "name": "audio_that_is_not_audio_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "input": {
+          "date": "2031-03-14",
+          "space_id": "C1",
+          "title": ""
+        }
+      },
+      "command": "add_meeting",
+      "comment": "No link block: the day's journal is created and gets the link as its last block. A blank title is `Meeting`, the tag already exists, and with no template the recording block opens the page.",
+      "name": "a_meeting_from_the_palette",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockId": "C10"
+      },
+      "command": "list_attachments",
+      "comment": "The recording block holds the audio and the transcript under its suffix, the files the add_meeting return cannot pin.",
+      "name": "the_recording_blocks_files"
+    }
+  ],
+  "seed": {
+    "blocks": [],
+    "properties": [],
+    "tags": []
+  }
+}

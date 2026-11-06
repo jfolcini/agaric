@@ -11,7 +11,7 @@ use agaric_core::ulid::BlockId;
 use agaric_engine::block_ops::{create_block_in_tx, set_property_in_tx};
 use agaric_store::pagination::BlockRow;
 use chrono::NaiveDate;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tracing::instrument;
 
@@ -83,7 +83,7 @@ pub struct AddMeetingRequest {
 }
 
 /// What [`add_meeting_inner`] wrote.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct MeetingResult {
     pub page_id: BlockId,
     pub recording_block_id: BlockId,
@@ -91,6 +91,101 @@ pub struct MeetingResult {
     pub link_block_id: Option<BlockId>,
     /// The audio, then the transcript, then the summary, those given.
     pub attachments: Vec<AttachmentRow>,
+}
+
+/// One file of [`AddMeetingInput`].
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+pub struct MeetingFileInput {
+    pub filename: String,
+    pub bytes: Vec<u8>,
+}
+
+/// The app's *New meeting* (#5364): a new meeting page, linked from
+/// `link_block_id` or, without one, from the day's journal. Every file is
+/// optional; `summary_text` and `summary_file` are one or the other.
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+pub struct AddMeetingInput {
+    pub space_id: String,
+    #[serde(default)]
+    pub title: String,
+    /// `YYYY-MM-DD`.
+    pub date: String,
+    #[serde(default)]
+    pub template_id: Option<BlockId>,
+    #[serde(default)]
+    pub link_block_id: Option<BlockId>,
+    #[serde(default)]
+    pub audio: Option<MeetingFileInput>,
+    #[serde(default)]
+    pub transcript: Option<MeetingFileInput>,
+    #[serde(default)]
+    pub summary_text: Option<String>,
+    #[serde(default)]
+    pub summary_file: Option<MeetingFileInput>,
+}
+
+impl AddMeetingInput {
+    /// The [`AddMeetingRequest`] this asks for, refused when the date is not
+    /// `YYYY-MM-DD` or both summaries are given.
+    pub fn into_request(self) -> Result<AddMeetingRequest, AppError> {
+        let date = NaiveDate::parse_from_str(&self.date, "%Y-%m-%d").map_err(|_| {
+            AppError::validation(format!("expected YYYY-MM-DD, got '{}'", self.date))
+        })?;
+        let file = |input: MeetingFileInput| MeetingFile {
+            filename: input.filename,
+            bytes: input.bytes,
+        };
+        let summary = match (self.summary_text, self.summary_file) {
+            (Some(_), Some(_)) => {
+                return Err(AppError::validation(
+                    "a summary is text or a file, not both".into(),
+                ));
+            }
+            (Some(text), None) => Some(MeetingSummary::Text(text)),
+            (None, Some(input)) => Some(MeetingSummary::File(file(input))),
+            (None, None) => None,
+        };
+        let link = match self.link_block_id {
+            Some(block_id) => MeetingLink::Block(block_id),
+            None => MeetingLink::Journal(date),
+        };
+        Ok(AddMeetingRequest {
+            space_id: self.space_id,
+            target: MeetingTarget::New {
+                title: self.title,
+                date,
+                template_id: self.template_id,
+                link,
+            },
+            audio: self.audio.map(file),
+            transcript: self.transcript.map(file),
+            summary,
+        })
+    }
+}
+
+/// Tauri command: the app's *New meeting* (#5364). Delegates to
+/// [`add_meeting_inner`], and returns the ops it wrote so one Undo reverts
+/// the whole meeting.
+#[tauri::command]
+#[specta::specta]
+pub async fn add_meeting(
+    app: tauri::AppHandle,
+    ctx: tauri::State<'_, crate::db::WriteCtx>,
+    input: AddMeetingInput,
+) -> Result<super::WithOps<MeetingResult>, AppError> {
+    // #3334 — the same `app_paths` seam the attachment writes use.
+    let app_data_dir = crate::app_paths::resolve_app_data_dir(&app).map_err(AppError::Io)?;
+    let req = input.into_request()?;
+    super::capture_op_refs(add_meeting_inner(
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
+        &app_data_dir,
+        req,
+    ))
+    .await
+    .map_err(super::sanitize_internal_error)
 }
 
 /// The kind of file a meeting holds.
@@ -735,6 +830,39 @@ mod tests {
             "call.summary.transcript.md"
         );
         assert_eq!(role_filename(" call.ogg ", Role::Audio), "call.ogg");
+    }
+
+    fn input(date: &str, link_block_id: Option<&str>) -> AddMeetingInput {
+        AddMeetingInput {
+            space_id: "S".into(),
+            title: "Sync".into(),
+            date: date.into(),
+            template_id: None,
+            link_block_id: link_block_id.map(BlockId::from_trusted),
+            audio: None,
+            transcript: None,
+            summary_text: None,
+            summary_file: None,
+        }
+    }
+
+    #[test]
+    fn new_meeting_input_links_the_block_else_the_day_and_refuses_a_bad_date_5364() {
+        let link = |req: AddMeetingRequest| match req.target {
+            MeetingTarget::New { link, .. } => link,
+            other => panic!("a new meeting, got {other:?}"),
+        };
+        let block = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        assert!(matches!(
+            link(input("2031-03-14", Some(block)).into_request().unwrap()),
+            MeetingLink::Block(id) if id.as_str() == block
+        ));
+        assert!(matches!(
+            link(input("2031-03-14", None).into_request().unwrap()),
+            MeetingLink::Journal(day) if day == NaiveDate::from_ymd_opt(2031, 3, 14).unwrap()
+        ));
+        let err = input("14/03/2031", None).into_request().unwrap_err();
+        assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
     }
 
     #[test]

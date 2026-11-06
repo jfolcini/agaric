@@ -278,6 +278,7 @@ macro_rules! agaric_commands {
             $crate::commands::pages::import_bibliography,
             // Attachments (F-7)
             $crate::commands::attachments::add_attachment_with_bytes,
+            $crate::commands::meeting_attachments::add_meeting,
             // NOTE: `read_attachment` is intentionally ABSENT here. It returns a
             // raw-byte `tauri::ipc::Response` (zero JSON encoding, #2654), which
             // does not implement `specta::Type`, so it cannot be a tauri-specta
