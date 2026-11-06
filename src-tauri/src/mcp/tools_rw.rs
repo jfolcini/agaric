@@ -436,17 +436,6 @@ pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
     descriptions
 }
 
-impl ReadWriteTools {
-    fn file_tools(&self) -> FileTools {
-        FileTools {
-            pool: self.pool.clone(),
-            materializer: self.materializer.clone(),
-            device_id: self.device_id.clone(),
-            app_data_dir: self.app_data_dir.clone(),
-        }
-    }
-}
-
 impl ToolRegistry for ReadWriteTools {
     fn list_tools(&self) -> Vec<ToolDescription> {
         list_tool_descriptions()
@@ -466,7 +455,7 @@ impl ToolRegistry for ReadWriteTools {
         let materializer = self.materializer.clone();
         let device_id = self.device_id.clone();
         let emitter = self.view_emitter.clone();
-        let files = self.file_tools();
+        let dir = self.app_data_dir.clone();
         scoped_dispatch(ctx, name, move |name| async move {
             let emitter: &dyn ViewChangeEmitter = emitter.as_ref();
             match name.as_str() {
@@ -522,7 +511,9 @@ impl ToolRegistry for ReadWriteTools {
                 TOOL_SET_PAGE_ALIASES => {
                     handle_set_page_aliases(&pool, &materializer, &device_id, emitter, args).await
                 }
-                TOOL_ATTACH_FILE | TOOL_ADD_MEETING => files.call(&name, emitter, args).await,
+                TOOL_ATTACH_FILE | TOOL_ADD_MEETING => {
+                    file_tool(&name, &pool, &materializer, &device_id, &dir, emitter, args).await
+                }
                 // Every read tool, and the unknown-tool error (#5379).
                 other => reads.call_tool(other, args, &read_ctx).await,
             }
@@ -1868,30 +1859,21 @@ fn attachment_mime_type(filename: &str) -> Result<&'static str, AppError> {
     })
 }
 
-/// What the tools that read a file on this device write with.
-struct FileTools {
-    pool: SqlitePool,
-    materializer: Materializer,
-    device_id: String,
-    app_data_dir: PathBuf,
-}
-
-impl FileTools {
-    /// `attach_file` or `add_meeting`.
-    async fn call(
-        &self,
-        name: &str,
-        emitter: &dyn ViewChangeEmitter,
-        args: Value,
-    ) -> Result<Value, AppError> {
-        let (pool, mat, device_id) = (&self.pool, &self.materializer, self.device_id.as_str());
-        let dir = self.app_data_dir.as_path();
-        if name == TOOL_ATTACH_FILE {
-            return handle_attach_file(pool, mat, device_id, dir, emitter, args).await;
-        }
-        let today = chrono::Local::now().date_naive();
-        handle_add_meeting(pool, mat, device_id, dir, emitter, args, today).await
+/// `attach_file` or `add_meeting`, the tools that read a file on this device.
+async fn file_tool(
+    name: &str,
+    pool: &SqlitePool,
+    mat: &Materializer,
+    device_id: &str,
+    dir: &Path,
+    emitter: &dyn ViewChangeEmitter,
+    args: Value,
+) -> Result<Value, AppError> {
+    if name == TOOL_ATTACH_FILE {
+        return handle_attach_file(pool, mat, device_id, dir, emitter, args).await;
     }
+    let today = chrono::Local::now().date_naive();
+    handle_add_meeting(pool, mat, device_id, dir, emitter, args, today).await
 }
 
 /// `add_meeting`'s file at `path`, checked and read as `attach_file` reads one.

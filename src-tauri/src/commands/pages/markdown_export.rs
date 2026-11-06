@@ -1272,7 +1272,8 @@ pub(super) async fn load_live_blocks(
 }
 
 /// Step 3b: resolve `((ULID))` targets to a roundtrip-safe link, and record
-/// which of them live on THIS page and so need an `^<ULID>` anchor marker.
+/// which of them live on THIS page and so need an `^<ULID>` anchor marker,
+/// into `refs`' block-ref fields.
 /// They are read from the content as well as from `block_links`
 /// ([`load_addressed_blocks`]), which the materializer derives in the
 /// background: the page's own `[[#^ULID]]` must find its anchor.
@@ -1280,7 +1281,8 @@ async fn resolve_block_refs(
     conn: &mut sqlx::SqliteConnection,
     page_id: &str,
     block_ref_ulids: HashSet<String>,
-) -> Result<BlockRefs, AppError> {
+    refs: &mut PageReferences,
+) -> Result<(), AppError> {
     // 3b. (#2963) Resolve `((ULID))` block references to a human-readable,
     //     roundtrip-safe token, and record which TARGET blocks (those on THIS
     //     page) must carry an Obsidian `^<ULID>` block-anchor marker on their
@@ -1305,9 +1307,6 @@ async fn resolve_block_refs(
     //         importer strips entirely).
     //       * target missing / deleted → absent from the map; the resolver
     //         emits a `(unresolved block reference)` literal (never a raw ULID).
-    let mut block_ref_replacement: HashMap<String, String> = HashMap::new();
-    let mut addressed_blocks: HashSet<String> = HashSet::new();
-    let mut block_ref_titles: HashMap<String, String> = HashMap::new();
     if !block_ref_ulids.is_empty() {
         let ulids: Vec<String> = block_ref_ulids.into_iter().collect();
         let ids_json = serde_json::to_string(&ulids)?;
@@ -1323,32 +1322,26 @@ async fn resolve_block_refs(
         .await?;
         for r in rows {
             if let Some(title) = &r.page_title {
-                block_ref_titles.insert(r.id.clone(), title.clone());
+                refs.block_ref_titles.insert(r.id.clone(), title.clone());
             }
             // A target whose denormalised `page_id` equals the page being
             // exported is same-page: anchor-only link + it will get a marker.
             if r.page_id.as_deref() == Some(page_id) {
-                addressed_blocks.insert(r.id.clone());
-                block_ref_replacement.insert(r.id.clone(), format!("[[#^{}]]", r.id));
+                refs.addressed_blocks.insert(r.id.clone());
+                refs.block_ref_replacement
+                    .insert(r.id.clone(), format!("[[#^{}]]", r.id));
             } else {
                 // Cross-page (or a target with no page, e.g. a page block):
                 // name the target's page (fallback "Untitled") so the link is
                 // human-readable.
                 let title = r.page_title.unwrap_or_else(|| "Untitled".to_string());
-                block_ref_replacement.insert(r.id.clone(), format!("[[{title}#^{}]]", r.id));
+                refs.block_ref_replacement
+                    .insert(r.id.clone(), format!("[[{title}#^{}]]", r.id));
             }
         }
     }
-    Ok((block_ref_replacement, addressed_blocks, block_ref_titles))
+    Ok(())
 }
-
-/// What [`resolve_block_refs`] reads: each target's export link, the page's
-/// own targets, and each target's page title.
-type BlockRefs = (
-    HashMap<String, String>,
-    HashSet<String>,
-    HashMap<String, String>,
-);
 
 /// Steps 3 and 3b: one batched lookup per token flavour over the whole subtree.
 async fn resolve_references(
@@ -1358,15 +1351,15 @@ async fn resolve_references(
 ) -> Result<PageReferences, AppError> {
     let (ulid_set, block_ref_ulids) = collect_reference_ulids(descendants);
     let (tag_names, page_titles) = resolve_tag_and_page_names(conn, ulid_set).await?;
-    let (block_ref_replacement, addressed_blocks, block_ref_titles) =
-        resolve_block_refs(conn, page_id, block_ref_ulids).await?;
-    Ok(PageReferences {
+    let mut refs = PageReferences {
         tag_names,
         page_titles,
-        block_ref_replacement,
-        addressed_blocks,
-        block_ref_titles,
-    })
+        block_ref_replacement: HashMap::new(),
+        addressed_blocks: HashSet::new(),
+        block_ref_titles: HashMap::new(),
+    };
+    resolve_block_refs(conn, page_id, block_ref_ulids, &mut refs).await?;
+    Ok(refs)
 }
 
 /// Step 4: the page's own frontmatter properties.

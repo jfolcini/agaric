@@ -184,13 +184,14 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       t,
       // Not used by `applyContentEdit`/`readCurrentContent`; structural inserts
       // never open the template picker, query builder, emoji picker, table
-      // picker, property drawer or voice-note recorder.
+      // picker, property drawer, voice-note recorder or meeting dialog.
       openTemplatePicker: async () => {},
       openQueryBuilder: () => {},
       openEmojiPicker: () => {},
       openTablePicker: () => {},
       openPropertyDrawer: () => {},
       openVoiceNoteRecorder: () => {},
+      openMeetingDialog: () => {},
     })
 
     const onDivider: BlockCommandHandler = (blockId) => {

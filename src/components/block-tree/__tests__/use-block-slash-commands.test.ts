@@ -93,6 +93,7 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockSlashCo
     openEmojiPicker: vi.fn(),
     openPropertyDrawer: vi.fn(),
     openVoiceNoteRecorder: vi.fn(),
+    openMeetingDialog: vi.fn(),
     ...overrides,
   }
 }
