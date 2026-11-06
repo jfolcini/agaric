@@ -2,6 +2,12 @@
   "env": {
     "MCP_TIMEOUT": "120000"
   },
+  "permissions": {
+    "allow": [
+      "Bash(gh api -X PATCH repos/jfolcini/agaric/dependabot/alerts/*)",
+      "Bash(gh api -X PATCH repos/jfolcini/agaric/code-scanning/alerts/*)"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {
