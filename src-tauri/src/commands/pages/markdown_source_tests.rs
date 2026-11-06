@@ -768,6 +768,123 @@ fn the_export_writes_an_embed_block_as_obsidians_embed() {
     }
 }
 
+/// A block of the page, and one of `Project`'s.
+const OWN: &str = "01J0000000000000000000000B";
+const THEIRS: &str = "01J0000000000000000000000T";
+
+/// [`data_with_names`] for `content` beside the page's block [`OWN`], with
+/// the blocks a block link may name in the snapshot, as `read_ref_blocks`
+/// reads them: `OWN` on the page and [`THEIRS`] on `Project`. `OWN` is
+/// addressed, as a ref from the page makes it.
+fn data_with_block_refs(content: &str) -> PageExportData {
+    let pages: &[(&str, &[&str])] = &[("Title", &[PAGE]), ("Project", &[PROJECT])];
+    let mut data = data_with_names(content, pages, &[]);
+    data.descendants.push(row(OWN, PAGE, 2, "own"));
+    data.addressed_blocks.insert(OWN.into());
+    let snapshot = &mut data.name_snapshot.pages;
+    snapshot.titles.extend([
+        (PAGE.to_owned(), "Title".to_owned()),
+        (PROJECT.to_owned(), "Project".to_owned()),
+    ]);
+    snapshot.blocks.extend([
+        (OWN.to_owned(), PAGE.to_owned()),
+        (THEIRS.to_owned(), PROJECT.to_owned()),
+    ]);
+    snapshot.own_page = Some(PAGE.into());
+    data
+}
+
+/// [`data_with_block_refs`] for `content`, its block alone as the buffer
+/// writes it.
+fn source_with_block_refs(content: &str) -> String {
+    let text = render_page_document(&data_with_block_refs(content)).0;
+    let (first, _) = text.split_once("\n\n").expect("two blocks");
+    format!("{first}\n")
+}
+
+/// #6277 F2 — a block ref is written as an Obsidian block link where the link
+/// reads back as the ref: `[[#^id]]` to a block of the page in the buffer and
+/// the mirror's file, which are the page's own text, and `[[Title#^id]]` to
+/// another page's block, and to the page's own in a copy, which leaves it.
+#[test]
+fn a_block_ref_is_written_as_an_obsidian_block_link() {
+    let data = data_with_block_refs(&format!("see (({OWN})) and (({THEIRS}))"));
+    assert_eq!(
+        render_page_document(&data).0,
+        format!("see [[#^{OWN}]] and [[Project#^{THEIRS}]] ^{BLOCK}\n\nown ^{OWN}\n")
+    );
+    assert_eq!(
+        render_page_file(&data).text,
+        format!("see [[#^{OWN}]] and [[Project#^{THEIRS}]]\n\nown ^{OWN}\n")
+    );
+    assert_eq!(
+        render_clipboard_source(&data, &[BLOCK.into()], true),
+        format!("see [[Title#^{OWN}]] and [[Project#^{THEIRS}]]\n")
+    );
+}
+
+/// #6277 F2 — a ref whose block the snapshot does not hold stays raw beside
+/// one that is named: a deleted block, one in another space, a page. So does
+/// an escaped one, and every ref of a block whose link would read back as
+/// another page: a title holding a `#`, or one another page holds.
+#[test]
+fn a_block_ref_that_would_not_read_back_stays_raw() {
+    let held = format!("(({ELSEWHERE})) and (({THEIRS})) and \\(({THEIRS}))");
+    assert_eq!(
+        source_with_block_refs(&held),
+        format!("(({ELSEWHERE})) and [[Project#^{THEIRS}]] and \\(({THEIRS})) ^{BLOCK}\n")
+    );
+    let content = format!("see (({THEIRS}))");
+    for title in ["C# Notes", "Title"] {
+        let mut data = data_with_block_refs(&content);
+        let snapshot = &mut data.name_snapshot.pages;
+        snapshot.titles.insert(PROJECT.into(), title.into());
+        let key = agaric_core::tag_norm::name_key("C");
+        snapshot.folded.insert(key, OTHER_PROJECT.into());
+        assert_eq!(
+            render_clipboard_source(&data, &[BLOCK.into()], true),
+            format!("{content}\n"),
+            "{title}"
+        );
+    }
+}
+
+/// #6277 F2 — a block that is one block embed whose link reads back is written
+/// as Obsidian's embed, `![[#^id]]` or `![[Title#^id]]`, as the export writes
+/// it; an embed among text keeps `{{embed …}}` around the link.
+#[test]
+fn a_block_embed_block_is_written_as_obsidians_embed() {
+    for (content, buffer, copy) in [
+        (
+            format!("{{{{embed (({OWN}))}}}}"),
+            format!("![[#^{OWN}]]"),
+            format!("![[Title#^{OWN}]]"),
+        ),
+        (
+            format!("{{{{embed (({THEIRS}))}}}}"),
+            format!("![[Project#^{THEIRS}]]"),
+            format!("![[Project#^{THEIRS}]]"),
+        ),
+        (
+            format!("see {{{{embed (({THEIRS}))}}}}"),
+            format!("see {{{{embed [[Project#^{THEIRS}]]}}}}"),
+            format!("see {{{{embed [[Project#^{THEIRS}]]}}}}"),
+        ),
+    ] {
+        assert_eq!(
+            source_with_block_refs(&content),
+            format!("{buffer} ^{BLOCK}\n"),
+            "{content}"
+        );
+        let data = data_with_block_refs(&content);
+        assert_eq!(
+            render_clipboard_source(&data, &[BLOCK.into()], true),
+            format!("{copy}\n"),
+            "{content}"
+        );
+    }
+}
+
 /// `Work` and `work` normalise alike, and the importer resolves both to the
 /// smallest-id tag (#1990), which is not this one.
 #[test]

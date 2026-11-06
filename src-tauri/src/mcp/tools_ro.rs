@@ -1160,7 +1160,9 @@ fn tool_desc_get_page_markdown() -> ToolDescription {
              task's priority, dates and rule as Obsidian Tasks signifiers at the end of its \
              line (`⏫ 🔁 every week ⏳ YYYY-MM-DD 📅 YYYY-MM-DD`). The title has no line. \
              A link or tag is written as its name where that name reads back as the same \
-             page or tag, else as its ULID (`[[ULID]]`, `#[ULID]`), and a ref-typed value as \
+             page or tag, else as its ULID (`[[ULID]]`, `#[ULID]`); a block reference as \
+             `[[#^ULID]]` to a block of the page and `[[Title#^ULID]]` to another page's where \
+             that reads back as the same block, else as `((ULID))`; and a ref-typed value as \
              its ULID. Each block ends with `^ULID`, the block_id update_block_content takes. \
              This is the page as the app's Edit as Markdown edits it: edit it and pass it to \
              the read-write server's edit_page_markdown. Past {RESPONSE_BYTES_CAP} bytes the \

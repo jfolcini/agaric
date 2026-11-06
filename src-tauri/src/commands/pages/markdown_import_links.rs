@@ -127,6 +127,14 @@ pub(super) struct LinkMatches {
     pub(super) aliases: HashMap<String, String>,
     /// Every matched page's title by id.
     pub(super) titles: HashMap<String, String>,
+    /// The blocks a `^id` anchor may name, each with its page, as the anchor
+    /// pass reads them ([`load_anchor_candidates`]): a render's snapshot holds
+    /// those of the pages its block refs name (#6277 F2). An import's pass
+    /// reads its own.
+    pub(super) blocks: HashMap<String, String>,
+    /// The page a render's snapshot was read for, whose blocks an anchor-only
+    /// `[[#^id]]` names.
+    pub(super) own_page: Option<String>,
 }
 
 impl LinkMatches {
@@ -160,6 +168,21 @@ impl LinkMatches {
             .get(&key)
             .or_else(|| self.aliases.get(&key))
             .map(String::as_str)
+    }
+
+    /// The page and block a link's `name` names by its `^id` anchor, as a
+    /// buffer save reads it: the block of that id on the page the base names,
+    /// or, for an anchor-only `#^id`, on [`Self::own_page`]. A page titled
+    /// with the whole name is a page link instead ([`Self::find`]).
+    pub(super) fn anchored_block(&self, name: &str) -> Option<(&str, &str)> {
+        let (base, anchor) = split_wikilink_anchor(name);
+        let id = obsidian_block_anchor_id(anchor?)?;
+        let page = match base {
+            "" => self.own_page.as_deref()?,
+            base => self.find(base)?,
+        };
+        let (block, on) = self.blocks.get_key_value(id)?;
+        (on == page).then_some((page, block.as_str()))
     }
 }
 
