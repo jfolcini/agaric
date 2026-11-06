@@ -1,9 +1,0 @@
-# Session 3624 — an escaped-pipe link in a table cell reads as its page (#6033)
-
-S13 (#6412) found that `[[Note\|alias]]` in a GFM table cell, the form Obsidian requires there, imported as a new page titled `Note\` with the cell linked to it and the escape dropped, so the row split into an extra column on the next read. No warning was raised.
-
-- Cause: `collect_inbound_page_link_bodies` and `rewrite_inbound_page_links` (`markdown_links.rs`) handed the raw body `Note\|alias` to `link_body_readings`, which splits on a bare `|`; the rewrite then wrote an unescaped `[[ULID|alias]]`.
-- Fix, in the shared reader so import, paste, Edit as Markdown and MCP block writes all get it: a link body is read with `\|` as `|` (`unescape_link_pipes`), a stored `[[ULID\|label]]` counts as an internal ref (`is_internal_page_link`), and a ref rewritten from an escaped body in a table row keeps its pipes escaped (`escape_pipes_as`); outside a table the editor reads only a bare pipe, so there the ref is written with one. The anchor pass, the deferred-link pass (`DEFERRED_LINK_RE`) and the folder import's vault-link rewrite take the same reading. The stored form `[[ULID\|label]]` is what the editor's `escapeCellPipes` writes and `buildTableRows` reads.
-- The Edit as Markdown path had its own copy of the bug: a stored `[[ULID\|alias]]` in the buffer resolved the name `ULID\` and made a page of it.
-- Left open: the stored-token readers (`ULID_LINK_RE` / `PAGE_LINK_RE` in the link cache, the FTS strip, export and the Edit as Markdown humaniser, the mock's link scan, the frontend backlink readers) do not read `[[ULID\|label]]`, so a labelled link in a table cell, typed or imported, gets no `block_links` row and exports as its raw ULID; and an Obsidian `![[pic.png\|300]]` in a table reads the file as `pic.png\`.
-- Ran: five new stored-result tests, each shown red; nextest over link, import, table, page-source and conformance; clippy; fmt.

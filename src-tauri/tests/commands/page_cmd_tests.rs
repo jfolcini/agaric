@@ -17832,6 +17832,62 @@ async fn import_obsidian_embed_keeps_its_width() {
     mat.shutdown();
 }
 
+/// A GFM table cell escapes a sized embed's pipe, `![[pic.png\|300]]`: the
+/// import attaches `pic.png` with its width, the pipe escaped as the editor's
+/// table writer escapes it, so the row keeps its columns.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_reads_an_escaped_pipe_embed_in_a_table_cell() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "| ![[pic.png\\|300]] | ![[pic.png]] |\n| --- | --- |\n".into(),
+        Some("note.md".into()),
+        TEST_SPACE_ID.into(),
+        Some(vec![VaultFile {
+            path: "pic.png".into(),
+            bytes: vec![0x89, b'P', b'N', b'G'],
+        }]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.warnings, Vec::<String>::new());
+    settle(&mat).await;
+
+    let files: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, filename FROM attachments WHERE deleted_at IS NULL ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let [(pic, filename)] = files.as_slice() else {
+        panic!("one attachment, got {files:?}");
+    };
+    assert_eq!(filename, "pic.png");
+    let blocks: Vec<String> =
+        sqlx::query_scalar("SELECT content FROM blocks WHERE deleted_at IS NULL ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(
+        !blocks.iter().any(|b| b.contains("pic.png\\")),
+        "no block names `pic.png\\`: {blocks:?}"
+    );
+    assert_eq!(
+        content_block_texts(&pool).await,
+        vec![format!(
+            "| ![\\|300](attachment:{pic}) | ![](attachment:{pic}) |\n| --- | --- |"
+        )]
+    );
+
+    mat.shutdown();
+}
+
 /// #6033 S6 — Logseq's `{:width N}` map after an image, ingested or remote,
 /// is stored as the alt's size suffix, a height kept as `|WxH` and a dragged
 /// size's fraction dropped. Code keeps the map as written.
