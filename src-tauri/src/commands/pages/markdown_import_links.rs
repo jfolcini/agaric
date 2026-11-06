@@ -127,6 +127,14 @@ pub(super) struct LinkMatches {
     pub(super) aliases: HashMap<String, String>,
     /// Every matched page's title by id.
     pub(super) titles: HashMap<String, String>,
+    /// The blocks a `^id` anchor may name, each with its page, as the anchor
+    /// pass reads them ([`load_anchor_candidates`]): a render's snapshot holds
+    /// those of the pages its block refs name (#6277 F2). An import's pass
+    /// reads its own.
+    pub(super) blocks: HashMap<String, String>,
+    /// The page a render's snapshot was read for, whose blocks an anchor-only
+    /// `[[#^id]]` names.
+    pub(super) own_page: Option<String>,
 }
 
 impl LinkMatches {
@@ -160,6 +168,21 @@ impl LinkMatches {
             .get(&key)
             .or_else(|| self.aliases.get(&key))
             .map(String::as_str)
+    }
+
+    /// The page and block a link's `name` names by its `^id` anchor, as a
+    /// buffer save reads it: the block of that id on the page the base names,
+    /// or, for an anchor-only `#^id`, on [`Self::own_page`]. A page titled
+    /// with the whole name is a page link instead ([`Self::find`]).
+    pub(super) fn anchored_block(&self, name: &str) -> Option<(&str, &str)> {
+        let (base, anchor) = split_wikilink_anchor(name);
+        let id = obsidian_block_anchor_id(anchor?)?;
+        let page = match base {
+            "" => self.own_page.as_deref()?,
+            base => self.find(base)?,
+        };
+        let (block, on) = self.blocks.get_key_value(id)?;
+        (on == page).then_some((page, block.as_str()))
     }
 }
 
@@ -350,6 +373,8 @@ async fn resolve_link_names(
 ) -> Result<(CommandTx, InboundLinks), AppError> {
     let file_page = ctx.file_page;
     let mut links = InboundLinks::default();
+    let link_names =
+        link_global_block_anchors(&mut tx, ctx, link_names, &mut links.page_links).await?;
     let mut resolved_base_links: HashMap<String, String> = HashMap::new();
     let mut cross_page = Vec::new();
     for name in link_names {
@@ -361,7 +386,8 @@ async fn resolve_link_names(
             && base.is_empty()
         {
             // An anchor-only link (`[[#^blockId]]` / `[[#Heading]]`): the
-            // implicit target page IS the page being imported. On an
+            // implicit target page IS the page being imported. Without one,
+            // `link_global_block_anchors` took those naming a block. On an
             // UNRESOLVED heading the deferred pass restores #1282's "no page
             // target" literal behaviour (`empty_base = true`).
             let deferred = deferred_anchor(anchor, block_anchor_id, true);
@@ -418,6 +444,54 @@ async fn resolve_link_names(
     )
     .await?;
     Ok((tx, links))
+}
+
+/// Link each anchor-only `[[#^id]]` among `names` to the live block of that id
+/// in the space, where no file of its own holds the text, as in a paste or an
+/// append (#6277 F2): a block id is global, so the link names that block
+/// wherever the text lands. Returns the other names, for the name pass.
+async fn link_global_block_anchors(
+    conn: &mut sqlx::SqliteConnection,
+    ctx: &NameCtx<'_>,
+    names: Vec<String>,
+    links: &mut PageLinks,
+) -> Result<Vec<String>, AppError> {
+    if ctx.file_page.is_some() {
+        return Ok(names);
+    }
+    let anchored: HashMap<String, String> = names
+        .iter()
+        .filter_map(|name| {
+            let (base, anchor) = split_wikilink_anchor(name);
+            let id = anchor.and_then(obsidian_block_anchor_id)?;
+            base.is_empty().then(|| (name.clone(), id.to_owned()))
+        })
+        .collect();
+    if anchored.is_empty() {
+        return Ok(names);
+    }
+    let ids = serde_json::to_string(&anchored.values().collect::<Vec<_>>())?;
+    let pages: HashMap<String, String> = sqlx::query!(
+        r#"SELECT id AS "id!", page_id AS "page_id!" FROM blocks
+           WHERE id IN (SELECT value FROM json_each(?1))
+             AND block_type = 'content' AND deleted_at IS NULL AND space_id = ?2"#,
+        ids,
+        ctx.space_id,
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .map(|row| (row.id, row.page_id))
+    .collect();
+    let (linked, rest): (Vec<String>, Vec<String>) = names
+        .into_iter()
+        .partition(|name| anchored.get(name).is_some_and(|id| pages.contains_key(id)));
+    for name in linked {
+        let id = &anchored[&name];
+        links.blocks.insert(name.clone(), id.clone());
+        links.ids.insert(name, pages[id].clone());
+    }
+    Ok(rest)
 }
 
 /// #1446 Part B / #1921 — resolve inbound `[[Page Name]]` wiki-links to internal

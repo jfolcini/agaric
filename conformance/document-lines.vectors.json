@@ -1152,6 +1152,38 @@
           "properties": {}
         }
       ]
+    },
+    {
+      "lineIds": [
+        "01J00000000000000000000000",
+        null,
+        "01J00000000000000000000001",
+        null,
+        "01J00000000000000000000002",
+        null
+      ],
+      "name": "#6277 F2: a block ref, and a block embed, whose link no name snapshot reads back is written as stored, even to a block of the page",
+      "text": "see ((01J00000000000000000000001))\n\ntarget\n\n{{embed ((01J00000000000000000000001))}}\n",
+      "tree": [
+        {
+          "content": "see ((01J00000000000000000000001))",
+          "depth": 0,
+          "id": "01J00000000000000000000000",
+          "properties": {}
+        },
+        {
+          "content": "target",
+          "depth": 0,
+          "id": "01J00000000000000000000001",
+          "properties": {}
+        },
+        {
+          "content": "{{embed ((01J00000000000000000000001))}}",
+          "depth": 0,
+          "id": "01J00000000000000000000002",
+          "properties": {}
+        }
+      ]
     }
   ],
   "description": "#5691 — Edit as Markdown's Document dialect, one case per hard case of the line-split format: the tree, each block under its id, the text a page holding it is written as, and the id each line of that text carries; under `typed`, text typed with no blank line between blocks and the tree it reads as, ids aside; and under `pasted`, text pasted from outside and the tree a paste reads it as (#6190). Authored by `markdown_document_tests.rs` with CONFORMANCE_UPDATE=1; never hand-edit.",

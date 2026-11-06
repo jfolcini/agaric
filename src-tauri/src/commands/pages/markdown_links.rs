@@ -767,9 +767,10 @@ pub(super) fn tag_reads_back_bare(before: &str, name: &str, after: &str) -> bool
             .is_some_and(|caps| caps.get(2).is_some_and(|m| m.as_str() == name))
 }
 
-/// `content` with its tag and page ids replaced by names, when the importer
-/// would resolve every name back to the id it replaced; `None` when there is
-/// no name to write or one would not come back, and the block goes out raw.
+/// `content` with its tag and page ids replaced by names and its block refs by
+/// Obsidian block links ([`name_block_refs`]), when the importer would resolve
+/// every name back to the id it replaced; `None` when there is no name to
+/// write or one would not come back, and the block goes out raw.
 ///
 /// The check runs the importer's own name collection and rewrite over the
 /// named text, with `is_code` as the parser will read the block; only the
@@ -777,15 +778,17 @@ pub(super) fn tag_reads_back_bare(before: &str, name: &str, after: &str) -> bool
 /// created. A name can be the page's own and still not come back: `[[Foo|Bar]]`
 /// reads as the page `Foo|Bar` when one exists (#5160 D10), and `#v1.2` as the
 /// tag `v1`. A block that is one embed whose name reads back is written as
-/// Obsidian's `![[Page]]` ([`as_obsidian_embed`]).
+/// Obsidian's `![[Page]]`, `![[Page#^id]]` or `![[#^id]]` ([`as_obsidian_embed`]).
 pub(super) fn humanise_refs_for_source(
     content: &str,
     is_code: bool,
     tag_names: &HashMap<String, String>,
     page_titles: &HashMap<String, String>,
     names: &NameSnapshot,
+    own_page: bool,
 ) -> Option<String> {
     let named = humanise_tag_and_page_refs(content, tag_names, page_titles);
+    let named = name_block_refs(&named, &names.pages, own_page);
     if named == content {
         return None;
     }
@@ -812,6 +815,35 @@ pub(super) fn humanise_refs_for_source(
     })
 }
 
+/// `content` with each `((ULID))` whose block `names` holds written as the
+/// Obsidian block link a save reads back (#6277 F2): `[[#^ULID]]` for a block
+/// of [`LinkMatches::own_page`] when `own_page`, the text being that page's,
+/// else `[[Title#^ULID]]` naming its page. A ref whose block `names` does not
+/// hold, as one to another space, a deleted block or a page, and an escaped
+/// one stay raw; [`humanise_refs_for_source`] checks the rest read back.
+fn name_block_refs(content: &str, names: &LinkMatches, own_page: bool) -> String {
+    agaric_store::cache::BLOCK_REF_RE
+        .replace_all(content, |caps: &regex::Captures<'_>| {
+            let m = caps.get(0).expect("group 0 always present");
+            let id = &caps[1];
+            let page = names
+                .blocks
+                .get(id)
+                .filter(|_| !is_escaped(content, m.start()));
+            match page {
+                Some(page) if own_page && names.own_page.as_ref() == Some(page) => {
+                    format!("[[#^{id}]]")
+                }
+                Some(page) => names
+                    .titles
+                    .get(page)
+                    .map_or_else(|| m.as_str().to_owned(), |t| format!("[[{t}#^{id}]]")),
+                None => m.as_str().to_owned(),
+            }
+        })
+        .into_owned()
+}
+
 /// The in-space names the importer resolves against, as its snapshots read
 /// them: the pages every reading of the link bodies the render writes may name
 /// (`snapshot_page_link_matches`), and each normalised tag name with its
@@ -825,16 +857,22 @@ pub(super) struct NameSnapshot {
 impl NameSnapshot {
     /// What the importer's page-link pass would make of each link body
     /// without creating a page: its reading ([`read_link_body`]) and the page
-    /// the name read names, the lowest id holding it (#6278).
+    /// the name read names, the lowest id holding it (#6278), or the block its
+    /// `^id` anchor names there ([`LinkMatches::anchored_block`], #6277 F2).
     pub(super) fn page_links(&self, bodies: impl IntoIterator<Item = String>) -> PageLinks {
         let mut links = PageLinks::default();
         for body in bodies {
             let (name, label) = read_link_body(&body, &self.pages);
             if let Some(id) = self.pages.find(name) {
                 links.ids.insert(name.to_string(), id.to_string());
-                let reading = (name.to_string(), label.map(str::to_string));
-                links.readings.insert(body, reading);
+            } else if let Some((page, block)) = self.pages.anchored_block(name) {
+                links.ids.insert(name.to_string(), page.to_string());
+                links.blocks.insert(name.to_string(), block.to_string());
+            } else {
+                continue;
             }
+            let reading = (name.to_string(), label.map(str::to_string));
+            links.readings.insert(body, reading);
         }
         links
     }

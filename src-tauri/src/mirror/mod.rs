@@ -449,7 +449,8 @@ impl Mirror {
     }
 
     /// One pass: `dirty`, the pages renamed since the last pass and those
-    /// linking to them, and every page whose file is not where the layout
+    /// linking to them, the pages at the other end of their block refs, and
+    /// every page whose file is not where the layout
     /// puts it, or with `full` every page.
     async fn pass(
         &mut self,
@@ -465,6 +466,8 @@ impl Mirror {
             .collect();
         dirty.extend(self.linking_pages(&renamed).await?);
         dirty.extend(renamed);
+        let refs = self.block_ref_pages(&dirty).await?;
+        dirty.extend(refs);
         dirty.extend(self.pages.iter().filter_map(|(id, state)| {
             let placed = layout.get(id).is_some_and(|(path, _)| *path == state.path);
             (!placed).then(|| id.clone())
@@ -536,6 +539,38 @@ impl Mirror {
             r#"SELECT DISTINCT s.page_id AS "page_id!: String"
                  FROM block_links l JOIN blocks s ON s.id = l.source_id
                 WHERE l.target_id IN (SELECT value FROM json_each(?1))
+                  AND s.deleted_at IS NULL AND s.page_id IS NOT NULL"#,
+            ids,
+        )
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    /// The live pages at the other end of a block ref from a block of
+    /// `pages`: the target's page carries its `^ID` and the ref names that
+    /// page (#6277 F2), so a new ref, a rename or a move changes the other
+    /// end's text. A ref removed leaves a stale `^ID` until the next full
+    /// pass, which reads back the same.
+    async fn block_ref_pages(&self, pages: &HashSet<String>) -> Result<Vec<String>, AppError> {
+        if pages.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ids = serde_json::to_string(pages)?;
+        Ok(sqlx::query_scalar!(
+            r#"SELECT t.page_id AS "page_id!: String"
+                 FROM block_links l
+                 JOIN blocks s ON s.id = l.source_id
+                 JOIN blocks t ON t.id = l.target_id
+                WHERE l.kind = 'block_ref'
+                  AND s.page_id IN (SELECT value FROM json_each(?1))
+                  AND t.deleted_at IS NULL AND t.page_id IS NOT NULL
+               UNION
+               SELECT s.page_id
+                 FROM block_links l
+                 JOIN blocks s ON s.id = l.source_id
+                 JOIN blocks t ON t.id = l.target_id
+                WHERE l.kind = 'block_ref'
+                  AND t.page_id IN (SELECT value FROM json_each(?1))
                   AND s.deleted_at IS NULL AND s.page_id IS NOT NULL"#,
             ids,
         )

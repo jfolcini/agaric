@@ -834,6 +834,17 @@ fn document_rows() -> Vec<(&'static str, Vec<BlockSpec>, &'static str)> {
             ],
             "{{embed [[01J00000000000000000000RF1]]}}\n\n{{embed ((01J00000000000000000000RF2))}}\n",
         ),
+        (
+            "#6277 F2: a block ref, and a block embed, whose link no name snapshot reads back \
+             is written as stored, even to a block of the page",
+            vec![
+                plain(0, "see ((01J00000000000000000000001))"),
+                plain(0, "target"),
+                plain(0, "{{embed ((01J00000000000000000000001))}}"),
+            ],
+            "see ((01J00000000000000000000001))\n\ntarget\n\n\
+             {{embed ((01J00000000000000000000001))}}\n",
+        ),
     ]
 }
 

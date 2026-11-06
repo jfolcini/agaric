@@ -531,12 +531,15 @@ fn push_bullet(
     }
     let start = output.len();
     let is_code = push(output, content);
+    // A copy leaves its page, so a ref in it names its target's page.
+    let own_page = mode.anchors != Anchors::Needed;
     let Some(named) = humanise_refs_for_source(
         content,
         is_code,
         &data.tag_names,
         &data.page_titles,
         &data.name_snapshot,
+        own_page,
     ) else {
         return;
     };
@@ -1166,6 +1169,8 @@ struct PageReferences {
     block_ref_replacement: HashMap<String, String>,
     /// The targets of the page's refs to its own blocks.
     addressed_blocks: HashSet<String>,
+    /// Each block ref target's page title, which a buffer may name it by.
+    block_ref_titles: HashMap<String, String>,
 }
 
 /// The `#[…]` / `[[…]]` targets and the `((…))` targets a page's descendants
@@ -1275,7 +1280,7 @@ async fn resolve_block_refs(
     conn: &mut sqlx::SqliteConnection,
     page_id: &str,
     block_ref_ulids: HashSet<String>,
-) -> Result<(HashMap<String, String>, HashSet<String>), AppError> {
+) -> Result<BlockRefs, AppError> {
     // 3b. (#2963) Resolve `((ULID))` block references to a human-readable,
     //     roundtrip-safe token, and record which TARGET blocks (those on THIS
     //     page) must carry an Obsidian `^<ULID>` block-anchor marker on their
@@ -1302,6 +1307,7 @@ async fn resolve_block_refs(
     //         emits a `(unresolved block reference)` literal (never a raw ULID).
     let mut block_ref_replacement: HashMap<String, String> = HashMap::new();
     let mut addressed_blocks: HashSet<String> = HashSet::new();
+    let mut block_ref_titles: HashMap<String, String> = HashMap::new();
     if !block_ref_ulids.is_empty() {
         let ulids: Vec<String> = block_ref_ulids.into_iter().collect();
         let ids_json = serde_json::to_string(&ulids)?;
@@ -1316,6 +1322,9 @@ async fn resolve_block_refs(
         .fetch_all(&mut *conn)
         .await?;
         for r in rows {
+            if let Some(title) = &r.page_title {
+                block_ref_titles.insert(r.id.clone(), title.clone());
+            }
             // A target whose denormalised `page_id` equals the page being
             // exported is same-page: anchor-only link + it will get a marker.
             if r.page_id.as_deref() == Some(page_id) {
@@ -1330,8 +1339,16 @@ async fn resolve_block_refs(
             }
         }
     }
-    Ok((block_ref_replacement, addressed_blocks))
+    Ok((block_ref_replacement, addressed_blocks, block_ref_titles))
 }
+
+/// What [`resolve_block_refs`] reads: each target's export link, the page's
+/// own targets, and each target's page title.
+type BlockRefs = (
+    HashMap<String, String>,
+    HashSet<String>,
+    HashMap<String, String>,
+);
 
 /// Steps 3 and 3b: one batched lookup per token flavour over the whole subtree.
 async fn resolve_references(
@@ -1341,13 +1358,14 @@ async fn resolve_references(
 ) -> Result<PageReferences, AppError> {
     let (ulid_set, block_ref_ulids) = collect_reference_ulids(descendants);
     let (tag_names, page_titles) = resolve_tag_and_page_names(conn, ulid_set).await?;
-    let (block_ref_replacement, addressed_blocks) =
+    let (block_ref_replacement, addressed_blocks, block_ref_titles) =
         resolve_block_refs(conn, page_id, block_ref_ulids).await?;
     Ok(PageReferences {
         tag_names,
         page_titles,
         block_ref_replacement,
         addressed_blocks,
+        block_ref_titles,
     })
 }
 
@@ -1741,8 +1759,7 @@ pub(super) async fn load_page_export_data(
         (Vec::new(), Vec::new())
     };
     let name_snapshot = if matches!(read, PageRead::Buffer | PageRead::File) {
-        let names = (&refs.page_titles, &ref_titles);
-        load_name_snapshot(conn, &page.id, &descendants, names).await?
+        load_name_snapshot(conn, &page.id, &descendants, &refs, &ref_titles).await?
     } else {
         NameSnapshot::default()
     };
@@ -1766,23 +1783,54 @@ pub(super) async fn load_page_export_data(
 
 /// What the importer would resolve the page's referenced names against: its
 /// space's pages the link bodies the render writes may name, the titles of
-/// ref-typed values among them, and its space's tags. A page in no space gets
-/// the empty snapshot, so every name stays raw.
+/// ref-typed values among them, the blocks its block links may name
+/// ([`read_ref_blocks`]), and its space's tags. A page in no space gets the
+/// empty snapshot, so every name stays raw.
 async fn load_name_snapshot(
     conn: &mut sqlx::SqliteConnection,
     page_id: &BlockId,
     descendants: &[BlockRow],
-    (page_titles, ref_titles): (&HashMap<String, String>, &HashMap<String, String>),
+    refs: &PageReferences,
+    ref_titles: &HashMap<String, String>,
 ) -> Result<NameSnapshot, AppError> {
     let Some(space) = agaric_store::space::resolve_block_space(&mut *conn, page_id).await? else {
         return Ok(NameSnapshot::default());
     };
-    let mut bodies = rendered_link_bodies(descendants, page_titles);
+    let mut bodies = rendered_link_bodies(descendants, &refs.page_titles);
     bodies.extend(ref_titles.values().cloned());
+    let block_links = refs.block_ref_titles.iter();
+    bodies.extend(block_links.map(|(id, title)| format!("{title}#^{id}")));
+    let mut pages = snapshot_page_link_matches(conn, space.as_str(), &bodies).await?;
+    read_ref_blocks(conn, &mut pages, page_id.as_str(), &refs.block_ref_titles).await?;
     Ok(NameSnapshot {
-        pages: snapshot_page_link_matches(conn, space.as_str(), &bodies).await?,
+        pages,
         tag_id_by_norm: snapshot_tags_by_norm(conn, space.as_str()).await?,
     })
+}
+
+/// Fill `pages` with the blocks a block link to one of `titles`' targets may
+/// name (#6277 F2): those an anchor names on the page its title names, as the
+/// anchor pass reads them, and on `page_id`, the page an anchor-only link
+/// names. With no block ref, none.
+async fn read_ref_blocks(
+    conn: &mut sqlx::SqliteConnection,
+    pages: &mut LinkMatches,
+    page_id: &str,
+    titles: &HashMap<String, String>,
+) -> Result<(), AppError> {
+    pages.own_page = Some(page_id.to_owned());
+    if titles.is_empty() {
+        return Ok(());
+    }
+    let mut named: HashSet<String> = titles
+        .values()
+        .filter_map(|title| pages.find(title).map(str::to_owned))
+        .collect();
+    named.insert(page_id.to_owned());
+    let named = named.iter().map(String::as_str).collect();
+    let candidates = load_anchor_candidates(conn, &named).await?;
+    pages.blocks = candidates.into_iter().map(|c| (c.id, c.page_id)).collect();
+    Ok(())
 }
 
 /// The link bodies the render writes for `descendants`: each linked page's

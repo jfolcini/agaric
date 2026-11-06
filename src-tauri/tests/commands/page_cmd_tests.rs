@@ -2824,9 +2824,9 @@ async fn get_page_buffer_writes_in_space_names() {
     assert_eq!(
         md,
         format!(
-            "see [[Project]] #work (({SOURCE_TARGET})) ^{SOURCE_BLOCK}\n\ntarget ^{SOURCE_TARGET}\n"
+            "see [[Project]] #work [[#^{SOURCE_TARGET}]] ^{SOURCE_BLOCK}\n\ntarget ^{SOURCE_TARGET}\n"
         ),
-        "in-space page and tag names must replace their ids; a block ref stays raw"
+        "in-space page and tag names must replace their ids; a block ref on the page is `[[#^ID]]`"
     );
 }
 
@@ -5945,8 +5945,8 @@ async fn get_blocks_source_writes_names_and_raw_block_refs_without_anchors() {
 
     assert_eq!(
         md,
-        format!("see [[Project]] #work (({SOURCE_TARGET}))\n"),
-        "in-space names replace their ids, a block ref stays raw, and there is no anchor"
+        format!("see [[Project]] #work [[Source#^{SOURCE_TARGET}]]\n"),
+        "in-space names replace their ids, a block ref names its page, and there is no anchor"
     );
 }
 

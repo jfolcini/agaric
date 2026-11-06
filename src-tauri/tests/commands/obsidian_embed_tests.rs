@@ -104,7 +104,7 @@ async fn an_export_writes_embeds_as_obsidians_and_imports_them_back() {
 }
 
 /// Edit as Markdown writes a page embed whose name reads back as Obsidian's,
-/// and a block embed as stored, as it writes a block ref; the buffer saved as
+/// and a block embed as Obsidian's, as it writes a block ref; the buffer saved as
 /// it was changes nothing, and an embed edited in it saves as an embed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_buffer_writes_a_page_embed_as_obsidians_and_saves_it_back() {
@@ -123,7 +123,7 @@ async fn the_buffer_writes_a_page_embed_as_obsidians_and_saves_it_back() {
     );
     let theirs = &e.theirs;
     assert!(
-        buffer.contains(&format!("\n{{{{embed (({theirs}))}}}} ^{block}\n")),
+        buffer.contains(&format!("\n![[Other#^{theirs}]] ^{block}\n")),
         "{buffer}"
     );
     assert!(buffer.contains("\nsee {{embed [[Other]]}} ^"), "{buffer}");
@@ -146,7 +146,7 @@ async fn the_buffer_writes_a_page_embed_as_obsidians_and_saves_it_back() {
 }
 
 /// A copy writes a page embed as Obsidian's, and a paste reads it back as the
-/// embed, beside a block embed it writes as stored.
+/// embed, beside a block embed it writes as Obsidian's.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_copied_embed_pastes_back_as_the_embed() {
     let (pool, _dir) = test_pool().await;
@@ -161,7 +161,7 @@ async fn a_copied_embed_pastes_back_as_the_embed() {
         .unwrap();
 
     let theirs = &e.theirs;
-    assert_eq!(copy, format!("![[Other]]\n\n{{{{embed (({theirs}))}}}}\n"));
+    assert_eq!(copy, format!("![[Other]]\n\n![[Other#^{theirs}]]\n"));
     let pasted: Vec<_> = paste(&pool, &mat, &anchor, paste_text(&copy))
         .await
         .into_iter()

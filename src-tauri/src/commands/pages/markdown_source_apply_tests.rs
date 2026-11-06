@@ -1019,3 +1019,113 @@ fn a_page_property_with_a_carriage_return_saves_by_its_line_ids() {
         assert_eq!(stored, "x\ry \\n");
     });
 }
+
+/// #6277 F2 — a buffer holding block refs, written as Obsidian block links,
+/// `[[#^id]]` to a block of the page and `[[Title#^id]]` to another page's,
+/// and a block embed of each as Obsidian's, saves as nothing; edited, each
+/// link and embed saves as the ref or embed it was written from.
+#[test]
+fn a_buffer_holding_block_refs_saves_as_nothing() {
+    Runtime::new().unwrap().block_on(async {
+        let fx = fixture().await;
+        let other = create_page_in_space_inner(
+            &fx.pool,
+            DEV,
+            &fx.materializer,
+            None,
+            "Other".into(),
+            TEST_SPACE_ID.into(),
+        )
+        .await
+        .unwrap()
+        .into_string();
+        let child = |parent: &str, content: String| {
+            let (pool, mat) = (fx.pool.clone(), &fx.materializer);
+            let parent = BlockId::from_trusted(parent);
+            async move {
+                create_block_inner(
+                    &pool,
+                    DEV,
+                    mat,
+                    "content".into(),
+                    content,
+                    Some(parent),
+                    None,
+                )
+                .await
+                .unwrap()
+                .id
+                .into_string()
+            }
+        };
+        let theirs = child(&other, "theirs".into()).await;
+        let own = child(&fx.page, "own".into()).await;
+        let refs = format!("see (({own})) and (({theirs}))");
+        let stored = [
+            "own".to_owned(),
+            refs.clone(),
+            format!("{{{{embed (({own}))}}}}"),
+            format!("{{{{embed (({theirs}))}}}}"),
+        ];
+        for content in &stored[1..] {
+            child(&fx.page, content.clone()).await;
+        }
+        let buffer = get_page_buffer_inner(&fx.pool, &fx.page).await.unwrap();
+        let links = format!("see [[#^{own}]] and [[Other#^{theirs}]]");
+        for written in [
+            &links,
+            &format!("![[#^{own}]]"),
+            &format!("![[Other#^{theirs}]]"),
+        ] {
+            assert!(
+                buffer.text.contains(&format!("\n{written}\n")),
+                "{}",
+                buffer.text
+            );
+        }
+        let before = op_counts(&fx.pool).await;
+
+        let report = save(
+            &fx,
+            (buffer.text.clone(), buffer.line_ids.clone()),
+            &buffer.source,
+        )
+        .await;
+
+        assert_eq!(
+            appended(&before, &op_counts(&fx.pool).await),
+            BTreeMap::new()
+        );
+        assert_eq!((report.created, report.edited), (0, 0));
+
+        let edited = buffer
+            .text
+            .replacen(&links, &format!("{links} too"), 1)
+            .replacen("own\n", &format!("own [[#^{own}]]\n"), 1)
+            .replacen(
+                &format!("![[Other#^{theirs}]]"),
+                &format!("![[#^{own}]]"),
+                1,
+            );
+        let report = save(&fx, (edited, buffer.line_ids), &buffer.source).await;
+
+        assert_eq!((report.created, report.edited), (0, 3));
+        let contents: Vec<String> = sqlx::query_scalar(
+            "SELECT content FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+             ORDER BY position, id",
+        )
+        .bind(&fx.page)
+        .fetch_all(&fx.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            contents,
+            [
+                format!("own (({own}))"),
+                format!("{refs} too"),
+                stored[2].clone(),
+                stored[2].clone(),
+            ]
+        );
+    });
+}
