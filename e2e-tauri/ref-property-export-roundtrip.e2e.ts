@@ -71,10 +71,11 @@ describe('Agaric real-backend ref property export (#6277 F3) @markdown @editor @
       timeoutMsg: `the page ${copy} shows no property table`,
     })
     await header.click()
-    const value = $(`button[aria-label="${KEY} value"]`)
-    await browser.waitUntil(async () => (await value.getText()) === target, {
+    // The row is a page picker, so the value is a ref; the page it names is
+    // checked below through `get_properties`.
+    await $(`button[aria-label="${KEY} value"]`).waitForDisplayed({
       timeout: ACTION_TIMEOUT,
-      timeoutMsg: `the page ${copy}'s ${KEY} never showed ${target}`,
+      timeoutMsg: `the page ${copy} lists no ${KEY} page picker`,
     })
     const pages = await invoke<{ id: string; content: string | null }[]>(
       'list_all_pages_in_space',
